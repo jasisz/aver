@@ -116,6 +116,78 @@ impl FnBareFacts {
     pub fn param_is_bare(&self, i: usize) -> bool {
         self.bare_params.get(i).copied().unwrap_or(false)
     }
+
+    /// The interval over-approximation of a value bound to `slot`, when the
+    /// analysis derived one and proved the slot `Bare`. `None` for a boxed
+    /// or unknown slot — the conservative decline.
+    fn bare_slot_interval(&self, slot: LocalId) -> Option<Interval> {
+        let fact = self.values.get(&slot)?;
+        if !fact.is_bare() {
+            return None;
+        }
+        fact.interval
+    }
+
+    /// Compute the result interval of an EXPRESSION TREE built only from
+    /// bare leaves (`Local`s the analysis proved `Bare`, `Int` literals) and
+    /// `Add`/`Sub`/`Mul`/`Neg` nodes, using the saturating #511 interval
+    /// arithmetic. Returns `None` if any leaf is non-bare / unknown or the
+    /// node is an unsupported shape — the conservative decline.
+    ///
+    /// This is the SINGLE SOURCE OF TRUTH for "what interval does this
+    /// inline compound evaluate to": both the analysis's `tail_value_is_bare`
+    /// and the Rust backend's `mir_expr_is_bare_i64` route a compound through
+    /// here, so neither can accept a tree whose result leaves `i64`.
+    pub fn bare_expr_interval(&self, e: &MirExpr) -> Option<Interval> {
+        match e {
+            MirExpr::Literal(l) => match l.node {
+                Literal::Int(k) => Some(Interval::point(k as i128)),
+                _ => None,
+            },
+            MirExpr::Local(local) => self.bare_slot_interval(local.node.slot),
+            MirExpr::Neg(inner) => {
+                let r = Interval::point(0).sub(self.bare_expr_interval(&inner.node)?);
+                Some(r)
+            }
+            MirExpr::BinOp(b) => {
+                let l = self.bare_expr_interval(&b.node.lhs.node)?;
+                let r = self.bare_expr_interval(&b.node.rhs.node)?;
+                match b.node.op {
+                    BinOp::Add => Some(l.add(r)),
+                    BinOp::Sub => Some(l.sub(r)),
+                    BinOp::Mul => Some(l.mul(r)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Is `e` a bare-`i64`-eligible expression? A `Local`/`Int` leaf the
+    /// analysis proved `Bare`, or an `Add`/`Sub`/`Mul`/`Neg` tree over such
+    /// leaves WHOSE RESULT INTERVAL provably fits `i64` (every intermediate
+    /// stays `OverflowFree` under the saturating interval arithmetic).
+    ///
+    /// SOUNDNESS (BUG 2): a compound is bare ONLY when its result interval
+    /// ⊆ `i64`. An overflowing compound like `n + i64::MAX` (result
+    /// `[MAX+1, …]`, outside `i64`) is NOT bare, so codegen must emit the
+    /// boxed `AverInt` arithmetic with `from_i64` boundary conversions — the
+    /// raw-`i64` path would silently wrap (`overflow-checks = false`).
+    pub fn expr_is_bare_i64(&self, e: &MirExpr) -> bool {
+        match e {
+            // A direct bare leaf: `Local` proven `Bare`, or an `Int` literal
+            // (an exact point — its `i64`-fit is checked by the enclosing
+            // compound's interval; a standalone literal is always a sound
+            // `{N}i64` constant on a bare path the analysis already gated).
+            MirExpr::Literal(l) => matches!(l.node, Literal::Int(_)),
+            MirExpr::Local(local) => self.is_bare(local.node.slot),
+            // A compound: require the WHOLE-TREE result interval to fit i64.
+            MirExpr::Neg(_) | MirExpr::BinOp(_) => self.bare_expr_interval(e).is_some_and(|iv| {
+                raw_i64_eligible(Some(iv), std::iter::once(&OpClass::OverflowFree))
+            }),
+            _ => false,
+        }
+    }
 }
 
 /// Whole-program representation-selection facts, keyed by `FnId`. Built
@@ -191,6 +263,14 @@ pub fn analyze(program: &MirProgram) -> BareI64Facts {
 struct Summary {
     bare_params: HashMap<FnId, Vec<bool>>,
     bare_return: HashMap<FnId, bool>,
+    /// Per-param TIGHT recurrence interval (`param_recurrence_bound`), so the
+    /// body pass can seed a bare counter with its PROVEN range
+    /// (`[K-step, entry]`) instead of the full `i64` line. This is what keeps
+    /// `n - 1` / `acc * n` over a bare counter in the OverflowFree band: a
+    /// full-`i64` seed makes every `+`/`-`/`*` over the counter look like it
+    /// could overflow, demoting the fast decrement to a boxed round-trip. A
+    /// `None` entry (or a missing param) falls back to the full-`i64` seed.
+    bare_param_intervals: HashMap<FnId, Vec<Option<Interval>>>,
 }
 
 impl Summary {
@@ -203,6 +283,15 @@ impl Summary {
 
     fn return_bare(&self, id: FnId) -> bool {
         self.bare_return.get(&id).copied().unwrap_or(false)
+    }
+
+    /// The proven recurrence interval for param `i` of `id`, if one was
+    /// derived. `None` ⇒ the body pass seeds the full `i64` range.
+    fn param_interval(&self, id: FnId, i: usize) -> Option<Interval> {
+        self.bare_param_intervals
+            .get(&id)
+            .and_then(|v| v.get(i).copied())
+            .flatten()
     }
 }
 
@@ -250,6 +339,20 @@ fn compute_summary(program: &MirProgram, int_params: &HashMap<FnId, Vec<bool>>) 
         }
     }
 
+    // Tight per-param recurrence intervals, computed ONCE: they are a pure
+    // function of the recurrence shape + literal entry callers, independent
+    // of the fixpoint's escape/return state, so they stay valid across
+    // iterations. A bare counter is seeded with this proven range in the
+    // body pass instead of the full `i64` line, keeping `n - 1` / `acc * n`
+    // OverflowFree (see `Summary::bare_param_intervals`).
+    let mut bare_param_intervals: HashMap<FnId, Vec<Option<Interval>>> = HashMap::new();
+    for (id, f) in program.iter() {
+        let ivs: Vec<Option<Interval>> = (0..f.params.len())
+            .map(|i| param_recurrence_bound(f, i, &edges))
+            .collect();
+        bare_param_intervals.insert(*id, ivs);
+    }
+
     loop {
         let mut changed = false;
 
@@ -273,8 +376,9 @@ fn compute_summary(program: &MirProgram, int_params: &HashMap<FnId, Vec<bool>>) 
 
         // (B) The counter must remain in `i64` range across the recurrence
         //     and the literal-bounded entry. A param is bare only when its
-        //     derived interval provably fits `i64`.
-        for (id, f) in program.iter() {
+        //     derived interval (precomputed in `bare_param_intervals`)
+        //     provably fits `i64`.
+        for (id, _f) in program.iter() {
             let ip = &int_params[id];
             for (i, &is_int) in ip.iter().enumerate() {
                 if !bare_params[id].get(i).copied().unwrap_or(false) {
@@ -284,7 +388,10 @@ fn compute_summary(program: &MirProgram, int_params: &HashMap<FnId, Vec<bool>>) 
                     demote_param(&mut bare_params, *id, i, &mut changed);
                     continue;
                 }
-                let bound = param_recurrence_bound(f, i, &edges);
+                let bound = bare_param_intervals
+                    .get(id)
+                    .and_then(|v| v.get(i).copied())
+                    .flatten();
                 let eligible = bound.is_some_and(|iv| {
                     raw_i64_eligible(Some(iv), std::iter::once(&OpClass::OverflowFree))
                 });
@@ -308,6 +415,7 @@ fn compute_summary(program: &MirProgram, int_params: &HashMap<FnId, Vec<bool>>) 
         let tmp = Summary {
             bare_params: bare_params.clone(),
             bare_return: bare_return.clone(),
+            bare_param_intervals: bare_param_intervals.clone(),
         };
         for (id, f) in program.iter() {
             let mut escaping: HashSet<LocalId> = HashSet::new();
@@ -329,6 +437,7 @@ fn compute_summary(program: &MirProgram, int_params: &HashMap<FnId, Vec<bool>>) 
             let tmp = Summary {
                 bare_params: bare_params.clone(),
                 bare_return: bare_return.clone(),
+                bare_param_intervals: bare_param_intervals.clone(),
             };
             let facts = analyze_fn(f, &tmp);
             if !facts.bare_return && bare_return.insert(*id, false) != Some(false) {
@@ -366,6 +475,7 @@ fn compute_summary(program: &MirProgram, int_params: &HashMap<FnId, Vec<bool>>) 
     Summary {
         bare_params,
         bare_return,
+        bare_param_intervals,
     }
 }
 
@@ -628,9 +738,37 @@ fn local_supplies_bare(
 fn param_recurrence_bound(f: &MirFn, i: usize, edges: &[CallEdge]) -> Option<Interval> {
     let param_slot = f.params.get(i)?.local;
 
-    // 1. The entry envelope: the convex hull of every literal value passed
+    // 1. The base-case guard + monotone decrement recurrence at the same
+    //    param index. Recognizes `match counter { K -> base; _ ->
+    //    tailcall(counter - step, …) }` (and the lowered `IfThenElse`).
+    //    Done FIRST so we can validate each entry literal against the
+    //    recognized `(guard_k, step)` as we hull it.
+    let recur = recurrence_for_param(f, param_slot, i)?;
+
+    // A decrement counter toward an EQUALITY guard `K` (`match n { K -> … }`)
+    // only certifies a finite range when the sequence `entry - m*step`
+    // actually LANDS on `K`. A comparison-direction guard (`<`/`<=`/`>`/`>=`)
+    // does not pin the stopping value, so we cannot bound the far endpoint —
+    // DECLINE (box; sound, only costs speed on a shape that may not occur).
+    if recur.guard_kind != GuardKind::Equality {
+        return None;
+    }
+
+    // 2. The entry envelope: the convex hull of every literal value passed
     //    at param index `i` by a NON-recursive caller. If any non-literal
     //    value reaches the param, we cannot bound the entry — decline.
+    //
+    //    REACHABILITY (the BUG-1 guard): for a decrement counter (step > 0)
+    //    toward the equality guard `K`, the `entry - m*step` sequence hits
+    //    `K` exactly when BOTH:
+    //      (a) `entry >= K` — the decrement moves TOWARD K, not away; and
+    //      (b) `(entry - K) % step == 0` — `K` is congruent to `entry`
+    //          mod `step`, so the sequence lands ON `K` rather than
+    //          stepping OVER it (which would diverge to -inf, leaving the
+    //          certified interval and wrapping i64).
+    //    `step == 1` always divides, so countdown / factorial (guard 0,
+    //    step 1, positive entry) still pass. Any entry literal that fails
+    //    EITHER condition makes the recurrence unbounded ⇒ decline.
     let mut entry: Option<Interval> = None;
     let mut saw_entry = false;
     for edge in edges {
@@ -640,6 +778,17 @@ fn param_recurrence_bound(f: &MirFn, i: usize, edges: &[CallEdge]) -> Option<Int
         saw_entry = true;
         let arg = edge.args.get(i)?;
         let iv = literal_interval(&arg.node)?;
+        // `literal_interval` yields a point `[v, v]`, so validating the
+        // single endpoint validates the whole point.
+        let v = match iv.lo {
+            crate::ir::interval::Bound::Finite(v) => v,
+            _ => return None,
+        };
+        if v < recur.guard_k || (v - recur.guard_k) % recur.step != 0 {
+            // The decrement never lands on the equality guard from this
+            // entry — the counter diverges past `K`. Decline.
+            return None;
+        }
         entry = Some(match entry {
             Some(prev) => prev.hull(iv),
             None => iv,
@@ -651,11 +800,6 @@ fn param_recurrence_bound(f: &MirFn, i: usize, edges: &[CallEdge]) -> Option<Int
     }
     let entry = entry?;
 
-    // 2. The base-case guard + monotone decrement recurrence at the same
-    //    param index. Recognizes `match counter { K -> base; _ ->
-    //    tailcall(counter - step, …) }` (and the lowered `IfThenElse`).
-    let recur = recurrence_for_param(f, param_slot, i)?;
-
     // 3. Combine. The counter ranges between the base guard (minus the
     //    transient last step) and the entry envelope. For `n - 1` toward
     //    `0` with entry `[lo, hi]`, that is `[min(lo, K-step), max(hi, K)]`.
@@ -664,12 +808,30 @@ fn param_recurrence_bound(f: &MirFn, i: usize, edges: &[CallEdge]) -> Option<Int
     Some(Interval { lo, hi })
 }
 
+/// How the base-case guard `K` compares the counter against the literal.
+/// ONLY an `Equality` guard (`match counter { K -> … }` / the lowered
+/// `IfThenElse` over `counter == K`) lets the decrement sequence be proven
+/// to LAND on `K`; every comparison-direction guard (`<`, `<=`, `>`, `>=`)
+/// is a half-bounded test that does not pin the exact stopping value, so it
+/// cannot be used to bound the recurrence's far endpoint — those DECLINE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GuardKind {
+    /// `counter == K` (a `Match` literal arm, or `IfThenElse` over `Eq`).
+    Equality,
+    /// `<`, `<=`, `>`, `>=` against `K` — a half-bounded comparison whose
+    /// exact stopping value is unknown. The conservative decline.
+    Comparison,
+}
+
 /// The recognized recurrence shape for a bounded counter.
 struct Recurrence {
     /// The base-case guard literal `K` (`match counter { K -> … }`).
     guard_k: i128,
     /// The decrement step magnitude (`counter - step`, positive literal).
     step: i128,
+    /// Whether the guard is an equality (the only kind that pins the
+    /// stopping value) or a comparison (declines).
+    guard_kind: GuardKind,
 }
 
 /// Recognize the bounded-counter recurrence for param `param_slot` (index
@@ -678,21 +840,33 @@ struct Recurrence {
 /// any other shape (accumulators, non-monotone recurrences, missing
 /// guard) — the conservative decline.
 fn recurrence_for_param(f: &MirFn, param_slot: LocalId, i: usize) -> Option<Recurrence> {
-    let guard_k = guard_literal_for(&f.body.node, param_slot)?;
+    let (guard_k, guard_kind) = guard_literal_for(&f.body.node, param_slot)?;
     let mut recur: Option<Recurrence> = None;
-    find_self_tailcall_recurrence(&f.body.node, f.fn_id, param_slot, i, guard_k, &mut recur);
+    find_self_tailcall_recurrence(
+        &f.body.node,
+        f.fn_id,
+        param_slot,
+        i,
+        guard_k,
+        guard_kind,
+        &mut recur,
+    );
     recur
 }
 
 /// Walk for a `Match`/`IfThenElse` that guards the counter against a
-/// literal `K`. Returns the first literal guard `K` found on the counter.
-fn guard_literal_for(e: &MirExpr, counter: LocalId) -> Option<i128> {
+/// literal `K`. Returns the first literal guard `(K, kind)` found on the
+/// counter — `kind` distinguishes an equality guard (the only kind that
+/// pins the stopping value) from a comparison guard.
+fn guard_literal_for(e: &MirExpr, counter: LocalId) -> Option<(i128, GuardKind)> {
     match e {
         MirExpr::Match(m) => {
+            // A `match counter { K -> … }` literal arm is an EQUALITY guard:
+            // the arm fires exactly when `counter == K`.
             if subject_is_local(&m.node.subject.node, counter) {
                 for arm in &m.node.arms {
                     if let MirPattern::Literal(Literal::Int(k)) = &arm.pattern {
-                        return Some(*k as i128);
+                        return Some((*k as i128, GuardKind::Equality));
                     }
                 }
             }
@@ -710,17 +884,24 @@ fn guard_literal_for(e: &MirExpr, counter: LocalId) -> Option<i128> {
                     BinOp::Eq | BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte
                 )
             {
+                // Only `==` pins the exact stopping value; `<`/`<=`/`>`/`>=`
+                // are half-bounded tests whose stopping value is unknown.
+                let kind = if matches!(b.node.op, BinOp::Eq) {
+                    GuardKind::Equality
+                } else {
+                    GuardKind::Comparison
+                };
                 if subject_is_local(&b.node.lhs.node, counter)
                     && let MirExpr::Literal(l) = &b.node.rhs.node
                     && let Literal::Int(k) = l.node
                 {
-                    return Some(k as i128);
+                    return Some((k as i128, kind));
                 }
                 if subject_is_local(&b.node.rhs.node, counter)
                     && let MirExpr::Literal(l) = &b.node.lhs.node
                     && let Literal::Int(k) = l.node
                 {
-                    return Some(k as i128);
+                    return Some((k as i128, kind));
                 }
             }
             guard_literal_for(&ite.node.cond.node, counter)
@@ -750,6 +931,7 @@ fn find_self_tailcall_recurrence(
     counter: LocalId,
     i: usize,
     guard_k: i128,
+    guard_kind: GuardKind,
     out: &mut Option<Recurrence>,
 ) {
     if out.is_some() {
@@ -760,11 +942,15 @@ fn find_self_tailcall_recurrence(
         && let Some(arg) = tc.node.args.get(i)
         && let Some(step) = decrement_step(&arg.node, counter)
     {
-        *out = Some(Recurrence { guard_k, step });
+        *out = Some(Recurrence {
+            guard_k,
+            step,
+            guard_kind,
+        });
         return;
     }
     visit_children(e, &mut |c| {
-        find_self_tailcall_recurrence(c, self_fn, counter, i, guard_k, out)
+        find_self_tailcall_recurrence(c, self_fn, counter, i, guard_k, guard_kind, out)
     });
 }
 
@@ -816,16 +1002,22 @@ fn literal_interval(arg: &MirExpr) -> Option<Interval> {
 fn analyze_fn(f: &MirFn, summary: &Summary) -> FnBareFacts {
     let mut facts = FnBareFacts::default();
 
-    // 1. Range: seed param intervals from the summary. A bare param is by
-    //    construction confined to `i64`, so seed a full-`i64` interval;
-    //    a boxed param is unbounded.
+    // 1. Range: seed param intervals from the summary. A bare param is
+    //    seeded with its PROVEN recurrence interval (`[K-step, entry]`) when
+    //    one was derived, so an in-body `n - 1` / `acc * n` over the counter
+    //    stays in the OverflowFree band; a bare param with no tight interval
+    //    falls back to the full-`i64` line (still sound — bare ⟹ confined to
+    //    `i64` by construction); a boxed param is unbounded.
     let mut intervals: HashMap<LocalId, Interval> = HashMap::new();
     let mut bare_params = vec![false; f.params.len()];
     for (i, p) in f.params.iter().enumerate() {
         let is_bare = summary.param_bare(f.fn_id, i);
         bare_params[i] = is_bare;
         let iv = if is_bare {
-            Interval::between(i64::MIN as i128, i64::MAX as i128)
+            summary
+                .param_interval(f.fn_id, i)
+                .filter(|iv| iv.fits_i64())
+                .unwrap_or_else(|| Interval::between(i64::MIN as i128, i64::MAX as i128))
         } else {
             Interval::unbounded()
         };
@@ -956,52 +1148,56 @@ fn eval_interval(e: &MirExpr, env: &HashMap<LocalId, Interval>, worst: &mut Inte
 /// slot defaults to escaping.
 fn scan_escapes(e: &MirExpr, summary: &Summary, out: &mut HashSet<LocalId>) {
     match e {
-        // Aggregates: every Int element/field escapes.
+        // Aggregates: every Int element/field escapes — INCLUDING a bare
+        // leaf reached through a `BinOp`/`Neg` (the aggregate emit does not
+        // convert a bare compound), hence `*_deep` (BUG 3).
         MirExpr::List(items) | MirExpr::Tuple(items) => {
             for it in items {
-                mark_operand_escapes(&it.node, out);
+                mark_operand_escapes_deep(&it.node, out);
                 scan_escapes(&it.node, summary, out);
             }
         }
         MirExpr::MapLiteral(pairs) => {
             for (k, v) in pairs {
-                mark_operand_escapes(&k.node, out);
-                mark_operand_escapes(&v.node, out);
+                mark_operand_escapes_deep(&k.node, out);
+                mark_operand_escapes_deep(&v.node, out);
                 scan_escapes(&k.node, summary, out);
                 scan_escapes(&v.node, summary, out);
             }
         }
         MirExpr::Construct(c) => {
             for a in &c.node.args {
-                mark_operand_escapes(&a.node, out);
+                mark_operand_escapes_deep(&a.node, out);
                 scan_escapes(&a.node, summary, out);
             }
         }
         MirExpr::RecordCreate(r) => {
             for fld in &r.node.fields {
-                mark_operand_escapes(&fld.value.node, out);
+                mark_operand_escapes_deep(&fld.value.node, out);
                 scan_escapes(&fld.value.node, summary, out);
             }
         }
         MirExpr::RecordUpdate(u) => {
-            mark_operand_escapes(&u.node.base.node, out);
+            mark_operand_escapes_deep(&u.node.base.node, out);
             scan_escapes(&u.node.base.node, summary, out);
             for fld in &u.node.updates {
-                mark_operand_escapes(&fld.value.node, out);
+                mark_operand_escapes_deep(&fld.value.node, out);
                 scan_escapes(&fld.value.node, summary, out);
             }
         }
         MirExpr::IndependentProduct(ip) => {
             for it in &ip.node.items {
-                mark_operand_escapes(&it.node, out);
+                mark_operand_escapes_deep(&it.node, out);
                 scan_escapes(&it.node, summary, out);
             }
         }
-        // Stringification: every embedded value escapes.
+        // Stringification: every embedded value escapes (including a bare
+        // leaf inside a `BinOp`/`Neg` — the interpolation emit stringifies
+        // the whole compound, not the operands).
         MirExpr::InterpolatedStr(parts) => {
             for p in parts {
                 if let super::super::expr::MirStrPart::Expr(ex) = p {
-                    mark_operand_escapes(&ex.node, out);
+                    mark_operand_escapes_deep(&ex.node, out);
                     scan_escapes(&ex.node, summary, out);
                 }
             }
@@ -1013,15 +1209,23 @@ fn scan_escapes(e: &MirExpr, summary: &Summary, out: &mut HashSet<LocalId>) {
         MirExpr::Call(c) => match c.node.callee {
             MirCallee::Fn(target) => {
                 for (i, a) in c.node.args.iter().enumerate() {
+                    // A user-fn boxed-param position: the boxed-arithmetic
+                    // emit converts a bare compound operand, so only a DIRECT
+                    // bare `Local` escapes here (shallow), not a leaf buried
+                    // in a `BinOp` (which `boxed_int_operand` converts).
                     if !summary.param_bare(target, i) {
                         mark_operand_escapes(&a.node, out);
                     }
                     scan_escapes(&a.node, summary, out);
                 }
             }
+            // A builtin / intrinsic / fn-value callee is a NON-converting
+            // position: its Int args emit without `boxed_int_operand`, so a
+            // bare leaf inside a `BinOp`/`Neg` arg (`String.fromInt(n + 1)`)
+            // escapes too — `*_deep` (BUG 3).
             _ => {
                 for a in &c.node.args {
-                    mark_operand_escapes(&a.node, out);
+                    mark_operand_escapes_deep(&a.node, out);
                     scan_escapes(&a.node, summary, out);
                 }
             }
@@ -1043,22 +1247,47 @@ fn scan_escapes(e: &MirExpr, summary: &Summary, out: &mut HashSet<LocalId>) {
     }
 }
 
-/// Mark the slot of a value that flows DIRECTLY into an escaping position.
+/// Mark the slot of a value flowing into a USER-FN-CALL boxed-param
+/// position (an ordinary `Call(Fn)` / `TailCall` arg at a boxed index).
 ///
-/// Only a bare `Local` read placed verbatim at a general-Int context
-/// escapes — its representation must then be `AverInt` (the value itself
-/// crosses the boundary). An ARITHMETIC expression (`acc * n`) at an
-/// escaping position does NOT escape its operands: the operands are
-/// consumed to compute a FRESH result, and that result (a new temp) is
-/// what crosses the boundary; each operand is converted at the arithmetic
-/// site (`boxed_int_operand` wraps a bare operand with `from_i64`) and
-/// keeps its own representation. So a counter read inside `acc * n` that
-/// feeds a boxed accumulator must NOT be flagged — flagging it was the bug
-/// that demoted the factorial counter. Hence: do not recurse into
-/// `BinOp` / `Neg`.
+/// Only a bare `Local` read placed verbatim there escapes — its
+/// representation must then be `AverInt` (the value itself crosses the
+/// boundary). An ARITHMETIC expression (`acc * n`) at such a position does
+/// NOT escape its operands: the boxed-arithmetic emit (`boxed_int_operand`)
+/// converts each bare operand with `from_i64` and the FRESH result is what
+/// crosses, so the operand keeps its own bare representation. Flagging a
+/// counter read inside `acc * n` was the bug that demoted the factorial
+/// counter — hence this variant does NOT recurse into `BinOp` / `Neg`.
 fn mark_operand_escapes(e: &MirExpr, out: &mut HashSet<LocalId>) {
     if let MirExpr::Local(l) = e {
         out.insert(l.node.slot);
+    }
+}
+
+/// Mark every bare-`Local` leaf reaching a NON-CONVERTING escaping
+/// position — an aggregate element/field (`[n + 1]`, a tuple/map/record
+/// slot), a stringify embed, or a builtin/intrinsic Int arg
+/// (`String.fromInt(n + 1)`).
+///
+/// BUG 3: unlike the user-fn boxed-param position, these emit sites do NOT
+/// run `boxed_int_operand`, so a bare compound like `n + 1` is emitted as
+/// raw `(n + 1)i64` straight into an `AverInt`-typed slot — a `rustc` type
+/// mismatch, and (without `overflow-checks`) a wrong value if the compound
+/// could wrap. So a bare leaf reaching these positions THROUGH a `BinOp` /
+/// `Neg` tree must escape (→ boxed), exactly like a direct `Local` does.
+/// Hence this variant RECURSES into `BinOp` / `Neg` (a literal leaf carries
+/// no slot, so it is harmlessly ignored).
+fn mark_operand_escapes_deep(e: &MirExpr, out: &mut HashSet<LocalId>) {
+    match e {
+        MirExpr::Local(l) => {
+            out.insert(l.node.slot);
+        }
+        MirExpr::Neg(inner) => mark_operand_escapes_deep(&inner.node, out),
+        MirExpr::BinOp(b) => {
+            mark_operand_escapes_deep(&b.node.lhs.node, out);
+            mark_operand_escapes_deep(&b.node.rhs.node, out);
+        }
+        _ => {}
     }
 }
 
@@ -1084,9 +1313,15 @@ fn tail_value_is_bare(e: &MirExpr, facts: &FnBareFacts, escaping: &HashSet<Local
         // does not constrain the return repr.
         MirExpr::TailCall(_) => true,
         MirExpr::Return(inner) => tail_value_is_bare(&inner.node, facts, escaping),
+        // A compound `Add`/`Sub`/`Mul` tail value is bare ONLY when its
+        // RESULT interval provably fits `i64` (BUG 2): a tree whose operands
+        // are each bare can still overflow (`n + i64::MAX`), so route through
+        // the interval-checked `expr_is_bare_i64` — the same gate codegen
+        // uses, so analysis and emit never disagree. (A `Bare` leaf already
+        // carries `escapes == false`, so an escaping operand is `Boxed` and
+        // `expr_is_bare_i64` declines it.)
         MirExpr::BinOp(b) if matches!(b.node.op, BinOp::Add | BinOp::Sub | BinOp::Mul) => {
-            tail_value_is_bare(&b.node.lhs.node, facts, escaping)
-                && tail_value_is_bare(&b.node.rhs.node, facts, escaping)
+            facts.expr_is_bare_i64(e)
         }
         _ => false,
     }
@@ -1402,6 +1637,207 @@ fn main() -> List<Int>
             OpClass::of_interval(worst.hull(result)),
             OpClass::OverflowFree,
             "the transient out-of-i64 intermediate must demote below OverflowFree"
+        );
+    }
+
+    // ── BUG 1: recurrence guard REACHABILITY ────────────────────────────
+
+    /// A decrement counter whose step does NOT divide `entry - K` steps OVER
+    /// the equality guard `K` and diverges to -inf — the certified interval
+    /// is fiction, so the param must NOT be bare (congruence skip).
+    #[test]
+    fn congruence_skip_declines() {
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn loopit(n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> loopit(n - 4611686018427387905, acc)
+
+fn main() -> Int
+    loopit(4, 0)
+"#;
+        let (program, facts) = facts_for(src);
+        let id = fn_id_by_name(&program, "loopit");
+        let f = facts.for_fn(id).expect("loopit facts");
+        assert!(
+            !f.param_is_bare(0),
+            "a counter that steps OVER its equality guard (4 % (2^62+1) != 0) must box"
+        );
+    }
+
+    /// Entry below the guard: the decrement moves AWAY from `K`, diverging —
+    /// must box.
+    #[test]
+    fn entry_below_guard_declines() {
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn down(n: Int, acc: Int) -> Int
+    match n
+        100 -> acc
+        _ -> down(n - 1, acc)
+
+fn main() -> Int
+    down(5, 0)
+"#;
+        let (program, facts) = facts_for(src);
+        let id = fn_id_by_name(&program, "down");
+        let f = facts.for_fn(id).expect("down facts");
+        assert!(
+            !f.param_is_bare(0),
+            "entry 5 < guard 100 decrements away from K → diverges → must box"
+        );
+    }
+
+    /// Odd entry, step 2 toward guard 0: parity-skip, never lands on 0 —
+    /// must box.
+    #[test]
+    fn parity_skip_declines() {
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn skip(n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> skip(n - 2, acc)
+
+fn main() -> Int
+    skip(25, 0)
+"#;
+        let (program, facts) = facts_for(src);
+        let id = fn_id_by_name(&program, "skip");
+        let f = facts.for_fn(id).expect("skip facts");
+        assert!(
+            !f.param_is_bare(0),
+            "odd entry 25 with step 2 toward guard 0 steps over 0 → must box"
+        );
+    }
+
+    /// Even entry, step 2 toward guard 0: the sequence LANDS on 0 — the fix
+    /// declines only UNREACHABLE guards, not all step>1, so this stays BARE.
+    #[test]
+    fn divisible_reachable_guard_stays_bare() {
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn skip(n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> skip(n - 2, acc)
+
+fn main() -> Int
+    skip(24, 0)
+"#;
+        let (program, facts) = facts_for(src);
+        let id = fn_id_by_name(&program, "skip");
+        let f = facts.for_fn(id).expect("skip facts");
+        assert!(
+            f.param_is_bare(0),
+            "even entry 24 with step 2 reaches guard 0 → must stay bare (win survives)"
+        );
+    }
+
+    // ── BUG 2: compound interval gate ───────────────────────────────────
+
+    /// A compound `n + i64::MAX` whose result interval leaves `i64` is NOT
+    /// bare, even though both operands are bare — `expr_is_bare_i64` must
+    /// decline it so codegen boxes the arithmetic.
+    #[test]
+    fn overflowing_compound_is_not_bare() {
+        let mut facts = FnBareFacts::default();
+        let n = LocalId(0);
+        // `n` is a bare counter confined to `[1, 1]`.
+        facts.values.insert(
+            n,
+            ValueFact {
+                interval: Some(Interval::point(1)),
+                op_class: OpClass::OverflowFree,
+                escapes: false,
+                repr: Repr::Bare,
+            },
+        );
+        let big = i64::MAX as i128;
+        let local_n = Spanned::bare(MirExpr::Local(Spanned::bare(
+            super::super::super::expr::MirLocal::at(n),
+        )));
+        let lit = Spanned::bare(MirExpr::Literal(Spanned::bare(Literal::Int(big as i64))));
+        let add = MirExpr::BinOp(Spanned::bare(super::super::super::expr::MirBinOp {
+            op: BinOp::Add,
+            lhs: Box::new(local_n),
+            rhs: Box::new(lit),
+        }));
+        assert!(
+            !facts.expr_is_bare_i64(&add),
+            "`n + i64::MAX` (result [MAX+1, MAX+1]) leaves i64 → must NOT be bare"
+        );
+    }
+
+    /// A compound `n - 1` over a tight bare counter `[0, 20000]` STAYS in
+    /// i64 → bare (the legitimate fast decrement must survive).
+    #[test]
+    fn in_range_compound_stays_bare() {
+        let mut facts = FnBareFacts::default();
+        let n = LocalId(0);
+        facts.values.insert(
+            n,
+            ValueFact {
+                interval: Some(Interval::between(-1, 20000)),
+                op_class: OpClass::OverflowFree,
+                escapes: false,
+                repr: Repr::Bare,
+            },
+        );
+        let local_n = Spanned::bare(MirExpr::Local(Spanned::bare(
+            super::super::super::expr::MirLocal::at(n),
+        )));
+        let lit = Spanned::bare(MirExpr::Literal(Spanned::bare(Literal::Int(1))));
+        let sub = MirExpr::BinOp(Spanned::bare(super::super::super::expr::MirBinOp {
+            op: BinOp::Sub,
+            lhs: Box::new(local_n),
+            rhs: Box::new(lit),
+        }));
+        assert!(
+            facts.expr_is_bare_i64(&sub),
+            "`n - 1` over a tight `[-1, 20000]` counter stays in i64 → bare"
+        );
+    }
+
+    // ── BUG 3: escape scan recurses into BinOp ──────────────────────────
+
+    /// A bare counter reaching a `List<Int>` aggregate THROUGH a `BinOp`
+    /// (`[n + 1]`) escapes — the escape scan must mark it so the param boxes
+    /// (the aggregate emit does not convert a bare compound).
+    #[test]
+    fn binop_in_aggregate_escapes() {
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn collect(n: Int) -> List<Int>
+    match n
+        1 -> [n + 1]
+        _ -> collect(n - 1)
+
+fn main() -> List<Int>
+    collect(2)
+"#;
+        let (program, facts) = facts_for(src);
+        let id = fn_id_by_name(&program, "collect");
+        let f = facts.for_fn(id).expect("collect facts");
+        assert!(
+            !f.param_is_bare(0),
+            "a counter reaching `[n + 1]` through a BinOp escapes the aggregate → must box"
         );
     }
 }

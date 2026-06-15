@@ -248,12 +248,6 @@ impl<'a> MirEmitCtx<'a> {
     fn is_borrowed_param(&self, name: &str) -> bool {
         self.borrowed_params.contains(name)
     }
-
-    /// Is the MIR slot `slot` proven a bare `i64` by the unboxing analysis?
-    /// Fail-closed: an absent fact returns `false` (keep `AverInt`).
-    fn slot_is_bare(&self, slot: crate::ir::mir::LocalId) -> bool {
-        self.bare.is_bare(slot)
-    }
 }
 
 /// A shared empty `FnBareFacts` (all-`Boxed`) for the coverage / test /
@@ -269,25 +263,23 @@ fn empty_bare_facts() -> &'static crate::ir::mir::FnBareFacts {
 ///
 /// - A `Local` whose slot the analysis proved `Bare`.
 /// - An `Int` literal (an exact constant — always representable as `i64`
-///   in a bare arithmetic context; the enclosing op's `i64`-fit was proven
-///   by the analysis's worst-join).
-/// - A `Neg` / `Add` / `Sub` / `Mul` over bare operands (the whole tree is
-///   bare).
+///   in a bare arithmetic context).
+/// - A `Neg` / `Add` / `Sub` / `Mul` over bare operands WHOSE RESULT
+///   INTERVAL provably fits `i64` (a tree like `n + i64::MAX` whose operands
+///   are each bare but whose result leaves `i64` is NOT bare — emitting raw
+///   `i64` there would silently wrap with `overflow-checks = false`).
+///
+/// SINGLE SOURCE OF TRUTH: this is a thin delegate to
+/// [`crate::ir::mir::FnBareFacts::expr_is_bare_i64`] — the SAME interval-
+/// checked predicate the analysis's `tail_value_is_bare` uses — so codegen
+/// never re-decides bareness structurally and can never disagree with the
+/// analysis that drove the signature.
 ///
 /// Fail-closed: any other shape (a boxed `Local`, a call result, a
-/// non-Int operand) is NOT bare, so the emit keeps `AverInt`.
+/// non-Int operand, an overflowing compound) is NOT bare, so the emit
+/// keeps `AverInt`.
 fn mir_expr_is_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> bool {
-    match &expr.node {
-        MirExpr::Literal(l) => matches!(l.node, crate::ast::Literal::Int(_)),
-        MirExpr::Local(local) => ctx.slot_is_bare(local.node.slot),
-        MirExpr::Neg(inner) => mir_expr_is_bare_i64(inner, ctx),
-        MirExpr::BinOp(b) => {
-            matches!(b.node.op, BinOp::Add | BinOp::Sub | BinOp::Mul)
-                && mir_expr_is_bare_i64(&b.node.lhs, ctx)
-                && mir_expr_is_bare_i64(&b.node.rhs, ctx)
-        }
-        _ => false,
-    }
+    ctx.bare.expr_is_bare_i64(&expr.node)
 }
 
 /// Emit `expr` as a raw `i64` expression, assuming [`mir_expr_is_bare_i64`]
@@ -942,16 +934,28 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             let int_arith = matches!(bop.op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div)
                 && (ty_is_int(bop.lhs.ty()) || ty_is_int(bop.rhs.ty()));
             if int_arith {
-                // Int unboxing: when BOTH operands are proven bare `i64`
-                // the result is bare too (the analysis's worst-join proved
-                // the binding interval fits `i64`), so emit native integer
-                // arithmetic. SOUNDNESS: only fires when
-                // `mir_expr_is_bare_i64` holds on each operand — a missing
-                // fact keeps the `AverInt` method path below. Div keeps the
-                // zero-divisor panic via an explicit guard, matching the
-                // `AverInt::div_trunc(..).expect(..)` trap.
-                if mir_expr_is_bare_i64(&bop.lhs, emit_ctx)
-                    && mir_expr_is_bare_i64(&bop.rhs, emit_ctx)
+                // Int unboxing: emit native integer arithmetic ONLY when the
+                // WHOLE result is proven bare `i64`. SOUNDNESS (BUG 2): the
+                // gate is `mir_expr_is_bare_i64(expr)` — the interval-checked
+                // predicate over the ENTIRE `Add`/`Sub`/`Mul` tree, NOT a
+                // per-operand check. `n + i64::MAX` has each operand bare but
+                // a result interval OUTSIDE `i64`, so it fails this gate and
+                // falls through to the boxed `AverInt` path below (which
+                // converts each bare operand via `from_i64`). A missing fact
+                // also keeps the boxed path. For `Add`/`Sub`/`Mul` we check
+                // the whole expression; `Div` is not modelled by the interval
+                // analysis (raw `/` over `Int` is a source type error — the
+                // builtin is `Int.div`), so it keeps the per-operand check
+                // plus the zero-divisor trap.
+                let whole_bare = match bop.op {
+                    BinOp::Add | BinOp::Sub | BinOp::Mul => mir_expr_is_bare_i64(expr, emit_ctx),
+                    BinOp::Div => {
+                        mir_expr_is_bare_i64(&bop.lhs, emit_ctx)
+                            && mir_expr_is_bare_i64(&bop.rhs, emit_ctx)
+                    }
+                    _ => false,
+                };
+                if whole_bare
                     && let Some(lb) = emit_bare_i64(&bop.lhs)
                     && let Some(rb) = emit_bare_i64(&bop.rhs)
                 {
