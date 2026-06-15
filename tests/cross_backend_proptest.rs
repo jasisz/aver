@@ -384,6 +384,74 @@ fn wrap_program(expr: &str) -> String {
     )
 }
 
+// ─── Equality-class regression (canonical-invariant) ────────────────────────
+//
+// The differential proptest above compares RENDERED output
+// (`String.fromInt` / interpolation), so it structurally CANNOT catch a
+// canonical-invariant violation: a value stored as Big when it should be
+// Small (or vice-versa) renders to the same decimal string, yet
+// `__aint_eq` — which short-circuits "a Small and a Big are never equal"
+// — would report two equal values UNEQUAL. The only observable that
+// distinguishes them is `==`. This focused test runs programs whose
+// correctness shows ONLY through `==`, flag-on (`AVER_WASMGC_BIGNUM=1`)
+// wasm-gc, and asserts the Bool output matches the VM (`Int = ℤ`).
+//
+// Coverage:
+//   1. both sides reach i64::MIN by DIFFERENT routes (neg-demote vs
+//      sub-demote) — the neg→Small(i64::MIN) demotion just fixed;
+//   2. double negation round-trips +2^63 (Big) → i64::MIN (Small) → +2^63;
+//   3. a Big that cancels back into i64-range must demote to Small so it
+//      compares equal to the natively-Small literal.
+
+/// Render a Bool via `String.fromBool` (Console.print needs a String) so
+/// the program's only observable is the `==` result.
+fn eq_program(expr: &str) -> String {
+    wrap_program(&format!("String.fromBool({})", expr))
+}
+
+#[test]
+fn cross_int_equality_canonical_invariant_vm_vs_wasm_gc() {
+    // (expr, expected) — expected is the ℤ truth the VM computes.
+    let cases: &[(&str, &str)] = &[
+        // i64::MIN reached two ways: neg of +2^63 vs (0 - i64::MAX) - 1.
+        (
+            "((-(9223372036854775807 + 1)) == ((0 - 9223372036854775807) - 1))",
+            "true",
+        ),
+        // double-neg: +2^63 (Big) → i64::MIN (Small) → +2^63 (Big).
+        (
+            "((-(-(9223372036854775807 + 1))) == (9223372036854775807 + 1))",
+            "true",
+        ),
+        // Big cancelling back into i64 range must demote to Small.
+        (
+            "(((9223372036854775807 * 2) - 9223372036854775807) == 9223372036854775807)",
+            "true",
+        ),
+        // Negative control: a genuine Big is NOT equal to a Small.
+        (
+            "((9223372036854775807 + 1) == 9223372036854775807)",
+            "false",
+        ),
+    ];
+
+    for (expr, expected) in cases {
+        let source = eq_program(expr);
+        let vm = run_vm("cross-eq-vm", &source).expect("VM must accept equality program");
+        let wg = run_wasm_gc_bignum("cross-eq-wg", &source)
+            .expect("wasm-gc (bignum) must accept equality program");
+        assert_eq!(
+            vm, *expected,
+            "VM disagreed with the expected ℤ truth on `{expr}`",
+        );
+        assert_eq!(
+            wg, vm,
+            "wasm-gc (bignum) diverged from VM on canonical-invariant case `{expr}`:\n\
+             VM = {vm}, wasm-gc = {wg}",
+        );
+    }
+}
+
 // ─── Properties ────────────────────────────────────────────────────────────
 
 proptest! {
