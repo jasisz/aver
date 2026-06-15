@@ -288,6 +288,15 @@ pub(super) fn emit_aint_neg(registry: &TypeRegistry) -> Result<Function, WasmGcE
     wat_helper::compile_wat_helper(&wat)
 }
 
+/// `__aint_abs(a) -> $AverInt` (slice 2). `|a|` over ℤ: a non-negative
+/// value is unchanged; `|i64::MIN|` promotes to the Big `+2^63`; a
+/// negative Big flips its sign field to `+1`. Mirrors `AverInt::abs`.
+pub(super) fn emit_aint_abs(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let wat = format!(include_str!("wat/abs.wat"), decls = decls);
+    wat_helper::compile_wat_helper(&wat)
+}
+
 /// `__aint_eq(a, b) -> i32` (1/0). Leans on the canonical invariant:
 /// equal Small ↔ equal $small; equal Big ↔ same sign + same limbs; a
 /// Small and a Big are never equal.
@@ -502,6 +511,72 @@ pub(super) fn emit_aint_mul(registry: &TypeRegistry) -> Result<Function, WasmGcE
     wat_helper::compile_wat_helper(&wat)
 }
 
+/// Locals for the divmod helper: decomposed operands + lengths, the
+/// long-division working set (quotient `$qm`, working remainder `$rwm`
+/// stripped to `$rwlen`, the bit/word/offset cursor), borrow/carry
+/// scratch, the Euclidean-adjust output `$rwout`, and the normalize
+/// scratch (`$rm $rs $rlen $lo $hi $tmpm`) shared by both result epilogues.
+fn divmod_locals() -> &'static str {
+    r#"
+            (local $am (ref null $mag)) (local $as_ i32)
+            (local $bm (ref null $mag)) (local $bs i32)
+            (local $alen i32) (local $blen i32)
+            (local $qm (ref null $mag)) (local $rwm (ref null $mag)) (local $rwlen i32)
+            (local $rwout (ref null $mag)) (local $rm (ref null $mag)) (local $rs i32) (local $rlen i32)
+            (local $bit i32) (local $word i32) (local $off i32)
+            (local $i i32) (local $j i32) (local $cmp i32) (local $negadj i32)
+            (local $carry i64) (local $acc i64) (local $borrow i64) (local $diff i64) (local $umag i64)
+            (local $lo i64) (local $hi i64) (local $tmpm (ref null $mag)) "#
+}
+
+/// `__aint_divmod(a, b, want_mod) -> $AverInt`. Euclidean division
+/// (`want_mod == 0`) or modulo (`want_mod != 0`), matching
+/// `aver-rt::AverInt::{div,rem}_euclid` and the VM EXACTLY: the
+/// remainder is always in `[0, |b|)`. The b == 0 partiality is handled
+/// by the caller BEFORE this helper (the boxed `Int.div`/`Int.mod`
+/// lowering), so this assumes `b != 0`.
+///
+/// Fast path: both operands Small AND not the `i64::MIN / -1` overflow
+/// (whose ℤ quotient `+2^63` is a Big) — reuse the same i64 Euclidean
+/// arithmetic the wrapping backend emits (`i64.div_s`/`i64.rem_s` plus
+/// the rem<0 lift). Slow path: decompose, run unsigned shift-subtract
+/// long division of the magnitudes to a truncating quotient+remainder,
+/// then apply the sign rules + the Euclidean adjustment and normalize.
+///
+/// Euclidean lift (derived from `euclid_div_rem`): when the dividend is
+/// negative and the truncating remainder is nonzero, the quotient's
+/// magnitude is `|trunc_q| + 1` (sign = `as_ * bs`, unchanged) and the
+/// remainder is `|b| - trunc_rem` (always non-negative). Otherwise the
+/// truncating quotient/remainder magnitudes pass through with sign
+/// `as_ * bs` / `as_` respectively. Both results renormalize.
+pub(super) fn emit_aint_divmod(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let locals = divmod_locals();
+    let decomp_a = decompose("a", "am", "as_", "umag");
+    let decomp_b = decompose("b", "bm", "bs", "umag");
+    let strip_a = strip("am", "alen", "sa", "la");
+    let strip_b = strip("bm", "blen", "sb", "lb");
+    // r vs |b| during long division: $rwm (stripped $rwlen) ⋛ $bm ($blen).
+    let cmp_r_b = umag_cmp("rwm", "rwlen", "bm", "blen", "cmp", "j");
+    // Two normalize epilogues, one per result branch; they're in disjoint
+    // `if` arms so reusing the same scratch locals is safe.
+    let norm_q = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
+    let norm_r = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
+    let wat = format!(
+        include_str!("wat/divmod.wat"),
+        decls = decls,
+        locals = locals,
+        decomp_a = decomp_a,
+        decomp_b = decomp_b,
+        strip_a = strip_a,
+        strip_b = strip_b,
+        cmp_r_b = cmp_r_b,
+        norm_q = norm_q,
+        norm_r = norm_r,
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
 /// Inlined schoolbook 32-bit-limb magnitude multiply. Reads stripped
 /// `am`/`$alen`, `bm`/`$blen`; writes the product magnitude into `$rm`
 /// (len `$alen+$blen`) and the result sign into `$rs` (= as_ * bs, with
@@ -560,6 +635,13 @@ mod tests {
     /// machinery is needed, then the four bignum/String index fields are
     /// overwritten directly (they are `pub(super)`, visible here).
     fn bignum_registry() -> TypeRegistry {
+        bignum_registry_for_validation()
+    }
+
+    /// Same self-consistent bignum layout, re-exported to the
+    /// `validation_guard` sibling module so its full-validate test renders
+    /// helpers against an identical type section.
+    pub(super) fn bignum_registry_for_validation() -> TypeRegistry {
         let mut registry = TypeRegistry::build_with_handler(&[], &[], false);
         registry.bignum = true;
         registry.string_array_type_idx = Some(0);
@@ -584,11 +666,13 @@ mod tests {
         let cases: &[(&str, fn(&TypeRegistry) -> Result<Function, WasmGcError>)] = &[
             ("emit_aint_from_i64", emit_aint_from_i64),
             ("emit_aint_neg", emit_aint_neg),
+            ("emit_aint_abs", emit_aint_abs),
             ("emit_aint_eq", emit_aint_eq),
             ("emit_aint_cmp", emit_aint_cmp),
             ("emit_aint_add", emit_aint_add),
             ("emit_aint_sub", emit_aint_sub),
             ("emit_aint_mul", emit_aint_mul),
+            ("emit_aint_divmod", emit_aint_divmod),
             ("emit_string_from_aint", emit_string_from_aint),
         ];
 
@@ -600,5 +684,82 @@ mod tests {
                 result.err()
             );
         }
+    }
+}
+
+/// VALIDATION guard — stronger than `every_bignum_helper_wat_parses`.
+/// The parse guard only runs `wat::parse_str` (syntax), so it accepts a
+/// helper whose control flow type-checks WRONG — e.g. an
+/// `(if (result (ref null $aint)) …)` whose arms leave nothing on the
+/// stack, or a branch with a mismatched value type. Those are *validation*
+/// errors wasmtime raises at instantiation, the exact class slice 2's
+/// divmod hit twice (spurious result annotations; a stale length local).
+/// Here every leaf helper's rendered module is run through the full
+/// `wasmparser` validator (GC + tail-call features on), so a stack-type
+/// bug in any `.wat` fails at `cargo test`, not only when a program
+/// happens to divide in wasmtime.
+#[cfg(test)]
+mod validation_guard {
+    use super::tests::bignum_registry_for_validation;
+    use super::*;
+
+    /// Validate the divmod + abs helpers (the slice-2 additions whose
+    /// control flow is non-trivial) by rendering their full WAT module and
+    /// running the binary validator. Renders via the same generators the
+    /// emitter uses.
+    #[test]
+    fn slice2_helper_modules_validate() {
+        let registry = bignum_registry_for_validation();
+
+        let modules: Vec<(&str, String)> = vec![
+            ("__aint_divmod", render_divmod(&registry)),
+            (
+                "__aint_abs",
+                render_simple(&registry, include_str!("wat/abs.wat")),
+            ),
+            (
+                "__aint_neg",
+                render_simple(&registry, include_str!("wat/neg.wat")),
+            ),
+        ];
+
+        for (name, wat) in modules {
+            let bytes = wat::parse_str(&wat)
+                .unwrap_or_else(|e| panic!("helper `{name}` failed to parse: {e}"));
+            let mut validator =
+                wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::all());
+            validator
+                .validate_all(&bytes)
+                .unwrap_or_else(|e| panic!("helper `{name}` failed to VALIDATE: {e}"));
+        }
+    }
+
+    fn render_simple(registry: &TypeRegistry, template: &str) -> String {
+        let decls = aint_type_decls(registry).unwrap();
+        template.replace("{decls}", &decls)
+    }
+
+    fn render_divmod(registry: &TypeRegistry) -> String {
+        let decls = aint_type_decls(registry).unwrap();
+        let locals = divmod_locals();
+        let decomp_a = decompose("a", "am", "as_", "umag");
+        let decomp_b = decompose("b", "bm", "bs", "umag");
+        let strip_a = strip("am", "alen", "sa", "la");
+        let strip_b = strip("bm", "blen", "sb", "lb");
+        let cmp_r_b = umag_cmp("rwm", "rwlen", "bm", "blen", "cmp", "j");
+        let norm_q = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
+        let norm_r = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
+        format!(
+            include_str!("wat/divmod.wat"),
+            decls = decls,
+            locals = locals,
+            decomp_a = decomp_a,
+            decomp_b = decomp_b,
+            strip_a = strip_a,
+            strip_b = strip_b,
+            cmp_r_b = cmp_r_b,
+            norm_q = norm_q,
+            norm_r = norm_r,
+        )
     }
 }

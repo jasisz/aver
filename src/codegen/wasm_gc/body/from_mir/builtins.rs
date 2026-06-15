@@ -22,6 +22,32 @@ pub(crate) enum MirBuiltinEmit {
     Produced(bool),
 }
 
+/// bignum slice 2 — look up a registered `__aint_*` helper fn idx,
+/// erroring (not silently miscompiling) when the prelude wasn't
+/// registered. Registration is unconditional under the flag
+/// (`module.rs`), so a miss is a real wiring bug.
+fn aint_helper(ctx: &EmitCtx<'_>, name: &str) -> Result<u32, WasmGcError> {
+    ctx.fn_map
+        .builtins
+        .get(name)
+        .copied()
+        .ok_or(WasmGcError::Validation(format!(
+            "bignum active but {name} helper not registered"
+        )))
+}
+
+/// bignum slice 2 — the `(ref null $AverInt)` block-type for `if`/`else`
+/// arms that yield an `Int` under the flag (e.g. the `Int.min`/`max`
+/// select).
+fn aint_block_ty(ctx: &EmitCtx<'_>) -> Result<wasm_encoder::BlockType, WasmGcError> {
+    let idx = ctx.registry.aint_struct_idx.ok_or(WasmGcError::Validation(
+        "bignum active but no $AverInt struct slot was allocated".into(),
+    ))?;
+    Ok(wasm_encoder::BlockType::Result(
+        crate::codegen::wasm_gc::types::struct_ref(idx),
+    ))
+}
+
 /// `--target wasip2` effect lowering — the MIR analogue of the
 /// `ctx.wasip2_lowering.is_some()` block in `emit_dotted_builtin`
 /// (builtins.rs). On wasip2 every Console / Args / Env / Time / Random
@@ -168,6 +194,47 @@ pub(crate) fn emit_mir_native_scalar_builtin(
         }
         "Float.pi" if args.is_empty() => {
             func.instruction(&Instruction::F64Const(std::f64::consts::PI.into()));
+        }
+        // bignum slice 2 — `Int.abs` / `Int.min` / `Int.max` over
+        // `$AverInt` refs route through the limb helpers (`__aint_abs`,
+        // `__aint_cmp`) so they're correct across the Small/Big boundary
+        // and both signs (incl. `|i64::MIN| = +2^63`). The i64-scalar arms
+        // below stay for the default (flag-off) path.
+        "Int.abs" if args.len() == 1 && ctx.registry.bignum => {
+            let abs_idx = aint_helper(ctx, "__aint_abs")?;
+            arg!(0);
+            func.instruction(&Instruction::Call(abs_idx));
+        }
+        "Int.min" if args.len() == 2 && ctx.registry.bignum => {
+            // a if cmp(a, b) <= 0 else b  (mirrors `AverInt::min_ref`); both
+            // args are pure builtin args, re-emitted per branch.
+            let cmp_idx = aint_helper(ctx, "__aint_cmp")?;
+            let aint_block = aint_block_ty(ctx)?;
+            arg!(0);
+            arg!(1);
+            func.instruction(&Instruction::Call(cmp_idx));
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::I32LeS);
+            func.instruction(&Instruction::If(aint_block));
+            arg!(0);
+            func.instruction(&Instruction::Else);
+            arg!(1);
+            func.instruction(&Instruction::End);
+        }
+        "Int.max" if args.len() == 2 && ctx.registry.bignum => {
+            // a if cmp(a, b) >= 0 else b  (mirrors `AverInt::max_ref`).
+            let cmp_idx = aint_helper(ctx, "__aint_cmp")?;
+            let aint_block = aint_block_ty(ctx)?;
+            arg!(0);
+            arg!(1);
+            func.instruction(&Instruction::Call(cmp_idx));
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::I32GeS);
+            func.instruction(&Instruction::If(aint_block));
+            arg!(0);
+            func.instruction(&Instruction::Else);
+            arg!(1);
+            func.instruction(&Instruction::End);
         }
         "Int.abs" if args.len() == 1 => {
             arg!(0);
@@ -604,6 +671,16 @@ pub(crate) fn emit_mir_int_div_mod_boxed(
             .ok_or(WasmGcError::Validation(
                 "boxed Int.div/mod requires the `Result<Int,String>` slot to be registered".into(),
             ))?;
+    // bignum slice 2 — under the opt-in `$AverInt` representation, `a`/`b`
+    // are struct refs (not i64). Route through the single Euclidean
+    // `__aint_divmod` helper (a `want_mod` flag selects div vs mod), test
+    // `b == 0` on the struct, and DROP the `i64::MIN / -1` overflow guard:
+    // over ℤ that quotient is `+2^63`, a valid `Result.Ok` (a Big), not an
+    // error — matching the VM (`src/types/int.rs`) and `aver-rt`.
+    if ctx.registry.bignum {
+        return emit_mir_aint_div_mod_boxed(func, is_div, a, b, slots, ctx, res_idx);
+    }
+
     let helper_name = if is_div {
         "__int_div_euclid"
     } else {
@@ -674,6 +751,92 @@ pub(crate) fn emit_mir_int_div_mod_boxed(
     Ok(MirBuiltinEmit::Produced(true))
 }
 
+/// bignum slice 2 — the `$AverInt` analogue of `emit_mir_int_div_mod_boxed`.
+/// `a`/`b` are `(ref null $aint)` struct refs; the carrier
+/// `Result<Int,String>`'s ok field (field 1) is therefore an `$AverInt`
+/// ref, not i64. Builds the same tagged struct the VM produces:
+/// `b == 0` → `Err("division by zero")`, else `Ok(__aint_divmod(a, b, m))`
+/// with `m = 0` for `div`, `1` for `mod`. There is NO overflow branch —
+/// over ℤ `i64::MIN / -1` is the valid Big `+2^63`.
+fn emit_mir_aint_div_mod_boxed(
+    func: &mut Function,
+    is_div: bool,
+    a: &Spanned<MirExpr>,
+    b: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+    res_idx: u32,
+) -> Result<MirBuiltinEmit, WasmGcError> {
+    let aint_idx = ctx.registry.aint_struct_idx.ok_or(WasmGcError::Validation(
+        "bignum Int.div/mod requires the $AverInt struct slot to be registered".into(),
+    ))?;
+    let divmod_idx =
+        ctx.fn_map
+            .builtins
+            .get("__aint_divmod")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "bignum Int.div/mod requires the __aint_divmod helper to be registered".into(),
+            ))?;
+
+    macro_rules! e {
+        ($x:expr) => {
+            if emit_mir_expr(func, $x, slots, ctx)?.is_none() {
+                return Ok(MirBuiltinEmit::Fallback);
+            }
+        };
+    }
+
+    let res_block = wasm_encoder::BlockType::Result(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(res_idx),
+    }));
+
+    // `Result.Err("division by zero")` — tag 0, an `$AverInt`-typed ok
+    // placeholder (default Int = Small(0)), the message string.
+    macro_rules! emit_err {
+        () => {{
+            func.instruction(&Instruction::I32Const(0));
+            emit_default_value(func, "Int", ctx.registry)?;
+            emit_string_literal_bytes(func, b"division by zero", ctx)?;
+            func.instruction(&Instruction::StructNew(res_idx));
+        }};
+    }
+    // `Result.Ok(__aint_divmod(a, b, want_mod))` — tag 1, the result, null err.
+    macro_rules! emit_ok {
+        () => {{
+            func.instruction(&Instruction::I32Const(1));
+            e!(a);
+            e!(b);
+            func.instruction(&Instruction::I32Const(if is_div { 0 } else { 1 }));
+            func.instruction(&Instruction::Call(divmod_idx));
+            emit_default_value(func, "String", ctx.registry)?;
+            func.instruction(&Instruction::StructNew(res_idx));
+        }};
+    }
+
+    // if b == 0 (canonical zero is Small(0): `$magf == null && $small == 0`)
+    e!(b);
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: aint_idx,
+        field_index: 1,
+    });
+    func.instruction(&Instruction::RefIsNull);
+    e!(b);
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: aint_idx,
+        field_index: 0,
+    });
+    func.instruction(&Instruction::I64Eqz);
+    func.instruction(&Instruction::I32And);
+    func.instruction(&Instruction::If(res_block));
+    emit_err!();
+    func.instruction(&Instruction::Else);
+    emit_ok!();
+    func.instruction(&Instruction::End);
+    Ok(MirBuiltinEmit::Produced(true))
+}
+
 /// Full mirror of `emit_result_with_default`. Two shapes:
 ///
 /// 1. **Fused** `Result.withDefault(Int.mod(a, b), default)` — `Int.mod`
@@ -718,6 +881,48 @@ pub(crate) fn emit_mir_result_with_default(
             let is_mod = inner_dotted == "Int.mod";
             let a = &inner.args[0];
             let b = &inner.args[1];
+            // bignum slice 2 — fold through the Euclidean `__aint_divmod`
+            // helper over `$AverInt` refs. `b == 0` is tested on the struct
+            // (canonical zero is Small(0)) and routes to `default`; there is
+            // no `i64::MIN / -1` trap edge (that quotient is a valid Big).
+            if ctx.registry.bignum {
+                let aint_idx = ctx.registry.aint_struct_idx.ok_or(WasmGcError::Validation(
+                    "bignum Result.withDefault(Int.div/mod) needs the $AverInt slot".into(),
+                ))?;
+                let divmod_idx = ctx.fn_map.builtins.get("__aint_divmod").copied().ok_or(
+                    WasmGcError::Validation(
+                        "bignum Result.withDefault(Int.div/mod) needs the __aint_divmod helper"
+                            .into(),
+                    ),
+                )?;
+                let block_ty = wasm_encoder::BlockType::Result(
+                    crate::codegen::wasm_gc::types::struct_ref(aint_idx),
+                );
+                // if b == 0 (`$magf == null && $small == 0`) -> default,
+                // else __aint_divmod(a, b, want_mod)
+                e!(b);
+                func.instruction(&Instruction::StructGet {
+                    struct_type_index: aint_idx,
+                    field_index: 1,
+                });
+                func.instruction(&Instruction::RefIsNull);
+                e!(b);
+                func.instruction(&Instruction::StructGet {
+                    struct_type_index: aint_idx,
+                    field_index: 0,
+                });
+                func.instruction(&Instruction::I64Eqz);
+                func.instruction(&Instruction::I32And);
+                func.instruction(&Instruction::If(block_ty));
+                e!(default);
+                func.instruction(&Instruction::Else);
+                e!(a);
+                e!(b);
+                func.instruction(&Instruction::I32Const(if is_mod { 1 } else { 0 }));
+                func.instruction(&Instruction::Call(divmod_idx));
+                func.instruction(&Instruction::End);
+                return Ok(MirBuiltinEmit::Produced(true));
+            }
             // Both fold through a Euclidean helper so the result matches the
             // VM/Rust `checked_{rem,div}_euclid`: `mod` lands in `[0,|b|)`,
             // `div` floors. The `b == 0` guard below routes divide-by-zero to
