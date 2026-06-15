@@ -1494,7 +1494,22 @@ fn fn_uses_int_arithmetic(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
             ResolvedExpr::RecordUpdate { base, updates, .. } => {
                 walk(&base.node) || updates.iter().any(|(_, e)| walk(&e.node))
             }
-            _ => false,
+            // Arithmetic hidden inside a `{...}` interpolation or a Map
+            // literal must still flip the gate — string interpolation is the
+            // idiomatic way to render an Int, and a missed arm lowers the
+            // WHOLE module's Int as wrapping i64 (a silent miscompile, not an
+            // error). The remaining arms are genuine leaves; enumerated
+            // explicitly (no `_` wildcard) so a future `ResolvedExpr` variant
+            // fails the build rather than silently defaulting the gate off.
+            ResolvedExpr::InterpolatedStr(parts) => parts.iter().any(|p| {
+                matches!(p, crate::ir::hir::ResolvedStrPart::Parsed(inner) if walk(&inner.node))
+            }),
+            ResolvedExpr::MapLiteral(pairs) => {
+                pairs.iter().any(|(k, v)| walk(&k.node) || walk(&v.node))
+            }
+            ResolvedExpr::Literal(_)
+            | ResolvedExpr::Ident(_)
+            | ResolvedExpr::Resolved { .. } => false,
         }
     }
     let ResolvedFnBody::Block(stmts) = fd.body.as_ref();

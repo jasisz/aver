@@ -446,6 +446,40 @@ proptest! {
         }
     }
 
+    /// THE SAME Int-arithmetic differential, but the value is rendered
+    /// through `"{...}"` string interpolation instead of
+    /// `String.fromInt(...)`. Interpolation is the idiomatic way to print
+    /// an Int, and it is a DISTINCT reachability path: the bignum gate
+    /// (`fn_uses_int_arithmetic`) must descend into interpolation parts, or
+    /// a program whose ONLY arithmetic lives inside a `{...}` lowers the
+    /// whole module's Int as wrapping i64 — a silent miscompile the
+    /// `String.fromInt` variant above structurally cannot catch (that call
+    /// keeps the gate on). Regression for that gate hole.
+    #[test]
+    fn cross_int_arithmetic_via_interpolation_vm_vs_wasm_gc(expr in int_boundary_expr(3)) {
+        let source = wrap_program(&format!("\"{{{}}}\"", expr));
+        let vm = run_vm("cross-bp-interp-vm", &source);
+        let wg = run_wasm_gc_bignum("cross-bp-interp-wg", &source);
+        match (&vm, &wg) {
+            (Ok(v), Ok(w)) => prop_assert_eq!(
+                v, w,
+                "VM vs wasm-gc diverged (interpolation render) on source:\n{}\nVM:\n{}\nwasm-gc:\n{}",
+                source, v, w
+            ),
+            (Err(_), Err(_)) => {}
+            (Ok(v), Err(e)) => prop_assert!(
+                false,
+                "VM accepted but wasm-gc rejected (interpolation) on source:\n{}\nVM stdout:\n{}\nwasm-gc error:\n{}",
+                source, v, e
+            ),
+            (Err(e), Ok(w)) => prop_assert!(
+                false,
+                "wasm-gc accepted but VM rejected (interpolation) on source:\n{}\nVM error:\n{}\nwasm-gc stdout:\n{}",
+                source, e, w
+            ),
+        }
+    }
+
     /// String concatenation + `String.fromInt` / `fromFloat` /
     /// `fromBool` projections must round-trip identically across
     /// backends. Covers the lowering of `+` over `AverStr` against
