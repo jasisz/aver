@@ -98,6 +98,22 @@ closest research context for Aver's design choices.
   economics of a prover steered by source-language lemmas.
   https://doi.org/10.1098/rsta.2015.0399
 
+## Integer Range Analysis
+
+- Raphael Ernani Rodrigues, Victor Hugo Sperle Campos, and Fernando Magno
+  Quintão Pereira, **A Fast and Low-Overhead Technique to Secure Programs
+  Against Integer Overflows** (CGO 2013). A sparse range analysis proves the
+  large majority of integer operations stay within machine-word bounds, so the
+  few that remain can be guarded cheaply. Aver's unboxing analysis shares the
+  goal of proving an integer stays in i64 range, but uses it for representation
+  selection — a provably-bounded `Int` lowers to a native `i64` instead of the
+  default arbitrary-precision carrier — rather than to insert runtime overflow
+  checks. Aver has no loops (tail recursion only), so the paper's loop-header
+  "future bounds" do not apply directly; Aver bounds a counter through a
+  bounded-tail-recursion recognizer over its own interval domain, and is
+  fail-closed (an unproven value stays arbitrary-precision).
+  https://doi.org/10.1109/CGO.2013.6494996
+
 ## Not Currently Claimed
 
 Aver is also broadly adjacent to monads, property-based testing, model checking,
