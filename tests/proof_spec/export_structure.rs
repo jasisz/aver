@@ -892,12 +892,21 @@ fn proof_export_rational_ring_laws_carry_ac_ring_package() {
         10,
         "the additive AC triple must ride along in every emission"
     );
-    // The honest floor stays: the rung is `first | (simp …; done) | sorry`,
-    // never a bare tactic that could surface a build error.
+    // The honest floor stays: the rung is
+    // `first | (grind [<cone>]; done) | (simp …; done) | sorry`, never a
+    // bare tactic that could surface a build error. `grind [<cone>]`
+    // leads (Lean 4.31 closes the nonlinear ring identities the
+    // AC-ring simp package stopped normalizing); the simp package and
+    // the caught `sorry` remain as the lower rungs.
     assert_eq!(
-        entry_text.matches("first | (simp [").count(),
+        entry_text.matches("first | (grind [").count(),
         10,
-        "every ring law must keep the caught-sorry alternation"
+        "every ring law must lead with the cone-aware grind rung"
+    );
+    assert_eq!(
+        entry_text.matches("; done) | (simp [").count(),
+        10,
+        "every ring law must keep the simp package and caught-sorry alternation"
     );
 
     let _ = std::fs::remove_dir_all(&lean_dir);

@@ -2,6 +2,8 @@ import AverCommon
 
 set_option linter.unusedVariables false
 
+set_option maxRecDepth 1000000
+
 /-- Sum of the three arguments. -/
 def tripleSum (a : Int) (b : Int) (c : Int) : Int :=
   ((a + b) + c)

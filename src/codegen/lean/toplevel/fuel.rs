@@ -342,16 +342,16 @@ pub(super) fn emit_fuelized_string_pos_fn(fd: &FnDef, ctx: &CodegenContext) -> S
 
 /// Companion theorem for a fuelized string-position SCANNER — the
 /// general crack in the fuel-unfolding barrier (#125 family): when the
-/// body matches the canonical shape `match String.charAt s pos with |
+/// body matches the canonical shape `match String.charAtAv s pos with |
 /// none => EXIT | some c => if P c then SELF(s, pos+1, …) else OTHER`
 /// (recognized by `proof_recognize::detect_string_pos_scan`), emit
 ///
 /// ```text
 /// theorem <fn>__fuel_scan : ∀ fuel s pos <carried>,
-///   0 ≤ pos → pos.toNat ≤ s.data.length →
-///   s.data.length - pos.toNat < fuel →
-///   (∀ ch ∈ s.data.drop pos.toNat, P (Char.toString ch) = true) →
-///   <fn>__fuel fuel s pos <args@pins> = EXIT[pos := ↑s.data.length]
+///   0 ≤ pos → pos.toNat ≤ s.toList.length →
+///   s.toList.length - pos.toNat < fuel →
+///   (∀ ch ∈ s.toList.drop pos.toNat, P (Char.toString ch) = true) →
+///   <fn>__fuel fuel s pos <args@pins> = EXIT[pos := ↑s.toList.length]
 /// ```
 ///
 /// proved by a FIXED fuel-induction template (`String.charAt_eq_of_lt`
@@ -436,7 +436,7 @@ fn emit_string_pos_scan_lemma(
         crate::codegen::proof_recognize::substitute_idents_in_expr(&shape.exit_expr, &subst);
     let exit = emit_expr_legacy(&exit_subst, ctx, None)
         .replace('\n', " ")
-        .replace(LEN_MARKER, &format!("(({s}.data.length : Int))"));
+        .replace(LEN_MARKER, &format!("(({s}.toList.length : Int))"));
 
     Some(format!(
         r#"/-- Auto-synthesized scan lemma: an all-`{pred}` suffix scan runs to the
@@ -444,9 +444,9 @@ fn emit_string_pos_scan_lemma(
     the fixed fuel-induction template. -/
 theorem {lemma_name} :
     ∀ (fuel : Nat) ({s} : String) ({pos} : Int){carried_binder_text},
-      0 ≤ {pos} → {pos}.toNat ≤ {s}.data.length →
-      {s}.data.length - {pos}.toNat < fuel →
-      (∀ ch ∈ {s}.data.drop {pos}.toNat, {pred} (Char.toString ch) = true) →
+      0 ≤ {pos} → {pos}.toNat ≤ {s}.toList.length →
+      {s}.toList.length - {pos}.toNat < fuel →
+      (∀ ch ∈ {s}.toList.drop {pos}.toNat, {pred} (Char.toString ch) = true) →
       {helper_name} fuel {s} {pos}{args} = {exit} := by
   intro fuel
   induction fuel with
@@ -455,14 +455,14 @@ theorem {lemma_name} :
     omega
   | succ fuel ih =>
     intro {s} {pos} {carried_intro}h0 h1 h2 h3
-    by_cases hlt : {pos}.toNat < {s}.data.length
+    by_cases hlt : {pos}.toNat < {s}.toList.length
     · have hch := String.charAt_eq_of_lt {s} {pos} h0 hlt
-      have hdrop := List.drop_eq_getElem_cons (l := {s}.data) (n := {pos}.toNat) hlt
-      have hdig : {pred} (Char.toString ({s}.data[{pos}.toNat])) = true := by
+      have hdrop := List.drop_eq_getElem_cons (l := {s}.toList) (i := {pos}.toNat) hlt
+      have hdig : {pred} (Char.toString ({s}.toList[{pos}.toNat])) = true := by
         apply h3
         rw [hdrop]
-        exact List.mem_cons_self _ _
-      have hstep : ∀ ch ∈ {s}.data.drop (({pos} + 1).toNat), {pred} (Char.toString ch) = true := by
+        exact List.mem_cons_self
+      have hstep : ∀ ch ∈ {s}.toList.drop (({pos} + 1).toNat), {pred} (Char.toString ch) = true := by
         intro ch hc
         apply h3
         rw [hdrop]
@@ -476,7 +476,7 @@ theorem {lemma_name} :
             simp only [{helper_name}, hch, hdig]
             simp
         _ = {exit} := hrec
-    · have hpos : {pos} = ({s}.data.length : Int) := by omega
+    · have hpos : {pos} = ({s}.toList.length : Int) := by omega
       have hch := String.charAt_none_of_ge {s} {pos} h0 (by omega)
       simp only [{helper_name}, hch]
       rw [hpos]"#

@@ -239,18 +239,18 @@ theorem {base}__exp_of_big (a b : Int) (h1 : ¬b < 1) (h2 : ¬a < 2 * b) :
     {exp} a b = 1 + {exp} ({halve} a) b := by
   rw [{exp}.eq_def, if_neg h1, if_neg h2]
 theorem {base}__exp_nonneg (a b : Int) : 0 <= {exp} a b := by
-  induction a, b using {exp}.induct with
-  | case1 a b h => rw [{base}__exp_of_low a b h]; omega
-  | case2 a b h1 h2 => rw [{base}__exp_of_small a b h1 h2]; omega
-  | case3 a b h1 h2 ih => rw [{base}__exp_of_big a b h1 h2]; omega
+  induction a using {exp}.induct (b := b) with
+  | case1 a h => rw [{base}__exp_of_low a b h]; omega
+  | case2 a h1 h2 => rw [{base}__exp_of_small a b h1 h2]; omega
+  | case3 a h1 h2 ih => rw [{base}__exp_of_big a b h1 h2]; omega
 theorem {base}__exp_window : ∀ a b : Int, 1 <= b -> b <= a ->
     {pow} ({exp} a b) * b <= a ∧ a < {pow} ({exp} a b + 1) * b := by
   intro a b
-  induction a, b using {exp}.induct with
-  | case1 a b h =>
+  induction a using {exp}.induct (b := b) with
+  | case1 a h =>
       intro hb _
       exact absurd hb (by omega)
-  | case2 a b h1 h2 =>
+  | case2 a h1 h2 =>
       intro hb hab
       rw [{base}__exp_of_small a b h1 h2]
       have hp1 : {pow} ((0 : Int) + 1) = 2 := by
@@ -261,7 +261,7 @@ theorem {base}__exp_window : ∀ a b : Int, 1 <= b -> b <= a ->
       constructor
       · rw [hp0]; omega
       · rw [hp1]; omega
-  | case3 a b h1 h2 ih =>
+  | case3 a h1 h2 ih =>
       intro hb hab
       have hhalf : {halve} a = a / 2 := {base}__halve_eq a
       have hba2 : b <= {halve} a := by rw [hhalf]; omega
