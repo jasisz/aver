@@ -766,7 +766,7 @@ fn emit_hash_for(
         return emit_hash_record(k_aver, registry, string_key_helpers, all_key_helpers);
     }
     if super::types::TypeRegistry::is_primitive_map_key(k_aver) {
-        return emit_hash_primitive(k_aver);
+        return emit_hash_primitive(k_aver, registry);
     }
     if registry
         .variants
@@ -817,7 +817,7 @@ fn emit_eq_for(
         return emit_eq_record(k_aver, registry, string_key_helpers, all_key_helpers);
     }
     if super::types::TypeRegistry::is_primitive_map_key(k_aver) {
-        return emit_eq_primitive(k_aver);
+        return emit_eq_primitive(k_aver, registry);
     }
     if registry
         .variants
@@ -859,15 +859,18 @@ fn emit_eq_for(
 /// primitives (callers don't have to box just to compute a hash).
 /// Map's keys array stores boxed refs, but `hash` runs on the raw
 /// value the user passed in.
-fn emit_hash_primitive(k_aver: &str) -> Result<Function, WasmGcError> {
+fn emit_hash_primitive(k_aver: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let mut f = Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
     match k_aver {
         "Int" => {
-            // i32.wrap_i64 — keeps low 32 bits. Cheap, distributes
-            // poorly for tightly-clustered Int domains; bench
-            // scenarios don't stress this.
-            f.instruction(&Instruction::I32WrapI64);
+            // Flag-off: `i32.wrap_i64` — keeps low 32 bits. Cheap,
+            // distributes poorly for tightly-clustered Int domains; bench
+            // scenarios don't stress this. Flag-on (bignum): the key is an
+            // `$aint` ref, so route through `__aint_hash` (an
+            // `i32.wrap_i64` on a ref is invalid wasm, and all Big keys
+            // would otherwise collapse into one bucket).
+            super::lists::emit_aint_field_hash(&mut f, registry)?;
         }
         "Float" => {
             f.instruction(&Instruction::I64ReinterpretF64);
@@ -889,14 +892,23 @@ fn emit_hash_primitive(k_aver: &str) -> Result<Function, WasmGcError> {
 
 /// `eq : (K_raw, K_raw) -> i32` for primitive K. Native eq
 /// instruction per K kind.
-fn emit_eq_primitive(k_aver: &str) -> Result<Function, WasmGcError> {
+fn emit_eq_primitive(k_aver: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let mut f = Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalGet(1));
     match k_aver {
-        "Int" => f.instruction(&Instruction::I64Eq),
-        "Float" => f.instruction(&Instruction::F64Eq),
-        "Bool" => f.instruction(&Instruction::I32Eq),
+        // Flag-on (bignum): keys are `$aint` refs → `__aint_eq` (an
+        // `i64.eq` on a ref is invalid wasm and wrong across Small/Big).
+        // Flag-off: byte-identical `i64.eq`.
+        "Int" => {
+            super::lists::emit_aint_field_eq(&mut f, registry)?;
+        }
+        "Float" => {
+            f.instruction(&Instruction::F64Eq);
+        }
+        "Bool" => {
+            f.instruction(&Instruction::I32Eq);
+        }
         _ => panic!(
             "internal compiler error: emit_eq_primitive called with \
              non-primitive K = `{k_aver}`; caller must dispatch to \
@@ -1877,8 +1889,9 @@ fn emit_hash_record(
         // emit field hash → i32
         match field_ty.trim() {
             "Int" => {
-                // i64 → low 32 bits
-                f.instruction(&Instruction::I32WrapI64);
+                // Flag-off: i64 → low 32 bits. Flag-on (bignum): the field
+                // is an `$aint` ref → `__aint_hash`.
+                super::lists::emit_aint_field_hash(&mut f, registry)?;
             }
             "Bool" => {
                 // already i32
@@ -1975,14 +1988,21 @@ fn emit_eq_record(
             field_index: i as u32,
         });
         match field_ty.trim() {
-            "Int" => f.instruction(&Instruction::I64Eq),
-            "Bool" => f.instruction(&Instruction::I32Eq),
-            "Float" => f.instruction(&Instruction::F64Eq),
+            // Flag-on (bignum): `$aint` ref → `__aint_eq`. Flag-off: `i64.eq`.
+            "Int" => {
+                super::lists::emit_aint_field_eq(&mut f, registry)?;
+            }
+            "Bool" => {
+                f.instruction(&Instruction::I32Eq);
+            }
+            "Float" => {
+                f.instruction(&Instruction::F64Eq);
+            }
             "String" => {
                 let helpers = string_key_helpers.ok_or(WasmGcError::Validation(
                     "eq_record: String field needs String key helpers".into(),
                 ))?;
-                f.instruction(&Instruction::Call(helpers.eq))
+                f.instruction(&Instruction::Call(helpers.eq));
             }
             other => {
                 let lookup_key = if other.starts_with("List<") || other.starts_with("Vector<") {
@@ -2006,7 +2026,7 @@ fn emit_eq_record(
                         .ok_or(WasmGcError::Validation(format!(
                             "eq_record: field `{other}` has no key helpers"
                         )))?;
-                    f.instruction(&Instruction::Call(inner.eq))
+                    f.instruction(&Instruction::Call(inner.eq));
                 } else {
                     return Err(WasmGcError::Unimplemented(
                         "phase 3c — record-key field type not in \
@@ -2355,7 +2375,7 @@ fn emit_map_eq(
     // if v_a != v_b → return 0
     f.instruction(&Instruction::LocalGet(10));
     f.instruction(&Instruction::LocalGet(11));
-    emit_v_eq(&mut f, v_aver, v_helpers)?;
+    emit_v_eq(&mut f, v_aver, v_helpers, registry)?;
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::I32Const(0));
@@ -2381,10 +2401,12 @@ fn emit_v_eq(
     f: &mut Function,
     v_aver: &str,
     v_helpers: Option<KeyHelpers>,
+    registry: &TypeRegistry,
 ) -> Result<(), WasmGcError> {
     match v_aver.trim() {
+        // Flag-on (bignum): `$aint` ref → `__aint_eq`. Flag-off: `i64.eq`.
         "Int" => {
-            f.instruction(&Instruction::I64Eq);
+            super::lists::emit_aint_field_eq(f, registry)?;
         }
         "Bool" => {
             f.instruction(&Instruction::I32Eq);
@@ -2408,10 +2430,12 @@ fn emit_v_hash(
     f: &mut Function,
     v_aver: &str,
     v_helpers: Option<KeyHelpers>,
+    registry: &TypeRegistry,
 ) -> Result<(), WasmGcError> {
     match v_aver.trim() {
+        // Flag-on (bignum): `$aint` ref → `__aint_hash`. Flag-off: wrap.
         "Int" => {
-            f.instruction(&Instruction::I32WrapI64);
+            super::lists::emit_aint_field_hash(f, registry)?;
         }
         "Bool" => {} // already i32
         "Float" => {
@@ -2518,7 +2542,7 @@ fn emit_map_hash(
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::ArrayGet(slots.values_array));
-    emit_v_hash(&mut f, v_aver, v_helpers)?;
+    emit_v_hash(&mut f, v_aver, v_helpers, registry)?;
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalSet(8));
     // h ^= entry_h
@@ -3001,8 +3025,9 @@ fn emit_hash_sum(
             });
             let field_ty_trim = field_ty.trim();
             match field_ty_trim {
+                // Flag-on (bignum): `$aint` ref → `__aint_hash`. Flag-off: wrap.
                 "Int" => {
-                    f.instruction(&Instruction::I32WrapI64);
+                    super::lists::emit_aint_field_hash(&mut f, registry)?;
                 }
                 "Bool" => {}
                 "Float" => {
@@ -3102,14 +3127,21 @@ fn emit_eq_sum(
                 });
                 let field_ty_trim = field_ty.trim();
                 match field_ty_trim {
-                    "Int" => f.instruction(&Instruction::I64Eq),
-                    "Bool" => f.instruction(&Instruction::I32Eq),
-                    "Float" => f.instruction(&Instruction::F64Eq),
+                    // Flag-on (bignum): `$aint` ref → `__aint_eq`. Flag-off: `i64.eq`.
+                    "Int" => {
+                        super::lists::emit_aint_field_eq(&mut f, registry)?;
+                    }
+                    "Bool" => {
+                        f.instruction(&Instruction::I32Eq);
+                    }
+                    "Float" => {
+                        f.instruction(&Instruction::F64Eq);
+                    }
                     "String" => {
                         let helpers = string_key_helpers.ok_or(WasmGcError::Validation(
                             "eq_sum: String field needs String key helpers".into(),
                         ))?;
-                        f.instruction(&Instruction::Call(helpers.eq))
+                        f.instruction(&Instruction::Call(helpers.eq));
                     }
                     _ => {
                         // Compound field — proxy to per-type eq helper.
@@ -3123,7 +3155,7 @@ fn emit_eq_sum(
                                      type `{field_ty_trim}` of `{parent_name}`"
                                 ))
                             })?;
-                        f.instruction(&Instruction::Call(helpers.eq))
+                        f.instruction(&Instruction::Call(helpers.eq));
                     }
                 };
                 if i > 0 {

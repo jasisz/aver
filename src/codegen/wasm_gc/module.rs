@@ -139,7 +139,7 @@ pub(super) fn emit_module_with(
     let symbol_table = view.symbol_table;
     let resolved_fn_defs = view.resolved_fn_defs;
 
-    let registry =
+    let mut registry =
         TypeRegistry::build_with_handler(items, &resolved_fn_defs, handler_name.is_some());
 
     // Lower the post-link resolved fns to MIR and run the shared
@@ -207,6 +207,11 @@ pub(super) fn emit_module_with(
             BuiltinName::AintDivmod,
             BuiltinName::AintCmp,
             BuiltinName::AintEq,
+            // slice 4 (eq+hash gap) — value hash agreeing with `__aint_eq`,
+            // for Map/Set Int keys and record/sum Int fields (the inline
+            // `i32.wrap_i64` over a raw value is invalid on an `$aint` ref,
+            // and collision-collapses every Big to one bucket).
+            BuiltinName::AintHash,
             // slice 3 — decimal parse / Float bridges / index extraction.
             // Registered alongside the arithmetic prelude so the conversion
             // + index re-point sites can assume the fn indices exist; -Oz
@@ -856,6 +861,17 @@ pub(super) fn emit_module_with(
         let p = name.params(&registry)?;
         let r = name.results(&registry)?;
         types.ty().function(p, r);
+    }
+    // bignum slice 4 (eq+hash gap) — record the `__aint_eq` / `__aint_hash`
+    // fn indices on the registry now that `assign_slots` has run, so every
+    // Int eq+hash emitter (Map keys/values, Set members, record/sum fields,
+    // carrier payloads — all of which already receive `&registry`) can route
+    // through them without threading two extra `Option<u32>` params through
+    // a dozen helper functions across maps.rs / lists.rs / eq_helpers.rs /
+    // hash_helpers.rs. `Some` iff `bignum`.
+    if registry.bignum {
+        registry.aint_eq_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintEq);
+        registry.aint_hash_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintHash);
     }
 
     // 6) Map helper fn types (per-K hash + eq, per-(K,V) empty/set/get/len).

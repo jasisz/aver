@@ -701,8 +701,36 @@ pub(crate) fn emit_mir_int_cascade(
     if emit_mir_expr(func, subject, slots, ctx)?.is_none() {
         return Ok(None);
     }
-    func.instruction(&Instruction::I64Const(*pat_lit));
-    func.instruction(&Instruction::I64Eq);
+    // bignum slice 4 (eq+hash gap) — under the flag the subject is an
+    // `$aint` ref, so the literal must be lifted to a Small `$aint`
+    // (`__aint_from_i64`) and compared with `__aint_eq`. The flag-off path
+    // stays the byte-identical `i64.const` + `i64.eq`. Without this, an
+    // Int-literal `match` (`match n { 0 -> …, _ -> … }`) emits an `i64.eq`
+    // on a struct ref — invalid wasm.
+    if ctx.registry.bignum {
+        let from_i64 =
+            ctx.fn_map
+                .builtins
+                .get("__aint_from_i64")
+                .copied()
+                .ok_or(WasmGcError::Validation(
+                    "bignum active but __aint_from_i64 helper not registered".into(),
+                ))?;
+        let eq = ctx
+            .fn_map
+            .builtins
+            .get("__aint_eq")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "bignum active but __aint_eq helper not registered".into(),
+            ))?;
+        func.instruction(&Instruction::I64Const(*pat_lit));
+        func.instruction(&Instruction::Call(from_i64));
+        func.instruction(&Instruction::Call(eq));
+    } else {
+        func.instruction(&Instruction::I64Const(*pat_lit));
+        func.instruction(&Instruction::I64Eq);
+    }
     func.instruction(&Instruction::If(block_ty));
     if emit_mir_expr(func, body, slots, ctx)?.is_none() {
         return Ok(None);

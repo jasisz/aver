@@ -170,6 +170,10 @@ pub(super) enum BuiltinName {
     AintCmp,
     /// `__aint_eq(a, b) -> i32` (1/0) — equality leaning on canonical form.
     AintEq,
+    /// `__aint_hash(a) -> i32` — value hash agreeing with `__aint_eq`
+    /// (equal values hash equal). Map/Set Int keys + record/sum Int
+    /// fields under bignum. slice 4 (eq+hash gap).
+    AintHash,
     // ── bignum slice 3 — decimal parse / Float bridges / index ─────────
     /// `__aint_to_f64(a) -> f64` — `Float.fromInt` (±inf saturation). slice 3.
     AintToF64,
@@ -245,6 +249,7 @@ impl BuiltinName {
             Self::AintDivmod => "__aint_divmod",
             Self::AintCmp => "__aint_cmp",
             Self::AintEq => "__aint_eq",
+            Self::AintHash => "__aint_hash",
             Self::AintToF64 => "__aint_to_f64",
             Self::AintFromF64 => "__aint_from_f64",
             Self::AintToIndex => "__aint_to_index",
@@ -290,7 +295,7 @@ impl BuiltinName {
             Self::AintAdd | Self::AintSub | Self::AintMul | Self::AintCmp | Self::AintEq => {
                 Ok(vec![aint_ref_ty(registry)?, aint_ref_ty(registry)?])
             }
-            Self::AintNeg | Self::AintAbs => Ok(vec![aint_ref_ty(registry)?]),
+            Self::AintNeg | Self::AintAbs | Self::AintHash => Ok(vec![aint_ref_ty(registry)?]),
             // `want_mod` selects modulo (≠0) vs division (0).
             Self::AintDivmod => Ok(vec![
                 aint_ref_ty(registry)?,
@@ -336,7 +341,9 @@ impl BuiltinName {
             | Self::AintAbs
             | Self::AintDivmod
             | Self::AintFromF64 => Ok(vec![aint_ref_ty(registry)?]),
-            Self::AintCmp | Self::AintEq | Self::AintToIndex => Ok(vec![ValType::I32]),
+            Self::AintCmp | Self::AintEq | Self::AintHash | Self::AintToIndex => {
+                Ok(vec![ValType::I32])
+            }
             Self::AintToF64 => Ok(vec![ValType::F64]),
         }
     }
@@ -383,6 +390,7 @@ impl BuiltinName {
             Self::AintDivmod => bignum::emit_aint_divmod(registry),
             Self::AintCmp => bignum::emit_aint_cmp(registry),
             Self::AintEq => bignum::emit_aint_eq(registry),
+            Self::AintHash => bignum::emit_aint_hash(registry),
             Self::AintToF64 => bignum::emit_aint_to_f64(registry),
             Self::AintFromF64 => bignum::emit_aint_from_f64(registry),
             Self::AintToIndex => bignum::emit_aint_to_index(registry),
