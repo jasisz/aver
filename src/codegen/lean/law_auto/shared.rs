@@ -31,8 +31,35 @@ pub(super) fn law_simp_defs(
 ) -> BTreeSet<String> {
     law_simp_source_names(ctx, vb, law)
         .into_iter()
-        .map(|name| aver_name_to_lean(&name))
+        .map(|name| {
+            let rendered = aver_name_to_lean(&name);
+            // Entry-module fns are emitted at the Lean root, so a user fn whose
+            // name shadows a stdlib symbol (e.g. `insert` vs the `Insert.insert`
+            // class method) makes a bare `simp only [insert]` error ("proposition
+            // expected") — the equation compiler can't pick the user def.
+            // `_root_.insert` always resolves to it and is a no-op otherwise.
+            // Dep-module fns are NOT at root: they live under their module
+            // namespace (`Lib.qrev`) and reach the consumer via `open Lib`, so a
+            // `_root_.` prefix would FAIL to resolve. Leave those bare — `open`
+            // resolves them exactly as before this change.
+            if is_dep_module_fn(ctx, &name) {
+                rendered
+            } else {
+                format!("_root_.{rendered}")
+            }
+        })
         .collect()
+}
+
+/// A simp-set name belongs to a dependency module iff its `FnDef` lives in
+/// one of `ctx.modules` (which holds dep modules only — entry-module fns sit
+/// in `ctx.fn_defs`). Mirrors `find_fn_def`'s dep-first resolution: on a
+/// bare-name collision between an entry and a dep fn, the dep classification
+/// wins, matching which def the bare reference actually resolves to.
+fn is_dep_module_fn(ctx: &CodegenContext, source_name: &str) -> bool {
+    ctx.modules
+        .iter()
+        .any(|m| m.fn_defs.iter().any(|fd| fd.name == source_name))
 }
 
 pub(super) fn law_simp_source_names(
