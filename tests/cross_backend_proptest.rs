@@ -452,6 +452,193 @@ fn cross_int_equality_canonical_invariant_vm_vs_wasm_gc() {
     }
 }
 
+// ─── Euclidean divmod (slice 2) ─────────────────────────────────────────────
+//
+// `Int.div` / `Int.mod` return `Result<Int, String>` with EUCLIDEAN
+// semantics (remainder always in `[0, |b|)`), matching the VM
+// (`src/types/int.rs`) and `aver-rt` exactly. Under bignum there is NO
+// `i64::MIN / -1` overflow — that quotient is the valid Big `+2^63`.
+//
+// The differential proptest compares RENDERED stdout, so it is blind to
+// two slice-1 bug classes; both are covered explicitly below:
+//   - render via BOTH `String.fromInt` AND `"{...}"` interpolation;
+//   - assert the law `(a/b)*b + (a%b) == a` and `0 <= (a%b) < |b|`
+//     through `==` (flag-on wasm-gc must equal the VM ℤ truth `true`),
+//     which a string render cannot distinguish from a canonical-invariant
+//     violation.
+
+/// The full sign/boundary matrix of operands for the Euclidean law. Each
+/// is a *parenthesised Int expression* (so it drops straight into a call
+/// arg). Includes i64::MIN/MAX, 0, ±1, near-sqrt(MAX) (squares overflow),
+/// 2^62, and Big values built by arithmetic (`a*a`, `±2^63`).
+fn divmod_operands() -> Vec<&'static str> {
+    // One representative per sign/boundary class. Kept to 11 so the
+    // generated `main` (11×11 pairs × 3 prints) stays well under the VM's
+    // single-function stack budget — the Big magnitudes are exercised by
+    // `cross_int_big_operand_divmod_vm_vs_wasm_gc` and the sweep below.
+    vec![
+        "0",
+        "1",
+        "(0 - 1)",
+        "7",
+        "(0 - 7)",
+        "9223372036854775807",             // i64::MAX
+        "((0 - 9223372036854775807) - 1)", // i64::MIN
+        "(9223372036854775807 + 1)",       // +2^63 (Big)
+        "(0 - (9223372036854775807 + 1))", // -2^63 (Big)
+        "3037000500",
+        "(0 - 3037000500)",
+    ]
+}
+
+/// `Int.div(a,b)` rendered as a String via a Result-unwrapping helper.
+/// `b == 0` renders the `Result.Err` message, so divide-by-zero is part
+/// of the differential (both backends must produce the same message).
+fn divmod_harness(body_lines: &str) -> String {
+    // `law` asserts the Euclidean contract `(q*b + r == a) && (0 <= r < |b|)`
+    // through `==` / `<` (NOT a string render), so a value mis-stored as
+    // Small-vs-Big — invisible to `String.fromInt` — fails it. The
+    // conjunction is spelled with `Bool.and` + a helper (Aver's parser
+    // rejects deeply nested inline `match` in this position).
+    format!(
+        "module Tmp\n\
+         \n\
+         fn dv(a: Int, b: Int) -> String\n    \
+             match Int.div(a, b)\n        \
+                 Result.Ok(q) -> String.fromInt(q)\n        \
+                 Result.Err(e) -> e\n\
+         \n\
+         fn md(a: Int, b: Int) -> String\n    \
+             match Int.mod(a, b)\n        \
+                 Result.Ok(r) -> String.fromInt(r)\n        \
+                 Result.Err(e) -> e\n\
+         \n\
+         fn lawq(a: Int, b: Int, q: Int) -> Bool\n    \
+             match Int.mod(a, b)\n        \
+                 Result.Ok(r) -> Bool.and(((q * b) + r) == a, Bool.and((0 - 1) < r, r < Int.abs(b)))\n        \
+                 Result.Err(_) -> false\n\
+         \n\
+         fn law(a: Int, b: Int) -> Bool\n    \
+             match Int.div(a, b)\n        \
+                 Result.Ok(q) -> lawq(a, b, q)\n        \
+                 Result.Err(_) -> true\n\
+         \n\
+         fn main()\n    \
+             ! [Console.print]\n\
+         {body_lines}\n"
+    )
+}
+
+#[test]
+fn cross_int_euclidean_divmod_vm_vs_wasm_gc() {
+    let ops = divmod_operands();
+    // Build one program that prints, for every (a, b) pair:
+    //   - div rendered via String.fromInt
+    //   - mod rendered via "{...}" interpolation (the slice-1 render blind
+    //     spot — a distinct reachability path)
+    //   - the Euclidean law `(q*b + r == a) && (0 <= r < |b|)` via `==`
+    //     (the canonical-invariant blind spot — only `==` distinguishes a
+    //     mis-stored Small/Big)
+    let mut lines = String::new();
+    let mut pair_count = 0usize;
+    for a in &ops {
+        for b in &ops {
+            lines.push_str(&format!("    Console.print(dv({a}, {b}))\n"));
+            lines.push_str(&format!("    Console.print(\"{{md({a}, {b})}}\")\n"));
+            lines.push_str(&format!(
+                "    Console.print(String.fromBool(law({a}, {b})))\n"
+            ));
+            pair_count += 1;
+        }
+    }
+    let source = divmod_harness(lines.trim_end());
+
+    let vm = run_vm("cross-divmod-vm", &source).expect("VM must accept the divmod harness");
+    let wg = run_wasm_gc_bignum("cross-divmod-wg", &source)
+        .expect("wasm-gc (bignum) must accept the divmod harness");
+
+    // 1. The two backends agree byte-for-byte on every rendered line.
+    assert_eq!(
+        vm, wg,
+        "VM vs wasm-gc (bignum) diverged on the Euclidean divmod matrix \
+         ({pair_count} pairs, div+mod+law per pair)"
+    );
+
+    // 2. Every `law(...)` line is `true` on the VM (the ℤ oracle). The law
+    //    lines are every third line; assert none is `false`, so the matrix
+    //    actually exercised the law rather than trivially agreeing on a
+    //    shared bug.
+    let law_lines: Vec<&str> = vm.lines().skip(2).step_by(3).collect();
+    assert_eq!(
+        law_lines.len(),
+        pair_count,
+        "expected one law line per pair"
+    );
+    assert!(
+        law_lines.iter().all(|l| *l == "true"),
+        "the Euclidean law `q*b + r == a, 0 <= r < |b|` failed on the VM ℤ \
+         oracle for some pair (first offending around index {:?})",
+        law_lines.iter().position(|l| *l != "true")
+    );
+}
+
+#[test]
+fn cross_int_big_operand_divmod_vm_vs_wasm_gc() {
+    // Big-operand divmod specifically exercises the limb long division
+    // (the i64 fast path can't reach these). `(a*a)/a == a`, `(a*a)%a == 0`
+    // for a near i64::MAX, plus a Big dividend over a Small divisor (both
+    // signs). Rendered via String.fromInt; the VM truth is asserted inline.
+    let cases: &[(&str, &str)] = &[
+        // (program-expr, expected ℤ stdout)
+        (
+            "dv(9223372036854775807 * 9223372036854775807, 9223372036854775807)",
+            "9223372036854775807",
+        ),
+        (
+            "md(9223372036854775807 * 9223372036854775807, 9223372036854775807)",
+            "0",
+        ),
+        ("dv(3037000500 * 3037000500, 3037000500)", "3037000500"),
+        ("md(3037000500 * 3037000500, 3037000500)", "0"),
+        // Big dividend, Small divisor, exactly divisible (i64::MAX*7 % 7 == 0).
+        ("md(9223372036854775807 * 7, 7)", "0"),
+        ("dv(9223372036854775807 * 7, 7)", "9223372036854775807"),
+        // Negative Big dividend, Small divisor — Euclidean remainder is
+        // non-negative; exact divisibility keeps it 0 (the slice-2 stale-
+        // length bug produced a spurious +7 here).
+        ("md((0 - 9223372036854775807) * 7, 7)", "0"),
+        (
+            "dv((0 - 9223372036854775807) * 7, 7)",
+            "-9223372036854775807",
+        ),
+    ];
+
+    let body: String = cases
+        .iter()
+        .map(|(expr, _)| format!("    Console.print({expr})"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let source = divmod_harness(&body);
+
+    let vm = run_vm("cross-bigdm-vm", &source).expect("VM must accept the big divmod program");
+    let wg = run_wasm_gc_bignum("cross-bigdm-wg", &source)
+        .expect("wasm-gc (bignum) must accept the big divmod program");
+
+    assert_eq!(
+        vm, wg,
+        "VM vs wasm-gc (bignum) diverged on Big-operand divmod"
+    );
+
+    let vm_lines: Vec<&str> = vm.lines().collect();
+    assert_eq!(vm_lines.len(), cases.len(), "line count mismatch");
+    for ((expr, expected), got) in cases.iter().zip(vm_lines.iter()) {
+        assert_eq!(
+            got, expected,
+            "VM ℤ truth wrong for `{expr}`: got {got}, expected {expected}"
+        );
+    }
+}
+
 // ─── Properties ────────────────────────────────────────────────────────────
 
 proptest! {
