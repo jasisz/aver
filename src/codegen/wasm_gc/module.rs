@@ -876,6 +876,8 @@ pub(super) fn emit_module_with(
     if registry.bignum {
         registry.aint_eq_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintEq);
         registry.aint_hash_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintHash);
+        registry.aint_from_i64_fn_idx =
+            builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintFromI64);
     }
 
     // 6) Map helper fn types (per-K hash + eq, per-(K,V) empty/set/get/len).
@@ -2380,6 +2382,13 @@ pub(super) fn emit_module_with(
             exports.export("__rt_string_to_lm", ExportKind::Func, b.to_lm_fn);
             exports.export("__rt_memory_pages", ExportKind::Func, b.pages_fn);
             exports.export("__rt_memory_grow", ExportKind::Func, b.grow_fn);
+            // `Int = ℤ`: `Int` entry params are the `$AverInt` carrier, so
+            // the host (`aver run --wasm-gc --expr`, record/replay) needs a
+            // way to build one from a machine-range i64 it parsed. Re-export
+            // the canonical Small constructor under a stable bridge name.
+            if let Some(idx) = registry.aint_from_i64_fn_idx {
+                exports.export("__rt_aint_from_i64", ExportKind::Func, idx);
+            }
         }
         exports.export("memory", ExportKind::Memory, 0);
     } else if cabi_realloc.is_some() {
@@ -6262,8 +6271,21 @@ fn emit_factory_terminal_size_make(
         .expect("checked at allocation");
     let mut f = Function::new([]);
     // params (width: i64, height: i64) → struct in declaration order.
+    // `Int = ℤ`: the host passes width/height as i64, but both
+    // `Terminal.Size` fields are the `$AverInt` carrier — lift each.
+    let lift = |f: &mut Function| -> Result<(), WasmGcError> {
+        if registry.bignum {
+            let from_i64 = registry.aint_from_i64_fn_idx.ok_or(WasmGcError::Validation(
+                "bignum Terminal.Size factory needs the __aint_from_i64 fn idx".into(),
+            ))?;
+            f.instruction(&Instruction::Call(from_i64));
+        }
+        Ok(())
+    };
     f.instruction(&Instruction::LocalGet(0));
+    lift(&mut f)?;
     f.instruction(&Instruction::LocalGet(1));
+    lift(&mut f)?;
     f.instruction(&Instruction::StructNew(rec_idx));
     f.instruction(&Instruction::End);
     Ok(f)
@@ -6508,7 +6530,16 @@ fn emit_factory_http_response_make(
         .record_type_idx("HttpResponse")
         .expect("checked at allocation");
     let mut f = Function::new([]);
+    // `Int = ℤ`: the host passes the HTTP `status` as i64 (the ABI stays
+    // i64), but the `HttpResponse.status` field is the `$AverInt` carrier
+    // under bignum — lift it to a Small before `struct.new`.
     f.instruction(&Instruction::LocalGet(0));
+    if registry.bignum {
+        let from_i64 = registry.aint_from_i64_fn_idx.ok_or(WasmGcError::Validation(
+            "bignum HttpResponse factory needs the __aint_from_i64 fn idx".into(),
+        ))?;
+        f.instruction(&Instruction::Call(from_i64));
+    }
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::StructNew(rec_idx));

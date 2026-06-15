@@ -173,6 +173,13 @@ pub(super) struct TypeRegistry {
     /// folds limbs+sign); the inline `i32.wrap_i64` over a raw value is
     /// invalid on a ref and collision-collapses every Big to one bucket.
     pub(super) aint_hash_fn_idx: Option<u32>,
+    /// wasm fn idx of the `__aint_from_i64` canonical Small constructor,
+    /// recorded alongside `aint_eq_fn_idx`. `Some` iff `bignum`. Used by
+    /// the host-ABI record FACTORIES (`__rt_record_http_response_make`,
+    /// `__rt_record_terminal_size_make`) which receive a machine-range
+    /// `Int` field (HTTP status, terminal rows/cols) as i64 from the host
+    /// and must lift it to the `$AverInt` carrier before `struct.new`.
+    pub(super) aint_from_i64_fn_idx: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -974,9 +981,11 @@ impl TypeRegistry {
             aint_struct_idx,
             aint_mag_array_idx,
             // Set by `module.rs` after `BuiltinRegistry::assign_slots`,
-            // once the `__aint_eq` / `__aint_hash` fn indices are known.
+            // once the `__aint_eq` / `__aint_hash` / `__aint_from_i64`
+            // fn indices are known.
             aint_eq_fn_idx: None,
             aint_hash_fn_idx: None,
+            aint_from_i64_fn_idx: None,
         }
     }
 

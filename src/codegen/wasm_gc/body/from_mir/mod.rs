@@ -123,6 +123,10 @@ fn registered_builtin_int_arg_positions(dotted: &str) -> &'static [usize] {
         "Char.fromCode" => &[0],
         "String.charAt" => &[1],
         "String.slice" => &[1, 2],
+        // `Byte.toHex(Int) -> Result<String,String>` — a byte value
+        // 0..255 in an i64 slot; saturate-lower (the helper's range check
+        // rejects out-of-byte values exactly as a Big would over-saturate).
+        "Byte.toHex" => &[0],
         _ => &[],
     }
 }
