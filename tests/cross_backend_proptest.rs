@@ -234,6 +234,17 @@ fn int_expr(max_depth: u32) -> BoxedStrategy<String> {
             (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("({} * {})", a, b)),
             // Unary minus — first-class `Expr::Neg` post-A1.
             inner.clone().prop_map(|a| format!("(-{})", a)),
+            // Euclidean `Int.div` / `Int.mod` (`Result<Int,String>`),
+            // rendered through the `Result` match so the generator stays
+            // Int-typed; `Int.abs` / `Int.min` / `Int.max` are Int directly.
+            // These exercise the slice-2 divmod + abs/min/max paths in the
+            // differential fuzz (the in-repo generator previously emitted
+            // only `+ - * neg`, so CI never fuzzed them).
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| int_div_mod_expr("div", &a, &b)),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| int_div_mod_expr("mod", &a, &b)),
+            inner.clone().prop_map(|a| format!("Int.abs({})", a)),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("Int.min({}, {})", a, b)),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("Int.max({}, {})", a, b)),
             // `match` on a Bool with two Int arms. Forces backends to
             // agree on branch-typed evaluation and value plumbing
             // through arms (the wasm-gc `if` ↔ VM jump-table split).
@@ -246,6 +257,16 @@ fn int_expr(max_depth: u32) -> BoxedStrategy<String> {
         ]
     })
     .boxed()
+}
+
+/// Render `Int.div(a, b)` / `Int.mod(a, b)` as an Int-typed expression by
+/// unwrapping the `Result<Int,String>` through an inline `match`. The
+/// divide-by-zero `Err` arm yields `0` so the expression is total (the
+/// differential still compares the Ok values, and both backends agree on
+/// the `0` fallback for `b == 0`). Wrapped in parens so it drops into any
+/// expression position.
+fn int_div_mod_expr(op: &str, a: &str, b: &str) -> String {
+    format!("(match Int.{op}({a}, {b})\n    Result.Ok(__q) -> __q\n    Result.Err(__e) -> 0)")
 }
 
 /// Depth-bounded Int expression whose LEAVES deliberately include the
@@ -281,6 +302,15 @@ fn int_boundary_expr(max_depth: u32) -> BoxedStrategy<String> {
             (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("({} - {})", a, b)),
             (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("({} * {})", a, b)),
             inner.clone().prop_map(|a| format!("(-{})", a)),
+            // Euclidean div/mod (through the `Result` match) + abs/min/max,
+            // at the i64-boundary leaves — exercises the slice-2 limb long
+            // division + the `MIN/-1` no-overflow edge + abs/min/max across
+            // the Small/Big boundary under the bignum differential oracle.
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| int_div_mod_expr("div", &a, &b)),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| int_div_mod_expr("mod", &a, &b)),
+            inner.clone().prop_map(|a| format!("Int.abs({})", a)),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("Int.min({}, {})", a, b)),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("Int.max({}, {})", a, b)),
         ]
     })
     .boxed()
@@ -635,6 +665,201 @@ fn cross_int_big_operand_divmod_vm_vs_wasm_gc() {
         assert_eq!(
             got, expected,
             "VM ℤ truth wrong for `{expr}`: got {got}, expected {expected}"
+        );
+    }
+}
+
+// ─── Decimal parse/format + Int<->Float/index exactness (slice 3) ───────────
+//
+// These cover the three slice-3 conversions whose wasm-gc lowering used to be
+// i64-only (`Int.fromString` wrapping past i64), saturating
+// (`Int.fromFloat`/`Float.fromInt` outside i64), or wrong (an `I32WrapI64`
+// of a Big `Vector` index into a wrong in-range slot). Under
+// `AVER_WASMGC_BIGNUM=1` they must match the VM (Int = ℤ) exactly. As with
+// the slice-1/2 focused tests, the render goes through BOTH `String.fromInt`
+// AND `"{...}"` interpolation where applicable so neither blind spot hides a
+// divergence.
+
+#[test]
+fn cross_int_from_string_roundtrip_vm_vs_wasm_gc() {
+    // `String.fromInt(Int.fromString(s)) == s` for magnitudes well past i64
+    // (both signs), plus invalid-input error-message parity. The 38-digit
+    // value is `i64::MAX * i64::MAX` — the headline acceptance.
+    let ok_cases: &[&str] = &[
+        "0",
+        "1",
+        "-1",
+        "9223372036854775807",                     // i64::MAX
+        "9223372036854775808",                     // i64::MAX + 1 (Big)
+        "-9223372036854775808",                    // i64::MIN
+        "-9223372036854775809",                    // i64::MIN - 1 (Big)
+        "85070591730234615847396907784232501249",  // i64::MAX^2 (38 digits)
+        "-85070591730234615847396907784232501249", // negative, Big
+        "170141183460469231731687303715884105728", // 2^127 (39 digits)
+    ];
+    // Helpers do the `Result` match (an inline `match` inside a call arg
+    // doesn't parse); `main` just prints. `fs` reformats the parse, `rt`
+    // observes the round-trip equality `fromInt(fromString(s)) == orig` via
+    // `==` (an Int mis-stored as Small/Big still `String.fromInt`-renders the
+    // same decimal, so the explicit `==` is the real canonical-invariant check).
+    let mut lines = String::new();
+    for s in ok_cases {
+        lines.push_str(&format!("    Console.print(fs(\"{s}\"))\n"));
+        lines.push_str(&format!("    Console.print(rt(\"{s}\", \"{s}\"))\n"));
+    }
+    // Invalid-input → `Err` message parity (must be byte-identical to the VM).
+    let bad_cases: &[&str] = &[" 5", "5 ", "", "-", "+", "0x10", "1.5", "--5", "abc", "12a"];
+    for s in bad_cases {
+        lines.push_str(&format!("    Console.print(fs(\"{s}\"))\n"));
+    }
+    let source = format!(
+        "module Tmp\n\n\
+         fn fs(s: String) -> String\n    \
+             match Int.fromString(s)\n        \
+                 Result.Ok(n) -> String.fromInt(n)\n        \
+                 Result.Err(e) -> e\n\
+         \n\
+         fn rt(s: String, orig: String) -> String\n    \
+             match Int.fromString(s)\n        \
+                 Result.Ok(n) -> String.fromBool(String.fromInt(n) == orig)\n        \
+                 Result.Err(e) -> e\n\
+         \n\
+         fn main()\n    ! [Console.print]\n{}\n",
+        lines.trim_end()
+    );
+
+    let vm = run_vm("cross-fs-vm", &source).expect("VM must accept the fromString harness");
+    let wg = run_wasm_gc_bignum("cross-fs-wg", &source)
+        .expect("wasm-gc (bignum) must accept the fromString harness");
+    assert_eq!(
+        vm, wg,
+        "VM vs wasm-gc (bignum) diverged on Int.fromString parse/format/error parity"
+    );
+    // The round-trip-equality lines (every other line in the Ok block) must
+    // all be `true` on the VM ℤ oracle — proof the corpus actually exercised
+    // past-i64 round-trips rather than trivially agreeing.
+    let rt_true = vm.lines().filter(|l| *l == "true").count();
+    assert_eq!(
+        rt_true,
+        ok_cases.len(),
+        "expected one `true` round-trip line per Ok case (got {rt_true}); \
+         a past-i64 round-trip silently failed"
+    );
+}
+
+#[test]
+fn cross_int_float_exactness_vm_vs_wasm_gc() {
+    // `Float.fromInt` (±inf saturation) and `Int.fromFloat` (exact Big /
+    // non-finite → 0) must match the VM. Big values are built by arithmetic
+    // (the lexer rejects > i64 literals — a separate follow-up). The
+    // observables avoid `String.fromFloat` on huge magnitudes (a pre-existing
+    // wasm-gc trap, unrelated to slice 3): we render Bool comparisons and
+    // the exact Int round-trip via `String.fromInt`.
+    let cases: &[(&str, &str)] = &[
+        // Float.fromInt(Big) compared against a Float threshold (observable
+        // without String.fromFloat): 2^63 > 1e9.
+        (
+            "String.fromBool(Float.fromInt(9223372036854775807 + 1) > 1000000000.0)",
+            "true",
+        ),
+        // Round-trip: Int.fromFloat(Float.fromInt(2^63)) == 2^63 exactly.
+        (
+            "String.fromInt(Int.fromFloat(Float.fromInt(9223372036854775807 + 1)))",
+            "9223372036854775808",
+        ),
+        // Negative Big round-trip.
+        (
+            "String.fromInt(Int.fromFloat(Float.fromInt(0 - (9223372036854775807 + 1))))",
+            "-9223372036854775808",
+        ),
+        // Int.fromFloat of a huge finite float (1e27, built by Float mult) is
+        // an EXACT Big — matches the VM's BigInt::from_f64 rounding.
+        (
+            "String.fromInt(Int.fromFloat(1000000000.0 * 1000000000.0 * 1000000000.0))",
+            "1000000000000000013287555072",
+        ),
+        // Int.fromFloat of a Small-range float stays Small.
+        ("String.fromInt(Int.fromFloat(42.9))", "42"),
+        ("String.fromInt(Int.fromFloat(-42.9))", "-42"),
+        // Float.fromInt of a Small round-trips.
+        (
+            "String.fromBool(Int.fromFloat(Float.fromInt(123456789)) == 123456789)",
+            "true",
+        ),
+    ];
+    let body: String = cases
+        .iter()
+        .map(|(expr, _)| format!("    Console.print({expr})"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let source = format!("module Tmp\n\nfn main()\n    ! [Console.print]\n{body}\n");
+
+    let vm = run_vm("cross-flt-vm", &source).expect("VM must accept the float-exactness harness");
+    let wg = run_wasm_gc_bignum("cross-flt-wg", &source)
+        .expect("wasm-gc (bignum) must accept the float-exactness harness");
+    assert_eq!(
+        vm, wg,
+        "VM vs wasm-gc (bignum) diverged on Int<->Float exactness"
+    );
+    let vm_lines: Vec<&str> = vm.lines().collect();
+    assert_eq!(vm_lines.len(), cases.len(), "line count mismatch");
+    for ((expr, expected), got) in cases.iter().zip(vm_lines.iter()) {
+        assert_eq!(
+            got, expected,
+            "VM ℤ truth wrong for `{expr}`: got {got}, expected {expected}"
+        );
+    }
+}
+
+#[test]
+fn cross_big_vector_index_oob_vm_vs_wasm_gc() {
+    // A Big `Int` index into a `Vector` is necessarily out of bounds, so it
+    // must behave as the VM's `Option.None` — NOT an `I32WrapI64`-truncated
+    // in-range access. Covers Vector.get (boxed) + the negative-index lower
+    // bound. The index is built by arithmetic so it overflows i64 into a Big.
+    // (index-expr, expected). The helper `vg` does the bounds-checked
+    // `Vector.get` + `Option` match (a 3-element vector of `7`s).
+    let cases: &[(&str, &str)] = &[
+        // Big positive index → None.
+        ("9223372036854775807 + 1", "none"),
+        // Big negative index → None.
+        ("0 - (9223372036854775807 + 1)", "none"),
+        // Plain negative index → None.
+        ("0 - 1", "none"),
+        // In-range index still works (the fix must not break valid access).
+        ("1", "7"),
+        // An index that would WRAP to an in-range i32 if truncated
+        // (`2^32 + 1` `I32WrapI64`s to `1`) must still be None.
+        ("4294967296 + 1", "none"),
+    ];
+    let body: String = cases
+        .iter()
+        .map(|(expr, _)| format!("    Console.print(vg({expr}))"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let source = format!(
+        "module Tmp\n\n\
+         fn vg(i: Int) -> String\n    \
+             match Vector.get(Vector.new(3, 7), i)\n        \
+                 Option.Some(x) -> String.fromInt(x)\n        \
+                 Option.None -> \"none\"\n\
+         \n\
+         fn main()\n    ! [Console.print]\n{body}\n"
+    );
+
+    let vm = run_vm("cross-bigidx-vm", &source).expect("VM must accept the big-index harness");
+    let wg = run_wasm_gc_bignum("cross-bigidx-wg", &source)
+        .expect("wasm-gc (bignum) must accept the big-index harness");
+    assert_eq!(
+        vm, wg,
+        "VM vs wasm-gc (bignum) diverged on Big-Vector-index out-of-bounds"
+    );
+    let vm_lines: Vec<&str> = vm.lines().collect();
+    assert_eq!(vm_lines.len(), cases.len(), "line count mismatch");
+    for ((expr, expected), got) in cases.iter().zip(vm_lines.iter()) {
+        assert_eq!(
+            got, expected,
+            "VM ℤ truth wrong for index `{expr}`: got {got}, expected {expected}"
         );
     }
 }

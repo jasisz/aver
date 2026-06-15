@@ -279,12 +279,13 @@ fn aint_string_result_decls(registry: &TypeRegistry) -> Result<String, WasmGcErr
     let struct_idx = registry.aint_struct_idx.ok_or(WasmGcError::Validation(
         "bignum Int.fromString needs the $aint slot, but it wasn't allocated".into(),
     ))?;
-    let result_idx = registry
-        .result_type_idx("Result<Int,String>")
-        .ok_or(WasmGcError::Validation(
-            "bignum Int.fromString needs the Result<Int,String> slot, but it wasn't allocated"
-                .into(),
-        ))?;
+    let result_idx =
+        registry
+            .result_type_idx("Result<Int,String>")
+            .ok_or(WasmGcError::Validation(
+                "bignum Int.fromString needs the Result<Int,String> slot, but it wasn't allocated"
+                    .into(),
+            ))?;
     if !(string_idx < mag_idx && mag_idx + 1 == struct_idx && struct_idx < result_idx) {
         return Err(WasmGcError::Validation(format!(
             "bignum Int.fromString expects string({string_idx}) < mag({mag_idx}), \
@@ -879,9 +880,15 @@ mod validation_guard {
             // builder, the ±inf saturating Float path) is exactly the class
             // the parse-only guard cannot catch, so validate the full module.
             ("__aint_from_string", render_from_string(&registry)),
-            ("__aint_to_f64", render_simple(&registry, include_str!("wat/to_f64.wat"))),
+            (
+                "__aint_to_f64",
+                render_simple(&registry, include_str!("wat/to_f64.wat")),
+            ),
             ("__aint_from_f64", render_from_f64(&registry)),
-            ("__aint_to_index", render_simple(&registry, include_str!("wat/to_index.wat"))),
+            (
+                "__aint_to_index",
+                render_simple(&registry, include_str!("wat/to_index.wat")),
+            ),
         ];
 
         for (name, wat) in modules {
