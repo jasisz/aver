@@ -36,6 +36,59 @@ fn aint_helper(ctx: &EmitCtx<'_>, name: &str) -> Result<u32, WasmGcError> {
         )))
 }
 
+/// bignum slice 3 — emit a `Vector`/`List` index expression and leave a
+/// signed i32 on the stack such that `idx >= 0 (signed)` AND
+/// `idx < len (unsigned)` is the in-bounds predicate. Under the flag the
+/// `$AverInt` index goes through `__aint_to_index` (Big or out-of-range →
+/// the sentinel `-1`, which fails BOTH halves of that predicate, so a Big
+/// index reads out-of-bounds — the VM's `Option.None` — instead of being
+/// `I32WrapI64`-truncated into a wrong slot). Flag-off it is the byte-
+/// identical `I32WrapI64`; the caller still guards the lower bound on the
+/// raw i64 (`index >= 0`), so off-path behaviour is unchanged.
+fn emit_index_i32(
+    func: &mut Function,
+    index: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<bool, WasmGcError> {
+    if emit_mir_expr(func, index, slots, ctx)?.is_none() {
+        return Ok(false);
+    }
+    if ctx.registry.bignum {
+        let to_index = aint_helper(ctx, "__aint_to_index")?;
+        func.instruction(&Instruction::Call(to_index));
+    } else {
+        func.instruction(&Instruction::I32WrapI64);
+    }
+    Ok(true)
+}
+
+/// bignum slice 3 — emit the lower-bound half of an index bounds-check:
+/// flag-off keeps the raw i64 `index >= 0`; flag-on tests the extracted
+/// i32 `idx >= 0` (signed), since `__aint_to_index` already collapses a
+/// negative / Big / too-large index to the `-1` sentinel.
+fn emit_index_nonneg(
+    func: &mut Function,
+    index: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<bool, WasmGcError> {
+    if ctx.registry.bignum {
+        if !emit_index_i32(func, index, slots, ctx)? {
+            return Ok(false);
+        }
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::I32GeS);
+    } else {
+        if emit_mir_expr(func, index, slots, ctx)?.is_none() {
+            return Ok(false);
+        }
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64GeS);
+    }
+    Ok(true)
+}
+
 /// bignum slice 2 — the `(ref null $AverInt)` block-type for `if`/`else`
 /// arms that yield an `Int` under the flag (e.g. the `Int.min`/`max`
 /// select).
@@ -151,6 +204,40 @@ pub(crate) fn emit_mir_native_scalar_builtin(
     }
     let i64_block = wasm_encoder::BlockType::Result(ValType::I64);
     match dotted {
+        // bignum slice 3 — Int <-> Float bridges over `$AverInt`. The
+        // scalar `F64ConvertI64S` / saturating `I64TruncF64S` are WRONG for
+        // values outside i64 (the plan flags this), so under the flag these
+        // route through the limb helpers that match `aver-rt`'s `to_f64`
+        // (±inf saturation) and `from_f64_trunc` (non-finite → 0, huge
+        // finite → exact Big). The i64-scalar arms below stay for flag-off.
+        "Float.fromInt" if args.len() == 1 && ctx.registry.bignum => {
+            let to_f64 = aint_helper(ctx, "__aint_to_f64")?;
+            arg!(0);
+            func.instruction(&Instruction::Call(to_f64));
+        }
+        "Int.fromFloat" if args.len() == 1 && ctx.registry.bignum => {
+            let from_f64 = aint_helper(ctx, "__aint_from_f64")?;
+            arg!(0);
+            func.instruction(&Instruction::Call(from_f64));
+        }
+        "Float.floor" if args.len() == 1 && ctx.registry.bignum => {
+            let from_f64 = aint_helper(ctx, "__aint_from_f64")?;
+            arg!(0);
+            func.instruction(&Instruction::F64Floor);
+            func.instruction(&Instruction::Call(from_f64));
+        }
+        "Float.ceil" if args.len() == 1 && ctx.registry.bignum => {
+            let from_f64 = aint_helper(ctx, "__aint_from_f64")?;
+            arg!(0);
+            func.instruction(&Instruction::F64Ceil);
+            func.instruction(&Instruction::Call(from_f64));
+        }
+        "Float.round" if args.len() == 1 && ctx.registry.bignum => {
+            let from_f64 = aint_helper(ctx, "__aint_from_f64")?;
+            arg!(0);
+            func.instruction(&Instruction::F64Nearest);
+            func.instruction(&Instruction::Call(from_f64));
+        }
         "Float.fromInt" if args.len() == 1 => {
             arg!(0);
             func.instruction(&Instruction::F64ConvertI64S);
@@ -410,19 +497,31 @@ pub(crate) fn emit_mir_option_with_default(
                     format!("Vector.get: element type `{element}` has no wasm representation"),
                 ))?;
             let block_ty = wasm_encoder::BlockType::Result(elem_val);
-            e!(index);
-            func.instruction(&Instruction::I64Const(0));
-            func.instruction(&Instruction::I64GeS);
-            e!(index);
-            func.instruction(&Instruction::I32WrapI64);
+            // bignum slice 3 — index extraction routes through
+            // `__aint_to_index` (Big → OOB), see `emit_index_i32`.
+            macro_rules! idx_nonneg {
+                () => {
+                    if !emit_index_nonneg(func, index, slots, ctx)? {
+                        return Ok(MirBuiltinEmit::Fallback);
+                    }
+                };
+            }
+            macro_rules! idx_i32 {
+                () => {
+                    if !emit_index_i32(func, index, slots, ctx)? {
+                        return Ok(MirBuiltinEmit::Fallback);
+                    }
+                };
+            }
+            idx_nonneg!();
+            idx_i32!();
             e!(vector);
             func.instruction(&Instruction::ArrayLen);
             func.instruction(&Instruction::I32LtU);
             func.instruction(&Instruction::I32And);
             func.instruction(&Instruction::If(block_ty));
             e!(vector);
-            e!(index);
-            func.instruction(&Instruction::I32WrapI64);
+            idx_i32!();
             func.instruction(&Instruction::ArrayGet(vec_idx));
             func.instruction(&Instruction::Else);
             e!(default);
@@ -539,23 +638,34 @@ fn emit_mir_vector_set_or_default(
             }
         };
     }
+    // bignum slice 3 — index extraction through `__aint_to_index`.
+    macro_rules! idx_nonneg {
+        () => {
+            if !emit_index_nonneg(func, index, slots, ctx)? {
+                return Ok(MirBuiltinEmit::Fallback);
+            }
+        };
+    }
+    macro_rules! idx_i32 {
+        () => {
+            if !emit_index_i32(func, index, slots, ctx)? {
+                return Ok(MirBuiltinEmit::Fallback);
+            }
+        };
+    }
 
     // Fast path: dead, non-aliased binding → mutate the engine array in
     // place and return the same handle. No scratch, no allocation.
     if mir_arg_uniquely_owned(vector, ctx) {
-        e!(index);
-        func.instruction(&Instruction::I64Const(0));
-        func.instruction(&Instruction::I64GeS);
-        e!(index);
-        func.instruction(&Instruction::I32WrapI64);
+        idx_nonneg!();
+        idx_i32!();
         e!(vector);
         func.instruction(&Instruction::ArrayLen);
         func.instruction(&Instruction::I32LtU);
         func.instruction(&Instruction::I32And);
         func.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
         e!(vector);
-        e!(index);
-        func.instruction(&Instruction::I32WrapI64);
+        idx_i32!();
         e!(value);
         func.instruction(&Instruction::ArraySet(vec_idx));
         func.instruction(&Instruction::End);
@@ -593,19 +703,15 @@ fn emit_mir_vector_set_or_default(
         array_type_index_src: vec_idx,
     });
 
-    e!(index);
-    func.instruction(&Instruction::I64Const(0));
-    func.instruction(&Instruction::I64GeS);
-    e!(index);
-    func.instruction(&Instruction::I32WrapI64);
+    idx_nonneg!();
+    idx_i32!();
     func.instruction(&Instruction::LocalGet(scratch));
     func.instruction(&Instruction::ArrayLen);
     func.instruction(&Instruction::I32LtU);
     func.instruction(&Instruction::I32And);
     func.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
     func.instruction(&Instruction::LocalGet(scratch));
-    e!(index);
-    func.instruction(&Instruction::I32WrapI64);
+    idx_i32!();
     e!(value);
     func.instruction(&Instruction::ArraySet(vec_idx));
     func.instruction(&Instruction::End);
@@ -1328,14 +1434,18 @@ pub(crate) fn emit_mir_vector_builtin(
                         "Vector.new: instantiation `{canonical}` was not registered"
                     )))?;
             // wasm `array.new` pops [value, size:i32]; Aver pushes size
-            // (i64) then fill, so emit fill, then size, then wrap.
+            // (i64) then fill, so emit fill, then size, then narrow to i32.
+            // Under bignum the size is a `$AverInt` ref, narrowed via
+            // `__aint_to_index` (a Big / negative size → the `-1` sentinel,
+            // i.e. a 0xffffffff length that `array.new` rejects — the VM
+            // likewise can't materialise an out-of-i32 vector); flag-off
+            // keeps the byte-identical `I32WrapI64`.
             if emit_mir_expr(func, &args[1], slots, ctx)?.is_none() {
                 return Ok(MirBuiltinEmit::Fallback);
             }
-            if emit_mir_expr(func, &args[0], slots, ctx)?.is_none() {
+            if !emit_index_i32(func, &args[0], slots, ctx)? {
                 return Ok(MirBuiltinEmit::Fallback);
             }
-            func.instruction(&Instruction::I32WrapI64);
             func.instruction(&Instruction::ArrayNew(vec_idx));
         }
         "Vector.get" if args.len() == 2 => {
@@ -1404,11 +1514,23 @@ pub(crate) fn emit_mir_vector_get_boxed(
             }
         };
     }
-    e!(index);
-    func.instruction(&Instruction::I64Const(0));
-    func.instruction(&Instruction::I64GeS);
-    e!(index);
-    func.instruction(&Instruction::I32WrapI64);
+    // bignum slice 3 — index extraction through `__aint_to_index`.
+    macro_rules! idx_nonneg {
+        () => {
+            if !emit_index_nonneg(func, index, slots, ctx)? {
+                return Ok(MirBuiltinEmit::Fallback);
+            }
+        };
+    }
+    macro_rules! idx_i32 {
+        () => {
+            if !emit_index_i32(func, index, slots, ctx)? {
+                return Ok(MirBuiltinEmit::Fallback);
+            }
+        };
+    }
+    idx_nonneg!();
+    idx_i32!();
     e!(vector);
     func.instruction(&Instruction::ArrayLen);
     func.instruction(&Instruction::I32LtU);
@@ -1416,8 +1538,7 @@ pub(crate) fn emit_mir_vector_get_boxed(
     func.instruction(&Instruction::If(block_ty));
     func.instruction(&Instruction::I32Const(1));
     e!(vector);
-    e!(index);
-    func.instruction(&Instruction::I32WrapI64);
+    idx_i32!();
     func.instruction(&Instruction::ArrayGet(vec_idx));
     func.instruction(&Instruction::StructNew(opt_idx));
     func.instruction(&Instruction::Else);
@@ -1466,20 +1587,31 @@ pub(crate) fn emit_mir_vector_set_boxed(
             }
         };
     }
+    // bignum slice 3 — index extraction through `__aint_to_index`.
+    macro_rules! idx_nonneg {
+        () => {
+            if !emit_index_nonneg(func, index, slots, ctx)? {
+                return Ok(MirBuiltinEmit::Fallback);
+            }
+        };
+    }
+    macro_rules! idx_i32 {
+        () => {
+            if !emit_index_i32(func, index, slots, ctx)? {
+                return Ok(MirBuiltinEmit::Fallback);
+            }
+        };
+    }
     if mir_arg_uniquely_owned(vector, ctx) {
-        e!(index);
-        func.instruction(&Instruction::I64Const(0));
-        func.instruction(&Instruction::I64GeS);
-        e!(index);
-        func.instruction(&Instruction::I32WrapI64);
+        idx_nonneg!();
+        idx_i32!();
         e!(vector);
         func.instruction(&Instruction::ArrayLen);
         func.instruction(&Instruction::I32LtU);
         func.instruction(&Instruction::I32And);
         func.instruction(&Instruction::If(block_ty));
         e!(vector);
-        e!(index);
-        func.instruction(&Instruction::I32WrapI64);
+        idx_i32!();
         e!(value);
         func.instruction(&Instruction::ArraySet(vec_idx));
         func.instruction(&Instruction::I32Const(1));
@@ -1505,11 +1637,8 @@ pub(crate) fn emit_mir_vector_set_boxed(
                  (slot-pre-pass missed this site)"
             ))
         })?;
-    e!(index);
-    func.instruction(&Instruction::I64Const(0));
-    func.instruction(&Instruction::I64GeS);
-    e!(index);
-    func.instruction(&Instruction::I32WrapI64);
+    idx_nonneg!();
+    idx_i32!();
     e!(vector);
     func.instruction(&Instruction::ArrayLen);
     func.instruction(&Instruction::I32LtU);
@@ -1530,8 +1659,7 @@ pub(crate) fn emit_mir_vector_set_boxed(
         array_type_index_src: vec_idx,
     });
     func.instruction(&Instruction::LocalGet(scratch));
-    e!(index);
-    func.instruction(&Instruction::I32WrapI64);
+    idx_i32!();
     e!(value);
     func.instruction(&Instruction::ArraySet(vec_idx));
     func.instruction(&Instruction::I32Const(1));

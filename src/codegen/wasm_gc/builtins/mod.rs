@@ -170,6 +170,14 @@ pub(super) enum BuiltinName {
     AintCmp,
     /// `__aint_eq(a, b) -> i32` (1/0) — equality leaning on canonical form.
     AintEq,
+    // ── bignum slice 3 — decimal parse / Float bridges / index ─────────
+    /// `__aint_to_f64(a) -> f64` — `Float.fromInt` (±inf saturation). slice 3.
+    AintToF64,
+    /// `__aint_from_f64(f) -> $AverInt` — `Int.fromFloat` (exact Big). slice 3.
+    AintFromF64,
+    /// `__aint_to_index(a) -> i32` — Vector/List index extraction; Big →
+    /// OOB sentinel `-1`. slice 3.
+    AintToIndex,
 }
 
 impl BuiltinName {
@@ -237,6 +245,9 @@ impl BuiltinName {
             Self::AintDivmod => "__aint_divmod",
             Self::AintCmp => "__aint_cmp",
             Self::AintEq => "__aint_eq",
+            Self::AintToF64 => "__aint_to_f64",
+            Self::AintFromF64 => "__aint_from_f64",
+            Self::AintToIndex => "__aint_to_index",
         }
     }
 
@@ -286,6 +297,8 @@ impl BuiltinName {
                 aint_ref_ty(registry)?,
                 ValType::I32,
             ]),
+            Self::AintToF64 | Self::AintToIndex => Ok(vec![aint_ref_ty(registry)?]),
+            Self::AintFromF64 => Ok(vec![ValType::F64]),
         }
     }
 
@@ -321,8 +334,10 @@ impl BuiltinName {
             | Self::AintMul
             | Self::AintNeg
             | Self::AintAbs
-            | Self::AintDivmod => Ok(vec![aint_ref_ty(registry)?]),
-            Self::AintCmp | Self::AintEq => Ok(vec![ValType::I32]),
+            | Self::AintDivmod
+            | Self::AintFromF64 => Ok(vec![aint_ref_ty(registry)?]),
+            Self::AintCmp | Self::AintEq | Self::AintToIndex => Ok(vec![ValType::I32]),
+            Self::AintToF64 => Ok(vec![ValType::F64]),
         }
     }
 
@@ -342,6 +357,7 @@ impl BuiltinName {
             Self::StringToUpper => emit_string_case(registry, true),
             Self::StringToLower => emit_string_case(registry, false),
             Self::StringTrim => emit_string_trim(registry),
+            Self::IntFromString if registry.bignum => bignum::emit_aint_from_string(registry),
             Self::IntFromString => emit_int_from_string(registry),
             Self::FloatFromString => emit_float_from_string(registry),
             Self::StringFromFloat => emit_string_from_float(registry),
@@ -367,6 +383,9 @@ impl BuiltinName {
             Self::AintDivmod => bignum::emit_aint_divmod(registry),
             Self::AintCmp => bignum::emit_aint_cmp(registry),
             Self::AintEq => bignum::emit_aint_eq(registry),
+            Self::AintToF64 => bignum::emit_aint_to_f64(registry),
+            Self::AintFromF64 => bignum::emit_aint_from_f64(registry),
+            Self::AintToIndex => bignum::emit_aint_to_index(registry),
         }
     }
 }

@@ -207,6 +207,13 @@ pub(super) fn emit_module_with(
             BuiltinName::AintDivmod,
             BuiltinName::AintCmp,
             BuiltinName::AintEq,
+            // slice 3 — decimal parse / Float bridges / index extraction.
+            // Registered alongside the arithmetic prelude so the conversion
+            // + index re-point sites can assume the fn indices exist; -Oz
+            // strips the unused ones.
+            BuiltinName::AintToF64,
+            BuiltinName::AintFromF64,
+            BuiltinName::AintToIndex,
         ] {
             builtin_registry.register(b);
         }
@@ -2294,6 +2301,16 @@ pub(super) fn emit_module_with(
             eq_helpers_lookup.insert(canonical.clone(), h.eq);
         }
     }
+    // bignum slice 3 — capture the `__aint_eq` fn idx before
+    // `builtin_idx_lookup` is moved into `fn_map`, so the list/vec Int-
+    // element eq sites can route through it (an `i64.eq` on a `$AverInt`
+    // ref is invalid wasm — a latent slice-1/2 gap for any `Vector<Int>`
+    // / `List<Int>`).
+    let aint_eq_fn_idx = if registry.bignum {
+        builtin_idx_lookup.get("__aint_eq").copied()
+    } else {
+        None
+    };
     let fn_map = FnMap {
         by_id,
         builtins: builtin_idx_lookup,
@@ -2861,6 +2878,7 @@ pub(super) fn emit_module_with(
         string_eq_fn_idx,
         &eq_helper_fn_idx_map,
         &hash_helper_fn_idx_map,
+        aint_eq_fn_idx,
     )?;
 
     // Per-(record/sum) `__eq_<TypeName>` helper bodies — emit after
