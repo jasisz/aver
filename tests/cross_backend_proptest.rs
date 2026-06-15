@@ -101,6 +101,34 @@ fn run_wasm_gc(prefix: &str, source: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// Like `run_wasm_gc`, but with the opt-in `AVER_WASMGC_BIGNUM=1` flag
+/// set so `Int` lowers to the arbitrary-precision `$AverInt` carrier
+/// (bignum slice 1). This is the differential oracle for add/sub/mul/
+/// neg/cmp/eq: with the flag on, wasm-gc must agree with the VM
+/// (Int = ℤ) on EVERY input, including the i64-overflow ones the
+/// generator produces.
+fn run_wasm_gc_bignum(prefix: &str, source: &str) -> Result<String, String> {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let path = temp_module(prefix, source);
+    let out = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .env("AVER_WASMGC_BIGNUM", "1")
+        .arg("run")
+        .arg(&path)
+        .arg("--wasm-gc")
+        .output()
+        .expect("expected `aver run --wasm-gc` (bignum) to execute");
+    cleanup(&path);
+    if !out.status.success() {
+        return Err(format!(
+            "wasm-gc (bignum) run failed:\n{}",
+            format_output(&out)
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
 /// Compile `source` to a Rust project via `aver compile --target rust`,
 /// `cargo build` it (a REAL build — the AverInt arithmetic + clone cascade
 /// must type-check + borrow-check), then run the binary and return trimmed
@@ -215,6 +243,44 @@ fn int_expr(max_depth: u32) -> BoxedStrategy<String> {
             (bool_expr(1), inner.clone(), inner.clone()).prop_map(|(c, t, f)| {
                 format!("(match {}\n    true -> {}\n    false -> {})", c, t, f)
             }),
+        ]
+    })
+    .boxed()
+}
+
+/// Depth-bounded Int expression whose LEAVES deliberately include the
+/// i64 boundary values (`i64::MIN`, `i64::MAX`, `0`, `±1`, and
+/// large-near-overflow magnitudes), so the bignum differential oracle
+/// exercises the overflow → Big promotion, the `MIN`/`-1` mul trap edge,
+/// the `-i64::MIN` neg promotion, and the canonical demote-on-cancel
+/// paths — not just random mid-range arithmetic. Mirrors `int_expr`'s
+/// recursion otherwise.
+fn int_boundary_expr(max_depth: u32) -> BoxedStrategy<String> {
+    // Note literals at/over i64::MIN can't be written directly (the
+    // lexer rejects `9223372036854775808`), so `i64::MIN` is built as
+    // `(0 - 9223372036854775807 - 1)`. Negative leaves are parenthesised.
+    let leaf = prop_oneof![
+        (-1_000_000i64..=1_000_000i64).prop_map(|n| if n < 0 {
+            format!("({})", n)
+        } else {
+            n.to_string()
+        }),
+        Just("9223372036854775807".to_string()), // i64::MAX
+        Just("(0 - 9223372036854775807 - 1)".to_string()), // i64::MIN
+        Just("0".to_string()),
+        Just("1".to_string()),
+        Just("(-1)".to_string()),
+        Just("3037000500".to_string()), // ~sqrt(i64::MAX), squares overflow
+        Just("(-3037000500)".to_string()),
+        Just("4611686018427387904".to_string()), // 2^62
+        Just("(-4611686018427387904)".to_string()),
+    ];
+    leaf.prop_recursive(max_depth, 24, 4, |inner| {
+        prop_oneof![
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("({} + {})", a, b)),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("({} - {})", a, b)),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("({} * {})", a, b)),
+            inner.clone().prop_map(|a| format!("(-{})", a)),
         ]
     })
     .boxed()
@@ -338,17 +404,22 @@ proptest! {
     /// (associativity, ordering of side effects inside a chain of
     /// BinOps, …).
     ///
-    /// IGNORED while the Int = ℤ migration is VM-only: the VM now uses
-    /// arbitrary-precision integers (no wrapping), while wasm-gc (and the
-    /// Rust codegen) still wrap on i64 overflow. On the overflow inputs this
-    /// generator produces, the backends therefore diverge by design. Re-enable
-    /// once wasm-gc carries the same bignum `Int` semantics.
+    /// bignum slice 1 — RE-ENABLED. wasm-gc now carries the same
+    /// arbitrary-precision `Int = ℤ` semantics as the VM under the opt-in
+    /// `AVER_WASMGC_BIGNUM` flag (`$AverInt` carrier; add/sub/mul/neg/cmp/
+    /// eq as limb helpers). The differential oracle therefore holds on
+    /// every input — INCLUDING the i64-overflow ones this generator
+    /// produces — which is the whole point: where the wrapping backend
+    /// returned a wrapped-negative i64 (`a*a` at i64::MAX printed `1`),
+    /// the bignum backend now prints the exact ℤ value the VM prints.
+    /// The leaves include i64::MIN/MAX, 0, ±1, and large-near-overflow
+    /// magnitudes so the Big-promotion + mul-trap-edge + neg-promotion
+    /// + canonical-demote paths are all hit.
     #[test]
-    #[ignore = "Int=Z migration is VM-only; wasm-gc still wraps on overflow (intentional WIP divergence)"]
-    fn cross_int_arithmetic_vm_vs_wasm_gc(expr in int_expr(3)) {
+    fn cross_int_arithmetic_vm_vs_wasm_gc(expr in int_boundary_expr(3)) {
         let source = wrap_program(&format!("String.fromInt({})", expr));
         let vm = run_vm("cross-bp-int-vm", &source);
-        let wg = run_wasm_gc("cross-bp-int-wg", &source);
+        let wg = run_wasm_gc_bignum("cross-bp-int-wg", &source);
         match (&vm, &wg) {
             // Both backends accept the program — outputs must match.
             (Ok(v), Ok(w)) => prop_assert_eq!(

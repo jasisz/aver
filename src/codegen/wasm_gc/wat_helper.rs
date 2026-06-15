@@ -65,8 +65,12 @@ pub(in crate::codegen::wasm_gc) fn padding_types(n: u32) -> String {
 pub(in crate::codegen::wasm_gc) fn compile_wat_helper(
     wat_source: &str,
 ) -> Result<Function, WasmGcError> {
-    let module_bytes = wat::parse_str(wat_source)
-        .map_err(|e| WasmGcError::Validation(format!("wat parse: {e}")))?;
+    let module_bytes = wat::parse_str(wat_source).map_err(|e| {
+        if std::env::var_os("AVER_WASMGC_DUMP_WAT").is_some() {
+            eprintln!("--- WAT parse failed ---\n{wat_source}\n--- end WAT ---");
+        }
+        WasmGcError::Validation(format!("wat parse: {e}"))
+    })?;
 
     let mut found_locals: Option<Vec<ValType>> = None;
     let mut found_body: Option<Vec<u8>> = None;

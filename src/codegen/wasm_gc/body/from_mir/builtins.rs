@@ -1374,6 +1374,23 @@ pub(crate) fn emit_mir_numeric_binop(
     if operand == Some(ValType::F64) && r_ty == Some(ValType::I64) {
         func.instruction(&Instruction::F64ConvertI64S);
     }
+    // bignum slice 1 — when Int is the `$AverInt` ref, both operands are
+    // already on the stack as refs; route arithmetic + comparisons
+    // through the limb helpers instead of the wrapping `i64.*` opcodes.
+    // Div is slice 2 — bail to the whole-fn fallback rather than
+    // miscompile (returns `None`).
+    if ctx.registry.bignum
+        && operand != Some(ValType::F64)
+        && operand != Some(ValType::I32)
+        && ctx.registry.aint_struct_idx.is_some()
+        && l_ty
+            == ctx
+                .registry
+                .aint_struct_idx
+                .map(crate::codegen::wasm_gc::types::struct_ref)
+    {
+        return emit_aint_binop(func, bop.op, ctx);
+    }
     let inst = match (operand, bop.op) {
         (Some(ValType::F64), BinOp::Add) => Instruction::F64Add,
         (Some(ValType::F64), BinOp::Sub) => Instruction::F64Sub,
@@ -1406,5 +1423,70 @@ pub(crate) fn emit_mir_numeric_binop(
         (_, BinOp::Gte) => Instruction::I64GeS,
     };
     func.instruction(&inst);
+    Ok(Some(()))
+}
+
+/// bignum slice 1 — emit the arithmetic/comparison for two `$AverInt`
+/// operands already on the stack. Arithmetic (`+`/`-`/`*`) leaves an
+/// `$AverInt` ref; comparisons (`==`/`!=`/`<`/`>`/`<=`/`>=`) leave an
+/// i32 bool. `Div` is slice 2 — returns `None` to fall back to the
+/// whole-fn path rather than emit a wrong result.
+fn emit_aint_binop(
+    func: &mut Function,
+    op: BinOp,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let call = |name: &str| -> Result<u32, WasmGcError> {
+        ctx.fn_map
+            .builtins
+            .get(name)
+            .copied()
+            .ok_or(WasmGcError::Validation(format!(
+                "bignum active but {name} helper not registered"
+            )))
+    };
+    match op {
+        BinOp::Add => {
+            func.instruction(&Instruction::Call(call("__aint_add")?));
+        }
+        BinOp::Sub => {
+            func.instruction(&Instruction::Call(call("__aint_sub")?));
+        }
+        BinOp::Mul => {
+            func.instruction(&Instruction::Call(call("__aint_mul")?));
+        }
+        BinOp::Div => {
+            // slice 2 — not yet supported under bignum; bail.
+            return Ok(None);
+        }
+        BinOp::Eq => {
+            func.instruction(&Instruction::Call(call("__aint_eq")?));
+        }
+        BinOp::Neq => {
+            func.instruction(&Instruction::Call(call("__aint_eq")?));
+            func.instruction(&Instruction::I32Eqz);
+        }
+        // Ordering: `__aint_cmp` → i32 in {-1,0,1}; compare to 0.
+        BinOp::Lt => {
+            func.instruction(&Instruction::Call(call("__aint_cmp")?));
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::I32LtS);
+        }
+        BinOp::Gt => {
+            func.instruction(&Instruction::Call(call("__aint_cmp")?));
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::I32GtS);
+        }
+        BinOp::Lte => {
+            func.instruction(&Instruction::Call(call("__aint_cmp")?));
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::I32LeS);
+        }
+        BinOp::Gte => {
+            func.instruction(&Instruction::Call(call("__aint_cmp")?));
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::I32GeS);
+        }
+    }
     Ok(Some(()))
 }

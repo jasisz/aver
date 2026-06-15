@@ -68,6 +68,8 @@ use super::WasmGcError;
 use super::types::TypeRegistry;
 use super::wat_helper;
 
+mod bignum;
+
 /// Curated set of pure-side builtins phase 3c+ implements. Adding a
 /// new builtin: extend this enum + `from_dotted` + `signature` +
 /// `emit_helper_body`.
@@ -143,6 +145,25 @@ pub(super) enum BuiltinName {
     /// Caller guards `b == 0`; the helper assumes `b != 0` (and would
     /// `i64.div_s`-trap on that or the `i64::MIN / -1` overflow).
     IntDivEuclid,
+    // ── bignum slice 1 — arbitrary-precision Int helpers ─────────────
+    // Each is a self-contained WAT fn over the `$AverInt` struct ref;
+    // registered only under the `AVER_WASMGC_BIGNUM` flag. See
+    // `bignum.rs` for the representation + semantics.
+    /// `__aint_from_i64(i64) -> $AverInt` — canonical Small constructor.
+    AintFromI64,
+    /// `__aint_add(a, b) -> $AverInt` — ℤ add (never wraps).
+    AintAdd,
+    /// `__aint_sub(a, b) -> $AverInt` — ℤ sub (never wraps).
+    AintSub,
+    /// `__aint_mul(a, b) -> $AverInt` — ℤ mul (never wraps); the C0 law
+    /// `a*a >= 0` holds even where i64 would wrap.
+    AintMul,
+    /// `__aint_neg(a) -> $AverInt` — ℤ negate (`-i64::MIN` promotes).
+    AintNeg,
+    /// `__aint_cmp(a, b) -> i32` (-1/0/1) — total order over ℤ.
+    AintCmp,
+    /// `__aint_eq(a, b) -> i32` (1/0) — equality leaning on canonical form.
+    AintEq,
 }
 
 impl BuiltinName {
@@ -201,11 +222,22 @@ impl BuiltinName {
             Self::StringReplace => "String.replace",
             Self::IntModEuclid => "__int_mod_euclid",
             Self::IntDivEuclid => "__int_div_euclid",
+            Self::AintFromI64 => "__aint_from_i64",
+            Self::AintAdd => "__aint_add",
+            Self::AintSub => "__aint_sub",
+            Self::AintMul => "__aint_mul",
+            Self::AintNeg => "__aint_neg",
+            Self::AintCmp => "__aint_cmp",
+            Self::AintEq => "__aint_eq",
         }
     }
 
     pub(super) fn params(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
+            // bignum slice 1 — `String.fromInt` takes the `$AverInt` ref
+            // (and formats Big via divmod-by-10) when bignum is active;
+            // otherwise the scalar i64.
+            Self::StringFromInt if registry.bignum => Ok(vec![aint_ref_ty(registry)?]),
             Self::StringFromInt => Ok(vec![ValType::I64]),
             Self::StringLength | Self::StringByteLength => Ok(vec![string_ref_ty(registry)?]),
             Self::StringConcatN => Ok(vec![string_array_ref_ty(registry)?]),
@@ -235,6 +267,11 @@ impl BuiltinName {
                 string_ref_ty(registry)?,
             ]),
             Self::IntModEuclid | Self::IntDivEuclid => Ok(vec![ValType::I64, ValType::I64]),
+            Self::AintFromI64 => Ok(vec![ValType::I64]),
+            Self::AintAdd | Self::AintSub | Self::AintMul | Self::AintCmp | Self::AintEq => {
+                Ok(vec![aint_ref_ty(registry)?, aint_ref_ty(registry)?])
+            }
+            Self::AintNeg => Ok(vec![aint_ref_ty(registry)?]),
         }
     }
 
@@ -264,6 +301,10 @@ impl BuiltinName {
             Self::ByteToHex => Ok(vec![result_ref_ty(registry, "Result<String,String>")?]),
             Self::StringReplace => Ok(vec![string_ref_ty(registry)?]),
             Self::IntModEuclid | Self::IntDivEuclid => Ok(vec![ValType::I64]),
+            Self::AintFromI64 | Self::AintAdd | Self::AintSub | Self::AintMul | Self::AintNeg => {
+                Ok(vec![aint_ref_ty(registry)?])
+            }
+            Self::AintCmp | Self::AintEq => Ok(vec![ValType::I32]),
         }
     }
 
@@ -272,6 +313,7 @@ impl BuiltinName {
     /// `emit_helper_bodies`.
     pub(super) fn emit_helper_body(self, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
         match self {
+            Self::StringFromInt if registry.bignum => bignum::emit_string_from_aint(registry),
             Self::StringFromInt => emit_string_from_int(registry),
             Self::StringLength => emit_string_length(registry),
             Self::StringByteLength => emit_string_byte_length(registry),
@@ -298,6 +340,13 @@ impl BuiltinName {
             Self::StringReplace => emit_string_replace(registry),
             Self::IntModEuclid => emit_int_mod_euclid(),
             Self::IntDivEuclid => emit_int_div_euclid(),
+            Self::AintFromI64 => bignum::emit_aint_from_i64(registry),
+            Self::AintAdd => bignum::emit_aint_add(registry),
+            Self::AintSub => bignum::emit_aint_sub(registry),
+            Self::AintMul => bignum::emit_aint_mul(registry),
+            Self::AintNeg => bignum::emit_aint_neg(registry),
+            Self::AintCmp => bignum::emit_aint_cmp(registry),
+            Self::AintEq => bignum::emit_aint_eq(registry),
         }
     }
 }
@@ -354,6 +403,11 @@ impl BuiltinRegistry {
         }
         Ok(())
     }
+}
+
+/// `(ref null $AverInt)` — bignum slice 1 carrier ref.
+fn aint_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
+    super::types::aint_ref_ty(registry)
 }
 
 /// `(ref null $string_array)` — shared String repr.

@@ -222,7 +222,21 @@ pub(crate) fn emit_mir_expr(
     match &expr.node {
         MirExpr::Literal(lit) => match &lit.node {
             Literal::Int(n) => {
-                func.instruction(&Instruction::I64Const(*n));
+                // bignum slice 1 — under the opt-in flag every Int value
+                // is the `$AverInt` struct ref, so an Int literal lowers
+                // to `i64.const n; call $__aint_from_i64` (the canonical
+                // Small constructor) instead of a bare `i64.const`.
+                if ctx.registry.bignum {
+                    func.instruction(&Instruction::I64Const(*n));
+                    let from_i64 = ctx.fn_map.builtins.get("__aint_from_i64").copied().ok_or(
+                        WasmGcError::Validation(
+                            "bignum active but __aint_from_i64 helper not registered".into(),
+                        ),
+                    )?;
+                    func.instruction(&Instruction::Call(from_i64));
+                } else {
+                    func.instruction(&Instruction::I64Const(*n));
+                }
                 Ok(Some(true))
             }
             Literal::Float(f) => {
@@ -357,6 +371,19 @@ pub(crate) fn emit_mir_expr(
                     return Ok(None);
                 }
                 func.instruction(&Instruction::F64Neg);
+            } else if ctx.registry.bignum {
+                // bignum slice 1 — Int Neg routes through `__aint_neg`
+                // (handles the `-i64::MIN` promotion to Big); the operand
+                // is already an `$AverInt` ref.
+                if emit_mir_expr(func, inner, slots, ctx)?.is_none() {
+                    return Ok(None);
+                }
+                let neg = ctx.fn_map.builtins.get("__aint_neg").copied().ok_or(
+                    WasmGcError::Validation(
+                        "bignum active but __aint_neg helper not registered".into(),
+                    ),
+                )?;
+                func.instruction(&Instruction::Call(neg));
             } else {
                 func.instruction(&Instruction::I64Const(0));
                 if emit_mir_expr(func, inner, slots, ctx)?.is_none() {
