@@ -1,0 +1,40 @@
+module Prop43Mono
+    intent =
+        "TIP isaplanner prop_43, monomorphized (Aver is first-order, no closures):"
+        "takeWhile p xs ++ dropWhile p xs = xs, with p FIXED to the concrete"
+        "non-degenerate is-zero predicate. Strictly weaker than the higher-order"
+        "original (loses the forall-over-p); the induction is identical, both sides"
+        "case on p(head) exactly as the HO original does."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn isZ(n: Nat) -> Bool
+    match n
+        Nat.Z -> true
+        Nat.S(z) -> false
+
+fn takeWhileZ(xs: List<Nat>) -> List<Nat>
+    match xs
+        [] -> []
+        [y, ..ys] -> match isZ(y)
+            true -> List.concat([y], takeWhileZ(ys))
+            false -> []
+
+fn dropWhileZ(xs: List<Nat>) -> List<Nat>
+    match xs
+        [] -> []
+        [y, ..ys] -> match isZ(y)
+            true -> dropWhileZ(ys)
+            false -> xs
+
+fn append(x: List<Nat>, y: List<Nat>) -> List<Nat>
+    match x
+        [] -> y
+        [z, ..xs] -> List.concat([z], append(xs, y))
+
+verify takeWhileZ law takeDropWhileAppend
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.Z, Nat.Z, Nat.S(Nat.Z), Nat.Z]]
+    append(takeWhileZ(xs), dropWhileZ(xs)) => xs

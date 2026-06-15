@@ -1,0 +1,25 @@
+module Prop36Mono
+    intent =
+        "TIP isaplanner prop_36, monomorphized (Aver is first-order, no closures):"
+        "takeWhile (\\x -> True) xs = xs. The original predicate IS the constant"
+        "True, so the concrete constTrue is a FAITHFUL rendering (no arbitrary"
+        "instance choice). takeWhileT always keeps, so it returns the whole list."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn constTrue(n: Nat) -> Bool
+    true
+
+fn takeWhileT(xs: List<Nat>) -> List<Nat>
+    match xs
+        [] -> []
+        [y, ..ys] -> match constTrue(y)
+            true -> List.concat([y], takeWhileT(ys))
+            false -> []
+
+verify takeWhileT law takeWhileTrueId
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]]
+    takeWhileT(xs) => xs

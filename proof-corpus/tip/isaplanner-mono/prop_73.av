@@ -1,0 +1,32 @@
+module Prop73Mono
+    intent =
+        "TIP isaplanner prop_73, monomorphized (Aver is first-order, no closures):"
+        "rev (filter p xs) = filter p (rev xs), with p FIXED to the concrete"
+        "non-degenerate is-zero predicate. Strictly weaker than the higher-order"
+        "original (loses the forall-over-p); the induction is identical."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn isZ(n: Nat) -> Bool
+    match n
+        Nat.Z -> true
+        Nat.S(z) -> false
+
+fn filterZ(xs: List<Nat>) -> List<Nat>
+    match xs
+        [] -> []
+        [y, ..ys] -> match isZ(y)
+            true -> List.concat([y], filterZ(ys))
+            false -> filterZ(ys)
+
+fn rev(xs: List<Nat>) -> List<Nat>
+    match xs
+        [] -> []
+        [y, ..ys] -> List.concat(rev(ys), [y])
+
+verify filterZ law filterRevCommute
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z)), Nat.Z]]
+    rev(filterZ(xs)) => filterZ(rev(xs))
