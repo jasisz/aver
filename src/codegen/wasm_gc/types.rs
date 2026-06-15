@@ -138,6 +138,26 @@ pub(super) struct TypeRegistry {
     /// declared. The runtime allocates the array lazily on first
     /// `Tcp.connect` call via `array.new_default` against this idx.
     pub(super) tcp_pool_type_idx: Option<u32>,
+    /// bignum slice 1 — opt-in arbitrary-precision `Int`. `true` when
+    /// the `AVER_WASMGC_BIGNUM` env flag is set AND any Int arithmetic
+    /// is reachable (so pure-String/Float/effect-only programs carry
+    /// zero bignum bytes). When set, `Int` lowers to `(ref null
+    /// $AverInt)` everywhere instead of the scalar `i64`, and `*` / `+`
+    /// / `-` / neg / cmp / eq route through the limb-arithmetic WAT
+    /// helpers rather than the wrapping `i64.*` opcodes.
+    pub(super) bignum: bool,
+    /// bignum slice 1 — wasm type idx for the `$AverInt` struct
+    /// `(struct (field $small i64) (field $mag (ref null (array i64)))
+    /// (field $sign i32))`. `Some` iff `bignum` is set. `$mag == null`
+    /// → Small (value in `$small`, the i64 fast path); non-null `$mag`
+    /// → Big (little-endian unsigned u64 limb magnitude + `$sign ∈
+    /// {-1,0,+1}`). Mirrors `aver-rt/src/int.rs` `AverInt`.
+    pub(super) aint_struct_idx: Option<u32>,
+    /// bignum slice 1 — wasm type idx for the `(array (mut i64))` limb
+    /// magnitude array referenced by `$AverInt.$mag`. `Some` iff
+    /// `bignum` is set; sits one slot below `aint_struct_idx` so the
+    /// struct can reference it without a forward edge.
+    pub(super) aint_mag_array_idx: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -304,6 +324,26 @@ impl TypeRegistry {
             let pool_idx = next_idx;
             next_idx += 1;
             (Some(slot_idx), Some(pool_idx))
+        } else {
+            (None, None)
+        };
+
+        // bignum slice 1 — `$AverInt` + `(array i64)` magnitude slots.
+        // Gated on the opt-in `AVER_WASMGC_BIGNUM` env flag AND "any Int
+        // arithmetic is reachable" so pure-String/Float/effect-only
+        // programs (and the 245B hello-worker) carry ZERO bignum bytes.
+        // The magnitude array slot is allocated first so the struct can
+        // reference it without a forward edge (a single rec group makes
+        // this safe, but keeping the array lower mirrors the other
+        // collection slots and reads cleaner).
+        let bignum_flag = std::env::var_os("AVER_WASMGC_BIGNUM").is_some();
+        let bignum = bignum_flag && resolved_fn_defs.iter().any(fn_uses_int_arithmetic);
+        let (aint_mag_array_idx, aint_struct_idx) = if bignum {
+            let mag_idx = next_idx;
+            next_idx += 1;
+            let struct_idx = next_idx;
+            next_idx += 1;
+            (Some(mag_idx), Some(struct_idx))
         } else {
             (None, None)
         };
@@ -915,6 +955,9 @@ impl TypeRegistry {
             non_newtypable_keys,
             tcp_slot_type_idx,
             tcp_pool_type_idx,
+            bignum,
+            aint_struct_idx,
+            aint_mag_array_idx,
         }
     }
 
@@ -1400,6 +1443,81 @@ fn fn_body_calls_int_div(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
     fn_body_calls_builtin(fd, "Int.div")
 }
 
+/// bignum slice 1 — "any Int arithmetic reachable" gate. True iff the
+/// fn signature mentions `Int` (param or return) OR the body contains
+/// an arithmetic `BinOp` / `Neg` / Int literal. Used to keep the
+/// `$AverInt` slots out of pure-String/Float/effect-only programs even
+/// when the `AVER_WASMGC_BIGNUM` flag is set. Deliberately broad (an
+/// Int param is enough): the cost of a false positive is two unused
+/// type slots that `wasm-opt -Oz` would strip anyway; a false negative
+/// would be a miscompile, so we err toward inclusion.
+fn fn_uses_int_arithmetic(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
+    use crate::ir::hir::{ResolvedExpr, ResolvedFnBody, ResolvedStmt};
+    if fd
+        .return_type
+        .display()
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|t| t == "Int")
+    {
+        return true;
+    }
+    if fd.params.iter().any(|(_, t)| {
+        t.display()
+            .split(|c: char| !c.is_alphanumeric())
+            .any(|tok| tok == "Int")
+    }) {
+        return true;
+    }
+    fn walk(e: &ResolvedExpr) -> bool {
+        use crate::ast::Literal;
+        match e {
+            ResolvedExpr::Literal(Literal::Int(_)) => true,
+            ResolvedExpr::Neg(_) => true,
+            ResolvedExpr::BinOp(op, l, r) => {
+                use crate::ast::BinOp;
+                matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div)
+                    || walk(&l.node)
+                    || walk(&r.node)
+            }
+            ResolvedExpr::Call(_, args) | ResolvedExpr::Ctor(_, args) => {
+                args.iter().any(|a| walk(&a.node))
+            }
+            ResolvedExpr::Match { subject, arms } => {
+                walk(&subject.node) || arms.iter().any(|a| walk(&a.body.node))
+            }
+            ResolvedExpr::TailCall { args, .. } => args.iter().any(|a| walk(&a.node)),
+            ResolvedExpr::Attr(o, _) | ResolvedExpr::ErrorProp(o) => walk(&o.node),
+            ResolvedExpr::List(xs)
+            | ResolvedExpr::Tuple(xs)
+            | ResolvedExpr::IndependentProduct(xs, _) => xs.iter().any(|x| walk(&x.node)),
+            ResolvedExpr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| walk(&e.node)),
+            ResolvedExpr::RecordUpdate { base, updates, .. } => {
+                walk(&base.node) || updates.iter().any(|(_, e)| walk(&e.node))
+            }
+            // Arithmetic hidden inside a `{...}` interpolation or a Map
+            // literal must still flip the gate — string interpolation is the
+            // idiomatic way to render an Int, and a missed arm lowers the
+            // WHOLE module's Int as wrapping i64 (a silent miscompile, not an
+            // error). The remaining arms are genuine leaves; enumerated
+            // explicitly (no `_` wildcard) so a future `ResolvedExpr` variant
+            // fails the build rather than silently defaulting the gate off.
+            ResolvedExpr::InterpolatedStr(parts) => parts.iter().any(|p| {
+                matches!(p, crate::ir::hir::ResolvedStrPart::Parsed(inner) if walk(&inner.node))
+            }),
+            ResolvedExpr::MapLiteral(pairs) => {
+                pairs.iter().any(|(k, v)| walk(&k.node) || walk(&v.node))
+            }
+            ResolvedExpr::Literal(_)
+            | ResolvedExpr::Ident(_)
+            | ResolvedExpr::Resolved { .. } => false,
+        }
+    }
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
+    stmts.iter().any(|stmt| match stmt {
+        ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => walk(&e.node),
+    })
+}
+
 fn collect_string_literals_in_fn(
     fd: &crate::ir::hir::ResolvedFnDef,
     out: &mut Vec<Vec<u8>>,
@@ -1512,6 +1630,16 @@ pub(super) fn aver_to_wasm(
     registry: Option<&TypeRegistry>,
 ) -> Result<Option<ValType>, WasmGcError> {
     let trimmed = type_str.trim();
+    // bignum slice 1 — under the opt-in flag, `Int` is the `$AverInt`
+    // struct ref everywhere (signatures, locals, etc.), NOT the scalar
+    // `i64`. Intercept before `primitive_to_wasm` so the ref shape wins.
+    // Float / Bool keep their scalar lowering.
+    if trimmed == "Int"
+        && let Some(reg) = registry
+        && reg.bignum
+    {
+        return Ok(Some(aint_ref_ty(reg)?));
+    }
     if let Some(v) = primitive_to_wasm(trimmed) {
         return Ok(Some(v));
     }
@@ -1743,6 +1871,17 @@ pub(super) fn struct_ref(type_idx: u32) -> ValType {
         nullable: true,
         heap_type: HeapType::Concrete(type_idx),
     })
+}
+
+/// bignum slice 1 — `(ref null $AverInt)` ValType for the carrier
+/// struct. Errors if the registry has no `$AverInt` slot (i.e. bignum
+/// is off but a site asked for it), which is a wiring bug, not a user
+/// error.
+pub(super) fn aint_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
+    let idx = registry.aint_struct_idx.ok_or(WasmGcError::Validation(
+        "Int reachable under bignum but no $AverInt type slot was allocated".into(),
+    ))?;
+    Ok(struct_ref(idx))
 }
 
 /// Result-list shape for a wasm function signature derived from an

@@ -191,6 +191,24 @@ pub(super) fn emit_module_with(
             &symbol_table,
         );
     }
+    // bignum slice 1 — when the opt-in `$AverInt` representation is
+    // active, register the full arithmetic prelude. Registration is
+    // unconditional (not per-op-discovered) because the literal /
+    // BinOp / Neg re-point sites all assume these fn indices exist;
+    // `wasm-opt -Oz` strips any helper a given program never reaches.
+    if registry.bignum {
+        for b in [
+            BuiltinName::AintFromI64,
+            BuiltinName::AintAdd,
+            BuiltinName::AintSub,
+            BuiltinName::AintMul,
+            BuiltinName::AintNeg,
+            BuiltinName::AintCmp,
+            BuiltinName::AintEq,
+        ] {
+            builtin_registry.register(b);
+        }
+    }
     // Sweep nominal element types of every registered List / Vector
     // and key types of every registered Map. The list/vec helper
     // bodies dispatch nominal element eq/hash via `Call(__eq_<X>)`
@@ -4319,6 +4337,51 @@ fn emit_user_types(
                 element_type: wasm_encoder::StorageType::I8,
                 mutable: true,
             }),
+        ));
+    }
+
+    // bignum slice 1 — `$AverInt` carrier + its `(array i64)` limb
+    // magnitude. Emitted only when the registry allocated them (opt-in
+    // flag + reachable Int arithmetic). The magnitude array slot sits
+    // one below the struct slot so the struct's `$mag` field references
+    // an already-defined idx (a single rec group makes forward refs
+    // legal too, but this keeps the layout obvious).
+    if let (Some(mag_idx), Some(struct_idx)) =
+        (registry.aint_mag_array_idx, registry.aint_struct_idx)
+    {
+        use wasm_encoder::{HeapType, RefType, StorageType, ValType};
+        // (array (mut i64)) — little-endian unsigned u64 limbs.
+        entries.push((
+            mag_idx,
+            mk_array(wasm_encoder::FieldType {
+                element_type: StorageType::Val(ValType::I64),
+                mutable: true,
+            }),
+        ));
+        // (struct (field $small i64)
+        //         (field $mag (ref null (array i64)))
+        //         (field $sign i32))
+        // Mutable fields so a helper can renormalize in place when it
+        // demotes a Big to Small without a fresh allocation.
+        entries.push((
+            struct_idx,
+            mk_struct(vec![
+                wasm_encoder::FieldType {
+                    element_type: StorageType::Val(ValType::I64),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: StorageType::Val(ValType::Ref(RefType {
+                        nullable: true,
+                        heap_type: HeapType::Concrete(mag_idx),
+                    })),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+            ]),
         ));
     }
 
