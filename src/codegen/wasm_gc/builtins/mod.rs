@@ -160,6 +160,12 @@ pub(super) enum BuiltinName {
     AintMul,
     /// `__aint_neg(a) -> $AverInt` — ℤ negate (`-i64::MIN` promotes).
     AintNeg,
+    /// `__aint_abs(a) -> $AverInt` — ℤ abs (`|i64::MIN|` promotes). slice 2.
+    AintAbs,
+    /// `__aint_divmod(a, b, want_mod) -> $AverInt` — Euclidean division
+    /// (`want_mod == 0`) or modulo (`want_mod != 0`); remainder always in
+    /// `[0, |b|)`. Caller guards `b == 0`. slice 2.
+    AintDivmod,
     /// `__aint_cmp(a, b) -> i32` (-1/0/1) — total order over ℤ.
     AintCmp,
     /// `__aint_eq(a, b) -> i32` (1/0) — equality leaning on canonical form.
@@ -227,6 +233,8 @@ impl BuiltinName {
             Self::AintSub => "__aint_sub",
             Self::AintMul => "__aint_mul",
             Self::AintNeg => "__aint_neg",
+            Self::AintAbs => "__aint_abs",
+            Self::AintDivmod => "__aint_divmod",
             Self::AintCmp => "__aint_cmp",
             Self::AintEq => "__aint_eq",
         }
@@ -271,7 +279,13 @@ impl BuiltinName {
             Self::AintAdd | Self::AintSub | Self::AintMul | Self::AintCmp | Self::AintEq => {
                 Ok(vec![aint_ref_ty(registry)?, aint_ref_ty(registry)?])
             }
-            Self::AintNeg => Ok(vec![aint_ref_ty(registry)?]),
+            Self::AintNeg | Self::AintAbs => Ok(vec![aint_ref_ty(registry)?]),
+            // `want_mod` selects modulo (≠0) vs division (0).
+            Self::AintDivmod => Ok(vec![
+                aint_ref_ty(registry)?,
+                aint_ref_ty(registry)?,
+                ValType::I32,
+            ]),
         }
     }
 
@@ -301,9 +315,13 @@ impl BuiltinName {
             Self::ByteToHex => Ok(vec![result_ref_ty(registry, "Result<String,String>")?]),
             Self::StringReplace => Ok(vec![string_ref_ty(registry)?]),
             Self::IntModEuclid | Self::IntDivEuclid => Ok(vec![ValType::I64]),
-            Self::AintFromI64 | Self::AintAdd | Self::AintSub | Self::AintMul | Self::AintNeg => {
-                Ok(vec![aint_ref_ty(registry)?])
-            }
+            Self::AintFromI64
+            | Self::AintAdd
+            | Self::AintSub
+            | Self::AintMul
+            | Self::AintNeg
+            | Self::AintAbs
+            | Self::AintDivmod => Ok(vec![aint_ref_ty(registry)?]),
             Self::AintCmp | Self::AintEq => Ok(vec![ValType::I32]),
         }
     }
@@ -345,6 +363,8 @@ impl BuiltinName {
             Self::AintSub => bignum::emit_aint_sub(registry),
             Self::AintMul => bignum::emit_aint_mul(registry),
             Self::AintNeg => bignum::emit_aint_neg(registry),
+            Self::AintAbs => bignum::emit_aint_abs(registry),
+            Self::AintDivmod => bignum::emit_aint_divmod(registry),
             Self::AintCmp => bignum::emit_aint_cmp(registry),
             Self::AintEq => bignum::emit_aint_eq(registry),
         }

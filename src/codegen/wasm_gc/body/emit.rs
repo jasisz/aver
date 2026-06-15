@@ -23,6 +23,26 @@ pub(super) fn emit_default_value(
     registry: &TypeRegistry,
 ) -> Result<(), WasmGcError> {
     match aver_ty.trim() {
+        // bignum slice 1/2 — under the opt-in flag, the default `Int` is
+        // the canonical `$AverInt` Small(0) struct ref, not the scalar
+        // `i64` zero. Used as the ok-field placeholder of `Result.Err`
+        // carriers (e.g. `Int.div`/`Int.mod`'s `Result<Int,String>`),
+        // where the field type is now `(ref null $aint)`.
+        "Int" if registry.bignum => {
+            let aint_idx = registry.aint_struct_idx.ok_or(WasmGcError::Validation(
+                "bignum default Int needs the $AverInt struct slot, but it wasn't allocated".into(),
+            ))?;
+            let mag_idx = registry.aint_mag_array_idx.ok_or(WasmGcError::Validation(
+                "bignum default Int needs the $mag array slot, but it wasn't allocated".into(),
+            ))?;
+            func.instruction(&Instruction::I64Const(0));
+            func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+                mag_idx,
+            )));
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::StructNew(aint_idx));
+            Ok(())
+        }
         "Int" => {
             func.instruction(&Instruction::I64Const(0));
             Ok(())

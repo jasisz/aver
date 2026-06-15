@@ -203,6 +203,8 @@ pub(super) fn emit_module_with(
             BuiltinName::AintSub,
             BuiltinName::AintMul,
             BuiltinName::AintNeg,
+            BuiltinName::AintAbs,
+            BuiltinName::AintDivmod,
             BuiltinName::AintCmp,
             BuiltinName::AintEq,
         ] {
