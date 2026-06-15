@@ -812,6 +812,107 @@ fn cross_int_float_exactness_vm_vs_wasm_gc() {
 }
 
 #[test]
+fn cross_float_from_int_rounding_vm_vs_wasm_gc() {
+    // `Float.fromInt` (Big → f64) must be CORRECTLY ROUNDED (round-to-nearest-
+    // even), bit-identical to the VM's `AverInt::to_f64` (which funnels through
+    // `num_bigint::BigInt::to_f64`). The earlier exactness test
+    // (`cross_int_float_exactness_vm_vs_wasm_gc`) only fed `Float.fromInt`
+    // EXACTLY-representable Bigs (2^63, 1e27-class), so it never exercised the
+    // rounding boundary. A high→low Horner accumulation (`acc = acc*2^32 + limb`
+    // in f64) double-rounds, diverging by 1 ULP on ~10% of >=3-limb magnitudes;
+    // this test feeds NON-representable >=3-limb Bigs (>= ~2^85) and asserts the
+    // round-trip `Int.fromFloat(Float.fromInt(big)) == big` matches the VM
+    // exactly. It FAILS on the pre-fix Horner helper and PASSES after the
+    // sticky-jam top-64-bits conversion (confirmed empirically in wasmtime).
+    //
+    // Inputs: the three cross-vendor counterexamples, plus a deterministic
+    // spread of >=3-limb magnitudes (both signs) including near-power-of-two
+    // and bit-53 tie/round boundary shapes, so the rounding decision is
+    // exercised in both directions (round up, round down, exact, tie-to-even).
+    let mut cases: Vec<String> = vec![
+        // Confirmed off-by-1-ULP counterexamples from two cross-vendor panels.
+        "38693363567040072931711122".to_string(),
+        "1842425632053114986489719067".to_string(),
+        "1204155011761264803879351098619922060".to_string(),
+        // Negative variants (sign applied after the correctly-rounded magnitude).
+        "-38693363567040072931711122".to_string(),
+        "-1204155011761264803879351098619922060".to_string(),
+        // Near power-of-two +/- 1 (>= 3 limbs): 2^85, 2^96, 2^127, 2^200.
+        "38685626227668133590597632".to_string(), // 2^85 (exact)
+        "38685626227668133590597631".to_string(), // 2^85 - 1
+        "79228162514264337593543950336".to_string(), // 2^96 (exact)
+        "79228162514264337593543950337".to_string(), // 2^96 + 1
+        "170141183460469231731687303715884105728".to_string(), // 2^127
+        "170141183460469231731687303715884105727".to_string(), // 2^127 - 1
+        // bit-53 tie/round boundary: ((2^53 + k) << s) and +/- a low bit, so
+        // round-to-nearest-even is forced both ways across the dropped bits.
+        "77371252455336267181195264".to_string(), // (2^53) << 33, exact
+        "77371252455336267181195265".to_string(), // + 1 (sticky -> round up?)
+        "77371252455336275771129856".to_string(), // (2^53) << 33 + 2^32 (half -> tie-even)
+        "77371252455336284361064448".to_string(), // (2^53 + 1) << 33
+        "618970019642690137449562112".to_string(), // (2^53) << 36
+        "618970019642690137449562113".to_string(), // + 1
+        // A long magnitude (>= 6 limbs) so the multi-limb sticky OR is hit.
+        "12345678901234567890123456789012345678901234567890".to_string(),
+        "-12345678901234567890123456789012345678901234567890".to_string(),
+    ];
+    // A deterministic LCG spread of >=3-limb magnitudes, both signs, so the
+    // 1-ULP divergence (which the Horner helper hit on ~10% of inputs) is very
+    // likely to be tripped by at least one case if the fix ever regresses.
+    let mut state: u128 = 0x9E37_79B9_7F4A_7C15;
+    for _ in 0..40 {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let hi = (state >> 64) as u64;
+        let lo = state as u64;
+        // 96..160-bit magnitude (>= 3 32-bit limbs), top bit forced set.
+        let mag = ((hi as u128) << 64) | (lo as u128) | (1u128 << 95);
+        let sign = if state & 1 == 0 { "" } else { "-" };
+        cases.push(format!("{sign}{mag}"));
+    }
+
+    // Render each through the round-trip `Int.fromFloat(Float.fromInt(big))`
+    // (the observable both panels used — avoids the unrelated huge-magnitude
+    // `String.fromFloat` trap). The VM is the ℤ oracle.
+    let body: String = cases
+        .iter()
+        .map(|c| format!("    Console.print(rt(\"{c}\"))"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let source = format!(
+        "module Tmp\n\n\
+         fn rt(s: String) -> String\n    \
+             match Int.fromString(s)\n        \
+                 Result.Ok(n) -> String.fromInt(Int.fromFloat(Float.fromInt(n)))\n        \
+                 Result.Err(e) -> e\n\
+         \n\
+         fn main()\n    ! [Console.print]\n{body}\n"
+    );
+
+    let vm =
+        run_vm("cross-flt-round-vm", &source).expect("VM must accept the float-rounding harness");
+    let wg = run_wasm_gc_bignum("cross-flt-round-wg", &source)
+        .expect("wasm-gc (bignum) must accept the float-rounding harness");
+    assert_eq!(
+        vm, wg,
+        "VM vs wasm-gc (bignum) diverged on Float.fromInt(Big) correct rounding \
+         (the round-trip Int.fromFloat(Float.fromInt(big)) drifted by >= 1 ULP)"
+    );
+    // Sanity: the corpus actually exercised >=3-limb Bigs (none collapsed to a
+    // trivially-agreeing Small) — every line is a long decimal, not "0".
+    assert_eq!(
+        vm.lines().count(),
+        cases.len(),
+        "line count mismatch (a case failed to render)"
+    );
+    assert!(
+        vm.lines().all(|l| l.trim_start_matches('-').len() > 18),
+        "expected every round-trip to render a past-i64 (>18 digit) magnitude"
+    );
+}
+
+#[test]
 fn cross_big_vector_index_oob_vm_vs_wasm_gc() {
     // A Big `Int` index into a `Vector` is necessarily out of bounds, so it
     // must behave as the VM's `Option.None` — NOT an `I32WrapI64`-truncated

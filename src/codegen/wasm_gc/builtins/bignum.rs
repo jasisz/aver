@@ -389,10 +389,15 @@ pub(super) fn emit_aint_from_i64(registry: &TypeRegistry) -> Result<Function, Wa
 }
 
 /// `__aint_to_f64(a) -> f64` — `Float.fromInt` under bignum. Small is an
-/// exact `i64→f64` round; Big runs a Horner accumulation over the limbs
-/// (`acc = acc*2^32 + limb`, high→low) that saturates to `±inf` for
-/// magnitudes past f64 range, mirroring `AverInt::to_f64`
-/// (`aver-rt/src/int.rs`).
+/// exact `i64→f64` round; Big is CORRECTLY ROUNDED (round-to-nearest-even,
+/// bit-identical to `num_bigint::BigInt::to_f64`) via the sticky-jam
+/// technique: reduce the magnitude to its top 64 significant bits `M` with
+/// shift `s = sigbits - 64`, OR every dropped lower bit into a sticky bit,
+/// jam sticky into `M`'s LSB, `f64.convert_i64_u(M)`, then multiply by the
+/// EXACT power of two `2^s` (saturating to `±inf` for magnitudes past f64
+/// range). A naive high→low Horner accumulation (`acc = acc*2^32 + limb`)
+/// double-rounds and drifts 1 ULP on ~10% of >=3-limb magnitudes — the
+/// sticky-jam single-rounds, matching `AverInt::to_f64` (`aver-rt/src/int.rs`).
 pub(super) fn emit_aint_to_f64(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let decls = aint_type_decls(registry)?;
     let wat = format!(include_str!("wat/to_f64.wat"), decls = decls);
