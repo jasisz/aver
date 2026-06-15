@@ -442,10 +442,24 @@ fn emit_fn_def_with_visibility(
             .unwrap_or_default()
     };
 
+    // Int unboxing facts for this fn (the bare-`i64` param/return summary).
+    // Read off the same `BareI64Facts` the body emit applies, so the
+    // non-TCO signature and body never disagree on which params/return are
+    // bare. `None` for fns the analysis didn't see (fail-closed → boxed).
+    // The self-TCO signature emits its own bare params inside
+    // `emit_mir_tco_fn`; here we only touch the non-TCO branch.
+    let bare_facts = ctx.bare_i64.for_fn(resolved_fd.fn_id);
+
     // Function signature
-    let params = emit_fn_params_with_owned(&fd.params, has_tco, &owned_collection_params);
+    let params = if has_tco {
+        emit_fn_params_with_owned(&fd.params, has_tco, &owned_collection_params)
+    } else {
+        emit_fn_params_with_bare(&fd.params, &owned_collection_params, bare_facts)
+    };
     let ret_type = if fd.return_type.is_empty() {
         "()".to_string()
+    } else if !has_tco && bare_facts.is_some_and(|f| f.bare_return) {
+        "i64".to_string()
     } else {
         type_annotation_to_rust(&fd.return_type)
     };
@@ -685,6 +699,36 @@ fn emit_fn_params_with_owned(
     owned_params: &HashSet<String>,
 ) -> String {
     emit_fn_params_inner(params, mutable, &HashSet::new(), owned_params)
+}
+
+/// Emit the non-TCO param signature with Int-unboxing applied: a param the
+/// analysis proved bare emits `p: i64` (by value, `Copy`); every other
+/// param falls through to [`emit_fn_params_inner`]'s owned / borrow /
+/// by-value decision. Used on the non-TCO path; the self-TCO signature
+/// handles its own bare params in `emit_mir_tco_fn`.
+fn emit_fn_params_with_bare(
+    params: &[(String, String)],
+    owned_params: &HashSet<String>,
+    bare_facts: Option<&crate::ir::mir::FnBareFacts>,
+) -> String {
+    params
+        .iter()
+        .enumerate()
+        .map(|(i, (name, type_ann))| {
+            if bare_facts.is_some_and(|f| f.param_is_bare(i)) {
+                return format!("{}: i64", aver_name_to_rust(name));
+            }
+            // Fall back to the single-param shape the inner emitter would
+            // produce for a non-bare, non-rc param.
+            emit_fn_params_inner(
+                std::slice::from_ref(&(name.clone(), type_ann.clone())),
+                false,
+                &HashSet::new(),
+                owned_params,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn emit_fn_params_inner(
@@ -1447,6 +1491,7 @@ mod tests {
             resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
             program_shape: None,
             mir_program: None,
+            bare_i64: Default::default(),
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
         }

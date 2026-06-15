@@ -89,9 +89,10 @@ pub use expr::{
 };
 pub use instantiations::{InstantiationRegistry, discover_instantiations};
 pub use lower::{lower_program, lower_top_level_value};
+pub use optimize::bare_i64;
 pub use optimize::{
-    algebraic_simplify, bool_match_to_if, branch_collapse, const_fold, dead_code,
-    inline_nullary_literals, optimize,
+    BareI64Facts, FnBareFacts, Repr, ValueFact, algebraic_simplify, bool_match_to_if,
+    branch_collapse, const_fold, dead_code, inline_nullary_literals, optimize,
 };
 pub use program::{LocalId, MirFn, MirParam, MirProgram};
 pub use stats::{LowerStats, SkipReason};

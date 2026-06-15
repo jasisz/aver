@@ -8351,6 +8351,7 @@ mod tests {
             resolved_program: aver::codegen::program_view::ResolvedProgramView::default(),
             program_shape: None,
             mir_program: None,
+            bare_i64: Default::default(),
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
         }
