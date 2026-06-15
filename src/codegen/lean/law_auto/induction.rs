@@ -1378,6 +1378,7 @@ fn emit_list_induction(
     let mk_arms = |arm_simp: &str,
                    arm_split: &str,
                    bridges: Option<&str>,
+                   cases_extra: Option<&str>,
                    with_sorry: bool|
      -> (String, String) {
         let nil_bridge = bridges
@@ -1388,6 +1389,18 @@ fn emit_list_induction(
             .unwrap_or_default();
         let split_bridge = bridges
             .map(|b| format!(" <;> (try simp only [{b}])"))
+            .unwrap_or_default();
+        // A second `cases tail` branch over a BRIDGED simp set (the law's defs
+        // with each canonical-Peano op's def swapped for its proven `f a b =
+        // a OP b` bridge). The bare `cases tail` branch above exposes the inner
+        // constructor of a two-deep match (`last`/`butlast`), but a residual
+        // like `minus (len t) 0 = len t` still defeats `omega` because `minus`
+        // is an opaque user fn; rewriting it to builtin `-` via the bridge makes
+        // the leftover pure linear arithmetic that `omega` decides. Additive and
+        // sound (runs after the bare branch fails, `<;> omega` throws on any
+        // leftover), so it can only ADD closures.
+        let cases_extra_branch = cases_extra
+            .map(|s| format!(" | (cases tail <;> simp_all [{s}] <;> omega)"))
             .unwrap_or_default();
         let tail = if with_sorry { " | sorry" } else { "" };
         (
@@ -1406,7 +1419,7 @@ fn emit_list_induction(
             // non-closing arm still degrades to the honest `sorry`. Sound, so it
             // can only ADD closures.
             format!(
-                "| cons head tail ih => first | (simp_all [{arm_simp}]; done) | (simp_all [{arm_simp}]; omega){cons_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega) | (cases tail <;> simp_all [{arm_simp}] <;> omega){tail}"
+                "| cons head tail ih => first | (simp_all [{arm_simp}]; done) | (simp_all [{arm_simp}]; omega){cons_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega) | (cases tail <;> simp_all [{arm_simp}] <;> omega){cases_extra_branch}{tail}"
             ),
         )
     };
@@ -1449,7 +1462,34 @@ fn emit_list_induction(
             wrap(&ladder("simp_all"))
         ));
     } else if fast_simp.is_empty() && gen_given.is_none() {
-        let (nil_arm, cons_arm) = mk_arms(&simp_list, &split_set, None, true);
+        // Canonical-Peano bridges on the plain (no-discovery) path. A two-deep-
+        // match law such as `butlast xs = take (minus (len xs) (S Z)) xs`
+        // reduces, after `cases tail`, to a residual like `minus (len t) 0 =
+        // len t` that `omega` cannot close while `minus` is an opaque user fn.
+        // Emit the proven `minus a b = a - b` bridge (the SAME recognizer the
+        // discovery-feedback path uses) and a bridged `cases tail` branch that
+        // rewrites the residual to `len t - 0 = len t`, which `omega` decides.
+        // The bridge is PROVED (a misrecognized op fails its own proof and
+        // degrades to an honest `sorry`, never a false theorem); the extra
+        // branch is additive (runs only after the bare arms fail, ends in
+        // `omega`), so this can only ADD closures. With no Peano op in the law
+        // the bridge set is empty and the emit is byte-identical to before.
+        let (arith_support, arith_bridges, bridged_fns) =
+            lean_nat_lift_support(law, ctx, &law_uid, &BTreeSet::new());
+        let cases_extra = if arith_bridges.is_empty() {
+            None
+        } else {
+            support_lines.extend(arith_support);
+            let set: BTreeSet<String> = simp_list
+                .split(", ")
+                .map(String::from)
+                .chain(arith_bridges.iter().cloned())
+                .filter(|n| !n.is_empty() && !bridged_fns.contains(n))
+                .collect();
+            Some(set.into_iter().collect::<Vec<_>>().join(", "))
+        };
+        let (nil_arm, cons_arm) =
+            mk_arms(&simp_list, &split_set, None, cases_extra.as_deref(), true);
         proof_lines.push(format!("  induction {} with", target_lean));
         proof_lines.push(format!("  {nil_arm}"));
         proof_lines.push(format!("  {cons_arm}"));
@@ -1591,13 +1631,15 @@ fn emit_list_induction(
             ));
         } else if arm_forward_siblings.is_empty() {
             // No in-arm sibling to add: one committed-only ladder, with sorry.
-            let (nil_arm, cons_arm) = mk_arms(&simp_list, &split_set, bridge_set.as_deref(), true);
+            let (nil_arm, cons_arm) =
+                mk_arms(&simp_list, &split_set, bridge_set.as_deref(), None, true);
             proof_lines.push(format!("  | (induction {} with", target_lean));
             proof_lines.push(format!("     {nil_arm}"));
             proof_lines.push(format!("     {cons_arm})"));
         } else {
             // ladderA: committed-only arms, NO sorry (throws → ladderB).
-            let (nil_a, cons_a) = mk_arms(&simp_list, &split_set, bridge_set.as_deref(), false);
+            let (nil_a, cons_a) =
+                mk_arms(&simp_list, &split_set, bridge_set.as_deref(), None, false);
             proof_lines.push(format!("  | (induction {} with", target_lean));
             proof_lines.push(format!("     {nil_a}"));
             proof_lines.push(format!("     {cons_a})"));
@@ -1613,7 +1655,7 @@ fn emit_list_induction(
             } else {
                 format!("{simp_b}, List.cons_append")
             };
-            let (nil_b, cons_b) = mk_arms(&simp_b, &split_b, bridge_set.as_deref(), true);
+            let (nil_b, cons_b) = mk_arms(&simp_b, &split_b, bridge_set.as_deref(), None, true);
             proof_lines.push(format!("  | (induction {} with", target_lean));
             proof_lines.push(format!("     {nil_b}"));
             proof_lines.push(format!("     {cons_b})"));
