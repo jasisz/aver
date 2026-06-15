@@ -99,6 +99,18 @@ pub(super) use strings::*;
 
 pub use coverage::{CoverageReport, coverage_report};
 
+/// `Int = ℤ`: registered `fn_map.builtins` helpers whose Aver return type
+/// is `Int` but whose wasm helper computes a raw scalar i64 (a byte / code
+/// count), so the result must be lifted into the `$AverInt` carrier. Kept
+/// narrow: only the helpers that ride the generic `fn_map.builtins`
+/// dispatch path. Int-returning builtins lowered by a dedicated emitter
+/// (`List.len` / `Map.len` / `Vector.len` / `String.length` / the `Int.*`
+/// / `Float.*` bridges) lift at their own site and are NOT listed here, so
+/// nothing double-wraps.
+fn registered_builtin_returns_raw_int(dotted: &str) -> bool {
+    matches!(dotted, "String.len" | "String.byteLength" | "Char.toCode")
+}
+
 /// Lower `mir_fn.body` into `func`, mirroring [`super::emit_fn_body`]
 /// byte-for-byte. Returns `Ok(Some(extra_locals))` on full coverage,
 /// `Ok(None)` when any node falls outside the supported subset — the
@@ -594,6 +606,14 @@ pub(crate) fn emit_mir_expr(
                                 .is_none()
                             {
                                 return Ok(None);
+                            }
+                            // `Int = ℤ`: a registered helper that returns
+                            // `Int` (`String.len`, `String.byteLength`,
+                            // `Char.toCode`) computes a raw i64; lift it
+                            // into the `$AverInt` carrier so the value
+                            // matches the ref shape every Int site expects.
+                            if registered_builtin_returns_raw_int(dotted) {
+                                lift_i64_result_to_aint(func, ctx)?;
                             }
                             Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
                         }

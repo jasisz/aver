@@ -219,6 +219,10 @@ pub(super) fn emit_module_with(
             BuiltinName::AintToF64,
             BuiltinName::AintFromF64,
             BuiltinName::AintToIndex,
+            // Saturating Int→i64 lowering for an Int ARGUMENT into an
+            // i64-typed builtin slot (`List.take`/`drop` counts,
+            // `String.charAt`/`slice` indices, `Char.fromCode`).
+            BuiltinName::AintToI64Sat,
         ] {
             builtin_registry.register(b);
         }

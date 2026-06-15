@@ -80,10 +80,11 @@ fn wasm_gc_console_print_writes_to_capture_buffer() {
 }
 
 // Boxed `match Int.div`/`match Int.mod` Err arms carry the VM's exact message
-// strings (`src/types/int.rs`): `"division by zero"` for both, `"division
-// overflow"` for `Int.div`'s `i64::MIN / -1` edge. Pin the wasm-gc captured
-// stdout to those byte-for-byte so the boxed Result construction can't drift
-// from the VM (the only path that produces these literals on wasm-gc).
+// strings (`src/types/int.rs`): `"division by zero"` for both. `Int = ℤ`:
+// `Int.div`'s `i64::MIN / -1` is NO LONGER an overflow Err — it is the valid
+// Big `+2^63` Ok (the slice-2 semantics: there is no i64 overflow over ℤ), so
+// that third case renders `ok`. Pin the wasm-gc captured stdout to those
+// byte-for-byte so the boxed Result construction can't drift from the VM.
 const DIV_MOD_ERR_SRC: &str = r#"module M
     intent =
         "boxed Int.div/mod Err messages"
@@ -141,10 +142,12 @@ fn wasm_gc_boxed_int_div_mod_err_messages_match_vm() {
     if let Err(e) = &run_res {
         panic!("wasm-gc run_in_process should succeed on boxed Int.div/mod, got: {e}");
     }
-    // Byte-for-byte identical to the VM's `src/types/int.rs` messages.
+    // Byte-for-byte identical to the VM. The first two are `Int.div`/`mod`
+    // by zero (still a genuine Err); the third is `Int.div(i64::MIN, -1)`,
+    // which over ℤ is the Ok Big `+2^63` → the `Result.Ok` arm renders `ok`.
     assert_eq!(
         stdout,
-        b"division by zero|division by zero|division overflow\n",
+        b"division by zero|division by zero|ok\n",
         "wasm-gc boxed Int.div/mod Err messages must match the VM verbatim; got {:?}",
         String::from_utf8_lossy(&stdout)
     );

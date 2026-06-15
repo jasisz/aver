@@ -71,11 +71,49 @@ fn run_int(source: &str) -> i64 {
     let instance = linker
         .instantiate(&mut store, &module)
         .unwrap_or_else(|e| panic!("instantiate failed: {e}"));
+    call_main_aint(&mut store, &instance)
+}
+
+/// Call the `main` export and extract its `Int` return. `Int = ℤ`:
+/// `main` now returns a `(ref null $AverInt)` carrier, not a scalar
+/// `i64`. Every program in this spec returns a value that fits i64 (a
+/// length, a small arithmetic result), so it is always the Small
+/// representation (`$magf == null`); read field 0 (`$small`). A Big
+/// result would need the limb-array decode, which these in-range tests
+/// never produce.
+fn call_main_aint(store: &mut wasmtime::Store<()>, instance: &wasmtime::Instance) -> i64 {
     let main = instance
-        .get_typed_func::<(), i64>(&mut store, "main")
-        .unwrap_or_else(|e| panic!("main: () -> Int export missing: {e}"));
-    main.call(&mut store, ())
-        .unwrap_or_else(|e| panic!("main trapped: {e}"))
+        .get_func(&mut *store, "main")
+        .unwrap_or_else(|| panic!("main export missing"));
+    let mut results = [wasmtime::Val::I32(0)];
+    main.call(&mut *store, &[], &mut results)
+        .unwrap_or_else(|e| panic!("main trapped: {e}"));
+    extract_aint_small(store, &results[0])
+}
+
+/// Read the Small (`$small`, field 0) i64 out of an `$AverInt` carrier
+/// returned by `main`. Asserts the value is in the Small representation
+/// (the spec programs are all in-range); a non-null `$magf` (field 1)
+/// would mean a Big result this helper does not decode.
+fn extract_aint_small(store: &mut wasmtime::Store<()>, val: &wasmtime::Val) -> i64 {
+    let anyref = match val {
+        wasmtime::Val::AnyRef(Some(a)) => *a,
+        wasmtime::Val::AnyRef(None) => panic!("main returned a null Int carrier"),
+        other => panic!("main returned a non-ref value: {other:?}"),
+    };
+    let structref = anyref
+        .as_struct(&mut *store)
+        .expect("anyref→struct query")
+        .expect("Int carrier is not a struct");
+    let mag = structref.field(&mut *store, 1).expect("read $magf field");
+    match mag {
+        wasmtime::Val::AnyRef(None) => {}
+        _ => panic!("main returned a Big Int; this spec only covers Small results"),
+    }
+    match structref.field(&mut *store, 0).expect("read $small field") {
+        wasmtime::Val::I64(v) => v,
+        other => panic!("$small field was not an i64: {other:?}"),
+    }
 }
 
 /// Walk the module's import section and register a default-value stub
@@ -191,11 +229,7 @@ fn run_int_multi(entry_src: &str, dep_sources: &[(&str, &str)]) -> i64 {
     let instance = linker
         .instantiate(&mut store, &module)
         .unwrap_or_else(|e| panic!("instantiate failed: {e}"));
-    let main = instance
-        .get_typed_func::<(), i64>(&mut store, "main")
-        .unwrap_or_else(|e| panic!("main: () -> Int export missing: {e}"));
-    main.call(&mut store, ())
-        .unwrap_or_else(|e| panic!("main trapped: {e}"))
+    call_main_aint(&mut store, &instance)
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -1097,25 +1131,30 @@ fn main() -> Int
     );
 }
 
-// `i64::MIN / -1` is guarded out before `i64.div_s` traps, surfacing as Err.
+// `Int = ℤ`: `i64::MIN / -1` is NOT an overflow Err — over ℤ it is the
+// valid Ok Big `+2^63 = i64::MAX + 1`. The slice-2 semantics deleted the
+// old wrapping/trap guard. To keep the assert in `run_int`'s Small range
+// while exercising the Big quotient, subtract `i64::MAX`: `(+2^63) -
+// i64::MAX == 1`, which demotes back to a Small the harness can read. A
+// wrong (wrapping) quotient would not land on exactly 1.
 #[test]
-fn boxed_int_div_err_overflow() {
+fn boxed_int_div_min_over_neg_one_is_big_ok() {
     assert_eq!(
         run_int(
             r#"module Tmp
-    intent = "boxed Int.div Err (overflow)"
+    intent = "boxed Int.div i64::MIN / -1 = Ok Big +2^63"
     depends []
 
 fn sd(a: Int, b: Int) -> Int
     match Int.div(a, b)
-        Result.Ok(v)  -> v
-        Result.Err(_) -> 0 - 1
+        Result.Ok(v)  -> v - 9223372036854775807
+        Result.Err(_) -> 0 - 999
 
 fn main() -> Int
     sd(0 - 9223372036854775807 - 1, 0 - 1)
 "#
         ),
-        -1
+        1
     );
 }
 

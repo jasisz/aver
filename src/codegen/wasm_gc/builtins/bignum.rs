@@ -427,6 +427,19 @@ pub(super) fn emit_aint_to_index(registry: &TypeRegistry) -> Result<Function, Wa
     wat_helper::compile_wat_helper(&wat)
 }
 
+/// `__aint_to_i64_sat(a) -> i64` — saturating Int→i64 lowering for an Int
+/// ARGUMENT into an i64-typed builtin slot. A Small passes its `$small`
+/// through; a positive Big saturates to i64::MAX, a negative Big to
+/// i64::MIN. Used where an out-of-i64 magnitude only needs to clamp to
+/// "all"/"none" (`List.take`/`drop` counts) or past-end (`String.charAt`/
+/// `slice` indices, `Char.fromCode`), which the receiving helper already
+/// handles as a saturated boundary.
+pub(super) fn emit_aint_to_i64_sat(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let wat = format!(include_str!("wat/to_i64_sat.wat"), decls = decls);
+    wat_helper::compile_wat_helper(&wat)
+}
+
 /// `__aint_neg(a) -> $AverInt`. Small fast path with `i64::MIN`
 /// promotion; Big flips the sign field (magnitude unchanged, stays
 /// canonical).

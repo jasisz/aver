@@ -22,10 +22,10 @@ pub(crate) enum MirBuiltinEmit {
     Produced(bool),
 }
 
-/// bignum slice 2 — look up a registered `__aint_*` helper fn idx,
-/// erroring (not silently miscompiling) when the prelude wasn't
-/// registered. Registration is unconditional under the flag
-/// (`module.rs`), so a miss is a real wiring bug.
+/// Look up a registered `__aint_*` helper fn idx, erroring (not silently
+/// miscompiling) when the prelude wasn't registered. Registration is
+/// unconditional whenever Int arithmetic is reachable (`module.rs`), so a
+/// miss is a real wiring bug.
 fn aint_helper(ctx: &EmitCtx<'_>, name: &str) -> Result<u32, WasmGcError> {
     ctx.fn_map
         .builtins
@@ -34,6 +34,46 @@ fn aint_helper(ctx: &EmitCtx<'_>, name: &str) -> Result<u32, WasmGcError> {
         .ok_or(WasmGcError::Validation(format!(
             "bignum active but {name} helper not registered"
         )))
+}
+
+/// `Int = ℤ`: lift a raw i64 sitting on the wasm stack into the canonical
+/// Small `$AverInt` carrier (`call $__aint_from_i64`). Used at every
+/// Int-RETURNING builtin whose helper computes an i64 internally — a
+/// length / count / codepoint (`List.len`, `Map.len`, `Vector.len`,
+/// `String.len` / `byteLength`, `Char.toCode`) or an effect import return
+/// (`Random.int`, `Time.unixMs`) — so the value matches the `(ref null
+/// $AverInt)` shape every other Int site expects. A no-op when `bignum`
+/// is off (no Int reachable), where these builtins keep their scalar i64.
+pub(crate) fn lift_i64_result_to_aint(
+    func: &mut Function,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    if ctx.registry.bignum {
+        let from_i64 = aint_helper(ctx, "__aint_from_i64")?;
+        func.instruction(&Instruction::Call(from_i64));
+    }
+    Ok(())
+}
+
+/// `Int = ℤ`: emit an Int builtin ARGUMENT and saturate-lower it from the
+/// `$AverInt` carrier to a raw i64, for an i64-typed builtin slot whose
+/// receiving helper clamps out-of-range counts/indices (`List.take` /
+/// `List.drop` counts, `String.charAt` / `String.slice` indices). A no-op
+/// passthrough when `bignum` is off (the arg is already i64).
+fn emit_aint_arg_as_i64_sat(
+    func: &mut Function,
+    arg: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<bool, WasmGcError> {
+    if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
+        return Ok(false);
+    }
+    if ctx.registry.bignum {
+        let to_sat = aint_helper(ctx, "__aint_to_i64_sat")?;
+        func.instruction(&Instruction::Call(to_sat));
+    }
+    Ok(true)
 }
 
 /// bignum slice 3 — emit a `Vector`/`List` index expression and leave a
@@ -384,6 +424,8 @@ pub(crate) fn emit_mir_native_scalar_builtin(
                     ))?;
             arg!(0);
             func.instruction(&Instruction::Call(len_idx));
+            // `String.length` returns `Int` — lift the raw i64 count.
+            lift_i64_result_to_aint(func, ctx)?;
         }
         // `String.split` / `String.join` ride the singleton (T=String)
         // `string_split_ops`, not `fn_map.builtins`.
@@ -1228,6 +1270,13 @@ pub(crate) fn emit_mir_map_builtin(
     };
     emit_args!();
     func.instruction(&Instruction::Call(target));
+    // `Map.len` returns `Int`; its helper computes a raw i64, so lift it
+    // into the `$AverInt` carrier. (`keys` / `values` / `entries` return
+    // Lists, `get` an `Option<V>`, `has` a Bool, `set` / `remove` a Map —
+    // none are Int.)
+    if method == "len" {
+        lift_i64_result_to_aint(func, ctx)?;
+    }
     Ok(MirBuiltinEmit::Produced(true))
 }
 
@@ -1303,8 +1352,30 @@ pub(crate) fn emit_mir_list_builtin(
                     _ => unreachable!("outer match restricts dotted"),
                 }
             };
-            emit_args!();
+            // `List.take` / `List.drop` take an i64 COUNT as their second
+            // arg; under `Int = ℤ` that arg is an `$AverInt` ref, so it
+            // must be saturate-lowered (a Big count just clamps to
+            // all/none, which the helper's `i >= n` loop guard handles).
+            // The other 2-arg ops (`concat` second arg = List, `contains`
+            // = element) carry no Int count, so they ride `emit_args!`.
+            if matches!(dotted, "List.take" | "List.drop") {
+                if emit_mir_expr(func, &args[0], slots, ctx)?.is_none() {
+                    return Ok(MirBuiltinEmit::Fallback);
+                }
+                if !emit_aint_arg_as_i64_sat(func, &args[1], slots, ctx)? {
+                    return Ok(MirBuiltinEmit::Fallback);
+                }
+            } else {
+                emit_args!();
+            }
             func.instruction(&Instruction::Call(fn_idx));
+            // `List.len` / `List.length` return `Int`; the helper computes
+            // a raw i64, so lift it into the `$AverInt` carrier. (`reverse`
+            // / `concat` / `take` / `drop` / `contains` return a List or
+            // Bool — no lift.)
+            if matches!(dotted, "List.len" | "List.length") {
+                lift_i64_result_to_aint(func, ctx)?;
+            }
         }
         "List.zip" if args.len() == 2 => {
             let la_aver = aver_type_str_of(&args[0]);
@@ -1420,6 +1491,9 @@ pub(crate) fn emit_mir_vector_builtin(
             }
             func.instruction(&Instruction::ArrayLen);
             func.instruction(&Instruction::I64ExtendI32U);
+            // `Vector.len` returns `Int` — lift the i64 length into the
+            // `$AverInt` carrier.
+            lift_i64_result_to_aint(func, ctx)?;
         }
         "Vector.new" if args.len() == 2 => {
             let elem_aver = aver_type_str_of(&args[1]);

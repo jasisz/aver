@@ -2634,15 +2634,12 @@ fn emit_sum_inline_hash(
                 field_ty.trim().to_string()
             };
             match resolved.as_str() {
-                // A GENUINE `Int` field lowers to `$aint` under bignum →
-                // `__aint_hash`; a newtype-erased Int (`resolved == "Int"`
-                // but `field_ty != "Int"`) stays a scalar i64 → wrap. Both
-                // are byte-identical flag-off.
-                "Int" if field_ty.trim() == "Int" => {
-                    emit_aint_field_hash(f, registry)?;
-                }
+                // `Int = ℤ` — an `Int` field lowers to `$aint` under
+                // bignum, so both a genuine and a newtype-erased
+                // (`Box(v: Int)`) Int field hash via `__aint_hash`. The
+                // helper falls to `i32.wrap_i64` when no Int is reachable.
                 "Int" => {
-                    f.instruction(&Instruction::I32WrapI64);
+                    emit_aint_field_hash(f, registry)?;
                 }
                 "Bool" => {} // already i32
                 "Float" => {
@@ -2717,14 +2714,11 @@ fn emit_record_inline_hash(
             field_type.trim().to_string()
         };
         match resolved.as_str() {
-            // Genuine `Int` field → `$aint` under bignum → `__aint_hash`;
-            // newtype-erased Int stays scalar i64 → wrap. Byte-identical
-            // flag-off.
-            "Int" if field_type.trim() == "Int" => {
-                emit_aint_field_hash(f, registry)?;
-            }
+            // `Int = ℤ` — both a genuine and a newtype-erased Int field
+            // lower to `$aint` and hash via `__aint_hash` (the helper falls
+            // to `i32.wrap_i64` when no Int is reachable).
             "Int" => {
-                f.instruction(&Instruction::I32WrapI64);
+                emit_aint_field_hash(f, registry)?;
             }
             "Bool" => {} // already i32
             "Float" => {
