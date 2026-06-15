@@ -427,6 +427,36 @@ pub(super) fn emit_aint_to_index(registry: &TypeRegistry) -> Result<Function, Wa
     wat_helper::compile_wat_helper(&wat)
 }
 
+/// `__aint_to_i64_sat(a) -> i64` — saturating Int→i64 lowering for an Int
+/// ARGUMENT into an i64-typed builtin slot. A Small passes its `$small`
+/// through; a positive Big saturates to i64::MAX, a negative Big to
+/// i64::MIN. Used where an out-of-i64 magnitude only needs to clamp to
+/// "all"/"none" (`List.take`/`drop` counts) or past-end (`String.charAt`/
+/// `slice` indices, `Char.fromCode`), which the receiving helper already
+/// handles as a saturated boundary.
+pub(super) fn emit_aint_to_i64_sat(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let wat = format!(include_str!("wat/to_i64_sat.wat"), decls = decls);
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `__aint_to_i64_checked(a) -> i64` — CHECKED Int→i64 lowering for an Int
+/// argument crossing the HOST EFFECT boundary (a `Random` bound,
+/// `Time.sleep` ms, a network port, a `Terminal` coordinate). A Small
+/// passes its `$small` through; a Big TRAPS (`unreachable`), since a
+/// canonical Big is by definition outside i64 range. This mirrors the VM
+/// host services' checked `AverInt::to_i64()` — which ERRORS on an out-of-
+/// i64 effect arg — so an out-of-range effect arg REJECTS on wasm-gc
+/// instead of silently saturating to i64::MAX/MIN and proceeding (e.g.
+/// `Time.sleep(2^63)` would otherwise saturate to a ~292-million-year
+/// hang). Self-contained: no inter-helper `call`, so
+/// `compile_wat_helper`'s single-function discipline holds.
+pub(super) fn emit_aint_to_i64_checked(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let wat = format!(include_str!("wat/to_i64_checked.wat"), decls = decls);
+    wat_helper::compile_wat_helper(&wat)
+}
+
 /// `__aint_neg(a) -> $AverInt`. Small fast path with `i64::MIN`
 /// promotion; Big flips the sign field (magnitude unchanged, stays
 /// canonical).

@@ -138,13 +138,14 @@ pub(super) struct TypeRegistry {
     /// declared. The runtime allocates the array lazily on first
     /// `Tcp.connect` call via `array.new_default` against this idx.
     pub(super) tcp_pool_type_idx: Option<u32>,
-    /// bignum slice 1 — opt-in arbitrary-precision `Int`. `true` when
-    /// the `AVER_WASMGC_BIGNUM` env flag is set AND any Int arithmetic
-    /// is reachable (so pure-String/Float/effect-only programs carry
-    /// zero bignum bytes). When set, `Int` lowers to `(ref null
-    /// $AverInt)` everywhere instead of the scalar `i64`, and `*` / `+`
-    /// / `-` / neg / cmp / eq route through the limb-arithmetic WAT
-    /// helpers rather than the wrapping `i64.*` opcodes.
+    /// Arbitrary-precision `Int` (`Int = ℤ`, the only wasm-gc Int
+    /// semantics). `true` when any Int arithmetic is reachable — a SIZE
+    /// reachability gate, NOT a semantics flag (so pure-String/Float/
+    /// effect-only programs carry zero bignum bytes). When set, `Int`
+    /// lowers to `(ref null $AverInt)` everywhere instead of the scalar
+    /// `i64`, and `*` / `+` / `-` / neg / cmp / eq route through the
+    /// limb-arithmetic WAT helpers rather than the wrapping `i64.*`
+    /// opcodes.
     pub(super) bignum: bool,
     /// bignum slice 1 — wasm type idx for the `$AverInt` struct
     /// `(struct (field $small i64) (field $mag (ref null (array i64)))
@@ -172,6 +173,20 @@ pub(super) struct TypeRegistry {
     /// folds limbs+sign); the inline `i32.wrap_i64` over a raw value is
     /// invalid on a ref and collision-collapses every Big to one bucket.
     pub(super) aint_hash_fn_idx: Option<u32>,
+    /// wasm fn idx of the `__aint_from_i64` canonical Small constructor,
+    /// recorded alongside `aint_eq_fn_idx`. `Some` iff `bignum`. Used by
+    /// the host-ABI record FACTORIES (`__rt_record_http_response_make`,
+    /// `__rt_record_terminal_size_make`) which receive a machine-range
+    /// `Int` field (HTTP status, terminal rows/cols) as i64 from the host
+    /// and must lift it to the `$AverInt` carrier before `struct.new`.
+    pub(super) aint_from_i64_fn_idx: Option<u32>,
+    /// wasm fn idx of `__aint_to_i64_checked` (TRAPS on an out-of-i64 Big).
+    /// `Some` iff `bignum`. Used by the `--handler` proxy synthesis to
+    /// CHECKED-lower the user's `HttpResponse.status` `$AverInt` field to
+    /// i64 before `set-status-code` — the VM rejects an out-of-range status
+    /// (`HttpResponse.status is out of range`), so an out-of-range status
+    /// TRAPS here rather than saturating into a wrong in-range code.
+    pub(super) aint_to_i64_checked_fn_idx: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -342,16 +357,16 @@ impl TypeRegistry {
             (None, None)
         };
 
-        // bignum slice 1 — `$AverInt` + `(array i64)` magnitude slots.
-        // Gated on the opt-in `AVER_WASMGC_BIGNUM` env flag AND "any Int
-        // arithmetic is reachable" so pure-String/Float/effect-only
-        // programs (and the 245B hello-worker) carry ZERO bignum bytes.
-        // The magnitude array slot is allocated first so the struct can
-        // reference it without a forward edge (a single rec group makes
-        // this safe, but keeping the array lower mirrors the other
-        // collection slots and reads cleaner).
-        let bignum_flag = std::env::var_os("AVER_WASMGC_BIGNUM").is_some();
-        let bignum = bignum_flag && resolved_fn_defs.iter().any(fn_uses_int_arithmetic);
+        // `$AverInt` + `(array i64)` magnitude slots. `Int = ℤ` is now
+        // the only wasm-gc semantics (no flag), so this is governed purely
+        // by the "any Int arithmetic reachable" REACHABILITY gate: it is a
+        // SIZE optimization, not a semantics switch. Pure-String/Float/
+        // effect-only programs (and the 245B hello-worker) carry ZERO
+        // bignum bytes. The magnitude array slot is allocated first so the
+        // struct can reference it without a forward edge (a single rec
+        // group makes this safe, but keeping the array lower mirrors the
+        // other collection slots and reads cleaner).
+        let bignum = resolved_fn_defs.iter().any(fn_uses_int_arithmetic);
         let (aint_mag_array_idx, aint_struct_idx) = if bignum {
             let mag_idx = next_idx;
             next_idx += 1;
@@ -973,9 +988,12 @@ impl TypeRegistry {
             aint_struct_idx,
             aint_mag_array_idx,
             // Set by `module.rs` after `BuiltinRegistry::assign_slots`,
-            // once the `__aint_eq` / `__aint_hash` fn indices are known.
+            // once the `__aint_eq` / `__aint_hash` / `__aint_from_i64`
+            // fn indices are known.
             aint_eq_fn_idx: None,
             aint_hash_fn_idx: None,
+            aint_from_i64_fn_idx: None,
+            aint_to_i64_checked_fn_idx: None,
         }
     }
 
@@ -1461,14 +1479,14 @@ fn fn_body_calls_int_div(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
     fn_body_calls_builtin(fd, "Int.div")
 }
 
-/// bignum slice 1 — "any Int arithmetic reachable" gate. True iff the
-/// fn signature mentions `Int` (param or return) OR the body contains
-/// an arithmetic `BinOp` / `Neg` / Int literal. Used to keep the
-/// `$AverInt` slots out of pure-String/Float/effect-only programs even
-/// when the `AVER_WASMGC_BIGNUM` flag is set. Deliberately broad (an
-/// Int param is enough): the cost of a false positive is two unused
-/// type slots that `wasm-opt -Oz` would strip anyway; a false negative
-/// would be a miscompile, so we err toward inclusion.
+/// "any Int arithmetic reachable" gate. True iff the fn signature
+/// mentions `Int` (param or return) OR the body contains an arithmetic
+/// `BinOp` / `Neg` / Int literal. Used to keep the `$AverInt` slots out
+/// of pure-String/Float/effect-only programs (a SIZE optimization — the
+/// semantics are always `Int = ℤ`). Deliberately broad (an Int param is
+/// enough): the cost of a false positive is two unused type slots that
+/// `wasm-opt -Oz` would strip anyway; a false negative would be a
+/// miscompile, so we err toward inclusion.
 /// Builtins whose signature mentions `Int` (produce OR consume one), so a
 /// call to any of them must flip the bignum gate even in a module with no
 /// Int literal / arithmetic of its own. Kept in sync with the surface
@@ -1706,10 +1724,10 @@ pub(super) fn aver_to_wasm(
     registry: Option<&TypeRegistry>,
 ) -> Result<Option<ValType>, WasmGcError> {
     let trimmed = type_str.trim();
-    // bignum slice 1 — under the opt-in flag, `Int` is the `$AverInt`
-    // struct ref everywhere (signatures, locals, etc.), NOT the scalar
-    // `i64`. Intercept before `primitive_to_wasm` so the ref shape wins.
-    // Float / Bool keep their scalar lowering.
+    // `Int = ℤ`: `Int` is the `$AverInt` struct ref everywhere
+    // (signatures, locals, etc.) whenever Int arithmetic is reachable,
+    // NOT the scalar `i64`. Intercept before `primitive_to_wasm` so the
+    // ref shape wins. Float / Bool keep their scalar lowering.
     if trimmed == "Int"
         && let Some(reg) = registry
         && reg.bignum
@@ -1726,8 +1744,14 @@ pub(super) fn aver_to_wasm(
         // Newtype optimization — a single-field record / single-variant
         // sum of a primitive lowers to the underlying primitive
         // everywhere. Saves an allocation per wrap and a struct.get
-        // per unwrap.
+        // per unwrap. `Int = ℤ`: an erased Int field is the `$AverInt`
+        // ref, NOT scalar i64 — recurse so the bignum interception above
+        // applies (otherwise an erased `Box(v: Int)` lowers to i64 while
+        // its stored/compared value is a ref → wasm-validation mismatch).
         if let Some(underlying) = reg.newtype_underlying(trimmed) {
+            if underlying.trim() == "Int" && reg.bignum {
+                return Ok(Some(aint_ref_ty(reg)?));
+            }
             return Ok(primitive_to_wasm(underlying));
         }
         if let Some(idx) = reg.record_type_idx(trimmed) {

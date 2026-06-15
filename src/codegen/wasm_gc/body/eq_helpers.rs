@@ -713,16 +713,19 @@ fn emit_inner_eq_dispatch(
         inner.to_string()
     };
     match resolved.as_str() {
-        // bignum slice 4 (eq+hash gap) — a GENUINE `Int` payload lowers to
-        // `$aint` under bignum → `__aint_eq` (an `i64.eq` on a ref is
-        // invalid wasm and wrong across Small/Big). A newtype-erased Int
-        // (`resolved == "Int"` but `inner != "Int"`) stays a scalar i64 →
-        // `i64.eq`. Both byte-identical flag-off.
-        "Int" if inner.trim() == "Int" => {
-            super::super::lists::emit_aint_field_eq(f, registry)?;
-        }
+        // `Int = ℤ` — an `Int` payload lowers to the `$aint` ref under
+        // bignum, so it compares via `__aint_eq` (an `i64.eq` on a ref is
+        // invalid wasm and wrong across the Small/Big boundary). This
+        // holds for BOTH a genuine `Int` field (`inner == "Int"`) AND a
+        // newtype-erased Int (`Box(v: Int)` → "Box" resolves to "Int"):
+        // the erased field's wasm representation is still `$aint`, not a
+        // scalar i64. Off-path (no Int reachable) both fall to `i64.eq`.
         "Int" => {
-            f.instruction(&Instruction::I64Eq);
+            // `emit_aint_field_eq` itself branches on `registry.bignum`
+            // (→ `__aint_eq` under ℤ, → `i64.eq` when no Int is reachable),
+            // so this single call is correct for both a genuine and an
+            // erased Int field.
+            super::super::lists::emit_aint_field_eq(f, registry)?;
         }
         "Bool" => {
             f.instruction(&Instruction::I32Eq);

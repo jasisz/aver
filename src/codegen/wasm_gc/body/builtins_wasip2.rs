@@ -23,6 +23,55 @@ use super::super::WasmGcError;
 use super::from_mir::emit_mir_expr;
 use super::{EmitCtx, SlotTable};
 
+/// `Int = ℤ`: emit an `Int` effect ARGUMENT and CHECKED-lower it from the
+/// `$AverInt` carrier to a raw i64 — the wasip2 effect lowerings (random
+/// bounds, sleep ms, port) compute on i64. An out-of-i64 Big TRAPS
+/// (`__aint_to_i64_checked`) rather than saturating, so an out-of-range
+/// effect arg REJECTS on wasm-gc exactly as the VM's host services' checked
+/// `to_i64()` errors. A no-op passthrough when no Int is reachable (the arg
+/// is already i64).
+fn emit_aint_arg_as_i64_wasip2(
+    func: &mut wasm_encoder::Function,
+    arg: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    emit_mir_expr(func, arg, slots, ctx)?;
+    if ctx.registry.bignum {
+        let to_checked = ctx
+            .fn_map
+            .builtins
+            .get("__aint_to_i64_checked")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "bignum active but __aint_to_i64_checked helper not registered".into(),
+            ))?;
+        func.instruction(&Instruction::Call(to_checked));
+    }
+    Ok(())
+}
+
+/// `Int = ℤ`: lift the raw i64 result of an `Int`-returning wasip2 effect
+/// (`Random.int`, `Time.unixMs`) into the `$AverInt` carrier. No-op when
+/// no Int is reachable.
+fn lift_i64_result_to_aint_wasip2(
+    func: &mut wasm_encoder::Function,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    if ctx.registry.bignum {
+        let from_i64 =
+            ctx.fn_map
+                .builtins
+                .get("__aint_from_i64")
+                .copied()
+                .ok_or(WasmGcError::Validation(
+                    "bignum active but __aint_from_i64 helper not registered".into(),
+                ))?;
+        func.instruction(&Instruction::Call(from_i64));
+    }
+    Ok(())
+}
+
 /// Phase 1.2b1.5 — call-site lowering for `Console.print` /
 /// `Console.error` / `Console.warn` on `--target wasip2`.
 ///
@@ -378,6 +427,8 @@ pub(super) fn emit_time_unix_ms_wasip2(
     func.instruction(&Instruction::I64Const(1_000_000));
     func.instruction(&Instruction::I64DivU);
     func.instruction(&Instruction::I64Add);
+    // `Int = ℤ`: `Time.unixMs() -> Int` — lift the i64 epoch ms to $aint.
+    lift_i64_result_to_aint_wasip2(func, ctx)?;
     Ok(())
 }
 
@@ -500,7 +551,8 @@ pub(super) fn emit_time_sleep_wasip2(
             "Time.sleep on wasip2: __rt_time_sleep fn idx missing — helper not allocated".into(),
         )
     })?;
-    emit_mir_expr(func, &args[0], slots, ctx)?; // ms: i64
+    // `Int = ℤ`: `ms` is the `$AverInt` carrier — saturate-lower to i64.
+    emit_aint_arg_as_i64_wasip2(func, &args[0], slots, ctx)?; // ms: i64
     func.instruction(&Instruction::Call(sleep_fn));
     Ok(())
 }
@@ -559,7 +611,8 @@ pub(super) fn emit_tcp_ping_wasip2(
         WasmGcError::Validation("Tcp.ping on wasip2: __rt_tcp_ping fn idx missing".into())
     })?;
     emit_mir_expr(func, &args[0], slots, ctx)?;
-    emit_mir_expr(func, &args[1], slots, ctx)?;
+    // `Int = ℤ`: the `port` is the `$AverInt` carrier — saturate-lower to i64.
+    emit_aint_arg_as_i64_wasip2(func, &args[1], slots, ctx)?;
     func.instruction(&Instruction::Call(ping_fn));
     Ok(())
 }
@@ -588,7 +641,8 @@ pub(super) fn emit_tcp_send_wasip2(
         WasmGcError::Validation("Tcp.send on wasip2: __rt_tcp_send fn idx missing".into())
     })?;
     emit_mir_expr(func, &args[0], slots, ctx)?;
-    emit_mir_expr(func, &args[1], slots, ctx)?;
+    // `Int = ℤ`: the `port` is the `$AverInt` carrier — saturate-lower to i64.
+    emit_aint_arg_as_i64_wasip2(func, &args[1], slots, ctx)?;
     emit_mir_expr(func, &args[2], slots, ctx)?;
     func.instruction(&Instruction::Call(send_fn));
     Ok(())
@@ -706,7 +760,8 @@ pub(super) fn emit_tcp_connect_wasip2(
         )
     })?;
     emit_mir_expr(func, &args[0], slots, ctx)?; // host: ref string
-    emit_mir_expr(func, &args[1], slots, ctx)?; // port: i64
+    // `Int = ℤ`: the `port` is the `$AverInt` carrier — saturate-lower to i64.
+    emit_aint_arg_as_i64_wasip2(func, &args[1], slots, ctx)?; // port: i64
     func.instruction(&Instruction::Call(connect_fn));
     Ok(())
 }
@@ -784,17 +839,20 @@ pub(super) fn emit_random_int_wasip2(
     //   push min_scratch
     //   push (get-random-u64() % (max - min + 1))
     //   i64.add
-    emit_mir_expr(func, &args[0], slots, ctx)?; // min: i64
+    // `Int = ℤ`: the host ABI is i64 — saturate-lower the `$AverInt`
+    // min/max bounds before the i64 arithmetic, then lift the i64 result.
+    emit_aint_arg_as_i64_wasip2(func, &args[0], slots, ctx)?; // min: i64
     func.instruction(&Instruction::LocalSet(min_scratch));
     func.instruction(&Instruction::LocalGet(min_scratch));
     func.instruction(&Instruction::Call(rand_fn)); // u64 -> i64 representation
-    emit_mir_expr(func, &args[1], slots, ctx)?; // max
+    emit_aint_arg_as_i64_wasip2(func, &args[1], slots, ctx)?; // max
     func.instruction(&Instruction::LocalGet(min_scratch));
     func.instruction(&Instruction::I64Sub);
     func.instruction(&Instruction::I64Const(1));
     func.instruction(&Instruction::I64Add);
     func.instruction(&Instruction::I64RemU); // modulo unsigned
     func.instruction(&Instruction::I64Add);
+    lift_i64_result_to_aint_wasip2(func, ctx)?;
     Ok(())
 }
 

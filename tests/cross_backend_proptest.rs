@@ -83,6 +83,12 @@ fn run_vm(prefix: &str, source: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// Run `source` on the wasm-gc backend. `Int = ℤ` is now the ONLY
+/// wasm-gc Int semantics (the `AVER_WASMGC_BIGNUM` flag was removed in
+/// the slice-4 flip), so this is also the differential oracle for
+/// add/sub/mul/neg/cmp/eq/div-mod/conversions: wasm-gc must agree with
+/// the VM on EVERY input, including the i64-overflow ones the
+/// generators produce.
 fn run_wasm_gc(prefix: &str, source: &str) -> Result<String, String> {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let aver_bin = env!("CARGO_BIN_EXE_aver");
@@ -97,34 +103,6 @@ fn run_wasm_gc(prefix: &str, source: &str) -> Result<String, String> {
     cleanup(&path);
     if !out.status.success() {
         return Err(format!("wasm-gc run failed:\n{}", format_output(&out)));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-/// Like `run_wasm_gc`, but with the opt-in `AVER_WASMGC_BIGNUM=1` flag
-/// set so `Int` lowers to the arbitrary-precision `$AverInt` carrier
-/// (bignum slice 1). This is the differential oracle for add/sub/mul/
-/// neg/cmp/eq: with the flag on, wasm-gc must agree with the VM
-/// (Int = ℤ) on EVERY input, including the i64-overflow ones the
-/// generator produces.
-fn run_wasm_gc_bignum(prefix: &str, source: &str) -> Result<String, String> {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
-    let path = temp_module(prefix, source);
-    let out = Command::new(aver_bin)
-        .current_dir(&repo_root)
-        .env("AVER_WASMGC_BIGNUM", "1")
-        .arg("run")
-        .arg(&path)
-        .arg("--wasm-gc")
-        .output()
-        .expect("expected `aver run --wasm-gc` (bignum) to execute");
-    cleanup(&path);
-    if !out.status.success() {
-        return Err(format!(
-            "wasm-gc (bignum) run failed:\n{}",
-            format_output(&out)
-        ));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
@@ -423,8 +401,8 @@ fn wrap_program(expr: &str) -> String {
 // `__aint_eq` — which short-circuits "a Small and a Big are never equal"
 // — would report two equal values UNEQUAL. The only observable that
 // distinguishes them is `==`. This focused test runs programs whose
-// correctness shows ONLY through `==`, flag-on (`AVER_WASMGC_BIGNUM=1`)
-// wasm-gc, and asserts the Bool output matches the VM (`Int = ℤ`).
+// correctness shows ONLY through `==` on the wasm-gc backend
+// (`Int = ℤ` by default), and asserts the Bool output matches the VM.
 //
 // Coverage:
 //   1. both sides reach i64::MIN by DIFFERENT routes (neg-demote vs
@@ -468,7 +446,7 @@ fn cross_int_equality_canonical_invariant_vm_vs_wasm_gc() {
     for (expr, expected) in cases {
         let source = eq_program(expr);
         let vm = run_vm("cross-eq-vm", &source).expect("VM must accept equality program");
-        let wg = run_wasm_gc_bignum("cross-eq-wg", &source)
+        let wg = run_wasm_gc("cross-eq-wg", &source)
             .expect("wasm-gc (bignum) must accept equality program");
         assert_eq!(
             vm, *expected,
@@ -491,8 +469,8 @@ fn cross_int_equality_canonical_invariant_vm_vs_wasm_gc() {
 // equal Big reached a DIFFERENT way would miss its entry). These cases route
 // every such site through `__aint_eq` / `__aint_hash`. Each builds Big values
 // by ARITHMETIC (`i64::MAX + 1`, `a*2`) — literals past i64 are lexer-rejected
-// — and the differential asserts flag-on (`AVER_WASMGC_BIGNUM=1`) wasm-gc
-// matches the VM (Int = ℤ) exactly. The decisive observable is a Big key/field
+// — and the differential asserts the wasm-gc backend (`Int = ℤ` by default)
+// matches the VM exactly. The decisive observable is a Big key/field
 // reached two ways: a string render can't tell a hit from a miss, but
 // `Map.get` / `Map.has` / `==` can.
 //
@@ -550,7 +528,7 @@ fn cross_int_eqhash_map_big_keys_vm_vs_wasm_gc() {
         Console.print(String.fromInt(Option.withDefault(Map.get(m5, bigAgain), 0 - 1)))\n";
     let source = map_int_program("Int", body);
     let vm = run_vm("cross-eqhash-map-vm", &source).expect("VM must accept Map<Int,Int> program");
-    let wg = run_wasm_gc_bignum("cross-eqhash-map-wg", &source)
+    let wg = run_wasm_gc("cross-eqhash-map-wg", &source)
         .expect("wasm-gc (bignum) must accept Map<Int,Int> with Big keys");
     assert_eq!(
         wg, vm,
@@ -576,7 +554,7 @@ fn cross_int_eqhash_set_big_dedup_vm_vs_wasm_gc() {
         Console.print(String.fromBool(Map.has(s3, (big * 2))))\n";
     let source = map_int_program("Bool", body);
     let vm = run_vm("cross-eqhash-set-vm", &source).expect("VM must accept Map<Int,Bool> program");
-    let wg = run_wasm_gc_bignum("cross-eqhash-set-wg", &source)
+    let wg = run_wasm_gc("cross-eqhash-set-wg", &source)
         .expect("wasm-gc (bignum) must accept Set-of-Int with Big members");
     assert_eq!(
         wg, vm,
@@ -619,7 +597,7 @@ fn cross_int_eqhash_record_sum_big_field_vm_vs_wasm_gc() {
              Console.print(String.fromBool(w1 == w4))\n"
         .to_string();
     let vm = run_vm("cross-eqhash-rec-vm", &source).expect("VM must accept record/sum eq program");
-    let wg = run_wasm_gc_bignum("cross-eqhash-rec-wg", &source)
+    let wg = run_wasm_gc("cross-eqhash-rec-wg", &source)
         .expect("wasm-gc (bignum) must accept record/sum eq with a Big Int field");
     assert_eq!(
         wg, vm,
@@ -730,7 +708,7 @@ fn cross_int_euclidean_divmod_vm_vs_wasm_gc() {
     let source = divmod_harness(lines.trim_end());
 
     let vm = run_vm("cross-divmod-vm", &source).expect("VM must accept the divmod harness");
-    let wg = run_wasm_gc_bignum("cross-divmod-wg", &source)
+    let wg = run_wasm_gc("cross-divmod-wg", &source)
         .expect("wasm-gc (bignum) must accept the divmod harness");
 
     // 1. The two backends agree byte-for-byte on every rendered line.
@@ -797,7 +775,7 @@ fn cross_int_big_operand_divmod_vm_vs_wasm_gc() {
     let source = divmod_harness(&body);
 
     let vm = run_vm("cross-bigdm-vm", &source).expect("VM must accept the big divmod program");
-    let wg = run_wasm_gc_bignum("cross-bigdm-wg", &source)
+    let wg = run_wasm_gc("cross-bigdm-wg", &source)
         .expect("wasm-gc (bignum) must accept the big divmod program");
 
     assert_eq!(
@@ -820,8 +798,8 @@ fn cross_int_big_operand_divmod_vm_vs_wasm_gc() {
 // These cover the three slice-3 conversions whose wasm-gc lowering used to be
 // i64-only (`Int.fromString` wrapping past i64), saturating
 // (`Int.fromFloat`/`Float.fromInt` outside i64), or wrong (an `I32WrapI64`
-// of a Big `Vector` index into a wrong in-range slot). Under
-// `AVER_WASMGC_BIGNUM=1` they must match the VM (Int = ℤ) exactly. As with
+// of a Big `Vector` index into a wrong in-range slot). On the wasm-gc
+// backend (`Int = ℤ` by default) they must match the VM exactly. As with
 // the slice-1/2 focused tests, the render goes through BOTH `String.fromInt`
 // AND `"{...}"` interpolation where applicable so neither blind spot hides a
 // divergence.
@@ -875,7 +853,7 @@ fn cross_int_from_string_roundtrip_vm_vs_wasm_gc() {
     );
 
     let vm = run_vm("cross-fs-vm", &source).expect("VM must accept the fromString harness");
-    let wg = run_wasm_gc_bignum("cross-fs-wg", &source)
+    let wg = run_wasm_gc("cross-fs-wg", &source)
         .expect("wasm-gc (bignum) must accept the fromString harness");
     assert_eq!(
         vm, wg,
@@ -941,7 +919,7 @@ fn cross_int_float_exactness_vm_vs_wasm_gc() {
     let source = format!("module Tmp\n\nfn main()\n    ! [Console.print]\n{body}\n");
 
     let vm = run_vm("cross-flt-vm", &source).expect("VM must accept the float-exactness harness");
-    let wg = run_wasm_gc_bignum("cross-flt-wg", &source)
+    let wg = run_wasm_gc("cross-flt-wg", &source)
         .expect("wasm-gc (bignum) must accept the float-exactness harness");
     assert_eq!(
         vm, wg,
@@ -1038,7 +1016,7 @@ fn cross_float_from_int_rounding_vm_vs_wasm_gc() {
 
     let vm =
         run_vm("cross-flt-round-vm", &source).expect("VM must accept the float-rounding harness");
-    let wg = run_wasm_gc_bignum("cross-flt-round-wg", &source)
+    let wg = run_wasm_gc("cross-flt-round-wg", &source)
         .expect("wasm-gc (bignum) must accept the float-rounding harness");
     assert_eq!(
         vm, wg,
@@ -1095,7 +1073,7 @@ fn cross_big_vector_index_oob_vm_vs_wasm_gc() {
     );
 
     let vm = run_vm("cross-bigidx-vm", &source).expect("VM must accept the big-index harness");
-    let wg = run_wasm_gc_bignum("cross-bigidx-wg", &source)
+    let wg = run_wasm_gc("cross-bigidx-wg", &source)
         .expect("wasm-gc (bignum) must accept the big-index harness");
     assert_eq!(
         vm, wg,
@@ -1131,14 +1109,14 @@ proptest! {
     /// (associativity, ordering of side effects inside a chain of
     /// BinOps, …).
     ///
-    /// bignum slice 1 — RE-ENABLED. wasm-gc now carries the same
-    /// arbitrary-precision `Int = ℤ` semantics as the VM under the opt-in
-    /// `AVER_WASMGC_BIGNUM` flag (`$AverInt` carrier; add/sub/mul/neg/cmp/
-    /// eq as limb helpers). The differential oracle therefore holds on
-    /// every input — INCLUDING the i64-overflow ones this generator
-    /// produces — which is the whole point: where the wrapping backend
-    /// returned a wrapped-negative i64 (`a*a` at i64::MAX printed `1`),
-    /// the bignum backend now prints the exact ℤ value the VM prints.
+    /// wasm-gc now carries the same arbitrary-precision `Int = ℤ`
+    /// semantics as the VM BY DEFAULT (`$AverInt` carrier; add/sub/mul/
+    /// neg/cmp/eq as limb helpers — no flag). The differential oracle
+    /// therefore holds on every input — INCLUDING the i64-overflow ones
+    /// this generator produces — which is the whole point: where the
+    /// old wrapping backend returned a wrapped-negative i64 (`a*a` at
+    /// i64::MAX printed `1`), the bignum backend now prints the exact ℤ
+    /// value the VM prints.
     /// The leaves include i64::MIN/MAX, 0, ±1, and large-near-overflow
     /// magnitudes so the Big-promotion + mul-trap-edge + neg-promotion
     /// + canonical-demote paths are all hit.
@@ -1146,7 +1124,7 @@ proptest! {
     fn cross_int_arithmetic_vm_vs_wasm_gc(expr in int_boundary_expr(3)) {
         let source = wrap_program(&format!("String.fromInt({})", expr));
         let vm = run_vm("cross-bp-int-vm", &source);
-        let wg = run_wasm_gc_bignum("cross-bp-int-wg", &source);
+        let wg = run_wasm_gc("cross-bp-int-wg", &source);
         match (&vm, &wg) {
             // Both backends accept the program — outputs must match.
             (Ok(v), Ok(w)) => prop_assert_eq!(
@@ -1186,7 +1164,7 @@ proptest! {
     fn cross_int_arithmetic_via_interpolation_vm_vs_wasm_gc(expr in int_boundary_expr(3)) {
         let source = wrap_program(&format!("\"{{{}}}\"", expr));
         let vm = run_vm("cross-bp-interp-vm", &source);
-        let wg = run_wasm_gc_bignum("cross-bp-interp-wg", &source);
+        let wg = run_wasm_gc("cross-bp-interp-wg", &source);
         match (&vm, &wg) {
             (Ok(v), Ok(w)) => prop_assert_eq!(
                 v, w,

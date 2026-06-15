@@ -75,6 +75,30 @@ pub(crate) fn decode_val_typed(
         (Type::Unit, _) => Ok(JsonValue::Null),
         (Type::Int, Val::I64(n)) => Ok(JsonValue::Int(*n)),
         (Type::Int, Val::I32(n)) => Ok(JsonValue::Int(*n as i64)),
+        // `Int = ℤ`: `Int` lowers to the `(ref null $AverInt)` carrier, so
+        // `main () -> Int` returns a struct ref. Read the Small value out
+        // of `$small` (field 0) when `$magf` (field 1) is null. A Big
+        // result has no i64-range representation in the replay trace
+        // format (`JsonValue::Int(i64)`), the same limit the VM hits when
+        // recording — surface it as a clear error rather than truncating.
+        (Type::Int, Val::AnyRef(Some(_))) => {
+            let (_tag, fields) = read_struct(store, val)?;
+            if fields.len() < 2 {
+                return Err(format!(
+                    "Int carrier struct expected >= 2 fields, got {}",
+                    fields.len()
+                ));
+            }
+            match &fields[1] {
+                Val::AnyRef(None) => match &fields[0] {
+                    Val::I64(n) => Ok(JsonValue::Int(*n)),
+                    other => Err(format!("Int carrier $small was not i64: {other:?}")),
+                },
+                _ => Err("Int main return is a Big value, which exceeds the \
+                          i64 replay-trace format"
+                    .to_string()),
+            }
+        }
         (Type::Float, Val::F64(b)) => Ok(JsonValue::Float(f64::from_bits(*b))),
         (Type::Float, Val::F32(b)) => Ok(JsonValue::Float(f32::from_bits(*b) as f64)),
         (Type::Bool, Val::I32(n)) => Ok(JsonValue::Bool(*n != 0)),
@@ -122,16 +146,33 @@ pub(super) fn encode_entry_args_for_wasm_gc(
     let mut out = Vec::with_capacity(args.len());
     for (idx, value) in args.iter().enumerate() {
         let val = match value {
-            Value::Int(n) => match n.to_i64() {
-                Some(i) => Val::I64(i),
-                None => {
-                    return Err(format!(
+            Value::Int(n) => {
+                let i = n.to_i64().ok_or_else(|| {
+                    format!(
                         "wasm-gc entry arg #{}: Int value out of 64-bit range \
-                         (the wasm-gc backend uses 64-bit integers)",
+                         (the host ABI passes Int entry args as i64)",
                         idx + 1
-                    ));
+                    )
+                })?;
+                // `Int = ℤ`: an `Int` entry param is the `$AverInt`
+                // carrier. When the module exports the bridge constructor
+                // (`__rt_aint_from_i64`, present whenever Int is reachable),
+                // build the carrier from the i64; otherwise the param is a
+                // plain scalar i64 (no Int arithmetic reachable) and the raw
+                // value goes through unchanged.
+                match instance.get_func(&mut *store, "__rt_aint_from_i64") {
+                    Some(from_i64) => {
+                        let mut out_aint = [Val::AnyRef(None)];
+                        from_i64
+                            .call(&mut *store, &[Val::I64(i)], &mut out_aint)
+                            .map_err(|e| {
+                                format!("wasm-gc entry arg #{}: __rt_aint_from_i64: {e:#}", idx + 1)
+                            })?;
+                        out_aint[0]
+                    }
+                    None => Val::I64(i),
                 }
-            },
+            }
             Value::Float(f) => Val::F64(f.to_bits()),
             Value::Bool(b) => Val::I32(if *b { 1 } else { 0 }),
             Value::Unit => continue, // Unit-typed param: no slot.

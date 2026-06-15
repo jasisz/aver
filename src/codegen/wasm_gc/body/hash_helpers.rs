@@ -642,15 +642,15 @@ fn emit_inner_hash_dispatch(
         inner.to_string()
     };
     match resolved.as_str() {
-        // bignum slice 4 (eq+hash gap) — a GENUINE `Int` payload lowers to
-        // `$aint` under bignum → `__aint_hash` (agrees with `__aint_eq`,
-        // and an `i32.wrap_i64` on a ref is invalid wasm). A newtype-erased
-        // Int stays a scalar i64 → wrap. Byte-identical flag-off.
-        "Int" if inner.trim() == "Int" => {
-            super::super::lists::emit_aint_field_hash(f, registry)?;
-        }
+        // `Int = ℤ` — an `Int` payload lowers to the `$aint` ref under
+        // bignum → `__aint_hash` (agrees with `__aint_eq`; an
+        // `i32.wrap_i64` on a ref is invalid wasm). This holds for BOTH a
+        // genuine `Int` field and a newtype-erased Int (`Box(v: Int)`):
+        // the erased field's wasm representation is still `$aint`.
+        // `emit_aint_field_hash` itself falls to `i32.wrap_i64` when no
+        // Int is reachable (bignum off).
         "Int" => {
-            f.instruction(&Instruction::I32WrapI64);
+            super::super::lists::emit_aint_field_hash(f, registry)?;
         }
         "Bool" => {} // already i32
         "Float" => {
