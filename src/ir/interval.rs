@@ -139,12 +139,12 @@ impl Bound {
     }
 
     /// Order for picking a `min` lower bound: `NegInf < Finite < PosInf`.
-    fn min(self, other: Bound) -> Bound {
+    pub fn min(self, other: Bound) -> Bound {
         if self.le(other) { self } else { other }
     }
 
     /// Order for picking a `max` upper bound.
-    fn max(self, other: Bound) -> Bound {
+    pub fn max(self, other: Bound) -> Bound {
         if self.le(other) { other } else { self }
     }
 
@@ -218,6 +218,19 @@ impl Interval {
         Interval {
             lo: self.lo.max(other.lo),
             hi: self.hi.min(other.hi),
+        }
+    }
+
+    /// Convex hull (worst-case widening join) — the merge operator for
+    /// control-flow joins and the per-value `worst` accumulator the
+    /// general range pass uses. If either operand escapes `i64`, so does
+    /// the hull, keeping the headroom verdict sound. Public mirror of the
+    /// crate-private `join` free fn so the bare-`i64` consumer (outside
+    /// this module) can widen without re-deriving the rule.
+    pub fn hull(self, other: Interval) -> Interval {
+        Interval {
+            lo: self.lo.min(other.lo),
+            hi: self.hi.max(other.hi),
         }
     }
 
@@ -315,7 +328,7 @@ pub enum OpClass {
 impl OpClass {
     /// Classify an arithmetic intermediate interval. Conservative:
     /// only a fully-`i64`-fitting interval earns `OverflowFree`.
-    fn of_interval(i: Interval) -> OpClass {
+    pub fn of_interval(i: Interval) -> OpClass {
         if i.fits_i64() {
             OpClass::OverflowFree
         } else if i.is_finite() {

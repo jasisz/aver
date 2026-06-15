@@ -346,6 +346,7 @@ pub(super) fn emit_dispatch_table_match<F>(
     subject: String,
     arms: &[ResolvedMatchArm],
     shape: &DispatchTableShape,
+    subject_is_bare: bool,
     body_for_arm: F,
 ) -> String
 where
@@ -375,7 +376,7 @@ where
         .rev()
         .fold(fallback, |else_branch, entry| {
             let arm = &arms[entry.arm_index];
-            let cond = emit_dispatch_condition(subject_name, &entry.pattern);
+            let cond = emit_dispatch_condition(subject_name, &entry.pattern, subject_is_bare);
             let body = emit_dispatch_arm_body(subject_name, arm, entry, &body_for_arm);
             format!("if {} {{ {} }} else {{ {} }}", cond, body, else_branch)
         });
@@ -452,12 +453,24 @@ where
     Some(format!("match {} {{ {} }}", subject, match_arms.join(", ")))
 }
 
-fn emit_dispatch_condition(subject_name: &str, pattern: &SemanticDispatchPattern) -> String {
+fn emit_dispatch_condition(
+    subject_name: &str,
+    pattern: &SemanticDispatchPattern,
+    subject_is_bare: bool,
+) -> String {
     match pattern {
         SemanticDispatchPattern::Literal(lit) => match lit {
             // `AverInt: PartialEq`, so an equality guard works directly;
             // `AverInt` cannot be a `match` pattern literal, hence the
-            // dispatch path lowers Int-literal arms to guards.
+            // dispatch path lowers Int-literal arms to guards. A bare-`i64`
+            // subject (a proven-bare counter, `Copy`) compares against a raw
+            // `{K}i64` literal — comparing it against `AverInt::from_i64(K)`
+            // would be `i64 == AverInt` (`rustc` E0308). This mirrors the
+            // single-arm `try_emit_int_literal_match` `subject_is_bare` path
+            // so the ≥2-literal-arm dispatch table stays in the fast loop.
+            DispatchLiteral::Int(i) if subject_is_bare => {
+                format!("{subject_name} == {i}i64")
+            }
             DispatchLiteral::Int(i) => {
                 format!("{subject_name} == aver_rt::AverInt::from_i64({i})")
             }

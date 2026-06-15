@@ -92,17 +92,22 @@ pub fn generate_cargo_toml(
     lines.push("lto = true".to_string());
     lines.push("codegen-units = 1".to_string());
 
-    // Aver `Int` is i64 with wrapping arithmetic — that is the
-    // semantics the VM, WASM (i32/i64 wrap by spec), and verify
-    // hostile-boundary expansion all share. Disable overflow-checks
-    // in dev/test so debug builds match release: a hostile case like
-    // `i64::MAX * 2` returns the wrapped value instead of panicking.
+    // Aver `Int` is arbitrary-precision (ℤ): both the VM and this Rust
+    // backend carry it as `aver_rt::AverInt`, and the unboxing analysis
+    // lowers a value to a bare `i64` only when it has PROVEN the value
+    // stays in i64 range — so a bare op never overflows in a correctly
+    // compiled program. Turn overflow-checks ON in dev/test as a
+    // defense-in-depth trip-wire: it has zero false positives on correct
+    // code, but turns any future unboxing miscompile (a value wrongly
+    // lowered to bare) into a loud panic instead of a silent i64 wrap.
+    // Release keeps the default (off) so the proven-bounded fast path
+    // carries no per-op check.
     lines.push(String::new());
     lines.push("[profile.dev]".to_string());
-    lines.push("overflow-checks = false".to_string());
+    lines.push("overflow-checks = true".to_string());
     lines.push(String::new());
     lines.push("[profile.test]".to_string());
-    lines.push("overflow-checks = false".to_string());
+    lines.push("overflow-checks = true".to_string());
 
     lines.join("\n")
 }

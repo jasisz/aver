@@ -330,6 +330,14 @@ pub struct CodegenContext {
     /// runtime codegen after the HIR walker's deletion (W6/Stage-3).
     /// `None` for hand-assembled test contexts that skip `build_context`.
     pub mir_program: Option<crate::ir::mir::MirProgram>,
+    /// Per-`(FnId, LocalId)` bare-`i64` representation facts for the Int
+    /// "unboxing" optimization, computed from `mir_program` by
+    /// `bare_i64::analyze`. The Rust backend reads a per-fn slice at
+    /// signature + body emit to select native `i64` vs the default
+    /// `aver_rt::AverInt` for provably-bounded, non-escaping Int values.
+    /// Fail-closed: empty (all-`Boxed`) for hand-assembled test contexts
+    /// and for dependency-module fragments (callers unseen).
+    pub bare_i64: crate::ir::mir::BareI64Facts,
     /// Kernel-proved lemmas parsed back from a committed
     /// `DiscoveredLemmas.lean` (the `--discover` artifact), set by the CLI
     /// on a normal `aver proof` run when the discovery-surface hash still
@@ -603,6 +611,15 @@ pub fn build_context(
         )))
     };
 
+    // Int "unboxing": derive the per-(FnId, LocalId) bare-`i64`
+    // representation facts from the optimized MIR. Read-only — never
+    // mutates the program. Empty (all-`Boxed`) when there is no MIR
+    // (defensive) or for fragments the analysis bails on.
+    let bare_i64 = mir_program
+        .as_ref()
+        .map(crate::ir::mir::bare_i64::analyze)
+        .unwrap_or_default();
+
     let ctx = CodegenContext {
         items,
         type_defs,
@@ -622,6 +639,7 @@ pub fn build_context(
         buffer_build_sinks,
         buffer_fusion_sites,
         synthesized_buffered_fns,
+        bare_i64,
         #[cfg(feature = "runtime")]
         proof_ir: crate::ir::ProofIR::default(),
         // Symbol table threaded through from the pipeline (or

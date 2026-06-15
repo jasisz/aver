@@ -46,6 +46,7 @@
 //! - CSE / loop-invariant hoisting — future waves.
 
 pub mod algebraic;
+pub mod bare_i64;
 pub mod bool_match;
 pub mod branch_collapse;
 pub mod const_fold;
@@ -57,6 +58,7 @@ pub mod own_param;
 pub(crate) mod test_helpers;
 
 pub use algebraic::algebraic_simplify;
+pub use bare_i64::{BareI64Facts, FnBareFacts, Repr, ValueFact};
 pub use bool_match::bool_match_to_if;
 pub use branch_collapse::branch_collapse;
 pub use const_fold::const_fold;
