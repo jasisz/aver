@@ -1,0 +1,31 @@
+module Prop24
+    intent =
+        "TIP prod prop_24: even (x + y) = even (y + x)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn even(x: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(y) -> match y
+            Nat.Z -> false
+            Nat.S(z) -> even(z)
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+
+verify plus law plusComm
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    plus(x, y) => plus(y, x)
+
+verify even law evenPlusComm
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    even(plus(x, y)) => even(plus(y, x))

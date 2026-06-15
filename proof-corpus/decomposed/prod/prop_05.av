@@ -1,0 +1,28 @@
+module Prop05
+    intent =
+        "TIP prod prop_05: length (rev x) = length x."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn length(x: List<Int>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..xs] -> Nat.S(length(xs))
+
+fn rev(x: List<Int>) -> List<Int>
+    match x
+        [] -> []
+        [y, ..xs] -> List.concat(rev(xs), [y])
+
+
+verify length law lengthSnoc
+    given a: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    given y: Int = [1, 2]
+    length(List.concat(a, [y])) => Nat.S(length(a))
+
+verify length law revPreservesLength
+    given x: List<Int> = [[], [1], [1, 2, 3]]
+    length(rev(x)) => length(x)

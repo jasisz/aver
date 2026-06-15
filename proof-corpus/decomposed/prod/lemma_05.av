@@ -1,0 +1,37 @@
+module Lemma05
+    intent =
+        "TIP prod lemma_05: drop (S v) (drop (S w) (x::y::zs)) = drop (S v) (drop w (x::zs))."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn drop(x: Nat, y: List<Int>) -> List<Int>
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> match y
+            [] -> []
+            [x2, ..x3] -> drop(z, x3)
+
+
+verify drop law dropSuccCons
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given a: Int = [1, 2, 3]
+    given y: List<Int> = [[], [7], [7, 8]]
+    drop(Nat.S(x), List.concat([a], y)) => drop(x, y)
+
+verify drop law dropOuterHeadNorm
+    given v: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given a: Int = [1, 2, 3]
+    given y: List<Int> = [[], [7], [7, 8]]
+    drop(Nat.S(v), drop(x, List.concat([a], y))) => drop(Nat.S(v), drop(x, List.concat([0], y)))
+
+verify drop law dropDropCons
+    given v: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given w: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given x: Int = [1, 2, 3]
+    given y: Int = [4, 5, 6]
+    given zs: List<Int> = [[], [7], [7, 8]]
+    drop(Nat.S(v), drop(Nat.S(w), List.concat([x], List.concat([y], zs)))) => drop(Nat.S(v), drop(w, List.concat([x], zs)))
