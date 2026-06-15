@@ -158,6 +158,20 @@ pub(super) struct TypeRegistry {
     /// `bignum` is set; sits one slot below `aint_struct_idx` so the
     /// struct can reference it without a forward edge.
     pub(super) aint_mag_array_idx: Option<u32>,
+    /// bignum slice 4 (eq+hash gap) — wasm fn idx of the `__aint_eq`
+    /// helper, set by `module.rs` once `BuiltinRegistry::assign_slots`
+    /// runs. `Some` iff `bignum`. Every Int-eq site (Map keys, Set
+    /// members, record/sum fields, carrier payloads) routes through this
+    /// instead of an `i64.eq` on a `$AverInt` ref (which is invalid wasm
+    /// and wrong across the Small/Big boundary). Threaded via the
+    /// registry (already passed to every emitter) rather than per-fn args.
+    pub(super) aint_eq_fn_idx: Option<u32>,
+    /// bignum slice 4 (eq+hash gap) — wasm fn idx of the `__aint_hash`
+    /// helper, set alongside `aint_eq_fn_idx`. `Some` iff `bignum`.
+    /// Equal `$AverInt` values hash equal (Small folds `$small`, Big
+    /// folds limbs+sign); the inline `i32.wrap_i64` over a raw value is
+    /// invalid on a ref and collision-collapses every Big to one bucket.
+    pub(super) aint_hash_fn_idx: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -958,6 +972,10 @@ impl TypeRegistry {
             bignum,
             aint_struct_idx,
             aint_mag_array_idx,
+            // Set by `module.rs` after `BuiltinRegistry::assign_slots`,
+            // once the `__aint_eq` / `__aint_hash` fn indices are known.
+            aint_eq_fn_idx: None,
+            aint_hash_fn_idx: None,
         }
     }
 

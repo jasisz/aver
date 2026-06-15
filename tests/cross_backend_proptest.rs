@@ -482,6 +482,152 @@ fn cross_int_equality_canonical_invariant_vm_vs_wasm_gc() {
     }
 }
 
+// ─── Int eq+hash gap: Map / Set / record / sum (slice 4) ────────────────────
+//
+// Slice 3 fixed List/Vector element eq+hash under bignum, but Map-with-Int-
+// keys, Set-of-Int (modelled as `Map<Int, Bool>`), and record/sum `==` with
+// an Int field still emitted `i64.eq` / `i32.wrap_i64` on an `$aint` REF —
+// invalid wasm AND semantically wrong for Big Int (a Big key looked up by an
+// equal Big reached a DIFFERENT way would miss its entry). These cases route
+// every such site through `__aint_eq` / `__aint_hash`. Each builds Big values
+// by ARITHMETIC (`i64::MAX + 1`, `a*2`) — literals past i64 are lexer-rejected
+// — and the differential asserts flag-on (`AVER_WASMGC_BIGNUM=1`) wasm-gc
+// matches the VM (Int = ℤ) exactly. The decisive observable is a Big key/field
+// reached two ways: a string render can't tell a hit from a miss, but
+// `Map.get` / `Map.has` / `==` can.
+//
+// NOTE (out of slice-4 scope, documented honestly): `Map.len` / `List.len`
+// return a raw i64 under bignum (an Int-returning builtin not lifted to
+// `$aint`), and bare `List<Int>` literals don't register their instantiation
+// under the flag. Both are PRE-EXISTING slice-1/3 representation gaps
+// independent of eq+hash; these tests therefore avoid `.len` + `String.fromInt`
+// and `List<Int>` literals. They are NOT regressions of this change.
+
+/// Empty `Map<Int, V>` builder (the `{}` literal needs a type annotation,
+/// which a binding can't carry — so a tiny typed helper fn supplies it).
+fn map_int_program(v_ty: &str, body: &str) -> String {
+    format!(
+        "module Tmp\n\
+         \n\
+         fn emptyM() -> Map<Int, {v_ty}>\n    \
+             {{}}\n\
+         \n\
+         fn main()\n    \
+             ! [Console.print]\n\
+         {body}"
+    )
+}
+
+#[test]
+fn cross_int_eqhash_map_big_keys_vm_vs_wasm_gc() {
+    // Two distinct Big keys + a Small key; a Big key reached via a SECOND
+    // computation (`bigAgain`, which equals `big` by ℤ arithmetic) must hit
+    // the SAME entry — overwriting it, not adding one (Eq/Hash agreement
+    // across the Small/Big boundary). Then `Map.remove` a Big key and read
+    // ONLY the post-remove map.
+    //
+    // We never read a pre-`Map.remove` map after the remove: wasm-gc's
+    // `Map.remove` rewrites the keys array in place (a PRE-EXISTING aliasing
+    // bug, reproducible flag-OFF too, unrelated to bignum eq+hash), so doing
+    // so would test that bug rather than this fix.
+    let body = "    \
+        big = (9223372036854775807 + 1)\n    \
+        big2 = (big * 2)\n    \
+        small = 42\n    \
+        bigAgain = ((9223372036854775807 * 2) - 9223372036854775807 + 1)\n    \
+        m1 = Map.set(emptyM(), big, 100)\n    \
+        m2 = Map.set(m1, big2, 200)\n    \
+        m3 = Map.set(m2, small, 300)\n    \
+        m4 = Map.set(m3, bigAgain, 101)\n    \
+        Console.print(String.fromInt(Option.withDefault(Map.get(m4, big), 0 - 1)))\n    \
+        Console.print(String.fromInt(Option.withDefault(Map.get(m4, big2), 0 - 1)))\n    \
+        Console.print(String.fromInt(Option.withDefault(Map.get(m4, small), 0 - 1)))\n    \
+        Console.print(String.fromInt(Option.withDefault(Map.get(m4, bigAgain), 0 - 1)))\n    \
+        Console.print(String.fromBool(Map.has(m4, big2)))\n    \
+        m5 = Map.remove(m4, big2)\n    \
+        Console.print(String.fromBool(Map.has(m5, big2)))\n    \
+        Console.print(String.fromInt(Option.withDefault(Map.get(m5, big), 0 - 1)))\n    \
+        Console.print(String.fromInt(Option.withDefault(Map.get(m5, bigAgain), 0 - 1)))\n";
+    let source = map_int_program("Int", body);
+    let vm = run_vm("cross-eqhash-map-vm", &source).expect("VM must accept Map<Int,Int> program");
+    let wg = run_wasm_gc_bignum("cross-eqhash-map-wg", &source)
+        .expect("wasm-gc (bignum) must accept Map<Int,Int> with Big keys");
+    assert_eq!(
+        wg, vm,
+        "VM vs wasm-gc (bignum) diverged on Map<Int,Int> with Big keys \
+         (get/has/overwrite/remove):\nVM:\n{vm}\nwasm-gc:\n{wg}"
+    );
+}
+
+#[test]
+fn cross_int_eqhash_set_big_dedup_vm_vs_wasm_gc() {
+    // Set-of-Int as `Map<Int, Bool>`: an equal-Big-via-two-paths must
+    // collapse to one membership entry; non-members miss.
+    let body = "    \
+        big = (9223372036854775807 + 1)\n    \
+        bigSame = ((9223372036854775807 * 2) - 9223372036854775807 + 1)\n    \
+        s1 = Map.set(emptyM(), big, true)\n    \
+        s2 = Map.set(s1, bigSame, true)\n    \
+        s3 = Map.set(s2, 7, true)\n    \
+        Console.print(String.fromBool(Map.has(s3, big)))\n    \
+        Console.print(String.fromBool(Map.has(s3, bigSame)))\n    \
+        Console.print(String.fromBool(Map.has(s3, 7)))\n    \
+        Console.print(String.fromBool(Map.has(s3, 8)))\n    \
+        Console.print(String.fromBool(Map.has(s3, (big * 2))))\n";
+    let source = map_int_program("Bool", body);
+    let vm = run_vm("cross-eqhash-set-vm", &source).expect("VM must accept Map<Int,Bool> program");
+    let wg = run_wasm_gc_bignum("cross-eqhash-set-wg", &source)
+        .expect("wasm-gc (bignum) must accept Set-of-Int with Big members");
+    assert_eq!(
+        wg, vm,
+        "VM vs wasm-gc (bignum) diverged on Set-of-Int (Map<Int,Bool>) Big dedup:\n\
+         VM:\n{vm}\nwasm-gc:\n{wg}"
+    );
+}
+
+#[test]
+fn cross_int_eqhash_record_sum_big_field_vm_vs_wasm_gc() {
+    // record `==` and sum `==` with a Big Int field: equal Big fields → true,
+    // differing → false, Small-vs-Big → false, different variant → false.
+    let source = "module Tmp\n\
+         \n\
+         record Point\n    \
+             x: Int\n    \
+             y: Int\n\
+         \n\
+         type Wrap\n    \
+             W(Int)\n    \
+             V(Int)\n\
+         \n\
+         fn main()\n    \
+             ! [Console.print]\n    \
+             big = (9223372036854775807 + 1)\n    \
+             bigSame = ((9223372036854775807 * 2) - 9223372036854775807 + 1)\n    \
+             p1 = Point(x = big, y = 5)\n    \
+             p2 = Point(x = bigSame, y = 5)\n    \
+             p3 = Point(x = big, y = 6)\n    \
+             p4 = Point(x = 42, y = 5)\n    \
+             Console.print(String.fromBool(p1 == p2))\n    \
+             Console.print(String.fromBool(p1 == p3))\n    \
+             Console.print(String.fromBool(p1 == p4))\n    \
+             w1 = Wrap.W(big)\n    \
+             w2 = Wrap.W(bigSame)\n    \
+             w3 = Wrap.W(42)\n    \
+             w4 = Wrap.V(big)\n    \
+             Console.print(String.fromBool(w1 == w2))\n    \
+             Console.print(String.fromBool(w1 == w3))\n    \
+             Console.print(String.fromBool(w1 == w4))\n"
+        .to_string();
+    let vm = run_vm("cross-eqhash-rec-vm", &source).expect("VM must accept record/sum eq program");
+    let wg = run_wasm_gc_bignum("cross-eqhash-rec-wg", &source)
+        .expect("wasm-gc (bignum) must accept record/sum eq with a Big Int field");
+    assert_eq!(
+        wg, vm,
+        "VM vs wasm-gc (bignum) diverged on record/sum `==` with a Big Int field:\n\
+         VM:\n{vm}\nwasm-gc:\n{wg}"
+    );
+}
+
 // ─── Euclidean divmod (slice 2) ─────────────────────────────────────────────
 //
 // `Int.div` / `Int.mod` return `Result<Int, String>` with EUCLIDEAN

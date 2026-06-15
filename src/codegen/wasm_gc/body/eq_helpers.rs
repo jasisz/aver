@@ -713,6 +713,14 @@ fn emit_inner_eq_dispatch(
         inner.to_string()
     };
     match resolved.as_str() {
+        // bignum slice 4 (eq+hash gap) — a GENUINE `Int` payload lowers to
+        // `$aint` under bignum → `__aint_eq` (an `i64.eq` on a ref is
+        // invalid wasm and wrong across Small/Big). A newtype-erased Int
+        // (`resolved == "Int"` but `inner != "Int"`) stays a scalar i64 →
+        // `i64.eq`. Both byte-identical flag-off.
+        "Int" if inner.trim() == "Int" => {
+            super::super::lists::emit_aint_field_eq(f, registry)?;
+        }
         "Int" => {
             f.instruction(&Instruction::I64Eq);
         }

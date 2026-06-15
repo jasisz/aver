@@ -721,23 +721,58 @@ fn emit_int_elem_eq(
     Ok(())
 }
 
-/// bignum slice 3 — mix an Int element into a List / Vector HASH. The
-/// element must already be on the stack (an i64 flag-off, a `(ref null
-/// $aint)` flag-on). Flag-off keeps the byte-identical `i32.wrap_i64`;
-/// flag-on reads the `$small` field and wraps it. The hash is only ever
-/// used to bucket within the same wasm module (never compared
-/// cross-backend), so any deterministic projection is sound — `eq`
-/// disambiguates collisions, and a Big's `$small` is a stable constant.
+/// bignum slice 3 / slice 4 — mix an Int element into a List / Vector
+/// HASH. The element must already be on the stack (an i64 flag-off, a
+/// `(ref null $aint)` flag-on). Flag-off keeps the byte-identical
+/// `i32.wrap_i64`; flag-on routes through `__aint_hash` (slice 4),
+/// matching every other structural Int-hash site and giving Big elements
+/// a real distribution. (Slice 3 originally read just the `$small`
+/// field, which is correct — `eq` disambiguates — but collapsed every
+/// Big to one bucket; `__aint_hash` removes that pathology uniformly.)
 fn emit_int_elem_hash(f: &mut Function, registry: &TypeRegistry) -> Result<(), WasmGcError> {
+    emit_aint_field_hash(f, registry)
+}
+
+/// bignum slice 4 (eq+hash gap) — emit Int EQUALITY for a structural
+/// site (record/sum field, Map key, Map value, carrier payload) that
+/// already has two operands on the stack. Flag-off keeps the
+/// byte-identical `i64.eq`; flag-on routes through `__aint_eq` (the fn
+/// idx now recorded on the registry by `module.rs`) so two `$aint` refs
+/// compare by value across the Small/Big boundary. An `i64.eq` on a
+/// `$AverInt` ref is invalid wasm — the gap this closes for
+/// `Map<Int,V>` keys / `Set<Int>` / record-and-sum Int fields, the
+/// sibling of the slice-3 `List`/`Vector` fix.
+pub(super) fn emit_aint_field_eq(
+    f: &mut Function,
+    registry: &TypeRegistry,
+) -> Result<(), WasmGcError> {
     if registry.bignum {
-        let aint_idx = registry.aint_struct_idx.ok_or(WasmGcError::Validation(
-            "bignum active but no $AverInt struct slot for the list/vec hash element".into(),
+        let eq = registry.aint_eq_fn_idx.ok_or(WasmGcError::Validation(
+            "bignum active but __aint_eq fn idx wasn't recorded on the registry".into(),
         ))?;
-        f.instruction(&Instruction::StructGet {
-            struct_type_index: aint_idx,
-            field_index: 0,
-        });
-        f.instruction(&Instruction::I32WrapI64);
+        f.instruction(&Instruction::Call(eq));
+    } else {
+        f.instruction(&Instruction::I64Eq);
+    }
+    Ok(())
+}
+
+/// bignum slice 4 (eq+hash gap) — emit Int HASH for a structural site
+/// whose single Int operand is already on the stack (an i64 flag-off, a
+/// `(ref null $aint)` flag-on). Flag-off keeps the byte-identical
+/// `i32.wrap_i64`; flag-on routes through `__aint_hash`, which agrees
+/// with `__aint_eq` (equal values hash equal) AND gives Big keys a real
+/// distribution instead of collapsing every Big to `$small == 0`. An
+/// `i32.wrap_i64` on a `$AverInt` ref is invalid wasm.
+pub(super) fn emit_aint_field_hash(
+    f: &mut Function,
+    registry: &TypeRegistry,
+) -> Result<(), WasmGcError> {
+    if registry.bignum {
+        let h = registry.aint_hash_fn_idx.ok_or(WasmGcError::Validation(
+            "bignum active but __aint_hash fn idx wasn't recorded on the registry".into(),
+        ))?;
+        f.instruction(&Instruction::Call(h));
     } else {
         f.instruction(&Instruction::I32WrapI64);
     }
@@ -1922,7 +1957,7 @@ pub(super) fn emit_record_eq_inline(
         // emit per-field eq → i32
         match field_ty.trim() {
             "Int" => {
-                f.instruction(&Instruction::I64Eq);
+                emit_aint_field_eq(f, registry)?;
             }
             "Bool" => {
                 f.instruction(&Instruction::I32Eq);
@@ -2038,7 +2073,7 @@ pub(super) fn emit_sum_eq_inline(
                 });
                 match field_ty.trim() {
                     "Int" => {
-                        f.instruction(&Instruction::I64Eq);
+                        emit_aint_field_eq(f, registry)?;
                     }
                     "Bool" => {
                         f.instruction(&Instruction::I32Eq);
@@ -2599,6 +2634,13 @@ fn emit_sum_inline_hash(
                 field_ty.trim().to_string()
             };
             match resolved.as_str() {
+                // A GENUINE `Int` field lowers to `$aint` under bignum →
+                // `__aint_hash`; a newtype-erased Int (`resolved == "Int"`
+                // but `field_ty != "Int"`) stays a scalar i64 → wrap. Both
+                // are byte-identical flag-off.
+                "Int" if field_ty.trim() == "Int" => {
+                    emit_aint_field_hash(f, registry)?;
+                }
                 "Int" => {
                     f.instruction(&Instruction::I32WrapI64);
                 }
@@ -2675,6 +2717,12 @@ fn emit_record_inline_hash(
             field_type.trim().to_string()
         };
         match resolved.as_str() {
+            // Genuine `Int` field → `$aint` under bignum → `__aint_hash`;
+            // newtype-erased Int stays scalar i64 → wrap. Byte-identical
+            // flag-off.
+            "Int" if field_type.trim() == "Int" => {
+                emit_aint_field_hash(f, registry)?;
+            }
             "Int" => {
                 f.instruction(&Instruction::I32WrapI64);
             }
