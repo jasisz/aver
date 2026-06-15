@@ -53,10 +53,20 @@ fn assert_lane_never_first_exact_lane_theorem(output_dir: &std::path::Path) {
 /// name — application type mismatch), `omega` failing on a nonlinear
 /// goal, and `_sample_N` theorems FALSE AS STATED (when-guard numerals
 /// elaborated as Nat, truncating subtraction). Post-fix the export
-/// builds GREEN: exactly 2 sorries (the two unguarded nonlinear
-/// universals — sqNonneg, nrNewErrNum≍nrOldErrSq), with every
-/// `when`-guarded law closed bounded over its declared domain and
-/// every emitted sample theorem true (Int-ascribed guards).
+/// builds GREEN: every `when`-guarded law closed bounded over its
+/// declared domain and every emitted sample theorem true (Int-ascribed
+/// guards).
+///
+/// The SHAPE-GATED `grind` rung (admitted on flat algebraic/ring goals,
+/// skipped on inductive ones) now closes the unconditional nonlinear
+/// polynomial ring identity `nrNewErrNum ≍ nrOldErrSq`
+/// (`s⁴ - d·(x·(2s² - dx)) = (s² - dx)²`) — grind's `+ring` subsolver
+/// carries the multi-variable nonlinear identity the hand-rolled AC-ring
+/// simp package stopped normalizing at Lean 4.31. So the wall now lands
+/// on exactly 1 honest caught sorry — the genuinely undecidable-by-grind
+/// `sqNonneg` (`x·x ≥ 0`, needs `mul_self_nonneg`, off the whitelist
+/// here) — down from 2. grind pulls `Classical.choice` on the closure
+/// (whitelisted: ⊆ {propext, Classical.choice, Quot.sound}).
 #[test]
 fn proof_nonlinear_laws_degrade_to_honest_sorries() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -64,12 +74,14 @@ fn proof_nonlinear_laws_degrade_to_honest_sorries() {
         return;
     }
     let output_dir = temp_output_dir("aver-proof-nr-wall");
-    let (summary, run) = run_lean_check_json("tests/fixtures/nr_wall.av", &output_dir, 2, &[]);
+    let (summary, run) = run_lean_check_json("tests/fixtures/nr_wall.av", &output_dir, 1, &[]);
     assert_eq!(
         summary["sorries"].as_u64(),
-        Some(2),
-        "nonlinear laws must land on exactly 2 honest caught sorries \
-         (a build error OR a different count is a regression).\n{}",
+        Some(1),
+        "the nonlinear wall must land on exactly 1 honest caught sorry — \
+         the shape-gated grind rung closes the nrNewErrNum≍nrOldErrSq ring \
+         identity, leaving only sqNonneg (a build error OR a different count \
+         is a regression).\n{}",
         format_output(&run)
     );
     assert_eq!(

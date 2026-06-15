@@ -3688,3 +3688,72 @@ fn universal_lane_collision_guard_clean_manifest_emits_both() {
         "a clean manifest collides with nothing — no omissions"
     );
 }
+
+/// Shape-gated `grind` rung, ADMIT side: a flat nonlinear arithmetic
+/// law (`x * x >= 0`) whose cone is a single NON-recursive pure fn and
+/// whose default ladder ends in an honest `sorry` (no `omega`/`rfl`
+/// guaranteed closer for `var * var`) must lead with the cone-aware
+/// `grind` rung — `grind`'s ring/order subsolvers close such flat goals
+/// without induction. Codegen-only (no lake): asserts the emitted tactic.
+#[test]
+fn grind_rung_admitted_on_flat_nonrecursive_law() {
+    let src = "\
+module FlatGrind
+    effects []
+
+fn sq_nonneg(x: Int) -> Bool
+    ? \"x squared is never negative.\"
+    x * x >= 0
+
+verify sq_nonneg law universal
+    given x: Int = [-7, -1, 0, 1, 9]
+    sq_nonneg(x) => true
+";
+    let mut ctx = ctx_from_source(src, "FlatGrind");
+    let out = transpile(&mut ctx);
+    let lean = generated_lean_file(&out);
+    assert!(
+        lean.contains("grind [_root_.sq_nonneg]"),
+        "a flat, sorry-floored, non-recursive law must gain the cone-aware \
+         grind rung:\n{lean}"
+    );
+}
+
+/// Shape-gated `grind` rung, SKIP side (the "not worse" invariant): an
+/// INDUCTIVE law whose cone contains a user-recursive pure fn
+/// (`len`/`append`, a list-length monoid identity) routes to the
+/// structural-induction path `grind` cannot close. The gate MUST NOT
+/// emit `grind` there — emitting it would only burn ~1.2s per proof for
+/// a guaranteed fall-through. Codegen-only: asserts NO `grind` anywhere
+/// in the inductive law's module.
+#[test]
+fn grind_rung_skipped_on_inductive_recursive_law() {
+    let src = "\
+module IndNoGrind
+    effects []
+
+fn len(xs: List<Int>) -> Int
+    match xs
+        [] -> 0
+        [x, ..rest] -> 1 + len(rest)
+
+fn append(xs: List<Int>, ys: List<Int>) -> List<Int>
+    match xs
+        [] -> ys
+        [x, ..rest] -> List.concat([x], append(rest, ys))
+
+verify len law lenAppend
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    given ys: List<Int> = [[], [4], [5, 6]]
+    len(append(xs, ys)) => len(xs) + len(ys)
+";
+    let mut ctx = ctx_from_source(src, "IndNoGrind");
+    let out = transpile(&mut ctx);
+    let lean = generated_lean_file(&out);
+    assert!(
+        !lean.contains("grind"),
+        "an inductive law over user-recursive fns (len/append) must NOT \
+         gain a grind rung — grind cannot close a structural-induction \
+         goal, so emitting it is pure waste:\n{lean}"
+    );
+}

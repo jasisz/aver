@@ -12,6 +12,7 @@ mod suffix_roundtrip;
 
 use super::VerifyEmitMode;
 use super::expr::aver_name_to_lean;
+use super::recursive_pure_fn_names;
 use crate::ast::{VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::verify_law::{collect_missing_helper_law_hints, missing_helper_law_message};
@@ -50,6 +51,198 @@ fn law_strategy_for(
 }
 
 pub fn emit_verify_law_forall_auto_proof(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    verify_mode: VerifyEmitMode,
+    theorem_base: &str,
+    quant_params: &str,
+    theorem_prop: &str,
+) -> Option<AutoProof> {
+    let inner = emit_verify_law_forall_auto_proof_inner(
+        vb,
+        law,
+        ctx,
+        verify_mode,
+        theorem_base,
+        quant_params,
+        theorem_prop,
+    )?;
+    // ADDITIVE, SHAPE-GATED `grind` outright-closer rung — prepended at
+    // the TOP of the ladder, but ONLY for laws whose goal is
+    // grind-amenable (algebraic / ring / order / comparison identity, NOT
+    // a structural-induction theorem). `grind` (Lean 4.31 core, no
+    // Mathlib) is a saturation solver with commutative-ring (+ring), AC,
+    // and order/linarith subsolvers — it closes flat arithmetic goals
+    // (like the nonlinear NR polynomial identity in nr_wall) WITHOUT
+    // induction, but it CANNOT perform the structural induction the
+    // recursive monoid/order laws (append-assoc, rev-involution,
+    // count-rev) require. Emitting it on those inductive goals only burns
+    // ~1.2s per proof for a guaranteed fall-through. The rung is admitted
+    // iff BOTH gates pass: the SHAPE gate (`grind_is_shape_amenable` — the
+    // law's unfold cone has NO user-recursive pure fn the proof would
+    // induct over) AND the FRONTIER gate (the proof ends in an honest
+    // `sorry`, so grind can do NEW work — guaranteed closers like
+    // `omega`/`rfl` are left byte-identical).
+    Some(maybe_wrap_with_grind_rung(vb, law, ctx, inner))
+}
+
+/// Whether the additive `grind` rung is SHAPE-AMENABLE for this law:
+/// the goal is a flat algebraic / ring / order / comparison identity
+/// that `grind`'s quantifier-free ring/AC/order subsolvers can close
+/// outright, NOT a structural-induction theorem over a user-recursive
+/// def (which needs `induction`/`fun_induction` first — something
+/// `grind` does not perform).
+///
+/// The discriminating signal is the law's unfold cone (`law_simp_defs`,
+/// the same transitively-reached pure-fn set the simp rungs source)
+/// intersected with `recursive_pure_fn_names` (the recursion classifier's
+/// set of user-recursive pure fns). When the cone touches ANY recursive
+/// pure fn, the law routes to the structural-induction path
+/// (`mk_arms`/list-induction/`fun_induction`) and `grind` cannot close
+/// it — SKIP. When the cone is entirely non-recursive, the goal is flat
+/// arithmetic/ring (like `nrNewErrNum = nrOldErrSq`) — ADMIT.
+///
+/// Also requires a non-empty cone: a law with no user fns in its cone is
+/// a pure builtin/arith goal the existing IR-pinned rungs (omega /
+/// RingIdentity) already own; a bare `grind` adds nothing there.
+fn grind_is_shape_amenable(ctx: &CodegenContext, vb: &VerifyBlock, law: &VerifyLaw) -> bool {
+    // Cone by SOURCE name (pre-`aver_name_to_lean`), so it can be matched
+    // directly against `recursive_pure_fn_names`' bare source names.
+    let cone = shared::law_simp_source_names(ctx, vb, law);
+    if cone.is_empty() {
+        return false;
+    }
+    let recursive = recursive_pure_fn_names(ctx);
+    // A user-recursive pure fn anywhere in the cone => the law inducts;
+    // `grind` cannot close it. Skip the rung (no waste on inductive goals).
+    !cone.iter().any(|name| recursive.contains(name))
+}
+
+/// Wrap an already-emitted [`AutoProof`] with the additive top-of-ladder
+/// `grind` rung when the law is shape-amenable (see
+/// [`grind_is_shape_amenable`]) AND the proof body has the canonical
+/// `intro <givens>; <body>` shape. Returns the proof unchanged otherwise
+/// — the rung is purely additive (a non-closing `grind` ends in `done`
+/// and `first` falls through to the existing body byte-for-byte).
+fn maybe_wrap_with_grind_rung(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    proof: AutoProof,
+) -> AutoProof {
+    // `replaces_theorem` proofs carry their OWN theorem statement +
+    // bespoke support stack (RingIdentity, floor-window, decimal /
+    // string roundtrips) — there is no plain `intro <givens>; <tactic>`
+    // body to prepend a `grind` arm onto, and the RingIdentity family
+    // already runs `grind` internally. Leave them untouched.
+    if proof.replaces_theorem {
+        return proof;
+    }
+    // A `when`-premised law introduces extra hypotheses (`h_when`, …)
+    // whose Subtype/`by_cases` handling the existing rungs are written
+    // around; a bare `grind` over the premise shape risks an
+    // introduced-but-unused hypothesis stall. The plain unconditional
+    // laws are exactly grind's wheelhouse, so restrict the rung to them.
+    if law.when.is_some() {
+        return proof;
+    }
+    // A proof body that ALREADY leads with `grind` owns its own grind
+    // rung (the `RingIdentity` family emits `first | (grind [<cone>]; …`
+    // internally). Re-wrapping it would emit a redundant outer `grind`
+    // arm — pure waste (a second grind saturation on the same goal). Skip.
+    if proof.proof_lines.iter().any(|l| l.contains("grind")) {
+        return proof;
+    }
+    // SHAPE GATE: only wrap a grind-amenable (flat algebraic/ring/order)
+    // goal — never an inductive law over a user-recursive def.
+    if !grind_is_shape_amenable(ctx, vb, law) {
+        return proof;
+    }
+    // FRONTIER GATE: only wrap a proof whose body ends in an honest
+    // `sorry` floor (a `first | … | sorry` fallback that might NOT
+    // close). A proof with a GUARANTEED closer (no trailing `sorry`: the
+    // IR-pinned `Reflexive`/`Commutative`/`LinearArithmetic`/… rungs that
+    // end in `rfl`/`omega`/`simp …`) already closes cheaply and reliably;
+    // prepending `grind` there only (a) churns the byte-for-byte golden
+    // exports for zero benefit and (b) risks running `grind` to a
+    // potential `maxHeartbeats` build error `first` cannot catch on a goal
+    // `omega` decides instantly. The shape gate already restricts to flat
+    // goals; pairing it with the frontier gate means `grind` is emitted
+    // ONLY where it can do NEW work — exactly the open flat laws (like the
+    // nonlinear ring identity the simp package no longer normalizes).
+    let ends_in_sorry = proof
+        .proof_lines
+        .iter()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .is_some_and(|l| l.trim_end().ends_with("sorry") || l.trim_end().ends_with("sorry)"));
+    if !ends_in_sorry {
+        return proof;
+    }
+    // The proof must be the canonical `intro <givens>` + body shape
+    // (the first proof line, post-indent, is the `intro`). Anything
+    // else is left as-is rather than guessing where to splice the arm.
+    let Some(first_line) = proof.proof_lines.first() else {
+        return proof;
+    };
+    if !first_line.trim_start().starts_with("intro ") {
+        return proof;
+    }
+    // The unfold cone (Lean names, law subject first) the same way the
+    // simp rungs source it. `grind` does NOT unfold user `def`s on its
+    // own (the same lesson as the RingIdentity rung), so it is handed the
+    // cone as `grind [<cone>]`. The shape gate already guaranteed a
+    // non-empty, recursion-free cone.
+    let cone: Vec<String> = shared::law_simp_defs(ctx, vb, law).into_iter().collect();
+    if cone.is_empty() {
+        return proof;
+    }
+    let mut proof_lines = proof.proof_lines;
+    let intro_line = proof_lines.remove(0);
+    let wrapped = wrap_body_with_grind_rung(intro_line, proof_lines, &cone);
+    AutoProof {
+        support_lines: proof.support_lines,
+        proof_lines: wrapped,
+        replaces_theorem: false,
+    }
+}
+
+/// Prepend the `grind` outright-closer arm to an existing (post-`intro`)
+/// `body_lines` tactic block:
+///
+/// ```text
+/// intro <givens>
+/// first
+/// | (grind [<cone>]; done)
+/// | (<existing body, re-indented>)
+/// ```
+///
+/// The `grind` arm ends in `done`, so a `grind` that leaves a residual
+/// goal THROWS and `first` falls to the existing body byte-for-byte
+/// (modulo a 2-space indent under the final `first` arm). `grind` is a
+/// sound saturation solver (it closes only true goals; on failure it
+/// throws on the leftover), so the rung is purely additive — it can only
+/// ADD closures and adds no axioms beyond grind's whitelisted set
+/// ({propext, Classical.choice, Quot.sound}).
+fn wrap_body_with_grind_rung(
+    intro_line: String,
+    body_lines: Vec<String>,
+    cone: &[String],
+) -> Vec<String> {
+    let mut out = vec![intro_line, "  first".to_string()];
+    out.push(format!("  | (grind [{}]; done)", cone.join(", ")));
+    out.push("  | (".to_string());
+    for line in &body_lines {
+        out.push(format!("  {line}"));
+    }
+    if let Some(last) = out.last_mut() {
+        last.push(')');
+    }
+    out
+}
+
+fn emit_verify_law_forall_auto_proof_inner(
     vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
