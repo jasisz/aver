@@ -268,120 +268,14 @@ fn aint_and_string_decls(registry: &TypeRegistry) -> Result<String, WasmGcError>
 /// into the output array with a leading `-` for negative sign.
 pub(super) fn emit_string_from_aint(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let decls = aint_and_string_decls(registry)?;
-    let wat = format!(
-        r#"
-        (module
-          {decls}
-          (func (export "helper") (param $a (ref null $aint)) (result (ref null $string))
-            (local $n i64) (local $abs i64) (local $copy i64)
-            (local $digits i32) (local $total i32) (local $i i32) (local $neg i32)
-            (local $arr (ref null $string))
-            (local $magc (ref null $mag)) (local $len i32) (local $li i32)
-            (local $cur i64) (local $rem i64) (local $q i64) (local $allzero i32)
-            (local $digbuf (ref null $string)) (local $dcount i32)
-            (if (result (ref null $string)) (ref.is_null (struct.get $aint $magf (local.get $a)))
-              (then
-                ;; ── Small: format $small as the scalar helper does ──
-                (local.set $n (struct.get $aint $small (local.get $a)))
-                (if (result (ref null $string)) (i64.eqz (local.get $n))
-                  (then (array.new $string (i32.const 48) (i32.const 1)))
-                  (else
-                    (local.set $neg (if (result i32) (i64.lt_s (local.get $n) (i64.const 0)) (then (i32.const 1)) (else (i32.const 0))))
-                    (local.set $abs (if (result i64) (local.get $neg) (then (i64.sub (i64.const 0) (local.get $n))) (else (local.get $n))))
-                    ;; count digits
-                    (local.set $copy (local.get $abs)) (local.set $digits (i32.const 0))
-                    (block $cd (loop $c
-                      (br_if $cd (i64.eqz (local.get $copy)))
-                      (local.set $digits (i32.add (local.get $digits) (i32.const 1)))
-                      (local.set $copy (i64.div_u (local.get $copy) (i64.const 10)))
-                      (br $c)))
-                    (local.set $total (i32.add (local.get $digits) (local.get $neg)))
-                    (local.set $arr (array.new_default $string (local.get $total)))
-                    (local.set $i (i32.sub (local.get $total) (i32.const 1)))
-                    (local.set $copy (local.get $abs))
-                    (block $fd (loop $f
-                      (br_if $fd (i32.lt_s (local.get $i) (local.get $neg)))
-                      (array.set $string (local.get $arr) (local.get $i)
-                        (i32.add (i32.const 48) (i32.wrap_i64 (i64.rem_u (local.get $copy) (i64.const 10)))))
-                      (local.set $copy (i64.div_u (local.get $copy) (i64.const 10)))
-                      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
-                      (br $f)))
-                    (if (local.get $neg) (then (array.set $string (local.get $arr) (i32.const 0) (i32.const 45))))
-                    (local.get $arr))))
-              (else
-                ;; ── Big: divmod-by-10 over 32-bit limbs ──
-                (local.set $neg (if (result i32) (i32.lt_s (struct.get $aint $sign (local.get $a)) (i32.const 0)) (then (i32.const 1)) (else (i32.const 0))))
-                ;; work on a mutable copy of the magnitude
-                (local.set $len (array.len (struct.get $aint $magf (local.get $a))))
-                (local.set $magc (array.new_default $mag (local.get $len)))
-                (local.set $li (i32.const 0))
-                (block $cpd (loop $cp
-                  (br_if $cpd (i32.ge_u (local.get $li) (local.get $len)))
-                  (array.set $mag (local.get $magc) (local.get $li)
-                    (array.get $mag (struct.get $aint $magf (local.get $a)) (local.get $li)))
-                  (local.set $li (i32.add (local.get $li) (i32.const 1)))
-                  (br $cp)))
-                ;; collect digits low→high into $digbuf (max ~10 digits/limb*len; len*10 is safe)
-                (local.set $digbuf (array.new_default $string (i32.mul (local.get $len) (i32.const 10))))
-                (local.set $dcount (i32.const 0))
-                (block $dvd (loop $dv
-                  ;; rem = 0; for li=len-1 down to 0: cur=(rem<<32)|limb; q=cur/10; rem=cur%10; limb=q
-                  (local.set $rem (i64.const 0))
-                  (local.set $li (local.get $len))
-                  (block $dl (loop $d
-                    (br_if $dl (i32.eqz (local.get $li)))
-                    (local.set $li (i32.sub (local.get $li) (i32.const 1)))
-                    (local.set $cur (i64.or (i64.shl (local.get $rem) (i64.const 32))
-                                            (i64.and (array.get $mag (local.get $magc) (local.get $li)) (i64.const 0xffffffff))))
-                    (local.set $q (i64.div_u (local.get $cur) (i64.const 10)))
-                    (local.set $rem (i64.rem_u (local.get $cur) (i64.const 10)))
-                    (array.set $mag (local.get $magc) (local.get $li) (local.get $q))
-                    (br $d)))
-                  ;; emit digit = rem
-                  (array.set $string (local.get $digbuf) (local.get $dcount)
-                    (i32.add (i32.const 48) (i32.wrap_i64 (local.get $rem))))
-                  (local.set $dcount (i32.add (local.get $dcount) (i32.const 1)))
-                  ;; loop while magnitude is non-zero
-                  (local.set $allzero (i32.const 1))
-                  (local.set $li (i32.const 0))
-                  (block $zd (loop $z
-                    (br_if $zd (i32.ge_u (local.get $li) (local.get $len)))
-                    (if (i64.ne (array.get $mag (local.get $magc) (local.get $li)) (i64.const 0))
-                      (then (local.set $allzero (i32.const 0)) (br $zd)))
-                    (local.set $li (i32.add (local.get $li) (i32.const 1)))
-                    (br $z)))
-                  ;; exit when the magnitude has become all-zero; else loop.
-                  (br_if $dvd (local.get $allzero))
-                  (br $dv)))
-                ;; build output: [neg '-'] then digits reversed
-                (local.set $total (i32.add (local.get $dcount) (local.get $neg)))
-                (local.set $arr (array.new_default $string (local.get $total)))
-                (if (local.get $neg) (then (array.set $string (local.get $arr) (i32.const 0) (i32.const 45))))
-                (local.set $i (i32.const 0))
-                (block $od (loop $o
-                  (br_if $od (i32.ge_u (local.get $i) (local.get $dcount)))
-                  (array.set $string (local.get $arr)
-                    (i32.add (local.get $neg) (local.get $i))
-                    (array.get_u $string (local.get $digbuf) (i32.sub (i32.sub (local.get $dcount) (i32.const 1)) (local.get $i))))
-                  (local.set $i (i32.add (local.get $i) (i32.const 1)))
-                  (br $o)))
-                (local.get $arr)))))
-    "#
-    );
+    let wat = format!(include_str!("wat/string_from_aint.wat"), decls = decls);
     wat_helper::compile_wat_helper(&wat)
 }
 
 /// `__aint_from_i64(n: i64) -> $AverInt` — canonical Small constructor.
 pub(super) fn emit_aint_from_i64(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let decls = aint_type_decls(registry)?;
-    let wat = format!(
-        r#"
-        (module
-          {decls}
-          (func (export "helper") (param $n i64) (result (ref null $aint))
-            (struct.new $aint (local.get $n) (ref.null $mag) (i32.const 0))))
-    "#
-    );
+    let wat = format!(include_str!("wat/from_i64.wat"), decls = decls);
     wat_helper::compile_wat_helper(&wat)
 }
 
@@ -390,50 +284,7 @@ pub(super) fn emit_aint_from_i64(registry: &TypeRegistry) -> Result<Function, Wa
 /// canonical).
 pub(super) fn emit_aint_neg(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let decls = aint_type_decls(registry)?;
-    let wat = format!(
-        r#"
-        (module
-          {decls}
-          (func (export "helper") (param $a (ref null $aint)) (result (ref null $aint))
-            (local $m (ref null $mag))
-            (local.set $m (struct.get $aint $magf (local.get $a)))
-            (if (result (ref null $aint)) (ref.is_null (local.get $m))
-              (then
-                (if (result (ref null $aint))
-                    (i64.eq (struct.get $aint $small (local.get $a)) (i64.const 0x8000000000000000))
-                  (then
-                    ;; -(i64::MIN) = 2^63 → Big, positive, two 32-bit limbs
-                    ;; (low=0, high=0x80000000).
-                    (struct.new $aint (i64.const 0)
-                      (array.new_fixed $mag 2 (i64.const 0) (i64.const 0x80000000))
-                      (i32.const 1)))
-                  (else
-                    (struct.new $aint
-                      (i64.sub (i64.const 0) (struct.get $aint $small (local.get $a)))
-                      (ref.null $mag) (i32.const 0)))))
-              (else
-                ;; Big. Negation keeps the magnitude and flips the sign, and the
-                ;; result stays a canonical Big EXCEPT for +2^63 (the smallest
-                ;; Big, = i64::MAX + 1): -(2^63) = i64::MIN re-enters i64 range
-                ;; and MUST demote to Small, or `eq` would report it unequal to
-                ;; the same value reached as a Small. +2^63's canonical limbs
-                ;; are [0, 0x80000000] (len 2); every other Big negation is
-                ;; still a canonical Big, so a plain sign flip is correct there.
-                (if (result (ref null $aint))
-                    (i32.and
-                      (i32.eq (struct.get $aint $sign (local.get $a)) (i32.const 1))
-                      (i32.and (i32.eq (array.len (local.get $m)) (i32.const 2))
-                        (i32.and
-                          (i64.eqz (array.get $mag (local.get $m) (i32.const 0)))
-                          (i64.eq (array.get $mag (local.get $m) (i32.const 1)) (i64.const 0x80000000)))))
-                  (then
-                    (struct.new $aint (i64.const 0x8000000000000000) (ref.null $mag) (i32.const 0)))
-                  (else
-                    (struct.new $aint (i64.const 0)
-                      (local.get $m)
-                      (i32.sub (i32.const 0) (struct.get $aint $sign (local.get $a))))))))))
-    "#
-    );
+    let wat = format!(include_str!("wat/neg.wat"), decls = decls);
     wat_helper::compile_wat_helper(&wat)
 }
 
@@ -442,43 +293,7 @@ pub(super) fn emit_aint_neg(registry: &TypeRegistry) -> Result<Function, WasmGcE
 /// Small and a Big are never equal.
 pub(super) fn emit_aint_eq(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let decls = aint_type_decls(registry)?;
-    let wat = format!(
-        r#"
-        (module
-          {decls}
-          (func (export "helper") (param $a (ref null $aint)) (param $b (ref null $aint)) (result i32)
-            (local $am (ref null $mag)) (local $bm (ref null $mag))
-            (local $i i32) (local $n i32) (local $eq i32)
-            (local.set $am (struct.get $aint $magf (local.get $a)))
-            (local.set $bm (struct.get $aint $magf (local.get $b)))
-            (if (result i32) (ref.is_null (local.get $am))
-              (then
-                (if (result i32) (ref.is_null (local.get $bm))
-                  (then (i64.eq (struct.get $aint $small (local.get $a)) (struct.get $aint $small (local.get $b))))
-                  (else (i32.const 0))))
-              (else
-                (if (result i32) (ref.is_null (local.get $bm))
-                  (then (i32.const 0))
-                  (else
-                    (if (result i32) (i32.ne (struct.get $aint $sign (local.get $a)) (struct.get $aint $sign (local.get $b)))
-                      (then (i32.const 0))
-                      (else
-                        (if (result i32) (i32.ne (array.len (local.get $am)) (array.len (local.get $bm)))
-                          (then (i32.const 0))
-                          (else
-                            (local.set $n (array.len (local.get $am)))
-                            (local.set $i (i32.const 0))
-                            (local.set $eq (i32.const 1))
-                            (block $done (loop $lp
-                              (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-                              (if (i64.ne (array.get $mag (local.get $am) (local.get $i))
-                                          (array.get $mag (local.get $bm) (local.get $i)))
-                                (then (local.set $eq (i32.const 0)) (br $done)))
-                              (local.set $i (i32.add (local.get $i) (i32.const 1)))
-                              (br $lp)))
-                            (local.get $eq)))))))))))
-    "#
-    );
+    let wat = format!(include_str!("wat/eq.wat"), decls = decls);
     wat_helper::compile_wat_helper(&wat)
 }
 
@@ -492,30 +307,13 @@ pub(super) fn emit_aint_cmp(registry: &TypeRegistry) -> Result<Function, WasmGcE
     let strip_b = strip("bm", "blen", "sb", "lb");
     let cmp = umag_cmp("am", "alen", "bm", "blen", "cmp", "j");
     let wat = format!(
-        r#"
-        (module
-          {decls}
-          (func (export "helper") (param $a (ref null $aint)) (param $b (ref null $aint)) (result i32)
-            (local $am (ref null $mag)) (local $as_ i32)
-            (local $bm (ref null $mag)) (local $bs i32)
-            (local $alen i32) (local $blen i32)
-            (local $cmp i32) (local $j i32) (local $umag i64)
-            {decomp_a}
-            {decomp_b}
-            (if (result i32) (i32.ne (local.get $as_) (local.get $bs))
-              (then
-                (if (result i32) (i32.gt_s (local.get $as_) (local.get $bs)) (then (i32.const 1)) (else (i32.const -1))))
-              (else
-                (if (result i32) (i32.eqz (local.get $as_))
-                  (then (i32.const 0))
-                  (else
-                    {strip_a}
-                    {strip_b}
-                    {cmp}
-                    (if (result i32) (i32.lt_s (local.get $as_) (i32.const 0))
-                      (then (i32.sub (i32.const 0) (local.get $cmp)))
-                      (else (local.get $cmp)))))))))
-    "#
+        include_str!("wat/cmp.wat"),
+        decls = decls,
+        decomp_a = decomp_a,
+        decomp_b = decomp_b,
+        strip_a = strip_a,
+        strip_b = strip_b,
+        cmp = cmp,
     );
     wat_helper::compile_wat_helper(&wat)
 }
@@ -662,40 +460,18 @@ fn emit_aint_addsub(registry: &TypeRegistry, is_sub: bool) -> Result<Function, W
         "(local.set $beff (local.get $bs))"
     };
     let wat = format!(
-        r#"
-        (module
-          {decls}
-          (func (export "helper") (param $a (ref null $aint)) (param $b (ref null $aint)) (result (ref null $aint))
-            (local $r i64)
-            {locals}
-            ;; fast path: both Small.
-            (if (result (ref null $aint))
-                (i32.and (ref.is_null (struct.get $aint $magf (local.get $a)))
-                         (ref.is_null (struct.get $aint $magf (local.get $b))))
-              (then
-                (local.set $r {fast_op})
-                (if (result (ref null $aint)) {overflow_check}
-                  (then
-                    ;; overflow → slow path
-                    {decomp_a}
-                    {decomp_b}
-                    {beff_set}
-                    {strip_a}
-                    {strip_b}
-                    {combine}
-                    {norm})
-                  (else
-                    (struct.new $aint (local.get $r) (ref.null $mag) (i32.const 0)))))
-              (else
-                ;; at least one Big → slow path
-                {decomp_a}
-                {decomp_b}
-                {beff_set}
-                {strip_a}
-                {strip_b}
-                {combine}
-                {norm}))))
-    "#
+        include_str!("wat/addsub.wat"),
+        decls = decls,
+        locals = locals,
+        decomp_a = decomp_a,
+        decomp_b = decomp_b,
+        beff_set = beff_set,
+        strip_a = strip_a,
+        strip_b = strip_b,
+        combine = combine,
+        norm = norm,
+        fast_op = fast_op,
+        overflow_check = overflow_check,
     );
     wat_helper::compile_wat_helper(&wat)
 }
@@ -713,52 +489,14 @@ pub(super) fn emit_aint_mul(registry: &TypeRegistry) -> Result<Function, WasmGcE
     let strip_b = strip("bm", "blen", "sb", "lb");
     let norm = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
     let wat = format!(
-        r#"
-        (module
-          {decls}
-          (func (export "helper") (param $a (ref null $aint)) (param $b (ref null $aint)) (result (ref null $aint))
-            (local $r i64) (local $av i64) (local $bv i64)
-            (local $k i32) (local $prod i64) (local $ok i32)
-            {locals}
-            (if (result (ref null $aint))
-                (i32.and (ref.is_null (struct.get $aint $magf (local.get $a)))
-                         (ref.is_null (struct.get $aint $magf (local.get $b))))
-              (then
-                (local.set $av (struct.get $aint $small (local.get $a)))
-                (local.set $bv (struct.get $aint $small (local.get $b)))
-                (local.set $r (i64.mul (local.get $av) (local.get $bv)))
-                ;; overflow oracle (mirrors i64::checked_mul): NO overflow
-                ;; iff a == 0 (product genuinely 0), OR — a != 0 AND it is
-                ;; not the `a == -1 && b == i64::MIN` div_s trap edge (that
-                ;; edge IS an overflow) AND the round-trip `r / a == b`.
-                ;;
-                ;; CRUCIAL: wasm `i32.and`/`i32.or` are NOT short-circuiting
-                ;; — both arms evaluate eagerly. A flat boolean expression
-                ;; would run `i64.div_s` on the trap edge and TRAP. So we
-                ;; compute `$ok` with lazy `if` control flow, never reaching
-                ;; the divide unless the divisor is safe.
-                (if (i64.eqz (local.get $av))
-                  (then (local.set $ok (i32.const 1)))
-                  (else
-                    (if (i32.and (i64.eq (local.get $av) (i64.const -1))
-                                 (i64.eq (local.get $bv) (i64.const 0x8000000000000000)))
-                      (then (local.set $ok (i32.const 0)))  ;; trap edge → overflow
-                      (else
-                        (local.set $ok (i64.eq (i64.div_s (local.get $r) (local.get $av)) (local.get $bv)))))))
-                (if (result (ref null $aint)) (local.get $ok)
-                  (then
-                    ;; no overflow → Small result
-                    (struct.new $aint (local.get $r) (ref.null $mag) (i32.const 0)))
-                  (else
-                    ;; overflow → slow path
-                    {decomp_a} {decomp_b} {strip_a} {strip_b}
-                    {mul_body}
-                    {norm})))
-              (else
-                {decomp_a} {decomp_b} {strip_a} {strip_b}
-                {mul_body}
-                {norm}))))
-    "#,
+        include_str!("wat/mul.wat"),
+        decls = decls,
+        locals = locals,
+        decomp_a = decomp_a,
+        decomp_b = decomp_b,
+        strip_a = strip_a,
+        strip_b = strip_b,
+        norm = norm,
         mul_body = mul_magnitude(),
     );
     wat_helper::compile_wat_helper(&wat)
@@ -809,4 +547,58 @@ fn mul_magnitude() -> String {
               (br $mi)))
     "#
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `TypeRegistry` with the bignum slots wired to a self-consistent
+    /// layout (`string=0 < mag=1`, `struct=mag+1=2`) — the layout
+    /// invariant both `aint_type_decls` and `aint_and_string_decls`
+    /// require. Built from an empty program so no parsing/resolution
+    /// machinery is needed, then the four bignum/String index fields are
+    /// overwritten directly (they are `pub(super)`, visible here).
+    fn bignum_registry() -> TypeRegistry {
+        let mut registry = TypeRegistry::build_with_handler(&[], &[], false);
+        registry.bignum = true;
+        registry.string_array_type_idx = Some(0);
+        registry.aint_mag_array_idx = Some(1);
+        registry.aint_struct_idx = Some(2);
+        registry
+    }
+
+    /// PARSE GUARD — the whole point of moving the WAT bodies into
+    /// `.wat` files. Every leaf helper's template is formatted and run
+    /// through `wat::parse_str` (inside `compile_wat_helper`). A stray
+    /// `)`/`(` in any `.wat` file — the exact bug class hand-balancing
+    /// parens in `r#"…"#` invited — fails HERE at `cargo test`, instead
+    /// of only when a program happens to exercise that op in wasmtime.
+    #[test]
+    fn every_bignum_helper_wat_parses() {
+        let registry = bignum_registry();
+
+        // Each leaf helper emits a full `(module … (func "helper" …))`;
+        // `compile_wat_helper` parses it, so `Ok` ⇒ the WAT is
+        // syntactically valid and the locals/body extracted cleanly.
+        let cases: &[(&str, fn(&TypeRegistry) -> Result<Function, WasmGcError>)] = &[
+            ("emit_aint_from_i64", emit_aint_from_i64),
+            ("emit_aint_neg", emit_aint_neg),
+            ("emit_aint_eq", emit_aint_eq),
+            ("emit_aint_cmp", emit_aint_cmp),
+            ("emit_aint_add", emit_aint_add),
+            ("emit_aint_sub", emit_aint_sub),
+            ("emit_aint_mul", emit_aint_mul),
+            ("emit_string_from_aint", emit_string_from_aint),
+        ];
+
+        for (name, emit) in cases {
+            let result = emit(&registry);
+            assert!(
+                result.is_ok(),
+                "bignum helper `{name}` failed to emit/parse its WAT: {:?}",
+                result.err()
+            );
+        }
+    }
 }
