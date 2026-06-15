@@ -162,3 +162,176 @@ fn sanitise(relative: &str) -> String {
         .map(|c| if c.is_alphanumeric() { c } else { '-' })
         .collect()
 }
+
+/// The four BOUNDARY-COMPLETENESS regressions (PR #519): valid Aver
+/// programs whose emitted Rust used to fail `rustc` with `E0308` because
+/// the bare-i64 unboxing analysis marked a value bare while codegen emitted
+/// it (or a callee's bare result) into an `AverInt` position without the
+/// `from_i64` boundary conversion. Each `(name, source)` must now emit Rust
+/// that type-checks. Inline (not in the file corpus) so the regression is
+/// self-documenting and travels with the test.
+const UNBOX_BOUNDARY_REGRESSIONS: &[(&str, &str)] = &[
+    // Q4: a bare compound `n + 1` as a Call arg to a BOXED param `keep(x)`.
+    (
+        "q4_call_arg_to_boxed_param",
+        r#"module Q4
+    intent = "bare compound in Call arg to a boxed param"
+    depends []
+    effects [Console.print]
+
+fn keep(x: Int) -> Int
+    x
+
+fn down(n: Int) -> Int
+    match n
+        0 -> keep(n + 1)
+        _ -> down(n - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("r={down(2)}")
+"#,
+    ),
+    // Q5: a bare-return fn `g` consumed by a boxed-return fn `h`.
+    (
+        "q5_bare_return_into_boxed_return",
+        r#"module Q5
+    intent = "bare return flowing into a boxed return position"
+    depends []
+    effects [Console.print]
+
+fn g(n: Int) -> Int
+    match n
+        0 -> 0
+        _ -> g(n - 1)
+
+fn h() -> Int
+    g(2)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("r={h()}")
+"#,
+    ),
+    // opus Area 3 (escaping alias): `let x = n - 1; [x, x]` into an Int list.
+    (
+        "esc_match_let_alias_into_aggregate",
+        r#"module EscM
+    intent = "bare compound aliased into an Int aggregate"
+    depends []
+    effects [Console.print]
+
+fn loopit(n: Int) -> List<Int>
+    match n
+        0 -> match n - 1
+            x -> [x, x]
+        _ -> loopit(n - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("r={List.len(loopit(4))}")
+"#,
+    ),
+    // opus Area 3 (subject alias): `match n { y -> y }` returned as Int.
+    (
+        "subj_ret_match_binding_alias",
+        r#"module SubjRet
+    intent = "bare subject aliased through a match binding, returned as Int"
+    depends []
+    effects [Console.print]
+
+fn loopit(n: Int) -> Int
+    match n
+        0 -> match n
+            y -> y
+        _ -> loopit(n - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("r={loopit(3)}")
+"#,
+    ),
+    // marms: a ≥2-literal-arm bounded counter → dispatch-table guard path.
+    (
+        "marms_multi_literal_arm_dispatch",
+        r#"module Marms
+    intent = "multi base-case literal arms over a bare counter"
+    depends []
+    effects [Console.print]
+
+fn loopit(n: Int, acc: Int) -> Int
+    match n
+        2 -> acc
+        0 -> acc
+        _ -> loopit(n - 1, acc + 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("r={loopit(5, 0)}")
+"#,
+    ),
+];
+
+#[test]
+fn rust_codegen_compiles_unbox_boundary_regressions() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let shared_target = shared_target_dir();
+    fs::create_dir_all(&shared_target).expect("create shared target dir");
+
+    let mut failures: Vec<String> = Vec::new();
+
+    for (name, source) in UNBOX_BOUNDARY_REGRESSIONS {
+        let workspace = temp_output_dir(&format!("rust-codegen-unbox-{name}"));
+        let src_path = workspace.join(format!("{name}.av"));
+        let project_dir = workspace.join("project");
+        fs::create_dir_all(&workspace).expect("create per-example workspace");
+        fs::write(&src_path, source).expect("write repro .av");
+
+        let compile = Command::new(aver_bin)
+            .current_dir(&repo_root)
+            .arg("compile")
+            .arg(&src_path)
+            .arg("--target")
+            .arg("rust")
+            .arg("-o")
+            .arg(&project_dir)
+            .output()
+            .expect("expected `aver compile --target rust` to spawn");
+        if !compile.status.success() {
+            failures.push(format!(
+                "{name}: aver compile --target rust failed\n{}",
+                format_output(&compile)
+            ));
+            let _ = fs::remove_dir_all(&workspace);
+            continue;
+        }
+
+        // `cargo check` is the load-bearing assertion: `aver compile` exit 0
+        // does NOT imply the emitted Rust type-checks — the whole point of
+        // these regressions is that it used to emit `i64`-into-`AverInt`
+        // E0308 mismatches.
+        let check = Command::new("cargo")
+            .arg("check")
+            .arg("--manifest-path")
+            .arg(project_dir.join("Cargo.toml"))
+            .env("CARGO_TARGET_DIR", &shared_target)
+            .output()
+            .expect("expected `cargo check` to spawn");
+        if !check.status.success() {
+            failures.push(format!(
+                "{name}: cargo check failed on emitted project (E0308 boundary regression?)\n{}",
+                format_output(&check)
+            ));
+        }
+        let _ = fs::remove_dir_all(&workspace);
+    }
+
+    assert!(
+        failures.is_empty(),
+        "{} of {} unbox-boundary regressions failed Rust codegen + cargo check:\n  - {}",
+        failures.len(),
+        UNBOX_BOUNDARY_REGRESSIONS.len(),
+        failures.join("\n  - ")
+    );
+}

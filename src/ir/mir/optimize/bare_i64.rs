@@ -1864,4 +1864,192 @@ fn main() -> List<Int>
             "a counter reaching `[n + 1]` through a BinOp escapes the aggregate → must box"
         );
     }
+
+    // ── BOUNDARY-COMPLETENESS regressions (PR #519 four defects) ─────────
+    //
+    // Each defect was a valid Aver program whose emitted Rust failed to
+    // compile because the analysis/codegen disagreed on a value's
+    // representation at a use position. The fix is fail-closed: the counter
+    // stays bare (fast loop preserved) while the single crossing converts at
+    // the boundary, OR the escaping value demotes. These assert the
+    // analysis-observable half (the codegen boundary conversions are covered
+    // by `tests/rust_codegen_regression.rs`).
+
+    /// Defect Q4: a bare compound `n + 1` flows as a Call arg to a BOXED
+    /// param (`keep(x: Int)`). The counter stays bare — codegen converts the
+    /// arg with `from_i64` at the boxed-param boundary (the value itself does
+    /// not cross; a fresh `AverInt` does), so the fast loop is preserved.
+    #[test]
+    fn call_arg_to_boxed_param_keeps_counter_bare() {
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn keep(x: Int) -> Int
+    x
+
+fn down(n: Int) -> Int
+    match n
+        0 -> keep(n + 1)
+        _ -> down(n - 1)
+
+fn main() -> Int
+    down(2)
+"#;
+        let (program, facts) = facts_for(src);
+        let down = facts
+            .for_fn(fn_id_by_name(&program, "down"))
+            .expect("down facts");
+        // `down`'s counter stays bare (converted at the boxed-param boundary).
+        assert!(
+            down.param_is_bare(0),
+            "the down counter stays bare; the boxed-param arg `n + 1` converts at the boundary"
+        );
+        // `keep`'s param is a general-Int (boxed) — it has a non-literal,
+        // non-bare-supplyable caller arg shape, so it never goes bare.
+        let keep = facts
+            .for_fn(fn_id_by_name(&program, "keep"))
+            .expect("keep facts");
+        assert!(
+            !keep.param_is_bare(0),
+            "keep's general-Int param stays boxed (no bounding recurrence)"
+        );
+    }
+
+    /// Defect Q5: a fn `g` whose return is proven bare is consumed by `h`
+    /// whose own return is the general Int. `g` keeps its bare return + bare
+    /// counter (the fast loop); codegen boxes the call result with `from_i64`
+    /// at `h`'s return crossing. The whole-program summary must still mark
+    /// `g.bare_return` (the consumer demotion is a CODEGEN conversion, not an
+    /// analysis demotion, so the win is preserved).
+    #[test]
+    fn bare_return_consumed_by_boxed_return_fn_stays_bare() {
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn g(n: Int) -> Int
+    match n
+        0 -> 0
+        _ -> g(n - 1)
+
+fn h() -> Int
+    g(2)
+
+fn main() -> Int
+    h()
+"#;
+        let (program, facts) = facts_for(src);
+        let g = facts.for_fn(fn_id_by_name(&program, "g")).expect("g facts");
+        assert!(g.param_is_bare(0), "g's bounded counter stays bare");
+        assert!(
+            g.bare_return,
+            "g's return stays bare; the boxed consumer `h` converts at its return boundary"
+        );
+    }
+
+    /// Defect subj_ret (opus Area 3): a bare counter `n` aliased through an
+    /// inner match binding `match n { y -> y }`. The alias must be TRACKED so
+    /// `y` inherits `n`'s bare interval — otherwise the body facts and codegen
+    /// (which declares `y` at `n`'s bare type) disagree. The counter stays
+    /// bare; the return crossing boxes `y` with `from_i64`.
+    #[test]
+    fn match_binding_alias_is_tracked_bare() {
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn loopit(n: Int) -> Int
+    match n
+        0 -> match n
+            y -> y
+        _ -> loopit(n - 1)
+
+fn main() -> Int
+    loopit(3)
+"#;
+        let (program, facts) = facts_for(src);
+        let f = facts
+            .for_fn(fn_id_by_name(&program, "loopit"))
+            .expect("loopit facts");
+        assert!(
+            f.param_is_bare(0),
+            "the counter stays bare; the aliased binding `y` inherits its bare interval"
+        );
+        // The aliased binding `y` must carry a fact (not absent → unknown):
+        // it aliases the bare param, so the analysis proves it bare and the
+        // codegen agrees on the representation at the return crossing.
+        let bare_y = f.values.values().any(|v| v.is_bare());
+        assert!(
+            bare_y,
+            "at least the counter / its bare alias is proven bare"
+        );
+    }
+
+    /// Defect esc_match (opus Area 3, escaping alias): a bare compound
+    /// `let x = n - 1` aliased into an `Int` aggregate `[x, x]`. `x` must
+    /// DEMOTE (it reaches a general-Int aggregate); the counter `n` stays
+    /// bare. Codegen boxes the binding value with `from_i64` at the let
+    /// crossing.
+    #[test]
+    fn match_let_alias_into_aggregate_demotes() {
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn loopit(n: Int) -> List<Int>
+    match n
+        0 -> match n - 1
+            x -> [x, x]
+        _ -> loopit(n - 1)
+
+fn main() -> List<Int>
+    loopit(4)
+"#;
+        let (program, facts) = facts_for(src);
+        let f = facts
+            .for_fn(fn_id_by_name(&program, "loopit"))
+            .expect("loopit facts");
+        // The counter `n` stays bare (its only escaping use is via the boxed
+        // `x` binding, not `n` itself).
+        assert!(f.param_is_bare(0), "the counter `n` stays bare");
+        // The `List<Int>` return is never bare.
+        assert!(!f.bare_return, "a List<Int> return is never bare i64");
+    }
+
+    /// Defect marms: a bare counter whose guard has ≥2 Int-literal base-case
+    /// arms lowers to the dispatch-table match path. The counter legitimately
+    /// stays bare and is compared against the literals — the codegen dispatch
+    /// path must emit `subject == {K}i64` (not `i64 == AverInt`). This asserts
+    /// the analysis keeps the multi-literal-arm counter bare (the codegen
+    /// dispatch-bare path is covered by `tests/rust_codegen_regression.rs`).
+    #[test]
+    fn multi_literal_arm_counter_stays_bare() {
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn loopit(n: Int, acc: Int) -> Int
+    match n
+        2 -> acc
+        0 -> acc
+        _ -> loopit(n - 1, acc + 1)
+
+fn main() -> Int
+    loopit(5, 0)
+"#;
+        let (program, facts) = facts_for(src);
+        let f = facts
+            .for_fn(fn_id_by_name(&program, "loopit"))
+            .expect("loopit facts");
+        assert!(
+            f.param_is_bare(0),
+            "a ≥2-literal-arm bounded counter stays bare (dispatch path emits `== Ki64`)"
+        );
+    }
 }
