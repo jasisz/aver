@@ -1102,6 +1102,30 @@ fn walk_let_chain(
             walk_let_chain(&l.node.value.node, env, op_classes);
             walk_let_chain(&l.node.body.node, env, op_classes);
         }
+        // A `match subject { y -> … }` Ident-binding arm ALIASES the subject:
+        // the binder `y` carries the subject's interval. Without this, a
+        // base-case `match n { y -> y }` (subj_ret) leaves `y` unknown, so the
+        // body pass can't prove `y` bare and the return-repr / escape facts
+        // disagree with codegen (which declares `y` at the subject's bare
+        // type). Recognize the alias so `y` inherits `n`'s bound — the same
+        // representation codegen emits. The subject's interval is evaluated in
+        // the current `env` (the subject is already in scope).
+        MirExpr::Match(m) => {
+            let mut worst = Interval::point(0);
+            let subj_iv = eval_interval(&m.node.subject.node, env, &mut worst);
+            walk_let_chain(&m.node.subject.node, env, op_classes);
+            for arm in &m.node.arms {
+                if let MirPattern::Bind(slot, _) = &arm.pattern {
+                    // Alias: the binder takes the subject's interval + op
+                    // class (the subject is read verbatim, no new arithmetic).
+                    env.entry(*slot).or_insert(subj_iv);
+                    op_classes
+                        .entry(*slot)
+                        .or_insert_with(|| OpClass::of_interval(subj_iv));
+                }
+                walk_let_chain(&arm.body.node, env, op_classes);
+            }
+        }
         _ => {
             visit_children(e, &mut |c| walk_let_chain(c, env, op_classes));
         }

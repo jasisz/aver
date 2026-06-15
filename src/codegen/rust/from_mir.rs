@@ -1257,6 +1257,19 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // shape.
             let let_node = &spanned_let.node;
             let value = emit_mir_expr(&let_node.value, emit_ctx)?;
+            // Int unboxing boundary (defect esc_match): when the binding slot
+            // is BOXED but its value renders bare `i64` (a bare `Local` /
+            // compound over a bare counter, e.g. `let x = n - 1`), the raw
+            // `i64` would be re-read later in an `AverInt` position (`[x, x]`
+            // aggregate) — a `rustc` E0308. The escape analysis already marked
+            // such a binding boxed; align codegen by boxing the value at the
+            // binding crossing with `from_i64`. A bare binding (its later uses
+            // are all bare-emittable) keeps the raw value untouched.
+            let value = if !emit_ctx.bare.is_bare(let_node.binding) {
+                boxed_int_operand(value, &let_node.value, emit_ctx)
+            } else {
+                value
+            };
             let body = emit_mir_expr(&let_node.body, emit_ctx)?;
             if let_node.binding_name.is_empty() {
                 Some(format!("{{ {}; {} }}", value, body))
@@ -2010,11 +2023,20 @@ fn emit_mir_match_with(
     // ── 1. Single-arm irrefutable → `let` destructuring. ──
     // Mirror of `emit_match`'s first branch.
     if arms.len() == 1 && resolved_pattern_is_irrefutable(&arms[0].pattern) {
-        let subj = mir_clone_arg(
-            emit_mir_expr(&m.subject, emit_ctx)?,
-            &m.subject.node,
-            emit_ctx,
-        );
+        let mut subj_code = emit_mir_expr(&m.subject, emit_ctx)?;
+        // Int unboxing boundary (defect esc_match): a `match (n - 1) { x -> … }`
+        // binds the subject to `x`. When the analysis marked the bound slot
+        // BOXED (because `x` later escapes — `[x, x]`) but the subject renders
+        // bare `i64`, box it at the binding crossing with `from_i64`, so the
+        // bound `x` is the `AverInt` its later uses expect. A bare bound slot
+        // keeps the raw subject. (Only the `Bind` arm carries a slot; a
+        // wildcard / destructuring pattern is unaffected.)
+        if let MirPattern::Bind(slot, _) = &m.arms[0].pattern
+            && !emit_ctx.bare.is_bare(*slot)
+        {
+            subj_code = boxed_int_operand(subj_code, &m.subject, emit_ctx);
+        }
+        let subj = mir_clone_arg(subj_code, &m.subject.node, emit_ctx);
         let codegen = emit_ctx.codegen?;
         let pat = emit_pattern(&arms[0].pattern, false, codegen);
         let body = arm_bodies[0].clone();
@@ -2103,7 +2125,13 @@ fn emit_mir_match_with(
 
     // ── 4. Dispatch table (literals / wrapper tags). ──
     if let Some(MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
-        return Some(emit_dispatch_table_match(subj, &arms, shape, body_for_arm));
+        return Some(emit_dispatch_table_match(
+            subj,
+            &arms,
+            shape,
+            subject_is_bare,
+            body_for_arm,
+        ));
     }
 
     // ── 4b. Int-literal match → if/else-if equality-guard chain. ──
@@ -2456,6 +2484,17 @@ pub(super) fn emit_mir_fn_body(
         return Some(format!("    crate::cancel_checkpoint();\n    {}", tail));
     }
 
+    // Int unboxing boundary (defect Q5): a BOXED-return non-TCO fn whose tail
+    // value renders bare `i64` (e.g. `h() -> Int` returning the bare-returning
+    // call `g(2)`) would land a raw `i64` in the `AverInt` return — box every
+    // bare leaf with `from_i64` at the return crossing.
+    if !emit_ctx.bare.bare_return
+        && tail_renders_bare_i64(body, emit_ctx)
+        && let Some(tail) = emit_boxed_return_tail(body, emit_ctx)
+    {
+        return Some(format!("    crate::cancel_checkpoint();\n    {}", tail));
+    }
+
     let mut code = emit_mir_expr(body, emit_ctx)?;
     // Return-position field access on a borrowed param → clone for
     // an owned result. Mirror of HIR's
@@ -2502,6 +2541,116 @@ fn emit_bare_return_tail(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Optio
             None
         }
         _ => None,
+    }
+}
+
+/// Does the value in RETURN/tail position render as a bare `i64` at any
+/// reachable leaf? Mirrors the descent of [`emit_bare_return_tail`] /
+/// [`emit_boxed_return_tail`] but only inspects the leaf representation. A
+/// `Match`/`IfThenElse` is bare-leafed if ANY arm/branch tail is; a `Let`
+/// body inherits its final expr; a direct leaf is bare iff
+/// [`mir_expr_is_bare_i64`]. Used to decide whether a BOXED-return fn whose
+/// tail value emits bare needs the `from_i64` boundary conversion (defects
+/// Q5 / subj_ret: a bare `Local`/compound aliased into an `AverInt` return).
+fn tail_renders_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> bool {
+    match &expr.node {
+        // A standalone `Int` literal is NOT a bare-rendering leaf for the
+        // boxing decision: its normal boxed-path emit is already
+        // `AverInt::from_i64(N)` (the correct boxed form), so it needs no
+        // return conversion. Only a bare `Local` / compound / call result —
+        // which would render as raw `i64` — does. (Mirrors `boxed_int_operand`,
+        // which likewise leaves a literal untouched.)
+        MirExpr::Literal(_) => false,
+        _ if mir_expr_is_bare_i64(expr, ctx) => true,
+        // A call to a fn whose RETURN the analysis proved bare renders as a
+        // raw `i64` (its signature is `-> i64`). Consumed in a boxed-return
+        // position this is the Q5 mismatch.
+        MirExpr::Call(_) | MirExpr::TailCall(_) => mir_call_returns_bare(expr, ctx),
+        MirExpr::Match(m) => m
+            .node
+            .arms
+            .iter()
+            .any(|arm| tail_renders_bare_i64(&arm.body, ctx)),
+        MirExpr::IfThenElse(ite) => {
+            tail_renders_bare_i64(&ite.node.then_branch, ctx)
+                || tail_renders_bare_i64(&ite.node.else_branch, ctx)
+        }
+        MirExpr::Let(l) => tail_renders_bare_i64(&l.node.body, ctx),
+        MirExpr::Return(inner) => tail_renders_bare_i64(inner, ctx),
+        _ => false,
+    }
+}
+
+/// Is `expr` a `Call(Fn)` / outside-loop `TailCall` whose callee's RETURN
+/// the whole-program unboxing analysis proved bare (`bare_return`)? Such a
+/// call renders as raw `i64`; in a boxed-return position it needs the
+/// `from_i64` boundary conversion. `None` codegen ctx (coverage/test) has no
+/// facts → `false` (conservative).
+fn mir_call_returns_bare(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> bool {
+    let target = match &expr.node {
+        MirExpr::Call(c) => match c.node.callee {
+            MirCallee::Fn(t) => t,
+            _ => return false,
+        },
+        MirExpr::TailCall(tc) => tc.node.target,
+        _ => return false,
+    };
+    ctx.codegen
+        .and_then(|cg| cg.bare_i64.for_fn(target))
+        .is_some_and(|f| f.bare_return)
+}
+
+/// Emit a tail/return value as a boxed `AverInt`, converting every bare-`i64`
+/// leaf at the boundary with `from_i64`. The structural mirror of
+/// [`emit_bare_return_tail`], but for a fn whose declared return is the
+/// general `AverInt` while some tail leaf is a proven-bare value (a bare
+/// `Local` aliased from a bare param, or a bare-returning call result). This
+/// is the return-position counterpart of [`boxed_int_operand`]: it keeps the
+/// loop counter bare (no demotion, win preserved) and only coerces at the
+/// single return crossing.
+///
+/// A non-bare leaf is emitted via the normal value path (`emit_mir_value_return`
+/// without the bare branch) — it is already an `AverInt`, so it is left as-is.
+/// Returns `None` for any shape the descent can't render (the caller then
+/// falls back to the default emit).
+fn emit_boxed_return_tail(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
+    match &expr.node {
+        // A standalone `Int` literal already emits as `AverInt::from_i64(N)`
+        // on the normal boxed path — emit it there (re-boxing would double-box
+        // into `from_i64(Ni64)`). Mirrors the `tail_renders_bare_i64` skip.
+        MirExpr::Literal(_) => {
+            let code = emit_mir_expr(expr, ctx)?;
+            Some(mir_maybe_clone(code, &expr.node, ctx))
+        }
+        // A directly bare-eligible leaf (a bare `Local` / compound): box it.
+        _ if mir_expr_is_bare_i64(expr, ctx) => {
+            emit_bare_i64(expr).map(|bare| format!("aver_rt::AverInt::from_i64({})", bare))
+        }
+        // A call to a bare-return callee: its result is a raw `i64`; box it.
+        MirExpr::Call(_) | MirExpr::TailCall(_) if mir_call_returns_bare(expr, ctx) => {
+            let code = emit_mir_expr(expr, ctx)?;
+            Some(format!("aver_rt::AverInt::from_i64({})", code))
+        }
+        MirExpr::Match(m) => emit_mir_match_with(&m.node, ctx, &|arm_body, ctx| {
+            emit_boxed_return_tail(arm_body, ctx)
+        }),
+        MirExpr::IfThenElse(ite) => {
+            let (cond, then_src, else_src) = mir_if_cond_and_branches(&ite.node, ctx)?;
+            let then_b = emit_boxed_return_tail(then_src, ctx)?;
+            let else_b = emit_boxed_return_tail(else_src, ctx)?;
+            Some(format!(
+                "if {} {{ {} }} else {{ {} }}",
+                cond, then_b, else_b
+            ))
+        }
+        MirExpr::Return(inner) => emit_boxed_return_tail(inner, ctx),
+        // A non-bare leaf is already an `AverInt` — emit it through the
+        // normal value path (which itself never takes the bare branch here,
+        // since this fn's return is boxed).
+        _ => {
+            let code = emit_mir_expr(expr, ctx)?;
+            Some(mir_maybe_clone(code, &expr.node, ctx))
+        }
     }
 }
 
@@ -2898,6 +3047,19 @@ fn emit_mir_value_return(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Optio
     {
         return Some(bare);
     }
+    // Int unboxing boundary (defects Q5 / subj_ret): when the fn's return is
+    // BOXED (`!bare_return`) but a tail leaf renders bare `i64` — a bare
+    // `Local` aliased from a bare param, or a bare-returning call result —
+    // the raw `i64` would land in the `AverInt` return slot (`rustc` E0308).
+    // Box every bare leaf with `from_i64` at the return crossing, keeping the
+    // counter bare (no demotion). Only when the type is actually Int, which a
+    // bare-rendering leaf implies.
+    if !ctx.bare.bare_return
+        && tail_renders_bare_i64(expr, ctx)
+        && let Some(boxed) = emit_boxed_return_tail(expr, ctx)
+    {
+        return Some(boxed);
+    }
     let code = emit_mir_expr(expr, ctx)?;
     Some(mir_maybe_clone(code, &expr.node, ctx))
 }
@@ -2929,7 +3091,13 @@ fn emit_mir_self_tco_continue(
             };
             arg_strs.push(bare?);
         } else {
-            arg_strs.push(mir_clone_arg(emit_mir_expr(a, ctx)?, &a.node, ctx));
+            // A BOXED rebind slot needs an `AverInt`. A bare-emittable arg
+            // (a bare compound `n + 1` / bare `Local`) renders raw `i64` on
+            // the default path, which would assign a bare value into the
+            // `AverInt` loop variable (`rustc` E0308). Convert at the
+            // boundary with `from_i64`, mirroring the named-call path.
+            let code = boxed_int_operand(emit_mir_expr(a, ctx)?, a, ctx);
+            arg_strs.push(mir_clone_arg(code, &a.node, ctx));
         }
     }
 
@@ -3493,7 +3661,16 @@ fn emit_named_call_to(
             // effectively unreachable for well-formed facts).
             return None;
         }
+        // A BOXED callee param: the arg must be an `AverInt`. A bare-emittable
+        // arg (a bare `Local`, or an `Add`/`Sub`/`Mul` tree the analysis proved
+        // in-range) renders as raw `i64` on the default path, which would land
+        // a bare value in an `AverInt` slot (`rustc` E0308). Convert it at the
+        // boundary with `from_i64` — exactly the bare→boxed coercion
+        // `boxed_int_operand` performs for a boxed-arithmetic operand. A literal
+        // already emits as `AverInt::from_i64(N)` (handled inside
+        // `boxed_int_operand`), and a boxed / unanalyzable arg is left untouched.
         let code = emit_mir_expr(a, ctx)?;
+        let code = boxed_int_operand(code, a, ctx);
         let s = if borrow_mask.get(i).copied().unwrap_or(false) {
             mir_borrow_arg(code, &a.node, ctx)
         } else {
