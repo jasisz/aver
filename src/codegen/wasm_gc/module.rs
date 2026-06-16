@@ -93,7 +93,9 @@ use super::body::{FnEntry, FnMap, emit_fn_body_via_mir};
 use super::builtins::{BuiltinName, BuiltinRegistry};
 use super::effects::{EffectName, EffectRegistry};
 use super::maps::MapHelperRegistry;
-use super::types::{TypeRegistry, param_types, record_struct_type, return_results};
+use super::types::{
+    TypeRegistry, param_types_with_repr, record_struct_type, return_results_with_repr,
+};
 use super::wasip2_helpers::{
     CabiReallocIndices, ConsoleReadLineIndices, DecodeListStringIndices, DiskExistsIndices,
     DiskListDirIndices, DiskReadTextIndices, DiskSimplePathOpIndices, DiskWriteTextIndices,
@@ -803,10 +805,23 @@ pub(super) fn emit_module_with(
 
     // 4) One fn type per user fn. `fn_type_indices[i]` is the wasm
     //    type idx for the i-th user fn (in declaration order).
+    // ETAP-2 SLICE 2a: source the per-fn Int repr from the MIR fn so the
+    // functype here, the `SlotTable` params-prefix, and the
+    // `call_indirect` `fn_sig_key` all read the SAME repr (the invariant
+    // they must agree on byte-for-byte). On the un-rewritten wasm-gc MIR
+    // every repr is default-empty, so `*_with_repr` emits the boxed
+    // signature `param_types` / `return_results` already produced — and
+    // the gate (`ENABLE_BARE_SLOTS`) is off besides. `fn_defs[i]` is
+    // position-aligned with `resolved_fn_defs[i]`.
+    let default_repr = crate::ir::mir::MirFnRepr::default();
     let mut fn_type_indices: Vec<u32> = Vec::with_capacity(fn_defs.len());
-    for fd in &fn_defs {
-        let params = param_types(&fd.params, Some(&registry))?;
-        let results = return_results(&fd.return_type, Some(&registry))?;
+    for (i, fd) in fn_defs.iter().enumerate() {
+        let repr = mir_program
+            .fn_by_id(resolved_fn_defs[i].fn_id)
+            .map(|mf| &mf.repr)
+            .unwrap_or(&default_repr);
+        let params = param_types_with_repr(&fd.params, Some(&registry), &repr.bare_params)?;
+        let results = return_results_with_repr(&fd.return_type, Some(&registry), repr.bare_return)?;
         types.ty().function(params, results);
         fn_type_indices.push(next_type_idx);
         next_type_idx += 1;

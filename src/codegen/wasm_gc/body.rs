@@ -222,6 +222,13 @@ pub(super) struct EmitCtx<'a> {
     /// reads this; an out-of-range slot is `false` (not aliased → fast
     /// path sound).
     pub(super) aliased_slots: &'a [bool],
+    /// Per-slot / per-param Int representation for the current fn (ETAP-2
+    /// SLICE 2a). Sourced from `MirFn::repr` (mirror of `aliased_slots`).
+    /// Default-empty on the un-rewritten wasm-gc MIR, so `slot_is_bare` /
+    /// `param_is_bare` / `bare_return` all answer "boxed" — the per-slot
+    /// unboxing seam is installed but inert until 2b wires the rewrite.
+    #[allow(dead_code)]
+    pub(super) repr: &'a crate::ir::mir::MirFnRepr,
     /// Param name → resolved aver type. Used by `CallLowerCtx` for
     /// local-name recognition; the typed-AST refactor (Step 3) made
     /// the *type* portion redundant for emit, but the param list is

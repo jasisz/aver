@@ -109,6 +109,7 @@ impl SlotTable {
         fd: &ResolvedFnDef,
         registry: &TypeRegistry,
         _fn_map: &FnMap,
+        repr: &crate::ir::mir::MirFnRepr,
     ) -> Result<Self, WasmGcError> {
         // Read the per-slot Aver type table the resolver built post-
         // typecheck (`FnResolution.local_slot_types`) and translate
@@ -116,10 +117,27 @@ impl SlotTable {
         // truth for slot indices ↔ types — every backend that needs
         // typed locals consumes the same table instead of re-walking
         // patterns.
+        // ETAP-2 SLICE 2a: per-slot Int unboxing seam. When a slot is
+        // tagged bare (`repr.bare_slots`) AND its Aver type is `Int`, the
+        // slot would carry a scalar `i64` local instead of the `$AverInt`
+        // ref. GATED OFF in 2a (`ENABLE_BARE_SLOTS == false`) so every slot
+        // falls through to `aver_to_wasm` (→ `$AverInt`); the branch is
+        // present, type-checks, and keys directly off the `by_slot` index
+        // (`LocalId(i)`, which the audit established is 1:1 with the
+        // resolver slot and the wasm local index). 2b flips the gate.
+        const ENABLE_BARE_SLOTS: bool = false;
         let mut by_slot: Vec<ValType> = Vec::new();
         if let Some(resolution) = fd.resolution.as_ref() {
-            for ty in resolution.local_slot_types.iter() {
+            for (i, ty) in resolution.local_slot_types.iter().enumerate() {
                 let aver_str = ty.display();
+                if ENABLE_BARE_SLOTS
+                    && aver_str.trim() == "Int"
+                    && repr.slot_is_bare(crate::ir::mir::LocalId(i as u32))
+                {
+                    // 2b: bare Int slot → raw scalar i64 local.
+                    by_slot.push(ValType::I64);
+                    continue;
+                }
                 // `Unit` (and any other type without a wasm
                 // representation) still occupies a slot index in the
                 // resolver's `local_slots` map — pushing an `i32`
