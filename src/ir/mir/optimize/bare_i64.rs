@@ -273,8 +273,8 @@ pub fn analyze(program: &MirProgram) -> BareI64Facts {
 struct Summary {
     bare_params: HashMap<FnId, Vec<bool>>,
     bare_return: HashMap<FnId, bool>,
-    /// Per-param TIGHT recurrence interval (`param_recurrence_bound`), so the
-    /// body pass can seed a bare counter with its PROVEN range
+    /// Per-param TIGHT recurrence interval (`compute_bare_param_intervals`),
+    /// so the body pass can seed a bare counter with its PROVEN range
     /// (`[K-step, entry]`) instead of the full `i64` line. This is what keeps
     /// `n - 1` / `acc * n` over a bare counter in the OverflowFree band: a
     /// full-`i64` seed makes every `+`/`-`/`*` over the counter look like it
@@ -355,13 +355,16 @@ fn compute_summary(program: &MirProgram, int_params: &HashMap<FnId, Vec<bool>>) 
     // iterations. A bare counter is seeded with this proven range in the
     // body pass instead of the full `i64` line, keeping `n - 1` / `acc * n`
     // OverflowFree (see `Summary::bare_param_intervals`).
-    let mut bare_param_intervals: HashMap<FnId, Vec<Option<Interval>>> = HashMap::new();
-    for (id, f) in program.iter() {
-        let ivs: Vec<Option<Interval>> = (0..f.params.len())
-            .map(|i| param_recurrence_bound(f, i, &edges))
-            .collect();
-        bare_param_intervals.insert(*id, ivs);
-    }
+    //
+    // Produced by a SOUND guard-seeded interval FIXPOINT over the call graph
+    // (`compute_bare_param_intervals`): the entry literals seed an interval
+    // per `(fn, param)`, every self-tail back-edge is JOINED as a recurrence
+    // transfer, an equality-decrement guard installs a convex floor, and
+    // widening guarantees termination. Any unrecognized / unfloored shape
+    // widens out of `i64` and maps to `None` (boxed). Drop-in: the output
+    // type and both readers (condition B + the `analyze_fn` seed) are
+    // unchanged.
+    let bare_param_intervals = compute_bare_param_intervals(program, &edges, &address_taken);
 
     loop {
         let mut changed = false;
@@ -738,47 +741,276 @@ fn local_supplies_bare(
     false
 }
 
-/// Derive the recurrence bound for param index `i` of `f`: combine the
-/// base-case guard (which bounds the counter on the decrement side) with
-/// the literal entry values from non-recursive callers (which bound it on
-/// the other side) and the monotone decrement.
+// ── The guard-seeded interval FIXPOINT (the bound producer) ──────────────
+//
+// `compute_bare_param_intervals` replaces the hand-rolled closed-form
+// recurrence recognizer with a SOUND per-`(FnId, param-index)` interval
+// fixpoint over the call graph. The output type and both consumers are
+// unchanged (drop-in): condition B and the `analyze_fn` seed read the same
+// `HashMap<FnId, Vec<Option<Interval>>>`.
+//
+// SOUNDNESS (the C0 obligation). Every interval is built bottom-up from
+// `Interval::unbounded()` / literal points using ONLY:
+//   - `hull` (the entry-seed join and the per-round state join) — enlarging,
+//   - `widen` (the termination operator) — enlarging (superset of `next`),
+//   - the single `intersect` with the equality-decrement `floor` — the ONLY
+//     narrowing, and it is narrowed against a convex bound that is
+//     PATH-GUARANTEED-TRUE on every recursive iteration (a descending
+//     counter whose reachability gate proves it lands exactly on `K`, so it
+//     is `>= K-step` on every back-edge — see `guard_floor`).
+// So a cell mapped to `Some(iv)` with `iv.fits_i64()` is a genuine superset
+// of the param's real reachable value-set, hence `⊆ i64`; any unrecognized
+// or unfloored shape widens to ±inf ⇒ `None` ⇒ boxed (lose speed, never a
+// wrong value). The floor is the only trusted, locally-auditable obligation.
+
+/// The number of join rounds before widening kicks in. With the every-round
+/// floor a countdown/factorial counter reaches its fixpoint within `UNROLL`
+/// rounds, so widen only ever fires on a genuinely-unbounded endpoint.
+const UNROLL: usize = 2;
+
+/// Per-`(FnId, param-index)` interval fixpoint. Replaces the closed-form
+/// `param_recurrence_bound`. Produces the SAME output map (drop-in): for each
+/// param cell, `Some(iv)` when the solved interval `fits_i64`, else `None`.
 ///
-/// Returns `Some(interval)` only when the param is provably confined to a
-/// finite `i64` range; `None` is the conservative decline.
-fn param_recurrence_bound(f: &MirFn, i: usize, edges: &[CallEdge]) -> Option<Interval> {
-    let param_slot = f.params.get(i)?.local;
-
-    // 1. The base-case guard + monotone decrement recurrence at the same
-    //    param index. Recognizes `match counter { K -> base; _ ->
-    //    tailcall(counter - step, …) }` (and the lowered `IfThenElse`).
-    //    Done FIRST so we can validate each entry literal against the
-    //    recognized `(guard_k, step)` as we hull it.
-    let recur = recurrence_for_param(f, param_slot, i)?;
-
-    // A decrement counter toward an EQUALITY guard `K` (`match n { K -> … }`)
-    // only certifies a finite range when the sequence `entry - m*step`
-    // actually LANDS on `K`. A comparison-direction guard (`<`/`<=`/`>`/`>=`)
-    // does not pin the stopping value, so we cannot bound the far endpoint —
-    // DECLINE (box; sound, only costs speed on a shape that may not occur).
-    if recur.guard_kind != GuardKind::Equality {
-        return None;
+/// The mechanics, per non-pinned `(f, i)` (see `solve_scc`):
+///   1. SEED = hull of every entry literal at index `i` over NON-self-tail
+///      caller edges (the entry envelope). No literal entry, or a non-literal
+///      entry arg, or no entry caller ⇒ ⊤ ⇒ `None` (boxed).
+///   2. FLOOR = the gated equality-decrement convex bound (`guard_floor`),
+///      or ⊤ when any of the four preconditions fails.
+///   3. Iterate the SCC worklist: every round joins ALL self-tail back-edges
+///      (so a second growing path can never be missed), meets the floor, and
+///      widens once `round >= UNROLL`.
+///
+/// Pinned to ⊤ (→ `None`): every param of `main` / an address-taken fn (its
+/// callers are unknowable, so its entry envelope is unknown).
+fn compute_bare_param_intervals(
+    program: &MirProgram,
+    edges: &[CallEdge],
+    address_taken: &HashSet<String>,
+) -> HashMap<FnId, Vec<Option<Interval>>> {
+    // State: one interval cell per param; ⊤ = `unbounded()`.
+    let mut state: HashMap<FnId, Vec<Interval>> = HashMap::new();
+    // Which `(fn, param)` cells are PINNED to ⊤ (externally-reachable fns —
+    // callers unknowable, so the entry envelope is unknown). Mirrors the
+    // existing seed at `compute_summary` (`f.name == "main" || address_taken`).
+    let mut pinned: HashMap<FnId, Vec<bool>> = HashMap::new();
+    for (id, f) in program.iter() {
+        let externally_reachable = f.name == "main" || address_taken.contains(&f.name);
+        state.insert(*id, vec![Interval::unbounded(); f.params.len()]);
+        pinned.insert(*id, vec![externally_reachable; f.params.len()]);
     }
 
-    // 2. The entry envelope: the convex hull of every literal value passed
-    //    at param index `i` by a NON-recursive caller. If any non-literal
-    //    value reaches the param, we cannot bound the entry — decline.
-    //
-    //    REACHABILITY (the BUG-1 guard): for a decrement counter (step > 0)
-    //    toward the equality guard `K`, the `entry - m*step` sequence hits
-    //    `K` exactly when BOTH:
-    //      (a) `entry >= K` — the decrement moves TOWARD K, not away; and
-    //      (b) `(entry - K) % step == 0` — `K` is congruent to `entry`
-    //          mod `step`, so the sequence lands ON `K` rather than
-    //          stepping OVER it (which would diverge to -inf, leaving the
-    //          certified interval and wrapping i64).
-    //    `step == 1` always divides, so countdown / factorial (guard 0,
-    //    step 1, positive entry) still pass. Any entry literal that fails
-    //    EITHER condition makes the recurrence unbounded ⇒ decline.
+    // Per-`(fn, param)` floor + entry seed, computed ONCE (pure functions of
+    // the recurrence shape + literal entries, independent of the iteration).
+    let mut floors: HashMap<FnId, Vec<Interval>> = HashMap::new();
+    let mut seeds: HashMap<FnId, Vec<Interval>> = HashMap::new();
+    for (id, f) in program.iter() {
+        let mut fv = Vec::with_capacity(f.params.len());
+        let mut sv = Vec::with_capacity(f.params.len());
+        for i in 0..f.params.len() {
+            fv.push(guard_floor(f, i, edges));
+            sv.push(seed_interval(f, i, edges));
+        }
+        floors.insert(*id, fv);
+        seeds.insert(*id, sv);
+    }
+
+    // Initialise the iterate at the SEED (the entry envelope) for every
+    // non-pinned cell — this is the BOTTOM of the ascending Kleene iteration:
+    // the join (`hull`) only ENLARGES, so starting at ⊤ would stay ⊤ forever.
+    // The recurrence transfer then joins the floored back-edge descent into
+    // this seed each round. A cell whose seed is already ⊤ (unbounded entry)
+    // stays ⊤ ⇒ `None` (boxed). Pinned cells keep their ⊤ seed.
+    for (id, f) in program.iter() {
+        for i in 0..f.params.len() {
+            if !pinned[id][i] {
+                state.get_mut(id).unwrap()[i] = seeds[id][i];
+            }
+        }
+    }
+
+    // Iterate over SCCs of the static caller→callee graph, callee-before-
+    // caller (each SCC runs its own local worklist to a fixpoint). Self-
+    // recursive counters (countdown/factorial) are size-1 SCCs with a
+    // self-edge; the transfer for index `i` reads only that cell's own state,
+    // so the per-SCC fixpoint is self-contained.
+    let nodes: Vec<FnId> = program.iter().map(|(id, _)| *id).collect();
+    let mut graph: HashMap<FnId, Vec<FnId>> = HashMap::new();
+    for edge in edges {
+        graph.entry(edge.caller).or_default().push(edge.target);
+    }
+    // `tarjan_sccs` returns components ordered by least member; the static
+    // call graph is a DAG across components, but the transfer never reads
+    // another fn's cell in this lean scope, so any order converges. Process
+    // each SCC's local fixpoint independently.
+    for scc in crate::scc::tarjan_sccs::<FnId>(&nodes, &graph) {
+        solve_scc(program, edges, &scc, &seeds, &floors, &pinned, &mut state);
+    }
+
+    // Final mapping: `Some(iv)` ONLY for a param that carries a recognized
+    // equality-decrement recurrence (a non-⊤ floor) AND whose solved interval
+    // `fits_i64`; otherwise `None` (boxed). The floor gate is what keeps this
+    // BYTE-IDENTICAL to the old closed-form producer: the old code returned a
+    // bound only when `recurrence_for_param` recognized the recurrence AND the
+    // reachability gate held — exactly the cells whose `guard_floor` is non-⊤.
+    // A non-recurrent param with a finite literal seed (e.g. `twice(10)`,
+    // `n + n`) would be a SOUND-but-NEW win; Phase A withholds it (boxes, as
+    // today) so the swap is observably identical on every known shape.
+    let top = Interval::unbounded();
+    let mut out: HashMap<FnId, Vec<Option<Interval>>> = HashMap::new();
+    for (id, f) in program.iter() {
+        let cells = &state[id];
+        let fl = &floors[id];
+        let ivs: Vec<Option<Interval>> = (0..f.params.len())
+            .map(|i| {
+                let iv = cells[i];
+                if fl[i] != top && iv.fits_i64() {
+                    Some(iv)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        out.insert(*id, ivs);
+    }
+    out
+}
+
+/// Test-only: produce the bare-`i64` param intervals for `program`, rebuilding
+/// the `edges` + `address_taken` inputs the same way `compute_summary` does.
+/// Lets the golden tests assert the produced interval VALUE (byte-identity),
+/// not just `param_is_bare`.
+#[cfg(test)]
+fn compute_param_intervals_for_test(program: &MirProgram) -> HashMap<FnId, Vec<Option<Interval>>> {
+    let mut address_taken: HashSet<String> = HashSet::new();
+    for (_, f) in program.iter() {
+        collect_fn_values(&f.body.node, &mut address_taken);
+    }
+    let mut edges: Vec<CallEdge> = Vec::new();
+    for (caller, f) in program.iter() {
+        collect_call_edges(*caller, &f.body.node, &mut edges);
+    }
+    compute_bare_param_intervals(program, &edges, &address_taken)
+}
+
+/// Run the per-`(fn, param)` interval worklist for one SCC to a fixpoint.
+/// Copies the `compute_summary` `loop { changed=false; …; if !changed break }`
+/// template. Pinned cells (externally-reachable fns) stay ⊤.
+fn solve_scc(
+    program: &MirProgram,
+    edges: &[CallEdge],
+    scc: &[FnId],
+    seeds: &HashMap<FnId, Vec<Interval>>,
+    floors: &HashMap<FnId, Vec<Interval>>,
+    pinned: &HashMap<FnId, Vec<bool>>,
+    state: &mut HashMap<FnId, Vec<Interval>>,
+) {
+    let mut round = 0usize;
+    loop {
+        let mut changed = false;
+        for &fid in scc {
+            let Some(f) = program.fn_by_id(fid) else {
+                continue;
+            };
+            for i in 0..f.params.len() {
+                if pinned[&fid][i] {
+                    continue; // externally reachable — stays ⊤.
+                }
+                let floor = floors[&fid][i];
+                let seed = seeds[&fid][i];
+
+                // The recurrence transfer: JOIN every self-tail back-edge's
+                // arg at index `i`, evaluated under the caller env where each
+                // counter slot is its CURRENT state interval, the floor
+                // applied. Joining ALL back-edges is what makes the multi-
+                // back-edge (#538) class structurally impossible — a second
+                // growing path is hulled in, never skipped.
+                let mut back: Option<Interval> = None;
+                for edge in edges {
+                    if edge.target != fid || !edge.is_tail_self() {
+                        continue;
+                    }
+                    let Some(arg) = edge.args.get(i) else {
+                        continue;
+                    };
+                    let env = caller_env(f, &state[&fid], floors[&fid].as_slice());
+                    let iv = eval_interval_pub(&arg.node, &env);
+                    back = Some(match back {
+                        Some(prev) => prev.hull(iv),
+                        None => iv,
+                    });
+                }
+
+                // incoming = (seed ⊔ back) ∩ floor — the floor meet EVERY
+                // round caps the bounded side so widen never fires on it.
+                let pre = match back {
+                    Some(b) => seed.hull(b),
+                    None => seed,
+                };
+                let incoming = pre.intersect(floor);
+                let joined = state[&fid][i].hull(incoming);
+                let next = if round < UNROLL {
+                    joined
+                } else {
+                    state[&fid][i].widen(joined)
+                };
+                if next != state[&fid][i] {
+                    state.get_mut(&fid).unwrap()[i] = next;
+                    changed = true;
+                }
+            }
+        }
+        round += 1;
+        if !changed {
+            break;
+        }
+    }
+}
+
+/// Build the caller env for the recurrence transfer. A FLOORED param (its
+/// `guard_floor` is a real convex bound, not ⊤) is read at its FLOOR — the
+/// path-guaranteed-true superset of that counter's value-set on the recursive
+/// branch — so `counter - step` is evaluated over the bounded counter and the
+/// descent caps at the floor in a single round (no per-round march that widen
+/// would blow to ±inf). A param with NO floor (⊤) is read at its current
+/// iterate `state[i]` (the seed-grown value); the floor-intersect there is a
+/// no-op (⊤), so it stays the raw state.
+fn caller_env(f: &MirFn, cells: &[Interval], floors: &[Interval]) -> HashMap<LocalId, Interval> {
+    let top = Interval::unbounded();
+    let mut env: HashMap<LocalId, Interval> = HashMap::new();
+    for (i, p) in f.params.iter().enumerate() {
+        // A FLOORED param is read at its floor — the path-guaranteed bound on
+        // the recursive branch (`[K-step, entry]`) — so `counter - step`
+        // evaluates over the full bounded range and the descent lands at the
+        // floor in ONE round (no per-round march that widen would blow to
+        // ±inf). An UNFLOORED param (floor ⊤) is read at its current iterate.
+        let iv = if floors[i] == top {
+            cells[i]
+        } else {
+            floors[i]
+        };
+        env.insert(p.local, iv);
+    }
+    env
+}
+
+/// Wrap `eval_interval` with a fresh `worst` accumulator and return
+/// `worst.hull(result)`, preserving the transient-out-of-`i64` demotion: a
+/// back-edge arg whose computation passes through an out-of-`i64`
+/// intermediate widens the counter out of `i64` ⇒ `!fits_i64` ⇒ boxed.
+fn eval_interval_pub(e: &MirExpr, env: &HashMap<LocalId, Interval>) -> Interval {
+    let mut worst = Interval::point(0);
+    let iv = eval_interval(e, env, &mut worst);
+    worst.hull(iv)
+}
+
+/// The SEED interval for param `i` of `f`: the convex hull of every literal
+/// entry value passed at index `i` by a NON-self-tail caller edge (the entry
+/// envelope). A non-literal entry arg, or no entry caller at all, ⇒ ⊤ (the
+/// param is unbounded, mapping to `None`). Self-tail edges are the recurrence
+/// back-edges (handled by the transfer), never seeds.
+fn seed_interval(f: &MirFn, i: usize, edges: &[CallEdge]) -> Interval {
     let mut entry: Option<Interval> = None;
     let mut saw_entry = false;
     for edge in edges {
@@ -786,36 +1018,124 @@ fn param_recurrence_bound(f: &MirFn, i: usize, edges: &[CallEdge]) -> Option<Int
             continue;
         }
         saw_entry = true;
-        let arg = edge.args.get(i)?;
-        let iv = literal_interval(&arg.node)?;
-        // `literal_interval` yields a point `[v, v]`, so validating the
-        // single endpoint validates the whole point.
+        let Some(arg) = edge.args.get(i) else {
+            return Interval::unbounded();
+        };
+        let Some(iv) = literal_interval(&arg.node) else {
+            return Interval::unbounded();
+        };
+        entry = Some(match entry {
+            Some(prev) => prev.hull(iv),
+            None => iv,
+        });
+    }
+    match (saw_entry, entry) {
+        (true, Some(iv)) => iv,
+        _ => Interval::unbounded(),
+    }
+}
+
+/// The equality-decrement FLOOR for param `i` of `f`: the convex interval
+/// `between(K - step, entry_hi)`, installed ONLY when ALL FOUR of the
+/// #538/#539/#541/#519 preconditions hold; otherwise ⊤ (no narrowing, the
+/// joined descent widens, the param boxes — same as today).
+///
+/// The four preconditions (each reuses a kept helper):
+///   (a) `guard_literal_for` finds an EQUALITY guard `K` on the counter
+///       (comparison guards get NO floor in this phase — Phase A boxes them);
+///   (b) the `K` base arm is TERMINAL (`!equality_guard_arm_recurses`) — the
+///       #541 invariant: a self-recursing base arm never stops at `K`;
+///   (c) every self-tail back-edge arg at index `i` is the SAME single
+///       `counter - step` monotone decrement (`walk_self_tailcall_steps`
+///       agrees on one `step`) — the #538 invariant: disagreeing or growing
+///       back-edges leave the floor uninstalled;
+///   (d) reachability: `entry >= K && (entry - K) % step == 0` for EVERY
+///       entry literal (the #519/BUG-1 invariant) — the descent must LAND on
+///       `K`, never step over it.
+///
+/// When all hold, the floor is `between(K - step, entry_hi)`, reproducing the
+/// old `param_recurrence_bound`'s exact `[min(entry.lo, K-step), max(entry.hi,
+/// K)]` (the gate guarantees `entry.lo >= K` so `min(entry.lo, K-step)=K-step`
+/// and `entry.hi >= K` so `max(entry.hi, K)=entry.hi`) — BYTE-IDENTICAL on
+/// every known shape.
+fn guard_floor(f: &MirFn, i: usize, edges: &[CallEdge]) -> Interval {
+    let unfloored = Interval::unbounded();
+    let Some(param_slot) = f.params.get(i).map(|p| p.local) else {
+        return unfloored;
+    };
+
+    // (a) equality guard K on the counter.
+    let Some((guard_k, guard_kind)) = guard_literal_for(&f.body.node, param_slot) else {
+        return unfloored;
+    };
+    if guard_kind != GuardKind::Equality {
+        return unfloored; // comparison guard ⇒ no floor in Phase A.
+    }
+
+    // (b) the K base arm must be TERMINAL (not self-recursing).
+    if equality_guard_arm_recurses(&f.body.node, f.fn_id, param_slot, guard_k) {
+        return unfloored;
+    }
+
+    // (c) every self-tail back-edge at index `i` is the SAME single
+    //     `counter - step` decrement.
+    let mut step: Option<i128> = None;
+    let mut saw_self_tail = false;
+    let all_same_decrement = walk_self_tailcall_steps(
+        &f.body.node,
+        f.fn_id,
+        param_slot,
+        i,
+        &mut step,
+        &mut saw_self_tail,
+    );
+    if !saw_self_tail || !all_same_decrement {
+        return unfloored;
+    }
+    let Some(step) = step else {
+        return unfloored;
+    };
+
+    // (d) reachability per entry literal: `entry >= K && (entry-K)%step == 0`.
+    //     We also recompute the entry hull here (the floor's upper endpoint).
+    let mut entry: Option<Interval> = None;
+    let mut saw_entry = false;
+    for edge in edges {
+        if edge.target != f.fn_id || edge.is_tail_self() {
+            continue;
+        }
+        saw_entry = true;
+        let Some(arg) = edge.args.get(i) else {
+            return unfloored;
+        };
+        let Some(iv) = literal_interval(&arg.node) else {
+            return unfloored;
+        };
         let v = match iv.lo {
             crate::ir::interval::Bound::Finite(v) => v,
-            _ => return None,
+            _ => return unfloored,
         };
-        if v < recur.guard_k || (v - recur.guard_k) % recur.step != 0 {
-            // The decrement never lands on the equality guard from this
-            // entry — the counter diverges past `K`. Decline.
-            return None;
+        if v < guard_k || (v - guard_k) % step != 0 {
+            // The decrement never lands on `K` from this entry — diverges.
+            return unfloored;
         }
         entry = Some(match entry {
             Some(prev) => prev.hull(iv),
             None => iv,
         });
     }
-    if !saw_entry {
-        // No non-recursive caller — we cannot bound the entry value.
-        return None;
-    }
-    let entry = entry?;
+    let entry = match (saw_entry, entry) {
+        (true, Some(iv)) => iv,
+        _ => return unfloored, // no entry caller ⇒ unbounded ⇒ no floor.
+    };
 
-    // 3. Combine. The counter ranges between the base guard (minus the
-    //    transient last step) and the entry envelope. For `n - 1` toward
-    //    `0` with entry `[lo, hi]`, that is `[min(lo, K-step), max(hi, K)]`.
-    let lo = entry.lo.min(Interval::point(recur.guard_k - recur.step).lo);
-    let hi = entry.hi.max(Interval::point(recur.guard_k).hi);
-    Some(Interval { lo, hi })
+    // The convex floor: `[min(entry.lo, K-step), max(entry.hi, K)]`. The gate
+    // guarantees every entry literal is `>= K`, so `entry.lo >= K > K-step`
+    // and `entry.hi >= K`, hence this equals `[K-step, entry.hi]` — exactly
+    // the old `param_recurrence_bound` combine (byte-identical).
+    let lo = entry.lo.min(Interval::point(guard_k - step).lo);
+    let hi = entry.hi.max(Interval::point(guard_k).hi);
+    Interval { lo, hi }
 }
 
 /// How the base-case guard `K` compares the counter against the literal.
@@ -831,79 +1151,6 @@ enum GuardKind {
     /// `<`, `<=`, `>`, `>=` against `K` — a half-bounded comparison whose
     /// exact stopping value is unknown. The conservative decline.
     Comparison,
-}
-
-/// The recognized recurrence shape for a bounded counter.
-struct Recurrence {
-    /// The base-case guard literal `K` (`match counter { K -> … }`).
-    guard_k: i128,
-    /// The decrement step magnitude (`counter - step`, positive literal).
-    step: i128,
-    /// Whether the guard is an equality (the only kind that pins the
-    /// stopping value) or a comparison (declines).
-    guard_kind: GuardKind,
-}
-
-/// Recognize the bounded-counter recurrence for param `param_slot` (index
-/// `i`) in `f`'s body: a base-case guard on the counter and a monotone
-/// `counter - step` recursive arg at the SAME index. Returns `None` for
-/// any other shape (accumulators, non-monotone recurrences, missing
-/// guard) — the conservative decline.
-fn recurrence_for_param(f: &MirFn, param_slot: LocalId, i: usize) -> Option<Recurrence> {
-    let (guard_k, guard_kind) = guard_literal_for(&f.body.node, param_slot)?;
-
-    // The equality guard `K` is the counter's CLAIMED stopping value, but
-    // `guard_literal_for` only checks that a `match counter { K -> … }` arm
-    // exists — NOT that that arm TERMINATES. If the `K`-arm body itself
-    // self-recurses (`match n { 0 -> loopit(n - 1, …); _ -> loopit(n - 1, …) }`),
-    // the counter never stops at `K`: it runs straight past the guard and off
-    // the `i64` line, so the `[K - step, entry]` bound derived below is fiction
-    // (the recursive-base-arm soundness hole). DECLINE (box). Fail-closed: a
-    // non-recursive base arm — countdown/factorial and every ordinary
-    // structural recursion — stays bare.
-    if guard_kind == GuardKind::Equality
-        && equality_guard_arm_recurses(&f.body.node, f.fn_id, param_slot, guard_k)
-    {
-        return None;
-    }
-
-    // Inspect EVERY self-tail-call's arg at index `i` — not just the first.
-    // A counter is a provably-bounded recurrence only when ALL of its
-    // self-recurrence paths advance it by the SAME single monotone
-    // `counter - step` decrement toward the equality guard. If any path is
-    // missing, grows the counter (`n + lit`), uses a different/opposite
-    // step, or is a non-`counter`-based expression, the param is NOT a
-    // bounded counter — DECLINE (box). Only checking the first path
-    // under-approximates the interval (a SECOND, growing self-tail-call
-    // leaks the counter out of `i64` range — the multi-tail-call soundness
-    // hole). Fail-closed: boxing costs speed, a missed bound never
-    // correctness.
-    //
-    // `walk_self_tailcall_steps` returns `false` the moment it sees any
-    // self-tail-call whose arg at `i` is NOT the agreed decrement step.
-    let mut step: Option<i128> = None;
-    let mut saw_self_tail = false;
-    let all_same_decrement = walk_self_tailcall_steps(
-        &f.body.node,
-        f.fn_id,
-        param_slot,
-        i,
-        &mut step,
-        &mut saw_self_tail,
-    );
-
-    // No self-tail-call at this index, or some path was not the agreed
-    // monotone decrement ⇒ no provably-bounded recurrence. Decline.
-    if !saw_self_tail || !all_same_decrement {
-        return None;
-    }
-    let step = step?;
-
-    Some(Recurrence {
-        guard_k,
-        step,
-        guard_kind,
-    })
 }
 
 /// Walk for a `Match`/`IfThenElse` that guards the counter against a
@@ -2260,6 +2507,148 @@ fn main() -> Int
         assert!(
             !f.param_is_bare(0),
             "a counter whose equality-guard base arm self-recurses is unbounded → must box"
+        );
+    }
+
+    // ── FIXPOINT producer: interval-VALUE goldens (byte-identity) ───────
+
+    /// The produced interval for a `(fn, param)`, read straight off the
+    /// fixpoint producer (not just `param_is_bare`). Pins the VALUE.
+    fn produced_interval(program: &MirProgram, fn_name: &str, i: usize) -> Option<Interval> {
+        let id = fn_id_by_name(program, fn_name);
+        let ivs = compute_param_intervals_for_test(program);
+        ivs.get(&id).and_then(|v| v.get(i).copied()).flatten()
+    }
+
+    /// Countdown's counter interval must equal the OLD closed-form value
+    /// `[K-step, entry] = [-1, 20000]` (the old `param_recurrence_bound`
+    /// combine `[min(E.lo, K-step), max(E.hi, K)]` for K=0, step=1, E=20000).
+    /// This pins byte-identity at the VALUE level, not just `param_is_bare`.
+    #[test]
+    fn countdown_interval_is_K_minus_step_to_entry() {
+        let src = r#"
+module Countdown
+    intent = "t"
+    depends []
+
+fn countdown(n: Int) -> Int
+    match n
+        0 -> 0
+        _ -> countdown(n - 1)
+
+fn main() -> Int
+    countdown(20000)
+"#;
+        let (program, _facts) = facts_for(src);
+        assert_eq!(
+            produced_interval(&program, "countdown", 0),
+            Some(Interval::between(-1, 20000)),
+            "countdown's counter interval must be byte-identical to the old [K-step, entry]"
+        );
+    }
+
+    /// Factorial: `n` (the counter) is `[K-step, entry] = [-1, 10]`; `acc`
+    /// (the growing accumulator) has no guard, so it widens out of i64 → None.
+    #[test]
+    fn factorial_n_interval_is_K_minus_step_to_entry_and_acc_is_none() {
+        let src = r#"
+module Factorial
+    intent = "t"
+    depends []
+
+fn factorial(n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> factorial(n - 1, acc * n)
+
+fn main() -> Int
+    factorial(10, 1)
+"#;
+        let (program, _facts) = facts_for(src);
+        assert_eq!(
+            produced_interval(&program, "factorial", 0),
+            Some(Interval::between(-1, 10)),
+            "factorial `n` interval must be byte-identical to [K-step, entry] = [-1, 10]"
+        );
+        assert_eq!(
+            produced_interval(&program, "factorial", 1),
+            None,
+            "factorial `acc` grows unbounded → boxed (None)"
+        );
+    }
+
+    /// The #519 modular non-landing decline, at the VALUE level: step 2,
+    /// guard 0, entry 5 — `(5-0) % 2 != 0` withholds the floor, so the param
+    /// is boxed (None), not `Some([0,5])` (the under-approximation the gate
+    /// closes). Pins that the decline survives the fixpoint rewrite.
+    #[test]
+    fn step_two_modular_nonlanding_interval_is_none() {
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn down(n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> down(n - 2, acc)
+
+fn main() -> Int
+    down(5, 0)
+"#;
+        let (program, facts) = facts_for(src);
+        let f = facts
+            .for_fn(fn_id_by_name(&program, "down"))
+            .expect("down facts");
+        assert!(
+            !f.param_is_bare(0),
+            "odd entry 5, step 2 toward guard 0 steps over 0 → must box"
+        );
+        assert_eq!(
+            produced_interval(&program, "down", 0),
+            None,
+            "the modular-hole counter must be None (the gate withholds the floor)"
+        );
+    }
+
+    /// Termination + boxing: an unguarded unit decrement with no reachable
+    /// base case (the guard subject is a DIFFERENT param, so the counter `n`
+    /// is never stopped) must (a) terminate the solve — no hang — and (b) map
+    /// the counter to None (boxed), exercising widen on the descending `lo`.
+    #[test]
+    fn widen_terminates_unbounded_decrement() {
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn spin(n: Int, k: Int) -> Int
+    match k
+        0 -> n
+        _ -> spin(n - 1, k - 1)
+
+fn caller(k: Int) -> Int
+    spin(7, k)
+
+fn main() -> Int
+    caller(3)
+"#;
+        let (program, facts) = facts_for(src);
+        // `spin`'s `n` has a unit decrement but its guard is on `k`, not `n`;
+        // `n` has a literal entry (7) but no equality guard ON `n`, so no
+        // floor is installed → the descent widens → None (boxed). The solve
+        // must terminate (this test returning at all proves no hang).
+        let f = facts
+            .for_fn(fn_id_by_name(&program, "spin"))
+            .expect("spin facts");
+        assert!(
+            !f.param_is_bare(0),
+            "an unguarded decrement counter (guard is on another param) must box"
+        );
+        assert_eq!(
+            produced_interval(&program, "spin", 0),
+            None,
+            "the unguarded decrement counter must widen to None, not hang"
         );
     }
 }

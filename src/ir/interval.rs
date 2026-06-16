@@ -242,6 +242,32 @@ impl Interval {
         self.lo.fits_i64() && self.hi.fits_i64()
     }
 
+    /// Standard interval widening ∇. An endpoint that moved OUTWARD between
+    /// the previous iterate `self` and the next iterate `next` jumps to the
+    /// matching infinity; a stable or inward-moving endpoint is kept (as the
+    /// enclosing bound of the two). ENLARGING-ONLY: the result is always a
+    /// superset of `next`, so widening can never make an interval too narrow
+    /// (soundness preserved — only precision is lost). It is the termination
+    /// operator for the bare-`i64` interval fixpoint: a genuinely-unbounded
+    /// endpoint reaches ±inf in one widen step, capping the chain height.
+    ///
+    /// `Bound::le` is module-private, so this MUST live in `interval.rs`.
+    pub fn widen(self, next: Interval) -> Interval {
+        // `lo` moved outward when `next.lo < self.lo` (descended) → -inf.
+        let lo = if next.lo.le(self.lo) && next.lo != self.lo {
+            Bound::NegInf
+        } else {
+            self.lo.min(next.lo)
+        };
+        // `hi` moved outward when `next.hi > self.hi` (ascended) → +inf.
+        let hi = if self.hi.le(next.hi) && self.hi != next.hi {
+            Bound::PosInf
+        } else {
+            self.hi.max(next.hi)
+        };
+        Interval { lo, hi }
+    }
+
     /// `true` when neither bound is infinite (the interval is a real
     /// finite range, even if wider than `i64`).
     fn is_finite(self) -> bool {
@@ -1134,5 +1160,57 @@ mod tests {
         );
         // [0, +inf] (Natural) is NOT overflow-free.
         assert_eq!(OpClass::of_interval(Interval::ge(0)), OpClass::Unbounded);
+    }
+
+    // ── widen ───────────────────────────────────────────────────────
+
+    #[test]
+    fn widen_stable_endpoint_kept() {
+        // No endpoint moved outward → the result is just the enclosing hull
+        // (here identical to both, which equal each other).
+        let a = Interval::between(0, 10);
+        assert_eq!(a.widen(a), a);
+    }
+
+    #[test]
+    fn widen_descending_lo_jumps_to_neg_inf() {
+        // `lo` descended (10 → 5) → -inf; `hi` stable.
+        let prev = Interval::between(10, 20);
+        let next = Interval::between(5, 20);
+        assert_eq!(
+            prev.widen(next),
+            Interval {
+                lo: Bound::NegInf,
+                hi: Bound::Finite(20),
+            }
+        );
+    }
+
+    #[test]
+    fn widen_ascending_hi_jumps_to_pos_inf() {
+        // `hi` ascended (20 → 30) → +inf; `lo` stable.
+        let prev = Interval::between(0, 20);
+        let next = Interval::between(0, 30);
+        assert_eq!(
+            prev.widen(next),
+            Interval {
+                lo: Bound::Finite(0),
+                hi: Bound::PosInf,
+            }
+        );
+    }
+
+    #[test]
+    fn widen_is_enlarging_only() {
+        // Result is always a superset of `next`: an inward-moving endpoint
+        // is NOT narrowed past `next` (widen only ever enlarges).
+        let prev = Interval::between(0, 100);
+        let next = Interval::between(5, 90); // both endpoints moved INWARD
+        let w = prev.widen(next);
+        // Superset of next on both sides.
+        assert!(w.lo.le(next.lo), "lo must not rise above next.lo");
+        assert!(next.hi.le(w.hi), "hi must not fall below next.hi");
+        // No outward move, so it stays the enclosing hull [0, 100].
+        assert_eq!(w, Interval::between(0, 100));
     }
 }
