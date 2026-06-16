@@ -23,6 +23,12 @@ use sampled::emit_guarded_domain_law;
 /// admits, so the emitter writes ONLY those into the build.
 pub(crate) use induction::admitted_dep_law_theorems;
 
+/// `aver proof --explain` residual probe: turn an emitted main law theorem's
+/// source lines into a normalization-only twin so Lean reports its residual
+/// (`unsolved goals`). Re-exported up to `codegen::lean` for the `--check`
+/// harness in the `aver` binary; see [`induction::residual_probe_body`].
+pub use induction::residual_probe_body;
+
 pub struct AutoProof {
     pub support_lines: Vec<String>,
     pub proof_lines: Vec<String>,

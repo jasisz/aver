@@ -1680,9 +1680,9 @@ fn emit_list_induction(
     // never emit a leading-comma `simp only [, …]` (a parse error `first`
     // could not recover from).
     let split_set = if simp_list.is_empty() {
-        "List.cons_append".to_string()
+        "List.cons_append, List.singleton_append, List.nil_append".to_string()
     } else {
-        format!("{simp_list}, List.cons_append")
+        format!("{simp_list}, List.cons_append, List.singleton_append, List.nil_append")
     };
 
     // Each arm closes fully or admits `sorry` — and crucially BUILDS either
@@ -2427,4 +2427,127 @@ fn emit_simple_induction(
         proof_lines,
         replaces_theorem: false,
     })
+}
+
+/// `aver proof --explain` residual probe. Given the EMITTED Lean source lines of
+/// ONE main law theorem (the `theorem … := by` line through its last arm), render
+/// a NORMALIZATION-ONLY twin whose body strips the closing tactic cascade so
+/// Lean's elaborator reports the law's residual (`unsolved goals`) instead of
+/// closing it with `sorry`/`omega`/`split`. The leftover goal IS what a
+/// Lemma-Calculation agent applies the IH against, so the cons arm's IH must stay
+/// in canonical recursive form: each arm is replaced by `(try simp only [<the
+/// theorem's own def simp set>, List.cons_append])` — def-unfold + cons-peel ONLY,
+/// no `done`/`omega`/`split`/`simp_all`/`| sorry`.
+///
+/// Only the clean, top-level `intro …; induction <t> with | <pat> => …` shape is
+/// probed (the dominant open-list / open-Nat family, e.g. prop_49 butlast). A
+/// theorem with no top-level `induction … with`, or whose body is the nested
+/// `first | (induction …)` feedback cascade, returns `None` — the caller leaves
+/// that law's `open_goal` unset rather than emit a misleading empty residual
+/// (scout risk: "no inductive probe shape → leave open_goal None").
+///
+/// `thm_lines` are the verbatim source lines of the theorem (leading whitespace
+/// intact). `probe_name` is substituted for the original theorem name so several
+/// probes can coexist in one file without clashing. Returns the probe theorem as
+/// a single `\n`-joined block.
+pub fn residual_probe_body(thm_lines: &[&str], probe_name: &str) -> Option<String> {
+    // 1. The statement line: `theorem <name> : <stmt> := by`. Swap only the name
+    //    token so the probe is independently nameable; keep the statement verbatim.
+    let stmt_line = thm_lines.first()?;
+    let after_kw = stmt_line.trim_start().strip_prefix("theorem ")?;
+    let name_end = after_kw.find(char::is_whitespace)?;
+    let rest = &after_kw[name_end..]; // ` : <stmt> := by` (or `:= by`)
+    if !rest.trim_end().ends_with(":= by") {
+        // Single-line `:= by native_decide` / `:= by decide` etc. — no inductive
+        // skeleton to strip; not a residual-bearing shape.
+        return None;
+    }
+
+    // 2. Find the top-level `induction <target> with` and `intro …` lines, plus
+    //    the arm lines. A nested `first | (induction …)` cascade has no arm at the
+    //    theorem's top indentation, so it is rejected (returns None) below.
+    let mut intro_line: Option<&str> = None;
+    let mut induction_line: Option<&str> = None;
+    let mut arm_lines: Vec<&str> = Vec::new();
+    let mut simp_defs: BTreeSet<String> = BTreeSet::new();
+    for line in &thm_lines[1..] {
+        let t = line.trim_start();
+        if t.starts_with("intro ") && intro_line.is_none() {
+            intro_line = Some(line);
+        } else if (t.starts_with("induction ") && t.ends_with(" with")) && induction_line.is_none()
+        {
+            induction_line = Some(line);
+        } else if t.starts_with("| ") && induction_line.is_some() {
+            arm_lines.push(line);
+        }
+        // Harvest the def names the emitter put in this theorem's simp sets so the
+        // probe normalizes with the SAME unfold set (def names only — `← `-reversed
+        // and lemma helpers are skipped to keep normalization confluent).
+        collect_simp_idents(line, &mut simp_defs);
+    }
+    let induction_line = induction_line?;
+    if arm_lines.is_empty() {
+        return None;
+    }
+    simp_defs.insert("List.cons_append".to_string());
+    let simp_set = simp_defs.into_iter().collect::<Vec<_>>().join(", ");
+    let strip = format!("(try simp only [{simp_set}])");
+
+    // 3. Reassemble: statement (renamed) + intro + induction + each arm's pattern
+    //    head with the cascade replaced by the normalization-only `strip`. Re-
+    //    indent every reconstructed line to a uniform 2-space body indent. The
+    //    source `induction`/arms may sit DEEPER than the theorem's `intro`: the
+    //    `fun_induction` first-rung wraps the manual ladder in a
+    //    `first | (fun_induction …) | ( induction … )` cascade, nesting the
+    //    `induction` and its arms one level in. Copying their original (deeper)
+    //    indentation verbatim while emitting `intro` shallow yields a probe whose
+    //    `intro`/`induction` columns disagree, which Lean rejects (an `introN`
+    //    parse failure, never the `unsolved goals` the caller reads). Flattening
+    //    to a 2-space block makes the probe a clean top-level `induction`
+    //    regardless of how deep it sat in the source body.
+    let mut out = vec![format!("theorem {probe_name}{rest}")];
+    if let Some(intro) = intro_line {
+        out.push(format!("  {}", intro.trim_start()));
+    }
+    out.push(format!("  {}", induction_line.trim_start()));
+    for arm in arm_lines {
+        // Keep everything up to and including the `=>`, drop the tactic cascade.
+        let arm = arm.trim();
+        if let Some(arrow) = arm.find("=>") {
+            let head = arm[..arrow + 2].trim_end();
+            out.push(format!("  {head} {strip}"));
+        } else {
+            out.push(format!("  {arm} {strip}"));
+        }
+    }
+    Some(out.join("\n"))
+}
+
+/// Collect the def/lemma identifiers inside every `simp[_all|_only] [ … ]` bracket
+/// on `line` into `set`, skipping `← `-reversed rewrites (non-confluent as
+/// normalization rules) and the structural `List.cons_append` peel (re-added by
+/// the caller). Used by [`residual_probe_body`] to reuse the theorem's OWN unfold
+/// set for the normalization-only probe.
+fn collect_simp_idents(line: &str, set: &mut BTreeSet<String>) {
+    let mut rest = line;
+    while let Some(open) = rest.find('[') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find(']') else { break };
+        let inner = &after[..close];
+        for tok in inner.split(',') {
+            let tok = tok.trim();
+            if tok.is_empty() || tok.starts_with("← ") || tok == "List.cons_append" {
+                continue;
+            }
+            // Plain identifiers only (def/theorem names); skip anything carrying
+            // tactic punctuation that slipped into a bracket scan.
+            if tok
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '\'')
+            {
+                set.insert(tok.to_string());
+            }
+        }
+        rest = &after[close + 1..];
+    }
 }
