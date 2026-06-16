@@ -98,6 +98,101 @@ fn discovered_lemmas_close_length_homomorphism_law_when_lake_is_available() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// DO-NO-HARM (Houdini accept) — the INVERSE of the feedback-loop win above.
+/// `rev (rev x) = x` already closes `universal:true` WITHOUT discovery (the rev
+/// anti-homomorphism recognizer emits its own aux lemma). But `--discover` over
+/// this cone commits a REVERSED unfold rule (`(x ++ y) = append x y`), which the
+/// feedback path used to inject into the induction ARMS — where, mixed with
+/// `append`'s own def, it simp-loops the working ladder into a `sorry`
+/// (`universal:true → false`: the net-negative feedback bug). The fix tries the
+/// EXACT pre-discovery proof FIRST (a no-`sorry` plain ladder that throws on an
+/// open arm), so a committed lemma can only ever ADD a proof, never demote one.
+/// This test pins that property: a law universal before discovery STAYS
+/// universal after committing lemmas. (Complements the length-homomorphism test
+/// — there discovery MUST move false→true; here it MUST NOT move true→false.)
+#[test]
+fn discovery_does_not_demote_an_already_universal_law_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping do-no-harm test: `lake` not available");
+        return;
+    }
+    let source = "module RevRev\n    intent =\n        \"rev (rev x) = x — already universal via the rev anti-homomorphism recognizer\"\n    effects []\n\n\
+         fn append(x: List<Int>, y: List<Int>) -> List<Int>\n    match x\n        [] -> y\n        [z, ..xs] -> List.concat([z], append(xs, y))\n\n\
+         fn rev(x: List<Int>) -> List<Int>\n    match x\n        [] -> []\n        [y, ..xs] -> append(rev(xs), [y])\n\n\
+         verify rev law revRev\n    given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]\n    rev(rev(x)) => x\n";
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-donoharm-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(src.join("m.av"), source).expect("write m.av");
+    let out = temp_output_dir("aver-donoharm-out");
+
+    let check = |label: &str| -> (bool, u64, String) {
+        let run = Command::new(aver_bin)
+            .arg("proof")
+            .arg(src.join("m.av"))
+            .arg("--backend")
+            .arg("lean")
+            .arg("-o")
+            .arg(&out)
+            .arg("--check")
+            .arg("--check-json")
+            .output()
+            .unwrap_or_else(|e| panic!("{label}: aver proof failed to run: {e}"));
+        let json_line = run
+            .stdout
+            .split(|&b| b == b'\n')
+            .rev()
+            .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+            .unwrap_or_else(|| panic!("{label}: no JSON line:\n{}", format_output(&run)))
+            .to_string();
+        let summary: serde_json::Value = serde_json::from_str(&json_line)
+            .unwrap_or_else(|e| panic!("{label}: bad JSON ({e}):\n{json_line}"));
+        (
+            summary["universal"].as_bool().unwrap_or(false),
+            summary["sorries"].as_u64().unwrap_or(u64::MAX),
+            format_output(&run),
+        )
+    };
+
+    // 1. Baseline: the law is universal WITHOUT discovery. If this ever flips,
+    //    the fixture stopped exercising do-no-harm (the recognizer changed) —
+    //    fix the fixture, not by relaxing the post-discovery assertion.
+    let (universal_before, sorries_before, output_before) = check("baseline");
+    assert!(
+        universal_before && sorries_before == 0,
+        "fixture is NOT universal without discovery — it no longer exercises do-no-harm:\n{output_before}"
+    );
+
+    // 2. Discover + commit into the same output dir (commits the reversed
+    //    `(x ++ y) = append x y` unfold rule that used to poison the arms).
+    let discover = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--discover")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("expected `aver proof --discover` to run");
+    let committed = std::fs::read_to_string(out.join("DiscoveredLemmas.lean")).unwrap_or_default();
+    assert!(
+        !committed.trim().is_empty() && committed.contains("theorem"),
+        "discovery committed no lemmas — the fixture no longer pins the feedback path:\n--- discover output ---\n{}",
+        format_output(&discover)
+    );
+
+    // 3. DO-NO-HARM: the SAME check, now replaying the committed lemmas, MUST
+    //    stay universal with zero sorries. A regression here is the
+    //    net-negative feedback bug (a committed lemma demoting a working proof).
+    let (universal_after, sorries_after, output_after) = check("with-discovery");
+    assert!(
+        universal_after && sorries_after == 0,
+        "committed discovered lemmas DEMOTED an already-universal law (do-no-harm violated):\n{output_after}"
+    );
+
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// THE FEEDBACK LOOP, część A — an already-proved EARLIER user `verify … law`
 /// feeds a later law's proof, with NO `--discover` step at all. The file holds
 /// two laws over `length`: `lengthHomo` (the homomorphism `length (append xs
