@@ -852,6 +852,21 @@ struct Recurrence {
 fn recurrence_for_param(f: &MirFn, param_slot: LocalId, i: usize) -> Option<Recurrence> {
     let (guard_k, guard_kind) = guard_literal_for(&f.body.node, param_slot)?;
 
+    // The equality guard `K` is the counter's CLAIMED stopping value, but
+    // `guard_literal_for` only checks that a `match counter { K -> … }` arm
+    // exists — NOT that that arm TERMINATES. If the `K`-arm body itself
+    // self-recurses (`match n { 0 -> loopit(n - 1, …); _ -> loopit(n - 1, …) }`),
+    // the counter never stops at `K`: it runs straight past the guard and off
+    // the `i64` line, so the `[K - step, entry]` bound derived below is fiction
+    // (the recursive-base-arm soundness hole). DECLINE (box). Fail-closed: a
+    // non-recursive base arm — countdown/factorial and every ordinary
+    // structural recursion — stays bare.
+    if guard_kind == GuardKind::Equality
+        && equality_guard_arm_recurses(&f.body.node, f.fn_id, param_slot, guard_k)
+    {
+        return None;
+    }
+
     // Inspect EVERY self-tail-call's arg at index `i` — not just the first.
     // A counter is a provably-bounded recurrence only when ALL of its
     // self-recurrence paths advance it by the SAME single monotone
@@ -1003,6 +1018,59 @@ fn walk_self_tailcall_steps(
         }
     });
     ok
+}
+
+/// Does the equality-guard base-case arm (`match counter { K -> body }`, the
+/// arm whose literal pattern equals `guard_k`) itself self-recurse?
+///
+/// `guard_literal_for` treats that literal arm as the counter's STOPPING
+/// point, which only holds when the arm TERMINATES. If its body tail-calls
+/// `self_fn`, the counter does NOT stop at `K` — it runs past the guard, so
+/// the `[K - step, entry]` recurrence bound is fiction and the param can
+/// leave `i64` (the recursive-base-arm hole). The caller declines (boxes)
+/// when this returns `true`. Fail-closed: the common non-recursive base arm
+/// (`match n { 0 -> acc; … }`) returns `false` and stays bare.
+fn equality_guard_arm_recurses(
+    e: &MirExpr,
+    self_fn: FnId,
+    counter: LocalId,
+    guard_k: i128,
+) -> bool {
+    if let MirExpr::Match(m) = e
+        && subject_is_local(&m.node.subject.node, counter)
+    {
+        for arm in &m.node.arms {
+            if let MirPattern::Literal(Literal::Int(k)) = &arm.pattern
+                && *k as i128 == guard_k
+                && contains_self_tailcall(&arm.body.node, self_fn)
+            {
+                return true;
+            }
+        }
+    }
+    let mut found = false;
+    visit_children(e, &mut |c| {
+        if !found {
+            found = equality_guard_arm_recurses(c, self_fn, counter, guard_k);
+        }
+    });
+    found
+}
+
+/// Does `e` contain a `TailCall` to `self_fn` anywhere in its subtree?
+fn contains_self_tailcall(e: &MirExpr, self_fn: FnId) -> bool {
+    if let MirExpr::TailCall(tc) = e
+        && tc.node.target == self_fn
+    {
+        return true;
+    }
+    let mut found = false;
+    visit_children(e, &mut |c| {
+        if !found {
+            found = contains_self_tailcall(c, self_fn);
+        }
+    });
+    found
 }
 
 /// If `e` is `counter - K` (a positive literal `K`), return `K`. The only
@@ -2154,6 +2222,44 @@ fn main() -> Int
         assert!(
             !f.param_is_bare(0),
             "a counter with a growing second self-tail-call path is unbounded → must box"
+        );
+    }
+
+    /// Recursive-base-arm soundness hole: the equality-guard arm (`match n {
+    /// 0 -> … }`) is treated as the counter's stopping point, but its body
+    /// itself self-recurses (`0 -> loopit(n - 1)`). The counter therefore
+    /// never stops at the guard `0` — it runs past it toward `-inf` (in ℤ) /
+    /// wraps (as bare `i64`), so the `[K - step, entry]` bound is fiction.
+    /// Pre-fix, `guard_literal_for` accepted the `0` arm as an equality guard
+    /// without checking it terminates, and `walk_self_tailcall_steps` counted
+    /// the base arm's `n - 1` as a valid decrement ⇒ `param_is_bare(0) == true`
+    /// (the hole). The fix declines when the equality-guard arm self-recurses.
+    #[test]
+    fn recursive_base_arm_declines() {
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn loopit(n: Int) -> Int
+    match n
+        0 -> loopit(n - 1)
+        9223372036854775807 -> n + 1
+        _ -> loopit(n - 1)
+
+fn main() -> Int
+    loopit(5)
+"#;
+        let (program, facts) = facts_for(src);
+        let f = facts
+            .for_fn(fn_id_by_name(&program, "loopit"))
+            .expect("loopit facts");
+        // The equality-guard `0` arm self-recurses, so `0` is not a stopping
+        // value and the counter is unbounded below — it must box. Pre-fix this
+        // asserted `param_is_bare(0) == true` (the soundness hole).
+        assert!(
+            !f.param_is_bare(0),
+            "a counter whose equality-guard base arm self-recurses is unbounded → must box"
         );
     }
 }
