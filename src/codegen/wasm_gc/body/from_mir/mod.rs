@@ -185,7 +185,10 @@ pub(crate) fn emit_fn_body_via_mir(
     caller_fn_collector: &std::cell::RefCell<CallerFnCollector>,
     wasip2_lowering: Option<&Wasip2Lowering>,
 ) -> Result<Option<Vec<ValType>>, WasmGcError> {
-    let slots = SlotTable::build_for_fn(rfd, registry, fn_map)?;
+    // ETAP-2 SLICE 2a: pass the per-slot Int repr (mirror of the alias
+    // facts). Default-empty on the un-rewritten wasm-gc MIR, so every slot
+    // stays boxed.
+    let slots = SlotTable::build_for_fn(rfd, registry, fn_map, &mir_fn.repr)?;
     let return_type_str = rfd.return_type.display();
 
     // Precollect every `let`-bound name (mirror of `emit_fn_body`) so
@@ -216,6 +219,10 @@ pub(crate) fn emit_fn_body_via_mir(
         // its gate off MIR rather than the AST `FnResolution`. Identical
         // bits to the resolver table today; the home is what changes.
         aliased_slots: mir_fn.aliased_slots.as_slice(),
+        // ETAP-2 SLICE 2a: per-slot Int repr rides the MIR fn (mirror of
+        // `aliased_slots`). Default-empty today (no wasm-gc rewrite is
+        // wired), so every slot stays boxed.
+        repr: &mir_fn.repr,
         params: &rfd.params,
         binding_names: &binding_names,
         effect_idx_lookup,
@@ -1040,6 +1047,11 @@ pub(crate) fn emit_mir_expr(
         // consumes the shared, un-rewritten MIR, so these never appear here.
         // `Ok(None)` (outside the supported subset) is the defensive, never-
         // hit fallback; it keeps wasm-gc behavior untouched (slice 2 territory).
+        //
+        // TODO(2b): lower per-slot (bare -> scalar i64; Box -> __aint_from_i64;
+        // Unbox -> __aint_to_i64_checked). Slice 2a installs the repr seam but
+        // wires no rewrite, so `mir_fn.repr` stays default-empty and these
+        // nodes never reach the emitter — the `Ok(None)` arm remains dead.
         MirExpr::Box(_) | MirExpr::Unbox(_) => Ok(None),
     }
 }

@@ -1984,6 +1984,16 @@ pub(super) fn aint_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcErro
     Ok(struct_ref(idx))
 }
 
+/// ETAP-2 SLICE 2a: when a per-param / per-return bare bit is set AND the
+/// Aver type is `Int`, the wasm signature would carry a scalar `i64` in
+/// place of the `$AverInt` ref. GATED OFF in 2a (`ENABLE_BARE_SLOTS ==
+/// false`) so the `*_with_repr` variants produce exactly the boxed
+/// signature `return_results` / `param_types` already emit. This keeps the
+/// functype registered in `module.rs`, the `SlotTable` params-prefix, and
+/// the `call_indirect` `fn_sig_key` on one repr-aware path so they agree
+/// byte-for-byte; 2b flips the gate.
+const ENABLE_BARE_SLOTS: bool = false;
+
 /// Result-list shape for a wasm function signature derived from an
 /// Aver return type.
 pub(super) fn return_results(
@@ -1993,6 +2003,21 @@ pub(super) fn return_results(
     Ok(aver_to_wasm(type_str, registry)?.into_iter().collect())
 }
 
+/// Repr-aware variant of [`return_results`]. In 2a `bare_return` is always
+/// `false` (the wasm-gc MIR is un-rewritten ⇒ `MirFnRepr` default-empty)
+/// AND the gate is off, so this delegates to `return_results`.
+pub(super) fn return_results_with_repr(
+    type_str: &str,
+    registry: Option<&TypeRegistry>,
+    bare_return: bool,
+) -> Result<Vec<ValType>, WasmGcError> {
+    if ENABLE_BARE_SLOTS && bare_return && type_str.trim() == "Int" {
+        // 2b: bare Int return → scalar i64 result.
+        return Ok(vec![ValType::I64]);
+    }
+    return_results(type_str, registry)
+}
+
 /// Param-list shape for a wasm function signature.
 pub(super) fn param_types(
     params: &[(String, String)],
@@ -2000,6 +2025,39 @@ pub(super) fn param_types(
 ) -> Result<Vec<ValType>, WasmGcError> {
     let mut out = Vec::with_capacity(params.len());
     for (_, ty) in params {
+        if let Some(v) = aver_to_wasm(ty, registry)? {
+            out.push(v);
+        }
+    }
+    Ok(out)
+}
+
+/// Repr-aware variant of [`param_types`]. `bare_params[i]` flags the i-th
+/// param as scalar `i64`. In 2a `bare_params` is empty AND the gate is off,
+/// so every param funnels through `aver_to_wasm` (→ `$AverInt`).
+pub(super) fn param_types_with_repr(
+    params: &[(String, String)],
+    registry: Option<&TypeRegistry>,
+    bare_params: &[bool],
+) -> Result<Vec<ValType>, WasmGcError> {
+    // Fast path / 2a path: no param renders bare (gate off, or
+    // `bare_params` empty), so the signature is exactly what `param_types`
+    // already emits — keep it as the single boxed source of truth.
+    let any_bare = ENABLE_BARE_SLOTS
+        && params
+            .iter()
+            .enumerate()
+            .any(|(i, (_, ty))| bare_params.get(i).copied().unwrap_or(false) && ty.trim() == "Int");
+    if !any_bare {
+        return param_types(params, registry);
+    }
+    let mut out = Vec::with_capacity(params.len());
+    for (i, (_, ty)) in params.iter().enumerate() {
+        if bare_params.get(i).copied().unwrap_or(false) && ty.trim() == "Int" {
+            // 2b: bare Int param → scalar i64 in the signature.
+            out.push(ValType::I64);
+            continue;
+        }
         if let Some(v) = aver_to_wasm(ty, registry)? {
             out.push(v);
         }
