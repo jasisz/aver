@@ -59,8 +59,9 @@ use crate::ir::mir::{
 pub fn rewrite_for_rust(
     program: MirProgram,
     boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
+    carrier: &super::bare_i64::CarrierIntervals,
 ) -> MirProgram {
-    rewrite(program, boxed_signature_fns)
+    rewrite(program, boxed_signature_fns, carrier)
 }
 
 /// ETAP-2 SLICE 2b: the wasm-gc entry. Identical body to
@@ -78,8 +79,9 @@ pub fn rewrite_for_rust(
 pub fn rewrite_for_wasm_gc(
     program: MirProgram,
     boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
+    carrier: &super::bare_i64::CarrierIntervals,
 ) -> MirProgram {
-    rewrite(program, boxed_signature_fns)
+    rewrite(program, boxed_signature_fns, carrier)
 }
 
 /// The shared rewrite both public entries delegate to. Target-agnostic:
@@ -90,9 +92,10 @@ pub fn rewrite_for_wasm_gc(
 fn rewrite(
     program: MirProgram,
     boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
+    carrier: &super::bare_i64::CarrierIntervals,
 ) -> MirProgram {
     let mut program = program;
-    let facts = super::bare_i64::analyze(&program);
+    let facts = super::bare_i64::analyze(&program, carrier);
     // Collect ids first to avoid borrowing `program.fns` while mutating it.
     let ids: Vec<crate::ir::FnId> = program.fns.keys().copied().collect();
     for id in ids {
@@ -914,7 +917,11 @@ mod tests {
         );
         let mir_items = result.resolved_items.clone();
         let program = optimize(lower_program(&mir_items));
-        rewrite_for_rust(program, &std::collections::HashSet::new())
+        rewrite_for_rust(
+            program,
+            &std::collections::HashSet::new(),
+            &super::super::bare_i64::CarrierIntervals::new(),
+        )
     }
 
     fn fn_named<'a>(program: &'a MirProgram, name: &str) -> &'a MirFn {

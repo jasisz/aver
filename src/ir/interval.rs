@@ -242,6 +242,18 @@ impl Interval {
         self.lo.fits_i64() && self.hi.fits_i64()
     }
 
+    /// `true` when the constant `k` provably lies within `[lo, hi]`. Used by
+    /// the carrier-`i64` eligibility tightening: a BARE record constructor
+    /// outside the smart-ctor whose carrier-field argument is a literal in
+    /// the proven interval is SAFE (it cannot smuggle an out-of-bound /
+    /// i64-overflowing value past the gate), so it does not demote the
+    /// carrier. A non-literal argument (or a literal outside the interval)
+    /// is ungated and DOES demote. `Bound::le` is module-private, so this
+    /// containment test must live here.
+    pub fn contains_point(self, k: i128) -> bool {
+        self.lo.le(Bound::Finite(k)) && Bound::Finite(k).le(self.hi)
+    }
+
     /// Standard interval widening ∇. An endpoint that moved OUTWARD between
     /// the previous iterate `self` and the next iterate `next` jumps to the
     /// matching infinity; a stable or inward-moving endpoint is kept (as the
@@ -1047,6 +1059,25 @@ mod tests {
         // [-2, 3] * [-2, 3] → min of {4,-6,-6,9} = -6, max = 9.
         let a = Interval::between(-2, 3);
         assert_eq!(a.mul(a), Interval::between(-6, 9));
+    }
+
+    #[test]
+    fn contains_point_respects_both_bounds_and_infinities() {
+        let band = Interval::between(0, 100);
+        // Endpoints inclusive, interior in, outside out.
+        assert!(band.contains_point(0));
+        assert!(band.contains_point(100));
+        assert!(band.contains_point(50));
+        assert!(!band.contains_point(-1));
+        assert!(!band.contains_point(101));
+        // One-sided bands: `n >= 0` contains every non-negative, no negative.
+        let ge0 = Interval::ge(0);
+        assert!(ge0.contains_point(0));
+        assert!(ge0.contains_point(i64::MAX as i128));
+        assert!(!ge0.contains_point(-1));
+        // The fully-unbounded interval contains everything.
+        assert!(Interval::unbounded().contains_point(i128::MIN));
+        assert!(Interval::unbounded().contains_point(i128::MAX));
     }
 
     // ── interval_of_invariant: 5 recognized shapes ─────────────────

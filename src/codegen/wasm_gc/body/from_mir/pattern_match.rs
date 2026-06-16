@@ -1236,6 +1236,13 @@ pub(crate) fn emit_mir_single_variant_match(
         if emit_mir_expr(func, subject, slots, ctx)?.is_none() {
             return Ok(None);
         }
+        // ETAP-2 carrier-`i64`: an eligible carrier subject is a native
+        // `i64`, but the unwrapped binding has the underlying `Int` type
+        // (its slot is an `$AverInt` ref), so lift it back before the
+        // `local.set`. Skip when the binding is discarded (`_`, NO_SLOT).
+        if slot != NO_SLOT && ctx.registry.is_eligible_carrier(&info.parent) {
+            super::emit_carrier_project_bridge(func, ctx)?;
+        }
         if slot != NO_SLOT {
             func.instruction(&Instruction::LocalSet(slot));
         } else {
@@ -1403,6 +1410,12 @@ pub(crate) fn emit_mir_arm_body(
             let slot = bindings[0].0;
             if slot != NO_SLOT {
                 func.instruction(&Instruction::LocalGet(subject_scratch));
+                // ETAP-2 carrier-`i64`: the scratch holds the carrier's
+                // native `i64`; the unwrapped binding's slot is the
+                // underlying `$AverInt`, so lift before binding.
+                if ctx.registry.is_eligible_carrier(&info.parent) {
+                    super::emit_carrier_project_bridge(func, ctx)?;
+                }
                 func.instruction(&Instruction::LocalSet(slot));
             }
             return emit_mir_arm_body_value(func, &arm.body, result_raw, slots, ctx);

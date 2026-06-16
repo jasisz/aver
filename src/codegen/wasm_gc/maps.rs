@@ -205,8 +205,15 @@ impl MapHelperRegistry {
             if k_seen.insert(k_aver.to_string()) {
                 k_names.push(k_aver.to_string());
             }
+            // ETAP-2 carrier-`i64`: an eligible carrier V is `i64`-erased —
+            // it behaves like a primitive V, so it needs NO pseudo-K
+            // `__hash_/__eq_<V>` helper (a struct-shaped body over an `i64` is
+            // invalid wasm). The Map's value eq/hash dispatches it inline as
+            // raw `i64.eq` / `i32.wrap_i64` (the `is_eligible_carrier` arms in
+            // the map value-dispatch sites).
             if !super::types::TypeRegistry::is_primitive_map_key(v_aver_trim)
                 && v_aver_trim != "String"
+                && !registry.is_eligible_carrier(v_aver_trim)
                 && k_seen.insert(v_aver_trim.to_string())
             {
                 k_names.push(v_aver_trim.to_string());
@@ -2403,6 +2410,13 @@ fn emit_v_eq(
     v_helpers: Option<KeyHelpers>,
     registry: &TypeRegistry,
 ) -> Result<(), WasmGcError> {
+    // ETAP-2 carrier-`i64`: an eligible carrier V is a native `i64` in the
+    // values array → raw `i64.eq`, NOT a `__eq_<V>` helper (which is never
+    // registered for it) nor `__aint_eq` (a ref helper).
+    if registry.is_eligible_carrier(v_aver.trim()) {
+        f.instruction(&Instruction::I64Eq);
+        return Ok(());
+    }
     match v_aver.trim() {
         // Flag-on (bignum): `$aint` ref → `__aint_eq`. Flag-off: `i64.eq`.
         "Int" => {
@@ -2432,6 +2446,12 @@ fn emit_v_hash(
     v_helpers: Option<KeyHelpers>,
     registry: &TypeRegistry,
 ) -> Result<(), WasmGcError> {
+    // ETAP-2 carrier-`i64`: an eligible carrier V is a native `i64` →
+    // raw `i32.wrap_i64`, matching its `i64.eq`.
+    if registry.is_eligible_carrier(v_aver.trim()) {
+        f.instruction(&Instruction::I32WrapI64);
+        return Ok(());
+    }
     match v_aver.trim() {
         // Flag-on (bignum): `$aint` ref → `__aint_hash`. Flag-off: wrap.
         "Int" => {

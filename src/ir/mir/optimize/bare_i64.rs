@@ -47,6 +47,73 @@ use crate::ir::interval::{Interval, OpClass, raw_i64_eligible};
 use super::super::expr::{MirCallee, MirExpr, MirPattern};
 use super::super::program::{LocalId, MirFn, MirProgram};
 
+/// ETAP-2 SLICE 0+1 — per-carrier-type proven bound, keyed by the opaque
+/// type's bare Aver name (the `MirParam.ty` string). Built once by
+/// [`crate::codegen::proof_lower::carrier_interval_table`] and threaded into
+/// [`analyze`]. The `bool` is the `interval_known` bit from
+/// [`crate::ir::interval::interval_of_invariant`]: only a recognized,
+/// `fits_i64` bound makes a carrier slot bare-eligible. An EMPTY table
+/// (the default at every non-carrier call site — the VM facts path, tests)
+/// reproduces the pre-slice all-`Int` behavior byte-for-byte.
+pub type CarrierIntervals = HashMap<String, (Interval, bool)>;
+
+/// The proven interval for a carrier whose Aver type name is `ty`, returned
+/// ONLY when the table holds a recognized bound (`interval_known`) that
+/// `fits_i64`. Any other case (`ty` not a carrier, an unrecognized invariant
+/// omitted upstream, or a bound too wide for `i64`) yields `None` — the
+/// fail-closed decline that keeps the carrier boxed.
+///
+/// `ty` is a `MirParam.ty` string, which the lowerer fills with
+/// `format!("{:?}", Type)` — so a named carrier type renders as the Debug
+/// form `Named { id: Some(TypeId(N)), name: "IntRange" }`, NOT the bare
+/// `"IntRange"`. We extract the bare `name:` to match the table key (which
+/// is keyed by the bare type name from `populate_refined_types`).
+///
+/// ## Seam gate (`CARRIER_BARE_ELIGIBLE`)
+///
+/// This is the analysis half of carrier-`i64` lowering. The codegen half —
+/// flipping a bare-carrier function slot to a native `i64` on the wasm-gc /
+/// Rust backends — is NOT in place yet: a carrier is a refinement-via-opaque
+/// single-field record that the wasm-gc registry already *newtype-erases* to
+/// its underlying `Int` ref (`$aint`), and the body-emit path (`Project` of
+/// the carrier field, `RecordCreate` of the carrier, the smart-constructor
+/// `Result.Ok(IntRange(..))` boundary, and the same on Rust which does NOT
+/// erase the carrier at all) still expects that ref. Flagging a carrier slot
+/// bare in `MirFnRepr` therefore desyncs the body from the (still-boxed)
+/// signature and emits invalid wasm. So the seam ships GATED OFF — exactly
+/// the discipline 2a used (`ENABLE_BARE_SLOTS = false`) before 2b flipped it.
+/// The table, threading, name-extraction, escape-coupling and summary
+/// integration below are all LIVE and tested; flipping this `const` to
+/// `true` (after the body-emit bridge lands) turns the slice on with no
+/// other change to this file.
+const CARRIER_BARE_ELIGIBLE: bool = false;
+
+fn carrier_interval(ty: &str, carrier: &CarrierIntervals) -> Option<Interval> {
+    if !CARRIER_BARE_ELIGIBLE {
+        return None;
+    }
+    let bare = bare_named_type(ty)?;
+    let (iv, known) = carrier.get(bare).copied()?;
+    if known && iv.fits_i64() {
+        Some(iv)
+    } else {
+        None
+    }
+}
+
+/// Extract the bare type name from a `MirParam.ty` Debug string for a
+/// `Type::Named`. Returns the `name: "X"` payload as `X`, or `None` when the
+/// string is not a `Named { … }` Debug form (e.g. `"Int"`, `"Result(…)"`).
+/// The Debug format of `Type::Named { id, name }` is stable
+/// (`Named { id: …, name: "X" }`); we slice out the quoted `name:` field.
+fn bare_named_type(ty: &str) -> Option<&str> {
+    let rest = ty.strip_prefix("Named {")?;
+    let after = rest.split("name:").nth(1)?;
+    let start = after.find('"')? + 1;
+    let end = after[start..].find('"')? + start;
+    Some(&after[start..end])
+}
+
 /// Representation chosen for a value: a native machine `i64` or the
 /// default arbitrary-precision `AverInt`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,7 +301,7 @@ impl BareI64Facts {
 /// visible `MirCallee::Fn` / `MirTailCall` call graph. A dependency-module
 /// fragment (callers unseen) bails to all-`Boxed`, exactly like
 /// `own_param`.
-pub fn analyze(program: &MirProgram) -> BareI64Facts {
+pub fn analyze(program: &MirProgram, carrier: &CarrierIntervals) -> BareI64Facts {
     // Diagnostic / bench-differential escape hatch: skip the analysis so a
     // run keeps the conservative all-Boxed baseline.
     if std::env::var("AVER_NO_BARE_I64").is_ok() {
@@ -256,11 +323,11 @@ pub fn analyze(program: &MirProgram) -> BareI64Facts {
 
     // The minimal cross-frame summary: which params are bare, whether the
     // return is bare.
-    let summary = compute_summary(program, &int_params);
+    let summary = compute_summary(program, &int_params, carrier);
 
     let mut fns: HashMap<FnId, FnBareFacts> = HashMap::new();
     for (id, f) in program.iter() {
-        fns.insert(*id, analyze_fn(f, &summary));
+        fns.insert(*id, analyze_fn(f, &summary, carrier));
     }
 
     BareI64Facts { fns }
@@ -305,7 +372,11 @@ impl Summary {
     }
 }
 
-fn compute_summary(program: &MirProgram, int_params: &HashMap<FnId, Vec<bool>>) -> Summary {
+fn compute_summary(
+    program: &MirProgram,
+    int_params: &HashMap<FnId, Vec<bool>>,
+    carrier: &CarrierIntervals,
+) -> Summary {
     // Address-taken fns (name appears as a `FnValue`) have callers we
     // cannot attribute — pin all their params/return boxed.
     let mut address_taken: HashSet<String> = HashSet::new();
@@ -452,7 +523,7 @@ fn compute_summary(program: &MirProgram, int_params: &HashMap<FnId, Vec<bool>>) 
                 bare_return: bare_return.clone(),
                 bare_param_intervals: bare_param_intervals.clone(),
             };
-            let facts = analyze_fn(f, &tmp);
+            let facts = analyze_fn(f, &tmp, carrier);
             if !facts.bare_return && bare_return.insert(*id, false) != Some(false) {
                 changed = true;
             }
@@ -500,7 +571,7 @@ fn compute_summary(program: &MirProgram, int_params: &HashMap<FnId, Vec<bool>>) 
             bare_param_intervals: bare_param_intervals.clone(),
         };
         for (_caller, f) in program.iter() {
-            let facts = analyze_fn(f, &tmp);
+            let facts = analyze_fn(f, &tmp, carrier);
             let mut demote: Vec<FnId> = Vec::new();
             collect_let_bound_boxed_returns(&f.body.node, &facts, &bare_return, &mut demote);
             for target in demote {
@@ -1538,7 +1609,7 @@ fn literal_interval(arg: &MirExpr) -> Option<Interval> {
 /// `summary` (which params/returns are bare). The body walk derives an
 /// interval per slot (bottom-up over the `Let` chain), an escape predicate
 /// (a single use-flow scan), and combines them via `raw_i64_eligible`.
-fn analyze_fn(f: &MirFn, summary: &Summary) -> FnBareFacts {
+fn analyze_fn(f: &MirFn, summary: &Summary, carrier: &CarrierIntervals) -> FnBareFacts {
     let mut facts = FnBareFacts::default();
 
     // 1. Range: seed param intervals from the summary. A bare param is
@@ -1547,12 +1618,31 @@ fn analyze_fn(f: &MirFn, summary: &Summary) -> FnBareFacts {
     //    stays in the OverflowFree band; a bare param with no tight interval
     //    falls back to the full-`i64` line (still sound — bare ⟹ confined to
     //    `i64` by construction); a boxed param is unbounded.
+    //
+    //    ETAP-2 SLICE 0+1 — carrier params. A param whose annotated type is a
+    //    refinement-via-opaque carrier (`carrier_interval(&p.ty, carrier)` is
+    //    `Some`) is bare-eligible from its PROVEN smart-constructor bound,
+    //    INDEPENDENT of the recurrence rule that drives `summary.param_bare`
+    //    (a carrier param isn't Int-typed, so the cross-frame summary never
+    //    flags it). The carrier bound is sound by construction: the type is
+    //    opaque + the only constructor is the guarded smart constructor, so
+    //    every inhabitant provably lies in the interval. The eligibility is
+    //    not final here — the combine (step 4) still gates on `!escapes`, and
+    //    the signature `bare_params[i]` is set FROM that combine result below
+    //    (so a carrier stored into a record / Map / stringified — i.e. one
+    //    that escapes — keeps a boxed signature, the slice-2 boundary).
     let mut intervals: HashMap<LocalId, Interval> = HashMap::new();
     let mut bare_params = vec![false; f.params.len()];
+    let mut carrier_params = vec![false; f.params.len()];
     for (i, p) in f.params.iter().enumerate() {
-        let is_bare = summary.param_bare(f.fn_id, i);
-        bare_params[i] = is_bare;
-        let iv = if is_bare {
+        let recurrence_bare = summary.param_bare(f.fn_id, i);
+        let carrier_iv = carrier_interval(&p.ty, carrier);
+        carrier_params[i] = carrier_iv.is_some();
+        bare_params[i] = recurrence_bare;
+        let iv = if let Some(cv) = carrier_iv {
+            // Carrier param: seed from its proven (fits_i64) bound.
+            cv
+        } else if recurrence_bare {
             summary
                 .param_interval(f.fn_id, i)
                 .filter(|iv| iv.fits_i64())
@@ -1562,7 +1652,6 @@ fn analyze_fn(f: &MirFn, summary: &Summary) -> FnBareFacts {
         };
         intervals.insert(p.local, iv);
     }
-    facts.bare_params = bare_params;
 
     // 2. Walk the body's `Let` chain, deriving an interval (+ worst-join
     //    op class) for each bound slot.
@@ -1597,11 +1686,16 @@ fn analyze_fn(f: &MirFn, summary: &Summary) -> FnBareFacts {
             },
         );
     }
-    // Params absent from the Let walk still get a fact (their seed).
+    // Params absent from the Let walk still get a fact (their seed). Every
+    // param is in `intervals`, so the combine above already inserted its
+    // value fact — this `or_insert_with` is a backstop for any param the
+    // combine somehow skipped. A carrier param is bare iff its proven bound
+    // made it eligible (it was seeded into `intervals`, so the combine
+    // covered it); the recurrence path keeps its `summary` seed.
     for (i, p) in f.params.iter().enumerate() {
-        let is_bare = summary.param_bare(f.fn_id, i);
+        let seeded_bare = summary.param_bare(f.fn_id, i) || carrier_params[i];
         facts.values.entry(p.local).or_insert_with(|| {
-            if is_bare {
+            if seeded_bare {
                 ValueFact {
                     interval: intervals.get(&p.local).copied(),
                     op_class: OpClass::OverflowFree,
@@ -1613,6 +1707,22 @@ fn analyze_fn(f: &MirFn, summary: &Summary) -> FnBareFacts {
             }
         });
     }
+
+    // Couple each CARRIER param's signature bit to the combine result: a
+    // carrier param is bare in the signature ONLY when its value repr came
+    // out `Bare` (proven bound `fits_i64`, OverflowFree ops, and — crucially
+    // — it does NOT escape into an aggregate / Map / stringify). This is the
+    // in-fn analogue of `compute_summary`'s condition B2 for Int counters:
+    // the signature never disagrees with the body repr, so wasm-gc/Rust
+    // never emit an `i64` param the body reads through an `$aint`/`AverInt`
+    // method. A non-carrier param keeps its recurrence-derived `bare_params`
+    // bit untouched.
+    for (i, p) in f.params.iter().enumerate() {
+        if carrier_params[i] {
+            bare_params[i] = facts.values.get(&p.local).is_some_and(|v| v.is_bare());
+        }
+    }
+    facts.bare_params = bare_params;
 
     // 5. Return: bare iff the summary says so AND the body's tail value is
     //    itself bare-eligible.
@@ -2009,6 +2119,13 @@ mod tests {
     use crate::source::parse_source;
 
     fn facts_for(src: &str) -> (MirProgram, BareI64Facts) {
+        facts_for_with_carrier(src, &CarrierIntervals::new())
+    }
+
+    /// Like [`facts_for`] but threads a caller-supplied carrier table —
+    /// used by the carrier-slot tests. The empty-table caller
+    /// ([`facts_for`]) reproduces the pre-slice behavior exactly.
+    fn facts_for_with_carrier(src: &str, carrier: &CarrierIntervals) -> (MirProgram, BareI64Facts) {
         let mut items = parse_source(src).expect("parse");
         let cfg = crate::ir::pipeline::PipelineConfig {
             typecheck: Some(crate::ir::pipeline::TypecheckMode::Full { base_dir: None }),
@@ -2025,8 +2142,29 @@ mod tests {
         );
         let mir_items: Vec<crate::ir::hir::ResolvedTopLevel> = result.resolved_items.clone();
         let program = optimize(lower_program(&mir_items));
-        let facts = analyze(&program);
+        let facts = analyze(&program, carrier);
         (program, facts)
+    }
+
+    /// Build the carrier-interval table for `src` through the same
+    /// refinement-via-opaque derivation the codegen entries use. Returns
+    /// the parsed items + symbol table the table borrows from, so the
+    /// caller can keep them alive while running `analyze`.
+    fn carrier_table_for(
+        items: &[crate::ast::TopLevel],
+        symbols: &crate::ir::SymbolTable,
+    ) -> CarrierIntervals {
+        let empty_prefixes: HashSet<String> = HashSet::new();
+        let empty_recursive: HashSet<crate::ir::FnId> = HashSet::new();
+        let inputs = crate::codegen::proof_lower::ProofLowerInputs {
+            entry_items: items,
+            dep_modules: &[],
+            module_prefixes: &empty_prefixes,
+            recursive_fns: &empty_recursive,
+            symbol_table: symbols,
+            program_shape: None,
+        };
+        crate::codegen::proof_lower::carrier_interval_table(&inputs)
     }
 
     fn fn_id_by_name<'a>(program: &'a MirProgram, name: &str) -> crate::ir::FnId {
@@ -2035,6 +2173,114 @@ mod tests {
             .find(|(_, f)| f.name == name)
             .map(|(id, _)| *id)
             .unwrap_or_else(|| panic!("fn `{name}` not in program"))
+    }
+
+    /// ETAP-2 SLICE 0+1 carrier-slot source. `carrier` seeds the bound;
+    /// the empty-carrier variant is the revert-test baseline.
+    const CARRIER_SRC: &str = r#"
+module Toy
+    intent = "t"
+    depends []
+
+record IntRange
+    value: Int
+
+fn fromInt(n: Int) -> Result<IntRange, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(IntRange(value = n))
+        false -> Result.Err("err")
+
+fn toInt(c: IntRange) -> Int
+    c.value
+
+fn doubled(c: IntRange) -> Int
+    c.value + c.value
+
+fn main() -> Int
+    match fromInt(50)
+        Result.Ok(c)  -> toInt(c) + doubled(c)
+        Result.Err(_) -> 0
+"#;
+
+    /// Drive `CARRIER_SRC` through the pipeline + carrier table; return the
+    /// MIR program + analysis facts.
+    fn carrier_facts(carrier_on: bool) -> (MirProgram, BareI64Facts) {
+        let mut items = parse_source(CARRIER_SRC).expect("parse");
+        let cfg = crate::ir::pipeline::PipelineConfig {
+            typecheck: Some(crate::ir::pipeline::TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        };
+        let result = crate::ir::pipeline::run(&mut items, cfg);
+        let carrier = if carrier_on {
+            carrier_table_for(&items, &result.symbol_table)
+        } else {
+            CarrierIntervals::new()
+        };
+        let mir_items = result.resolved_items.clone();
+        let program = optimize(lower_program(&mir_items));
+        let facts = analyze(&program, &carrier);
+        (program, facts)
+    }
+
+    #[test]
+    fn bare_named_type_extracts_name_from_debug() {
+        // The lowerer fills `MirParam.ty` with `format!("{:?}", Type)`, so a
+        // named carrier renders as the Debug form. Pin the extractor.
+        assert_eq!(
+            bare_named_type("Named { id: Some(TypeId(0)), name: \"IntRange\" }"),
+            Some("IntRange")
+        );
+        assert_eq!(
+            bare_named_type("Named { id: None, name: \"Natural\" }"),
+            Some("Natural")
+        );
+        // Non-Named (primitive / compound) debug strings decline.
+        assert_eq!(bare_named_type("Int"), None);
+        assert_eq!(
+            bare_named_type("Result(Named { id: None, name: \"X\" }, Str)"),
+            None
+        );
+    }
+
+    #[test]
+    fn carrier_interval_table_derives_proven_bound() {
+        // The table is keyed by the bare carrier type name and carries the
+        // exact `[0, 100]` bound the proof side persists — byte-identical
+        // derivation, fail-closed on an unrecognized invariant.
+        let mut items = parse_source(CARRIER_SRC).expect("parse");
+        let cfg = crate::ir::pipeline::PipelineConfig {
+            typecheck: Some(crate::ir::pipeline::TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        };
+        let result = crate::ir::pipeline::run(&mut items, cfg);
+        let table = carrier_table_for(&items, &result.symbol_table);
+        let (iv, known) = table.get("IntRange").copied().expect("IntRange in table");
+        assert!(known, "the [0,100] invariant is recognized");
+        assert!(iv.fits_i64(), "the carrier bound fits i64");
+        assert_eq!(iv, Interval::between(0, 100), "exact proven carrier bound");
+    }
+
+    #[test]
+    fn carrier_seam_gated_off_keeps_param_boxed() {
+        // SHIPPED-SAFE invariant: while the codegen body-emit bridge is not
+        // in place (`CARRIER_BARE_ELIGIBLE == false`), a carrier param stays
+        // BOXED even when the table holds its proven bound — so the analysis
+        // never desyncs a carrier slot from the (still-boxed) signature and
+        // wasm-gc / Rust output is byte-identical to pre-slice. This test
+        // pins the gate; flip the `const` (with the body bridge) to enable.
+        assert!(
+            !CARRIER_BARE_ELIGIBLE,
+            "this test pins the shipped-off carrier seam"
+        );
+        let (program, facts) = carrier_facts(true);
+        for name in ["toInt", "doubled"] {
+            let id = fn_id_by_name(&program, name);
+            let f = facts.for_fn(id).expect("carrier facts");
+            assert!(
+                !f.param_is_bare(0),
+                "with the seam gated off, `{name}`'s carrier param stays boxed"
+            );
+        }
     }
 
     #[test]

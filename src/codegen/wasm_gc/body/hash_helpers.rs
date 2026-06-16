@@ -78,6 +78,15 @@ impl HashHelperRegistry {
         if self.kinds.contains_key(type_name) {
             return;
         }
+        // ETAP-2 carrier-`i64`: an eligible carrier is `i64`-erased — it has
+        // no struct and needs no per-type `__hash_<Carrier>` helper (its hash
+        // inlines as raw `i32.wrap_i64` at every use site). A struct-shaped
+        // helper body over an `i64` value is invalid wasm. This is the
+        // backstop covering every caller path (seed, field walk, `==`
+        // discovery, nominal-in-type walk).
+        if registry.is_eligible_carrier(type_name) {
+            return;
+        }
         let mut seen = std::collections::HashSet::new();
         let resolvable = match kind {
             HashKind::Record => {
@@ -146,6 +155,12 @@ impl HashHelperRegistry {
             field_ty,
             "Int" | "Float" | "Bool" | "String" | "Unit" | "Byte" | "Char"
         ) {
+            return;
+        }
+        // ETAP-2 carrier-`i64`: an eligible carrier is `i64`-erased — no
+        // struct, no per-type `__hash_<Carrier>` helper; its hash is the raw
+        // `i32.wrap_i64` inlined at the use site. Treat like a primitive.
+        if registry.is_eligible_carrier(field_ty) {
             return;
         }
         if registry.record_fields.contains_key(field_ty) {
@@ -636,6 +651,14 @@ fn emit_inner_hash_dispatch(
     helper_idx_map: &HashMap<String, u32>,
     self_fn_idx: Option<u32>,
 ) -> Result<(), WasmGcError> {
+    // ETAP-2 carrier-`i64`: an eligible carrier field/payload is a native
+    // `i64`, so its hash is a raw `i32.wrap_i64` — NOT `__aint_hash` (a ref
+    // helper). Must agree with the carrier eq (`i64.eq`) so equal carriers
+    // hash equal. Check before the newtype resolution.
+    if registry.is_eligible_carrier(inner) {
+        f.instruction(&Instruction::I32WrapI64);
+        return Ok(());
+    }
     let resolved: String = if let Some(under) = registry.newtype_underlying(inner) {
         under.to_string()
     } else {

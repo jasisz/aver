@@ -696,6 +696,15 @@ enum ListEqKind {
     /// the canonical (whitespace-free) so the body emitter can look
     /// it up in the helper idx map at emit time.
     CarrierEq(String),
+    /// ETAP-2 carrier-`i64`: a refinement-via-opaque carrier whose
+    /// proven bound `fits_i64` and whose erasure is therefore a NATIVE
+    /// `i64` array/list element — NOT the boxed `$AverInt` ref a plain
+    /// `Int` element lowers to under bignum. Equality is a raw `i64.eq`
+    /// and hash a raw `i32.wrap_i64`, EXACTLY the bignum-off Int path, so
+    /// the element op matches the `(array i64)` / `(field i64)` storage
+    /// instead of calling the `$aint` ref helpers (`__aint_eq` /
+    /// `__aint_hash`) which would expect a ref and fail wasm validation.
+    CarrierI64,
 }
 
 /// bignum slice 3 — emit Int-element EQUALITY for a List / Vector
@@ -781,6 +790,16 @@ pub(super) fn emit_aint_field_hash(
 
 fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
     let trimmed = elem.trim();
+    // ETAP-2 carrier-`i64`: an eligible carrier element is a NATIVE `i64`
+    // (the erasure produced `i64`, not `$AverInt`), so its element eq/hash
+    // must be the raw `i64.eq` / `i32.wrap_i64`, NOT the boxed `$aint`
+    // helper the plain-`Int` recursion below would pick. Check BEFORE the
+    // newtype recursion, which would otherwise fold the carrier into `Int`
+    // → `I64` → `emit_int_elem_eq` → `call $__aint_eq` (a ref helper that
+    // fails validation on a raw `i64` element).
+    if registry.is_eligible_carrier(trimmed) {
+        return Some(ListEqKind::CarrierI64);
+    }
     // Newtype-erased sum / record (single-variant single-field of a
     // primitive) gets its underlying primitive's eq instruction.
     if let Some(under) = registry.newtype_underlying(trimmed) {
@@ -1867,6 +1886,12 @@ fn emit_list_contains(
             f.instruction(&Instruction::LocalGet(1));
             match &kind {
                 ListEqKind::I64 => emit_int_elem_eq(&mut f, registry, aint_eq_fn_idx)?,
+                // ETAP-2 carrier-`i64`: raw `i64.eq` — the element is a native
+                // `i64`, NOT an `$AverInt` ref, so it does NOT route through
+                // `emit_int_elem_eq` (which calls `__aint_eq` under bignum).
+                ListEqKind::CarrierI64 => {
+                    f.instruction(&Instruction::I64Eq);
+                }
                 ListEqKind::F64 => {
                     f.instruction(&Instruction::F64Eq);
                 }
@@ -1955,6 +1980,17 @@ pub(super) fn emit_record_eq_inline(
             field_index: i as u32,
         });
         // emit per-field eq → i32
+        // ETAP-2 carrier-`i64`: an eligible carrier field is a native `i64`,
+        // so it compares with a raw `i64.eq`, NOT the `__aint_eq` ref helper
+        // (the plain-`Int` arm) nor a per-type `__eq_<Carrier>` (which a
+        // newtype carrier never gets). Check before the type-name match.
+        if registry.is_eligible_carrier(field_ty.trim()) {
+            f.instruction(&Instruction::I64Eq);
+            if i > 0 {
+                f.instruction(&Instruction::I32And);
+            }
+            continue;
+        }
         match field_ty.trim() {
             "Int" => {
                 emit_aint_field_eq(f, registry)?;
@@ -2071,6 +2107,15 @@ pub(super) fn emit_sum_eq_inline(
                     struct_type_index: v_idx,
                     field_index: i as u32,
                 });
+                // ETAP-2 carrier-`i64`: an eligible carrier sum-field is a
+                // native `i64` → raw `i64.eq`.
+                if registry.is_eligible_carrier(field_ty.trim()) {
+                    f.instruction(&Instruction::I64Eq);
+                    if i > 0 {
+                        f.instruction(&Instruction::I32And);
+                    }
+                    continue;
+                }
                 match field_ty.trim() {
                     "Int" => {
                         emit_aint_field_eq(f, registry)?;
@@ -2341,6 +2386,10 @@ fn emit_list_eq(
         ListEqKind::I64 => {
             emit_int_elem_eq(&mut f, registry, aint_eq_fn_idx)?;
         }
+        // ETAP-2 carrier-`i64`: raw `i64.eq` over native-`i64` elements.
+        ListEqKind::CarrierI64 => {
+            f.instruction(&Instruction::I64Eq);
+        }
         ListEqKind::F64 => {
             f.instruction(&Instruction::F64Eq);
         }
@@ -2479,6 +2528,13 @@ fn emit_list_hash(
     match &kind {
         ListEqKind::I64 => {
             emit_int_elem_hash(&mut f, registry)?;
+        }
+        // ETAP-2 carrier-`i64`: raw `i32.wrap_i64` over the native-`i64`
+        // element — the bignum-off Int hash, NOT `__aint_hash` (a ref
+        // helper). Equal carrier values hash equal because they ARE the
+        // same `i64`.
+        ListEqKind::CarrierI64 => {
+            f.instruction(&Instruction::I32WrapI64);
         }
         ListEqKind::I32 => {} // bool — already i32
         ListEqKind::F64 => {
@@ -2627,6 +2683,15 @@ fn emit_sum_inline_hash(
                 struct_type_index: v_idx,
                 field_index: i as u32,
             });
+            // ETAP-2 carrier-`i64`: an eligible carrier sum-field is a native
+            // `i64` → raw `i32.wrap_i64` (the bignum-off Int hash), matching
+            // its `i64.eq`.
+            if registry.is_eligible_carrier(field_ty.trim()) {
+                f.instruction(&Instruction::I32WrapI64);
+                f.instruction(&Instruction::I32Add);
+                f.instruction(&Instruction::LocalSet(elem_hash_local));
+                continue;
+            }
             let resolved: String = if let Some(under) = registry.newtype_underlying(field_ty.trim())
             {
                 under.to_string()
@@ -2708,6 +2773,14 @@ fn emit_record_inline_hash(
             struct_type_index: record_idx,
             field_index: i as u32,
         });
+        // ETAP-2 carrier-`i64`: an eligible carrier record-field is a native
+        // `i64` → raw `i32.wrap_i64`, matching its `i64.eq`.
+        if registry.is_eligible_carrier(field_type.trim()) {
+            f.instruction(&Instruction::I32WrapI64);
+            f.instruction(&Instruction::I32Add);
+            f.instruction(&Instruction::LocalSet(elem_hash_local));
+            continue;
+        }
         let resolved: String = if let Some(under) = registry.newtype_underlying(field_type.trim()) {
             under.to_string()
         } else {
@@ -2792,6 +2865,10 @@ fn emit_vec_eq(
     match &kind {
         ListEqKind::I64 => {
             emit_int_elem_eq(&mut f, registry, aint_eq_fn_idx)?;
+        }
+        // ETAP-2 carrier-`i64`: raw `i64.eq` over `(array i64)` elements.
+        ListEqKind::CarrierI64 => {
+            f.instruction(&Instruction::I64Eq);
         }
         ListEqKind::F64 => {
             f.instruction(&Instruction::F64Eq);
@@ -2905,6 +2982,10 @@ fn emit_vec_hash(
     match &kind {
         ListEqKind::I64 => {
             emit_int_elem_hash(&mut f, registry)?;
+        }
+        // ETAP-2 carrier-`i64`: raw `i32.wrap_i64` over `(array i64)` elems.
+        ListEqKind::CarrierI64 => {
+            f.instruction(&Instruction::I32WrapI64);
         }
         ListEqKind::I32 => {} // bool — already i32
         ListEqKind::F64 => {
