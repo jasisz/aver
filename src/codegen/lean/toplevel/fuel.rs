@@ -889,6 +889,10 @@ fn emit_native_termination_measure(fd: &FnDef, ctx: &CodegenContext) -> Option<S
             // try native here instead of conservatively forcing a fuel wrapper,
             // which would tax every law touching the predicate with
             // fuel-congruence. SINGLE-carrier only (see above).
+            // backend-link-stage: name-keyed recursive-type-def lookup (same as
+            // the fuel path's `recursive_types`); the measure only needs WHETHER
+            // this Named type is recursive, not its `id`, so the bare-name match
+            // is sufficient here.
             crate::types::Type::Named { name: tname, .. }
                 if single_sizeof_param
                     && ctx
