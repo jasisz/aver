@@ -839,6 +839,14 @@ fn emit_native_termination_measure(fd: &FnDef, ctx: &CodegenContext) -> Option<S
     if indices.is_empty() {
         return None;
     }
+    // SINGLE-carrier only for the recursive-ADT arm. Multi-carrier ADT sum
+    // measures (`sizeOf f + sizeOf g`) are native-CLOSABLE for some shapes
+    // (an `eval` SCC builds) but NOT all — a red-black-tree mutual SCC's
+    // `decreasing_by` does not close, hard-failing the build. So multi-carrier
+    // ADT stays on fuel pending a per-SCC closure check; lifting it blanket
+    // regressed `proof_export_lake_builds_red_black_tree`.
+    let single_sizeof_param = indices.len() == 1;
+
     // Pointer-eq scope so a same-bare-name twin never provides
     // these param types. Synthetic / mid-rewrite fns fall back to
     // on-demand resolve.
@@ -855,21 +863,47 @@ fn emit_native_termination_measure(fd: &FnDef, ctx: &CodegenContext) -> Option<S
         let (name, ty) = rfd.params.get(idx)?;
         let lean_name = aver_name_to_lean(name);
         match ty {
-            crate::types::Type::List(_) | crate::types::Type::Vector(_) => {
+            crate::types::Type::List(_)
+            | crate::types::Type::Vector(_)
+            // `Map` lowers to `List (k × v)` in the proof backend (AverMap is
+            // list-backed), so `sizeOf` measures it exactly like a List — e.g.
+            // a json-shaped `objectSafe(m: Map) = entriesSafe(Map.entries m)`
+            // delegates at the SAME `sizeOf m` and settles on the lex rank.
+            | crate::types::Type::Map(_, _) => {
                 // `sizeOf` instead of `.length` so the user measure
                 // matches what Lean's mutual-block wf elaboration
                 // generates internally — `decreasing_tactic` then
                 // closes the chain without `simp_wf` scrambling.
                 terms.push(format!("sizeOf {lean_name}"));
             }
-            // Skip Named ADTs and String: `sizeOf` decrease on a
-            // recursive ADT in a multi-arg measure (`step f` from
-            // `stepApp f arg`, measure `sizeOf f + sizeOf arg`)
-            // needs the strict-positivity fact `sizeOf arg ≥ 1`
-            // which omega doesn't get for free. Fall back to fuel
-            // for those SCCs — accumulator-pattern guard already
-            // filters them too, so the only effect here is a more
-            // conservative measure-existence gate.
+            // A recursive ADT param recurses STRUCTURALLY: its `sizeOf`
+            // strictly drops on every constructor sub-term, so it carries a
+            // native `sizeOf` measure exactly like a List — the same
+            // `(sizeOf, rank)` lex tuple the mutual block emits, with the
+            // robust `decreasing_by` closing the ADT-field decrease and the
+            // rank settling any same-`sizeOf` delegation (e.g. a Map-as-list
+            // `entries` identity hop in a json-shaped SCC). Restricted to the
+            // Proof side only, and the kernel's own termination check is the
+            // fail-closed backstop — if the measure is wrong for some SCC the
+            // build fails (that SCC stays open), never a false theorem. So we
+            // try native here instead of conservatively forcing a fuel wrapper,
+            // which would tax every law touching the predicate with
+            // fuel-congruence. SINGLE-carrier only (see above).
+            crate::types::Type::Named { name: tname, .. }
+                if single_sizeof_param
+                    && ctx
+                        .modules
+                        .iter()
+                        .flat_map(|m| m.type_defs.iter())
+                        .chain(ctx.type_defs.iter())
+                        .any(|td| {
+                            type_def_name(td) == tname.as_str() && is_recursive_type_def(td)
+                        }) =>
+            {
+                terms.push(format!("sizeOf {lean_name}"));
+            }
+            // String (parser position-recursion, not structural) and every
+            // other shape still decline to fuel.
             _ => return None,
         }
     }
@@ -943,9 +977,14 @@ pub(super) fn emit_native_mutual_sizeof_group(
         // Robust tactic chain — `decreasing_tactic` alone bottoms out
         // on simple shapes (BigInt) but Lean elaborator on multi-arg
         // mutual SCCs sometimes needs `simp_wf` to unfold sizeOf
-        // before omega can close the arithmetic on lengths.
+        // before omega can close the arithmetic on lengths. The
+        // `simp only [AverMap.entries, AverMap.fromList]` step unfolds the
+        // list-backed-Map identities so a `objectSafe(m)=entriesSafe(Map.entries m)`
+        // delegation's goal reduces `sizeOf (AverMap.entries m)` to `sizeOf m`
+        // (then the lex rank closes the same-size step); `AverMap.*` is always
+        // in scope via the imported prelude, and `try` no-ops where absent.
         lines.push(
-            "  decreasing_by all_goals (first | decreasing_tactic | (simp_wf; (try simp_all); first | omega | (constructor <;> first | rfl | omega)))"
+            "  decreasing_by all_goals (first | decreasing_tactic | (simp_wf; (try simp only [AverMap.entries, AverMap.fromList]); (try simp_all); first | omega | (constructor <;> first | rfl | omega)))"
                 .to_string(),
         );
         lines.push(String::new());

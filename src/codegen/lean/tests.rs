@@ -3219,10 +3219,20 @@ fn grok_s_language_example_uses_total_ranked_sizeof_mutual_recursion() {
     let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
     let lean = generated_lean_file(&out);
     assert!(lean.contains("mutual"));
-    assert!(lean.contains("def eval__fuel"));
     assert!(lean.contains("def parseListItems__fuel"));
     assert!(!lean.contains("partial def eval"));
-    assert!(!lean.contains("termination_by (sizeOf e,"));
+    // The `eval` SCC stays FUEL: it has MULTI-`Sexpr`-carrier members
+    // (`evalOpWithPair(_, leftExpr: Sexpr, rightExpr: Sexpr, _)`). Multi-carrier
+    // ADT sum measures are native-closable for some shapes but not all (a
+    // red-black-tree SCC's `decreasing_by` fails), so multi-carrier ADT stays
+    // on fuel — only SINGLE-carrier structural ADT goes native.
+    assert!(lean.contains("def eval__fuel"));
+    assert!(lean.contains("def evalOpWithPair__fuel"));
+    // The SINGLE-carrier structural `Sexpr` fns (`toString'`, `validSymbolNames`)
+    // DO emit native `termination_by (sizeOf e, _)` now (no fuel) — structural
+    // recursion on the ADT, Lean's own termination check accepts it.
+    assert!(lean.contains("termination_by (sizeOf e,"));
+    assert!(!lean.contains("def toString'__fuel"));
     assert!(lean.contains("-- when validSymbolNames e"));
     assert!(!lean.contains("private theorem toString'_law_parseRoundtrip_aux"));
     assert!(
