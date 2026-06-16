@@ -4970,6 +4970,7 @@ pub(super) fn cmd_proof(
     error_budget: Option<usize>,
     sorry_budget: Option<usize>,
     check_json: bool,
+    explain: bool,
     gate: Option<&str>,
     write_baseline: Option<&str>,
     discover: bool,
@@ -5249,6 +5250,7 @@ pub(super) fn cmd_proof(
             error_budget,
             sorry_budget,
             check_json,
+            explain,
             dafny_entry,
             gate,
             write_baseline,
@@ -5834,6 +5836,12 @@ fn run_proof_check(
     error_budget: Option<usize>,
     sorry_budget: Option<usize>,
     check_json: bool,
+    // `--explain` (Lean-only): after the counted build + audit succeed, run an
+    // ISOLATED, fail-soft residual probe per OPEN law and populate each
+    // `ManifestLaw.open_goal` with the law's `unsolved goals` text (and, with
+    // `--check-json`, surface them inline as a top-level `open_goals` object).
+    // Off by default; never touches `passed` / exit code / the counted build.
+    explain: bool,
     dafny_entry: Option<String>,
     // The ratchet. `gate`: compare the freshly recomputed manifest against
     // this committed baseline and FAIL on any regression (a baseline law that
@@ -6078,14 +6086,57 @@ fn run_proof_check(
     // `<out>/proof_manifest.json`. This is the artifact `--gate` diffs against
     // a committed baseline; it reuses the SAME class markers + `#print axioms`
     // verdicts already computed above (no extra lake invocation).
-    let manifest: Option<ProofManifest> = match (&lean_law_audit, &when_universal) {
-        (Some(audit), Some((_, _, lane_laws))) => {
-            let m = build_proof_manifest(&audit.laws, lane_laws);
-            write_proof_manifest(output_dir, &m);
-            Some(m)
-        }
+    //
+    // `--explain` (Lean only, opt-in, fail-soft): BEFORE writing the manifest,
+    // run an isolated residual probe over the laws that did NOT close
+    // universally (tier Failed / Bounded) and merge each law's `unsolved goals`
+    // text onto its `open_goal` by `fn.law` identity. Strictly additive: a law
+    // with no residual found stays `open_goal: None`, and with `--explain`
+    // absent the probe never runs, so the written bytes are unchanged. The probe
+    // is gated on the COUNTED build having succeeded (no audit otherwise), and
+    // its own outcome can never touch `passed` / `universal` / the exit code.
+    let mut manifest: Option<ProofManifest> = match (&lean_law_audit, &when_universal) {
+        (Some(audit), Some((_, _, lane_laws))) => Some(build_proof_manifest(&audit.laws, lane_laws)),
         _ => None,
     };
+    let mut open_goals: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    if explain
+        && matches!(backend, super::cli::ProofBackend::Lean)
+        && output.status.success()
+        && model_panic_hits == 0
+        && let Some(m) = manifest.as_mut()
+    {
+        // The OPEN laws to probe = every emitted MAIN law theorem (with its
+        // `fn.law` identity from the class marker) MINUS the ones the manifest
+        // already records as tier Universal (a genuinely-closed law has no
+        // residual). Reading the open set from the emitted markers — not just
+        // `m.laws` — is essential: a sorry-floored, universal-CLASSED law earns
+        // NO manifest record at all (the audit returns early on `sorries > 0`),
+        // so it would otherwise be invisible to a `m.laws`-only scan. A Bounded
+        // record IS probed (its native_decide twin closes, but the law's own
+        // universal `∀`-statement is the residual-bearing shape).
+        let closed_universal: std::collections::HashSet<&str> = m
+            .laws
+            .iter()
+            .filter(|l| matches!(l.tier, LawTier::Universal))
+            .map(|l| l.law.as_str())
+            .collect();
+        let open: Vec<(String, String)> = emitted_main_law_theorems(output_dir)
+            .into_iter()
+            .filter(|(label, _)| !closed_universal.contains(label.as_str()))
+            .collect();
+        open_goals = lean_residual_goals(output_dir, &open);
+        for l in m.laws.iter_mut() {
+            if let Some(goal) = open_goals.get(&l.law) {
+                l.open_goal = Some(goal.clone());
+            }
+        }
+    }
+    // Write the manifest AFTER residuals are merged so the sidecar carries them.
+    if let Some(m) = &manifest {
+        write_proof_manifest(output_dir, m);
+    }
 
     if check_json {
         let mut obj = serde_json::Map::new();
@@ -6135,6 +6186,18 @@ fn run_proof_check(
             // (the gate's diff target), NOT inline in this summary line, so
             // existing substring consumers of check-json are untouched.
             obj.insert("manifest".into(), PROOF_MANIFEST_FILE.into());
+        }
+        // `--explain` ONLY: surface the per-law residuals inline so an agent
+        // consumer reads them WITHOUT opening the sidecar. Keyed by `fn.law`
+        // identity. Emitted only when `--explain` produced at least one residual
+        // — with the flag absent (or no open law bearing a residual) the map is
+        // empty and NO key is added, so the check-json bytes are unchanged.
+        if !open_goals.is_empty() {
+            let mut goals = serde_json::Map::new();
+            for (law, goal) in &open_goals {
+                goals.insert(law.clone(), goal.clone().into());
+            }
+            obj.insert("open_goals".into(), serde_json::Value::Object(goals));
         }
         obj.insert("budget".into(), budget.into());
         obj.insert("passed".into(), passed.into());
@@ -6370,13 +6433,21 @@ fn proof_manifest_to_json(manifest: &ProofManifest) -> String {
     let laws: Vec<serde_json::Value> = sorted
         .iter()
         .map(|l| {
-            serde_json::json!({
-                "law": l.law,
-                "backend": l.backend,
-                "tier": l.tier.as_str(),
-                "axioms": l.axioms,
-                "theorem": l.theorem,
-            })
+            // Build per-law records as a `Map` (a `BTreeMap`, so keys stay
+            // alphabetical / byte-reproducible) so `open_goal` is inserted ONLY
+            // when present: an absent key (not `null`) for a closed law / a
+            // manifest written without `--explain` keeps the byte-for-byte
+            // baseline diff clean and existing substring consumers untouched.
+            let mut obj = serde_json::Map::new();
+            obj.insert("law".into(), l.law.clone().into());
+            obj.insert("backend".into(), l.backend.clone().into());
+            obj.insert("tier".into(), l.tier.as_str().into());
+            obj.insert("axioms".into(), l.axioms.clone().into());
+            obj.insert("theorem".into(), l.theorem.clone().into());
+            if let Some(g) = &l.open_goal {
+                obj.insert("open_goal".into(), g.clone().into());
+            }
+            serde_json::Value::Object(obj)
         })
         .collect();
     serde_json::to_string_pretty(&serde_json::json!({
@@ -6431,6 +6502,10 @@ fn parse_proof_manifest(raw: &str) -> Result<ProofManifest, String> {
             tier,
             axioms,
             theorem: item["theorem"].as_str().unwrap_or("").to_string(),
+            // `--explain` residual, tolerantly read (informational, like
+            // `theorem`): absent on a manifest written without `--explain` /
+            // for a closed law, so it stays `None` and never gates the ratchet.
+            open_goal: item["open_goal"].as_str().map(str::to_string),
         });
     }
     Ok(ProofManifest {
@@ -6718,6 +6793,12 @@ struct ManifestLaw {
     axioms: Vec<String>,
     /// Emitted theorem name — informational, never compared.
     theorem: String,
+    /// `aver proof --explain` ONLY: the law's UNSOLVED GOAL ("residual") text,
+    /// for laws that do not close universally. `None` everywhere unless
+    /// `--explain` populated it (and unset for closed laws even then), so the
+    /// serialized manifest stays byte-identical to before when absent. Purely
+    /// informational, like `theorem` — NEVER gates the ratchet.
+    open_goal: Option<String>,
 }
 
 /// Result of the Lean law-theorem audit (`lean_universal_audit`): the
@@ -6947,6 +7028,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
                     tier: LawTier::Bounded,
                     axioms: Vec::new(),
                     theorem: thm.clone(),
+                    open_goal: None,
                 });
         }
         by_label.into_values().collect()
@@ -7075,6 +7157,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
                     tier,
                     axioms,
                     theorem: thm.clone(),
+                    open_goal: None,
                 };
                 manifest_keep_stronger(&mut universal_records, record);
             }
@@ -7095,6 +7178,311 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
             laws: bounded_records,
         },
     }
+}
+
+/// Scan the emitted `.lean` sources for every MAIN law theorem (the universal
+/// `∀`-claim — `is_main_law_theorem`, excluding `_checked_domain`/`_sample_N`
+/// bounded cross-checks) paired with its `fn.law` identity from the class
+/// marker's third field (falling back to the theorem name on an older emission
+/// without the label, matching `manifest_label_for`). Used by `--explain` to
+/// build the open-law set DIRECTLY from the markers — robust to the audit
+/// returning early (no manifest record) for a sorry-floored universal-classed
+/// law. Returns `(fn.law, theorem)` pairs, deduped by theorem name. Top-level
+/// theorems only (namespace-nested dep-module law theorems are skipped, mirroring
+/// `lean_universal_audit`).
+fn emitted_main_law_theorems(dir: &str) -> Vec<(String, String)> {
+    let mut labels: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut thms: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".lean") || name == "lakefile.lean" {
+                continue;
+            }
+            let Ok(contents) = std::fs::read_to_string(entry.path()) else {
+                continue;
+            };
+            if name == "DiscoveredLemmas.lean" && contents.contains("-- cone-hash:") {
+                continue;
+            }
+            let mut namespace_depth = 0usize;
+            for line in contents.lines() {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("namespace ") {
+                    namespace_depth += 1;
+                } else if trimmed == "end" || trimmed.starts_with("end ") {
+                    namespace_depth = namespace_depth.saturating_sub(1);
+                }
+                if let Some(rest) = line.strip_prefix(lean_codegen::LAW_CLASS_MARKER_PREFIX) {
+                    let mut parts = rest.split_whitespace();
+                    if let (Some(thm), Some(_class)) = (parts.next(), parts.next())
+                        && let Some(label) = parts.next()
+                    {
+                        labels.insert(thm.to_string(), label.to_string());
+                    }
+                    continue;
+                }
+                if namespace_depth > 0 {
+                    continue;
+                }
+                if let Some(rest) = line.strip_prefix("theorem ") {
+                    let thm = rest
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("")
+                        .trim_end_matches(':');
+                    if is_main_law_theorem(thm) && seen.insert(thm.to_string()) {
+                        thms.push(thm.to_string());
+                    }
+                }
+            }
+        }
+    }
+    thms.into_iter()
+        .map(|thm| {
+            let label = manifest_label_for(&thm, &labels);
+            (label, thm)
+        })
+        .collect()
+}
+
+/// `aver proof --explain` residual probe (Lean only, fail-soft). For each OPEN
+/// law in `open_laws` (`(fn.law identity, emitted theorem name)`, tier
+/// Failed/Bounded), re-emit ONLY that theorem's body as a NORMALIZATION-ONLY twin
+/// (def-unfold + `List.cons_append` cons-peel, no `done`/`omega`/`split`/
+/// `simp_all`/`| sorry`) so Lean's elaborator reports the law's residual
+/// (`unsolved goals`) with the IH in canonical recursive form — exactly what a
+/// Lemma-Calculation agent applies the IH against. Returns `fn.law -> residual`.
+///
+/// Runs `lake env lean <probe>` (NOT `lake build`: build reformats the diagnostic
+/// as `error: ././File.lean:L:C: …` with build-failed noise and a different
+/// path-before-`error:` shape; `lake env lean` prints the clean
+/// `<file>:L:C: error: unsolved goals` the parser keys on). The COUNTED build
+/// (`lake build` in `run_proof_check`) is left completely untouched — same
+/// iron-guard isolation the when-universal lane uses. Every failure path is
+/// absorbed: a missing root, an unprobeable shape, or a non-`unsolved goals`
+/// diagnostic just leaves that law without a residual (the caller keeps it
+/// `open_goal: None`).
+fn lean_residual_goals(
+    dir: &str,
+    open_laws: &[(String, String)],
+) -> std::collections::BTreeMap<String, String> {
+    use std::process::Command;
+    let mut out: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    if open_laws.is_empty() {
+        return out;
+    }
+    let roots = lean_lakefile_roots(dir);
+    if roots.is_empty() {
+        return out;
+    }
+    // Map the requested theorem names to their `fn.law` identity (the caller
+    // already pairs them, but we key the scan on theorem name to find each
+    // theorem's emitted source block). `theorem -> fn.law`.
+    let want_label: std::collections::HashMap<&str, &str> = open_laws
+        .iter()
+        .map(|(label, thm)| (thm.as_str(), label.as_str()))
+        .collect();
+
+    // Scan the emitted `.lean` sources for each wanted theorem's full source
+    // block: from its `theorem <name>` line through the line before the next
+    // top-level `theorem`/`--`-marker/EOF. Re-emitting the body verbatim (minus
+    // the closing cascade) keeps the probe statement byte-identical to what the
+    // counted build elaborated.
+    let mut blocks: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".lean") || name == "lakefile.lean" {
+                continue;
+            }
+            let Ok(contents) = std::fs::read_to_string(entry.path()) else {
+                continue;
+            };
+            if name == "DiscoveredLemmas.lean" && contents.contains("-- cone-hash:") {
+                continue;
+            }
+            let lines: Vec<&str> = contents.lines().collect();
+            let mut i = 0;
+            while i < lines.len() {
+                let t = lines[i].trim_start();
+                if let Some(rest) = t.strip_prefix("theorem ") {
+                    let thm = rest
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("")
+                        .trim_end_matches(':');
+                    if want_label.contains_key(thm) {
+                        // Capture this theorem's source up to the next top-level
+                        // `theorem` / marker comment / EOF.
+                        let mut block = vec![lines[i].to_string()];
+                        let mut j = i + 1;
+                        while j < lines.len() {
+                            let tj = lines[j].trim_start();
+                            if tj.starts_with("theorem ")
+                                || tj.starts_with(lean_codegen::LAW_CLASS_MARKER_PREFIX.trim())
+                                || tj.starts_with("-- verify law ")
+                            {
+                                break;
+                            }
+                            block.push(lines[j].to_string());
+                            j += 1;
+                        }
+                        blocks.insert(thm.to_string(), block);
+                        i = j;
+                        continue;
+                    }
+                }
+                i += 1;
+            }
+        }
+    }
+
+    // Build the combined probe file: import every lakefile root, then one
+    // normalization-only probe theorem per open law whose source block was found
+    // AND whose shape is probeable (`residual_probe_body` returns `Some`). Track
+    // the probe theorem name -> `fn.law` so a parsed residual attributes back to
+    // the stable identity. Each probe is named `_aver_residual_<N>` so several
+    // coexist without clashing with each other or the imported originals.
+    let mut src = String::new();
+    for r in &roots {
+        src.push_str("import ");
+        src.push_str(r);
+        src.push('\n');
+    }
+    // `probe theorem name -> fn.law`, and the emit order so we can map a parsed
+    // error line back to the enclosing probe theorem.
+    let mut probe_to_law: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut n = 0usize;
+    for (label, thm) in open_laws {
+        let Some(block) = blocks.get(thm) else {
+            continue;
+        };
+        let block_refs: Vec<&str> = block.iter().map(String::as_str).collect();
+        let probe_name = format!("_aver_residual_{n}");
+        let Some(body) = aver::codegen::lean::residual_probe_body(&block_refs, &probe_name) else {
+            continue;
+        };
+        src.push_str(&body);
+        src.push('\n');
+        probe_to_law.insert(probe_name, label.clone());
+        n += 1;
+    }
+    if probe_to_law.is_empty() {
+        return out;
+    }
+
+    let probe_file = std::path::Path::new(dir).join("_aver_residual_probe.lean");
+    if std::fs::write(&probe_file, &src).is_err() {
+        return out;
+    }
+    let res = Command::new("lake")
+        .args(["env", "lean", "_aver_residual_probe.lean"])
+        .current_dir(dir)
+        .output();
+    let _ = std::fs::remove_file(&probe_file);
+    let Ok(o) = res else { return out };
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+
+    // Index probe theorem name -> the source LINE it was emitted on, so a parsed
+    // error line attributes to the nearest preceding probe theorem.
+    let probe_lines: Vec<&str> = src.lines().collect();
+    let mut thm_at_line: Vec<(usize, &str)> = Vec::new();
+    for (idx, line) in probe_lines.iter().enumerate() {
+        if let Some(rest) = line.trim_start().strip_prefix("theorem ") {
+            let nm = rest.split_whitespace().next().unwrap_or("");
+            if probe_to_law.contains_key(nm) {
+                thm_at_line.push((idx + 1, nm)); // lean is 1-based
+            }
+        }
+    }
+
+    // Parse the `lake env lean` diagnostics. Each block starts at a header
+    // `<file>:<line>:<col>: (error|warning): <msg>` and runs to the next header
+    // / EOF. Keep blocks whose msg == "unsolved goals", attribute the error line
+    // to the nearest preceding probe theorem, and key the residual on its
+    // `fn.law` identity.
+    let diag_lines: Vec<&str> = combined.lines().collect();
+    let mut k = 0;
+    while k < diag_lines.len() {
+        if let Some((line_no, msg)) = parse_lean_diag_header(diag_lines[k]) {
+            // Slice this block's body (lines after the header up to the next
+            // header / EOF).
+            let mut body = Vec::new();
+            let mut m = k + 1;
+            while m < diag_lines.len() && parse_lean_diag_header(diag_lines[m]).is_none() {
+                body.push(diag_lines[m]);
+                m += 1;
+            }
+            if msg == "unsolved goals" {
+                // Nearest probe theorem whose emit line is <= the error line
+                // (`thm_at_line` is in ascending line order, so the LAST match is
+                // the nearest preceding theorem).
+                let owner = thm_at_line
+                    .iter()
+                    .rfind(|(tl, _)| *tl <= line_no)
+                    .map(|(_, nm)| *nm);
+                if let Some(nm) = owner
+                    && let Some(label) = probe_to_law.get(nm)
+                {
+                    let residual = body.join("\n").trim_end().to_string();
+                    if !residual.is_empty() {
+                        // First residual per law wins (nil arm precedes cons);
+                        // both arms describe the same law's open goal, and the
+                        // cons arm carries the IH — prefer the LAST (cons) one,
+                        // so overwrite.
+                        out.insert(label.clone(), residual);
+                    }
+                }
+            }
+            k = m;
+        } else {
+            k += 1;
+        }
+    }
+    out
+}
+
+/// Parse one `lake env lean` diagnostic header line —
+/// `<file>:<line>:<col>: (error|warning): <msg>` (the
+/// `^(\S+):(\d+):(\d+): (error|warning): (.*)$` shape) — into
+/// `(line_number, message)`. `None` for any non-header line (so the caller can
+/// slice a multi-line diagnostic body from header to header). Manual parse: the
+/// `regex` crate is not a dependency of this binary.
+fn parse_lean_diag_header(line: &str) -> Option<(usize, String)> {
+    // No leading whitespace, no internal whitespace before the first colon.
+    if line.starts_with(char::is_whitespace) {
+        return None;
+    }
+    // Find `: error: ` or `: warning: ` (the severity marker).
+    let (head, msg) = if let Some(idx) = line.find(": error: ") {
+        (&line[..idx], line[idx + ": error: ".len()..].to_string())
+    } else if let Some(idx) = line.find(": warning: ") {
+        (&line[..idx], line[idx + ": warning: ".len()..].to_string())
+    } else {
+        return None;
+    };
+    // `head` == `<file>:<line>:<col>`. The last two colon-separated fields must
+    // be decimal `line`/`col`.
+    let mut parts = head.rsplitn(3, ':');
+    let col = parts.next()?;
+    let ln = parts.next()?;
+    let file = parts.next()?;
+    if file.is_empty() || file.contains(char::is_whitespace) {
+        return None;
+    }
+    if !col.bytes().all(|b| b.is_ascii_digit()) || col.is_empty() {
+        return None;
+    }
+    let line_no: usize = ln.parse().ok()?;
+    Some((line_no, msg))
 }
 
 /// Resolve the `fn.law` manifest identity for a law theorem. Prefers the
@@ -7214,6 +7602,7 @@ fn run_when_universal_lane(dir: &str) -> (usize, usize, Vec<ManifestLaw>) {
             tier,
             axioms,
             theorem: theorem.to_string(),
+            open_goal: None,
         });
         details.push(serde_json::json!({
             "law": label,
@@ -7888,6 +8277,7 @@ mod tests {
             tier,
             axioms: axioms.iter().map(|a| a.to_string()).collect(),
             theorem: format!("{}_thm", name.replace('.', "_")),
+            open_goal: None,
         }
     }
 
@@ -8167,6 +8557,126 @@ mod tests {
             a.axioms,
             vec!["Quot.sound".to_string(), "propext".to_string()]
         );
+    }
+
+    #[test]
+    fn manifest_open_goal_absent_when_none_present_when_some() {
+        // `--explain` no-op invariant: a closed law (`open_goal: None`)
+        // serializes with NO `open_goal` key at all (not `null`) — so a manifest
+        // written without `--explain` is byte-identical to before. A law carrying
+        // a residual serializes the key and it round-trips through the tolerant
+        // parser as informational data.
+        let mut closed = law("a.one", super::LawTier::Universal, &["propext"]);
+        closed.open_goal = None;
+        let mut open = law("b.two", super::LawTier::Bounded, &[]);
+        open.open_goal = Some("case cons\nih : P tail\n⊢ Q (head :: tail)".to_string());
+        let json = super::proof_manifest_to_json(&manifest(vec![closed, open]));
+        // The closed law's record must NOT mention `open_goal`; the open one must.
+        // (Only one `open_goal` occurrence in the whole document.)
+        assert_eq!(
+            json.matches("\"open_goal\"").count(),
+            1,
+            "exactly one law carries an open_goal key:\n{json}"
+        );
+        let parsed = super::parse_proof_manifest(&json).expect("parses back");
+        let a = parsed.laws.iter().find(|l| l.law == "a.one").unwrap();
+        let b = parsed.laws.iter().find(|l| l.law == "b.two").unwrap();
+        assert!(a.open_goal.is_none(), "closed law has no residual");
+        assert_eq!(
+            b.open_goal.as_deref(),
+            Some("case cons\nih : P tail\n⊢ Q (head :: tail)")
+        );
+    }
+
+    #[test]
+    fn manifest_all_none_open_goal_byte_identical_to_pre_explain() {
+        // The strongest no-op guard: a manifest where every law has
+        // `open_goal: None` (the only state reachable without `--explain`)
+        // serializes to bytes that contain NO `open_goal` substring — the exact
+        // shape pre-`--explain` baselines and substring consumers expect.
+        let m = manifest(vec![
+            law("a.one", super::LawTier::Universal, &["propext"]),
+            law("b.two", super::LawTier::Bounded, &[]),
+        ]);
+        let json = super::proof_manifest_to_json(&m);
+        assert!(
+            !json.contains("open_goal"),
+            "no law carries a residual → no open_goal key anywhere:\n{json}"
+        );
+    }
+
+    #[test]
+    fn residual_probe_strips_cascade_and_reuses_def_set() {
+        // The probe re-emits the theorem statement verbatim (renamed), keeps the
+        // intro + top-level `induction … with` skeleton, and replaces each arm's
+        // closing cascade with NORMALIZATION-ONLY `(try simp only [<defs>,
+        // List.cons_append])` — no `done`/`omega`/`split`/`simp_all`/`| sorry`.
+        let thm = [
+            "theorem f_law_x : ∀ (xs : List Int), g xs = h xs := by",
+            "  intro xs",
+            "  induction xs with",
+            "  | nil => first | (simp [g, h]; done) | (simp [g, h]; omega) | sorry",
+            "  | cons head tail ih => first | (simp_all [g, h]; done) | sorry",
+        ];
+        let body = aver::codegen::lean::residual_probe_body(&thm, "_probe0")
+            .expect("a clean top-level induction shape is probeable");
+        // Statement renamed, kept verbatim otherwise.
+        assert!(body.contains("theorem _probe0 : ∀ (xs : List Int), g xs = h xs := by"));
+        assert!(body.contains("intro xs"));
+        assert!(body.contains("induction xs with"));
+        // Both arms reduced to the normalization-only strip with the def set
+        // harvested from the original arms + `List.cons_append`. The set is a
+        // `BTreeSet`, so it renders sorted (`List.cons_append` < `g` < `h`).
+        assert!(
+            body.contains("| nil => (try simp only [List.cons_append, g, h])"),
+            "nil arm not stripped to normalization-only:\n{body}"
+        );
+        assert!(
+            body.contains("| cons head tail ih => (try simp only [List.cons_append, g, h])"),
+            "cons arm not stripped to normalization-only:\n{body}"
+        );
+        // NONE of the closing tactics survive — that is the whole point (a leftover
+        // `omega`/`split` would throw `No usable constraints` instead of leaving a
+        // clean residual).
+        for banned in ["done", "omega", "split", "simp_all", "sorry"] {
+            assert!(!body.contains(banned), "probe must not contain `{banned}`:\n{body}");
+        }
+    }
+
+    #[test]
+    fn residual_probe_rejects_unprobeable_shapes() {
+        // A single-line `native_decide` / `rcases` body has no top-level
+        // `induction … with` to strip → `None` (the caller leaves open_goal None
+        // rather than emit a misleading empty residual).
+        let native = ["theorem f_law_x : P := by native_decide"];
+        assert!(aver::codegen::lean::residual_probe_body(&native, "_p").is_none());
+        let rcases = [
+            "theorem f_law_x : ∀ n, P n := by",
+            "  intro n",
+            "  rcases h with a | b",
+            "  · simp",
+        ];
+        assert!(aver::codegen::lean::residual_probe_body(&rcases, "_p").is_none());
+    }
+
+    #[test]
+    fn parse_lean_diag_header_matches_lake_env_lean_form() {
+        // `lake env lean` prints `<file>:<line>:<col>: error: <msg>` — the form
+        // the residual parser keys on (NOT the `lake build` `error: <path>:…`
+        // shape). The header parse yields (line, msg) and rejects non-headers.
+        assert_eq!(
+            super::parse_lean_diag_header("_aver_residual_probe.lean:5:8: error: unsolved goals"),
+            Some((5, "unsolved goals".to_string()))
+        );
+        assert_eq!(
+            super::parse_lean_diag_header("Foo.lean:32:8: warning: declaration uses 'sorry'"),
+            Some((32, "declaration uses 'sorry'".to_string()))
+        );
+        // Body lines (indented goal text) are NOT headers.
+        assert!(super::parse_lean_diag_header("case cons").is_none());
+        assert!(super::parse_lean_diag_header("  ⊢ g xs = h xs").is_none());
+        // No severity marker → not a header.
+        assert!(super::parse_lean_diag_header("info: building").is_none());
     }
 
     #[test]

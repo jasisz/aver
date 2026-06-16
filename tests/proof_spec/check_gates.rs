@@ -939,3 +939,104 @@ fn ratchet_corrupt_baseline_fails_closed() {
     );
     let _ = std::fs::remove_file(&baseline);
 }
+
+/// Run `aver proof <corpus_av> --backend lean --check --check-json [--explain]`
+/// and return the parsed check-json summary object. Lake-gated (skips if absent).
+fn run_check_json_for(
+    out_tag: &str,
+    corpus_av: &str,
+    explain: bool,
+) -> Option<serde_json::Value> {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping {out_tag}: `lake` not available");
+        return None;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let out = temp_output_dir(out_tag);
+    let mut cmd = Command::new(aver_bin);
+    cmd.current_dir(&repo_root)
+        .arg("proof")
+        .arg(corpus_av)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json");
+    if explain {
+        cmd.arg("--explain");
+    }
+    let run = cmd.output().expect("expected `aver proof --check` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)))
+        .to_string();
+    let _ = std::fs::remove_dir_all(&out);
+    Some(serde_json::from_str(&json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}")))
+}
+
+#[test]
+fn proof_check_explain_surfaces_open_goal_residual() {
+    // `--explain` enabler for an agent proposer / "Lemma Calculation": for an
+    // OPEN inductive law (prop_49 butlast, which the auto-prover sorry-floors)
+    // the check-json must carry a per-`fn.law` `open_goals` entry whose text is
+    // the law's UNSOLVED GOAL with the inductive hypothesis (`ih`) in canonical
+    // recursive form — exactly what an agent applies the IH against. The counted
+    // verdict is unchanged (still not universal, still a sorry).
+    let Some(summary) = run_check_json_for("aver-explain-open-out", "proof-corpus/tip/isaplanner/prop_49.av", true)
+    else {
+        return;
+    };
+    let goals = summary
+        .get("open_goals")
+        .and_then(|g| g.as_object())
+        .unwrap_or_else(|| panic!("--explain must emit an `open_goals` object:\n{summary}"));
+    let residual = goals
+        .get("butlast.butlastConcatLaw")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| {
+            panic!("open_goals must be keyed by `fn.law` identity:\n{summary}")
+        });
+    assert!(
+        !residual.is_empty(),
+        "the residual text must be non-empty:\n{residual}"
+    );
+    assert!(
+        residual.contains("ih :") && residual.contains("butlast (append tail ys)"),
+        "the residual must carry the IH in canonical recursive form (the Lemma \
+         Calculation input):\n{residual}"
+    );
+}
+
+#[test]
+fn proof_check_without_explain_emits_no_open_goals_key() {
+    // The no-op invariant: WITHOUT `--explain`, the same OPEN task's check-json
+    // must contain NO `open_goals` key at all — byte-shape unchanged for existing
+    // substring consumers (proof-corpus/run.sh, the --gate baseline diff).
+    let Some(summary) = run_check_json_for("aver-explain-noop-out", "proof-corpus/tip/isaplanner/prop_49.av", false)
+    else {
+        return;
+    };
+    assert!(
+        summary.get("open_goals").is_none(),
+        "without --explain there must be no `open_goals` key:\n{summary}"
+    );
+    // And every counted field that exists without --explain must match what it
+    // reports WITH --explain (only the additive `open_goals` key may appear).
+    let Some(with_explain) =
+        run_check_json_for("aver-explain-cmp-out", "proof-corpus/tip/isaplanner/prop_49.av", true)
+    else {
+        return;
+    };
+    for (k, v) in summary.as_object().unwrap() {
+        assert_eq!(
+            with_explain.get(k),
+            Some(v),
+            "field `{k}` must be identical with/without --explain"
+        );
+    }
+}

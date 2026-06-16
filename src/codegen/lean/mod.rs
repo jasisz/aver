@@ -28,6 +28,11 @@ pub(crate) use types::type_to_lean;
 // `law_auto` cites the prelude spec lemma names via `super::`; the
 // `transpile*` entry points below drive the unified emitter.
 pub(crate) use prelude::prelude_spec_lemmas_for_builtins;
+
+/// `aver proof --explain` residual probe — turns an emitted main law theorem's
+/// source lines into a normalization-only twin so Lean reports its residual
+/// (`unsolved goals`). Used by the `--check` harness in the `aver` binary.
+pub use law_auto::residual_probe_body;
 #[cfg(test)]
 use prelude::{generate_lakefile_with_roots, generate_prelude};
 use transpile::{LeanEmitMode, transpile_unified};

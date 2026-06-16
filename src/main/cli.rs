@@ -609,6 +609,21 @@ pub(super) enum Commands {
         /// failure.
         #[arg(long, requires = "check")]
         check_json: bool,
+        /// `--check` only (Lean-only): for each law that does NOT close
+        /// universally (a residual `sorry` / failed inductive arm), emit
+        /// the law's UNSOLVED GOAL ("residual") text per law — into the
+        /// per-law `proof_manifest.json` records (`open_goal`) and, with
+        /// `--check-json`, inline as a top-level `open_goals` object keyed
+        /// by `fn.law`. The residual is the leftover after normalization
+        /// with the IH left in canonical recursive form — the enabler for
+        /// an agent proposer / "Lemma Calculation" (apply the IH once to
+        /// the residual and the leftover IS the missing lemma). Costs one
+        /// extra isolated `lake env lean` build per open law; opt-in and
+        /// fail-soft (a probe failure never affects `passed` / exit code).
+        /// With `--explain` absent, the check-json bytes and manifest are
+        /// byte-identical to before (no new key, `open_goal` absent).
+        #[arg(long, requires = "check")]
+        explain: bool,
         /// THE RATCHET. Compare the freshly recomputed per-law proof
         /// manifest against this committed baseline and exit non-zero on
         /// any regression: a previously-proven law that is removed, demoted
