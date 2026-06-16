@@ -47,6 +47,7 @@
 
 pub mod algebraic;
 pub mod bare_i64;
+pub mod bare_i64_rewrite;
 pub mod bool_match;
 pub mod branch_collapse;
 pub mod const_fold;

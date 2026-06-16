@@ -1371,6 +1371,13 @@ pub fn type_is_int(ty: Option<&Type>) -> bool {
     matches!(ty, Some(Type::Int))
 }
 
+/// Test-only re-export of the immediate-children walk, so sibling-module
+/// tests (`bare_i64_rewrite`) can recurse without duplicating the match.
+#[cfg(test)]
+pub(crate) fn tests_visit_children(e: &MirExpr, f: &mut dyn FnMut(&MirExpr)) {
+    visit_children(e, f)
+}
+
 /// Apply `f` to every immediate sub-expression of `e`. Kept in sync with
 /// the exhaustive walk in `own_param.rs` / `instantiations.rs`.
 fn visit_children(e: &MirExpr, f: &mut dyn FnMut(&MirExpr)) {

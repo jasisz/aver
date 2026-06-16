@@ -444,7 +444,7 @@ mod tests {
                 body,
                 local_count: 0,
                 aliased_slots: std::sync::Arc::new(Vec::new()),
-                repr: super::program::MirFnRepr::default(),
+                repr: crate::ir::mir::MirFnRepr::default(),
             },
         );
         p
