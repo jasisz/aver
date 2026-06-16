@@ -448,6 +448,48 @@ fn main() -> Unit
     );
 }
 
+/// Transient intermediate-overflow Int-unboxing hole: a compound
+/// `(n + i64::MAX) - i64::MAX` over a bare counter `n`. The whole-tree result
+/// narrows back INTO `i64`, but the inner `n + i64::MAX` intermediate leaves
+/// `i64`. The pre-fix `bare_expr_interval` checked only the FINAL result
+/// interval, so the compound was marked bare and the Rust backend emitted a
+/// MIXED tree — the inner `add` boxed-then-`to_i64()` then a raw `i64` outer
+/// `.sub` — which does NOT compile (`E0599 no method 'sub' for i64`). This is
+/// fail-closed (a compile error, never a silent wrap), but a valid Aver
+/// program must still compile: the fix gates EVERY intermediate against `i64`
+/// (mirroring the analysis-side `eval_interval` worst-join), so the whole
+/// compound boxes. Build+run the emitted Rust and assert it builds and equals
+/// the VM's exact `1`.
+#[test]
+fn rust_transient_intermediate_overflow_compound_matches_vm() {
+    let src = r#"module IntermediateOverflow
+    intent = "a compound whose intermediate leaves i64 but final narrows back must box"
+    depends []
+    effects [Console.print]
+
+fn loopit(n: Int) -> Int
+    ? "base case adds then subtracts i64::MAX; the intermediate overflows i64"
+    match n
+        1 -> (n + 9223372036854775807) - 9223372036854775807
+        _ -> loopit(n - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(loopit(5)))
+"#;
+    let vm = run_vm_inline("intermediate_overflow", src).expect("vm run");
+    let rust = build_run_rust_inline("intermediate_overflow", src)
+        .expect("rust build+run (pre-fix: E0599 — the mixed bare/boxed compound did not compile)");
+    assert_eq!(
+        vm, "1",
+        "VM computes the exact value (the intermediate is ℤ, never wraps)"
+    );
+    assert_eq!(
+        rust, vm,
+        "Rust diverged from VM — the transient-overflow compound was wrongly kept bare"
+    );
+}
+
 /// The own_param perf win on the RUST backend, verified end-to-end: a
 /// linearly-threaded Vector param the pass proves uniquely owned must (a)
 /// build+run to the same result as the VM, and (b) emit the OWNED-by-value
