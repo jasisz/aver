@@ -1537,10 +1537,22 @@ fn expr_calls_into_set(expr: &Spanned<Expr>, names: &HashSet<String>) -> bool {
 }
 
 fn arg_is_non_growing(expr: &Spanned<Expr>) -> bool {
-    matches!(
-        &expr.node,
-        Expr::Ident(_) | Expr::Resolved { .. } | Expr::Literal(_) | Expr::Attr(..)
-    )
+    match &expr.node {
+        Expr::Ident(_) | Expr::Resolved { .. } | Expr::Literal(_) | Expr::Attr(..) => true,
+        // `Map.entries(x)` lowers to `x` (AverMap is list-backed; `entries` is
+        // the identity), so it is size-PRESERVING — non-growing exactly when
+        // its argument is. This lets a json-shaped delegation
+        // `objectSafe(m) = entriesSafe(Map.entries m)` read as the same-`sizeOf`
+        // lex step it actually is (the rank, not the size, decreases). Sound:
+        // a wrong size-claim only makes the SCC's native `termination_by` fail
+        // to elaborate (fall back to fuel), never a false theorem.
+        Expr::FnCall(callee, args) => {
+            expr_to_dotted_name(callee).as_deref() == Some("Map.entries")
+                && args.len() == 1
+                && arg_is_non_growing(&args[0])
+        }
+        _ => false,
+    }
 }
 
 pub(crate) fn supports_mutual_sizeof_ranked(

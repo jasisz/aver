@@ -67,6 +67,78 @@ fn proof_lean_peano_lift_nat_arith_kernel_clean() {
 }
 
 #[test]
+fn proof_lean_mutual_recursive_adt_predicate_uses_native_termination_kernel_clean() {
+    // A mutual recursive-ADT predicate SCC (`treeOk : Tree -> Bool` +
+    // `treeListOk : List Tree -> Bool`) must emit as a NATIVE
+    // `termination_by (sizeOf, rank)` mutual block — NOT a fuel-wrapped
+    // `__fuel` def. Native emission keeps the predicate a CLEAN recursive def,
+    // so its cons-distribution law
+    //   `treeListOk (h :: t) = treeOk h && treeListOk t`
+    // closes as a one-step structural proof. Under the old conservative gate the
+    // SCC fell to fuel because a member has a recursive-ADT param (`t : Tree`),
+    // and the fuel WRAPPER makes the two sides of that law carry DIFFERENT fuel
+    // expressions — a gap no `simp`/`grind` bridges without a synthesized
+    // fuel-congruence lemma, so the law stayed bounded (`sorry`). Proof side is
+    // fail-closed: a wrong measure only makes Lean reject the `termination_by`
+    // (SCC stays open), never a false theorem — so trying native here is safe.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping native-termination ADT test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-native-adt-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module TreeSafe\n    effects []\n\n\
+         type Tree\n    Leaf(Bool)\n    Node(List<Tree>)\n\n\
+         fn treeOk(t: Tree) -> Bool\n    match t\n        Tree.Leaf(b) -> b\n        Tree.Node(kids) -> treeListOk(kids)\n\n\
+         fn treeListOk(ts: List<Tree>) -> Bool\n    match ts\n        [] -> true\n        [h, ..rest] -> match treeOk(h)\n            true -> treeListOk(rest)\n            false -> false\n\n\
+         verify treeListOk law consDistrib\n    given h: Tree = [Tree.Leaf(true), Tree.Leaf(false), Tree.Node([Tree.Leaf(true)])]\n    given t: List<Tree> = [[], [Tree.Leaf(true)], [Tree.Leaf(false), Tree.Leaf(true)]]\n    treeListOk(List.prepend(h, t)) => Bool.and(treeOk(h), treeListOk(t))\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-native-adt-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean = std::fs::read_to_string(out.join("TreeSafe.lean")).expect("read TreeSafe.lean");
+    assert!(
+        !lean.contains("__fuel") && lean.contains("termination_by (sizeOf"),
+        "the mutual recursive-ADT predicate must emit NATIVE `termination_by (sizeOf, _)` \
+         (no `__fuel` wrapper):\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "the cons-distribution law over the native (fuel-free) predicate must \
+         kernel-prove as a GENUINE universal:\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
 fn proof_lean_proves_peano_arith_identity_via_nat_lift_kernel_clean() {
     // Layer-2 of the Peano lift (#3): recognize the canonical `plus` (left-
     // recursive addition) and `minus` (truncated subtraction) and emit a
