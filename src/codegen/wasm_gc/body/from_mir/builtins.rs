@@ -1762,6 +1762,43 @@ pub(crate) fn emit_mir_numeric_binop(
 ) -> Result<Option<()>, WasmGcError> {
     let l = &bop.lhs;
     let r = &bop.rhs;
+    // ETAP-2 SLICE 2b: decide whether this Int op is a RAW (`i64.*`) op or a
+    // boxed (`$AverInt` limb-helper) op. `mir_int_binop_is_raw` keys on the
+    // `bare_i64_rewrite`'s structural decision:
+    //   - ARITHMETIC (`+`/`-`/`*`): raw only when the WHOLE tree renders raw
+    //     (a bare anchor + raw-compatible leaves + the interval the rewrite
+    //     already proved `OverflowFree`). A pure-literal tree whose product
+    //     overflows i64 is NOT raw — it takes the boxed full-precision path.
+    //   - COMPARISON (`==`/`<`/…): raw when at least one operand is a bare
+    //     anchor and both are raw-compatible — a comparison never overflows,
+    //     so `n == 0` (`n` bare, `0` literal) is `i64.eq`.
+    // The mixed case (one bare, one boxed operand) cannot occur: the rewrite
+    // wraps a raw operand of a boxed op in `Box`, so a boxed op sees two
+    // `$AverInt` operands (the path below). `Div` is not produced over bare
+    // Int (source `Int.div` is a `Result` builtin), so it is excluded.
+    let both_raw = super::mir_int_binop_is_raw(bop, ctx);
+    if both_raw {
+        if super::emit_mir_int_raw(func, l, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+        if super::emit_mir_int_raw(func, r, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+        let inst = match bop.op {
+            BinOp::Add => Instruction::I64Add,
+            BinOp::Sub => Instruction::I64Sub,
+            BinOp::Mul => Instruction::I64Mul,
+            BinOp::Eq => Instruction::I64Eq,
+            BinOp::Neq => Instruction::I64Ne,
+            BinOp::Lt => Instruction::I64LtS,
+            BinOp::Gt => Instruction::I64GtS,
+            BinOp::Lte => Instruction::I64LeS,
+            BinOp::Gte => Instruction::I64GeS,
+            _ => unreachable!("both_raw gated to Add/Sub/Mul + the 6 comparisons"),
+        };
+        func.instruction(&inst);
+        return Ok(Some(()));
+    }
     let l_ty = wasm_type_of(l, ctx.registry)?;
     let r_ty = wasm_type_of(r, ctx.registry)?;
     let operand = if l_ty == Some(ValType::F64) || r_ty == Some(ValType::F64) {

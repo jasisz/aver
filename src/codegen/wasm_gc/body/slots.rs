@@ -125,7 +125,7 @@ impl SlotTable {
         // present, type-checks, and keys directly off the `by_slot` index
         // (`LocalId(i)`, which the audit established is 1:1 with the
         // resolver slot and the wasm local index). 2b flips the gate.
-        const ENABLE_BARE_SLOTS: bool = false;
+        const ENABLE_BARE_SLOTS: bool = true;
         let mut by_slot: Vec<ValType> = Vec::new();
         if let Some(resolution) = fd.resolution.as_ref() {
             for (i, ty) in resolution.local_slot_types.iter().enumerate() {

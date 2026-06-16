@@ -266,6 +266,27 @@ pub(super) struct EmitCtx<'a> {
     /// (`program.builtins[id]`). `None` on the `ResolvedExpr` emit
     /// path, which never reads it (it carries the dotted name inline).
     pub(super) mir_builtins: Option<&'a [String]>,
+    /// ETAP-2 SLICE 2b: the rewritten [`crate::ir::mir::MirProgram`] driving
+    /// the MIR body emitter, so a `Call(Fn(target))` / `TailCall` site can
+    /// read the CALLEE's `repr.bare_params` / `bare_return` — the current
+    /// fn's own `repr` (above) only describes ITS slots/params/return. A
+    /// call arg at a bare callee param must be emitted as a raw `i64`; a
+    /// bare-returning callee leaves an `i64` on the stack. `None` on the
+    /// `ResolvedExpr` emit path (which never reaches a bare callee — the
+    /// gate is MIR-only). Default-to-boxed for an absent callee — fail-closed.
+    pub(super) mir_program: Option<&'a crate::ir::mir::MirProgram>,
+    /// ETAP-2 SLICE 2b: `true` while emitting an `Int`-typed value in a RAW
+    /// (`i64`) result context — set ONLY by the bare-return tail emitter
+    /// (`emit_mir_bare_tail`) around the value/branch/arm tails of a fn whose
+    /// `repr.bare_return` holds. Read by the `Match` / `IfThenElse` block-type
+    /// selection (a raw result declares an `i64` block, not `$AverInt`) and by
+    /// the `Int`-literal arm (a raw context emits `i64.const`, not
+    /// `__aint_from_i64`). A `Cell` so the recursive emitter can save/restore
+    /// it around a sub-context without rethreading every arm-emit signature;
+    /// it is RESET to `false` whenever the emitter descends into a non-tail
+    /// value position (a `Match` subject, a call arg, an `IfThenElse` cond), so
+    /// it only ever colours genuine tail positions. Default `false` (boxed).
+    pub(super) int_result_raw: std::cell::Cell<bool>,
 }
 
 /// Concrete fn / global / helper indices the wasip2 call-site
@@ -524,6 +545,28 @@ impl<'a> EmitCtx<'a> {
         };
         let (params, results) = super::types::fn_sig_wasm(args, ret, Some(self.registry)).ok()?;
         Some(super::types::fn_sig_key(&params, &results))
+    }
+
+    /// ETAP-2 SLICE 2b: is the value bound to wasm local `slot` a raw
+    /// machine `i64` (the `bare_i64_rewrite` tagged it bare)? A `Local`
+    /// read of such a slot leaves an `i64` on the stack; a read of a boxed
+    /// slot leaves a `$AverInt` ref. The `LocalId` ↔ resolver slot ↔ wasm
+    /// local index is 1:1 (`SlotTable::build_for_fn` keys the per-slot
+    /// `ValType` off the same index). Default `false` (boxed) for slots
+    /// outside the rewritten repr — fail-closed.
+    pub(super) fn slot_is_bare(&self, slot: u32) -> bool {
+        self.repr.slot_is_bare(crate::ir::mir::LocalId(slot))
+    }
+
+    /// ETAP-2 SLICE 2b: is param index `i` of the CALLEE `target` bare?
+    /// Read from the callee's `MirFn::repr` (every fn's repr lives on the
+    /// rewritten program). Default `false` (boxed) when the program is
+    /// absent (`ResolvedExpr` path) or the callee is unknown — fail-closed,
+    /// so a call arg only goes raw at a position the rewrite proved bare.
+    pub(super) fn callee_param_is_bare(&self, target: crate::ir::FnId, i: usize) -> bool {
+        self.mir_program
+            .and_then(|p| p.fn_by_id(target))
+            .is_some_and(|f| f.repr.param_is_bare(i))
     }
 }
 

@@ -60,25 +60,124 @@ pub fn rewrite_for_rust(
     program: MirProgram,
     boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
 ) -> MirProgram {
+    rewrite(program, boxed_signature_fns)
+}
+
+/// ETAP-2 SLICE 2b: the wasm-gc entry. Identical body to
+/// [`rewrite_for_rust`] (the rewrite itself is target-agnostic — it only
+/// reads the [`super::bare_i64`] analysis output), differing ONLY in who
+/// computes `boxed_signature_fns`. The Rust backend feeds its
+/// `mutual_tco_members`; the wasm-gc backend has its OWN tail-call
+/// lowering (direct `return_call` to each member's own functype), so a
+/// mutual-recursion cycle requires ALL its members to AGREE on the bare
+/// param/return signature or the `return_call` fails wasm validation. The
+/// wasm-gc backend therefore over-approximates: it boxes the signature of
+/// every fn in a call-graph SCC of size > 1 (see
+/// [`mutual_recursion_box_set`]). Fail-closed — over-boxing a signature is
+/// always sound (it just declines an unboxing), under-boxing would desync.
+pub fn rewrite_for_wasm_gc(
+    program: MirProgram,
+    boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
+) -> MirProgram {
+    rewrite(program, boxed_signature_fns)
+}
+
+/// The shared rewrite both public entries delegate to. Target-agnostic:
+/// it consumes only the analysis output + the caller-supplied
+/// `boxed_signature_fns`. See [`rewrite_for_rust`] /
+/// [`rewrite_for_wasm_gc`] for the two callers and how each computes
+/// `boxed_signature_fns`.
+fn rewrite(
+    program: MirProgram,
+    boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
+) -> MirProgram {
     let mut program = program;
     let facts = super::bare_i64::analyze(&program);
     // Collect ids first to avoid borrowing `program.fns` while mutating it.
     let ids: Vec<crate::ir::FnId> = program.fns.keys().copied().collect();
     for id in ids {
-        // A boxed-signature fn (mutual-TCO member) keeps the all-`Int`
-        // default repr + un-rewritten body: codegen emits it boxed, so any
-        // bare tag would desync signature and body.
-        if boxed_signature_fns.contains(&id) {
-            continue;
-        }
-        let Some(fn_facts) = facts.for_fn(id).cloned() else {
-            continue;
+        // A boxed-signature fn (mutual-TCO member) is emitted with a boxed
+        // (`AverInt`) signature regardless of the analysis. We MUST still
+        // rewrite its BODY — but with its OWN repr forced all-boxed (empty
+        // `FnBareFacts`) — so two things hold: (1) its own params/return/slots
+        // stay `AverInt` (matching the pinned boxed signature; a bare tag
+        // would desync), and (2) every boundary INTO another fn's bare repr
+        // is still inserted — crucially, a `Box` around a bare-RETURNING
+        // callee whose result this fn returns / stores (the Q5 case). Without
+        // the body rewrite, a mutual-TCO member calling a `bare_return` fn
+        // (`abAtDepth`'s `[] -> abNoMoves(isMax)` arm, `abNoMoves` bare) would
+        // emit the callee's raw `i64` result where its own boxed body expects
+        // `AverInt` — a wasm VALIDATION error. The all-boxed facts make
+        // `rewrite_boxed`/`rewrite_call_args` box that result.
+        let fn_facts = if boxed_signature_fns.contains(&id) {
+            FnBareFacts::default()
+        } else {
+            let Some(f) = facts.for_fn(id).cloned() else {
+                continue;
+            };
+            f
         };
         if let Some(f) = program.fns.get_mut(&id) {
             rewrite_fn(f, &fn_facts, &facts, boxed_signature_fns);
         }
     }
     program
+}
+
+/// The wasm-gc `boxed_signature_fns` set: every fn that participates in a
+/// call-graph cycle of size > 1 (mutual recursion). The wasm-gc tail-call
+/// lowering is a direct `return_call <target_fn_idx>` to the callee's OWN
+/// functype, so two fns in the same recurrence must carry byte-identical
+/// param/return signatures; the simplest sound guarantee is to box the
+/// signature of EVERY mutual-recursion member (a self-recursive fn alone is
+/// fine — its own signature is internally consistent — so self-edges are
+/// excluded, matching [`crate::scc::mutually_recursive`]'s contract).
+///
+/// The call graph spans BOTH ordinary `Call(Fn)` and `TailCall` edges: a
+/// non-tail mutual call still forces the two fns to agree if either is
+/// reached by the other's tail recurrence, and including non-tail edges
+/// only ever ENLARGES the boxed set (fail-closed). Self-edges are dropped
+/// so a plain self-recursive fn (`countdown`, `factorial`) is NOT forced
+/// boxed.
+pub fn mutual_recursion_box_set(
+    program: &MirProgram,
+) -> std::collections::HashSet<crate::ir::FnId> {
+    use std::collections::HashMap;
+    let nodes: Vec<crate::ir::FnId> = program.fns.keys().copied().collect();
+    let mut graph: HashMap<crate::ir::FnId, Vec<crate::ir::FnId>> = HashMap::new();
+    for (caller, f) in program.iter() {
+        let mut callees: Vec<crate::ir::FnId> = Vec::new();
+        collect_callees(&f.body.node, *caller, &mut callees);
+        graph.insert(*caller, callees);
+    }
+    crate::scc::mutually_recursive(&nodes, &graph)
+}
+
+/// Collect the `Call(Fn)` / `TailCall` callee `FnId`s reachable in `e`,
+/// EXCLUDING self-edges (`target == caller`) so a plain self-recursive fn
+/// is a 1-element SCC and stays unboxed.
+fn collect_callees(e: &MirExpr, caller: crate::ir::FnId, out: &mut Vec<crate::ir::FnId>) {
+    match e {
+        MirExpr::Call(c) => {
+            if let MirCallee::Fn(t) = c.node.callee
+                && t != caller
+            {
+                out.push(t);
+            }
+            for a in &c.node.args {
+                collect_callees(&a.node, caller, out);
+            }
+        }
+        MirExpr::TailCall(tc) => {
+            if tc.node.target != caller {
+                out.push(tc.node.target);
+            }
+            for a in &tc.node.args {
+                collect_callees(&a.node, caller, out);
+            }
+        }
+        _ => super::bare_i64::visit_children(e, &mut |c| collect_callees(c, caller, out)),
+    }
 }
 
 /// Populate `f.repr` from the analysis and insert the explicit boundary
@@ -201,6 +300,19 @@ fn rewrite_boxed(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> 
     if renders_raw(&e.node, ctx.facts) {
         return box_node(e);
     }
+    // A `Match` / `IfThenElse` in a boxed context yields its result from each
+    // arm/branch body, so EACH body is itself a boxed-context value: a body
+    // that renders raw (a bare leaf, a raw-arith tree, or a bare-RETURNING
+    // call) must be `Box`ed so the block produces an `$AverInt`. `rewrite_children`
+    // would route the bodies through plain `rewrite_value`, leaving a bare-
+    // returning-call body raw (the boundary-completeness hole: `x = match flag
+    // { true -> g(2); false -> 0 }` with `g` bare-return — wasm-gc typed the
+    // block `$AverInt` but `g(2)` rendered `i64`). Route the bodies through the
+    // boxed-tail path instead, which boxes a bare-returning call + a raw leaf
+    // and is a no-op on an already-boxed body.
+    if matches!(&e.node, MirExpr::Match(_) | MirExpr::IfThenElse(_)) {
+        return rewrite_boxed_branches(e, ctx);
+    }
     // Otherwise it is already an `AverInt` — recurse so any nested boxed
     // contexts (call args, aggregate elements, …) get their own boundaries.
     rewrite_children(e, ctx)
@@ -224,7 +336,70 @@ fn rewrite_boxed_tail(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirE
     if renders_raw(&e.node, ctx.facts) {
         return box_node(e);
     }
+    // Same boxed-branch discipline as `rewrite_boxed`: a `Match` / `IfThenElse`
+    // tail in a boxed-return fn yields its result from each arm, so each body
+    // must produce an `$AverInt` — box a bare-returning-call / raw-leaf body,
+    // leave an already-boxed body untouched.
+    if matches!(&e.node, MirExpr::Match(_) | MirExpr::IfThenElse(_)) {
+        return rewrite_boxed_branches(e, ctx);
+    }
     rewrite_children(e, ctx)
+}
+
+/// Rewrite a `Match` / `IfThenElse` in a BOXED context: the subject/condition
+/// keep their existing (subject-binding / value) treatment, but each arm or
+/// branch BODY is a boxed-context value and is routed through
+/// [`rewrite_boxed_tail`] so a body that renders raw (a bare leaf, a raw-arith
+/// tree, or a bare-RETURNING call) is `Box`ed to an `$AverInt`. An
+/// already-boxed body is unchanged (the boxed-tail path is a no-op there), so
+/// this only affects the raw-yielding-arm programs the boundary-completeness
+/// hole produced. Mirrors the per-node recursion of `rewrite_children_inner`'s
+/// `Match` / `IfThenElse` arms, differing ONLY in the body context (boxed vs
+/// plain value).
+fn rewrite_boxed_branches(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> {
+    let line = e.line;
+    let ty = e.ty().cloned();
+    let rebuilt = match e.node {
+        MirExpr::Match(mut m) => {
+            let subj = take_box(&mut m.node.subject);
+            m.node.subject = std::boxed::Box::new(rewrite_match_subject(subj, &m.node.arms, ctx));
+            for arm in &mut m.node.arms {
+                let body = std::mem::replace(
+                    &mut arm.body,
+                    Spanned::bare(MirExpr::Literal(Spanned::bare(Literal::Unit))),
+                );
+                arm.body = rewrite_boxed_tail(body, ctx);
+            }
+            Spanned::new(MirExpr::Match(m), line)
+        }
+        MirExpr::IfThenElse(mut ite) => {
+            let cond = take_box(&mut ite.node.cond);
+            ite.node.cond = std::boxed::Box::new(rewrite_value(cond, ctx));
+            let then_b = take_box(&mut ite.node.then_branch);
+            ite.node.then_branch = std::boxed::Box::new(rewrite_boxed_tail(then_b, ctx));
+            let else_b = take_box(&mut ite.node.else_branch);
+            ite.node.else_branch = std::boxed::Box::new(rewrite_boxed_tail(else_b, ctx));
+            Spanned::new(MirExpr::IfThenElse(ite), line)
+        }
+        // `rewrite_boxed` / `rewrite_boxed_tail` only dispatch here for a
+        // `Match` / `IfThenElse` node; any other node is a caller bug.
+        other => rewrite_children(Spanned::new(other, line), ctx),
+    };
+    if let Some(t) = ty {
+        rebuilt.set_ty(t);
+    }
+    rebuilt
+}
+
+/// Rewrite an `InterpolatedStr` embed (a value being stringified). Same
+/// boundary discipline as a boxed RETURN tail: a raw leaf / a bare-returning
+/// call must be `Box`ed so the embed carries an `$AverInt` (wasm-gc's decimal
+/// formatter takes an `$aint` ref; Rust's `from_i64(x).to_string()` matches
+/// the raw `x.to_string()` it replaces). The bare-returning-call boxing (the
+/// Q5 case) is REQUIRED here because the analysis treats stringify as a safe
+/// `bare_return` consumer — it does NOT demote — so the call still renders raw.
+fn rewrite_interp_embed(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> {
+    rewrite_boxed_tail(e, ctx)
 }
 
 /// Rewrite an expression appearing in a RAW (`i64`) context: the consumer
@@ -308,7 +483,26 @@ fn rewrite_match_subject(
 fn rewrite_tail(e: Spanned<MirExpr>, bare_return: bool, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> {
     let line = e.line;
     let ty = e.ty().cloned();
-    match e.node {
+    // Preserve the node's type stamp across the rebuild. The numeric-
+    // disambiguation + the wasm-gc emitter (`aver_type_str_of`) read it; a
+    // tail reconstruction that dropped the stamp left a rewritten `TailCall`
+    // / `Match` un-typed, which panics the wasm-gc reader. Mirror of
+    // `rewrite_children`'s stamp preservation, applied to EVERY tail arm.
+    let out = rewrite_tail_inner(e.node, line, ty.clone(), bare_return, ctx);
+    if let Some(t) = ty {
+        out.set_ty(t);
+    }
+    out
+}
+
+fn rewrite_tail_inner(
+    node: MirExpr,
+    line: usize,
+    ty: Option<crate::ast::Type>,
+    bare_return: bool,
+    ctx: &RewriteCtx<'_>,
+) -> Spanned<MirExpr> {
+    match node {
         MirExpr::Match(mut m) => {
             // Subject is rewritten for the binding's representation (a bound
             // subject aliases the binding — defect esc_match); the arm bodies
@@ -562,10 +756,22 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
             Spanned::new(MirExpr::RecordUpdate(u), line)
         }
         MirExpr::InterpolatedStr(parts) => {
+            // An interpolation embed is a general-Int (BOXED) context: the
+            // value is stringified. wasm-gc's `$aint` decimal formatter
+            // takes an `$AverInt` ref, so a raw-rendering Int embed (a bare
+            // local, a raw-arith tree, a bare-returning call) must be `Box`ed
+            // at the embed crossing. (On Rust this is `from_i64(x).to_string()`
+            // — identical output to the raw `x.to_string()` it had before, so
+            // boxing here is sound for both backends.) Unlike an ordinary
+            // boxed value position, a bare-RETURNING call ALSO boxes here (the
+            // Q5 rule): the analysis treats stringify as a safe `bare_return`
+            // consumer (it does NOT demote), so the call still renders raw and
+            // the embed must box its result. `rewrite_interp_embed` handles
+            // both the raw-leaf and the bare-returning-call cases.
             let parts = parts
                 .into_iter()
                 .map(|p| match p {
-                    MirStrPart::Expr(ex) => MirStrPart::Expr(rewrite_value(ex, ctx)),
+                    MirStrPart::Expr(ex) => MirStrPart::Expr(rewrite_interp_embed(ex, ctx)),
                     MirStrPart::Literal(s) => MirStrPart::Literal(s),
                 })
                 .collect();

@@ -229,9 +229,21 @@ pub(crate) fn emit_fn_body_via_mir(
         caller_fn_collector,
         wasip2_lowering,
         mir_builtins: Some(&mir_program.builtins),
+        // ETAP-2 SLICE 2b: carry the whole program so call sites can read
+        // the CALLEE's bare param/return repr (the per-fn `repr` above only
+        // covers the current fn).
+        mir_program: Some(mir_program),
+        // ETAP-2 SLICE 2b: the body is in RETURN position — colour it raw
+        // when THIS fn's return is bare (`repr.bare_return`), so the tail
+        // value (and the tails of any `Match` / `IfThenElse` / `Let` it
+        // descends through) produces an `i64` to match the bare `i64`
+        // signature result. Set just below, before the body walk.
+        int_result_raw: std::cell::Cell::new(false),
     };
 
     // Walk the body. `Ok(None)` mid-walk → caller falls back.
+    // ETAP-2 SLICE 2b: a bare-return fn's body is a raw-i64 result tail.
+    ctx.int_result_raw.set(mir_fn.repr.bare_return);
     let Some(produces_value) = emit_mir_expr(func, &mir_fn.body, &slots, &ctx)? else {
         return Ok(None);
     };
@@ -287,6 +299,17 @@ pub(crate) fn emit_mir_expr(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<bool>, WasmGcError> {
+    // ETAP-2 SLICE 2b: take-and-CLEAR the raw-result colour at entry. The
+    // bare-return tail emitter sets `int_result_raw` true around a result
+    // position; reading it here and resetting to `false` means every child
+    // this arm emits is BOXED by default — only the `Match` / `IfThenElse` /
+    // `Let` arms below RE-set it for their genuine tail children
+    // (arm bodies / branches / let body), never for a value position (a
+    // subject, a cond, a let value, a call arg, an operand). So the colour
+    // can never leak into a boxed context (where a raw `i64.const` literal
+    // would be a validation error). The literal arm + the block-type
+    // selection are the only readers.
+    let result_raw = ctx.int_result_raw.replace(false);
     match &expr.node {
         MirExpr::Literal(lit) => match &lit.node {
             Literal::Int(n) => {
@@ -294,7 +317,12 @@ pub(crate) fn emit_mir_expr(
                 // is the `$AverInt` struct ref, so an Int literal lowers
                 // to `i64.const n; call $__aint_from_i64` (the canonical
                 // Small constructor) instead of a bare `i64.const`.
-                if ctx.registry.bignum {
+                // ETAP-2 SLICE 2b: in a RAW result context the literal is a
+                // bare `i64.const` (no `from_i64`) — the consumer wants an
+                // `i64`.
+                if result_raw {
+                    func.instruction(&Instruction::I64Const(*n));
+                } else if ctx.registry.bignum {
                     func.instruction(&Instruction::I64Const(*n));
                     let from_i64 = ctx.fn_map.builtins.get("__aint_from_i64").copied().ok_or(
                         WasmGcError::Validation(
@@ -434,11 +462,23 @@ pub(crate) fn emit_mir_expr(
             // sign bit via `f64.neg`; Int has no dedicated insn and
             // lowers to `i64.const 0; <operand>; i64.sub`.
             let inner_ty = wasm_type_of(inner, ctx.registry)?;
+            // ETAP-2 SLICE 2b: a `Neg` whose operand renders raw `i64` (the
+            // rewrite left it un-boxed) is itself a raw value — emit the
+            // operand raw and negate with `i64.const 0; …; i64.sub`. A boxed
+            // operand (the rewrite wrapped a raw inner in `Box`) keeps the
+            // `__aint_neg` path below. This is the same `both-raw` discipline
+            // `emit_mir_numeric_binop` uses, kept in lockstep.
             if inner_ty == Some(ValType::F64) {
                 if emit_mir_expr(func, inner, slots, ctx)?.is_none() {
                     return Ok(None);
                 }
                 func.instruction(&Instruction::F64Neg);
+            } else if mir_renders_raw_i64(&inner.node, ctx) {
+                func.instruction(&Instruction::I64Const(0));
+                if emit_mir_int_raw(func, inner, slots, ctx)?.is_none() {
+                    return Ok(None);
+                }
+                func.instruction(&Instruction::I64Sub);
             } else if ctx.registry.bignum {
                 // bignum slice 1 — Int Neg routes through `__aint_neg`
                 // (handles the `-i64::MIN` promotion to Big); the operand
@@ -464,7 +504,9 @@ pub(crate) fn emit_mir_expr(
         MirExpr::Return(inner) => {
             // Not produced by the current HIR → MIR lowering (carried
             // for symmetry with the Rust walker); emit the value then
-            // a wasm `return`.
+            // a wasm `return`. ETAP-2 SLICE 2b: the returned value is a
+            // result tail — inherit the raw colour.
+            ctx.int_result_raw.set(result_raw);
             let Some(produces) = emit_mir_expr(func, inner, slots, ctx)? else {
                 return Ok(None);
             };
@@ -482,25 +524,44 @@ pub(crate) fn emit_mir_expr(
                 if value_produces {
                     func.instruction(&Instruction::Drop);
                 }
+                // ETAP-2 SLICE 2b: the body is the result tail — inherit the
+                // raw colour the entry take-and-clear stored in `result_raw`.
+                ctx.int_result_raw.set(result_raw);
                 return emit_mir_expr(func, &l.body, slots, ctx);
             }
             // Mirror of `emit_fn_body`'s `Binding` arm.
-            let Some(value_produces) = emit_mir_expr(func, &l.value, slots, ctx)? else {
-                return Ok(None);
-            };
             let slot = ctx
                 .self_local_slot(&l.binding_name)
                 .ok_or(WasmGcError::Validation(format!(
                     "binding `{}` has no resolver slot",
                     l.binding_name
                 )))?;
+            // ETAP-2 SLICE 2b: a bare binding slot is a raw `i64` local, so
+            // its VALUE must be emitted in raw context — a boxed-path emit
+            // (e.g. an `Int` literal lowering to `__aint_from_i64`) would
+            // push an `$AverInt` ref into an `i64` slot (validation error).
+            // The rewrite already left the value raw-rendering for a bare
+            // binding (`rewrite_let_value`).
+            let value_produces = if ctx.slot_is_bare(slot as u32) {
+                match emit_mir_int_raw(func, &l.value, slots, ctx)? {
+                    Some(p) => p,
+                    None => return Ok(None),
+                }
+            } else {
+                match emit_mir_expr(func, &l.value, slots, ctx)? {
+                    Some(p) => p,
+                    None => return Ok(None),
+                }
+            };
             // Unit-typed values push nothing; the slot may also be an
             // i32 placeholder out of `by_slot` range (preserved for
             // resolver index alignment) — neither stores.
             if value_produces && (slot as usize) < slots.by_slot.len() {
                 func.instruction(&Instruction::LocalSet(slot));
             }
-            // The chain's tail is the return value left on the stack.
+            // The chain's tail is the return value left on the stack — a
+            // result tail, so inherit the raw colour (ETAP-2 SLICE 2b).
+            ctx.int_result_raw.set(result_raw);
             emit_mir_expr(func, &l.body, slots, ctx)
         }
         MirExpr::Call(spanned_call) => {
@@ -526,8 +587,13 @@ pub(crate) fn emit_mir_expr(
                         }
                         Some(entry) => {
                             let wasm_idx = entry.wasm_idx;
-                            if emit_mir_args_then_call(func, &call.args, slots, ctx, wasm_idx)?
-                                .is_none()
+                            // ETAP-2 SLICE 2b: honor the callee's per-param
+                            // bare repr — an arg at a bare param is emitted
+                            // raw `i64` to match the callee's `i64` param slot.
+                            if emit_mir_fn_args_then_call(
+                                func, fn_id, &call.args, slots, ctx, wasm_idx,
+                            )?
+                            .is_none()
                             {
                                 return Ok(None);
                             }
@@ -812,15 +878,32 @@ pub(crate) fn emit_mir_expr(
                     )));
                 }
             };
-            for arg in &tc.args {
-                if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
+            // ETAP-2 SLICE 2b: honor the (self / mutual) callee's per-param
+            // bare repr. A self-tail-call's args feed the SAME param slots,
+            // so a bare param (`countdown(n - 1)`, `n` bare) takes a raw
+            // `i64` arg; `emit_return_call_insn` then `return_call`s the
+            // target's own functype (whose bare param is `i64`). A boxed
+            // param keeps the `$AverInt` path.
+            for (i, arg) in tc.args.iter().enumerate() {
+                if ctx.callee_param_is_bare(tc.target, i) {
+                    if emit_mir_int_raw(func, arg, slots, ctx)?.is_none() {
+                        return Ok(None);
+                    }
+                } else if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
                     return Ok(None);
                 }
             }
             emit_return_call_insn(func, wasm_idx, ctx.self_wasm_idx);
             Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
         }
-        MirExpr::Match(spanned_match) => emit_mir_match(func, &spanned_match.node, slots, ctx),
+        MirExpr::Match(spanned_match) => {
+            // ETAP-2 SLICE 2b: propagate the raw-result colour into the match
+            // (its arm bodies are the result tails). The entry take-and-clear
+            // stored it in `result_raw`; re-set the flag so `emit_mir_match`
+            // reads it.
+            ctx.int_result_raw.set(result_raw);
+            emit_mir_match(func, &spanned_match.node, slots, ctx)
+        }
         MirExpr::Construct(spanned_ctor) => {
             // Mirror of `emit_expr`'s `Ctor` arm. A constructor always
             // produces a value (never `Unit`).
@@ -1010,20 +1093,31 @@ pub(crate) fn emit_mir_expr(
         // proved both branches agree); a `Unit` if produces no value.
         MirExpr::IfThenElse(ite) => {
             let ite = &ite.node;
-            let result_ty = aver_type_canonical(&ite.then_branch, ctx.return_type, ctx.registry);
-            let block_ty = match aver_to_wasm(&result_ty, Some(ctx.registry))? {
-                Some(v) => wasm_encoder::BlockType::Result(v),
-                None => wasm_encoder::BlockType::Empty,
+            // ETAP-2 SLICE 2b: in a RAW result context (a bare-return tail),
+            // the if/else block produces an `i64`, not an `$AverInt`. The
+            // cond is a value position (flag already cleared at entry); each
+            // BRANCH is the result position, so re-set the colour around it.
+            let block_ty = if result_raw {
+                wasm_encoder::BlockType::Result(ValType::I64)
+            } else {
+                let result_ty =
+                    aver_type_canonical(&ite.then_branch, ctx.return_type, ctx.registry);
+                match aver_to_wasm(&result_ty, Some(ctx.registry))? {
+                    Some(v) => wasm_encoder::BlockType::Result(v),
+                    None => wasm_encoder::BlockType::Empty,
+                }
             };
             let produces = !matches!(block_ty, wasm_encoder::BlockType::Empty);
             if emit_mir_expr(func, &ite.cond, slots, ctx)?.is_none() {
                 return Ok(None);
             }
             func.instruction(&Instruction::If(block_ty));
+            ctx.int_result_raw.set(result_raw);
             if emit_mir_expr(func, &ite.then_branch, slots, ctx)?.is_none() {
                 return Ok(None);
             }
             func.instruction(&Instruction::Else);
+            ctx.int_result_raw.set(result_raw);
             if emit_mir_expr(func, &ite.else_branch, slots, ctx)?.is_none() {
                 return Ok(None);
             }
@@ -1042,17 +1136,262 @@ pub(crate) fn emit_mir_expr(
             }
             None => Ok(None),
         },
-        // ETAP-2 Int-representation boundaries are inserted ONLY by the
-        // Rust-codegen-only `bare_i64_rewrite` pass — the wasm-gc backend
-        // consumes the shared, un-rewritten MIR, so these never appear here.
-        // `Ok(None)` (outside the supported subset) is the defensive, never-
-        // hit fallback; it keeps wasm-gc behavior untouched (slice 2 territory).
-        //
-        // TODO(2b): lower per-slot (bare -> scalar i64; Box -> __aint_from_i64;
-        // Unbox -> __aint_to_i64_checked). Slice 2a installs the repr seam but
-        // wires no rewrite, so `mir_fn.repr` stays default-empty and these
-        // nodes never reach the emitter — the `Ok(None)` arm remains dead.
-        MirExpr::Box(_) | MirExpr::Unbox(_) => Ok(None),
+        // ETAP-2 SLICE 2b — the representation boundaries the
+        // `bare_i64_rewrite::rewrite_for_wasm_gc` pass inserted. Codegen no
+        // longer DECIDES where a boundary goes (the rewrite did); it just
+        // lowers the node:
+        //   Box(inner)   — `inner` evaluates to a raw `i64`; lift it into the
+        //                  `$AverInt` carrier via `__aint_from_i64` (the same
+        //                  canonical Small constructor an Int literal uses).
+        //   Unbox(inner) — `inner` evaluates to an `$AverInt`; narrow it to a
+        //                  raw `i64` via the CHECKED `__aint_to_i64_checked`,
+        //                  which TRAPS on an out-of-i64 Big. The analysis
+        //                  proved the value fits, so the trap never fires on a
+        //                  sound program — but on wasm-gc (where `i64.*` wraps
+        //                  silently) it is the ONLY runtime net, so it is
+        //                  checked, never saturating.
+        MirExpr::Box(inner) => {
+            // `inner` is a raw-i64 subtree; emit it in raw context, then box.
+            if emit_mir_int_raw(func, inner, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            lift_i64_result_to_aint(func, ctx)?;
+            Ok(Some(true))
+        }
+        MirExpr::Unbox(inner) => {
+            // `inner` is a boxed `$AverInt`; emit it boxed, then checked-narrow.
+            if emit_mir_expr(func, inner, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            let to_checked = ctx
+                .fn_map
+                .builtins
+                .get("__aint_to_i64_checked")
+                .copied()
+                .ok_or(WasmGcError::Validation(
+                    "bignum active but __aint_to_i64_checked helper not registered (Unbox)".into(),
+                ))?;
+            func.instruction(&Instruction::Call(to_checked));
+            Ok(Some(true))
+        }
+    }
+}
+
+/// ETAP-2 SLICE 2b: does `e` render as a raw machine `i64` on the stack
+/// (rather than an `$AverInt` ref) under the current fn's `repr`? This is
+/// the wasm-gc mirror of the Rust backend's `mir_expr_is_bare_i64`, but
+/// PURELY STRUCTURAL: the `bare_i64_rewrite` already decided every crossing
+/// (it inserted `Box`/`Unbox` and only leaves a raw-rendering subtree where
+/// raw is wanted), so no interval re-derivation is needed here — a node
+/// renders raw exactly when:
+///   - `Local(slot)` and the slot is bare (`repr.slot_is_bare`),
+///   - `Unbox(_)` (always narrows to `i64`),
+///   - `Neg`/`Add`/`Sub`/`Mul` over operands that ALL render raw,
+///   - an `Int` literal (a raw `i64.const` candidate — its actual repr is
+///     decided by its PARENT context: a boxed parent emits it via the
+///     boxed literal arm (`from_i64`), a raw parent via `emit_mir_int_raw`).
+///
+/// A `Box(_)` renders an `$AverInt` (NOT raw). Everything else is boxed.
+///
+/// SOUNDNESS: a wrongly-raw value silently wraps on wasm-gc (no trip-wire).
+/// This predicate never INTRODUCES bareness — it only reports the structure
+/// the fail-closed rewrite produced. A bare `Local` that should have been
+/// boxed would have been wrapped in `Box` by the rewrite, so it would not
+/// reach a raw consumer; if it ever did, the stack-type (`i64`) vs declared
+/// (`$AverInt` ref) mismatch is a wasm VALIDATION error, not a silent miscompile.
+pub(crate) fn mir_renders_raw_i64(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
+    match e {
+        MirExpr::Local(local) => ctx.slot_is_bare(local.node.slot.0),
+        MirExpr::Unbox(_) => true,
+        MirExpr::Box(_) => false,
+        // A standalone `Int` literal is raw-COMPATIBLE (it can lower to an
+        // `i64.const`), but on its own it is NOT proof of a raw context — its
+        // repr is decided by its parent (a boxed parent emits `from_i64`, a
+        // raw parent `i64.const`). So a literal alone does NOT render raw; it
+        // only stays raw INSIDE a raw arithmetic tree anchored by a real bare
+        // value (handled below). This is what stops a pure-LITERAL arithmetic
+        // tree whose PRODUCT overflows i64 (`(-1) * i64::MIN`, a boxed-`Mul`
+        // constant in `String.fromInt(...)`) from being mistaken for a bare
+        // op — that tree has no bare anchor, so it takes the boxed `__aint_*`
+        // path (full precision), matching the VM.
+        MirExpr::Literal(_) => false,
+        // Arithmetic renders raw only when it is part of a BARE slot's
+        // computation: it must contain at least one genuine raw anchor (a bare
+        // `Local` or an `Unbox`) AND every leaf must be raw-compatible (a bare
+        // `Local`, an `Unbox`, or an `Int` literal). The rewrite already
+        // interval-checked the WHOLE tree (it boxed any out-of-`i64` operand),
+        // so a tree that still has all-raw-compatible leaves + a bare anchor is
+        // one the analysis proved `OverflowFree`. (A pure-literal tree fails
+        // the anchor test and is boxed; a tree with a `Box`ed operand fails the
+        // leaf test and is boxed.)
+        MirExpr::Neg(inner) => {
+            mir_arith_leaves_raw_compatible(&inner.node, ctx)
+                && mir_has_raw_anchor(&inner.node, ctx)
+        }
+        MirExpr::BinOp(b) => {
+            matches!(b.node.op, BinOp::Add | BinOp::Sub | BinOp::Mul)
+                && mir_arith_leaves_raw_compatible(e, ctx)
+                && mir_has_raw_anchor(e, ctx)
+        }
+        _ => false,
+    }
+}
+
+/// Every leaf of the `Add`/`Sub`/`Mul`/`Neg` tree `e` is raw-compatible: a
+/// bare `Local`, an `Unbox`, or an `Int` literal. A `Box`ed operand (the
+/// rewrite wrapped an out-of-range / boxed value) makes the whole tree boxed.
+fn mir_arith_leaves_raw_compatible(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
+    match e {
+        MirExpr::Local(local) => ctx.slot_is_bare(local.node.slot.0),
+        MirExpr::Unbox(_) => true,
+        MirExpr::Literal(l) => matches!(l.node, Literal::Int(_)),
+        MirExpr::Neg(inner) => mir_arith_leaves_raw_compatible(&inner.node, ctx),
+        MirExpr::BinOp(b) => {
+            matches!(b.node.op, BinOp::Add | BinOp::Sub | BinOp::Mul)
+                && mir_arith_leaves_raw_compatible(&b.node.lhs.node, ctx)
+                && mir_arith_leaves_raw_compatible(&b.node.rhs.node, ctx)
+        }
+        _ => false,
+    }
+}
+
+/// The `Add`/`Sub`/`Mul`/`Neg` tree `e` contains at least one genuine raw
+/// VALUE (a bare `Local` or an `Unbox`) — not just literals. This anchors
+/// the tree to a bare slot's computation; a pure-literal tree has no anchor.
+fn mir_has_raw_anchor(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
+    match e {
+        MirExpr::Local(local) => ctx.slot_is_bare(local.node.slot.0),
+        MirExpr::Unbox(_) => true,
+        MirExpr::Neg(inner) => mir_has_raw_anchor(&inner.node, ctx),
+        MirExpr::BinOp(b) => {
+            mir_has_raw_anchor(&b.node.lhs.node, ctx) || mir_has_raw_anchor(&b.node.rhs.node, ctx)
+        }
+        _ => false,
+    }
+}
+
+/// ETAP-2 SLICE 2b: does this Int `BinOp` lower to a RAW `i64.*` op (vs the
+/// boxed `$AverInt` limb helpers)? See the call site in
+/// `emit_mir_numeric_binop` for the discipline:
+///   - ARITHMETIC (`+`/`-`/`*`): raw only when the WHOLE node renders raw
+///     (`mir_renders_raw_i64`, which requires a bare anchor + raw-compatible
+///     leaves — the rewrite already interval-checked the tree). A pure-literal
+///     tree that overflows i64 is boxed (full precision, matching the VM).
+///   - COMPARISON (`==`/`!=`/`<`/`>`/`<=`/`>=`): raw when at least one operand
+///     is a genuine bare anchor AND both operands are raw-compatible. A
+///     comparison never overflows, so a literal operand (`n == 0`) is fine to
+///     compare raw against `i64.const`. (The rewrite leaves a bare comparison's
+///     operands raw — a boxed operand would have been `Box`ed, failing the
+///     leaf test below and routing to the boxed comparison helpers.)
+pub(crate) fn mir_int_binop_is_raw(bop: &crate::ir::mir::MirBinOp, ctx: &EmitCtx<'_>) -> bool {
+    if matches!(bop.op, BinOp::Div) {
+        // `Div` is not produced over bare Int (source `Int.div` is a Result
+        // builtin), so it never takes the raw path.
+        return false;
+    }
+    // Both arithmetic AND comparison reduce to the SAME structural test:
+    //   - every operand leaf is raw-compatible (a bare `Local`, an `Unbox`, or
+    //     an `Int` literal) — a `Box`ed operand fails this, routing to boxed,
+    //   - at least one operand carries a genuine bare anchor (a bare `Local` /
+    //     `Unbox`) — a pure-literal tree fails this, routing to boxed.
+    // For ARITHMETIC the interval-fit is already guaranteed: the rewrite
+    // `Box`es the anchor of any out-of-`i64` tree (`n * BigLit` → `Box(n) *
+    // …`), so an overflowing tree has a `Box`ed operand and fails the
+    // leaf test. For a COMPARISON there is no overflow to worry about; a
+    // literal operand (`n == 0`) compares raw against `i64.const`.
+    let leaves_ok = mir_arith_leaves_raw_compatible(&bop.lhs.node, ctx)
+        && mir_arith_leaves_raw_compatible(&bop.rhs.node, ctx);
+    let anchored = mir_has_raw_anchor(&bop.lhs.node, ctx) || mir_has_raw_anchor(&bop.rhs.node, ctx);
+    leaves_ok && anchored
+}
+
+/// ETAP-2 SLICE 2b: emit `e` (an `Int`-typed MIR expression the rewrite
+/// placed in a RAW context — a bare `Let` value, a call arg at a bare
+/// callee param, a bare-return tail, a `Box`'s inner, or an operand of raw
+/// arithmetic) leaving a raw machine `i64` on the stack. Mirror of the Rust
+/// backend's `emit_bare_i64`.
+///
+/// The cases are exactly the raw-rendering shapes
+/// [`mir_renders_raw_i64`] recognizes:
+///   - `Int` literal      → `i64.const`,
+///   - bare `Local`       → `local.get` (the slot's declared type IS `i64`),
+///   - `Neg`/`Add`/`Sub`/`Mul` → recurse operands raw, then the raw `i64.*` op,
+///   - `Unbox(inner)`     → emit `inner` boxed, then `__aint_to_i64_checked`.
+///
+/// A `Box(_)` or any non-raw shape reaching here is a rewrite bug — return
+/// `Ok(None)` so the whole-fn fallback engages rather than miscompile.
+pub(crate) fn emit_mir_int_raw(
+    func: &mut Function,
+    e: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<bool>, WasmGcError> {
+    match &e.node {
+        MirExpr::Literal(l) => match &l.node {
+            Literal::Int(n) => {
+                func.instruction(&Instruction::I64Const(*n));
+                Ok(Some(true))
+            }
+            // A non-Int literal in a raw Int context is a rewrite bug.
+            _ => Ok(None),
+        },
+        MirExpr::Local(local) => {
+            // A bare slot's declared wasm local type is i64 (SlotTable), so a
+            // plain `local.get` already yields a raw i64. Guard: a NON-bare
+            // local reaching a raw context is a rewrite bug (it would push an
+            // `$AverInt` ref where an i64 is expected → validation error).
+            if !ctx.slot_is_bare(local.node.slot.0) {
+                return Ok(None);
+            }
+            func.instruction(&Instruction::LocalGet(local.node.slot.0));
+            Ok(Some(true))
+        }
+        MirExpr::Neg(inner) => {
+            // Raw negation: `i64.const 0; <inner>; i64.sub`.
+            func.instruction(&Instruction::I64Const(0));
+            if emit_mir_int_raw(func, inner, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            func.instruction(&Instruction::I64Sub);
+            Ok(Some(true))
+        }
+        MirExpr::BinOp(b) => {
+            let op = b.node.op;
+            let inst = match op {
+                BinOp::Add => Instruction::I64Add,
+                BinOp::Sub => Instruction::I64Sub,
+                BinOp::Mul => Instruction::I64Mul,
+                // Only Add/Sub/Mul render raw (see `mir_renders_raw_i64`);
+                // any other op here is a rewrite bug → fall back.
+                _ => return Ok(None),
+            };
+            if emit_mir_int_raw(func, &b.node.lhs, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            if emit_mir_int_raw(func, &b.node.rhs, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            func.instruction(&inst);
+            Ok(Some(true))
+        }
+        // An `Unbox` IS a raw value: delegate to the main emitter's `Unbox`
+        // arm (the single checked-narrow lowering), which leaves an i64.
+        // A `Call`/`TailCall` to a bare-returning callee returns an `i64`
+        // (its functype result is `i64`) — the main emitter already lowers
+        // it; no result colour needed (the i64 comes from the callee sig).
+        MirExpr::Unbox(_) | MirExpr::Call(_) | MirExpr::TailCall(_) => {
+            emit_mir_expr(func, e, slots, ctx)
+        }
+        // A `Match` / `IfThenElse` / `Let` / `Return` whose tail is the raw
+        // value: delegate to the main emitter WITH the raw result colour set,
+        // so its block type comes out `i64` and its arm/branch/body tails
+        // recurse raw (the literal arms emit `i64.const`, not `__aint_from_i64`).
+        // The whole-fn fallback still engages if the delegate returns `None`.
+        MirExpr::Match(_) | MirExpr::IfThenElse(_) | MirExpr::Let(_) | MirExpr::Return(_) => {
+            ctx.int_result_raw.set(true);
+            emit_mir_expr(func, e, slots, ctx)
+        }
+        _ => Ok(None),
     }
 }
 
@@ -1069,6 +1408,37 @@ pub(crate) fn emit_mir_args_then_call(
     wasm_idx: u32,
 ) -> Result<Option<()>, WasmGcError> {
     emit_mir_args_then_call_lowering_int(func, args, slots, ctx, wasm_idx, &[])
+}
+
+/// ETAP-2 SLICE 2b: emit a USER `Fn` call's args honoring the CALLEE's
+/// per-param representation, then `call $wasm_idx`. An arg at a bare callee
+/// param (`callee.repr.bare_params[i]`) is emitted in RAW context (the
+/// callee's param slot is `i64`); every other arg keeps the boxed
+/// `$AverInt` path. The rewrite already shaped each arg for its param
+/// context (`rewrite_call_args`: a bare param gets a raw-rendering arg, a
+/// boxed param a `Box`/already-`$AverInt` arg), so this only SELECTS the
+/// matching emit path — it inserts no conversion. Used only for direct
+/// user-`Fn` calls; builtins / intrinsics / effects keep the boxed
+/// `emit_mir_args_then_call*` path (the rewrite boxes their Int args).
+fn emit_mir_fn_args_then_call(
+    func: &mut Function,
+    target: crate::ir::FnId,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+    wasm_idx: u32,
+) -> Result<Option<()>, WasmGcError> {
+    for (i, arg) in args.iter().enumerate() {
+        if ctx.callee_param_is_bare(target, i) {
+            if emit_mir_int_raw(func, arg, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+        } else if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+    }
+    func.instruction(&Instruction::Call(wasm_idx));
+    Ok(Some(()))
 }
 
 /// As [`emit_mir_args_then_call`], but `int_arg_positions` lists the

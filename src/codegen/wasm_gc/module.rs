@@ -163,7 +163,22 @@ pub(super) fn emit_module_with(
             .cloned()
             .map(crate::ir::hir::ResolvedTopLevel::FnDef)
             .collect();
-        crate::ir::mir::optimize(crate::ir::mir::lower_program(&mir_items))
+        let optimized = crate::ir::mir::optimize(crate::ir::mir::lower_program(&mir_items));
+        // ETAP-2 SLICE 2b: make Int representation EXPLICIT for the wasm-gc
+        // codegen. The rewrite tags each fn's bare slots / params / return on
+        // `MirFn::repr` and inserts `Box`/`Unbox` boundary nodes; the body
+        // emitter + signature path (gated by `ENABLE_BARE_SLOTS`) then flip a
+        // proven-bounded Int slot to a native `i64`. Unlike the Rust backend,
+        // wasm-gc lowers a mutual tail-call to a DIRECT `return_call` to the
+        // callee's own functype, so every member of a >1-fn recurrence cycle
+        // must agree on its bare signature — `mutual_recursion_box_set`
+        // over-approximates by boxing every such member (fail-closed). The
+        // analysis itself still bails to all-Boxed for multi-module /
+        // external-caller fragments (`bare_i64::analyze`), so a dependency
+        // fragment never goes bare.
+        let boxed =
+            crate::ir::mir::optimize::bare_i64_rewrite::mutual_recursion_box_set(&optimized);
+        crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_wasm_gc(optimized, &boxed)
     };
 
     // Lazy caller_fn name registry — populated during user-fn body
