@@ -157,13 +157,123 @@ pub(super) fn emit_module_with(
     // value or a builtin/variant `FnValue` (no funcref-table slot),
     // for which it returns `None`. Such fns get a `unreachable`
     // trap-stub body (`emit_trap_stub_body`).
-    let mir_program: crate::ir::mir::MirProgram = {
+    // ETAP-2 carrier-`i64`: derive the per-carrier-type proven bound ONCE,
+    // up front. The wasm-gc input `items` is the already-FLATTENED program
+    // (`flatten_multimodule` inlined every dep into entry scope, mirroring
+    // this view's `SymbolTable::build(items, &[])`), so the carrier type +
+    // its smart constructor both live in `entry_items` and `dep_modules` is
+    // empty. The same table feeds (a) the MIR `bare_i64` rewrite (an
+    // optional per-slot raw-i64 perf path, gated off in this slice) AND (b)
+    // the type registry's `eligible_carriers` set, which is THE size lever:
+    // every eligible carrier erases to a native `i64` in `aver_to_wasm`. An
+    // empty table (no opaque-bounded carrier) keeps the pre-slice all-`Int`
+    // lowering byte-for-byte.
+    let carrier_intervals = {
+        let empty_prefixes: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let empty_recursive: std::collections::HashSet<crate::ir::FnId> =
+            std::collections::HashSet::new();
+        let inputs = crate::codegen::proof_lower::ProofLowerInputs {
+            entry_items: items,
+            dep_modules: &[],
+            module_prefixes: &empty_prefixes,
+            recursive_fns: &empty_recursive,
+            symbol_table: &symbol_table,
+            program_shape: None,
+        };
+        crate::codegen::proof_lower::carrier_interval_table(&inputs)
+    };
+    // The codegen size lever: a carrier whose proven bound is recognized AND
+    // `fits_i64` erases to native `i64` everywhere it appears (slots, record
+    // fields, Option/Result payloads, `Vector<Carrier>` elements). A bound
+    // too wide for `i64` (or an unrecognized invariant, already omitted from
+    // the table upstream) is excluded here, so the carrier stays `$AverInt`.
+    //
+    // `AVER_NO_CARRIER_I64=1` is the differential / size-measurement escape
+    // hatch: it forces the all-`$AverInt` carrier representation (empty
+    // eligible set), so a coords-heavy toy can be compiled both ways to
+    // measure the struct-field size win, and any divergence the carrier path
+    // introduces can be bisected against the boxed baseline.
+    // Lower + optimize the resolved fns to MIR ONCE, up front — the typed MIR
+    // is the RESOLVED-IR source of truth for Map-key types: every node carries
+    // an `Option<Type>` stamp, so `discover_instantiations` surfaces every
+    // `Map<K, V>` the program actually uses, including ones with NO textual
+    // annotation (a local-binding `m: Map<…>` whose annotation Scan 2's string
+    // walk never reaches, or a fully INFERRED `m = Map.set({}, c, 5)`). The
+    // box/unbox boundary rewrite (`rewrite_for_wasm_gc`) is layered on top of
+    // THIS same `optimized` value below — building it here avoids a second
+    // lower+optimize pass while making the inferred Map-key types available to
+    // the carrier-eligibility scan.
+    let optimized_mir: crate::ir::mir::MirProgram = {
         let mir_items: Vec<crate::ir::hir::ResolvedTopLevel> = resolved_fn_defs
             .iter()
             .cloned()
             .map(crate::ir::hir::ResolvedTopLevel::FnDef)
             .collect();
-        let optimized = crate::ir::mir::optimize(crate::ir::mir::lower_program(&mir_items));
+        crate::ir::mir::optimize(crate::ir::mir::lower_program(&mir_items))
+    };
+
+    let eligible_carriers: std::collections::HashSet<String> =
+        if std::env::var("AVER_NO_CARRIER_I64").is_ok() {
+            std::collections::HashSet::new()
+        } else {
+            // Proven-bound candidates: the carrier's invariant is recognized
+            // AND `fits_i64`. This is necessary but NOT sufficient — it does
+            // not prove every value went through the gate, nor that the
+            // carrier's codegen is only exercised in positions the i64
+            // erasure supports.
+            let proven: std::collections::HashSet<String> = carrier_intervals
+                .iter()
+                .filter(|(_, (iv, known))| *known && iv.fits_i64())
+                .map(|(name, _)| name.clone())
+                .collect();
+            // Fail-closed tightening (unless explicitly disabled for a
+            // revert-test): subtract carriers that are constructed ungated
+            // (bare ctor bypass) or used as a `Map` KEY (direct/transitive).
+            // Either trip keeps that carrier BOXED, matching the VM and the
+            // pre-slice boxed wasm-gc path. `AVER_CARRIER_I64_SKIP_DEMOTION=1`
+            // restores the un-tightened set so the regression revert-tests
+            // can show the hole returning (trap / validation error).
+            if std::env::var("AVER_CARRIER_I64_SKIP_DEMOTION").is_ok() {
+                proven
+            } else {
+                let inputs = crate::codegen::proof_lower::ProofLowerInputs {
+                    entry_items: items,
+                    dep_modules: &[],
+                    module_prefixes: &std::collections::HashSet::new(),
+                    recursive_fns: &std::collections::HashSet::new(),
+                    symbol_table: &symbol_table,
+                    program_shape: None,
+                };
+                // RESOLVED-IR Map-key types: the typed-MIR instantiation
+                // registry carries every `Map<K, V>` the program uses, keyed
+                // off inference, so a carrier used as a Map KEY via a local
+                // binding OR pure inference (no annotation anywhere) is still
+                // demoted. This is the complete source of truth; the textual
+                // annotation scan inside `carrier_eligibility_demotions` stays
+                // as a cheap backstop.
+                let resolved_map_keys: Vec<crate::ast::Type> =
+                    crate::ir::mir::discover_instantiations(&optimized_mir)
+                        .maps
+                        .into_iter()
+                        .map(|(k, _v)| k)
+                        .collect();
+                let demoted = crate::codegen::proof_lower::carrier_eligibility_demotions(
+                    &inputs,
+                    &proven,
+                    &carrier_intervals,
+                    &resolved_map_keys,
+                );
+                proven.difference(&demoted).cloned().collect()
+            }
+        };
+    registry.set_eligible_carriers(eligible_carriers);
+
+    let mir_program: crate::ir::mir::MirProgram = {
+        // Reuse the `optimized` MIR built above for carrier-eligibility
+        // Map-key discovery — the box/unbox boundary rewrite is the only
+        // step layered on top, and it does not change the type stamps the
+        // instantiation scan consumed.
+        let optimized = optimized_mir;
         // ETAP-2 SLICE 2b: make Int representation EXPLICIT for the wasm-gc
         // codegen. The rewrite tags each fn's bare slots / params / return on
         // `MirFn::repr` and inserts `Box`/`Unbox` boundary nodes; the body
@@ -178,7 +288,17 @@ pub(super) fn emit_module_with(
         // fragment never goes bare.
         let boxed =
             crate::ir::mir::optimize::bare_i64_rewrite::mutual_recursion_box_set(&optimized);
-        crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_wasm_gc(optimized, &boxed)
+        // The per-carrier-type bound (`carrier_intervals`, hoisted above)
+        // also seeds the MIR rewrite's optional per-slot raw-i64 path. That
+        // path is gated OFF in this slice (`CARRIER_BARE_ELIGIBLE == false`),
+        // so it is inert here; the carrier-`i64` size lever lives entirely in
+        // the registry's `eligible_carriers` set + the construct / project
+        // box-bridges.
+        crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_wasm_gc(
+            optimized,
+            &boxed,
+            &carrier_intervals,
+        )
     };
 
     // Lazy caller_fn name registry — populated during user-fn body
@@ -276,6 +396,14 @@ pub(super) fn emit_module_with(
         }
     }
     for name in &nominal_seed {
+        // ETAP-2 carrier-`i64`: an eligible carrier is `i64`-erased — it has
+        // no struct, so a per-type `__eq_/__hash_<Carrier>` helper would emit
+        // a body that `struct.get`s an `i64` (invalid wasm). Its eq/hash is
+        // the raw `i64.eq` / `i32.wrap_i64` inlined at every use site, so skip
+        // the helper registration entirely (mirrors `register_field_type`).
+        if registry.is_eligible_carrier(name) {
+            continue;
+        }
         if registry.record_fields.contains_key(name) {
             eq_helpers_registry.register_transitive(name, EqKind::Record, &registry);
             hash_helpers_registry.register_transitive(name, HashKind::Record, &registry);
@@ -4917,6 +5045,13 @@ fn register_nominal_in_type(
             let Some(key) = named_type_registry_key(symbol_table, t) else {
                 return;
             };
+            // ETAP-2 carrier-`i64`: an eligible carrier is `i64`-erased — no
+            // struct, no per-type helper (its eq/hash inlines raw at the use
+            // site). Skip so no `__eq_/__hash_<Carrier>` slot is allocated
+            // (a struct-shaped body over an `i64` is invalid wasm).
+            if type_registry.is_eligible_carrier(&key) {
+                return;
+            }
             if type_registry.record_fields.contains_key(&key) {
                 eq_helpers.register_transitive(&key, EqKind::Record, type_registry);
             } else if type_registry
@@ -5042,7 +5177,13 @@ fn discover_builtins_in_expr(
                 && matches!(t, AverType::Named { .. })
                 && let Some(key) = named_type_registry_key(symbol_table, t)
             {
-                if type_registry.record_fields.contains_key(&key) {
+                // ETAP-2 carrier-`i64`: a direct carrier `==` lowers via the
+                // project box-bridge (each side boxed to `$AverInt`, compared
+                // with `__aint_eq`) — NOT a struct `__eq_<Carrier>` helper. An
+                // eligible carrier is `i64`-erased and gets no such helper.
+                if type_registry.is_eligible_carrier(&key) {
+                    // no helper — handled inline
+                } else if type_registry.record_fields.contains_key(&key) {
                     eq_helpers.register_transitive(&key, EqKind::Record, type_registry);
                 } else if type_registry
                     .variants

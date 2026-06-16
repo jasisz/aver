@@ -127,6 +127,22 @@ pub(super) struct TypeRegistry {
     /// addressing layout uses `keys[i] == null` as the empty marker,
     /// which only works when keys are emitted as ref values.
     pub(super) non_newtypable_keys: std::collections::HashSet<String>,
+    /// ETAP-2 carrier-`i64`: refinement-via-opaque carrier types whose
+    /// proven smart-constructor bound `fits_i64`, keyed by bare Aver name
+    /// (e.g. `"IntRange"`). For a name in this set, the newtype erasure
+    /// produces a NATIVE `i64` (not the `$AverInt` ref) EVERYWHERE the
+    /// carrier appears — fn slots, record fields, Option/Result payloads,
+    /// `Vector<Carrier>` elements — because every shape routes through
+    /// `aver_to_wasm`. The carrier `IS` the `i64`; the two boundary
+    /// conversions (construct unboxes the `$AverInt` field value to `i64`
+    /// via `__aint_to_i64_checked` — which can never trap because the bound
+    /// proves the fit; projection boxes the `i64` back to `$AverInt` via
+    /// `__aint_from_i64`) live at the carrier construct / project emit
+    /// sites. EMPTY (the default) reproduces the all-`$aint` behavior
+    /// byte-for-byte; only an opaque carrier with a recognized, `fits_i64`
+    /// invariant lands here. Built from
+    /// [`crate::codegen::proof_lower::carrier_interval_table`].
+    pub(super) eligible_carriers: std::collections::HashSet<String>,
     /// Phase 4 (0.20) — `(struct (mut i32 socket) (mut i32 in_stream)
     /// (mut i32 out_stream) (mut i32 in_use))` slot type for an entry
     /// in the TCP connection pool. `None` when no `Tcp.*` effect is
@@ -982,6 +998,12 @@ impl TypeRegistry {
             string_literals,
             string_literal_idx,
             non_newtypable_keys,
+            // ETAP-2 carrier-`i64`: populated post-build by `module.rs`
+            // (`set_eligible_carriers`) from the refinement-via-opaque
+            // carrier table, which needs `ProofLowerInputs` this builder
+            // doesn't have. Empty here ⇒ no carrier erases to `i64` until
+            // the codegen entry opts in.
+            eligible_carriers: std::collections::HashSet::new(),
             tcp_slot_type_idx,
             tcp_pool_type_idx,
             bignum,
@@ -1267,6 +1289,27 @@ impl TypeRegistry {
     /// lowers to identity, `match obj { Foo.Foo(n) -> body }` binds `n`
     /// to the underlying `T` value with no `struct.get`. Same trick
     /// rustc uses for `struct UserId(u64)`.
+    /// ETAP-2 carrier-`i64`: install the set of refinement-via-opaque
+    /// carrier type names whose proven bound `fits_i64`. Called once by the
+    /// wasm-gc codegen entry after it derives the carrier interval table.
+    /// Keyed by bare Aver name (`"IntRange"`).
+    pub(super) fn set_eligible_carriers(&mut self, names: std::collections::HashSet<String>) {
+        self.eligible_carriers = names;
+    }
+
+    /// ETAP-2 carrier-`i64`: is `type_name` (bare or `Module.`-qualified) a
+    /// carrier whose erasure should be a native `i64`? A carrier in the
+    /// eligible set is ALSO a newtype (single-field opaque record of `Int`),
+    /// so `newtype_underlying` already returns `Some("Int")` for it — this
+    /// just decides whether that erasure becomes `i64` or stays `$AverInt`.
+    pub(super) fn is_eligible_carrier(&self, type_name: &str) -> bool {
+        if self.eligible_carriers.is_empty() {
+            return false;
+        }
+        let bare = type_name.rsplit_once('.').map_or(type_name, |(_, b)| b);
+        self.eligible_carriers.contains(bare.trim())
+    }
+
     pub(super) fn newtype_underlying(&self, type_name: &str) -> Option<&str> {
         // Suppress newtype optimisation when the type is used as a
         // `Map<K, *>` key. Map's open-addressing layout uses
@@ -1749,6 +1792,17 @@ pub(super) fn aver_to_wasm(
         // applies (otherwise an erased `Box(v: Int)` lowers to i64 while
         // its stored/compared value is a ref → wasm-validation mismatch).
         if let Some(underlying) = reg.newtype_underlying(trimmed) {
+            // ETAP-2 carrier-`i64`: an eligible carrier (opaque single-`Int`
+            // record whose smart-constructor bound `fits_i64`) erases to a
+            // NATIVE `i64` instead of the `$AverInt` ref — the size lever.
+            // This fires EVERYWHERE the carrier type-string reaches a
+            // ValType (fn slots, record fields, Option/Result payloads,
+            // `Vector<Carrier>` elements) because they all route here. The
+            // construct / project emit sites box-bridge the boundary to the
+            // surrounding `$AverInt` Int values.
+            if reg.is_eligible_carrier(trimmed) {
+                return Ok(Some(ValType::I64));
+            }
             if underlying.trim() == "Int" && reg.bignum {
                 return Ok(Some(aint_ref_ty(reg)?));
             }

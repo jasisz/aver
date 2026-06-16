@@ -615,9 +615,16 @@ pub fn build_context(
     // representation facts from the optimized MIR. Read-only — never
     // mutates the program. Empty (all-`Boxed`) when there is no MIR
     // (defensive) or for fragments the analysis bails on.
+    //
+    // ETAP-2 SLICE 0+1: this facts path (the VM-side / general read) passes
+    // an EMPTY carrier table, so no carrier slot lowers here — byte-identical
+    // to the pre-slice behavior. Carrier lowering is opt-in at the two
+    // codegen-rewrite entries (`rewrite_for_rust` / `rewrite_for_wasm_gc`),
+    // which build the real table from the refinement-via-opaque inputs.
+    let empty_carrier = crate::ir::mir::bare_i64::CarrierIntervals::new();
     let bare_i64 = mir_program
         .as_ref()
-        .map(crate::ir::mir::bare_i64::analyze)
+        .map(|p| crate::ir::mir::bare_i64::analyze(p, &empty_carrier))
         .unwrap_or_default();
 
     let ctx = CodegenContext {

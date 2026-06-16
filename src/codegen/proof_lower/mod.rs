@@ -508,6 +508,509 @@ fn populate_refined_type_intervals(inputs: &ProofLowerInputs, ir: &mut ProofIR) 
     }
 }
 
+/// ETAP-2 SLICE 0+1: derive, per refinement-via-opaque type in scope, the
+/// constant interval its smart-constructor invariant proves over the
+/// carrier. The table is keyed by the opaque type's *bare* Aver name (e.g.
+/// `"IntRange"`). The bare-`i64` MIR pass matches a carrier
+/// parameter/local/return slot against this key — it extracts the bare name
+/// from the slot's `MirParam.ty` (which the lowerer fills with the Debug
+/// form `Named { id: …, name: "IntRange" }`, NOT the bare name; see
+/// `bare_named_type` in `bare_i64`) and seeds the slot with the proven bound.
+///
+/// The value is `interval_of_invariant(&predicate)` — byte-identical to the
+/// bound [`populate_refined_type_intervals`] persists on each
+/// `RefinedTypeDecl` (both build the same [`Predicate`] from
+/// [`refinement_info_for_in_scope`] + [`ProofLowerInputs::resolve_expr`] and
+/// run the same `interval` recognizer). No forked logic.
+///
+/// **Fail-closed.** A type whose invariant the recognizer does not
+/// understand returns `interval_known == false`; that entry is OMITTED from
+/// the table entirely, so the MIR pass never sees it and the carrier stays
+/// boxed. A carrier whose proven bound does not `fits_i64` is also kept
+/// (the table carries the raw `(Interval, bool)` so the seed site can apply
+/// `fits_i64` itself — see `carrier_interval` in `bare_i64`).
+pub fn carrier_interval_table(
+    inputs: &ProofLowerInputs,
+) -> HashMap<String, (crate::ir::interval::Interval, bool)> {
+    let mut table = HashMap::new();
+
+    let entry_typedefs = inputs.entry_items.iter().filter_map(|item| match item {
+        TopLevel::TypeDef(td) => Some((None::<&str>, td)),
+        _ => None,
+    });
+    let module_typedefs = inputs.dep_modules.iter().flat_map(|m| {
+        m.type_defs
+            .iter()
+            .map(move |td| (Some(m.prefix.as_str()), td))
+    });
+
+    for (module_prefix, td) in entry_typedefs.chain(module_typedefs) {
+        // Refinement-via-opaque is a single-carrier-field product; mirror the
+        // exact eligibility `populate_refined_types` applies so the keyed
+        // bound is the same fact the proof side carries.
+        let TypeDef::Product { name, fields, .. } = td else {
+            continue;
+        };
+        if fields.len() != 1 {
+            continue;
+        }
+        let Some(info) =
+            crate::codegen::common::refinement_info_for_in_scope(name, inputs, module_prefix)
+        else {
+            continue;
+        };
+        let invariant = Predicate {
+            free_vars: vec![(
+                info.param_name.to_string(),
+                QuantifierType::Plain(info.carrier_type.to_string()),
+            )],
+            expr: inputs.resolve_expr(info.predicate, module_prefix),
+        };
+        let (interval, interval_known) = crate::ir::interval::interval_of_invariant(&invariant);
+        // Fail-closed: an unrecognized invariant (`interval_known == false`)
+        // is OMITTED, so the carrier stays boxed.
+        if !interval_known {
+            continue;
+        }
+        // Key by the bare type name — the `MirParam.ty` string. Two modules
+        // may each declare a same-named carrier with different predicates;
+        // the bare name collides. Keep the FIRST (entry walks before deps),
+        // and on a same-name collision intersect to the tighter common bound
+        // (fail-closed: a narrower interval is always still a valid
+        // over-approximation of either inhabitant set, and a mismatch can
+        // only ever shrink eligibility, never wrongly widen it).
+        table
+            .entry(name.clone())
+            .and_modify(|(iv, known): &mut (crate::ir::interval::Interval, bool)| {
+                *iv = iv.intersect(interval);
+                *known = true;
+            })
+            .or_insert((interval, true));
+    }
+
+    table
+}
+
+/// ETAP-2 carrier-`i64` SLICE 2b FOLLOW-UP: the fail-closed eligibility
+/// tightening. The bare carrier interval ([`carrier_interval_table`]) proves
+/// only that the smart-constructor's invariant `fits_i64`; it does NOT prove
+/// that every value of the carrier type actually went through that gate, nor
+/// that the carrier's codegen is exercised only in positions the i64 erasure
+/// supports. This scan removes a carrier from the eligible set when either
+/// assumption is violated, so the carrier stays boxed (`$AverInt`) — the
+/// safe, pre-slice representation that the VM and the boxed wasm-gc path
+/// agree on.
+///
+/// Two whole-program scans, both fail-closed (a trip can only ever SHRINK the
+/// eligible set, never widen it):
+///
+/// 1. **Ungated construction (closes the bare-constructor bypass).** A bare
+///    record constructor `IntRange(value = n)` callable in the defining
+///    module bypasses the smart-ctor's `0 <= n <= 100` gate. With `n`
+///    overflowing `i64` the VM keeps full precision but the wasm-gc construct
+///    bridge `__aint_to_i64_checked` TRAPS. A carrier `RecordCreate`d outside
+///    its own recognized smart-constructor function is therefore ineligible —
+///    UNLESS the construct's carrier-field argument is a constant literal that
+///    provably lies inside the carrier's proven interval. Such a literal
+///    construct (`IntRange(value = 0)` against a `[0, 100]` bound) cannot
+///    smuggle an out-of-bound / i64-overflowing value past the gate, so it is
+///    SAFE and does not demote — that pattern is exactly the in-bounds Err
+///    fallback the slice's own carriers use (`unwrap`'s `IntRange(value = 0)`).
+///    A non-literal argument, or a literal OUTSIDE the interval, is ungated
+///    and DOES demote (this is the `mk(n) = IntRange(value = n)` bypass).
+///
+/// 2. **Map-key usage (closes the i64-erased Map-KEY codegen gap).** A
+///    carrier used as a `Map` KEY type — directly (`Map<IntRange, V>`) or
+///    transitively as a field of a record/type used as a key
+///    (`Map<Coord, V>` with `Coord { x: IntRange }`) — fails wasm validation,
+///    because the Map-key codegen was not updated for the i64-erased carrier.
+///    Such a carrier is ineligible (the boxed key path it used before still
+///    compiles). Map VALUES are unaffected and stay eligible.
+///
+///    The COMPLETE source of truth for which carriers are Map keys is
+///    `resolved_map_keys` — the resolved `Map<K, V>` key types harvested from
+///    the typed MIR (`ir::mir::discover_instantiations`). Because those types
+///    come from inference, a carrier used as a key reaches this scan whether
+///    its `Map` type was written as a fn-signature annotation, a LOCAL-BINDING
+///    annotation (`m: Map<IntRange, Int> = …`), or NO annotation at all
+///    (`m = Map.set({}, c, 5)`). A textual annotation scan cannot see the
+///    last two; the resolved key type can. The annotation scan is retained as
+///    a cheap fail-closed backstop only.
+///
+/// Returns the set of carrier type names (bare names, the same keys
+/// [`carrier_interval_table`] uses) to REMOVE from the eligible set. The
+/// caller subtracts this from the proven-bound set.
+///
+/// `resolved_map_keys`: every `Map<K, _>` key type the program instantiates,
+/// per the typed-MIR instantiation registry. This is the inference-complete
+/// Map-key signal that drives Scan 2.
+pub fn carrier_eligibility_demotions(
+    inputs: &ProofLowerInputs,
+    candidates: &HashSet<String>,
+    intervals: &HashMap<String, (crate::ir::interval::Interval, bool)>,
+    resolved_map_keys: &[crate::ast::Type],
+) -> HashSet<String> {
+    let mut demoted: HashSet<String> = HashSet::new();
+    if candidates.is_empty() {
+        return demoted;
+    }
+
+    // Map each candidate carrier to its recognized smart-constructor fn name.
+    // `refinement_info_for_in_scope` is THE source of truth for "the
+    // smart-ctor function" — the exact fn the interval recognizer keyed off.
+    // For the wasm-gc path `dep_modules` is empty (the program is flattened
+    // into `entry_items`), so the entry scope (`None`) resolves every
+    // carrier; we still consult dep scopes for generality.
+    let mut ctor_fn_of: HashMap<String, String> = HashMap::new();
+    for name in candidates {
+        if let Some(info) = crate::codegen::common::refinement_info_for_in_scope(name, inputs, None)
+        {
+            ctor_fn_of.insert(name.clone(), info.constructor_fn.to_string());
+        } else {
+            for m in inputs.dep_modules {
+                if let Some(info) = crate::codegen::common::refinement_info_for_in_scope(
+                    name,
+                    inputs,
+                    Some(m.prefix.as_str()),
+                ) {
+                    ctor_fn_of.insert(name.clone(), info.constructor_fn.to_string());
+                    break;
+                }
+            }
+        }
+    }
+
+    // ---- Scan 1: ungated construction --------------------------------------
+    // Walk every fn body in the program. A `RecordCreate { type_name }` whose
+    // `type_name` is a candidate carrier and which sits in a fn OTHER than
+    // that carrier's smart-constructor is an ungated construct ⇒ demote,
+    // UNLESS its carrier-field argument is a constant literal provably inside
+    // the carrier's proven interval (an in-bounds literal can't smuggle an
+    // out-of-bound value past the gate — fail-closed but not over-eager). If
+    // we can't cleanly identify the smart-ctor (no entry in `ctor_fn_of`),
+    // every non-literal-safe construct demotes — fail-closed.
+    let all_fn_defs = inputs
+        .entry_items
+        .iter()
+        .filter_map(|it| match it {
+            TopLevel::FnDef(fd) => Some(fd),
+            _ => None,
+        })
+        .chain(inputs.dep_modules.iter().flat_map(|m| m.fn_defs.iter()));
+    for fd in all_fn_defs {
+        for stmt in fd.body.stmts() {
+            let expr = match stmt {
+                crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => e,
+            };
+            carrier_walk_expr(expr, &mut |e| {
+                // Both a fresh construct (`RecordCreate`) and a record-update
+                // (`RecordUpdate`, which sets the carrier's only field to an
+                // arbitrary value) can smuggle a value past the smart-ctor
+                // gate; treat both the same.
+                let (type_name, fields): (&String, &[(String, Spanned<Expr>)]) = match e {
+                    Expr::RecordCreate { type_name, fields } => (type_name, fields),
+                    Expr::RecordUpdate {
+                        type_name, updates, ..
+                    } => (type_name, updates),
+                    _ => return,
+                };
+                if !candidates.contains(type_name) {
+                    return;
+                }
+                // The construct inside the carrier's own smart-ctor is the
+                // gated one — never demotes.
+                if ctor_fn_of.get(type_name) == Some(&fd.name) {
+                    return;
+                }
+                // Outside the smart-ctor: safe iff the (single) carrier field
+                // is a constant literal inside the proven interval.
+                let safe_literal = matches!(
+                    intervals.get(type_name),
+                    Some((iv, true)) if construct_arg_is_in_interval(fields, *iv)
+                );
+                if !safe_literal {
+                    demoted.insert(type_name.clone());
+                }
+            });
+        }
+    }
+
+    // ---- Scan 2: Map-key usage (direct + transitive) -----------------------
+    // Build, per record type, the set of carrier names reachable through its
+    // (transitive) fields, so a carrier nested inside a record used as a key
+    // is demoted too.
+    let record_fields = collect_record_fields(inputs);
+
+    // PRIMARY (complete) source of truth: the RESOLVED Map-key types harvested
+    // from the typed MIR (`discover_instantiations`). Every `Map<K, V>` the
+    // program actually instantiates is here — including ones whose key type is
+    // only known after INFERENCE (a local-binding `m: Map<…>` annotation that
+    // the textual scan never walks, or a fully inferred `m = Map.set({}, c,
+    // 5)` with no annotation at all). A textual annotation scan is
+    // fundamentally incomplete for these; the resolved key type is not. Demote
+    // every carrier reachable from each resolved key (directly, or
+    // transitively through a record / Option / List / Tuple field — the same
+    // `carriers_reachable_from` closure the annotation path uses).
+    for key in resolved_map_keys {
+        carriers_reachable_from(
+            key,
+            candidates,
+            &record_fields,
+            &mut HashSet::new(),
+            &mut demoted,
+        );
+    }
+
+    // BACKSTOP (cheap): the original textual scan over fn-param / fn-return /
+    // record-field annotations. Redundant with the resolved-IR path above for
+    // any Map the MIR sees, but kept so a Map type that appears ONLY in an
+    // annotation position the MIR instantiation walk doesn't reach (e.g. a
+    // signature whose body never constructs/uses the Map) still trips. It can
+    // only ever ADD to `demoted` (fail-closed).
+    for ty_str in all_type_annotations(inputs) {
+        let ty = crate::types::parse_type_str(&ty_str);
+        collect_map_key_carriers(&ty, candidates, &record_fields, &mut demoted);
+    }
+
+    demoted
+}
+
+/// A single-carrier-field `RecordCreate`'s field argument is a constant
+/// integer literal provably within the proven interval `iv`. Handles the
+/// bare literal `IntRange(value = 0)` and the negated literal
+/// `IntRange(value = -5)` (parsed as `Expr::Neg(Literal(Int))`). Any other
+/// shape (a parameter, a call, an arithmetic expression) is NOT a provable
+/// constant ⇒ returns `false` ⇒ the construct is treated as ungated.
+fn construct_arg_is_in_interval(
+    fields: &[(String, Spanned<Expr>)],
+    iv: crate::ir::interval::Interval,
+) -> bool {
+    // Refinement-via-opaque carriers are single-field products.
+    let [(_, value)] = fields else {
+        return false;
+    };
+    let k: i128 = match &value.node {
+        Expr::Literal(Literal::Int(n)) => *n as i128,
+        Expr::Neg(inner) => match &inner.node {
+            Expr::Literal(Literal::Int(n)) => -(*n as i128),
+            _ => return false,
+        },
+        _ => return false,
+    };
+    iv.contains_point(k)
+}
+
+/// Local AST visitor (the proof-lower module has no shared walker). Pre-order
+/// visit of every sub-expression. Mirrors `call_graph::walk_expr`.
+fn carrier_walk_expr(expr: &Spanned<Expr>, visit: &mut impl FnMut(&Expr)) {
+    visit(&expr.node);
+    match &expr.node {
+        Expr::FnCall(func, args) => {
+            carrier_walk_expr(func, visit);
+            for arg in args {
+                carrier_walk_expr(arg, visit);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            for arg in &boxed.args {
+                carrier_walk_expr(arg, visit);
+            }
+        }
+        Expr::Attr(obj, _) => carrier_walk_expr(obj, visit),
+        Expr::BinOp(_, l, r) => {
+            carrier_walk_expr(l, visit);
+            carrier_walk_expr(r, visit);
+        }
+        Expr::Neg(inner) | Expr::ErrorProp(inner) => carrier_walk_expr(inner, visit),
+        Expr::Match { subject, arms, .. } => {
+            carrier_walk_expr(subject, visit);
+            for arm in arms {
+                carrier_walk_expr(&arm.body, visit);
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for item in items {
+                carrier_walk_expr(item, visit);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                carrier_walk_expr(k, visit);
+                carrier_walk_expr(v, visit);
+            }
+        }
+        Expr::Constructor(_, maybe) => {
+            if let Some(inner) = maybe {
+                carrier_walk_expr(inner, visit);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let crate::ast::StrPart::Parsed(e) = part {
+                    carrier_walk_expr(e, visit);
+                }
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                carrier_walk_expr(e, visit);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            carrier_walk_expr(base, visit);
+            for (_, e) in updates {
+                carrier_walk_expr(e, visit);
+            }
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
+    }
+}
+
+/// Bare record-type name → its field type strings (`Product` types only).
+/// Used by Scan 2 to chase a carrier nested inside a record used as a Map
+/// key.
+fn collect_record_fields(inputs: &ProofLowerInputs) -> HashMap<String, Vec<String>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    let entry_tds = inputs.entry_items.iter().filter_map(|it| match it {
+        TopLevel::TypeDef(td) => Some(td),
+        _ => None,
+    });
+    let dep_tds = inputs.dep_modules.iter().flat_map(|m| m.type_defs.iter());
+    for td in entry_tds.chain(dep_tds) {
+        if let TypeDef::Product { name, fields, .. } = td {
+            out.entry(name.clone())
+                .or_default()
+                .extend(fields.iter().map(|(_, ty)| ty.clone()));
+        }
+    }
+    out
+}
+
+/// Every type annotation string in the program: fn param types, fn return
+/// types, and record field types. A `Map<…>` anywhere here is a Map-key
+/// usage candidate for Scan 2.
+fn all_type_annotations(inputs: &ProofLowerInputs) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let push_fn = |fd: &FnDef, out: &mut Vec<String>| {
+        for (_, ty) in &fd.params {
+            out.push(ty.clone());
+        }
+        out.push(fd.return_type.clone());
+    };
+    for it in inputs.entry_items {
+        match it {
+            TopLevel::FnDef(fd) => push_fn(fd, &mut out),
+            TopLevel::TypeDef(TypeDef::Product { fields, .. }) => {
+                out.extend(fields.iter().map(|(_, ty)| ty.clone()));
+            }
+            _ => {}
+        }
+    }
+    for m in inputs.dep_modules {
+        for fd in &m.fn_defs {
+            push_fn(fd, &mut out);
+        }
+        for td in &m.type_defs {
+            if let TypeDef::Product { fields, .. } = td {
+                out.extend(fields.iter().map(|(_, ty)| ty.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// Walk a parsed `Type`. For every `Map<K, _>` encountered, add every
+/// candidate carrier REACHABLE from `K` (directly, or transitively through a
+/// record's fields) to `demoted`. Recurses through every type constructor so
+/// a `Map` buried inside `List<Map<…>>`, a `Result`/`Option` payload, a
+/// tuple, etc. is still found.
+fn collect_map_key_carriers(
+    ty: &crate::ast::Type,
+    candidates: &HashSet<String>,
+    record_fields: &HashMap<String, Vec<String>>,
+    demoted: &mut HashSet<String>,
+) {
+    use crate::ast::Type;
+    match ty {
+        Type::Map(key, value) => {
+            carriers_reachable_from(key, candidates, record_fields, &mut HashSet::new(), demoted);
+            // The KEY is the hazard; recurse into both so a nested Map in
+            // either position is still inspected.
+            collect_map_key_carriers(key, candidates, record_fields, demoted);
+            collect_map_key_carriers(value, candidates, record_fields, demoted);
+        }
+        Type::Result(a, b) => {
+            collect_map_key_carriers(a, candidates, record_fields, demoted);
+            collect_map_key_carriers(b, candidates, record_fields, demoted);
+        }
+        Type::Option(a) | Type::List(a) | Type::Vector(a) => {
+            collect_map_key_carriers(a, candidates, record_fields, demoted);
+        }
+        Type::Tuple(items) => {
+            for t in items {
+                collect_map_key_carriers(t, candidates, record_fields, demoted);
+            }
+        }
+        Type::Fn(params, ret, _) => {
+            for p in params {
+                collect_map_key_carriers(p, candidates, record_fields, demoted);
+            }
+            collect_map_key_carriers(ret, candidates, record_fields, demoted);
+        }
+        _ => {}
+    }
+}
+
+/// Collect every candidate carrier reachable from a Map-KEY type `key`:
+/// `key` itself if it names a carrier, plus (transitively) any carrier among
+/// the fields of a record `key` names. `seen` guards self-referential
+/// records.
+fn carriers_reachable_from(
+    key: &crate::ast::Type,
+    candidates: &HashSet<String>,
+    record_fields: &HashMap<String, Vec<String>>,
+    seen: &mut HashSet<String>,
+    demoted: &mut HashSet<String>,
+) {
+    use crate::ast::Type;
+    let Some(name) = key.named_name() else {
+        // A Map key that is itself a container (`Map<List<Carrier>, V>`) —
+        // chase the inner element types too.
+        match key {
+            Type::Option(a) | Type::List(a) | Type::Vector(a) => {
+                carriers_reachable_from(a, candidates, record_fields, seen, demoted);
+            }
+            Type::Tuple(items) => {
+                for t in items {
+                    carriers_reachable_from(t, candidates, record_fields, seen, demoted);
+                }
+            }
+            Type::Map(k, v) => {
+                carriers_reachable_from(k, candidates, record_fields, seen, demoted);
+                carriers_reachable_from(v, candidates, record_fields, seen, demoted);
+            }
+            Type::Result(a, b) => {
+                carriers_reachable_from(a, candidates, record_fields, seen, demoted);
+                carriers_reachable_from(b, candidates, record_fields, seen, demoted);
+            }
+            _ => {}
+        }
+        return;
+    };
+    if !seen.insert(name.to_string()) {
+        return;
+    }
+    if candidates.contains(name) {
+        demoted.insert(name.to_string());
+    }
+    if let Some(fields) = record_fields.get(name) {
+        for field_ty in fields {
+            let parsed = crate::types::parse_type_str(field_ty);
+            carriers_reachable_from(&parsed, candidates, record_fields, seen, demoted);
+        }
+    }
+}
+
 /// Walk `analyze_plans(inputs)` and populate `ProofIR.fn_contracts`.
 ///
 /// Translation pass over the classifier output (`RecursionPlan`) —

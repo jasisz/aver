@@ -92,6 +92,13 @@ impl EqHelperRegistry {
         if self.kinds.contains_key(type_name) {
             return;
         }
+        // ETAP-2 carrier-`i64`: an eligible carrier is `i64`-erased — no
+        // struct, no per-type `__eq_<Carrier>` helper (its eq inlines as raw
+        // `i64.eq` at the use site). A struct `__eq_` body over an `i64` is
+        // invalid wasm. Backstop covering every caller path.
+        if registry.is_eligible_carrier(type_name) {
+            return;
+        }
         // Skip nominal types whose fields contain unhandled shapes
         // (List/Map/Vector/Set inside fields — the inline eq emitter
         // covers Option/Result/Tuple via per-instantiation helpers
@@ -175,6 +182,16 @@ impl EqHelperRegistry {
             field_ty,
             "Int" | "Float" | "Bool" | "String" | "Unit" | "Byte" | "Char"
         ) {
+            return;
+        }
+        // ETAP-2 carrier-`i64`: an eligible carrier is erased to a native
+        // `i64`, so it has NO struct representation and needs NO per-type
+        // `__eq_<Carrier>` helper — its eq is the raw `i64.eq` inlined at the
+        // use site (the carrier-`i64` arms in the inline eq emitters). Treat
+        // it exactly like a primitive: register nothing. Registering a helper
+        // would emit a body that `struct.get`s a value that is actually an
+        // `i64` (the func-33 validation failure this guards).
+        if registry.is_eligible_carrier(field_ty) {
             return;
         }
         if registry.record_fields.contains_key(field_ty) {
@@ -705,6 +722,16 @@ fn emit_inner_eq_dispatch(
     string_eq_fn_idx: Option<u32>,
     helper_idx_map: &HashMap<String, u32>,
 ) -> Result<(), WasmGcError> {
+    // ETAP-2 carrier-`i64`: an eligible carrier field/payload is a NATIVE
+    // `i64` (erased to `i64`, not the `$AverInt` ref a plain `Int` field
+    // lowers to), so it compares with a raw `i64.eq` — NOT `__aint_eq`,
+    // which expects two refs and fails validation on a scalar `i64`. Check
+    // before the newtype resolution, which would fold the carrier into
+    // `Int` → `emit_aint_field_eq` → `__aint_eq`.
+    if registry.is_eligible_carrier(inner) {
+        f.instruction(&Instruction::I64Eq);
+        return Ok(());
+    }
     // Resolve newtypes — `Box(n: Int)` reaches here as "Box" but
     // its wasm representation is i64.
     let resolved: String = if let Some(under) = registry.newtype_underlying(inner) {

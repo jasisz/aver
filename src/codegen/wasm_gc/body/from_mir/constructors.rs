@@ -22,7 +22,13 @@ pub(crate) fn emit_mir_constructor_with_args(
         )));
     }
     if ctx.registry.newtype_underlying(&info.parent).is_some() {
-        return Ok(emit_mir_expr(func, &args[0], slots, ctx)?.map(|_| ()));
+        let produced = emit_mir_expr(func, &args[0], slots, ctx)?;
+        // ETAP-2 carrier-`i64`: a single-variant single-`Int` carrier sum
+        // erases to `i64`; narrow the payload value at the construct boundary.
+        if produced.is_some() && ctx.registry.is_eligible_carrier(&info.parent) {
+            emit_carrier_construct_bridge(func, ctx)?;
+        }
+        return Ok(produced.map(|_| ()));
     }
     for arg in args {
         if emit_mir_expr(func, arg, slots, ctx)?.is_none() {

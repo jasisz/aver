@@ -99,6 +99,56 @@ pub(super) use strings::*;
 
 pub use coverage::{CoverageReport, coverage_report};
 
+/// ETAP-2 carrier-`i64`: narrow the `$AverInt` Int VALUE on the stack down
+/// to the native `i64` the carrier slot/field holds. Emitted at the carrier
+/// CONSTRUCT boundary (the newtype-erased smart-constructor field value, an
+/// `$AverInt`, must land as `i64` in the carrier). Uses
+/// `__aint_to_i64_checked` — which TRAPS on an out-of-`i64` Big — but the
+/// carrier's proven smart-constructor bound `fits_i64`, so the trap is
+/// unreachable for any value that ever reaches a real carrier (opaque type +
+/// guarded constructor). A no-op when bignum is off (then `Int` is already a
+/// scalar i64 and the carrier field is too).
+pub(crate) fn emit_carrier_construct_bridge(
+    func: &mut Function,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    if ctx.registry.bignum {
+        let to_checked = ctx
+            .fn_map
+            .builtins
+            .get("__aint_to_i64_checked")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "carrier-i64 construct needs __aint_to_i64_checked but it is not registered".into(),
+            ))?;
+        func.instruction(&Instruction::Call(to_checked));
+    }
+    Ok(())
+}
+
+/// ETAP-2 carrier-`i64`: lift the native `i64` a carrier slot/field holds
+/// back into the `$AverInt` carrier the surrounding `Int` context expects.
+/// Emitted at the carrier PROJECT boundary (`c.value` reads the i64 and the
+/// result is a plain `Int`). Uses `__aint_from_i64` (the canonical Small
+/// constructor — infallible). A no-op when bignum is off.
+pub(crate) fn emit_carrier_project_bridge(
+    func: &mut Function,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    if ctx.registry.bignum {
+        let from_i64 =
+            ctx.fn_map
+                .builtins
+                .get("__aint_from_i64")
+                .copied()
+                .ok_or(WasmGcError::Validation(
+                    "carrier-i64 project needs __aint_from_i64 but it is not registered".into(),
+                ))?;
+        func.instruction(&Instruction::Call(from_i64));
+    }
+    Ok(())
+}
+
 /// `Int = ℤ`: registered `fn_map.builtins` helpers whose Aver return type
 /// is `Int` but whose wasm helper computes a raw scalar i64 (a byte / code
 /// count), so the result must be lifted into the `$AverInt` carrier. Kept
@@ -987,8 +1037,15 @@ pub(crate) fn emit_mir_expr(
             let proj = &spanned_proj.node;
             let record_name = aver_type_str_of(&proj.base);
             if ctx.registry.newtype_underlying(&record_name).is_some() {
-                return Ok(emit_mir_expr(func, &proj.base, slots, ctx)?
-                    .map(|_| aver_type_str_of(expr).trim() != "Unit"));
+                // ETAP-2 carrier-`i64`: an eligible carrier's field read is
+                // still identity (emit the base), but the base is now a
+                // native `i64` and the projected `.value` is a plain `Int`,
+                // so lift it back into the `$AverInt` carrier.
+                let produced = emit_mir_expr(func, &proj.base, slots, ctx)?;
+                if produced.is_some() && ctx.registry.is_eligible_carrier(&record_name) {
+                    emit_carrier_project_bridge(func, ctx)?;
+                }
+                return Ok(produced.map(|_| aver_type_str_of(expr).trim() != "Unit"));
             }
             let (Some(type_idx), Some(field_idx)) = (
                 ctx.registry.record_type_idx(&record_name),

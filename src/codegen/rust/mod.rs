@@ -86,8 +86,18 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
         // analysis, so the rewrite must not tag them bare (it would desync
         // the boxed signature from a bare-rewritten body / caller).
         let boxed = ctx.mutual_tco_members.clone();
-        ctx.mir_program =
-            Some(crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(prog, &boxed));
+        // ETAP-2 SLICE 0+1: derive the per-carrier-type proven bound from the
+        // same refinement-via-opaque inputs the proof side reads, so a
+        // carrier function-slot can lower to native `i64`. An empty table
+        // (no opaque-bounded carrier in scope) keeps the all-`Int` behavior.
+        // Scoped so the immutable `&ctx` borrow ends before the assignment.
+        let carrier = {
+            let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+            crate::codegen::proof_lower::carrier_interval_table(&inputs)
+        };
+        ctx.mir_program = Some(
+            crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(prog, &boxed, &carrier),
+        );
     }
     let has_embedded_policy = ctx.policy.is_some();
     let has_runtime_policy = ctx.runtime_policy_from_env;

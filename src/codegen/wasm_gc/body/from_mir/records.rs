@@ -54,7 +54,14 @@ pub(crate) fn emit_mir_record_create(
         let field = fields.first().ok_or(WasmGcError::Validation(format!(
             "newtype record `{type_name}` requires one field"
         )))?;
-        return Ok(emit_mir_expr(func, &field.value, slots, ctx)?.map(|_| ()));
+        let produced = emit_mir_expr(func, &field.value, slots, ctx)?;
+        // ETAP-2 carrier-`i64`: an eligible carrier construct is still
+        // identity, but the field value is a plain `Int` (`$AverInt`) and the
+        // carrier holds a native `i64`, so narrow it at the boundary.
+        if produced.is_some() && ctx.registry.is_eligible_carrier(type_name) {
+            emit_carrier_construct_bridge(func, ctx)?;
+        }
+        return Ok(produced.map(|_| ()));
     }
     let type_idx = ctx
         .registry
