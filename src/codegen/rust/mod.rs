@@ -81,7 +81,13 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
     // the explicit boundary nodes; the body emitter below then lowers those
     // nodes trivially instead of deciding representation itself.
     if let Some(prog) = ctx.mir_program.take() {
-        ctx.mir_program = Some(crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(prog));
+        // Mutual-TCO members are emitted with an unconditionally boxed
+        // (`AverInt`) trampoline signature regardless of the unboxing
+        // analysis, so the rewrite must not tag them bare (it would desync
+        // the boxed signature from a bare-rewritten body / caller).
+        let boxed = ctx.mutual_tco_members.clone();
+        ctx.mir_program =
+            Some(crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(prog, &boxed));
     }
     let has_embedded_policy = ctx.policy.is_some();
     let has_runtime_policy = ctx.runtime_policy_from_env;

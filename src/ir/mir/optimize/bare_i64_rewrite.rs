@@ -47,16 +47,35 @@ use crate::ir::mir::{
 /// existing range+escape analysis, then for every fn populates `repr` and
 /// inserts `Box`/`Unbox` boundary nodes. Pure: returns a fresh program;
 /// the caller (the Rust backend) feeds it the clone it codegens from.
-pub fn rewrite_for_rust(mut program: MirProgram) -> MirProgram {
+///
+/// `boxed_signature_fns` lists fns the Rust backend emits with an
+/// unconditionally BOXED (`AverInt`) signature regardless of the analysis —
+/// today the mutual-TCO members, whose trampoline always returns `AverInt`.
+/// The analysis can still flag such a fn's return/params bare (a phantom the
+/// codegen overrides), so the rewrite must treat them as boxed everywhere:
+/// it leaves their `repr` empty (body stays all-`Int`) AND treats their
+/// params/return as boxed at every CALL site, so a caller neither raw-reads
+/// nor double-boxes a value the callee actually returns as `AverInt`.
+pub fn rewrite_for_rust(
+    program: MirProgram,
+    boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
+) -> MirProgram {
+    let mut program = program;
     let facts = super::bare_i64::analyze(&program);
     // Collect ids first to avoid borrowing `program.fns` while mutating it.
     let ids: Vec<crate::ir::FnId> = program.fns.keys().copied().collect();
     for id in ids {
+        // A boxed-signature fn (mutual-TCO member) keeps the all-`Int`
+        // default repr + un-rewritten body: codegen emits it boxed, so any
+        // bare tag would desync signature and body.
+        if boxed_signature_fns.contains(&id) {
+            continue;
+        }
         let Some(fn_facts) = facts.for_fn(id).cloned() else {
             continue;
         };
         if let Some(f) = program.fns.get_mut(&id) {
-            rewrite_fn(f, &fn_facts, &facts);
+            rewrite_fn(f, &fn_facts, &facts, boxed_signature_fns);
         }
     }
     program
@@ -64,7 +83,12 @@ pub fn rewrite_for_rust(mut program: MirProgram) -> MirProgram {
 
 /// Populate `f.repr` from the analysis and insert the explicit boundary
 /// nodes throughout `f.body`.
-fn rewrite_fn(f: &mut MirFn, facts: &FnBareFacts, all: &BareI64Facts) {
+fn rewrite_fn(
+    f: &mut MirFn,
+    facts: &FnBareFacts,
+    all: &BareI64Facts,
+    boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
+) {
     // 1. Make the per-value representation explicit on the fn.
     let mut bare_slots = std::collections::HashSet::new();
     for (slot, fact) in &facts.values {
@@ -81,7 +105,11 @@ fn rewrite_fn(f: &mut MirFn, facts: &FnBareFacts, all: &BareI64Facts) {
     // 2. Insert boundary nodes. The body is in RETURN position: a bare
     //    return fn expects its tail raw; a boxed return fn expects it
     //    boxed (and a bare leaf there is `Box`ed — defect Q5 / subj_ret).
-    let ctx = RewriteCtx { facts, all };
+    let ctx = RewriteCtx {
+        facts,
+        all,
+        boxed_signature_fns,
+    };
     let body = std::mem::replace(
         &mut f.body,
         Spanned::bare(MirExpr::Literal(Spanned::bare(Literal::Unit))),
@@ -92,6 +120,23 @@ fn rewrite_fn(f: &mut MirFn, facts: &FnBareFacts, all: &BareI64Facts) {
 struct RewriteCtx<'a> {
     facts: &'a FnBareFacts,
     all: &'a BareI64Facts,
+    /// Fns the Rust backend emits with an unconditionally boxed signature
+    /// (mutual-TCO members). A call to such a fn returns `AverInt` and takes
+    /// `AverInt` params regardless of the analysis flags — so `call_returns_raw`
+    /// and `rewrite_call_args` treat them as boxed.
+    boxed_signature_fns: &'a std::collections::HashSet<crate::ir::FnId>,
+}
+
+impl RewriteCtx<'_> {
+    /// The callee's per-fn facts, BUT only when the callee is emitted with
+    /// its analysis-derived signature. A boxed-signature fn (mutual-TCO
+    /// member) returns `None` here, so callers treat its params/return boxed.
+    fn callee_facts(&self, target: crate::ir::FnId) -> Option<&FnBareFacts> {
+        if self.boxed_signature_fns.contains(&target) {
+            return None;
+        }
+        self.all.for_fn(target)
+    }
 }
 
 /// Wrap `e` in a fresh `Box` node (raw i64 -> Int), preserving the span +
@@ -138,12 +183,17 @@ fn rewrite_boxed(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> 
     if matches!(&e.node, MirExpr::Literal(l) if matches!(l.node, Literal::Int(_))) {
         return rewrite_children(e, ctx);
     }
-    // A call to a bare-RETURN callee renders as raw `i64` (its signature is
-    // `-> i64`); in a boxed context it must be boxed (defect Q5).
-    if call_returns_raw(&e.node, ctx) {
-        let inner = rewrite_children(e, ctx);
-        return box_node(inner);
-    }
+    // NOTE: a bare-RETURN call is NOT boxed here. The prior side-table
+    // codegen only boxed a bare-returning call in RETURN-TAIL position
+    // (`emit_boxed_return_tail`); a call result in a non-tail boxed context
+    // (a `let` value, an arithmetic operand, an aggregate element) was left
+    // as-is, because the analysis's "unsafe return consumer" rule (C2)
+    // demotes a callee's `bare_return` whenever its result reaches such a
+    // position. Boxing it here would double-box a callee whose ACTUAL
+    // emitted signature is boxed anyway (e.g. a mutual-TCO member, which
+    // codegen always emits `-> AverInt` regardless of the analysis flag).
+    // The Q5 return-tail case is handled by `rewrite_boxed_tail`.
+    //
     // A directly raw-rendering leaf / compound (a bare `Local`, or an
     // in-range `Add`/`Sub`/`Mul`/`Neg` tree): box it. Its raw operands stay
     // raw inside (rewrite_children leaves them — they are consumed by the
@@ -156,26 +206,45 @@ fn rewrite_boxed(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> 
     rewrite_children(e, ctx)
 }
 
+/// Rewrite a value in a BOXED RETURN-TAIL position (a boxed-return fn's tail
+/// leaf). Same as [`rewrite_boxed`] PLUS the Q5 case: a bare-returning call
+/// in tail position renders as raw `i64`, so box it (`emit_boxed_return_tail`
+/// in the prior codegen). This is restricted to tail position because that
+/// is the only place the prior codegen boxed a bare-returning call.
+fn rewrite_boxed_tail(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> {
+    if matches!(&e.node, MirExpr::Literal(l) if matches!(l.node, Literal::Int(_))) {
+        return rewrite_children(e, ctx);
+    }
+    // Q5 / subj_ret: a bare-returning call in tail position is raw `i64`; box
+    // it at the return crossing.
+    if call_returns_raw(&e.node, ctx) {
+        let inner = rewrite_children(e, ctx);
+        return box_node(inner);
+    }
+    if renders_raw(&e.node, ctx.facts) {
+        return box_node(e);
+    }
+    rewrite_children(e, ctx)
+}
+
 /// Rewrite an expression appearing in a RAW (`i64`) context: the consumer
 /// expects a native `i64`. A sub-expression that is already raw stays; one
 /// that is a boxed `AverInt` is narrowed via `Unbox`. This is the
 /// relocation of the codegen call-arg `to_i64` coercion at a bare param.
 fn rewrite_raw(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> {
-    // A call to a bare-return callee is already raw `i64`.
-    if call_returns_raw(&e.node, ctx) {
-        return rewrite_children(e, ctx);
-    }
-    // A raw-rendering leaf / compound: stays raw, but recurse so a nested
-    // boxed operand inside an arithmetic tree is handled. (By construction
-    // a whole-tree-bare compound has only raw leaves, so this is a no-op,
-    // but recursing keeps the walk total.)
+    // A raw-rendering leaf / compound (a bare `Local`, an in-range
+    // `Add`/`Sub`/`Mul`/`Neg` tree, an Int literal): stays raw. Recurse so a
+    // nested boxed operand inside an arithmetic tree is handled (a no-op by
+    // construction — a whole-tree-bare compound has only raw leaves).
     if renders_raw(&e.node, ctx.facts) {
         return rewrite_children(e, ctx);
     }
-    // A boxed `AverInt` value reaching a raw context: narrow it. (Rare by
-    // construction — the analysis only marks a param bare when every caller
-    // supplies a raw or literal value; this covers the residual `to_i64`
-    // call-arg path.)
+    // Any other value reaching a raw context (`i64` param / return) is a
+    // boxed `AverInt` and must be narrowed via `Unbox` (the checked
+    // `to_i64`). This mirrors the prior codegen's bare-param call-arg path,
+    // which narrowed every non-`emit_bare_i64` arg — INCLUDING a call result
+    // — with `to_i64`, rather than trusting the (mutual-TCO-unreliable)
+    // `bare_return` flag.
     let inner = rewrite_children(e, ctx);
     unbox_node(inner)
 }
@@ -192,7 +261,7 @@ fn call_returns_raw(e: &MirExpr, ctx: &RewriteCtx<'_>) -> bool {
         MirExpr::TailCall(tc) => tc.node.target,
         _ => return false,
     };
-    ctx.all.for_fn(target).is_some_and(|f| f.bare_return)
+    ctx.callee_facts(target).is_some_and(|f| f.bare_return)
 }
 
 /// Rewrite a `match` SUBJECT for the representation its binding aliases
@@ -238,6 +307,7 @@ fn rewrite_match_subject(
 /// tail leaves so each arm/branch is handled in the right context.
 fn rewrite_tail(e: Spanned<MirExpr>, bare_return: bool, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> {
     let line = e.line;
+    let ty = e.ty().cloned();
     match e.node {
         MirExpr::Match(mut m) => {
             // Subject is rewritten for the binding's representation (a bound
@@ -306,14 +376,32 @@ fn rewrite_tail(e: Spanned<MirExpr>, bare_return: bool, ctx: &RewriteCtx<'_>) ->
             let r = rewrite_tail(*inner, bare_return, ctx);
             Spanned::new(MirExpr::Return(std::boxed::Box::new(r)), line)
         }
-        // A self-tail-call's value is the recurrence, not a base value — its
-        // args are handled by `rewrite_value` (call-arg boundaries).
+        // A (self / mutual) tail-call is the RECURRENCE, not a returned
+        // value: it transfers control, it does not cross a representation
+        // boundary in the caller's frame. Its ARGS are rewritten in the
+        // callee's per-param context (`rewrite_call_args`), but the call
+        // itself is never `Box`/`Unbox`ed. Treating it as a value (and
+        // unboxing it in a bare-return fn) was the spurious-`Unbox` bug.
+        MirExpr::TailCall(mut tc) => {
+            let target = tc.node.target;
+            let callee = MirCallee::Fn(target);
+            let args = std::mem::take(&mut tc.node.args);
+            tc.node.args = rewrite_call_args(args, &callee, ctx);
+            Spanned::new(MirExpr::TailCall(tc), line)
+        }
+        // A base-case value (a literal, a bare `Local`, an arithmetic tree,
+        // an ordinary `Call`): rewrite for the fn's return representation.
         other => {
             let spanned = Spanned::new(other, line);
+            if let Some(t) = ty {
+                spanned.set_ty(t);
+            }
             if bare_return {
                 rewrite_raw(spanned, ctx)
             } else {
-                rewrite_boxed(spanned, ctx)
+                // Boxed-return tail: the Q5 bare-returning-call boxing applies
+                // here (and only here — see `rewrite_boxed_tail`).
+                rewrite_boxed_tail(spanned, ctx)
             }
         }
     }
@@ -549,7 +637,7 @@ fn rewrite_call_args(
     ctx: &RewriteCtx<'_>,
 ) -> Vec<Spanned<MirExpr>> {
     let callee_facts = match callee {
-        MirCallee::Fn(t) => ctx.all.for_fn(*t),
+        MirCallee::Fn(t) => ctx.callee_facts(*t),
         _ => None,
     };
     args.into_iter()
@@ -620,7 +708,7 @@ mod tests {
         );
         let mir_items = result.resolved_items.clone();
         let program = optimize(lower_program(&mir_items));
-        rewrite_for_rust(program)
+        rewrite_for_rust(program, &std::collections::HashSet::new())
     }
 
     fn fn_named<'a>(program: &'a MirProgram, name: &str) -> &'a MirFn {

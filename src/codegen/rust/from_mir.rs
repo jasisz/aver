@@ -325,24 +325,6 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>) -> Option<String> {
     }
 }
 
-/// Coerce an operand of a BOXED `AverInt` arithmetic op to an `AverInt`
-/// expression. A bare-`i64` operand whose boxed-path emission would be a
-/// raw `i64` (a bare `Local` or bare arithmetic tree) crosses the
-/// bare→`AverInt` boundary via `from_i64`. A literal is NOT converted: its
-/// boxed-path `code` is already `AverInt::from_i64(N)` (the correct boxed
-/// form), so wrapping it would double-box. A boxed / unanalyzable operand
-/// is left as the already-emitted `code`.
-fn boxed_int_operand(code: String, _expr: &Spanned<MirExpr>, _ctx: &MirEmitCtx<'_>) -> String {
-    // ETAP-2 SLICE 1: the bare->boxed boundary is now an EXPLICIT
-    // `MirExpr::Box` node the `bare_i64_rewrite` pass inserted, lowered by
-    // the `Box` arm of `emit_mir_expr`. Codegen no longer inserts the
-    // `from_i64` conversion here — it would double-box the value the rewrite
-    // already wrapped. This is now an identity pass (kept as a no-op so the
-    // many call sites need not all be deleted in one churn-heavy edit; the
-    // residual call sites are harmless and the next cleanup can inline it).
-    code
-}
-
 /// Per-fn borrow policy for the MIR walker — the slice of
 /// [`super::emit_ctx::EmitCtx`] the covered arms read, owned so a
 /// borrowing [`MirEmitCtx`] can be built from it. Recomputed per
@@ -977,12 +959,10 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 // Mixed-representation boundary: this is the boxed
                 // `AverInt` arithmetic path, but ONE operand may be a bare
                 // `i64` (e.g. `acc * n` where `acc` stays boxed and `n`
-                // went bare). The `AverInt` method takes `&AverInt`, so a
-                // bare operand re-enters the boxed world via `from_i64`
-                // (the bare→AverInt escape edge). A boxed operand is left
-                // as-is.
-                let l = boxed_int_operand(l, &bop.lhs, emit_ctx);
-                let r = boxed_int_operand(r, &bop.rhs, emit_ctx);
+                // went bare). ETAP-2 SLICE 1: the bare→`AverInt` boundary is
+                // now an EXPLICIT `Box(n)` node the rewrite inserted, so
+                // `emit_mir_expr` already produced the `from_i64(n)` text for
+                // `l` / `r` — no codegen-side coercion here.
                 let method = match bop.op {
                     BinOp::Add => "add",
                     BinOp::Sub => "sub",
@@ -2047,11 +2027,11 @@ fn emit_mir_match_with(
         // bound `x` is the `AverInt` its later uses expect. A bare bound slot
         // keeps the raw subject. (Only the `Bind` arm carries a slot; a
         // wildcard / destructuring pattern is unaffected.)
-        if let MirPattern::Bind(slot, _) = &m.arms[0].pattern
-            && !emit_ctx.bare.is_bare(*slot)
-        {
-            subj_code = boxed_int_operand(subj_code, &m.subject, emit_ctx);
-        }
+        // ETAP-2 SLICE 1: the bind-crossing boundary is now an EXPLICIT
+        // `Box`/`Unbox` node the rewrite wrapped the subject in (it rewrites
+        // the subject in the binding's representation context). `subj_code`
+        // already carries the right representation — no codegen-side coercion.
+        let _ = &m.arms[0].pattern;
         let subj = mir_clone_arg(subj_code, &m.subject.node, emit_ctx);
         let codegen = emit_ctx.codegen?;
         let pat = emit_pattern(&arms[0].pattern, false, codegen);
