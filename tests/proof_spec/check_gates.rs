@@ -942,11 +942,7 @@ fn ratchet_corrupt_baseline_fails_closed() {
 
 /// Run `aver proof <corpus_av> --backend lean --check --check-json [--explain]`
 /// and return the parsed check-json summary object. Lake-gated (skips if absent).
-fn run_check_json_for(
-    out_tag: &str,
-    corpus_av: &str,
-    explain: bool,
-) -> Option<serde_json::Value> {
+fn run_check_json_for(out_tag: &str, corpus_av: &str, explain: bool) -> Option<serde_json::Value> {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping {out_tag}: `lake` not available");
         return None;
@@ -976,7 +972,9 @@ fn run_check_json_for(
         .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)))
         .to_string();
     let _ = std::fs::remove_dir_all(&out);
-    Some(serde_json::from_str(&json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}")))
+    Some(
+        serde_json::from_str(&json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}")),
+    )
 }
 
 #[test]
@@ -987,8 +985,11 @@ fn proof_check_explain_surfaces_open_goal_residual() {
     // the law's UNSOLVED GOAL with the inductive hypothesis (`ih`) in canonical
     // recursive form — exactly what an agent applies the IH against. The counted
     // verdict is unchanged (still not universal, still a sorry).
-    let Some(summary) = run_check_json_for("aver-explain-open-out", "proof-corpus/tip/isaplanner/prop_49.av", true)
-    else {
+    let Some(summary) = run_check_json_for(
+        "aver-explain-open-out",
+        "proof-corpus/tip/isaplanner/prop_49.av",
+        true,
+    ) else {
         return;
     };
     let goals = summary
@@ -998,9 +999,7 @@ fn proof_check_explain_surfaces_open_goal_residual() {
     let residual = goals
         .get("butlast.butlastConcatLaw")
         .and_then(|v| v.as_str())
-        .unwrap_or_else(|| {
-            panic!("open_goals must be keyed by `fn.law` identity:\n{summary}")
-        });
+        .unwrap_or_else(|| panic!("open_goals must be keyed by `fn.law` identity:\n{summary}"));
     assert!(
         !residual.is_empty(),
         "the residual text must be non-empty:\n{residual}"
@@ -1017,8 +1016,11 @@ fn proof_check_without_explain_emits_no_open_goals_key() {
     // The no-op invariant: WITHOUT `--explain`, the same OPEN task's check-json
     // must contain NO `open_goals` key at all — byte-shape unchanged for existing
     // substring consumers (proof-corpus/run.sh, the --gate baseline diff).
-    let Some(summary) = run_check_json_for("aver-explain-noop-out", "proof-corpus/tip/isaplanner/prop_49.av", false)
-    else {
+    let Some(summary) = run_check_json_for(
+        "aver-explain-noop-out",
+        "proof-corpus/tip/isaplanner/prop_49.av",
+        false,
+    ) else {
         return;
     };
     assert!(
@@ -1027,9 +1029,11 @@ fn proof_check_without_explain_emits_no_open_goals_key() {
     );
     // And every counted field that exists without --explain must match what it
     // reports WITH --explain (only the additive `open_goals` key may appear).
-    let Some(with_explain) =
-        run_check_json_for("aver-explain-cmp-out", "proof-corpus/tip/isaplanner/prop_49.av", true)
-    else {
+    let Some(with_explain) = run_check_json_for(
+        "aver-explain-cmp-out",
+        "proof-corpus/tip/isaplanner/prop_49.av",
+        true,
+    ) else {
         return;
     };
     for (k, v) in summary.as_object().unwrap() {

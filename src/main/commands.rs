@@ -6096,7 +6096,9 @@ fn run_proof_check(
     // is gated on the COUNTED build having succeeded (no audit otherwise), and
     // its own outcome can never touch `passed` / `universal` / the exit code.
     let mut manifest: Option<ProofManifest> = match (&lean_law_audit, &when_universal) {
-        (Some(audit), Some((_, _, lane_laws))) => Some(build_proof_manifest(&audit.laws, lane_laws)),
+        (Some(audit), Some((_, _, lane_laws))) => {
+            Some(build_proof_manifest(&audit.laws, lane_laws))
+        }
         _ => None,
     };
     let mut open_goals: std::collections::BTreeMap<String, String> =
@@ -8639,7 +8641,10 @@ mod tests {
         // `omega`/`split` would throw `No usable constraints` instead of leaving a
         // clean residual).
         for banned in ["done", "omega", "split", "simp_all", "sorry"] {
-            assert!(!body.contains(banned), "probe must not contain `{banned}`:\n{body}");
+            assert!(
+                !body.contains(banned),
+                "probe must not contain `{banned}`:\n{body}"
+            );
         }
     }
 

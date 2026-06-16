@@ -2494,20 +2494,30 @@ pub fn residual_probe_body(thm_lines: &[&str], probe_name: &str) -> Option<Strin
     let strip = format!("(try simp only [{simp_set}])");
 
     // 3. Reassemble: statement (renamed) + intro + induction + each arm's pattern
-    //    head with the cascade replaced by the normalization-only `strip`.
+    //    head with the cascade replaced by the normalization-only `strip`. Re-
+    //    indent every reconstructed line to a uniform 2-space body indent. The
+    //    source `induction`/arms may sit DEEPER than the theorem's `intro`: the
+    //    `fun_induction` first-rung wraps the manual ladder in a
+    //    `first | (fun_induction …) | ( induction … )` cascade, nesting the
+    //    `induction` and its arms one level in. Copying their original (deeper)
+    //    indentation verbatim while emitting `intro` shallow yields a probe whose
+    //    `intro`/`induction` columns disagree, which Lean rejects (an `introN`
+    //    parse failure, never the `unsolved goals` the caller reads). Flattening
+    //    to a 2-space block makes the probe a clean top-level `induction`
+    //    regardless of how deep it sat in the source body.
     let mut out = vec![format!("theorem {probe_name}{rest}")];
     if let Some(intro) = intro_line {
-        out.push(intro.to_string());
+        out.push(format!("  {}", intro.trim_start()));
     }
-    out.push(induction_line.to_string());
+    out.push(format!("  {}", induction_line.trim_start()));
     for arm in arm_lines {
         // Keep everything up to and including the `=>`, drop the tactic cascade.
-        let indent: String = arm.chars().take_while(|c| c.is_whitespace()).collect();
+        let arm = arm.trim();
         if let Some(arrow) = arm.find("=>") {
             let head = arm[..arrow + 2].trim_end();
-            out.push(format!("{head} {strip}"));
+            out.push(format!("  {head} {strip}"));
         } else {
-            out.push(format!("{indent}{} {strip}", arm.trim()));
+            out.push(format!("  {arm} {strip}"));
         }
     }
     Some(out.join("\n"))
