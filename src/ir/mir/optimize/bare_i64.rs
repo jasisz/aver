@@ -1072,6 +1072,16 @@ fn guard_floor(f: &MirFn, i: usize, edges: &[CallEdge]) -> Interval {
         return unfloored; // comparison guard ⇒ no floor in Phase A.
     }
 
+    // (a') the guard K must DOMINATE the recursion: its literal arm and a
+    //      self-tail-call must be sibling arms of the SAME `match counter`.
+    //      Otherwise `guard_literal_for` may have picked a `K` from an
+    //      unrelated `match counter` (a dead binding, a different branch)
+    //      while the recursion is stopped by a different base value, making
+    //      `[K-step, entry]` fiction and the counter unbounded below.
+    if !guard_dominates_recursion(&f.body.node, f.fn_id, param_slot, guard_k) {
+        return unfloored;
+    }
+
     // (b) the K base arm must be TERMINAL (not self-recursing).
     if equality_guard_arm_recurses(&f.body.node, f.fn_id, param_slot, guard_k) {
         return unfloored;
@@ -1318,6 +1328,91 @@ fn contains_self_tailcall(e: &MirExpr, self_fn: FnId) -> bool {
         }
     });
     found
+}
+
+/// Does the equality guard `K` DOMINATE the recursion — does the `K` base case
+/// and a self-tail-call live in MUTUALLY-EXCLUSIVE branches of the SAME control
+/// node on the counter?
+///
+/// `guard_literal_for` returns a `K` literal found ANYWHERE on the counter,
+/// including a `match counter` that does not gate the recursion at all (a dead
+/// `let` binding, an unrelated branch). If the recursion is actually stopped by
+/// a DIFFERENT control node (a different base value — e.g. the real base case is
+/// `i64::MAX`, not `0`), the `[K-step, entry]` floor is fiction and the counter
+/// runs unbounded toward `-inf` (the guard-dominance hole). Requiring the
+/// recursive self-tail-call to sit in the `counter != K` branch — and NOT in the
+/// `counter == K` (base) branch — proves the counter genuinely descends toward
+/// `K` and stops there. Two lowered forms count:
+///   - `match counter { K -> base; … rec … }` — the `K` literal arm and a
+///     self-tail-call are SIBLING arms.
+///   - `if counter == K { base } else { … rec … }` (the lowering of
+///     `match counter == K { true -> base; false -> rec }`) — `Eq` is symmetric,
+///     so either operand order; the recursion must be in the `else`
+///     (`counter != K`) branch and absent from the `then` (`== K`) branch.
+///
+/// Fail-closed: no dominating node ⇒ no floor ⇒ the descent widens ⇒ boxed.
+fn guard_dominates_recursion(e: &MirExpr, self_fn: FnId, counter: LocalId, guard_k: i128) -> bool {
+    if let MirExpr::Match(m) = e
+        && subject_is_local(&m.node.subject.node, counter)
+    {
+        let mut has_k_arm = false;
+        let mut has_sibling_recursion = false;
+        for arm in &m.node.arms {
+            let is_k = matches!(
+                &arm.pattern,
+                MirPattern::Literal(Literal::Int(k)) if *k as i128 == guard_k
+            );
+            if is_k {
+                has_k_arm = true;
+            } else if contains_self_tailcall(&arm.body.node, self_fn) {
+                has_sibling_recursion = true;
+            }
+        }
+        if has_k_arm && has_sibling_recursion {
+            return true;
+        }
+    }
+    // The lowered `match counter == K { true -> base; false -> rec }` form:
+    // `IfThenElse { cond: counter == K, then = base, else = rec }`. The
+    // recursion must be in the `else` (counter != K) branch and absent from the
+    // `then` (counter == K) branch — a self-tail-call under `== K` would recurse
+    // AT the base case (unbounded), exactly the recursive-base-arm hole.
+    if let MirExpr::IfThenElse(ite) = e
+        && let MirExpr::BinOp(b) = &ite.node.cond.node
+        && matches!(b.node.op, BinOp::Eq)
+        && cond_compares_counter_to_k(&b.node.lhs.node, &b.node.rhs.node, counter, guard_k)
+        && contains_self_tailcall(&ite.node.else_branch.node, self_fn)
+        && !contains_self_tailcall(&ite.node.then_branch.node, self_fn)
+    {
+        return true;
+    }
+    let mut found = false;
+    visit_children(e, &mut |c| {
+        if !found {
+            found = guard_dominates_recursion(c, self_fn, counter, guard_k);
+        }
+    });
+    found
+}
+
+/// `true` when `lhs OP rhs` compares the `counter` local against the literal
+/// `guard_k` (either operand order). Used by the `Eq`-guard dominance check.
+fn cond_compares_counter_to_k(
+    lhs: &MirExpr,
+    rhs: &MirExpr,
+    counter: LocalId,
+    guard_k: i128,
+) -> bool {
+    fn is_k_lit(e: &MirExpr, guard_k: i128) -> bool {
+        if let MirExpr::Literal(l) = e
+            && let Literal::Int(k) = l.node
+        {
+            return k as i128 == guard_k;
+        }
+        false
+    }
+    (subject_is_local(lhs, counter) && is_k_lit(rhs, guard_k))
+        || (subject_is_local(rhs, counter) && is_k_lit(lhs, guard_k))
 }
 
 /// If `e` is `counter - K` (a positive literal `K`), return `K`. The only
@@ -2507,6 +2602,79 @@ fn main() -> Int
         assert!(
             !f.param_is_bare(0),
             "a counter whose equality-guard base arm self-recurses is unbounded → must box"
+        );
+    }
+
+    /// Guard-dominance hole: the `0` literal arm that `guard_literal_for`
+    /// latches onto lives in a DEAD `match n` binding, NOT in the match that
+    /// actually gates the recursion (whose base case is `i64::MAX`). The
+    /// counter decrements toward `-inf`, never stopping at `0`, so the
+    /// `[K-step, entry]` floor is fiction. The fix requires the `K` arm and a
+    /// self-tail-call to be sibling arms of the SAME `match counter`
+    /// (`guard_dominates_recursion`); here they are not, so the param boxes.
+    /// Found by the cross-vendor panel on the fixpoint PR — a latent hole
+    /// pre-existing in the hand-rolled recognizers.
+    #[test]
+    fn non_dominating_guard_declines() {
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn bad(n: Int) -> Int
+    witness = match n
+        0 -> 0
+        _ -> 0
+    match n
+        9223372036854775807 -> n
+        _ -> bad(n - 1)
+
+fn main() -> Int
+    bad(5)
+"#;
+        let (program, facts) = facts_for(src);
+        let f = facts
+            .for_fn(fn_id_by_name(&program, "bad"))
+            .expect("bad facts");
+        // The `0` guard does not dominate the recursion (its match is a dead
+        // binding); the real base case is `i64::MAX`, never reached descending
+        // from 5 — the counter is unbounded below and must box.
+        assert!(
+            !f.param_is_bare(0),
+            "a counter whose equality guard does not dominate the recursion is unbounded → must box"
+        );
+    }
+
+    /// The OTHER idiomatic countdown shape — `match n == 0 { true -> …;
+    /// false -> down(n-1) }` — lowers to `IfThenElse { cond: n == 0, then,
+    /// else }`. Its guard dominates the recursion (rec in the `n != 0` else
+    /// branch, base in the `== 0` then branch), so the counter must STAY bare.
+    /// Guards the over-box the dominance gate would otherwise cause on the
+    /// `Eq`-cond form (caught by the empirical panel).
+    #[test]
+    fn comparison_equality_countdown_stays_bare() {
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn down(n: Int) -> Int
+    match n == 0
+        true -> 0
+        false -> down(n - 1)
+
+fn main() -> Int
+    down(20000)
+"#;
+        let (program, facts) = facts_for(src);
+        let f = facts
+            .for_fn(fn_id_by_name(&program, "down"))
+            .expect("down facts");
+        // `n == 0` dominates (rec in the `!= 0` branch), so the counter is
+        // bounded `[0, 20000]` and stays bare — same as `match n { 0 -> … }`.
+        assert!(
+            f.param_is_bare(0),
+            "a `match n == 0` countdown's counter dominates and must stay bare (no over-box)"
         );
     }
 
