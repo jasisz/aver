@@ -195,6 +195,42 @@ fn call_returns_raw(e: &MirExpr, ctx: &RewriteCtx<'_>) -> bool {
     ctx.all.for_fn(target).is_some_and(|f| f.bare_return)
 }
 
+/// Rewrite a `match` SUBJECT for the representation its binding aliases
+/// require. A `match subject { x -> … }` binds the subject to `x`, so `x`
+/// inherits the subject's representation. The analysis already set `x`'s
+/// repr (a binding that ESCAPES is boxed — defect esc_match `[x, x]`), so
+/// the subject must be rewritten to MATCH the binding: boxed when the
+/// binding is boxed (the raw subject is `Box`ed at the bind crossing), raw
+/// when the binding is bare. With no `Bind` arm (literal / ctor / wildcard
+/// patterns) the subject is an ordinary value position. When arms disagree
+/// (multiple bind arms with mixed reps — not produced by lowering), the
+/// safe choice is boxed.
+fn rewrite_match_subject(
+    subj: Spanned<MirExpr>,
+    arms: &[crate::ir::mir::MirMatchArm],
+    ctx: &RewriteCtx<'_>,
+) -> Spanned<MirExpr> {
+    use crate::ir::mir::MirPattern;
+    let bind_slots: Vec<LocalId> = arms
+        .iter()
+        .filter_map(|arm| match &arm.pattern {
+            MirPattern::Bind(slot, _) => Some(*slot),
+            _ => None,
+        })
+        .collect();
+    if bind_slots.is_empty() {
+        return rewrite_value(subj, ctx);
+    }
+    // Every bind slot aliases the same subject, so they share a repr in a
+    // well-formed program; require ALL bare to treat the subject raw.
+    let all_bare = bind_slots.iter().all(|s| ctx.facts.is_bare(*s));
+    if all_bare {
+        rewrite_raw(subj, ctx)
+    } else {
+        rewrite_boxed(subj, ctx)
+    }
+}
+
 /// Rewrite a value in TAIL/return position. `bare_return` is the enclosing
 /// fn's return representation: when bare, the tail is a raw context; when
 /// boxed, a boxed context (and the descent boxes a bare leaf — defects
@@ -204,15 +240,16 @@ fn rewrite_tail(e: Spanned<MirExpr>, bare_return: bool, ctx: &RewriteCtx<'_>) ->
     let line = e.line;
     match e.node {
         MirExpr::Match(mut m) => {
-            // Subject is an ordinary value position (handled by its own
-            // children rewrite); the arm bodies are tails.
+            // Subject is rewritten for the binding's representation (a bound
+            // subject aliases the binding — defect esc_match); the arm bodies
+            // are tails.
             let subj = std::mem::replace(
                 &mut m.node.subject,
                 std::boxed::Box::new(Spanned::bare(MirExpr::Literal(Spanned::bare(
                     Literal::Unit,
                 )))),
             );
-            m.node.subject = std::boxed::Box::new(rewrite_value(*subj, ctx));
+            m.node.subject = std::boxed::Box::new(rewrite_match_subject(*subj, &m.node.arms, ctx));
             for arm in &mut m.node.arms {
                 let body = std::mem::replace(
                     &mut arm.body,
@@ -473,7 +510,7 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
         }
         MirExpr::Match(mut m) => {
             let subj = take_box(&mut m.node.subject);
-            m.node.subject = std::boxed::Box::new(rewrite_value(subj, ctx));
+            m.node.subject = std::boxed::Box::new(rewrite_match_subject(subj, &m.node.arms, ctx));
             for arm in &mut m.node.arms {
                 let body = std::mem::replace(
                     &mut arm.body,

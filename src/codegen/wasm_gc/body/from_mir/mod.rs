@@ -1035,6 +1035,12 @@ pub(crate) fn emit_mir_expr(
             }
             None => Ok(None),
         },
+        // ETAP-2 Int-representation boundaries are inserted ONLY by the
+        // Rust-codegen-only `bare_i64_rewrite` pass — the wasm-gc backend
+        // consumes the shared, un-rewritten MIR, so these never appear here.
+        // `Ok(None)` (outside the supported subset) is the defensive, never-
+        // hit fallback; it keeps wasm-gc behavior untouched (slice 2 territory).
+        MirExpr::Box(_) | MirExpr::Unbox(_) => Ok(None),
     }
 }
 
