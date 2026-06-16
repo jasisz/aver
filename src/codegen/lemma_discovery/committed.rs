@@ -29,6 +29,53 @@ use crate::ast::{TopLevel, VerifyKind};
 use crate::codegen::proof_lower::{LawProofCone, ProofLowerInputs};
 use crate::ir::proof_ir::ProofIR;
 
+/// Who PROPOSED a lemma — the ORIGIN axis, orthogonal to the verification
+/// STRENGTH axis (the sidecar's "verified (bounded), kernel proof pending" vs
+/// proven header). The proof system has several lemma proposers; each lands on
+/// a different point of the discovery-vs-plumbing map, so the artifacts carry
+/// the origin honestly instead of letting one proposer's name (the
+/// `--discover` enumerator) stand in for all of them.
+///
+/// - [`Conjectured`](Self::Conjectured) — an agent/LLM generalization, a LEAP
+///   into the discovery half of the map.
+/// - [`Enumerated`](Self::Enumerated) — the `discover` blind enumerate +
+///   hostile forward-check, a search that LANDS mostly on plumbing.
+/// - [`Recognized`](Self::Recognized) — shape recognizers / bridges, FORCED by
+///   the program's structure → plumbing.
+/// - [`Calculated`](Self::Calculated) — Lemma-Calculation (residual → lemma),
+///   FORCED by the stuck goal → plumbing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LemmaProvenance {
+    /// Agent/LLM generalization — a leap into discovery.
+    Conjectured,
+    /// The `discover` blind enumerate + hostile forward-check — a search that
+    /// lands mostly on plumbing.
+    Enumerated,
+    /// Shape recognizers / bridges — plumbing forced by structure.
+    Recognized,
+    /// Lemma-Calculation (residual → lemma) — plumbing forced by the stuck goal.
+    Calculated,
+}
+
+impl LemmaProvenance {
+    /// Stable lowercase tag for rendering and round-trip:
+    /// `"conjectured"` / `"enumerated"` / `"recognized"` / `"calculated"`.
+    pub fn as_tag(&self) -> &'static str {
+        match self {
+            LemmaProvenance::Conjectured => "conjectured",
+            LemmaProvenance::Enumerated => "enumerated",
+            LemmaProvenance::Recognized => "recognized",
+            LemmaProvenance::Calculated => "calculated",
+        }
+    }
+}
+
+impl std::fmt::Display for LemmaProvenance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_tag())
+    }
+}
+
 /// A lemma available to a law's proof: its theorem name plus Lean text
 /// (statement, and for embedded ones the tactic too). Two provenances flow
 /// through the same orientation / loop-exclusion / simp-selection machinery:
@@ -48,6 +95,11 @@ pub struct CommittedLemma {
     /// Write `text` verbatim into the proof project (`true`), or only
     /// reference `name` in simp sets because it is already emitted (`false`).
     pub embed: bool,
+    /// Which proposer ORIGINATED this lemma (orthogonal to `embed`/strength).
+    /// Carried so the future Lemma-Calculation path can set it; every current
+    /// producer is the discovery enumerator, so this is always
+    /// [`LemmaProvenance::Enumerated`] for now.
+    pub provenance: LemmaProvenance,
 }
 
 impl CommittedLemma {
@@ -60,6 +112,7 @@ impl CommittedLemma {
             name,
             text,
             embed: false,
+            provenance: LemmaProvenance::Enumerated,
         }
     }
 }
@@ -88,6 +141,7 @@ pub fn parse_committed_lemmas(content: &str) -> Vec<CommittedLemma> {
                 name,
                 text: line.to_string(),
                 embed: true,
+                provenance: LemmaProvenance::Enumerated,
             });
         } else if let Some(block) = current.as_mut() {
             block.text.push('\n');
@@ -764,6 +818,7 @@ verify count law countPlusConcat
                 name: "free_floating".to_string(),
                 text: "theorem free_floating (a : Nat) : a + 0 = a := by simp".to_string(),
                 embed: true,
+                provenance: LemmaProvenance::Enumerated,
             }];
             assert!(plan_simp_over_lemma_pins(inputs, &ir, &lemmas).is_empty());
         });

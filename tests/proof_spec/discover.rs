@@ -318,7 +318,7 @@ fn discover_bounds_decreasing_accumulator_on_drain_when_lake_is_available() {
 
 // ===========================================================================
 // Born-as-Aver discovery (`--discover --emit-laws`): a discovered law is born
-// AS an Aver law in a sidecar `<file>.discovered.av`, so it flows through the
+// AS an Aver law in a sidecar `<file>.aux.av`, so it flows through the
 // same pipeline as a user law (verify, the cross-file pool, `aver proof
 // --check --gate`). Scope (v1): the `Conjecture` family only.
 // ===========================================================================
@@ -349,7 +349,7 @@ fn run_emit_laws(file: &PathBuf, module_root: &PathBuf) -> (PathBuf, String) {
         .arg(module_root)
         .output()
         .expect("expected `aver proof --discover --emit-laws` to run");
-    let sidecar = PathBuf::from(format!("{}.discovered.av", file.display()));
+    let sidecar = PathBuf::from(format!("{}.aux.av", file.display()));
     (sidecar, String::from_utf8_lossy(&run.stdout).into_owned())
 }
 
