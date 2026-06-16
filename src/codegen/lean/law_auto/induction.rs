@@ -1931,8 +1931,13 @@ fn emit_list_induction(
         // `revRev` ladder). Gated on a non-empty `discovered_simp` so a
         // sibling-only feedback emit (część A) stays byte-identical to before.
         if !discovered_simp.is_empty() {
-            let (nil_plain, cons_plain) =
-                mk_arms(&simp_list_plain, &split_set_plain, bridge_set.as_deref(), None, false);
+            let (nil_plain, cons_plain) = mk_arms(
+                &simp_list_plain,
+                &split_set_plain,
+                bridge_set.as_deref(),
+                None,
+                false,
+            );
             proof_lines.push(format!("  | (induction {} with", target_lean));
             proof_lines.push(format!("     {nil_plain}"));
             proof_lines.push(format!("     {cons_plain})"));
