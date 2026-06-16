@@ -1992,7 +1992,7 @@ pub(super) fn aint_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcErro
 /// functype registered in `module.rs`, the `SlotTable` params-prefix, and
 /// the `call_indirect` `fn_sig_key` on one repr-aware path so they agree
 /// byte-for-byte; 2b flips the gate.
-const ENABLE_BARE_SLOTS: bool = false;
+const ENABLE_BARE_SLOTS: bool = true;
 
 /// Result-list shape for a wasm function signature derived from an
 /// Aver return type.

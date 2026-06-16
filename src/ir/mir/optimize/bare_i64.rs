@@ -480,6 +480,38 @@ fn compute_summary(program: &MirProgram, int_params: &HashMap<FnId, Vec<bool>>) 
             }
         }
 
+        // (C3) A bare-returning callee whose result is bound to a `let` is
+        //      safe ONLY when the binding slot is itself bare (a fresh `i64`
+        //      that stays raw). If the binding is BOXED — its later uses
+        //      escape into a general-Int context (`from.x + dx`, an aggregate,
+        //      a boxed param) so `analyze_fn` declined it — then storing the
+        //      raw `i64` call result into the `AverInt` slot is unsound: a
+        //      `rustc` type error on Rust, a wasm VALIDATION error on wasm-gc
+        //      (no per-store coercion). The C2 scan deliberately does NOT flag
+        //      a `let`-bound call (the binding's uses are scanned as their own
+        //      positions), but a `Local` use never flags its originating call,
+        //      so this binding-aware step closes that gap: recompute each
+        //      caller's per-slot facts and demote any bare-returning callee
+        //      bound to a non-bare slot. (Mirror of C2's discipline, keyed on
+        //      the binding repr instead of the consumer position.)
+        let tmp = Summary {
+            bare_params: bare_params.clone(),
+            bare_return: bare_return.clone(),
+            bare_param_intervals: bare_param_intervals.clone(),
+        };
+        for (_caller, f) in program.iter() {
+            let facts = analyze_fn(f, &tmp);
+            let mut demote: Vec<FnId> = Vec::new();
+            collect_let_bound_boxed_returns(&f.body.node, &facts, &bare_return, &mut demote);
+            for target in demote {
+                if bare_return.get(&target).copied().unwrap_or(false)
+                    && bare_return.insert(target, false) != Some(false)
+                {
+                    changed = true;
+                }
+            }
+        }
+
         if !changed {
             break;
         }
@@ -490,6 +522,31 @@ fn compute_summary(program: &MirProgram, int_params: &HashMap<FnId, Vec<bool>>) 
         bare_return,
         bare_param_intervals,
     }
+}
+
+/// Walk `e`, collecting any `Call(Fn(target))` that is the immediate VALUE
+/// of a `Let` whose binding slot the caller's per-slot analysis (`facts`)
+/// declined to make bare, AND whose `target` the summary currently marks
+/// `bare_return`. Such a callee's raw `i64` result would be stored into a
+/// boxed `AverInt` binding slot with no boundary conversion — unsound. The
+/// fixpoint demotes each collected `target`'s `bare_return` (C3).
+fn collect_let_bound_boxed_returns(
+    e: &MirExpr,
+    facts: &FnBareFacts,
+    bare_return: &HashMap<FnId, bool>,
+    out: &mut Vec<FnId>,
+) {
+    if let MirExpr::Let(l) = e
+        && let MirExpr::Call(c) = &l.node.value.node
+        && let MirCallee::Fn(target) = c.node.callee
+        && bare_return.get(&target).copied().unwrap_or(false)
+        && !facts.is_bare(l.node.binding)
+    {
+        out.push(target);
+    }
+    visit_children(e, &mut |c| {
+        collect_let_bound_boxed_returns(c, facts, bare_return, out)
+    });
 }
 
 /// The set of callee `FnId`s whose return value is consumed in at least
@@ -612,6 +669,27 @@ fn scan_return_consumers(
                 }
             }
         },
+        // A `TailCall`'s args carry the SAME consumer discipline as a
+        // `Call(Fn)`: a call result passed at the tail-callee's BOXED param
+        // index is consumed in a general-Int (`AverInt`) position and so is
+        // unsafe; at a BARE param it is safe. Without this arm a bare-
+        // returning call used as a tail-call arg at a boxed param
+        // (`loop(i - 1, signOf(i))`, `signOf` bare-return, `loop`'s `acc`
+        // boxed) was NEVER flagged, so `signOf.bare_return` stayed true and
+        // its raw `i64` result flowed into the `AverInt` param — a silent
+        // wrong value on Rust, a wasm VALIDATION error on wasm-gc (where
+        // there is no per-call coercion). Mirror of the `MirCallee::Fn` arm.
+        MirExpr::TailCall(tc) => {
+            for (i, a) in tc.node.args.iter().enumerate() {
+                let bare_param = bare_params
+                    .get(&tc.node.target)
+                    .and_then(|v| v.get(i).copied())
+                    .unwrap_or(false);
+                if !bare_param {
+                    flag_if_call(&a.node, unsafe_set);
+                }
+            }
+        }
         // Interpolation embeds stringify their values — `to_string()` works
         // on `i64` too, so a call result there is SAFE (do not flag).
         // A `Let` whose VALUE is a call: the binding holds the result; we
@@ -1840,8 +1918,11 @@ pub(crate) fn tests_visit_children(e: &MirExpr, f: &mut dyn FnMut(&MirExpr)) {
 }
 
 /// Apply `f` to every immediate sub-expression of `e`. Kept in sync with
-/// the exhaustive walk in `own_param.rs` / `instantiations.rs`.
-fn visit_children(e: &MirExpr, f: &mut dyn FnMut(&MirExpr)) {
+/// the exhaustive walk in `own_param.rs` / `instantiations.rs`. `pub(crate)`
+/// so the sibling `bare_i64_rewrite` pass (the wasm-gc `mutual_recursion_box_set`
+/// call-graph walk) can reuse this one exhaustive child enumeration instead
+/// of forking a second copy.
+pub(crate) fn visit_children(e: &MirExpr, f: &mut dyn FnMut(&MirExpr)) {
     match e {
         MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
         MirExpr::Let(l) => {

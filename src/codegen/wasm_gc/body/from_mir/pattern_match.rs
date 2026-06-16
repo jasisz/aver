@@ -4,6 +4,26 @@
 
 use super::*;
 
+/// ETAP-2 SLICE 2b: the raw-result colour an arm body must carry, derived
+/// from the match's already-computed `block_ty`. A bare-`i64` match (a
+/// `bare_return` Int fn's tail, or a bare slot's `let` value) declares its
+/// block result as `BlockType::Result(I64)` in `emit_mir_match` — this is
+/// the SINGLE source of truth for "the arms produce a raw `i64`". The
+/// carrier helpers (`Result` / `Option` / `List` / variant / tuple-ctor /
+/// map-get-fused) emit their arm bodies AFTER the `emit_mir_match` entry
+/// take-and-clear cleared the colour, so each arm-body emit must re-derive
+/// and re-set it — exactly as the `Bool` / int-cascade paths thread their
+/// `result_raw` bool. Reading it off `block_ty` avoids threading the bool
+/// through every (recursive) cascade signature and CANNOT desync from the
+/// declared block type: a boxed Int match declares `Result($AverInt ref)`
+/// under bignum (never `I64`), so `I64` here is unambiguously the raw path.
+/// (With bignum OFF an Int match also declares `I64`, but there the raw and
+/// boxed Int emits are byte-identical `i64.const`, so setting it raw is a
+/// harmless no-op.)
+fn block_ty_is_raw_i64(block_ty: wasm_encoder::BlockType) -> bool {
+    matches!(block_ty, wasm_encoder::BlockType::Result(ValType::I64))
+}
+
 /// Mirror of `emit_match` (emit.rs) for the primitive-subject shapes:
 /// `Bool` (a single `if`/`else`) and `Int` (an `i64.eq` cascade). An
 /// arm carrying a constructor or list pattern is routed to the carrier
@@ -26,13 +46,25 @@ pub(crate) fn emit_mir_match(
     if m.arms.is_empty() {
         return Err(WasmGcError::Validation("match has no arms".into()));
     }
+    // ETAP-2 SLICE 2b: read the raw-result colour the caller (`emit_mir_expr`)
+    // cleared at entry — it is passed through this `EmitCtx` flag (the match
+    // is reached from the `MirExpr::Match` arm, which re-set it for the match
+    // tail). A raw result means the arm bodies produce an `i64`, so the block
+    // type is `i64`, not `$AverInt`, and the arm bodies are emitted in raw
+    // context. Take-and-clear here too so the subject (a value position)
+    // stays boxed; each arm-body emit re-sets it below / in the cascade.
+    let result_raw = ctx.int_result_raw.replace(false);
     // Result/block type — mirror of `emit_match`. The first arm's body
     // type is the match's type (typecheck proved all arms agree); a
     // `Unit` match lowers to `BlockType::Empty` and produces no value.
-    let result_ty_str = aver_type_canonical(&m.arms[0].body, ctx.return_type, ctx.registry);
-    let block_ty = match aver_to_wasm(&result_ty_str, Some(ctx.registry))? {
-        Some(v) => wasm_encoder::BlockType::Result(v),
-        None => wasm_encoder::BlockType::Empty,
+    let block_ty = if result_raw {
+        wasm_encoder::BlockType::Result(ValType::I64)
+    } else {
+        let result_ty_str = aver_type_canonical(&m.arms[0].body, ctx.return_type, ctx.registry);
+        match aver_to_wasm(&result_ty_str, Some(ctx.registry))? {
+            Some(v) => wasm_encoder::BlockType::Result(v),
+            None => wasm_encoder::BlockType::Empty,
+        }
     };
     let produces = !matches!(block_ty, wasm_encoder::BlockType::Empty);
 
@@ -54,7 +86,7 @@ pub(crate) fn emit_mir_match(
                 .iter()
                 .all(|p| matches!(p, MirPattern::Bind(..) | MirPattern::Wildcard))
         {
-            return emit_mir_tuple_match(func, &m.subject, &m.arms[0], slots, ctx);
+            return emit_mir_tuple_match(func, &m.subject, &m.arms[0], result_raw, slots, ctx);
         }
         return Ok(
             emit_mir_tuple_constructor_match(func, m, block_ty, slots, ctx)?.map(|()| produces),
@@ -100,10 +132,10 @@ pub(crate) fn emit_mir_match(
         )
     }) {
         if m.arms.len() == 1 {
-            return Ok(
-                emit_mir_single_variant_match(func, &m.subject, &m.arms[0], slots, ctx)?
-                    .map(|()| produces),
-            );
+            return Ok(emit_mir_single_variant_match(
+                func, &m.subject, &m.arms[0], result_raw, slots, ctx,
+            )?
+            .map(|()| produces));
         }
         return Ok(emit_mir_variant_dispatch(func, m, block_ty, slots, ctx)?.map(|()| produces));
     }
@@ -138,10 +170,14 @@ pub(crate) fn emit_mir_match(
                 return Ok(None);
             }
             func.instruction(&Instruction::If(block_ty));
+            // ETAP-2 SLICE 2b: the two bodies are result tails — colour them
+            // raw when the match result is raw (block type is then `i64`).
+            ctx.int_result_raw.set(result_raw);
             if emit_mir_expr(func, t, slots, ctx)?.is_none() {
                 return Ok(None);
             }
             func.instruction(&Instruction::Else);
+            ctx.int_result_raw.set(result_raw);
             if emit_mir_expr(func, f, slots, ctx)?.is_none() {
                 return Ok(None);
             }
@@ -174,6 +210,7 @@ pub(crate) fn emit_mir_match(
                 &typed_arms,
                 wildcard,
                 block_ty,
+                result_raw,
                 slots,
                 ctx,
             )?
@@ -207,6 +244,7 @@ fn emit_mir_tuple_match(
     func: &mut Function,
     subject: &Spanned<MirExpr>,
     arm: &MirMatchArm,
+    result_raw: bool,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<bool>, WasmGcError> {
@@ -247,7 +285,12 @@ fn emit_mir_tuple_match(
             func.instruction(&Instruction::LocalSet(slot.0));
         }
     }
-    // The arm body's value is the match's value, left on the stack.
+    // The arm body's value is the match's value, left on the stack — a
+    // result tail, so colour it raw when the match result is raw (ETAP-2
+    // SLICE 2b). There is no branch block here, so the body inherits the
+    // colour the caller computed (`result_raw`) directly rather than via a
+    // block type.
+    ctx.int_result_raw.set(result_raw);
     let Some(produces) = emit_mir_expr(func, &arm.body, slots, ctx)? else {
         return Ok(None);
     };
@@ -358,6 +401,8 @@ fn emit_mir_tuple_constructor_arm_cascade(
     };
     match &arm.pattern {
         MirPattern::Wildcard => {
+            // ETAP-2 SLICE 2b: arm tail — colour raw per the block type.
+            ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
             if emit_mir_expr(func, &arm.body, slots, ctx)?.is_none() {
                 return Ok(None);
             }
@@ -367,6 +412,7 @@ fn emit_mir_tuple_constructor_arm_cascade(
                 func.instruction(&Instruction::LocalGet(scratch));
                 func.instruction(&Instruction::LocalSet(slot.0));
             }
+            ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
             if emit_mir_expr(func, &arm.body, slots, ctx)?.is_none() {
                 return Ok(None);
             }
@@ -480,6 +526,8 @@ fn emit_mir_tuple_constructor_arm_cascade(
                     _ => {}
                 }
             }
+            // ETAP-2 SLICE 2b: arm tail — colour raw per the block type.
+            ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
             if emit_mir_expr(func, &arm.body, slots, ctx)?.is_none() {
                 return Ok(None);
             }
@@ -588,10 +636,14 @@ fn emit_mir_map_get_match_fused(
         }
     }
     func.instruction(&Instruction::If(block_ty));
+    // ETAP-2 SLICE 2b: re-set the raw colour for each arm tail (see
+    // `block_ty_is_raw_i64`) so a bare `Int` arm body renders raw `i64`.
+    ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
     if emit_mir_expr(func, &some_arm.body, slots, ctx)?.is_none() {
         return Ok(None);
     }
     func.instruction(&Instruction::Else);
+    ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
     if emit_mir_expr(func, &none_arm.body, slots, ctx)?.is_none() {
         return Ok(None);
     }
@@ -682,32 +734,43 @@ pub(crate) fn emit_mir_string_match(
 /// Mirror of `emit_int_match_cascade` (emit.rs): `subject == lit ?
 /// body : <rest>`, recomputing the subject per arm (no scratch slot).
 /// Returns `None` if any subtree falls outside the supported subset.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_mir_int_cascade(
     func: &mut Function,
     subject: &Spanned<MirExpr>,
     typed_arms: &[(i64, &Spanned<MirExpr>)],
     wildcard: &Spanned<MirExpr>,
     block_ty: wasm_encoder::BlockType,
+    result_raw: bool,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
     let Some(((pat_lit, body), rest)) = typed_arms.split_first() else {
-        // No typed arms left — emit the wildcard body.
+        // No typed arms left — emit the wildcard body (a result tail).
+        ctx.int_result_raw.set(result_raw);
         if emit_mir_expr(func, wildcard, slots, ctx)?.is_none() {
             return Ok(None);
         }
         return Ok(Some(()));
     };
+    // ETAP-2 SLICE 2b: a BARE subject (`match n { 0 -> … }`, `n` a raw i64)
+    // is compared with the scalar `i64.const` + `i64.eq` — the literal is
+    // NOT lifted to `$aint`. The boxed (`$aint` ref) subject keeps the
+    // `__aint_from_i64` + `__aint_eq` path. The subject is a value position,
+    // so emit it with the colour cleared.
+    let subject_raw = super::mir_renders_raw_i64(&subject.node, ctx);
+    ctx.int_result_raw.set(false);
     if emit_mir_expr(func, subject, slots, ctx)?.is_none() {
         return Ok(None);
     }
-    // bignum slice 4 (eq+hash gap) — under the flag the subject is an
+    // bignum slice 4 (eq+hash gap) — under the flag a BOXED subject is an
     // `$aint` ref, so the literal must be lifted to a Small `$aint`
     // (`__aint_from_i64`) and compared with `__aint_eq`. The flag-off path
-    // stays the byte-identical `i64.const` + `i64.eq`. Without this, an
-    // Int-literal `match` (`match n { 0 -> …, _ -> … }`) emits an `i64.eq`
-    // on a struct ref — invalid wasm.
-    if ctx.registry.bignum {
+    // (and a bare i64 subject) stays the byte-identical `i64.const` +
+    // `i64.eq`. Without this, an Int-literal `match` (`match n { 0 -> …, _
+    // -> … }`) over a boxed subject emits an `i64.eq` on a struct ref —
+    // invalid wasm.
+    if ctx.registry.bignum && !subject_raw {
         let from_i64 =
             ctx.fn_map
                 .builtins
@@ -732,11 +795,18 @@ pub(crate) fn emit_mir_int_cascade(
         func.instruction(&Instruction::I64Eq);
     }
     func.instruction(&Instruction::If(block_ty));
+    // The matched arm body is a result tail — colour it raw when the match
+    // result is raw.
+    ctx.int_result_raw.set(result_raw);
     if emit_mir_expr(func, body, slots, ctx)?.is_none() {
         return Ok(None);
     }
     func.instruction(&Instruction::Else);
-    if emit_mir_int_cascade(func, subject, rest, wildcard, block_ty, slots, ctx)?.is_none() {
+    if emit_mir_int_cascade(
+        func, subject, rest, wildcard, block_ty, result_raw, slots, ctx,
+    )?
+    .is_none()
+    {
         return Ok(None);
     }
     func.instruction(&Instruction::End);
@@ -877,10 +947,14 @@ pub(crate) fn emit_mir_option_match(
         });
         func.instruction(&Instruction::LocalSet(slot));
     }
+    // ETAP-2 SLICE 2b: re-set the raw colour for each arm tail (see
+    // `block_ty_is_raw_i64`) so a bare `Int` arm body renders raw `i64`.
+    ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
     if emit_mir_expr(func, &some_arm.body, slots, ctx)?.is_none() {
         return Ok(None);
     }
     func.instruction(&Instruction::Else);
+    ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
     if emit_mir_expr(func, &none_arm.body, slots, ctx)?.is_none() {
         return Ok(None);
     }
@@ -965,6 +1039,13 @@ pub(crate) fn emit_mir_result_match(
         });
         func.instruction(&Instruction::LocalSet(slot));
     }
+    // ETAP-2 SLICE 2b: the arm body is a result tail — re-set the raw colour
+    // (the `emit_mir_match` entry cleared it for the boxed subject) so a bare
+    // arm body (e.g. an `Int` literal in a `bare_return` fn) renders as raw
+    // `i64`, matching the `Result(I64)` block type. Without it the literal
+    // takes the boxed `__aint_from_i64` path and pushes an `$AverInt` ref
+    // where the block expects `i64` — a wasm validation error (the v4 bug).
+    ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
     if emit_mir_expr(func, &ok_arm.body, slots, ctx)?.is_none() {
         return Ok(None);
     }
@@ -980,6 +1061,7 @@ pub(crate) fn emit_mir_result_match(
         });
         func.instruction(&Instruction::LocalSet(slot));
     }
+    ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
     if emit_mir_expr(func, &err_arm.body, slots, ctx)?.is_none() {
         return Ok(None);
     }
@@ -1039,6 +1121,9 @@ pub(crate) fn emit_mir_list_match(
     func.instruction(&Instruction::LocalGet(scratch));
     func.instruction(&Instruction::RefIsNull);
     func.instruction(&Instruction::If(block_ty));
+    // ETAP-2 SLICE 2b: re-set the raw colour for each arm tail (see
+    // `block_ty_is_raw_i64`) so a bare `Int` arm body renders raw `i64`.
+    ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
     if emit_mir_expr(func, &empty_arm.body, slots, ctx)?.is_none() {
         return Ok(None);
     }
@@ -1067,6 +1152,7 @@ pub(crate) fn emit_mir_list_match(
             func.instruction(&Instruction::LocalSet(tail.0));
         }
     }
+    ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
     if emit_mir_expr(func, &cons_arm.body, slots, ctx)?.is_none() {
         return Ok(None);
     }
@@ -1100,13 +1186,19 @@ pub(crate) fn mir_user_variant_info<'a>(
 }
 
 /// Emit a covered arm body, returning `None` if the body falls outside
-/// the supported subset (propagated as a whole-fn fallback).
+/// the supported subset (propagated as a whole-fn fallback). `result_raw`
+/// is the match-tail raw colour (ETAP-2 SLICE 2b): re-set here because the
+/// body is a result tail and the `emit_mir_match` entry cleared the colour
+/// for the boxed subject. A bare `Int` arm body then renders raw `i64` to
+/// match the `i64` block type / fn return.
 pub(crate) fn emit_mir_arm_body_value(
     func: &mut Function,
     body: &Spanned<MirExpr>,
+    result_raw: bool,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
+    ctx.int_result_raw.set(result_raw);
     Ok(emit_mir_expr(func, body, slots, ctx)?.map(|_| ()))
 }
 
@@ -1122,6 +1214,7 @@ pub(crate) fn emit_mir_single_variant_match(
     func: &mut Function,
     subject: &Spanned<MirExpr>,
     arm: &MirMatchArm,
+    result_raw: bool,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
@@ -1148,7 +1241,7 @@ pub(crate) fn emit_mir_single_variant_match(
         } else {
             func.instruction(&Instruction::Drop);
         }
-        return emit_mir_arm_body_value(func, &arm.body, slots, ctx);
+        return emit_mir_arm_body_value(func, &arm.body, result_raw, slots, ctx);
     }
 
     let variant_idx = info.type_idx;
@@ -1160,7 +1253,7 @@ pub(crate) fn emit_mir_single_variant_match(
             return Ok(None);
         }
         func.instruction(&Instruction::Drop);
-        return emit_mir_arm_body_value(func, &arm.body, slots, ctx);
+        return emit_mir_arm_body_value(func, &arm.body, result_raw, slots, ctx);
     }
 
     if emit_mir_expr(func, subject, slots, ctx)?.is_none() {
@@ -1181,7 +1274,7 @@ pub(crate) fn emit_mir_single_variant_match(
         } else {
             func.instruction(&Instruction::Drop);
         }
-        return emit_mir_arm_body_value(func, &arm.body, slots, ctx);
+        return emit_mir_arm_body_value(func, &arm.body, result_raw, slots, ctx);
     }
 
     // Multi-binding — stash the cast subject, re-read + re-cast per
@@ -1202,7 +1295,7 @@ pub(crate) fn emit_mir_single_variant_match(
         });
         func.instruction(&Instruction::LocalSet(slot.0));
     }
-    emit_mir_arm_body_value(func, &arm.body, slots, ctx)
+    emit_mir_arm_body_value(func, &arm.body, result_raw, slots, ctx)
 }
 
 /// Mirror of `emit_variant_dispatch` (emit.rs): stash the subject in
@@ -1221,7 +1314,8 @@ pub(crate) fn emit_mir_variant_dispatch(
         return Ok(None);
     }
     func.instruction(&Instruction::LocalSet(scratch));
-    emit_mir_variant_arm_cascade(func, &m.arms, block_ty, scratch, slots, ctx)
+    let result_raw = block_ty_is_raw_i64(block_ty);
+    emit_mir_variant_arm_cascade(func, &m.arms, block_ty, scratch, result_raw, slots, ctx)
 }
 
 /// Mirror of `emit_variant_arm_cascade` (emit.rs): one arm left → the
@@ -1232,6 +1326,7 @@ pub(crate) fn emit_mir_variant_arm_cascade(
     arms: &[MirMatchArm],
     block_ty: wasm_encoder::BlockType,
     subject_scratch: u32,
+    result_raw: bool,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
@@ -1242,7 +1337,7 @@ pub(crate) fn emit_mir_variant_arm_cascade(
         return Ok(Some(()));
     }
     if arms.len() == 1 {
-        return emit_mir_arm_body(func, &arms[0], subject_scratch, slots, ctx);
+        return emit_mir_arm_body(func, &arms[0], subject_scratch, result_raw, slots, ctx);
     }
     let arm = &arms[0];
     match &arm.pattern {
@@ -1256,7 +1351,7 @@ pub(crate) fn emit_mir_variant_arm_cascade(
                 wasm_encoder::HeapType::Concrete(info.type_idx),
             ));
             func.instruction(&Instruction::If(block_ty));
-            if emit_mir_arm_body(func, arm, subject_scratch, slots, ctx)?.is_none() {
+            if emit_mir_arm_body(func, arm, subject_scratch, result_raw, slots, ctx)?.is_none() {
                 return Ok(None);
             }
             func.instruction(&Instruction::Else);
@@ -1265,6 +1360,7 @@ pub(crate) fn emit_mir_variant_arm_cascade(
                 &arms[1..],
                 block_ty,
                 subject_scratch,
+                result_raw,
                 slots,
                 ctx,
             )?
@@ -1275,7 +1371,9 @@ pub(crate) fn emit_mir_variant_arm_cascade(
             func.instruction(&Instruction::End);
             Ok(Some(()))
         }
-        MirPattern::Wildcard => emit_mir_arm_body(func, arm, subject_scratch, slots, ctx),
+        MirPattern::Wildcard => {
+            emit_mir_arm_body(func, arm, subject_scratch, result_raw, slots, ctx)
+        }
         // A non-Ctor / non-Wildcard arm here is `emit_match`'s
         // Unimplemented case — fall back.
         _ => Ok(None),
@@ -1289,6 +1387,7 @@ pub(crate) fn emit_mir_arm_body(
     func: &mut Function,
     arm: &MirMatchArm,
     subject_scratch: u32,
+    result_raw: bool,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
@@ -1306,7 +1405,7 @@ pub(crate) fn emit_mir_arm_body(
                 func.instruction(&Instruction::LocalGet(subject_scratch));
                 func.instruction(&Instruction::LocalSet(slot));
             }
-            return emit_mir_arm_body_value(func, &arm.body, slots, ctx);
+            return emit_mir_arm_body_value(func, &arm.body, result_raw, slots, ctx);
         }
         for (i, slot) in bindings.iter().enumerate() {
             if slot.0 == NO_SLOT {
@@ -1322,8 +1421,8 @@ pub(crate) fn emit_mir_arm_body(
             });
             func.instruction(&Instruction::LocalSet(slot.0));
         }
-        return emit_mir_arm_body_value(func, &arm.body, slots, ctx);
+        return emit_mir_arm_body_value(func, &arm.body, result_raw, slots, ctx);
     }
     // Wildcard / non-pattern arm — just emit the body.
-    emit_mir_arm_body_value(func, &arm.body, slots, ctx)
+    emit_mir_arm_body_value(func, &arm.body, result_raw, slots, ctx)
 }
