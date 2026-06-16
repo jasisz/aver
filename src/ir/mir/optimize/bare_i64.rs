@@ -131,13 +131,22 @@ impl FnBareFacts {
     /// Compute the result interval of an EXPRESSION TREE built only from
     /// bare leaves (`Local`s the analysis proved `Bare`, `Int` literals) and
     /// `Add`/`Sub`/`Mul`/`Neg` nodes, using the saturating #511 interval
-    /// arithmetic. Returns `None` if any leaf is non-bare / unknown or the
-    /// node is an unsupported shape — the conservative decline.
+    /// arithmetic. Returns `None` if any leaf is non-bare / unknown, the node
+    /// is an unsupported shape, OR any INTERMEDIATE sub-result leaves `i64` —
+    /// the conservative decline.
     ///
     /// This is the SINGLE SOURCE OF TRUTH for "what interval does this
     /// inline compound evaluate to": both the analysis's `tail_value_is_bare`
     /// and the Rust backend's `mir_expr_is_bare_i64` route a compound through
     /// here, so neither can accept a tree whose result leaves `i64`.
+    ///
+    /// SOUNDNESS: gating only the WHOLE-TREE result is not enough — a
+    /// transient out-of-`i64` intermediate (`(n + i64::MAX) - i64::MAX`,
+    /// whose inner `Add` is `[MAX+1, …]` but whose final value narrows back
+    /// into range) would lower this node's raw-`i64` op and WRAP before the
+    /// enclosing op runs. So every node's result is checked against `i64`
+    /// here, mirroring `eval_interval`'s `worst`-join on the analysis side;
+    /// a single escaping sub-result declines the whole compound to boxed.
     pub fn bare_expr_interval(&self, e: &MirExpr) -> Option<Interval> {
         match e {
             MirExpr::Literal(l) => match l.node {
@@ -147,17 +156,18 @@ impl FnBareFacts {
             MirExpr::Local(local) => self.bare_slot_interval(local.node.slot),
             MirExpr::Neg(inner) => {
                 let r = Interval::point(0).sub(self.bare_expr_interval(&inner.node)?);
-                Some(r)
+                r.fits_i64().then_some(r)
             }
             MirExpr::BinOp(b) => {
                 let l = self.bare_expr_interval(&b.node.lhs.node)?;
                 let r = self.bare_expr_interval(&b.node.rhs.node)?;
-                match b.node.op {
-                    BinOp::Add => Some(l.add(r)),
-                    BinOp::Sub => Some(l.sub(r)),
-                    BinOp::Mul => Some(l.mul(r)),
-                    _ => None,
-                }
+                let result = match b.node.op {
+                    BinOp::Add => l.add(r),
+                    BinOp::Sub => l.sub(r),
+                    BinOp::Mul => l.mul(r),
+                    _ => return None,
+                };
+                result.fits_i64().then_some(result)
             }
             _ => None,
         }
