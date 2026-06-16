@@ -1620,6 +1620,12 @@ fn emit_list_induction(
     let discovered_simp = discovered_simp_entries(ctx, discovered);
     let siblings = earlier_law_lemmas(vb, law, ctx);
     let fast_simp = fastpath_simp_entries(ctx, discovered, &siblings);
+    // The pre-discovery arm simp set (law defs + recognizer rev rules), BEFORE
+    // the committed discovered lemmas join. The do-no-harm fallback ladder
+    // below inducts over THIS set so a law already universal without discovery
+    // keeps proving even if a committed lemma would simp-loop the augmented
+    // arms into a `sorry` (the net-negative feedback bug).
+    let simp_list_plain = simp_defs.iter().cloned().collect::<Vec<_>>().join(", ");
     simp_defs.extend(discovered_simp.iter().cloned());
     let simp_list = simp_defs.into_iter().collect::<Vec<_>>().join(", ");
     let target_lean = &intro_names[target_idx];
@@ -1683,6 +1689,11 @@ fn emit_list_induction(
         "List.cons_append, List.singleton_append, List.nil_append".to_string()
     } else {
         format!("{simp_list}, List.cons_append, List.singleton_append, List.nil_append")
+    };
+    let split_set_plain = if simp_list_plain.is_empty() {
+        "List.cons_append, List.singleton_append, List.nil_append".to_string()
+    } else {
+        format!("{simp_list_plain}, List.cons_append, List.singleton_append, List.nil_append")
     };
 
     // Each arm closes fully or admits `sorry` — and crucially BUILDS either
@@ -1909,6 +1920,23 @@ fn emit_list_induction(
             .collect();
 
         proof_lines.push("  first".to_string());
+        // DO-NO-HARM (Houdini accept). Try the EXACT pre-discovery proof FIRST:
+        // induct over `simp_list_plain` (NO committed discovered lemmas) with NO
+        // `sorry`, so an open arm THROWS and `first` moves on. A law already
+        // universal before discovery closes here and `first` stops — the
+        // discovered-lemma tactics below are reached ONLY when the pre-discovery
+        // proof cannot close. So a committed lemma can only ever ADD a proof,
+        // never demote a working one into a `sorry` (the net-negative feedback
+        // bug: e.g. the reversed `← (++)=append` rule simp-looping rev's
+        // `revRev` ladder). Gated on a non-empty `discovered_simp` so a
+        // sibling-only feedback emit (część A) stays byte-identical to before.
+        if !discovered_simp.is_empty() {
+            let (nil_plain, cons_plain) =
+                mk_arms(&simp_list_plain, &split_set_plain, bridge_set.as_deref(), None, false);
+            proof_lines.push(format!("  | (induction {} with", target_lean));
+            proof_lines.push(format!("     {nil_plain}"));
+            proof_lines.push(format!("     {cons_plain})"));
+        }
         proof_lines.push(format!(
             "  | (simp only [{}] <;> omega)",
             fast_lemmas.join(", ")
