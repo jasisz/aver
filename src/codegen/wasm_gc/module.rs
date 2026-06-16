@@ -139,9 +139,6 @@ pub(super) fn emit_module_with(
     let symbol_table = view.symbol_table;
     let resolved_fn_defs = view.resolved_fn_defs;
 
-    let mut registry =
-        TypeRegistry::build_with_handler(items, &resolved_fn_defs, handler_name.is_some());
-
     // Lower the post-link resolved fns to MIR and run the shared
     // `optimize` pipeline — the SAME six passes the VM consumes
     // (`ir::mir::optimize`). MIR is the only codegen path. Hoisted to
@@ -163,6 +160,54 @@ pub(super) fn emit_module_with(
             .collect();
         crate::ir::mir::optimize(crate::ir::mir::lower_program(&mir_items))
     };
+
+    // ETAP-2 SLICE 2 — the Int-unboxing SIZE gate. Run the SAME
+    // range+escape rewrite the Rust backend uses (`rewrite_for_wasm_gc`)
+    // on a clone of the optimized MIR; it reports whether EVERY Int in the
+    // program is provably bare (raw `i64`). When fully bare, the
+    // `$AverInt` type slots + the bignum prelude are NOT emitted (the
+    // existing scalar-`i64` lowering path is then exact for the whole
+    // program — `+`/`-`/`*` over a proven-in-range value wraps to the same
+    // ℤ value), and `wasm-opt`/DCE drops the bignum helpers → the size
+    // recovery. FAIL-CLOSED: any boxed `Int` (an overflowing `a*a`, a Big
+    // literal, an escaping or stringified Int) leaves `fully_bare == false`
+    // and the boxed representation + full prelude stay (the C0 law holds).
+    //
+    // A mutual-TCO SCC member (size > 1) must keep a uniform signature
+    // across the SCC for the cross-fn `return_call`, so it is held boxed —
+    // computed here from the entry-scope tail-call SCCs and projected to
+    // `FnId`s. A singleton self-recursive fn (`countdown` / `factorial`) is
+    // never in this set and may go bare.
+    let boxed_signature_fns: std::collections::HashSet<crate::ir::FnId> = {
+        let mut set = std::collections::HashSet::new();
+        let name_to_id: std::collections::HashMap<&str, crate::ir::FnId> = resolved_fn_defs
+            .iter()
+            .map(|rfd| (rfd.name.as_str(), rfd.fn_id))
+            .collect();
+        for group in crate::call_graph::tailcall_scc_components(&fn_defs) {
+            if group.len() < 2 {
+                continue; // singleton self-recursive fn — plain TCO, may go bare
+            }
+            for fd in group {
+                if let Some(id) = name_to_id.get(fd.name.as_str()) {
+                    set.insert(*id);
+                }
+            }
+        }
+        set
+    };
+    let force_no_bignum = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_wasm_gc(
+        mir_program.clone(),
+        &boxed_signature_fns,
+    )
+    .fully_bare;
+
+    let mut registry = TypeRegistry::build_with_handler(
+        items,
+        &resolved_fn_defs,
+        handler_name.is_some(),
+        force_no_bignum,
+    );
 
     // Lazy caller_fn name registry — populated during user-fn body
     // emit by `emit_caller_fn_idx` call sites. Threaded into every

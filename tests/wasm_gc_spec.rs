@@ -95,9 +95,16 @@ fn call_main_aint(store: &mut wasmtime::Store<()>, instance: &wasmtime::Instance
 /// returned by `main`. Asserts the value is in the Small representation
 /// (the spec programs are all in-range); a non-null `$magf` (field 1)
 /// would mean a Big result this helper does not decode.
+///
+/// ETAP-2: a program the Int-unboxing rewrite proved FULLY BARE drops the
+/// `$AverInt` representation entirely — its `main` returns a scalar `i64`,
+/// not a carrier ref. So accept a raw `i64` result directly (it is the same
+/// in-range value the boxed Small would have carried).
 fn extract_aint_small(store: &mut wasmtime::Store<()>, val: &wasmtime::Val) -> i64 {
     let anyref = match val {
         wasmtime::Val::AnyRef(Some(a)) => *a,
+        // Fully-bare program: `main` returns a raw `i64` (no `$AverInt`).
+        wasmtime::Val::I64(v) => return *v,
         wasmtime::Val::AnyRef(None) => panic!("main returned a null Int carrier"),
         other => panic!("main returned a non-ref value: {other:?}"),
     };

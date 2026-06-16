@@ -217,6 +217,15 @@ impl TypeRegistry {
         items: &[TopLevel],
         resolved_fn_defs: &[crate::ir::hir::ResolvedFnDef],
         _handler_active: bool,
+        // ETAP-2: when `true`, the wasm-gc Int-unboxing rewrite proved EVERY
+        // Int in the program bare (raw `i64`), so the `$AverInt` type slots +
+        // the bignum prelude are NOT needed — the scalar-`i64` lowering path
+        // is exact for the whole program. Forces `bignum` off below so the
+        // prelude (and its type slots) is never emitted and `wasm-opt`/DCE
+        // drops the helpers → the size win. FAIL-CLOSED: the rewrite passes
+        // `false` whenever any boxed `Int` survives, leaving the broad
+        // HIR-reachability gate to keep the prelude.
+        force_no_bignum: bool,
     ) -> Self {
         // _handler_active is consumed by `items_reference_name`
         // overrides below so the rest of the builder stays
@@ -366,7 +375,12 @@ impl TypeRegistry {
         // struct can reference it without a forward edge (a single rec
         // group makes this safe, but keeping the array lower mirrors the
         // other collection slots and reads cleaner).
-        let bignum = resolved_fn_defs.iter().any(fn_uses_int_arithmetic);
+        // The broad HIR-reachability gate flips `bignum` on whenever ANY Int
+        // arithmetic is reachable. ETAP-2 narrows it: when the unboxing
+        // rewrite proved the WHOLE program bare (`force_no_bignum`), the
+        // boxed `$AverInt` representation is provably never built, so skip
+        // the slots + prelude entirely (the size recovery).
+        let bignum = !force_no_bignum && resolved_fn_defs.iter().any(fn_uses_int_arithmetic);
         let (aint_mag_array_idx, aint_struct_idx) = if bignum {
             let mag_idx = next_idx;
             next_idx += 1;

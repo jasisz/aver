@@ -839,7 +839,7 @@ mod tests {
     /// `validation_guard` sibling module so its full-validate test renders
     /// helpers against an identical type section.
     pub(super) fn bignum_registry_for_validation() -> TypeRegistry {
-        let mut registry = TypeRegistry::build_with_handler(&[], &[], false);
+        let mut registry = TypeRegistry::build_with_handler(&[], &[], false, false);
         registry.bignum = true;
         registry.string_array_type_idx = Some(0);
         registry.aint_mag_array_idx = Some(1);

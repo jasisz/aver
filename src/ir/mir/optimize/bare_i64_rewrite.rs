@@ -60,6 +60,20 @@ pub fn rewrite_for_rust(
     program: MirProgram,
     boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
 ) -> MirProgram {
+    rewrite_with_facts(program, boxed_signature_fns).0
+}
+
+/// The shared rewrite core: run the range+escape analysis, populate every
+/// fn's `repr`, and insert the explicit `Box`/`Unbox` boundary nodes. The
+/// ANALYSIS and the node insertion are target-independent — both the Rust
+/// (`rewrite_for_rust`) and wasm-gc (`rewrite_for_wasm_gc`) entries share
+/// this; only how the lowered nodes are consumed differs. Returns the
+/// rewritten program AND the facts so a caller can interrogate the
+/// representation decision (the wasm-gc fully-bare SIZE gate).
+fn rewrite_with_facts(
+    program: MirProgram,
+    boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
+) -> (MirProgram, BareI64Facts) {
     let mut program = program;
     let facts = super::bare_i64::analyze(&program);
     // Collect ids first to avoid borrowing `program.fns` while mutating it.
@@ -78,7 +92,285 @@ pub fn rewrite_for_rust(
             rewrite_fn(f, &fn_facts, &facts, boxed_signature_fns);
         }
     }
-    program
+    (program, facts)
+}
+
+/// Result of the wasm-gc Int-representation rewrite: the rewritten program
+/// (with `repr` + boundary nodes) plus whether the WHOLE program is bare.
+pub struct WasmGcRewrite {
+    /// The rewritten program — identical structure to the input for a
+    /// fully-bare program (no boundary node is inserted), or carrying the
+    /// explicit `Box`/`Unbox` boundaries at every mixed crossing otherwise.
+    pub program: MirProgram,
+    /// `true` ⟺ EVERY Int value in the program was proven bare (raw `i64`):
+    /// no `$aint`-typed value, no `Box`/`Unbox` boundary, no Int-producing /
+    /// consuming builtin survives. When set, the wasm-gc backend can drop
+    /// the `$AverInt` type slots + the entire bignum prelude (the size win);
+    /// the existing scalar-`i64` lowering path is then exact for the whole
+    /// program (`+`/`-`/`*` over a proven-in-range value wraps to the same ℤ
+    /// value — the ring homomorphism). FAIL-CLOSED: any doubt ⇒ `false` ⇒
+    /// the boxed `$AverInt` representation + full prelude stay.
+    pub fully_bare: bool,
+}
+
+/// wasm-gc entry: run the SAME range+escape analysis + boundary-node
+/// insertion as `rewrite_for_rust`, and additionally compute the
+/// whole-program fully-bare verdict that gates the `$AverInt` prelude.
+///
+/// `boxed_signature_fns` lists fns the wasm-gc backend must keep boxed
+/// regardless of the analysis — the mutual-TCO SCC members (size > 1),
+/// whose cross-fn `return_call` requires a uniform signature across the
+/// SCC. A singleton self-recursive fn (`countdown` / `factorial`) is NOT
+/// in this set and may go bare.
+pub fn rewrite_for_wasm_gc(
+    program: MirProgram,
+    boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
+) -> WasmGcRewrite {
+    // The fully-bare gate keys off the ANALYSIS + the ORIGINAL (pre-rewrite)
+    // program, NOT the rewritten one: the rewrite inserts a spurious `Box`
+    // around an entry fn's bare-returning tail call (`main` returns
+    // `countdown(20000)` → `Box(countdown(…))`), a Rust-ABI artifact that
+    // does not reflect a real `$aint` need. So compute the verdict before
+    // the rewrite mutates the body.
+    let facts = super::bare_i64::analyze(&program);
+    let fully_bare = program_is_fully_bare(&program, &facts, boxed_signature_fns);
+    let program = rewrite_with_facts(program, boxed_signature_fns).0;
+    WasmGcRewrite {
+        program,
+        fully_bare,
+    }
+}
+
+/// Can the WHOLE program run with every `Int` as a scalar `i64` (the wasm-gc
+/// `bignum = false` lowering) WITHOUT any value ever leaving the `i64` range?
+/// This is the SOUND, fail-closed gate for dropping the `$AverInt` type slots
+/// + the bignum prelude (the size win).
+///
+/// The guarantee required is narrow and program-wide: **no operation can
+/// produce a value outside `i64`.** Under `bignum = false` the body emitter
+/// lowers every `Int` uniformly to `i64` and ignores the analysis's per-slot
+/// bare/boxed distinction entirely (that distinction only matters in the
+/// MIXED world where boxed contexts exist). So the only thing that can break
+/// `ℤ == i64` is a value escaping the `i64` range, which happens at exactly
+/// three sources:
+///  1. overflowing Int arithmetic (`a * a` at `i64::MAX`, `n + i64::MAX`),
+///  2. an arbitrary-precision Int builtin / intrinsic (`Int.fromString` can
+///     parse a 38-digit Big; `Int.div` / `Int.mod` / `String.fromInt` carry
+///     an `Int` across a helper that assumes `$aint`),
+///  3. an Int literal exceeding `i64` — IMPOSSIBLE in Aver, where
+///     `Literal::Int` is an `i64` (so not checked).
+///
+/// The body walk ([`body_is_fully_bare`]) rejects (1) via the interval-checked
+/// `expr_is_bare_i64` (an overflowing tree is not bare) and (2) via the
+/// Int-touching builtin/intrinsic check. If NEITHER appears anywhere, no `Big`
+/// can ever be constructed, so every `Int` is always in range and the scalar
+/// path is exact. A fn the analysis declined (dep fragment / bailout) cannot
+/// be cleared ⇒ NOT fully bare. Any doubt ⇒ `false` ⇒ the boxed
+/// representation + full prelude stay (the C0 law holds).
+///
+/// NOTE this deliberately does NOT require the analysis's per-fn `bare_return`
+/// / `bare_params` flags — those encode ESCAPE (a value reaching a boxed
+/// context), which is a MIXED-world concern. With `bignum = false` there are
+/// no boxed contexts; the entry fn returning a bare-returning call (`main`)
+/// is fine even though the analysis marks its return boxed for the Rust ABI.
+fn program_is_fully_bare(
+    program: &MirProgram,
+    facts: &BareI64Facts,
+    boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
+) -> bool {
+    // A mutual-TCO SCC member is held boxed (the cross-fn `return_call`
+    // requires a uniform signature across the SCC), so a program that has
+    // ANY such member is not fully bare.
+    if program
+        .iter()
+        .any(|(id, _)| boxed_signature_fns.contains(id))
+    {
+        return false;
+    }
+    let dbg = std::env::var_os("AVER_DEBUG_BARE_GATE").is_some();
+    for (id, f) in program.iter() {
+        let Some(fn_facts) = facts.for_fn(*id) else {
+            if dbg {
+                eprintln!("[bare-gate] fn `{}` declined (no facts)", f.name);
+            }
+            // The analysis declined this fn (dep fragment / bailout): cannot
+            // prove no overflow ⇒ keep the prelude.
+            return false;
+        };
+        // The body must contain no overflowing Int arithmetic and no
+        // arbitrary-precision Int builtin/intrinsic — the only sources of an
+        // out-of-`i64` value.
+        if !body_is_fully_bare(&f.body, fn_facts) {
+            if dbg {
+                eprintln!(
+                    "[bare-gate] fn `{}` body has a boxed Int node (overflow / $aint builtin)",
+                    f.name
+                );
+            }
+            return false;
+        }
+    }
+    if dbg {
+        eprintln!("[bare-gate] program is FULLY BARE");
+    }
+    true
+}
+
+/// Walk a fn body: does it contain no overflowing Int arithmetic and no
+/// `$aint`-producing builtin/intrinsic? Conservative — any Int arithmetic
+/// node whose whole-tree result interval is not provably `⊆ i64`, any Int
+/// `Div`, any Int-touching builtin/intrinsic call, or any explicit
+/// `Box`/`Unbox` boundary returns `false`.
+///
+/// Walks `Spanned<MirExpr>` (not bare `MirExpr`) so each node carries its
+/// type stamp — a `Call`'s result type lives on the enclosing `Spanned`, not
+/// on the `MirCall`.
+fn body_is_fully_bare(e: &Spanned<MirExpr>, facts: &FnBareFacts) -> bool {
+    let mut ok = true;
+    node_keeps_bare(e, facts, &mut ok);
+    ok
+}
+
+/// Sets `ok = false` on the first node that would force an `$aint`, then
+/// recurses into every `Spanned` child.
+fn node_keeps_bare(e: &Spanned<MirExpr>, facts: &FnBareFacts, ok: &mut bool) {
+    if !*ok {
+        return;
+    }
+    match &e.node {
+        // An explicit representation boundary means an `$aint` is built /
+        // narrowed at a mixed crossing — not fully bare.
+        MirExpr::Box(_) | MirExpr::Unbox(_) => {
+            *ok = false;
+            return;
+        }
+        // Int arithmetic must render bare as a whole tree; a boxed Int
+        // `Add`/`Sub`/`Mul` (operands or result out of the i64 band) needs
+        // the `$aint` op. A non-Int BinOp (comparison, String, Float) is
+        // fine — only gate Int arithmetic.
+        MirExpr::BinOp(b)
+            if matches!(b.node.op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div) =>
+        {
+            let is_int = super::bare_i64::type_is_int(b.node.lhs.ty())
+                || super::bare_i64::type_is_int(b.node.rhs.ty());
+            // Div never lowers bare (the analysis declines it), so an Int
+            // `Div` always needs the boxed `__aint_divmod`.
+            if is_int && (matches!(b.node.op, BinOp::Div) || !facts.expr_is_bare_i64(&e.node)) {
+                *ok = false;
+                return;
+            }
+        }
+        // A boxed Int `Neg` lowers through `__aint_neg`; a bare one is fine.
+        MirExpr::Neg(_)
+            if super::bare_i64::type_is_int(e.ty()) && !facts.expr_is_bare_i64(&e.node) =>
+        {
+            *ok = false;
+            return;
+        }
+        // A call to a builtin / intrinsic that produces or consumes an Int
+        // needs the `$aint` representation at that boundary. A user-fn
+        // (`MirCallee::Fn`) call is covered by the per-fn bare param/return
+        // checks instead.
+        MirExpr::Call(c) if !matches!(c.node.callee, MirCallee::Fn(_)) => {
+            let result_is_int = super::bare_i64::type_is_int(e.ty());
+            let arg_is_int = c
+                .node
+                .args
+                .iter()
+                .any(|a| super::bare_i64::type_is_int(a.ty()));
+            if result_is_int || arg_is_int {
+                *ok = false;
+                return;
+            }
+        }
+        _ => {}
+    }
+    visit_spanned_children(e, &mut |c| node_keeps_bare(c, facts, ok));
+}
+
+/// Apply `f` to every immediate `Spanned` sub-expression of `e`. Mirrors
+/// `bare_i64::visit_children` but preserves each child's `Spanned` wrapper
+/// (and thus its type stamp), which the fully-bare gate needs to read a
+/// nested `Call`'s result type.
+fn visit_spanned_children(e: &Spanned<MirExpr>, f: &mut dyn FnMut(&Spanned<MirExpr>)) {
+    use crate::ir::mir::MirStrPart;
+    match &e.node {
+        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
+        MirExpr::Let(l) => {
+            f(&l.node.value);
+            f(&l.node.body);
+        }
+        MirExpr::Call(c) => {
+            for a in &c.node.args {
+                f(a);
+            }
+        }
+        MirExpr::TailCall(tc) => {
+            for a in &tc.node.args {
+                f(a);
+            }
+        }
+        MirExpr::BinOp(b) => {
+            f(&b.node.lhs);
+            f(&b.node.rhs);
+        }
+        MirExpr::Neg(inner)
+        | MirExpr::Try(inner)
+        | MirExpr::Return(inner)
+        | MirExpr::Box(inner)
+        | MirExpr::Unbox(inner) => f(inner),
+        MirExpr::Match(m) => {
+            f(&m.node.subject);
+            for arm in &m.node.arms {
+                f(&arm.body);
+            }
+        }
+        MirExpr::Construct(c) => {
+            for a in &c.node.args {
+                f(a);
+            }
+        }
+        MirExpr::RecordCreate(r) => {
+            for field in &r.node.fields {
+                f(&field.value);
+            }
+        }
+        MirExpr::RecordUpdate(u) => {
+            f(&u.node.base);
+            for field in &u.node.updates {
+                f(&field.value);
+            }
+        }
+        MirExpr::Project(p) => f(&p.node.base),
+        MirExpr::IfThenElse(ite) => {
+            f(&ite.node.cond);
+            f(&ite.node.then_branch);
+            f(&ite.node.else_branch);
+        }
+        MirExpr::List(items) | MirExpr::Tuple(items) => {
+            for i in items {
+                f(i);
+            }
+        }
+        MirExpr::MapLiteral(pairs) => {
+            for (k, v) in pairs {
+                f(k);
+                f(v);
+            }
+        }
+        MirExpr::InterpolatedStr(parts) => {
+            for p in parts {
+                if let MirStrPart::Expr(ex) = p {
+                    f(ex);
+                }
+            }
+        }
+        MirExpr::IndependentProduct(ip) => {
+            for i in &ip.node.items {
+                f(i);
+            }
+        }
+    }
 }
 
 /// Populate `f.repr` from the analysis and insert the explicit boundary
@@ -734,6 +1026,148 @@ mod tests {
             _ => {}
         }
         super::super::bare_i64::tests_visit_children(e, &mut |c| count_rec(c, boxes, unboxes));
+    }
+
+    /// Build the optimized (pre-rewrite) MIR program, exactly as the
+    /// wasm-gc backend feeds `rewrite_for_wasm_gc`.
+    fn optimized(src: &str) -> MirProgram {
+        let mut items = parse_source(src).expect("parse");
+        let cfg = crate::ir::pipeline::PipelineConfig {
+            typecheck: Some(crate::ir::pipeline::TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        };
+        let result = crate::ir::pipeline::run(&mut items, cfg);
+        assert!(
+            result
+                .typecheck
+                .as_ref()
+                .is_none_or(|t| t.errors.is_empty()),
+            "typecheck errors: {:?}",
+            result.typecheck.map(|t| t.errors)
+        );
+        let mir_items = result.resolved_items.clone();
+        optimize(lower_program(&mir_items))
+    }
+
+    fn fully_bare(src: &str) -> bool {
+        rewrite_for_wasm_gc(optimized(src), &std::collections::HashSet::new()).fully_bare
+    }
+
+    #[test]
+    fn wasm_gc_gate_countdown_is_fully_bare() {
+        // A pure bounded tail-recursive loop returning Int — every Int is
+        // raw i64, no overflow, no $aint builtin ⇒ the prelude can be dropped.
+        let src = r#"
+module Countdown
+    intent = "t"
+    depends []
+
+fn countdown(n: Int) -> Int
+    match n
+        0 -> 0
+        _ -> countdown(n - 1)
+
+fn main() -> Int
+    countdown(20000)
+"#;
+        assert!(fully_bare(src), "bounded countdown must be fully bare");
+    }
+
+    #[test]
+    fn wasm_gc_gate_overflow_square_stays_boxed() {
+        // `a * a` over an unbounded param can overflow i64 ⇒ NOT fully bare,
+        // the boxed $AverInt representation + prelude must stay (the C0 law).
+        let src = r#"
+module AA
+    intent = "t"
+    depends []
+
+fn square(a: Int) -> Int
+    a * a
+
+fn main() -> Int
+    square(9223372036854775807)
+"#;
+        assert!(
+            !fully_bare(src),
+            "an overflowing a*a must keep the boxed representation"
+        );
+    }
+
+    #[test]
+    fn wasm_gc_gate_factorial_stays_boxed() {
+        // The accumulator `acc * n` cannot be bounded ⇒ overflowing arithmetic
+        // ⇒ NOT fully bare.
+        let src = r#"
+module Factorial
+    intent = "t"
+    depends []
+
+fn factorial(n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> factorial(n - 1, acc * n)
+
+fn main() -> Int
+    factorial(10, 1)
+"#;
+        assert!(
+            !fully_bare(src),
+            "factorial's unbounded accumulator must keep the boxed representation"
+        );
+    }
+
+    #[test]
+    fn wasm_gc_gate_stringified_int_stays_boxed() {
+        // `String.fromInt` is an Int-touching builtin (it can render a Big),
+        // so a program that stringifies an Int keeps the prelude even when
+        // the integer itself is bounded — fail-closed.
+        let src = r#"
+module Stringify
+    intent = "t"
+    depends []
+    effects [Console.print]
+
+fn countdown(n: Int) -> Int
+    match n
+        0 -> 0
+        _ -> countdown(n - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(countdown(20000)))
+"#;
+        assert!(
+            !fully_bare(src),
+            "a stringified Int must keep the boxed representation (String.fromInt can render a Big)"
+        );
+    }
+
+    #[test]
+    fn wasm_gc_gate_bool_observed_bounded_is_fully_bare() {
+        // A bounded Int compared to a literal (`== 0`) produces a Bool; the
+        // comparison is bare (`i64.eq`) and `String.fromBool` does not touch
+        // Int — so the program is fully bare and observable without the
+        // prelude.
+        let src = r#"
+module BoolObs
+    intent = "t"
+    depends []
+    effects [Console.print]
+
+fn countdown(n: Int) -> Int
+    match n
+        0 -> 0
+        _ -> countdown(n - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromBool(countdown(20000) == 0))
+"#;
+        assert!(
+            fully_bare(src),
+            "a bounded Int observed via a Bool comparison must be fully bare"
+        );
     }
 
     #[test]
