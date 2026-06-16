@@ -2019,7 +2019,7 @@ fn emit_mir_match_with(
     // ── 1. Single-arm irrefutable → `let` destructuring. ──
     // Mirror of `emit_match`'s first branch.
     if arms.len() == 1 && resolved_pattern_is_irrefutable(&arms[0].pattern) {
-        let mut subj_code = emit_mir_expr(&m.subject, emit_ctx)?;
+        let subj_code = emit_mir_expr(&m.subject, emit_ctx)?;
         // Int unboxing boundary (defect esc_match): a `match (n - 1) { x -> … }`
         // binds the subject to `x`. When the analysis marked the bound slot
         // BOXED (because `x` later escapes — `[x, x]`) but the subject renders
