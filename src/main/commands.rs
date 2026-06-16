@@ -5000,7 +5000,7 @@ pub(super) fn cmd_proof(
     if discover {
         // `--emit-laws`: born-as-Aver discovery. Render each VM-survivor
         // `Conjecture` as a legal `verify <fn> law`, keep the ones that pass the
-        // STRICT forward check, and write them to a sidecar `<file>.discovered.av`
+        // STRICT forward check, and write them to a sidecar `<file>.aux.av`
         // — so a discovered law flows through the same pipeline as a user law.
         // Additive: the Lean `DiscoveredLemmas.lean` path is left untouched; this
         // is a distinct output and returns early.
@@ -5263,7 +5263,7 @@ pub(super) fn cmd_proof(
 /// `Conjecture` family, render each survivor as a legal `verify <fn> law`,
 /// keep only the laws that pass the STRICT forward check (`aver verify`
 /// semantics — stricter than the 6-round sampler), and write them to a sidecar
-/// `<file>.discovered.av`. The user's source file is NEVER mutated.
+/// `<file>.aux.av`. The user's source file is NEVER mutated.
 ///
 /// The sidecar is the source verbatim + a provenance header + the rendered
 /// laws, so it is self-contained (cone fns / ADTs / module all in scope) and
@@ -5324,7 +5324,7 @@ fn cmd_proof_emit_laws(
 
     let sidecar_path = emit_laws_to
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from(format!("{file}.discovered.av")));
+        .unwrap_or_else(|| std::path::PathBuf::from(format!("{file}.aux.av")));
 
     // SOURCE-PROTECTION (the "never mutates source" contract MUST hold for the
     // `--emit-laws-to` override path too): refuse to write if the target IS — or

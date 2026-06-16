@@ -275,9 +275,9 @@ mod vm_filter;
 
 pub use bricks::structural_lemma_groups;
 pub use committed::{
-    CommittedLemma, SimpDirection, apply_simp_over_lemma_pins, forbidden_token_in_lemma,
-    mentioned_fns, parse_committed_lemmas, plan_simp_over_lemma_pins, simp_entries,
-    simp_orientation,
+    CommittedLemma, LemmaProvenance, SimpDirection, apply_simp_over_lemma_pins,
+    forbidden_token_in_lemma, mentioned_fns, parse_committed_lemmas, plan_simp_over_lemma_pins,
+    simp_entries, simp_orientation,
 };
 pub use emit_laws::{
     DISCOVERED_LAW_PREFIX, EmitLawsResult, EmittedLaw, emit_laws_for_reports, render_sidecar,

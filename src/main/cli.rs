@@ -666,7 +666,7 @@ pub(super) enum Commands {
         /// HOSTILE-WIDENED forward check (`aver verify --hostile` semantics over a
         /// distinguishing, distinct-per-binder, type-boundary domain — not the
         /// discovery sampler's symmetric domain) to a sidecar
-        /// `<file>.discovered.av`. The discovered law is then BORN AS AN AVER LAW
+        /// `<file>.aux.av`. The discovered law is then BORN AS AN AVER LAW
         /// — it flows through the same pipeline as a user law (verify, hostile,
         /// the cross-file pool, `aver proof … --gate`). Emitted laws are labeled
         /// "verified (bounded), kernel proof pending", NOT proven; kernel credit
@@ -675,7 +675,7 @@ pub(super) enum Commands {
         #[arg(long, requires = "discover")]
         emit_laws: bool,
         /// `--emit-laws` only: write the sidecar here instead of the default
-        /// `<file>.discovered.av`. Refuses to write if the target is — or aliases
+        /// `<file>.aux.av`. Refuses to write if the target is — or aliases
         /// — your source or any input `.av` (the source is never overwritten).
         #[arg(long, requires = "emit_laws")]
         emit_laws_to: Option<String>,

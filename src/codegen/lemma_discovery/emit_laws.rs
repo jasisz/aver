@@ -49,11 +49,11 @@
 //!
 //! Self-contained, parse-legal, runnable `.av`: the original source verbatim
 //! (so the cone fns / ADTs / module are all in scope without cross-module
-//! qualification) followed by a provenance header and the rendered laws. The
-//! user's source file is NEVER mutated — the sidecar is a separate
-//! `<file>.discovered.av`. Deterministic: stable law order (discovery order,
-//! which is itself stable), stable `given` formatting, byte-reproducible across
-//! reruns.
+//! qualification) followed by a provenance header and the rendered laws (each
+//! carrying a per-law `// provenance: <origin>` tag). The user's source file is
+//! NEVER mutated — the sidecar is a separate, provenance-neutral
+//! `<file>.aux.av`. Deterministic: stable law order (discovery order, which is
+//! itself stable), stable `given` formatting, byte-reproducible across reruns.
 
 use std::collections::BTreeSet;
 
@@ -76,6 +76,12 @@ pub struct EmittedLaw {
     pub subject_fn: String,
     /// The full `verify … law` block text (indented, parse-legal).
     pub block: String,
+    /// Which proposer ORIGINATED this law — the ORIGIN axis, distinct from the
+    /// sidecar header's STRENGTH axis ("verified (bounded), kernel proof
+    /// pending"). The only current producer is the discovery enumerator, so
+    /// every emission is [`LemmaProvenance::Enumerated`]; rendered as a per-law
+    /// `// provenance: <tag>` comment so each law self-documents its origin.
+    pub provenance: LemmaProvenance,
 }
 
 /// Outcome of an emit-laws run over one file's discovery reports: the laws that
@@ -153,6 +159,9 @@ pub fn emit_laws_for_reports(
                         name,
                         subject_fn,
                         block,
+                        // The discovery enumerator is the only producer on this
+                        // path; tag origin accordingly (NOT the strength axis).
+                        provenance: LemmaProvenance::Enumerated,
                     });
                 }
                 Ok(false) => {
@@ -762,7 +771,7 @@ pub fn render_sidecar(
     }
     out.push('\n');
     // The next-step command references the ACTUAL written path (which may be a
-    // `--emit-laws-to` override), not a hardcoded `<source>.discovered.av`.
+    // `--emit-laws-to` override), not a hardcoded `<source>.aux.av`.
     out.push_str(&format!(
         "// ===========================================================================\n\
          // Machine-proposed laws: aver proof {source_file} --discover --emit-laws\n\
@@ -782,6 +791,10 @@ pub fn render_sidecar(
          // ===========================================================================\n\n",
     ));
     for law in laws {
+        // Per-law ORIGIN tag (the provenance axis — who proposed the law),
+        // distinct from the header's STRENGTH note above. An Aver `//` comment,
+        // so the sidecar stays `aver check`-clean.
+        out.push_str(&format!("// provenance: {}\n", law.provenance.as_tag()));
         out.push_str(&law.block);
         out.push('\n');
     }
