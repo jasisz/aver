@@ -33,6 +33,11 @@ const VM_STEP_LIMIT: u64 = 1_000_000;
 const VM_INT_MAGNITUDE_GUARD: u64 = 1 << 40;
 /// Recursion bound for the sample-value generator (records → fields → …).
 const SAMPLE_DEPTH: usize = 3;
+/// Bound on greedy-shrink sweeps over a refuting assignment. Each sweep is a
+/// full pass over every binder's shrink candidates; we stop early at the first
+/// sweep that makes no progress, so this only caps a pathological chain. A
+/// minimal counterexample over the tiny sample domain needs very few sweeps.
+const SHRINK_MAX_SWEEPS: usize = 64;
 
 /// Refute or keep every candidate of every (enumerated) law by running both
 /// sides on the Aver VM over sample variable assignments. Compiles the
@@ -73,6 +78,12 @@ pub fn vm_filter(reports: &mut [LawDiscovery], inputs: &ProofLowerInputs) {
 /// counterexample (per-binder values + both sides) built from data already in
 /// hand, no extra evaluation. Inconclusive samples (eval error / out-of-guard
 /// magnitude) are skipped, never counted as a refutation (`None`).
+///
+/// Before surfacing, the refuting assignment is greedily SHRUNK (smaller lists,
+/// `Int`s toward 0, simpler fields) so the reported witness is the smallest one
+/// we can reach that STILL refutes — see [`shrink_assignment`]. Shrinking is
+/// pure presentation: it never changes the verdict (a refutation stays a
+/// refutation), only the values shown.
 fn vm_refutes(
     c: &Conjecture,
     binders: &[Binder],
@@ -94,21 +105,18 @@ fn vm_refutes(
                 }
             })
             .collect();
-        let (Some(l), Some(rhs)) = (
-            eval_term(&c.lhs, &assignment, vm),
-            eval_term(&c.rhs, &assignment, vm),
-        ) else {
-            continue;
-        };
-        if !value_within_int_guard(&l) || !value_within_int_guard(&rhs) {
-            continue;
-        }
-        if l != rhs {
-            // Counterexample found — surface it. `assignment` (per-binder
-            // value), `l` (LHS) and `rhs` (RHS) are already computed; we only
-            // format the values we already hold. Restrict the givens to the
-            // candidate's own free variables (the ones that actually bind its
-            // sides), in binder index order (stable/sorted).
+        if refutes_at(c, &assignment, vm).is_some() {
+            // Counterexample found. Greedily minimize it while it still refutes,
+            // then surface the (re-verified) shrunk assignment. `refutes_at` is
+            // the single source of truth for "refutes": the witness's `l`/`rhs`
+            // are recomputed from the *final* assignment, so what we show is
+            // exactly what we last verified — never a stale larger pair.
+            let assignment = shrink_assignment(c, assignment, vm);
+            let (l, rhs) = refutes_at(c, &assignment, vm)
+                .expect("shrink_assignment preserves refutation by construction");
+            // Restrict the givens to the candidate's own free variables (the
+            // ones that actually bind its sides), in binder index order
+            // (stable/sorted).
             let mut fvs = std::collections::BTreeSet::new();
             c.lhs.free_vars(&mut fvs);
             c.rhs.free_vars(&mut fvs);
@@ -130,6 +138,213 @@ fn vm_refutes(
         }
     }
     None
+}
+
+/// The refutation test, factored out so both the initial search and every
+/// shrink step gate on the EXACT same predicate. `Some((lhs, rhs))` iff this
+/// assignment conclusively refutes `c`: both sides evaluate (no eval error /
+/// unmodeled builtin), both stay within the `Int` magnitude guard (out-of-guard
+/// is inconclusive, never a refutation), and the two sides differ. `None`
+/// otherwise — inconclusive or agreeing. Returning the values lets the caller
+/// reuse them without re-evaluating.
+fn refutes_at(
+    c: &Conjecture,
+    assignment: &[Option<Value>],
+    vm: &mut crate::vm::VM,
+) -> Option<(Value, Value)> {
+    let l = eval_term(&c.lhs, assignment, vm)?;
+    let rhs = eval_term(&c.rhs, assignment, vm)?;
+    if !value_within_int_guard(&l) || !value_within_int_guard(&rhs) {
+        return None;
+    }
+    (l != rhs).then_some((l, rhs))
+}
+
+/// Greedily minimize an already-refuting assignment while it STILL refutes.
+///
+/// QuickCheck/QuickChick-style shrinking: each sweep proposes a few smaller
+/// candidates per binder (lists toward `[]`, `Int`s toward 0, records/variants
+/// with shrunk fields — see [`shrink_value`]), RE-EVALUATES the lemma via
+/// [`refutes_at`], and keeps a candidate only if it still refutes. Sweeps
+/// repeat to a fixpoint (a sweep that accepts nothing stops the loop), bounded
+/// by [`SHRINK_MAX_SWEEPS`] so it always terminates.
+///
+/// Soundness: this is pure addition over an already-found counterexample. A
+/// shrink step is committed ONLY when `refutes_at` returns `Some` on the
+/// candidate, so the returned assignment is guaranteed to still refute — it can
+/// never turn a refuted lemma into "not refuted" nor report a non-refuting
+/// witness. In the worst case (no shrink re-verifies) the original assignment is
+/// returned unchanged.
+fn shrink_assignment(
+    c: &Conjecture,
+    mut assignment: Vec<Option<Value>>,
+    vm: &mut crate::vm::VM,
+) -> Vec<Option<Value>> {
+    // Only the candidate's own free variables can change the verdict; leave the
+    // rest untouched (they're filtered out of the witness anyway).
+    let mut fvs = std::collections::BTreeSet::new();
+    c.lhs.free_vars(&mut fvs);
+    c.rhs.free_vars(&mut fvs);
+    let fvs: Vec<usize> = fvs.into_iter().collect();
+    for _ in 0..SHRINK_MAX_SWEEPS {
+        let mut progressed = false;
+        for &i in &fvs {
+            // Skip binders with no value at this index (out of range or
+            // unassigned): nothing to shrink.
+            let Some(Some(current)) = assignment.get(i) else {
+                continue;
+            };
+            // Try this binder's shrink candidates smallest-first; accept the
+            // first that keeps the lemma refuted, then move on (greedy).
+            for cand in shrink_value(current) {
+                let prev = assignment[i].replace(cand);
+                if refutes_at(c, &assignment, vm).is_some() {
+                    progressed = true;
+                    break;
+                }
+                // Rejected: it no longer refutes (or went inconclusive) — undo.
+                assignment[i] = prev;
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
+    assignment
+}
+
+/// Smaller-than-`v` candidates for a single binder, in roughly smallest-first
+/// order. Each is a *proposal*: the caller re-verifies it still refutes and
+/// discards it otherwise, so these need only be plausible shrinks, not
+/// guaranteed-valid ones. Returns an empty `Vec` for values with no smaller
+/// form (already-minimal scalars), which ends shrinking for that binder.
+fn shrink_value(v: &Value) -> Vec<Value> {
+    match v {
+        // Lists: drop toward `[]`, then simplify what's left. Try the empty
+        // list, then a halved prefix/suffix (fast-shrink long lists), then each
+        // single-element deletion (so any one offending element can be removed),
+        // and finally shrink each surviving element in place (so e.g. `[34]`
+        // collapses to `[0]`). Length-reducing moves come first. (The sample
+        // generator only ever produces `List` values, never `Vector`, so a
+        // `Vector` here has no smaller form via `list_to_vec` and is left as-is.)
+        Value::List(_) | Value::Vector(_) => {
+            let Some(xs) = crate::value::list_to_vec(v) else {
+                return Vec::new();
+            };
+            if xs.is_empty() {
+                return Vec::new();
+            }
+            let mut out = vec![crate::value::list_from_vec(Vec::new())];
+            if xs.len() > 1 {
+                let half = xs.len() / 2;
+                out.push(crate::value::list_from_vec(xs[..half].to_vec()));
+                out.push(crate::value::list_from_vec(xs[half..].to_vec()));
+            }
+            for drop_at in 0..xs.len() {
+                let mut shorter = xs.clone();
+                shorter.remove(drop_at);
+                out.push(crate::value::list_from_vec(shorter));
+            }
+            out.extend(shrink_one_field(&xs, crate::value::list_from_vec));
+            out
+        }
+        // `Int`: move toward 0 — try 0, then negate (toward a positive), then
+        // halve the magnitude. The re-verify gate drops any that stop refuting.
+        Value::Int(n) => {
+            let mut out = Vec::new();
+            if !n.is_zero() {
+                out.push(Value::int(0));
+            }
+            if let Some(i) = n.to_i64() {
+                if i < 0 {
+                    out.push(Value::Int(n.neg()));
+                }
+                let half = i / 2;
+                if half != i {
+                    out.push(Value::int(half));
+                }
+            }
+            out
+        }
+        // Strings: shrink toward "" the same way as lists (empty, then drop a
+        // char). Kept simple — char-level shrinking is enough for readability.
+        Value::Str(s) if !s.is_empty() => {
+            let mut out = vec![Value::Str(String::new())];
+            for drop_at in 0..s.chars().count() {
+                let shorter: String = s
+                    .chars()
+                    .enumerate()
+                    .filter_map(|(j, ch)| (j != drop_at).then_some(ch))
+                    .collect();
+                out.push(Value::Str(shorter));
+            }
+            out
+        }
+        // Optionals / wrappers: a `Some`/`Ok`/`Err` shrinks to its shrunk
+        // payload (re-wrapped); `Some` also shrinks to `None` (the base case).
+        Value::Some(inner) => {
+            let mut out = vec![Value::None];
+            out.extend(
+                shrink_value(inner)
+                    .into_iter()
+                    .map(|s| Value::Some(Box::new(s))),
+            );
+            out
+        }
+        Value::Ok(inner) => shrink_value(inner)
+            .into_iter()
+            .map(|s| Value::Ok(Box::new(s)))
+            .collect(),
+        Value::Err(inner) => shrink_value(inner)
+            .into_iter()
+            .map(|s| Value::Err(Box::new(s)))
+            .collect(),
+        // Tuples / records / variants: shrink one field at a time, leaving the
+        // others fixed (so the structure is preserved while values get simpler).
+        Value::Tuple(items) => shrink_one_field(items, Value::Tuple),
+        Value::Record { type_name, fields } => {
+            let (names, vals): (Vec<String>, Vec<Value>) =
+                fields.iter().map(|(n, x)| (n.clone(), x.clone())).unzip();
+            let type_name = type_name.clone();
+            shrink_one_field(&vals, move |xs| Value::Record {
+                type_name: type_name.clone(),
+                fields: std::sync::Arc::from(
+                    names.iter().cloned().zip(xs).collect::<Vec<_>>().as_slice(),
+                ),
+            })
+        }
+        Value::Variant {
+            type_name,
+            variant,
+            fields,
+        } => {
+            let type_name = type_name.clone();
+            let variant = variant.clone();
+            shrink_one_field(fields, move |xs| Value::Variant {
+                type_name: type_name.clone(),
+                variant: variant.clone(),
+                fields: std::sync::Arc::from(xs.as_slice()),
+            })
+        }
+        // Already minimal (Bool, Unit, Float, None, …): no smaller form.
+        _ => Vec::new(),
+    }
+}
+
+/// Shrink a fixed-arity field list (tuple / record / variant) by shrinking each
+/// field in turn while holding the others fixed, rebuilding the container via
+/// `rebuild`. Each emitted candidate differs from the input in exactly one
+/// field, so the structural shape (arity, type, variant) is preserved.
+fn shrink_one_field(fields: &[Value], rebuild: impl Fn(Vec<Value>) -> Value) -> Vec<Value> {
+    let mut out = Vec::new();
+    for (i, f) in fields.iter().enumerate() {
+        for smaller in shrink_value(f) {
+            let mut next = fields.to_vec();
+            next[i] = smaller;
+            out.push(rebuild(next));
+        }
+    }
+    out
 }
 
 /// Evaluate a term under a variable assignment on the VM. `None` = inconclusive
@@ -331,5 +546,131 @@ fn named_sample(td: &crate::ast::TypeDef, inputs: &ProofLowerInputs, depth: usiz
             }
             out
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A bare VM with no compiled functions — enough to drive `eval_term` /
+    /// `refutes_at` for conjectures whose only callee is the directly-modeled
+    /// `List.concat` builtin (which never touches the VM's function table).
+    fn bare_vm() -> crate::vm::VM {
+        crate::vm::VM::new(
+            crate::vm::CodeStore::new(),
+            Vec::new(),
+            crate::nan_value::Arena::new(),
+        )
+    }
+
+    /// `List.concat(x, x) == x` over a single list binder `x`. False for any
+    /// non-empty `x` (the doubled list is strictly longer) and true for `[]`
+    /// (both sides empty) — so the shortest refuting `x` is a 1-element list.
+    fn self_concat_conjecture() -> Conjecture {
+        let x = TermNode::Var(0);
+        Conjecture {
+            lhs: TermNode::App {
+                callee: "List.concat".to_string(),
+                args: vec![x.clone(), x.clone()],
+            },
+            rhs: x,
+            ty: Type::List(Box::new(Type::Int)),
+        }
+    }
+
+    /// `shrink_value` on a list offers `[]` first and a single-element-deletion
+    /// candidate for every position, and on a positive `Int` offers 0 — the raw
+    /// per-type shrink moves the greedy pass composes.
+    #[test]
+    fn shrink_value_offers_smaller_candidates() {
+        let list = crate::value::list_from_vec(vec![Value::int(7), Value::int(8), Value::int(9)]);
+        let cands = shrink_value(&list);
+        // Empty list is the smallest move and comes first.
+        assert_eq!(
+            cands.first(),
+            Some(&crate::value::list_from_vec(Vec::new())),
+            "list shrink must offer [] first"
+        );
+        // Every single-element deletion is offered (so any one offender drops).
+        for drop_at in 0..3 {
+            let mut expect = vec![Value::int(7), Value::int(8), Value::int(9)];
+            expect.remove(drop_at);
+            assert!(
+                cands.contains(&crate::value::list_from_vec(expect)),
+                "list shrink must offer dropping element {drop_at}"
+            );
+        }
+        // A positive Int shrinks toward 0 (0 offered as the smallest move).
+        assert!(
+            shrink_value(&Value::int(42)).contains(&Value::int(0)),
+            "Int shrink must offer 0"
+        );
+        // Already-minimal scalars have no smaller form.
+        assert!(shrink_value(&Value::int(0)).is_empty());
+        assert!(shrink_value(&Value::Bool(true)).is_empty());
+    }
+
+    /// A deliberately-large refuting assignment shrinks to the minimal witness
+    /// that STILL refutes: the list collapses to a single element AND that
+    /// element's `Int` collapses to 0 — i.e. `[0]`, the shortest/simplest list
+    /// for which `List.concat(x, x) != x`. The shrunk assignment is re-verified
+    /// to genuinely refute (it never silently "un-refutes").
+    #[test]
+    fn shrink_assignment_minimizes_a_large_counterexample() {
+        let c = self_concat_conjecture();
+        let mut vm = bare_vm();
+        // Big, noisy starting counterexample: a 5-element list of large Ints.
+        let big = crate::value::list_from_vec(vec![
+            Value::int(5),
+            Value::int(9),
+            Value::int(13),
+            Value::int(21),
+            Value::int(34),
+        ]);
+        let start = vec![Some(big.clone())];
+
+        // Sanity: the starting assignment really does refute (precondition for
+        // shrinking — we only ever shrink an already-found counterexample).
+        assert!(
+            refutes_at(&c, &start, &mut vm).is_some(),
+            "the large starting assignment must refute"
+        );
+
+        let shrunk = shrink_assignment(&c, start, &mut vm);
+
+        // The shrunk witness still refutes — the load-bearing soundness property
+        // (a shrink step is only ever kept when it re-verifies as a refutation).
+        let (l, rhs) =
+            refutes_at(&c, &shrunk, &mut vm).expect("the shrunk assignment must still refute");
+        assert_ne!(l, rhs, "a refutation has lhs != rhs");
+
+        // And it shrank all the way to the minimal `[0]`: one element, value 0.
+        let shrunk_x = shrunk[0].clone().expect("binder 0 stays assigned");
+        assert_eq!(
+            shrunk_x,
+            crate::value::list_from_vec(vec![Value::int(0)]),
+            "the 5-element large-Int list must shrink to the minimal [0]"
+        );
+    }
+
+    /// Shrinking is conservative: when the starting assignment does NOT refute,
+    /// `shrink_assignment` leaves it untouched (it never manufactures a smaller
+    /// "counterexample" out of an agreeing assignment).
+    #[test]
+    fn shrink_assignment_leaves_a_non_refuting_assignment_unchanged() {
+        let c = self_concat_conjecture();
+        let mut vm = bare_vm();
+        // `x = []` makes both sides `[]` — agreement, not a refutation.
+        let empty = vec![Some(crate::value::list_from_vec(Vec::new()))];
+        assert!(
+            refutes_at(&c, &empty, &mut vm).is_none(),
+            "the empty-list assignment must NOT refute (both sides empty)"
+        );
+        let out = shrink_assignment(&c, empty.clone(), &mut vm);
+        assert_eq!(
+            out, empty,
+            "a non-refuting assignment is returned unchanged"
+        );
     }
 }
