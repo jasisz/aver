@@ -1751,6 +1751,22 @@ fn emit_list_induction(
         let cases_extra_branch = cases_extra
             .map(|s| format!(" | (cases tail <;> simp_all [{s}] <;> omega)"))
             .unwrap_or_default();
+        // A `split` twin of the bridged `cases tail` branch, over the SAME
+        // bridged simp set (the comparison fn's def swapped for its proven
+        // `f a b = true ↔ a ≤ b` bridge, so the inductive hypothesis lands in
+        // arithmetic form `omega` can use). A guarded comparison law — e.g.
+        // `le (len (filterZ xs)) (len xs)` where `filterZ` branches on an inner
+        // `isZ head` — needs BOTH the guard split AND the bridge in ONE rung:
+        // the bare split rung above unfolds the comparison fn (destroying the
+        // `= true` the bridge keys on), and the `cases tail` branch never splits
+        // the guard. `simp only [s]` exposes the inner `if` (the comparison fn's
+        // def is NOT in `s`, so it survives for the bridge), `split` case-splits
+        // it, then `simp_all [s] <;> omega` bridges the IH and closes each branch.
+        // Additive and sound (runs only after the prior arms fail, ends in
+        // `omega`), so it can only ADD closures.
+        let split_extra_branch = cases_extra
+            .map(|s| format!(" | (simp only [{s}]; split <;> simp_all [{s}] <;> omega)"))
+            .unwrap_or_default();
         let tail = if with_sorry { " | sorry" } else { "" };
         (
             format!(
@@ -1768,7 +1784,7 @@ fn emit_list_induction(
             // non-closing arm still degrades to the honest `sorry`. Sound, so it
             // can only ADD closures.
             format!(
-                "| cons head tail ih => first | (simp_all [{arm_simp}]; done) | (simp_all [{arm_simp}]; omega){cons_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega) | (cases tail <;> simp_all [{arm_simp}] <;> omega){cases_extra_branch}{tail}"
+                "| cons head tail ih => first | (simp_all [{arm_simp}]; done) | (simp_all [{arm_simp}]; omega){cons_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega) | (cases tail <;> simp_all [{arm_simp}] <;> omega){cases_extra_branch}{split_extra_branch}{tail}"
             ),
         )
     };
