@@ -852,6 +852,8 @@ fn label_for(expr: &MirExpr) -> &'static str {
         MirExpr::IndependentProduct(_) => "IndependentProduct",
         MirExpr::Return(_) => "Return",
         MirExpr::FnValue(_) => "FnValue",
+        MirExpr::Box(_) => "Box",
+        MirExpr::Unbox(_) => "Unbox",
     }
 }
 
@@ -1449,6 +1451,25 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         // refinement + module-path mangling) so the emit is byte-identical.
         // The VM does the same (`compile_ident` → `symbol_ref`).
         MirExpr::FnValue(name) => Some(emit_mir_static_ref(name, emit_ctx)),
+        // ETAP-2 representation boundaries (inserted by the
+        // `bare_i64::rewrite_for_rust` MIR->MIR pass). Codegen no longer
+        // DECIDES where a boundary goes — the rewrite already inserted it —
+        // it just lowers the node:
+        //   Box(x)   — x evaluates to a raw `i64`; box it into `AverInt`.
+        //   Unbox(x) — x evaluates to an `AverInt`; narrow to raw `i64`
+        //              via the checked `to_i64()` (the analysis proved the
+        //              value fits, so the `expect` never fires).
+        MirExpr::Box(inner) => {
+            let raw = emit_mir_expr(inner, emit_ctx)?;
+            Some(format!("aver_rt::AverInt::from_i64({})", raw))
+        }
+        MirExpr::Unbox(inner) => {
+            let boxed = emit_mir_expr(inner, emit_ctx)?;
+            Some(format!(
+                "{}.to_i64().expect(\"Int out of i64 range\")",
+                boxed
+            ))
+        }
         _ => None,
     }
 }
@@ -5440,6 +5461,7 @@ mod tests {
             body,
             local_count: 0,
             aliased_slots: std::sync::Arc::new(vec![]),
+            repr: crate::ir::mir::MirFnRepr::default(),
         }
     }
 

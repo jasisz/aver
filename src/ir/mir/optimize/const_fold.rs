@@ -143,6 +143,7 @@ fn walk_children(node: &mut MirExpr, builtins: &[String]) {
         MirExpr::Project(spanned_proj) => fold_in_place(&mut spanned_proj.node.base, builtins),
         MirExpr::Try(inner) => fold_in_place(inner, builtins),
         MirExpr::Return(inner) => fold_in_place(inner, builtins),
+        MirExpr::Box(inner) | MirExpr::Unbox(inner) => fold_in_place(inner, builtins),
         MirExpr::List(items) | MirExpr::Tuple(items) => {
             for item in items {
                 fold_in_place(item, builtins);

@@ -156,7 +156,10 @@ fn bool_match_walk_children(node: &mut MirExpr) {
             }
         }
         MirExpr::Project(spanned_proj) => bool_match_in_place(&mut spanned_proj.node.base),
-        MirExpr::Try(inner) | MirExpr::Return(inner) => bool_match_in_place(inner),
+        MirExpr::Try(inner)
+        | MirExpr::Return(inner)
+        | MirExpr::Box(inner)
+        | MirExpr::Unbox(inner) => bool_match_in_place(inner),
         MirExpr::List(items) | MirExpr::Tuple(items) => {
             for item in items {
                 bool_match_in_place(item);

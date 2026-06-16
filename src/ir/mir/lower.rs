@@ -258,6 +258,10 @@ fn lower_fn(fd: &ResolvedFnDef, program: &mut MirProgram) -> Result<MirFn, SkipR
             .as_ref()
             .map(|r| r.aliased_slots.clone())
             .unwrap_or_default(),
+        // Int-representation tags stay empty at lowering: they are filled
+        // only by the late `bare_i64::rewrite_for_rust` pass on the Rust
+        // codegen clone. Everywhere else, every Int value is boxed.
+        repr: super::program::MirFnRepr::default(),
     })
 }
 

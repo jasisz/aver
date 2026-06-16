@@ -1394,7 +1394,11 @@ fn visit_children(e: &MirExpr, f: &mut dyn FnMut(&MirExpr)) {
             f(&b.node.lhs.node);
             f(&b.node.rhs.node);
         }
-        MirExpr::Neg(inner) | MirExpr::Try(inner) | MirExpr::Return(inner) => f(&inner.node),
+        MirExpr::Neg(inner)
+        | MirExpr::Try(inner)
+        | MirExpr::Return(inner)
+        | MirExpr::Box(inner)
+        | MirExpr::Unbox(inner) => f(&inner.node),
         MirExpr::Match(m) => {
             f(&m.node.subject.node);
             for arm in &m.node.arms {

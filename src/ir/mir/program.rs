@@ -160,6 +160,50 @@ pub struct MirFn {
     /// out-of-range slot reads `false` (not aliased → fast path sound),
     /// matching the resolver tables.
     pub aliased_slots: std::sync::Arc<Vec<bool>>,
+    /// **Int-representation tags (ETAP-2).** Populated ONLY by the
+    /// `bare_i64::rewrite_for_rust` MIR->MIR pass on the per-target clone
+    /// the Rust backend codegens from; default-empty everywhere else (so
+    /// the VM / wasm-gc / proof MIR keep all-`Int` representation). When a
+    /// slot is in [`MirFnRepr::bare_slots`] it is a raw machine `i64` for
+    /// its whole lifetime (its reads render native `i64`, arithmetic over
+    /// raw slots stays raw); every crossing into an `Int` context is an
+    /// explicit [`super::expr::MirExpr::Box`] node the rewrite inserted.
+    /// This is the per-value representation tag made explicit ON the IR --
+    /// backends read it off the rewritten `MirFn` instead of re-deriving
+    /// from the `BareI64Facts` side table.
+    pub repr: MirFnRepr,
+}
+
+/// Per-fn Int-representation summary made explicit on the rewritten MIR
+/// (ETAP-2 SLICE 1). Default-empty ⇒ everything is the arbitrary-precision
+/// `Int` (`aver_rt::AverInt`), the fail-closed baseline. Populated only by
+/// `bare_i64::rewrite_for_rust`.
+#[derive(Debug, Clone, Default)]
+pub struct MirFnRepr {
+    /// Locals (params + let bindings + match aliases) the rewrite tagged as
+    /// raw machine `i64`. A read of such a slot renders as a native `i64`
+    /// ident; arithmetic over raw slots stays raw. A missing slot is `Int`
+    /// (boxed) -- fail-closed.
+    pub bare_slots: std::collections::HashSet<LocalId>,
+    /// Per-param representation, indexed by declaration order (same indexing
+    /// `aliased_slots` / `own_param` use): `true` ⟺ the param's Rust
+    /// signature type is bare `i64` (and every caller `Box`/`Unbox`es at the
+    /// boundary).
+    pub bare_params: Vec<bool>,
+    /// `true` ⟺ the fn's Rust return type is bare `i64`.
+    pub bare_return: bool,
+}
+
+impl MirFnRepr {
+    /// Is the value bound to `slot` represented as a raw machine `i64`?
+    pub fn slot_is_bare(&self, slot: LocalId) -> bool {
+        self.bare_slots.contains(&slot)
+    }
+
+    /// Is param index `i` bare in the Rust signature?
+    pub fn param_is_bare(&self, i: usize) -> bool {
+        self.bare_params.get(i).copied().unwrap_or(false)
+    }
 }
 
 /// One formal parameter. The `LocalId` is assigned at lowering

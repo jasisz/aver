@@ -140,6 +140,18 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &Spanned<MirExpr>, indent: &str)
             write!(f, "return ")?;
             write_expr(f, inner, indent)
         }
+        // ETAP-2 representation boundaries (only present on the Rust
+        // codegen clone after `bare_i64::rewrite_for_rust`).
+        MirExpr::Box(inner) => {
+            write!(f, "box(")?;
+            write_expr(f, inner, indent)?;
+            write!(f, ")")
+        }
+        MirExpr::Unbox(inner) => {
+            write!(f, "unbox(")?;
+            write_expr(f, inner, indent)?;
+            write!(f, ")")
+        }
     }
 }
 

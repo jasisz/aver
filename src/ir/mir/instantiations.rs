@@ -222,7 +222,10 @@ impl Walker {
                 self.register_ty(spanned_proj.node.base.ty());
                 self.visit_expr(&spanned_proj.node.base.node);
             }
-            MirExpr::Try(inner) | MirExpr::Return(inner) => {
+            MirExpr::Try(inner)
+            | MirExpr::Return(inner)
+            | MirExpr::Box(inner)
+            | MirExpr::Unbox(inner) => {
                 self.register_ty(inner.ty());
                 self.visit_expr(&inner.node);
             }
@@ -441,6 +444,7 @@ mod tests {
                 body,
                 local_count: 0,
                 aliased_slots: std::sync::Arc::new(Vec::new()),
+                repr: super::program::MirFnRepr::default(),
             },
         );
         p

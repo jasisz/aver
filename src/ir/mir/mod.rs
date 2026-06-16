@@ -94,5 +94,5 @@ pub use optimize::{
     BareI64Facts, FnBareFacts, Repr, ValueFact, algebraic_simplify, bool_match_to_if,
     branch_collapse, const_fold, dead_code, inline_nullary_literals, optimize,
 };
-pub use program::{LocalId, MirFn, MirParam, MirProgram};
+pub use program::{LocalId, MirFn, MirFnRepr, MirParam, MirProgram};
 pub use stats::{LowerStats, SkipReason};

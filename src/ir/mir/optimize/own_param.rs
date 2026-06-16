@@ -763,7 +763,10 @@ fn scan_leaks(
                 out,
             );
         }
-        MirExpr::Return(inner) | MirExpr::Try(inner) => {
+        MirExpr::Return(inner)
+        | MirExpr::Try(inner)
+        | MirExpr::Box(inner)
+        | MirExpr::Unbox(inner) => {
             scan_leaks(&inner.node, prov, captures_param, builtins, out);
         }
 
@@ -1256,7 +1259,11 @@ fn visit_children(e: &MirExpr, f: &mut dyn FnMut(&MirExpr)) {
             f(&b.node.lhs.node);
             f(&b.node.rhs.node);
         }
-        MirExpr::Neg(inner) | MirExpr::Try(inner) | MirExpr::Return(inner) => f(&inner.node),
+        MirExpr::Neg(inner)
+        | MirExpr::Try(inner)
+        | MirExpr::Return(inner)
+        | MirExpr::Box(inner)
+        | MirExpr::Unbox(inner) => f(&inner.node),
         MirExpr::Match(m) => {
             f(&m.node.subject.node);
             for arm in &m.node.arms {
@@ -1356,6 +1363,7 @@ mod tests {
                 body: span(MirExpr::Literal(span(Literal::Int(0)))),
                 local_count: 1,
                 aliased_slots: Arc::new(vec![true]),
+                repr: crate::ir::mir::program::MirFnRepr::default(),
             },
         );
         (p, id)
