@@ -440,6 +440,14 @@ pub(super) fn compile_mir_expr(
             Ok(())
         }
 
+        // ETAP-2 representation boundaries are inserted only by the Rust
+        // codegen rewrite (`bare_i64::rewrite_for_rust`) on a per-target
+        // clone — the VM compiles the SHARED, un-rewritten MIR, so these
+        // never reach here. The VM models every Int as arbitrary-precision,
+        // so `Box`/`Unbox` are representation identities: compile the inner
+        // transparently (defensive — keeps the walker total).
+        MirExpr::Box(inner) | MirExpr::Unbox(inner) => compile_mir_expr(fc, inner),
+
         // ── Phase 4d: tail-call dispatch ────────────────────────
         MirExpr::TailCall(spanned_tail) => {
             let tc = &spanned_tail.node;
@@ -898,6 +906,8 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
         MirExpr::Project(p) => can_compile(&p.node.base),
         // Phase 4d additions:
         MirExpr::Try(inner) => can_compile(inner),
+        // ETAP-2 boundaries are Rust-codegen-only; never on the VM path.
+        MirExpr::Box(inner) | MirExpr::Unbox(inner) => can_compile(inner),
         MirExpr::TailCall(t) => t.node.args.iter().all(can_compile),
         // Phase 4f additions:
         MirExpr::List(items) => items.iter().all(can_compile),
@@ -1597,6 +1607,11 @@ fn contains_last_use_slot_mir(expr: &MirExpr, target: u32) -> bool {
         MirExpr::Neg(inner) => contains_last_use_slot_mir(&inner.node, target),
         MirExpr::Project(p) => contains_last_use_slot_mir(&p.node.base.node, target),
         MirExpr::Try(inner) => contains_last_use_slot_mir(&inner.node, target),
+        // ETAP-2 boundaries never appear on the VM path (the rewrite is
+        // Rust-codegen-only); recurse transparently for completeness.
+        MirExpr::Box(inner) | MirExpr::Unbox(inner) => {
+            contains_last_use_slot_mir(&inner.node, target)
+        }
         MirExpr::Construct(c) => c
             .node
             .args

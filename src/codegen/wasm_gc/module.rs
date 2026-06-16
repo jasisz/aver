@@ -5305,7 +5305,11 @@ fn collect_address_taken(mir_program: &crate::ir::mir::MirProgram) -> Vec<String
                 walk(&b.node.lhs.node, seen, order);
                 walk(&b.node.rhs.node, seen, order);
             }
-            MirExpr::Neg(inner) | MirExpr::Try(inner) | MirExpr::Return(inner) => {
+            MirExpr::Neg(inner)
+            | MirExpr::Try(inner)
+            | MirExpr::Return(inner)
+            | MirExpr::Box(inner)
+            | MirExpr::Unbox(inner) => {
                 walk(&inner.node, seen, order);
             }
             MirExpr::Match(m) => {
@@ -5421,9 +5425,11 @@ fn collect_call_indirect_sigs(
                 walk(&b.node.lhs.node, note);
                 walk(&b.node.rhs.node, note);
             }
-            MirExpr::Neg(inner) | MirExpr::Try(inner) | MirExpr::Return(inner) => {
-                walk(&inner.node, note)
-            }
+            MirExpr::Neg(inner)
+            | MirExpr::Try(inner)
+            | MirExpr::Return(inner)
+            | MirExpr::Box(inner)
+            | MirExpr::Unbox(inner) => walk(&inner.node, note),
             MirExpr::Match(m) => {
                 walk(&m.node.subject.node, note);
                 for arm in &m.node.arms {

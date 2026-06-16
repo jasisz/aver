@@ -119,7 +119,10 @@ fn branch_collapse_walk_children(node: &mut MirExpr) {
             }
         }
         MirExpr::Project(spanned_proj) => branch_collapse_in_place(&mut spanned_proj.node.base),
-        MirExpr::Try(inner) | MirExpr::Return(inner) => branch_collapse_in_place(inner),
+        MirExpr::Try(inner)
+        | MirExpr::Return(inner)
+        | MirExpr::Box(inner)
+        | MirExpr::Unbox(inner) => branch_collapse_in_place(inner),
         MirExpr::List(items) | MirExpr::Tuple(items) => {
             for item in items {
                 branch_collapse_in_place(item);

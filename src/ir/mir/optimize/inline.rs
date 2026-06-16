@@ -123,7 +123,10 @@ fn inline_walk_children(node: &mut MirExpr, candidates: &HashMap<FnId, Literal>)
             }
         }
         MirExpr::Project(spanned_proj) => inline_in_place(&mut spanned_proj.node.base, candidates),
-        MirExpr::Try(inner) | MirExpr::Return(inner) => inline_in_place(inner, candidates),
+        MirExpr::Try(inner)
+        | MirExpr::Return(inner)
+        | MirExpr::Box(inner)
+        | MirExpr::Unbox(inner) => inline_in_place(inner, candidates),
         MirExpr::List(items) | MirExpr::Tuple(items) => {
             for item in items {
                 inline_in_place(item, candidates);
@@ -173,6 +176,7 @@ mod tests {
                 body: span(callee_body),
                 local_count: 0,
                 aliased_slots: std::sync::Arc::new(Vec::new()),
+                repr: crate::ir::mir::program::MirFnRepr::default(),
             },
         );
         p.fns.insert(
@@ -186,6 +190,7 @@ mod tests {
                 body: span(caller_body),
                 local_count: 0,
                 aliased_slots: std::sync::Arc::new(Vec::new()),
+                repr: crate::ir::mir::program::MirFnRepr::default(),
             },
         );
         p
@@ -227,6 +232,7 @@ mod tests {
                 body: span(MirExpr::Literal(span(Literal::Int(42)))),
                 local_count: 1,
                 aliased_slots: std::sync::Arc::new(Vec::new()),
+                repr: crate::ir::mir::program::MirFnRepr::default(),
             },
         );
         let caller_body_expr = MirExpr::Call(span(MirCall {
@@ -244,6 +250,7 @@ mod tests {
                 body: span(caller_body_expr),
                 local_count: 0,
                 aliased_slots: std::sync::Arc::new(Vec::new()),
+                repr: crate::ir::mir::program::MirFnRepr::default(),
             },
         );
         let inlined = inline_nullary_literals(p);

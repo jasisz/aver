@@ -72,6 +72,23 @@ fn synthesize_rust_module_cascade(
 
 /// Transpile an Aver program to a Rust project.
 pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
+    // ETAP-2 SLICE 1: make Int representation EXPLICIT in the MIR the Rust
+    // backend codegens from. This runs ONLY here (the Rust entry) — the VM,
+    // wasm-gc, proof, Dafny and Lean backends never call `transpile`, so
+    // their `ctx.mir_program` keeps the all-`Int` representation and never
+    // sees a `Box`/`Unbox` node. The rewrite reuses the (already-computed)
+    // `bare_i64` range+escape analysis to tag each fn's `repr` and insert
+    // the explicit boundary nodes; the body emitter below then lowers those
+    // nodes trivially instead of deciding representation itself.
+    if let Some(prog) = ctx.mir_program.take() {
+        // Mutual-TCO members are emitted with an unconditionally boxed
+        // (`AverInt`) trampoline signature regardless of the unboxing
+        // analysis, so the rewrite must not tag them bare (it would desync
+        // the boxed signature from a bare-rewritten body / caller).
+        let boxed = ctx.mutual_tco_members.clone();
+        ctx.mir_program =
+            Some(crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(prog, &boxed));
+    }
     let has_embedded_policy = ctx.policy.is_some();
     let has_runtime_policy = ctx.runtime_policy_from_env;
     let embedded_independence_cancel = ctx

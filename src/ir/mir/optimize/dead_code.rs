@@ -107,6 +107,7 @@ fn dce_walk_children(node: &mut MirExpr) {
         MirExpr::Project(spanned_proj) => dce_in_place(&mut spanned_proj.node.base),
         MirExpr::Try(inner) => dce_in_place(inner),
         MirExpr::Return(inner) => dce_in_place(inner),
+        MirExpr::Box(inner) | MirExpr::Unbox(inner) => dce_in_place(inner),
         MirExpr::List(items) | MirExpr::Tuple(items) => {
             for item in items {
                 dce_in_place(item);
@@ -197,7 +198,10 @@ fn visit_locals(node: &MirExpr, visit: &mut impl FnMut(LocalId)) {
             }
         }
         MirExpr::Project(spanned_proj) => visit_locals(&spanned_proj.node.base.node, visit),
-        MirExpr::Try(inner) | MirExpr::Return(inner) => visit_locals(&inner.node, visit),
+        MirExpr::Try(inner)
+        | MirExpr::Return(inner)
+        | MirExpr::Box(inner)
+        | MirExpr::Unbox(inner) => visit_locals(&inner.node, visit),
         MirExpr::List(items) | MirExpr::Tuple(items) => {
             for item in items {
                 visit_locals(&item.node, visit);
@@ -283,6 +287,9 @@ pub(super) fn is_pure(expr: &Spanned<MirExpr>) -> bool {
                 && is_pure(&spanned_ite.node.then_branch)
                 && is_pure(&spanned_ite.node.else_branch)
         }
+        // A representation boundary is pure iff its inner value is — it is
+        // a pure `from_i64` / `to_i64` conversion over the inner result.
+        MirExpr::Box(inner) | MirExpr::Unbox(inner) => is_pure(inner),
         MirExpr::Call(_)
         | MirExpr::TailCall(_)
         | MirExpr::Try(_)

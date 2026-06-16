@@ -184,6 +184,30 @@ pub enum MirExpr {
     /// walker falls back to HIR if the name doesn't resolve (a genuinely
     /// unresolved ident — typecheck-rejected input).
     FnValue(String),
+    /// **Int-representation boundary (ETAP-2): raw `i64` → `Int`.** The
+    /// inner expression evaluates to a raw machine `i64` (a value the Int
+    /// "unboxing" analysis proved bare); `Box` wraps it back into the
+    /// arbitrary-precision `Int` (`aver_rt::AverInt`) at every escape (a
+    /// return-as-Int, a boxed-callee-param arg, an aggregate/record/map
+    /// store, a stringify, a boxed `Let` crossing, a boxed-arithmetic
+    /// operand).
+    ///
+    /// Inserted ONLY by the `bare_i64::rewrite_for_rust` MIR→MIR pass,
+    /// which runs LATE (after proof export + shape recognition) on a
+    /// per-target clone — so the VM / wasm-gc / proof MIR never contains
+    /// this node. Backends that may see it (the Rust codegen) lower it to
+    /// `aver_rt::AverInt::from_i64(<inner raw>)`; every other walker treats
+    /// it as a transparent pass-through to `inner` (it never appears on
+    /// their path, the arm exists only for exhaustiveness).
+    Box(std::boxed::Box<Spanned<MirExpr>>),
+    /// **Int-representation boundary (ETAP-2): `Int` → raw `i64`.** The dual
+    /// of [`MirExpr::Box`]: the inner expression evaluates to an `Int`
+    /// (`aver_rt::AverInt`) and `Unbox` narrows it to a raw machine `i64`
+    /// via the checked `to_i64()` (the analysis only marks a slot bare when
+    /// it provably fits `i64`, so the narrowing never loses information).
+    /// Inserted by the same rewrite; the Rust codegen lowers it to
+    /// `<inner boxed>.to_i64().expect(...)`.
+    Unbox(std::boxed::Box<Spanned<MirExpr>>),
 }
 
 /// `let binding = value; body`.
