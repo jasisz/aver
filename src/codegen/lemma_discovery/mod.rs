@@ -267,6 +267,13 @@ pub struct LawDiscovery {
 }
 
 mod bricks;
+// IR-side lemma-calculation substrate (lift fn bodies to defining equations +
+// unfold). PR1: mechanical primitives + unit tests only — every item is
+// consumed solely by the module's own tests for now, so it is gated to `test`
+// to stay dead-code-clean in the default build. PR2 flips this to an
+// unconditional `mod calculate;` when the step-residual driver consumes it.
+#[cfg(test)]
+mod calculate;
 mod committed;
 mod emit_laws;
 mod enumerate;
