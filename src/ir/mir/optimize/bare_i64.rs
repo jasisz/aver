@@ -841,17 +841,44 @@ struct Recurrence {
 /// guard) — the conservative decline.
 fn recurrence_for_param(f: &MirFn, param_slot: LocalId, i: usize) -> Option<Recurrence> {
     let (guard_k, guard_kind) = guard_literal_for(&f.body.node, param_slot)?;
-    let mut recur: Option<Recurrence> = None;
-    find_self_tailcall_recurrence(
+
+    // Inspect EVERY self-tail-call's arg at index `i` — not just the first.
+    // A counter is a provably-bounded recurrence only when ALL of its
+    // self-recurrence paths advance it by the SAME single monotone
+    // `counter - step` decrement toward the equality guard. If any path is
+    // missing, grows the counter (`n + lit`), uses a different/opposite
+    // step, or is a non-`counter`-based expression, the param is NOT a
+    // bounded counter — DECLINE (box). Only checking the first path
+    // under-approximates the interval (a SECOND, growing self-tail-call
+    // leaks the counter out of `i64` range — the multi-tail-call soundness
+    // hole). Fail-closed: boxing costs speed, a missed bound never
+    // correctness.
+    //
+    // `walk_self_tailcall_steps` returns `false` the moment it sees any
+    // self-tail-call whose arg at `i` is NOT the agreed decrement step.
+    let mut step: Option<i128> = None;
+    let mut saw_self_tail = false;
+    let all_same_decrement = walk_self_tailcall_steps(
         &f.body.node,
         f.fn_id,
         param_slot,
         i,
-        guard_k,
-        guard_kind,
-        &mut recur,
+        &mut step,
+        &mut saw_self_tail,
     );
-    recur
+
+    // No self-tail-call at this index, or some path was not the agreed
+    // monotone decrement ⇒ no provably-bounded recurrence. Decline.
+    if !saw_self_tail || !all_same_decrement {
+        return None;
+    }
+    let step = step?;
+
+    Some(Recurrence {
+        guard_k,
+        step,
+        guard_kind,
+    })
 }
 
 /// Walk for a `Match`/`IfThenElse` that guards the counter against a
@@ -922,36 +949,50 @@ fn guard_literal_for(e: &MirExpr, counter: LocalId) -> Option<(i128, GuardKind)>
     }
 }
 
-/// Find a self-`TailCall` and check whether its arg at index `i` is a
-/// monotone `counter - step` (decrement of a positive literal). Records the
-/// [`Recurrence`] on the first match.
-fn find_self_tailcall_recurrence(
+/// Walk `e` and validate the arg at index `i` of EVERY self-`TailCall` to
+/// `self_fn`. Each such arg MUST be the monotone `counter - step` decrement
+/// (a positive literal `step`), and every path must agree on the SAME
+/// `step` — the first one seen pins it (recorded in `step`). `saw_self_tail`
+/// is set when at least one self-tail-call carries an arg at `i`.
+///
+/// Returns `false` (and stops contributing) the moment any self-tail-call's
+/// arg at `i` is NOT the agreed decrement — a growing `counter + lit`, a
+/// different/opposite step, or a non-`counter`-based expr. A `false` result
+/// means the param is not a provably-bounded counter and must box
+/// (fail-closed). A self-tail-call with too few args (no slot `i`) is
+/// skipped: the param at `i` does not participate in that call.
+fn walk_self_tailcall_steps(
     e: &MirExpr,
     self_fn: FnId,
     counter: LocalId,
     i: usize,
-    guard_k: i128,
-    guard_kind: GuardKind,
-    out: &mut Option<Recurrence>,
-) {
-    if out.is_some() {
-        return;
-    }
+    step: &mut Option<i128>,
+    saw_self_tail: &mut bool,
+) -> bool {
+    let mut ok = true;
     if let MirExpr::TailCall(tc) = e
         && tc.node.target == self_fn
         && let Some(arg) = tc.node.args.get(i)
-        && let Some(step) = decrement_step(&arg.node, counter)
     {
-        *out = Some(Recurrence {
-            guard_k,
-            step,
-            guard_kind,
-        });
-        return;
+        *saw_self_tail = true;
+        match decrement_step(&arg.node, counter) {
+            // First decrement path pins the step; later paths must match it.
+            Some(s) => match *step {
+                None => *step = Some(s),
+                Some(prev) if prev != s => ok = false,
+                Some(_) => {}
+            },
+            // Not a `counter - lit` decrement (a growth path, a different
+            // shape, or not counter-based) ⇒ unbounded recurrence.
+            None => ok = false,
+        }
     }
     visit_children(e, &mut |c| {
-        find_self_tailcall_recurrence(c, self_fn, counter, i, guard_k, guard_kind, out)
+        if !walk_self_tailcall_steps(c, self_fn, counter, i, step, saw_self_tail) {
+            ok = false;
+        }
     });
+    ok
 }
 
 /// If `e` is `counter - K` (a positive literal `K`), return `K`. The only
@@ -2061,6 +2102,48 @@ fn main() -> Int
         assert!(
             f.param_is_bare(0),
             "a ≥2-literal-arm bounded counter stays bare (dispatch path emits `== Ki64`)"
+        );
+    }
+
+    /// Multi-tail-call soundness hole: a counter with TWO self-tail-call
+    /// paths at the same index — one decrements (`n - 1`), one GROWS (`n +
+    /// 1_000_000_000_000_000_000`). The pre-fix recurrence recognizer
+    /// stopped at the FIRST (decrement) path and seeded the param's interval
+    /// from the decrement alone, marking it bare; at runtime the growth path
+    /// drove `n` out of `i64` range and the emitted native `i64` op
+    /// (`n + n`) silently wrapped in release (the C0 bug — caught only by the
+    /// `overflow-checks` panic in dev). The fix requires EVERY self-tail-call
+    /// arg at the index to be the SAME monotone decrement; a second growing
+    /// path makes the recurrence unbounded ⇒ the param must BOX (fail-closed).
+    #[test]
+    fn multi_tailcall_growing_path_demotes_to_boxed() {
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn loopit(n: Int, phase: Int) -> Int
+    match n
+        0 -> n + n
+        _ -> match phase
+            0 -> n + n
+            5000 -> loopit(n - 1, phase)
+            _ -> loopit(n + 1000000000000000000, phase - 1)
+
+fn main() -> Int
+    loopit(8, 5)
+"#;
+        let (program, facts) = facts_for(src);
+        let f = facts
+            .for_fn(fn_id_by_name(&program, "loopit"))
+            .expect("loopit facts");
+        // The counter `n` has a SECOND, growing self-tail-call path, so it is
+        // NOT a provably-bounded counter — it must box. Pre-fix this asserted
+        // `param_is_bare(0) == true` (the soundness hole): the recognizer saw
+        // only the `n - 1` path.
+        assert!(
+            !f.param_is_bare(0),
+            "a counter with a growing second self-tail-call path is unbounded → must box"
         );
     }
 }

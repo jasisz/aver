@@ -405,6 +405,49 @@ fn main() -> Unit
     );
 }
 
+/// Multi-tail-call Int-unboxing soundness hole (the C0 bug): a counter `n`
+/// with TWO self-tail-call paths — one decrements (`n - 1`), one GROWS
+/// (`n + 1_000_000_000_000_000_000`). The pre-fix recurrence recognizer saw
+/// only the first (decrement) path, under-approximated `n`'s interval, and
+/// marked it bare → the Rust backend emitted native `i64` for `n`, so at
+/// runtime the growth path drove `n` past `i64::MAX` and `n + n` silently
+/// WRAPPED in release (a panic in dev under `overflow-checks`). The fix
+/// boxes `n` (every self-tail-call must be the SAME monotone decrement, else
+/// the recurrence is unbounded). Build+run the emitted Rust and assert it
+/// equals the VM's arbitrary-precision `10000000000000000016` — a wrongly
+/// bare counter would diverge (wrap) or panic.
+#[test]
+fn rust_multi_tailcall_growing_counter_matches_vm() {
+    let src = r#"module MultiTail
+    intent = "two self-tail-call paths: one decrements, one grows — counter must box"
+    depends []
+    effects [Console.print]
+
+fn loopit(n: Int, phase: Int) -> Int
+    ? "phase 5000 decrements n; any other non-zero phase grows n past i64 range"
+    match n
+        0 -> n + n
+        _ -> match phase
+            0 -> n + n
+            5000 -> loopit(n - 1, phase)
+            _ -> loopit(n + 1000000000000000000, phase - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(loopit(8, 5)))
+"#;
+    let vm = run_vm_inline("multitail", src).expect("vm run");
+    let rust = build_run_rust_inline("multitail", src).expect("rust build+run");
+    assert_eq!(
+        vm, "10000000000000000016",
+        "VM computes the arbitrary-precision (no-wrap) value"
+    );
+    assert_eq!(
+        rust, vm,
+        "Rust diverged from VM — the multi-tail-call counter was wrongly unboxed to i64 and wrapped/panicked"
+    );
+}
+
 /// The own_param perf win on the RUST backend, verified end-to-end: a
 /// linearly-threaded Vector param the pass proves uniquely owned must (a)
 /// build+run to the same result as the VM, and (b) emit the OWNED-by-value
