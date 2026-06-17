@@ -387,6 +387,13 @@ pub(super) fn emit_module_with(
     // `wasm-opt -Oz` strips any helper a given program never reaches.
     if registry.bignum {
         for b in [
+            // Shared sub-routines FIRST, so the arithmetic helpers that `call`
+            // them have a known fn index. `wasm-opt -Oz` DCEs any a given
+            // program never reaches.
+            BuiltinName::AintDecompose,
+            BuiltinName::AintNormalize,
+            BuiltinName::AintStrip,
+            BuiltinName::AintUmagCmp,
             BuiltinName::AintFromI64,
             BuiltinName::AintAdd,
             BuiltinName::AintSub,
@@ -1105,6 +1112,16 @@ pub(super) fn emit_module_with(
             builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintFromI64);
         registry.aint_to_i64_checked_fn_idx =
             builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintToI64Checked);
+        // Shared sub-routine fn indices — the arithmetic helpers' WAT renders a
+        // `call <idx>` to these instead of inlining the body. `Some` since they
+        // are registered unconditionally above when `bignum`.
+        registry.aint_decompose_fn_idx =
+            builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintDecompose);
+        registry.aint_normalize_fn_idx =
+            builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintNormalize);
+        registry.aint_strip_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintStrip);
+        registry.aint_umag_cmp_fn_idx =
+            builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintUmagCmp);
     }
 
     // 6) Map helper fn types (per-K hash + eq, per-(K,V) empty/set/get/len).

@@ -1,6 +1,7 @@
 
         (module
           {decls}
+          {func_pad}
           (func (export "helper") (param $s (ref null $string)) (result (ref null $result))
             (local $len i32) (local $idx i32) (local $start i32)
             (local $negative i32) (local $saw_digit i32)
