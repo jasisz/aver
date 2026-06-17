@@ -788,6 +788,49 @@ pub(super) fn emit_aint_field_hash(
     Ok(())
 }
 
+/// ETAP-2 multi-field carrier-`i64`: emit Int EQUALITY for one RECORD FIELD,
+/// dispatching per `(record_name, field_name)`. A field the per-field
+/// recognizer proved bounded (`is_eligible_carrier_field`) is erased to a
+/// native `i64` struct field, so it compares with a raw `i64.eq` even when
+/// bignum is active — an `__aint_eq` on a scalar `i64` is invalid wasm. Every
+/// other Int field stays the boxed `$AverInt` ref and routes through
+/// `emit_aint_field_eq` (→ `__aint_eq` under ℤ, `i64.eq` off). A record can be
+/// MIXED (one i64 field, one `$AverInt`), so the choice is per field.
+pub(super) fn emit_record_int_field_eq(
+    f: &mut Function,
+    registry: &TypeRegistry,
+    record_name: &str,
+    field_name: &str,
+) -> Result<(), WasmGcError> {
+    if registry.is_eligible_carrier_field(record_name, field_name) {
+        f.instruction(&Instruction::I64Eq);
+        Ok(())
+    } else {
+        emit_aint_field_eq(f, registry)
+    }
+}
+
+/// ETAP-2 multi-field carrier-`i64`: emit Int HASH for one RECORD FIELD,
+/// dispatching per `(record_name, field_name)` — the hash sibling of
+/// [`emit_record_int_field_eq`]. An i64-erased carrier field hashes with the
+/// raw `i32.wrap_i64` (the bignum-off Int scheme), which AGREES with the
+/// `i64.eq` the eq path picks for the same field (equal carriers hash equal,
+/// so a Map/Set lookup over such records can't silently miss). A boxed Int
+/// field routes through `emit_aint_field_hash` (→ `__aint_hash` under ℤ).
+pub(super) fn emit_record_int_field_hash(
+    f: &mut Function,
+    registry: &TypeRegistry,
+    record_name: &str,
+    field_name: &str,
+) -> Result<(), WasmGcError> {
+    if registry.is_eligible_carrier_field(record_name, field_name) {
+        f.instruction(&Instruction::I32WrapI64);
+        Ok(())
+    } else {
+        emit_aint_field_hash(f, registry)
+    }
+}
+
 fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
     let trimmed = elem.trim();
     // ETAP-2 carrier-`i64`: an eligible carrier element is a NATIVE `i64`
@@ -1966,7 +2009,7 @@ pub(super) fn emit_record_eq_inline(
         f.instruction(&Instruction::I32Const(1));
         return Ok(());
     }
-    for (i, (_, field_ty)) in fields.iter().enumerate() {
+    for (i, (field_name, field_ty)) in fields.iter().enumerate() {
         // push head.f
         f.instruction(&Instruction::LocalGet(head_local));
         f.instruction(&Instruction::StructGet {
@@ -1980,10 +2023,12 @@ pub(super) fn emit_record_eq_inline(
             field_index: i as u32,
         });
         // emit per-field eq → i32
-        // ETAP-2 carrier-`i64`: an eligible carrier field is a native `i64`,
-        // so it compares with a raw `i64.eq`, NOT the `__aint_eq` ref helper
-        // (the plain-`Int` arm) nor a per-type `__eq_<Carrier>` (which a
-        // newtype carrier never gets). Check before the type-name match.
+        // ETAP-2 carrier-`i64`: an eligible WHOLE-TYPE carrier field (a
+        // single-field newtype carrier used as this record's field type) is a
+        // native `i64`, so it compares with a raw `i64.eq`, NOT the `__aint_eq`
+        // ref helper (the plain-`Int` arm) nor a per-type `__eq_<Carrier>`
+        // (which a newtype carrier never gets). Check before the type-name
+        // match.
         if registry.is_eligible_carrier(field_ty.trim()) {
             f.instruction(&Instruction::I64Eq);
             if i > 0 {
@@ -1993,7 +2038,10 @@ pub(super) fn emit_record_eq_inline(
         }
         match field_ty.trim() {
             "Int" => {
-                emit_aint_field_eq(f, registry)?;
+                // ETAP-2 multi-field carrier-`i64`: a bounded Int field erased
+                // to a native `i64` compares with `i64.eq`; every other Int
+                // field stays the boxed `$AverInt` and routes to `__aint_eq`.
+                emit_record_int_field_eq(f, registry, record_name, field_name)?;
             }
             "Bool" => {
                 f.instruction(&Instruction::I32Eq);
@@ -2564,6 +2612,7 @@ fn emit_list_hash(
                 )))?;
             emit_record_inline_hash(
                 &mut f,
+                record_name,
                 r_idx,
                 fields,
                 /* elem_local */ 3,
@@ -2747,6 +2796,7 @@ fn emit_sum_inline_hash(
 #[allow(clippy::too_many_arguments)]
 fn emit_record_inline_hash(
     f: &mut Function,
+    record_name: &str,
     record_idx: u32,
     fields: &[(String, String)],
     elem_local: u32,
@@ -2759,7 +2809,7 @@ fn emit_record_inline_hash(
     // elem_hash = 5381 (DJB2 init).
     f.instruction(&Instruction::I32Const(5381));
     f.instruction(&Instruction::LocalSet(elem_hash_local));
-    for (i, (_field_name, field_type)) in fields.iter().enumerate() {
+    for (i, (field_name, field_type)) in fields.iter().enumerate() {
         // elem_hash = elem_hash * 33 + field_hash
         // (= (elem_hash << 5) + elem_hash + field_hash, DJB2.)
         f.instruction(&Instruction::LocalGet(elem_hash_local));
@@ -2773,9 +2823,20 @@ fn emit_record_inline_hash(
             struct_type_index: record_idx,
             field_index: i as u32,
         });
-        // ETAP-2 carrier-`i64`: an eligible carrier record-field is a native
-        // `i64` → raw `i32.wrap_i64`, matching its `i64.eq`.
+        // ETAP-2 carrier-`i64`: an eligible WHOLE-TYPE carrier record-field
+        // (a single-field newtype carrier used as this field's type) is a
+        // native `i64` → raw `i32.wrap_i64`, matching its `i64.eq`.
         if registry.is_eligible_carrier(field_type.trim()) {
+            f.instruction(&Instruction::I32WrapI64);
+            f.instruction(&Instruction::I32Add);
+            f.instruction(&Instruction::LocalSet(elem_hash_local));
+            continue;
+        }
+        // ETAP-2 multi-field carrier-`i64`: a bounded Int field erased to a
+        // native `i64` hashes with the raw `i32.wrap_i64` (agreeing with its
+        // `i64.eq`); a boxed Int field stays on `__aint_hash`.
+        if field_type.trim() == "Int" && registry.is_eligible_carrier_field(record_name, field_name)
+        {
             f.instruction(&Instruction::I32WrapI64);
             f.instruction(&Instruction::I32Add);
             f.instruction(&Instruction::LocalSet(elem_hash_local));
@@ -3009,6 +3070,7 @@ fn emit_vec_hash(
                 )))?;
             emit_record_inline_hash(
                 &mut f,
+                record_name,
                 r_idx,
                 fields,
                 /* elem_local */ 4,
