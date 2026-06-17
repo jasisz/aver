@@ -3103,3 +3103,386 @@ fn main() -> Unit
         );
     }
 }
+
+// ===========================================================================
+// `Int = ℤ` size lever — routing a RAW-i64 `String.fromInt` / interpolation
+// embed to the LEAN i64 formatter instead of boxing to `$AverInt` + the
+// ~536 B base-2^32 long-division bignum formatter.
+//
+// A bare/carrier value the analysis proved `OverflowFree` is stringified by
+// the LEAN itoa (`__wasmgc_string_from_int_i64`, a raw `i64` param) directly
+// — NO box, NO call to the bignum formatter. So a program whose every Int-
+// stringify arg is bare/carrier never references the bignum formatter, which
+// `wasm-opt -Oz` then DCEs. A genuine `$AverInt` arg (an unbounded Int >
+// i64) keeps the bignum formatter, which MUST stay present and correct.
+//
+// SOUNDNESS — SILENT-C0: a wrong digit is a silent wrong string (no trap,
+// no validation error). The VM (full ℤ `AverInt::to_string`) is the ground
+// truth; `verify --wasm-gc` decodes the emitted string, so a single wrong
+// digit shows as a VM-vs-wasm-gc mismatch. The differentials below are
+// EXHAUSTIVE over the i64-range edge cases (0, 1, 9, 10, 99, 100, negatives,
+// a large positive carrier, and a negative-bound carrier at its min) for BOTH
+// `String.fromInt(c.value)` and the interpolation embed `"{c.value}"`.
+// ===========================================================================
+
+/// Disassemble `source`'s `--optimize size` wasm-gc module and count its
+/// functions (the `(func` headers). The bignum decimal formatter is ONE
+/// function; an all-raw-stringify program DCEs it, so its function count sits
+/// strictly below the same program with one extra genuine-`$AverInt`
+/// stringify. Returns `None` when the `wasm-opt` / `wasm-tools` toolchain is
+/// absent (the assertion then degrades gracefully).
+fn optimized_fn_count(prefix: &str, source: &str) -> Option<usize> {
+    let bytes = compile_wasm_bytes_optimized(prefix, source, false)?;
+    let dir = std::env::temp_dir().join(format!("{prefix}-fncount"));
+    std::fs::create_dir_all(&dir).ok()?;
+    let wasm = dir.join("m.wasm");
+    std::fs::write(&wasm, &bytes).ok()?;
+    let wat = wasm_tools_print(&wasm);
+    let _ = std::fs::remove_dir_all(&dir);
+    if wat.is_empty() {
+        return None;
+    }
+    Some(wat.match_indices("(func ").count())
+}
+
+/// EXHAUSTIVE `String.fromInt(c.value)` differential over a bare/carrier
+/// value across the i64-range edges. Every value is stringified by the LEAN
+/// i64 formatter (the carrier is `OverflowFree`); the VM keeps the full ℤ
+/// carrier and is the oracle. A wrong digit ⇒ a VM-vs-wasm-gc mismatch.
+#[test]
+fn raw_carrier_string_from_int_exhaustive_edges_match_vm() {
+    // A wide carrier bound (`0 .. 4_000_000_000`) so the large positive edge
+    // (3_999_999_999) is in-carrier yet past i32 — exercising the full i64
+    // itoa digit loop. Each `show(sc(N))` stringifies the bare carrier value.
+    let src = r#"module M
+    intent = "exhaustive raw-carrier String.fromInt"
+    effects [Console]
+
+record Score
+    value: Int
+
+fn fromInt(n: Int) -> Result<Score, String>
+    match Bool.and(n >= 0, n <= 4000000000)
+        true  -> Result.Ok(Score(value = n))
+        false -> Result.Err("oob")
+
+fn sc(n: Int) -> Score
+    match fromInt(n)
+        Result.Ok(s)  -> s
+        Result.Err(_) -> Score(value = 0)
+
+fn show(s: Score) -> String
+    String.fromInt(s.value)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(show(sc(0)))
+    Console.print(show(sc(1)))
+    Console.print(show(sc(9)))
+    Console.print(show(sc(10)))
+    Console.print(show(sc(99)))
+    Console.print(show(sc(100)))
+    Console.print(show(sc(3999999999)))
+"#;
+    let out = assert_vm_wasm_identical("raw-fromint-edges", src);
+    assert_eq!(out, "0\n1\n9\n10\n99\n100\n3999999999");
+    assert_carrier_revert_agrees("raw-fromint-edges", src, &out);
+}
+
+/// EXHAUSTIVE interpolation `"{c.value}"` differential over a bare/carrier
+/// value across the same i64-range edges. The embed routes to the LEAN i64
+/// formatter exactly like the direct `String.fromInt` call. VM is the oracle.
+#[test]
+fn raw_carrier_interpolation_exhaustive_edges_match_vm() {
+    let src = r#"module M
+    intent = "exhaustive raw-carrier interpolation embed"
+    effects [Console]
+
+record Score
+    value: Int
+
+fn fromInt(n: Int) -> Result<Score, String>
+    match Bool.and(n >= 0, n <= 4000000000)
+        true  -> Result.Ok(Score(value = n))
+        false -> Result.Err("oob")
+
+fn sc(n: Int) -> Score
+    match fromInt(n)
+        Result.Ok(s)  -> s
+        Result.Err(_) -> Score(value = 0)
+
+fn show(s: Score) -> String
+    "v={s.value}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(show(sc(0)))
+    Console.print(show(sc(1)))
+    Console.print(show(sc(9)))
+    Console.print(show(sc(10)))
+    Console.print(show(sc(99)))
+    Console.print(show(sc(100)))
+    Console.print(show(sc(3999999999)))
+"#;
+    let out = assert_vm_wasm_identical("raw-interp-edges", src);
+    assert_eq!(out, "v=0\nv=1\nv=9\nv=10\nv=99\nv=100\nv=3999999999");
+    assert_carrier_revert_agrees("raw-interp-edges", src, &out);
+}
+
+/// NEGATIVES — a SIGNED-bound carrier (`-100 .. 100`) stringified across the
+/// negative edges (-1, -10, -99, -100) plus a positive control. The lean
+/// formatter's sign path (write `'-'` at position 0) must produce digits
+/// byte-identical to the VM. Both `String.fromInt` and interpolation.
+#[test]
+fn raw_signed_carrier_negatives_match_vm() {
+    let src = r#"module M
+    intent = "exhaustive raw-carrier negatives"
+    effects [Console]
+
+record Signed
+    value: Int
+
+fn fromInt(n: Int) -> Result<Signed, String>
+    match Bool.and(n >= -100, n <= 100)
+        true  -> Result.Ok(Signed(value = n))
+        false -> Result.Err("oob")
+
+fn sc(n: Int) -> Signed
+    match fromInt(n)
+        Result.Ok(s)  -> s
+        Result.Err(_) -> Signed(value = 0)
+
+fn show(s: Signed) -> String
+    String.fromInt(s.value)
+
+fn interp(s: Signed) -> String
+    "v={s.value}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(show(sc(0 - 1)))
+    Console.print(show(sc(0 - 10)))
+    Console.print(show(sc(0 - 99)))
+    Console.print(show(sc(0 - 100)))
+    Console.print(interp(sc(0 - 1)))
+    Console.print(interp(sc(0 - 10)))
+    Console.print(interp(sc(0 - 99)))
+    Console.print(interp(sc(0 - 100)))
+    Console.print(show(sc(42)))
+"#;
+    let out = assert_vm_wasm_identical("raw-negatives", src);
+    assert_eq!(out, "-1\n-10\n-99\n-100\nv=-1\nv=-10\nv=-99\nv=-100\n42");
+    assert_carrier_revert_agrees("raw-negatives", src, &out);
+}
+
+/// A NEGATIVE-BOUND carrier stringified AT ITS MIN. The carrier is bounded
+/// `-2_000_000_000 .. 0`, and the value is its minimum (a 10-digit negative
+/// past i32::MIN) — the lean i64 itoa must format the full magnitude + sign
+/// byte-identically to the VM.
+#[test]
+fn raw_carrier_negative_min_bound_matches_vm() {
+    let src = r#"module M
+    intent = "raw-carrier at its negative-min bound"
+    effects [Console]
+
+record NegRange
+    value: Int
+
+fn fromInt(n: Int) -> Result<NegRange, String>
+    match Bool.and(n >= -2000000000, n <= 0)
+        true  -> Result.Ok(NegRange(value = n))
+        false -> Result.Err("oob")
+
+fn sc(n: Int) -> NegRange
+    match fromInt(n)
+        Result.Ok(s)  -> s
+        Result.Err(_) -> NegRange(value = 0)
+
+fn show(s: NegRange) -> String
+    String.fromInt(s.value)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{sc(0 - 2000000000).value} {show(sc(0 - 2000000000))}")
+"#;
+    let out = assert_vm_wasm_identical("raw-neg-min", src);
+    assert_eq!(out, "-2000000000 -2000000000");
+    assert_carrier_revert_agrees("raw-neg-min", src, &out);
+}
+
+/// MIXED — one bare/carrier stringify (routes to the lean formatter) AND one
+/// genuine unbounded-Int stringify (`9e9 * 9e9 = 8.1e19`, far past i64::MAX,
+/// a real `$AverInt`). The bignum formatter MUST remain and produce the exact
+/// bignum decimal; the carrier value stays lean-formatted. VM is the oracle
+/// for BOTH.
+#[test]
+fn mixed_carrier_and_unbounded_int_stringify_match_vm() {
+    let src = r#"module M
+    intent = "mixed raw-carrier + genuine unbounded-Int stringify"
+    effects [Console]
+
+record Score
+    value: Int
+
+fn fromInt(n: Int) -> Result<Score, String>
+    match Bool.and(n >= 0, n <= 4000000000)
+        true  -> Result.Ok(Score(value = n))
+        false -> Result.Err("oob")
+
+fn sc(n: Int) -> Score
+    match fromInt(n)
+        Result.Ok(s)  -> s
+        Result.Err(_) -> Score(value = 0)
+
+fn big() -> Int
+    9000000000 * 9000000000
+
+fn show(s: Score) -> String
+    String.fromInt(s.value)
+
+fn main() -> Unit
+    ! [Console.print]
+    s = sc(3999999999)
+    Console.print("{show(s)} {String.fromInt(big())} {s.value}")
+"#;
+    // 9e9 * 9e9 = 8.1e19 > i64::MAX (~9.22e18): a genuine Big the lean i64
+    // formatter could not represent. It MUST flow through the bignum
+    // formatter; the carrier 3999999999 stays lean-formatted. VM is the oracle.
+    let out = assert_vm_wasm_identical("mixed-stringify", src);
+    assert_eq!(out, "3999999999 81000000000000000000 3999999999");
+}
+
+/// NON-carrier control — a plain `Int` (no carrier in scope) stringified via
+/// `String.fromInt` must stay byte-identical to the VM. Without a carrier the
+/// arg is a genuine `$AverInt` under bignum, so this keeps the bignum
+/// formatter (the lean route only fires for a proven-raw arg). Guards that the
+/// routing did NOT regress the ordinary `String.fromInt` path.
+#[test]
+fn plain_int_string_from_int_still_bignum_and_matches_vm() {
+    let src = r#"module M
+    intent = "plain Int String.fromInt keeps the bignum formatter"
+    effects [Console]
+
+fn label(n: Int) -> String
+    String.fromInt(n)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(label(0))
+    Console.print(label(0 - 7))
+    Console.print(label(123456789))
+    Console.print("{label(1000000000000000000 + 1000000000000000000)}")
+"#;
+    // 1e18 + 1e18 = 2e18 (still in i64 here) — a plain Int, formatted by the
+    // bignum formatter. VM is the oracle for every digit.
+    let out = assert_vm_wasm_identical("plain-fromint", src);
+    assert_eq!(out, "0\n-7\n123456789\n2000000000000000000");
+}
+
+/// DCE PROOF — an all-raw-stringify program (every `String.fromInt` /
+/// interpolation arg is a bare/carrier value) must NOT reference the bignum
+/// decimal formatter, so `wasm-opt -Oz` drops it. Oracle: the optimized
+/// function count + byte size of the all-raw program sit STRICTLY below the
+/// SAME program with one extra genuine-`$AverInt` stringify (which forces the
+/// bignum formatter present). The delta is the bignum formatter + its `$aint`
+/// deps. Both builds must run byte-identically to the VM.
+#[test]
+fn all_raw_stringify_dces_the_bignum_formatter() {
+    let all_raw = r#"module M
+    intent = "all-raw stringify — bignum formatter must DCE"
+    effects [Console]
+
+record Score
+    value: Int
+
+fn fromInt(n: Int) -> Result<Score, String>
+    match Bool.and(n >= 0, n <= 4000000000)
+        true  -> Result.Ok(Score(value = n))
+        false -> Result.Err("oob")
+
+fn sc(n: Int) -> Score
+    match fromInt(n)
+        Result.Ok(s)  -> s
+        Result.Err(_) -> Score(value = 0)
+
+fn show(s: Score) -> String
+    String.fromInt(s.value)
+
+fn main() -> Unit
+    ! [Console.print]
+    s = sc(3999999999)
+    Console.print("{show(s)} {s.value}")
+"#;
+    // The SAME program plus ONE genuine unbounded-Int stringify (`9e9 * 9e9`,
+    // far past i64) — this forces the bignum formatter to be referenced and
+    // therefore NOT DCE'd.
+    let with_bignum = r#"module M
+    intent = "raw stringify + one genuine unbounded-Int stringify"
+    effects [Console]
+
+record Score
+    value: Int
+
+fn fromInt(n: Int) -> Result<Score, String>
+    match Bool.and(n >= 0, n <= 4000000000)
+        true  -> Result.Ok(Score(value = n))
+        false -> Result.Err("oob")
+
+fn sc(n: Int) -> Score
+    match fromInt(n)
+        Result.Ok(s)  -> s
+        Result.Err(_) -> Score(value = 0)
+
+fn big() -> Int
+    9000000000 * 9000000000
+
+fn show(s: Score) -> String
+    String.fromInt(s.value)
+
+fn main() -> Unit
+    ! [Console.print]
+    s = sc(3999999999)
+    Console.print("{show(s)} {String.fromInt(big())} {s.value}")
+"#;
+
+    // Both must run byte-identically to the VM (output correctness first).
+    let raw_out = assert_vm_wasm_identical("dce-allraw", all_raw);
+    assert_eq!(raw_out, "3999999999 3999999999");
+    let mixed_out = assert_vm_wasm_identical("dce-mixed", with_bignum);
+    assert_eq!(mixed_out, "3999999999 81000000000000000000 3999999999");
+
+    // FUNCTION-COUNT oracle: the bignum formatter is ONE function. The all-raw
+    // build must reach FEWER functions than the build that also stringifies a
+    // genuine Big — proof the formatter (and its `$aint` deps) DCE'd. Skips
+    // gracefully when `wasm-opt` / `wasm-tools` is absent.
+    if let (Some(raw_fns), Some(mixed_fns)) = (
+        optimized_fn_count("dce-allraw-fns", all_raw),
+        optimized_fn_count("dce-mixed-fns", with_bignum),
+    ) {
+        assert!(
+            raw_fns < mixed_fns,
+            "all-raw stringify must DCE the bignum formatter: the all-raw module \
+             reaches {raw_fns} functions, the build that also stringifies a genuine \
+             Big reaches {mixed_fns}. Equal counts would mean the bignum formatter \
+             survived in the all-raw build (it was referenced despite every arg \
+             being raw)."
+        );
+    }
+
+    // SIZE oracle: the all-raw optimized module must be STRICTLY smaller than
+    // the bignum-using one (the formatter + deps are pure overhead the all-raw
+    // program never pays). Reported for the byte-drop measurement.
+    if let (Some(raw), Some(mixed)) = (
+        compile_wasm_bytes_optimized("dce-allraw-sz", all_raw, false),
+        compile_wasm_bytes_optimized("dce-mixed-sz", with_bignum, false),
+    ) {
+        assert!(
+            raw.len() < mixed.len(),
+            "all-raw optimized module must be smaller than the bignum-using one: \
+             all-raw={} bytes, with-bignum={} bytes (delta = the DCE'd bignum \
+             formatter + its $aint deps).",
+            raw.len(),
+            mixed.len(),
+        );
+    }
+}

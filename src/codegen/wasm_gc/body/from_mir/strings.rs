@@ -64,32 +64,24 @@ pub(crate) fn emit_mir_interpolated_str(
             }
             MirStrPart::Expr(inner) => {
                 let aver_ty = aver_type_str_of(inner);
+                // `Int = ℤ` size lever: an `Int` embed emits its own value AND
+                // the matching decimal formatter via `emit_mir_int_stringify`,
+                // which routes a raw-i64 (bare/carrier) embed to the LEAN i64
+                // formatter (no box, no ~536 B bignum formatter) and a genuine
+                // `$AverInt` embed to the bignum `String.fromInt`. Handled
+                // BEFORE the generic emit below so the value is emitted exactly
+                // once in the representation its chosen formatter consumes.
+                if aver_ty.trim() == "Int" {
+                    match emit_mir_int_stringify(func, inner, slots, ctx)? {
+                        Some(()) => continue,
+                        None => return Ok(None),
+                    }
+                }
                 if emit_mir_expr(func, inner, slots, ctx)?.is_none() {
                     return Ok(None);
                 }
                 match aver_ty.trim() {
                     "String" => { /* identity */ }
-                    "Int" => {
-                        // ETAP-2 carrier-`i64`: a bare-carrier `.value` read
-                        // (or raw carrier arithmetic) leaves a native `i64` on
-                        // the stack — the project bridge was skipped because the
-                        // surrounding context is expected to box. `String.fromInt`
-                        // takes a boxed `$AverInt` ref, so this IS that context:
-                        // lift the raw `i64` to `$AverInt` (`__aint_from_i64`)
-                        // before the call, or the raw `i64` meets a `(ref null
-                        // $type)` slot (a wasm VALIDATION failure). Mirrors the
-                        // `from_mir.rs` boundary-box at the other `$AverInt` sinks.
-                        if ctx.registry.bignum && mir_renders_raw_i64(&inner.node, ctx) {
-                            emit_carrier_project_bridge(func, ctx)?;
-                        }
-                        let to_string_idx =
-                            ctx.fn_map.builtins.get("String.fromInt").copied().ok_or(
-                                WasmGcError::Validation(
-                                    "interpolation of Int requires String.fromInt builtin".into(),
-                                ),
-                            )?;
-                        func.instruction(&Instruction::Call(to_string_idx));
-                    }
                     "Float" => {
                         let to_string_idx =
                             ctx.fn_map.builtins.get("String.fromFloat").copied().ok_or(
