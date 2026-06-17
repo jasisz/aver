@@ -3486,3 +3486,383 @@ fn main() -> Unit
         );
     }
 }
+
+// ===========================================================================
+// CONST-COMPARE SPECIALIZATION DIFFERENTIAL
+//
+// A boxed `$AverInt` compared against an i64-fitting CONSTANT lowers to a
+// tag-branch (`ref.is_null $magf` ⇒ Small → native `i64.<cmp>_s` against the
+// constant; Big ⇒ the relation is fixed by `$sign` alone) instead of a
+// general `__aint_cmp` call. THE VM (full ℤ) IS GROUND TRUTH — every emitted
+// comparison MUST decode to the SAME boolean on the VM and on wasm-gc, or the
+// tag-branch picked the wrong side / inverted a relation / mishandled a sign.
+//
+// Each comparison result is encoded as an Int ("1"/"0") so a wrong wasm-gc
+// boolean shows up as a decoded-output mismatch (not a silent type pun). The
+// operand is a plain `Int` PARAM (a genuinely-boxed `$AverInt`, never bare-
+// eligible) so the specialization path fires; the constant is a literal that
+// always `fits_i64` (an AST `Int` is an `i64`).
+//
+// Coverage: all six ops (`< > <= >= == !=`), BOTH operand orders (`v OP K`
+// and `K OP v`), each constant K ∈ {0, 1, -1, 100, -100, i64::MAX, i64::MIN+1}
+// (i64::MIN itself is unspellable as a source literal — its magnitude exceeds
+// i64::MAX — so i64::MIN+1, the most-negative literal, stands in), and the
+// value classes:
+//   - Small AT the boundary: K-1, K, K+1 (full ℤ, so K+1 past i64::MAX is a
+//     genuine Big — the Small/Big boundary at the i64 extreme falls out here),
+//   - Small FAR from K,
+//   - Big-positive (`a*a*a` past i64::MAX),
+//   - Big-negative (`0 - a*a*a`).
+// The Big-negative-vs-negative-const and Small-at-i64::MIN/MAX cases are the
+// fault-prone ones and are hit for every op and order. (Negative literals are
+// spelled `0 - N`, which the const-fold pass collapses to a single
+// `Literal::Int(-N)` before MIR, so the specialization sees a literal operand.
+// The i64::MIN *value* IS reachable as `(0 - i64::MAX) - 1` and is swept as a
+// Small operand — only the i64::MIN *constant* is unspellable.)
+
+/// `boolToInt` + `cube`, threaded so the operand stays a boxed `$AverInt`
+/// param. Prepended to every generated comparison program.
+const CONST_CMP_PRELUDE: &str = r#"module M
+    intent = "const-compare specialization differential"
+    effects [Console]
+
+fn b(x: Bool) -> Int
+    match x
+        true  -> 1
+        false -> 0
+
+fn cube(n: Int) -> Int
+    n * n * n
+"#;
+
+/// VM == wasm-gc for `source` (plain boxed `$AverInt` comparisons, not
+/// carrier-erased). Returns the agreed output for the caller to pin against an
+/// independent oracle. Diverging output ⇒ the tag-branch produced a wrong
+/// boolean.
+fn assert_const_cmp_identical(prefix: &str, source: &str) -> String {
+    let (vm_ok, vm_out) = run(prefix, source, false, false);
+    let (wg_ok, wg_out) = run(prefix, source, true, false);
+    assert!(vm_ok, "{prefix}: VM run failed:\n{vm_out}");
+    assert!(wg_ok, "{prefix}: wasm-gc run failed:\n{wg_out}");
+    assert_eq!(
+        vm_out, wg_out,
+        "{prefix}: VM-vs-wasm-gc DIVERGENCE — the const-compare tag-branch \
+         produced a wrong boolean (wrong Small/Big side, inverted relation, or \
+         mis-read sign).\n  VM     = {vm_out:?}\n  wasm-gc= {wg_out:?}"
+    );
+    vm_out
+}
+
+/// The reference oracle, computed in Rust over `i128` (a superset of every
+/// i64-fitting value AND every Big we build), mirroring the six comparisons
+/// for `v OP k` (`order_const_left == false`) or `k OP v` (`== true`).
+fn ref_cmp(v: i128, op: &str, k: i128, order_const_left: bool) -> i128 {
+    let (lhs, rhs) = if order_const_left { (k, v) } else { (v, k) };
+    let r = match op {
+        "<" => lhs < rhs,
+        ">" => lhs > rhs,
+        "<=" => lhs <= rhs,
+        ">=" => lhs >= rhs,
+        "==" => lhs == rhs,
+        "!=" => lhs != rhs,
+        other => panic!("unknown op {other}"),
+    };
+    i128::from(r)
+}
+
+/// Build the comparison program + the expected decoded string for one
+/// `(value-expr, value-i128)` operand against the full op×order×K matrix.
+/// `value_src` is an Aver expression evaluating to the boxed operand; the fn
+/// it lands in takes it as an `Int` param so the operand stays `$AverInt`.
+fn const_cmp_case(value_src: &str, value_i128: i128) -> (String, String) {
+    // Each constant is an i64-fitting literal. The most-positive extreme is
+    // i64::MAX (spellable directly); the most-negative is i64::MIN+1 (spelled
+    // `0 - i64::MAX` and const-folded) — i64::MIN itself has no source literal.
+    let consts: [i64; 7] = [0, 1, -1, 100, -100, i64::MAX, i64::MIN + 1];
+    let ops = ["<", ">", "<=", ">=", "==", "!="];
+
+    let mut body = String::new();
+    let mut fns = String::new();
+    let mut expected: Vec<String> = Vec::new();
+    let mut idx = 0usize;
+
+    for &k in &consts {
+        for op in &ops {
+            for order_const_left in [false, true] {
+                let fname = format!("c{idx}");
+                idx += 1;
+                // `v` is a boxed `$AverInt` param; the literal `k` triggers the
+                // const-compare specialization. Both operand orders covered.
+                // Negative literals are spelled `0 - N` so the lexer keeps them
+                // (and so `K OP v` with a negative K stays well-formed).
+                let klit = if k < 0 {
+                    format!("(0 - {})", k.unsigned_abs())
+                } else {
+                    k.to_string()
+                };
+                let expr = if order_const_left {
+                    format!("b({klit} {op} v)")
+                } else {
+                    format!("b(v {op} {klit})")
+                };
+                fns.push_str(&format!("\nfn {fname}(v: Int) -> Int\n    {expr}\n"));
+                body.push_str(&format!(
+                    "    Console.print(\"{{{fname}({value_src})}}\")\n"
+                ));
+                expected.push(ref_cmp(value_i128, op, i128::from(k), order_const_left).to_string());
+            }
+        }
+    }
+
+    let src = format!("{CONST_CMP_PRELUDE}{fns}\nfn main() -> Unit\n    ! [Console.print]\n{body}");
+    (src, expected.join("\n"))
+}
+
+/// Drive one value class through the whole op×order×K matrix and assert VM ==
+/// wasm-gc AND that the agreed output equals the Rust `i128` oracle.
+fn run_const_cmp_class(prefix: &str, value_src: &str, value_i128: i128) {
+    let (src, expected) = const_cmp_case(value_src, value_i128);
+    let out = assert_const_cmp_identical(prefix, &src);
+    assert_eq!(
+        out, expected,
+        "{prefix}: decoded output disagreed with the i128 reference oracle — \
+         a const-compare result is wrong on BOTH backends (a value-class / \
+         oracle setup bug) or the VM itself differs from i128 semantics."
+    );
+}
+
+// `a*a*a` for a = 3037000500 ≈ 2.804e28, far beyond i64::MAX (9.22e18): a
+// genuine Big. Negated for the Big-negative class.
+const BIG_A: i128 = 3037000500;
+
+/// Small operand sweep landing ON the boundaries (K-1, K, K+1) of the constant
+/// matrix {0,1,-1,100,-100,i64::MAX,i64::MIN}, PLUS the extreme Smalls at
+/// i64::MAX / i64::MAX-1 / i64::MIN. Every boundary triple is covered across
+/// the value set; the i64-extreme Smalls are the fault-prone ones.
+#[test]
+fn const_cmp_small_at_boundaries_match_vm() {
+    let smalls: [(&str, i128); 14] = [
+        ("0", 0),
+        ("1", 1),
+        ("0 - 1", -1),
+        ("2", 2),
+        ("0 - 2", -2),
+        ("99", 99),
+        ("100", 100),
+        ("101", 101),
+        ("0 - 99", -99),
+        ("0 - 100", -100),
+        ("0 - 101", -101),
+        // i64::MAX, i64::MAX-1 — directly spellable. i64::MIN has no source
+        // literal (magnitude > i64::MAX), so it is built as
+        // `(0 - i64::MAX) - 1` — still a Small `$AverInt` (normalize demotes
+        // exactly -2^63 to Small), the load-bearing extreme-Small case.
+        ("9223372036854775807", 9223372036854775807),
+        ("9223372036854775806", 9223372036854775806),
+        ("(0 - 9223372036854775807) - 1", -9223372036854775808),
+    ];
+    for (i, (expr, val)) in smalls.iter().enumerate() {
+        run_const_cmp_class(&format!("cc-small-{i}"), expr, *val);
+    }
+}
+
+/// Small FAR from every K (a mid-range value not adjacent to any boundary).
+#[test]
+fn const_cmp_small_far_match_vm() {
+    run_const_cmp_class("cc-small-far-pos", "123456789", 123456789);
+    run_const_cmp_class("cc-small-far-neg", "0 - 123456789", -123456789);
+}
+
+/// Big-POSITIVE (`a*a*a` past i64::MAX) against the whole matrix. A Big-
+/// positive is `> k` for every i64 `k`, `< k` for none, `== k` for none.
+#[test]
+fn const_cmp_big_positive_match_vm() {
+    let big = BIG_A * BIG_A * BIG_A;
+    run_const_cmp_class("cc-big-pos", "cube(3037000500)", big);
+}
+
+/// Big-NEGATIVE (`0 - a*a*a`) against the whole matrix — the most fault-prone
+/// class, especially against the negative constants (-1, -100, i64::MIN). A
+/// Big-negative is `< k` for every i64 `k`, `> k` for none, `== k` for none.
+#[test]
+fn const_cmp_big_negative_match_vm() {
+    let big_neg = -(BIG_A * BIG_A * BIG_A);
+    run_const_cmp_class("cc-big-neg", "0 - cube(3037000500)", big_neg);
+}
+
+/// A `$AverInt`-vs-`$AverInt` comparison (NO literal operand) MUST stay on the
+/// general `__aint_cmp` path and remain correct with the specialization
+/// present — the fail-closed guard. VM == wasm-gc is the correctness oracle.
+///
+/// The structural witness that the specialization did NOT over-fire uses the
+/// FUNCTION-COUNT DCE oracle (the compiled module carries no name section, so
+/// a name grep is vacuous): a program whose only comparison is the NON-literal
+/// `a < c` keeps `__aint_cmp` (+ its `__aint_decompose` dep) reachable, so it
+/// reaches STRICTLY MORE functions than the otherwise-identical program whose
+/// comparison is against a CONSTANT (which DCEs both helpers). If the
+/// specialization over-fired on the non-literal form, the two counts would be
+/// equal.
+#[test]
+fn const_cmp_non_literal_stays_on_aint_cmp() {
+    // The NON-literal comparison: both operands are boxed `$AverInt` params,
+    // so the comparison must call `__aint_cmp`.
+    let non_literal = r#"module M
+    intent = "non-literal $AverInt comparison stays general"
+    effects [Console]
+
+fn b(x: Bool) -> Int
+    match x
+        true  -> 1
+        false -> 0
+
+fn lt(a: Int, c: Int) -> Int
+    b(a < c)
+
+fn cube(n: Int) -> Int
+    n * n * n
+
+fn main() -> Unit
+    ! [Console.print]
+    p = cube(3037000500)
+    q = 0 - cube(3037000500)
+    Console.print("{lt(p, q)} {lt(q, p)}")
+"#;
+    // The CONST-literal twin: the same shape but the comparison is against a
+    // constant, so the specialization fires and `__aint_cmp` DCEs.
+    let const_literal = r#"module M
+    intent = "const-literal $AverInt comparison specializes"
+    effects [Console]
+
+fn b(x: Bool) -> Int
+    match x
+        true  -> 1
+        false -> 0
+
+fn lt(a: Int) -> Int
+    b(a < 100)
+
+fn cube(n: Int) -> Int
+    n * n * n
+
+fn main() -> Unit
+    ! [Console.print]
+    p = cube(3037000500)
+    q = 0 - cube(3037000500)
+    Console.print("{lt(p)} {lt(q)}")
+"#;
+    // Correctness first (VM is the oracle for both).
+    let nl_out = assert_const_cmp_identical("cc-nonliteral", non_literal);
+    // p (Big+) < q (Big-) = 0 ; q < p = 1
+    assert_eq!(nl_out, "0 1");
+    let cl_out = assert_const_cmp_identical("cc-constliteral", const_literal);
+    // p (Big+) < 100 = 0 ; q (Big-) < 100 = 1
+    assert_eq!(cl_out, "0 1");
+
+    // STRUCTURAL: the non-literal program keeps `__aint_cmp` (+ decompose), so
+    // it reaches MORE functions after DCE than the const-literal twin. Skips
+    // when wasm-opt/wasm-tools is absent (both None ⇒ vacuous).
+    if let (Some(nl_fns), Some(cl_fns)) = (
+        optimized_fn_count("cc-nonliteral-fns", non_literal),
+        optimized_fn_count("cc-constliteral-fns", const_literal),
+    ) {
+        assert!(
+            cl_fns < nl_fns,
+            "the const-literal comparison must DCE `__aint_cmp` (+ `__aint_decompose`), \
+             reaching FEWER functions than the non-literal twin that keeps them: \
+             const-literal={cl_fns} fns, non-literal={nl_fns} fns. Equal counts ⇒ the \
+             specialization failed to fire (const path still called __aint_cmp) OR \
+             over-fired on the non-literal form."
+        );
+    }
+}
+
+/// DCE MEASUREMENT (TASK 1) — a carrier-game-shape `mk(n) -> Result` whose
+/// SOLE `$AverInt` comparison is the bound check `n >= 0 && n <= 100`. With the
+/// const-compare specialization the bound check is a tag-branch, so the general
+/// `__aint_cmp` AND `__aint_decompose` are no longer reached and DCE under
+/// `--optimize size`.
+///
+/// The compiled module carries no name section, so the DCE is measured by
+/// BYTE SIZE + FUNCTION COUNT against an otherwise-identical twin whose bound
+/// check compares against a NON-literal bound (`n <= hi`, `hi` a param) — that
+/// twin keeps `__aint_cmp` reachable. The specialized build must be STRICTLY
+/// SMALLER and reach FEWER functions; the byte drop is the reported number.
+#[test]
+fn const_cmp_bound_check_dces_aint_cmp_helpers() {
+    let specialized = r#"module M
+    intent = "bound-check sole comparison: const-compare DCEs __aint_cmp"
+    effects [Console]
+
+record Point
+    x: Int
+    y: Int
+
+fn mk(n: Int) -> Result<Point, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(Point(x = n, y = n))
+        false -> Result.Err("oob")
+
+fn main() -> Unit
+    ! [Console.print]
+    match mk(50)
+        Result.Ok(p)  -> Console.print("{p.x}")
+        Result.Err(e) -> Console.print(e)
+"#;
+    // The twin: the upper bound is a NON-literal `$AverInt` param (`hi`), so
+    // `n <= hi` keeps the general `__aint_cmp` reachable (no specialization).
+    let general = r#"module M
+    intent = "bound-check against a non-literal bound keeps __aint_cmp"
+    effects [Console]
+
+record Point
+    x: Int
+    y: Int
+
+fn mk(n: Int, hi: Int) -> Result<Point, String>
+    match Bool.and(n >= 0, n <= hi)
+        true  -> Result.Ok(Point(x = n, y = n))
+        false -> Result.Err("oob")
+
+fn main() -> Unit
+    ! [Console.print]
+    match mk(50, 100)
+        Result.Ok(p)  -> Console.print("{p.x}")
+        Result.Err(e) -> Console.print(e)
+"#;
+    let out = assert_vm_wasm_identical("cc-dce-bound", specialized);
+    assert_eq!(out, "50");
+    let gout = assert_vm_wasm_identical("cc-dce-bound-general", general);
+    assert_eq!(gout, "50");
+
+    // BYTE + FUNCTION-COUNT DCE oracle. Reports the specialized size.
+    if let (Some(spec), Some(general_bytes)) = (
+        compile_wasm_bytes_optimized("cc-dce-spec-sz", specialized, false),
+        compile_wasm_bytes_optimized("cc-dce-gen-sz", general, false),
+    ) {
+        eprintln!(
+            "const-compare bound-check: specialized = {} bytes, non-literal twin = {} bytes \
+             (drop = {} bytes)",
+            spec.len(),
+            general_bytes.len(),
+            general_bytes.len().saturating_sub(spec.len()),
+        );
+        assert!(
+            spec.len() < general_bytes.len(),
+            "the specialized bound check must DCE `__aint_cmp` (+ `__aint_decompose`) and \
+             be SMALLER than the non-literal-bound twin: specialized={} bytes, \
+             non-literal={} bytes.",
+            spec.len(),
+            general_bytes.len(),
+        );
+    }
+    if let (Some(spec_fns), Some(gen_fns)) = (
+        optimized_fn_count("cc-dce-spec-fns", specialized),
+        optimized_fn_count("cc-dce-gen-fns", general),
+    ) {
+        assert!(
+            spec_fns < gen_fns,
+            "the specialized bound check must reach FEWER functions (the comparison \
+             helpers DCE): specialized={spec_fns} fns, non-literal={gen_fns} fns."
+        );
+    }
+}

@@ -1806,6 +1806,50 @@ pub(crate) fn emit_mir_numeric_binop(
     } else {
         l_ty
     };
+    // bignum const-compare specialization — an `$AverInt` compared
+    // against an i64-fitting Int LITERAL lowers to a tag-branch (Small
+    // → native i64 compare; Big → sign-determined) instead of
+    // allocating the constant as an `$AverInt` and calling
+    // `__aint_cmp`. Fail-closed: only fires when both operands are the
+    // `$AverInt` ref type, exactly one is a literal that `fits_i64`,
+    // and the op is one of the six comparisons. A `$AverInt`-vs-
+    // `$AverInt` comparison (`p.x == q.x`) is NOT a literal on either
+    // side, so it stays on `__aint_cmp` byte-for-byte.
+    if ctx.registry.bignum
+        && ctx.registry.aint_struct_idx.is_some()
+        && operand != Some(ValType::F64)
+        && operand != Some(ValType::I32)
+        && l_ty
+            == ctx
+                .registry
+                .aint_struct_idx
+                .map(crate::codegen::wasm_gc::types::struct_ref)
+        && r_ty
+            == ctx
+                .registry
+                .aint_struct_idx
+                .map(crate::codegen::wasm_gc::types::struct_ref)
+        && matches!(
+            bop.op,
+            BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte
+        )
+    {
+        // `const_on_left` records which side the constant sat on so
+        // the tag-branch can flip the comparison (`K < x` ≡ `x > K`).
+        let lit = mir_int_literal(l)
+            .map(|k| (k, true))
+            .or_else(|| mir_int_literal(r).map(|k| (k, false)));
+        if let Some((k, const_on_left)) = lit {
+            // The non-literal operand (the `$AverInt` ref) goes on the
+            // stack; the literal is folded into the branch as an
+            // `i64.const`.
+            let non_lit = if const_on_left { r } else { l };
+            if emit_mir_expr(func, non_lit, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            return emit_aint_cmp_const(func, bop.op, k, const_on_left, slots, ctx);
+        }
+    }
     if emit_mir_expr(func, l, slots, ctx)?.is_none() {
         return Ok(None);
     }
@@ -1933,4 +1977,147 @@ fn emit_aint_binop(
         }
     }
     Ok(Some(()))
+}
+
+/// If `expr` is a literal `Int`, return its `i64` value. Used by the
+/// const-compare specialization to peel the constant operand of an
+/// `$AverInt`-vs-constant comparison. `Literal::Int` is an `i64` in the
+/// AST, so the value is always `fits_i64` by construction — there is no
+/// out-of-range Int literal to reject. (A source literal that exceeds
+/// `i64` is rejected at lex/parse time, before MIR.)
+fn mir_int_literal(expr: &Spanned<MirExpr>) -> Option<i64> {
+    match &expr.node {
+        MirExpr::Literal(l) => match l.node {
+            crate::ast::Literal::Int(n) => Some(n),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// bignum const-compare specialization — the non-literal `$AverInt`
+/// operand is already on the stack; emit a tag-branch comparison
+/// against the i64 constant `k` and leave an i32 bool, replacing the
+/// general `__aint_cmp` call.
+///
+/// Soundness rests on the carrier invariant (`__aint_normalize` /
+/// `__aint_from_i64`): a value is **Small** (`$magf == null`) iff it is
+/// in `[i64::MIN, i64::MAX]` — the FULL i64 range, including `i64::MIN`
+/// which `normalize` deliberately demotes to a Small. A value is
+/// **Big** (`$magf != null`) iff `|value| > i64::MAX`, i.e. strictly
+/// outside the i64 range, with `$sign ∈ {-1, +1}`. Therefore:
+///   - Small → load `$small` and do the NATIVE signed i64 compare
+///     against `k`.
+///   - Big → the relation against any i64 constant is fixed by `$sign`
+///     alone: a Big-positive is `> k` for every i64 `k`, a Big-negative
+///     is `< k`; and a Big NEVER equals an i64 constant.
+///
+/// `const_on_left` flips the comparison so the `$AverInt` is always the
+/// left operand of the EFFECTIVE relation (`k < x` ≡ `x > k`).
+fn emit_aint_cmp_const(
+    func: &mut Function,
+    op: BinOp,
+    k: i64,
+    const_on_left: bool,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let aint_idx = ctx.registry.aint_struct_idx.ok_or(WasmGcError::Validation(
+        "const-compare specialization requires the $AverInt struct slot".into(),
+    ))?;
+    let scratch = slots.const_cmp_scratch.ok_or(WasmGcError::Validation(
+        "const-compare specialization needs a scratch slot but none was reserved".into(),
+    ))?;
+
+    // Normalize so the `$AverInt` is the LEFT operand of the effective
+    // relation. The source spelled `const OP aint` when `const_on_left`,
+    // which is equivalent to `aint OP_flipped const`.
+    let eff = if const_on_left { flip_cmp(op) } else { op };
+
+    // Stash the operand so both field reads (`$magf`, then `$small` /
+    // `$sign`) read the same value without re-emitting the operand
+    // expression.
+    func.instruction(&Instruction::LocalSet(scratch));
+
+    let block_ty = wasm_encoder::BlockType::Result(ValType::I32);
+    // if ($magf == null) → Small
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: aint_idx,
+        field_index: 1,
+    });
+    func.instruction(&Instruction::RefIsNull);
+    func.instruction(&Instruction::If(block_ty));
+
+    // ── Small: native i64 compare of `$small` against `k` ──
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: aint_idx,
+        field_index: 0,
+    });
+    func.instruction(&Instruction::I64Const(k));
+    func.instruction(&match eff {
+        BinOp::Eq => Instruction::I64Eq,
+        BinOp::Neq => Instruction::I64Ne,
+        BinOp::Lt => Instruction::I64LtS,
+        BinOp::Gt => Instruction::I64GtS,
+        BinOp::Lte => Instruction::I64LeS,
+        BinOp::Gte => Instruction::I64GeS,
+        _ => unreachable!("emit_aint_cmp_const gated to the six comparisons"),
+    });
+
+    func.instruction(&Instruction::Else);
+
+    // ── Big: the result is determined by `$sign` alone ──
+    // A Big-positive (`$sign > 0`) exceeds every i64 `k`; a Big-negative
+    // (`$sign < 0`) is below every i64 `k`; a Big never equals `k`.
+    match eff {
+        // x < k  ⟺  x is Big-negative  ⟺  $sign < 0
+        // x <= k ⟺  same (Big never == k)
+        BinOp::Lt | BinOp::Lte => {
+            func.instruction(&Instruction::LocalGet(scratch));
+            func.instruction(&Instruction::StructGet {
+                struct_type_index: aint_idx,
+                field_index: 2,
+            });
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::I32LtS);
+        }
+        // x > k  ⟺  x is Big-positive  ⟺  $sign > 0
+        // x >= k ⟺  same (Big never == k)
+        BinOp::Gt | BinOp::Gte => {
+            func.instruction(&Instruction::LocalGet(scratch));
+            func.instruction(&Instruction::StructGet {
+                struct_type_index: aint_idx,
+                field_index: 2,
+            });
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::I32GtS);
+        }
+        // A Big never equals an i64 constant.
+        BinOp::Eq => {
+            func.instruction(&Instruction::I32Const(0));
+        }
+        BinOp::Neq => {
+            func.instruction(&Instruction::I32Const(1));
+        }
+        _ => unreachable!("emit_aint_cmp_const gated to the six comparisons"),
+    }
+
+    func.instruction(&Instruction::End);
+    Ok(Some(()))
+}
+
+/// Flip a comparison operator across its operands: `k OP x` ≡
+/// `x flip(OP) k`. Equality / inequality are symmetric and unchanged.
+fn flip_cmp(op: BinOp) -> BinOp {
+    match op {
+        BinOp::Lt => BinOp::Gt,
+        BinOp::Gt => BinOp::Lt,
+        BinOp::Lte => BinOp::Gte,
+        BinOp::Gte => BinOp::Lte,
+        BinOp::Eq => BinOp::Eq,
+        BinOp::Neq => BinOp::Neq,
+        other => other,
+    }
 }

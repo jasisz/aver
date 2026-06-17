@@ -18,7 +18,7 @@ use crate::ir::hir::{
 use crate::types::Type;
 
 use super::super::WasmGcError;
-use super::super::types::{TypeRegistry, aver_to_wasm};
+use super::super::types::{TypeRegistry, aver_to_wasm, struct_ref};
 use super::FnMap;
 use super::infer::{
     arm_is_option_pattern_resolved, arm_is_result_pattern_resolved, aver_type_str_of,
@@ -93,6 +93,18 @@ pub(super) struct SlotTable {
     /// `Random.int(readBound(), 10)`). Stash `min` once after first
     /// emit and reuse via LocalGet.
     pub(super) random_int_wasip2_min_scratch: Option<u32>,
+    /// Scratch `(ref null $AverInt)` slot for the const-compare
+    /// specialization (`$AverInt` compared against an i64-fitting
+    /// literal). The non-literal operand is stashed here once so the
+    /// tag-branch can read its `$magf` (Small/Big discriminant) and
+    /// then its `$small`/`$sign` field without re-emitting the operand
+    /// expression — which would double-run any side effect in it.
+    /// Reserved whenever `bignum` is active (one unused ref local when
+    /// no const-comparison is present — cheaper than walking the MIR
+    /// body here, which would couple slot allocation to the body walk
+    /// and break the differential-gate invariant that `build_for_fn`
+    /// reads only the resolver tables, not the MIR body).
+    pub(super) const_cmp_scratch: Option<u32>,
 }
 
 impl SlotTable {
@@ -298,6 +310,23 @@ impl SlotTable {
         } else {
             None
         };
+        // Const-compare specialization scratch: a single `(ref null
+        // $AverInt)` slot to stash the non-literal operand of an
+        // `$AverInt`-vs-i64-constant comparison. Reserved whenever
+        // bignum is active so the slot index is a pure function of the
+        // registry flag (not the MIR body), preserving the invariant
+        // that `build_for_fn` keys only off the resolver tables.
+        let const_cmp_scratch = if registry.bignum {
+            if let Some(aint_idx) = registry.aint_struct_idx {
+                let idx = by_slot.len() as u32;
+                by_slot.push(struct_ref(aint_idx));
+                Some(idx)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         Ok(Self {
             by_slot,
             subject_scratch,
@@ -307,6 +336,7 @@ impl SlotTable {
             args_get_wasip2_retptr_scratch,
             env_get_wasip2_scratch,
             random_int_wasip2_min_scratch,
+            const_cmp_scratch,
         })
     }
 
