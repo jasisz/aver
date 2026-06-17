@@ -302,17 +302,27 @@ fn rewrite_boxed(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> 
     if matches!(&e.node, MirExpr::Literal(l) if matches!(l.node, Literal::Int(_))) {
         return rewrite_children(e, ctx);
     }
-    // NOTE: a bare-RETURN call is NOT boxed here. The prior side-table
-    // codegen only boxed a bare-returning call in RETURN-TAIL position
-    // (`emit_boxed_return_tail`); a call result in a non-tail boxed context
-    // (a `let` value, an arithmetic operand, an aggregate element) was left
-    // as-is, because the analysis's "unsafe return consumer" rule (C2)
-    // demotes a callee's `bare_return` whenever its result reaches such a
-    // position. Boxing it here would double-box a callee whose ACTUAL
-    // emitted signature is boxed anyway (e.g. a mutual-TCO member, which
-    // codegen always emits `-> AverInt` regardless of the analysis flag).
-    // The Q5 return-tail case is handled by `rewrite_boxed_tail`.
-    //
+    // A bare-RETURNING call whose result lands in THIS `$AverInt` sink is
+    // boxed (the Q5 rule, here extended from the return-tail to EVERY boxed
+    // context). The analysis's "unsafe return consumer" rule (C2) demotes a
+    // callee's `bare_return` in MOST non-tail boxed positions (an arithmetic
+    // operand, a boxed-param arg, an aggregate element), so for those the
+    // callee is already `-> $AverInt` and `call_returns_raw` reports false —
+    // this box is a no-op. But C2 deliberately WHITELISTS the stringify-safe
+    // sinks (`String.fromInt`, interpolation embeds): the callee STAYS
+    // `bare_return`, so its raw `i64` result flows unchanged into an
+    // `$AverInt`-typed builtin arg. On Rust that arg was coerced per-emit; on
+    // wasm-gc there is no per-call coercion, so the raw `i64` met an
+    // `$AverInt` ref slot — a wasm VALIDATION error (the carrier-arith bug:
+    // `String.fromInt(dbl(c))` with `dbl` bare-return). Boxing the call here
+    // closes the boundary while keeping `dbl`'s add native. A mutual-TCO
+    // member is NOT double-boxed: `call_returns_raw` reads `callee_facts`,
+    // which is `None` for a `boxed_signature_fn` (that callee already emits
+    // `-> $AverInt`), so it reports false and we leave it alone.
+    if call_returns_raw(&e.node, ctx) {
+        let inner = rewrite_children(e, ctx);
+        return box_node(inner);
+    }
     // A directly raw-rendering leaf / compound (a bare `Local`, or an
     // in-range `Add`/`Sub`/`Mul`/`Neg` tree): box it. Its raw operands stay
     // raw inside (rewrite_children leaves them — they are consumed by the
@@ -1060,5 +1070,45 @@ fn main() -> Int
         assert!(!h.repr.bare_return, "h's return stays boxed");
         let (boxes, _unboxes) = count_boundaries(&h.body.node);
         assert!(boxes >= 1, "h boxes the bare-returning call result");
+    }
+
+    #[test]
+    fn bare_return_call_into_string_from_int_arg_boxes_at_sink() {
+        // The carrier-arith bug class at the MIR level: `g` has a bare return
+        // (the analysis keeps the recurrence native); `s` feeds the bare-
+        // returning `g(2)` straight into `String.fromInt`, whose param slot is
+        // `$AverInt`. The rewrite MUST insert a `Box` at that builtin-arg
+        // boundary — without it the raw `i64` call result met a `ref null
+        // $type` slot, a wasm-gc validation failure (`verify --wasm-gc` masks
+        // it; only a full-module compile catches it). The box lands ONLY at
+        // the sink; `g`'s recurrence stays native (`g.repr.bare_return`).
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn g(n: Int) -> Int
+    match n
+        0 -> 0
+        _ -> g(n - 1)
+
+fn s() -> String
+    String.fromInt(g(2))
+
+fn main() -> String
+    s()
+"#;
+        let program = rewritten(src);
+        let g = fn_named(&program, "g");
+        assert!(
+            g.repr.bare_return,
+            "g's recurrence stays native (bare return preserved)"
+        );
+        let s = fn_named(&program, "s");
+        let (boxes, _unboxes) = count_boundaries(&s.body.node);
+        assert!(
+            boxes >= 1,
+            "the bare-returning g(2) feeding String.fromInt's $AverInt arg is boxed at the sink"
+        );
     }
 }

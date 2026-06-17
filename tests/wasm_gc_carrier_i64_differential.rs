@@ -65,8 +65,57 @@ fn run(prefix: &str, source: &str, wasm_gc: bool, no_carrier: bool) -> (bool, St
     )
 }
 
+/// FULL-MODULE wasm-gc compile of `source` (carrier-`i64` ON). Returns
+/// `(success, combined stdout+stderr)`. The boundary-completeness class this
+/// guards (a bare-i64 carrier result meeting an `$AverInt`-typed sink) is a
+/// MODULE-level validation failure: it surfaces only when the WHOLE module
+/// is lowered, never under a per-case `verify --wasm-gc` (which wraps one fn
+/// in a thin harness and can't see the cross-fn boundary). `aver run
+/// --wasm-gc` exercises only the call graph `main` reaches, so a sink in an
+/// unreached fn slips through — `compile --target wasm-gc` lowers EVERY fn.
+fn compile_wasm_gc(prefix: &str, source: &str) -> (bool, String) {
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = temp_module(prefix, source);
+    let out_dir = path.parent().expect("temp module has parent").join("out");
+    let out = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(&path)
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile executes");
+    cleanup(&path);
+    let mut combined = String::from_utf8_lossy(&out.stdout).to_string();
+    combined.push_str(&String::from_utf8_lossy(&out.stderr));
+    (out.status.success(), combined.trim().to_string())
+}
+
+/// Assert `source` compiles to a wasm-gc module CLEANLY — no validation
+/// error. The `compile` CLI prints a validation failure to stdout but STILL
+/// EXITS 0, so a success-status check alone is blind to this bug class; the
+/// assertion scans the combined output for the diagnostic substrings too.
+fn assert_compiles_clean_wasm_gc(prefix: &str, source: &str) {
+    let (ok, msg) = compile_wasm_gc(prefix, source);
+    assert!(
+        ok && !msg.contains("validation failed")
+            && !msg.contains("type mismatch")
+            && !msg.contains("error"),
+        "{prefix}: full-module wasm-gc compile was NOT clean — a carrier-i64 value \
+         reached an $AverInt-typed sink (builtin arg / field / map / aggregate / boxed \
+         param) without a Box at the boundary. `verify --wasm-gc` masks this; only a \
+         full-module compile catches it.\n{msg}"
+    );
+}
+
 /// VM == wasm-gc (carrier-`i64` ON). Divergence ⇒ a carrier value wrapped or
-/// a boundary bridge dropped precision.
+/// a boundary bridge dropped precision. ALSO asserts the WHOLE module
+/// compiles clean to wasm-gc (every fn lowered, not just `main`'s reachable
+/// graph) — the boundary-completeness gate `aver run` / `verify --wasm-gc`
+/// could not see.
 fn assert_vm_wasm_identical(prefix: &str, source: &str) -> String {
     let (vm_ok, vm_out) = run(prefix, source, false, false);
     let (wg_ok, wg_out) = run(prefix, source, true, false);
@@ -78,6 +127,7 @@ fn assert_vm_wasm_identical(prefix: &str, source: &str) -> String {
          boundary bridge lost precision where the VM kept the full $aint carrier.\n  \
          VM     = {vm_out:?}\n  wasm-gc= {wg_out:?}"
     );
+    assert_compiles_clean_wasm_gc(prefix, source);
     vm_out
 }
 
@@ -644,6 +694,382 @@ fn main() -> Unit
     // 2^40 = 1099511627776; (2^40)^2 = 2^80, far beyond i64::MAX. The VM
     // computes the exact bignum; wasm-gc must match (stayed boxed, no wrap).
     let out = assert_vm_wasm_identical("carrier-wide-overflow", src);
+    assert_eq!(out, "1208925819614629174706176");
+}
+
+// ---------------------------------------------------------------------------
+// BARE-i64 carrier RESULT → `$AverInt`-typed SINK boundaries.
+//
+// A native-`i64` carrier-arithmetic result (a `bare_return` fn whose body is
+// `c.value + c.value`, kept native because the interval fixpoint proved the
+// sum fits i64) flowing into an `$AverInt`-typed consume site must be BOXED
+// at the boundary (`__aint_from_i64`), or the raw `i64` meets a `ref null
+// $type` slot — a wasm-gc VALIDATION failure on a VM-valid program. The wasm
+// rewrite was missing this box for the call-result-into-`$AverInt`-sink path
+// (`String.fromInt` and every other boxed sink: a record `Int` field, a
+// `Map` value/key, a `Tuple`/`Option`/`Result` payload, a boxed user-fn
+// param). The interval analysis keeps the ADD native (`dbl`'s `bare_return`
+// stays true); the box lands only at the stringify/sink boundary, so the
+// size/speed win is preserved. Each witness must compile clean AND VM ==
+// wasm-gc (`assert_vm_wasm_identical` now also asserts a clean full-module
+// compile). The original panel witness `String.fromInt(dbl(c)) => "10"` is
+// the first case.
+
+/// The witness from the cross-vendor panel: a bare-returning carrier-arith
+/// call (`dbl(c) = c.value + c.value`) fed straight into `String.fromInt`,
+/// whose wasm slot is `$AverInt`. Before the fix this was a module-level
+/// validation error that `verify --wasm-gc` masked.
+#[test]
+fn carrier_bare_call_into_string_from_int_boxes_at_boundary() {
+    let src = r#"module M
+    intent = "carrier arith result into String.fromInt"
+    effects [Console]
+
+record C
+    value: Int
+
+fn mk(n: Int) -> Result<C, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(C(value = n))
+        false -> Result.Err("oob")
+
+fn dbl(c: C) -> Int
+    c.value + c.value
+
+fn dblStr(c: C) -> String
+    String.fromInt(dbl(c))
+
+fn main() -> Unit
+    ! [Console.print]
+    match mk(5)
+        Result.Ok(c)  -> Console.print(dblStr(c))
+        Result.Err(_) -> Console.print("err")
+"#;
+    let out = assert_vm_wasm_identical("carrier-fromint-call", src);
+    assert_eq!(out, "10");
+    assert_carrier_revert_agrees("carrier-fromint-call", src, &out);
+}
+
+/// String INTERPOLATION embed of a bare-returning carrier-arith call
+/// (`"v={dbl(c)}"`). The embed's decimal formatter takes an `$AverInt` ref;
+/// the analysis whitelists stringify as a safe `bare_return` consumer, so the
+/// call stays bare and must be boxed at the embed crossing.
+#[test]
+fn carrier_bare_call_into_interpolation_boxes_at_boundary() {
+    let src = r#"module M
+    intent = "carrier arith result into interpolation embed"
+    effects [Console]
+
+record C
+    value: Int
+
+fn mk(n: Int) -> Result<C, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(C(value = n))
+        false -> Result.Err("oob")
+
+fn dbl(c: C) -> Int
+    c.value + c.value
+
+fn show(c: C) -> String
+    "v={dbl(c)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    match mk(5)
+        Result.Ok(c)  -> Console.print(show(c))
+        Result.Err(_) -> Console.print("err")
+"#;
+    let out = assert_vm_wasm_identical("carrier-interp-call", src);
+    assert_eq!(out, "v=10");
+    assert_carrier_revert_agrees("carrier-interp-call", src, &out);
+}
+
+/// A bare-returning carrier-arith call result stored into a RECORD `Int`
+/// FIELD (`Box(n = dbl(c))`, field typed `$AverInt`).
+#[test]
+fn carrier_bare_call_into_record_field_boxes_at_boundary() {
+    let src = r#"module M
+    intent = "carrier arith result into record Int field"
+    effects [Console]
+
+record C
+    value: Int
+
+record Holder
+    n: Int
+
+fn mk(n: Int) -> Result<C, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(C(value = n))
+        false -> Result.Err("oob")
+
+fn dbl(c: C) -> Int
+    c.value + c.value
+
+fn store(c: C) -> Holder
+    Holder(n = dbl(c))
+
+fn main() -> Unit
+    ! [Console.print]
+    match mk(5)
+        Result.Ok(c)  -> Console.print("{store(c).n}")
+        Result.Err(_) -> Console.print("err")
+"#;
+    let out = assert_vm_wasm_identical("carrier-recfield-call", src);
+    assert_eq!(out, "10");
+    assert_carrier_revert_agrees("carrier-recfield-call", src, &out);
+}
+
+/// A bare-returning carrier-arith call result stored as a `Map<_, Int>` VALUE
+/// (`Map.set({}, "k", dbl(c))`, value typed `$AverInt`).
+#[test]
+fn carrier_bare_call_into_map_value_boxes_at_boundary() {
+    let src = r#"module M
+    intent = "carrier arith result into Map Int value"
+    effects [Console]
+
+record C
+    value: Int
+
+fn mk(n: Int) -> Result<C, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(C(value = n))
+        false -> Result.Err("oob")
+
+fn dbl(c: C) -> Int
+    c.value + c.value
+
+fn build(c: C) -> Map<String, Int>
+    Map.set({}, "k", dbl(c))
+
+fn main() -> Unit
+    ! [Console.print]
+    match mk(5)
+        Result.Ok(c)  -> Console.print("{Option.withDefault(Map.get(build(c), "k"), 0)}")
+        Result.Err(_) -> Console.print("err")
+"#;
+    let out = assert_vm_wasm_identical("carrier-mapval-call", src);
+    assert_eq!(out, "10");
+    assert_carrier_revert_agrees("carrier-mapval-call", src, &out);
+}
+
+/// A bare-returning carrier-arith call result used as a `Map<Int, _>` KEY
+/// (`Map.set({}, dbl(c), "v")`, key typed `$AverInt`).
+#[test]
+fn carrier_bare_call_into_map_key_boxes_at_boundary() {
+    let src = r#"module M
+    intent = "carrier arith result into Map Int key"
+    effects [Console]
+
+record C
+    value: Int
+
+fn mk(n: Int) -> Result<C, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(C(value = n))
+        false -> Result.Err("oob")
+
+fn dbl(c: C) -> Int
+    c.value + c.value
+
+fn build(c: C) -> Map<Int, String>
+    Map.set({}, dbl(c), "v")
+
+fn main() -> Unit
+    ! [Console.print]
+    match mk(5)
+        Result.Ok(c)  -> Console.print(Option.withDefault(Map.get(build(c), 10), "MISS"))
+        Result.Err(_) -> Console.print("err")
+"#;
+    let out = assert_vm_wasm_identical("carrier-mapkey-call", src);
+    assert_eq!(out, "v");
+    assert_carrier_revert_agrees("carrier-mapkey-call", src, &out);
+}
+
+/// A bare-returning carrier-arith call result as a `Tuple<Int, _>` payload
+/// (`(dbl(c), "x")`, first element typed `$AverInt`).
+#[test]
+fn carrier_bare_call_into_tuple_payload_boxes_at_boundary() {
+    let src = r#"module M
+    intent = "carrier arith result into Tuple Int payload"
+    effects [Console]
+
+record C
+    value: Int
+
+fn mk(n: Int) -> Result<C, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(C(value = n))
+        false -> Result.Err("oob")
+
+fn dbl(c: C) -> Int
+    c.value + c.value
+
+fn pair(c: C) -> Tuple<Int, String>
+    (dbl(c), "x")
+
+fn fst(t: Tuple<Int, String>) -> Int
+    match t
+        (a, _) -> a
+
+fn main() -> Unit
+    ! [Console.print]
+    match mk(5)
+        Result.Ok(c)  -> Console.print("{fst(pair(c))}")
+        Result.Err(_) -> Console.print("err")
+"#;
+    let out = assert_vm_wasm_identical("carrier-tuple-call", src);
+    assert_eq!(out, "10");
+    assert_carrier_revert_agrees("carrier-tuple-call", src, &out);
+}
+
+/// A bare-returning carrier-arith call result as an `Option<Int>` payload
+/// (`Option.Some(dbl(c))`, payload typed `$AverInt`).
+#[test]
+fn carrier_bare_call_into_option_payload_boxes_at_boundary() {
+    let src = r#"module M
+    intent = "carrier arith result into Option Int payload"
+    effects [Console]
+
+record C
+    value: Int
+
+fn mk(n: Int) -> Result<C, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(C(value = n))
+        false -> Result.Err("oob")
+
+fn dbl(c: C) -> Int
+    c.value + c.value
+
+fn opt(c: C) -> Option<Int>
+    Option.Some(dbl(c))
+
+fn main() -> Unit
+    ! [Console.print]
+    match mk(5)
+        Result.Ok(c)  -> Console.print("{Option.withDefault(opt(c), 0)}")
+        Result.Err(_) -> Console.print("err")
+"#;
+    let out = assert_vm_wasm_identical("carrier-option-call", src);
+    assert_eq!(out, "10");
+    assert_carrier_revert_agrees("carrier-option-call", src, &out);
+}
+
+/// A bare-returning carrier-arith call result as a `Result<Int, _>` payload
+/// (`Result.Ok(dbl(c))`, Ok payload typed `$AverInt`).
+#[test]
+fn carrier_bare_call_into_result_payload_boxes_at_boundary() {
+    let src = r#"module M
+    intent = "carrier arith result into Result Int payload"
+    effects [Console]
+
+record C
+    value: Int
+
+fn mk(n: Int) -> Result<C, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(C(value = n))
+        false -> Result.Err("oob")
+
+fn coerce(n: Int) -> C
+    match mk(n)
+        Result.Ok(c)  -> c
+        Result.Err(_) -> C(value = 0)
+
+fn dbl(c: C) -> Int
+    c.value + c.value
+
+fn res(c: C) -> Result<Int, String>
+    Result.Ok(dbl(c))
+
+fn main() -> Unit
+    ! [Console.print]
+    match res(coerce(5))
+        Result.Ok(v)  -> Console.print("{v}")
+        Result.Err(_) -> Console.print("err")
+"#;
+    let out = assert_vm_wasm_identical("carrier-result-call", src);
+    assert_eq!(out, "10");
+    assert_carrier_revert_agrees("carrier-result-call", src, &out);
+}
+
+/// A bare-returning carrier-arith call result passed as an arg to a USER fn
+/// with a BOXED `Int` param (`addBoxed(dbl(c), 7)`, `x` is `$AverInt`
+/// because `x * 1000000000000` makes its product escape i64 ⇒ boxed param).
+#[test]
+fn carrier_bare_call_into_boxed_user_param_boxes_at_boundary() {
+    let src = r#"module M
+    intent = "carrier arith result into boxed user-fn Int param"
+    effects [Console]
+
+record C
+    value: Int
+
+fn mk(n: Int) -> Result<C, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(C(value = n))
+        false -> Result.Err("oob")
+
+fn dbl(c: C) -> Int
+    c.value + c.value
+
+fn addBoxed(x: Int, y: Int) -> Int
+    x * 1000000000000 + y
+
+fn combine(c: C) -> Int
+    addBoxed(dbl(c), 7)
+
+fn main() -> Unit
+    ! [Console.print]
+    match mk(5)
+        Result.Ok(c)  -> Console.print("{combine(c)}")
+        Result.Err(_) -> Console.print("err")
+"#;
+    let out = assert_vm_wasm_identical("carrier-userparam-call", src);
+    assert_eq!(out, "10000000000007");
+    assert_carrier_revert_agrees("carrier-userparam-call", src, &out);
+}
+
+/// SOUNDNESS guard for the new boxing: a WIDE-bound carrier whose
+/// `c.value * c.value` OVERFLOWS i64, then stringified via `String.fromInt`.
+/// The interval fixpoint demotes the multiply to boxed (so `square`'s
+/// `bare_return` is false and the new Q5 box is a no-op there); the full
+/// `$aint` product must reach the formatter EXACT — a raw i64 would wrap.
+#[test]
+fn carrier_wide_overflow_into_string_from_int_stays_exact() {
+    let src = r#"module M
+    intent = "wide-bound carrier overflow into String.fromInt stays exact"
+    effects [Console]
+
+record Wide
+    value: Int
+
+fn fromWide(n: Int) -> Result<Wide, String>
+    match Bool.and(n >= 0, n <= 1099511627776)
+        true  -> Result.Ok(Wide(value = n))
+        false -> Result.Err("oob")
+
+fn unwrap(r: Result<Wide, String>) -> Wide
+    match r
+        Result.Ok(c)  -> c
+        Result.Err(_) -> Wide(value = 0)
+
+fn wide(n: Int) -> Wide
+    unwrap(fromWide(n))
+
+fn square(c: Wide) -> Int
+    c.value * c.value
+
+fn squareStr(c: Wide) -> String
+    String.fromInt(square(c))
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(squareStr(wide(1099511627776)))
+"#;
+    let out = assert_vm_wasm_identical("carrier-wide-fromint", src);
     assert_eq!(out, "1208925819614629174706176");
 }
 
