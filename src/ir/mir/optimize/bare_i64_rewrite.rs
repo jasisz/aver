@@ -71,7 +71,8 @@ pub fn rewrite_for_rust(
     // Rust; only the carrier-projection leaf is suppressed — pass an EMPTY
     // carrier table so `carrier_interval` declines every carrier.
     let empty = super::bare_i64::CarrierIntervals::new();
-    rewrite(program, boxed_signature_fns, &empty)
+    let empty_fields = super::bare_i64::FieldCarrierIntervals::new();
+    rewrite(program, boxed_signature_fns, &empty, &empty_fields)
 }
 
 /// ETAP-2 SLICE 2b: the wasm-gc entry. Identical body to
@@ -90,8 +91,9 @@ pub fn rewrite_for_wasm_gc(
     program: MirProgram,
     boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
     carrier: &super::bare_i64::CarrierIntervals,
+    field_carrier: &super::bare_i64::FieldCarrierIntervals,
 ) -> MirProgram {
-    rewrite(program, boxed_signature_fns, carrier)
+    rewrite(program, boxed_signature_fns, carrier, field_carrier)
 }
 
 /// The shared rewrite both public entries delegate to. Target-agnostic:
@@ -103,9 +105,10 @@ fn rewrite(
     program: MirProgram,
     boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
     carrier: &super::bare_i64::CarrierIntervals,
+    field_carrier: &super::bare_i64::FieldCarrierIntervals,
 ) -> MirProgram {
     let mut program = program;
-    let facts = super::bare_i64::analyze(&program, carrier);
+    let facts = super::bare_i64::analyze_with_fields(&program, carrier, field_carrier);
     // Collect ids first to avoid borrowing `program.fns` while mutating it.
     let ids: Vec<crate::ir::FnId> = program.fns.keys().copied().collect();
     for id in ids {

@@ -591,6 +591,635 @@ pub fn carrier_interval_table(
     table
 }
 
+/// ETAP-2 multi-field carrier-`i64`: derive, per `(record-type, Int-field)`
+/// pair in scope, the constant interval a MULTI-ARG smart constructor's guard
+/// proves over that field. This generalizes [`carrier_interval_table`] from
+/// the single-`value`-field carrier TYPE to a multi-field record whose 2+-arg
+/// smart constructor bounds each field independently.
+///
+/// The recognized shape is:
+/// ```text
+/// record Coord { x: Int, y: Int }                 // 2+ Int fields
+/// fn coord(x: Int, y: Int) -> Result<Coord, String>
+///     match <guard conjunction over x, y>
+///         true  -> Result.Ok(Coord(x = x, y = y)) // param p_j -> field f_i
+///         false -> Result.Err("...")
+/// ```
+/// The Ok-branch `RecordCreate` maps each constructor PARAM to a record FIELD
+/// (`Coord(x = x, y = y)`). For each field, the guard is split on its
+/// `Bool.and` tree and only the leaf comparisons mentioning that field's bound
+/// param ALONE are kept (a cross-field condition like `x + y <= 50` mentions
+/// two params and is DROPPED — conservative/sound: a narrower per-field bound
+/// is always a valid over-approximation). Running [`interval_of_invariant`]
+/// over those single-var leaves yields the field's interval.
+///
+/// **Fail-closed.** A field with no proven single-var `fits_i64` bound is
+/// OMITTED (the field stays boxed `$AverInt`). A non-`Int` field, a param that
+/// the Ok branch does not bind one-to-one to a field, or an unrecognized guard
+/// all decline. The single-field path ([`carrier_interval_table`]) is
+/// untouched — this table is ADDITIVE and keyed by `(record, field)`.
+///
+/// Returns a map keyed by `(bare record name, field name)`.
+pub fn field_carrier_interval_table(
+    inputs: &ProofLowerInputs,
+) -> HashMap<(String, String), (crate::ir::interval::Interval, bool)> {
+    let mut table = HashMap::new();
+
+    let entry_typedefs = inputs.entry_items.iter().filter_map(|item| match item {
+        TopLevel::TypeDef(td) => Some((None::<&str>, td)),
+        _ => None,
+    });
+    let module_typedefs = inputs.dep_modules.iter().flat_map(|m| {
+        m.type_defs
+            .iter()
+            .map(move |td| (Some(m.prefix.as_str()), td))
+    });
+
+    for (module_prefix, td) in entry_typedefs.chain(module_typedefs) {
+        let TypeDef::Product { name, fields, .. } = td else {
+            continue;
+        };
+        // Single-field products are the existing carrier-TYPE path; skip them
+        // here so the two tables never both claim the same record.
+        if fields.len() < 2 {
+            continue;
+        }
+        // Every field must be a plain `Int` for the multi-field i64 erasure;
+        // a record mixing Int and non-Int fields keeps its non-Int fields
+        // boxed (only the Int fields with a proven bound become eligible).
+        let Some((ctor, ctor_prefix)) =
+            find_multi_field_smart_ctor(name, fields, inputs, module_prefix)
+        else {
+            continue;
+        };
+        // Map record FIELD name -> the constructor PARAM name that feeds it,
+        // read from the Ok-branch `RecordCreate`.
+        let field_to_param = match ctor_field_param_map(ctor, name, fields) {
+            Some(m) => m,
+            None => continue,
+        };
+        let guard = ctor_guard_predicate(ctor);
+        let Some(guard) = guard else { continue };
+        for (fname, ftype) in fields {
+            if ftype.trim() != "Int" {
+                continue;
+            }
+            let Some(param) = field_to_param.get(fname) else {
+                continue;
+            };
+            // Project the guard onto single-variable leaves mentioning ONLY
+            // this param. A cross-field leaf (two distinct params) is dropped.
+            let resolved_guard = inputs.resolve_expr(guard, ctor_prefix);
+            let leaves =
+                crate::codegen::common::flatten_bool_and_conjuncts_resolved(&resolved_guard);
+            let single_var: Vec<_> = leaves
+                .into_iter()
+                .filter(|leaf| resolved_leaf_mentions_only(leaf, param))
+                .collect();
+            if single_var.is_empty() {
+                continue;
+            }
+            // Rebuild a conjunction predicate over the kept leaves and run the
+            // SAME interval recognizer the single-field path uses.
+            let conj = rebuild_bool_and(single_var);
+            let invariant = Predicate {
+                free_vars: vec![(param.clone(), QuantifierType::Plain("Int".to_string()))],
+                expr: conj,
+            };
+            let (interval, interval_known) = crate::ir::interval::interval_of_invariant(&invariant);
+            if !interval_known {
+                continue;
+            }
+            // Same collision discipline as the type-keyed table: on a
+            // same-`(record, field)` collision across modules, intersect to
+            // the tighter common bound (fail-closed).
+            table
+                .entry((name.clone(), fname.clone()))
+                .and_modify(|(iv, known): &mut (crate::ir::interval::Interval, bool)| {
+                    *iv = iv.intersect(interval);
+                    *known = true;
+                })
+                .or_insert((interval, true));
+        }
+    }
+
+    table
+}
+
+/// Find the single recognized multi-arg smart constructor for `record_name`:
+/// a pure fn `mk(p1, ..., pN) -> Result<Rec, String>` whose body is a single
+/// two-arm `true -> Result.Ok(Rec(...)) | false -> Result.Err(_)` match. The
+/// param count must be >= 2 (a one-arg ctor is the single-field carrier path).
+/// Returns the `&FnDef` plus the module scope it was found in.
+fn find_multi_field_smart_ctor<'a>(
+    record_name: &str,
+    fields: &[(String, String)],
+    inputs: &ProofLowerInputs<'a>,
+    record_scope: Option<&str>,
+) -> Option<(&'a FnDef, Option<&'a str>)> {
+    let entry_fns = inputs.entry_items.iter().filter_map(|item| match item {
+        TopLevel::FnDef(fd) => Some((None::<&str>, fd)),
+        _ => None,
+    });
+    let module_fns = inputs.dep_modules.iter().flat_map(|m| {
+        m.fn_defs
+            .iter()
+            .map(move |fd| (Some(m.prefix.as_str()), fd))
+    });
+    for (scope, fd) in entry_fns.chain(module_fns) {
+        // The constructor lives in the same module as the record (opaque
+        // refinement is single-module); skip a same-named fn in another scope.
+        if scope != record_scope {
+            continue;
+        }
+        if !fd.return_type.starts_with("Result<") {
+            continue;
+        }
+        if !fd.return_type[7..].starts_with(record_name) {
+            continue;
+        }
+        if fd.params.len() < 2 {
+            continue;
+        }
+        let stmts = fd.body.stmts();
+        if stmts.len() != 1 {
+            continue;
+        }
+        let crate::ast::Stmt::Expr(body_expr) = &stmts[0] else {
+            continue;
+        };
+        let Expr::Match { arms, .. } = &body_expr.node else {
+            continue;
+        };
+        if !is_multi_field_ok_err_match(arms, record_name, fields) {
+            continue;
+        }
+        return Some((fd, scope));
+    }
+    None
+}
+
+/// True iff `arms` is the canonical multi-field smart-ctor shape:
+/// `true -> Result.Ok(Rec(f_i = p_j, ...))` covering EVERY field, and
+/// `false -> Result.Err(_)`.
+fn is_multi_field_ok_err_match(
+    arms: &[crate::ast::MatchArm],
+    record_name: &str,
+    fields: &[(String, String)],
+) -> bool {
+    if arms.len() != 2 {
+        return false;
+    }
+    let mut true_ok = false;
+    let mut false_err = false;
+    for arm in arms {
+        match &arm.pattern {
+            crate::ast::Pattern::Literal(Literal::Bool(true)) => {
+                if multi_field_ok_constructor(&arm.body, record_name, fields).is_some() {
+                    true_ok = true;
+                }
+            }
+            crate::ast::Pattern::Literal(Literal::Bool(false)) => {
+                if multi_field_is_err_constructor(&arm.body) {
+                    false_err = true;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true_ok && false_err
+}
+
+/// Local mirror of `common::is_err_constructor` (which is private): the arm
+/// body is `Result.Err(_)`.
+fn multi_field_is_err_constructor(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
+        Expr::Constructor(name, Some(_)) => name == "Result.Err",
+        Expr::FnCall(callee, args) if args.len() == 1 => {
+            matches!(expr_to_dotted_name(&callee.node), Some(name) if name == "Result.Err")
+        }
+        _ => false,
+    }
+}
+
+/// Inspect a `Result.Ok(Rec(f_i = p_j, ...))` arm body and return the
+/// field-name -> param-name map when every field is set to a bare identifier.
+/// `None` if the body is not the expected `Result.Ok` of a `RecordCreate` of
+/// `record_name` covering exactly the declared fields with identifier values.
+fn multi_field_ok_constructor(
+    expr: &Spanned<Expr>,
+    record_name: &str,
+    fields: &[(String, String)],
+) -> Option<HashMap<String, String>> {
+    let (ctor_name, ctor_arg_node) = match &expr.node {
+        Expr::Constructor(name, Some(arg)) => (name.clone(), &arg.node),
+        Expr::FnCall(callee, args) if args.len() == 1 => {
+            let name = expr_to_dotted_name(&callee.node)?;
+            (name, &args[0].node)
+        }
+        _ => return None,
+    };
+    if ctor_name != "Result.Ok" {
+        return None;
+    }
+    let (t, create_fields) = match ctor_arg_node {
+        Expr::RecordCreate { type_name, fields } => (type_name.as_str(), fields),
+        _ => return None,
+    };
+    if t != record_name || create_fields.len() != fields.len() {
+        return None;
+    }
+    let mut map = HashMap::new();
+    for (fname, fvalue) in create_fields {
+        let param = match &fvalue.node {
+            Expr::Ident(n) | Expr::Resolved { name: n, .. } => n.clone(),
+            _ => return None,
+        };
+        map.insert(fname.clone(), param);
+    }
+    // Every declared field must be assigned by the Ok branch.
+    if fields.iter().any(|(fname, _)| !map.contains_key(fname)) {
+        return None;
+    }
+    Some(map)
+}
+
+/// The field -> param map of the smart constructor's Ok branch (the
+/// `true -> Result.Ok(Rec(...))` arm). Walks the body's single match.
+fn ctor_field_param_map(
+    fd: &FnDef,
+    record_name: &str,
+    fields: &[(String, String)],
+) -> Option<HashMap<String, String>> {
+    let stmts = fd.body.stmts();
+    let crate::ast::Stmt::Expr(body_expr) = stmts.first()? else {
+        return None;
+    };
+    let Expr::Match { arms, .. } = &body_expr.node else {
+        return None;
+    };
+    for arm in arms {
+        if matches!(
+            &arm.pattern,
+            crate::ast::Pattern::Literal(Literal::Bool(true))
+        ) {
+            return multi_field_ok_constructor(&arm.body, record_name, fields);
+        }
+    }
+    None
+}
+
+/// The smart constructor's guard predicate (the `Match` subject the Ok/Err
+/// arms branch on).
+fn ctor_guard_predicate(fd: &FnDef) -> Option<&Spanned<Expr>> {
+    let stmts = fd.body.stmts();
+    let crate::ast::Stmt::Expr(body_expr) = stmts.first()? else {
+        return None;
+    };
+    let Expr::Match { subject, .. } = &body_expr.node else {
+        return None;
+    };
+    Some(subject)
+}
+
+/// True iff every identifier leaf mentioned in `leaf` is `param` (so the leaf
+/// is a SINGLE-VARIABLE condition over that one param). A leaf naming two
+/// distinct params (a cross-field condition like `x + y <= 50`) returns false
+/// and is dropped by the caller — conservative/sound per-field projection.
+fn resolved_leaf_mentions_only(leaf: &Spanned<crate::ir::hir::ResolvedExpr>, param: &str) -> bool {
+    let mut only = true;
+    let mut saw = false;
+    collect_resolved_idents(leaf, &mut |name| {
+        if name == param {
+            saw = true;
+        } else {
+            only = false;
+        }
+    });
+    only && saw
+}
+
+/// Walk a resolved expression, invoking `f` for every identifier leaf
+/// (`Ident` / `Resolved`).
+fn collect_resolved_idents(e: &Spanned<crate::ir::hir::ResolvedExpr>, f: &mut impl FnMut(&str)) {
+    use crate::ir::hir::ResolvedExpr;
+    match &e.node {
+        ResolvedExpr::Ident(n) | ResolvedExpr::Resolved { name: n, .. } => f(n),
+        ResolvedExpr::BinOp(_, l, r) => {
+            collect_resolved_idents(l, f);
+            collect_resolved_idents(r, f);
+        }
+        ResolvedExpr::Neg(i) => collect_resolved_idents(i, f),
+        ResolvedExpr::Call(_, args) => {
+            for a in args {
+                collect_resolved_idents(a, f);
+            }
+        }
+        ResolvedExpr::Attr(o, _) => collect_resolved_idents(o, f),
+        _ => {}
+    }
+}
+
+/// Rebuild a `Bool.and` conjunction over the kept single-variable leaves.
+/// A single leaf returns itself; >1 fold into nested `Bool.and(...)` calls,
+/// matching the shape [`interval_of_invariant`] recognizes.
+fn rebuild_bool_and(
+    mut leaves: Vec<Spanned<crate::ir::hir::ResolvedExpr>>,
+) -> Spanned<crate::ir::hir::ResolvedExpr> {
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
+    let mut acc = leaves.remove(0);
+    for leaf in leaves {
+        let line = acc.line;
+        acc = Spanned::new(
+            ResolvedExpr::Call(
+                ResolvedCallee::Builtin("Bool.and".to_string()),
+                vec![acc, leaf],
+            ),
+            line,
+        );
+    }
+    acc
+}
+
+/// ETAP-2 multi-field carrier-`i64`: the per-`(record, field)` ELIGIBLE map —
+/// [`field_carrier_interval_table`] tightened the same way the single-field
+/// path tightens its proven-bound set. An entry survives only when its bound
+/// is recognized AND `fits_i64` AND the owning record is NOT demoted by any
+/// whole-program scan ([`multi_field_record_demotions`]):
+///   - the record is constructed UNGATED (a bare `RecordCreate` outside its
+///     own smart-ctor whose args are not all in-bounds literals) — that bypass
+///     could store an out-of-`i64` value the construct bridge would TRAP on;
+///   - the record (or a record reaching it) is used as a `Map` KEY — the
+///     Map-key codegen was not updated for the i64-erased fields;
+///   - the record (or a record reaching it) is used as a `Map` VALUE or as a
+///     `List` / `Vector` / `Tuple` element — those containers store the
+///     element/value in a backing array (or a heterogeneous tuple struct)
+///     whose slot is the boxed `$AverInt` record ref, so an i64-erased field
+///     of such an element fails wasm validation (`expected (ref null $type),
+///     found i64`). The whole record stays boxed in those container positions,
+///     matching the VM + the boxed wasm-gc path. (`Option` / `Result` payloads
+///     are NOT demoted: they hold the element as an inline struct ref, where an
+///     i64-erased field is fine — so the smart-ctor boundary
+///     `coord(...) -> Result<Coord, String>` keeps the native-i64 win.)
+///
+/// A demoted record keeps EVERY field boxed (the whole struct stays the
+/// pre-slice all-`$AverInt` layout). wasm-gc only; the Rust path passes the
+/// empty registry and never erases a field.
+///
+/// Returns a map keyed by `(bare record name, field name)`; an empty map
+/// reproduces the pre-slice all-`$AverInt` multi-field record byte-for-byte.
+pub fn field_carrier_eligible_intervals(
+    inputs: &ProofLowerInputs,
+    instantiations: &crate::ir::mir::InstantiationRegistry,
+) -> HashMap<(String, String), (crate::ir::interval::Interval, bool)> {
+    let table = field_carrier_interval_table(inputs);
+    if table.is_empty() {
+        return table;
+    }
+    // Proven-bound candidates: bound recognized AND `fits_i64`. The set of
+    // RECORD names with at least one such field drives the demotion scans
+    // (a demotion is per-record — a record constructed ungated / used as a
+    // Map key keeps ALL its fields boxed).
+    let record_candidates: HashSet<String> = table
+        .iter()
+        .filter(|(_, (iv, known))| *known && iv.fits_i64())
+        .map(|((rec, _), _)| rec.clone())
+        .collect();
+    if std::env::var("AVER_CARRIER_I64_SKIP_DEMOTION").is_ok() {
+        return table
+            .into_iter()
+            .filter(|((rec, _), (iv, known))| {
+                *known && iv.fits_i64() && record_candidates.contains(rec)
+            })
+            .collect();
+    }
+    let demoted_records =
+        multi_field_record_demotions(inputs, &record_candidates, &table, instantiations);
+    table
+        .into_iter()
+        .filter(|((rec, _), (iv, known))| {
+            *known
+                && iv.fits_i64()
+                && record_candidates.contains(rec)
+                && !demoted_records.contains(rec)
+        })
+        .collect()
+}
+
+/// ETAP-2 multi-field carrier-`i64`: the RECORD-level fail-closed demotion
+/// scan — the multi-field generalization of [`carrier_eligibility_demotions`].
+/// A multi-field bounded record is demoted (every field kept boxed) when:
+///   - **Scan 1 (ungated construction).** A `RecordCreate` / `RecordUpdate` of
+///     the record in a fn OTHER than its recognized multi-arg smart constructor
+///     can smuggle an out-of-`i64` value past the per-field gate (the construct
+///     bridge `__aint_to_i64_checked` would TRAP). SAFE only when every field
+///     argument is a constant literal provably inside that field's proven
+///     interval; any non-literal / out-of-range field argument demotes.
+///   - **Scan 2 (Map-key usage).** The record — directly or transitively as a
+///     field of a record/Option/List/Tuple used as a Map KEY — reaches a
+///     `Map<K, V>` key position; the Map-key codegen still expects the boxed
+///     struct. Driven by the inference-complete resolved Map-key types, with
+///     the textual annotation scan as a cheap backstop. Both reuse the SAME
+///     `carriers_reachable_from` / `collect_map_key_carriers` closures the
+///     single-field path uses.
+///   - **Scan 3 (container value / element usage).** The record — directly or
+///     transitively — reaches a `Map` VALUE, a `List` / `Vector` element, or a
+///     `Tuple` element. Those containers store the element/value in a backing
+///     array (or a heterogeneous tuple struct) whose slot is the boxed
+///     `$AverInt` record ref (`(ref null $Record)`); an i64-erased field of
+///     such an element then meets that boxed slot, failing wasm validation
+///     (`expected (ref null $type), found i64`). Demoting keeps the whole
+///     record boxed, which the boxed wasm-gc path + the VM agree on. `Option` /
+///     `Result` payloads are EXCLUDED — they hold the element as an inline
+///     struct ref where the i64-erased field is fine, so the smart-ctor
+///     boundary `coord(...) -> Result<Coord, String>` keeps the native-i64 win.
+///     Driven by the inference-complete instantiation registry (every `Map`,
+///     `List`, `Vector`, `Tuple` the program uses), reusing the same
+///     `carriers_reachable_from` closure.
+///
+/// Fail-closed: a trip can only ever SHRINK the eligible set.
+fn multi_field_record_demotions(
+    inputs: &ProofLowerInputs,
+    candidates: &HashSet<String>,
+    field_intervals: &HashMap<(String, String), (crate::ir::interval::Interval, bool)>,
+    instantiations: &crate::ir::mir::InstantiationRegistry,
+) -> HashSet<String> {
+    let mut demoted: HashSet<String> = HashSet::new();
+    if candidates.is_empty() {
+        return demoted;
+    }
+
+    // Map each candidate record to its recognized multi-arg smart-ctor fn name
+    // (the only construct site that gates the fields). A record with no
+    // recognizable smart-ctor never reached `field_carrier_interval_table`, so
+    // every candidate has one — but resolve defensively and demote on failure.
+    let mut ctor_fn_of: HashMap<String, String> = HashMap::new();
+    let record_defs = collect_product_defs(inputs);
+    for name in candidates {
+        let Some((fields, scope)) = record_defs.get(name) else {
+            demoted.insert(name.clone());
+            continue;
+        };
+        match find_multi_field_smart_ctor(name, fields, inputs, *scope) {
+            Some((ctor, _)) => {
+                ctor_fn_of.insert(name.clone(), ctor.name.clone());
+            }
+            None => {
+                demoted.insert(name.clone());
+            }
+        }
+    }
+
+    // ---- Scan 1: ungated construction --------------------------------------
+    let all_fn_defs = inputs
+        .entry_items
+        .iter()
+        .filter_map(|it| match it {
+            TopLevel::FnDef(fd) => Some(fd),
+            _ => None,
+        })
+        .chain(inputs.dep_modules.iter().flat_map(|m| m.fn_defs.iter()));
+    for fd in all_fn_defs {
+        for stmt in fd.body.stmts() {
+            let expr = match stmt {
+                crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => e,
+            };
+            carrier_walk_expr(expr, &mut |e| {
+                let (type_name, create_fields): (&String, &[(String, Spanned<Expr>)]) = match e {
+                    Expr::RecordCreate { type_name, fields } => (type_name, fields),
+                    Expr::RecordUpdate {
+                        type_name, updates, ..
+                    } => (type_name, updates),
+                    _ => return,
+                };
+                if !candidates.contains(type_name) {
+                    return;
+                }
+                // The construct inside the record's own smart-ctor is gated.
+                if ctor_fn_of.get(type_name) == Some(&fd.name) {
+                    return;
+                }
+                // Outside the smart-ctor: safe iff EVERY provided field value is
+                // a constant literal inside that field's proven interval (an
+                // in-bounds literal cannot smuggle an out-of-bound value past
+                // the gate). A `RecordUpdate` that omits a bounded field copies
+                // it from the (already-gated) base, which is safe too.
+                let all_safe = create_fields.iter().all(|(fname, value)| {
+                    match field_intervals.get(&(type_name.clone(), fname.clone())) {
+                        // A non-bounded field (no eligible interval) is stored
+                        // boxed regardless, so it can't smuggle an i64-overflow.
+                        None => true,
+                        Some((iv, true)) => literal_in_interval(value, *iv),
+                        Some((_, false)) => false,
+                    }
+                });
+                if !all_safe {
+                    demoted.insert(type_name.clone());
+                }
+            });
+        }
+    }
+
+    // ---- Scan 2: Map-key usage (direct + transitive) -----------------------
+    let record_fields = collect_record_fields(inputs);
+    for (key, _value) in &instantiations.maps {
+        carriers_reachable_from(
+            key,
+            candidates,
+            &record_fields,
+            &mut HashSet::new(),
+            &mut demoted,
+        );
+    }
+    for ty_str in all_type_annotations(inputs) {
+        let ty = crate::types::parse_type_str(&ty_str);
+        collect_map_key_carriers(&ty, candidates, &record_fields, &mut demoted);
+    }
+
+    // ---- Scan 3: container value / element usage (direct + transitive) -----
+    // A multi-field carrier reachable from a `Map` VALUE, a `List` / `Vector`
+    // element, or a `Tuple` element keeps all its fields BOXED: those
+    // containers store their element/value in a backing ARRAY (`List`/`Vector`/
+    // `Map`-values) or a heterogeneous tuple struct whose slot type is the
+    // record's BOXED ref shape (`(ref null $type)`). An i64-erased field of
+    // such an element then meets that boxed slot and fails wasm validation
+    // (`expected (ref null $type), found i64`). Demoting keeps the whole record
+    // boxed — what the VM + the boxed wasm-gc path agree on.
+    //
+    // `Option` / `Result` payloads are DELIBERATELY excluded: those hold the
+    // element as an inline struct REF (the i64 fields stay inside the `$Coord`
+    // struct, which the Option/Result slot holds as `(ref $Coord)`), so an
+    // i64-erased field is fine there. Excluding them keeps the native-i64 win
+    // for the common smart-ctor boundary `coord(...) -> Result<Coord, String>`,
+    // which only ever wraps-then-immediately-unwraps the record — that pattern
+    // compiles clean WITHOUT demotion, and demoting it would needlessly box
+    // every multi-field carrier (its own constructor returns a `Result`).
+    //
+    // Driven by the inference-complete instantiation registry (the same
+    // typed-MIR source Scan 2's map keys come from), so a carrier used as a
+    // container element via a local binding OR pure inference (no annotation
+    // anywhere) is still demoted. Reuses `carriers_reachable_from`, which
+    // transitively chases record fields + nested containers.
+    let demote_from = |ty: &crate::ast::Type, demoted: &mut HashSet<String>| {
+        carriers_reachable_from(ty, candidates, &record_fields, &mut HashSet::new(), demoted);
+    };
+    for (_key, value) in &instantiations.maps {
+        demote_from(value, &mut demoted);
+    }
+    for elem in &instantiations.lists {
+        demote_from(elem, &mut demoted);
+    }
+    for elem in &instantiations.vectors {
+        demote_from(elem, &mut demoted);
+    }
+    for elems in &instantiations.tuples {
+        for elem in elems {
+            demote_from(elem, &mut demoted);
+        }
+    }
+
+    demoted
+}
+
+/// A candidate record's declarations as the demotion scan needs them: its
+/// `(field, type)` list plus the module scope it was found in (`None` = entry).
+type ProductDef<'a> = (&'a [(String, String)], Option<&'a str>);
+
+/// Bare `Product` type name → its [`ProductDef`]. Lets the demotion scan
+/// re-locate a candidate record's field declarations + smart constructor.
+fn collect_product_defs<'a>(inputs: &ProofLowerInputs<'a>) -> HashMap<String, ProductDef<'a>> {
+    let mut out: HashMap<String, ProductDef<'a>> = HashMap::new();
+    for item in inputs.entry_items {
+        if let TopLevel::TypeDef(TypeDef::Product { name, fields, .. }) = item {
+            out.entry(name.clone()).or_insert((fields.as_slice(), None));
+        }
+    }
+    for m in inputs.dep_modules {
+        for td in &m.type_defs {
+            if let TypeDef::Product { name, fields, .. } = td {
+                out.entry(name.clone())
+                    .or_insert((fields.as_slice(), Some(m.prefix.as_str())));
+            }
+        }
+    }
+    out
+}
+
+/// A `RecordCreate`/`RecordUpdate` field value is a constant integer literal
+/// (`5` or `-5`) provably within the proven interval `iv`. Any other shape
+/// (a param, a call, arithmetic) is not a provable constant ⇒ `false`.
+fn literal_in_interval(value: &Spanned<Expr>, iv: crate::ir::interval::Interval) -> bool {
+    let k: i128 = match &value.node {
+        Expr::Literal(Literal::Int(n)) => *n as i128,
+        Expr::Neg(inner) => match &inner.node {
+            Expr::Literal(Literal::Int(n)) => -(*n as i128),
+            _ => return false,
+        },
+        _ => return false,
+    };
+    iv.contains_point(k)
+}
+
 /// ETAP-2 carrier-`i64` SLICE 2b FOLLOW-UP: the fail-closed eligibility
 /// tightening. The bare carrier interval ([`carrier_interval_table`]) proves
 /// only that the smart-constructor's invariant `fits_i64`; it does NOT prove

@@ -143,6 +143,17 @@ pub(super) struct TypeRegistry {
     /// invariant lands here. Built from
     /// [`crate::codegen::proof_lower::carrier_interval_table`].
     pub(super) eligible_carriers: std::collections::HashSet<String>,
+    /// ETAP-2 multi-field carrier-`i64`: the eligible `(record, field)` pairs
+    /// whose proven smart-constructor bound `fits_i64`. For a pair in this set,
+    /// the record's wasm STRUCT FIELD lowers to a native `i64` (instead of the
+    /// `$AverInt` ref), and the field read / record construct bridge the i64
+    /// boundary the same way the single-field carrier does. A multi-field record
+    /// can have a MIX: one bounded Int field → i64, another unbounded field →
+    /// boxed. Built from
+    /// [`crate::codegen::proof_lower::field_carrier_eligible_intervals`] (already
+    /// demotion-tightened); EMPTY (the default) reproduces the all-`$AverInt`
+    /// multi-field record layout byte-for-byte.
+    pub(super) eligible_carrier_fields: std::collections::HashSet<(String, String)>,
     /// Phase 4 (0.20) — `(struct (mut i32 socket) (mut i32 in_stream)
     /// (mut i32 out_stream) (mut i32 in_use))` slot type for an entry
     /// in the TCP connection pool. `None` when no `Tcp.*` effect is
@@ -1004,6 +1015,11 @@ impl TypeRegistry {
             // doesn't have. Empty here ⇒ no carrier erases to `i64` until
             // the codegen entry opts in.
             eligible_carriers: std::collections::HashSet::new(),
+            // ETAP-2 multi-field carrier-`i64`: populated post-build by
+            // `module.rs` (`set_eligible_carrier_fields`) from the multi-field
+            // carrier table. Empty here ⇒ no record field erases to `i64` until
+            // the codegen entry opts in.
+            eligible_carrier_fields: std::collections::HashSet::new(),
             tcp_slot_type_idx,
             tcp_pool_type_idx,
             bignum,
@@ -1308,6 +1324,32 @@ impl TypeRegistry {
         }
         let bare = type_name.rsplit_once('.').map_or(type_name, |(_, b)| b);
         self.eligible_carriers.contains(bare.trim())
+    }
+
+    /// ETAP-2 multi-field carrier-`i64`: install the eligible `(record, field)`
+    /// pairs whose proven bound `fits_i64`. Called once by the wasm-gc codegen
+    /// entry after it derives + demotion-tightens the multi-field carrier table.
+    /// Keyed by bare record name + field name (`("Coord", "x")`).
+    pub(super) fn set_eligible_carrier_fields(
+        &mut self,
+        fields: std::collections::HashSet<(String, String)>,
+    ) {
+        self.eligible_carrier_fields = fields;
+    }
+
+    /// ETAP-2 multi-field carrier-`i64`: is `(record_name, field)` a bounded
+    /// record field whose storage should be a native `i64`? `record_name` may
+    /// be bare or `Module.`-qualified; the field name is exact.
+    pub(super) fn is_eligible_carrier_field(&self, record_name: &str, field: &str) -> bool {
+        if self.eligible_carrier_fields.is_empty() {
+            return false;
+        }
+        let bare = record_name
+            .rsplit_once('.')
+            .map_or(record_name, |(_, b)| b)
+            .trim();
+        self.eligible_carrier_fields
+            .contains(&(bare.to_string(), field.to_string()))
     }
 
     pub(super) fn newtype_underlying(&self, type_name: &str) -> Option<&str> {
@@ -2154,14 +2196,24 @@ pub(super) fn fn_sig_key(params: &[ValType], results: &[ValType]) -> String {
 /// declared field, mutable=false (Aver records are immutable; `update`
 /// returns a fresh struct via `struct.new`).
 pub(super) fn record_struct_type(
+    record_name: &str,
     fields: &[(String, String)],
     registry: &TypeRegistry,
 ) -> Result<StructType, WasmGcError> {
     let mut out = Vec::with_capacity(fields.len());
-    for (_, ty) in fields {
-        let val_ty = aver_to_wasm(ty, Some(registry))?.ok_or(WasmGcError::Validation(format!(
-            "record field of type {ty} has no wasm representation"
-        )))?;
+    for (fname, ty) in fields {
+        // ETAP-2 multi-field carrier-`i64`: a bounded Int field of a recognized
+        // multi-arg smart-ctor record erases to a native `i64` (the storage size
+        // lever — identical to the single-field-leaf composition). Every other
+        // field keeps its default lowering, so a MIXED record (one bounded Int
+        // → i64, one unbounded → boxed `$AverInt`) lowers each field correctly.
+        let val_ty = if registry.is_eligible_carrier_field(record_name, fname) {
+            ValType::I64
+        } else {
+            aver_to_wasm(ty, Some(registry))?.ok_or(WasmGcError::Validation(format!(
+                "record field of type {ty} has no wasm representation"
+            )))?
+        };
         out.push(FieldType {
             element_type: StorageType::Val(val_ty),
             mutable: false,

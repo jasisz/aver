@@ -1336,17 +1336,36 @@ fn mir_arith_leaves_raw_compatible(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
     }
 }
 
-/// ETAP-2 carrier-`i64`: is `e` a `.value` `Project` whose BASE renders a
-/// native `i64` carrier value? Such a read renders as a raw native `i64` (the
-/// project bridge is skipped) — a genuine raw anchor like an `Unbox`. Two base
-/// shapes qualify, mirroring `FnBareFacts::carrier_project_interval`:
-///   - `Local(bare_carrier_slot)` — a bare carrier param/local (#551);
-///   - a NESTED carrier-field read — a `Project` whose result type is an
-///     eligible carrier (`rec.coord` in `rec.coord.value`); #550 erased that
-///     carrier field to a native `i64`, so the inner `struct.get` yields i64
-///     and the outer `.value` is identity.
+/// ETAP-2 carrier-`i64`: is `e` a `Project` that reads a native `i64` carrier
+/// value directly (the project bridge is skipped) — a genuine raw anchor like
+/// an `Unbox`? Three shapes qualify, mirroring
+/// `FnBareFacts::carrier_project_interval`:
+///   - a `.value` read whose base is a `Local(bare_carrier_slot)` — a bare
+///     carrier param/local (#551);
+///   - a `.value` read whose base is a NESTED carrier-field read (a `Project`
+///     whose result type is an eligible carrier, `rec.coord` in
+///     `rec.coord.value`); #550 erased that carrier field to a native `i64`;
+///   - a DIRECT bounded-field read `Project(rec, "x")` where `rec`'s stamped
+///     type is a bounded multi-field record and `(record, "x")` is an eligible
+///     field (#550 stored that field as a native `i64`, so the `struct.get`
+///     yields i64). This is the multi-field generalization.
 fn mir_is_bare_carrier_project(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
-    matches!(e, MirExpr::Project(p) if mir_base_renders_carrier_i64_raw(&p.node.base, ctx))
+    let MirExpr::Project(p) = e else {
+        return false;
+    };
+    mir_base_renders_carrier_i64_raw(&p.node.base, ctx)
+        || mir_is_field_carrier_read(&p.node.base, &p.node.field, ctx)
+}
+
+/// ETAP-2 multi-field carrier-`i64`: is `Project(base, field)` a DIRECT
+/// bounded-field read whose `(record, field)` is eligible? `base`'s stamped
+/// type names a bounded multi-field record and `(record, field)` is in the
+/// registry's eligible-field set — #550 stored that field as a native `i64`,
+/// so the `struct.get` reads raw i64. Fail-closed: any other base type / field
+/// is not eligible (the field is boxed, the read yields an `$AverInt`).
+fn mir_is_field_carrier_read(base: &Spanned<MirExpr>, field: &str, ctx: &EmitCtx<'_>) -> bool {
+    let record = aver_type_str_of(base);
+    ctx.registry.is_eligible_carrier_field(&record, field)
 }
 
 /// ETAP-2 carrier-`i64`: does `base` render a native `i64` carrier value (so a

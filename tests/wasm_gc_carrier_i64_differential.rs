@@ -1452,6 +1452,37 @@ fn compile_wasm_bytes(prefix: &str, source: &str, no_carrier: bool) -> Vec<u8> {
     bytes
 }
 
+/// Like [`compile_wasm_bytes`] but runs the `--optimize size` pipeline
+/// (`wasm-metadce` → `wasm-opt -Oz`), which DCEs the unreachable boxed-`$AverInt`
+/// arithmetic prelude. The size WIN of the carrier-`i64` path only shows after
+/// DCE — an un-optimized module carries the whole bignum prelude in both builds.
+/// Returns `None` when the `wasm-opt` toolchain is absent (the size assertion
+/// then degrades to "not larger" so CI without `wasm-opt` still passes).
+fn compile_wasm_bytes_optimized(prefix: &str, source: &str, no_carrier: bool) -> Option<Vec<u8>> {
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = temp_module(prefix, source);
+    let out_dir = path.parent().expect("temp module has parent").join("out");
+    let mut cmd = Command::new(aver_bin);
+    cmd.current_dir(&repo_root)
+        .arg("compile")
+        .arg(&path)
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--optimize")
+        .arg("size")
+        .arg("-o")
+        .arg(&out_dir);
+    if no_carrier {
+        cmd.env("AVER_NO_CARRIER_I64", "1");
+    }
+    let out = cmd.output().expect("aver compile executes");
+    let wasm = out_dir.join("main.wasm");
+    let bytes = std::fs::read(&wasm).ok();
+    cleanup(&path);
+    if out.status.success() { bytes } else { None }
+}
+
 // ---------------------------------------------------------------------------
 // Eligibility-tightening (fail-closed) regressions.
 //
@@ -2089,4 +2120,521 @@ fn main() -> Unit
     // the sum is 0. VM is ground truth; the whole module must compile clean.
     let out = assert_vm_wasm_identical("bare-ip-call", src);
     assert_eq!(out, "0");
+}
+
+// ===========================================================================
+// Multi-field carrier-`i64`: a `record Coord { x: Int, y: Int }` plus a 2-arg
+// smart constructor gating BOTH fields → each Int field stored as native i64.
+// The source stays `c.x : Int` (no `.value`). VM is ground truth; every case
+// must match wasm-gc AND compile clean.
+// ===========================================================================
+
+/// A `Coord { x: Int, y: Int }` with a 2-arg smart ctor bounding each field.
+/// `c.x + c.dx` reads native i64 fields and adds raw. VM == wasm-gc, revert
+/// agrees (representation-only).
+#[test]
+fn multi_field_native_arithmetic_matches_vm_and_reverts() {
+    let src = r#"module M
+    intent = "multi-field carrier-i64 native arithmetic"
+    effects [Console]
+
+record Coord
+    x: Int
+    y: Int
+
+fn coord(x: Int, y: Int) -> Result<Coord, String>
+    match Bool.and(Bool.and(x >= 0, x <= 1000), Bool.and(y >= 0, y <= 1000))
+        true  -> Result.Ok(Coord(x = x, y = y))
+        false -> Result.Err("oob")
+
+fn manhattan(c: Coord) -> Int
+    c.x + c.y
+
+fn main() -> Unit
+    ! [Console.print]
+    match coord(30, 12)
+        Result.Ok(c)  -> Console.print("{manhattan(c)}")
+        Result.Err(_) -> Console.print("err")
+"#;
+    let out = assert_vm_wasm_identical("mf-native", src);
+    assert_eq!(out, "42");
+    assert_carrier_revert_agrees("mf-native", src, &out);
+}
+
+/// WIDE-BOUND per-field overflow: a field bounded `0 .. 2^40` whose squared
+/// value (`c.x * c.x` = up to 2^80) leaves `i64`, so the multiply MUST stay
+/// boxed (full `$aint` precision), matching the VM. A raw `i64.mul` would
+/// wrap. This is the load-bearing soundness case for the multi-field read.
+#[test]
+fn multi_field_wide_bound_square_stays_boxed_matches_vm() {
+    let src = r#"module M
+    intent = "multi-field carrier-i64 wide-bound overflow stays boxed"
+    effects [Console]
+
+record Wide
+    x: Int
+    y: Int
+
+fn wide(x: Int, y: Int) -> Result<Wide, String>
+    match Bool.and(Bool.and(x >= 0, x <= 1099511627776), Bool.and(y >= 0, y <= 1099511627776))
+        true  -> Result.Ok(Wide(x = x, y = y))
+        false -> Result.Err("oob")
+
+fn square(c: Wide) -> Int
+    c.x * c.x
+
+fn main() -> Unit
+    ! [Console.print]
+    match wide(1000000000, 0)
+        Result.Ok(c)  -> Console.print("{square(c)}")
+        Result.Err(_) -> Console.print("err")
+"#;
+    // 1e9 squared = 1e18, which fits i64; but the field bound 2^40 makes the
+    // PRODUCT bound 2^80 (> i64), so the analysis keeps the multiply boxed.
+    // The VM computes the exact 1000000000000000000; wasm-gc must match.
+    let out = assert_vm_wasm_identical("mf-wide-square", src);
+    assert_eq!(out, "1000000000000000000");
+    assert_carrier_revert_agrees("mf-wide-square", src, &out);
+}
+
+/// A wide-bound field whose square genuinely EXCEEDS i64 must still match the
+/// VM (boxed bignum). `2^40 * 2^40 = 2^80`, far past i64::MAX — a raw multiply
+/// would wrap to a wrong value.
+#[test]
+fn multi_field_wide_bound_true_overflow_matches_vm() {
+    let src = r#"module M
+    intent = "multi-field carrier-i64 true overflow stays boxed"
+    effects [Console]
+
+record Wide
+    x: Int
+    y: Int
+
+fn wide(x: Int, y: Int) -> Result<Wide, String>
+    match Bool.and(Bool.and(x >= 0, x <= 1099511627776), Bool.and(y >= 0, y <= 1099511627776))
+        true  -> Result.Ok(Wide(x = x, y = y))
+        false -> Result.Err("oob")
+
+fn square(c: Wide) -> Int
+    c.x * c.x
+
+fn main() -> Unit
+    ! [Console.print]
+    match wide(1099511627776, 0)
+        Result.Ok(c)  -> Console.print("{square(c)}")
+        Result.Err(_) -> Console.print("err")
+"#;
+    // 2^40 squared = 2^80 = 1208925819614629174706176, way past i64::MAX.
+    let out = assert_vm_wasm_identical("mf-true-overflow", src);
+    assert_eq!(out, "1208925819614629174706176");
+}
+
+/// MIXED record: one field gated/bounded (→ native i64), the other NOT
+/// mentioned in the guard (→ boxed `$AverInt`). Both reads must match the VM,
+/// and the whole module compiles clean (the boxed field stays the ref shape).
+#[test]
+fn multi_field_mixed_bounded_and_unbounded_matches_vm() {
+    let src = r#"module M
+    intent = "multi-field carrier-i64 mixed bounded/unbounded fields"
+    effects [Console]
+
+record Mixed
+    x: Int
+    y: Int
+
+fn mixed(x: Int, y: Int) -> Result<Mixed, String>
+    match Bool.and(x >= 0, x <= 100)
+        true  -> Result.Ok(Mixed(x = x, y = y))
+        false -> Result.Err("oob")
+
+fn combine(c: Mixed) -> Int
+    c.x + c.y
+
+fn bigY() -> Int
+    5000000000 * 5000000000
+
+fn main() -> Unit
+    ! [Console.print]
+    match mixed(7, bigY())
+        Result.Ok(c)  -> Console.print("{combine(c)}")
+        Result.Err(_) -> Console.print("err")
+"#;
+    // x = 7 (bounded → i64), y = 5e9 * 5e9 = 2.5e19 (unbounded → boxed bignum,
+    // it exceeds i64::MAX ~9.2e18). The sum is boxed (y escapes i64), exact on
+    // both backends. The literals stay in i64 range; the PRODUCT overflows.
+    let out = assert_vm_wasm_identical("mf-mixed", src);
+    assert_eq!(out, "25000000000000000007");
+    assert_carrier_revert_agrees("mf-mixed", src, &out);
+}
+
+/// MIS-FIRE negative: a plain 2-field record with NO smart constructor. The
+/// fields must NOT be erased to i64 (no proven bound) — they stay boxed. The
+/// program still runs correctly and compiles clean; this guards against the
+/// recognizer firing on an unguarded record.
+#[test]
+fn multi_field_no_smart_ctor_keeps_fields_boxed_matches_vm() {
+    let src = r#"module M
+    intent = "multi-field plain record (no smart ctor) stays boxed"
+    effects [Console]
+
+record Plain
+    x: Int
+    y: Int
+
+fn combine(c: Plain) -> Int
+    c.x + c.y
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{combine(Plain(x = 5, y = 37))}")
+"#;
+    let out = assert_vm_wasm_identical("mf-misfire", src);
+    assert_eq!(out, "42");
+    assert_carrier_revert_agrees("mf-misfire", src, &out);
+}
+
+/// UNGATED / OUT-OF-RANGE construction demotes: the record has a smart ctor,
+/// but a SECOND fn constructs it ungated with an out-of-range / non-literal
+/// value. The record must fall back to all-boxed (every field stays
+/// `$AverInt`), or the construct bridge would TRAP on the out-of-range value.
+/// The program runs correctly and compiles clean.
+#[test]
+fn multi_field_ungated_construction_demotes_matches_vm() {
+    let src = r#"module M
+    intent = "multi-field ungated construction demotes to boxed"
+    effects [Console]
+
+record Coord
+    x: Int
+    y: Int
+
+fn coord(x: Int, y: Int) -> Result<Coord, String>
+    match Bool.and(Bool.and(x >= 0, x <= 100), Bool.and(y >= 0, y <= 100))
+        true  -> Result.Ok(Coord(x = x, y = y))
+        false -> Result.Err("oob")
+
+fn raw(n: Int) -> Coord
+    Coord(x = n, y = n)
+
+fn combine(c: Coord) -> Int
+    c.x + c.y
+
+fn bigN() -> Int
+    5000000000 * 5000000000
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{combine(raw(bigN()))}")
+"#;
+    // `raw` constructs Coord ungated with 2.5e19 (> i64::MAX); the record is
+    // demoted to all-boxed, so the bignum field stays exact (no trap, no wrap).
+    let out = assert_vm_wasm_identical("mf-ungated", src);
+    assert_eq!(out, "50000000000000000000");
+    assert_carrier_revert_agrees("mf-ungated", src, &out);
+}
+
+/// NESTED bounded record field read: `state.head.x` where `head : Coord` and
+/// `Coord.x` is a bounded i64 field. The struct.get chain reads the inner i64.
+/// VM == wasm-gc.
+#[test]
+fn multi_field_nested_read_matches_vm_and_reverts() {
+    let src = r#"module M
+    intent = "multi-field nested bounded field read"
+    effects [Console]
+
+record Coord
+    x: Int
+    y: Int
+
+record State
+    head: Coord
+    score: Int
+
+fn coord(x: Int, y: Int) -> Result<Coord, String>
+    match Bool.and(Bool.and(x >= 0, x <= 1000), Bool.and(y >= 0, y <= 1000))
+        true  -> Result.Ok(Coord(x = x, y = y))
+        false -> Result.Err("oob")
+
+fn headX(s: State) -> Int
+    s.head.x + s.head.y
+
+fn main() -> Unit
+    ! [Console.print]
+    match coord(11, 31)
+        Result.Ok(c)  -> Console.print("{headX(State(head = c, score = 0))}")
+        Result.Err(_) -> Console.print("err")
+"#;
+    let out = assert_vm_wasm_identical("mf-nested", src);
+    assert_eq!(out, "42");
+    assert_carrier_revert_agrees("mf-nested", src, &out);
+}
+
+/// A bounded multi-field read flowing into a STRINGIFY sink (interpolation
+/// embed) — the raw i64 must be boxed at the embed boundary (the $aint decimal
+/// formatter takes an $AverInt ref). Compiles clean + matches the VM.
+#[test]
+fn multi_field_read_into_stringify_sink_matches_vm() {
+    let src = r#"module M
+    intent = "multi-field bounded read into a stringify sink"
+    effects [Console]
+
+record Coord
+    x: Int
+    y: Int
+
+fn coord(x: Int, y: Int) -> Result<Coord, String>
+    match Bool.and(Bool.and(x >= 0, x <= 1000), Bool.and(y >= 0, y <= 1000))
+        true  -> Result.Ok(Coord(x = x, y = y))
+        false -> Result.Err("oob")
+
+fn main() -> Unit
+    ! [Console.print]
+    match coord(40, 2)
+        Result.Ok(c)  -> Console.print("x={c.x} y={c.y}")
+        Result.Err(_) -> Console.print("err")
+"#;
+    let out = assert_vm_wasm_identical("mf-stringify", src);
+    assert_eq!(out, "x=40 y=2");
+    assert_carrier_revert_agrees("mf-stringify", src, &out);
+}
+
+/// SIZE PROOF for the multi-field win: a `Coord { x: Int, y: Int }` snake-shaped
+/// model (clean source, NO `.value`) whose 2-arg smart ctor bounds both fields.
+/// Every field read is native i64 and the arithmetic runs `i64.add/sub`, so the
+/// boxed `$AverInt` arithmetic prelude DCEs. The carrier-ON build must be
+/// STRICTLY SMALLER than the boxed baseline (`AVER_NO_CARRIER_I64=1`), and the
+/// `Coord` struct lowers to `(struct (field i64) (field i64))` — byte-identical
+/// to the single-field-leaf `Coord { x: Axis, y: Axis }` composition. VM ==
+/// wasm-gc both ways is covered by `assert_vm_wasm_identical`.
+#[test]
+fn multi_field_snake_size_drops_vs_boxed() {
+    let src = r#"module M
+    intent = "multi-field snake size: native field arithmetic"
+    effects [Console]
+
+record Coord
+    x: Int
+    y: Int
+
+fn coord(x: Int, y: Int) -> Result<Coord, String>
+    match Bool.and(Bool.and(x >= 0, x <= 1000), Bool.and(y >= 0, y <= 1000))
+        true  -> Result.Ok(Coord(x = x, y = y))
+        false -> Result.Err("oob")
+
+fn unwrap(r: Result<Coord, String>) -> Coord
+    match r
+        Result.Ok(c)  -> c
+        Result.Err(_) -> Coord(x = 0, y = 0)
+
+fn mk(x: Int, y: Int) -> Coord
+    unwrap(coord(x, y))
+
+fn sumX(a: Coord, b: Coord) -> Int
+    a.x + b.x
+
+fn sumY(a: Coord, b: Coord) -> Int
+    a.y + b.y
+
+fn diff(a: Coord, b: Coord) -> Int
+    (a.x - b.x) + (a.y - b.y)
+
+fn main() -> Unit
+    ! [Console.print]
+    p = mk(5, 7)
+    q = mk(1, 2)
+    Console.print("{sumX(p, q)} {sumY(p, q)} {diff(p, q)}")
+"#;
+    // Representation-only erasure: identical output both ways.
+    let out = assert_vm_wasm_identical("mf-snake-size", src);
+    assert_eq!(out, "6 9 9");
+    assert_carrier_revert_agrees("mf-snake-size", src, &out);
+
+    // The size WIN materializes after `--optimize size` (DCE drops the now-
+    // unreachable boxed-`$AverInt` arith prelude). Measured locally: carrier-ON
+    // ~1953 B vs carrier-OFF(boxed) ~6254 B (~31%) — byte-equal to the
+    // single-field-leaf `Coord { x: Axis, y: Axis }` composition (~1940 B).
+    if let (Some(on), Some(off)) = (
+        compile_wasm_bytes_optimized("mf-snake-on", src, false),
+        compile_wasm_bytes_optimized("mf-snake-off", src, true),
+    ) {
+        assert!(
+            on.len() < off.len(),
+            "multi-field carrier-i64 must SHRINK the optimized module — native field \
+             arithmetic DCEs the boxed arith prelude. carrier-ON={} bytes, \
+             carrier-OFF(boxed)={} bytes",
+            on.len(),
+            off.len(),
+        );
+    }
+    // Un-optimized, the carrier-ON build must at least NOT GROW the module
+    // (the storage erasure + native ops never add bytes; the prelude is shared).
+    let on_raw = compile_wasm_bytes("mf-snake-on-raw", src, false);
+    let off_raw = compile_wasm_bytes("mf-snake-off-raw", src, true);
+    assert!(
+        on_raw.len() <= off_raw.len() + 16,
+        "carrier-ON un-optimized must not meaningfully grow the module: ON={} OFF={}",
+        on_raw.len(),
+        off_raw.len(),
+    );
+}
+
+// ===========================================================================
+// Multi-field carrier as a CONTAINER value / element (HOLE #3, fail-closed
+// demotion). A bounded `record Coord { x: Int, y: Int }` whose 2-arg smart
+// ctor erases each field to native i64 is stored in a `Map` VALUE, a `List`
+// / `Vector` element, or a `Tuple` element. Those containers hold the
+// element/value in a backing array (or a heterogeneous tuple struct) whose
+// slot is the BOXED `$AverInt` record ref — and the record's eq / hash
+// helper then reads an i64-erased field and passes it to the boxed `$AverInt`
+// eq / hash, failing wasm validation (`expected (ref null $type), found i64`).
+// The container scan demotes the record (all fields boxed) so it compiles
+// clean and matches the VM. (`Option` / `Result` payloads are EXCLUDED — they
+// hold the element as an inline struct ref where an i64-erased field is fine,
+// so the smart-ctor boundary `coord(...) -> Result<Coord, String>` keeps the
+// native-i64 win — covered by the per-position tests below.)
+//
+// Each test pairs the FIX (default build: VM == wasm-gc, clean compile) with
+// the REVERT (`AVER_CARRIER_I64_SKIP_DEMOTION=1` restores the un-tightened
+// eligibility ⇒ the validation failure returns). The field square reads back
+// `2^40 * 2^40 = 2^80`, far past i64::MAX, so the demoted (boxed) record must
+// keep the value EXACT.
+// ===========================================================================
+
+/// Shared body for the container-element demotion tests: a `Coord { x, y }`
+/// bounded `0 .. 2^40`, stored via `$store` and read back via `$read` which
+/// squares `g.x` (overshooting i64). `$store` / `$read` are the per-container
+/// fn pair; the rest is identical.
+fn multi_field_container_src(store_fn: &str, read_fn: &str) -> String {
+    format!(
+        r#"module M
+    intent = "multi-field carrier as container element"
+    effects [Console]
+
+record Coord
+    x: Int
+    y: Int
+
+fn coord(x: Int, y: Int) -> Result<Coord, String>
+    match Bool.and(Bool.and(x >= 0, x <= 1099511627776), Bool.and(y >= 0, y <= 1099511627776))
+        true  -> Result.Ok(Coord(x = x, y = y))
+        false -> Result.Err("oob")
+
+fn unwrap(r: Result<Coord, String>) -> Coord
+    match r
+        Result.Ok(c)  -> c
+        Result.Err(_) -> Coord(x = 0, y = 0)
+
+{store_fn}
+
+{read_fn}
+
+fn main() -> Unit
+    ! [Console.print]
+    c = unwrap(coord(1099511627776, 0))
+    Console.print("{{readSquare(store(c))}}")
+"#
+    )
+}
+
+/// Assert a container-element program (FIX) compiles clean + VM == wasm-gc,
+/// and (REVERT) with the demotion scan disabled the i64-erased field in the
+/// container element fails wasm validation.
+fn assert_container_demotes_and_reverts(prefix: &str, src: &str) {
+    // FIX: the container scan demotes Coord to boxed ⇒ compiles clean AND
+    // VM == wasm-gc at the exact 2^80 bignum.
+    let out = assert_vm_wasm_identical(prefix, src);
+    assert_eq!(out, "1208925819614629174706176");
+
+    // REVERT: scan disabled ⇒ the i64-erased field in the container element's
+    // record eq / hash helper meets the boxed `$AverInt` helper ⇒ wasm
+    // validation fails (the hole returns).
+    let (ok, msg) = run_wasm_skip_demotion(&format!("{prefix}-revert"), src);
+    assert!(
+        !ok,
+        "{prefix} revert: with the container scan disabled an i64-erased \
+         multi-field carrier in a container element must fail wasm validation \
+         (the hole returns), but the run succeeded:\n{msg}"
+    );
+    assert!(
+        msg.contains("validation failed") || msg.contains("type mismatch"),
+        "{prefix} revert: expected a wasm validation / type-mismatch error from \
+         the i64-erased container element, got:\n{msg}"
+    );
+}
+
+/// HOLE #3 — a multi-field carrier as a `Map` VALUE.
+#[test]
+fn multi_field_as_map_value_demotes_to_boxed() {
+    let src = multi_field_container_src(
+        "fn store(c: Coord) -> Map<String, Coord>\n    Map.set({}, \"k\", c)",
+        "fn readSquare(m: Map<String, Coord>) -> Int\n    match Map.get(m, \"k\")\n        Option.Some(g) -> g.x * g.x\n        Option.None    -> 0",
+    );
+    assert_container_demotes_and_reverts("mf-map-value", &src);
+}
+
+/// HOLE #3 — a multi-field carrier as a `List` element.
+#[test]
+fn multi_field_as_list_element_demotes_to_boxed() {
+    let src = multi_field_container_src(
+        "fn store(c: Coord) -> List<Coord>\n    [c]",
+        "fn readSquare(xs: List<Coord>) -> Int\n    match xs\n        [g, ..rest] -> g.x * g.x\n        []          -> 0",
+    );
+    assert_container_demotes_and_reverts("mf-list-element", &src);
+}
+
+/// HOLE #3 — a multi-field carrier as a `Vector` element.
+#[test]
+fn multi_field_as_vector_element_demotes_to_boxed() {
+    let src = multi_field_container_src(
+        "fn store(c: Coord) -> Vector<Coord>\n    Vector.new(1, c)",
+        "fn readSquare(v: Vector<Coord>) -> Int\n    match Vector.get(v, 0)\n        Option.Some(g) -> g.x * g.x\n        Option.None    -> 0",
+    );
+    assert_container_demotes_and_reverts("mf-vector-element", &src);
+}
+
+/// HOLE #3 — a multi-field carrier as a `Tuple` element.
+#[test]
+fn multi_field_as_tuple_element_demotes_to_boxed() {
+    let src = multi_field_container_src(
+        "fn store(c: Coord) -> Tuple<Coord, Int>\n    (c, 0)",
+        "fn readSquare(t: Tuple<Coord, Int>) -> Int\n    match t\n        (g, _) -> g.x * g.x",
+    );
+    assert_container_demotes_and_reverts("mf-tuple-element", &src);
+}
+
+/// HOLE #3 boundary — a multi-field carrier as an `Option` / `Result` payload
+/// is NOT demoted: the payload holds an inline struct ref where an i64-erased
+/// field is fine, so the native-i64 win is preserved (the program compiles
+/// clean + matches the VM WITHOUT demotion). This guards against the scan
+/// over-demoting the common smart-ctor boundary `coord -> Result<Coord, _>`.
+#[test]
+fn multi_field_as_option_result_payload_stays_native() {
+    let option_src = multi_field_container_src(
+        "fn store(c: Coord) -> Option<Coord>\n    Option.Some(c)",
+        "fn readSquare(o: Option<Coord>) -> Int\n    match o\n        Option.Some(g) -> g.x * g.x\n        Option.None    -> 0",
+    );
+    // FIX path: VM == wasm-gc, compiles clean.
+    let out = assert_vm_wasm_identical("mf-option-payload", &option_src);
+    assert_eq!(out, "1208925819614629174706176");
+    // The Option payload is NOT a demotion hazard: even with the scan disabled
+    // it compiles clean (the inline struct ref holds the i64 fields fine).
+    let (ok, _msg) = run_wasm_skip_demotion("mf-option-payload-noskip", &option_src);
+    assert!(
+        ok,
+        "an Option payload of a multi-field carrier must compile clean with OR \
+         without the demotion scan — it is not a container-element hazard"
+    );
+
+    let result_src = multi_field_container_src(
+        "fn store(c: Coord) -> Result<Coord, String>\n    Result.Ok(c)",
+        "fn readSquare(r: Result<Coord, String>) -> Int\n    match r\n        Result.Ok(g)  -> g.x * g.x\n        Result.Err(_) -> 0",
+    );
+    let out = assert_vm_wasm_identical("mf-result-payload", &result_src);
+    assert_eq!(out, "1208925819614629174706176");
+    let (ok, _msg) = run_wasm_skip_demotion("mf-result-payload-noskip", &result_src);
+    assert!(
+        ok,
+        "a Result payload of a multi-field carrier must compile clean with OR \
+         without the demotion scan — it is not a container-element hazard"
+    );
 }
