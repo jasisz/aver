@@ -1880,7 +1880,7 @@ fn emit_hash_record(
     // h = 5381
     f.instruction(&Instruction::I32Const(5381));
     f.instruction(&Instruction::LocalSet(1));
-    for (i, (_field_name, field_ty)) in fields.iter().enumerate() {
+    for (i, (field_name, field_ty)) in fields.iter().enumerate() {
         // h = h * 33 (h<<5 + h)
         f.instruction(&Instruction::LocalGet(1));
         f.instruction(&Instruction::I32Const(5));
@@ -1897,8 +1897,16 @@ fn emit_hash_record(
         match field_ty.trim() {
             "Int" => {
                 // Flag-off: i64 → low 32 bits. Flag-on (bignum): the field
-                // is an `$aint` ref → `__aint_hash`.
-                super::lists::emit_aint_field_hash(&mut f, registry)?;
+                // is an `$aint` ref → `__aint_hash`. ETAP-2 multi-field
+                // carrier-`i64`: a bounded field erased to a native `i64`
+                // hashes raw `i32.wrap_i64` even under bignum (agrees with
+                // its `i64.eq`).
+                super::lists::emit_record_int_field_hash(
+                    &mut f,
+                    registry,
+                    record_name,
+                    field_name,
+                )?;
             }
             "Bool" => {
                 // already i32
@@ -1983,7 +1991,7 @@ fn emit_eq_record(
             "eq_record: `{record_name}` has no field info"
         )))?;
     let mut f = Function::new([]);
-    for (i, (_field_name, field_ty)) in fields.iter().enumerate() {
+    for (i, (field_name, field_ty)) in fields.iter().enumerate() {
         f.instruction(&Instruction::LocalGet(0));
         f.instruction(&Instruction::StructGet {
             struct_type_index: record_idx,
@@ -1996,8 +2004,10 @@ fn emit_eq_record(
         });
         match field_ty.trim() {
             // Flag-on (bignum): `$aint` ref → `__aint_eq`. Flag-off: `i64.eq`.
+            // ETAP-2 multi-field carrier-`i64`: a bounded field erased to a
+            // native `i64` compares raw `i64.eq` even under bignum.
             "Int" => {
-                super::lists::emit_aint_field_eq(&mut f, registry)?;
+                super::lists::emit_record_int_field_eq(&mut f, registry, record_name, field_name)?;
             }
             "Bool" => {
                 f.instruction(&Instruction::I32Eq);

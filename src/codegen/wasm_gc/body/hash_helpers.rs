@@ -352,7 +352,7 @@ fn emit_record_hash_body(
     f.instruction(&Instruction::LocalSet(1));
     f.instruction(&Instruction::I32Const(5381));
     f.instruction(&Instruction::LocalSet(2));
-    for (i, (_, field_ty)) in fields.iter().enumerate() {
+    for (i, (field_name, field_ty)) in fields.iter().enumerate() {
         // h = h * 33 + field_hash
         f.instruction(&Instruction::LocalGet(2));
         f.instruction(&Instruction::I32Const(5));
@@ -364,13 +364,22 @@ fn emit_record_hash_body(
             struct_type_index: r_idx,
             field_index: i as u32,
         });
-        emit_inner_hash_dispatch(
-            &mut f,
-            field_ty.trim(),
-            registry,
-            helper_idx_map,
-            self_fn_idx.filter(|_| field_ty.trim() == name),
-        )?;
+        // ETAP-2 multi-field carrier-`i64`: a bounded Int field erased to a
+        // native `i64` hashes with the raw `i32.wrap_i64` (agreeing with the
+        // `i64.eq` the record's eq helper picks for the same field); a boxed
+        // Int field falls through to `emit_inner_hash_dispatch` (→ `__aint_hash`
+        // under ℤ). An `__aint_hash` on a scalar `i64` is invalid wasm.
+        if field_ty.trim() == "Int" && registry.is_eligible_carrier_field(name, field_name) {
+            f.instruction(&Instruction::I32WrapI64);
+        } else {
+            emit_inner_hash_dispatch(
+                &mut f,
+                field_ty.trim(),
+                registry,
+                helper_idx_map,
+                self_fn_idx.filter(|_| field_ty.trim() == name),
+            )?;
+        }
         f.instruction(&Instruction::I32Add);
         f.instruction(&Instruction::LocalSet(2));
     }

@@ -951,15 +951,16 @@ fn rebuild_bool_and(
 ///     could store an out-of-`i64` value the construct bridge would TRAP on;
 ///   - the record (or a record reaching it) is used as a `Map` KEY — the
 ///     Map-key codegen was not updated for the i64-erased fields;
-///   - the record (or a record reaching it) is used as a `Map` VALUE or as a
-///     `List` / `Vector` / `Tuple` element — those containers store the
-///     element/value in a backing array (or a heterogeneous tuple struct)
-///     whose slot is the boxed `$AverInt` record ref, so an i64-erased field
-///     of such an element fails wasm validation (`expected (ref null $type),
-///     found i64`). The whole record stays boxed in those container positions,
-///     matching the VM + the boxed wasm-gc path. (`Option` / `Result` payloads
-///     are NOT demoted: they hold the element as an inline struct ref, where an
-///     i64-erased field is fine — so the smart-ctor boundary
+///   - the record (or a record reaching it) is used DIRECTLY as a `Map` VALUE
+///     (or through a record field / `Option` / `Result` that keeps it an inline
+///     struct ref in the values array) — that trips a separate, pre-existing
+///     record-as-Map-value validation bug, so the whole record stays boxed
+///     there. A carrier used as a `List` / `Vector` / `Tuple` ELEMENT now STAYS
+///     native: the per-field record eq/hash helpers dispatch a raw `i64.eq` /
+///     `i32.wrap_i64` for its i64-erased fields, so `List<Coord>` keeps
+///     `(field i64)(field i64)` elements that compile + run native. (`Option` /
+///     `Result` payloads are NOT demoted either — they hold the element as an
+///     inline struct ref, so the smart-ctor boundary
 ///     `coord(...) -> Result<Coord, String>` keeps the native-i64 win.)
 ///
 /// A demoted record keeps EVERY field boxed (the whole struct stays the
@@ -1022,20 +1023,17 @@ pub fn field_carrier_eligible_intervals(
 ///     the textual annotation scan as a cheap backstop. Both reuse the SAME
 ///     `carriers_reachable_from` / `collect_map_key_carriers` closures the
 ///     single-field path uses.
-///   - **Scan 3 (container value / element usage).** The record — directly or
-///     transitively — reaches a `Map` VALUE, a `List` / `Vector` element, or a
-///     `Tuple` element. Those containers store the element/value in a backing
-///     array (or a heterogeneous tuple struct) whose slot is the boxed
-///     `$AverInt` record ref (`(ref null $Record)`); an i64-erased field of
-///     such an element then meets that boxed slot, failing wasm validation
-///     (`expected (ref null $type), found i64`). Demoting keeps the whole
-///     record boxed, which the boxed wasm-gc path + the VM agree on. `Option` /
-///     `Result` payloads are EXCLUDED — they hold the element as an inline
-///     struct ref where the i64-erased field is fine, so the smart-ctor
-///     boundary `coord(...) -> Result<Coord, String>` keeps the native-i64 win.
-///     Driven by the inference-complete instantiation registry (every `Map`,
-///     `List`, `Vector`, `Tuple` the program uses), reusing the same
-///     `carriers_reachable_from` closure.
+///   - **Scan 3 (direct Map-VALUE usage).** The record reaches a `Map` VALUE
+///     DIRECTLY (or through a record field / `Option` / `Result` that keeps it
+///     an inline struct ref in the values array). That trips a separate,
+///     pre-existing record-as-Map-value validation bug, so the record stays
+///     boxed there. The walk STOPS at a `List` / `Vector` / `Tuple` boundary: a
+///     carrier used as such a container ELEMENT now stays native i64 (the
+///     per-field record eq/hash helpers dispatch the raw `i64.eq` /
+///     `i32.wrap_i64` for an i64-erased field), so a carrier reachable only
+///     THROUGH such a container — e.g. a `Map<K, List<Coord>>` value — is NOT
+///     demoted. Driven by the inference-complete instantiation registry (every
+///     `Map` the program uses), via `carriers_reachable_as_map_value`.
 ///
 /// Fail-closed: a trip can only ever SHRINK the eligible set.
 fn multi_field_record_demotions(
@@ -1136,49 +1134,93 @@ fn multi_field_record_demotions(
         collect_map_key_carriers(&ty, candidates, &record_fields, &mut demoted);
     }
 
-    // ---- Scan 3: container value / element usage (direct + transitive) -----
-    // A multi-field carrier reachable from a `Map` VALUE, a `List` / `Vector`
-    // element, or a `Tuple` element keeps all its fields BOXED: those
-    // containers store their element/value in a backing ARRAY (`List`/`Vector`/
-    // `Map`-values) or a heterogeneous tuple struct whose slot type is the
-    // record's BOXED ref shape (`(ref null $type)`). An i64-erased field of
-    // such an element then meets that boxed slot and fails wasm validation
-    // (`expected (ref null $type), found i64`). Demoting keeps the whole record
-    // boxed — what the VM + the boxed wasm-gc path agree on.
+    // ---- Scan 3: Map-VALUE usage (direct + transitive, list/vec/tuple-stopped)
+    // A multi-field carrier reachable DIRECTLY as a `Map` VALUE (or through a
+    // record field / `Option` / `Result` that keeps it an inline struct ref in
+    // the values backing array) keeps all its fields BOXED — that case trips a
+    // separate, pre-existing record-as-Map-value validation bug that is out of
+    // scope here, so we fail closed exactly as before.
     //
-    // `Option` / `Result` payloads are DELIBERATELY excluded: those hold the
-    // element as an inline struct REF (the i64 fields stay inside the `$Coord`
-    // struct, which the Option/Result slot holds as `(ref $Coord)`), so an
-    // i64-erased field is fine there. Excluding them keeps the native-i64 win
-    // for the common smart-ctor boundary `coord(...) -> Result<Coord, String>`,
-    // which only ever wraps-then-immediately-unwraps the record — that pattern
-    // compiles clean WITHOUT demotion, and demoting it would needlessly box
-    // every multi-field carrier (its own constructor returns a `Result`).
+    // A carrier used as a `List` / `Vector` / `Tuple` ELEMENT now STAYS native
+    // i64: the per-field record eq/hash helpers dispatch a raw `i64.eq` /
+    // `i32.wrap_i64` for an i64-erased field (gated on `is_eligible_carrier_
+    // field`), so `List<Coord>` keeps `(field i64)(field i64)` elements and
+    // `List.contains` / `==` over them compiles and runs native. The reachability
+    // walk therefore STOPS at a `List` / `Vector` / `Tuple` boundary — a carrier
+    // only reachable THROUGH such a container (e.g. `Map<K, List<Coord>>`, where
+    // the Map value is a list ref whose elements are native) is NOT demoted.
     //
-    // Driven by the inference-complete instantiation registry (the same
-    // typed-MIR source Scan 2's map keys come from), so a carrier used as a
-    // container element via a local binding OR pure inference (no annotation
-    // anywhere) is still demoted. Reuses `carriers_reachable_from`, which
-    // transitively chases record fields + nested containers.
-    let demote_from = |ty: &crate::ast::Type, demoted: &mut HashSet<String>| {
-        carriers_reachable_from(ty, candidates, &record_fields, &mut HashSet::new(), demoted);
-    };
+    // `Option` / `Result` payloads are likewise inline struct refs, so a carrier
+    // behind them as a Map value stays eligible (the common smart-ctor boundary
+    // `coord(...) -> Result<Coord, String>` keeps the native-i64 win).
+    let mut map_value_seen: HashSet<String> = HashSet::new();
     for (_key, value) in &instantiations.maps {
-        demote_from(value, &mut demoted);
-    }
-    for elem in &instantiations.lists {
-        demote_from(elem, &mut demoted);
-    }
-    for elem in &instantiations.vectors {
-        demote_from(elem, &mut demoted);
-    }
-    for elems in &instantiations.tuples {
-        for elem in elems {
-            demote_from(elem, &mut demoted);
-        }
+        carriers_reachable_as_map_value(
+            value,
+            candidates,
+            &record_fields,
+            &mut map_value_seen,
+            &mut demoted,
+        );
     }
 
     demoted
+}
+
+/// ETAP-2 multi-field carrier-`i64`: the Map-VALUE reachability walk for the
+/// demotion scan — like [`carriers_reachable_from`] but it STOPS at a `List` /
+/// `Vector` / `Tuple` boundary. A carrier stored as a `List` / `Vector` /
+/// `Tuple` element keeps its i64 fields native (the container's per-element
+/// eq/hash dispatches the raw i64 ops), so reaching one only THROUGH such a
+/// container (e.g. a `Map<K, List<Coord>>` value, a list-of-tuples value) does
+/// NOT demote it. A carrier reachable as a DIRECT Map value, or through a
+/// record field / `Option` / `Result` (all of which hold it as an inline struct
+/// ref in the values backing array), still demotes — the record-as-Map-value
+/// validation bug that motivates this scan is unchanged by the container slice.
+fn carriers_reachable_as_map_value(
+    value: &crate::ast::Type,
+    candidates: &HashSet<String>,
+    record_fields: &HashMap<String, Vec<String>>,
+    seen: &mut HashSet<String>,
+    demoted: &mut HashSet<String>,
+) {
+    use crate::ast::Type;
+    let Some(name) = value.named_name() else {
+        match value {
+            // `Option` / `Result` keep the payload an inline struct ref in the
+            // Map values array, so a carrier behind them is still a direct
+            // value — descend.
+            Type::Option(a) => {
+                carriers_reachable_as_map_value(a, candidates, record_fields, seen, demoted);
+            }
+            Type::Result(a, b) => {
+                carriers_reachable_as_map_value(a, candidates, record_fields, seen, demoted);
+                carriers_reachable_as_map_value(b, candidates, record_fields, seen, demoted);
+            }
+            // A nested `Map` value is itself a Map values array — descend into
+            // its value (its key is a separate Scan-2 concern, handled there).
+            Type::Map(_k, v) => {
+                carriers_reachable_as_map_value(v, candidates, record_fields, seen, demoted);
+            }
+            // `List` / `Vector` / `Tuple` make the carrier a native container
+            // ELEMENT (now eligible) — STOP, do not demote anything inside.
+            Type::List(_) | Type::Vector(_) | Type::Tuple(_) => {}
+            _ => {}
+        }
+        return;
+    };
+    if !seen.insert(name.to_string()) {
+        return;
+    }
+    if candidates.contains(name) {
+        demoted.insert(name.to_string());
+    }
+    if let Some(fields) = record_fields.get(name) {
+        for field_ty in fields {
+            let parsed = crate::types::parse_type_str(field_ty);
+            carriers_reachable_as_map_value(&parsed, candidates, record_fields, seen, demoted);
+        }
+    }
 }
 
 /// A candidate record's declarations as the demotion scan needs them: its
