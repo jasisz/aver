@@ -88,6 +88,17 @@ pub(crate) fn emit_mir_record_create(
         if emit_mir_record_field_value(func, &provided.value, decl_ty, slots, ctx)?.is_none() {
             return Ok(None);
         }
+        // ETAP-2 multi-field carrier-`i64`: an eligible bounded Int field is
+        // stored as a native `i64`, but the rewrite boxes every `RecordCreate`
+        // field value (`rewrite_boxed`), so the value just emitted is an
+        // `$AverInt`. Narrow it to the i64 the field slot holds via the
+        // construct bridge (`__aint_to_i64_checked`, which can never trap — the
+        // smart-ctor bound proves the fit). The bridge is a no-op when bignum is
+        // off (`Int` is already a scalar i64). Mirrors the single-field carrier
+        // construct bridge, per eligible field.
+        if ctx.registry.is_eligible_carrier_field(type_name, decl_name) {
+            emit_carrier_construct_bridge(func, ctx)?;
+        }
     }
     func.instruction(&Instruction::StructNew(type_idx));
     Ok(Some(()))
@@ -125,6 +136,13 @@ pub(crate) fn emit_mir_record_update(
             {
                 return Ok(None);
             }
+            // ETAP-2 multi-field carrier-`i64`: an OVERRIDE of an eligible
+            // bounded field is a boxed `$AverInt` (the rewrite boxes every
+            // update value) but the field slot is a native `i64` — narrow it via
+            // the construct bridge, exactly like `emit_mir_record_create`.
+            if ctx.registry.is_eligible_carrier_field(type_name, decl_name) {
+                emit_carrier_construct_bridge(func, ctx)?;
+            }
         } else {
             let field_idx = ctx
                 .registry
@@ -135,6 +153,10 @@ pub(crate) fn emit_mir_record_update(
             if emit_mir_expr(func, base, slots, ctx)?.is_none() {
                 return Ok(None);
             }
+            // A COPIED-from-base eligible field is already a native `i64` in the
+            // base struct, so the `struct.get` yields the i64 the new field slot
+            // expects — no bridge needed (the boxed `struct.get` of an
+            // `$AverInt` field stays `$AverInt`, also matching its slot).
             func.instruction(&Instruction::StructGet {
                 struct_type_index: type_idx,
                 field_index: field_idx,

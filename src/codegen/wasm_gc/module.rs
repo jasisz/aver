@@ -282,6 +282,49 @@ pub(super) fn emit_module_with(
         .collect();
     registry.set_eligible_carriers(eligible_carriers);
 
+    // ETAP-2 multi-field carrier-`i64`: the per-`(record, field)` eligible
+    // table — a `Coord { x: Int, y: Int }` whose 2-arg smart ctor bounds each
+    // field. Each eligible field erases to a native `i64` struct field (the
+    // size lever, identical to the single-field-leaf composition). Computed
+    // here so the storage erasure (`record_struct_type` reads the registry's
+    // eligible-field set) AND the body-emit bridges (construct / direct-read)
+    // key off ONE table. Empty under `AVER_NO_CARRIER_I64=1` (the differential
+    // baseline) and on any program with no bounded multi-field record.
+    let field_carrier_intervals: crate::ir::mir::bare_i64::FieldCarrierIntervals =
+        if std::env::var("AVER_NO_CARRIER_I64").is_ok() {
+            crate::ir::mir::bare_i64::FieldCarrierIntervals::new()
+        } else {
+            let inputs = crate::codegen::proof_lower::ProofLowerInputs {
+                entry_items: items,
+                dep_modules: &[],
+                module_prefixes: &std::collections::HashSet::new(),
+                recursive_fns: &std::collections::HashSet::new(),
+                symbol_table: &symbol_table,
+                program_shape: None,
+            };
+            // The inference-complete resolved Map-key types (same source the
+            // single-field demotion scan uses) drive the multi-field Map-key
+            // demotion: a bounded record used as a Map KEY keeps all its fields
+            // boxed.
+            let resolved_map_keys: Vec<crate::ast::Type> =
+                crate::ir::mir::discover_instantiations(&optimized_mir)
+                    .maps
+                    .into_iter()
+                    .map(|(k, _v)| k)
+                    .collect();
+            crate::codegen::proof_lower::field_carrier_eligible_intervals(
+                &inputs,
+                &resolved_map_keys,
+            )
+        };
+    let eligible_carrier_fields: std::collections::HashSet<(String, String)> =
+        field_carrier_intervals
+            .iter()
+            .filter(|(_, (iv, known))| *known && iv.fits_i64())
+            .map(|((rec, field), _)| (rec.clone(), field.clone()))
+            .collect();
+    registry.set_eligible_carrier_fields(eligible_carrier_fields);
+
     let mir_program: crate::ir::mir::MirProgram = {
         // Reuse the `optimized` MIR built above for carrier-eligibility
         // Map-key discovery — the box/unbox boundary rewrite is the only
@@ -312,6 +355,7 @@ pub(super) fn emit_module_with(
             optimized,
             &boxed,
             &bare_carrier_intervals,
+            &field_carrier_intervals,
         )
     };
 
@@ -4512,7 +4556,7 @@ fn emit_user_types(
     for item in items {
         match item {
             TopLevel::TypeDef(TypeDef::Product { name, fields, .. }) => {
-                let st = record_struct_type(fields, registry)?;
+                let st = record_struct_type(name, fields, registry)?;
                 let idx = registry
                     .record_type_idx(name)
                     .ok_or(WasmGcError::Validation(format!(
@@ -4943,7 +4987,7 @@ fn emit_user_types(
             .record_fields
             .get(record.aver_name)
             .expect("builtin record registered without fields");
-        let st = super::types::record_struct_type(fields, registry)?;
+        let st = super::types::record_struct_type(record.aver_name, fields, registry)?;
         let idx = registry
             .record_type_idx(record.aver_name)
             .ok_or(WasmGcError::Validation(format!(

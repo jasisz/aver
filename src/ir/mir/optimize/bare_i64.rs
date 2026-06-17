@@ -57,6 +57,19 @@ use super::super::program::{LocalId, MirFn, MirProgram};
 /// reproduces the pre-slice all-`Int` behavior byte-for-byte.
 pub type CarrierIntervals = HashMap<String, (Interval, bool)>;
 
+/// ETAP-2 multi-field carrier-`i64` — per-`(record-type, field)` proven bound,
+/// keyed by the bare record name + field name. Built by
+/// [`crate::codegen::proof_lower::field_carrier_eligible_intervals`] (already
+/// tightened through the same demotion scans as the single-field set) and
+/// threaded into [`analyze`] alongside [`CarrierIntervals`]. Lets
+/// [`FnBareFacts::carrier_project_interval`] recognize a DIRECT bounded-field
+/// read — `Project(rec, "x")` where `rec`'s stamped type is a bounded record
+/// and field `x` is eligible — as a raw i64 leaf carrying `x`'s bound (#550
+/// stored the field as a native `i64`, so the `struct.get` yields i64). An
+/// EMPTY table (the default at every non-wasm-gc call site — the VM facts path,
+/// the Rust backend, tests) reproduces the pre-slice all-`Int` behavior.
+pub type FieldCarrierIntervals = HashMap<(String, String), (Interval, bool)>;
+
 /// The proven interval for a carrier whose Aver type name is `ty`, returned
 /// ONLY when the table holds a recognized bound (`interval_known`) that
 /// `fits_i64`. Any other case (`ty` not a carrier, an unrecognized invariant
@@ -192,6 +205,16 @@ pub struct FnBareFacts {
     /// backend / whenever no eligible carrier is in scope — the byte-identical
     /// default (the nested form then never fires, only the `Local`-base form).
     pub carrier_types: CarrierIntervals,
+    /// ETAP-2 multi-field carrier-`i64` (wasm-gc only): the eligible
+    /// `(record, field)` bound table. Lets `carrier_project_interval` recognize
+    /// a DIRECT bounded-field read — `Project(rec, "x")` where `rec`'s stamped
+    /// type is a bounded record and `(record, "x")` is eligible — as a raw i64
+    /// leaf carrying `x`'s proven bound. The #550 storage erasure stored that
+    /// field as a native `i64`, so the `struct.get` yields i64 and the read is a
+    /// bare leaf for the surrounding arithmetic. EMPTY on the Rust backend /
+    /// whenever no bounded multi-field record is in scope — the byte-identical
+    /// default (the direct-field form then never fires).
+    pub field_carrier_intervals: FieldCarrierIntervals,
 }
 
 impl FnBareFacts {
@@ -242,6 +265,15 @@ impl FnBareFacts {
         {
             return Some(iv);
         }
+        // Multi-field direct bounded-field read: `Project(rec, "x")` where
+        // `rec`'s stamped type is a bounded record and `(record, "x")` is an
+        // eligible field. The #550 storage erasure stored `x` as a native `i64`,
+        // so the `struct.get` yields raw i64 — a bare leaf carrying `x`'s proven
+        // bound. (The base `rec` is a `Coord` struct ref, NOT itself an eligible
+        // carrier, so this does not overlap the single-field `.value` paths.)
+        if let Some(iv) = self.field_carrier_field_interval(&p.node.base, &p.node.field) {
+            return Some(iv);
+        }
         // Nested carrier-field read: the base is any expression whose stamped
         // type is an eligible carrier (a field read, or transitively a field of
         // a field). The #550 storage erasure made that carrier a native `i64`,
@@ -249,6 +281,26 @@ impl FnBareFacts {
         // if the base has no stamped type, or the type is not an eligible
         // carrier, decline (boxed).
         self.base_renders_eligible_carrier(&p.node.base)
+    }
+
+    /// ETAP-2 multi-field carrier-`i64`: the proven interval of field `field`
+    /// read off `base`, when `base`'s stamped type is a bounded record and
+    /// `(record, field)` is an eligible bounded field. #550 stored that field
+    /// as a native `i64`, so the `struct.get` reads raw i64 directly — a bare
+    /// leaf. `None` when `base` has no stamped record type, or the
+    /// `(record, field)` pair is not eligible / not `fits_i64` — fail-closed.
+    fn field_carrier_field_interval(
+        &self,
+        base: &Spanned<MirExpr>,
+        field: &str,
+    ) -> Option<Interval> {
+        let name = base.ty().and_then(Type::named_name)?;
+        let bare = name.rsplit_once('.').map_or(name, |(_, b)| b);
+        let (iv, known) = self
+            .field_carrier_intervals
+            .get(&(bare.to_string(), field.to_string()))
+            .copied()?;
+        (known && iv.fits_i64()).then_some(iv)
     }
 
     /// The proven interval of `base` when it renders an eligible carrier value
@@ -389,6 +441,19 @@ impl BareI64Facts {
 /// fragment (callers unseen) bails to all-`Boxed`, exactly like
 /// `own_param`.
 pub fn analyze(program: &MirProgram, carrier: &CarrierIntervals) -> BareI64Facts {
+    analyze_with_fields(program, carrier, &FieldCarrierIntervals::new())
+}
+
+/// [`analyze`] plus the multi-field carrier table (`field_carrier`): the
+/// wasm-gc entry threads the eligible `(record, field)` bounds so a DIRECT
+/// bounded-field read renders as a raw i64 leaf. Every other caller goes
+/// through [`analyze`] (empty field table) and keeps the byte-identical
+/// pre-slice behavior.
+pub fn analyze_with_fields(
+    program: &MirProgram,
+    carrier: &CarrierIntervals,
+    field_carrier: &FieldCarrierIntervals,
+) -> BareI64Facts {
     // Diagnostic / bench-differential escape hatch: skip the analysis so a
     // run keeps the conservative all-Boxed baseline.
     if std::env::var("AVER_NO_BARE_I64").is_ok() {
@@ -409,12 +474,14 @@ pub fn analyze(program: &MirProgram, carrier: &CarrierIntervals) -> BareI64Facts
     }
 
     // The minimal cross-frame summary: which params are bare, whether the
-    // return is bare.
-    let summary = compute_summary(program, &int_params, carrier);
+    // return is bare. The field table only adds NEW bare leaves (a direct
+    // bounded-field read), which the body pass reads via the per-fn facts; the
+    // cross-frame param/return summary keys off `carrier` exactly as before.
+    let summary = compute_summary(program, &int_params, carrier, field_carrier);
 
     let mut fns: HashMap<FnId, FnBareFacts> = HashMap::new();
     for (id, f) in program.iter() {
-        fns.insert(*id, analyze_fn(f, &summary, carrier));
+        fns.insert(*id, analyze_fn(f, &summary, carrier, field_carrier));
     }
 
     BareI64Facts { fns }
@@ -463,6 +530,7 @@ fn compute_summary(
     program: &MirProgram,
     int_params: &HashMap<FnId, Vec<bool>>,
     carrier: &CarrierIntervals,
+    field_carrier: &FieldCarrierIntervals,
 ) -> Summary {
     // Address-taken fns (name appears as a `FnValue`) have callers we
     // cannot attribute — pin all their params/return boxed.
@@ -610,7 +678,7 @@ fn compute_summary(
                 bare_return: bare_return.clone(),
                 bare_param_intervals: bare_param_intervals.clone(),
             };
-            let facts = analyze_fn(f, &tmp, carrier);
+            let facts = analyze_fn(f, &tmp, carrier, field_carrier);
             if !facts.bare_return && bare_return.insert(*id, false) != Some(false) {
                 changed = true;
             }
@@ -658,7 +726,7 @@ fn compute_summary(
             bare_param_intervals: bare_param_intervals.clone(),
         };
         for (_caller, f) in program.iter() {
-            let facts = analyze_fn(f, &tmp, carrier);
+            let facts = analyze_fn(f, &tmp, carrier, field_carrier);
             let mut demote: Vec<FnId> = Vec::new();
             collect_let_bound_boxed_returns(&f.body.node, &facts, &bare_return, &mut demote);
             for target in demote {
@@ -1700,7 +1768,12 @@ fn literal_interval(arg: &MirExpr) -> Option<Interval> {
 /// `summary` (which params/returns are bare). The body walk derives an
 /// interval per slot (bottom-up over the `Let` chain), an escape predicate
 /// (a single use-flow scan), and combines them via `raw_i64_eligible`.
-fn analyze_fn(f: &MirFn, summary: &Summary, carrier: &CarrierIntervals) -> FnBareFacts {
+fn analyze_fn(
+    f: &MirFn,
+    summary: &Summary,
+    carrier: &CarrierIntervals,
+    field_carrier: &FieldCarrierIntervals,
+) -> FnBareFacts {
     let mut facts = FnBareFacts::default();
 
     // 1. Range: seed param intervals from the summary. A bare param is
@@ -1766,6 +1839,13 @@ fn analyze_fn(f: &MirFn, summary: &Summary, carrier: &CarrierIntervals) -> FnBar
     // `rec.coord` is stamped an eligible carrier). EMPTY on the Rust backend /
     // no-eligible-carrier baseline, so the nested form never fires there.
     facts.carrier_types = carrier.clone();
+    // ETAP-2 multi-field carrier-`i64`: the eligible `(record, field)` bound
+    // table powers the DIRECT bounded-field recognition (`Project(rec, "x")`
+    // whose `rec` is a bounded record and `(record, "x")` is eligible). EMPTY
+    // on the Rust backend / no-eligible-record baseline, so the direct-field
+    // form never fires there. Set BEFORE the let-chain walk so a field read
+    // bound to a slot is recognized as a bare leaf.
+    facts.field_carrier_intervals = field_carrier.clone();
 
     // 2. Walk the body's `Let` chain, deriving an interval (+ worst-join
     //    op class) for each bound slot. The carrier-projection facts let the
@@ -3476,6 +3556,172 @@ fn main() -> Int
             produced_interval(&program, "spin", 0),
             None,
             "the unguarded decrement counter must widen to None, not hang"
+        );
+    }
+
+    // ---- multi-field carrier bound attribution -----------------------------
+
+    /// Build the per-`(record, field)` carrier-interval table for `src`
+    /// through the same multi-field derivation the codegen entry uses.
+    fn field_table_for(
+        src: &str,
+    ) -> HashMap<(String, String), (crate::ir::interval::Interval, bool)> {
+        let mut items = parse_source(src).expect("parse");
+        let cfg = crate::ir::pipeline::PipelineConfig {
+            typecheck: Some(crate::ir::pipeline::TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        };
+        let result = crate::ir::pipeline::run(&mut items, cfg);
+        let empty_prefixes: HashSet<String> = HashSet::new();
+        let empty_recursive: HashSet<crate::ir::FnId> = HashSet::new();
+        let inputs = crate::codegen::proof_lower::ProofLowerInputs {
+            entry_items: &items,
+            dep_modules: &[],
+            module_prefixes: &empty_prefixes,
+            recursive_fns: &empty_recursive,
+            symbol_table: &result.symbol_table,
+            program_shape: None,
+        };
+        crate::codegen::proof_lower::field_carrier_interval_table(&inputs)
+    }
+
+    #[test]
+    fn field_carrier_per_field_intervals() {
+        // A 2-arg smart ctor bounding each field independently → each field
+        // gets its own proven interval.
+        let src = r#"
+module Toy
+    intent = "t"
+    depends []
+
+record Coord
+    x: Int
+    y: Int
+
+fn coord(x: Int, y: Int) -> Result<Coord, String>
+    match Bool.and(Bool.and(x >= 0, x <= 100), Bool.and(y >= 0, y <= 200))
+        true  -> Result.Ok(Coord(x = x, y = y))
+        false -> Result.Err("err")
+
+fn main() -> Int
+    match coord(1, 2)
+        Result.Ok(c)  -> c.x
+        Result.Err(_) -> 0
+"#;
+        let table = field_table_for(src);
+        let (ix, kx) = table
+            .get(&("Coord".to_string(), "x".to_string()))
+            .copied()
+            .expect("x field bound");
+        let (iy, ky) = table
+            .get(&("Coord".to_string(), "y".to_string()))
+            .copied()
+            .expect("y field bound");
+        assert!(kx && ky, "both fields recognized");
+        use crate::ir::interval::Bound;
+        assert_eq!(ix.lo, Bound::Finite(0));
+        assert_eq!(ix.hi, Bound::Finite(100));
+        assert_eq!(iy.lo, Bound::Finite(0));
+        assert_eq!(iy.hi, Bound::Finite(200));
+    }
+
+    #[test]
+    fn field_carrier_cross_field_condition_dropped() {
+        // A cross-field leaf (`x + y <= 50`) mentions two params; it is dropped
+        // from each field's projection, so each field keeps only its own
+        // single-variable bound. The bound is a sound over-approximation.
+        let src = r#"
+module Toy
+    intent = "t"
+    depends []
+
+record Coord
+    x: Int
+    y: Int
+
+fn coord(x: Int, y: Int) -> Result<Coord, String>
+    match Bool.and(Bool.and(x >= 0, x <= 100), Bool.and(y >= 0, x + y <= 50))
+        true  -> Result.Ok(Coord(x = x, y = y))
+        false -> Result.Err("err")
+
+fn main() -> Int
+    0
+"#;
+        let table = field_table_for(src);
+        // x keeps its single-var [0, 100] (the cross-field `x + y <= 50` drops).
+        let (ix, kx) = table
+            .get(&("Coord".to_string(), "x".to_string()))
+            .copied()
+            .expect("x field bound");
+        assert!(kx);
+        use crate::ir::interval::Bound;
+        assert_eq!(ix.lo, Bound::Finite(0));
+        assert_eq!(ix.hi, Bound::Finite(100));
+        // y has only `y >= 0` as a single-var leaf (the upper bound was the
+        // dropped cross-field condition) → no fits_i64 upper bound, so the
+        // interval is recognized-but-unbounded-above; it is NOT eligible.
+        let y = table.get(&("Coord".to_string(), "y".to_string())).copied();
+        if let Some((iy, ky)) = y {
+            assert!(
+                !(ky && iy.fits_i64()),
+                "y with only a lower bound must not be a fits_i64 eligible field"
+            );
+        }
+    }
+
+    #[test]
+    fn field_carrier_only_one_field_bounded() {
+        // A mixed record: one field gated, the other not mentioned in the
+        // guard at all. Only the gated field gets a bound.
+        let src = r#"
+module Toy
+    intent = "t"
+    depends []
+
+record Coord
+    x: Int
+    y: Int
+
+fn coord(x: Int, y: Int) -> Result<Coord, String>
+    match Bool.and(x >= 0, x <= 100)
+        true  -> Result.Ok(Coord(x = x, y = y))
+        false -> Result.Err("err")
+
+fn main() -> Int
+    0
+"#;
+        let table = field_table_for(src);
+        assert!(
+            table.contains_key(&("Coord".to_string(), "x".to_string())),
+            "the gated field x is bounded"
+        );
+        let y = table.get(&("Coord".to_string(), "y".to_string())).copied();
+        assert!(
+            y.is_none_or(|(iv, k)| !(k && iv.fits_i64())),
+            "the ungated field y must not be an eligible bounded field"
+        );
+    }
+
+    #[test]
+    fn field_carrier_mis_fire_no_smart_ctor() {
+        // A plain 2-field record with NO smart constructor → no bound is
+        // attributed to any field (the table is empty for it).
+        let src = r#"
+module Toy
+    intent = "t"
+    depends []
+
+record Coord
+    x: Int
+    y: Int
+
+fn main() -> Int
+    Coord(x = 1, y = 2).x
+"#;
+        let table = field_table_for(src);
+        assert!(
+            !table.contains_key(&("Coord".to_string(), "x".to_string())),
+            "a record with no smart ctor attributes no field bound"
         );
     }
 }
