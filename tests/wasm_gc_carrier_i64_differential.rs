@@ -867,6 +867,62 @@ fn main() -> Unit
     assert_carrier_revert_agrees("nested-field-sinks", src, &out);
 }
 
+/// MUTUAL-RECURSION SCC member stringifying a nested carrier field — the
+/// snake `tick`/`tickMove`/`gameLoop` shape. `step`/`bounce`/`loopN` form a
+/// call cycle, so all three carry a PINNED boxed (`$AverInt`) signature and
+/// the rewrite forces each member's body all-boxed. The bug: the all-boxed
+/// override used FULLY-empty facts, dropping the carrier-recognition tables —
+/// so a nested carrier-field read (`h.c.value`, base type a single-field
+/// carrier) reached an `$AverInt` sink (`String.fromInt`) WITHOUT a `Box`,
+/// while the wasm-gc emitter (registry-based, independent of the override)
+/// still rendered it raw `i64`. The raw `i64` met the formatter's `(ref null
+/// $type)` slot — a wasm VALIDATION failure on a VM-valid program. The fix
+/// keeps the TYPE-driven carrier tables in the all-boxed facts so the rewrite
+/// boxes the field read at the sink. Without it, `compile --target wasm-gc`
+/// fails validation; with it, VM == wasm-gc.
+#[test]
+fn mutual_recursion_member_stringifies_carrier_field_boxes_at_boundary() {
+    let src = r#"module M
+    intent = "mutual-TCO member stringifies a nested carrier field"
+    effects [Console]
+
+record Score
+    value: Int
+
+record State
+    score: Score
+    fuel: Int
+
+fn fromInt(n: Int) -> Result<Score, String>
+    match Bool.and(n >= 0, n <= 1000000)
+        true  -> Result.Ok(Score(value = n))
+        false -> Result.Err("oob")
+
+fn sc(n: Int) -> Score
+    match fromInt(n)
+        Result.Ok(s)  -> s
+        Result.Err(_) -> Score(value = 0)
+
+fn step(s: State) -> String
+    match s.fuel == 0
+        true  -> "done: {String.fromInt(s.score.value)}"
+        false -> bounce(s)
+
+fn bounce(s: State) -> String
+    loopN(State(score = s.score, fuel = s.fuel - 1))
+
+fn loopN(s: State) -> String
+    step(s)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(step(State(score = sc(7), fuel = 3)))
+"#;
+    let out = assert_vm_wasm_identical("mutual-tco-carrier-stringify", src);
+    assert_eq!(out, "done: 7");
+    assert_carrier_revert_agrees("mutual-tco-carrier-stringify", src, &out);
+}
+
 /// WIDE-BOUND NESTED-FIELD OVERFLOW (the C0 soundness probe for the new raw
 /// source). A record holds a `0..2^40` carrier; `rec.c.value * rec.c.value` =
 /// up to `2^80`, which OVERFLOWS `i64`. The interval fixpoint must read the
