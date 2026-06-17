@@ -944,23 +944,33 @@ fn rebuild_bool_and(
 /// ETAP-2 multi-field carrier-`i64`: the per-`(record, field)` ELIGIBLE map —
 /// [`field_carrier_interval_table`] tightened the same way the single-field
 /// path tightens its proven-bound set. An entry survives only when its bound
-/// is recognized AND `fits_i64` AND the owning record is NOT demoted by either
+/// is recognized AND `fits_i64` AND the owning record is NOT demoted by any
 /// whole-program scan ([`multi_field_record_demotions`]):
 ///   - the record is constructed UNGATED (a bare `RecordCreate` outside its
 ///     own smart-ctor whose args are not all in-bounds literals) — that bypass
 ///     could store an out-of-`i64` value the construct bridge would TRAP on;
 ///   - the record (or a record reaching it) is used as a `Map` KEY — the
-///     Map-key codegen was not updated for the i64-erased fields.
+///     Map-key codegen was not updated for the i64-erased fields;
+///   - the record (or a record reaching it) is used as a `Map` VALUE or as a
+///     `List` / `Vector` / `Tuple` element — those containers store the
+///     element/value in a backing array (or a heterogeneous tuple struct)
+///     whose slot is the boxed `$AverInt` record ref, so an i64-erased field
+///     of such an element fails wasm validation (`expected (ref null $type),
+///     found i64`). The whole record stays boxed in those container positions,
+///     matching the VM + the boxed wasm-gc path. (`Option` / `Result` payloads
+///     are NOT demoted: they hold the element as an inline struct ref, where an
+///     i64-erased field is fine — so the smart-ctor boundary
+///     `coord(...) -> Result<Coord, String>` keeps the native-i64 win.)
 ///
 /// A demoted record keeps EVERY field boxed (the whole struct stays the
 /// pre-slice all-`$AverInt` layout). wasm-gc only; the Rust path passes the
-/// empty default and never erases a field.
+/// empty registry and never erases a field.
 ///
 /// Returns a map keyed by `(bare record name, field name)`; an empty map
 /// reproduces the pre-slice all-`$AverInt` multi-field record byte-for-byte.
 pub fn field_carrier_eligible_intervals(
     inputs: &ProofLowerInputs,
-    resolved_map_keys: &[crate::ast::Type],
+    instantiations: &crate::ir::mir::InstantiationRegistry,
 ) -> HashMap<(String, String), (crate::ir::interval::Interval, bool)> {
     let table = field_carrier_interval_table(inputs);
     if table.is_empty() {
@@ -984,7 +994,7 @@ pub fn field_carrier_eligible_intervals(
             .collect();
     }
     let demoted_records =
-        multi_field_record_demotions(inputs, &record_candidates, &table, resolved_map_keys);
+        multi_field_record_demotions(inputs, &record_candidates, &table, instantiations);
     table
         .into_iter()
         .filter(|((rec, _), (iv, known))| {
@@ -1012,13 +1022,27 @@ pub fn field_carrier_eligible_intervals(
 ///     the textual annotation scan as a cheap backstop. Both reuse the SAME
 ///     `carriers_reachable_from` / `collect_map_key_carriers` closures the
 ///     single-field path uses.
+///   - **Scan 3 (container value / element usage).** The record — directly or
+///     transitively — reaches a `Map` VALUE, a `List` / `Vector` element, or a
+///     `Tuple` element. Those containers store the element/value in a backing
+///     array (or a heterogeneous tuple struct) whose slot is the boxed
+///     `$AverInt` record ref (`(ref null $Record)`); an i64-erased field of
+///     such an element then meets that boxed slot, failing wasm validation
+///     (`expected (ref null $type), found i64`). Demoting keeps the whole
+///     record boxed, which the boxed wasm-gc path + the VM agree on. `Option` /
+///     `Result` payloads are EXCLUDED — they hold the element as an inline
+///     struct ref where the i64-erased field is fine, so the smart-ctor
+///     boundary `coord(...) -> Result<Coord, String>` keeps the native-i64 win.
+///     Driven by the inference-complete instantiation registry (every `Map`,
+///     `List`, `Vector`, `Tuple` the program uses), reusing the same
+///     `carriers_reachable_from` closure.
 ///
 /// Fail-closed: a trip can only ever SHRINK the eligible set.
 fn multi_field_record_demotions(
     inputs: &ProofLowerInputs,
     candidates: &HashSet<String>,
     field_intervals: &HashMap<(String, String), (crate::ir::interval::Interval, bool)>,
-    resolved_map_keys: &[crate::ast::Type],
+    instantiations: &crate::ir::mir::InstantiationRegistry,
 ) -> HashSet<String> {
     let mut demoted: HashSet<String> = HashSet::new();
     if candidates.is_empty() {
@@ -1098,7 +1122,7 @@ fn multi_field_record_demotions(
 
     // ---- Scan 2: Map-key usage (direct + transitive) -----------------------
     let record_fields = collect_record_fields(inputs);
-    for key in resolved_map_keys {
+    for (key, _value) in &instantiations.maps {
         carriers_reachable_from(
             key,
             candidates,
@@ -1110,6 +1134,48 @@ fn multi_field_record_demotions(
     for ty_str in all_type_annotations(inputs) {
         let ty = crate::types::parse_type_str(&ty_str);
         collect_map_key_carriers(&ty, candidates, &record_fields, &mut demoted);
+    }
+
+    // ---- Scan 3: container value / element usage (direct + transitive) -----
+    // A multi-field carrier reachable from a `Map` VALUE, a `List` / `Vector`
+    // element, or a `Tuple` element keeps all its fields BOXED: those
+    // containers store their element/value in a backing ARRAY (`List`/`Vector`/
+    // `Map`-values) or a heterogeneous tuple struct whose slot type is the
+    // record's BOXED ref shape (`(ref null $type)`). An i64-erased field of
+    // such an element then meets that boxed slot and fails wasm validation
+    // (`expected (ref null $type), found i64`). Demoting keeps the whole record
+    // boxed — what the VM + the boxed wasm-gc path agree on.
+    //
+    // `Option` / `Result` payloads are DELIBERATELY excluded: those hold the
+    // element as an inline struct REF (the i64 fields stay inside the `$Coord`
+    // struct, which the Option/Result slot holds as `(ref $Coord)`), so an
+    // i64-erased field is fine there. Excluding them keeps the native-i64 win
+    // for the common smart-ctor boundary `coord(...) -> Result<Coord, String>`,
+    // which only ever wraps-then-immediately-unwraps the record — that pattern
+    // compiles clean WITHOUT demotion, and demoting it would needlessly box
+    // every multi-field carrier (its own constructor returns a `Result`).
+    //
+    // Driven by the inference-complete instantiation registry (the same
+    // typed-MIR source Scan 2's map keys come from), so a carrier used as a
+    // container element via a local binding OR pure inference (no annotation
+    // anywhere) is still demoted. Reuses `carriers_reachable_from`, which
+    // transitively chases record fields + nested containers.
+    let demote_from = |ty: &crate::ast::Type, demoted: &mut HashSet<String>| {
+        carriers_reachable_from(ty, candidates, &record_fields, &mut HashSet::new(), demoted);
+    };
+    for (_key, value) in &instantiations.maps {
+        demote_from(value, &mut demoted);
+    }
+    for elem in &instantiations.lists {
+        demote_from(elem, &mut demoted);
+    }
+    for elem in &instantiations.vectors {
+        demote_from(elem, &mut demoted);
+    }
+    for elems in &instantiations.tuples {
+        for elem in elems {
+            demote_from(elem, &mut demoted);
+        }
     }
 
     demoted

@@ -302,20 +302,14 @@ pub(super) fn emit_module_with(
                 symbol_table: &symbol_table,
                 program_shape: None,
             };
-            // The inference-complete resolved Map-key types (same source the
-            // single-field demotion scan uses) drive the multi-field Map-key
-            // demotion: a bounded record used as a Map KEY keeps all its fields
-            // boxed.
-            let resolved_map_keys: Vec<crate::ast::Type> =
-                crate::ir::mir::discover_instantiations(&optimized_mir)
-                    .maps
-                    .into_iter()
-                    .map(|(k, _v)| k)
-                    .collect();
-            crate::codegen::proof_lower::field_carrier_eligible_intervals(
-                &inputs,
-                &resolved_map_keys,
-            )
+            // The inference-complete instantiation registry (every `Map`,
+            // `List`, `Vector`, `Tuple`, `Option`, `Result` the program uses)
+            // drives the multi-field demotion: a bounded record used as a Map
+            // KEY, a Map VALUE, or any container element keeps all its fields
+            // boxed (its container-element/value codegen stores the boxed
+            // `$AverInt` record, so an i64-erased field fails wasm validation).
+            let instantiations = crate::ir::mir::discover_instantiations(&optimized_mir);
+            crate::codegen::proof_lower::field_carrier_eligible_intervals(&inputs, &instantiations)
         };
     let eligible_carrier_fields: std::collections::HashSet<(String, String)> =
         field_carrier_intervals

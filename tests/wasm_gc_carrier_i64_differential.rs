@@ -2477,3 +2477,164 @@ fn main() -> Unit
         off_raw.len(),
     );
 }
+
+// ===========================================================================
+// Multi-field carrier as a CONTAINER value / element (HOLE #3, fail-closed
+// demotion). A bounded `record Coord { x: Int, y: Int }` whose 2-arg smart
+// ctor erases each field to native i64 is stored in a `Map` VALUE, a `List`
+// / `Vector` element, or a `Tuple` element. Those containers hold the
+// element/value in a backing array (or a heterogeneous tuple struct) whose
+// slot is the BOXED `$AverInt` record ref — and the record's eq / hash
+// helper then reads an i64-erased field and passes it to the boxed `$AverInt`
+// eq / hash, failing wasm validation (`expected (ref null $type), found i64`).
+// The container scan demotes the record (all fields boxed) so it compiles
+// clean and matches the VM. (`Option` / `Result` payloads are EXCLUDED — they
+// hold the element as an inline struct ref where an i64-erased field is fine,
+// so the smart-ctor boundary `coord(...) -> Result<Coord, String>` keeps the
+// native-i64 win — covered by the per-position tests below.)
+//
+// Each test pairs the FIX (default build: VM == wasm-gc, clean compile) with
+// the REVERT (`AVER_CARRIER_I64_SKIP_DEMOTION=1` restores the un-tightened
+// eligibility ⇒ the validation failure returns). The field square reads back
+// `2^40 * 2^40 = 2^80`, far past i64::MAX, so the demoted (boxed) record must
+// keep the value EXACT.
+// ===========================================================================
+
+/// Shared body for the container-element demotion tests: a `Coord { x, y }`
+/// bounded `0 .. 2^40`, stored via `$store` and read back via `$read` which
+/// squares `g.x` (overshooting i64). `$store` / `$read` are the per-container
+/// fn pair; the rest is identical.
+fn multi_field_container_src(store_fn: &str, read_fn: &str) -> String {
+    format!(
+        r#"module M
+    intent = "multi-field carrier as container element"
+    effects [Console]
+
+record Coord
+    x: Int
+    y: Int
+
+fn coord(x: Int, y: Int) -> Result<Coord, String>
+    match Bool.and(Bool.and(x >= 0, x <= 1099511627776), Bool.and(y >= 0, y <= 1099511627776))
+        true  -> Result.Ok(Coord(x = x, y = y))
+        false -> Result.Err("oob")
+
+fn unwrap(r: Result<Coord, String>) -> Coord
+    match r
+        Result.Ok(c)  -> c
+        Result.Err(_) -> Coord(x = 0, y = 0)
+
+{store_fn}
+
+{read_fn}
+
+fn main() -> Unit
+    ! [Console.print]
+    c = unwrap(coord(1099511627776, 0))
+    Console.print("{{readSquare(store(c))}}")
+"#
+    )
+}
+
+/// Assert a container-element program (FIX) compiles clean + VM == wasm-gc,
+/// and (REVERT) with the demotion scan disabled the i64-erased field in the
+/// container element fails wasm validation.
+fn assert_container_demotes_and_reverts(prefix: &str, src: &str) {
+    // FIX: the container scan demotes Coord to boxed ⇒ compiles clean AND
+    // VM == wasm-gc at the exact 2^80 bignum.
+    let out = assert_vm_wasm_identical(prefix, src);
+    assert_eq!(out, "1208925819614629174706176");
+
+    // REVERT: scan disabled ⇒ the i64-erased field in the container element's
+    // record eq / hash helper meets the boxed `$AverInt` helper ⇒ wasm
+    // validation fails (the hole returns).
+    let (ok, msg) = run_wasm_skip_demotion(&format!("{prefix}-revert"), src);
+    assert!(
+        !ok,
+        "{prefix} revert: with the container scan disabled an i64-erased \
+         multi-field carrier in a container element must fail wasm validation \
+         (the hole returns), but the run succeeded:\n{msg}"
+    );
+    assert!(
+        msg.contains("validation failed") || msg.contains("type mismatch"),
+        "{prefix} revert: expected a wasm validation / type-mismatch error from \
+         the i64-erased container element, got:\n{msg}"
+    );
+}
+
+/// HOLE #3 — a multi-field carrier as a `Map` VALUE.
+#[test]
+fn multi_field_as_map_value_demotes_to_boxed() {
+    let src = multi_field_container_src(
+        "fn store(c: Coord) -> Map<String, Coord>\n    Map.set({}, \"k\", c)",
+        "fn readSquare(m: Map<String, Coord>) -> Int\n    match Map.get(m, \"k\")\n        Option.Some(g) -> g.x * g.x\n        Option.None    -> 0",
+    );
+    assert_container_demotes_and_reverts("mf-map-value", &src);
+}
+
+/// HOLE #3 — a multi-field carrier as a `List` element.
+#[test]
+fn multi_field_as_list_element_demotes_to_boxed() {
+    let src = multi_field_container_src(
+        "fn store(c: Coord) -> List<Coord>\n    [c]",
+        "fn readSquare(xs: List<Coord>) -> Int\n    match xs\n        [g, ..rest] -> g.x * g.x\n        []          -> 0",
+    );
+    assert_container_demotes_and_reverts("mf-list-element", &src);
+}
+
+/// HOLE #3 — a multi-field carrier as a `Vector` element.
+#[test]
+fn multi_field_as_vector_element_demotes_to_boxed() {
+    let src = multi_field_container_src(
+        "fn store(c: Coord) -> Vector<Coord>\n    Vector.new(1, c)",
+        "fn readSquare(v: Vector<Coord>) -> Int\n    match Vector.get(v, 0)\n        Option.Some(g) -> g.x * g.x\n        Option.None    -> 0",
+    );
+    assert_container_demotes_and_reverts("mf-vector-element", &src);
+}
+
+/// HOLE #3 — a multi-field carrier as a `Tuple` element.
+#[test]
+fn multi_field_as_tuple_element_demotes_to_boxed() {
+    let src = multi_field_container_src(
+        "fn store(c: Coord) -> Tuple<Coord, Int>\n    (c, 0)",
+        "fn readSquare(t: Tuple<Coord, Int>) -> Int\n    match t\n        (g, _) -> g.x * g.x",
+    );
+    assert_container_demotes_and_reverts("mf-tuple-element", &src);
+}
+
+/// HOLE #3 boundary — a multi-field carrier as an `Option` / `Result` payload
+/// is NOT demoted: the payload holds an inline struct ref where an i64-erased
+/// field is fine, so the native-i64 win is preserved (the program compiles
+/// clean + matches the VM WITHOUT demotion). This guards against the scan
+/// over-demoting the common smart-ctor boundary `coord -> Result<Coord, _>`.
+#[test]
+fn multi_field_as_option_result_payload_stays_native() {
+    let option_src = multi_field_container_src(
+        "fn store(c: Coord) -> Option<Coord>\n    Option.Some(c)",
+        "fn readSquare(o: Option<Coord>) -> Int\n    match o\n        Option.Some(g) -> g.x * g.x\n        Option.None    -> 0",
+    );
+    // FIX path: VM == wasm-gc, compiles clean.
+    let out = assert_vm_wasm_identical("mf-option-payload", &option_src);
+    assert_eq!(out, "1208925819614629174706176");
+    // The Option payload is NOT a demotion hazard: even with the scan disabled
+    // it compiles clean (the inline struct ref holds the i64 fields fine).
+    let (ok, _msg) = run_wasm_skip_demotion("mf-option-payload-noskip", &option_src);
+    assert!(
+        ok,
+        "an Option payload of a multi-field carrier must compile clean with OR \
+         without the demotion scan — it is not a container-element hazard"
+    );
+
+    let result_src = multi_field_container_src(
+        "fn store(c: Coord) -> Result<Coord, String>\n    Result.Ok(c)",
+        "fn readSquare(r: Result<Coord, String>) -> Int\n    match r\n        Result.Ok(g)  -> g.x * g.x\n        Result.Err(_) -> 0",
+    );
+    let out = assert_vm_wasm_identical("mf-result-payload", &result_src);
+    assert_eq!(out, "1208925819614629174706176");
+    let (ok, _msg) = run_wasm_skip_demotion("mf-result-payload-noskip", &result_src);
+    assert!(
+        ok,
+        "a Result payload of a multi-field carrier must compile clean with OR \
+         without the demotion scan — it is not a container-element hazard"
+    );
+}
