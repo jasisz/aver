@@ -476,9 +476,10 @@ fn call_returns_raw(e: &MirExpr, ctx: &RewriteCtx<'_>) -> bool {
 /// the subject must be rewritten to MATCH the binding: boxed when the
 /// binding is boxed (the raw subject is `Box`ed at the bind crossing), raw
 /// when the binding is bare. With no `Bind` arm (literal / ctor / wildcard
-/// patterns) the subject is an ordinary value position. When arms disagree
-/// (multiple bind arms with mixed reps — not produced by lowering), the
-/// safe choice is boxed.
+/// patterns) the subject is rewritten for the representation the wasm-gc
+/// match cascade reads off it (see [`rewrite_no_bind_subject`]). When bind
+/// arms disagree (multiple bind arms with mixed reps — not produced by
+/// lowering), the safe choice is boxed.
 fn rewrite_match_subject(
     subj: Spanned<MirExpr>,
     arms: &[crate::ir::mir::MirMatchArm],
@@ -493,12 +494,44 @@ fn rewrite_match_subject(
         })
         .collect();
     if bind_slots.is_empty() {
-        return rewrite_value(subj, ctx);
+        return rewrite_no_bind_subject(subj, ctx);
     }
     // Every bind slot aliases the same subject, so they share a repr in a
     // well-formed program; require ALL bare to treat the subject raw.
     let all_bare = bind_slots.iter().all(|s| ctx.facts.is_bare(*s));
     if all_bare {
+        rewrite_raw(subj, ctx)
+    } else {
+        rewrite_boxed(subj, ctx)
+    }
+}
+
+/// Rewrite a no-`Bind`-arm match subject (literal / ctor / wildcard arms,
+/// e.g. `match dbl(c) { 0 -> 1; _ -> 2 }`). The wasm-gc Int-match cascade
+/// types this subject by a single STRUCTURAL test — `mir_renders_raw_i64`:
+/// a subject that renders a raw `i64` keeps the native `i64.eq`/`i64.const`
+/// compare path; ANY other subject is typed `$AverInt` (a `ref null $type`)
+/// and compared with `__aint_eq`. So the rewrite must honor exactly that
+/// split:
+///
+///   - a subject that renders raw (a bare `Local`, a bare carrier `.value`,
+///     a whole-tree-bare arith) stays raw — `rewrite_raw` (so the native
+///     compare matches; this is the common bare-counter `match n { 0 -> … }`),
+///   - EVERY other subject must be an `$AverInt`, so it routes through the
+///     single boxing chokepoint `rewrite_boxed`, which boxes a bare-RETURNING
+///     call (the boundary-completeness hole: `match dbl(c) { 0 -> … }` /
+///     `match countdown(3) { 0 -> … }`, the callee returns raw `i64` but the
+///     cascade typed the subject `$AverInt` → a wasm VALIDATION error), boxes
+///     a Match/IfThenElse subject's raw-yielding arms, and is a no-op on an
+///     already-`$AverInt` subject.
+///
+/// Before this funnel the no-bind subject went through `rewrite_value`, which
+/// rewrites only children and never applied the `call_returns_raw`→`Box`
+/// rule, so a bare-returning-call subject leaked raw into the `$AverInt`
+/// position. The `renders_raw` guard keeps `rewrite_boxed` from boxing a
+/// genuinely-raw subject (which would needlessly force the boxed compare).
+fn rewrite_no_bind_subject(subj: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> {
+    if renders_raw(&subj.node, ctx.facts) {
         rewrite_raw(subj, ctx)
     } else {
         rewrite_boxed(subj, ctx)
@@ -1109,6 +1142,78 @@ fn main() -> String
         assert!(
             boxes >= 1,
             "the bare-returning g(2) feeding String.fromInt's $AverInt arg is boxed at the sink"
+        );
+    }
+
+    #[test]
+    fn bare_return_call_as_no_bind_match_subject_boxes_at_subject() {
+        // The 3rd hole of the bare-i64 → $AverInt class at the MIR level: `g`
+        // has a bare return; `r` uses `g(2)` as a NO-BIND match subject
+        // (literal/wildcard arms). The wasm-gc Int-match cascade types that
+        // subject `$AverInt` (a bare-returning call is not recognized raw), so
+        // the rewrite MUST box `g(2)` at the subject crossing — without it the
+        // raw `i64` met the `ref null $type` subject slot, a wasm validation
+        // failure. The box lands at the subject; `g`'s recurrence stays native.
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn g(n: Int) -> Int
+    match n
+        0 -> 0
+        _ -> g(n - 1)
+
+fn r() -> Int
+    match g(2)
+        0 -> 1
+        _ -> 2
+
+fn main() -> Int
+    r()
+"#;
+        let program = rewritten(src);
+        let g = fn_named(&program, "g");
+        assert!(
+            g.repr.bare_return,
+            "g's recurrence stays native (bare return preserved)"
+        );
+        let r = fn_named(&program, "r");
+        let (boxes, _unboxes) = count_boundaries(&r.body.node);
+        assert!(
+            boxes >= 1,
+            "the bare-returning g(2) used as a no-bind $AverInt match subject is boxed"
+        );
+    }
+
+    #[test]
+    fn bare_local_no_bind_match_subject_stays_raw() {
+        // The native-compare path must be preserved: a bare counter used as a
+        // no-bind match subject (`match n { 0 -> …; _ -> … }`, `n` bare) renders
+        // raw `i64`, so the wasm-gc cascade keeps the native `i64.eq` compare.
+        // The rewrite must NOT box it (no spurious boundary) — `countdown`'s own
+        // recurrence-decrementing match is exactly this shape.
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn countdown(n: Int) -> Int
+    match n
+        0 -> 0
+        _ -> countdown(n - 1)
+
+fn main() -> Int
+    countdown(20000)
+"#;
+        let program = rewritten(src);
+        let f = fn_named(&program, "countdown");
+        assert!(f.repr.param_is_bare(0), "counter param is bare");
+        let (boxes, unboxes) = count_boundaries(&f.body.node);
+        assert_eq!(
+            (boxes, unboxes),
+            (0, 0),
+            "a bare-counter no-bind match subject stays raw — no boundary node"
         );
     }
 }

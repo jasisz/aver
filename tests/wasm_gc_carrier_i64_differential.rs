@@ -1512,3 +1512,140 @@ fn main() -> Unit
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Match-SUBJECT boundary completeness (the 3rd hole of the bare-i64 →
+// `$AverInt` class).
+//
+// The wasm-gc Int-match cascade types a no-`Bind`-arm subject by a single
+// structural test (`mir_renders_raw_i64`): a raw-rendering subject keeps the
+// native `i64.eq` compare, ANY other subject is typed `$AverInt` and compared
+// with `__aint_eq`. A bare-RETURNING call subject (`match dbl(c) { 0 -> … }`,
+// `match countdown(3) { 0 -> … }`) renders raw `i64` from the callee but is
+// NOT recognized raw by the cascade, so it was typed `$AverInt` — and the
+// `bare_i64_rewrite` routed the no-bind subject through `rewrite_value`
+// (children only), never boxing the bare-returning call. The raw `i64` met a
+// `ref null $type` subject slot → a wasm VALIDATION error on a VM-valid
+// program. Now the no-bind subject funnels through the boxing chokepoint.
+//
+// These are the FIRST match-scrutinee cases in the differential. Two flavors:
+//   - CARRIER: `match dbl(c) { … }` with `dbl` a bare carrier-arith call —
+//     vanishes with `AVER_NO_CARRIER_I64=1` (the #551 blocker).
+//   - BARE-i64: `match countdown(n) { … }` over a recurrence counter —
+//     vanishes with `AVER_NO_BARE_I64=1`, a PRE-EXISTING bare-i64 bug the
+//     same fix closes (carrier-arith plays no part).
+
+/// CARRIER flavor — a bare-returning carrier-arith call as a no-bind match
+/// SUBJECT (`match dbl(c) { 0 -> …; 100 -> …; _ -> … }`). The subject is
+/// typed `$AverInt` by the cascade, so the rewrite must box `dbl(c)`'s raw
+/// `i64` result at the subject boundary. VM == wasm-gc, and the whole module
+/// compiles clean.
+#[test]
+fn carrier_bare_call_as_match_subject_boxes_at_boundary() {
+    let src = r#"module M
+    intent = "carrier arith result as no-bind Int match subject"
+    effects [Console]
+
+record C
+    value: Int
+
+fn mk(n: Int) -> Result<C, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(C(value = n))
+        false -> Result.Err("oob")
+
+fn dbl(c: C) -> Int
+    c.value + c.value
+
+fn classify(c: C) -> Int
+    match dbl(c)
+        0   -> 1
+        100 -> 2
+        _   -> 3
+
+fn main() -> Unit
+    ! [Console.print]
+    match mk(50)
+        Result.Ok(c)  -> Console.print("{classify(c)}")
+        Result.Err(_) -> Console.print("err")
+"#;
+    let out = assert_vm_wasm_identical("carrier-match-subject", src);
+    assert_eq!(out, "2");
+    assert_carrier_revert_agrees("carrier-match-subject", src, &out);
+}
+
+/// CARRIER flavor, BOOL-result variant — the no-bind match SUBJECT is the
+/// same bare-returning carrier-arith call, but each arm yields a `Bool`
+/// (`match dbl(c) { 100 -> true; _ -> false }`). The arm result type does NOT
+/// change the subject's `$AverInt` typing, so the subject-boundary box is
+/// still required; only the block result colour differs.
+#[test]
+fn carrier_bare_call_as_bool_match_subject_boxes_at_boundary() {
+    let src = r#"module M
+    intent = "carrier arith result as no-bind subject, Bool arms"
+    effects [Console]
+
+record C
+    value: Int
+
+fn mk(n: Int) -> Result<C, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(C(value = n))
+        false -> Result.Err("oob")
+
+fn dbl(c: C) -> Int
+    c.value + c.value
+
+fn isHundred(c: C) -> Bool
+    match dbl(c)
+        100 -> true
+        _   -> false
+
+fn show(b: Bool) -> String
+    match b
+        true  -> "yes"
+        false -> "no"
+
+fn main() -> Unit
+    ! [Console.print]
+    match mk(50)
+        Result.Ok(c)  -> Console.print("{show(isHundred(c))}")
+        Result.Err(_) -> Console.print("err")
+"#;
+    let out = assert_vm_wasm_identical("carrier-bool-match-subject", src);
+    assert_eq!(out, "yes");
+    assert_carrier_revert_agrees("carrier-bool-match-subject", src, &out);
+}
+
+/// BARE-i64 flavor (PRE-EXISTING, predates #551) — a bare-i64 recurrence
+/// counter as a no-bind match SUBJECT (`match countdown(n) { 0 -> …; _ -> … }`).
+/// `countdown` returns a native `i64` (bare return); the cascade typed the
+/// subject `$AverInt`, so the same subject-boundary box closes it. Carrier
+/// arith plays no part (no carrier here) — the program vanishes the bug only
+/// with `AVER_NO_BARE_I64=1`, never `AVER_NO_CARRIER_I64=1`. VM == wasm-gc and
+/// the module compiles clean.
+#[test]
+fn bare_recurrence_call_as_match_subject_boxes_at_boundary() {
+    let src = r#"module M
+    intent = "bare-i64 recurrence result as no-bind Int match subject"
+    effects [Console]
+
+fn countdown(n: Int) -> Int
+    match n
+        0 -> 0
+        _ -> countdown(n - 1)
+
+fn run(n: Int) -> Int
+    match countdown(n)
+        0 -> 1
+        _ -> 2
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{run(3)} {run(0)}")
+"#;
+    // countdown(3) and countdown(0) both reach 0, so both pick the `0 -> 1`
+    // arm. VM is ground truth; the whole module must compile clean to wasm-gc.
+    let out = assert_vm_wasm_identical("bare-match-subject", src);
+    assert_eq!(out, "1 1");
+}
