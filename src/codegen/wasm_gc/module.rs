@@ -418,6 +418,15 @@ pub(super) fn emit_module_with(
             // of saturating, so an out-of-range effect arg rejects on
             // wasm-gc exactly as the VM's checked `to_i64()` errors.
             BuiltinName::AintToI64Checked,
+            // `Int = ℤ` size lever: the LEAN i64 decimal formatter, registered
+            // as a SECOND `String.fromInt` helper alongside the `$AverInt`
+            // bignum formatter. A raw-i64 (bare/carrier) stringify routes here
+            // directly (no box, no bignum formatter); the bignum `StringFromInt`
+            // is then referenced ONLY by genuine `$AverInt` stringifies, so an
+            // all-raw program never calls it and `wasm-opt -Oz` DCEs it. This
+            // itoa body is far smaller than the ~536 B long-division formatter,
+            // and -Oz strips it too when no raw stringify reaches it.
+            BuiltinName::StringFromIntI64,
         ] {
             builtin_registry.register(b);
         }

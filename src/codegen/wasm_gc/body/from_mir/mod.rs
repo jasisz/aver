@@ -149,6 +149,103 @@ pub(crate) fn emit_carrier_project_bridge(
     Ok(())
 }
 
+/// `Int = ℤ` size lever: emit an `Int` value being STRINGIFIED (a
+/// `String.fromInt` arg or a string-interpolation `Int` embed) followed by
+/// the matching decimal formatter, choosing between the LEAN i64 formatter
+/// and the `$AverInt` bignum formatter by the arg's representation.
+///
+/// Under bignum the rewrite shapes a stringify arg the analysis proved
+/// `OverflowFree` (a bare/carrier value) as a `Box(raw_i64)` — it boxes at
+/// the `$AverInt` sink so the un-routed default (the bignum formatter) stays
+/// valid. THIS routing peels that box back off: a `Box(raw_i64)` (or a
+/// directly raw-rendering arg the codegen-side check catches) is emitted as a
+/// raw `i64` and passed to the LEAN itoa formatter
+/// (`__wasmgc_string_from_int_i64`) — NO box, NO call to the ~536 B bignum
+/// formatter. A genuine `$AverInt` arg (an unbounded Int) keeps the
+/// `String.fromInt` bignum path. So a program whose every Int-stringify arg is
+/// raw never references the bignum formatter, which `wasm-opt -Oz` then DCEs.
+///
+/// SOUNDNESS (SILENT-C0): the lean formatter MUST produce byte-identical
+/// decimal to the bignum formatter (and the VM) for every i64-range value —
+/// guarded by the exhaustive VM-vs-wasm-gc differential in
+/// `tests/wasm_gc_carrier_i64_differential.rs`. Returns `Ok(None)` (whole-fn
+/// fallback) only if arg emission itself bails.
+///
+/// Non-bignum builds never reach this on the boxed path — `String.fromInt`
+/// already takes a scalar i64 there; this routing is bignum-only.
+fn emit_mir_int_stringify(
+    func: &mut Function,
+    arg: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    // Three raw shapes feed the LEAN formatter (all read a native `i64`):
+    //   1. `Box(raw_i64)` — the rewrite boxed an `OverflowFree` value at this
+    //      `$AverInt` sink; peel the box and emit the inner raw.
+    //   2. a directly raw-rendering arg (`mir_renders_raw_i64`) the rewrite
+    //      left raw (a bare carrier `.value`, a bare slot, in-range arith).
+    //   3. an eligible-carrier `.value` PROJECT whose slot the bare-i64
+    //      analysis did NOT tag bare (a carrier LOCAL only ever stringified,
+    //      never fed into arithmetic — `slot_is_bare_carrier` is false), yet
+    //      whose registry STORAGE is still the erased native `i64`. The
+    //      default `emit_mir_expr` would lift it to `$AverInt` via the project
+    //      bridge and hand it to the bignum formatter; instead read the i64
+    //      storage directly and route lean, so an all-carrier-stringify
+    //      program never references the bignum formatter.
+    enum Raw<'a> {
+        Inner(&'a Spanned<MirExpr>),
+        CarrierProject(&'a Spanned<MirExpr>),
+    }
+    let raw: Option<Raw<'_>> = match &arg.node {
+        MirExpr::Box(inner) if mir_renders_raw_i64(&inner.node, ctx) => Some(Raw::Inner(inner)),
+        _ if mir_renders_raw_i64(&arg.node, ctx) => Some(Raw::Inner(arg)),
+        // An eligible-carrier `.value` read whose base STORAGE is i64-erased
+        // (case 3). `emit_mir_carrier_value_raw` reads the i64 directly.
+        MirExpr::Project(_) if mir_is_eligible_carrier_value_project(&arg.node, ctx) => {
+            Some(Raw::CarrierProject(arg))
+        }
+        _ => None,
+    };
+    if ctx.registry.bignum
+        && let Some(raw) = raw
+    {
+        // Raw path: leave a native `i64` on the stack, call the LEAN formatter.
+        let produced = match raw {
+            Raw::Inner(inner) => emit_mir_int_raw(func, inner, slots, ctx)?,
+            Raw::CarrierProject(p) => emit_mir_carrier_value_raw(func, p, slots, ctx)?,
+        };
+        if produced.is_none() {
+            return Ok(None);
+        }
+        let lean = ctx
+            .fn_map
+            .builtins
+            .get("__wasmgc_string_from_int_i64")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "raw-i64 String.fromInt needs __wasmgc_string_from_int_i64 but it is not registered"
+                    .into(),
+            ))?;
+        func.instruction(&Instruction::Call(lean));
+        return Ok(Some(()));
+    }
+    // Boxed path: emit the arg as it stands (an `$AverInt` under bignum, a
+    // scalar i64 without) and call the default `String.fromInt` formatter.
+    if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    let to_string_idx =
+        ctx.fn_map
+            .builtins
+            .get("String.fromInt")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "stringify of Int requires String.fromInt builtin".into(),
+            ))?;
+    func.instruction(&Instruction::Call(to_string_idx));
+    Ok(Some(()))
+}
+
 /// `Int = ℤ`: registered `fn_map.builtins` helpers whose Aver return type
 /// is `Int` but whose wasm helper computes a raw scalar i64 (a byte / code
 /// count), so the result must be lifted into the `$AverInt` carrier. Kept
@@ -800,6 +897,19 @@ pub(crate) fn emit_mir_expr(
                         MirBuiltinEmit::Fallback => return Ok(None),
                         MirBuiltinEmit::NotHandled => {}
                     }
+                    // `Int = ℤ` size lever: route a `String.fromInt(x)` whose
+                    // arg the rewrite proved raw-i64 (a bare/carrier value,
+                    // shaped as `Box(raw_i64)`) to the LEAN i64 formatter — no
+                    // box, no ~536 B bignum formatter. A genuine `$AverInt` arg
+                    // keeps the bignum `String.fromInt`. Bignum-only: without
+                    // it `String.fromInt` already takes a scalar i64 and the
+                    // generic path below is correct.
+                    if ctx.registry.bignum && dotted == "String.fromInt" && call.args.len() == 1 {
+                        return match emit_mir_int_stringify(func, &call.args[0], slots, ctx)? {
+                            Some(()) => Ok(Some(aver_type_str_of(expr).trim() != "Unit")),
+                            None => Ok(None),
+                        };
+                    }
                     match ctx.fn_map.builtins.get(dotted) {
                         Some(&wasm_idx) => {
                             // `Int = ℤ`: a registered helper that takes an
@@ -1382,6 +1492,64 @@ fn mir_base_renders_carrier_i64_raw(base: &Spanned<MirExpr>, ctx: &EmitCtx<'_>) 
         MirExpr::Project(_) => ctx.registry.is_eligible_carrier(&aver_type_str_of(base)),
         _ => false,
     }
+}
+
+/// `Int = ℤ` size lever (stringify routing): is `e` a `.value` PROJECT over an
+/// ELIGIBLE single-field carrier whose registry storage is the erased native
+/// `i64`, REGARDLESS of whether the `bare_i64` analysis tagged the base slot
+/// bare? This is the superset of [`mir_is_bare_carrier_project`] used ONLY at
+/// the stringify boundary: a carrier value that is only ever stringified (never
+/// fed into native arithmetic) keeps a boxed slot classification, so the bridge
+/// would lift it to `$AverInt` and route to the bignum formatter — but its
+/// STORAGE is still i64, so it can be read raw and routed to the lean formatter.
+///
+/// Eligibility is registry/type-level (`is_eligible_carrier` ⇒ the carrier is a
+/// single-field newtype erased to i64 everywhere) AND the projected field is
+/// that carrier's underlying value (`newtype_underlying` is `Some`, so the
+/// `.value` read is identity) AND the base is a shape whose `emit_mir_expr`
+/// genuinely renders the carrier's native `i64` storage — a `Local` (the slot
+/// type IS i64), a `Project` (a carrier field read, i64), or a `Call` /
+/// `TailCall` (the callee returns the erased i64). Fail-closed: a `Box` /
+/// `Unbox` / other base (which would render an `$AverInt` ref or an unexpected
+/// value) returns false, keeping the boxed bignum path — so the lean formatter
+/// never receives a non-i64 stack value.
+fn mir_is_eligible_carrier_value_project(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
+    let MirExpr::Project(p) = e else {
+        return false;
+    };
+    let base_renders_i64 = matches!(
+        &p.node.base.node,
+        MirExpr::Local(_) | MirExpr::Project(_) | MirExpr::Call(_) | MirExpr::TailCall(_)
+    );
+    let record = aver_type_str_of(&p.node.base);
+    base_renders_i64
+        && ctx.registry.is_eligible_carrier(&record)
+        && ctx.registry.newtype_underlying(&record).is_some()
+}
+
+/// `Int = ℤ` size lever (stringify routing): emit a `.value` PROJECT over an
+/// eligible single-field carrier (recognized by
+/// [`mir_is_eligible_carrier_value_project`]) leaving its native `i64` storage
+/// on the stack WITHOUT the `$AverInt` project bridge. The `.value` read is a
+/// newtype identity, so the base — a carrier `Local` (i64 storage) or a nested
+/// carrier-field read (i64 field) — already renders i64; emit it directly.
+/// Returns `Ok(None)` (whole-fn fallback) if the base emission bails.
+fn emit_mir_carrier_value_raw(
+    func: &mut Function,
+    e: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<bool>, WasmGcError> {
+    let MirExpr::Project(p) = &e.node else {
+        return Ok(None);
+    };
+    // The base is the carrier value itself (newtype identity). Emitting it
+    // yields the native `i64`: a carrier `Local` lowers to a plain `local.get`
+    // (the slot's wasm type IS i64), and a nested carrier-field base is read by
+    // the `Project` arm WITHOUT its own bridge (its result type is the eligible
+    // carrier ⇒ `mir_base_renders_carrier_i64_raw` true). Neither runs the
+    // outer `.value` bridge, so no `$AverInt` lift happens.
+    emit_mir_expr(func, &p.node.base, slots, ctx)
 }
 
 /// The `Add`/`Sub`/`Mul`/`Neg` tree `e` contains at least one genuine raw

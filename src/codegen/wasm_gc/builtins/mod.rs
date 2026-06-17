@@ -76,6 +76,20 @@ mod bignum;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum BuiltinName {
     StringFromInt,
+    /// `Int = ℤ` size lever: the LEAN i64 decimal formatter (`itoa` over a
+    /// machine `i64`), registered ONLY under bignum as a SECOND `String.fromInt`
+    /// helper alongside the `$AverInt` long-division formatter (`StringFromInt`).
+    /// A `String.fromInt` / interpolation arg the rewrite proved renders a raw
+    /// `i64` (a bare/carrier value — `OverflowFree`) routes here directly, with
+    /// NO box and NO call to the ~536 B bignum formatter. A program whose every
+    /// Int-stringify arg is raw therefore never references the bignum formatter,
+    /// which `wasm-opt -Oz` then DCEs. A genuine `$AverInt` arg (an unbounded
+    /// Int) keeps the `StringFromInt` bignum path. Byte-identical decimal to
+    /// the bignum formatter for every i64-range value (exhaustive differential
+    /// in `tests/wasm_gc_carrier_i64_differential.rs`). Internal — not addressable
+    /// from Aver source (no `from_dotted` mapping); registered explicitly under
+    /// bignum.
+    StringFromIntI64,
     /// `String.len(s) -> Int` — Unicode scalar value count, matching
     /// the VM's `s.chars().count()` semantics (docs: "number of
     /// characters"). One pass over the UTF-8 byte array counting
@@ -230,6 +244,7 @@ impl BuiltinName {
     pub(super) fn canonical(self) -> &'static str {
         match self {
             Self::StringFromInt => "String.fromInt",
+            Self::StringFromIntI64 => "__wasmgc_string_from_int_i64",
             Self::StringLength => "String.len",
             Self::StringByteLength => "String.byteLength",
             Self::StringConcatN => "__wasmgc_concat_n",
@@ -280,6 +295,9 @@ impl BuiltinName {
             // otherwise the scalar i64.
             Self::StringFromInt if registry.bignum => Ok(vec![aint_ref_ty(registry)?]),
             Self::StringFromInt => Ok(vec![ValType::I64]),
+            // The LEAN i64 formatter always takes a raw machine `i64` (it is
+            // only registered under bignum, where `StringFromInt` takes `$aint`).
+            Self::StringFromIntI64 => Ok(vec![ValType::I64]),
             Self::StringLength | Self::StringByteLength => Ok(vec![string_ref_ty(registry)?]),
             Self::StringConcatN => Ok(vec![string_array_ref_ty(registry)?]),
             Self::StringStartsWith | Self::StringContains => {
@@ -328,7 +346,7 @@ impl BuiltinName {
 
     pub(super) fn results(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
-            Self::StringFromInt => Ok(vec![string_ref_ty(registry)?]),
+            Self::StringFromInt | Self::StringFromIntI64 => Ok(vec![string_ref_ty(registry)?]),
             Self::StringLength | Self::StringByteLength => Ok(vec![ValType::I64]),
             Self::StringConcatN => Ok(vec![string_ref_ty(registry)?]),
             Self::StringStartsWith | Self::StringContains => Ok(vec![ValType::I32]),
@@ -375,6 +393,10 @@ impl BuiltinName {
         match self {
             Self::StringFromInt if registry.bignum => bignum::emit_string_from_aint(registry),
             Self::StringFromInt => emit_string_from_int(registry),
+            // The LEAN i64 formatter is the same `itoa` body `StringFromInt`
+            // uses without bignum — registered separately so it stays available
+            // alongside the `$aint` formatter under bignum.
+            Self::StringFromIntI64 => emit_string_from_int(registry),
             Self::StringLength => emit_string_length(registry),
             Self::StringByteLength => emit_string_byte_length(registry),
             Self::StringConcatN => emit_string_concat_n(registry),
