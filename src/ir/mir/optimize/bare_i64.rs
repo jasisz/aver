@@ -181,6 +181,17 @@ pub struct FnBareFacts {
     /// backend (it keeps the carrier struct) and whenever no eligible carrier
     /// is in scope — the byte-identical default.
     pub carrier_slots: HashMap<LocalId, Interval>,
+    /// ETAP-2 carrier-`i64` (wasm-gc only): the eligible-carrier type table
+    /// (`bare type name → (proven interval, recognized)`), restricted to the
+    /// registry's eligible set. Lets `carrier_project_interval` recognize a
+    /// NESTED carrier-field read — `Project(Project(rec, "coord"), "value")`,
+    /// where the inner `rec.coord` is stamped an eligible carrier type — as a
+    /// raw i64 leaf carrying `coord`'s proven bound. The #550 storage erasure
+    /// already made the carrier field a native `i64`, so the inner field read
+    /// yields i64 and the outer `.value` is identity. EMPTY on the Rust
+    /// backend / whenever no eligible carrier is in scope — the byte-identical
+    /// default (the nested form then never fires, only the `Local`-base form).
+    pub carrier_types: CarrierIntervals,
 }
 
 impl FnBareFacts {
@@ -205,20 +216,58 @@ impl FnBareFacts {
         fact.interval
     }
 
-    /// ETAP-2 carrier-`i64`: the proven interval of a `Project(Local(slot),
-    /// _)` whose base `slot` holds a BARE carrier (wasm storage IS i64). The
-    /// `.value` read is a native i64 carrying the carrier's smart-constructor
-    /// bound, so it is a bare leaf for the surrounding arithmetic. `None` for
-    /// any non-carrier base — the conservative decline (boxed `$AverInt`
-    /// project bridge).
+    /// ETAP-2 carrier-`i64`: the proven interval of a `.value` `Project` whose
+    /// BASE renders an eligible carrier value (wasm storage IS i64). Two base
+    /// shapes qualify, both reading a native i64:
+    ///   - a `Local` in `carrier_slots` — a bare carrier PARAM/local (the #551
+    ///     param-level form);
+    ///   - a NESTED carrier-field read — a `Project` whose result `ty()` is an
+    ///     eligible carrier type (`carrier_types`), e.g. `rec.coord` in
+    ///     `rec.coord.value`. The #550 storage erasure made `coord` a native
+    ///     `i64` field, so the inner `struct.get` yields i64 and the outer
+    ///     `.value` is identity. The general field-of-field-of-… case is
+    ///     covered: ANY base whose `ty()` is an eligible carrier renders i64.
+    ///
+    /// In both cases the `.value` read is a native i64 carrying the carrier's
+    /// smart-constructor bound, a bare leaf for the surrounding arithmetic.
+    /// `None` for any other base — the conservative, fail-closed decline (the
+    /// boxed `$AverInt` project bridge runs).
     pub fn carrier_project_interval(&self, e: &MirExpr) -> Option<Interval> {
         let MirExpr::Project(p) = e else {
             return None;
         };
-        let MirExpr::Local(local) = &p.node.base.node else {
+        // Param/local bare carrier slot (#551).
+        if let MirExpr::Local(local) = &p.node.base.node
+            && let Some(iv) = self.carrier_slots.get(&local.node.slot).copied()
+        {
+            return Some(iv);
+        }
+        // Nested carrier-field read: the base is any expression whose stamped
+        // type is an eligible carrier (a field read, or transitively a field of
+        // a field). The #550 storage erasure made that carrier a native `i64`,
+        // so the base renders raw i64 and its `.value` is identity. Fail-closed:
+        // if the base has no stamped type, or the type is not an eligible
+        // carrier, decline (boxed).
+        self.base_renders_eligible_carrier(&p.node.base)
+    }
+
+    /// The proven interval of `base` when it renders an eligible carrier value
+    /// as a native `i64` — i.e. `base.ty()` is an eligible carrier type held in
+    /// `carrier_types`. This is the NESTED-field recognition: a carrier-typed
+    /// field read (`rec.coord`) was erased to an i64 field by #550, so reading
+    /// its `.value` is identity over that i64. We additionally require `base`
+    /// to be a `Project` so the recognition matches EXACTLY the i64-rendering
+    /// positions the wasm-gc emitter skips the project bridge for (a carrier
+    /// field read); a carrier-typed `Local`/`Call`/etc. base is NOT recognized
+    /// here (those go through `carrier_slots` or stay boxed) — fail-closed.
+    fn base_renders_eligible_carrier(&self, base: &Spanned<MirExpr>) -> Option<Interval> {
+        if !matches!(base.node, MirExpr::Project(_)) {
             return None;
-        };
-        self.carrier_slots.get(&local.node.slot).copied()
+        }
+        let name = base.ty().and_then(Type::named_name)?;
+        let bare = name.rsplit_once('.').map_or(name, |(_, b)| b);
+        let (iv, known) = self.carrier_types.get(bare).copied()?;
+        (known && iv.fits_i64()).then_some(iv)
     }
 
     /// ETAP-2 carrier-`i64`: does `e` read a bare carrier's i64 `.value`
@@ -1189,9 +1238,9 @@ fn caller_env(f: &MirFn, cells: &[Interval], floors: &[Interval]) -> HashMap<Loc
 fn eval_interval_pub(e: &MirExpr, env: &HashMap<LocalId, Interval>) -> Interval {
     let mut worst = Interval::point(0);
     // The recurrence back-edge args are `counter - step` over Int counters; a
-    // carrier `.value` projection never appears here, so the carrier-slot map
-    // is empty (a `Project` evaluates to `unbounded()`, the safe decline).
-    let no_carriers: HashMap<LocalId, Interval> = HashMap::new();
+    // carrier `.value` projection never appears here, so the carrier facts are
+    // empty (a `Project` evaluates to `unbounded()`, the safe decline).
+    let no_carriers = FnBareFacts::default();
     let iv = eval_interval(e, env, &mut worst, &no_carriers);
     worst.hull(iv)
 }
@@ -1712,17 +1761,18 @@ fn analyze_fn(f: &MirFn, summary: &Summary, carrier: &CarrierIntervals) -> FnBar
     // can recognize a bare carrier's `.value` read. (Set before the combine so
     // `tail_value_is_bare` / `expr_is_bare_i64` see them via `&facts`.)
     facts.carrier_slots = carrier_slots;
+    // The eligible-carrier type table powers the NESTED carrier-field
+    // recognition (`Project(Project(rec, "coord"), "value")` whose inner
+    // `rec.coord` is stamped an eligible carrier). EMPTY on the Rust backend /
+    // no-eligible-carrier baseline, so the nested form never fires there.
+    facts.carrier_types = carrier.clone();
 
     // 2. Walk the body's `Let` chain, deriving an interval (+ worst-join
     //    op class) for each bound slot. The carrier-projection facts let the
-    //    walk read a bare carrier's `.value` as its proven i64 interval.
+    //    walk read a bare carrier's `.value` (param-level OR nested field) as
+    //    its proven i64 interval.
     let mut op_classes: HashMap<LocalId, OpClass> = HashMap::new();
-    walk_let_chain(
-        &f.body.node,
-        &mut intervals,
-        &mut op_classes,
-        &facts.carrier_slots,
-    );
+    walk_let_chain(&f.body.node, &mut intervals, &mut op_classes, &facts);
 
     // 3. Escape: a single use-flow scan. A slot escapes if any use-site is
     //    a general-Int context.
@@ -1786,25 +1836,26 @@ fn analyze_fn(f: &MirFn, summary: &Summary, carrier: &CarrierIntervals) -> FnBar
 
 /// Walk the `Let` chain, recording each bound slot's interval and worst-
 /// join op class. `env` holds param + already-bound intervals and is grown
-/// in place; branches recurse so nested bindings are seen. `carrier_slots`
-/// lets a bare carrier's `.value` read (`Project`) contribute its proven
-/// interval to an arithmetic binding.
+/// in place; branches recurse so nested bindings are seen. `facts` carries
+/// the carrier-projection facts (`carrier_slots` + `carrier_types`) so a bare
+/// carrier's `.value` read (`Project`, param-level OR nested field) contributes
+/// its proven interval to an arithmetic binding.
 fn walk_let_chain(
     e: &MirExpr,
     env: &mut HashMap<LocalId, Interval>,
     op_classes: &mut HashMap<LocalId, OpClass>,
-    carrier_slots: &HashMap<LocalId, Interval>,
+    facts: &FnBareFacts,
 ) {
     match e {
         MirExpr::Let(l) => {
             let mut worst = Interval::point(0);
-            let iv = eval_interval(&l.node.value.node, env, &mut worst, carrier_slots);
+            let iv = eval_interval(&l.node.value.node, env, &mut worst, facts);
             env.insert(l.node.binding, iv);
             // The binding's op class is the worst-join over its value
             // expression (so a transient out-of-i64 intermediate demotes).
             op_classes.insert(l.node.binding, OpClass::of_interval(worst.hull(iv)));
-            walk_let_chain(&l.node.value.node, env, op_classes, carrier_slots);
-            walk_let_chain(&l.node.body.node, env, op_classes, carrier_slots);
+            walk_let_chain(&l.node.value.node, env, op_classes, facts);
+            walk_let_chain(&l.node.body.node, env, op_classes, facts);
         }
         // A `match subject { y -> … }` Ident-binding arm ALIASES the subject:
         // the binder `y` carries the subject's interval. Without this, a
@@ -1816,8 +1867,8 @@ fn walk_let_chain(
         // the current `env` (the subject is already in scope).
         MirExpr::Match(m) => {
             let mut worst = Interval::point(0);
-            let subj_iv = eval_interval(&m.node.subject.node, env, &mut worst, carrier_slots);
-            walk_let_chain(&m.node.subject.node, env, op_classes, carrier_slots);
+            let subj_iv = eval_interval(&m.node.subject.node, env, &mut worst, facts);
+            walk_let_chain(&m.node.subject.node, env, op_classes, facts);
             for arm in &m.node.arms {
                 if let MirPattern::Bind(slot, _) = &arm.pattern {
                     // Alias: the binder takes the subject's interval + op
@@ -1827,28 +1878,28 @@ fn walk_let_chain(
                         .entry(*slot)
                         .or_insert_with(|| OpClass::of_interval(subj_iv));
                 }
-                walk_let_chain(&arm.body.node, env, op_classes, carrier_slots);
+                walk_let_chain(&arm.body.node, env, op_classes, facts);
             }
         }
         _ => {
-            visit_children(e, &mut |c| {
-                walk_let_chain(c, env, op_classes, carrier_slots)
-            });
+            visit_children(e, &mut |c| walk_let_chain(c, env, op_classes, facts));
         }
     }
 }
 
 /// Abstractly evaluate a MIR expression to its interval, joining each
 /// arithmetic node into `worst` (so a transient out-of-i64 intermediate
-/// demotes the binding). Unknown shapes evaluate to `unbounded()`.
-/// `carrier_slots` maps a bare carrier slot to its proven `fits_i64` bound, so
-/// a `Project(Local(carrier_slot), _)` (`c.value`) evaluates to that bound
-/// rather than `unbounded()` — the carrier-projection leaf.
+/// demotes the binding). Unknown shapes evaluate to `unbounded()`. `facts`
+/// carries the carrier-projection facts so a `.value` read over a bare carrier
+/// — a param/local (`carrier_slots`) OR a nested carrier-field read
+/// (`Project(Project(..))` whose inner type is an eligible carrier) — evaluates
+/// to the carrier's proven bound rather than `unbounded()`, the
+/// carrier-projection leaf.
 fn eval_interval(
     e: &MirExpr,
     env: &HashMap<LocalId, Interval>,
     worst: &mut Interval,
-    carrier_slots: &HashMap<LocalId, Interval>,
+    facts: &FnBareFacts,
 ) -> Interval {
     match e {
         MirExpr::Literal(l) => match l.node {
@@ -1859,23 +1910,20 @@ fn eval_interval(
             .get(&local.node.slot)
             .copied()
             .unwrap_or_else(Interval::unbounded),
-        // ETAP-2 carrier-`i64`: `c.value` over a bare carrier slot reads the
-        // native i64 with the carrier's proven bound.
-        MirExpr::Project(p) => match &p.node.base.node {
-            MirExpr::Local(local) => carrier_slots
-                .get(&local.node.slot)
-                .copied()
-                .unwrap_or_else(Interval::unbounded),
-            _ => Interval::unbounded(),
-        },
+        // ETAP-2 carrier-`i64`: `c.value` over a bare carrier (param/local or a
+        // nested carrier field) reads the native i64 with the carrier's proven
+        // bound; any other `Project` declines to `unbounded()`.
+        MirExpr::Project(_) => facts
+            .carrier_project_interval(e)
+            .unwrap_or_else(Interval::unbounded),
         MirExpr::Neg(inner) => {
-            let r = Interval::point(0).sub(eval_interval(&inner.node, env, worst, carrier_slots));
+            let r = Interval::point(0).sub(eval_interval(&inner.node, env, worst, facts));
             *worst = worst.hull(r);
             r
         }
         MirExpr::BinOp(b) => {
-            let l = eval_interval(&b.node.lhs.node, env, worst, carrier_slots);
-            let r = eval_interval(&b.node.rhs.node, env, worst, carrier_slots);
+            let l = eval_interval(&b.node.lhs.node, env, worst, facts);
+            let r = eval_interval(&b.node.rhs.node, env, worst, facts);
             let result = match b.node.op {
                 BinOp::Add => l.add(r),
                 BinOp::Sub => l.sub(r),
@@ -2387,6 +2435,185 @@ fn main() -> Int
         }
     }
 
+    /// NESTED carrier-FIELD source: `Holder { c: IntRange }` whose `nestedAdd`
+    /// reads `h.c.value + h.c.value` (a `Project(Project(..))`). The base
+    /// `h.c` is stamped the eligible carrier `IntRange`, so the analysis treats
+    /// each nested `.value` as a raw i64 leaf at the `[0,100]` bound and the sum
+    /// stays OverflowFree (bare); a wide `0..2^40` carrier's `c.value * c.value`
+    /// overflows i64 and DECLINES (boxed) — the same fixpoint, fed the nested
+    /// leaf. With the carrier table OFF, the nested form never fires.
+    const NESTED_CARRIER_SRC: &str = r#"
+module Toy
+    intent = "t"
+    depends []
+
+record IntRange
+    value: Int
+
+record Holder
+    c: IntRange
+
+record Wide
+    value: Int
+
+record WideHolder
+    c: Wide
+
+fn fromInt(n: Int) -> Result<IntRange, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(IntRange(value = n))
+        false -> Result.Err("err")
+
+fn fromWide(n: Int) -> Result<Wide, String>
+    match Bool.and(n >= 0, n <= 1099511627776)
+        true  -> Result.Ok(Wide(value = n))
+        false -> Result.Err("err")
+
+fn nestedAdd(h: Holder) -> Int
+    h.c.value + h.c.value
+
+fn nestedWideMul(h: WideHolder) -> Int
+    h.c.value * h.c.value
+
+fn main() -> Int
+    0
+"#;
+
+    fn nested_carrier_facts(carrier_on: bool) -> (MirProgram, BareI64Facts) {
+        let mut items = parse_source(NESTED_CARRIER_SRC).expect("parse");
+        let cfg = crate::ir::pipeline::PipelineConfig {
+            typecheck: Some(crate::ir::pipeline::TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        };
+        let result = crate::ir::pipeline::run(&mut items, cfg);
+        assert!(
+            result
+                .typecheck
+                .as_ref()
+                .is_none_or(|t| t.errors.is_empty()),
+            "typecheck errors: {:?}",
+            result.typecheck.map(|t| t.errors)
+        );
+        let carrier = if carrier_on {
+            carrier_table_for(&items, &result.symbol_table)
+        } else {
+            CarrierIntervals::new()
+        };
+        let mir_items = result.resolved_items.clone();
+        let program = optimize(lower_program(&mir_items));
+        let facts = analyze(&program, &carrier);
+        (program, facts)
+    }
+
+    /// Find the `Project(Project(..), _)` nested-field read inside `e` and
+    /// query the carrier-projection recognizer on it.
+    fn find_nested_project_interval(e: &MirExpr, facts: &FnBareFacts) -> Option<Interval> {
+        if let MirExpr::Project(p) = e
+            && matches!(p.node.base.node, MirExpr::Project(_))
+            && let Some(iv) = facts.carrier_project_interval(e)
+        {
+            return Some(iv);
+        }
+        let mut found = None;
+        visit_children(e, &mut |c| {
+            if found.is_none() {
+                found = find_nested_project_interval(c, facts);
+            }
+        });
+        found
+    }
+
+    #[test]
+    fn nested_carrier_field_in_range_is_bare_leaf() {
+        // The carrier table is ON: the nested `h.c.value` read is recognized as
+        // a raw i64 leaf carrying the carrier's proven `[0,100]` bound, so the
+        // `+` over it is OverflowFree (the binding goes bare).
+        let (program, facts) = nested_carrier_facts(true);
+        let id = fn_id_by_name(&program, "nestedAdd");
+        let f = facts.for_fn(id).expect("nestedAdd facts");
+        let pf = program.fn_by_id(id).expect("mir fn");
+        let iv = find_nested_project_interval(&pf.body.node, f)
+            .expect("the nested h.c.value read is recognized as a carrier projection");
+        assert_eq!(
+            iv,
+            Interval::between(0, 100),
+            "the nested-field read carries the carrier's proven [0,100] bound"
+        );
+        // The whole `h.c.value + h.c.value` tree is a bare i64 expression.
+        let sum =
+            find_carrier_sum(&pf.body.node).expect("the body contains the `c.value + c.value` add");
+        assert!(
+            f.expr_is_bare_i64(sum),
+            "in-range nested-field sum is bare-i64 eligible (OverflowFree)"
+        );
+    }
+
+    #[test]
+    fn nested_carrier_field_off_table_declines() {
+        // With the carrier table EMPTY, the nested form never fires — the read
+        // is not recognized as a carrier projection (fail-closed → boxed).
+        let (program, facts) = nested_carrier_facts(false);
+        let id = fn_id_by_name(&program, "nestedAdd");
+        let f = facts.for_fn(id).expect("nestedAdd facts");
+        let pf = program.fn_by_id(id).expect("mir fn");
+        assert!(
+            find_nested_project_interval(&pf.body.node, f).is_none(),
+            "with the carrier table empty, a nested-field read is NOT a carrier projection"
+        );
+    }
+
+    #[test]
+    fn nested_carrier_field_wide_mul_declines() {
+        // A wide `0..2^40` nested-field carrier: `h.c.value * h.c.value` reaches
+        // up to 2^80, which overflows i64. Even though each nested read IS a
+        // recognized carrier projection, the PRODUCT leaves i64, so the compound
+        // declines to boxed — the same C0 gate as the param-level form.
+        let (program, facts) = nested_carrier_facts(true);
+        let id = fn_id_by_name(&program, "nestedWideMul");
+        let f = facts.for_fn(id).expect("nestedWideMul facts");
+        let pf = program.fn_by_id(id).expect("mir fn");
+        // The nested leaf IS recognized (carries the wide bound) …
+        let iv = find_nested_project_interval(&pf.body.node, f)
+            .expect("the nested wide read is still a recognized carrier projection");
+        assert!(iv.fits_i64(), "the [0,2^40] carrier bound itself fits i64");
+        // … but the `*` product does NOT, so the compound is NOT bare-i64.
+        let mul = find_carrier_sum(&pf.body.node)
+            .expect("the body contains the `c.value * c.value` multiply");
+        assert!(
+            !f.expr_is_bare_i64(mul),
+            "the wide-bound nested-field multiply overflows i64 and stays boxed"
+        );
+    }
+
+    /// Find the `Add`/`Mul` `BinOp` whose operands are nested-field carrier
+    /// reads (the `c.value + c.value` / `c.value * c.value` body). Manual
+    /// recursion over the tail-bearing node shapes (the body is a single arith
+    /// node, possibly wrapped in `Return`/`Let`/`Match`), returning a borrowed
+    /// reference (so it cannot route through the `visit_children` closure).
+    fn find_carrier_sum(e: &MirExpr) -> Option<&MirExpr> {
+        match e {
+            MirExpr::BinOp(b)
+                if matches!(b.node.op, BinOp::Add | BinOp::Mul)
+                    && matches!(b.node.lhs.node, MirExpr::Project(_))
+                    && matches!(b.node.rhs.node, MirExpr::Project(_)) =>
+            {
+                Some(e)
+            }
+            MirExpr::Return(inner) | MirExpr::Box(inner) | MirExpr::Unbox(inner) => {
+                find_carrier_sum(&inner.node)
+            }
+            MirExpr::Let(l) => {
+                find_carrier_sum(&l.node.value.node).or_else(|| find_carrier_sum(&l.node.body.node))
+            }
+            MirExpr::Match(m) => m
+                .node
+                .arms
+                .iter()
+                .find_map(|a| find_carrier_sum(&a.body.node)),
+            _ => None,
+        }
+    }
+
     #[test]
     fn countdown_counter_is_bare() {
         let src = r#"
@@ -2555,7 +2782,7 @@ fn main() -> List<Int>
         }));
 
         let mut worst = Interval::point(0);
-        let no_carriers: HashMap<LocalId, Interval> = HashMap::new();
+        let no_carriers = FnBareFacts::default();
         let result = eval_interval(&sub, &env, &mut worst, &no_carriers);
         // The final value cancels back into [0, 10] (fits i64) …
         assert!(result.fits_i64(), "final value cancels back into range");

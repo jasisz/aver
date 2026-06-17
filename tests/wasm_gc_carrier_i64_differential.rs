@@ -698,6 +698,354 @@ fn main() -> Unit
 }
 
 // ---------------------------------------------------------------------------
+// NESTED carrier-FIELD reads (`rec.c.value`) — the record-threaded GAMES win.
+//
+// A `.value` read whose base is itself a carrier-typed RECORD FIELD —
+// `Project(Project(rec, "c"), "value")` — renders raw native `i64` on wasm-gc:
+// #550 erased the carrier field `c` to an i64 field, so the inner `struct.get`
+// yields i64 and the outer `.value` is identity. Before this slice the read
+// routed through the boxed `$AverInt` project bridge (the base was a `Project`,
+// not a bare-carrier `Local`), so a state-record-threaded game got ZERO arith
+// win. Now the nested read is a raw i64 leaf fed into the SAME interval
+// fixpoint as a param-level read: in-range arithmetic goes native, an
+// out-of-`i64` op stays boxed. The VM (full ℤ) is the oracle.
+
+/// The core nested-field shape: a record `{ c: Carrier }` with `rec.c.value +
+/// rec.c.value`. Each `rec.c.value` reads the i64 carrier field directly and
+/// the sum runs as a native `i64.add`. VM == wasm-gc, compiles clean, reverts.
+#[test]
+fn nested_carrier_field_add_matches_vm() {
+    let src = r#"module M
+    intent = "nested carrier-field read add"
+    effects [Console]
+
+record IntRange
+    value: Int
+
+record Holder
+    c: IntRange
+
+fn fromInt(n: Int) -> Result<IntRange, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(IntRange(value = n))
+        false -> Result.Err("oob")
+
+fn unwrap(r: Result<IntRange, String>) -> IntRange
+    match r
+        Result.Ok(c)  -> c
+        Result.Err(_) -> IntRange(value = 0)
+
+fn ir(n: Int) -> IntRange
+    unwrap(fromInt(n))
+
+fn doubled(h: Holder) -> Int
+    h.c.value + h.c.value
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{doubled(Holder(c = ir(21)))}")
+"#;
+    let out = assert_vm_wasm_identical("nested-field-add", src);
+    assert_eq!(out, "42");
+    assert_carrier_revert_agrees("nested-field-add", src, &out);
+}
+
+/// The SNAKE shape — a GameState-like record holding bounded-carrier coords +
+/// a delta, with `state.x.value + state.dx.value` style nested-field
+/// arithmetic (the canonical record-threaded game move). Both nested reads are
+/// raw i64; the add is native. VM == wasm-gc, compiles clean, reverts.
+#[test]
+fn nested_carrier_field_snake_move_matches_vm() {
+    let src = r#"module M
+    intent = "snake-shaped nested carrier-field arithmetic"
+    effects [Console]
+
+record Coord
+    value: Int
+
+record GameState
+    x: Coord
+    y: Coord
+    dx: Coord
+    dy: Coord
+    score: Coord
+
+fn coordOf(n: Int) -> Result<Coord, String>
+    match Bool.and(n >= 0, n <= 1000)
+        true  -> Result.Ok(Coord(value = n))
+        false -> Result.Err("oob")
+
+fn unwrap(r: Result<Coord, String>) -> Coord
+    match r
+        Result.Ok(c)  -> c
+        Result.Err(_) -> Coord(value = 0)
+
+fn coord(n: Int) -> Coord
+    unwrap(coordOf(n))
+
+fn nextX(s: GameState) -> Int
+    s.x.value + s.dx.value
+
+fn nextY(s: GameState) -> Int
+    s.y.value + s.dy.value
+
+fn bumpedScore(s: GameState) -> Int
+    s.score.value + 1
+
+fn atFood(s: GameState, fx: Coord, fy: Coord) -> Bool
+    Bool.and(s.x.value == fx.value, s.y.value == fy.value)
+
+fn main() -> Unit
+    ! [Console.print]
+    s = GameState(x = coord(5), y = coord(7), dx = coord(1), dy = coord(2), score = coord(3))
+    Console.print("{nextX(s)} {nextY(s)} {bumpedScore(s)} {atFood(s, coord(5), coord(7))} {atFood(s, coord(6), coord(7))}")
+"#;
+    let out = assert_vm_wasm_identical("nested-field-snake", src);
+    assert_eq!(out, "6 9 4 true false");
+    assert_carrier_revert_agrees("nested-field-snake", src, &out);
+}
+
+/// Nested-field read flowing into each `$AverInt`-typed SINK. A bare-returning
+/// fn whose body is a nested-field arith (`h.c.value + h.c.value`, kept native)
+/// feeds its raw `i64` result into: `String.fromInt`, a `Map` value, an
+/// independent-product (bang-group) element, and a no-bind `match` subject.
+/// Each sink slot is `$AverInt`, so the rewrite must box the raw result at the
+/// boundary (the same chokepoints #551 closed) — the new raw SOURCE flows into
+/// the SAME sinks. VM == wasm-gc, and the WHOLE module compiles clean.
+#[test]
+fn nested_carrier_field_into_sinks_box_at_boundary() {
+    let src = r#"module M
+    intent = "nested carrier-field result into $AverInt sinks"
+    effects [Console]
+
+record IntRange
+    value: Int
+
+record Holder
+    c: IntRange
+
+fn fromInt(n: Int) -> Result<IntRange, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(IntRange(value = n))
+        false -> Result.Err("oob")
+
+fn unwrap(r: Result<IntRange, String>) -> IntRange
+    match r
+        Result.Ok(c)  -> c
+        Result.Err(_) -> IntRange(value = 0)
+
+fn ir(n: Int) -> IntRange
+    unwrap(fromInt(n))
+
+fn dbl(h: Holder) -> Int
+    h.c.value + h.c.value
+
+fn toStr(h: Holder) -> String
+    String.fromInt(dbl(h))
+
+fn intoMap(h: Holder) -> Int
+    m = Map.set({}, "k", dbl(h))
+    Option.withDefault(Map.get(m, "k"), 0)
+
+fn intoProduct(h: Holder) -> Int
+    match (dbl(h), dbl(h))!
+        (a, b) -> a + b
+
+fn classify(h: Holder) -> Int
+    match dbl(h)
+        0  -> 1
+        20 -> 2
+        _  -> 3
+
+fn main() -> Unit
+    ! [Console.print]
+    h = Holder(c = ir(10))
+    Console.print("{toStr(h)} {intoMap(h)} {intoProduct(h)} {classify(h)}")
+"#;
+    let out = assert_vm_wasm_identical("nested-field-sinks", src);
+    assert_eq!(out, "20 20 40 2");
+    assert_carrier_revert_agrees("nested-field-sinks", src, &out);
+}
+
+/// WIDE-BOUND NESTED-FIELD OVERFLOW (the C0 soundness probe for the new raw
+/// source). A record holds a `0..2^40` carrier; `rec.c.value * rec.c.value` =
+/// up to `2^80`, which OVERFLOWS `i64`. The interval fixpoint must read the
+/// nested-field `.value` at the carrier's PROVEN `[0, 2^40]` bound and DEMOTE
+/// the multiply to boxed (the project bridge runs, the `*` is the
+/// full-precision `__aint_mul`) — a raw `i64.mul` would WRAP silently. The VM
+/// keeps full ℤ; an equal wasm-gc result proves the analysis bounded the
+/// nested-field read correctly and did NOT emit a wrapping native op.
+#[test]
+fn nested_carrier_field_wide_bound_mul_stays_boxed_match_vm() {
+    let src = r#"module M
+    intent = "nested carrier-field wide-bound multiply overflow"
+    effects [Console]
+
+record Wide
+    value: Int
+
+record Holder
+    c: Wide
+
+fn fromWide(n: Int) -> Result<Wide, String>
+    match Bool.and(n >= 0, n <= 1099511627776)
+        true  -> Result.Ok(Wide(value = n))
+        false -> Result.Err("oob")
+
+fn unwrap(r: Result<Wide, String>) -> Wide
+    match r
+        Result.Ok(c)  -> c
+        Result.Err(_) -> Wide(value = 0)
+
+fn wide(n: Int) -> Wide
+    unwrap(fromWide(n))
+
+fn square(h: Holder) -> Int
+    h.c.value * h.c.value
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{square(Holder(c = wide(1099511627776)))}")
+"#;
+    // (2^40)^2 = 2^80, far beyond i64::MAX. The nested-field `.value` reads carry
+    // the [0, 2^40] bound, so the fixpoint demotes the multiply to boxed and the
+    // VM's exact bignum is reproduced.
+    let out = assert_vm_wasm_identical("nested-field-wide-overflow", src);
+    assert_eq!(out, "1208925819614629174706176");
+}
+
+/// SIZE PROOF for the record-threaded win: a snake-shaped GameState whose
+/// coords + score are bounded opaque carriers held in a record, with native
+/// nested-field arithmetic across moves. With the carrier path ON (default)
+/// the `.value` reads are raw i64 and the add/sub/mul/cmp run native, so the
+/// boxed `$AverInt` arithmetic prelude DCEs; with it OFF (`AVER_NO_CARRIER_I64=1`)
+/// each read lifts through the project bridge into a boxed limb-op. The ON
+/// build must be NO LARGER than the boxed baseline (and strictly smaller here,
+/// since the boxed-arith helpers are no longer reachable). VM == wasm-gc both
+/// ways is covered by `assert_vm_wasm_identical`; this test reports the bytes.
+#[test]
+fn nested_carrier_field_snake_size_drops_vs_boxed() {
+    let src = r#"module M
+    intent = "record-threaded snake size: native carrier-field arithmetic"
+    effects [Console]
+
+record Coord
+    value: Int
+
+record GameState
+    x: Coord
+    y: Coord
+    dx: Coord
+    dy: Coord
+    score: Coord
+
+fn coordOf(n: Int) -> Result<Coord, String>
+    match Bool.and(n >= 0, n <= 1000)
+        true  -> Result.Ok(Coord(value = n))
+        false -> Result.Err("oob")
+
+fn unwrap(r: Result<Coord, String>) -> Coord
+    match r
+        Result.Ok(c)  -> c
+        Result.Err(_) -> Coord(value = 0)
+
+fn coord(n: Int) -> Coord
+    unwrap(coordOf(n))
+
+fn nextX(s: GameState) -> Int
+    s.x.value + s.dx.value
+
+fn nextY(s: GameState) -> Int
+    s.y.value + s.dy.value
+
+fn manhattan(s: GameState, fx: Coord, fy: Coord) -> Int
+    (fx.value - s.x.value) + (fy.value - s.y.value)
+
+fn areaScaled(s: GameState) -> Int
+    s.x.value * s.dx.value
+
+fn atFood(s: GameState, fx: Coord, fy: Coord) -> Bool
+    Bool.and(s.x.value == fx.value, s.y.value == fy.value)
+
+fn aheadOf(s: GameState, fx: Coord) -> Bool
+    s.x.value < fx.value
+
+fn bumpScore(s: GameState) -> Int
+    s.score.value + 1
+
+fn main() -> Unit
+    ! [Console.print]
+    s = GameState(x = coord(5), y = coord(7), dx = coord(1), dy = coord(2), score = coord(3))
+    fx = coord(8)
+    fy = coord(7)
+    Console.print("{nextX(s)} {nextY(s)} {manhattan(s, fx, fy)} {areaScaled(s)} {atFood(s, fx, fy)} {aheadOf(s, fx)} {bumpScore(s)}")
+"#;
+    // Behavior is identical both ways (representation-only erasure).
+    let out = assert_vm_wasm_identical("nested-snake-size", src);
+    assert_eq!(out, "6 9 3 5 false true 4");
+    assert_carrier_revert_agrees("nested-snake-size", src, &out);
+
+    let on = compile_wasm_bytes("nested-snake-on", src, false);
+    let off = compile_wasm_bytes("nested-snake-off", src, true);
+    assert!(
+        on.len() <= off.len(),
+        "record-threaded carrier-i64 must not GROW the module — native nested-field \
+         arithmetic should DCE the boxed arith prelude. carrier-ON={} bytes, \
+         carrier-OFF(boxed)={} bytes",
+        on.len(),
+        off.len(),
+    );
+    // The boxed `$AverInt` arithmetic helpers (`__aint_add` / `__aint_mul` /
+    // `__aint_sub`) must be UNREACHABLE in the carrier-ON build — every nested
+    // read went native. The WAT-token probe tolerates `wasm-tools` being absent
+    // (both counts 0 ⇒ the assertion is vacuous). With it present the carrier-ON
+    // boxed-arith footprint must sit STRICTLY below the boxed baseline.
+    let on_boxed_arith = carrier_boxed_arith_token_count("nested-snake-on-wat", src, false);
+    let off_boxed_arith = carrier_boxed_arith_token_count("nested-snake-off-wat", src, true);
+    if off_boxed_arith > 0 {
+        assert!(
+            on_boxed_arith < off_boxed_arith,
+            "the carrier-ON build must reach FEWER boxed-arith helpers than the boxed \
+             baseline (the native nested-field path DCEs them): ON={on_boxed_arith}, \
+             OFF={off_boxed_arith}",
+        );
+    }
+}
+
+/// Count `call $__aint_{add,sub,mul}` tokens in the WAT disassembly of
+/// `source`'s wasm-gc output — a probe for how much BOXED Int arithmetic
+/// survives. `no_carrier` forces the all-`$aint` baseline. Returns 0 (vacuous)
+/// when `wasm-tools` is absent.
+fn carrier_boxed_arith_token_count(prefix: &str, source: &str, no_carrier: bool) -> usize {
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = temp_module(prefix, source);
+    let out_dir = path.parent().expect("temp module has parent").join("out");
+    let mut cmd = Command::new(aver_bin);
+    cmd.current_dir(&repo_root)
+        .arg("compile")
+        .arg(&path)
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("-o")
+        .arg(&out_dir);
+    if no_carrier {
+        cmd.env("AVER_NO_CARRIER_I64", "1");
+    }
+    let out = cmd.output().expect("aver compile executes");
+    assert!(
+        out.status.success(),
+        "{prefix}: wasm-gc compile failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let wat = wasm_tools_print(&out_dir.join("main.wasm"));
+    cleanup(&path);
+    wat.match_indices("__aint_add").count()
+        + wat.match_indices("__aint_sub").count()
+        + wat.match_indices("__aint_mul").count()
+}
+
+// ---------------------------------------------------------------------------
 // BARE-i64 carrier RESULT → `$AverInt`-typed SINK boundaries.
 //
 // A native-`i64` carrier-arithmetic result (a `bare_return` fn whose body is
