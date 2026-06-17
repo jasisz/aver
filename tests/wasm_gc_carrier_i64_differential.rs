@@ -416,6 +416,237 @@ fn main() -> Unit
     );
 }
 
+// ---------------------------------------------------------------------------
+// Carrier ARITHMETIC differentials (the raw-i64 carrier path,
+// `CARRIER_BARE_ELIGIBLE == true`). A bare carrier's `.value` reads a native
+// `i64` and arithmetic over it runs as `i64.add/sub/mul` WHERE the interval
+// fixpoint proves the result fits `i64`; an operation that could leave `i64`
+// stays boxed (the project bridge runs, full `$aint` precision). The VM (full
+// ℤ) is the oracle: any divergence is a silent wrap.
+
+/// Carrier + carrier and carrier * literal: both run as native `i64` ops over
+/// a `[0,100]` carrier (the products fit `i64`). VM == wasm-gc.
+#[test]
+fn carrier_arith_add_and_mul_literal_match_vm() {
+    let src = r#"module M
+    intent = "carrier-i64 add + mul-literal arithmetic"
+    effects [Console]
+
+record IntRange
+    value: Int
+
+fn fromInt(n: Int) -> Result<IntRange, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(IntRange(value = n))
+        false -> Result.Err("oob")
+
+fn unwrap(r: Result<IntRange, String>) -> IntRange
+    match r
+        Result.Ok(c)  -> c
+        Result.Err(_) -> IntRange(value = 0)
+
+fn ir(n: Int) -> IntRange
+    unwrap(fromInt(n))
+
+fn sumPair(a: IntRange, b: IntRange) -> Int
+    a.value + b.value
+
+fn timesTen(c: IntRange) -> Int
+    c.value * 10
+
+fn doubled(c: IntRange) -> Int
+    c.value + c.value
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{sumPair(ir(30), ir(12))} {timesTen(ir(7))} {doubled(ir(20))}")
+"#;
+    let out = assert_vm_wasm_identical("carrier-arith-add-mul", src);
+    assert_eq!(out, "42 70 40");
+    assert_carrier_revert_agrees("carrier-arith-add-mul", src, &out);
+}
+
+/// Carrier COMPARISON `<` and `==`: a bare carrier's `.value` compares as a
+/// raw `i64.lt_s` / `i64.eq`. VM == wasm-gc.
+#[test]
+fn carrier_value_comparison_match_vm() {
+    let src = r#"module M
+    intent = "carrier-i64 value comparison"
+    effects [Console]
+
+record IntRange
+    value: Int
+
+fn fromInt(n: Int) -> Result<IntRange, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(IntRange(value = n))
+        false -> Result.Err("oob")
+
+fn unwrap(r: Result<IntRange, String>) -> IntRange
+    match r
+        Result.Ok(c)  -> c
+        Result.Err(_) -> IntRange(value = 0)
+
+fn ir(n: Int) -> IntRange
+    unwrap(fromInt(n))
+
+fn less(a: IntRange, b: IntRange) -> Bool
+    a.value < b.value
+
+fn eq(a: IntRange, b: IntRange) -> Bool
+    a.value == b.value
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{less(ir(3), ir(7))} {less(ir(7), ir(3))} {eq(ir(5), ir(5))} {eq(ir(5), ir(6))}")
+"#;
+    let out = assert_vm_wasm_identical("carrier-cmp", src);
+    assert_eq!(out, "true false true false");
+    assert_carrier_revert_agrees("carrier-cmp", src, &out);
+}
+
+/// MIXED-representation carrier comparison + arithmetic — the load-bearing
+/// snake shape. `s.x.value` reads a carrier FIELD (`Project(Project(..))`, a
+/// boxed `$AverInt` via the project bridge) while `fx.value` reads a bare
+/// carrier PARAM's `.value` (a raw i64). Comparing / subtracting one against
+/// the other must coerce both to the same representation (box the raw side) —
+/// without the fix, codegen compared an i64 against an `$AverInt` ref, a wasm
+/// validation error. VM == wasm-gc.
+#[test]
+fn carrier_mixed_field_and_param_value_match_vm() {
+    let src = r#"module M
+    intent = "carrier-i64 mixed field/param value comparison + subtraction"
+    effects [Console]
+
+record Coord
+    value: Int
+
+record State
+    x: Coord
+    y: Coord
+
+fn coordOf(n: Int) -> Result<Coord, String>
+    match Bool.and(n >= 0, n <= 1000)
+        true  -> Result.Ok(Coord(value = n))
+        false -> Result.Err("oob")
+
+fn unwrap(r: Result<Coord, String>) -> Coord
+    match r
+        Result.Ok(c)  -> c
+        Result.Err(_) -> Coord(value = 0)
+
+fn coord(n: Int) -> Coord
+    unwrap(coordOf(n))
+
+fn atFood(s: State, fx: Coord, fy: Coord) -> Bool
+    Bool.and(s.x.value == fx.value, s.y.value == fy.value)
+
+fn manhattan(s: State, fx: Coord, fy: Coord) -> Int
+    (fx.value - s.x.value) + (fy.value - s.y.value)
+
+fn main() -> Unit
+    ! [Console.print]
+    s = State(x = coord(5), y = coord(5))
+    fx = coord(8)
+    fy = coord(5)
+    Console.print("{atFood(s, fx, fy)} {atFood(s, coord(5), coord(5))} {manhattan(s, fx, fy)}")
+"#;
+    let out = assert_vm_wasm_identical("carrier-mixed", src);
+    assert_eq!(out, "false true 3");
+    assert_carrier_revert_agrees("carrier-mixed", src, &out);
+}
+
+/// Carrier as a RECORD FIELD with arithmetic on the projected value, plus the
+/// SNAKE pattern — a record-update increment `score = state.score + 1` where
+/// `score` is a bounded carrier field. The `state.score.value + 1` runs as a
+/// native `i64.add` and the result is rewrapped into a fresh carrier field via
+/// the construct bridge. VM == wasm-gc.
+#[test]
+fn carrier_record_field_arithmetic_and_snake_pattern_match_vm() {
+    let src = r#"module M
+    intent = "carrier-i64 record field arithmetic + snake score increment"
+    effects [Console]
+
+record Coord
+    value: Int
+
+record State
+    score: Coord
+    x: Coord
+
+fn fromCoord(n: Int) -> Result<Coord, String>
+    match Bool.and(n >= 0, n <= 1000)
+        true  -> Result.Ok(Coord(value = n))
+        false -> Result.Err("oob")
+
+fn unwrap(r: Result<Coord, String>) -> Coord
+    match r
+        Result.Ok(c)  -> c
+        Result.Err(_) -> Coord(value = 0)
+
+fn coord(n: Int) -> Coord
+    unwrap(fromCoord(n))
+
+fn bump(s: State) -> State
+    State(score = coord(s.score.value + 1), x = s.x)
+
+fn readScore(s: State) -> Int
+    s.score.value
+
+fn readX(s: State) -> Int
+    s.x.value
+
+fn main() -> Unit
+    ! [Console.print]
+    s = State(score = coord(41), x = coord(7))
+    s2 = bump(s)
+    Console.print("{readScore(s2)} {readX(s2)} {readScore(s)}")
+"#;
+    let out = assert_vm_wasm_identical("carrier-record-snake", src);
+    assert_eq!(out, "42 7 41");
+}
+
+/// WIDE-BOUND OVERFLOW (the load-bearing C0 soundness probe). A carrier
+/// bounded `0..2^40` doing `c.value * c.value` = up to `2^80`, which OVERFLOWS
+/// `i64`. The interval fixpoint must DEMOTE the multiply to boxed (the project
+/// bridge runs, the `*` is the full-precision `__aint_mul`) — a raw `i64.mul`
+/// would WRAP silently. The VM keeps full ℤ; an equal wasm-gc result proves
+/// the analysis did NOT emit a wrapping native op for an out-of-`i64` op.
+#[test]
+fn carrier_wide_bound_mul_overflow_stays_boxed_match_vm() {
+    let src = r#"module M
+    intent = "carrier-i64 wide-bound multiply overflow"
+    effects [Console]
+
+record Wide
+    value: Int
+
+fn fromWide(n: Int) -> Result<Wide, String>
+    match Bool.and(n >= 0, n <= 1099511627776)
+        true  -> Result.Ok(Wide(value = n))
+        false -> Result.Err("oob")
+
+fn unwrap(r: Result<Wide, String>) -> Wide
+    match r
+        Result.Ok(c)  -> c
+        Result.Err(_) -> Wide(value = 0)
+
+fn wide(n: Int) -> Wide
+    unwrap(fromWide(n))
+
+fn square(c: Wide) -> Int
+    c.value * c.value
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{square(wide(1099511627776))}")
+"#;
+    // 2^40 = 1099511627776; (2^40)^2 = 2^80, far beyond i64::MAX. The VM
+    // computes the exact bignum; wasm-gc must match (stayed boxed, no wrap).
+    let out = assert_vm_wasm_identical("carrier-wide-overflow", src);
+    assert_eq!(out, "1208925819614629174706176");
+}
+
 /// Compile `source` to a wasm-gc `.wasm` and return its bytes. `no_carrier`
 /// forces the all-`$aint` baseline via `AVER_NO_CARRIER_I64=1`.
 fn compile_wasm_bytes(prefix: &str, source: &str, no_carrier: bool) -> Vec<u8> {

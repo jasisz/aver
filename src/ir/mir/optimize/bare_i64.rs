@@ -86,7 +86,7 @@ pub type CarrierIntervals = HashMap<String, (Interval, bool)>;
 /// integration below are all LIVE and tested; flipping this `const` to
 /// `true` (after the body-emit bridge lands) turns the slice on with no
 /// other change to this file.
-const CARRIER_BARE_ELIGIBLE: bool = false;
+const CARRIER_BARE_ELIGIBLE: bool = true;
 
 fn carrier_interval(ty: &str, carrier: &CarrierIntervals) -> Option<Interval> {
     if !CARRIER_BARE_ELIGIBLE {
@@ -171,6 +171,16 @@ pub struct FnBareFacts {
     pub bare_params: Vec<bool>,
     /// `true` ⟺ the fn's return type is emitted as a bare `i64`.
     pub bare_return: bool,
+    /// ETAP-2 carrier-`i64` (wasm-gc only): slots holding a bare carrier
+    /// value (an eligible refinement-via-opaque carrier whose wasm storage IS
+    /// a native `i64`) mapped to the carrier's PROVEN `fits_i64` interval.
+    /// A `Project(Local(slot), "value")` over such a slot reads the i64
+    /// directly (no `$AverInt` project bridge) and contributes the carrier's
+    /// interval to the surrounding arithmetic, so `c.value + c.value` over a
+    /// `[0,100]` carrier stays in the OverflowFree band. EMPTY on the Rust
+    /// backend (it keeps the carrier struct) and whenever no eligible carrier
+    /// is in scope — the byte-identical default.
+    pub carrier_slots: HashMap<LocalId, Interval>,
 }
 
 impl FnBareFacts {
@@ -193,6 +203,29 @@ impl FnBareFacts {
             return None;
         }
         fact.interval
+    }
+
+    /// ETAP-2 carrier-`i64`: the proven interval of a `Project(Local(slot),
+    /// _)` whose base `slot` holds a BARE carrier (wasm storage IS i64). The
+    /// `.value` read is a native i64 carrying the carrier's smart-constructor
+    /// bound, so it is a bare leaf for the surrounding arithmetic. `None` for
+    /// any non-carrier base — the conservative decline (boxed `$AverInt`
+    /// project bridge).
+    pub fn carrier_project_interval(&self, e: &MirExpr) -> Option<Interval> {
+        let MirExpr::Project(p) = e else {
+            return None;
+        };
+        let MirExpr::Local(local) = &p.node.base.node else {
+            return None;
+        };
+        self.carrier_slots.get(&local.node.slot).copied()
+    }
+
+    /// ETAP-2 carrier-`i64`: does `e` read a bare carrier's i64 `.value`
+    /// (`Project(Local(bare_carrier_slot), _)`)? Such a read renders raw i64
+    /// on wasm-gc (the project bridge is skipped), so it is a bare leaf.
+    pub fn is_carrier_project(&self, e: &MirExpr) -> bool {
+        self.carrier_project_interval(e).is_some()
     }
 
     /// Compute the result interval of an EXPRESSION TREE built only from
@@ -221,6 +254,9 @@ impl FnBareFacts {
                 _ => None,
             },
             MirExpr::Local(local) => self.bare_slot_interval(local.node.slot),
+            // ETAP-2 carrier-`i64`: a bare carrier's `.value` is a native i64
+            // leaf carrying the carrier's proven bound.
+            MirExpr::Project(_) => self.carrier_project_interval(e),
             MirExpr::Neg(inner) => {
                 let r = Interval::point(0).sub(self.bare_expr_interval(&inner.node)?);
                 r.fits_i64().then_some(r)
@@ -258,6 +294,8 @@ impl FnBareFacts {
             // `{N}i64` constant on a bare path the analysis already gated).
             MirExpr::Literal(l) => matches!(l.node, Literal::Int(_)),
             MirExpr::Local(local) => self.is_bare(local.node.slot),
+            // ETAP-2 carrier-`i64`: a bare carrier's `.value` reads raw i64.
+            MirExpr::Project(_) => self.is_carrier_project(e),
             // A compound: require the WHOLE-TREE result interval to fit i64.
             MirExpr::Neg(_) | MirExpr::BinOp(_) => self.bare_expr_interval(e).is_some_and(|iv| {
                 raw_i64_eligible(Some(iv), std::iter::once(&OpClass::OverflowFree))
@@ -1150,7 +1188,11 @@ fn caller_env(f: &MirFn, cells: &[Interval], floors: &[Interval]) -> HashMap<Loc
 /// intermediate widens the counter out of `i64` ⇒ `!fits_i64` ⇒ boxed.
 fn eval_interval_pub(e: &MirExpr, env: &HashMap<LocalId, Interval>) -> Interval {
     let mut worst = Interval::point(0);
-    let iv = eval_interval(e, env, &mut worst);
+    // The recurrence back-edge args are `counter - step` over Int counters; a
+    // carrier `.value` projection never appears here, so the carrier-slot map
+    // is empty (a `Project` evaluates to `unbounded()`, the safe decline).
+    let no_carriers: HashMap<LocalId, Interval> = HashMap::new();
+    let iv = eval_interval(e, env, &mut worst, &no_carriers);
     worst.hull(iv)
 }
 
@@ -1619,30 +1661,44 @@ fn analyze_fn(f: &MirFn, summary: &Summary, carrier: &CarrierIntervals) -> FnBar
     //    falls back to the full-`i64` line (still sound — bare ⟹ confined to
     //    `i64` by construction); a boxed param is unbounded.
     //
-    //    ETAP-2 SLICE 0+1 — carrier params. A param whose annotated type is a
-    //    refinement-via-opaque carrier (`carrier_interval(&p.ty, carrier)` is
-    //    `Some`) is bare-eligible from its PROVEN smart-constructor bound,
-    //    INDEPENDENT of the recurrence rule that drives `summary.param_bare`
-    //    (a carrier param isn't Int-typed, so the cross-frame summary never
-    //    flags it). The carrier bound is sound by construction: the type is
-    //    opaque + the only constructor is the guarded smart constructor, so
-    //    every inhabitant provably lies in the interval. The eligibility is
-    //    not final here — the combine (step 4) still gates on `!escapes`, and
-    //    the signature `bare_params[i]` is set FROM that combine result below
-    //    (so a carrier stored into a record / Map / stringified — i.e. one
-    //    that escapes — keeps a boxed signature, the slice-2 boundary).
+    //    ETAP-2 carrier-`i64` — carrier params (wasm-gc only). A param whose
+    //    annotated type is a refinement-via-opaque carrier
+    //    (`carrier_interval(&p.ty, carrier)` is `Some`) has its wasm storage
+    //    ALREADY erased to a native `i64` (the registry's `eligible_carriers`
+    //    set, applied uniformly by `aver_to_wasm`), INDEPENDENT of this Int-
+    //    bareness analysis. So a carrier param is NOT an Int-bare slot — the
+    //    value `c` is the carrier (a record), never a raw Int operand — and we
+    //    deliberately do NOT mark it `bare_params` / `Repr::Bare`: a carrier
+    //    value flows to a carrier param with NO conversion (both are i64), so
+    //    flagging it bare would make the call site spuriously `Unbox` the i64.
+    //    What the carrier param DOES enable is a raw `.value` read: a
+    //    `Project(Local(carrier_slot), "value")` reads the i64 directly (no
+    //    `$AverInt` project bridge) and contributes the carrier's PROVEN bound
+    //    to the surrounding arithmetic. We record that bound in `carrier_slots`
+    //    so `bare_expr_interval` / `expr_is_bare_i64` treat the `.value` read
+    //    as a bare leaf — `c.value + c.value` over a `[0,100]` carrier then
+    //    stays OverflowFree, while `c.value * c.value` over a `[0,2^40]`
+    //    carrier overflows i64 and the compound declines (boxed) — the C0
+    //    soundness gate is the SAME interval fixpoint, just with a carrier-
+    //    projection leaf source. The bound is sound by construction: the type
+    //    is opaque + the only constructor is the guarded smart constructor, so
+    //    every inhabitant provably lies in the interval.
     let mut intervals: HashMap<LocalId, Interval> = HashMap::new();
     let mut bare_params = vec![false; f.params.len()];
-    let mut carrier_params = vec![false; f.params.len()];
+    let mut carrier_slots: HashMap<LocalId, Interval> = HashMap::new();
     for (i, p) in f.params.iter().enumerate() {
         let recurrence_bare = summary.param_bare(f.fn_id, i);
-        let carrier_iv = carrier_interval(&p.ty, carrier);
-        carrier_params[i] = carrier_iv.is_some();
         bare_params[i] = recurrence_bare;
-        let iv = if let Some(cv) = carrier_iv {
-            // Carrier param: seed from its proven (fits_i64) bound.
-            cv
-        } else if recurrence_bare {
+        if let Some(cv) = carrier_interval(&p.ty, carrier) {
+            // Carrier param: its `.value` reads raw i64 with this proven bound.
+            // The param value `c` itself stays a (boxed/struct) carrier slot —
+            // not an Int-bare slot — so its `intervals` entry is unbounded
+            // (it is never an arithmetic operand directly).
+            carrier_slots.insert(p.local, cv);
+            intervals.insert(p.local, Interval::unbounded());
+            continue;
+        }
+        let iv = if recurrence_bare {
             summary
                 .param_interval(f.fn_id, i)
                 .filter(|iv| iv.fits_i64())
@@ -1652,11 +1708,21 @@ fn analyze_fn(f: &MirFn, summary: &Summary, carrier: &CarrierIntervals) -> FnBar
         };
         intervals.insert(p.local, iv);
     }
+    // Record the carrier-projection facts on the result so the rewrite + emit
+    // can recognize a bare carrier's `.value` read. (Set before the combine so
+    // `tail_value_is_bare` / `expr_is_bare_i64` see them via `&facts`.)
+    facts.carrier_slots = carrier_slots;
 
     // 2. Walk the body's `Let` chain, deriving an interval (+ worst-join
-    //    op class) for each bound slot.
+    //    op class) for each bound slot. The carrier-projection facts let the
+    //    walk read a bare carrier's `.value` as its proven i64 interval.
     let mut op_classes: HashMap<LocalId, OpClass> = HashMap::new();
-    walk_let_chain(&f.body.node, &mut intervals, &mut op_classes);
+    walk_let_chain(
+        &f.body.node,
+        &mut intervals,
+        &mut op_classes,
+        &facts.carrier_slots,
+    );
 
     // 3. Escape: a single use-flow scan. A slot escapes if any use-site is
     //    a general-Int context.
@@ -1689,11 +1755,12 @@ fn analyze_fn(f: &MirFn, summary: &Summary, carrier: &CarrierIntervals) -> FnBar
     // Params absent from the Let walk still get a fact (their seed). Every
     // param is in `intervals`, so the combine above already inserted its
     // value fact — this `or_insert_with` is a backstop for any param the
-    // combine somehow skipped. A carrier param is bare iff its proven bound
-    // made it eligible (it was seeded into `intervals`, so the combine
-    // covered it); the recurrence path keeps its `summary` seed.
+    // combine somehow skipped. The recurrence path keeps its `summary` seed;
+    // a carrier param is NOT Int-bare (its `intervals` entry is unbounded), so
+    // the backstop boxes it — the value `c` is a carrier slot, only its
+    // `.value` read goes raw (via `carrier_slots`).
     for (i, p) in f.params.iter().enumerate() {
-        let seeded_bare = summary.param_bare(f.fn_id, i) || carrier_params[i];
+        let seeded_bare = summary.param_bare(f.fn_id, i);
         facts.values.entry(p.local).or_insert_with(|| {
             if seeded_bare {
                 ValueFact {
@@ -1707,21 +1774,6 @@ fn analyze_fn(f: &MirFn, summary: &Summary, carrier: &CarrierIntervals) -> FnBar
             }
         });
     }
-
-    // Couple each CARRIER param's signature bit to the combine result: a
-    // carrier param is bare in the signature ONLY when its value repr came
-    // out `Bare` (proven bound `fits_i64`, OverflowFree ops, and — crucially
-    // — it does NOT escape into an aggregate / Map / stringify). This is the
-    // in-fn analogue of `compute_summary`'s condition B2 for Int counters:
-    // the signature never disagrees with the body repr, so wasm-gc/Rust
-    // never emit an `i64` param the body reads through an `$aint`/`AverInt`
-    // method. A non-carrier param keeps its recurrence-derived `bare_params`
-    // bit untouched.
-    for (i, p) in f.params.iter().enumerate() {
-        if carrier_params[i] {
-            bare_params[i] = facts.values.get(&p.local).is_some_and(|v| v.is_bare());
-        }
-    }
     facts.bare_params = bare_params;
 
     // 5. Return: bare iff the summary says so AND the body's tail value is
@@ -1734,22 +1786,25 @@ fn analyze_fn(f: &MirFn, summary: &Summary, carrier: &CarrierIntervals) -> FnBar
 
 /// Walk the `Let` chain, recording each bound slot's interval and worst-
 /// join op class. `env` holds param + already-bound intervals and is grown
-/// in place; branches recurse so nested bindings are seen.
+/// in place; branches recurse so nested bindings are seen. `carrier_slots`
+/// lets a bare carrier's `.value` read (`Project`) contribute its proven
+/// interval to an arithmetic binding.
 fn walk_let_chain(
     e: &MirExpr,
     env: &mut HashMap<LocalId, Interval>,
     op_classes: &mut HashMap<LocalId, OpClass>,
+    carrier_slots: &HashMap<LocalId, Interval>,
 ) {
     match e {
         MirExpr::Let(l) => {
             let mut worst = Interval::point(0);
-            let iv = eval_interval(&l.node.value.node, env, &mut worst);
+            let iv = eval_interval(&l.node.value.node, env, &mut worst, carrier_slots);
             env.insert(l.node.binding, iv);
             // The binding's op class is the worst-join over its value
             // expression (so a transient out-of-i64 intermediate demotes).
             op_classes.insert(l.node.binding, OpClass::of_interval(worst.hull(iv)));
-            walk_let_chain(&l.node.value.node, env, op_classes);
-            walk_let_chain(&l.node.body.node, env, op_classes);
+            walk_let_chain(&l.node.value.node, env, op_classes, carrier_slots);
+            walk_let_chain(&l.node.body.node, env, op_classes, carrier_slots);
         }
         // A `match subject { y -> … }` Ident-binding arm ALIASES the subject:
         // the binder `y` carries the subject's interval. Without this, a
@@ -1761,8 +1816,8 @@ fn walk_let_chain(
         // the current `env` (the subject is already in scope).
         MirExpr::Match(m) => {
             let mut worst = Interval::point(0);
-            let subj_iv = eval_interval(&m.node.subject.node, env, &mut worst);
-            walk_let_chain(&m.node.subject.node, env, op_classes);
+            let subj_iv = eval_interval(&m.node.subject.node, env, &mut worst, carrier_slots);
+            walk_let_chain(&m.node.subject.node, env, op_classes, carrier_slots);
             for arm in &m.node.arms {
                 if let MirPattern::Bind(slot, _) = &arm.pattern {
                     // Alias: the binder takes the subject's interval + op
@@ -1772,11 +1827,13 @@ fn walk_let_chain(
                         .entry(*slot)
                         .or_insert_with(|| OpClass::of_interval(subj_iv));
                 }
-                walk_let_chain(&arm.body.node, env, op_classes);
+                walk_let_chain(&arm.body.node, env, op_classes, carrier_slots);
             }
         }
         _ => {
-            visit_children(e, &mut |c| walk_let_chain(c, env, op_classes));
+            visit_children(e, &mut |c| {
+                walk_let_chain(c, env, op_classes, carrier_slots)
+            });
         }
     }
 }
@@ -1784,7 +1841,15 @@ fn walk_let_chain(
 /// Abstractly evaluate a MIR expression to its interval, joining each
 /// arithmetic node into `worst` (so a transient out-of-i64 intermediate
 /// demotes the binding). Unknown shapes evaluate to `unbounded()`.
-fn eval_interval(e: &MirExpr, env: &HashMap<LocalId, Interval>, worst: &mut Interval) -> Interval {
+/// `carrier_slots` maps a bare carrier slot to its proven `fits_i64` bound, so
+/// a `Project(Local(carrier_slot), _)` (`c.value`) evaluates to that bound
+/// rather than `unbounded()` — the carrier-projection leaf.
+fn eval_interval(
+    e: &MirExpr,
+    env: &HashMap<LocalId, Interval>,
+    worst: &mut Interval,
+    carrier_slots: &HashMap<LocalId, Interval>,
+) -> Interval {
     match e {
         MirExpr::Literal(l) => match l.node {
             Literal::Int(k) => Interval::point(k as i128),
@@ -1794,14 +1859,23 @@ fn eval_interval(e: &MirExpr, env: &HashMap<LocalId, Interval>, worst: &mut Inte
             .get(&local.node.slot)
             .copied()
             .unwrap_or_else(Interval::unbounded),
+        // ETAP-2 carrier-`i64`: `c.value` over a bare carrier slot reads the
+        // native i64 with the carrier's proven bound.
+        MirExpr::Project(p) => match &p.node.base.node {
+            MirExpr::Local(local) => carrier_slots
+                .get(&local.node.slot)
+                .copied()
+                .unwrap_or_else(Interval::unbounded),
+            _ => Interval::unbounded(),
+        },
         MirExpr::Neg(inner) => {
-            let r = Interval::point(0).sub(eval_interval(&inner.node, env, worst));
+            let r = Interval::point(0).sub(eval_interval(&inner.node, env, worst, carrier_slots));
             *worst = worst.hull(r);
             r
         }
         MirExpr::BinOp(b) => {
-            let l = eval_interval(&b.node.lhs.node, env, worst);
-            let r = eval_interval(&b.node.rhs.node, env, worst);
+            let l = eval_interval(&b.node.lhs.node, env, worst, carrier_slots);
+            let r = eval_interval(&b.node.rhs.node, env, worst, carrier_slots);
             let result = match b.node.op {
                 BinOp::Add => l.add(r),
                 BinOp::Sub => l.sub(r),
@@ -1996,6 +2070,9 @@ fn tail_value_is_bare(e: &MirExpr, facts: &FnBareFacts, escaping: &HashSet<Local
         MirExpr::BinOp(b) if matches!(b.node.op, BinOp::Add | BinOp::Sub | BinOp::Mul) => {
             facts.expr_is_bare_i64(e)
         }
+        // ETAP-2 carrier-`i64`: a tail `c.value` over a bare carrier reads raw
+        // i64, so the fn may return bare i64 (skip the project bridge).
+        MirExpr::Project(_) => facts.is_carrier_project(e),
         _ => false,
     }
 }
@@ -2261,16 +2338,18 @@ fn main() -> Int
     }
 
     #[test]
-    fn carrier_seam_gated_off_keeps_param_boxed() {
-        // SHIPPED-SAFE invariant: while the codegen body-emit bridge is not
-        // in place (`CARRIER_BARE_ELIGIBLE == false`), a carrier param stays
-        // BOXED even when the table holds its proven bound — so the analysis
-        // never desyncs a carrier slot from the (still-boxed) signature and
-        // wasm-gc / Rust output is byte-identical to pre-slice. This test
-        // pins the gate; flip the `const` (with the body bridge) to enable.
+    fn carrier_seam_enabled_records_carrier_projection_slots() {
+        // The carrier-`i64` arithmetic seam is ON (`CARRIER_BARE_ELIGIBLE ==
+        // true`). A carrier param is NOT marked an Int-bare param/slot — the
+        // value `c` is the carrier (i64 STORAGE, never a raw Int operand), so
+        // flagging it bare would make a call site spuriously `Unbox` it. What
+        // the seam DOES is record the carrier param's slot in `carrier_slots`
+        // (with its proven bound) so a `c.value` read renders raw i64. Pin
+        // both: param NOT Int-bare, slot recorded as a carrier-projection
+        // source with the `[0,100]` bound.
         assert!(
-            !CARRIER_BARE_ELIGIBLE,
-            "this test pins the shipped-off carrier seam"
+            CARRIER_BARE_ELIGIBLE,
+            "this test pins the enabled carrier-arithmetic seam"
         );
         let (program, facts) = carrier_facts(true);
         for name in ["toInt", "doubled"] {
@@ -2278,7 +2357,32 @@ fn main() -> Int
             let f = facts.for_fn(id).expect("carrier facts");
             assert!(
                 !f.param_is_bare(0),
-                "with the seam gated off, `{name}`'s carrier param stays boxed"
+                "`{name}`'s carrier param is NOT an Int-bare param (no spurious \
+                 Unbox at the call site)"
+            );
+            let pf = program.fn_by_id(id).expect("mir fn");
+            let carrier_slot = pf.params[0].local;
+            assert_eq!(
+                f.carrier_slots.get(&carrier_slot).copied(),
+                Some(Interval::between(0, 100)),
+                "`{name}`'s carrier param is a carrier-projection source with the \
+                 proven [0,100] bound"
+            );
+        }
+    }
+
+    #[test]
+    fn carrier_off_table_records_no_carrier_slots() {
+        // With the carrier table EMPTY (the Rust backend / no-eligible-carrier
+        // baseline), no carrier-projection slot is recorded — the byte-
+        // identical pre-slice behavior.
+        let (program, facts) = carrier_facts(false);
+        for name in ["toInt", "doubled"] {
+            let id = fn_id_by_name(&program, name);
+            let f = facts.for_fn(id).expect("carrier facts");
+            assert!(
+                f.carrier_slots.is_empty(),
+                "with the carrier table empty, `{name}` records no carrier slot"
             );
         }
     }
@@ -2451,7 +2555,8 @@ fn main() -> List<Int>
         }));
 
         let mut worst = Interval::point(0);
-        let result = eval_interval(&sub, &env, &mut worst);
+        let no_carriers: HashMap<LocalId, Interval> = HashMap::new();
+        let result = eval_interval(&sub, &env, &mut worst, &no_carriers);
         // The final value cancels back into [0, 10] (fits i64) …
         assert!(result.fits_i64(), "final value cancels back into range");
         // … but the worst-join saw the transient `n + i64::MAX` (out of i64),

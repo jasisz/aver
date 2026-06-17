@@ -59,9 +59,19 @@ use crate::ir::mir::{
 pub fn rewrite_for_rust(
     program: MirProgram,
     boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
-    carrier: &super::bare_i64::CarrierIntervals,
+    _carrier: &super::bare_i64::CarrierIntervals,
 ) -> MirProgram {
-    rewrite(program, boxed_signature_fns, carrier)
+    // ETAP-2 carrier-`i64` is a WASM-GC-ONLY size lever: the wasm-gc registry
+    // erases an eligible carrier's storage to a native `i64` everywhere, so a
+    // carrier value IS an i64 and `c.value` can stay raw. The RUST backend
+    // keeps the carrier as a real struct (`IntRange { value: AverInt }`), so a
+    // raw-i64 carrier path would emit invalid Rust (a `.to_i64()` on a struct,
+    // an `i64` where the field is `AverInt`). The Int-recurrence bareness
+    // (countdown / factorial counters) is target-agnostic and stays on for
+    // Rust; only the carrier-projection leaf is suppressed — pass an EMPTY
+    // carrier table so `carrier_interval` declines every carrier.
+    let empty = super::bare_i64::CarrierIntervals::new();
+    rewrite(program, boxed_signature_fns, &empty)
 }
 
 /// ETAP-2 SLICE 2b: the wasm-gc entry. Identical body to
@@ -198,10 +208,17 @@ fn rewrite_fn(
             bare_slots.insert(*slot);
         }
     }
+    // ETAP-2 carrier-`i64`: carry the bare-carrier slots so the wasm-gc emit
+    // reads `c.value` as a raw i64 (skip the project bridge). A boxed-signature
+    // fn (mutual-TCO member) gets an empty `facts`, so its `carrier_slots` is
+    // empty too — its carrier reads stay boxed, matching the pinned signature.
+    let carrier_slots: std::collections::HashSet<LocalId> =
+        facts.carrier_slots.keys().copied().collect();
     f.repr = MirFnRepr {
         bare_slots,
         bare_params: facts.bare_params.clone(),
         bare_return: facts.bare_return,
+        carrier_slots,
     };
 
     // 2. Insert boundary nodes. The body is in RETURN position: a bare
@@ -685,17 +702,29 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
                 b.node.rhs = std::boxed::Box::new(rewrite_boxed(rhs, ctx));
                 return Spanned::new(MirExpr::BinOp(b), line);
             }
-            // Comparison or non-Int op: a comparison between two raw
-            // operands stays raw (codegen emits `i64 == i64`); otherwise
-            // recurse as value positions.
+            // Comparison: a comparison between two raw operands stays raw
+            // (codegen emits `i64 == i64`); otherwise BOTH operands must be
+            // boxed `$AverInt` (the boxed comparison helper). The MIXED case
+            // is the carrier-arithmetic crux: `s.x.value == fx.value` reads a
+            // carrier FIELD (`Project(Project(..))`, a boxed `$AverInt`) on one
+            // side and a bare carrier PARAM's `.value` (raw i64) on the other.
+            // Without boxing the raw side, codegen would compare an i64 against
+            // an `$AverInt` ref — a wasm VALIDATION error. So if EITHER operand
+            // is boxed, route BOTH through `rewrite_boxed` (a no-op on an
+            // already-boxed operand, a `Box` on a raw one).
             if matches!(
                 op,
                 BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte
-            ) && renders_raw(&lhs.node, ctx.facts)
-                && renders_raw(&rhs.node, ctx.facts)
-            {
-                b.node.lhs = std::boxed::Box::new(rewrite_raw(lhs, ctx));
-                b.node.rhs = std::boxed::Box::new(rewrite_raw(rhs, ctx));
+            ) {
+                let both_raw =
+                    renders_raw(&lhs.node, ctx.facts) && renders_raw(&rhs.node, ctx.facts);
+                if both_raw {
+                    b.node.lhs = std::boxed::Box::new(rewrite_raw(lhs, ctx));
+                    b.node.rhs = std::boxed::Box::new(rewrite_raw(rhs, ctx));
+                } else {
+                    b.node.lhs = std::boxed::Box::new(rewrite_boxed(lhs, ctx));
+                    b.node.rhs = std::boxed::Box::new(rewrite_boxed(rhs, ctx));
+                }
                 return Spanned::new(MirExpr::BinOp(b), line);
             }
             b.node.lhs = std::boxed::Box::new(rewrite_value(lhs, ctx));

@@ -266,6 +266,20 @@ pub(super) fn emit_module_with(
                 proven.difference(&demoted).cloned().collect()
             }
         };
+    // ETAP-2 carrier-`i64`: the per-slot raw-i64 carrier ARITHMETIC path (the
+    // `bare_i64` analysis + rewrite) must key off the SAME carrier set the
+    // registry's STORAGE erasure uses — `eligible_carriers`, i.e. the proven
+    // bound MINUS the fail-closed demotions (Map-key / bare-ctor) AND empty
+    // under `AVER_NO_CARRIER_I64=1`. Otherwise the analysis would flag a
+    // `.value` read raw (skip the project bridge) for a carrier the registry
+    // kept as `$AverInt` storage — reading an i64 from an `$AverInt` slot,
+    // a wasm validation error. So restrict the carrier table to the eligible
+    // names before threading it into the rewrite.
+    let bare_carrier_intervals: crate::ir::mir::bare_i64::CarrierIntervals = carrier_intervals
+        .iter()
+        .filter(|(name, _)| eligible_carriers.contains(name.as_str()))
+        .map(|(name, iv)| (name.clone(), *iv))
+        .collect();
     registry.set_eligible_carriers(eligible_carriers);
 
     let mir_program: crate::ir::mir::MirProgram = {
@@ -288,16 +302,16 @@ pub(super) fn emit_module_with(
         // fragment never goes bare.
         let boxed =
             crate::ir::mir::optimize::bare_i64_rewrite::mutual_recursion_box_set(&optimized);
-        // The per-carrier-type bound (`carrier_intervals`, hoisted above)
-        // also seeds the MIR rewrite's optional per-slot raw-i64 path. That
-        // path is gated OFF in this slice (`CARRIER_BARE_ELIGIBLE == false`),
-        // so it is inert here; the carrier-`i64` size lever lives entirely in
-        // the registry's `eligible_carriers` set + the construct / project
-        // box-bridges.
+        // The eligible-carrier bound (`bare_carrier_intervals`) seeds the MIR
+        // rewrite's per-slot raw-i64 carrier path (`CARRIER_BARE_ELIGIBLE ==
+        // true`): a bare carrier's `.value` reads native i64 and arithmetic
+        // over it runs as `i64.add/sub/mul` where the interval fixpoint proves
+        // the result fits i64. Restricted to the registry's eligible set above,
+        // so the analysis never goes raw for a carrier the storage kept boxed.
         crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_wasm_gc(
             optimized,
             &boxed,
-            &carrier_intervals,
+            &bare_carrier_intervals,
         )
     };
 

@@ -558,6 +558,18 @@ impl<'a> EmitCtx<'a> {
         self.repr.slot_is_bare(crate::ir::mir::LocalId(slot))
     }
 
+    /// ETAP-2 carrier-`i64`: does wasm local `slot` hold a BARE carrier whose
+    /// `.value` projection reads a raw native `i64` (the registry already
+    /// erased the carrier storage to i64, and the `bare_i64` analysis proved
+    /// the read flows only into native arithmetic / a raw return)? When set,
+    /// the `Project` emit SKIPS the `$AverInt` project bridge and yields the
+    /// i64 directly. Default `false` for slots outside the rewritten repr —
+    /// fail-closed (the project bridge runs, the `.value` lifts to `$AverInt`).
+    pub(super) fn slot_is_bare_carrier(&self, slot: u32) -> bool {
+        self.repr
+            .slot_is_bare_carrier(crate::ir::mir::LocalId(slot))
+    }
+
     /// ETAP-2 SLICE 2b: is param index `i` of the CALLEE `target` bare?
     /// Read from the callee's `MirFn::repr` (every fn's repr lives on the
     /// rewritten program). Default `false` (boxed) when the program is
