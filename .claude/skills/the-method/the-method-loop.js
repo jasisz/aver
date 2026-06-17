@@ -3,7 +3,7 @@ export const meta = {
   description: 'The Method: an agent proposes helper lemmas -> aver tests -> Lean/Z3 judges -> refine, with an independent verify gate. Closes open Aver proof laws on any Aver project.',
   phases: [
     { title: 'Method', detail: 'one agent per open task: propose helper lemmas, test with aver, refine until Lean closes or budget out' },
-    { title: 'Verify', detail: "independent re-verify of each self-reported closure (fresh dir) — the proposer's own verdict is not trusted" },
+    { title: 'Verify', detail: "independent re-verify of each self-reported closure (fresh dir) — the proposer's own verdict is not trusted; on success the verified decomposition is PERSISTED to decomposed/ so it is recoverable, never re-guessed" },
   ],
 }
 
@@ -41,6 +41,10 @@ const RESULT_SCHEMA = {
 
 const FIND_AVER = 'Locate the aver binary: try ./target/release/aver, then ./target/debug/aver, then `aver` on PATH; if none exists, run `cargo build --bin aver` first.'
 const SAFETY = 'SAFETY: READ-ONLY on the project. Do ALL edits on COPIES under /tmp. Never run state-changing git commands and never modify project files.'
+// The verify gate is the ONE agent allowed a single project write: persisting the verified
+// decomposition to decomposed/ so wins are durable on disk during the run (not scraped from a
+// possibly-truncated result), and so re-runs replay instead of re-guessing.
+const VERIFY_SAFETY = 'SAFETY: do ALL proof/verification work on COPIES under /tmp. The ONLY project-file write you may make is creating/overwriting the single decomposed entry described below. Never run state-changing git commands; never touch any other project file.'
 
 const METHOD_PROMPT = (t) => `You ARE "The Method": close an OPEN Aver proof obligation by proposing auxiliary helper lemmas, testing them with the Aver toolchain, and refining on failure. You propose; the Lean kernel / Z3 judges.
 
@@ -68,10 +72,11 @@ Return: task="${t}"; closed (bool); attempts used; helperLaws = the WINNING set 
 // INDEPENDENT agent re-checks each claimed closure from scratch before we count it.
 const VERIFY_SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['verified', 'note'],
+  required: ['verified', 'note', 'persistedPath'],
   properties: {
     verified: { type: 'boolean', description: 'true ONLY if you yourself observed "universal":true with "sorries":0 on the augmented task' },
     note: { type: 'string', description: '1-2 sentences: observed universal/sorries values, or why it failed' },
+    persistedPath: { type: 'string', description: 'project-relative path of the decomposed/ entry you wrote and re-confirmed (empty string if verified=false or the persist step failed)' },
   },
 }
 
@@ -86,8 +91,13 @@ Steps:
 3. Run: <aver> proof <scratch> --discover -o <freshdir> ; then <aver> proof <scratch> --check --check-json --backend lean -o <freshdir>.
 4. verified = true ONLY if the check output contains "universal":true AND "sorries":0. Retry once on a transient lake error.
 5. Sanity: confirm the BASE task (no helpers) is still OPEN ("universal":true ABSENT).
-${SAFETY}
-Return: verified (bool), note.`
+6. PERSIST (only if verified) — make the win durable and recoverable so it is never re-guessed:
+   - Destination = the target path with its "/tip/" segment replaced by "/decomposed/" (e.g. proof-corpus/tip/prod/prop_38.av -> proof-corpus/decomposed/prod/prop_38.av; proof-corpus/tip/isaplanner/prop_76.av -> proof-corpus/decomposed/isaplanner/prop_76.av). If the path has no "/tip/" segment, use proof-corpus/decomposed/<basename>. Create parent dirs if needed.
+   - Convention (read one existing decomposed/ entry + its base to match it EXACTLY): the entry is the base file with the helper laws (and any helper "fn" definitions they introduce) spliced in BEFORE the target "verify ... law" block — same module name, same functions, nothing else changed.
+   - Write your verified augmented .av to that destination, then re-run the closing sequence ON THE WRITTEN FILE and confirm it still shows "universal":true,"sorries":0. Set persistedPath to that project-relative path.
+   - If verified=false, or the write or re-check fails, set persistedPath="".
+${VERIFY_SAFETY}
+Return: verified (bool), note, persistedPath.`
 
 phase('Method')
 // pipeline: each task is proposed, then (if self-reported closed) independently verified — no
@@ -99,7 +109,7 @@ const results = (await pipeline(
     if (!r) return { task: t, closed: false, verified: false, attempts: 0, helperLaws: [], finalError: 'agent died', summary: '' }
     if (!r.closed) return { ...r, verified: false }
     return agent(VERIFY_PROMPT(r.task, r.helperLaws), { label: `verify:${r.task}`, phase: 'Verify', schema: VERIFY_SCHEMA, agentType: 'general-purpose' })
-      .then((v) => ({ ...r, verified: !!(v && v.verified), verifyNote: v ? v.note : 'verifier died' }))
+      .then((v) => ({ ...r, verified: !!(v && v.verified), verifyNote: v ? v.note : 'verifier died', persistedPath: v ? (v.persistedPath || '') : '' }))
   },
 )).filter(Boolean)
 
@@ -109,11 +119,16 @@ for (const r of results) {
 }
 const verifiedClosed = results.filter((r) => r.closed && r.verified)
 const overReported = results.filter((r) => r.closed && !r.verified)
-log(`The Method: ${verifiedClosed.length}/${results.length} verified-closed${overReported.length ? ` (${overReported.length} self-reported but failed verification)` : ''}`)
+const persisted = verifiedClosed.filter((r) => r.persistedPath)
+log(`The Method: ${verifiedClosed.length}/${results.length} verified-closed${overReported.length ? ` (${overReported.length} self-reported but failed verification)` : ''}; ${persisted.length} persisted to decomposed/`)
+const notPersisted = verifiedClosed.filter((r) => !r.persistedPath)
+if (notPersisted.length) log(`WARNING: ${notPersisted.length} verified win(s) NOT persisted: ${notPersisted.map((r) => r.task).join(', ')}`)
 return {
   verifiedClosed: verifiedClosed.length,
   selfReported: results.filter((r) => r.closed).length,
   total: results.length,
-  winners: verifiedClosed.map((r) => ({ task: r.task, helperLaws: r.helperLaws })),
+  persistedCount: persisted.length,
+  persistedPaths: persisted.map((r) => r.persistedPath),
+  winners: verifiedClosed.map((r) => ({ task: r.task, helperLaws: r.helperLaws, persistedPath: r.persistedPath || '' })),
   results,
 }
