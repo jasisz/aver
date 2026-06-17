@@ -1053,10 +1053,11 @@ pub(crate) fn emit_mir_expr(
                 // native `i64.add` instead of two `__aint_from_i64` lifts plus
                 // a boxed limb-add.
                 let produced = emit_mir_expr(func, &proj.base, slots, ctx)?;
-                let bare_carrier_read = matches!(
-                    &proj.base.node,
-                    MirExpr::Local(local) if ctx.slot_is_bare_carrier(local.node.slot.0)
-                );
+                // The base renders a native `i64` (so the `.value` read is
+                // identity → raw i64, skip the project bridge) when it is a BARE
+                // carrier slot (#551) OR a NESTED carrier-field read (#550 erased
+                // the carrier field to i64, so the inner `struct.get` yields i64).
+                let bare_carrier_read = mir_base_renders_carrier_i64_raw(&proj.base, ctx);
                 if produced.is_some()
                     && ctx.registry.is_eligible_carrier(&record_name)
                     && !bare_carrier_read
@@ -1335,18 +1336,33 @@ fn mir_arith_leaves_raw_compatible(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
     }
 }
 
-/// ETAP-2 carrier-`i64`: is `e` a `Project(Local(bare_carrier_slot), _)`?
-/// Such a `.value` read renders as a raw native `i64` (the project bridge is
-/// skipped) — a genuine raw anchor like an `Unbox`.
+/// ETAP-2 carrier-`i64`: is `e` a `.value` `Project` whose BASE renders a
+/// native `i64` carrier value? Such a read renders as a raw native `i64` (the
+/// project bridge is skipped) — a genuine raw anchor like an `Unbox`. Two base
+/// shapes qualify, mirroring `FnBareFacts::carrier_project_interval`:
+///   - `Local(bare_carrier_slot)` — a bare carrier param/local (#551);
+///   - a NESTED carrier-field read — a `Project` whose result type is an
+///     eligible carrier (`rec.coord` in `rec.coord.value`); #550 erased that
+///     carrier field to a native `i64`, so the inner `struct.get` yields i64
+///     and the outer `.value` is identity.
 fn mir_is_bare_carrier_project(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
-    matches!(
-        e,
-        MirExpr::Project(p)
-            if matches!(
-                &p.node.base.node,
-                MirExpr::Local(local) if ctx.slot_is_bare_carrier(local.node.slot.0)
-            )
-    )
+    matches!(e, MirExpr::Project(p) if mir_base_renders_carrier_i64_raw(&p.node.base, ctx))
+}
+
+/// ETAP-2 carrier-`i64`: does `base` render a native `i64` carrier value (so a
+/// `.value` `Project` over it is identity → raw i64, skipping the project
+/// bridge)? True for a BARE carrier slot (`Local`, #551) or a NESTED
+/// carrier-field read (a `Project` whose stamped type is an eligible carrier,
+/// #550 erased the field to i64). Fail-closed: any other base is NOT a raw
+/// carrier read (the bridge runs, lifting the i64 to `$AverInt`).
+fn mir_base_renders_carrier_i64_raw(base: &Spanned<MirExpr>, ctx: &EmitCtx<'_>) -> bool {
+    match &base.node {
+        MirExpr::Local(local) => ctx.slot_is_bare_carrier(local.node.slot.0),
+        // A carrier-typed field read: its result type is the eligible carrier,
+        // which #550 stored as a native `i64`, so the field read yields i64.
+        MirExpr::Project(_) => ctx.registry.is_eligible_carrier(&aver_type_str_of(base)),
+        _ => false,
+    }
 }
 
 /// The `Add`/`Sub`/`Mul`/`Neg` tree `e` contains at least one genuine raw
@@ -1479,19 +1495,15 @@ pub(crate) fn emit_mir_int_raw(
         MirExpr::Unbox(_) | MirExpr::Call(_) | MirExpr::TailCall(_) => {
             emit_mir_expr(func, e, slots, ctx)
         }
-        // ETAP-2 carrier-`i64`: a `Project(Local(bare_carrier), "value")`
-        // reads the carrier's native i64 — the main emitter's `Project` arm
-        // skips the project bridge for a bare carrier slot, leaving the raw
-        // i64 on the stack. A non-bare-carrier `Project` reaching here would
-        // push an `$AverInt` (project bridge) where an i64 is expected, so
-        // guard: only delegate when the base is a bare carrier slot, else
-        // fall back (`Ok(None)`) — fail-closed.
-        MirExpr::Project(p) => {
-            let bare_carrier = matches!(
-                &p.node.base.node,
-                MirExpr::Local(local) if ctx.slot_is_bare_carrier(local.node.slot.0)
-            );
-            if bare_carrier {
+        // ETAP-2 carrier-`i64`: a `.value` `Project` over a native-i64 carrier
+        // base (a bare carrier slot, or a nested carrier-field read) reads the
+        // carrier's native i64 — the main emitter's `Project` arm skips the
+        // project bridge, leaving the raw i64 on the stack. Any other `Project`
+        // reaching here would push an `$AverInt` (project bridge) where an i64
+        // is expected, so guard on `mir_is_bare_carrier_project`, else fall back
+        // (`Ok(None)`) — fail-closed.
+        MirExpr::Project(_) => {
+            if mir_is_bare_carrier_project(&e.node, ctx) {
                 emit_mir_expr(func, e, slots, ctx)
             } else {
                 Ok(None)
