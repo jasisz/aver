@@ -1,0 +1,23 @@
+module Prop17
+    intent =
+        "TIP prod prop_17: rev(rev(x ++ y)) = rev(rev(x)) ++ rev(rev(y))."
+    effects []
+
+fn rev(x: List<Int>) -> List<Int>
+    match x
+        [] -> []
+        [y, ..xs] -> List.concat(rev(xs), [y])
+
+verify rev law revDist
+    given x: List<Int> = [[1], [1, 2], [1, 2, 3]]
+    given y: List<Int> = [[4], [4, 5], [4, 5, 6]]
+    rev(List.concat(x, y)) => List.concat(rev(y), rev(x))
+
+verify rev law revInvolution
+    given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    rev(rev(x)) => x
+
+verify rev law revRevAppend
+    given x: List<Int> = [[1], [1, 2, 3], [2]]
+    given y: List<Int> = [[2], [4, 5], [3]]
+    rev(rev(List.concat(x, y))) => List.concat(rev(rev(x)), rev(rev(y)))
