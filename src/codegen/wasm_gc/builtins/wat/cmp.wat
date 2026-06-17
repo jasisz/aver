@@ -1,6 +1,7 @@
 
         (module
           {decls}
+          {func_pad}
           (func (export "helper") (param $a (ref null $aint)) (param $b (ref null $aint)) (result i32)
             (local $am (ref null $mag)) (local $as_ i32)
             (local $bm (ref null $mag)) (local $bs i32)

@@ -214,6 +214,16 @@ pub(super) struct TypeRegistry {
     /// (`HttpResponse.status is out of range`), so an out-of-range status
     /// TRAPS here rather than saturating into a wrong in-range code.
     pub(super) aint_to_i64_checked_fn_idx: Option<u32>,
+    /// bignum size dedup — wasm fn indices of the shared sub-routines the
+    /// arithmetic helpers `call` instead of inlining a private copy. Recorded
+    /// by `module.rs` once `BuiltinRegistry::assign_slots` runs (the
+    /// sub-routines are registered BEFORE the helpers that call them, so the
+    /// indices are known when each helper's WAT is rendered). `Some` iff
+    /// `bignum`. `None` falls each helper back to the inlined body.
+    pub(super) aint_decompose_fn_idx: Option<u32>,
+    pub(super) aint_normalize_fn_idx: Option<u32>,
+    pub(super) aint_strip_fn_idx: Option<u32>,
+    pub(super) aint_umag_cmp_fn_idx: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -1032,6 +1042,10 @@ impl TypeRegistry {
             aint_hash_fn_idx: None,
             aint_from_i64_fn_idx: None,
             aint_to_i64_checked_fn_idx: None,
+            aint_decompose_fn_idx: None,
+            aint_normalize_fn_idx: None,
+            aint_strip_fn_idx: None,
+            aint_umag_cmp_fn_idx: None,
         }
     }
 
@@ -2078,6 +2092,19 @@ pub(super) fn aint_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcErro
         "Int reachable under bignum but no $AverInt type slot was allocated".into(),
     ))?;
     Ok(struct_ref(idx))
+}
+
+/// bignum size dedup — `(ref null $mag)` ValType for the 32-bit-limb
+/// magnitude array. The shared `__aint_decompose` / `__aint_normalize` /
+/// `__aint_strip` / `__aint_umag_cmp` sub-routines take/return it.
+pub(super) fn aint_mag_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
+    let idx = registry.aint_mag_array_idx.ok_or(WasmGcError::Validation(
+        "bignum shared sub-routine needs the $mag array slot, but it wasn't allocated".into(),
+    ))?;
+    Ok(ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(idx),
+    }))
 }
 
 /// ETAP-2 SLICE 2a: when a per-param / per-return bare bit is set AND the

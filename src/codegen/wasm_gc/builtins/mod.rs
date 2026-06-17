@@ -211,6 +211,26 @@ pub(super) enum BuiltinName {
     /// `AverInt::to_i64()`, which ERRORS rather than saturating an out-of-
     /// range effect arg. slice 4 (flip).
     AintToI64Checked,
+    // ── bignum shared sub-routines (size dedup) ─────────────────────────
+    // These were TEXT-INLINED into every arithmetic helper because
+    // `compile_wat_helper` lifted one fn and could not relocate inter-helper
+    // `call`s. The lifter now pads the standalone helper WAT with
+    // function-index placeholders so a `call <real-idx>` validates and its
+    // body bytes transfer verbatim — letting the arithmetic helpers `call`
+    // these ONCE-emitted sub-routines instead of carrying a private copy.
+    // Registered (and slotted) BEFORE the arithmetic helpers that call them,
+    // so their fn indices are known when those helpers' WAT is rendered.
+    /// `__aint_decompose(a) -> (mag, sign)` — split an `$AverInt` into a
+    /// non-null 32-bit-limb magnitude (leading zeros possible) + sign.
+    AintDecompose,
+    /// `__aint_normalize(rm, rs) -> $AverInt` — strip + demote-to-Small /
+    /// build-tight-Big a working magnitude into a canonical `$AverInt`.
+    AintNormalize,
+    /// `__aint_strip(arr) -> i32` — count of limbs after leading zeros.
+    AintStrip,
+    /// `__aint_umag_cmp(am, alen, bm, blen) -> i32` (-1/0/1) — unsigned
+    /// magnitude compare of two stripped limb arrays.
+    AintUmagCmp,
 }
 
 impl BuiltinName {
@@ -285,6 +305,10 @@ impl BuiltinName {
             Self::AintToIndex => "__aint_to_index",
             Self::AintToI64Sat => "__aint_to_i64_sat",
             Self::AintToI64Checked => "__aint_to_i64_checked",
+            Self::AintDecompose => "__aint_decompose",
+            Self::AintNormalize => "__aint_normalize",
+            Self::AintStrip => "__aint_strip",
+            Self::AintUmagCmp => "__aint_umag_cmp",
         }
     }
 
@@ -341,6 +365,16 @@ impl BuiltinName {
                 Ok(vec![aint_ref_ty(registry)?])
             }
             Self::AintFromF64 => Ok(vec![ValType::F64]),
+            // Shared bignum sub-routines.
+            Self::AintDecompose => Ok(vec![aint_ref_ty(registry)?]),
+            Self::AintNormalize => Ok(vec![mag_ref_ty(registry)?, ValType::I32]),
+            Self::AintStrip => Ok(vec![mag_ref_ty(registry)?]),
+            Self::AintUmagCmp => Ok(vec![
+                mag_ref_ty(registry)?,
+                ValType::I32,
+                mag_ref_ty(registry)?,
+                ValType::I32,
+            ]),
         }
     }
 
@@ -383,6 +417,11 @@ impl BuiltinName {
             }
             Self::AintToF64 => Ok(vec![ValType::F64]),
             Self::AintToI64Sat | Self::AintToI64Checked => Ok(vec![ValType::I64]),
+            // Shared bignum sub-routines.
+            Self::AintDecompose => Ok(vec![mag_ref_ty(registry)?, ValType::I32]),
+            Self::AintNormalize => Ok(vec![aint_ref_ty(registry)?]),
+            Self::AintStrip => Ok(vec![ValType::I32]),
+            Self::AintUmagCmp => Ok(vec![ValType::I32]),
         }
     }
 
@@ -438,6 +477,10 @@ impl BuiltinName {
             Self::AintToIndex => bignum::emit_aint_to_index(registry),
             Self::AintToI64Sat => bignum::emit_aint_to_i64_sat(registry),
             Self::AintToI64Checked => bignum::emit_aint_to_i64_checked(registry),
+            Self::AintDecompose => bignum::emit_aint_decompose(registry),
+            Self::AintNormalize => bignum::emit_aint_normalize(registry),
+            Self::AintStrip => bignum::emit_aint_strip(registry),
+            Self::AintUmagCmp => bignum::emit_aint_umag_cmp(registry),
         }
     }
 }
@@ -499,6 +542,11 @@ impl BuiltinRegistry {
 /// `(ref null $AverInt)` — bignum slice 1 carrier ref.
 fn aint_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
     super::types::aint_ref_ty(registry)
+}
+
+/// `(ref null $mag)` — shared bignum sub-routine limb-array ref.
+fn mag_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
+    super::types::aint_mag_ref_ty(registry)
 }
 
 /// `(ref null $string_array)` — shared String repr.

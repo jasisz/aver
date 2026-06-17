@@ -84,13 +84,32 @@ fn aint_type_decls(registry: &TypeRegistry) -> Result<String, WasmGcError> {
     ))
 }
 
+/// Decompose `$AverInt` operand local `$op` into a non-null 32-bit-limb
+/// magnitude array local `$opm` (little-endian, leading zeros possible) and a
+/// sign local `$ops` (-1/0/+1). When the shared `__aint_decompose` sub-routine
+/// has a registered fn index, emits a `call` to it (its two results land into
+/// `$opm` / `$ops`); otherwise inlines the body. `$umag` is an i64 scratch the
+/// inline path uses.
+fn decompose(registry: &TypeRegistry, op: &str, opm: &str, ops: &str, umag: &str) -> String {
+    if let Some(idx) = registry.aint_decompose_fn_idx {
+        // `call` pushes `(mag, sign)`; pop sign then mag into the caller locals.
+        return format!(
+            r#"
+            (call {idx} (local.get ${op}))
+            (local.set ${ops})
+            (local.set ${opm}) "#
+        );
+    }
+    decompose_inline(op, opm, ops, umag)
+}
+
 /// Inlined WAT: decompose `$AverInt` operand local `$op` into a non-null
 /// 32-bit-limb magnitude array local `$opm` (little-endian, leading
 /// zeros possible) and a sign local `$ops` (-1/0/+1). A Small splits
 /// `|small|` into two 32-bit limbs; zero → sign 0 + empty magnitude.
 /// `|i64::MIN|` is recovered via `0 - small` (wrapping), giving the
 /// correct unsigned `2^63` whose low/high 32-bit halves are then split.
-fn decompose(op: &str, opm: &str, ops: &str, umag: &str) -> String {
+fn decompose_inline(op: &str, opm: &str, ops: &str, umag: &str) -> String {
     // $umag is an i64 scratch holding |small| during the split.
     format!(
         r#"
@@ -119,6 +138,19 @@ fn decompose(op: &str, opm: &str, ops: &str, umag: &str) -> String {
     )
 }
 
+/// Normalize epilogue. Takes a working 32-bit-limb magnitude array local
+/// `$rm` (leading zeros allowed) and a raw sign local `$rs`, leaves a
+/// canonical `$AverInt` on the stack. When the shared `__aint_normalize`
+/// sub-routine has a registered fn index, emits a `call` to it; otherwise
+/// inlines the body, whose scratch locals are the fixed `$rlen $i $lo $hi
+/// $tmpm` (declared by every caller's `arith_locals`/`divmod_locals`).
+fn normalize(registry: &TypeRegistry, rm: &str, rs: &str) -> String {
+    if let Some(idx) = registry.aint_normalize_fn_idx {
+        return format!("(call {idx} (local.get ${rm}) (local.get ${rs}))");
+    }
+    normalize_inline(rm, rs, "rlen", "i", "lo", "hi", "tmpm")
+}
+
 /// Inlined WAT normalize epilogue. Takes a working 32-bit-limb magnitude
 /// array local `$rm` (leading zeros allowed) and a raw sign local `$rs`,
 /// leaves a canonical `$AverInt` on the stack. Scratch: `$rlen $i $hi
@@ -127,7 +159,15 @@ fn decompose(op: &str, opm: &str, ops: &str, umag: &str) -> String {
 /// Strips leading zeros; magnitude 0 → Small(0); a magnitude of ≤2 limbs
 /// whose 64-bit value fits the signed-i64 range for `$rs` → Small (incl.
 /// the lone `i64::MIN`); else a tight Big.
-fn normalize(rm: &str, rs: &str, rlen: &str, i: &str, lo: &str, hi: &str, tmpm: &str) -> String {
+fn normalize_inline(
+    rm: &str,
+    rs: &str,
+    rlen: &str,
+    i: &str,
+    lo: &str,
+    hi: &str,
+    tmpm: &str,
+) -> String {
     format!(
         r#"
             ;; strip leading zero limbs
@@ -194,10 +234,31 @@ fn tight_big(rm: &str, rs: &str, rlen: &str, i: &str, tmpm: &str) -> String {
     )
 }
 
+/// Unsigned-magnitude compare of arrays `$am` (stripped len `$alen`) and
+/// `$bm` (stripped len `$blen`) → -1/0/1 into i32 `$cmp`. When the shared
+/// `__aint_umag_cmp` sub-routine has a registered fn index, emits a `call`
+/// to it; otherwise inlines the body (i32 scratch `$j`).
+fn umag_cmp(
+    registry: &TypeRegistry,
+    am: &str,
+    alen: &str,
+    bm: &str,
+    blen: &str,
+    cmp: &str,
+    j: &str,
+) -> String {
+    if let Some(idx) = registry.aint_umag_cmp_fn_idx {
+        return format!(
+            "(local.set ${cmp} (call {idx} (local.get ${am}) (local.get ${alen}) (local.get ${bm}) (local.get ${blen})))"
+        );
+    }
+    umag_cmp_inline(am, alen, bm, blen, cmp, j)
+}
+
 /// Inlined unsigned-magnitude compare of arrays `$am` (stripped len
 /// `$alen`) and `$bm` (stripped len `$blen`) → -1/0/1 into i32 `$cmp`.
 /// i32 scratch `$j`.
-fn umag_cmp(am: &str, alen: &str, bm: &str, blen: &str, cmp: &str, j: &str) -> String {
+fn umag_cmp_inline(am: &str, alen: &str, bm: &str, blen: &str, cmp: &str, j: &str) -> String {
     format!(
         r#"
             (if (i32.ne (local.get ${alen}) (local.get ${blen}))
@@ -359,10 +420,12 @@ fn from_string_err_build() -> String {
 pub(super) fn emit_aint_from_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let decls = aint_string_result_decls(registry)?;
     let err_build = from_string_err_build();
-    let norm = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
+    let norm = normalize(registry, "rm", "rs");
+    let func_pad = func_pad(&[(registry.aint_normalize_fn_idx, NORMALIZE_SIG)]);
     let wat = format!(
         include_str!("wat/from_string.wat"),
         decls = decls,
+        func_pad = func_pad,
         err_build = err_build,
         norm = norm,
     );
@@ -378,6 +441,75 @@ pub(super) fn emit_aint_from_string(registry: &TypeRegistry) -> Result<Function,
 pub(super) fn emit_string_from_aint(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let decls = aint_and_string_decls(registry)?;
     let wat = format!(include_str!("wat/string_from_aint.wat"), decls = decls);
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// WAT signatures the shared sub-routines are `call`ed with, in `$`-typed
+/// WAT form. Must match the `params`/`results` declared in `builtins/mod.rs`,
+/// because the standalone helper module's placeholder `(func)` at each
+/// sub-routine's real index is type-checked against the `call`.
+const DECOMPOSE_SIG: &str = "(param (ref null $aint)) (result (ref null $mag) i32)";
+const NORMALIZE_SIG: &str = "(param (ref null $mag)) (param i32) (result (ref null $aint))";
+const STRIP_SIG: &str = "(param (ref null $mag)) (result i32)";
+const UMAG_CMP_SIG: &str =
+    "(param (ref null $mag)) (param i32) (param (ref null $mag)) (param i32) (result i32)";
+
+/// Build the function-index scaffolding a multi-helper bignum WAT needs so its
+/// `(call <real-idx>)` instructions validate in the standalone module. Only
+/// the shared sub-routines the helper actually `call`s contribute a stub; a
+/// `None` fn idx (bignum off, or a not-yet-factored sub-routine) is skipped —
+/// the generator inlined the body in that case, so no `call` was emitted.
+/// Returns the WAT fragment to splice right after `{decls}`. See
+/// `wat_helper::func_placeholders` for the index/relocation contract.
+fn func_pad(callees: &[(Option<u32>, &'static str)]) -> String {
+    let stubs: Vec<wat_helper::CalleeStub> = callees
+        .iter()
+        .filter_map(|(idx, sig)| idx.map(|abs_idx| wat_helper::CalleeStub { abs_idx, sig }))
+        .collect();
+    wat_helper::func_placeholders(&stubs)
+}
+
+/// `__aint_decompose(a) -> (mag, sign)` — shared sub-routine. Splits an
+/// `$AverInt` into a non-null 32-bit-limb magnitude (leading zeros possible)
+/// and a sign (-1/0/+1), leaving both on the stack `(mag, sign)`. The body is
+/// the same logic the inlined `decompose` generator emits, lifted into a
+/// callable function so add/sub/mul/divmod/cmp `call` it once instead of each
+/// carrying a private copy. A leaf (no inter-helper `call`).
+pub(super) fn emit_aint_decompose(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let wat = format!(include_str!("wat/decompose.wat"), decls = decls);
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `__aint_normalize(rm, rs) -> $AverInt` — shared sub-routine. Strips leading
+/// zeros from a working magnitude, demotes an in-range value to Small (incl.
+/// the lone `i64::MIN`) or builds a tight Big, leaving a canonical `$AverInt`.
+/// Same logic the inlined `normalize` epilogue emits; a leaf.
+pub(super) fn emit_aint_normalize(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let wat = format!(
+        include_str!("wat/normalize.wat"),
+        decls = decls,
+        tight_big = tight_big("rm", "rs", "rlen", "i", "tmpm"),
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `__aint_strip(arr) -> i32` — shared sub-routine. Count of limbs after
+/// dropping leading-zero limbs. Same logic the inlined `strip` generator
+/// emits; a leaf.
+pub(super) fn emit_aint_strip(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let wat = format!(include_str!("wat/strip.wat"), decls = decls);
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `__aint_umag_cmp(am, alen, bm, blen) -> i32` (-1/0/1) — shared sub-routine.
+/// Unsigned magnitude compare of two stripped limb arrays. Same logic the
+/// inlined `umag_cmp` generator emits; a leaf.
+pub(super) fn emit_aint_umag_cmp(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let wat = format!(include_str!("wat/umag_cmp.wat"), decls = decls);
     wat_helper::compile_wat_helper(&wat)
 }
 
@@ -411,8 +543,14 @@ pub(super) fn emit_aint_to_f64(registry: &TypeRegistry) -> Result<Function, Wasm
 /// non-negative exponent), matching `AverInt::from_f64_trunc`.
 pub(super) fn emit_aint_from_f64(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let decls = aint_type_decls(registry)?;
-    let norm = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
-    let wat = format!(include_str!("wat/from_f64.wat"), decls = decls, norm = norm);
+    let norm = normalize(registry, "rm", "rs");
+    let func_pad = func_pad(&[(registry.aint_normalize_fn_idx, NORMALIZE_SIG)]);
+    let wat = format!(
+        include_str!("wat/from_f64.wat"),
+        decls = decls,
+        func_pad = func_pad,
+        norm = norm
+    );
     wat_helper::compile_wat_helper(&wat)
 }
 
@@ -507,14 +645,20 @@ pub(super) fn emit_aint_hash(registry: &TypeRegistry) -> Result<Function, WasmGc
 /// magnitude (flipped for two negatives). Mirrors `AverInt::cmp`.
 pub(super) fn emit_aint_cmp(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let decls = aint_type_decls(registry)?;
-    let decomp_a = decompose("a", "am", "as_", "umag");
-    let decomp_b = decompose("b", "bm", "bs", "umag");
-    let strip_a = strip("am", "alen", "sa", "la");
-    let strip_b = strip("bm", "blen", "sb", "lb");
-    let cmp = umag_cmp("am", "alen", "bm", "blen", "cmp", "j");
+    let decomp_a = decompose(registry, "a", "am", "as_", "umag");
+    let decomp_b = decompose(registry, "b", "bm", "bs", "umag");
+    let strip_a = strip(registry, "am", "alen", "sa", "la");
+    let strip_b = strip(registry, "bm", "blen", "sb", "lb");
+    let cmp = umag_cmp(registry, "am", "alen", "bm", "blen", "cmp", "j");
+    let func_pad = func_pad(&[
+        (registry.aint_decompose_fn_idx, DECOMPOSE_SIG),
+        (registry.aint_strip_fn_idx, STRIP_SIG),
+        (registry.aint_umag_cmp_fn_idx, UMAG_CMP_SIG),
+    ]);
     let wat = format!(
         include_str!("wat/cmp.wat"),
         decls = decls,
+        func_pad = func_pad,
         decomp_a = decomp_a,
         decomp_b = decomp_b,
         strip_a = strip_a,
@@ -524,9 +668,19 @@ pub(super) fn emit_aint_cmp(registry: &TypeRegistry) -> Result<Function, WasmGcE
     wat_helper::compile_wat_helper(&wat)
 }
 
+/// Leading-zero strip of array `$arr` into i32 len local `$len`. When the
+/// shared `__aint_strip` sub-routine has a registered fn index, emits a `call`
+/// to it; otherwise inlines a loop using unique block/loop labels `$bl`/`$lp`.
+fn strip(registry: &TypeRegistry, arr: &str, len: &str, bl: &str, lp: &str) -> String {
+    if let Some(idx) = registry.aint_strip_fn_idx {
+        return format!("(local.set ${len} (call {idx} (local.get ${arr})))");
+    }
+    strip_inline(arr, len, bl, lp)
+}
+
 /// Inlined leading-zero strip of array `$arr` into i32 len local `$len`,
 /// using unique block/loop label names `$bl`/`$lp`.
-fn strip(arr: &str, len: &str, bl: &str, lp: &str) -> String {
+fn strip_inline(arr: &str, len: &str, bl: &str, lp: &str) -> String {
     format!(
         r#"
             (local.set ${len} (array.len (local.get ${arr})))
@@ -546,8 +700,8 @@ fn strip(arr: &str, len: &str, bl: &str, lp: &str) -> String {
 /// Assumes the caller has stripped `am`→`$alen`, `bm`→`$blen` and
 /// declared scratch `$rlen $i $carry $cmp $j $borrow $diff` with the
 /// types named below. 32-bit limbs make carry/borrow exact.
-fn signed_combine() -> String {
-    let cmp = umag_cmp("am", "alen", "bm", "blen", "cmp", "j");
+fn signed_combine(registry: &TypeRegistry) -> String {
+    let cmp = umag_cmp(registry, "am", "alen", "bm", "blen", "cmp", "j");
     format!(
         r#"
             ;; signs "agree" when one is zero, or the two non-zero signs match.
@@ -640,12 +794,18 @@ pub(super) fn emit_aint_sub(registry: &TypeRegistry) -> Result<Function, WasmGcE
 fn emit_aint_addsub(registry: &TypeRegistry, is_sub: bool) -> Result<Function, WasmGcError> {
     let decls = aint_type_decls(registry)?;
     let locals = arith_locals();
-    let decomp_a = decompose("a", "am", "as_", "umag");
-    let decomp_b = decompose("b", "bm", "bs", "umag");
-    let strip_a = strip("am", "alen", "sa", "la");
-    let strip_b = strip("bm", "blen", "sb", "lb");
-    let combine = signed_combine();
-    let norm = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
+    let decomp_a = decompose(registry, "a", "am", "as_", "umag");
+    let decomp_b = decompose(registry, "b", "bm", "bs", "umag");
+    let strip_a = strip(registry, "am", "alen", "sa", "la");
+    let strip_b = strip(registry, "bm", "blen", "sb", "lb");
+    let combine = signed_combine(registry);
+    let norm = normalize(registry, "rm", "rs");
+    let func_pad = func_pad(&[
+        (registry.aint_decompose_fn_idx, DECOMPOSE_SIG),
+        (registry.aint_strip_fn_idx, STRIP_SIG),
+        (registry.aint_umag_cmp_fn_idx, UMAG_CMP_SIG),
+        (registry.aint_normalize_fn_idx, NORMALIZE_SIG),
+    ]);
     // i64 fast-path: both Small.
     let (fast_op, overflow_check) = if is_sub {
         (
@@ -668,6 +828,7 @@ fn emit_aint_addsub(registry: &TypeRegistry, is_sub: bool) -> Result<Function, W
     let wat = format!(
         include_str!("wat/addsub.wat"),
         decls = decls,
+        func_pad = func_pad,
         locals = locals,
         decomp_a = decomp_a,
         decomp_b = decomp_b,
@@ -689,14 +850,20 @@ fn emit_aint_addsub(registry: &TypeRegistry, is_sub: bool) -> Result<Function, W
 pub(super) fn emit_aint_mul(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let decls = aint_type_decls(registry)?;
     let locals = arith_locals();
-    let decomp_a = decompose("a", "am", "as_", "umag");
-    let decomp_b = decompose("b", "bm", "bs", "umag");
-    let strip_a = strip("am", "alen", "sa", "la");
-    let strip_b = strip("bm", "blen", "sb", "lb");
-    let norm = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
+    let decomp_a = decompose(registry, "a", "am", "as_", "umag");
+    let decomp_b = decompose(registry, "b", "bm", "bs", "umag");
+    let strip_a = strip(registry, "am", "alen", "sa", "la");
+    let strip_b = strip(registry, "bm", "blen", "sb", "lb");
+    let norm = normalize(registry, "rm", "rs");
+    let func_pad = func_pad(&[
+        (registry.aint_decompose_fn_idx, DECOMPOSE_SIG),
+        (registry.aint_strip_fn_idx, STRIP_SIG),
+        (registry.aint_normalize_fn_idx, NORMALIZE_SIG),
+    ]);
     let wat = format!(
         include_str!("wat/mul.wat"),
         decls = decls,
+        func_pad = func_pad,
         locals = locals,
         decomp_a = decomp_a,
         decomp_b = decomp_b,
@@ -749,19 +916,26 @@ fn divmod_locals() -> &'static str {
 pub(super) fn emit_aint_divmod(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let decls = aint_type_decls(registry)?;
     let locals = divmod_locals();
-    let decomp_a = decompose("a", "am", "as_", "umag");
-    let decomp_b = decompose("b", "bm", "bs", "umag");
-    let strip_a = strip("am", "alen", "sa", "la");
-    let strip_b = strip("bm", "blen", "sb", "lb");
+    let decomp_a = decompose(registry, "a", "am", "as_", "umag");
+    let decomp_b = decompose(registry, "b", "bm", "bs", "umag");
+    let strip_a = strip(registry, "am", "alen", "sa", "la");
+    let strip_b = strip(registry, "bm", "blen", "sb", "lb");
     // r vs |b| during long division: $rwm (stripped $rwlen) ⋛ $bm ($blen).
-    let cmp_r_b = umag_cmp("rwm", "rwlen", "bm", "blen", "cmp", "j");
+    let cmp_r_b = umag_cmp(registry, "rwm", "rwlen", "bm", "blen", "cmp", "j");
     // Two normalize epilogues, one per result branch; they're in disjoint
     // `if` arms so reusing the same scratch locals is safe.
-    let norm_q = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
-    let norm_r = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
+    let norm_q = normalize(registry, "rm", "rs");
+    let norm_r = normalize(registry, "rm", "rs");
+    let func_pad = func_pad(&[
+        (registry.aint_decompose_fn_idx, DECOMPOSE_SIG),
+        (registry.aint_strip_fn_idx, STRIP_SIG),
+        (registry.aint_umag_cmp_fn_idx, UMAG_CMP_SIG),
+        (registry.aint_normalize_fn_idx, NORMALIZE_SIG),
+    ]);
     let wat = format!(
         include_str!("wat/divmod.wat"),
         decls = decls,
+        func_pad = func_pad,
         locals = locals,
         decomp_a = decomp_a,
         decomp_b = decomp_b,
@@ -883,6 +1057,11 @@ mod tests {
             ("emit_aint_to_f64", emit_aint_to_f64),
             ("emit_aint_from_f64", emit_aint_from_f64),
             ("emit_aint_to_index", emit_aint_to_index),
+            // Shared sub-routines — their standalone modules must parse too.
+            ("emit_aint_decompose", emit_aint_decompose),
+            ("emit_aint_normalize", emit_aint_normalize),
+            ("emit_aint_strip", emit_aint_strip),
+            ("emit_aint_umag_cmp", emit_aint_umag_cmp),
         ];
 
         for (name, emit) in cases {
@@ -951,6 +1130,16 @@ mod validation_guard {
                 "__aint_to_index",
                 render_simple(&registry, include_str!("wat/to_index.wat")),
             ),
+            // Shared sub-routines (size dedup) — their standalone modules
+            // must VALIDATE: the demote-to-Small / build-Big branch
+            // (`__aint_normalize`) returns `(ref null $aint)` on every arm, the
+            // decompose splits return `(mag, sign)`, the strip/cmp return i32.
+            // A paren slip or stack-type mismatch fails here, not only when a
+            // program happens to hit the divide path in wasmtime.
+            ("__aint_decompose", render_decompose(&registry)),
+            ("__aint_normalize", render_normalize(&registry)),
+            ("__aint_strip", render_strip(&registry)),
+            ("__aint_umag_cmp", render_umag_cmp(&registry)),
         ];
 
         for (name, wat) in modules {
@@ -964,6 +1153,174 @@ mod validation_guard {
         }
     }
 
+    /// CALL-PATH validate — the arithmetic helpers rendered with the `call`
+    /// path ACTIVE. Setting the shared fn-index fields on the registry flips
+    /// each generator from inlining to emitting `(call <idx>)` plus the
+    /// `func_pad` placeholder scaffolding (`(func <sig> unreachable)` at each
+    /// callee's index). The resulting STANDALONE module — placeholders at
+    /// indices 0..=3 then the exported helper — is exactly what
+    /// `compile_wat_helper` parses, and it self-validates: the `call <idx>`
+    /// type-checks against the placeholder of matching signature. A wrong
+    /// call-index/signature, a `func_pad` slot at the wrong index, or a stack
+    /// mismatch in the `call` shim fails here — the bug class the inline-only
+    /// standalone guards above structurally cannot see.
+    #[test]
+    fn shared_subroutine_call_path_validates() {
+        let mut registry = bignum_registry_for_validation();
+        // Pick non-trivial indices so an off-by-one in `func_pad`'s padding (or
+        // in the lifted `call`'s LEB128 index) would mis-resolve and fail.
+        registry.aint_decompose_fn_idx = Some(7);
+        registry.aint_normalize_fn_idx = Some(8);
+        registry.aint_strip_fn_idx = Some(9);
+        registry.aint_umag_cmp_fn_idx = Some(10);
+
+        // Each helper's full standalone module text (decls + func_pad +
+        // exported helper), validated as a unit. `func_pad` declares placeholder
+        // funcs up to index 10 so every `(call 7..10)` resolves to a func of the
+        // right signature.
+        let modules: Vec<(&str, String)> = vec![
+            ("__aint_add", render_addsub(&registry, false)),
+            ("__aint_sub", render_addsub(&registry, true)),
+            ("__aint_mul", render_mul(&registry)),
+            ("__aint_divmod", render_divmod(&registry)),
+            ("__aint_cmp", render_cmp(&registry)),
+            ("__aint_from_string", render_from_string(&registry)),
+            ("__aint_from_f64", render_from_f64(&registry)),
+        ];
+        for (name, wat) in modules {
+            let bytes = wat::parse_str(&wat)
+                .unwrap_or_else(|e| panic!("call-path helper `{name}` failed to parse: {e}"));
+            let mut validator =
+                wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::all());
+            validator
+                .validate_all(&bytes)
+                .unwrap_or_else(|e| panic!("call-path helper `{name}` failed to VALIDATE: {e}"));
+        }
+    }
+
+    fn render_addsub(registry: &TypeRegistry, is_sub: bool) -> String {
+        let decls = aint_type_decls(registry).unwrap();
+        let locals = arith_locals();
+        let decomp_a = decompose(registry, "a", "am", "as_", "umag");
+        let decomp_b = decompose(registry, "b", "bm", "bs", "umag");
+        let strip_a = strip(registry, "am", "alen", "sa", "la");
+        let strip_b = strip(registry, "bm", "blen", "sb", "lb");
+        let combine = signed_combine(registry);
+        let norm = normalize(registry, "rm", "rs");
+        let func_pad = func_pad(&[
+            (registry.aint_decompose_fn_idx, DECOMPOSE_SIG),
+            (registry.aint_strip_fn_idx, STRIP_SIG),
+            (registry.aint_umag_cmp_fn_idx, UMAG_CMP_SIG),
+            (registry.aint_normalize_fn_idx, NORMALIZE_SIG),
+        ]);
+        let (fast_op, overflow_check) = if is_sub {
+            (
+                "(i64.sub (struct.get $aint $small (local.get $a)) (struct.get $aint $small (local.get $b)))",
+                "(i64.lt_s (i64.and (i64.xor (struct.get $aint $small (local.get $a)) (struct.get $aint $small (local.get $b))) (i64.xor (struct.get $aint $small (local.get $a)) (local.get $r))) (i64.const 0))",
+            )
+        } else {
+            (
+                "(i64.add (struct.get $aint $small (local.get $a)) (struct.get $aint $small (local.get $b)))",
+                "(i64.lt_s (i64.and (i64.xor (struct.get $aint $small (local.get $a)) (local.get $r)) (i64.xor (struct.get $aint $small (local.get $b)) (local.get $r))) (i64.const 0))",
+            )
+        };
+        let beff_set = if is_sub {
+            "(local.set $beff (i32.sub (i32.const 0) (local.get $bs)))"
+        } else {
+            "(local.set $beff (local.get $bs))"
+        };
+        format!(
+            include_str!("wat/addsub.wat"),
+            decls = decls,
+            func_pad = func_pad,
+            locals = locals,
+            decomp_a = decomp_a,
+            decomp_b = decomp_b,
+            beff_set = beff_set,
+            strip_a = strip_a,
+            strip_b = strip_b,
+            combine = combine,
+            norm = norm,
+            fast_op = fast_op,
+            overflow_check = overflow_check,
+        )
+    }
+
+    fn render_mul(registry: &TypeRegistry) -> String {
+        let decls = aint_type_decls(registry).unwrap();
+        let locals = arith_locals();
+        let decomp_a = decompose(registry, "a", "am", "as_", "umag");
+        let decomp_b = decompose(registry, "b", "bm", "bs", "umag");
+        let strip_a = strip(registry, "am", "alen", "sa", "la");
+        let strip_b = strip(registry, "bm", "blen", "sb", "lb");
+        let norm = normalize(registry, "rm", "rs");
+        let func_pad = func_pad(&[
+            (registry.aint_decompose_fn_idx, DECOMPOSE_SIG),
+            (registry.aint_strip_fn_idx, STRIP_SIG),
+            (registry.aint_normalize_fn_idx, NORMALIZE_SIG),
+        ]);
+        format!(
+            include_str!("wat/mul.wat"),
+            decls = decls,
+            func_pad = func_pad,
+            locals = locals,
+            decomp_a = decomp_a,
+            decomp_b = decomp_b,
+            strip_a = strip_a,
+            strip_b = strip_b,
+            norm = norm,
+            mul_body = mul_magnitude(),
+        )
+    }
+
+    fn render_cmp(registry: &TypeRegistry) -> String {
+        let decls = aint_type_decls(registry).unwrap();
+        let decomp_a = decompose(registry, "a", "am", "as_", "umag");
+        let decomp_b = decompose(registry, "b", "bm", "bs", "umag");
+        let strip_a = strip(registry, "am", "alen", "sa", "la");
+        let strip_b = strip(registry, "bm", "blen", "sb", "lb");
+        let cmp = umag_cmp(registry, "am", "alen", "bm", "blen", "cmp", "j");
+        let func_pad = func_pad(&[
+            (registry.aint_decompose_fn_idx, DECOMPOSE_SIG),
+            (registry.aint_strip_fn_idx, STRIP_SIG),
+            (registry.aint_umag_cmp_fn_idx, UMAG_CMP_SIG),
+        ]);
+        format!(
+            include_str!("wat/cmp.wat"),
+            decls = decls,
+            func_pad = func_pad,
+            decomp_a = decomp_a,
+            decomp_b = decomp_b,
+            strip_a = strip_a,
+            strip_b = strip_b,
+            cmp = cmp,
+        )
+    }
+
+    fn render_decompose(registry: &TypeRegistry) -> String {
+        let decls = aint_type_decls(registry).unwrap();
+        format!(include_str!("wat/decompose.wat"), decls = decls)
+    }
+
+    fn render_normalize(registry: &TypeRegistry) -> String {
+        let decls = aint_type_decls(registry).unwrap();
+        format!(
+            include_str!("wat/normalize.wat"),
+            decls = decls,
+            tight_big = tight_big("rm", "rs", "rlen", "i", "tmpm"),
+        )
+    }
+
+    fn render_strip(registry: &TypeRegistry) -> String {
+        let decls = aint_type_decls(registry).unwrap();
+        format!(include_str!("wat/strip.wat"), decls = decls)
+    }
+
+    fn render_umag_cmp(registry: &TypeRegistry) -> String {
+        let decls = aint_type_decls(registry).unwrap();
+        format!(include_str!("wat/umag_cmp.wat"), decls = decls)
+    }
+
     fn render_simple(registry: &TypeRegistry, template: &str) -> String {
         let decls = aint_type_decls(registry).unwrap();
         template.replace("{decls}", &decls)
@@ -972,10 +1329,12 @@ mod validation_guard {
     fn render_from_string(registry: &TypeRegistry) -> String {
         let decls = aint_string_result_decls(registry).unwrap();
         let err_build = from_string_err_build();
-        let norm = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
+        let norm = normalize(registry, "rm", "rs");
+        let func_pad = func_pad(&[(registry.aint_normalize_fn_idx, NORMALIZE_SIG)]);
         format!(
             include_str!("wat/from_string.wat"),
             decls = decls,
+            func_pad = func_pad,
             err_build = err_build,
             norm = norm,
         )
@@ -983,23 +1342,36 @@ mod validation_guard {
 
     fn render_from_f64(registry: &TypeRegistry) -> String {
         let decls = aint_type_decls(registry).unwrap();
-        let norm = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
-        format!(include_str!("wat/from_f64.wat"), decls = decls, norm = norm)
+        let norm = normalize(registry, "rm", "rs");
+        let func_pad = func_pad(&[(registry.aint_normalize_fn_idx, NORMALIZE_SIG)]);
+        format!(
+            include_str!("wat/from_f64.wat"),
+            decls = decls,
+            func_pad = func_pad,
+            norm = norm
+        )
     }
 
     fn render_divmod(registry: &TypeRegistry) -> String {
         let decls = aint_type_decls(registry).unwrap();
         let locals = divmod_locals();
-        let decomp_a = decompose("a", "am", "as_", "umag");
-        let decomp_b = decompose("b", "bm", "bs", "umag");
-        let strip_a = strip("am", "alen", "sa", "la");
-        let strip_b = strip("bm", "blen", "sb", "lb");
-        let cmp_r_b = umag_cmp("rwm", "rwlen", "bm", "blen", "cmp", "j");
-        let norm_q = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
-        let norm_r = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
+        let decomp_a = decompose(registry, "a", "am", "as_", "umag");
+        let decomp_b = decompose(registry, "b", "bm", "bs", "umag");
+        let strip_a = strip(registry, "am", "alen", "sa", "la");
+        let strip_b = strip(registry, "bm", "blen", "sb", "lb");
+        let cmp_r_b = umag_cmp(registry, "rwm", "rwlen", "bm", "blen", "cmp", "j");
+        let norm_q = normalize(registry, "rm", "rs");
+        let norm_r = normalize(registry, "rm", "rs");
+        let func_pad = func_pad(&[
+            (registry.aint_decompose_fn_idx, DECOMPOSE_SIG),
+            (registry.aint_strip_fn_idx, STRIP_SIG),
+            (registry.aint_umag_cmp_fn_idx, UMAG_CMP_SIG),
+            (registry.aint_normalize_fn_idx, NORMALIZE_SIG),
+        ]);
         format!(
             include_str!("wat/divmod.wat"),
             decls = decls,
+            func_pad = func_pad,
             locals = locals,
             decomp_a = decomp_a,
             decomp_b = decomp_b,

@@ -47,6 +47,50 @@ pub(in crate::codegen::wasm_gc) fn padding_types(n: u32) -> String {
     s
 }
 
+/// A shared sub-routine a helper `call`s by its REAL user-module function
+/// index: `abs_idx` is that index, `sig` the WAT param/result signature it is
+/// `call`ed with (e.g. `"(param (ref null $aint)) (result (ref null $mag) i32)"`).
+pub(in crate::codegen::wasm_gc) struct CalleeStub {
+    pub abs_idx: u32,
+    pub sig: &'static str,
+}
+
+/// Build the function-index scaffolding a multi-helper WAT module needs so its
+/// `(call <abs_idx>)` instructions VALIDATE in the standalone module.
+///
+/// A helper WAT has no imported functions, so defined-function indices start
+/// at 0 and advance in definition order. To make `(call N)` (where `N` is a
+/// shared sub-routine's real user-module fn index) valid, the standalone
+/// module must declare a function at index `N` with a matching signature.
+/// This emits placeholder `(func)`s at indices `0..=max(abs_idx)`, giving each
+/// real-callee slot its true signature (so the `call` type-checks) and every
+/// filler slot a trivial `(func unreachable)`. The caller then appends the
+/// actual helper as `(func (export "helper") …)`, which lands at the NEXT
+/// index — `compile_wat_helper` lifts it by export name. The lifted body's
+/// `call N` bytes already encode the real index, so they transfer verbatim
+/// into the user module with NO relocation.
+///
+/// `unreachable` is a valid body for ANY result type (stack-polymorphic), so
+/// the placeholders satisfy the validator without fabricating return values.
+pub(in crate::codegen::wasm_gc) fn func_placeholders(callees: &[CalleeStub]) -> String {
+    let max_idx = match callees.iter().map(|c| c.abs_idx).max() {
+        Some(m) => m,
+        None => return String::new(),
+    };
+    let mut sig_at: std::collections::HashMap<u32, &'static str> = std::collections::HashMap::new();
+    for c in callees {
+        sig_at.insert(c.abs_idx, c.sig);
+    }
+    let mut s = String::with_capacity((max_idx as usize + 1) * 24);
+    for idx in 0..=max_idx {
+        match sig_at.get(&idx) {
+            Some(sig) => s.push_str(&format!("(func {sig} unreachable)\n")),
+            None => s.push_str("(func unreachable)\n"),
+        }
+    }
+    s
+}
+
 /// Compile a WAT helper template into a `wasm_encoder::Function` ready
 /// to be appended to the user module's code section.
 ///
@@ -72,15 +116,54 @@ pub(in crate::codegen::wasm_gc) fn compile_wat_helper(
         WasmGcError::Validation(format!("wat parse: {e}"))
     })?;
 
+    // The function index we want to lift. Historically a helper WAT held
+    // exactly one `(func)` and we lifted entry 0. To let a helper `call` a
+    // SHARED sub-routine (decompose / normalize / …) at that sub-routine's
+    // REAL user-module fn index, the helper WAT now pads its function-index
+    // space with placeholder `(func)`s so each `call <abs-idx>` validates in
+    // the standalone module — the called index already equals the user-module
+    // index, so the lifted body's `call` bytes transfer VERBATIM, no
+    // relocation. The real helper is the one exported `"helper"`; everything
+    // before it is scaffolding. Resolve that export to a function index and
+    // lift the matching code entry (falling back to entry 0 when no `"helper"`
+    // export exists, preserving the single-function helpers byte-for-byte).
+    let mut helper_fn_idx: Option<u32> = None;
+    for payload in Parser::new(0).parse_all(&module_bytes) {
+        let payload =
+            payload.map_err(|e| WasmGcError::Validation(format!("wasm parse helper: {e}")))?;
+        if let Payload::ExportSection(reader) = payload {
+            for export in reader {
+                let export =
+                    export.map_err(|e| WasmGcError::Validation(format!("export read: {e}")))?;
+                if export.name == "helper" && export.kind == wasmparser::ExternalKind::Func {
+                    helper_fn_idx = Some(export.index);
+                }
+            }
+        }
+    }
+
     let mut found_locals: Option<Vec<ValType>> = None;
     let mut found_body: Option<Vec<u8>> = None;
+    // Function index of the current code-section entry. A helper WAT has no
+    // imported functions, so defined-function indices start at 0 and advance
+    // per `CodeSectionEntry`.
+    let mut code_fn_idx: u32 = 0;
 
     for payload in Parser::new(0).parse_all(&module_bytes) {
         let payload =
             payload.map_err(|e| WasmGcError::Validation(format!("wasm parse helper: {e}")))?;
         if let Payload::CodeSectionEntry(body) = payload {
-            // Helper modules contain exactly one function — take the
-            // first one and stop.
+            let this_idx = code_fn_idx;
+            code_fn_idx += 1;
+            // Lift the `"helper"`-exported function when present, else the
+            // first function (the legacy single-`func` helper shape).
+            let want = match helper_fn_idx {
+                Some(idx) => this_idx == idx,
+                None => found_body.is_none(),
+            };
+            if !want {
+                continue;
+            }
             let mut locals: Vec<ValType> = Vec::new();
             let mut locals_reader = body
                 .get_locals_reader()
@@ -110,7 +193,9 @@ pub(in crate::codegen::wasm_gc) fn compile_wat_helper(
 
             found_locals = Some(locals);
             found_body = Some(expr_bytes);
-            break;
+            if helper_fn_idx.is_some() {
+                break;
+            }
         }
     }
 
