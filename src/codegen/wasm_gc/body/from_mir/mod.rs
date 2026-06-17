@@ -1038,11 +1038,29 @@ pub(crate) fn emit_mir_expr(
             let record_name = aver_type_str_of(&proj.base);
             if ctx.registry.newtype_underlying(&record_name).is_some() {
                 // ETAP-2 carrier-`i64`: an eligible carrier's field read is
-                // still identity (emit the base), but the base is now a
-                // native `i64` and the projected `.value` is a plain `Int`,
-                // so lift it back into the `$AverInt` carrier.
+                // still identity (emit the base, which is a native `i64`).
+                //
+                // The default reads `.value` as a plain `Int`, so the i64 is
+                // lifted back into the `$AverInt` carrier via the project
+                // bridge. BUT when the base is a BARE carrier slot
+                // (`slot_is_bare_carrier`), the `bare_i64` rewrite proved the
+                // `.value` read flows ONLY into native i64 arithmetic / a raw
+                // return — and it left the surrounding context raw (or wrapped
+                // the read in an explicit `Box` where a boxed value is wanted).
+                // So in that case we SKIP the bridge and yield the raw i64; the
+                // `Box` node (if any) does the lift. This is the whole
+                // carrier-arithmetic size lever: `c.value + c.value` runs as a
+                // native `i64.add` instead of two `__aint_from_i64` lifts plus
+                // a boxed limb-add.
                 let produced = emit_mir_expr(func, &proj.base, slots, ctx)?;
-                if produced.is_some() && ctx.registry.is_eligible_carrier(&record_name) {
+                let bare_carrier_read = matches!(
+                    &proj.base.node,
+                    MirExpr::Local(local) if ctx.slot_is_bare_carrier(local.node.slot.0)
+                );
+                if produced.is_some()
+                    && ctx.registry.is_eligible_carrier(&record_name)
+                    && !bare_carrier_read
+                {
                     emit_carrier_project_bridge(func, ctx)?;
                 }
                 return Ok(produced.map(|_| aver_type_str_of(expr).trim() != "Unit"));
@@ -1260,6 +1278,9 @@ pub(crate) fn mir_renders_raw_i64(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
     match e {
         MirExpr::Local(local) => ctx.slot_is_bare(local.node.slot.0),
         MirExpr::Unbox(_) => true,
+        // ETAP-2 carrier-`i64`: a bare carrier's `.value` read is a genuine
+        // raw i64 (the project bridge is skipped), like an `Unbox`.
+        MirExpr::Project(_) => mir_is_bare_carrier_project(e, ctx),
         MirExpr::Box(_) => false,
         // A standalone `Int` literal is raw-COMPATIBLE (it can lower to an
         // `i64.const`), but on its own it is NOT proof of a raw context — its
@@ -1301,6 +1322,8 @@ fn mir_arith_leaves_raw_compatible(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
     match e {
         MirExpr::Local(local) => ctx.slot_is_bare(local.node.slot.0),
         MirExpr::Unbox(_) => true,
+        // ETAP-2 carrier-`i64`: a bare carrier's `.value` is a raw i64 leaf.
+        MirExpr::Project(_) => mir_is_bare_carrier_project(e, ctx),
         MirExpr::Literal(l) => matches!(l.node, Literal::Int(_)),
         MirExpr::Neg(inner) => mir_arith_leaves_raw_compatible(&inner.node, ctx),
         MirExpr::BinOp(b) => {
@@ -1312,6 +1335,20 @@ fn mir_arith_leaves_raw_compatible(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
     }
 }
 
+/// ETAP-2 carrier-`i64`: is `e` a `Project(Local(bare_carrier_slot), _)`?
+/// Such a `.value` read renders as a raw native `i64` (the project bridge is
+/// skipped) — a genuine raw anchor like an `Unbox`.
+fn mir_is_bare_carrier_project(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
+    matches!(
+        e,
+        MirExpr::Project(p)
+            if matches!(
+                &p.node.base.node,
+                MirExpr::Local(local) if ctx.slot_is_bare_carrier(local.node.slot.0)
+            )
+    )
+}
+
 /// The `Add`/`Sub`/`Mul`/`Neg` tree `e` contains at least one genuine raw
 /// VALUE (a bare `Local` or an `Unbox`) — not just literals. This anchors
 /// the tree to a bare slot's computation; a pure-literal tree has no anchor.
@@ -1319,6 +1356,9 @@ fn mir_has_raw_anchor(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
     match e {
         MirExpr::Local(local) => ctx.slot_is_bare(local.node.slot.0),
         MirExpr::Unbox(_) => true,
+        // ETAP-2 carrier-`i64`: a bare carrier's `.value` read is a genuine
+        // raw anchor (a real i64 value, not a literal).
+        MirExpr::Project(_) => mir_is_bare_carrier_project(e, ctx),
         MirExpr::Neg(inner) => mir_has_raw_anchor(&inner.node, ctx),
         MirExpr::BinOp(b) => {
             mir_has_raw_anchor(&b.node.lhs.node, ctx) || mir_has_raw_anchor(&b.node.rhs.node, ctx)
@@ -1438,6 +1478,24 @@ pub(crate) fn emit_mir_int_raw(
         // it; no result colour needed (the i64 comes from the callee sig).
         MirExpr::Unbox(_) | MirExpr::Call(_) | MirExpr::TailCall(_) => {
             emit_mir_expr(func, e, slots, ctx)
+        }
+        // ETAP-2 carrier-`i64`: a `Project(Local(bare_carrier), "value")`
+        // reads the carrier's native i64 — the main emitter's `Project` arm
+        // skips the project bridge for a bare carrier slot, leaving the raw
+        // i64 on the stack. A non-bare-carrier `Project` reaching here would
+        // push an `$AverInt` (project bridge) where an i64 is expected, so
+        // guard: only delegate when the base is a bare carrier slot, else
+        // fall back (`Ok(None)`) — fail-closed.
+        MirExpr::Project(p) => {
+            let bare_carrier = matches!(
+                &p.node.base.node,
+                MirExpr::Local(local) if ctx.slot_is_bare_carrier(local.node.slot.0)
+            );
+            if bare_carrier {
+                emit_mir_expr(func, e, slots, ctx)
+            } else {
+                Ok(None)
+            }
         }
         // A `Match` / `IfThenElse` / `Let` / `Return` whose tail is the raw
         // value: delegate to the main emitter WITH the raw result colour set,

@@ -192,12 +192,26 @@ pub struct MirFnRepr {
     pub bare_params: Vec<bool>,
     /// `true` ⟺ the fn's Rust return type is bare `i64`.
     pub bare_return: bool,
+    /// ETAP-2 carrier-`i64` (wasm-gc only): slots holding a BARE carrier value
+    /// — an eligible refinement-via-opaque carrier whose wasm storage IS a
+    /// native `i64`. A `Project(Local(slot), "value")` over such a slot reads
+    /// the i64 DIRECTLY (the codegen skips the `$AverInt` project bridge), so
+    /// the `.value` read is a raw-i64 leaf for the native arithmetic the
+    /// rewrite left raw. Empty on the Rust backend (carriers stay structs) and
+    /// whenever no eligible carrier is in scope — the byte-identical default.
+    pub carrier_slots: std::collections::HashSet<LocalId>,
 }
 
 impl MirFnRepr {
     /// Is the value bound to `slot` represented as a raw machine `i64`?
     pub fn slot_is_bare(&self, slot: LocalId) -> bool {
         self.bare_slots.contains(&slot)
+    }
+
+    /// ETAP-2 carrier-`i64`: does `slot` hold a bare carrier whose `.value`
+    /// read renders as a raw native `i64` (no project bridge)?
+    pub fn slot_is_bare_carrier(&self, slot: LocalId) -> bool {
+        self.carrier_slots.contains(&slot)
     }
 
     /// Is param index `i` bare in the Rust signature?
