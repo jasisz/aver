@@ -126,7 +126,28 @@ fn rewrite(
         // `AverInt` — a wasm VALIDATION error. The all-boxed facts make
         // `rewrite_boxed`/`rewrite_call_args` box that result.
         let fn_facts = if boxed_signature_fns.contains(&id) {
-            FnBareFacts::default()
+            // Empty `values` / `carrier_slots` / `bare_params` / `bare_return`
+            // (its own signature + slots stay boxed `AverInt`, matching the
+            // pinned mutual-TCO signature). BUT keep the TYPE-driven carrier
+            // recognition tables (`carrier_types` / `field_carrier_intervals`):
+            // a NESTED carrier-field read (`state.score.value`, base type a
+            // single-field carrier) or a DIRECT bounded multi-field read is
+            // recognized by the wasm-gc EMITTER structurally (registry-based,
+            // independent of this fn's boxed-signature override) — it reads the
+            // erased `i64` field directly and SKIPS the project bridge. So the
+            // rewrite must ALSO see those reads as raw and `Box` them into this
+            // fn's boxed (`$AverInt`) sinks (a `String.fromInt` arg, a returned
+            // `Result.Ok` embed). With fully-empty facts the rewrite missed the
+            // box and the raw `i64` met an `$AverInt` slot — a wasm VALIDATION
+            // failure on a mutual-TCO member that stringifies a carrier field
+            // (the snake `tick`/`tickMove` SCC stringifying `score.value`).
+            // These tables are global (same for every fn), so this never
+            // introduces bareness the analysis didn't already prove.
+            FnBareFacts {
+                carrier_types: carrier.clone(),
+                field_carrier_intervals: field_carrier.clone(),
+                ..FnBareFacts::default()
+            }
         } else {
             let Some(f) = facts.for_fn(id).cloned() else {
                 continue;

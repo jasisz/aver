@@ -70,6 +70,18 @@ pub(crate) fn emit_mir_interpolated_str(
                 match aver_ty.trim() {
                     "String" => { /* identity */ }
                     "Int" => {
+                        // ETAP-2 carrier-`i64`: a bare-carrier `.value` read
+                        // (or raw carrier arithmetic) leaves a native `i64` on
+                        // the stack — the project bridge was skipped because the
+                        // surrounding context is expected to box. `String.fromInt`
+                        // takes a boxed `$AverInt` ref, so this IS that context:
+                        // lift the raw `i64` to `$AverInt` (`__aint_from_i64`)
+                        // before the call, or the raw `i64` meets a `(ref null
+                        // $type)` slot (a wasm VALIDATION failure). Mirrors the
+                        // `from_mir.rs` boundary-box at the other `$AverInt` sinks.
+                        if ctx.registry.bignum && mir_renders_raw_i64(&inner.node, ctx) {
+                            emit_carrier_project_bridge(func, ctx)?;
+                        }
                         let to_string_idx =
                             ctx.fn_map.builtins.get("String.fromInt").copied().ok_or(
                                 WasmGcError::Validation(
