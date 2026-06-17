@@ -853,8 +853,18 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
             Spanned::new(MirExpr::InterpolatedStr(parts), line)
         }
         MirExpr::IndependentProduct(mut ip) => {
+            // `(a, b, c)!` builds a tuple `struct.new` whose Int element slots
+            // are `$AverInt` (`ref null $type`); `(a, b, c)?!` likewise builds
+            // the unwrapped-Ok tuple. Each element is therefore a BOXED context,
+            // exactly like a plain `Tuple` (the adjacent arm above). Routing the
+            // items through `rewrite_value` (children only) left a raw-rendering
+            // Int element — a bare-returning call (`countdown(3)`), inline bare
+            // arith, or a bare carrier `.value` (`dbl(c)`) — un-boxed, so the
+            // raw `i64` met the `$AverInt` tuple field: a wasm VALIDATION error
+            // on a VM-valid program (the 4th boundary-completeness hole). Box
+            // each element at the chokepoint, identical to `Tuple`.
             let items = std::mem::take(&mut ip.node.items);
-            ip.node.items = items.into_iter().map(|it| rewrite_value(it, ctx)).collect();
+            ip.node.items = rewrite_boxed_each(items, ctx);
             Spanned::new(MirExpr::IndependentProduct(ip), line)
         }
         MirExpr::Project(mut p) => {

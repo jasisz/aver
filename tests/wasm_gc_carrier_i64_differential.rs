@@ -1649,3 +1649,96 @@ fn main() -> Unit
     let out = assert_vm_wasm_identical("bare-match-subject", src);
     assert_eq!(out, "1 1");
 }
+
+// ---------------------------------------------------------------------------
+// INDEPENDENT-PRODUCT (bang-group `!`) element boundary completeness (the 4th
+// hole of the bare-i64 → `$AverInt` class).
+//
+// `(a, b)!` builds a tuple `struct.new` whose Int element slots are typed
+// `$AverInt` (`ref null $type`), exactly like a plain `Tuple` literal. The
+// `bare_i64_rewrite` routed the product's elements through `rewrite_value`
+// (children only) instead of the `rewrite_boxed_each` chokepoint the adjacent
+// `Tuple` arm uses, so a raw-rendering Int element — a bare-returning call
+// (`countdown(3)`), inline bare arith, or a bare carrier `.value` (`dbl(c)`) —
+// stayed un-boxed: the raw `i64` met the `$AverInt` tuple field, a wasm
+// VALIDATION error on a VM-valid program. `verify --wasm-gc` masks it; only a
+// full-module compile (every fn lowered) catches it. Two flavors:
+//   - CARRIER: `(dbl(c), dbl(c))!` over a bare carrier-arith call — vanishes
+//     with `AVER_NO_CARRIER_I64=1` (the #551 carrier blocker).
+//   - BARE-i64: `(countdown(3), countdown(4))!` over recurrence counters —
+//     vanishes with `AVER_NO_BARE_I64=1`, a PRE-EXISTING bare-i64 bug the same
+//     fix closes (carrier-arith plays no part).
+
+/// CARRIER flavor — a bang-group product `(dbl(c), dbl(c))!` whose elements are
+/// bare-returning carrier-arith calls. Each Int element slot of the tuple is
+/// `$AverInt`, so the rewrite must box each `dbl(c)` raw `i64` result at the
+/// product-element boundary. VM == wasm-gc, and the whole module compiles clean.
+#[test]
+fn carrier_bare_call_in_independent_product_boxes_at_boundary() {
+    let src = r#"module M
+    intent = "carrier arith result in independent-product (!) element"
+    effects [Console]
+
+record C
+    value: Int
+
+fn mk(n: Int) -> Result<C, String>
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(C(value = n))
+        false -> Result.Err("oob")
+
+fn dbl(c: C) -> Int
+    c.value + c.value
+
+fn pair(c: C) -> Tuple<Int, Int>
+    (dbl(c), dbl(c))!
+
+fn sumPair(c: C) -> Int
+    match pair(c)
+        (a, b) -> a + b
+
+fn main() -> Unit
+    ! [Console.print]
+    match mk(5)
+        Result.Ok(c)  -> Console.print("{sumPair(c)}")
+        Result.Err(_) -> Console.print("err")
+"#;
+    let out = assert_vm_wasm_identical("carrier-ip-call", src);
+    assert_eq!(out, "20");
+    assert_carrier_revert_agrees("carrier-ip-call", src, &out);
+}
+
+/// BARE-i64 flavor (PRE-EXISTING, predates #551) — a bang-group product
+/// `(countdown(3), countdown(4))!` whose elements are bare-i64 recurrence
+/// calls. `countdown` returns a native `i64` (bare return); each tuple element
+/// slot is `$AverInt`, so the same product-element box closes it. Carrier
+/// arith plays no part (no carrier here) — the program vanishes the bug only
+/// with `AVER_NO_BARE_I64=1`, never `AVER_NO_CARRIER_I64=1`. VM == wasm-gc and
+/// the module compiles clean.
+#[test]
+fn bare_recurrence_call_in_independent_product_boxes_at_boundary() {
+    let src = r#"module M
+    intent = "bare-i64 recurrence result in independent-product (!) element"
+    effects [Console]
+
+fn countdown(n: Int) -> Int
+    match n
+        0 -> 0
+        _ -> countdown(n - 1)
+
+fn pair() -> Tuple<Int, Int>
+    (countdown(3), countdown(4))!
+
+fn run() -> Int
+    match pair()
+        (a, b) -> a + b
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{run()}")
+"#;
+    // countdown(3) and countdown(4) both reach 0, so the tuple is (0, 0) and
+    // the sum is 0. VM is ground truth; the whole module must compile clean.
+    let out = assert_vm_wasm_identical("bare-ip-call", src);
+    assert_eq!(out, "0");
+}
