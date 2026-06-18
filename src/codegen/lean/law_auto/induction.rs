@@ -1630,6 +1630,21 @@ fn emit_list_induction(
     let simp_list = simp_defs.into_iter().collect::<Vec<_>>().join(", ");
     let target_lean = &intro_names[target_idx];
 
+    // SECOND list argument — a list-typed `given` OTHER than the induction
+    // target. A law like `last (xs ++ ys) = lastOfTwo xs ys` inducts on `xs`,
+    // but the subject's body matches the OTHER list (`lastOfTwo` matches `ys`),
+    // so the residual `last (h :: ys) = match ys with [] => h | _ => last ys`
+    // only closes after the second list is ALSO case-split. The induction
+    // ladder peels the target's `tail`; an additive `cases <second_list>` rung
+    // (run only after the existing arms fail, ending in `omega`) splits the
+    // second list too. First list-typed given that is not the target.
+    let second_list: Option<String> = law
+        .givens
+        .iter()
+        .enumerate()
+        .find(|(i, g)| *i != target_idx && g.type_name.trim_start().starts_with("List"))
+        .and_then(|(i, _)| intro_names.get(i).cloned());
+
     // Generalizing-induction target: a Peano `given` the verified fn decrements
     // SYNCHRONOUSLY with the list (the `n` of `take`/`drop`, which match `n`
     // then recurse on `(z, tail)`). Inducting on the list alone gives a cons IH
@@ -1778,10 +1793,44 @@ fn emit_list_induction(
         let split_extra_branch = cases_extra
             .map(|s| format!(" | (simp only [{s}]; split <;> simp_all [{s}] <;> omega)"))
             .unwrap_or_default();
+        // GAP #3 — case-split the SECOND list argument. The subject fn may match
+        // a DIFFERENT list than the induction target (`lastOfTwo` matches `ys`,
+        // not the recursed `xs`), leaving a residual `… = match ys with …` that
+        // no amount of `cases tail` peels. An additive `cases <second_list>`
+        // rung (and a `cases tail <;> cases <second_list>` twin for the cons arm,
+        // where BOTH lists drive the two-deep `last`/`butlast` shape) splits it.
+        // Runs only after the prior arms fail and ends in `<;> omega`, so a
+        // non-closing arm still degrades to the honest `sorry` — purely additive,
+        // sound (`cases`/`simp_all`/`omega` mint no axioms), can only ADD closures.
+        let second_cases_nil = second_list
+            .as_deref()
+            .map(|sl| format!(" | (cases {sl} <;> simp_all [{arm_simp}] <;> omega)"))
+            .unwrap_or_default();
+        let second_cases_cons = second_list
+            .as_deref()
+            .map(|sl| {
+                format!(
+                    " | (cases {sl} <;> simp_all [{arm_simp}] <;> omega) | (cases tail <;> cases {sl} <;> simp_all [{arm_simp}] <;> omega)"
+                )
+            })
+            .unwrap_or_default();
+        // GAP #1 — push a proved equality through a user-fn wrapper with `congr`.
+        // simp+omega cannot conclude `f a = f b` from a provable `a = b` when `f`
+        // is an opaque user fn (`half (length …) = half (length …)`): omega never
+        // sees inside `half`. `congr 1` reduces the goal to its argument equality
+        // `a = b`, which the SAME arm simp set + `omega` then discharges (the
+        // homomorphism/bridge rewrites having normalized `a` and `b` to the same
+        // linear-arith form). Runs only after the prior arms fail and every
+        // sub-goal ends in `omega`, so it throws on a leftover and degrades to
+        // `sorry` — additive and sound, can only ADD closures.
+        let congr_nil =
+            format!(" | (simp [{arm_simp}]; congr 1 <;> simp_all [{arm_simp}] <;> omega)");
+        let congr_cons =
+            format!(" | (simp_all [{arm_simp}]; congr 1 <;> simp_all [{arm_simp}] <;> omega)");
         let tail = if with_sorry { " | sorry" } else { "" };
         (
             format!(
-                "| nil => first | (simp [{arm_simp}]; done) | (simp [{arm_simp}]; omega){nil_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega){tail}"
+                "| nil => first | (simp [{arm_simp}]; done) | (simp [{arm_simp}]; omega){nil_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega){second_cases_nil}{congr_nil}{tail}"
             ),
             // Trailing `cases tail` branch: a fn whose body matches TWO levels
             // deep on the list (`last`/`butlast`: `match x | [] | y::z => match z
@@ -1795,7 +1844,7 @@ fn emit_list_induction(
             // non-closing arm still degrades to the honest `sorry`. Sound, so it
             // can only ADD closures.
             format!(
-                "| cons head tail ih => first | (simp_all [{arm_simp}]; done) | (simp_all [{arm_simp}]; omega){cons_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega) | (cases tail <;> simp_all [{arm_simp}] <;> omega){cases_extra_branch}{split_extra_branch}{tail}"
+                "| cons head tail ih => first | (simp_all [{arm_simp}]; done) | (simp_all [{arm_simp}]; omega){cons_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega) | (cases tail <;> simp_all [{arm_simp}] <;> omega){cases_extra_branch}{split_extra_branch}{second_cases_cons}{congr_cons}{tail}"
             ),
         )
     };
