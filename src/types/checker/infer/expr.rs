@@ -389,6 +389,31 @@ impl TypeChecker {
                         Some(expected_map)
                     }
 
+                    // List.concat(a, b) — when an argument is an empty-list
+                    // literal `[]`, push the expected List<T> into both args so
+                    // the empty list adopts the concrete element type (e.g.
+                    // `List.concat([], [])` from cartesian law-case expansion of
+                    // `[]`-bearing givens would otherwise leave the result
+                    // List<Var>). Only the empty-list case is intercepted; a
+                    // genuine element mismatch between non-empty lists falls
+                    // through to normal concat inference, which reports a precise
+                    // "list element types differ" error.
+                    ("List.concat", 2, Type::List(_))
+                        if args
+                            .iter()
+                            .any(|a| matches!(&a.node, Expr::List(elems) if elems.is_empty())) =>
+                    {
+                        let left_ty = self.infer_type_with_expected(&args[0], Some(expected));
+                        let right_ty = self.infer_type_with_expected(&args[1], Some(expected));
+                        if self.compatible(&left_ty, expected)
+                            && self.compatible(&right_ty, expected)
+                        {
+                            Some(expected.clone())
+                        } else {
+                            None
+                        }
+                    }
+
                     // Option.None — accidentally written as zero-arg call.
                     ("Option.None", 0, Type::Option(_)) => Some(expected.clone()),
 
