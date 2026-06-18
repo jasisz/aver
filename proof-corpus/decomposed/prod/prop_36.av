@@ -1,0 +1,39 @@
+module Prop36
+    intent =
+        "TIP prod prop_36: elem x y => elem x (y ++ z)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn barbar(x: Bool, y: Bool) -> Bool
+    match x
+        true -> true
+        false -> y
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn elem(x: Nat, y: List<Nat>) -> Bool
+    match y
+        [] -> false
+        [z, ..xs] -> barbar(eqNat(x, z), elem(x, xs))
+
+verify elem law barbarPreserveTrue
+    given x: Bool = [true, false]
+    given y: Bool = [true, false]
+    barbar(true, y) => true
+
+verify elem law elemConcat
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z)], [Nat.Z, Nat.S(Nat.Z)]]
+    given z: List<Nat> = [[], [Nat.S(Nat.Z)], [Nat.Z]]
+    when elem(x, y)
+    elem(x, List.concat(y, z)) => true

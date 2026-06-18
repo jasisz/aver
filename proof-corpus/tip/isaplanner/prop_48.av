@@ -21,6 +21,12 @@ fn butlast(xs: List<Nat>) -> List<Nat>
             [] -> []
             [x2, ..x3] -> List.concat([y], butlast(z))
 
+fn isCons(xs: List<Nat>) -> Bool
+    match xs
+        [] -> false
+        [y, ..z] -> true
+
 verify butlast law butlastLastAppend
     given xs: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]]
+    when isCons(xs)
     List.concat(butlast(xs), [last(xs)]) => xs

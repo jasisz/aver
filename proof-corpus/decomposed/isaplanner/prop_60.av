@@ -19,6 +19,17 @@ fn isCons(xs: List<Nat>) -> Bool
         [] -> false
         [y, ..z] -> true
 
+verify last law lastSnoc
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z]]
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    last(List.concat(xs, [x])) => x
+
+verify last law lastConsNonEmpty
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.Z]]
+    when isCons(xs)
+    last(List.concat([x], xs)) => last(xs)
+
 verify last law lastAppend
     given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z]]
     given ys: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z)], [Nat.Z, Nat.S(Nat.Z)]]

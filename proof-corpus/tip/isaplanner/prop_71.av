@@ -41,4 +41,5 @@ verify elem law insElem
     given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
     given y: Nat = [Nat.S(Nat.Z), Nat.Z, Nat.S(Nat.S(Nat.Z))]
     given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z]]
+    when Bool.not(eqNat(x, y))
     elem(x, ins(y, xs)) => elem(x, xs)
