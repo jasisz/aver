@@ -1224,14 +1224,26 @@ pub(crate) fn emit_mir_expr(
             // per entry. Canonical from the first entry's K/V stamped
             // types, or the sole registered `Map<K,V>` when empty.
             let canonical: String = if entries.is_empty() {
-                if ctx.registry.map_order.len() == 1 {
+                // Empty `{}` carries no entry types, but the type checker
+                // stamped the whole literal with its expected `Map<K, V>`
+                // (the empty-MapLiteral arm in `types/checker/infer/expr.rs`
+                // adopts `expected`). Consult that stamp first — canonicalised
+                // the same way the non-empty branch builds it from entry types
+                // — so multiple registered instantiations resolve
+                // unambiguously. Fall back to the lone-instantiation shortcut
+                // only when the stamp is not a registered `Map<K, V>`.
+                let stamped = aver_type_canonical(expr, ctx.return_type, ctx.registry);
+                if ctx.registry.map_order.contains(&stamped) {
+                    stamped
+                } else if ctx.registry.map_order.len() == 1 {
                     ctx.registry.map_order[0].clone()
                 } else {
-                    return Err(WasmGcError::Validation(
+                    return Err(WasmGcError::Validation(format!(
                         "empty MapLiteral: cannot resolve Map<K,V> instantiation \
-                         without context (multiple instantiations registered)"
-                            .into(),
-                    ));
+                         (stamped `{stamped}` not registered; {} instantiations \
+                         available)",
+                        ctx.registry.map_order.len()
+                    )));
                 }
             } else {
                 let k_aver = aver_type_str_of(&entries[0].0);
