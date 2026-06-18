@@ -2314,6 +2314,23 @@ fn emit_list_induction(
             proof_lines.push(format!("     {nil_plain}"));
             proof_lines.push(format!("     {cons_plain})"));
         }
+        // Structural-only rung (bridge-free), tried BEFORE the bridged rungs
+        // below: the sibling laws ALONE, closed by `; done`. The bridge +
+        // commute-normalizer rungs rewrite a user fn to its builtin (`plus →
+        // +`) and a `S (S y)` literal to a numeral (`+ 2`) / reorder the `+`s —
+        // which strands an `S (S)`-shaped sibling law (`even ((n+1)+1) = even
+        // n`, `length (w ++ (x::y::z)) = ((length (w ++ z) + 1) + 1)`) so it no
+        // longer matches, and `omega` — blind to the opaque user fn (`even`) —
+        // then cannot finish. Trying the siblings WITHOUT the arithmetic
+        // canonicalization lets the pure structural rewrite close by `rfl`
+        // (prod lemma_14/lemma_16's `even`-shift targets). Gated on non-empty
+        // siblings; `; done` throws on any leftover, so this is strictly
+        // additive — a non-closing goal falls straight through to the rungs
+        // below, and the bare-sibling set is a subset of `fast_lemmas` already
+        // run there, so it adds no new simp-loop surface.
+        if !fast_simp.is_empty() {
+            proof_lines.push(format!("  | (simp only [{}]; done)", fast_simp.join(", ")));
+        }
         proof_lines.push(format!(
             "  | (simp only [{}] <;> omega)",
             fast_lemmas.join(", ")
@@ -2854,6 +2871,18 @@ fn emit_simple_induction(
             fast_lemmas.extend(COMMUTE_NORMALIZERS.iter().map(|s| s.to_string()));
         }
         proof_lines.push("  first".to_string());
+        // Structural-only rung (bridge-free), tried BEFORE the bridged rung
+        // below — see `emit_list_induction` for the full rationale. The `plus →
+        // +` bridge plus `Nat.add_comm` rewrite a `S (S y)` literal to a numeral
+        // and reorder the `+`s, stranding an `S (S)`-shaped sibling law (`even
+        // ((n+1)+1) = even n`) so it no longer matches and `omega` (blind to the
+        // opaque `even`) cannot finish. Trying the siblings alone lets the pure
+        // structural rewrite close by `rfl` (prod lemma_16's `even`-plus-shift).
+        // Gated on non-empty siblings; `; done` throws on a leftover, so it is
+        // strictly additive (falls through to the bridged rung below).
+        if !fast_simp.is_empty() {
+            proof_lines.push(format!("  | (simp only [{}]; done)", fast_simp.join(", ")));
+        }
         proof_lines.push(format!(
             "  | (simp only [{}] <;> omega)",
             fast_lemmas.join(", ")
