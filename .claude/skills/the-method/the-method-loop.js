@@ -13,7 +13,7 @@ let a = typeof args === 'string'
   ? (() => { try { return JSON.parse(args) } catch { return args.trim() ? [args.trim()] : null } })()
   : args
 const TASKS = Array.isArray(a) ? a : (a && Array.isArray(a.tasks) ? a.tasks : [])
-const MAX_ATTEMPTS = (a && a.attempts) || 4
+const MAX_ATTEMPTS = (a && a.attempts) || 3
 const MODEL = (a && a.model) || undefined  // optional model override for the proposer (e.g. 'haiku','sonnet'); undefined = inherit
 if (!TASKS.length) {
   log('the-method: pass one or more Aver task .av paths as args, e.g. { tasks: ["path/to/task.av"] }')
@@ -63,7 +63,7 @@ STEP 1 — understand the mechanism for THIS project:
     <aver> proof <scratch.av> --discover -o <dir>            (proves + commits the helper lemmas)
     <aver> proof <scratch.av> --check --check-json --backend lean -o <dir>   (SAME dir; closed <=> output contains "universal":true)
 
-STEP 2 — the loop (max ${MAX_ATTEMPTS} attempts; stop the instant it closes):
+STEP 2 — the loop (HARD CAP: at most ${MAX_ATTEMPTS} attempts; stop the instant it closes). If it has NOT closed after ${MAX_ATTEMPTS} attempts, STOP immediately — return closed:false with your best helper set and ONE short line naming the likely missing PROVER capability (e.g. "needs congr", "needs cases on a 2nd list arg", "nonlinear arithmetic"). Do NOT keep proposing more variations, and do NOT analyze the prover's tactics/internals — spiraling past the cap is the dominant cost sink and never closes a prover-blocked goal.
 1. Propose 1-3 TRUE, GENERAL helper laws about the task's OWN functions that the main proof needs — a missing homomorphism / associativity / distributivity / an equation relating subterms of the goal. Do NOT merely restate the goal.
 2. Copy the target to a fresh /tmp scratch and splice the helper laws in BEFORE the target "verify ... law" line. ORDER MATTERS (appending at the END can fail to fire); RENDERING MATTERS (how a constructor/operator is written changes how it elaborates). Valid Aver only: first-order, no closures.
 3. Run discover then check into a FRESH /tmp dir. Closed <=> "universal":true with "sorries":0.

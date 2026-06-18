@@ -980,14 +980,14 @@ fn run_check_json_for(out_tag: &str, corpus_av: &str, explain: bool) -> Option<s
 #[test]
 fn proof_check_explain_surfaces_open_goal_residual() {
     // `--explain` enabler for an agent proposer / "Lemma Calculation": for an
-    // OPEN inductive law (prop_49 butlast, which the auto-prover sorry-floors)
-    // the check-json must carry a per-`fn.law` `open_goals` entry whose text is
+    // OPEN inductive law (prop_53 count-over-sort, which the auto-prover
+    // sorry-floors) the check-json must carry a per-`fn.law` `open_goals` entry whose text is
     // the law's UNSOLVED GOAL with the inductive hypothesis (`ih`) in canonical
     // recursive form — exactly what an agent applies the IH against. The counted
     // verdict is unchanged (still not universal, still a sorry).
     let Some(summary) = run_check_json_for(
         "aver-explain-open-out",
-        "proof-corpus/tip/isaplanner/prop_49.av",
+        "proof-corpus/tip/isaplanner/prop_53.av",
         true,
     ) else {
         return;
@@ -997,7 +997,7 @@ fn proof_check_explain_surfaces_open_goal_residual() {
         .and_then(|g| g.as_object())
         .unwrap_or_else(|| panic!("--explain must emit an `open_goals` object:\n{summary}"));
     let residual = goals
-        .get("butlast.butlastConcatLaw")
+        .get("count.countSort")
         .and_then(|v| v.as_str())
         .unwrap_or_else(|| panic!("open_goals must be keyed by `fn.law` identity:\n{summary}"));
     assert!(
@@ -1005,7 +1005,7 @@ fn proof_check_explain_surfaces_open_goal_residual() {
         "the residual text must be non-empty:\n{residual}"
     );
     assert!(
-        residual.contains("ih :") && residual.contains("butlast (append tail ys)"),
+        residual.contains("ih :") && residual.contains("count n (sort tail)"),
         "the residual must carry the IH in canonical recursive form (the Lemma \
          Calculation input):\n{residual}"
     );
@@ -1018,7 +1018,7 @@ fn proof_check_without_explain_emits_no_open_goals_key() {
     // substring consumers (proof-corpus/run.sh, the --gate baseline diff).
     let Some(summary) = run_check_json_for(
         "aver-explain-noop-out",
-        "proof-corpus/tip/isaplanner/prop_49.av",
+        "proof-corpus/tip/isaplanner/prop_53.av",
         false,
     ) else {
         return;
@@ -1031,7 +1031,7 @@ fn proof_check_without_explain_emits_no_open_goals_key() {
     // reports WITH --explain (only the additive `open_goals` key may appear).
     let Some(with_explain) = run_check_json_for(
         "aver-explain-cmp-out",
-        "proof-corpus/tip/isaplanner/prop_49.av",
+        "proof-corpus/tip/isaplanner/prop_53.av",
         true,
     ) else {
         return;
