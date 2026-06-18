@@ -20,11 +20,12 @@ use crate::codegen::CodegenContext;
 /// Lean renderer for the backend-neutral rev anti-homomorphism recognizer
 /// (`crate::codegen::proof_recognize::collect_rev_ops_in_law` — shared with the
 /// Dafny backend; despite the module path it returns source-name structs only).
-/// Produces the proved append-nil-right / associativity / rev-distribution
-/// theorems (prepended as `support_lines`) and the distribution lemma's name to
-/// add to the induction's `simp` set. List<Int> folds lower to clean
-/// `def … termination_by`, so these close kernel-clean (`#print axioms =
-/// [propext]`) — the Lean counterpart of the Dafny rev strategy, SAME recognizer.
+/// Produces the proved append-nil-right, associativity, rev-distribution, and
+/// rev-INVOLUTION theorems (prepended as `support_lines`) and the distribution
+/// and involution lemma names to add to the induction's `simp` set. List<Int>
+/// folds lower to clean `def … termination_by`, so these close kernel-clean
+/// (`#print axioms = [propext]`) — the Lean counterpart of the Dafny rev
+/// strategy, SAME recognizer.
 fn lean_rev_support(
     ops: &[crate::codegen::proof_recognize::RevOp],
     law_uid: &str,
@@ -37,6 +38,7 @@ fn lean_rev_support(
         let nilr = format!("{law_uid}_{a}_nilR");
         let assoc = format!("{law_uid}_{a}_assoc");
         let dist = format!("{law_uid}_{r}_revDist");
+        let invol = format!("{law_uid}_{r}_revInvol");
         support.push(format!(
             "theorem {nilr} : ∀ (xa : List Int), {a} xa [] = xa := by\n  intro xa; induction xa with\n  | nil => simp [{a}]\n  | cons h t ih => simp [{a}, ih]"
         ));
@@ -46,10 +48,28 @@ fn lean_rev_support(
         support.push(format!(
             "theorem {dist} : ∀ (xa xb : List Int), {r} ({a} xa xb) = {a} ({r} xb) ({r} xa) := by\n  intro xa xb; induction xa with\n  | nil => simp [{r}, {a}, {nilr}]\n  | cons h t ih => simp [{r}, {a}, ih, {assoc}]"
         ));
+        // rev INVOLUTION (`rev (rev x) = x`) — the missing rung for the
+        // double-rev anti-homomorphism family (TIP prod/prop_11
+        // `rev (app (rev x) (rev y)) = app y x`). Once the law's `simp only`
+        // distributes `rev` over the inner append (the `revDist` rule above),
+        // the residual `app (rev (rev y)) (rev (rev x))` only collapses to
+        // `app y x` when each doubled `rev` cancels — exactly this lemma. Its
+        // own cons case is proved by the SAME ladder: `simp [rev, append,
+        // revDist, ih]` rewrites `rev (rev (h :: t))` = `rev (app (rev t) [h])`
+        // = `app (rev [h]) (rev (rev t))` = `app [h] t` = `h :: t` under the IH.
+        // PROVED, not trusted — a misrecognized rev fails this proof and
+        // degrades to an honest `sorry` (caught by the `#print axioms` gate),
+        // never a false theorem. Terminating as a simp rewrite (each use strips
+        // two `rev`s), so adding its name to the simp set cannot loop; it only
+        // ever ADDS closures to the rev-family ladders.
+        support.push(format!(
+            "theorem {invol} : ∀ (xa : List Int), {r} ({r} xa) = xa := by\n  intro xa; induction xa with\n  | nil => simp [{r}]\n  | cons h t ih => simp [{r}, {a}, {dist}, ih]"
+        ));
         // The append fn name is needed in the main induction's simp set too
         // (revDist rewrites into `append`, which must then unfold).
         simp_extra.push(a);
         simp_extra.push(dist);
+        simp_extra.push(invol);
     }
     (support, simp_extra)
 }
@@ -712,8 +732,25 @@ fn earlier_law_lemmas(
         // The genuine decomposition case is preserved: a count-homomorphism
         // helper IS a law about `count`, the very subject it shares.
         let prev_subject = aver_name_to_lean(&prev.fn_name);
+        // THIRD rule — LHS-rooted relevance. A Forward sibling fires against the
+        // consumer goal only through its LHS shape, so a helper whose LHS sits
+        // ENTIRELY inside this proof's cone is relevant even when its RHS
+        // introduces a new combinator outside the cone. The `even (length
+        // (append x y)) = even (length (append y x))` commute needs the
+        // length-homomorphism `length (append x y) = plus …` — its LHS is
+        // `{length, append} ⊆ cone`, but `plus` (RHS-only) keeps it out of the
+        // is_subset rule, and it never mentions the subject `even` for the
+        // subject rule. Gate on the sibling's OWN subject fn ∈ scope (a law
+        // genuinely ABOUT a cone fn, not unrelated noise), exactly as the
+        // subject rule does; the RHS combinator's `= a + b` bridge is
+        // synthesized downstream, and loop safety stays in `simp_entries`.
+        let lhs_mentions = crate::codegen::lemma_discovery::lemma_lhs_fns(&text, &program_index);
+        let lhs_rooted = !lhs_mentions.is_empty()
+            && lhs_mentions.is_subset(&scope)
+            && scope.contains(&prev_subject);
         if mentions.is_subset(&scope)
             || (mentions.contains(&subject) && scope.contains(&prev_subject))
+            || lhs_rooted
         {
             out.push(crate::codegen::lemma_discovery::CommittedLemma::reference(
                 name, text,
@@ -1932,12 +1969,38 @@ fn emit_list_induction(
         let lemma_fns = feedback_source_fns(ctx, discovered, &siblings);
         let (arith_support, arith_bridges, bridged_fns) =
             lean_nat_lift_support(law, ctx, &law_uid, &lemma_fns);
+        // Commutativity normalizers for the fast path ONLY. After a homomorphism
+        // + `= a + b` bridge rewrite, a COMMUTE goal lands as `f (a + b) = f (b +
+        // a)` where `f` is an opaque user fn (`even`, `half`) — `omega` never
+        // sees inside `f`, so it cannot close it, but `simp`'s permutative
+        // handling of `Nat.add_comm`/`Nat.mul_comm` orders both sides to the same
+        // canonical form and closes by `rfl`. These are permutative rules: `simp`
+        // applies them only toward its term order, so they NEVER loop. Confined to
+        // the fast path's `simp only` rungs (gated on non-empty siblings /
+        // committed lemmas) — the induction arms stay byte-identical, so a law
+        // that already closed on its ladder is untouched. Strictly additive: a
+        // `simp only` that already closed runs `<;> omega` on zero goals.
+        const COMMUTE_NORMALIZERS: &[&str] = &[
+            "Nat.add_comm",
+            "Nat.mul_comm",
+            "Int.add_comm",
+            "Int.mul_comm",
+        ];
         let mut fast_lemmas: Vec<String> = fast_simp.clone();
         fast_lemmas.extend(arith_bridges.iter().cloned());
+        if !fast_simp.is_empty() {
+            fast_lemmas.extend(COMMUTE_NORMALIZERS.iter().map(|s| s.to_string()));
+        }
         let fast_unfolds: BTreeSet<String> = law_simp_defs(ctx, vb, law)
             .into_iter()
             .chain(fast_simp.iter().cloned())
             .chain(arith_bridges.iter().cloned())
+            .chain(
+                COMMUTE_NORMALIZERS
+                    .iter()
+                    .filter(|_| !fast_simp.is_empty())
+                    .map(|s| s.to_string()),
+            )
             .filter(|n| !bridged_fns.contains(n))
             .collect();
         let bridge_set = if arith_bridges.is_empty() {
@@ -2482,8 +2545,21 @@ fn emit_simple_induction(
         // (and a second def-unfolding variant is tried — see
         // `emit_list_induction`); the bridged fns' own defs stay out of the
         // `simp only` calls (def + bridge in one call sticks).
+        // Commute normalizers for the fast path only — see the same const in
+        // `emit_list_induction` for the rationale (a `f (a + b) = f (b + a)`
+        // commute residual under an opaque user fn `f` closes by `simp`'s
+        // permutative ordering, never `omega`; permutative rules don't loop).
+        const COMMUTE_NORMALIZERS: &[&str] = &[
+            "Nat.add_comm",
+            "Nat.mul_comm",
+            "Int.add_comm",
+            "Int.mul_comm",
+        ];
         let mut fast_lemmas: Vec<String> = fast_simp.clone();
         fast_lemmas.extend(arith_bridges.iter().cloned());
+        if !fast_simp.is_empty() {
+            fast_lemmas.extend(COMMUTE_NORMALIZERS.iter().map(|s| s.to_string()));
+        }
         proof_lines.push("  first".to_string());
         proof_lines.push(format!(
             "  | (simp only [{}] <;> omega)",
@@ -2494,6 +2570,7 @@ fn emit_simple_induction(
                 .into_iter()
                 .chain(fast_simp.iter().cloned())
                 .chain(arith_bridges.iter().cloned())
+                .chain(COMMUTE_NORMALIZERS.iter().map(|s| s.to_string()))
                 .filter(|n| !bridged_fns.contains(n))
                 .collect();
             // Skip the def-unfolding variant when it collapses to the lemma+

@@ -235,6 +235,27 @@ pub fn mentioned_fns(text: &str, lean_index: &BTreeMap<String, String>) -> BTree
     out
 }
 
+/// Program fns a lemma's LEFT-HAND SIDE mentions — the rewrite rule's pattern,
+/// projected through `lean_index` like [`mentioned_fns`]. A Forward lemma fires
+/// against the consumer goal only through its LHS shape (`length (append x y) =
+/// plus …` matches a goal containing `length (append …)`), so a sibling whose
+/// LHS sits entirely inside the consumer's proof cone is RELEVANT even when its
+/// RHS introduces an out-of-cone combinator (`plus`) — that combinator's
+/// `= a + b` bridge is synthesized downstream, and loop safety is handled by
+/// [`simp_entries`]. Falls back to the whole statement when there is no
+/// top-level `=` (an invariant-shaped lemma, which is inert as a rewrite anyway).
+pub fn lemma_lhs_fns(text: &str, lean_index: &BTreeMap<String, String>) -> BTreeSet<String> {
+    let lhs = statement_body(text)
+        .and_then(|stmt| {
+            split_after_top_eq(stmt).map(|rhs| {
+                let end = stmt.len() - rhs.len() - 1; // strip the `=` between lhs and rhs
+                stmt[..end].trim()
+            })
+        })
+        .unwrap_or(text);
+    mentioned_fns(lhs, lean_index)
+}
+
 /// How a committed lemma may join a `simp` set. Discovery commits equations
 /// in enumeration orientation, so usability as a rewrite rule is a property
 /// to RECOVER, not assume.
