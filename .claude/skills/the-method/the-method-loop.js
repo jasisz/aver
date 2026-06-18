@@ -57,12 +57,12 @@ const LAWS_SCHEMA = {
 
 const RUN_SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['checkPassed', 'universal', 'sorries', 'allHelpersVerified', 'lawStatus', 'note'],
+  required: ['checkPassed', 'verifyClean', 'universal', 'sorries', 'lawStatus', 'note'],
   properties: {
-    checkPassed: { type: 'boolean', description: 'false iff the `aver check` pre-flight reported a parse/type error (the spliced helper is malformed) — in that case the proof was NOT run and the note carries the verbatim aver error' },
-    universal: { type: 'boolean', description: 'value of "universal" from the --check-json line' },
+    checkPassed: { type: 'boolean', description: 'false iff the `aver check` pre-flight reported a parse/type error (the spliced helper is malformed) — in that case neither verify nor the proof was run and the note carries the verbatim aver error' },
+    verifyClean: { type: 'boolean', description: 'result of the CHEAP `aver verify` sieve (bounded sample eval, no Lean) run BEFORE the proof: true iff every law (helpers + target) passes with ZERO violations. false means a law is FALSE on its samples (e.g. a Nat-vs-Int bridge) — a real Aver-level refutation the kernel can miss; the proof is then NOT run.' },
+    universal: { type: 'boolean', description: 'value of "universal" from the --check-json line (only meaningful when verifyClean=true; the proof is skipped otherwise)' },
     sorries: { type: 'integer', description: 'value of "sorries" from the --check-json line' },
-    allHelpersVerified: { type: 'boolean', description: 'true iff every spliced helper passed its own bounded check' },
     lawStatus: {
       type: 'array',
       description: 'per-law status read from proof_manifest.json (laws[].tier; a declared law ABSENT from the manifest is open). AVER-LEVEL ONLY — map tiers to these words; do NOT include Lean axiom names, theorem names, or the word "sorry".',
@@ -70,7 +70,7 @@ const RUN_SCHEMA = {
         type: 'object', additionalProperties: false, required: ['law', 'status'],
         properties: {
           law: { type: 'string', description: 'the Aver law name (e.g. "appendBridge", or the target law name)' },
-          status: { type: 'string', enum: ['proven', 'sample-only', 'open'], description: 'proven = manifest tier universal (kernel-genuine); sample-only = tier bounded (passes samples, not universal); open = declared but absent from the manifest (unproved)' },
+          status: { type: 'string', enum: ['proven', 'sample-only', 'open', 'false-on-samples'], description: 'proven = manifest tier universal (kernel-genuine); sample-only = tier bounded (passes samples, not universal); open = declared but absent from the manifest (unproved); false-on-samples = `aver verify` found a counterexample (the law is FALSE / type-confused, e.g. a Nat-vs-Int bridge — must be replaced, not laddered)' },
         },
       },
     },
@@ -102,13 +102,13 @@ const RUN_PROMPT = (t, helperLaws) => `Mechanically test a fixed helper-law set 
 - TARGET task: ${t}  (relative to the project root, or absolute).
 - helper laws to splice (JSON, verbatim): ${JSON.stringify(helperLaws)}
 
-Copy ${t} to a fresh /tmp scratch; splice the helpers (and any fn they introduce) in BEFORE the target "verify … law" line (order + rendering matter). PRE-FLIGHT FIRST: run \`<aver> check <scratch>\` — block ONLY on a real parse/type error (\`error[parse...]\` or \`error[type-error]\`); IGNORE \`error[missing-verify]\` and \`error[module-size]\` (project-hygiene lints, NOT proof problems — a helper referencing a task fn like plus/lessEq without its own verify block is fine and proves regardless). If there is a genuine parse/type error, STOP, do NOT run the proof, and return checkPassed:false, universal:false, sorries:0, note=that verbatim error. Only if check is clean: run \`<aver> proof <scratch> --check --check-json --backend lean -o <dir>\` (retry once on a transient lake error). Do NOT use --discover — the inline proposed laws are the ONLY auxiliary lemmas; the goal must close by them + our auto-prover, not by the enumerative recognizer. Read the --check-json summary line for universal/sorries, AND read \`<dir>/proof_manifest.json\` for per-law status: its \`laws[]\` lists each tiered law as {law, tier} (tier "universal" -> status "proven"; "bounded" -> "sample-only"); a law you spliced (or the target law) that is ABSENT from laws[] is "open". Return checkPassed:true, universal, sorries, allHelpersVerified, lawStatus (one entry per helper + the target, using ONLY proven/sample-only/open), and a one-line AVER-LEVEL note. Do NOT read or reason about the generated Lean/Dafny, tactics, the proof residual, or the manifest's \`axioms\`/\`theorem\` fields (Lean internals) — those never go in your output.`
+Copy ${t} to a fresh /tmp scratch; splice the helpers (and any fn they introduce) in BEFORE the target "verify … law" line (order + rendering matter). PRE-FLIGHT FIRST: run \`<aver> check <scratch>\` — block ONLY on a real parse/type error (\`error[parse...]\` or \`error[type-error]\`); IGNORE \`error[missing-verify]\` and \`error[module-size]\` (project-hygiene lints, NOT proof problems — a helper referencing a task fn like plus/lessEq without its own verify block is fine and proves regardless). If there is a genuine parse/type error, STOP, do NOT run anything else, and return checkPassed:false, verifyClean:false, universal:false, sorries:0, note=that verbatim error. CHEAP SIEVE NEXT — run \`<aver> verify <scratch>\` (bounded sample eval, NO Lean): if ANY law is violated (a "✗"/"verify-mismatch"/"law violated"), set verifyClean:false, STOP, do NOT run the proof, and report which law is false on samples (status false-on-samples in lawStatus, note e.g. "law lengthBridge violated bounded verify 0/3 — false on samples, not a valid Aver law"). This catches a false / type-confused law (e.g. a Nat-vs-Int bridge) instantly and independently of Lean. Only if verify is fully clean (verifyClean:true): run \`<aver> proof <scratch> --check --check-json --backend lean -o <dir>\` (retry once on a transient lake error). Do NOT use --discover — the inline proposed laws are the ONLY auxiliary lemmas; the goal must close by them + our auto-prover, not by the enumerative recognizer. Read the --check-json summary line for universal/sorries, AND read \`<dir>/proof_manifest.json\` for per-law status: its \`laws[]\` lists each tiered law as {law, tier} (tier "universal" -> status "proven"; "bounded" -> "sample-only"); a law you spliced (or the target law) that is ABSENT from laws[] is "open". Return checkPassed:true, verifyClean:true, universal, sorries, lawStatus (one entry per helper + the target, using proven/sample-only/open), and a one-line AVER-LEVEL note. Do NOT read or reason about the generated Lean/Dafny, tactics, the proof residual, or the manifest's \`axioms\`/\`theorem\` fields (Lean internals) — those never go in your output.`
 
 const VERIFY_PROMPT = (t, helperLaws) => `INDEPENDENT verification gate. Do NOT trust any prior "closed" claim — verify from scratch yourself, then persist if it holds.
 - TARGET (OPEN in baseline): ${t}
 - candidate helper laws (JSON): ${JSON.stringify(helperLaws)}
 
-Copy ${t} to a fresh /tmp scratch; splice the helpers in BEFORE the target "verify … law" line (use the source strings verbatim; order + rendering matter); run \`<aver> proof <scratch> --check --check-json --backend lean -o <freshdir>\` (retry once on a transient lake error). Do NOT use --discover — closure must be self-contained (the inline laws + our auto-prover only). verified=true ONLY if the check output contains "universal":true AND "sorries":0. Confirm the BASE task (no helpers) is still OPEN. If verified, PERSIST: destination = the target path with its "/tip/" segment replaced by "/decomposed/" (no "/tip/" → proof-corpus/decomposed/<basename>); match an existing decomposed/ entry's convention EXACTLY (base file + spliced helpers/fns, nothing else); write it, re-run the closing sequence on the WRITTEN file, confirm "universal":true,"sorries":0, and set persistedPath. Else persistedPath="". Return verified, note, persistedPath.`
+Copy ${t} to a fresh /tmp scratch; splice the helpers in BEFORE the target "verify … law" line (use the source strings verbatim; order + rendering matter). FIRST run the CHEAP SIEVE \`<aver> verify <scratch>\` (bounded, no Lean): EVERY law (helpers + target) must pass with ZERO violations — a "✗"/verify-mismatch means a law is FALSE on samples (e.g. a Nat-returning fn bridged to an Int-returning builtin), a real Aver-level refutation the kernel can wrongly accept, so verified=false immediately. Only if verify is clean: run \`<aver> proof <scratch> --check --check-json --backend lean -o <freshdir>\` (retry once on a transient lake error). Do NOT use --discover — closure must be self-contained (the inline laws + our auto-prover only). verified=true ONLY if BOTH aver verify is clean AND the check output has "universal":true with "sorries":0. Confirm the BASE task (no helpers) is still OPEN. If verified, PERSIST: destination = the target path with its "/tip/" segment replaced by "/decomposed/" (no "/tip/" → proof-corpus/decomposed/<basename>); match an existing decomposed/ entry's convention EXACTLY (base file + spliced helpers/fns, nothing else); write it, re-run BOTH \`<aver> verify <written>\` (zero violations) AND \`<aver> proof <written> --check --check-json --backend lean\` ("universal":true,"sorries":0) on the WRITTEN file, and set persistedPath. Else persistedPath="". Return verified, note, persistedPath.`
 
 phase('Method')
 
@@ -132,13 +132,13 @@ async function runOneTask(t) {
     }
     const run = await agent(RUN_PROMPT(t, prop.helperLaws),
       { label: `run:${t}#${attempt}`, phase: 'Method', schema: RUN_SCHEMA, agentType: 'the-method-runner', model: RUNNER_MODEL })
-    if (run && run.universal === true && run.sorries === 0) {
+    if (run && run.verifyClean === true && run.universal === true && run.sorries === 0) {
       won = { helperLaws: prop.helperLaws, rationale: prop.rationale || '' }
       lastNote = ''
       break
     }
     lastNote = run ? run.note : 'runner died'
-    history.push({ laws: prop.helperLaws, note: lastNote, lawStatus: run ? (run.lawStatus || []) : [], allHelpersVerified: run ? run.allHelpersVerified : false })
+    history.push({ laws: prop.helperLaws, note: lastNote, lawStatus: run ? (run.lawStatus || []) : [], verifyClean: run ? run.verifyClean : false })
   }
 
   const base = { task: t, attempts: attemptsUsed }

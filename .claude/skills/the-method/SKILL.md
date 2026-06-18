@@ -35,14 +35,18 @@ parallel; within a chain, up to `attempts` propose→test rounds:
    any generated `.lean`/`.dfy`): reads the target (and one `decomposed/` example, if present) and
    proposes 1–3 true, general helper laws aimed at the open goal — never a restatement.
 2. **Runner** (`the-method-runner`): mechanically splices the laws into a `/tmp` copy — **before**
-   the target `verify ... law` (order + rendering matter) — runs a cheap `aver check` pre-flight
-   (parse/typecheck; a malformed law is caught here and fed straight back), then
-   `aver proof <scratch> --check --check-json --backend lean`, and returns **ONLY the Aver-level
-   verdict** (`universal`/`sorries`, which helper failed its bounded check). The Lean residual never
-   crosses back to the conjecturer. **No `--discover`**: The Method measures the LLM-proposed laws +
-   our auto-prover, not the built-in enumerative recognizer — so a closure is self-contained (the
-   inline laws alone), and the conjecturer must supply every law the proof needs (including bridges
-   to builtins like `List.concat`/`List.len`/`List.reverse`).
+   the target `verify ... law` (order + rendering matter) — then runs a **three-stage sieve**,
+   cheapest first: (a) `aver check` (parse/typecheck — a malformed law caught + fed straight back);
+   (b) **`aver verify`** (bounded sample eval, no Lean — an INDEPENDENT Aver-semantics check: a law
+   FALSE on its samples, e.g. a `Nat`-returning fn bridged to an `Int`-returning builtin, is
+   rejected here as `false-on-samples`, before any Lean — this catches the class the kernel proof
+   can wrongly accept because its own bounded check shares the Lean translation); (c) only if verify
+   is clean, `aver proof --check --check-json --backend lean`. A closure requires **both**
+   `verifyClean` AND `universal:true`/`sorries:0`. The runner returns **only the Aver-level verdict**
+   (per-law `lawStatus`: proven / sample-only / open / false-on-samples) — the Lean residual never
+   crosses back. **No `--discover`**: The Method measures the LLM-proposed laws + our auto-prover,
+   not the enumerative recognizer; a closure is self-contained, and the conjecturer must supply every
+   law (including bridges to builtins like `List.concat`/`List.reverse`).
 3. On failure the conjecturer refines against that Aver-level verdict; on `"universal":true` with
    `"sorries":0` the chain closes.
 
