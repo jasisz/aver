@@ -1930,7 +1930,27 @@ fn emit_string_from_float(registry: &TypeRegistry) -> Result<Function, WasmGcErr
 
             local.get $abs_val
             f64.floor
-            i64.trunc_f64_s
+            ;; Integer-part conversion. `$abs_val` is `f64.abs(val)`, so it is
+            ;; always >= 0, and the digit loop below is fully UNSIGNED
+            ;; (`i64.div_u`/`i64.rem_u`, plus a sign-agnostic `i64.eqz`).
+            ;; Use the non-trapping SATURATING UNSIGNED truncation rather than
+            ;; the trapping signed `i64.trunc_f64_s`: the signed variant traps
+            ;; for `floor(abs_val) >= 2^63` (~9.22e18) and had no overflow
+            ;; guard (the fractional loop below already bails at
+            ;; `9.2233720368547758e18`; the integer path never did), so e.g.
+            ;; `String.fromFloat(1e19)` trapped on wasm-gc.
+            ;;
+            ;; `i64.trunc_sat_f64_u` renders the EXACT integer over the full
+            ;; u64 range `[0, 2^64)`, matching the VM's Rust shortest-roundtrip
+            ;; formatting for every magnitude whose exact f64
+            ;; integer equals its own shortest decimal — all `|f| < 2^53`, plus
+            ;; whole values like `1e19`/`1.8e19` up to `2^64`. For
+            ;; `|f| >= 2^64` it saturates to `u64::MAX` instead of trapping
+            ;; (best-effort, non-trapping, mirroring the fractional bail). The
+            ;; remaining exact-vs-shortest divergence above `2^53` (e.g.
+            ;; `9223372036854775000.0` -> `9223372036854774784`) needs a full
+            ;; Ryu/Grisu in WAT and is intentionally left to a future change.
+            i64.trunc_sat_f64_u
             local.set $int_part
 
             i32.const 21 local.set $pos

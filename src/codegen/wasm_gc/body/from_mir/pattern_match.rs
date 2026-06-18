@@ -226,6 +226,40 @@ pub(crate) fn emit_mir_match(
             }
             Ok(Some(produces))
         }
+        "Unit" => {
+            // A `Unit` subject (`match u { _ -> body }` / `match u { x -> body
+            // }`) is irrefutable: `Unit` has a single inhabitant, so the first
+            // arm always fires. There is no tag to test and no branch block,
+            // and the subject carries no wasm value (`aver_to_wasm("Unit") ==
+            // None`).
+            //
+            // Take the shortcut — emit ONLY the arm body — only for a PURE
+            // subject (a slot read, field projection, or literal). Emitting
+            // such a subject would `local.get` the i32 PLACEHOLDER slot the
+            // `SlotTable` reserves for a `Unit` local and leave a stray value
+            // on the stack; a pure read has no effects, so skipping it is both
+            // required for validity and behaviour-preserving. An EFFECTFUL
+            // `Unit` subject (e.g. a `Unit`-returning call used directly as the
+            // subject) is deliberately left to the `_ => Ok(None)` fallback
+            // below — a LOUD trap stub — rather than silently dropping its
+            // effect: that shape is degenerate (a `Unit` call's result is
+            // already discarded), has no corpus precedent, and keeping it loud
+            // avoids a silent VM↔wasm-gc divergence. Without this branch even
+            // the pure case falls through to the trap. No branch block ⇒ the
+            // body inherits `result_raw` directly, like `emit_mir_tuple_match`.
+            if matches!(
+                m.subject.node,
+                MirExpr::Local(_) | MirExpr::Project(_) | MirExpr::Literal(_)
+            ) {
+                ctx.int_result_raw.set(result_raw);
+                if emit_mir_expr(func, &m.arms[0].body, slots, ctx)?.is_none() {
+                    return Ok(None);
+                }
+                Ok(Some(produces))
+            } else {
+                Ok(None)
+            }
+        }
         // Non-primitive subjects (sum/record/etc.) fall back.
         _ => Ok(None),
     }

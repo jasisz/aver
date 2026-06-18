@@ -242,6 +242,40 @@ pub(crate) fn emit_mir_native_scalar_builtin(
             }
         };
     }
+    // Ties-away-from-zero rounding (matches the VM's `f64::round`). wasm has
+    // only `F64Nearest` (ties-to-even), so emit it inline as
+    // `t = trunc(x); select(t + copysign(1, x), t, |x - t| >= 0.5)`. The
+    // half-test is EXACT — there is deliberately NO `+0.5` pre-round, which
+    // would double-round a predecessor-of-half like `0.49999999999999994`
+    // UP to 1 and is absorbed into a no-op for large odd integers in
+    // `[2^52, 2^53)`; both are inputs `F64Nearest` and `floor(|x|+0.5)` get
+    // wrong. `x` (`args[$i]`) is re-emitted (the existing `Int.abs`/`min`/
+    // `max` arms re-emit args the same way) — safe because `Float.round`'s
+    // argument is a pure scalar. Leaves the rounded `f64` on the stack.
+    macro_rules! round_ties_away {
+        ($i:expr) => {{
+            // val1 = trunc(x) + copysign(1.0, x)
+            arg!($i);
+            func.instruction(&Instruction::F64Trunc);
+            func.instruction(&Instruction::F64Const((1.0f64).into()));
+            arg!($i);
+            func.instruction(&Instruction::F64Copysign);
+            func.instruction(&Instruction::F64Add);
+            // val2 = trunc(x)
+            arg!($i);
+            func.instruction(&Instruction::F64Trunc);
+            // cond = |x - trunc(x)| >= 0.5
+            arg!($i);
+            arg!($i);
+            func.instruction(&Instruction::F64Trunc);
+            func.instruction(&Instruction::F64Sub);
+            func.instruction(&Instruction::F64Abs);
+            func.instruction(&Instruction::F64Const((0.5f64).into()));
+            func.instruction(&Instruction::F64Ge);
+            // select val1 (round away) if |frac| >= 0.5 else val2 (trunc)
+            func.instruction(&Instruction::Select);
+        }};
+    }
     let i64_block = wasm_encoder::BlockType::Result(ValType::I64);
     match dotted {
         // bignum slice 3 — Int <-> Float bridges over `$AverInt`. The
@@ -274,8 +308,7 @@ pub(crate) fn emit_mir_native_scalar_builtin(
         }
         "Float.round" if args.len() == 1 && ctx.registry.bignum => {
             let from_f64 = aint_helper(ctx, "__aint_from_f64")?;
-            arg!(0);
-            func.instruction(&Instruction::F64Nearest);
+            round_ties_away!(0);
             func.instruction(&Instruction::Call(from_f64));
         }
         "Float.fromInt" if args.len() == 1 => {
@@ -297,8 +330,7 @@ pub(crate) fn emit_mir_native_scalar_builtin(
             func.instruction(&Instruction::I64TruncF64S);
         }
         "Float.round" if args.len() == 1 => {
-            arg!(0);
-            func.instruction(&Instruction::F64Nearest);
+            round_ties_away!(0);
             func.instruction(&Instruction::I64TruncF64S);
         }
         "Float.abs" if args.len() == 1 => {

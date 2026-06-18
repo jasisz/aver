@@ -199,6 +199,29 @@ impl MapHelperRegistry {
             if v_aver_trim == "String" {
                 needs_string = true;
             }
+            // A value record / sum V is NOT newtype-erased when its
+            // single field is `String` (String is not a wasm-gc
+            // primitive), so it routes through `emit_hash_record` /
+            // `emit_eq_record`, whose String-field arm needs the
+            // String key helper. Mirror the K check above for V so a
+            // direct `String` field of the value record force-
+            // registers `String` even when K has none.
+            if let Some(fs) = registry.record_fields.get(v_aver_trim) {
+                needs_string |= fs.iter().any(|(_, t)| t.trim() == "String");
+            }
+            if registry
+                .variants
+                .values()
+                .flat_map(|v| v.iter())
+                .any(|v| v.parent == v_aver_trim)
+            {
+                needs_string |= registry
+                    .variants
+                    .values()
+                    .flat_map(|vs| vs.iter())
+                    .filter(|v| v.parent == v_aver_trim)
+                    .any(|v| v.fields.iter().any(|t| t.trim() == "String"));
+            }
             if needs_string && k_seen.insert("String".into()) {
                 k_names.push("String".into());
             }

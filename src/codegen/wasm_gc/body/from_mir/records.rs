@@ -115,6 +115,33 @@ pub(crate) fn emit_mir_record_update(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
+    // Mirror `emit_mir_record_create`'s newtype short-circuit: a record with
+    // a single primitive field is newtype-erased to the bare underlying value
+    // (Int->i64, Float->f64, Bool->i32), so an UPDATE must also emit the bare
+    // value with NO struct ops. Without this, `RecordUpdate` would
+    // `struct.get`/`struct.new` the erased wrapper and push a `(ref $type)`
+    // where the surrounding flow expects the unwrapped primitive -> wasm-gc
+    // validation error (`type mismatch: expected i64, found (ref $type)`).
+    if ctx.registry.newtype_underlying(type_name).is_some() {
+        let produced = if let Some(override_field) = updates.first() {
+            // The newtype's only field is overridden: emit the override value
+            // directly. The rewrite boxes update values, so an eligible carrier
+            // field's value is an `$AverInt` that must be narrowed to the i64
+            // the carrier holds — exactly like `emit_mir_record_create`'s
+            // single-field carrier construct bridge.
+            let p = emit_mir_expr(func, &override_field.value, slots, ctx)?;
+            if p.is_some() && ctx.registry.is_eligible_carrier(type_name) {
+                emit_carrier_construct_bridge(func, ctx)?;
+            }
+            p
+        } else {
+            // No override for the single field: re-emit the base, which already
+            // evaluates to the bare erased value (no bridge — a carrier base is
+            // already the native `i64`, matching the copied-from-base case).
+            emit_mir_expr(func, base, slots, ctx)?
+        };
+        return Ok(produced.map(|_| ()));
+    }
     let type_idx = ctx
         .registry
         .record_type_idx(type_name)

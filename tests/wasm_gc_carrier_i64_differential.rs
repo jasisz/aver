@@ -3967,3 +3967,184 @@ fn main() -> Unit
     let out = assert_vm_wasm_identical("map-multifield-value", src);
     assert_eq!(out, "10");
 }
+
+// ── wasm-gc bug-ledger tail (docs/wasm-gc-known-issues.md) ───────────
+//
+// Six pre-existing wasm-gc codegen bugs, all re-validated as still
+// reproducing on main post-carrier-i64 and fixed together. Parked here
+// to reuse the VM↔wasm-gc differential harness (several are not
+// carrier-specific). Each asserts VM↔wasm-gc value parity; the
+// validation-failure ones also assert a clean full-module compile.
+
+#[test]
+fn ledger_match_on_unit_emits_body_not_trap_stub() {
+    // A `match` on a Unit subject fell through subject-type dispatch to a
+    // whole-fn `unreachable` trap stub. The pure-subject case now emits
+    // the (irrefutable) first arm. (Effectful Unit subjects deliberately
+    // still fall back — out of scope, kept loud, not silently dropped.)
+    let src = r#"module M
+    intent = "match on unit subject"
+    effects [Console]
+
+fn classify(u: Unit) -> Int
+    match u
+        _ -> 42
+
+fn label(u: Unit) -> String
+    match u
+        x -> "bound"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{classify(Unit)},{label(Unit)}")
+"#;
+    let out = assert_vm_wasm_identical("ledger-match-unit", src);
+    assert_eq!(out, "42,bound");
+}
+
+#[test]
+fn ledger_empty_map_literal_resolves_via_stamp_with_multiple_instantiations() {
+    // An empty `{}` only resolved the canonical `Map<K,V>` when exactly
+    // one instantiation was registered; with two it hard-errored instead
+    // of consulting the stamped expected type. (Type-agnostic; a record
+    // value just happens to register two instantiations.)
+    let src = r#"module M
+    intent = "two empty-map instantiations"
+    effects [Console]
+
+record Pt
+    x: Int
+    y: Int
+
+record Line
+    a: Int
+    b: Int
+
+fn buildPt() -> Map<String, Pt>
+    Map.set({}, "p", Pt(x = 5, y = 7))
+
+fn buildLine() -> Map<String, Line>
+    Map.set({}, "l", Line(a = 1, b = 2))
+
+fn ptX(k: String) -> Int
+    match Map.get(buildPt(), k)
+        Option.Some(p) -> p.x
+        Option.None -> 0 - 1
+
+fn lineA(k: String) -> Int
+    match Map.get(buildLine(), k)
+        Option.Some(l) -> l.a
+        Option.None -> 0 - 1
+
+fn main() -> Unit
+    ! [Console.print]
+    px = ptX("p")
+    la = lineA("l")
+    Console.print("{px},{la}")
+"#;
+    assert_compiles_clean_wasm_gc("ledger-empty-map-multi", src);
+    let out = assert_vm_wasm_identical("ledger-empty-map-multi", src);
+    assert_eq!(out, "5,1");
+}
+
+#[test]
+fn ledger_float_round_is_ties_away_not_ties_to_even() {
+    // wasm-gc emitted `F64Nearest` (IEEE ties-to-even); the VM uses Rust
+    // `f64::round` (ties-away). The fix emits an EXACT ties-away sequence
+    // (`trunc + |frac|>=0.5 select`). The adversarial cases are the point:
+    // a naive `floor(|x|+0.5)` double-rounds `0.49999999999999994` up to 1
+    // and absorbs `+0.5` into a no-op for large odd integers — both pinned
+    // here so that simplification can never silently come back.
+    let src = r#"module M
+    intent = "float round ties-away"
+    effects [Console]
+
+fn r(f: Float) -> Int
+    Float.round(f)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{r(2.5)},{r(0.0 - 2.5)},{r(0.5)},{r(0.0 - 0.5)},{r(1.5)},{r(0.49999999999999994)},{r(8256582647594471.0)}")
+"#;
+    let out = assert_vm_wasm_identical("ledger-float-round", src);
+    // 2.5->3, -2.5->-3, 0.5->1, -0.5->-1, 1.5->2, 0.4999..94->0 (NOT 1),
+    // 8256582647594471->itself (NOT +1).
+    assert_eq!(out, "3,-3,1,-1,2,0,8256582647594471");
+}
+
+#[test]
+fn ledger_string_from_float_no_trap_past_2_pow_63() {
+    // The integer-part conversion used the trapping `i64.trunc_f64_s` with
+    // no overflow guard, so `String.fromFloat(1e19)` trapped. Now uses
+    // saturating unsigned truncation, rendering the exact integer across
+    // the full u64 range.
+    let src = r#"module M
+    intent = "string from float past 2^63"
+    effects [Console]
+
+fn s(f: Float) -> String
+    String.fromFloat(f)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{s(10000000000000000000.0)}|{s(18000000000000000000.0)}")
+"#;
+    let out = assert_vm_wasm_identical("ledger-string-from-float", src);
+    assert_eq!(out, "10000000000000000000|18000000000000000000");
+}
+
+#[test]
+fn ledger_record_update_on_newtype_record() {
+    // `RecordUpdate` on a newtype (single-primitive-field) record lacked
+    // the create-side newtype short-circuit, emitting `struct.get`/
+    // `struct.new` against the erased wrapper → validation failure.
+    let src = r#"module M
+    intent = "record update on newtype"
+    effects [Console]
+
+record Wrapper
+    val: Int
+
+fn bump(w: Wrapper) -> Wrapper
+    Wrapper.update(w, val = w.val + 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{bump(Wrapper(val = 41)).val}")
+"#;
+    assert_compiles_clean_wasm_gc("ledger-record-update-newtype", src);
+    let out = assert_vm_wasm_identical("ledger-record-update-newtype", src);
+    assert_eq!(out, "42");
+}
+
+#[test]
+fn ledger_map_value_record_with_string_field() {
+    // A Map value record with a `String` field is NOT newtype-erased
+    // (String is not a wasm-gc primitive), so it routes through
+    // `emit_hash_record`/`emit_eq_record`, whose String-field arm needs
+    // the String key helper force-registered. It used to hard-error
+    // "String field needs String key helpers".
+    let src = r#"module M
+    intent = "map value record with String field"
+    effects [Console]
+
+record K
+    a: Int
+
+record V
+    s: String
+
+fn lookup(m: Map<K, V>, k: K) -> String
+    match Map.get(m, k)
+        Option.Some(v) -> v.s
+        Option.None -> "none"
+
+fn main() -> Unit
+    ! [Console.print]
+    m = Map.set({}, K(a = 1), V(s = "hi"))
+    Console.print("{lookup(m, K(a = 1))},{lookup(m, K(a = 2))}")
+"#;
+    assert_compiles_clean_wasm_gc("ledger-map-string-value", src);
+    let out = assert_vm_wasm_identical("ledger-map-string-value", src);
+    assert_eq!(out, "hi,none");
+}
