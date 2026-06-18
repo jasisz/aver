@@ -3866,3 +3866,104 @@ fn main() -> Unit
         );
     }
 }
+
+// ── Map value that is a newtype-erased record ────────────────────────
+//
+// A `Map<K, V>` whose VALUE `V` is a single-primitive-field record is
+// newtype-erased: `aver_to_wasm(V)` and the `values_array` element are
+// the underlying carrier (`$aint` for Int), and the force-registered
+// per-V hash/eq helper SIGNATURE follows. The helper BODY used to
+// `struct.get` the unerased `$V` struct, diverging from the erased
+// signature → wasm validation failure
+// (`map_keyed_by_record_with_record_value`). The body must hash/eq the
+// carrier directly. Keys are never erased; multi-field record values
+// keep the struct path. These pin the fix on the three shapes.
+
+#[test]
+fn map_newtype_int_value_helper_matches_erased_signature() {
+    let src = r#"module M
+    intent = "newtype Int record map value — erased hash/eq helper"
+    effects [Console]
+
+record K
+    a: Int
+
+record V
+    b: Int
+
+fn lookup(m: Map<K, V>, k: K) -> Int
+    match Map.get(m, k)
+        Option.Some(v) -> v.b
+        Option.None -> 0 - 1
+
+fn main() -> Unit
+    ! [Console.print]
+    m = Map.set(Map.set({}, K(a = 1), V(b = 9)), K(a = 2), V(b = 8))
+    Console.print("{lookup(m, K(a = 1))},{lookup(m, K(a = 2))},{lookup(m, K(a = 3))}")
+"#;
+    // The bug was a pure validation failure on the V helper — the
+    // clean-compile assert is the load-bearing one; value parity pins
+    // that key hash/eq (a hit, a second key, a miss) still agree.
+    assert_compiles_clean_wasm_gc("map-newtype-int-value", src);
+    let out = assert_vm_wasm_identical("map-newtype-int-value", src);
+    assert_eq!(out, "9,8,-1");
+}
+
+#[test]
+fn map_newtype_float_value_helper_matches_erased_signature() {
+    let src = r#"module M
+    intent = "newtype Float record map value — erased hash/eq helper"
+    effects [Console]
+
+record K
+    a: Int
+
+record V
+    f: Float
+
+fn lookup(m: Map<K, V>, k: K) -> Float
+    match Map.get(m, k)
+        Option.Some(v) -> v.f
+        Option.None -> 0.0
+
+fn main() -> Unit
+    ! [Console.print]
+    m = Map.set({}, K(a = 1), V(f = 9.5))
+    Console.print("{lookup(m, K(a = 1))}")
+"#;
+    assert_compiles_clean_wasm_gc("map-newtype-float-value", src);
+    let out = assert_vm_wasm_identical("map-newtype-float-value", src);
+    assert_eq!(out, "9.5");
+}
+
+#[test]
+fn map_multifield_record_value_keeps_struct_path() {
+    // A multi-field record value is NOT newtype-erased — `aver_to_wasm`
+    // returns the `$V` struct ref, the helper signature and body agree,
+    // and the fix's guard does not fire. Pins that the unchanged path
+    // still compiles clean and round-trips.
+    let src = r#"module M
+    intent = "multi-field record map value — unerased struct path"
+    effects [Console]
+
+record K
+    a: Int
+
+record V
+    x: Int
+    y: Int
+
+fn lookup(m: Map<K, V>, k: K) -> Int
+    match Map.get(m, k)
+        Option.Some(v) -> v.x + v.y
+        Option.None -> 0 - 1
+
+fn main() -> Unit
+    ! [Console.print]
+    m = Map.set({}, K(a = 1), V(x = 3, y = 7))
+    Console.print("{lookup(m, K(a = 1))}")
+"#;
+    assert_compiles_clean_wasm_gc("map-multifield-value", src);
+    let out = assert_vm_wasm_identical("map-multifield-value", src);
+    assert_eq!(out, "10");
+}
