@@ -2,7 +2,15 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.25.1 (unreleased)
+## 0.26.0 (unreleased)
+
+### Changed
+
+- **`Int` is now arbitrary-precision (ℤ) on every backend — VM, Rust, and wasm-gc.** Integer arithmetic no longer overflows or wraps: a result that exceeds 64 bits keeps going instead of silently truncating, so `Int` is the mathematical integer everywhere, matching what proofs and `verify` already assumed. This closes the last place a verified Aver program could disagree with its proof at runtime. Small values keep a native-integer fast path; only genuinely large magnitudes pay for big-integer storage.
+
+### Performance
+
+- **Bounded integers recover native speed and code size under the ℤ default.** A value the compiler can prove stays in a fixed range — an opaque or module-private record whose smart constructor bounds its field — is stored and computed as a native 64-bit integer rather than the big-integer representation on wasm-gc, comparisons against integer constants lower to a direct machine compare, and the big-integer runtime is shared across helpers instead of copied into each. Size-sensitive programs (the games corpus) shed most of the cost the ℤ default would otherwise add.
 
 ### Added
 

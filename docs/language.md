@@ -35,7 +35,7 @@ Duplicate binding of the same name in the same scope is a type error.
 
 ## Operators
 
-Arithmetic: `+`, `-`, `*`, `/` — operands must match (`Int+Int`, `Float+Float`, `String+String`). No implicit promotion; use `Float.fromInt` / `Int.fromFloat` to convert.
+Arithmetic: `+`, `-`, `*` — operands must match (`Int+Int`, `Float+Float`, `String+String`). No implicit promotion; use `Float.fromInt` / `Int.fromFloat` to convert. The `/` operator is **Float-only**; integer `/` is a type error. For integers use `Int.div(a, b) : Result<Int, String>` (Euclidean; `b == 0` → `Result.Err`) and `Int.mod(a, b) : Result<Int, String>` — there is no integer `%`. `Int` is arbitrary-precision (ℤ): no overflow, no wraparound.
 Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`.
 Error propagation: `expr?` — unwraps `Result.Ok`, propagates `Result.Err` as a `RuntimeError`.
 Independent products: `(a, b)!` — product of independent computations. `(a, b)?!` — same, with Result unwrapping (all must succeed or first error propagates). Elements cannot reference each other; independence is structural. Composes recursively for fan-out parallelism. See [independence.md](independence.md).

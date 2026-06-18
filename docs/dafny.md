@@ -58,7 +58,7 @@ A single `.dfy` file containing:
 | `match x: true → a, false → b` | `if x then a else b` |
 | `match n: 0 → base, _ → f(n-1)` | `if n == 0 then base else f(n-1)` |
 | `match xs: [] → a, [h,..t] → b` | `if \|xs\| == 0 then a else var h := xs[0]; var t := xs[1..]; b` |
-| `x / y` | `x / y` (Dafny flags unproved non-zero divisor) |
+| `Int.div(a, b)` / `Int.mod(a, b)` | `Result`-wrapped Euclidean div/mod (Dafny guards the zero divisor); integer `/` is a type error, `/` is Float-only (Dafny `real`) |
 | `verify f law name` | sample `method` + universal `lemma` |
 
 ## Termination
