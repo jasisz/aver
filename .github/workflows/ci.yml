@@ -36,6 +36,20 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --exclude aver-lang -- -D warnings && cargo clippy -p aver-lang --lib --bin aver -- -D warnings
 
+      - name: Compile gate — terminal-off feature set
+        # The default build has `terminal` on, so `#[cfg(not(feature =
+        # "terminal"))]` branches (the playground/wasm32 and fuzz-mutator
+        # stubs) never compile in the normal gates — a whole class of
+        # regression that only surfaced in the nightly Fuzz job (which
+        # builds aver-lang with `terminal` off). The Int=ℤ migration hit
+        # exactly this: a `Value::Int(<raw i64>)` in the terminal-off
+        # `Terminal.Size` stub broke 7/8 fuzz targets while every PR
+        # stayed green. Checking the fuzz mutator manifest reproduces the
+        # exact terminal-off feature resolution (aver-lang with
+        # `default-features = false, features = ["runtime"]`) in ~17s, so
+        # this class now gates on PRs instead of the morning after.
+        run: cargo check --manifest-path fuzz/mutator/Cargo.toml
+
       - name: Test
         # Iron — Stage 4: CI exercises proptest sweeps at 2 000 cases
         # per property instead of the 256-case default. The matcher
