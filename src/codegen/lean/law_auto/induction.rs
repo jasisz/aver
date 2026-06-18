@@ -1606,6 +1606,266 @@ fn wrap_with_fun_induction_rung(
     out
 }
 
+/// A proved `nil`-helper for a list-truncating cone fn: `f … [] … = []`, with the
+/// list arg the fn case-splits set to `[]` and every other param a fresh
+/// universal, and the proof case-splitting the DRIVER param (the synchronously-
+/// decremented `Nat` for take/drop, or the structural list for `zip`).
+///
+/// SOUND BY FLOOR: the proof is `first | (… cases … <;> simp [f]) | sorry`, so a
+/// fn that does NOT actually satisfy the helper degrades to a `sorry`-floored
+/// (non-kernel-clean) lemma — its name, cited in the rung's `simp_all` set, then
+/// taints any closure that uses it into a `sorryAx` dependency the `#print
+/// axioms` universal gate catches. It can NEVER mint a false theorem.
+struct NilHelper {
+    text: String,
+    name: String,
+}
+
+/// Emit the `nil`-helper for a take/drop-shaped cone fn — one with a single
+/// structural `List` param (`single_list_structural_param_index`) AND a `Nat`
+/// param it decrements synchronously (`param_decremented_in_recursion`). The
+/// helper is `f a₀ … [] … aₙ = []` with the list param `[]` and the decremented
+/// `Nat` the case-split driver: `intro …; cases <driver> <;> simp [f]`. (take's
+/// `Z -> []` and drop's `Z -> xs`-at-`[]` both reduce, so the helper holds.)
+fn take_drop_nil_helper(
+    fd: &crate::ast::FnDef,
+    law_uid: &str,
+    ctx: &CodegenContext,
+) -> Option<NilHelper> {
+    use crate::codegen::recursion::detect::{
+        param_decremented_in_recursion, single_list_structural_param_index,
+    };
+    let list_idx = single_list_structural_param_index(fd)?;
+    // The synchronously-decremented Nat param (take/drop's `n`).
+    let nat_idx = fd.params.iter().enumerate().position(|(i, (_, ty))| {
+        i != list_idx
+            && (ty.trim() == "Nat"
+                || crate::codegen::proof_recognize::peano_type_named(ctx, ty.trim()).is_some())
+            && param_decremented_in_recursion(fd, i)
+    })?;
+    let f = aver_name_to_lean(&fd.name);
+    let name = format!("{law_uid}_{f}_nil");
+    // Bind each param to a fresh universal name except the list param, which is
+    // `[]`. The driver `Nat` is case-split; the others ride along untouched.
+    let driver = "n_d";
+    let args: Vec<String> = (0..fd.params.len())
+        .map(|i| {
+            if i == list_idx {
+                "[]".to_string()
+            } else if i == nat_idx {
+                driver.to_string()
+            } else {
+                format!("p_{i}")
+            }
+        })
+        .collect();
+    let binders: Vec<String> = (0..fd.params.len())
+        .filter(|i| *i != list_idx)
+        .map(|i| {
+            if i == nat_idx {
+                driver.to_string()
+            } else {
+                format!("p_{i}")
+            }
+        })
+        .collect();
+    let text = format!(
+        "theorem {name} : ∀ {binders}, {f} {args} = [] := by\n  intro {binders}\n  first | (cases {driver} <;> simp [{f}]) | sorry",
+        binders = binders.join(" "),
+        args = args.join(" ")
+    );
+    Some(NilHelper { text, name })
+}
+
+/// Emit the `nil`-helper for a `zip`-shaped cone fn — one whose body matches its
+/// FIRST list param, then (in the cons arm) its SECOND list param, recursing on
+/// both tails. The needed helper is `f xs [] = []`: when the second list is
+/// empty the cons arm returns `[]`, and the first-list-nil arm returns `[]` too,
+/// so `cases <first list> <;> simp [f]` closes it. Returns the helper with the
+/// SECOND list param `[]` and the first the case-split driver.
+fn zip_nil_helper(
+    fd: &crate::ast::FnDef,
+    law_uid: &str,
+    ctx: &CodegenContext,
+) -> Option<NilHelper> {
+    use crate::codegen::recursion::detect::{
+        param_decremented_in_recursion, single_list_structural_param_index,
+    };
+    // A zip-shape has NO synchronously-decremented Nat (that is the take/drop
+    // shape, handled above) — it threads two lists. Require a structural FIRST
+    // list and a SECOND list param, and no decremented Nat param.
+    let first_list = single_list_structural_param_index(fd)?;
+    let has_decremented_nat = fd.params.iter().enumerate().any(|(i, (_, ty))| {
+        i != first_list
+            && (ty.trim() == "Nat"
+                || crate::codegen::proof_recognize::peano_type_named(ctx, ty.trim()).is_some())
+            && param_decremented_in_recursion(fd, i)
+    });
+    if has_decremented_nat {
+        return None;
+    }
+    let second_list = fd.params.iter().enumerate().position(|(i, (_, ty))| {
+        i != first_list && (ty.trim_start().starts_with("List<") || ty.trim() == "List")
+    })?;
+    let f = aver_name_to_lean(&fd.name);
+    let name = format!("{law_uid}_{f}_nil");
+    let driver = "xs_d";
+    let args: Vec<String> = (0..fd.params.len())
+        .map(|i| {
+            if i == second_list {
+                "[]".to_string()
+            } else if i == first_list {
+                driver.to_string()
+            } else {
+                format!("p_{i}")
+            }
+        })
+        .collect();
+    let binders: Vec<String> = (0..fd.params.len())
+        .filter(|i| *i != second_list)
+        .map(|i| {
+            if i == first_list {
+                driver.to_string()
+            } else {
+                format!("p_{i}")
+            }
+        })
+        .collect();
+    let text = format!(
+        "theorem {name} : ∀ {binders}, {f} {args} = [] := by\n  intro {binders}\n  first | (cases {driver} <;> simp [{f}]) | sorry",
+        binders = binders.join(" "),
+        args = args.join(" ")
+    );
+    Some(NilHelper { text, name })
+}
+
+/// ADDITIVE rung for the SYNCHRONOUS take/drop/zip family. A law whose subject
+/// fn recurses synchronously on a `Nat` and a `List` (take/drop) — or threads two
+/// lists (zip) — closes by generalizing-induction on the DRIVER `Nat` while
+/// case-splitting every OTHER `Nat`/`List` given in each arm, with the law defs
+/// and the cone's proved `nil`-helpers in `simp_all`. The manual single-list
+/// ladder in [`emit_list_induction`] inducts on a LIST given and gets the cons IH
+/// at the wrong `Nat`; this rung inducts on the `Nat` so the IH lands at the
+/// predecessor, closing `drop n (take m xs) = take (m-n) (drop n xs)` (prop_57),
+/// `dropPair n (zip xs ys) = zip (dropInt n xs) (dropInt n ys)` (prop_58), and
+/// nested `drop (S w) (drop x (y::zs)) = drop w (drop x zs)` (prod/lemma_04).
+///
+/// Returns `(support_helper_theorems, rung_alternative_lines)` — the rung is ONE
+/// parenthesized `first` alternative (`| ( induction … with | zero => … | succ
+/// k ih => … )`) meant to LEAD the existing ladder. It carries NO `sorry` floor
+/// and every arm ends in `simp_all` (which THROWS on an open goal), so the
+/// alternative either CLOSES the goal or FAILS and `first` falls through to the
+/// existing ladder byte-for-byte. It NEVER selects the induction variable for the
+/// existing ladder (the #567 root cause) — it is purely a leading addition. All
+/// tactics (`cases`/`simp_all` + `sorry`-floored proved `nil`-helpers) are sound,
+/// so it can only ever ADD closures; a non-closing law stays `universal:false`
+/// exactly as before.
+fn emit_synchronous_multivar_induction(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+    law_uid: &str,
+) -> Option<(Vec<String>, Vec<String>)> {
+    use crate::codegen::recursion::detect::{
+        param_decremented_in_recursion, single_list_structural_param_index,
+    };
+    // The DRIVER is the bare `Nat` given the SUBJECT fn decrements synchronously
+    // with its structural list (take/drop's `n`, the inner `drop`'s `x` in
+    // lemma_04). Mapped param-name → given-name positionally, exactly as the
+    // `gen_given` Peano branch in `emit_list_induction`.
+    let subject = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())?;
+    let list_idx = single_list_structural_param_index(subject)?;
+    let nat_param = subject
+        .params
+        .iter()
+        .enumerate()
+        .find_map(|(i, (pname, ty))| {
+            (i != list_idx
+                && (ty.trim() == "Nat"
+                    || crate::codegen::proof_recognize::peano_type_named(ctx, ty.trim()).is_some())
+                && param_decremented_in_recursion(subject, i))
+            .then_some(pname)
+        })?;
+    let driver_given_idx = law.givens.iter().position(|g| &g.name == nat_param)?;
+    let driver = intro_names.get(driver_given_idx)?.clone();
+
+    // Partition the OTHER givens by Lean-induction relevance: `Nat`/Peano givens
+    // and `List` givens get `cases`-split in each arm; everything else (a bare
+    // `Int` like lemma_04's `y`) is generalized but not split. ALL non-driver
+    // givens are generalized so the cons IH is the fully-quantified `∀ …, P …`.
+    let mut other_intros: Vec<String> = Vec::new();
+    let mut cases_intros: Vec<String> = Vec::new();
+    for (i, g) in law.givens.iter().enumerate() {
+        if i == driver_given_idx {
+            continue;
+        }
+        let Some(intro) = intro_names.get(i) else {
+            continue;
+        };
+        other_intros.push(intro.clone());
+        let ty = g.type_name.trim();
+        let is_nat =
+            ty == "Nat" || crate::codegen::proof_recognize::peano_type_named(ctx, ty).is_some();
+        let is_list = ty.starts_with("List<") || ty == "List";
+        if is_nat || is_list {
+            cases_intros.push(intro.clone());
+        }
+    }
+
+    // Proved `nil`-helpers for every list-truncating cone fn (take/drop AND zip
+    // shapes). Each is kernel-proved by its own `cases <;> simp` (sorry-floored
+    // for soundness), and its name joins the arms' `simp_all` set so a residual
+    // like `zip (dropInt k t) [] = []` rewrites to `[]`.
+    let mut support: Vec<String> = Vec::new();
+    let mut helper_names: Vec<String> = Vec::new();
+    for src_name in super::shared::law_simp_source_names(ctx, vb, law) {
+        let Some(fd) = ctx.fn_def_by_name(&src_name, ctx.active_module_scope().as_deref()) else {
+            continue;
+        };
+        let helper =
+            take_drop_nil_helper(fd, law_uid, ctx).or_else(|| zip_nil_helper(fd, law_uid, ctx));
+        if let Some(h) = helper {
+            support.push(h.text);
+            helper_names.push(h.name);
+        }
+    }
+
+    // The arm `simp_all` set: the law defs (`_root_.`-prefixed via `law_simp_defs`)
+    // + the proved nil-helpers + the append-peeling lemmas. `List.cons_append` /
+    // `List.nil_append` let the appended list (`[y] ++ zs` in lemma_04) peel a
+    // cons in lockstep with the recursing fn.
+    let mut simp_set: BTreeSet<String> = law_simp_defs(ctx, vb, law);
+    simp_set.extend(helper_names.iter().cloned());
+    simp_set.insert("List.cons_append".to_string());
+    simp_set.insert("List.nil_append".to_string());
+    let simp = simp_set.into_iter().collect::<Vec<_>>().join(", ");
+
+    // Each arm: `cases <other Nats/Lists> <;> simp_all [defs, helpers, …]`. With no
+    // splittable other given, the arm is a bare `simp_all`. Both arms are
+    // IDENTICAL (the predecessor `k`/its IH ride in `simp_all` automatically).
+    let arm = if cases_intros.is_empty() {
+        format!("simp_all [{simp}]")
+    } else {
+        format!(
+            "cases {} <;> simp_all [{simp}]",
+            cases_intros.join(" <;> cases ")
+        )
+    };
+    let generalizing = if other_intros.is_empty() {
+        String::new()
+    } else {
+        format!(" generalizing {}", other_intros.join(" "))
+    };
+    let rung = vec![
+        "  | (".to_string(),
+        format!("    induction {driver}{generalizing} with"),
+        format!("    | zero => {arm}"),
+        format!("    | succ k ih => {arm})"),
+    ];
+    Some((support, rung))
+}
+
 /// Lean structural induction over a builtin `List<T>` given:
 /// `induction xs with | nil => simp [defs] | cons head tail ih => simp_all [defs]`.
 /// `List.length_cons` is a default simp lemma, so a length-relating law over a
@@ -2214,6 +2474,39 @@ fn emit_list_induction(
             let intro_line = proof_lines.remove(0);
             proof_lines =
                 wrap_with_fun_induction_rung(intro_line, proof_lines, &targets, &refl_simp_list);
+        }
+
+        // ADDITIVE synchronous take/drop/zip rung — prepended as the LEADING
+        // `first` alternative. Built independently of the `fun_induction` rung
+        // above and threaded in front of whatever ladder is now in `proof_lines`
+        // (the `fun_induction`-wrapped `first` chain, or the bare ladder). The
+        // rung carries no `sorry` floor and throws on any open goal, so `first`
+        // either takes its closure or falls through to the rest byte-for-byte.
+        if let Some((multivar_support, rung)) =
+            emit_synchronous_multivar_induction(vb, law, ctx, intro_names, &law_uid)
+        {
+            support_lines.extend(multivar_support);
+            let intro_line = proof_lines.remove(0);
+            // If the ladder is already a `first` chain (the `fun_induction` rung
+            // ran), splice the rung in as its new first alternative; otherwise
+            // build a fresh `first | (rung) | (existing body)` wrapper.
+            if proof_lines.first().map(String::as_str) == Some("  first") {
+                let mut wrapped = vec![intro_line, "  first".to_string()];
+                wrapped.extend(rung);
+                wrapped.extend(proof_lines.into_iter().skip(1));
+                proof_lines = wrapped;
+            } else {
+                let mut wrapped = vec![intro_line, "  first".to_string()];
+                wrapped.extend(rung);
+                wrapped.push("  | (".to_string());
+                for line in &proof_lines {
+                    wrapped.push(format!("  {line}"));
+                }
+                if let Some(last) = wrapped.last_mut() {
+                    last.push(')');
+                }
+                proof_lines = wrapped;
+            }
         }
     }
 
