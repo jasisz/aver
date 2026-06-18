@@ -19,7 +19,13 @@ fn appendNat(x: List<Nat>, y: List<Nat>) -> List<Nat>
         [] -> y
         [z, ..xs] -> List.concat([z], appendNat(xs, y))
 
+fn isNil(xs: List<Nat>) -> Bool
+    match xs
+        [] -> true
+        [y, ..z] -> false
+
 verify last law lastAppendNil
     given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]]
     given ys: List<Nat> = [[], [], [], []]
+    when isNil(ys)
     last(appendNat(xs, ys)) => last(xs)
