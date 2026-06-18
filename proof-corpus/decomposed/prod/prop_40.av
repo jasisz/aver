@@ -1,0 +1,61 @@
+module Prop40
+    intent =
+        "TIP prod prop_40: subset x y implies union x y = y."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn barbar(x: Bool, y: Bool) -> Bool
+    match x
+        true -> true
+        false -> y
+
+fn elem(x: Nat, y: List<Nat>) -> Bool
+    match y
+        [] -> false
+        [z, ..xs] -> barbar(eqNat(x, z), elem(x, xs))
+
+fn union(x: List<Nat>, y: List<Nat>) -> List<Nat>
+    match x
+        [] -> y
+        [z, ..xs] -> match elem(z, y)
+            true -> union(xs, y)
+            false -> List.concat([z], union(xs, y))
+
+fn andBool(x: Bool, y: Bool) -> Bool
+    match x
+        true -> y
+        false -> false
+
+fn subset(x: List<Nat>, y: List<Nat>) -> Bool
+    match x
+        [] -> true
+        [z, ..xs] -> andBool(elem(z, y), subset(xs, y))
+
+verify union law unionEmptyLeft
+    given x: List<Nat> = [[], [Nat.Z]]
+    union([], x) => x
+
+verify union law unionElemTrue
+    given z: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given x: List<Nat> = [[], [Nat.Z]]
+    given y: List<Nat> = [[], [Nat.Z]]
+    when elem(z, y)
+    union(List.concat([z], x), y) => union(x, y)
+
+verify union law subsetUnion
+    given x: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    given y: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    when subset(x, y)
+    union(x, y) => y
