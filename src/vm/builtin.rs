@@ -402,8 +402,8 @@ impl VmBuiltin {
                 let rec = Value::Record {
                     type_name: "Terminal.Size".to_string(),
                     fields: Arc::from(vec![
-                        ("width".to_string(), Value::Int(80)),
-                        ("height".to_string(), Value::Int(24)),
+                        ("width".to_string(), Value::int(80)),
+                        ("height".to_string(), Value::int(24)),
                     ]),
                 };
                 Some(Ok(NanValue::from_value(&rec, arena)))
