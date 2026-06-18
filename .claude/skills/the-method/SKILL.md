@@ -28,18 +28,39 @@ Workflow({ scriptPath: "<this-skill-dir>/the-method-loop.js", args: { tasks: ["p
 ```
 
 ## How it runs
-One autonomous agent per task (in parallel). Each agent:
-1. Reads the target task; if the project has example decompositions (e.g. a `decomposed/`
-   directory of solved tasks), learns the exact splice form from one of them.
-2. Proposes 1–3 true, general helper laws aimed at the open goal (not a restatement of it).
-3. Splices them into a `/tmp` copy — **before** the target `verify ... law` (order matters; rendering
-   matters too) — and runs `aver proof <scratch> --discover -o <dir>` then
-   `aver proof <scratch> --check --check-json --backend lean -o <dir>`; success ⟺ `"universal":true`.
-4. Refines on failure, up to `attempts` tries.
+The conjecturer and the prover are SEPARATE, capability-fenced agents — "the agent proposes, the
+kernel decides" is enforced structurally, not merely asked. One independent chain per task, run in
+parallel; within a chain, up to `attempts` propose→test rounds:
+1. **Conjecturer** (`the-method-proposer`, **Read+Glob only** — no toolchain, no Bash, cannot open
+   any generated `.lean`/`.dfy`): reads the target (and one `decomposed/` example, if present) and
+   proposes 1–3 true, general helper laws aimed at the open goal — never a restatement.
+2. **Runner** (`the-method-runner`): mechanically splices the laws into a `/tmp` copy — **before**
+   the target `verify ... law` (order + rendering matter) — then runs a **three-stage sieve**,
+   cheapest first: (a) `aver check` (parse/typecheck — a malformed law caught + fed straight back);
+   (b) **`aver verify`** (bounded sample eval, no Lean — an INDEPENDENT Aver-semantics check: a law
+   FALSE on its samples, e.g. a `Nat`-returning fn bridged to an `Int`-returning builtin, is
+   rejected here as `false-on-samples`, before any Lean — this catches the class the kernel proof
+   can wrongly accept because its own bounded check shares the Lean translation); (c) only if verify
+   is clean, `aver proof --check --check-json --backend lean`. A closure requires **both**
+   `verifyClean` AND `universal:true`/`sorries:0`. The runner returns **only the Aver-level verdict**
+   (per-law `lawStatus`: proven / sample-only / open / false-on-samples) — the Lean residual never
+   crosses back. **No `--discover`**: The Method measures the LLM-proposed laws + our auto-prover,
+   not the enumerative recognizer; a closure is self-contained, and the conjecturer must supply every
+   law (including bridges to builtins like `List.concat`/`List.reverse`).
+3. On failure the conjecturer refines against that Aver-level verdict; on `"universal":true` with
+   `"sorries":0` the chain closes.
 
-Then a **Verify** phase independently re-checks each claimed closure from scratch (a separate agent,
-a fresh dir) — a self-reported closure is not trusted on its own. Only verified closures are
-returned.
+Because the conjecturer physically cannot see the proof, it cannot drift from conjecturing into
+tactic/prover-internals debugging (the measured dominant cost sink). The `model` override sets the
+conjecturer; the runner and verify gate stay on the session model by default. (The runner is
+mechanical but must read the verdict ACCURATELY — the loop only verifies a self-reported close, so a
+runner that under-reports silently drops a real win; a measured run showed a `haiku` runner doing
+exactly that, for marginal cost saving. Pass `runnerModel`/`verifierModel` to override, accepting
+that risk.)
+
+Then a **Verify** phase (`the-method-verifier`) independently re-checks each claimed closure from
+scratch (a fresh dir) — a self-reported closure is not trusted on its own — and persists the
+verified decomposition to `decomposed/`. Only verified closures are returned.
 
 ## Output
 Per task: `closed`, `verified`, `attempts`, `helperLaws` ({name, source}), `summary`; plus a
@@ -51,5 +72,6 @@ Keep a proposed lemma set only if the augmented task still closes — never let 
 regress a proof that worked without it.
 
 ## Safety
-READ-ONLY on the project. All edits happen on `/tmp` scratch copies. The loop never runs
-state-changing `git` commands and never modifies project files.
+The conjecturer and runner are READ-ONLY on the project — all proof work happens on `/tmp` scratch
+copies. The ONLY sanctioned project-file write is the verify gate persisting a re-confirmed win to
+`decomposed/`. The loop never runs state-changing `git` commands and never modifies your source.

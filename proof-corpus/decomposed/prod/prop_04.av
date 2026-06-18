@@ -1,0 +1,50 @@
+module Prop04
+    intent =
+        "TIP prod prop_04: length(x ++ x) = double(length x)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn length(x: List<Int>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..xs] -> Nat.S(length(xs))
+
+fn double(x: Nat) -> Nat
+    match x
+        Nat.Z -> Nat.Z
+        Nat.S(y) -> Nat.S(Nat.S(double(y)))
+
+fn append(x: List<Int>, y: List<Int>) -> List<Int>
+    match x
+        [] -> y
+        [z, ..xs] -> List.concat([z], append(xs, y))
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+verify plus law plusZeroRight
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    plus(x, Nat.Z) => x
+
+verify plus law plusSuccRight
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    plus(x, Nat.S(y)) => Nat.S(plus(x, y))
+
+verify double law doublePlus
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    double(n) => plus(n, n)
+
+verify length law lengthAppend
+    given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    given y: List<Int> = [[], [2], [4, 5]]
+    length(append(x, y)) => plus(length(x), length(y))
+
+verify length law lengthAppendDouble
+    given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    length(append(x, x)) => double(length(x))

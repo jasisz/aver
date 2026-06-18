@@ -1,82 +1,83 @@
 export const meta = {
   name: 'the-method',
-  description: 'The Method: an agent proposes helper lemmas -> aver tests -> Lean/Z3 judges -> refine, with an independent verify gate. Closes open Aver proof laws on any Aver project.',
+  description: 'The Method: a CONJECTURER agent proposes helper lemmas -> a separate RUNNER agent tests with aver -> Lean/Z3 judges -> refine, with an independent verify gate. The conjecturer is capability-fenced (read-only, no toolchain, never sees the proof) so it cannot drift into tactic/prover debugging. Closes open Aver proof laws on any Aver project.',
   phases: [
-    { title: 'Method', detail: 'one agent per open task: propose helper lemmas, test with aver, refine until Lean closes or budget out' },
-    { title: 'Verify', detail: "independent re-verify of each self-reported closure (fresh dir) — the proposer's own verdict is not trusted; on success the verified decomposition is PERSISTED to decomposed/ so it is recoverable, never re-guessed" },
+    { title: 'Method', detail: 'per open task: a read-only conjecturer proposes helper laws; a mechanical runner splices + tests with aver and returns ONLY the Aver-level verdict; refine until Lean closes or the attempt cap is hit' },
+    { title: 'Verify', detail: "independent re-verify of each self-reported closure (fresh dir) — the run's own verdict is not trusted; on success the verified decomposition is PERSISTED to decomposed/ so it is recoverable, never re-guessed" },
   ],
 }
 
-// Inputs (via Workflow `args`): either an array of task .av paths, or { tasks: [...], attempts? }.
+// Inputs (via Workflow `args`): either an array of task .av paths, or { tasks: [...], attempts? , model? }.
 // Paths are relative to the project root (the cwd the workflow runs in) or absolute.
 let a = typeof args === 'string'
   ? (() => { try { return JSON.parse(args) } catch { return args.trim() ? [args.trim()] : null } })()
   : args
 const TASKS = Array.isArray(a) ? a : (a && Array.isArray(a.tasks) ? a.tasks : [])
 const MAX_ATTEMPTS = (a && a.attempts) || 3
-const MODEL = (a && a.model) || undefined  // optional model override for the proposer (e.g. 'haiku','sonnet'); undefined = inherit
+const MODEL = (a && a.model) || undefined  // optional model override for the CONJECTURER (e.g. 'haiku','sonnet'); undefined = inherit (session model).
+// The RUNNER is mechanical, BUT it must read the --check-json verdict ACCURATELY: the loop only
+// invokes the verify gate on a self-reported close, so a runner that UNDER-reports (says open when
+// universal:true) silently drops a genuine win — measured: a haiku runner under-reported a real
+// self-contained closure (prop_06), and the cost saving was marginal (the token cost is dominated by
+// the aver/lake output it ingests + the verify gate, not the runner's model). So the runner defaults
+// to the session model; pass runnerModel:'haiku' only if you accept that lost-win risk.
+const RUNNER_MODEL = (a && a.runnerModel) || undefined
+// The verify gate stays on the default (session) model unless overridden: it is the trust anchor and
+// does the careful persist-to-decomposed/ write.
+const VERIFIER_MODEL = (a && a.verifierModel) || undefined
 if (!TASKS.length) {
   log('the-method: pass one or more Aver task .av paths as args, e.g. { tasks: ["path/to/task.av"] }')
   return { error: 'no tasks given' }
 }
-log(`The Method: ${TASKS.length} task(s), up to ${MAX_ATTEMPTS} attempts each${MODEL ? `, proposer model=${MODEL}` : ''}`)
+log(`The Method: ${TASKS.length} task(s), up to ${MAX_ATTEMPTS} attempts each${MODEL ? `, conjecturer=${MODEL}` : ''}${RUNNER_MODEL ? `, runner=${RUNNER_MODEL}` : ''}${VERIFIER_MODEL ? `, verifier=${VERIFIER_MODEL}` : ''}`)
 
-const RESULT_SCHEMA = {
+// ---- THE CAPABILITY FENCE ----------------------------------------------------------------------
+// The proposer/runner split is the fence: "agent proposes, kernel decides" made STRUCTURAL, not
+// asked. The conjecturer (`the-method-proposer`, tools: Read+Glob ONLY) physically cannot run the
+// toolchain or open a generated .lean/.dfy, so it cannot slide from conjecturing into debugging
+// tactics/the proof residual — the measured dominant cost sink (a "must close" model spiralling on
+// the Lean goal state). The runner (`the-method-runner`) does the mechanical splice+run and returns
+// ONLY an Aver-level verdict; the Lean residual never crosses back into the conjecturer's context.
+// See feedback_explain_residual_internal_only + project_tip_isaplanner_split (cost diagnosis).
+
+const LAWS_SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['task', 'closed', 'attempts', 'helperLaws', 'finalError', 'summary'],
+  required: ['helperLaws', 'rationale'],
   properties: {
-    task: { type: 'string' },
-    closed: { type: 'boolean', description: 'true iff the augmented task reached "universal":true on Lean' },
-    attempts: { type: 'integer' },
     helperLaws: {
       type: 'array',
       items: {
         type: 'object', additionalProperties: false, required: ['name', 'source'],
-        properties: { name: { type: 'string' }, source: { type: 'string', description: 'the helper law as valid Aver source' } },
+        properties: { name: { type: 'string' }, source: { type: 'string', description: 'the helper law (plus any fn it introduces) as valid first-order Aver source' } },
       },
     },
-    finalError: { type: 'string', description: 'empty if closed, else short Lean error / reason it stayed open' },
-    summary: { type: 'string', description: '2-3 sentences: what was tried and why it did/did not work' },
+    rationale: { type: 'string', description: '1-2 sentences, Aver-level only: what these laws say and why the proof needs them' },
   },
 }
 
-const FIND_AVER = 'Locate the aver binary: try ./target/release/aver, then ./target/debug/aver, then `aver` on PATH; if none exists, run `cargo build --bin aver` first.'
-const SAFETY = 'SAFETY: READ-ONLY on the project. Do ALL edits on COPIES under /tmp. Never run state-changing git commands and never modify project files.'
-// The verify gate is the ONE agent allowed a single project write: persisting the verified
-// decomposition to decomposed/ so wins are durable on disk during the run (not scraped from a
-// possibly-truncated result), and so re-runs replay instead of re-guessing.
-const VERIFY_SAFETY = 'SAFETY: do ALL proof/verification work on COPIES under /tmp. The ONLY project-file write you may make is creating/overwriting the single decomposed entry described below. Never run state-changing git commands; never touch any other project file.'
+const RUN_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  required: ['checkPassed', 'verifyClean', 'universal', 'sorries', 'lawStatus', 'note'],
+  properties: {
+    checkPassed: { type: 'boolean', description: 'false iff the `aver check` pre-flight reported a parse/type error (the spliced helper is malformed) — in that case neither verify nor the proof was run and the note carries the verbatim aver error' },
+    verifyClean: { type: 'boolean', description: 'result of the CHEAP `aver verify` sieve (bounded sample eval, no Lean) run BEFORE the proof: true iff every law (helpers + target) passes with ZERO violations. false means a law is FALSE on its samples (e.g. a Nat-vs-Int bridge) — a real Aver-level refutation the kernel can miss; the proof is then NOT run.' },
+    universal: { type: 'boolean', description: 'value of "universal" from the --check-json line (only meaningful when verifyClean=true; the proof is skipped otherwise)' },
+    sorries: { type: 'integer', description: 'value of "sorries" from the --check-json line' },
+    lawStatus: {
+      type: 'array',
+      description: 'per-law status read from proof_manifest.json (laws[].tier; a declared law ABSENT from the manifest is open). AVER-LEVEL ONLY — map tiers to these words; do NOT include Lean axiom names, theorem names, or the word "sorry".',
+      items: {
+        type: 'object', additionalProperties: false, required: ['law', 'status'],
+        properties: {
+          law: { type: 'string', description: 'the Aver law name (e.g. "appendBridge", or the target law name)' },
+          status: { type: 'string', enum: ['proven', 'sample-only', 'open', 'false-on-samples'], description: 'proven = manifest tier universal (kernel-genuine); sample-only = tier bounded (passes samples, not universal); open = declared but absent from the manifest (unproved); false-on-samples = `aver verify` found a counterexample (the law is FALSE / type-confused, e.g. a Nat-vs-Int bridge — must be replaced, not laddered)' },
+        },
+      },
+    },
+    note: { type: 'string', description: 'ONE line, AVER-LEVEL ONLY (e.g. "all helpers proven, target open" or a parse/type error). NEVER quote Lean/Dafny, tactics, the proof residual, or Lean axiom names.' },
+  },
+}
 
-const METHOD_PROMPT = (t) => `You ARE "The Method": close an OPEN Aver proof obligation by proposing auxiliary helper lemmas, testing them with the Aver toolchain, and refining on failure. You propose; the Lean kernel / Z3 judges.
-
-YOU ARE A CONJECTURER, NOT A PROVER. Reason ONLY about Aver: the datatypes, the functions, the open law, and what auxiliary Aver law would unblock it. Do NOT open, read, or reason about the generated Lean/Dafny files; do NOT reason about Lean tactics, induction strategy, the proof residual / goal state, simp sets, fuel, or the Aver prover's internals — discharging the proof is the toolchain's job, not yours. Your ONLY output is the right Aver helper law(s). If an attempt does not close, propose a DIFFERENT or additional Aver LAW (or fix the law's statement / sample domains) — never try to debug or fix the proof itself. Keep your reasoning short: long tactic-level analysis means you have drifted out of your job and should step back to "what true Aver law is missing?".
-
-LADDER — do not restate, do not spiral. A helper law may itself need its OWN sub-lemmas before it proves; that is normal and EXPECTED, and supplying them is YOUR job. Canonical example: 'plus(x, y) = plus(y, x)' does NOT prove alone — it needs 'plus(x, Nat.Z) = x' and 'plus(x, Nat.S(y)) = Nat.S(plus(x, y))' proven FIRST, after which the auto-prover discharges commutativity by induction with those in scope. When a helper does not close, ask "what does THIS helper itself need?" and add that rung. This LADDERING (a finite chain of distinct true sub-laws) is the core of the job, and is NOT the spiraling the attempt-cap targets — spiraling is re-proposing cosmetic variants of the SAME law, or analyzing the prover. A 3-4 law ladder that closes beats giving up at attempt 1. Foundational ladders (Peano plus/mult laws, list append identity/associativity, rev involution) recur across tasks — reuse them.
-
-Prefer the ONE-SIDED homomorphism form. For a two-sided commute goal like 'f(g(x, y)) = f(g(y, x))' the auto-prover often stalls on the symmetric g(x,y)-versus-g(y,x) shape. State the rung that pushes ONE side through its homomorphism — e.g. 'f(g(x, y)) = f(op(h(x), h(y)))' — and let a separate commutativity rung for op finish; that is the shape the auto-prover closes. Do not fight the verbatim two-sided form.
-
-You are working inside an Aver project (the current working directory).
-- ${FIND_AVER}
-- TARGET task file (contains an OPEN "verify ... law"): ${t}  (relative to the project root, or absolute).
-
-${SAFETY}
-
-STEP 1 — understand the mechanism for THIS project:
-- Read the target task: its datatypes, functions, and the OPEN law.
-- If the project has example decompositions (e.g. a "decomposed/" directory of already-solved tasks), read one solved task plus its base to learn EXACTLY how helper laws are written into a .av. The closing command sequence is:
-    <aver> proof <scratch.av> --discover -o <dir>            (proves + commits the helper lemmas)
-    <aver> proof <scratch.av> --check --check-json --backend lean -o <dir>   (SAME dir; closed <=> output contains "universal":true)
-
-STEP 2 — the loop (HARD CAP: at most ${MAX_ATTEMPTS} attempts; stop the instant it closes). If it has NOT closed after ${MAX_ATTEMPTS} attempts, STOP immediately — return closed:false with your best helper set and ONE short line naming the likely missing PROVER capability (e.g. "needs congr", "needs cases on a 2nd list arg", "nonlinear arithmetic"). Do NOT keep proposing more variations, and do NOT analyze the prover's tactics/internals — spiraling past the cap is the dominant cost sink and never closes a prover-blocked goal.
-1. Propose the TRUE, GENERAL helper laws the proof needs — a missing homomorphism / associativity / distributivity / an equation relating subterms of the goal — INCLUDING the sub-lemmas any helper itself needs (the LADDER above: e.g. propose plus-Z and plus-succ alongside plus-comm). Do not artificially cap the count at one or two, and do not merely restate the goal.
-2. Copy the target to a fresh /tmp scratch and splice the helper laws in BEFORE the target "verify ... law" line. ORDER MATTERS (appending at the END can fail to fire); RENDERING MATTERS (how a constructor/operator is written changes how it elaborates). Valid Aver only: first-order, no closures.
-3. Run discover then check into a FRESH /tmp dir. Closed <=> "universal":true with "sorries":0.
-4. Retry once on a transient lake error. On failure, read the Lean error / see which helper failed, refine, try again.
-
-Return: task="${t}"; closed (bool); attempts used; helperLaws = the WINNING set [{name, source}] if closed (else your best attempt); finalError ("" if closed); summary (2-3 sentences).`
-
-// VERIFY GATE — an autonomous agent's self-reported `closed` is not trustworthy on its own. An
-// INDEPENDENT agent re-checks each claimed closure from scratch before we count it.
 const VERIFY_SCHEMA = {
   type: 'object', additionalProperties: false,
   required: ['verified', 'note', 'persistedPath'],
@@ -87,38 +88,78 @@ const VERIFY_SCHEMA = {
   },
 }
 
-const VERIFY_PROMPT = (t, helperLaws) => `INDEPENDENT verification gate. Do NOT trust any prior "closed" claim — verify from scratch yourself.
-You are in an Aver project. ${FIND_AVER}
+const PROPOSE_PROMPT = (t, attempt, history) => `Propose the Aver helper law(s) to unblock an OPEN proof obligation. You are the CONJECTURER (read-only; you cannot run anything or see any proof — that is by design).
+
+- TARGET task file (contains the OPEN "verify … law"): ${t}  (relative to the project root, or absolute).
+- Attempt ${attempt} of ${MAX_ATTEMPTS}.
+${history.length ? `- Aver-level outcome of previous attempt(s) — each has a per-law \`lawStatus\` map (proven = holds universally; sample-only = passes samples but NOT universally, so restate/strengthen it; open = the law, or the TARGET, is still unproved). These are FACTS about which Aver laws closed, NOT prover internals — read them to decide your next law: if every helper is "proven" but the target is "open", you are MISSING a law (add the next one / ladder deeper); if a helper is "sample-only" or "open", that helper itself is wrong or too weak — fix or replace it. Do NOT reason about WHY the target's proof fails (that is the prover's job):\n${JSON.stringify(history)}` : '- This is the first attempt.'}
+
+FIRST read \`llms.txt\` at the project root to lock the EXACT Aver grammar (the \`verify <fn> law\` block, \`given <name>: <Type> = [<samples>]\`, the single \`lhs => rhs\` equation). Then read the target (its datatypes, functions, the open law); if a decomposed/ directory exists, read one solved entry + its base to learn EXACTLY how helper laws (and any fn they introduce) are written as valid Aver. Return TRUE, GENERAL helper laws the proof needs (a missing homomorphism / associativity / distributivity / an equation relating subterms of the goal) — do NOT restate the goal.
+There is NO discovery backfill: every auxiliary law the proof needs must be in YOUR proposed set. In particular, when a task fn is DEFINED in terms of a builtin (e.g. \`append\` built on \`List.concat\`, or fns whose proof must line up with \`List.len\`/\`List.reverse\`), include the BRIDGE law for EVERY such builtin used, not just some — e.g. \`append(x, y) => List.concat(x, y)\`, \`length(x) => List.len(x)\`, \`rev(x) => List.reverse(x)\`. A common miss is supplying two bridges but forgetting the third.
+Valid Aver only: first-order, no closures, no match/if/chained-=> in a law body (use a recursive helper fn instead); a given's declared type MUST match its sample values. Keep rationale short and Aver-level.`
+
+const RUN_PROMPT = (t, helperLaws) => `Mechanically test a fixed helper-law set against an Aver task and report ONLY the Aver-level verdict.
+- TARGET task: ${t}  (relative to the project root, or absolute).
+- helper laws to splice (JSON, verbatim): ${JSON.stringify(helperLaws)}
+
+Copy ${t} to a fresh /tmp scratch; splice the helpers (and any fn they introduce) in BEFORE the target "verify … law" line (order + rendering matter). PRE-FLIGHT FIRST: run \`<aver> check <scratch>\` — block ONLY on a real parse/type error (\`error[parse...]\` or \`error[type-error]\`); IGNORE \`error[missing-verify]\` and \`error[module-size]\` (project-hygiene lints, NOT proof problems — a helper referencing a task fn like plus/lessEq without its own verify block is fine and proves regardless). If there is a genuine parse/type error, STOP, do NOT run anything else, and return checkPassed:false, verifyClean:false, universal:false, sorries:0, note=that verbatim error. CHEAP SIEVE NEXT — run \`<aver> verify <scratch>\` (bounded sample eval, NO Lean): if ANY law is violated (a "✗"/"verify-mismatch"/"law violated"), set verifyClean:false, STOP, do NOT run the proof, and report which law is false on samples (status false-on-samples in lawStatus, note e.g. "law lengthBridge violated bounded verify 0/3 — false on samples, not a valid Aver law"). This catches a false / type-confused law (e.g. a Nat-vs-Int bridge) instantly and independently of Lean. Only if verify is fully clean (verifyClean:true): run \`<aver> proof <scratch> --check --check-json --backend lean -o <dir>\` (retry once on a transient lake error). Do NOT use --discover — the inline proposed laws are the ONLY auxiliary lemmas; the goal must close by them + our auto-prover, not by the enumerative recognizer. Read the --check-json summary line for universal/sorries, AND read \`<dir>/proof_manifest.json\` for per-law status: its \`laws[]\` lists each tiered law as {law, tier} (tier "universal" -> status "proven"; "bounded" -> "sample-only"); a law you spliced (or the target law) that is ABSENT from laws[] is "open". Return checkPassed:true, verifyClean:true, universal, sorries, lawStatus (one entry per helper + the target, using proven/sample-only/open), and a one-line AVER-LEVEL note. Do NOT read or reason about the generated Lean/Dafny, tactics, the proof residual, or the manifest's \`axioms\`/\`theorem\` fields (Lean internals) — those never go in your output.`
+
+const VERIFY_PROMPT = (t, helperLaws) => `INDEPENDENT verification gate. Do NOT trust any prior "closed" claim — verify from scratch yourself, then persist if it holds.
 - TARGET (OPEN in baseline): ${t}
 - candidate helper laws (JSON): ${JSON.stringify(helperLaws)}
 
-Steps:
-1. Copy ${t} to a fresh /tmp scratch.
-2. Splice the helper laws in BEFORE the target "verify ... law" line (order and rendering matter — appending at the end can fail). Use the helper source strings verbatim.
-3. Run: <aver> proof <scratch> --discover -o <freshdir> ; then <aver> proof <scratch> --check --check-json --backend lean -o <freshdir>.
-4. verified = true ONLY if the check output contains "universal":true AND "sorries":0. Retry once on a transient lake error.
-5. Sanity: confirm the BASE task (no helpers) is still OPEN ("universal":true ABSENT).
-6. PERSIST (only if verified) — make the win durable and recoverable so it is never re-guessed:
-   - Destination = the target path with its "/tip/" segment replaced by "/decomposed/" (e.g. proof-corpus/tip/prod/prop_38.av -> proof-corpus/decomposed/prod/prop_38.av; proof-corpus/tip/isaplanner/prop_76.av -> proof-corpus/decomposed/isaplanner/prop_76.av). If the path has no "/tip/" segment, use proof-corpus/decomposed/<basename>. Create parent dirs if needed.
-   - Convention (read one existing decomposed/ entry + its base to match it EXACTLY): the entry is the base file with the helper laws (and any helper "fn" definitions they introduce) spliced in BEFORE the target "verify ... law" block — same module name, same functions, nothing else changed.
-   - Write your verified augmented .av to that destination, then re-run the closing sequence ON THE WRITTEN FILE and confirm it still shows "universal":true,"sorries":0. Set persistedPath to that project-relative path.
-   - If verified=false, or the write or re-check fails, set persistedPath="".
-${VERIFY_SAFETY}
-Return: verified (bool), note, persistedPath.`
+Copy ${t} to a fresh /tmp scratch; splice the helpers in BEFORE the target "verify … law" line (use the source strings verbatim; order + rendering matter). FIRST run the CHEAP SIEVE \`<aver> verify <scratch>\` (bounded, no Lean): EVERY law (helpers + target) must pass with ZERO violations — a "✗"/verify-mismatch means a law is FALSE on samples (e.g. a Nat-returning fn bridged to an Int-returning builtin), a real Aver-level refutation the kernel can wrongly accept, so verified=false immediately. Only if verify is clean: run \`<aver> proof <scratch> --check --check-json --backend lean -o <freshdir>\` (retry once on a transient lake error). Do NOT use --discover — closure must be self-contained (the inline laws + our auto-prover only). verified=true ONLY if BOTH aver verify is clean AND the check output has "universal":true with "sorries":0. Confirm the BASE task (no helpers) is still OPEN. If verified, PERSIST: destination = the target path with its "/tip/" segment replaced by "/decomposed/" (no "/tip/" → proof-corpus/decomposed/<basename>); match an existing decomposed/ entry's convention EXACTLY (base file + spliced helpers/fns, nothing else); write it, re-run BOTH \`<aver> verify <written>\` (zero violations) AND \`<aver> proof <written> --check --check-json --backend lean\` ("universal":true,"sorries":0) on the WRITTEN file, and set persistedPath. Else persistedPath="". Return verified, note, persistedPath.`
 
 phase('Method')
-// pipeline: each task is proposed, then (if self-reported closed) independently verified — no
-// barrier, so verification starts the moment an agent finishes.
-const results = (await pipeline(
-  TASKS,
-  (t) => agent(METHOD_PROMPT(t), { label: `method:${t}`, phase: 'Method', schema: RESULT_SCHEMA, agentType: 'general-purpose', model: MODEL }),
-  (r, t) => {
-    if (!r) return { task: t, closed: false, verified: false, attempts: 0, helperLaws: [], finalError: 'agent died', summary: '' }
-    if (!r.closed) return { ...r, verified: false }
-    return agent(VERIFY_PROMPT(r.task, r.helperLaws), { label: `verify:${r.task}`, phase: 'Verify', schema: VERIFY_SCHEMA, agentType: 'general-purpose' })
-      .then((v) => ({ ...r, verified: !!(v && v.verified), verifyNote: v ? v.note : 'verifier died', persistedPath: v ? (v.persistedPath || '') : '' }))
-  },
-)).filter(Boolean)
+
+// One independent chain per task, run concurrently. Within a chain the propose->run loop is
+// sequential (each attempt refines on the prior Aver-level verdict); on a close, the verify gate
+// runs. Wrapped in thunks so cross-task concurrency is preserved; phase is set explicitly on each
+// agent (parallel/await => avoid racing the global phase() cursor).
+async function runOneTask(t) {
+  const history = []
+  let won = null
+  let lastNote = ''
+  let attemptsUsed = 0
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    attemptsUsed = attempt
+    const prop = await agent(PROPOSE_PROMPT(t, attempt, history),
+      { label: `propose:${t}#${attempt}`, phase: 'Method', schema: LAWS_SCHEMA, agentType: 'the-method-proposer', model: MODEL })
+    if (!prop || !Array.isArray(prop.helperLaws) || !prop.helperLaws.length) {
+      lastNote = prop ? 'conjecturer returned no laws' : 'conjecturer died'
+      history.push({ laws: [], note: lastNote })
+      continue
+    }
+    const run = await agent(RUN_PROMPT(t, prop.helperLaws),
+      { label: `run:${t}#${attempt}`, phase: 'Method', schema: RUN_SCHEMA, agentType: 'the-method-runner', model: RUNNER_MODEL })
+    if (run && run.verifyClean === true && run.universal === true && run.sorries === 0) {
+      won = { helperLaws: prop.helperLaws, rationale: prop.rationale || '' }
+      lastNote = ''
+      break
+    }
+    lastNote = run ? run.note : 'runner died'
+    history.push({ laws: prop.helperLaws, note: lastNote, lawStatus: run ? (run.lawStatus || []) : [], verifyClean: run ? run.verifyClean : false })
+  }
+
+  const base = { task: t, attempts: attemptsUsed }
+  if (!won) {
+    return { ...base, closed: false, verified: false, helperLaws: history.length ? (history[history.length - 1].laws || []) : [], finalError: lastNote || 'did not close within attempt cap', persistedPath: '' }
+  }
+  const v = await agent(VERIFY_PROMPT(t, won.helperLaws),
+    { label: `verify:${t}`, phase: 'Verify', schema: VERIFY_SCHEMA, agentType: 'the-method-verifier', model: VERIFIER_MODEL })
+  return {
+    ...base,
+    closed: true,
+    helperLaws: won.helperLaws,
+    finalError: '',
+    summary: won.rationale,
+    verified: !!(v && v.verified),
+    verifyNote: v ? v.note : 'verifier died',
+    persistedPath: v ? (v.persistedPath || '') : '',
+  }
+}
+
+const results = (await parallel(TASKS.map((t) => () => runOneTask(t)))).filter(Boolean)
 
 for (const r of results) {
   const status = r.closed ? (r.verified ? 'CLOSED+VERIFIED' : 'self-CLOSED but VERIFY FAILED') : 'open'
