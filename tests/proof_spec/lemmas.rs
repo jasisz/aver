@@ -326,6 +326,12 @@ fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
         "proof-corpus/decomposed/prod/prop_02.av",
         "proof-corpus/decomposed/prod/prop_19.av",
         "proof-corpus/decomposed/prod/prop_34.av",
+        // bridge-free structural rung: the `even`-shift targets whose sibling
+        // laws are `S (S)`-shaped and were stranded by the `plus → +` / commute
+        // normalizers in the bridged simp set (now closed by a leading
+        // structural-only rung).
+        "proof-corpus/decomposed/prod/lemma_14.av",
+        "proof-corpus/decomposed/prod/lemma_16.av",
     ];
     for task in tasks {
         let out = temp_output_dir(&format!(
