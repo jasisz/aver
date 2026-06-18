@@ -4148,3 +4148,40 @@ fn main() -> Unit
     let out = assert_vm_wasm_identical("ledger-map-string-value", src);
     assert_eq!(out, "hi,none");
 }
+
+#[test]
+fn ledger_string_from_float_large_magnitude_is_known_to_diverge() {
+    // KNOWN, ACCEPTED divergence — NOT a parity bug. For |f| >= 2^53 every
+    // f64 is an integer, and the two backends render it by different valid
+    // conventions: the VM prints Rust's shortest-roundtrip decimal, wasm-gc
+    // prints the exact f64 bits. BOTH denote the same f64 (the difference is
+    // representation, not value). A complete fix needs a shortest-roundtrip
+    // (Ryu/Grisu) formatter in WAT; until then this test PINS the boundary so
+    // a change to either side is caught, and the parity fuzzer skips exactly
+    // this shape (fuzz/fuzz_targets/parity_vm_vs_wasm_gc.rs, gated on
+    // `fromFloat` + same-f64). The trap that used to fire here (|f| >= 2^63)
+    // is fixed — only the rendering convention differs now.
+    let src = r#"module M
+    intent = "large float rendering boundary"
+    effects [Console]
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromFloat(9223372036854775000.0))
+"#;
+    let (vm_ok, vm_out) = run("float-big-vm", src, false, false);
+    let (wg_ok, wg_out) = run("float-big-wasm", src, true, false);
+    assert!(vm_ok, "VM run failed: {vm_out}");
+    assert!(wg_ok, "wasm-gc run failed: {wg_out}");
+    // VM = shortest-roundtrip, wasm-gc = exact bits — they DIFFER (documented).
+    assert_eq!(vm_out, "9223372036854775000");
+    assert_eq!(wg_out, "9223372036854774784");
+    assert_ne!(vm_out, wg_out);
+    // ...but both decimals MUST denote the same f64 — otherwise it is a real
+    // value bug, not a rendering-convention difference.
+    assert_eq!(
+        vm_out.parse::<f64>().unwrap().to_bits(),
+        wg_out.parse::<f64>().unwrap().to_bits(),
+        "the two renderings must be the SAME f64"
+    );
+}
