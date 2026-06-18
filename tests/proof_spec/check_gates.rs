@@ -1044,3 +1044,42 @@ fn proof_check_without_explain_emits_no_open_goals_key() {
         );
     }
 }
+
+#[test]
+fn verify_law_rejects_incompatible_sides_nat_vs_int() {
+    // Regression: a `verify … law` body `LHS => RHS` asserts the two sides are
+    // EQUAL, so they must have compatible types. A user `Nat`-returning fn equated
+    // with the `Int`-returning `List.len` used to typecheck — and then the Lean
+    // lowering dropped the Int and proved a spurious `Nat = Nat` (`universal:true`)
+    // while `aver verify` refuted it 0/3 (a translation-validation hole). The
+    // checker must now reject the law at `aver check` (pure typecheck, no backend).
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let dir = temp_output_dir("aver-natint-law");
+    std::fs::create_dir_all(&dir).expect("create dir");
+    let file = dir.join("natint.av");
+    std::fs::write(
+        &file,
+        "module NatIntLaw\n    intent = \"nat-vs-int law must be a type error\"\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn length(xs: List<Int>) -> Nat\n    ? \"user length returns a Nat ADT\"\n    match xs\n        [] -> Nat.Z\n        [y, ..ys] -> Nat.S(length(ys))\n\n\
+         verify length law lenBridge\n    given x: List<Int> = [[], [1], [1, 2, 3]]\n    length(x) => List.len(x)\n",
+    )
+    .expect("write natint.av");
+    let run = Command::new(aver_bin)
+        .arg("check")
+        .arg(&file)
+        .output()
+        .expect("expected `aver check` to run");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(
+        combined.contains("incompatible types")
+            && combined.contains("Nat")
+            && combined.contains("Int"),
+        "expected a Nat-vs-Int incompatible-law type error, got:\n{combined}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

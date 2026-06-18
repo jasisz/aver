@@ -566,12 +566,43 @@ impl TypeChecker {
                     // whenever it is fully concrete.
                     // `infer_type_with_expected` falls back to plain
                     // inference for shapes that don't need the hint.
-                    if super::infer::type_is_fully_concrete(&left_ty) {
-                        let _ = self.infer_type_with_expected(right, Some(&left_ty));
+                    let right_ty = if super::infer::type_is_fully_concrete(&left_ty) {
+                        self.infer_type_with_expected(right, Some(&left_ty))
                     } else {
-                        let _ = self.infer_type(right);
-                    }
+                        self.infer_type(right)
+                    };
                     self.check_effects_in_expr(right, &caller, &inherited_effects);
+                    // A `verify … law` body `LHS => RHS` asserts the two sides are
+                    // EQUAL — it is bounded-checked by `aver verify` and emitted as
+                    // `LHS = RHS` to every proof backend — so they must have
+                    // compatible types. The checker inferred each side but never
+                    // compared them, so a law across types slipped through: e.g. a
+                    // `Nat`-returning fn equated with the `Int`-returning `List.len`
+                    // — the Lean lowering drops the Int and proves a spurious
+                    // `Nat = Nat` (`universal:true`) while `aver verify` refutes it.
+                    // Flag only when BOTH sides are fully concrete (a type variable
+                    // means the instantiation isn't pinned here — leave it to
+                    // inference) and neither direction of `compatible` holds.
+                    // `compatible` already rejects `Int` vs a user ADT, so this
+                    // closes the gap backend-agnostically.
+                    if let crate::ast::VerifyKind::Law(law) = &vb.kind
+                        && super::infer::type_is_fully_concrete(&left_ty)
+                        && super::infer::type_is_fully_concrete(&right_ty)
+                        && !self.compatible(&left_ty, &right_ty)
+                        && !self.compatible(&right_ty, &left_ty)
+                    {
+                        self.error_at_line(
+                            case_line,
+                            format!(
+                                "Verify law '{}.{}' case #{}: the two sides of `=>` have incompatible types ({} vs {}) — a law asserts they are equal, so both sides must have the same type",
+                                vb.fn_name,
+                                law.name,
+                                idx + 1,
+                                left_ty.display(),
+                                right_ty.display()
+                            ),
+                        );
+                    }
                     if let crate::ast::VerifyKind::Law(law) = &vb.kind
                         && let Some(sample_guard) = law.sample_guards.get(idx)
                     {
