@@ -769,6 +769,19 @@ fn emit_hash_for(
     if k_aver == "String" {
         return emit_hash_string(registry);
     }
+    // A newtype-erased value record — a `Map<_, V>` whose `V` is a
+    // single-primitive-field record — reaches its hash helper as the
+    // bare carrier, not the `$V` struct: `aver_to_wasm(V)` and the
+    // `values_array` element are both `aver_to_wasm(under)`. Hash it as
+    // the underlying primitive. Routing through `emit_hash_record` would
+    // `struct.get` the unerased struct and diverge from the erased
+    // signature (the `map_keyed_by_record_with_record_value` validation
+    // bug). Map keys are never erased (`newtype_underlying` returns
+    // `None` for `non_newtypable_keys`), so this fires only for value
+    // records — exactly where `aver_to_wasm` erases.
+    if let Some(under) = registry.newtype_underlying(k_aver) {
+        return emit_hash_for(under, registry, string_key_helpers, all_key_helpers);
+    }
     if registry.record_type_idx(k_aver).is_some() {
         return emit_hash_record(k_aver, registry, string_key_helpers, all_key_helpers);
     }
@@ -819,6 +832,16 @@ fn emit_eq_for(
 ) -> Result<Function, WasmGcError> {
     if k_aver == "String" {
         return emit_eq_string(registry);
+    }
+    // Mirror of the newtype-erasure guard in `emit_hash_for`: a
+    // newtype-erased value record reaches its eq helper as two bare
+    // carriers (`aver_to_wasm(V) == aver_to_wasm(under)`), so compare
+    // them as the underlying primitive instead of `struct.get`-ing the
+    // unerased `$V` struct (which would diverge from the erased
+    // signature). Keys are never erased, so this fires only for value
+    // records.
+    if let Some(under) = registry.newtype_underlying(k_aver) {
+        return emit_eq_for(under, registry, string_key_helpers, all_key_helpers);
     }
     if registry.record_type_idx(k_aver).is_some() {
         return emit_eq_record(k_aver, registry, string_key_helpers, all_key_helpers);
