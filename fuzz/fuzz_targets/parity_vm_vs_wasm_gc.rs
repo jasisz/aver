@@ -58,6 +58,37 @@ struct BackendOutcome {
     value: JsonValue,
 }
 
+/// Canonicalise every maximal numeric run (`[0-9.]+`) to its parsed
+/// `f64` bit pattern, so two different decimal renderings of the SAME
+/// `f64` compare equal; runs that don't parse as `f64` are left
+/// verbatim and all non-numeric text must still match exactly. Used to
+/// recognise the one KNOWN, accepted VM↔wasm-gc divergence — large-
+/// magnitude `String.fromFloat`, where the VM prints Rust's
+/// shortest-roundtrip decimal and wasm-gc prints the exact f64 bits
+/// (both denote the same f64; a full fix needs Ryu/Grisu in WAT) —
+/// without masking a genuine VALUE divergence (e.g. a bignum `Int`
+/// rendering bug, whose decimals would parse to DIFFERENT f64s, or
+/// which appears in a program that never calls `fromFloat`).
+fn canon_floats(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(start) = rest.find(|c: char| c.is_ascii_digit()) {
+        out.push_str(&rest[..start]);
+        let after = &rest[start..];
+        let run_len = after
+            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .unwrap_or(after.len());
+        let run = &after[..run_len];
+        match run.parse::<f64>() {
+            Ok(f) => out.push_str(&format!("\u{1}{:016x}", f.to_bits())),
+            Err(_) => out.push_str(run),
+        }
+        rest = &after[run_len..];
+    }
+    out.push_str(rest);
+    out
+}
+
 fn main() {
     afl::fuzz_nohook!(|data: &[u8]| {
         if data.len() > MAX_INPUT_SIZE {
@@ -122,6 +153,24 @@ fn main() {
                 }
                 let vm_out = String::from_utf8_lossy(&vm.stdout);
                 let wasm_out = String::from_utf8_lossy(&wasm.stdout);
+                // KNOWN, ACCEPTED divergence — NOT a parity bug: a program
+                // that calls `String.fromFloat` on a magnitude >= 2^53 prints
+                // the VM's shortest-roundtrip decimal vs wasm-gc's exact-bits
+                // decimal (both the SAME f64). Skip ONLY when `fromFloat` is
+                // actually used AND every numeric difference is two decimals
+                // for the identical f64 — so a real value divergence (a
+                // bignum `Int` bug, or any non-`fromFloat` program) still
+                // panics. Pinned in
+                // tests/wasm_gc_carrier_i64_differential.rs
+                // (`ledger_string_from_float_large_magnitude_*`); remove this
+                // skip if/when a WAT shortest-roundtrip formatter lands.
+                if source.contains("fromFloat")
+                    && canon_floats(&vm_out) == canon_floats(&wasm_out)
+                    && canon_floats(&format!("{:?}", vm.value))
+                        == canon_floats(&format!("{:?}", wasm.value))
+                {
+                    return;
+                }
                 panic!(
                     "VM vs wasm-gc divergence:\n--- vm stdout ---\n{vm_out}\n--- wasm-gc stdout ---\n{wasm_out}\n--- vm value: {:?}\n--- wasm-gc value: {:?}",
                     vm.value, wasm.value
