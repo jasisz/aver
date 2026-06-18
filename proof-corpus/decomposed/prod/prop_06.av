@@ -27,22 +27,23 @@ fn rev(x: List<Int>) -> List<Int>
         [] -> []
         [y, ..ys] -> append(rev(ys), [y])
 
-verify length law lengthIsLen
+verify append law appendBridge
+    given x: List<Int> = [[], [1], [1, 2, 3]]
+    given y: List<Int> = [[], [2], [4, 5]]
+    append(x, y) => List.concat(x, y)
+
+verify rev law revBridge
+    given x: List<Int> = [[], [1], [1, 2, 3]]
+    rev(x) => List.reverse(x)
+
+verify length law lengthBridge
     given x: List<Int> = [[], [1], [1, 2, 3]]
     length(x) => List.len(x)
 
-verify rev law revIsReverse
-    given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
-    rev(x) => List.reverse(x)
-
-verify length law lengthAppend
-    given x: List<Int> = [[], [1], [1, 2, 3]]
-    given y: List<Int> = [[], [2], [4, 5]]
-    length(append(x, y)) => plus(length(x), length(y))
-
-verify length law lengthRev
-    given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
-    length(rev(x)) => length(x)
+verify plus law plusComm
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    plus(x, y) => plus(y, x)
 
 verify length law revAppendLength
     given x: List<Int> = [[], [1], [1, 2, 3]]
