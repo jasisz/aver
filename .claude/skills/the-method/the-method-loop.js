@@ -14,11 +14,12 @@ let a = typeof args === 'string'
   : args
 const TASKS = Array.isArray(a) ? a : (a && Array.isArray(a.tasks) ? a.tasks : [])
 const MAX_ATTEMPTS = (a && a.attempts) || 4
+const MODEL = (a && a.model) || undefined  // optional model override for the proposer (e.g. 'haiku','sonnet'); undefined = inherit
 if (!TASKS.length) {
   log('the-method: pass one or more Aver task .av paths as args, e.g. { tasks: ["path/to/task.av"] }')
   return { error: 'no tasks given' }
 }
-log(`The Method: ${TASKS.length} task(s), up to ${MAX_ATTEMPTS} attempts each`)
+log(`The Method: ${TASKS.length} task(s), up to ${MAX_ATTEMPTS} attempts each${MODEL ? `, proposer model=${MODEL}` : ''}`)
 
 const RESULT_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -47,6 +48,8 @@ const SAFETY = 'SAFETY: READ-ONLY on the project. Do ALL edits on COPIES under /
 const VERIFY_SAFETY = 'SAFETY: do ALL proof/verification work on COPIES under /tmp. The ONLY project-file write you may make is creating/overwriting the single decomposed entry described below. Never run state-changing git commands; never touch any other project file.'
 
 const METHOD_PROMPT = (t) => `You ARE "The Method": close an OPEN Aver proof obligation by proposing auxiliary helper lemmas, testing them with the Aver toolchain, and refining on failure. You propose; the Lean kernel / Z3 judges.
+
+YOU ARE A CONJECTURER, NOT A PROVER. Reason ONLY about Aver: the datatypes, the functions, the open law, and what auxiliary Aver law would unblock it. Do NOT open, read, or reason about the generated Lean/Dafny files; do NOT reason about Lean tactics, induction strategy, the proof residual / goal state, simp sets, fuel, or the Aver prover's internals — discharging the proof is the toolchain's job, not yours. Your ONLY output is the right Aver helper law(s). If an attempt does not close, propose a DIFFERENT or additional Aver LAW (or fix the law's statement / sample domains) — never try to debug or fix the proof itself. Keep your reasoning short: long tactic-level analysis means you have drifted out of your job and should step back to "what true Aver law is missing?".
 
 You are working inside an Aver project (the current working directory).
 - ${FIND_AVER}
@@ -104,7 +107,7 @@ phase('Method')
 // barrier, so verification starts the moment an agent finishes.
 const results = (await pipeline(
   TASKS,
-  (t) => agent(METHOD_PROMPT(t), { label: `method:${t}`, phase: 'Method', schema: RESULT_SCHEMA, agentType: 'general-purpose' }),
+  (t) => agent(METHOD_PROMPT(t), { label: `method:${t}`, phase: 'Method', schema: RESULT_SCHEMA, agentType: 'general-purpose', model: MODEL }),
   (r, t) => {
     if (!r) return { task: t, closed: false, verified: false, attempts: 0, helperLaws: [], finalError: 'agent died', summary: '' }
     if (!r.closed) return { ...r, verified: false }
