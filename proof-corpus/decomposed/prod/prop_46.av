@@ -1,0 +1,62 @@
+module Prop46
+    intent =
+        "TIP prod prop_46: x = y => elem x (insert y z)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn barbar(x: Bool, y: Bool) -> Bool
+    match x
+        true -> true
+        false -> y
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn elem(x: Nat, y: List<Nat>) -> Bool
+    match y
+        [] -> false
+        [z, ..xs] -> barbar(eqNat(x, z), elem(x, xs))
+
+fn lessEq(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> lessEq(z, x2)
+
+fn insert(x: Nat, y: List<Nat>) -> List<Nat>
+    match y
+        [] -> [x]
+        [z, ..xs] -> match lessEq(x, z)
+            true -> List.concat([x], y)
+            false -> List.concat([z], insert(x, xs))
+
+verify barbar law barbarTrueLeft
+    given b: Bool = [true, false]
+    barbar(true, b) => true
+
+verify barbar law barbarTrueRight
+    given b: Bool = [true, false]
+    barbar(b, true) => true
+
+verify elem law elemConcatSingleton
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given ys: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z]]
+    elem(x, List.concat([y], ys)) => barbar(eqNat(x, y), elem(x, ys))
+
+verify elem law insertElem
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given z: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z]]
+    when eqNat(x, y)
+    elem(x, insert(y, z)) => true
