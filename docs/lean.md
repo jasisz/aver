@@ -207,6 +207,32 @@ bool keys on. A robust CI budget pins all four together:
 `bounded_laws == M` (plus `when_universal == K` if the file has
 quarantine-lane upgrades).
 
+## Minimizing a proof (`--minimize`)
+
+`aver proof file.av --backend lean -o out/ --check --minimize` (Lean-only,
+implies `--check`) rewrites each auto-proof to the tactic that actually closed
+it. The auto-prover pins a deterministic `first | (t₁) | (t₂) | … | sorry`
+PORTFOLIO at every law — it cannot know statically which alternative a given
+goal needs — and `--minimize` resolves that hedge against a real build:
+
+1. each `first` branch is prefixed with a `trace "AVERMIN:i:b"` marker and the
+   project is built ONCE. `first` tries branches left-to-right and commits to
+   the first that closes, tracing each it reaches, so the winning branch of
+   portfolio `i` is the **highest** index `b` that appears in the build log
+   (failed branches before it trace too — the markers are not rolled back);
+2. each portfolio is collapsed to its winning branch and the project is
+   RE-VERIFIED. If a theorem no longer closes (a mis-parsed winner), it keeps
+   its original portfolio.
+
+So minimization is **fail-safe** (it can never ship a proof that does not
+build) and **status-preserving** (it keeps exactly the branch Lean committed
+to). A law that closes for real drops its alternation and `sorry` floor and
+reads like a hand-written proof; a law that only closed via its floor collapses
+to a bare `sorry` — the honest gap is kept, never silently dropped, so the
+`sorries` / `universal` numbers from `--check` are unchanged. It is an opt-in
+polishing pass (it costs two extra `lake build`s), not part of the normal
+verify loop.
+
 ## Refinement records (refinement-via-opaque)
 
 An Aver `record X { v: Int }` paired with a validating smart constructor

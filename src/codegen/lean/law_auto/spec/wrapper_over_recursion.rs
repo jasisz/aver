@@ -68,7 +68,7 @@ pub(in super::super) fn emit_wrapper_over_recursion_law(
     let _ = (vb, law);
     Some(AutoProof {
         support_lines,
-        proof_lines,
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
         replaces_theorem: false,
     })
 }

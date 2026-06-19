@@ -370,6 +370,101 @@ fn run_lean_check_json(
     (summary, run)
 }
 
+/// `aver proof --minimize` collapses each `first | … | sorry` portfolio in a
+/// generated proof to the branch that actually closed — without changing
+/// whether the proof passes. `int_comparison_laws` emits three shape-gated
+/// `grind` portfolios (`first | (grind …) | (<body ending in sorry>)`); the
+/// probe build reports `grind` as their winner, so the minimized proof keeps
+/// just `grind […]; done` and drops the dead body-plus-`sorry` arm while
+/// staying universal. Guards the whole instrument → parse → collapse →
+/// fail-safe pipeline end-to-end.
+#[test]
+fn proof_minimize_collapses_grind_portfolios_and_stays_passing() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping --minimize test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let example = "examples/formal/int_comparison_laws.av";
+    let output_dir = repo_root.join("target").join("proof-minimize-it");
+    let _ = std::fs::remove_dir_all(&output_dir);
+    let lean_path = output_dir.join("IntComparisonLaws.lean");
+
+    // Baseline emit (no --minimize): the grind rung is a structured
+    // `first | (grind …) | (…)` portfolio.
+    let baseline = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .args(["proof", example, "--backend", "lean", "-o"])
+        .arg(&output_dir)
+        .output()
+        .expect("baseline `aver proof` to run");
+    assert!(
+        baseline.status.success(),
+        "baseline emit failed:\n{}",
+        format_output(&baseline)
+    );
+    let baseline_src = std::fs::read_to_string(&lean_path).expect("read baseline Lean");
+    let portfolios = baseline_src.matches("| (grind [").count();
+    assert!(
+        portfolios > 0,
+        "fixture should emit grind-wrap portfolios; got none:\n{baseline_src}"
+    );
+
+    // With --minimize --check: portfolios collapse to their winner; the proof
+    // must still pass with zero sorries.
+    let min = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .args(["proof", example, "--backend", "lean", "-o"])
+        .arg(&output_dir)
+        .args([
+            "--check",
+            "--check-json",
+            "--minimize",
+            "--sorry-budget",
+            "0",
+        ])
+        .output()
+        .expect("`aver proof --check --minimize` to run");
+    let json_line = min
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&min)))
+        .to_string();
+    let summary: serde_json::Value =
+        serde_json::from_str(&json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "minimized proof must still pass:\n{}",
+        format_output(&min)
+    );
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "minimized proof must keep zero sorries:\n{}",
+        format_output(&min)
+    );
+
+    let min_src = std::fs::read_to_string(&lean_path).expect("read minimized Lean");
+    assert!(
+        !min_src.contains("AVERMIN"),
+        "instrument markers must not survive into the minimized proof:\n{min_src}"
+    );
+    assert!(
+        min_src.matches("| (grind [").count() < portfolios,
+        "grind portfolios should be collapsed (fewer `| (grind [` lines than baseline {portfolios}):\n{min_src}"
+    );
+    assert!(
+        min_src.contains("grind ["),
+        "the winning grind branch should remain in the collapsed proof:\n{min_src}"
+    );
+
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
 /// The COUNTED summary — everything the budget pins and run.sh
 /// consumers key on — with the lane's additive field stripped, for
 /// byte-level comparison across lane-on / lane-sabotaged / lane-off

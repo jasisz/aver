@@ -235,6 +235,13 @@ Lean export modes:
 - `sorry`
 - `theorem-skeleton`
 
+`--check` builds the export with `lake` and gates on the result (`--check-json`
+for a machine-readable summary); `--gate <baseline>` / `--write-baseline` are
+the proof ratchet; `--minimize` (Lean, implies `--check`) collapses each
+auto-proof to the single tactic that actually closed it. See
+[docs/lean.md](lean.md) for the proof workflow, the `--check` summary fields,
+and `--minimize`.
+
 ### Replay
 
 ```bash

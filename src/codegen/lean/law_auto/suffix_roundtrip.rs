@@ -875,7 +875,7 @@ pub(super) fn emit_string_escape_roundtrip_law(
 
     Some(AutoProof {
         support_lines: support,
-        proof_lines,
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
         replaces_theorem: false,
     })
 }

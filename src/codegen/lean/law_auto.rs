@@ -31,7 +31,11 @@ pub use induction::residual_probe_body;
 
 pub struct AutoProof {
     pub support_lines: Vec<String>,
-    pub proof_lines: Vec<String>,
+    /// The proof body as a structured tactic tree (`:= by` block). Built by
+    /// each rung; rendered to lines by the consumer. Proofs not yet structured
+    /// into `First` portfolios wrap their lines via [`tactic_ir::Tactic::raw`]
+    /// (a no-op on output). `--minimize` collapses the `First` nodes here.
+    pub body: super::tactic_ir::Tactic,
     /// When true, the main theorem statement is already included in `support_lines`
     /// and should not be emitted separately by the caller.
     pub replaces_theorem: bool,
@@ -157,7 +161,8 @@ fn maybe_wrap_with_grind_rung(
     // rung (the `RingIdentity` family emits `first | (grind [<cone>]; …`
     // internally). Re-wrapping it would emit a redundant outer `grind`
     // arm — pure waste (a second grind saturation on the same goal). Skip.
-    if proof.proof_lines.iter().any(|l| l.contains("grind")) {
+    let lines = proof.body.render();
+    if lines.iter().any(|l| l.contains("grind")) {
         return proof;
     }
     // SHAPE GATE: only wrap a grind-amenable (flat algebraic/ring/order)
@@ -177,8 +182,7 @@ fn maybe_wrap_with_grind_rung(
     // goals; pairing it with the frontier gate means `grind` is emitted
     // ONLY where it can do NEW work — exactly the open flat laws (like the
     // nonlinear ring identity the simp package no longer normalizes).
-    let ends_in_sorry = proof
-        .proof_lines
+    let ends_in_sorry = lines
         .iter()
         .rev()
         .find(|l| !l.trim().is_empty())
@@ -189,7 +193,7 @@ fn maybe_wrap_with_grind_rung(
     // The proof must be the canonical `intro <givens>` + body shape
     // (the first proof line, post-indent, is the `intro`). Anything
     // else is left as-is rather than guessing where to splice the arm.
-    let Some(first_line) = proof.proof_lines.first() else {
+    let Some(first_line) = lines.first() else {
         return proof;
     };
     if !first_line.trim_start().starts_with("intro ") {
@@ -204,48 +208,52 @@ fn maybe_wrap_with_grind_rung(
     if cone.is_empty() {
         return proof;
     }
-    let mut proof_lines = proof.proof_lines;
-    let intro_line = proof_lines.remove(0);
-    let wrapped = wrap_body_with_grind_rung(intro_line, proof_lines, &cone);
+    // Structured grind rung:
+    //
+    // ```text
+    // intro <givens>
+    // first
+    // | (grind [<cone>]; done)
+    // | (<existing body>)
+    // ```
+    //
+    // Built as a real [`tactic_ir::Tactic::First`] (not a flattened string) so
+    // `--minimize` can collapse it to its winning branch — almost always the
+    // existing body, since `grind` is a shape-gated frontier closer admitted
+    // only where the body already ends in an honest `sorry`. The `grind` arm
+    // ends in `done`, so a `grind` that leaves a residual goal THROWS and
+    // `first` falls to the existing body; the rung is purely additive and adds
+    // no axioms beyond grind's whitelisted set ({propext, Classical.choice,
+    // Quot.sound}).
+    //
+    // The body branch keeps the EXISTING body tree (intro removed) rather than
+    // its rendered string, so a structured inner portfolio (a converted
+    // `first | … | sorry`) stays a real `First` the minimizer can also collapse
+    // — not flattened back to opaque text. Render is byte-identical either way
+    // (the inner `First` prints inline). The intro-shape gate above guarantees
+    // step 0 of the body sequence is the `intro`.
+    use crate::codegen::lean::tactic_ir::Tactic;
+    let support_lines = proof.support_lines;
+    let body = match proof.body {
+        Tactic::Seq(mut steps) if !steps.is_empty() => {
+            let intro = steps.remove(0);
+            Tactic::Seq(vec![
+                Tactic::Leaf(intro.render().join("\n").trim().to_string()),
+                Tactic::First(vec![
+                    Tactic::Leaf(format!("grind [{}]; done", cone.join(", "))),
+                    Tactic::Seq(steps),
+                ]),
+            ])
+        }
+        // A non-sequence body is unreachable given the intro-shape gate; leave
+        // it untouched rather than guess where the `grind` arm would splice.
+        other => other,
+    };
     AutoProof {
-        support_lines: proof.support_lines,
-        proof_lines: wrapped,
+        support_lines,
+        body,
         replaces_theorem: false,
     }
-}
-
-/// Prepend the `grind` outright-closer arm to an existing (post-`intro`)
-/// `body_lines` tactic block:
-///
-/// ```text
-/// intro <givens>
-/// first
-/// | (grind [<cone>]; done)
-/// | (<existing body, re-indented>)
-/// ```
-///
-/// The `grind` arm ends in `done`, so a `grind` that leaves a residual
-/// goal THROWS and `first` falls to the existing body byte-for-byte
-/// (modulo a 2-space indent under the final `first` arm). `grind` is a
-/// sound saturation solver (it closes only true goals; on failure it
-/// throws on the leftover), so the rung is purely additive — it can only
-/// ADD closures and adds no axioms beyond grind's whitelisted set
-/// ({propext, Classical.choice, Quot.sound}).
-fn wrap_body_with_grind_rung(
-    intro_line: String,
-    body_lines: Vec<String>,
-    cone: &[String],
-) -> Vec<String> {
-    let mut out = vec![intro_line, "  first".to_string()];
-    out.push(format!("  | (grind [{}]; done)", cone.join(", ")));
-    out.push("  | (".to_string());
-    for line in &body_lines {
-        out.push(format!("  {line}"));
-    }
-    if let Some(last) = out.last_mut() {
-        last.push(')');
-    }
-    out
 }
 
 fn emit_verify_law_forall_auto_proof_inner(
@@ -378,7 +386,10 @@ fn emit_verify_law_forall_auto_proof_inner(
         if let Some(lines) = proof_lines {
             return Some(AutoProof {
                 support_lines: Vec::new(),
-                proof_lines: intro_then(&proof_intro_names, lines),
+                body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
+                    &proof_intro_names,
+                    lines,
+                )),
                 replaces_theorem: false,
             });
         }
@@ -395,10 +406,10 @@ fn emit_verify_law_forall_auto_proof_inner(
         let lean_names: Vec<String> = extra_unfolds.iter().map(|n| aver_name_to_lean(n)).collect();
         return Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(
+            body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 &proof_intro_names,
                 vec![format!("simpa [{}]", lean_names.join(", "))],
-            ),
+            )),
             replaces_theorem: false,
         });
     }
@@ -418,13 +429,13 @@ fn emit_verify_law_forall_auto_proof_inner(
         let lean_names: Vec<String> = unfold_fns.iter().map(|n| aver_name_to_lean(n)).collect();
         return Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(
+            body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 &proof_intro_names,
                 vec![format!(
                     "simp only [{}] <;> (first | (split <;> rfl) | rfl | decide)",
                     lean_names.join(", ")
                 )],
-            ),
+            )),
             replaces_theorem: false,
         });
     }
@@ -451,10 +462,10 @@ fn emit_verify_law_forall_auto_proof_inner(
             .join(" <;> ");
         return Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(
+            body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 &proof_intro_names,
                 vec![format!("{cascade} <;> (first | rfl | decide | sorry)")],
-            ),
+            )),
             replaces_theorem: false,
         });
     }
@@ -522,7 +533,7 @@ fn emit_verify_law_forall_auto_proof_inner(
     {
         return Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(
+            body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 &proof_intro_names,
                 vec![
                     format!(
@@ -532,7 +543,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                     ),
                     "omega".to_string(),
                 ],
-            ),
+            )),
             replaces_theorem: false,
         });
     }
@@ -549,10 +560,10 @@ fn emit_verify_law_forall_auto_proof_inner(
         let lean_names: Vec<String> = extra_unfolds.iter().map(|n| aver_name_to_lean(n)).collect();
         return Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(
+            body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 &proof_intro_names,
                 vec![format!("simp [{}]", lean_names.join(", "))],
-            ),
+            )),
             replaces_theorem: false,
         });
     }
@@ -568,14 +579,14 @@ fn emit_verify_law_forall_auto_proof_inner(
     {
         return Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(
+            body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 &proof_intro_names,
                 vec![format!(
                     "simp [{}, {}]",
                     aver_name_to_lean(impl_fn),
                     aver_name_to_lean(spec_fn)
                 )],
-            ),
+            )),
             replaces_theorem: false,
         });
     }
@@ -678,7 +689,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                 };
                 return Some(AutoProof {
                     support_lines: Vec::new(),
-                    proof_lines: intro_then(
+                    body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                         &proof_intro_names,
                         vec![format!(
                             "simpa using {} {} {} {}",
@@ -687,7 +698,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                             atom_arg(&args[1]),
                             atom_arg(&args[2]),
                         )],
-                    ),
+                    )),
                     replaces_theorem: false,
                 });
             }
@@ -747,7 +758,10 @@ fn emit_verify_law_forall_auto_proof_inner(
                 };
                 return Some(AutoProof {
                     support_lines: Vec::new(),
-                    proof_lines: intro_then(&proof_intro_names, vec![simp_first, simp_second]),
+                    body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
+                        &proof_intro_names,
+                        vec![simp_first, simp_second],
+                    )),
                     replaces_theorem: false,
                 });
             }
@@ -786,7 +800,10 @@ fn emit_verify_law_forall_auto_proof_inner(
                 ];
                 return Some(AutoProof {
                     support_lines: Vec::new(),
-                    proof_lines: intro_then(&proof_intro_names, lines),
+                    body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
+                        &proof_intro_names,
+                        lines,
+                    )),
                     replaces_theorem: false,
                 });
             }
@@ -846,7 +863,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                 let uses_max_min = linear_arith_uses_max_min(unfold_fns, ctx);
                 return Some(AutoProof {
                     support_lines: Vec::new(),
-                    proof_lines: emit_simp_omega_from_ir(
+                    body: emit_simp_omega_from_ir(
                         unfold_fns,
                         wrapper_return,
                         smart_guard.as_ref(),
@@ -865,7 +882,7 @@ fn emit_verify_law_forall_auto_proof_inner(
         .or_else(|| {
             emit_guarded_domain_law(law).map(|proof_lines| AutoProof {
                 support_lines: Vec::new(),
-                proof_lines,
+                body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
                 replaces_theorem: false,
             })
         })
@@ -1011,13 +1028,12 @@ fn emit_ring_identity_law(
         // caught `sorry`. Every alternation arm ends in `done`, so a
         // tactic that leaves a residual goal falls through rather than
         // raising an "unsolved goals" build error.
-        proof_lines: intro_then(
+        body: intro_then_first(
             proof_intro_names,
-            vec![format!(
-                "first | (grind [{}]; done) | (simp [{}]; done) | sorry",
-                grind_cone.join(", "),
-                simp_set.join(", ")
-            )],
+            vec![
+                format!("grind [{}]; done", grind_cone.join(", ")),
+                format!("simp [{}]; done", simp_set.join(", ")),
+            ],
         ),
         replaces_theorem: false,
     })
@@ -1071,12 +1087,9 @@ fn emit_simp_over_prelude_lemmas_law(
     push_unique(&mut simp_set, "Int.add_sub_cancel".to_string());
     Some(AutoProof {
         support_lines: Vec::new(),
-        proof_lines: intro_then(
+        body: intro_then_first(
             proof_intro_names,
-            vec![format!(
-                "first | (simp [{}]; done) | sorry",
-                simp_set.join(", ")
-            )],
+            vec![format!("simp [{}]; done", simp_set.join(", "))],
         ),
         replaces_theorem: false,
     })
@@ -1116,12 +1129,9 @@ fn emit_string_length_additive_law(
     }
     Some(AutoProof {
         support_lines: Vec::new(),
-        proof_lines: intro_then(
+        body: intro_then_first(
             proof_intro_names,
-            vec![
-                "first | (simp only [String.add_eq_append, String.length_append] <;> omega) | sorry"
-                    .to_string(),
-            ],
+            vec!["simp only [String.add_eq_append, String.length_append] <;> omega".to_string()],
         ),
         replaces_theorem: false,
     })
@@ -1203,11 +1213,11 @@ fn emit_string_append_monoid_law(
     }
     Some(AutoProof {
         support_lines: Vec::new(),
-        proof_lines: intro_then(
+        body: intro_then_first(
             proof_intro_names,
             vec![
-                "first | (simp only [String.add_eq_append, String.append_empty, \
-                 String.empty_append, String.append_assoc]) | sorry"
+                "simp only [String.add_eq_append, String.append_empty, \
+                 String.empty_append, String.append_assoc]"
                     .to_string(),
             ],
         ),
@@ -1259,12 +1269,12 @@ fn emit_int_abs_identity_law(law: &VerifyLaw, proof_intro_names: &[String]) -> O
     }
     Some(AutoProof {
         support_lines: Vec::new(),
-        proof_lines: intro_then(
+        body: intro_then_first(
             proof_intro_names,
             vec![
-                "first | (simp only [Int.natAbs_natCast, Int.natAbs_mul, Int.natCast_mul] <;> omega) \
-                 | (simp [Int.natAbs_natCast, Int.natAbs_mul, Int.natCast_mul]) | sorry"
+                "simp only [Int.natAbs_natCast, Int.natAbs_mul, Int.natCast_mul] <;> omega"
                     .to_string(),
+                "simp [Int.natAbs_natCast, Int.natAbs_mul, Int.natCast_mul]".to_string(),
             ],
         ),
         replaces_theorem: false,
@@ -1319,12 +1329,9 @@ fn emit_map_empty_fact_law(
     );
     Some(AutoProof {
         support_lines: Vec::new(),
-        proof_lines: intro_then(
+        body: intro_then_first(
             proof_intro_names,
-            vec![format!(
-                "first | (simp only [{}] ; done) | sorry",
-                simp_set.join(", ")
-            )],
+            vec![format!("simp only [{}] ; done", simp_set.join(", "))],
         ),
         replaces_theorem: false,
     })
@@ -1421,9 +1428,9 @@ fn emit_map_len_set_positive_law(
     }
     Some(AutoProof {
         support_lines: Vec::new(),
-        proof_lines: intro_then(
+        body: intro_then_first(
             proof_intro_names,
-            vec!["first | (exact AverMap.len_set_ge_one _ _ _) | sorry".to_string()],
+            vec!["exact AverMap.len_set_ge_one _ _ _".to_string()],
         ),
         replaces_theorem: false,
     })
@@ -1486,7 +1493,8 @@ fn emit_simp_omega_from_ir(
     has_when: bool,
     uses_max_min: bool,
     ctx: &CodegenContext,
-) -> Vec<String> {
+) -> super::tactic_ir::Tactic {
+    use super::tactic_ir::Tactic;
     let lean_names: Vec<String> = unfold_fns.iter().map(|n| aver_name_to_lean(n)).collect();
     if lifted && wrapper_return {
         // Subtype/subset lift carries the smart-constructor
@@ -1495,13 +1503,13 @@ fn emit_simp_omega_from_ir(
         // by_cases case-split is unnecessary. Plain unfold + simp
         // with arithmetic lemmas closes via Lean's built-in
         // commutativity normalisation.
-        intro_then(
+        Tactic::raw(intro_then(
             intro_names,
             vec![
                 format!("unfold {}", lean_names.join(" ")),
                 "simp [Int.add_comm, Int.mul_comm]".to_string(),
             ],
-        )
+        ))
     } else if wrapper_return {
         // Case ONLY over the law's actual Int-typed given variables —
         // NEVER the introduced premise-hypothesis names. `intro_names`
@@ -1552,12 +1560,12 @@ fn emit_simp_omega_from_ir(
             "simp only [{}] <;> omega",
             COMPARISON_NORMALIZERS.join(", ")
         );
-        intro_then(
+        // `unfold` then a structured `first | (sign-split) | (comparison) | sorry`
+        // (was a flat string) so `--minimize` can collapse it to its winner.
+        intro_prefix_then_first(
             intro_names,
-            vec![
-                format!("unfold {}", lean_names.join(" ")),
-                format!("first | ({by_cases_chain} <;> simp [{simp_args}]) | ({cmp}) | sorry"),
-            ],
+            vec![format!("unfold {}", lean_names.join(" "))],
+            vec![format!("{by_cases_chain} <;> simp [{simp_args}]"), cmp],
         )
     } else {
         // A `when` premise is introduced as a hypothesis (`h_when`).
@@ -1568,7 +1576,7 @@ fn emit_simp_omega_from_ir(
         // premise opaque and `omega` fails ("no usable constraints"),
         // wrongly rejecting a valid law. Without a `when`, keep the
         // conservative `simp only` — there is no premise to simplify.
-        let tac = if uses_max_min {
+        if uses_max_min {
             // `Int.max`/`Int.min` lower to core `max`/`min`, which
             // `omega` treats as opaque atoms (it has no `max`/`min`
             // theory). Unfolding `Int.max_def`/`Int.min_def` exposes
@@ -1599,15 +1607,26 @@ fn emit_simp_omega_from_ir(
             // `sorry` so a still-open case degrades to a caught sorry
             // instead of an uncatchable build error.
             let l = lemmas.join(", ");
-            format!(
-                "first | (simp only [{l}] <;> omega) | (simp only [{l}] <;> (try split) <;> simp_all <;> omega) | sorry"
+            // Structured `first | (omega) | (split…omega) | sorry` so a minimizer
+            // can drop the legacy fallback rung when the clean `omega` form wins.
+            intro_then_first(
+                intro_names,
+                vec![
+                    format!("simp only [{l}] <;> omega"),
+                    format!("simp only [{l}] <;> (try split) <;> simp_all <;> omega"),
+                ],
             )
         } else if has_when {
-            format!("simp_all [{}] <;> omega", lean_names.join(", "))
+            Tactic::raw(intro_then(
+                intro_names,
+                vec![format!("simp_all [{}] <;> omega", lean_names.join(", "))],
+            ))
         } else {
-            format!("simp only [{}] <;> omega", lean_names.join(", "))
-        };
-        intro_then(intro_names, vec![tac])
+            Tactic::raw(intro_then(
+                intro_names,
+                vec![format!("simp only [{}] <;> omega", lean_names.join(", "))],
+            ))
+        }
     }
 }
 
@@ -1696,6 +1715,58 @@ pub(super) fn intro_then(intro_names: &[String], steps: Vec<String>) -> Vec<Stri
     }
     lines.extend(steps);
     indent_lines(lines, 2)
+}
+
+/// Build a proof body `intro <givens>; first | (b₀) | (b₁) | … | sorry` as a
+/// STRUCTURED portfolio: each branch a [`Tactic`] leaf, a bare `sorry` floor
+/// appended, under one [`tactic_ir::Tactic::First`]. This is the minimizable
+/// twin of `Tactic::raw(intro_then(names, vec![format!("first | (b₀) | … |
+/// sorry")]))` — `render_body` emits it INLINE and byte-for-byte identically
+/// (so the emitted proof is unchanged), but `--minimize` can now collapse the
+/// portfolio to its winning branch. `branches` are the alternative tactic
+/// texts WITHOUT their wrapping parens (the renderer re-adds them) and WITHOUT
+/// the trailing `| sorry` (added here). Each branch must be a single complete
+/// tactic that runs on ONE goal — never the right-hand side of `<;>`.
+fn intro_then_first(intro_names: &[String], branches: Vec<String>) -> super::tactic_ir::Tactic {
+    intro_prefix_then_first(intro_names, Vec::new(), branches)
+}
+
+/// As [`intro_then_first`] but with `prefix` tactic steps emitted (each its own
+/// line) between the `intro` and the `first` portfolio — e.g. an `unfold …`
+/// that must run before the alternation. Renders
+/// `intro <givens>; <prefix…>; first | (b₀) | … | sorry`, inline + byte-for-byte
+/// like the legacy `intro_then(names, [<prefix…>, "first | … | sorry"])`.
+fn intro_prefix_then_first(
+    intro_names: &[String],
+    prefix: Vec<String>,
+    branches: Vec<String>,
+) -> super::tactic_ir::Tactic {
+    use super::tactic_ir::Tactic;
+    let mut steps = Vec::new();
+    if !intro_names.is_empty() {
+        steps.push(Tactic::Leaf(format!("intro {}", intro_names.join(" "))));
+    }
+    steps.extend(prefix.into_iter().map(Tactic::Leaf));
+    let mut alts: Vec<Tactic> = branches.into_iter().map(Tactic::Leaf).collect();
+    alts.push(Tactic::Sorry);
+    steps.push(Tactic::First(alts));
+    Tactic::Seq(steps)
+}
+
+/// Render a SUPPORT theorem — a helper lemma emitted (as one multi-line string)
+/// alongside the main law — from its `:= by` header line plus a structured
+/// proof `body`. The body renders through [`super::tactic_ir::Tactic::render_body`],
+/// so a `first | … | sorry` portfolio inside the support theorem is now a real
+/// `First` the `--minimize` pass collapses (the producer runs inside the
+/// minimize re-emit passes). Byte-for-byte identical to the legacy hand-written
+/// `format!("theorem … := by\n  …")` string when no pass is active.
+pub(super) fn support_theorem(header: &str, body: super::tactic_ir::Tactic) -> String {
+    let mut out = String::from(header);
+    for line in body.render_body() {
+        out.push('\n');
+        out.push_str(&line);
+    }
+    out
 }
 
 fn extend_intro_names_with_premises(law: &VerifyLaw, intro_names: &[String]) -> Vec<String> {

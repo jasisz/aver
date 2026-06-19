@@ -168,7 +168,7 @@ pub(in super::super) fn emit_second_order_linear_recurrence_spec_equivalence_law
 
     Some(AutoProof {
         support_lines,
-        proof_lines: Vec::new(),
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(Vec::new()),
         replaces_theorem: true,
     })
 }
