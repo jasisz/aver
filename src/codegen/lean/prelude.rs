@@ -310,6 +310,31 @@ theorem has_set_self [DecidableEq α] (m : List (α × β)) (k : α) (v : β) :
     AverMap.has (AverMap.set m k v) k = true := by
   simpa [AverMap.has, AverMap.set] using any_set_go_self k v m"#;
 
+/// `Map.len(Map.set(m, k, v)) >= 1` — `set` always yields a non-empty map.
+/// `set.go` either appends `[(k, v)]` (the `nil` base) or rebuilds a `cons`
+/// (both branches of the `cons` step), so its length is `≥ 1` for every `m` —
+/// proved by induction on `m`. The public `len_set_ge_one` is stated in the
+/// exact lowered shape of the law goal (`((AverMap.len … : Int) >= 1) = true`)
+/// so the emitter can discharge it with a bare `exact AverMap.len_set_ge_one
+/// _ _ _`. This is the one empty-vs-non-empty Map fact that needs real
+/// induction rather than a definitional unfold.
+const AVER_MAP_PRELUDE_LEN_SET_GE_ONE: &str = r#"private theorem set_go_len_pos [DecidableEq α] (k : α) (v : β) :
+    ∀ (m : List (α × β)), 1 ≤ (AverMap.set.go k v m).length := by
+  intro m
+  induction m with
+  | nil =>
+      simp [AverMap.set.go]
+  | cons p tl ih =>
+      simp only [AverMap.set.go]
+      split <;> simp
+
+theorem len_set_ge_one [DecidableEq α] (m : List (α × β)) (k : α) (v : β) :
+    (((AverMap.len (AverMap.set m k v)) : Int) >= 1) = true := by
+  have h : 1 ≤ (AverMap.set m k v).length := by
+    simpa [AverMap.set] using set_go_len_pos k v m
+  simp only [AverMap.len]
+  exact eq_true (by omega)"#;
+
 const AVER_MAP_PRELUDE_GET_SET_SELF: &str = r#"private theorem get_set_go_self [DecidableEq α] (k : α) (v : β) :
     ∀ (m : List (α × β)), AverMap.get (AverMap.set.go k v m) k = some v := by
   intro m
@@ -1019,6 +1044,7 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     let mut parts = vec![AVER_MAP_PRELUDE_BASE.to_string()];
 
     let needs_has_set_self = include_all_helpers || body.contains("AverMap.has_set_self");
+    let needs_len_set_ge_one = include_all_helpers || body.contains("AverMap.len_set_ge_one");
     let needs_get_set_self = include_all_helpers || body.contains("AverMap.get_set_self");
     let needs_get_set_other = include_all_helpers
         || body.contains("AverMap.get_set_other")
@@ -1031,6 +1057,9 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
 
     if needs_has_set_self {
         parts.push(AVER_MAP_PRELUDE_HAS_SET_SELF.to_string());
+    }
+    if needs_len_set_ge_one {
+        parts.push(AVER_MAP_PRELUDE_LEN_SET_GE_ONE.to_string());
     }
     if needs_get_set_self {
         parts.push(AVER_MAP_PRELUDE_GET_SET_SELF.to_string());

@@ -883,6 +883,15 @@ fn emit_verify_law_forall_auto_proof_inner(
             emit_map_empty_fact_law(vb, law, ctx, &proof_intro_names)
         })
         .or_else(|| {
+            // `Map.len(Map.set(m, k, v)) >= 1 => true` — `set` always yields a
+            // non-empty map. Unlike the empty-map facts this needs real
+            // induction (`set.go` length is `>= 1`), so it leans on the
+            // hand-proved prelude lemma `AverMap.len_set_ge_one` (stated in the
+            // exact lowered goal shape); the rung just `exact`s it. Shape-driven
+            // on the `Map.len(Map.set(…)) >= 1` lhs, so it claims nothing else.
+            emit_map_len_set_positive_law(law, &proof_intro_names)
+        })
+        .or_else(|| {
             // IR-pinned `RingIdentity` — rendered (like the prelude
             // rung below) after every legacy ad-hoc fallback, so it
             // fires only where the chain used to fall through. The
@@ -1393,6 +1402,48 @@ fn expr_is_empty_map(e: &crate::ast::Spanned<crate::ast::Expr>, ctx: &CodegenCon
         }
         _ => false,
     }
+}
+
+/// `Map.len(Map.set(m, k, v)) >= 1 => true` — `set` always yields a
+/// non-empty map. Unlike the empty-map facts this is not a definitional
+/// unfold: it needs induction on `m` (`set.go` length is `>= 1`). The
+/// hand-proved prelude lemma `AverMap.len_set_ge_one` carries that induction
+/// and is stated in the exact lowered goal shape, so the rung discharges the
+/// law with a bare `exact AverMap.len_set_ge_one _ _ _` (the placeholders
+/// unify the map/key/value from the goal). Citing the lemma demand-ships it.
+/// The `| sorry` floor keeps it sound.
+fn emit_map_len_set_positive_law(
+    law: &VerifyLaw,
+    proof_intro_names: &[String],
+) -> Option<AutoProof> {
+    if law.when.is_some() || !law_is_map_len_set_ge_one(law) {
+        return None;
+    }
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        proof_lines: intro_then(
+            proof_intro_names,
+            vec!["first | (exact AverMap.len_set_ge_one _ _ _) | sorry".to_string()],
+        ),
+        replaces_theorem: false,
+    })
+}
+
+/// True for a law whose lhs is `Map.len(Map.set(_, _, _)) >= 1` — the trigger
+/// for [`emit_map_len_set_positive_law`].
+fn law_is_map_len_set_ge_one(law: &VerifyLaw) -> bool {
+    use crate::ast::{BinOp, Expr, Literal};
+    let Expr::BinOp(BinOp::Gte, left, right) = &law.lhs.node else {
+        return false;
+    };
+    let is_one = matches!(&right.node, Expr::Literal(Literal::Int(1)));
+    let len_over_set = matches!(&left.node, Expr::FnCall(callee, args)
+        if crate::codegen::common::expr_to_dotted_name(&callee.node).as_deref() == Some("Map.len")
+            && args.len() == 1
+            && matches!(&args[0].node, Expr::FnCall(set_callee, _)
+                if crate::codegen::common::expr_to_dotted_name(&set_callee.node).as_deref()
+                    == Some("Map.set")));
+    is_one && len_over_set
 }
 
 /// Try `simp [fn_names...] ; omega` for laws on Int-domain functions.

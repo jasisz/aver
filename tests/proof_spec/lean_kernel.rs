@@ -975,3 +975,67 @@ fn proof_lean_proves_int_abs_identities_kernel_clean() {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+#[test]
+fn proof_lean_proves_map_set_nonempty_kernel_clean() {
+    // `Map.len(Map.set(m, k, v)) >= 1 => true` — `set` always yields a
+    // non-empty map. Unlike the empty-map facts this needs real induction
+    // (`set.go` length is `>= 1`), carried by the hand-proved prelude lemma
+    // `AverMap.len_set_ge_one` (stated in the exact lowered goal shape and
+    // demand-shipped). The `emit_map_len_set_positive_law` rung discharges the
+    // law with `exact AverMap.len_set_ge_one _ _ _`. Was a bare sorry before.
+    // Dafny's Z3 proves it.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean map-set-nonempty test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-mapsetne-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module MapSetNE\n    effects []\n\n\
+         fn after(reg: Map<String, Int>, k: String, v: Int) -> Int\n    Map.len(Map.set(reg, k, v))\n\n\
+         verify after law nonEmpty\n    given reg: Map<String, Int> = [{}, {\"a\" => 1}]\n    given k: String = [\"x\", \"a\"]\n    given v: Int = [7]\n    Map.len(Map.set(reg, k, v)) >= 1 => true\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-mapsetne-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean = std::fs::read_to_string(out.join("MapSetNE.lean")).expect("read MapSetNE.lean");
+    assert!(
+        lean.contains("AverMap.len_set_ge_one"),
+        "the map-set-nonempty rung must cite the inductive prelude lemma \
+         `AverMap.len_set_ge_one`:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "Map.len(Map.set m k v) >= 1 must kernel-prove as a GENUINE universal \
+         (passed, 0 sorries, universal:true) via the inductive prelude lemma.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
