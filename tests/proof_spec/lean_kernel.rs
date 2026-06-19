@@ -771,3 +771,72 @@ fn proof_lean_int_abs_lowers_int_honest_so_nesting_builds() {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+#[test]
+fn proof_lean_proves_empty_map_facts_kernel_clean() {
+    // Pure builtin empty-map facts — `Map.get(empty, k) = None`,
+    // `Map.has(empty, k) = false`, `Map.len(empty) = 0`. Each is stated
+    // through its subject fn (`lookup(k) => None`), so `SimpOverPreludeLemmas`
+    // claims it but its minimal `simp [cone, Int.add_sub_cancel]` can't reduce
+    // the `AverMap.*` accessor and parks it on a sorry. The empty-map-precise
+    // `emit_map_empty_fact_law` rung (before the prelude rung) closes it with
+    // a bounded `simp only [cone, AverMap.get/has/len, []-lemmas]`. Dafny's Z3
+    // already proves these.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean empty-map-facts test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-emptymap-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module EmptyMap\n    effects []\n\n\
+         fn emptyM() -> Map<String, Int>\n    {}\n\n\
+         fn lookup(k: String) -> Option<Int>\n    Map.get(emptyM(), k)\n\n\
+         fn contains(k: String) -> Bool\n    Map.has(emptyM(), k)\n\n\
+         fn size(ignored: Int) -> Int\n    Map.len(emptyM())\n\n\
+         verify lookup law getEmptyNone\n    given k: String = [\"a\", \"b\"]\n    Map.get(emptyM(), k) => Option.None\n\n\
+         verify contains law hasEmptyFalse\n    given k: String = [\"a\", \"b\"]\n    Map.has(emptyM(), k) => false\n\n\
+         verify size law lenEmptyZero\n    given ignored: Int = [0, 1]\n    Map.len(emptyM()) => 0\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-emptymap-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean = std::fs::read_to_string(out.join("EmptyMap.lean")).expect("read EmptyMap.lean");
+    assert!(
+        lean.contains("AverMap.get, AverMap.has, AverMap.len"),
+        "the empty-map-fact rung must emit the AverMap accessor simp set:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "all three empty-map facts (get/has/len) must kernel-prove as GENUINE \
+         universals (passed, 0 sorries, universal:true).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
