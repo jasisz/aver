@@ -115,11 +115,6 @@ body { overflow-x: hidden; }
     max-width: 13.5ch;
 }
 
-.hero h1 span {
-    color: var(--accent);
-    opacity: 0.92;
-}
-
 .hero-thesis {
     display: block;
     font-size: 0.92rem;
