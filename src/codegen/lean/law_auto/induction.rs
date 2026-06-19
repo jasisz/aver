@@ -12,10 +12,24 @@ use std::collections::BTreeSet;
 
 use super::super::expr::aver_name_to_lean;
 use super::super::shared::to_lower_first;
+use super::super::tactic_ir::{InductionArm, Tactic};
 use super::AutoProof;
 use super::shared::law_simp_defs;
 use crate::ast::{TypeDef, TypeVariant, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
+
+/// `first | (<simp>; done) | (<simp>; omega) | sorry` — the per-arm portfolio
+/// shared by the Peano bridge theorems (`<simp>` is e.g. `simp [f]` /
+/// `simp [f, ih]`). A structured `First` so `--minimize` collapses the arm to
+/// whichever of `; done` / `; omega` actually closed; renders inline,
+/// byte-identical to the legacy string.
+fn simp_done_omega_first(simp: &str) -> Tactic {
+    Tactic::First(vec![
+        Tactic::Leaf(format!("{simp}; done")),
+        Tactic::Leaf(format!("{simp}; omega")),
+        Tactic::Sorry,
+    ])
+}
 
 /// Lean renderer for the backend-neutral rev anti-homomorphism recognizer
 /// (`crate::codegen::proof_recognize::collect_rev_ops_in_law` — shared with the
@@ -132,8 +146,28 @@ fn lean_nat_lift_support(
         match op.kind {
             NatArithKind::Add => {
                 let name = format!("{law_uid}_{f}_isNatAdd");
-                support.push(format!(
-                    "theorem {name} : ∀ a b, {f} a b = a + b := by\n  intro a b\n  induction a with\n  | zero => first | (simp [{f}]; done) | (simp [{f}]; omega) | sorry\n  | succ k ih => first | (simp [{f}, ih]; done) | (simp [{f}, ih]; omega) | sorry"
+                // Structured per-arm `first | (simp; done) | (simp; omega) | sorry`
+                // so `--minimize` collapses each arm to its winner; inline render
+                // is byte-identical to the legacy string.
+                let body = Tactic::Seq(vec![
+                    Tactic::Leaf("intro a b".to_string()),
+                    Tactic::Induction {
+                        target: "a".to_string(),
+                        arms: vec![
+                            InductionArm {
+                                pattern: "zero".to_string(),
+                                body: simp_done_omega_first(&format!("simp [{f}]")),
+                            },
+                            InductionArm {
+                                pattern: "succ k ih".to_string(),
+                                body: simp_done_omega_first(&format!("simp [{f}, ih]")),
+                            },
+                        ],
+                    },
+                ]);
+                support.push(super::support_theorem(
+                    &format!("theorem {name} : ∀ a b, {f} a b = a + b := by"),
+                    body,
                 ));
                 simp_extra.push(name);
             }
@@ -152,8 +186,30 @@ fn lean_nat_lift_support(
                     continue;
                 };
                 let name = format!("{law_uid}_{f}_isNatMul");
-                support.push(format!(
-                    "theorem {name} : ∀ a b, {f} a b = a * b := by\n  intro a b\n  induction a with\n  | zero => first | (simp [{f}]; done) | (simp [{f}]; omega) | sorry\n  | succ k ih => first | (simp only [{f}, {add_name}, ih, Nat.succ_mul, Nat.add_comm]) | sorry"
+                let body = Tactic::Seq(vec![
+                    Tactic::Leaf("intro a b".to_string()),
+                    Tactic::Induction {
+                        target: "a".to_string(),
+                        arms: vec![
+                            InductionArm {
+                                pattern: "zero".to_string(),
+                                body: simp_done_omega_first(&format!("simp [{f}]")),
+                            },
+                            InductionArm {
+                                pattern: "succ k ih".to_string(),
+                                body: Tactic::First(vec![
+                                    Tactic::Leaf(format!(
+                                        "simp only [{f}, {add_name}, ih, Nat.succ_mul, Nat.add_comm]"
+                                    )),
+                                    Tactic::Sorry,
+                                ]),
+                            },
+                        ],
+                    },
+                ]);
+                support.push(super::support_theorem(
+                    &format!("theorem {name} : ∀ a b, {f} a b = a * b := by"),
+                    body,
                 ));
                 simp_extra.push(name);
                 has_mul = true;
@@ -325,8 +381,16 @@ fn lean_refl_support(
         }
         let f = aver_name_to_lean(&src_name);
         let name = format!("{law_uid}_{f}_refl");
-        support.push(format!(
-            "theorem {name} : ∀ a, {f} a a = true := by\n  intro a\n  first | (induction a <;> simp_all [{f}]; done) | (induction a <;> simp_all [{f}]) | sorry"
+        let body = super::intro_then_first(
+            &["a".to_string()],
+            vec![
+                format!("induction a <;> simp_all [{f}]; done"),
+                format!("induction a <;> simp_all [{f}]"),
+            ],
+        );
+        support.push(super::support_theorem(
+            &format!("theorem {name} : ∀ a, {f} a a = true := by"),
+            body,
         ));
         names.push(name);
     }
@@ -1669,10 +1733,17 @@ fn take_drop_nil_helper(
             }
         })
         .collect();
-    let text = format!(
-        "theorem {name} : ∀ {binders}, {f} {args} = [] := by\n  intro {binders}\n  first | (cases {driver} <;> simp [{f}]) | sorry",
-        binders = binders.join(" "),
-        args = args.join(" ")
+    let binders = binders.join(" ");
+    let body = super::intro_then_first(
+        std::slice::from_ref(&binders),
+        vec![format!("cases {driver} <;> simp [{f}]")],
+    );
+    let text = super::support_theorem(
+        &format!(
+            "theorem {name} : ∀ {binders}, {f} {args} = [] := by",
+            args = args.join(" ")
+        ),
+        body,
     );
     Some(NilHelper { text, name })
 }
@@ -1731,10 +1802,17 @@ fn zip_nil_helper(
             }
         })
         .collect();
-    let text = format!(
-        "theorem {name} : ∀ {binders}, {f} {args} = [] := by\n  intro {binders}\n  first | (cases {driver} <;> simp [{f}]) | sorry",
-        binders = binders.join(" "),
-        args = args.join(" ")
+    let binders = binders.join(" ");
+    let body = super::intro_then_first(
+        std::slice::from_ref(&binders),
+        vec![format!("cases {driver} <;> simp [{f}]")],
+    );
+    let text = super::support_theorem(
+        &format!(
+            "theorem {name} : ∀ {binders}, {f} {args} = [] := by",
+            args = args.join(" ")
+        ),
+        body,
     );
     Some(NilHelper { text, name })
 }

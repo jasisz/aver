@@ -1753,6 +1753,22 @@ fn intro_prefix_then_first(
     Tactic::Seq(steps)
 }
 
+/// Render a SUPPORT theorem — a helper lemma emitted (as one multi-line string)
+/// alongside the main law — from its `:= by` header line plus a structured
+/// proof `body`. The body renders through [`super::tactic_ir::Tactic::render_body`],
+/// so a `first | … | sorry` portfolio inside the support theorem is now a real
+/// `First` the `--minimize` pass collapses (the producer runs inside the
+/// minimize re-emit passes). Byte-for-byte identical to the legacy hand-written
+/// `format!("theorem … := by\n  …")` string when no pass is active.
+pub(super) fn support_theorem(header: &str, body: super::tactic_ir::Tactic) -> String {
+    let mut out = String::from(header);
+    for line in body.render_body() {
+        out.push('\n');
+        out.push_str(&line);
+    }
+    out
+}
+
 fn extend_intro_names_with_premises(law: &VerifyLaw, intro_names: &[String]) -> Vec<String> {
     let mut names = intro_names.to_vec();
     if law.when.is_some() {
