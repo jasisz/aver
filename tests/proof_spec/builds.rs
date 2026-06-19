@@ -68,6 +68,20 @@ fn proof_export_builds_int_comparison_laws_when_lake_is_available() {
 }
 
 #[test]
+fn proof_export_builds_int_abs_laws_when_lake_is_available() {
+    // Pure builtin `Int.abs` identities (idempotence, multiplicativity,
+    // non-negativity). The `emit_int_abs_identity_law` rung closes all three
+    // as universals via the natAbs/cast lemmas; Dafny's Z3 already proves
+    // them. Sorry budget 0 — revert and idempotence/non-neg hard-fail the
+    // build and multiplicativity sorries.
+    assert_proof_builds_with_sorry_budget(
+        "examples/formal/int_abs_laws.av",
+        "aver-proof-int-abs-laws",
+        0,
+    );
+}
+
+#[test]
 fn proof_dafny_verifies_fibonacci_when_dafny_is_available() {
     // `goldenApprox(n)` divides `Float.fromInt(fib(n + 1))` by
     // `Float.fromInt(fib(n))`. Float `/` lowers via the `FloatDiv`

@@ -906,3 +906,72 @@ fn proof_lean_proves_int_comparison_identities_kernel_clean() {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+#[test]
+fn proof_lean_proves_int_abs_identities_kernel_clean() {
+    // Pure builtin `Int.abs` identities — idempotence
+    // (`Int.abs(Int.abs x) = Int.abs x`), multiplicativity
+    // (`Int.abs(x*y) = Int.abs x * Int.abs y`), and non-negativity
+    // (`Int.abs x >= 0 = true`). `Int.abs` lowers Int-honestly to
+    // `((… : Int).natAbs : Int)`; the `emit_int_abs_identity_law` rung
+    // (before the LinearArithmetic rung) closes all three with
+    // `Int.natAbs_natCast` / `Int.natAbs_mul` / `Int.natCast_mul`
+    // (+ a full-`simp` fallback for the Bool `>= 0` wrapper), `sorry`-floored.
+    // Before this rung they hard-failed the build (idempotence/non-neg) or
+    // sorried (multiplicativity). Dafny's Z3 proves all three.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean int-abs-identities test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-absid-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module AbsId\n    effects []\n\n\
+         fn magnitude(x: Int) -> Int\n    Int.abs(x)\n\n\
+         fn scaledMagnitude(x: Int, y: Int) -> Int\n    Int.abs(x * y)\n\n\
+         verify magnitude law idempotent\n    given x: Int = [0, 3, -5]\n    Int.abs(Int.abs(x)) => Int.abs(x)\n\n\
+         verify magnitude law nonNegative\n    given x: Int = [0, 3, -5]\n    Int.abs(x) >= 0 => true\n\n\
+         verify scaledMagnitude law multiplicative\n    given x: Int = [0, 3, -5]\n    given y: Int = [0, 2, -4]\n    Int.abs(x * y) => Int.abs(x) * Int.abs(y)\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-absid-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean = std::fs::read_to_string(out.join("AbsId.lean")).expect("read AbsId.lean");
+    assert!(
+        lean.contains("Int.natAbs_natCast, Int.natAbs_mul, Int.natCast_mul"),
+        "the Int.abs identity rung must emit the natAbs/cast lemma set:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "the three Int.abs identities must kernel-prove as GENUINE universals \
+         (passed, 0 sorries, universal:true).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}

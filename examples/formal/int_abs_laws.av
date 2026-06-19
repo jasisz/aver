@@ -1,0 +1,36 @@
+module IntAbsLaws
+    exposes [magnitude, scaledMagnitude]
+    intent =
+        "`Int.abs` is a magnitude: its three defining algebraic laws, proved"
+        "UNIVERSALLY (every int, not just sampled rows):"
+        "  - idempotence — taking the magnitude of a magnitude changes nothing"
+        "    (`Int.abs(Int.abs x) = Int.abs x`),"
+        "  - multiplicativity — magnitude distributes over a product"
+        "    (`Int.abs(x*y) = Int.abs x * Int.abs y`),"
+        "  - non-negativity — a magnitude is never negative (`Int.abs x >= 0`)."
+        ""
+        "These are pure builtin facts. `Int.abs : Int -> Int` lowers Int-honestly"
+        "to `((x : Int).natAbs : Int)`, so the Lean proofs are about the Nat.cast"
+        "of a natAbs; Dafny's Z3 discharges them too."
+    effects []
+
+fn magnitude(x: Int) -> Int
+    ? "The magnitude (absolute value) of x."
+    Int.abs(x)
+
+fn scaledMagnitude(x: Int, y: Int) -> Int
+    ? "The magnitude of a product."
+    Int.abs(x * y)
+
+verify magnitude law idempotent
+    given x: Int = [0, 3, -5, 7]
+    Int.abs(Int.abs(x)) => Int.abs(x)
+
+verify magnitude law nonNegative
+    given x: Int = [0, 3, -5, 7]
+    Int.abs(x) >= 0 => true
+
+verify scaledMagnitude law multiplicative
+    given x: Int = [0, 3, -5]
+    given y: Int = [0, 2, -4]
+    Int.abs(x * y) => Int.abs(x) * Int.abs(y)
