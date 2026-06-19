@@ -98,8 +98,14 @@ pub fn emit_builtin_call(
         // produce an `Int`, not a bare Lean `Nat`: dropping to `Nat` silently
         // changes the type (a spurious `Nat = Nat` proof for a `Nat`-vs-`Int`
         // law) AND mis-computes `Int` arithmetic (`len x - 5` is ≥0-truncated in
-        // `Nat` but can be negative in `Int`). Wrap each as `Int.ofNat`.
-        StringLen => format!("(Int.ofNat {}.length)", p(&a[0])),
+        // `Nat` but can be negative in `Int`). Cast to `Int` via the ascription
+        // `(… : Int)`, which elaborates to the `Nat.cast`/`↑` coercion — the SAME
+        // form the hand-written prelude lemmas use (`(s.length : Int)` in
+        // String.slice_full etc.). Using `Int.ofNat` instead would be a distinct,
+        // non-defeq term (`Int.ofNat n` ≠ `↑n` reducibly in Lean 4.31), clashing
+        // with the prelude at any rfl-terminal step; matching `↑` avoids that
+        // class entirely. `omega` is cast-aware, so length arithmetic still closes.
+        StringLen => format!("({}.length : Int)", p(&a[0])),
         StringCharAt => format!("String.charAtAv {} {}", p(&a[0]), p(&a[1])),
         StringChars => format!("String.charsAv {}", p(&a[0])),
         StringSlice => format!("String.sliceAv {} {} {}", p(&a[0]), p(&a[1]), p(&a[2])),
@@ -122,7 +128,7 @@ pub fn emit_builtin_call(
         // ---- List ----
         ListLen => {
             let subj = emit_list_length_subject(&args[0], ctx);
-            format!("(Int.ofNat {}.length)", subj)
+            format!("({}.length : Int)", subj)
         }
         ListHead => format!("{}.head?", p(&a[0])),
         ListTail => format!("{}.tail?", p(&a[0])),
@@ -157,7 +163,7 @@ pub fn emit_builtin_call(
             p(&a[1]),
             p(&a[2])
         ),
-        VectorLen => format!("(Int.ofNat {}.size)", p(&a[0])),
+        VectorLen => format!("({}.size : Int)", p(&a[0])),
         VectorFromList => format!("{}.toArray", p(&a[0])),
         ListFromVector => format!("{}.toList", p(&a[0])),
 
@@ -169,7 +175,7 @@ pub fn emit_builtin_call(
         MapKeys => format!("AverMap.keys {}", p(&a[0])),
         MapValues => format!("AverMap.values {}", p(&a[0])),
         MapEntries => format!("AverMap.entries {}", p(&a[0])),
-        MapLen => format!("(Int.ofNat (AverMap.len {}))", p(&a[0])),
+        MapLen => format!("((AverMap.len {}) : Int)", p(&a[0])),
         MapFromList => format!("AverMap.fromList {}", p(&a[0])),
     };
     Some(result)
@@ -257,9 +263,9 @@ mod tests {
         )
         .expect("List.len should be emitted");
 
-        // `List.len` returns Aver `Int`, so the Lean lowering is `Int.ofNat`-wrapped
-        // (a bare Lean `Nat` would silently change the type); the empty-list subject
-        // still carries its `: List Unit` annotation.
-        assert_eq!(emitted, "(Int.ofNat (([] : List Unit)).length)");
+        // `List.len` returns Aver `Int`, so the Lean lowering casts to `Int` via the
+        // `(… : Int)` ascription (the `↑`/Nat.cast form the prelude uses), not a bare
+        // Lean `Nat`; the empty-list subject still carries its `: List Unit` annotation.
+        assert_eq!(emitted, "((([] : List Unit)).length : Int)");
     }
 }
