@@ -700,6 +700,28 @@ warning: declaration uses 'sorry'
     }
 
     #[test]
+    fn collapse_to_the_sorry_floor_keeps_the_sorry() {
+        // When nothing real closes, `first` falls to its `sorry` floor — the
+        // last branch traced, so the MAX-index winner. Minimize must collapse
+        // to bare `sorry`, never silently drop the honest gap. (Status-
+        // preserving: a sorry proof stays a sorry proof.)
+        let portfolio = || {
+            Tactic::Seq(vec![
+                leaf("intro a b"),
+                Tactic::First(vec![leaf("grind; done"), leaf("simp_all"), Tactic::Sorry]),
+            ])
+        };
+        // The instrumented build reported branch 2 (the sorry floor) as winner.
+        minimize::begin_collapse(BTreeMap::from([(0usize, 2usize)]));
+        let collapsed = portfolio().render_body();
+        minimize::end();
+        assert_eq!(
+            collapsed,
+            vec!["  intro a b".to_string(), "  sorry".to_string()]
+        );
+    }
+
+    #[test]
     fn render_body_round_trips_instrument_then_collapse() {
         // The grind-wrap shape. Instrument emits markers; suppose the probe
         // build reports the body branch (1) as the winner — collapse drops the
