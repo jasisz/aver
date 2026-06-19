@@ -62,6 +62,7 @@ All were OPEN even to Z3/Dafny.
 | `handwritten/qrev_rev.av` | `fastRev x = rev x` | OPEN (frontier) | accumulator-generalization: `qrev(xs,acc) = rev(xs)++acc` |
 | `isaplanner/prop_19.av` | `len(drop n xs) = len xs − n` | OPEN (frontier) | the generalized `len∘drop` law over `n` |
 | `prod/prop_27.av` | `rev x = qrev x []` | OPEN (frontier) | `qrev` spec `qrev(x,y) = rev(x)++y` |
+| `prod/prop_28.av` | `revflat x = qrevflat x []` | OPEN (frontier) | append↔concat bridge + append right-identity/associativity + the `qrevflat` accumulator spec `qrevflat(x,y) = append(revflat x, y)` |
 | `prod/prop_29.av` | `rev(qrev x []) = x` | OPEN (frontier) | qrev-spec + rev-append homomorphism + rev involution |
 | `prod/prop_30.av` | `rev(rev x ++ []) = x` | OPEN (frontier) | rev-snoc + rev involution |
 | `prod/prop_31.av` | `qrev(qrev x []) [] = x` | OPEN (frontier) | generalized `qrev` "master" law `qrev(qrev(x,y),[]) = qrev(y,x)` |
