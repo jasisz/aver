@@ -626,16 +626,22 @@ pub(super) enum Commands {
         explain: bool,
         /// `--check` only (Lean-only): MINIMIZE each auto-proof. The emitter
         /// pins a deterministic `first | (tactic₁) | … | sorry` PORTFOLIO at
-        /// every law; this rewrites each one to the single tactic that
-        /// actually closed it, dropping the alternation and the `sorry` floor,
-        /// so the generated Lean reads like a hand-written proof (and carries
-        /// no `sorry` tokens at all). Mechanism: a per-branch `trace` marker
-        /// self-reports the winning `first` alternative in ONE instrumented
-        /// `lake build` (losing branches backtrack, so only the winner's
-        /// marker surfaces); the minimized project is then RE-VERIFIED — if it
-        /// no longer closes, that theorem keeps its original portfolio, so
-        /// minimization is fail-safe (it can never produce a worse or unsound
-        /// proof, only a non-minimized one).
+        /// every law (it cannot know statically which alternative will close);
+        /// this rewrites each one to the single branch that actually closed,
+        /// dropping the losing alternatives and the `sorry` floor, so the
+        /// generated Lean reads like a hand-written proof. Mechanism: each
+        /// branch is prefixed with a `trace "AVERMIN:i:b"` marker and the
+        /// project is built ONCE; `first` tries branches left-to-right and
+        /// commits to the first that closes, tracing each it reaches — so the
+        /// winner of portfolio `i` is the HIGHEST branch index `b` that
+        /// surfaces in the build log (failed branches before it trace too; the
+        /// markers are not rolled back). The collapsed project is then
+        /// RE-VERIFIED — if a theorem no longer closes (a mis-parsed winner) it
+        /// keeps its original portfolio. Minimization is therefore fail-safe
+        /// AND status-preserving: it keeps exactly the branch Lean committed
+        /// to, so a law that only closes via its `sorry` floor collapses to a
+        /// bare `sorry` (the honest gap is never silently dropped), and a law
+        /// that closes for real loses its alternation and floor.
         #[arg(long, requires = "check")]
         minimize: bool,
         /// THE RATCHET. Compare the freshly recomputed per-law proof
