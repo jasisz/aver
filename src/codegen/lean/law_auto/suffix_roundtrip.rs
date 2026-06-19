@@ -870,6 +870,14 @@ pub(super) fn emit_string_escape_roundtrip_law(
             proof_lines.push(format!("     {line}"));
         }
     }
+    // The law goal carries `Int.ofNat (…).length` (builtins lower `*.len` as
+    // `Int.ofNat`), while `hpos` is stated via the `(… : Int)` coercion (`↑·` /
+    // `Nat.cast`). These are propositionally equal but NOT defeq, so the implicit
+    // `rfl` after `rw [hpos]` cannot bridge them and the goal falls to a spurious
+    // `sorry`. Normalize `Int.ofNat n → ↑n` so both sides match; `try` keeps it a
+    // no-op for laws where `rw [hpos]` already closed by rfl (no mismatch), so it
+    // can only ADD closures, never demote one. `Int.ofNat_eq_natCast` is core-Lean.
+    proof_lines.push("     try simp only [Int.ofNat_eq_natCast]".to_string());
     proof_lines.push("     done)".to_string());
     proof_lines.push("  | sorry".to_string());
 
