@@ -19,12 +19,11 @@ mod transpile;
 mod types;
 pub mod universal_lane;
 
-// Re-exports for the lemma-discovery pass (`codegen::lemma_discovery`), which
-// renders discovered candidate lemmas to Lean theorem text using the SAME
-// name/type mapping the program defs are emitted with — so a discovered
-// theorem references `decode` / `Run` / `++` exactly as generated.
+// Crate-wide re-export: committed-lemma handling (`codegen::lemma_discovery`)
+// and the law-auto rungs map Aver fn names to their Lean spelling through the
+// same helper the program defs are emitted with, so a cited lemma references
+// `decode` / `Run` / `++` exactly as generated.
 pub(crate) use expr::aver_name_to_lean;
-pub(crate) use types::type_to_lean;
 
 // `law_auto` cites the prelude spec lemma names via `super::`; the
 // `transpile*` entry points below drive the unified emitter.

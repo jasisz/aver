@@ -10,8 +10,6 @@ mod check_gates;
 mod cross_file;
 #[path = "proof_spec/dafny_inline.rs"]
 mod dafny_inline;
-#[path = "proof_spec/discover.rs"]
-mod discover;
 #[path = "proof_spec/export_structure.rs"]
 mod export_structure;
 #[path = "proof_spec/floor_window.rs"]

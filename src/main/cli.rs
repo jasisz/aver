@@ -673,32 +673,6 @@ pub(super) enum Commands {
         /// `--gate` against the committed baseline only.
         #[arg(long)]
         write_baseline: Option<String>,
-        /// Run the (expensive) lemma-discovery pass and print its report
-        /// instead of generating a proof project. Discovery enumerates the
-        /// auxiliary-lemma candidates each `verify ... law` needs over its
-        /// pure-fn proof cone; see `prompts/lemma-discovery.md`. This is the
-        /// explicit, cached discovery step — normal `aver proof` only
-        /// replays already-committed, re-verified lemmas.
-        #[arg(long)]
-        discover: bool,
-        /// `--discover` only: render each surviving `Conjecture` candidate as a
-        /// legal `verify <fn> law` block and write the ones that pass the
-        /// HOSTILE-WIDENED forward check (`aver verify --hostile` semantics over a
-        /// distinguishing, distinct-per-binder, type-boundary domain — not the
-        /// discovery sampler's symmetric domain) to a sidecar
-        /// `<file>.aux.av`. The discovered law is then BORN AS AN AVER LAW
-        /// — it flows through the same pipeline as a user law (verify, hostile,
-        /// the cross-file pool, `aver proof … --gate`). Emitted laws are labeled
-        /// "verified (bounded), kernel proof pending", NOT proven; kernel credit
-        /// is gated on `#print axioms` (no sorryAx). The user's source file is
-        /// never mutated. v1 scope: the `Conjecture` family only.
-        #[arg(long, requires = "discover")]
-        emit_laws: bool,
-        /// `--emit-laws` only: write the sidecar here instead of the default
-        /// `<file>.aux.av`. Refuses to write if the target is — or aliases
-        /// — your source or any input `.av` (the source is never overwritten).
-        #[arg(long, requires = "emit_laws")]
-        emit_laws_to: Option<String>,
     },
 }
 

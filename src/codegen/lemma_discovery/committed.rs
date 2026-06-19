@@ -565,6 +565,31 @@ pub fn apply_simp_over_lemma_pins(ir: &mut ProofIR, plan: &[SimpOverLemmaPin]) {
     }
 }
 
+/// Staleness key for a committed `DiscoveredLemmas.lean`: an FNV-1a hash over
+/// the sorted signatures of the program's pure-fn proof surface. A normal
+/// `aver proof` re-pins committed lemmas only when this matches the hash the
+/// file was tagged with — a changed surface means the committed lemmas may be
+/// stale, so they are ignored (the re-pin behaves exactly as if none existed).
+/// The hash gates staleness only; re-verification in `lake build` is the
+/// soundness guard, never the hash.
+pub fn discovery_surface_hash(inputs: &ProofLowerInputs) -> String {
+    let mut sigs: Vec<String> = inputs
+        .pure_fns()
+        .iter()
+        .map(|fd| {
+            let params: Vec<String> = fd.params.iter().map(|(n, t)| format!("{n}:{t}")).collect();
+            format!("{}({})->{}", fd.name, params.join(","), fd.return_type)
+        })
+        .collect();
+    sigs.sort();
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in sigs.join(";").bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

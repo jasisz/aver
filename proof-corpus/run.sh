@@ -26,13 +26,6 @@
 #
 # Usage:  ./run.sh            (uses ../target/debug/aver — build it first)
 #         AVER=/path/to/aver ./run.sh
-#         DISCOVER=1 ./run.sh (run `aver proof --discover` into the same
-#                              output dir before each Lean check, so committed
-#                              discovered lemmas feed the law's proof — the
-#                              SimpOverLemmas feedback loop. The default run
-#                              stays discovery-free: that is the honest
-#                              no-discovery baseline, and the delta between
-#                              the two runs is discovery's coverage value.)
 set -u
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -60,12 +53,6 @@ proves() {
   esac
   for attempt in 1 2; do
     out="$(mktemp -d)"
-    # DISCOVER=1 (Lean only): commit kernel-proved discovered lemmas into the
-    # same output dir first; the proof step below picks them up and re-pins
-    # in-scope laws to SimpOverLemmas.
-    if [ "${DISCOVER:-0}" = "1" ] && [ "$backend" = lean ]; then
-      "$AVER" proof "$f" --discover -o "$out" >/dev/null 2>&1 || true
-    fi
     json="$("$AVER" proof "$f" --backend "$backend" --check --check-json -o "$out" 2>/dev/null | grep '"passed"' | tail -1)"
     rm -rf "$out"
     if [ "$backend" = lean ]; then
