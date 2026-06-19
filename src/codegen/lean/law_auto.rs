@@ -863,7 +863,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                 let uses_max_min = linear_arith_uses_max_min(unfold_fns, ctx);
                 return Some(AutoProof {
                     support_lines: Vec::new(),
-                    body: crate::codegen::lean::tactic_ir::Tactic::raw(emit_simp_omega_from_ir(
+                    body: emit_simp_omega_from_ir(
                         unfold_fns,
                         wrapper_return,
                         smart_guard.as_ref(),
@@ -873,7 +873,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                         law.when.is_some(),
                         uses_max_min,
                         ctx,
-                    )),
+                    ),
                     replaces_theorem: false,
                 });
             }
@@ -1493,7 +1493,8 @@ fn emit_simp_omega_from_ir(
     has_when: bool,
     uses_max_min: bool,
     ctx: &CodegenContext,
-) -> Vec<String> {
+) -> super::tactic_ir::Tactic {
+    use super::tactic_ir::Tactic;
     let lean_names: Vec<String> = unfold_fns.iter().map(|n| aver_name_to_lean(n)).collect();
     if lifted && wrapper_return {
         // Subtype/subset lift carries the smart-constructor
@@ -1502,13 +1503,13 @@ fn emit_simp_omega_from_ir(
         // by_cases case-split is unnecessary. Plain unfold + simp
         // with arithmetic lemmas closes via Lean's built-in
         // commutativity normalisation.
-        intro_then(
+        Tactic::raw(intro_then(
             intro_names,
             vec![
                 format!("unfold {}", lean_names.join(" ")),
                 "simp [Int.add_comm, Int.mul_comm]".to_string(),
             ],
-        )
+        ))
     } else if wrapper_return {
         // Case ONLY over the law's actual Int-typed given variables —
         // NEVER the introduced premise-hypothesis names. `intro_names`
@@ -1559,12 +1560,12 @@ fn emit_simp_omega_from_ir(
             "simp only [{}] <;> omega",
             COMPARISON_NORMALIZERS.join(", ")
         );
-        intro_then(
+        // `unfold` then a structured `first | (sign-split) | (comparison) | sorry`
+        // (was a flat string) so `--minimize` can collapse it to its winner.
+        intro_prefix_then_first(
             intro_names,
-            vec![
-                format!("unfold {}", lean_names.join(" ")),
-                format!("first | ({by_cases_chain} <;> simp [{simp_args}]) | ({cmp}) | sorry"),
-            ],
+            vec![format!("unfold {}", lean_names.join(" "))],
+            vec![format!("{by_cases_chain} <;> simp [{simp_args}]"), cmp],
         )
     } else {
         // A `when` premise is introduced as a hypothesis (`h_when`).
@@ -1575,7 +1576,7 @@ fn emit_simp_omega_from_ir(
         // premise opaque and `omega` fails ("no usable constraints"),
         // wrongly rejecting a valid law. Without a `when`, keep the
         // conservative `simp only` — there is no premise to simplify.
-        let tac = if uses_max_min {
+        if uses_max_min {
             // `Int.max`/`Int.min` lower to core `max`/`min`, which
             // `omega` treats as opaque atoms (it has no `max`/`min`
             // theory). Unfolding `Int.max_def`/`Int.min_def` exposes
@@ -1606,15 +1607,26 @@ fn emit_simp_omega_from_ir(
             // `sorry` so a still-open case degrades to a caught sorry
             // instead of an uncatchable build error.
             let l = lemmas.join(", ");
-            format!(
-                "first | (simp only [{l}] <;> omega) | (simp only [{l}] <;> (try split) <;> simp_all <;> omega) | sorry"
+            // Structured `first | (omega) | (split…omega) | sorry` so a minimizer
+            // can drop the legacy fallback rung when the clean `omega` form wins.
+            intro_then_first(
+                intro_names,
+                vec![
+                    format!("simp only [{l}] <;> omega"),
+                    format!("simp only [{l}] <;> (try split) <;> simp_all <;> omega"),
+                ],
             )
         } else if has_when {
-            format!("simp_all [{}] <;> omega", lean_names.join(", "))
+            Tactic::raw(intro_then(
+                intro_names,
+                vec![format!("simp_all [{}] <;> omega", lean_names.join(", "))],
+            ))
         } else {
-            format!("simp only [{}] <;> omega", lean_names.join(", "))
-        };
-        intro_then(intro_names, vec![tac])
+            Tactic::raw(intro_then(
+                intro_names,
+                vec![format!("simp only [{}] <;> omega", lean_names.join(", "))],
+            ))
+        }
     }
 }
 
@@ -1716,11 +1728,25 @@ pub(super) fn intro_then(intro_names: &[String], steps: Vec<String>) -> Vec<Stri
 /// the trailing `| sorry` (added here). Each branch must be a single complete
 /// tactic that runs on ONE goal — never the right-hand side of `<;>`.
 fn intro_then_first(intro_names: &[String], branches: Vec<String>) -> super::tactic_ir::Tactic {
+    intro_prefix_then_first(intro_names, Vec::new(), branches)
+}
+
+/// As [`intro_then_first`] but with `prefix` tactic steps emitted (each its own
+/// line) between the `intro` and the `first` portfolio — e.g. an `unfold …`
+/// that must run before the alternation. Renders
+/// `intro <givens>; <prefix…>; first | (b₀) | … | sorry`, inline + byte-for-byte
+/// like the legacy `intro_then(names, [<prefix…>, "first | … | sorry"])`.
+fn intro_prefix_then_first(
+    intro_names: &[String],
+    prefix: Vec<String>,
+    branches: Vec<String>,
+) -> super::tactic_ir::Tactic {
     use super::tactic_ir::Tactic;
     let mut steps = Vec::new();
     if !intro_names.is_empty() {
         steps.push(Tactic::Leaf(format!("intro {}", intro_names.join(" "))));
     }
+    steps.extend(prefix.into_iter().map(Tactic::Leaf));
     let mut alts: Vec<Tactic> = branches.into_iter().map(Tactic::Leaf).collect();
     alts.push(Tactic::Sorry);
     steps.push(Tactic::First(alts));
