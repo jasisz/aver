@@ -1,0 +1,46 @@
+module IntComparisonLaws
+    exposes [sameKey, notBelow, comparable]
+    intent =
+        "Bool-valued integer comparison predicates a scheduler/sorter relies on,"
+        "with their defining algebraic laws proved UNIVERSALLY (every pair of"
+        "ints, not just sampled rows):"
+        "  - equality is symmetric (`sameKey a b = sameKey b a`),"
+        "  - `not (a < b)` is exactly `a >= b` (`notBelow a b = atLeast a b`),"
+        "  - `<=` is total (`(a <= b) || (b <= a) = true`)."
+        ""
+        "These are pure builtin facts about Int comparison — no user recursion."
+        "Dafny's Z3 discharges them; the Lean backend normalises the Bool"
+        "comparison wrappers (`==`/decide/`||`) to a linear-order goal `omega`"
+        "decides."
+    effects []
+
+fn sameKey(a: Int, b: Int) -> Bool
+    ? "Do two keys compare equal?"
+    a == b
+
+fn atLeast(a: Int, b: Int) -> Bool
+    ? "Is a at least b?"
+    a >= b
+
+fn notBelow(a: Int, b: Int) -> Bool
+    ? "Is a not strictly below b?"
+    Bool.not(a < b)
+
+fn comparable(a: Int, b: Int) -> Bool
+    ? "Are a and b comparable under `<=` (always true — `<=` is total)?"
+    Bool.or(a <= b, b <= a)
+
+verify sameKey law symmetric
+    given a: Int = [0, 1, -2, 5]
+    given b: Int = [0, 1, -2, 5]
+    sameKey(a, b) => sameKey(b, a)
+
+verify notBelow law isAtLeast
+    given a: Int = [0, 1, -2, 5]
+    given b: Int = [0, 1, -2, 5]
+    notBelow(a, b) => atLeast(a, b)
+
+verify comparable law totalOrder
+    given a: Int = [0, 1, -2, 5]
+    given b: Int = [0, 1, -2, 5]
+    comparable(a, b) => true

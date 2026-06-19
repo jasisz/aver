@@ -54,6 +54,20 @@ fn proof_export_builds_empty_map_facts_when_lake_is_available() {
 }
 
 #[test]
+fn proof_export_builds_int_comparison_laws_when_lake_is_available() {
+    // Bool-valued Int comparison identities (equality symmetry, `!(a < b) =
+    // (a >= b)`, totality of `<=`). The `wrapper_return` arm's sign-split now
+    // falls through to a comparison normaliser + `sorry` floor, closing these
+    // as universals; Dafny's Z3 already proves them. Sorry budget 0 — revert
+    // and each hard-fails the Lean build.
+    assert_proof_builds_with_sorry_budget(
+        "examples/formal/int_comparison_laws.av",
+        "aver-proof-int-comparison-laws",
+        0,
+    );
+}
+
+#[test]
 fn proof_dafny_verifies_fibonacci_when_dafny_is_available() {
     // `goldenApprox(n)` divides `Float.fromInt(fib(n + 1))` by
     // `Float.fromInt(fib(n))`. Float `/` lowers via the `FloatDiv`
