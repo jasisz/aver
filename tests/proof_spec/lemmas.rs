@@ -318,6 +318,7 @@ fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
         "proof-corpus/decomposed/handwritten/qrev_rev.av",
         "proof-corpus/decomposed/isaplanner/prop_19.av",
         "proof-corpus/decomposed/prod/prop_27.av",
+        "proof-corpus/decomposed/prod/prop_28.av",
         "proof-corpus/decomposed/prod/prop_29.av",
         "proof-corpus/decomposed/prod/prop_30.av",
         "proof-corpus/decomposed/prod/prop_31.av",
