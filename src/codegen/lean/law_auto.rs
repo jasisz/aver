@@ -890,6 +890,15 @@ fn emit_verify_law_forall_auto_proof_inner(
             // exactly where the cascade returned `None`.
             emit_string_length_additive_law(law, &proof_intro_names)
         })
+        .or_else(|| {
+            // Pure builtin String-concat monoid identities (`s + "" = s`,
+            // `"" + s = s`, `(a + b) + c = a + (b + c)`) — the
+            // no-`String.len`-wrapper sibling of the rung above. Same
+            // class (bare String equality, no user fn → BackendDispatch →
+            // Dafny proves, Lean used to sorry); last-in-cascade and
+            // shape-driven, so it cannot perturb any existing proof.
+            emit_string_append_monoid_law(law, &proof_intro_names)
+        })
 }
 
 /// Fixed core AC-ring lemma package for the `RingIdentity` rung —
@@ -1130,6 +1139,74 @@ fn law_expr_children_any(
     }
 }
 
+/// Pure builtin String-concat monoid identities: `s + "" = s`, `"" + s =
+/// s`, and `(a + b) + c = a + (b + c)`. Like [`emit_string_length_additive_law`]
+/// these mention no user fn (the law is a bare String equality), so every
+/// cone-anchored rung declines and the strategy stays `BackendDispatch` —
+/// Dafny's Z3 discharges them, the Lean side fell to a bare `sorry`. This
+/// is the no-`String.len`-wrapper sibling of that rung.
+///
+/// One unified tactic closes all three shapes: `String.add_eq_append`
+/// (prelude rfl lemma, demand-shipped because the tactic cites it)
+/// rewrites the custom `HAdd String` `+` to `++`, then the Lean-core
+/// `String.append_empty` / `String.empty_append` / `String.append_assoc`
+/// finish. The `| sorry` floor keeps it sound — a falsely-matched
+/// non-identity (e.g. an `Int` reassociation that slipped past the earlier
+/// arithmetic rungs) just fails the tactic and degrades to the same caught
+/// sorry, never a false close (`simp` is kernel-checked).
+fn emit_string_append_monoid_law(
+    law: &VerifyLaw,
+    proof_intro_names: &[String],
+) -> Option<AutoProof> {
+    if law.when.is_some() {
+        return None;
+    }
+    let fires = law_expr_has_empty_string_concat(&law.lhs)
+        || law_expr_has_empty_string_concat(&law.rhs)
+        || is_concat_reassociation(&law.lhs, &law.rhs);
+    if !fires {
+        return None;
+    }
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        proof_lines: intro_then(
+            proof_intro_names,
+            vec![
+                "first | (simp only [String.add_eq_append, String.append_empty, \
+                 String.empty_append, String.append_assoc]) | sorry"
+                    .to_string(),
+            ],
+        ),
+        replaces_theorem: false,
+    })
+}
+
+/// `e` contains a `BinOp(Add, x, y)` where `x` or `y` is the empty String
+/// literal `""` — the unambiguous String-`+` signal (`""` only types as a
+/// String, so the `+` is the custom `HAdd String`). Triggers the
+/// identity shapes of [`emit_string_append_monoid_law`].
+fn law_expr_has_empty_string_concat(e: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
+    use crate::ast::{BinOp, Expr, Literal};
+    let is_empty_str = |s: &crate::ast::Spanned<Expr>| matches!(&s.node, Expr::Literal(Literal::Str(t)) if t.is_empty());
+    let here =
+        matches!(&e.node, Expr::BinOp(BinOp::Add, l, r) if is_empty_str(l) || is_empty_str(r));
+    here || law_expr_children_any(e, law_expr_has_empty_string_concat)
+}
+
+/// `lhs` is `(_ + _) + _` and `rhs` is `_ + (_ + _)` — a `+` reassociation
+/// (the associativity shape). Operand types are not inspected: an `Int`
+/// reassociation is closed by the earlier arithmetic rungs and never
+/// reaches this last-in-cascade rung, so matching the shape alone is safe.
+fn is_concat_reassociation(
+    lhs: &crate::ast::Spanned<crate::ast::Expr>,
+    rhs: &crate::ast::Spanned<crate::ast::Expr>,
+) -> bool {
+    use crate::ast::{BinOp, Expr};
+    let left_nested = matches!(&lhs.node, Expr::BinOp(BinOp::Add, l, _) if matches!(l.node, Expr::BinOp(BinOp::Add, _, _)));
+    let right_nested = matches!(&rhs.node, Expr::BinOp(BinOp::Add, _, r) if matches!(r.node, Expr::BinOp(BinOp::Add, _, _)));
+    left_nested && right_nested
+}
+
 /// Try `simp [fn_names...] ; omega` for laws on Int-domain functions.
 ///
 /// Works when the function is a non-recursive match on Int args
@@ -1233,9 +1310,20 @@ fn emit_simp_omega_from_ir(
                 .cloned()
                 .chain(["Int.max_def".to_string(), "Int.min_def".to_string()])
                 .collect();
+            // `<;> omega` alone closes the unfolded min/max if-nest —
+            // `omega` case-splits the `Int.min_def`/`Int.max_def`
+            // conditionals itself, which the legacy `(try split) <;>
+            // simp_all` chain did NOT for a 3-way `min` nest: it left
+            // unsolved goals and, with no `first | … | sorry` wrapper,
+            // hard-failed the WHOLE module build (poisoning every other
+            // law in the file, not just this one). Try the clean `omega`
+            // form first, keep the legacy chain as a fallback so no
+            // min/max law that closed before can regress, and floor on
+            // `sorry` so a still-open case degrades to a caught sorry
+            // instead of an uncatchable build error.
+            let l = lemmas.join(", ");
             format!(
-                "simp only [{}] <;> (try split) <;> simp_all <;> omega",
-                lemmas.join(", ")
+                "first | (simp only [{l}] <;> omega) | (simp only [{l}] <;> (try split) <;> simp_all <;> omega) | sorry"
             )
         } else if has_when {
             format!("simp_all [{}] <;> omega", lean_names.join(", "))

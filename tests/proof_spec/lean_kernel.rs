@@ -581,3 +581,132 @@ fn proof_lean_proves_string_length_additivity_kernel_clean() {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+#[test]
+fn proof_lean_proves_string_concat_monoid_kernel_clean() {
+    // Pure builtin String-concat monoid identities — `s + "" = s`,
+    // `"" + s = s`, `(a + b) + c = a + (b + c)`. Same class as the
+    // String-length-additivity rung but WITHOUT a `String.len` wrapper, so
+    // a separate shape-driven rung (`emit_string_append_monoid_law`) closes
+    // them: `String.add_eq_append` rewrites the custom `HAdd String` `+` to
+    // `++`, then the Lean-core `String.append_empty`/`empty_append`/
+    // `append_assoc` finish. Each currently fell to a bare `sorry`
+    // (BackendDispatch; Dafny's Z3 already proves them).
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean string-concat-monoid test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-strmonoid-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module StrMonoid\n    effects []\n\n\
+         fn cat2(a: String, b: String) -> String\n    a + b\n\n\
+         verify cat2 law rightId\n    given a: String = [\"\", \"x\"]\n    given b: String = [\"\", \"y\"]\n    a + \"\" => a\n\n\
+         verify cat2 law leftId\n    given a: String = [\"\", \"x\"]\n    given b: String = [\"\", \"y\"]\n    \"\" + a => a\n\n\
+         verify cat2 law assoc\n    given a: String = [\"\", \"x\"]\n    given b: String = [\"\", \"y\"]\n    (a + b) + a => a + (b + a)\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-strmonoid-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean = std::fs::read_to_string(out.join("StrMonoid.lean")).expect("read StrMonoid.lean");
+    assert!(
+        lean.contains(
+            "String.add_eq_append, String.append_empty, String.empty_append, String.append_assoc"
+        ),
+        "the String-concat-monoid laws must emit the append-monoid simp rung:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "all three String-concat monoid identities must kernel-prove as GENUINE \
+         universals (passed, 0 sorries, universal:true).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_lean_min_associativity_closes_without_build_error() {
+    // The `Int.min`/`Int.max` LinearArithmetic rung used to emit a bare
+    // `simp only [..., Int.min_def, Int.max_def] <;> (try split) <;>
+    // simp_all <;> omega` with NO `first | … | sorry` wrapper. For a 3-way
+    // `min` nest that chain left unsolved goals and hard-failed the WHOLE
+    // module's Lean build (not just this law). The rung now tries a clean
+    // `<;> omega` (omega case-splits the unfolded ifs itself) first, keeps
+    // the legacy chain as a non-regressing fallback, and floors on `sorry`.
+    // So min-associativity now closes as a universal AND a failing min/max
+    // case can never crash the build. (Revert the rung change and this
+    // task becomes `universal: no` via a Lean build error.)
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean min-associativity test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-minassoc-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module MinAssoc\n    effects []\n\n\
+         fn minOf(a: Int, b: Int) -> Int\n    Int.min(a, b)\n\n\
+         verify minOf law associative\n    given a: Int = [0, 1, -3]\n    given b: Int = [0, 1, -3]\n    given c: Int = [0, 1, -3]\n    minOf(minOf(a, b), c) => minOf(a, minOf(b, c))\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-minassoc-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "Int.min 3-way associativity must kernel-prove as a universal (passed, 0 \
+         sorries, universal:true) — and crucially must NOT hard-fail the Lean build.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
