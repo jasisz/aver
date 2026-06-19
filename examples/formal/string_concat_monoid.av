@@ -1,0 +1,40 @@
+module StringConcatMonoid
+    exposes [label]
+    intent =
+        "A label is assembled from string segments with `+`. Two structural"
+        "facts the assembler relies on, proved here as UNIVERSAL laws (every"
+        "string, not just sampled rows):"
+        "  - an absent/empty segment changes nothing (`s + \"\" = s`, `\"\" + s = s`),"
+        "    so optional segments can be left empty without a special case;"
+        "  - grouping does not matter (`(a + b) + c = a + (b + c)`), so segments"
+        "    can be concatenated in any nesting."
+        ""
+        "These are the monoid laws of String concatenation. They mention no"
+        "user function — `String +` is the only operation — so they are pure"
+        "builtin identities; Aver proves them in the Lean kernel via the"
+        "`String.append` monoid lemmas."
+    effects []
+
+fn label(a: String, b: String) -> String
+    ? "Join two label segments."
+    a + b
+
+verify label
+    label("user", "/42") => "user/42"
+    label("", "root")    => "root"
+
+verify label law rightIdentity
+    given a: String = ["", "user", "/42"]
+    given b: String = ["", "x", "yz"]
+    a + "" => a
+
+verify label law leftIdentity
+    given a: String = ["", "user", "/42"]
+    given b: String = ["", "x", "yz"]
+    "" + a => a
+
+verify label law associative
+    given a: String = ["", "user", "/42"]
+    given b: String = ["", "x", "yz"]
+    given c: String = ["", "q", "rs"]
+    (a + b) + c => a + (b + c)
