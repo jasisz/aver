@@ -42,7 +42,18 @@ pub fn emit_builtin_call(
         OptionToResult => format!("Option.toExcept {} {}", p(&a[0]), p(&a[1])),
 
         // ---- Int ----
-        IntAbs => format!("{}.natAbs", p(&a[0])),
+        // `Int.abs : Int -> Int` at the Aver surface, so it must lower to an
+        // `Int`, not the `Nat`-typed `Int.natAbs`. The bare `.natAbs` only
+        // type-checked where an enclosing `: Int` position coerced it; a
+        // nested `Int.abs(Int.abs x)` became `(x.natAbs).natAbs` — `Nat`
+        // has no `.natAbs`, a hard Lean build error. The ARGUMENT is ascribed
+        // `({} : Int)` (not just the result): `.natAbs` is dot-notation, so
+        // Lean resolves it from the receiver's type, and a bare numeric
+        // literal sample (`Int.abs(-5)`) would otherwise default the receiver
+        // to `Nat` (no `Nat.natAbs`). The outer `: Int` casts the `Nat` result
+        // back so it stays Int-honest everywhere (`omega` / `Int.natAbs_*` see
+        // through the `↑`). Mirrors the `(… : Int)`-coerced `*.len` lowering.
+        IntAbs => format!("(({} : Int).natAbs : Int)", p(&a[0])),
         IntFromFloat => format!("AverFloat.toInt {}", p(&a[0])),
         IntMin => format!("min {} {}", p(&a[0]), p(&a[1])),
         IntMax => format!("max {} {}", p(&a[0]), p(&a[1])),
