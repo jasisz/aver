@@ -509,3 +509,75 @@ fn proof_lean_proves_rev_antihomomorphism_kernel_clean() {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+#[test]
+fn proof_lean_proves_string_length_additivity_kernel_clean() {
+    // Pure builtin String-length additivity: `String.len(a + b) =
+    // String.len(a) + String.len(b)`. The law mentions no user fn — its lhs
+    // calls builtins directly — so every cone-anchored rung declines
+    // (Induction needs a recursive-ADT given; SimpOverPreludeLemmas anchors
+    // its unfold set on the subject fn appearing in the lhs) and the IR
+    // strategy stays `BackendDispatch`. Dafny's Z3 already discharges the
+    // sequence-length axiom; the Lean side used to fall to a bare `sorry`.
+    // The shape-driven `emit_string_length_additive_law` rung now closes it:
+    // `String.add_eq_append` (rfl) rewrites the custom `HAdd String` `+` to
+    // `++`, the core `@[simp] String.length_append` distributes the length,
+    // and `omega` finishes over the `(… : Int)` coercions — a GENUINE
+    // universal (`universal:true`), not a bounded `native_decide`. (Revert
+    // the emitter and this law degrades to `universal:false` — the rung is
+    // load-bearing.)
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean string-length-additivity test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-strlen-add-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module StrLenAdd\n    effects []\n\n\
+         fn assembledLength(prefix: String, body: String) -> Int\n    String.len(prefix + body)\n\n\
+         verify assembledLength law reservationIsExact\n    given prefix: String = [\"\", \"12:00 \"]\n    given body: String = [\"\", \"boot ok\"]\n    String.len(prefix + body) => String.len(prefix) + String.len(body)\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-strlen-add-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    // The closer must be the string-length-additive rung, not a sorry.
+    let lean = std::fs::read_to_string(out.join("StrLenAdd.lean")).expect("read StrLenAdd.lean");
+    assert!(
+        lean.contains("simp only [String.add_eq_append, String.length_append] <;> omega"),
+        "the String-length-additive law must emit the `String.add_eq_append` + \
+         `String.length_append` + `omega` rung:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "String.len(a + b) = String.len(a) + String.len(b) must kernel-prove as a \
+         GENUINE universal (passed, 0 sorries, universal:true).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}

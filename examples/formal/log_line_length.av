@@ -1,0 +1,27 @@
+module LogLineLength
+    exposes [assembledLength]
+    intent =
+        "A log writer assembles each line from a fixed timestamp prefix and the"
+        "message body, then reserves exactly that many bytes in a fixed-size ring"
+        "buffer before the write. The reservation must equal the sum of the two"
+        "part lengths, or the buffer math under-reserves and truncates a line."
+        ""
+        "The `reservationIsExact` law states that the assembled length is the sum"
+        "of the part lengths — `String.len(a + b) = String.len(a) + String.len(b)`."
+        "It is a pure builtin identity (no user recursion), proved UNIVERSALLY:"
+        "Aver's `String +` is `String.append`, so the length distributes over the"
+        "concatenation for every prefix/body, not just the sampled rows."
+    effects []
+
+fn assembledLength(prefix: String, body: String) -> Int
+    ? "Byte length of the assembled log line (prefix followed by body)."
+    String.len(prefix + body)
+
+verify assembledLength
+    assembledLength("12:00 ", "boot ok") => 13
+    assembledLength("x", "")             => 1
+
+verify assembledLength law reservationIsExact
+    given prefix: String = ["", "12:00 ", "ERROR "]
+    given body: String = ["", "boot ok", "disk full"]
+    String.len(prefix + body) => String.len(prefix) + String.len(body)

@@ -866,18 +866,29 @@ fn emit_verify_law_forall_auto_proof_inner(
             emit_ring_identity_law(vb, law, ctx, &proof_intro_names)
         })
         .or_else(|| {
-            // IR-pinned `SimpOverPreludeLemmas` — DELIBERATELY the last
-            // rung, after every legacy ad-hoc fallback above: it must
-            // fire only where the chain used to return `None` and the
-            // caller emitted a bare-`sorry` universal. The simp set is
-            // kept minimal (cone + fuel + registry hits + the single
-            // baked-in `Int.add_sub_cancel` rewrite the archived
-            // hand-proofs needed) — a fat set risks a simp LOOP, and a
+            // IR-pinned `SimpOverPreludeLemmas` — after every legacy
+            // ad-hoc fallback above: it must fire only where the chain
+            // used to return `None` and the caller emitted a
+            // bare-`sorry` universal. The simp set is kept minimal
+            // (cone + fuel + registry hits + the single baked-in
+            // `Int.add_sub_cancel` rewrite the archived hand-proofs
+            // needed) — a fat set risks a simp LOOP, and a
             // maxHeartbeats blow-up is a build error `first` cannot
             // catch. `done` forces closure: simp succeeding but
             // leaving a residual goal must fall to the honest `sorry`,
             // never surface as an "unsolved goals" build error.
             emit_simp_over_prelude_lemmas_law(vb, law, ctx, &proof_intro_names)
+        })
+        .or_else(|| {
+            // Pure builtin String-length additivity (`String.len(a + b)
+            // = String.len(a) + String.len(b)`). The law statement is
+            // over builtins alone, so every cone-anchored rung above has
+            // already declined and the strategy stayed `BackendDispatch`
+            // — Dafny's Z3 already discharges the sequence-length axiom,
+            // and this is the Lean-only twin that closes it instead of a
+            // bare `sorry`. Shape-driven (not IR-pinned), so it fires
+            // exactly where the cascade returned `None`.
+            emit_string_length_additive_law(law, &proof_intro_names)
         })
 }
 
@@ -1026,6 +1037,97 @@ fn emit_simp_over_prelude_lemmas_law(
         ),
         replaces_theorem: false,
     })
+}
+
+/// Pure builtin String-length additivity: `String.len(a + b) =
+/// String.len(a) + String.len(b)` (and nested-concat / argument-swapped
+/// variants). The law statement mentions no user fn — its lhs calls
+/// builtins directly — so every cone-anchored rung declines: `Induction`
+/// needs a recursive-ADT given, and `SimpOverPreludeLemmas` anchors its
+/// unfold set on the subject fn appearing in the lhs. The strategy
+/// therefore stays `BackendDispatch`, where Dafny's Z3 already discharges
+/// the law via the sequence-length axiom (`|s + t| = |s| + |t|`) but the
+/// Lean side fell to a bare `sorry`. This Lean-only rung closes it
+/// without touching the IR strategy or the Dafny path.
+///
+/// Mechanism: Aver's `String +` is the custom `HAdd String` instance
+/// (`⟨String.append⟩`); the prelude `rfl` lemma `String.add_eq_append :
+/// s + t = s ++ t` (demand-shipped because the emitted tactic cites it)
+/// rewrites `+ → ++`, the Lean-core `@[simp] String.length_append`
+/// rewrites `(s ++ t).length → s.length + t.length`, and `omega` finishes
+/// over the `(… : Int)` length coercions (it is cast-aware). The honest
+/// `| sorry` floor means a non-additive law this happened to match simply
+/// fails the tactic and degrades to the same caught sorry it had before —
+/// the rung can never close a false law (`simp`/`omega` are sound).
+fn emit_string_length_additive_law(
+    law: &VerifyLaw,
+    proof_intro_names: &[String],
+) -> Option<AutoProof> {
+    if law.when.is_some() {
+        return None;
+    }
+    if !(law_expr_has_string_len_over_concat(&law.lhs)
+        || law_expr_has_string_len_over_concat(&law.rhs))
+    {
+        return None;
+    }
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        proof_lines: intro_then(
+            proof_intro_names,
+            vec![
+                "first | (simp only [String.add_eq_append, String.length_append] <;> omega) | sorry"
+                    .to_string(),
+            ],
+        ),
+        replaces_theorem: false,
+    })
+}
+
+/// True when `e` contains a `String.len(arg)` call whose `arg`
+/// syntactically involves a string `+` — the trigger shape for
+/// [`emit_string_length_additive_law`]. `String.len` takes a `String`, so
+/// an `Add` under it is necessarily the custom `HAdd String` concat (no
+/// type lookup needed). Walks both law sides so an argument-swapped law
+/// (`len(a) + len(b) => len(a + b)`) is recognised too.
+fn law_expr_has_string_len_over_concat(e: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
+    use crate::ast::Expr;
+    let here = matches!(&e.node, Expr::FnCall(callee, args)
+        if args.len() == 1
+            && crate::codegen::common::expr_to_dotted_name(&callee.node).as_deref()
+                == Some("String.len")
+            && expr_contains_add(&args[0]));
+    here || law_expr_children_any(e, law_expr_has_string_len_over_concat)
+}
+
+/// True when `e` contains a `BinOp(Add, …)` at any depth.
+fn expr_contains_add(e: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
+    use crate::ast::{BinOp, Expr};
+    matches!(&e.node, Expr::BinOp(BinOp::Add, _, _)) || law_expr_children_any(e, expr_contains_add)
+}
+
+/// `true` if `f` holds on any direct child sub-expression of `e`. Covers
+/// the compound `Expr` variants a `verify` law's lhs/rhs can hold;
+/// leaf/irrelevant variants short-circuit to `false`.
+fn law_expr_children_any(
+    e: &crate::ast::Spanned<crate::ast::Expr>,
+    f: fn(&crate::ast::Spanned<crate::ast::Expr>) -> bool,
+) -> bool {
+    use crate::ast::Expr;
+    match &e.node {
+        Expr::Attr(o, _) => f(o),
+        Expr::FnCall(c, args) => f(c) || args.iter().any(f),
+        Expr::BinOp(_, l, r) => f(l) || f(r),
+        Expr::Neg(i) | Expr::ErrorProp(i) => f(i),
+        Expr::Match { subject, arms } => f(subject) || arms.iter().any(|a| f(&a.body)),
+        Expr::Constructor(_, Some(inner)) => f(inner),
+        Expr::List(xs) | Expr::Tuple(xs) | Expr::IndependentProduct(xs, _) => xs.iter().any(f),
+        Expr::MapLiteral(kvs) => kvs.iter().any(|(k, v)| f(k) || f(v)),
+        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, v)| f(v)),
+        Expr::RecordUpdate { base, updates, .. } => f(base) || updates.iter().any(|(_, v)| f(v)),
+        Expr::TailCall(d) => d.args.iter().any(f),
+        _ => false,
+    }
 }
 
 /// Try `simp [fn_names...] ; omega` for laws on Int-domain functions.

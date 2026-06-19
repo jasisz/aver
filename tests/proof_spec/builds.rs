@@ -11,6 +11,21 @@ fn proof_export_builds_fibonacci_when_lake_is_available() {
 }
 
 #[test]
+fn proof_export_builds_log_line_length_when_lake_is_available() {
+    // Pure builtin String-length additivity (`String.len(a + b) =
+    // String.len(a) + String.len(b)`) on a life-like log-line byte-budget
+    // example. The law mentions no user fn, so it stays `BackendDispatch`;
+    // the Lean-only `emit_string_length_additive_law` rung closes it as a
+    // universal. Sorry budget 0 — the rung must fully discharge it (revert
+    // the rung and this example regresses to a caught sorry).
+    assert_proof_builds_with_sorry_budget(
+        "examples/formal/log_line_length.av",
+        "aver-proof-log-line-length",
+        0,
+    );
+}
+
+#[test]
 fn proof_dafny_verifies_fibonacci_when_dafny_is_available() {
     // `goldenApprox(n)` divides `Float.fromInt(fib(n + 1))` by
     // `Float.fromInt(fib(n))`. Float `/` lowers via the `FloatDiv`
