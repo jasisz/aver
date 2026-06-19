@@ -11,7 +11,7 @@ mod prelude;
 pub(crate) mod recurrence;
 mod sample_literal;
 mod shared;
-mod tactic_ir;
+pub mod tactic_ir;
 #[cfg(test)]
 mod tests;
 mod toplevel;

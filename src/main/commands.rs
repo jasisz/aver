@@ -4981,7 +4981,6 @@ pub(super) fn cmd_proof(
     emit_laws: bool,
     emit_laws_to: Option<&str>,
 ) {
-    let _ = minimize;
     let (mut ctx, module_root) = build_codegen_context(
         file,
         project_name,
@@ -5224,8 +5223,20 @@ pub(super) fn cmd_proof(
             // evaluation path to go vacuous through).
             ctx.sample_expected = collect_verify_ground_truth(file, &module_root);
             cmd_proof_lean(file, output_dir, &mut ctx, verify_mode);
+            // `--minimize`: learn each portfolio's winning branch from one
+            // instrumented build, then re-emit collapsed (fail-safe — restores
+            // the normal proof if the collapsed project does not build).
+            if minimize {
+                run_lean_minimize(file, output_dir, &mut ctx, verify_mode);
+            }
         }
         super::cli::ProofBackend::Dafny => {
+            if minimize {
+                eprintln!(
+                    "{}",
+                    "--minimize applies to the Lean backend only; ignored for Dafny".yellow()
+                );
+            }
             cmd_proof_dafny(file, output_dir, &ctx);
         }
     }
@@ -7955,6 +7966,99 @@ fn cmd_proof_lean(
 
     let build_hint = format!("cd {} && lake build", output_dir);
     write_codegen_output(file, output_dir, "Lean 4", &build_hint, &output);
+}
+
+/// `--minimize` (Lean): collapse each emitted `first | … | sorry` portfolio to
+/// the single branch that actually closed.
+///
+/// The normal proof project is already on disk. We re-emit it twice:
+///
+/// 1. INSTRUMENT — prefix every `first` branch with a `trace
+///    "AVERMIN:<idx>:<branch>"` marker and run ONE `lake build`. Lean tries a
+///    portfolio's branches left-to-right and commits to the first that closes,
+///    tracing each it reaches, so the winner of node `idx` is the maximum
+///    branch index that surfaces in the build log (failed branches trace too —
+///    they are not rolled back).
+/// 2. COLLAPSE — re-emit with each portfolio reduced to its proven branch.
+///
+/// Fail-safe: the collapsed project must still build; if a winner was
+/// mis-parsed and it does not, the normal (un-minimized) project is restored.
+/// `lake`'s content-addressed cache keeps the second and third builds cheap.
+fn run_lean_minimize(
+    file: &str,
+    output_dir: &str,
+    ctx: &mut codegen::CodegenContext,
+    verify_mode: &super::cli::ProofVerifyMode,
+) {
+    use aver::codegen::lean::tactic_ir::minimize;
+    use std::process::Command;
+
+    let lake_ok = Command::new("lake")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !lake_ok {
+        eprintln!(
+            "{}",
+            "--minimize: `lake` is not on PATH — left the proof un-minimized".yellow()
+        );
+        return;
+    }
+
+    // Run `lake build` in the project dir, returning (success, combined output).
+    let build = |dir: &str| -> (bool, String) {
+        match Command::new("lake").arg("build").current_dir(dir).output() {
+            Ok(o) => (
+                o.status.success(),
+                format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&o.stdout),
+                    String::from_utf8_lossy(&o.stderr)
+                ),
+            ),
+            Err(_) => (false, String::new()),
+        }
+    };
+
+    // 1) INSTRUMENT + probe build.
+    minimize::begin_instrument();
+    cmd_proof_lean(file, output_dir, ctx, verify_mode);
+    minimize::end();
+    let (_probe_ok, probe_out) = build(output_dir);
+    let winners = minimize::parse_winners(&probe_out);
+
+    if winners.is_empty() {
+        // No portfolio was exercised (or none collapsible) — restore the normal
+        // project so `--check` runs against the unmodified proof.
+        cmd_proof_lean(file, output_dir, ctx, verify_mode);
+        println!("--minimize: no collapsible proof portfolios found");
+        return;
+    }
+
+    // 2) COLLAPSE re-emit.
+    minimize::begin_collapse(winners.clone());
+    cmd_proof_lean(file, output_dir, ctx, verify_mode);
+    minimize::end();
+
+    // 3) FAIL-SAFE verify.
+    let (collapsed_ok, _) = build(output_dir);
+    if collapsed_ok {
+        println!(
+            "{}",
+            format!(
+                "--minimize: collapsed {} proof portfolio(s) to their proven branch",
+                winners.len()
+            )
+            .green()
+        );
+    } else {
+        cmd_proof_lean(file, output_dir, ctx, verify_mode);
+        eprintln!(
+            "{}",
+            "--minimize: collapsed proof did not build — restored the normal proof".yellow()
+        );
+    }
 }
 
 fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) {

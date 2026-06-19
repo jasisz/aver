@@ -233,7 +233,7 @@ fn maybe_wrap_with_grind_rung(
         Tactic::Leaf(intro_line.trim_start().to_string()),
         Tactic::First(vec![
             Tactic::Leaf(format!("grind [{}]; done", cone.join(", "))),
-            Tactic::raw(body_lines),
+            Tactic::raw_dedented(body_lines),
         ]),
     ]);
     AutoProof {
