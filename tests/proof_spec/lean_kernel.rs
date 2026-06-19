@@ -710,3 +710,64 @@ fn proof_lean_min_associativity_closes_without_build_error() {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+#[test]
+fn proof_lean_int_abs_lowers_int_honest_so_nesting_builds() {
+    // `Int.abs : Int -> Int` at the Aver surface now lowers to the Int-honest
+    // `((arg : Int).natAbs : Int)`, not the `Nat`-typed bare `arg.natAbs`. A
+    // nested `Int.abs(Int.abs x)` used to become `(x.natAbs).natAbs` — `Nat`
+    // has no `.natAbs`, an uncatchable Lean build error. The ARGUMENT is
+    // ascribed `: Int` (not just the result) because `.natAbs` is dot-notation
+    // resolved from the receiver's type, and a bare numeric-literal sample
+    // (`Int.abs(-5)`) would otherwise default the receiver to `Nat`. (Revert
+    // the lowering and this module fails to build / `native_decide` chokes on
+    // `Nat.natAbs`.)
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean int-abs lowering test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-intabs-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module IntAbsNest\n    effects []\n\n\
+         fn doubleAbs(x: Int) -> Int\n    Int.abs(Int.abs(x))\n\n\
+         verify doubleAbs\n    doubleAbs(-7) => 7\n    doubleAbs(4) => 4\n    doubleAbs(0) => 0\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-intabs-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean = std::fs::read_to_string(out.join("IntAbsNest.lean")).expect("read IntAbsNest.lean");
+    assert!(
+        lean.contains("(x : Int).natAbs : Int)"),
+        "Int.abs must lower to the arg-ascribed Int-honest form `((… : Int).natAbs : Int)`:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (summary["passed"].as_bool(), summary["sorries"].as_u64()),
+        (Some(true), Some(0)),
+        "a fn with a nested `Int.abs(Int.abs x)` must build clean (passed, 0 sorries) — \
+         the Int-honest lowering removes the `Nat.natAbs` build error.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
