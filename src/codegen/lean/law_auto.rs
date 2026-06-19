@@ -208,48 +208,39 @@ fn maybe_wrap_with_grind_rung(
     if cone.is_empty() {
         return proof;
     }
-    let mut proof_lines = lines;
-    let intro_line = proof_lines.remove(0);
-    let wrapped = wrap_body_with_grind_rung(intro_line, proof_lines, &cone);
+    let mut body_lines = lines;
+    let intro_line = body_lines.remove(0);
+    // Structured grind rung:
+    //
+    // ```text
+    // intro <givens>
+    // first
+    // | (grind [<cone>]; done)
+    // | (<existing body, re-indented>)
+    // ```
+    //
+    // Built as a real [`tactic_ir::Tactic::First`] (not a flattened string) so
+    // `--minimize` can later collapse it to its winning branch — almost always
+    // the existing body, since `grind` is a shape-gated frontier closer
+    // admitted only where the body already ends in an honest `sorry`. The
+    // `grind` arm ends in `done`, so a `grind` that leaves a residual goal
+    // THROWS and `first` falls to the existing body; the rung is purely
+    // additive and adds no axioms beyond grind's whitelisted set ({propext,
+    // Classical.choice, Quot.sound}). Branch leaves carry their tactic text
+    // verbatim; `render_body` lays out the `first`/`|` indentation.
+    use crate::codegen::lean::tactic_ir::Tactic;
+    let body = Tactic::Seq(vec![
+        Tactic::Leaf(intro_line.trim_start().to_string()),
+        Tactic::First(vec![
+            Tactic::Leaf(format!("grind [{}]; done", cone.join(", "))),
+            Tactic::raw(body_lines),
+        ]),
+    ]);
     AutoProof {
         support_lines: proof.support_lines,
-        body: crate::codegen::lean::tactic_ir::Tactic::raw(wrapped),
+        body,
         replaces_theorem: false,
     }
-}
-
-/// Prepend the `grind` outright-closer arm to an existing (post-`intro`)
-/// `body_lines` tactic block:
-///
-/// ```text
-/// intro <givens>
-/// first
-/// | (grind [<cone>]; done)
-/// | (<existing body, re-indented>)
-/// ```
-///
-/// The `grind` arm ends in `done`, so a `grind` that leaves a residual
-/// goal THROWS and `first` falls to the existing body byte-for-byte
-/// (modulo a 2-space indent under the final `first` arm). `grind` is a
-/// sound saturation solver (it closes only true goals; on failure it
-/// throws on the leftover), so the rung is purely additive — it can only
-/// ADD closures and adds no axioms beyond grind's whitelisted set
-/// ({propext, Classical.choice, Quot.sound}).
-fn wrap_body_with_grind_rung(
-    intro_line: String,
-    body_lines: Vec<String>,
-    cone: &[String],
-) -> Vec<String> {
-    let mut out = vec![intro_line, "  first".to_string()];
-    out.push(format!("  | (grind [{}]; done)", cone.join(", ")));
-    out.push("  | (".to_string());
-    for line in &body_lines {
-        out.push(format!("  {line}"));
-    }
-    if let Some(last) = out.last_mut() {
-        last.push(')');
-    }
-    out
 }
 
 fn emit_verify_law_forall_auto_proof_inner(

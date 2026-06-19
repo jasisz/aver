@@ -68,9 +68,86 @@ impl Tactic {
         self.render_indent(0)
     }
 
+    /// Render the proof body as it sits under a theorem's `:= by` — at the
+    /// canonical 2-space indent.
+    ///
+    /// `raw`-migrated bodies carry a baked-in leading indent in their leaf
+    /// strings (the legacy emit indented every proof line by 2). Re-indenting
+    /// that on top would double it, so this first strips the tree's common
+    /// leaf indent (preserving any deeper *relative* nesting) and then renders
+    /// at indent 1. For a uniformly 2-space-baked body that is byte-identical
+    /// to the legacy output; for a structured body (a real [`Tactic::First`]
+    /// authored without baked indent) it lays the `first`/`|` keywords at the
+    /// 2-space column the surrounding `intro` sits at — which Lean's
+    /// column-sensitive `by` block requires.
+    pub fn render_body(&self) -> Vec<String> {
+        let strip = self.leaf_min_indent().unwrap_or(0);
+        self.clone().strip_leaf_indent(strip).render_indent(1)
+    }
+
+    /// The smallest leading-space count across every non-blank line of every
+    /// leaf in the tree (`None` if the tree has no non-blank leaf line).
+    /// Structural keywords (`first`, `| …`, `induction … with`) are NOT leaves
+    /// and do not count — only authored tactic text does.
+    fn leaf_min_indent(&self) -> Option<usize> {
+        match self {
+            Tactic::Leaf(s) => s
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(leading_spaces)
+                .min(),
+            Tactic::Sorry => None,
+            Tactic::Seq(ts) | Tactic::First(ts) => {
+                ts.iter().filter_map(Tactic::leaf_min_indent).min()
+            }
+            Tactic::Induction { arms, .. } => {
+                arms.iter().filter_map(|a| a.body.leaf_min_indent()).min()
+            }
+        }
+    }
+
+    /// Strip up to `n` leading spaces from every line of every leaf — the
+    /// un-bake step paired with [`render_body`]. Clamped per line so a line
+    /// shallower than `n` is left flush, never over-stripped into its content.
+    fn strip_leaf_indent(self, n: usize) -> Tactic {
+        match self {
+            Tactic::Leaf(s) => Tactic::Leaf(
+                s.lines()
+                    .map(|l| {
+                        let k = leading_spaces(l).min(n);
+                        l[k..].to_string()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            Tactic::Sorry => Tactic::Sorry,
+            Tactic::Seq(ts) => {
+                Tactic::Seq(ts.into_iter().map(|t| t.strip_leaf_indent(n)).collect())
+            }
+            Tactic::First(ts) => {
+                Tactic::First(ts.into_iter().map(|t| t.strip_leaf_indent(n)).collect())
+            }
+            Tactic::Induction { target, arms } => Tactic::Induction {
+                target,
+                arms: arms
+                    .into_iter()
+                    .map(|a| InductionArm {
+                        pattern: a.pattern,
+                        body: a.body.strip_leaf_indent(n),
+                    })
+                    .collect(),
+            },
+        }
+    }
+
     fn render_indent(&self, indent: usize) -> Vec<String> {
         let pad = "  ".repeat(indent);
         match self {
+            // An empty leaf stays a truly empty line — never padded. (A
+            // `String::new()` step in a `raw`-wrapped proof is a blank
+            // separator; emitting `pad` instead would leave trailing
+            // whitespace and break byte-identity when rendered at depth.)
+            Tactic::Leaf(s) if s.is_empty() => vec![String::new()],
             // Preserve an empty leaf as an empty line (`"".lines()` yields
             // NOTHING, which would silently drop blank lines from `raw`-wrapped
             // proofs); only split a genuinely multi-line leaf.
@@ -148,6 +225,34 @@ impl Tactic {
     }
 }
 
+/// Count of leading ASCII spaces on a line.
+fn leading_spaces(l: &str) -> usize {
+    l.len() - l.trim_start().len()
+}
+
+/// Strip the common leading indent shared by all non-blank lines, preserving
+/// each line's *relative* nesting (blank lines stay blank). Used to re-base a
+/// multi-line `first` branch under its `| (` wrapper without flattening the
+/// branch's own internal structure (an `induction`/`cases` ladder).
+fn relative_dedent(lines: &[String]) -> Vec<String> {
+    let min = lines
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| leading_spaces(l))
+        .min()
+        .unwrap_or(0);
+    lines
+        .iter()
+        .map(|l| {
+            if l.trim().is_empty() {
+                String::new()
+            } else {
+                l[min..].to_string()
+            }
+        })
+        .collect()
+}
+
 /// Render a `First`: inline (`first | (b₀) | (b₁) | sorry`) when every branch is
 /// a single line, else multi-line with each branch on its own `|` line.
 fn render_first(branches: &[Tactic], indent: usize) -> Vec<String> {
@@ -171,9 +276,16 @@ fn render_first(branches: &[Tactic], indent: usize) -> Vec<String> {
                 Tactic::Sorry => out.push(format!("{pad}| sorry")),
                 _ if lines.len() == 1 => out.push(format!("{pad}| ({})", lines[0].trim_start())),
                 _ => {
-                    out.push(format!("{pad}| (",));
-                    for l in lines {
-                        out.push(format!("{pad}  {}", l.trim_start()));
+                    out.push(format!("{pad}| ("));
+                    // Re-base the branch relative to `| (`, keeping its own
+                    // internal nesting (trimming each line would flatten an
+                    // induction ladder inside the branch).
+                    for l in relative_dedent(lines) {
+                        if l.is_empty() {
+                            out.push(String::new());
+                        } else {
+                            out.push(format!("{pad}  {l}"));
+                        }
                     }
                     out.push(format!("{pad})"));
                 }
@@ -274,6 +386,54 @@ mod tests {
             },
         ]);
         assert_eq!(t.first_count(), 2);
+    }
+
+    #[test]
+    fn render_body_is_byte_identical_for_baked_raw() {
+        // A `raw`-migrated body carries the legacy baked 2-space indent (with a
+        // deeper 4-space continuation). `render_body` strips the common 2 and
+        // re-adds it at indent 1 — reproducing the exact legacy lines.
+        let baked = vec![
+            "  intro xs".to_string(),
+            "  induction xs with".to_string(),
+            "  | nil => simp".to_string(),
+            "  | cons h t ih =>".to_string(),
+            "    simp [ih]".to_string(),
+        ];
+        let body = Tactic::raw(baked.clone());
+        assert_eq!(body.render_body(), baked);
+    }
+
+    #[test]
+    fn render_body_lays_out_grind_wrapped_first_at_two_space() {
+        // The grind-wrap shape: un-baked intro + `First`, the body branch a
+        // baked multi-line `raw`. `render_body` must put `first`/`|` at the
+        // 2-space column (matching `intro`) and re-base the body branch under
+        // `| (` without flattening it.
+        let body = Tactic::Seq(vec![
+            leaf("intro a b"),
+            Tactic::First(vec![
+                leaf("grind [f]; done"),
+                Tactic::raw(vec![
+                    "  simp [f]".to_string(),
+                    "  omega".to_string(),
+                    "  sorry".to_string(),
+                ]),
+            ]),
+        ]);
+        assert_eq!(
+            body.render_body(),
+            vec![
+                "  intro a b".to_string(),
+                "  first".to_string(),
+                "  | (grind [f]; done)".to_string(),
+                "  | (".to_string(),
+                "    simp [f]".to_string(),
+                "    omega".to_string(),
+                "    sorry".to_string(),
+                "  )".to_string(),
+            ]
+        );
     }
 
     #[test]

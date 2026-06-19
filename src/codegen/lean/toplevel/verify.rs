@@ -636,7 +636,7 @@ fn emit_verify_law_block(
                     theorem_base, quant_params, theorem_parts[0].prop
                 ));
             }
-            lines.extend(auto_proof.body.render());
+            lines.extend(auto_proof.body.render_body());
         } else {
             // Support lines (e.g. shared `{theorem_base}_digit_pred` private
             // theorems) are keyed on the shared `theorem_base`, so every part's
@@ -688,7 +688,7 @@ fn emit_verify_law_block(
                             header_prefix, part.name, quant_params, part.prop
                         ));
                     }
-                    body.extend(auto_proof.body.render());
+                    body.extend(auto_proof.body.render_body());
                 } else {
                     body.push(format!(
                         "{}theorem {} : ∀ {}, {} := by",
