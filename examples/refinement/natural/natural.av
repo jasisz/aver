@@ -2,22 +2,21 @@ module Natural
     exposes [fromInt, toInt, add, mul]
     exposes opaque [Natural]
     intent =
-        "Refinement-via-opaque, sound-proof variant. Aver has no"
-        "refinement types and no value-level contracts; instead, an"
-        "opaque record with a validating constructor pins the `Int"
-        ">= 0` invariant inside the defining module."
+        "Refinement-via-opaque: Aver has no refinement types in the"
+        "type system (proof-only is the ceiling), so an opaque record"
+        "with a validating constructor pins the `Int >= 0` invariant"
+        "inside the defining module — the non-negativity fact that"
+        "Aver's single `Int = ℤ` does not itself carry in the type."
         ""
-        "All arithmetic operations return Result<Nat, String> and"
-        "route through fromInt internally. This loses the 'closed"
-        "under +' shorthand (the caller has to thread the Result"
-        "through every call site) but gains soundness against Aver"
-        "Int's i64 wrap-around: `add(Natural(value = i64::MAX),"
-        "Natural(value = 1))` returns Err, not a silent overflow that"
-        "produces a Nat with value < 0. A naive `add(a, b) ="
-        "Natural(value = a.value + b.value)` is fully provable for"
-        "unbounded ints in Lean / Dafny / Z3 but wrong on the Aver"
-        "runtime — the gap between a mathematical proof and the"
-        "VM's actual semantics. This variant closes that gap."
+        "Operations route their raw Int result through `fromInt`, so"
+        "the `>= 0` invariant is maintained by construction. For `add`"
+        "and `mul` the result is always Ok — a sum/product of"
+        "non-negatives is non-negative; the Result shape is the"
+        "general refinement-maintenance pattern (load-bearing only for"
+        "an operation that could leave the non-negatives, e.g. a"
+        "subtraction). NOTE: Aver `Int` is arbitrary-precision (ℤ), so"
+        "there is NO overflow/wrap-around to guard against — the value"
+        "here is purely the `>= 0` refinement, not overflow-safety."
     effects []
 
 record Natural
@@ -44,9 +43,9 @@ verify toInt
     toInt(Natural(value = 5)) => 5
 
 fn add(a: Natural, b: Natural) -> Result<Natural, String>
-    ? "Sum of two Nats — overflow-safe. Routes the raw Int sum"
-      "through fromInt so wrap-around (i64::MAX + 1 = i64::MIN)"
-      "surfaces as Err instead of a Nat with value < 0."
+    ? "Sum of two Nats. Routes the raw Int sum through fromInt to"
+      "maintain the `>= 0` invariant by construction; for two Nats"
+      "the sum is always non-negative, so this is always Ok."
     fromInt(a.value + b.value)
 
 verify add
@@ -61,7 +60,9 @@ verify add law commutative
     add(Natural(value = a), Natural(value = b)) => add(Natural(value = b), Natural(value = a))
 
 fn mul(a: Natural, b: Natural) -> Result<Natural, String>
-    ? "Product of two Nats — overflow-safe via fromInt."
+    ? "Product of two Nats — routes through fromInt to maintain the"
+      "`>= 0` invariant (always Ok: a product of non-negatives is"
+      "non-negative)."
     fromInt(a.value * b.value)
 
 verify mul
