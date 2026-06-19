@@ -840,3 +840,69 @@ fn proof_lean_proves_empty_map_facts_kernel_clean() {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+#[test]
+fn proof_lean_proves_int_comparison_identities_kernel_clean() {
+    // Bool-valued Int comparison identities — equality symmetry
+    // (`(a == b) = (b == a)`), `!(a < b) = (a >= b)`, totality of `<=`
+    // (`(a <= b) || (b <= a) = true`). These route to the `wrapper_return`
+    // arm of `emit_simp_omega_from_ir`, whose sign-split `by_cases <;> simp`
+    // left them at "simp made no progress" — and with no `first | … | sorry`
+    // wrapper that hard-failed the whole module build. The arm now tries the
+    // sign-split first (unchanged for arithmetic laws), then a comparison
+    // normaliser (`COMPARISON_NORMALIZERS` + `omega`), then a `sorry` floor.
+    // (Revert and these become a Lean build error, not even a caught sorry.)
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean int-comparison test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-intcmp-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module IntCmp\n    effects []\n\n\
+         fn sameKey(a: Int, b: Int) -> Bool\n    a == b\n\n\
+         fn atLeast(a: Int, b: Int) -> Bool\n    a >= b\n\n\
+         fn notBelow(a: Int, b: Int) -> Bool\n    Bool.not(a < b)\n\n\
+         fn comparable(a: Int, b: Int) -> Bool\n    Bool.or(a <= b, b <= a)\n\n\
+         verify sameKey law symmetric\n    given a: Int = [0, 1, -2]\n    given b: Int = [0, 1, -2]\n    sameKey(a, b) => sameKey(b, a)\n\n\
+         verify notBelow law isAtLeast\n    given a: Int = [0, 1, -2]\n    given b: Int = [0, 1, -2]\n    notBelow(a, b) => atLeast(a, b)\n\n\
+         verify comparable law totalOrder\n    given a: Int = [0, 1, -2]\n    given b: Int = [0, 1, -2]\n    comparable(a, b) => true\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-intcmp-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "the three Int comparison identities must kernel-prove as GENUINE \
+         universals (passed, 0 sorries, universal:true) — and must NOT hard-fail \
+         the Lean build.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}

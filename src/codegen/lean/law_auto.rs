@@ -1353,6 +1353,26 @@ fn expr_is_empty_map(e: &crate::ast::Spanned<crate::ast::Expr>, ctx: &CodegenCon
 /// emit body of the legacy `emit_simp_omega_law` (kept as fallback
 /// for `BackendDispatch`) but sources `unfold_fns` / `wrapper_
 /// return` / `smart_guard` from `ProofIR.law_theorems[*].strategy`.
+/// Core (no-Mathlib) lemma package that normalises a Bool-valued Int
+/// comparison identity so `omega` can finish: `Bool.beq_comm` orders the
+/// `==`, `Bool.or_eq_true`/`Bool.and_eq_true`/`decide_eq_true_eq` strip the
+/// `= true` / `&&` / `||` Bool wrappers to the underlying decidable props,
+/// `decide_eq_decide` reduces `decide p = decide q` to `p ↔ q`, `← decide_not`
+/// turns `!decide p` into `decide ¬p`, and `ge_iff_le`/`gt_iff_lt` rewrite
+/// `≥`/`>` to `≤`/`<` — leaving a pure linear-order goal `omega` decides.
+/// Used only as a `first`-alternative after the sign-split in the
+/// `wrapper_return` arm of [`emit_simp_omega_from_ir`].
+const COMPARISON_NORMALIZERS: &[&str] = &[
+    "Bool.beq_comm",
+    "Bool.or_eq_true",
+    "Bool.and_eq_true",
+    "decide_eq_decide",
+    "decide_eq_true_eq",
+    "← decide_not",
+    "ge_iff_le",
+    "gt_iff_lt",
+];
+
 #[allow(clippy::too_many_arguments)]
 fn emit_simp_omega_from_ir(
     unfold_fns: &[String],
@@ -1412,11 +1432,29 @@ fn emit_simp_omega_from_ir(
             .chain(["Int.add_comm".to_string(), "Int.mul_comm".to_string()])
             .collect();
         let simp_args = simp_hyps.join(", ");
+        // The sign-split `by_cases … <;> simp [Int.add_comm, Int.mul_comm]`
+        // closes wrapper-return arithmetic identities, but a Bool-valued
+        // COMPARISON identity (`(a == b) = (b == a)`, `!(a < b) = (a >= b)`,
+        // `(a <= b) || (b <= a) = true`, `(a < b) = (b > a)`) leaves it with
+        // "simp made no progress" — and with no `first | … | sorry` wrapper
+        // that hard-failed the whole module build. After the `unfold`, try the
+        // sign-split FIRST (so every law that closed before is byte-identical),
+        // then a comparison-normalising `simp only [<COMPARISON_NORMALIZERS>]
+        // <;> omega` (which closes the Bool-comparison shapes Dafny's Z3 already
+        // proves), and floor on `sorry` so anything still open degrades to a
+        // caught sorry instead of an uncatchable build error. The comparison
+        // rung is inert when the sign-split already closed (it is never
+        // reached), and `simp`/`omega` are sound, so it can never close a false
+        // law.
+        let cmp = format!(
+            "simp only [{}] <;> omega",
+            COMPARISON_NORMALIZERS.join(", ")
+        );
         intro_then(
             intro_names,
             vec![
                 format!("unfold {}", lean_names.join(" ")),
-                format!("{by_cases_chain} <;> simp [{simp_args}]"),
+                format!("first | ({by_cases_chain} <;> simp [{simp_args}]) | ({cmp}) | sorry"),
             ],
         )
     } else {
