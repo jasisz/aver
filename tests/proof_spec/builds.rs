@@ -82,6 +82,19 @@ fn proof_export_builds_int_abs_laws_when_lake_is_available() {
 }
 
 #[test]
+fn proof_export_builds_map_set_nonempty_when_lake_is_available() {
+    // `Map.len(Map.set(m, k, v)) >= 1` — set yields a non-empty map. Needs
+    // induction (the hand-proved prelude lemma `AverMap.len_set_ge_one`); the
+    // `emit_map_len_set_positive_law` rung discharges it. Sorry budget 0 —
+    // revert and the law regresses to a bare sorry. Dafny's Z3 proves it.
+    assert_proof_builds_with_sorry_budget(
+        "examples/formal/map_set_nonempty.av",
+        "aver-proof-map-set-nonempty",
+        0,
+    );
+}
+
+#[test]
 fn proof_dafny_verifies_fibonacci_when_dafny_is_available() {
     // `goldenApprox(n)` divides `Float.fromInt(fib(n + 1))` by
     // `Float.fromInt(fib(n))`. Float `/` lowers via the `FloatDiv`

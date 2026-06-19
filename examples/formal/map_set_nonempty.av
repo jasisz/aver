@@ -1,0 +1,23 @@
+module MapSetNonEmpty
+    exposes [sizeAfterInsert]
+    intent =
+        "Inserting into a registry (a Map) always leaves it non-empty — there is"
+        "at least the entry just written. Proved UNIVERSALLY: for every map, key,"
+        "and value, `Map.len(Map.set(reg, k, v)) >= 1`."
+        ""
+        "Unlike the empty-map facts, this is not a definitional unfold: `set`"
+        "recurses over the entry list, so the proof needs induction (its result"
+        "is a non-empty list whether the key was new or already present). The"
+        "Lean side carries that induction in a hand-proved prelude lemma"
+        "(`AverMap.len_set_ge_one`); Dafny's Z3 discharges it directly."
+    effects []
+
+fn sizeAfterInsert(reg: Map<String, Int>, k: String, v: Int) -> Int
+    ? "Number of entries after inserting (k, v) into reg."
+    Map.len(Map.set(reg, k, v))
+
+verify sizeAfterInsert law nonEmptyAfterInsert
+    given reg: Map<String, Int> = [{}, {"a" => 1}, {"a" => 1, "b" => 2}]
+    given k: String = ["x", "a"]
+    given v: Int = [7]
+    Map.len(Map.set(reg, k, v)) >= 1 => true
