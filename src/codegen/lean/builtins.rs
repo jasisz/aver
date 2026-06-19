@@ -94,7 +94,12 @@ pub fn emit_builtin_call(
         ByteFromHex => format!("AverByte.fromHex {}", p(&a[0])),
 
         // ---- String ----
-        StringLen => format!("{}.length", p(&a[0])),
+        // `*.len` builtins return Aver `Int` (= ℤ), so their Lean lowering must
+        // produce an `Int`, not a bare Lean `Nat`: dropping to `Nat` silently
+        // changes the type (a spurious `Nat = Nat` proof for a `Nat`-vs-`Int`
+        // law) AND mis-computes `Int` arithmetic (`len x - 5` is ≥0-truncated in
+        // `Nat` but can be negative in `Int`). Wrap each as `Int.ofNat`.
+        StringLen => format!("(Int.ofNat {}.length)", p(&a[0])),
         StringCharAt => format!("String.charAtAv {} {}", p(&a[0]), p(&a[1])),
         StringChars => format!("String.charsAv {}", p(&a[0])),
         StringSlice => format!("String.sliceAv {} {} {}", p(&a[0]), p(&a[1]), p(&a[2])),
@@ -117,7 +122,7 @@ pub fn emit_builtin_call(
         // ---- List ----
         ListLen => {
             let subj = emit_list_length_subject(&args[0], ctx);
-            format!("{}.length", subj)
+            format!("(Int.ofNat {}.length)", subj)
         }
         ListHead => format!("{}.head?", p(&a[0])),
         ListTail => format!("{}.tail?", p(&a[0])),
@@ -152,7 +157,7 @@ pub fn emit_builtin_call(
             p(&a[1]),
             p(&a[2])
         ),
-        VectorLen => format!("{}.size", p(&a[0])),
+        VectorLen => format!("(Int.ofNat {}.size)", p(&a[0])),
         VectorFromList => format!("{}.toArray", p(&a[0])),
         ListFromVector => format!("{}.toList", p(&a[0])),
 
@@ -164,7 +169,7 @@ pub fn emit_builtin_call(
         MapKeys => format!("AverMap.keys {}", p(&a[0])),
         MapValues => format!("AverMap.values {}", p(&a[0])),
         MapEntries => format!("AverMap.entries {}", p(&a[0])),
-        MapLen => format!("AverMap.len {}", p(&a[0])),
+        MapLen => format!("(Int.ofNat (AverMap.len {}))", p(&a[0])),
         MapFromList => format!("AverMap.fromList {}", p(&a[0])),
     };
     Some(result)
@@ -252,6 +257,9 @@ mod tests {
         )
         .expect("List.len should be emitted");
 
-        assert_eq!(emitted, "(([] : List Unit)).length");
+        // `List.len` returns Aver `Int`, so the Lean lowering is `Int.ofNat`-wrapped
+        // (a bare Lean `Nat` would silently change the type); the empty-list subject
+        // still carries its `: List Unit` annotation.
+        assert_eq!(emitted, "(Int.ofNat (([] : List Unit)).length)");
     }
 }
