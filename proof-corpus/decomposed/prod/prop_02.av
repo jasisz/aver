@@ -1,0 +1,33 @@
+module Prop02
+    intent =
+        "TIP prod prop_02: length(x ++ y) = length(y ++ x)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn length(x: List<Int>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..xs] -> Nat.S(length(xs))
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+verify length law lengthConcatHomo
+    given x: List<Int> = [[], [1], [1, 2, 3]]
+    given y: List<Int> = [[], [2], [4, 5]]
+    length(List.concat(x, y)) => plus(length(x), length(y))
+
+verify plus law plusComm
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    plus(x, y) => plus(y, x)
+
+verify length law lengthConcatComm
+    given x: List<Int> = [[1], [2, 3], [1, 2, 3]]
+    given y: List<Int> = [[4], [5], [4, 5]]
+    length(List.concat(x, y)) => length(List.concat(y, x))

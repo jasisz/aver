@@ -323,8 +323,11 @@ fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
         "proof-corpus/decomposed/prod/prop_31.av",
         // decomposition-reach chunk #2 (deterministic spread over fresh open pool).
         "proof-corpus/decomposed/isaplanner/prop_55.av",
-        // (prod/prop_02 removed: it closed only via the Aver-false `length => List.len`
-        //  Nat-vs-Int bridge, now correctly a type error — see the checker fix.)
+        // prop_02/prop_06 re-derived SOUND (pure Nat=Nat homomorphisms — no Aver-false
+        // builtin bridge) after the checker now rejects `length => List.len`; both pass
+        // `aver verify` AND `--check` universal.
+        "proof-corpus/decomposed/prod/prop_02.av",
+        "proof-corpus/decomposed/prod/prop_06.av",
         "proof-corpus/decomposed/prod/prop_19.av",
         "proof-corpus/decomposed/prod/prop_34.av",
         // bridge-free structural rung: the `even`-shift targets whose sibling
