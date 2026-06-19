@@ -624,6 +624,20 @@ pub(super) enum Commands {
         /// byte-identical to before (no new key, `open_goal` absent).
         #[arg(long, requires = "check")]
         explain: bool,
+        /// `--check` only (Lean-only): MINIMIZE each auto-proof. The emitter
+        /// pins a deterministic `first | (tactic₁) | … | sorry` PORTFOLIO at
+        /// every law; this rewrites each one to the single tactic that
+        /// actually closed it, dropping the alternation and the `sorry` floor,
+        /// so the generated Lean reads like a hand-written proof (and carries
+        /// no `sorry` tokens at all). Mechanism: a per-branch `trace` marker
+        /// self-reports the winning `first` alternative in ONE instrumented
+        /// `lake build` (losing branches backtrack, so only the winner's
+        /// marker surfaces); the minimized project is then RE-VERIFIED — if it
+        /// no longer closes, that theorem keeps its original portfolio, so
+        /// minimization is fail-safe (it can never produce a worse or unsound
+        /// proof, only a non-minimized one).
+        #[arg(long, requires = "check")]
+        minimize: bool,
         /// THE RATCHET. Compare the freshly recomputed per-law proof
         /// manifest against this committed baseline and exit non-zero on
         /// any regression: a previously-proven law that is removed, demoted

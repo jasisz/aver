@@ -4971,12 +4971,17 @@ pub(super) fn cmd_proof(
     sorry_budget: Option<usize>,
     check_json: bool,
     explain: bool,
+    // Reserved for the `--minimize` proof-output pass (collapse each `first |
+    // … | sorry` portfolio to its winning branch on the Tactic IR). Plumbed
+    // through now; consumed once the IR migration lands.
+    minimize: bool,
     gate: Option<&str>,
     write_baseline: Option<&str>,
     discover: bool,
     emit_laws: bool,
     emit_laws_to: Option<&str>,
 ) {
+    let _ = minimize;
     let (mut ctx, module_root) = build_codegen_context(
         file,
         project_name,
