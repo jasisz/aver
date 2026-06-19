@@ -793,6 +793,18 @@ fn emit_verify_law_forall_auto_proof_inner(
             None
         })
         .or_else(|| {
+            // Pure builtin `Int.abs` identities (`Int.abs(Int.abs x) =
+            // Int.abs x`, `Int.abs(x*y) = Int.abs x * Int.abs y`,
+            // `Int.abs x >= 0 = true`). Placed BEFORE the LinearArithmetic
+            // rung: idempotence/non-negativity otherwise route there and its
+            // `simp only [cone] <;> omega` can't see through the `Int.natAbs`
+            // cast (and, with no sorry floor, hard-fails the build), while the
+            // `*`-distribution law falls through to a bare sorry. Dafny's Z3
+            // proves all three. Shape-driven on `Int.abs` in the law sides, so
+            // it leaves every non-abs LinearArithmetic law untouched.
+            emit_int_abs_identity_law(law, &proof_intro_names)
+        })
+        .or_else(|| {
             // IR-pinned SimpOmegaUnfold takes precedence over the
             // legacy detection here — the lowerer already ran the
             // same shape check and captured `unfold_fns`,
@@ -1218,6 +1230,45 @@ fn is_concat_reassociation(
     let left_nested = matches!(&lhs.node, Expr::BinOp(BinOp::Add, l, _) if matches!(l.node, Expr::BinOp(BinOp::Add, _, _)));
     let right_nested = matches!(&rhs.node, Expr::BinOp(BinOp::Add, _, r) if matches!(r.node, Expr::BinOp(BinOp::Add, _, _)));
     left_nested && right_nested
+}
+
+/// Pure builtin `Int.abs` identities — idempotence (`Int.abs(Int.abs x) =
+/// Int.abs x`), multiplicativity (`Int.abs(x*y) = Int.abs x * Int.abs y`),
+/// and non-negativity (`Int.abs x >= 0 = true`). `Int.abs` lowers to the
+/// Int-honest `((… : Int).natAbs : Int)`, so these are facts about the
+/// `Nat.cast` of a `natAbs`; the cone is already inlined in the goal, so no
+/// def unfold is needed. One tactic closes all three: `Int.natAbs_natCast`
+/// collapses `(↑n).natAbs = n` (idempotence), `Int.natAbs_mul` +
+/// `Int.natCast_mul` push the product through the cast (multiplicativity),
+/// and the full-`simp` fallback discharges the Bool `… >= 0 = true` wrapper
+/// (non-negativity). The `| sorry` floor keeps it sound — `simp`/`omega` are
+/// kernel-checked, so it can never close a false law.
+fn emit_int_abs_identity_law(law: &VerifyLaw, proof_intro_names: &[String]) -> Option<AutoProof> {
+    if law.when.is_some() || !(law_expr_calls_int_abs(&law.lhs) || law_expr_calls_int_abs(&law.rhs))
+    {
+        return None;
+    }
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        proof_lines: intro_then(
+            proof_intro_names,
+            vec![
+                "first | (simp only [Int.natAbs_natCast, Int.natAbs_mul, Int.natCast_mul] <;> omega) \
+                 | (simp [Int.natAbs_natCast, Int.natAbs_mul, Int.natCast_mul]) | sorry"
+                    .to_string(),
+            ],
+        ),
+        replaces_theorem: false,
+    })
+}
+
+/// `e` contains an `Int.abs(...)` builtin call at any depth — the trigger
+/// for [`emit_int_abs_identity_law`].
+fn law_expr_calls_int_abs(e: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
+    use crate::ast::Expr;
+    let here = matches!(&e.node, Expr::FnCall(callee, _)
+        if crate::codegen::common::expr_to_dotted_name(&callee.node).as_deref() == Some("Int.abs"));
+    here || law_expr_children_any(e, law_expr_calls_int_abs)
 }
 
 /// Pure builtin empty-map facts: `Map.get(empty, k) = None`,
