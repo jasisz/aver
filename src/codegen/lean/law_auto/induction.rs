@@ -1370,7 +1370,7 @@ fn emit_map_fold_homomorphism(
 
     AutoProof {
         support_lines: Vec::new(),
-        proof_lines,
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
         replaces_theorem: false,
     }
 }
@@ -2529,7 +2529,7 @@ fn emit_list_induction(
 
     Some(AutoProof {
         support_lines,
-        proof_lines,
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
         replaces_theorem: false,
     })
 }
@@ -2659,7 +2659,7 @@ fn emit_both_args_peeling_law(
 
     Some(AutoProof {
         support_lines: Vec::new(),
-        proof_lines,
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
         replaces_theorem: false,
     })
 }
@@ -2921,7 +2921,7 @@ fn emit_simple_induction(
     support_lines.extend(comm_support);
     Some(AutoProof {
         support_lines,
-        proof_lines,
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
         replaces_theorem: false,
     })
 }

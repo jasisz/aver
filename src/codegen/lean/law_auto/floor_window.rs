@@ -115,7 +115,7 @@ pub(super) fn emit_floor_window_law(
     };
     Some(AutoProof {
         support_lines: text.lines().map(|l| l.to_string()).collect(),
-        proof_lines: Vec::new(),
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(Vec::new()),
         replaces_theorem: true,
     })
 }

@@ -56,14 +56,14 @@ fn emit_effectful_spec_equivalence_law(
         ];
         return Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(
+            body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 intro_names,
                 // `simp` (no-a variant) avoids the `unnecessarySimpa`
                 // linter warning when no goal is left to close after
                 // unfolding — a bare def-equality match doesn't need
                 // `simpa`'s cleanup step.
                 vec![format!("simp [{}]", simp_defs.join(", "))],
-            ),
+            )),
             replaces_theorem: false,
         });
     }
@@ -80,10 +80,10 @@ fn emit_effectful_spec_equivalence_law(
     let simp_defs: Vec<String> = law_simp_defs(ctx, vb, law).into_iter().collect();
     Some(AutoProof {
         support_lines: Vec::new(),
-        proof_lines: intro_then(
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
             intro_names,
             vec![format!("simp [{}]", simp_defs.join(", "))],
-        ),
+        )),
         replaces_theorem: false,
     })
 }
@@ -190,10 +190,10 @@ pub(super) fn emit_spec_function_equivalence_law(
         let simp_defs = law_simp_defs(ctx, vb, law).into_iter().collect::<Vec<_>>();
         Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(
+            body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 intro_names,
                 vec![format!("simpa [{}]", simp_defs.join(", "))],
-            ),
+            )),
             replaces_theorem: false,
         })
     };

@@ -50,6 +50,16 @@ pub struct InductionArm {
 }
 
 impl Tactic {
+    /// Wrap already-rendered proof lines as an opaque sequence — the
+    /// behavior-preserving bridge for proofs not yet structured into `First`
+    /// nodes. `raw(lines).render() == lines`, so migrating a site to
+    /// `body: Tactic::raw(<old proof_lines>)` is a no-op on the emitted Lean;
+    /// only the portfolio sites that later become real [`Tactic::First`] trees
+    /// gain anything for `--minimize`.
+    pub fn raw(lines: Vec<String>) -> Tactic {
+        Tactic::Seq(lines.into_iter().map(Tactic::Leaf).collect())
+    }
+
     /// Render to the proof-body lines that follow `:= by` (the caller supplies
     /// the theorem-level indent when it stitches these into the file). Produces
     /// valid Lean; formatting is normalised (it need not be byte-identical to
@@ -61,6 +71,10 @@ impl Tactic {
     fn render_indent(&self, indent: usize) -> Vec<String> {
         let pad = "  ".repeat(indent);
         match self {
+            // Preserve an empty leaf as an empty line (`"".lines()` yields
+            // NOTHING, which would silently drop blank lines from `raw`-wrapped
+            // proofs); only split a genuinely multi-line leaf.
+            Tactic::Leaf(s) if !s.contains('\n') => vec![format!("{pad}{s}")],
             Tactic::Leaf(s) => s.lines().map(|l| format!("{pad}{l}")).collect(),
             Tactic::Sorry => vec![format!("{pad}sorry")],
             Tactic::Seq(steps) => steps.iter().flat_map(|t| t.render_indent(indent)).collect(),

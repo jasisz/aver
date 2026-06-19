@@ -262,7 +262,7 @@ done"#
 
     Some(AutoProof {
         support_lines,
-        proof_lines,
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
         replaces_theorem: false,
     })
 }

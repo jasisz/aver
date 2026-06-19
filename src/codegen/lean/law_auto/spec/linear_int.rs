@@ -80,7 +80,7 @@ pub(super) fn emit_linear_int_omega_spec_equivalence_law(
 
         Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(
+            body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 intro_names,
                 vec![
                     format!(
@@ -90,7 +90,7 @@ pub(super) fn emit_linear_int_omega_spec_equivalence_law(
                     ),
                     "omega".to_string(),
                 ],
-            ),
+            )),
             replaces_theorem: false,
         })
     };

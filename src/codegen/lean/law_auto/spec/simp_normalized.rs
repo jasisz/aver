@@ -179,10 +179,10 @@ pub(super) fn emit_simp_normalized_spec_equivalence_law(
         let simp_defs = law_simp_defs(ctx, vb, law).into_iter().collect::<Vec<_>>();
         Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(
+            body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 intro_names,
                 vec![format!("simp [{}]", simp_defs.join(", "))],
-            ),
+            )),
             replaces_theorem: false,
         })
     };

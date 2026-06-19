@@ -31,7 +31,11 @@ pub use induction::residual_probe_body;
 
 pub struct AutoProof {
     pub support_lines: Vec<String>,
-    pub proof_lines: Vec<String>,
+    /// The proof body as a structured tactic tree (`:= by` block). Built by
+    /// each rung; rendered to lines by the consumer. Proofs not yet structured
+    /// into `First` portfolios wrap their lines via [`tactic_ir::Tactic::raw`]
+    /// (a no-op on output). `--minimize` collapses the `First` nodes here.
+    pub body: super::tactic_ir::Tactic,
     /// When true, the main theorem statement is already included in `support_lines`
     /// and should not be emitted separately by the caller.
     pub replaces_theorem: bool,
@@ -157,7 +161,8 @@ fn maybe_wrap_with_grind_rung(
     // rung (the `RingIdentity` family emits `first | (grind [<cone>]; …`
     // internally). Re-wrapping it would emit a redundant outer `grind`
     // arm — pure waste (a second grind saturation on the same goal). Skip.
-    if proof.proof_lines.iter().any(|l| l.contains("grind")) {
+    let lines = proof.body.render();
+    if lines.iter().any(|l| l.contains("grind")) {
         return proof;
     }
     // SHAPE GATE: only wrap a grind-amenable (flat algebraic/ring/order)
@@ -177,8 +182,7 @@ fn maybe_wrap_with_grind_rung(
     // goals; pairing it with the frontier gate means `grind` is emitted
     // ONLY where it can do NEW work — exactly the open flat laws (like the
     // nonlinear ring identity the simp package no longer normalizes).
-    let ends_in_sorry = proof
-        .proof_lines
+    let ends_in_sorry = lines
         .iter()
         .rev()
         .find(|l| !l.trim().is_empty())
@@ -189,7 +193,7 @@ fn maybe_wrap_with_grind_rung(
     // The proof must be the canonical `intro <givens>` + body shape
     // (the first proof line, post-indent, is the `intro`). Anything
     // else is left as-is rather than guessing where to splice the arm.
-    let Some(first_line) = proof.proof_lines.first() else {
+    let Some(first_line) = lines.first() else {
         return proof;
     };
     if !first_line.trim_start().starts_with("intro ") {
@@ -204,12 +208,12 @@ fn maybe_wrap_with_grind_rung(
     if cone.is_empty() {
         return proof;
     }
-    let mut proof_lines = proof.proof_lines;
+    let mut proof_lines = lines;
     let intro_line = proof_lines.remove(0);
     let wrapped = wrap_body_with_grind_rung(intro_line, proof_lines, &cone);
     AutoProof {
         support_lines: proof.support_lines,
-        proof_lines: wrapped,
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(wrapped),
         replaces_theorem: false,
     }
 }
@@ -378,7 +382,10 @@ fn emit_verify_law_forall_auto_proof_inner(
         if let Some(lines) = proof_lines {
             return Some(AutoProof {
                 support_lines: Vec::new(),
-                proof_lines: intro_then(&proof_intro_names, lines),
+                body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
+                    &proof_intro_names,
+                    lines,
+                )),
                 replaces_theorem: false,
             });
         }
@@ -395,10 +402,10 @@ fn emit_verify_law_forall_auto_proof_inner(
         let lean_names: Vec<String> = extra_unfolds.iter().map(|n| aver_name_to_lean(n)).collect();
         return Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(
+            body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 &proof_intro_names,
                 vec![format!("simpa [{}]", lean_names.join(", "))],
-            ),
+            )),
             replaces_theorem: false,
         });
     }
@@ -418,13 +425,13 @@ fn emit_verify_law_forall_auto_proof_inner(
         let lean_names: Vec<String> = unfold_fns.iter().map(|n| aver_name_to_lean(n)).collect();
         return Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(
+            body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 &proof_intro_names,
                 vec![format!(
                     "simp only [{}] <;> (first | (split <;> rfl) | rfl | decide)",
                     lean_names.join(", ")
                 )],
-            ),
+            )),
             replaces_theorem: false,
         });
     }
@@ -451,10 +458,10 @@ fn emit_verify_law_forall_auto_proof_inner(
             .join(" <;> ");
         return Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(
+            body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 &proof_intro_names,
                 vec![format!("{cascade} <;> (first | rfl | decide | sorry)")],
-            ),
+            )),
             replaces_theorem: false,
         });
     }
@@ -522,7 +529,7 @@ fn emit_verify_law_forall_auto_proof_inner(
     {
         return Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(
+            body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 &proof_intro_names,
                 vec![
                     format!(
@@ -532,7 +539,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                     ),
                     "omega".to_string(),
                 ],
-            ),
+            )),
             replaces_theorem: false,
         });
     }
@@ -549,10 +556,10 @@ fn emit_verify_law_forall_auto_proof_inner(
         let lean_names: Vec<String> = extra_unfolds.iter().map(|n| aver_name_to_lean(n)).collect();
         return Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(
+            body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 &proof_intro_names,
                 vec![format!("simp [{}]", lean_names.join(", "))],
-            ),
+            )),
             replaces_theorem: false,
         });
     }
@@ -568,14 +575,14 @@ fn emit_verify_law_forall_auto_proof_inner(
     {
         return Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(
+            body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 &proof_intro_names,
                 vec![format!(
                     "simp [{}, {}]",
                     aver_name_to_lean(impl_fn),
                     aver_name_to_lean(spec_fn)
                 )],
-            ),
+            )),
             replaces_theorem: false,
         });
     }
@@ -678,7 +685,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                 };
                 return Some(AutoProof {
                     support_lines: Vec::new(),
-                    proof_lines: intro_then(
+                    body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                         &proof_intro_names,
                         vec![format!(
                             "simpa using {} {} {} {}",
@@ -687,7 +694,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                             atom_arg(&args[1]),
                             atom_arg(&args[2]),
                         )],
-                    ),
+                    )),
                     replaces_theorem: false,
                 });
             }
@@ -747,7 +754,10 @@ fn emit_verify_law_forall_auto_proof_inner(
                 };
                 return Some(AutoProof {
                     support_lines: Vec::new(),
-                    proof_lines: intro_then(&proof_intro_names, vec![simp_first, simp_second]),
+                    body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
+                        &proof_intro_names,
+                        vec![simp_first, simp_second],
+                    )),
                     replaces_theorem: false,
                 });
             }
@@ -786,7 +796,10 @@ fn emit_verify_law_forall_auto_proof_inner(
                 ];
                 return Some(AutoProof {
                     support_lines: Vec::new(),
-                    proof_lines: intro_then(&proof_intro_names, lines),
+                    body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
+                        &proof_intro_names,
+                        lines,
+                    )),
                     replaces_theorem: false,
                 });
             }
@@ -846,7 +859,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                 let uses_max_min = linear_arith_uses_max_min(unfold_fns, ctx);
                 return Some(AutoProof {
                     support_lines: Vec::new(),
-                    proof_lines: emit_simp_omega_from_ir(
+                    body: crate::codegen::lean::tactic_ir::Tactic::raw(emit_simp_omega_from_ir(
                         unfold_fns,
                         wrapper_return,
                         smart_guard.as_ref(),
@@ -856,7 +869,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                         law.when.is_some(),
                         uses_max_min,
                         ctx,
-                    ),
+                    )),
                     replaces_theorem: false,
                 });
             }
@@ -865,7 +878,7 @@ fn emit_verify_law_forall_auto_proof_inner(
         .or_else(|| {
             emit_guarded_domain_law(law).map(|proof_lines| AutoProof {
                 support_lines: Vec::new(),
-                proof_lines,
+                body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
                 replaces_theorem: false,
             })
         })
@@ -1011,14 +1024,14 @@ fn emit_ring_identity_law(
         // caught `sorry`. Every alternation arm ends in `done`, so a
         // tactic that leaves a residual goal falls through rather than
         // raising an "unsolved goals" build error.
-        proof_lines: intro_then(
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
             proof_intro_names,
             vec![format!(
                 "first | (grind [{}]; done) | (simp [{}]; done) | sorry",
                 grind_cone.join(", "),
                 simp_set.join(", ")
             )],
-        ),
+        )),
         replaces_theorem: false,
     })
 }
@@ -1071,13 +1084,13 @@ fn emit_simp_over_prelude_lemmas_law(
     push_unique(&mut simp_set, "Int.add_sub_cancel".to_string());
     Some(AutoProof {
         support_lines: Vec::new(),
-        proof_lines: intro_then(
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
             proof_intro_names,
             vec![format!(
                 "first | (simp [{}]; done) | sorry",
                 simp_set.join(", ")
             )],
-        ),
+        )),
         replaces_theorem: false,
     })
 }
@@ -1116,13 +1129,13 @@ fn emit_string_length_additive_law(
     }
     Some(AutoProof {
         support_lines: Vec::new(),
-        proof_lines: intro_then(
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
             proof_intro_names,
             vec![
                 "first | (simp only [String.add_eq_append, String.length_append] <;> omega) | sorry"
                     .to_string(),
             ],
-        ),
+        )),
         replaces_theorem: false,
     })
 }
@@ -1203,14 +1216,14 @@ fn emit_string_append_monoid_law(
     }
     Some(AutoProof {
         support_lines: Vec::new(),
-        proof_lines: intro_then(
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
             proof_intro_names,
             vec![
                 "first | (simp only [String.add_eq_append, String.append_empty, \
                  String.empty_append, String.append_assoc]) | sorry"
                     .to_string(),
             ],
-        ),
+        )),
         replaces_theorem: false,
     })
 }
@@ -1259,14 +1272,14 @@ fn emit_int_abs_identity_law(law: &VerifyLaw, proof_intro_names: &[String]) -> O
     }
     Some(AutoProof {
         support_lines: Vec::new(),
-        proof_lines: intro_then(
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
             proof_intro_names,
             vec![
                 "first | (simp only [Int.natAbs_natCast, Int.natAbs_mul, Int.natCast_mul] <;> omega) \
                  | (simp [Int.natAbs_natCast, Int.natAbs_mul, Int.natCast_mul]) | sorry"
                     .to_string(),
             ],
-        ),
+        )),
         replaces_theorem: false,
     })
 }
@@ -1319,13 +1332,13 @@ fn emit_map_empty_fact_law(
     );
     Some(AutoProof {
         support_lines: Vec::new(),
-        proof_lines: intro_then(
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
             proof_intro_names,
             vec![format!(
                 "first | (simp only [{}] ; done) | sorry",
                 simp_set.join(", ")
             )],
-        ),
+        )),
         replaces_theorem: false,
     })
 }
@@ -1421,10 +1434,10 @@ fn emit_map_len_set_positive_law(
     }
     Some(AutoProof {
         support_lines: Vec::new(),
-        proof_lines: intro_then(
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
             proof_intro_names,
             vec!["first | (exact AverMap.len_set_ge_one _ _ _) | sorry".to_string()],
-        ),
+        )),
         replaces_theorem: false,
     })
 }

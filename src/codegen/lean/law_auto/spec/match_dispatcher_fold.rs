@@ -31,7 +31,7 @@ pub(in super::super) fn emit_match_dispatcher_fold_law(
 
     Some(AutoProof {
         support_lines: Vec::new(),
-        proof_lines,
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
         replaces_theorem: false,
     })
 }
