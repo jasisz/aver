@@ -40,6 +40,20 @@ fn proof_export_builds_string_concat_monoid_when_lake_is_available() {
 }
 
 #[test]
+fn proof_export_builds_empty_map_facts_when_lake_is_available() {
+    // Pure builtin empty-map facts (`Map.get(empty, k) = None`,
+    // `Map.has(empty, k) = false`, `Map.len(empty) = 0`). The empty-map-precise
+    // `emit_map_empty_fact_law` rung closes all three as universals; Dafny's Z3
+    // already proves them. Sorry budget 0 — revert the rung and each regresses
+    // to a caught sorry.
+    assert_proof_builds_with_sorry_budget(
+        "examples/formal/empty_map_facts.av",
+        "aver-proof-empty-map-facts",
+        0,
+    );
+}
+
+#[test]
 fn proof_dafny_verifies_fibonacci_when_dafny_is_available() {
     // `goldenApprox(n)` divides `Float.fromInt(fib(n + 1))` by
     // `Float.fromInt(fib(n))`. Float `/` lowers via the `FloatDiv`

@@ -858,6 +858,19 @@ fn emit_verify_law_forall_auto_proof_inner(
             })
         })
         .or_else(|| {
+            // Pure builtin empty-map facts (`Map.get(empty, k) = None`,
+            // `Map.has(empty, k) = false`, `Map.len(empty) = 0`). Placed
+            // BEFORE the prelude rung: such a law is stated through its
+            // subject fn (`getE(k) => None`), so `SimpOverPreludeLemmas`
+            // claims it but its minimal `simp [cone, Int.add_sub_cancel]`
+            // can't reduce the `AverMap.*` accessor and parks it on a sorry.
+            // This rung's bounded `simp only [cone, AverMap.*, []-lemmas]`
+            // closes it. The recognizer is empty-map-precise (the accessor's
+            // map arg must be a `{}` literal or a const fn returning `{}`),
+            // so it never steals a Map law the prelude rung could close.
+            emit_map_empty_fact_law(vb, law, ctx, &proof_intro_names)
+        })
+        .or_else(|| {
             // IR-pinned `RingIdentity` — rendered (like the prelude
             // rung below) after every legacy ad-hoc fallback, so it
             // fires only where the chain used to fall through. The
@@ -1205,6 +1218,130 @@ fn is_concat_reassociation(
     let left_nested = matches!(&lhs.node, Expr::BinOp(BinOp::Add, l, _) if matches!(l.node, Expr::BinOp(BinOp::Add, _, _)));
     let right_nested = matches!(&rhs.node, Expr::BinOp(BinOp::Add, _, r) if matches!(r.node, Expr::BinOp(BinOp::Add, _, _)));
     left_nested && right_nested
+}
+
+/// Pure builtin empty-map facts: `Map.get(empty, k) = None`,
+/// `Map.has(empty, k) = false`, `Map.len(empty) = 0`. The subject fn body
+/// reduces to a `Map.get`/`has`/`len` over a provably empty map; Dafny's Z3
+/// discharges these, but the Lean generic grind rung can't reduce the
+/// `AverMap.*` accessor on `[]` and parks the law on a caught sorry.
+///
+/// This rung unfolds the law's cone (subject fn + the empty-map source fn)
+/// together with the accessor defs and the `[]` lemmas, which collapses the
+/// goal: `AverMap.get [] k = none`, `AverMap.has [] k = false` (via
+/// `List.any_nil`), `((AverMap.len []) : Int) = 0` (via `List.length_nil` +
+/// `Int.ofNat_zero`). One unified `simp only` set closes any of the three;
+/// the `| sorry` floor keeps it sound — a Map law whose argument is NOT
+/// empty simply fails the `; done` and degrades to the same caught sorry it
+/// had before. Last-in-cascade and shape-driven, so it cannot perturb an
+/// existing proof (a Map law another rung already owns is handled earlier).
+fn emit_map_empty_fact_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    proof_intro_names: &[String],
+) -> Option<AutoProof> {
+    if law.when.is_some() || !subject_fn_accesses_empty_map(vb, ctx) {
+        return None;
+    }
+    let mut simp_set: Vec<String> = shared::law_simp_defs(ctx, vb, law).into_iter().collect();
+    simp_set.extend(
+        [
+            "AverMap.get",
+            "AverMap.has",
+            "AverMap.len",
+            "List.any_nil",
+            "List.length_nil",
+            "Int.ofNat_zero",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        proof_lines: intro_then(
+            proof_intro_names,
+            vec![format!(
+                "first | (simp only [{}] ; done) | sorry",
+                simp_set.join(", ")
+            )],
+        ),
+        replaces_theorem: false,
+    })
+}
+
+/// True when the law's subject fn body accesses a PROVABLY EMPTY map via
+/// `Map.get`/`Map.has`/`Map.len` — the precise trigger for
+/// [`emit_map_empty_fact_law`]. Requiring emptiness (not just any Map
+/// accessor) keeps the rung from stealing a non-empty Map law the prelude
+/// rung might close.
+fn subject_fn_accesses_empty_map(vb: &VerifyBlock, ctx: &CodegenContext) -> bool {
+    let Some(fd) = ctx.fn_def_by_name(&vb.fn_name, None) else {
+        return false;
+    };
+    fd.body.stmts().iter().any(|stmt| {
+        let e = match stmt {
+            crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => e,
+        };
+        expr_accesses_empty_map(e, ctx)
+    })
+}
+
+/// `e` contains a `Map.get`/`Map.has`/`Map.len` call whose map argument is a
+/// provably empty map (see [`expr_is_empty_map`]), at any depth.
+fn expr_accesses_empty_map(
+    e: &crate::ast::Spanned<crate::ast::Expr>,
+    ctx: &CodegenContext,
+) -> bool {
+    use crate::ast::Expr;
+    if let Expr::FnCall(callee, args) = &e.node
+        && !args.is_empty()
+        && matches!(
+            crate::codegen::common::expr_to_dotted_name(&callee.node).as_deref(),
+            Some("Map.get") | Some("Map.has") | Some("Map.len")
+        )
+        && expr_is_empty_map(&args[0], ctx)
+    {
+        return true;
+    }
+    // Recurse into the compound `Expr` variants a law subject's body holds.
+    match &e.node {
+        Expr::Attr(o, _) => expr_accesses_empty_map(o, ctx),
+        Expr::FnCall(c, args) => {
+            expr_accesses_empty_map(c, ctx) || args.iter().any(|a| expr_accesses_empty_map(a, ctx))
+        }
+        Expr::BinOp(_, l, r) => expr_accesses_empty_map(l, ctx) || expr_accesses_empty_map(r, ctx),
+        Expr::Neg(i) | Expr::ErrorProp(i) => expr_accesses_empty_map(i, ctx),
+        Expr::Match { subject, arms } => {
+            expr_accesses_empty_map(subject, ctx)
+                || arms.iter().any(|a| expr_accesses_empty_map(&a.body, ctx))
+        }
+        Expr::Constructor(_, Some(inner)) => expr_accesses_empty_map(inner, ctx),
+        Expr::List(xs) | Expr::Tuple(xs) | Expr::IndependentProduct(xs, _) => {
+            xs.iter().any(|x| expr_accesses_empty_map(x, ctx))
+        }
+        _ => false,
+    }
+}
+
+/// A provably empty map: the `{}` literal, or a zero-arg call to a user fn
+/// whose body is exactly `{}`.
+fn expr_is_empty_map(e: &crate::ast::Spanned<crate::ast::Expr>, ctx: &CodegenContext) -> bool {
+    use crate::ast::{Expr, Stmt};
+    match &e.node {
+        Expr::MapLiteral(entries) => entries.is_empty(),
+        Expr::FnCall(callee, args) if args.is_empty() => {
+            crate::codegen::common::expr_to_dotted_name(&callee.node)
+                .and_then(|n| ctx.fn_def_by_name(&n, None))
+                .is_some_and(|fd| {
+                    let stmts = fd.body.stmts();
+                    stmts.len() == 1
+                        && matches!(&stmts[0],
+                            Stmt::Expr(b) if matches!(&b.node, Expr::MapLiteral(es) if es.is_empty()))
+                })
+        }
+        _ => false,
+    }
 }
 
 /// Try `simp [fn_names...] ; omega` for laws on Int-domain functions.

@@ -1,0 +1,41 @@
+module EmptyMapFacts
+    exposes [lookup, contains, size]
+    intent =
+        "A freshly-created registry (an empty Map) has no entries. Three facts a"
+        "caller relies on before populating it, proved here as UNIVERSAL laws:"
+        "  - a lookup misses for every key (`Map.get(empty, k) = None`),"
+        "  - membership is false for every key (`Map.has(empty, k) = false`),"
+        "  - the size is zero (`Map.len(empty) = 0`)."
+        ""
+        "These are pure builtin facts about the empty map — no user recursion."
+        "Dafny's Z3 discharges them directly; the Lean backend proves them by"
+        "reducing the `AverMap` accessor on the empty entry list."
+    effects []
+
+fn emptyRegistry() -> Map<String, Int>
+    ? "A fresh, empty registry."
+    {}
+
+fn lookup(k: String) -> Option<Int>
+    ? "Look a key up in the fresh registry."
+    Map.get(emptyRegistry(), k)
+
+fn contains(k: String) -> Bool
+    ? "Is a key present in the fresh registry?"
+    Map.has(emptyRegistry(), k)
+
+fn size(ignored: Int) -> Int
+    ? "Number of entries in the fresh registry (always zero)."
+    Map.len(emptyRegistry())
+
+verify lookup law emptyHasNoEntries
+    given k: String = ["a", "x", "key"]
+    Map.get(emptyRegistry(), k) => Option.None
+
+verify contains law emptyContainsNothing
+    given k: String = ["a", "x", "key"]
+    Map.has(emptyRegistry(), k) => false
+
+verify size law emptyHasZeroSize
+    given ignored: Int = [0, 1]
+    Map.len(emptyRegistry()) => 0
