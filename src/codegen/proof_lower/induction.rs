@@ -108,87 +108,19 @@ pub(super) fn collect_fn_calls_expr(
     }
 }
 
-/// Collect the user-type *names* referenced by a type annotation string
-/// (`List<Run>`, `Result<Tree, String>`, `(A, B)`, …) into `out`. Parses
-/// the annotation with [`parse_type_annotation`] and walks the resulting
-/// `Type`, harvesting every `Type::Named` leaf. Builtin scalars and the
-/// collection constructors contribute nothing themselves — only the named
-/// (potential-ADT) leaves land; the caller filters those to actual user
-/// `TypeDef`s. Drives [`LawProofCone`]'s `types` alphabet.
-pub(super) fn collect_named_types_in_annotation(
-    annotation: &str,
-    out: &mut std::collections::BTreeSet<String>,
-) {
-    fn walk(ty: &crate::types::Type, out: &mut std::collections::BTreeSet<String>) {
-        use crate::types::Type;
-        match ty {
-            // syntax-discovery-only: collects named types from a source type
-            // annotation into the LawProofCone alphabet; `name` is the discovery
-            // cone key, not a backend-routing / output identity decision.
-            Type::Named { name, .. } => {
-                out.insert(name.clone());
-            }
-            Type::Result(a, b) | Type::Map(a, b) => {
-                walk(a, out);
-                walk(b, out);
-            }
-            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => walk(inner, out),
-            Type::Tuple(items) => {
-                for t in items {
-                    walk(t, out);
-                }
-            }
-            Type::Fn(args, ret, _) => {
-                for a in args {
-                    walk(a, out);
-                }
-                walk(ret, out);
-            }
-            Type::Int
-            | Type::Float
-            | Type::Str
-            | Type::Bool
-            | Type::Unit
-            | Type::Var(_)
-            | Type::Invalid => {}
-        }
-    }
-    walk(
-        &crate::codegen::common::parse_type_annotation(annotation),
-        out,
-    );
-}
-
 /// The scoped pure-function dependency closure of a `verify ... law` — the
-/// set of pure user functions a law's proof is allowed to mention, plus the
-/// ADTs those functions range over.
+/// set of pure user functions a law's proof is allowed to mention.
 ///
-/// Phase 0/2 of the lemma-discovery charter (`prompts/lemma-discovery.md`):
-/// the various strategy detectors each re-derive the pure-fn closure ad hoc
-/// (`law_helper_unfolds`, the spec-equivalence unfold list, etc.). This is
-/// the single reusable computation they share, and the substrate the term
-/// enumerator (`codegen::lemma_discovery`) builds on. `pure_fns` is the
-/// enumeration *vocabulary*; `types` is the type-directed generator's
-/// *signature alphabet* — the ADTs reachable from those fns' parameter and
-/// return annotations, which the enumerator needs to mint typed variables.
-///
-/// `law_helper_unfolds` consumes only `pure_fns` (transitively reachable
-/// helper source names, outer fn excluded, sorted for deterministic emit).
-/// `types` lands now because its consumer — the enumerator — has landed.
-/// Already-proven theorems and a content hash (the cache key) get added
-/// when *their* consumers (the proof cache / replay) land — not before.
+/// The various strategy detectors each re-derive the pure-fn closure ad hoc
+/// (`law_helper_unfolds`, the spec-equivalence unfold list, etc.); this is the
+/// single reusable computation they share. `law_helper_unfolds` consumes
+/// `pure_fns` (transitively reachable helper source names, outer fn excluded,
+/// sorted for deterministic emit).
 pub(crate) struct LawProofCone<'a> {
     /// Pure user fns transitively reachable from the law's lhs/rhs/when,
     /// in deterministic (sorted-by-name) order, excluding the law's own
     /// subject fn.
     pure_fns: Vec<&'a FnDef>,
-    /// User-defined ADTs (`Sum`/`Product` type defs) transitively reachable
-    /// from `pure_fns`' parameter and return type annotations, in
-    /// deterministic (sorted-by-name) order. Builtin scalars (`Int`,
-    /// `String`, …) and builtin records that don't resolve to a user
-    /// `TypeDef` are dropped — only types the enumerator can construct or
-    /// case-split on survive.
-    types: Vec<&'a TypeDef>,
 }
 
 impl<'a> LawProofCone<'a> {
@@ -256,51 +188,7 @@ impl<'a> LawProofCone<'a> {
         // canonical `fd.name`s of pure user fns, so every entry re-resolves.
         let pure_fns: Vec<&'a FnDef> = names.iter().filter_map(|n| resolve_user_fn(n)).collect();
 
-        // Type alphabet: ADTs reachable from the cone fns' signatures, then
-        // transitively through those types' own field annotations (a record
-        // field can name another ADT). Seed from every param + return type
-        // string of every pure fn in the cone.
-        let mut type_names: BTreeSet<String> = BTreeSet::new();
-        for fd in &pure_fns {
-            for (_, ann) in &fd.params {
-                collect_named_types_in_annotation(ann, &mut type_names);
-            }
-            collect_named_types_in_annotation(&fd.return_type, &mut type_names);
-        }
-        loop {
-            let before = type_names.len();
-            let snapshot: Vec<String> = type_names.iter().cloned().collect();
-            for name in snapshot {
-                let Some(td) = inputs.find_type_def(&name) else {
-                    continue;
-                };
-                match td {
-                    crate::ast::TypeDef::Sum { variants, .. } => {
-                        for v in variants {
-                            for field_ty in &v.fields {
-                                collect_named_types_in_annotation(field_ty, &mut type_names);
-                            }
-                        }
-                    }
-                    crate::ast::TypeDef::Product { fields, .. } => {
-                        for (_, field_ty) in fields {
-                            collect_named_types_in_annotation(field_ty, &mut type_names);
-                        }
-                    }
-                }
-            }
-            if type_names.len() == before {
-                break;
-            }
-        }
-        // Keep only names that resolve to a user `TypeDef`; builtin scalars
-        // (`Int`/`String`/…) and unregistered builtin records drop out here.
-        let types: Vec<&'a TypeDef> = type_names
-            .iter()
-            .filter_map(|n| inputs.find_type_def(n))
-            .collect();
-
-        Self { pure_fns, types }
+        Self { pure_fns }
     }
 
     /// The cone's pure-fn names, deterministic (sorted) order, excluding the
@@ -313,12 +201,6 @@ impl<'a> LawProofCone<'a> {
     /// may apply. Deterministic (sorted-by-name) order, law subject excluded.
     pub(crate) fn pure_fns(&self) -> &[&'a FnDef] {
         &self.pure_fns
-    }
-
-    /// The cone's ADT type alphabet — the user types the enumerator can mint
-    /// typed variables of or case-split on. Deterministic (sorted) order.
-    pub(crate) fn types(&self) -> &[&'a TypeDef] {
-        &self.types
     }
 }
 
