@@ -2703,13 +2703,37 @@ fn emit_both_args_peeling_law(
     if intro_names.len() != law.givens.len() {
         return None;
     }
-    // The law must be a genuine commutativity / associativity of THIS fn over
-    // its givens — not merely some 2-/3-given law that happens to mention a
-    // both-args-peeling fn. A `minus(plus(n,m),n)=m` or a `n ≤ m+n` keeps its
-    // existing bridge proof; this generalizing template fires only on
-    // `f a b = f b a` / `f (f a b) c = f a (f b c)`.
+    // Two shapes fire this generalizing template. (1) A genuine commutativity /
+    // associativity of THIS fn over its givens (`f a b = f b a` / `f (f a b) c =
+    // f a (f b c)`). (2) A 2-given RELATIONAL law that pairs a both-args-peeling
+    // fn with a comparison — `eq (max a b) a = lessEq b a` (prop_24/33/34): the
+    // proof needs the SAME `induction g1 generalizing g2 with … cases g2` double
+    // peel, plus the comparison fn's `(le a b = true) = (a ≤ b)` bridge so the
+    // residual lands in arithmetic `omega` decides. A `minus(plus(n,m),n)=m`
+    // (no comparison) matches NEITHER and keeps its existing bridge proof.
     let given_names: Vec<String> = law.givens.iter().map(|g| g.name.clone()).collect();
-    crate::codegen::proof_recognize::recognize_binary_law_shape(law, &vb.fn_name, &given_names)?;
+    let is_comm_assoc =
+        crate::codegen::proof_recognize::recognize_binary_law_shape(law, &vb.fn_name, &given_names)
+            .is_some();
+
+    // Comparison bridges in the law's cone (`lessEq`/`le`/`lt` → builtin `≤`/`<`),
+    // proved as self-contained support theorems. Their presence is what makes the
+    // relational shape closable; an arithmetic-only law has none and falls
+    // through to the single-carrier emitter unchanged.
+    let law_uid = format!(
+        "{}_{}",
+        aver_name_to_lean(&vb.fn_name),
+        aver_name_to_lean(&law.name)
+    );
+    let (bridge_support, bridge_names, _bridged) =
+        lean_nat_lift_support(law, ctx, &law_uid, &BTreeSet::new());
+    let has_compare_bridge = bridge_names
+        .iter()
+        .any(|n| n.ends_with("_isNatLe") || n.ends_with("_isNatLt"));
+    let relational = !is_comm_assoc && law.givens.len() == 2 && has_compare_bridge;
+    if !is_comm_assoc && !relational {
+        return None;
+    }
 
     let simp_list = law_simp_defs(ctx, vb, law)
         .into_iter()
@@ -2724,8 +2748,26 @@ fn emit_both_args_peeling_law(
         .iter()
         .map(|g| format!("cases {g} <;> "))
         .collect::<String>();
+    // RELATIONAL only: an additive rung that adds the comparison bridges to the
+    // arm `simp_all` and finishes with `omega`. Keeping the comparison fn's def
+    // AND its `= true ↔ ≤` bridge in one `simp_all` is fine (the bridge is a
+    // Prop-equality, not a recursive unfold, so it does not loop), then `omega`
+    // discharges the `≤`/`=` residual. Runs only after the bare `; done`/`; omega`
+    // rungs fail, ends in `omega`, so it throws on a leftover and degrades to the
+    // honest `sorry` — purely additive, sound, can only ADD closures. The
+    // comm/assoc path keeps an empty rung and is byte-identical to before.
+    let bridge_rung = if relational {
+        let all_simp = if bridge_names.is_empty() {
+            simp_list.clone()
+        } else {
+            format!("{simp_list}, {}", bridge_names.join(", "))
+        };
+        format!(" | ({cases_prefix}simp_all [{all_simp}] <;> omega)")
+    } else {
+        String::new()
+    };
     let ladder = format!(
-        "first | ({cases_prefix}simp_all [{simp_list}]; done) | ({cases_prefix}simp_all [{simp_list}]; omega) | sorry"
+        "first | ({cases_prefix}simp_all [{simp_list}]; done) | ({cases_prefix}simp_all [{simp_list}]; omega){bridge_rung} | sorry"
     );
 
     let proof_lines = vec![
@@ -2736,7 +2778,11 @@ fn emit_both_args_peeling_law(
     ];
 
     Some(AutoProof {
-        support_lines: Vec::new(),
+        support_lines: if relational {
+            bridge_support
+        } else {
+            Vec::new()
+        },
         body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
         replaces_theorem: false,
     })

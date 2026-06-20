@@ -297,6 +297,23 @@ fn lean_escapes_user_max_min_collision_when_lake_is_available() {
     );
 }
 
+/// Leaf-reach: a RELATIONAL both-args law — `(min a b == b) = (b <= a)` — now
+/// closes as a genuine universal. The subject `eq` peels both args, so the proof
+/// needs `induction a generalizing b with … cases b`, and the residual only
+/// clears once the comparison fn's `(le a b = true) = (a ≤ b)` bridge rewrites
+/// it into arithmetic `omega` decides. The both-args-peeling emit used to fire
+/// only for commutativity/associativity (no comparison) and left this on a
+/// `sorry`; it now also handles the relational-with-comparison shape. Budget 0:
+/// fully proven. TIP isaplanner prop_34 (prop_33 is the symmetric `<=` variant).
+#[test]
+fn lean_proves_relational_both_args_min_le_when_lake_is_available() {
+    assert_proof_builds_with_sorry_budget(
+        "proof-corpus/tip/isaplanner/prop_34.av",
+        "aver-relational-both-args",
+        0,
+    );
+}
+
 /// Leaf-reach: the Lean backend auto-proves an ACCUMULATOR-generalizing law —
 /// `qrev(xs, acc) = rev(xs) ++ acc`, where `qrev` recurses on `xs` while
 /// THREADING `acc` (fed `List.concat([h], acc)`). The IH must be `∀ acc,
