@@ -1,0 +1,29 @@
+module NatTri
+    intent = "Nat + Add corner of the accumulator-fold grid: a tail-recursive triangular-sum equals its recurrence."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+fn triTR(n: Nat, acc: Nat) -> Nat
+    match n
+        Nat.Z -> acc
+        Nat.S(m) -> triTR(m, plus(n, acc))
+
+fn triFold(n: Nat) -> Nat
+    triTR(n, Nat.Z)
+
+fn triSpec(n: Nat) -> Nat
+    match n
+        Nat.Z -> Nat.Z
+        Nat.S(m) -> plus(n, triSpec(m))
+
+verify triFold law equalsSpec
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z)), Nat.S(Nat.S(Nat.S(Nat.Z)))]
+    triFold(n) => triSpec(n)

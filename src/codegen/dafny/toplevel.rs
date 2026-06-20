@@ -1749,9 +1749,11 @@ fn emit_wrapper_nat_support_stack(
     impl_dafny: &str,
     law_name_dafny: &str,
 ) -> Option<String> {
-    // Only the value-first multiplicative countdown is handled here; the
-    // additive twin is the `seq<int>` `sum_acc` path.
-    if combine_op != crate::ast::BinOp::Mul || !value_first {
+    // Value-first countdown over a Peano `Nat`, additive OR multiplicative.
+    // The `List`/`seq<int>` driver is the sibling stack; here the close is
+    // chosen by the combine op — additive rests on the `plus` monoid alone,
+    // multiplicative builds the `mul` monoid on top of it.
+    if !value_first || !matches!(combine_op, crate::ast::BinOp::Add | crate::ast::BinOp::Mul) {
         return None;
     }
 
@@ -1772,35 +1774,32 @@ fn emit_wrapper_nat_support_stack(
         .find(|v| v.fields.len() == 1 && v.fields[0].trim() == bare)?
         .name
         .clone();
-    let combine_fd = ctx.fn_def_by_name(combine_fn, ctx.active_module_scope().as_deref())?;
-    let plus = aver_name_to_dafny(&peano_additive_callee(combine_fd)?);
+    // The additive monoid: for a multiplicative combine (`mul`) it is the
+    // callee of `mul`'s succ arm (`S(z) -> plus(y, mul(z, y))`); for an
+    // additive combine the fn IS that monoid.
+    let plus = match combine_op {
+        crate::ast::BinOp::Mul => {
+            let combine_fd =
+                ctx.fn_def_by_name(combine_fn, ctx.active_module_scope().as_deref())?;
+            aver_name_to_dafny(&peano_additive_callee(combine_fd)?)
+        }
+        _ => aver_name_to_dafny(combine_fn),
+    };
 
     let t = bare.to_string();
-    let mul = aver_name_to_dafny(combine_fn);
     let inner = aver_name_to_dafny(inner_fn);
     let other = aver_name_to_dafny(other_fn);
     let wrap = aver_name_to_dafny(wrapper_fn);
     let zero = format!("{t}.{base}");
-    let one = format!("{t}.{succ}({t}.{base})");
     let main = format!("{impl_dafny}_{law_name_dafny}");
     let p = format!("{main}__"); // law-scoped helper-lemma prefix
 
-    // Names of the proved helper lemmas (`plus` monoid, then `mul` monoid).
-    let (pz, ps, pc, pa, psw) = (
+    // `plus` monoid helper-lemma names (shared by both combine ops).
+    let (pz, ps, pc, pa) = (
         format!("{p}plus_zero_r"),
         format!("{p}plus_succ_r"),
         format!("{p}plus_comm"),
         format!("{p}plus_assoc"),
-        format!("{p}plus_swap"),
-    );
-    let (om, mo, ma, mpd, mc, mz, msr) = (
-        format!("{p}one_mul"),
-        format!("{p}mul_one"),
-        format!("{p}mul_assoc"),
-        format!("{p}mul_plus_dist"),
-        format!("{p}mul_comm"),
-        format!("{p}mul_zero_r"),
-        format!("{p}mul_succ_r"),
     );
     let acc = format!("{inner}__acc");
 
@@ -1808,7 +1807,7 @@ fn emit_wrapper_nat_support_stack(
     lines.push(format!(
         "// Law: {wrapper_fn}.{law_name_dafny} — Peano-Nat wrapper-over-recursion support stack"
     ));
-    // ── plus monoid ──────────────────────────────────────────────────────
+    // ── plus monoid (shared) ─────────────────────────────────────────────
     lines.push(format!(
         "lemma {pz}(x: {t})\n  ensures {plus}(x, {zero}) == x\n  decreases x\n{{ match x case {base} => case {succ}(q) => {pz}(q); }}"
     ));
@@ -1821,38 +1820,67 @@ fn emit_wrapper_nat_support_stack(
     lines.push(format!(
         "lemma {pa}(a: {t}, b: {t}, c: {t})\n  ensures {plus}({plus}(a, b), c) == {plus}(a, {plus}(b, c))\n  decreases a\n{{ match a case {base} => case {succ}(q) => {pa}(q, b, c); }}"
     ));
-    lines.push(format!(
-        "lemma {psw}(a: {t}, b: {t}, c: {t})\n  ensures {plus}(a, {plus}(b, c)) == {plus}(b, {plus}(a, c))\n{{ {pa}(a, b, c); {pc}(a, b); {pa}(b, a, c); }}"
-    ));
-    // ── mul monoid ───────────────────────────────────────────────────────
-    lines.push(format!(
-        "lemma {mz}(b: {t})\n  ensures {mul}(b, {zero}) == {zero}\n  decreases b\n{{ match b case {base} => case {succ}(w) => {mz}(w); }}"
-    ));
-    lines.push(format!(
-        "lemma {om}(x: {t})\n  ensures {mul}({one}, x) == x\n{{ {pz}(x); }}"
-    ));
-    lines.push(format!(
-        "lemma {mo}(a: {t})\n  ensures {mul}(a, {one}) == a\n  decreases a\n{{ match a case {base} => case {succ}(z) => {mo}(z); assert {plus}({one}, z) == {t}.{succ}(z); }}"
-    ));
-    lines.push(format!(
-        "lemma {msr}(b: {t}, z: {t})\n  ensures {mul}(b, {t}.{succ}(z)) == {plus}(b, {mul}(b, z))\n  decreases b\n{{ match b case {base} => case {succ}(w) => {msr}(w, z); {psw}(z, w, {mul}(w, z)); }}"
-    ));
-    lines.push(format!(
-        "lemma {mpd}(a: {t}, b: {t}, c: {t})\n  ensures {mul}({plus}(a, b), c) == {plus}({mul}(a, c), {mul}(b, c))\n  decreases a\n{{ match a case {base} => case {succ}(z) => {mpd}(z, b, c); {pa}(c, {mul}(z, c), {mul}(b, c)); }}"
-    ));
-    lines.push(format!(
-        "lemma {ma}(a: {t}, b: {t}, c: {t})\n  ensures {mul}({mul}(a, b), c) == {mul}(a, {mul}(b, c))\n  decreases a\n{{ match a case {base} => case {succ}(z) => {ma}(z, b, c); {mpd}(b, {mul}(z, b), c); }}"
-    ));
-    lines.push(format!(
-        "lemma {mc}(a: {t}, b: {t})\n  ensures {mul}(a, b) == {mul}(b, a)\n  decreases a\n{{ match a case {base} => {mz}(b); case {succ}(z) => {mc}(z, b); {msr}(b, z); }}"
-    ));
-    // ── accumulator decomposition + main law ─────────────────────────────
-    lines.push(format!(
-        "lemma {acc}(n: {t}, a: {t})\n  ensures {inner}(n, a) == {mul}({inner}(n, {one}), a)\n  decreases n\n{{ match n case {base} => {om}(a); case {succ}(m) => {acc}(m, {mul}(n, a)); {acc}(m, {mul}(n, {one})); {mo}(n); {ma}({inner}(m, {one}), n, a); }}"
-    ));
-    lines.push(format!(
-        "lemma {{:fuel {wrap}, 5}} {{:fuel {other}, 5}} {{:fuel {inner}, 5}} {main}(n: {t})\n  ensures {wrap}(n) == {other}(n)\n  decreases n\n{{ match n case {base} => case {succ}(m) => {main}(m); {acc}(m, {mul}(n, {one})); {mo}(n); {mc}({other}(m), n); }}\n"
-    ));
+
+    match combine_op {
+        crate::ast::BinOp::Mul => {
+            // ── mul monoid (built on the plus monoid) ────────────────────
+            let mul = aver_name_to_dafny(combine_fn);
+            let one = format!("{t}.{succ}({t}.{base})");
+            let psw = format!("{p}plus_swap");
+            let (om, mo, ma, mpd, mc, mz, msr) = (
+                format!("{p}one_mul"),
+                format!("{p}mul_one"),
+                format!("{p}mul_assoc"),
+                format!("{p}mul_plus_dist"),
+                format!("{p}mul_comm"),
+                format!("{p}mul_zero_r"),
+                format!("{p}mul_succ_r"),
+            );
+            lines.push(format!(
+                "lemma {psw}(a: {t}, b: {t}, c: {t})\n  ensures {plus}(a, {plus}(b, c)) == {plus}(b, {plus}(a, c))\n{{ {pa}(a, b, c); {pc}(a, b); {pa}(b, a, c); }}"
+            ));
+            lines.push(format!(
+                "lemma {mz}(b: {t})\n  ensures {mul}(b, {zero}) == {zero}\n  decreases b\n{{ match b case {base} => case {succ}(w) => {mz}(w); }}"
+            ));
+            lines.push(format!(
+                "lemma {om}(x: {t})\n  ensures {mul}({one}, x) == x\n{{ {pz}(x); }}"
+            ));
+            lines.push(format!(
+                "lemma {mo}(a: {t})\n  ensures {mul}(a, {one}) == a\n  decreases a\n{{ match a case {base} => case {succ}(z) => {mo}(z); assert {plus}({one}, z) == {t}.{succ}(z); }}"
+            ));
+            lines.push(format!(
+                "lemma {msr}(b: {t}, z: {t})\n  ensures {mul}(b, {t}.{succ}(z)) == {plus}(b, {mul}(b, z))\n  decreases b\n{{ match b case {base} => case {succ}(w) => {msr}(w, z); {psw}(z, w, {mul}(w, z)); }}"
+            ));
+            lines.push(format!(
+                "lemma {mpd}(a: {t}, b: {t}, c: {t})\n  ensures {mul}({plus}(a, b), c) == {plus}({mul}(a, c), {mul}(b, c))\n  decreases a\n{{ match a case {base} => case {succ}(z) => {mpd}(z, b, c); {pa}(c, {mul}(z, c), {mul}(b, c)); }}"
+            ));
+            lines.push(format!(
+                "lemma {ma}(a: {t}, b: {t}, c: {t})\n  ensures {mul}({mul}(a, b), c) == {mul}(a, {mul}(b, c))\n  decreases a\n{{ match a case {base} => case {succ}(z) => {ma}(z, b, c); {mpd}(b, {mul}(z, b), c); }}"
+            ));
+            lines.push(format!(
+                "lemma {mc}(a: {t}, b: {t})\n  ensures {mul}(a, b) == {mul}(b, a)\n  decreases a\n{{ match a case {base} => {mz}(b); case {succ}(z) => {mc}(z, b); {msr}(b, z); }}"
+            ));
+            // ── accumulator decomposition + main law (multiplicative) ─────
+            lines.push(format!(
+                "lemma {acc}(n: {t}, a: {t})\n  ensures {inner}(n, a) == {mul}({inner}(n, {one}), a)\n  decreases n\n{{ match n case {base} => {om}(a); case {succ}(m) => {acc}(m, {mul}(n, a)); {acc}(m, {mul}(n, {one})); {mo}(n); {ma}({inner}(m, {one}), n, a); }}"
+            ));
+            lines.push(format!(
+                "lemma {{:fuel {wrap}, 5}} {{:fuel {other}, 5}} {{:fuel {inner}, 5}} {main}(n: {t})\n  ensures {wrap}(n) == {other}(n)\n  decreases n\n{{ match n case {base} => case {succ}(m) => {main}(m); {acc}(m, {mul}(n, {one})); {mo}(n); {mc}({other}(m), n); }}\n"
+            ));
+        }
+        _ => {
+            // ── accumulator decomposition + main law (additive) ──────────
+            // No `mul` monoid: the close rests on `plus` associativity and
+            // commutativity alone, and the neutral is `zero` (the additive
+            // identity). `inner n acc = plus (inner n zero) acc`.
+            lines.push(format!(
+                "lemma {acc}(n: {t}, a: {t})\n  ensures {inner}(n, a) == {plus}({inner}(n, {zero}), a)\n  decreases n\n{{ match n case {base} => case {succ}(m) => {acc}(m, {plus}(n, a)); {acc}(m, {plus}(n, {zero})); {pz}(n); {pa}({inner}(m, {zero}), n, a); }}"
+            ));
+            lines.push(format!(
+                "lemma {{:fuel {wrap}, 5}} {{:fuel {other}, 5}} {{:fuel {inner}, 5}} {main}(n: {t})\n  ensures {wrap}(n) == {other}(n)\n  decreases n\n{{ match n case {base} => case {succ}(m) => {main}(m); {acc}(m, {plus}(n, {zero})); {pz}(n); {pc}({other}(m), n); }}\n"
+            ));
+        }
+    }
     Some(lines.join("\n"))
 }
 
