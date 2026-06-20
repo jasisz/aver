@@ -521,6 +521,25 @@ pub enum QuantifierType {
 /// Dafny maps the same variant to its own lemma vocabulary, a Z3
 /// backend could ship a different tactic again. Tactic names
 /// (`SimpOverLemmas`, `simp+omega`) do not appear in variant names;
+/// Driver of a [`ProofStrategy::WrapperOverRecursion`] inner loop —
+/// the structure the recursion shrinks. `List` is the original
+/// `sum_acc` shape (`match xs { [] -> acc; h::t -> loop(t, step) }`);
+/// `PeanoNat` is the `factTR` countdown (`match n { Z -> acc; S(m) ->
+/// loop(m, combine(n, acc)) }`). The two need different induction
+/// skeletons (`nil`/`cons` vs `zero`/`succ`) and, for `Mul`, different
+/// closing tactics (`omega` can't discharge a nonlinear residual).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WrapperDriver {
+    /// Structural fold over a `List<_>` first parameter.
+    List,
+    /// Countdown over a Peano-`Nat` ADT first parameter. Carries the
+    /// ADT's source type name and whether the folded value (the matched
+    /// subject) is the combine fn's FIRST argument (`mul(n, acc)` →
+    /// `true`; `mul(acc, n)` → `false`) so the backend rewrite matches
+    /// the def's actual step term.
+    PeanoNat { type_name: String, value_first: bool },
+}
+
 /// `LinearArithmetic` is named for the semantic, not the tactic.
 #[derive(Debug, Clone)]
 pub enum ProofStrategy {
@@ -822,6 +841,15 @@ pub enum ProofStrategy {
         /// Binary op the inner threads through its accumulator
         /// (`Add` / `Mul` / `Sub`). Drives the aux lemma's RHS.
         combine_op: crate::ast::BinOp,
+        /// Driver of the inner recursion: a `List<_>` structural fold
+        /// (the additive `sum_acc` shape) or a Peano-`Nat` countdown
+        /// (`factTR`). Selects the backend's induction skeleton and the
+        /// closing tactic family.
+        driver: WrapperDriver,
+        /// For a Peano-`Nat` fold whose step is a named monoid fn
+        /// (`mul(n, acc)` / `plus(n, acc)`), the combine fn's source
+        /// name. `None` for an inline-binop `List` fold (`acc + h`).
+        combine_fn: Option<String>,
     },
     /// Ground constant-fold over fixed ADT/enum constructor
     /// arguments. The law's call(s) pin every non-Int param of the

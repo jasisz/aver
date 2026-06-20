@@ -112,7 +112,7 @@ fn lean_rev_support(
 /// discovery feedback loop passes the fns its committed lemmas mention, so an
 /// op a homomorphism lemma INTRODUCES (e.g. `plus` rewriting into a law that
 /// only said `double`) still gets its bridge. Empty for the plain path.
-fn lean_nat_lift_support(
+pub(super) fn lean_nat_lift_support(
     law: &VerifyLaw,
     ctx: &CodegenContext,
     law_uid: &str,

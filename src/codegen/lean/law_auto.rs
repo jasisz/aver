@@ -641,13 +641,17 @@ fn emit_verify_law_forall_auto_proof_inner(
     }
 
     // Stage 8 of #232 — `WrapperOverRecursion` support stack.
-    // Aux acc-decomposition lemma + main universal lemma; both
-    // close in core Lean 4 (`omega`) without Mathlib.
+    // Aux acc-decomposition lemma + main universal lemma. The `List`-fold
+    // additive case closes in core Lean 4 (`omega`); the Peano-`Nat`
+    // multiplicative case (`factTR`) bridges the user monoid fn to `Nat.*`
+    // and closes with the core `Nat.mul_*` lemmas — still no Mathlib.
     if let Some(crate::ir::ProofStrategy::WrapperOverRecursion {
         wrapper_fn,
         inner_fn,
         other_fn,
         combine_op,
+        driver,
+        combine_fn,
     }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
         && let Some(proof) = spec::emit_wrapper_over_recursion_law(
             vb,
@@ -657,6 +661,8 @@ fn emit_verify_law_forall_auto_proof_inner(
             &inner_fn,
             &other_fn,
             combine_op,
+            &driver,
+            combine_fn.as_deref(),
         )
     {
         return Some(proof);

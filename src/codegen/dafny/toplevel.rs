@@ -1708,6 +1708,45 @@ fn emit_wrapper_over_recursion_support_stack(
     lines.join("\n")
 }
 
+/// Stage 8 (Peano-`Nat` driver): support stack for a `factTR`-shape
+/// multiplicative countdown fold. Unlike the `seq<int>` case — where Z3 knows
+/// `int` `*` is associative/commutative for free — the user `mul` is a
+/// function over a `Nat` datatype, so the monoid laws must be supplied as
+/// induction lemmas (`mul_assoc` / `mul_comm` / `mul_one`) the decomposition
+/// and main lemmas can lean on. Returns `None` for shapes outside the
+/// multiplicative countdown so the caller falls back to the honest decline.
+#[allow(clippy::too_many_arguments)]
+fn emit_wrapper_nat_support_stack(
+    ctx: &CodegenContext,
+    wrapper_fn: &str,
+    inner_fn: &str,
+    other_fn: &str,
+    combine_fn: &str,
+    combine_op: crate::ast::BinOp,
+    nat_type: &str,
+    value_first: bool,
+    impl_dafny: &str,
+    law_name_dafny: &str,
+) -> Option<String> {
+    // Only the multiplicative countdown is handled here.
+    if combine_op != crate::ast::BinOp::Mul {
+        return None;
+    }
+    let _ = (
+        ctx,
+        wrapper_fn,
+        inner_fn,
+        other_fn,
+        combine_fn,
+        nat_type,
+        value_first,
+        impl_dafny,
+        law_name_dafny,
+    );
+    // TODO: emit the Nat-datatype monoid lemmas + decomposition stack.
+    None
+}
+
 /// True when the law's call cone (lhs + rhs, transitively expanded
 /// through fn bodies) reaches a fn carrying the guard-validated
 /// floor-division countdown contract
@@ -2166,6 +2205,8 @@ pub fn emit_verify_law(
         inner_fn,
         other_fn,
         combine_op,
+        driver,
+        combine_fn,
     }) = vb_fn_id
         .and_then(|fn_id| {
             ctx.proof_ir
@@ -2175,14 +2216,41 @@ pub fn emit_verify_law(
         })
         .map(|t| t.strategy.clone())
     {
-        return emit_wrapper_over_recursion_support_stack(
-            &wrapper_fn,
-            &inner_fn,
-            &other_fn,
-            combine_op,
-            &fn_name,
-            &law_name,
-        );
+        match driver {
+            crate::ir::WrapperDriver::List => {
+                return emit_wrapper_over_recursion_support_stack(
+                    &wrapper_fn,
+                    &inner_fn,
+                    &other_fn,
+                    combine_op,
+                    &fn_name,
+                    &law_name,
+                );
+            }
+            crate::ir::WrapperDriver::PeanoNat {
+                type_name,
+                value_first,
+            } => {
+                if let Some(combine) = combine_fn.as_deref()
+                    && let Some(stack) = emit_wrapper_nat_support_stack(
+                        ctx,
+                        &wrapper_fn,
+                        &inner_fn,
+                        &other_fn,
+                        combine,
+                        combine_op,
+                        &type_name,
+                        value_first,
+                        &fn_name,
+                        &law_name,
+                    )
+                {
+                    return stack;
+                }
+                // Fall through to the default decline when the Peano-Nat
+                // shape isn't one the support stack handles.
+            }
+        }
     }
 
     // Refinement lift: for each Int given whose value is wrapped in

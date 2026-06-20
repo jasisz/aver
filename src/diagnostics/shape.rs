@@ -1458,6 +1458,8 @@ fn module_pattern_to_json(p: &ModulePattern) -> serde_json::Value {
             step_fn,
             step_op,
             finish_fn,
+            driver_type,
+            step_value_first,
         } => json!({
             "kind": "AccumulatorFold",
             "scope": scope_json(scope),
@@ -1468,6 +1470,8 @@ fn module_pattern_to_json(p: &ModulePattern) -> serde_json::Value {
             "step_fn": step_fn,
             "step_op": step_op.map(|o| format!("{o:?}")),
             "finish_fn": finish_fn,
+            "driver_type": driver_type,
+            "step_value_first": step_value_first,
         }),
     }
 }
