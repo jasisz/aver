@@ -938,20 +938,7 @@ pub(crate) fn supports_single_sizeof_structural(fd: &FnDef, inputs: &ProofLowerI
         return false;
     }
 
-    // A threaded accumulator (`factTR(m, mul(n, acc))` — the `acc` slot gets a
-    // reconstructed value every self-call) is NOT part of the structural
-    // measure: Lean recurses on the driver that shrinks (`n`), and the
-    // accumulator may grow freely. When the accumulator's TYPE is a recursive
-    // ADT (a Peano `Nat`, not a scalar `Int`) it would otherwise land in the
-    // measure and the growth check below would wrongly reject the fn. Dropping
-    // threaded slots is purely additive: a slot passed a reconstructed (non-
-    // local) expression in EVERY self-call never contributes a structural
-    // decrease, so removing it cannot lose an accept — only admit the genuine
-    // single-driver structural shape Lean's equation compiler closes natively.
-    let metric_indices: Vec<usize> = sizeof_measure_param_indices(fd)
-        .into_iter()
-        .filter(|idx| !param_threaded_in_recursion(fd, *idx))
-        .collect();
+    let metric_indices = sizeof_measure_param_indices(fd);
     if metric_indices.is_empty() {
         return false;
     }
