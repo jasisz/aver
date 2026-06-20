@@ -1708,13 +1708,34 @@ fn emit_wrapper_over_recursion_support_stack(
     lines.join("\n")
 }
 
+/// The additive monoid fn a Peano `mul` is built on — the outer call of `mul`'s
+/// succ arm (`S(z) -> plus(y, mul(z, y))`). Returns its source name.
+fn peano_additive_callee(mul_fd: &FnDef) -> Option<String> {
+    use crate::ast::{Expr, Pattern};
+    let tail = mul_fd.body.tail_expr()?;
+    let Expr::Match { arms, .. } = &tail.node else {
+        return None;
+    };
+    for arm in arms {
+        if let Pattern::Constructor(_, binders) = &arm.pattern
+            && binders.len() == 1
+            && let Expr::FnCall(callee, _) = &arm.body.node
+        {
+            return crate::codegen::common::expr_to_dotted_name(&callee.node);
+        }
+    }
+    None
+}
+
 /// Stage 8 (Peano-`Nat` driver): support stack for a `factTR`-shape
 /// multiplicative countdown fold. Unlike the `seq<int>` case — where Z3 knows
 /// `int` `*` is associative/commutative for free — the user `mul` is a
 /// function over a `Nat` datatype, so the monoid laws must be supplied as
-/// induction lemmas (`mul_assoc` / `mul_comm` / `mul_one`) the decomposition
-/// and main lemmas can lean on. Returns `None` for shapes outside the
-/// multiplicative countdown so the caller falls back to the honest decline.
+/// induction lemmas (`mul_assoc` / `mul_comm` / `mul_one`, in turn resting on
+/// the `plus` monoid) the decomposition and main lemmas lean on. Each lemma is
+/// discharged by Dafny itself. Returns `None` for shapes outside the
+/// value-first multiplicative countdown so the caller falls back to the honest
+/// decline.
 #[allow(clippy::too_many_arguments)]
 fn emit_wrapper_nat_support_stack(
     ctx: &CodegenContext,
@@ -1728,23 +1749,111 @@ fn emit_wrapper_nat_support_stack(
     impl_dafny: &str,
     law_name_dafny: &str,
 ) -> Option<String> {
-    // Only the multiplicative countdown is handled here.
-    if combine_op != crate::ast::BinOp::Mul {
+    // Only the value-first multiplicative countdown is handled here; the
+    // additive twin is the `seq<int>` `sum_acc` path.
+    if combine_op != crate::ast::BinOp::Mul || !value_first {
         return None;
     }
-    let _ = (
-        ctx,
-        wrapper_fn,
-        inner_fn,
-        other_fn,
-        combine_fn,
-        nat_type,
-        value_first,
-        impl_dafny,
-        law_name_dafny,
+
+    // Resolve the Peano constructors (nullary base + unary self-recursive succ)
+    // and the additive monoid fn `mul` rests on.
+    let bare = nat_type.rsplit('.').next().unwrap_or(nat_type);
+    let td = ctx
+        .type_defs
+        .iter()
+        .chain(ctx.modules.iter().flat_map(|m| m.type_defs.iter()))
+        .find(|td| crate::codegen::common::type_def_name(td) == bare)?;
+    let crate::ast::TypeDef::Sum { variants, .. } = td else {
+        return None;
+    };
+    let base = variants.iter().find(|v| v.fields.is_empty())?.name.clone();
+    let succ = variants
+        .iter()
+        .find(|v| v.fields.len() == 1 && v.fields[0].trim() == bare)?
+        .name
+        .clone();
+    let combine_fd = ctx.fn_def_by_name(combine_fn, ctx.active_module_scope().as_deref())?;
+    let plus = aver_name_to_dafny(&peano_additive_callee(combine_fd)?);
+
+    let t = bare.to_string();
+    let mul = aver_name_to_dafny(combine_fn);
+    let inner = aver_name_to_dafny(inner_fn);
+    let other = aver_name_to_dafny(other_fn);
+    let wrap = aver_name_to_dafny(wrapper_fn);
+    let zero = format!("{t}.{base}");
+    let one = format!("{t}.{succ}({t}.{base})");
+    let main = format!("{impl_dafny}_{law_name_dafny}");
+    let p = format!("{main}__"); // law-scoped helper-lemma prefix
+
+    // Names of the proved helper lemmas (`plus` monoid, then `mul` monoid).
+    let (pz, ps, pc, pa, psw) = (
+        format!("{p}plus_zero_r"),
+        format!("{p}plus_succ_r"),
+        format!("{p}plus_comm"),
+        format!("{p}plus_assoc"),
+        format!("{p}plus_swap"),
     );
-    // TODO: emit the Nat-datatype monoid lemmas + decomposition stack.
-    None
+    let (om, mo, ma, mpd, mc, mz, msr) = (
+        format!("{p}one_mul"),
+        format!("{p}mul_one"),
+        format!("{p}mul_assoc"),
+        format!("{p}mul_plus_dist"),
+        format!("{p}mul_comm"),
+        format!("{p}mul_zero_r"),
+        format!("{p}mul_succ_r"),
+    );
+    let acc = format!("{inner}__acc");
+
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "// Law: {wrapper_fn}.{law_name_dafny} — Peano-Nat wrapper-over-recursion support stack"
+    ));
+    // ── plus monoid ──────────────────────────────────────────────────────
+    lines.push(format!(
+        "lemma {pz}(x: {t})\n  ensures {plus}(x, {zero}) == x\n  decreases x\n{{ match x case {base} => case {succ}(q) => {pz}(q); }}"
+    ));
+    lines.push(format!(
+        "lemma {ps}(x: {t}, y: {t})\n  ensures {plus}(x, {t}.{succ}(y)) == {t}.{succ}({plus}(x, y))\n  decreases x\n{{ match x case {base} => case {succ}(q) => {ps}(q, y); }}"
+    ));
+    lines.push(format!(
+        "lemma {pc}(a: {t}, b: {t})\n  ensures {plus}(a, b) == {plus}(b, a)\n  decreases a\n{{ match a case {base} => {pz}(b); case {succ}(q) => {pc}(q, b); {ps}(b, q); }}"
+    ));
+    lines.push(format!(
+        "lemma {pa}(a: {t}, b: {t}, c: {t})\n  ensures {plus}({plus}(a, b), c) == {plus}(a, {plus}(b, c))\n  decreases a\n{{ match a case {base} => case {succ}(q) => {pa}(q, b, c); }}"
+    ));
+    lines.push(format!(
+        "lemma {psw}(a: {t}, b: {t}, c: {t})\n  ensures {plus}(a, {plus}(b, c)) == {plus}(b, {plus}(a, c))\n{{ {pa}(a, b, c); {pc}(a, b); {pa}(b, a, c); }}"
+    ));
+    // ── mul monoid ───────────────────────────────────────────────────────
+    lines.push(format!(
+        "lemma {mz}(b: {t})\n  ensures {mul}(b, {zero}) == {zero}\n  decreases b\n{{ match b case {base} => case {succ}(w) => {mz}(w); }}"
+    ));
+    lines.push(format!(
+        "lemma {om}(x: {t})\n  ensures {mul}({one}, x) == x\n{{ {pz}(x); }}"
+    ));
+    lines.push(format!(
+        "lemma {mo}(a: {t})\n  ensures {mul}(a, {one}) == a\n  decreases a\n{{ match a case {base} => case {succ}(z) => {mo}(z); assert {plus}({one}, z) == {t}.{succ}(z); }}"
+    ));
+    lines.push(format!(
+        "lemma {msr}(b: {t}, z: {t})\n  ensures {mul}(b, {t}.{succ}(z)) == {plus}(b, {mul}(b, z))\n  decreases b\n{{ match b case {base} => case {succ}(w) => {msr}(w, z); {psw}(z, w, {mul}(w, z)); }}"
+    ));
+    lines.push(format!(
+        "lemma {mpd}(a: {t}, b: {t}, c: {t})\n  ensures {mul}({plus}(a, b), c) == {plus}({mul}(a, c), {mul}(b, c))\n  decreases a\n{{ match a case {base} => case {succ}(z) => {mpd}(z, b, c); {pa}(c, {mul}(z, c), {mul}(b, c)); }}"
+    ));
+    lines.push(format!(
+        "lemma {ma}(a: {t}, b: {t}, c: {t})\n  ensures {mul}({mul}(a, b), c) == {mul}(a, {mul}(b, c))\n  decreases a\n{{ match a case {base} => case {succ}(z) => {ma}(z, b, c); {mpd}(b, {mul}(z, b), c); }}"
+    ));
+    lines.push(format!(
+        "lemma {mc}(a: {t}, b: {t})\n  ensures {mul}(a, b) == {mul}(b, a)\n  decreases a\n{{ match a case {base} => {mz}(b); case {succ}(z) => {mc}(z, b); {msr}(b, z); }}"
+    ));
+    // ── accumulator decomposition + main law ─────────────────────────────
+    lines.push(format!(
+        "lemma {acc}(n: {t}, a: {t})\n  ensures {inner}(n, a) == {mul}({inner}(n, {one}), a)\n  decreases n\n{{ match n case {base} => {om}(a); case {succ}(m) => {acc}(m, {mul}(n, a)); {acc}(m, {mul}(n, {one})); {mo}(n); {ma}({inner}(m, {one}), n, a); }}"
+    ));
+    lines.push(format!(
+        "lemma {{:fuel {wrap}, 5}} {{:fuel {other}, 5}} {{:fuel {inner}, 5}} {main}(n: {t})\n  ensures {wrap}(n) == {other}(n)\n  decreases n\n{{ match n case {base} => case {succ}(m) => {main}(m); {acc}(m, {mul}(n, {one})); {mo}(n); {mc}({other}(m), n); }}\n"
+    ));
+    Some(lines.join("\n"))
 }
 
 /// True when the law's call cone (lhs + rhs, transitively expanded

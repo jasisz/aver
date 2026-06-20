@@ -128,6 +128,34 @@ fn proof_export_builds_sum_acc_when_lake_is_available() {
 }
 
 #[test]
+fn proof_dafny_verifies_fact_acc_when_dafny_is_available() {
+    // The multiplicative Peano-`Nat` twin of `sum_acc`:
+    // `WrapperOverRecursion` proves a tail-recursive factorial equals its
+    // recurrence. Z3 has no free associativity/commutativity for the user
+    // `mul` (a function over the `Nat` datatype, not `int`), so the support
+    // stack supplies the `plus`/`mul` monoid lemmas by induction before the
+    // accumulator-decomposition + main lemmas. Regression guard: disable the
+    // strategy or break a monoid lemma and `dafny verify` reports errors.
+    assert_dafny_verifies(
+        "proof-corpus/handwritten/fact_acc_spec.av",
+        "aver-dafny-fact-acc",
+    );
+}
+
+#[test]
+fn proof_export_builds_fact_acc_when_lake_is_available() {
+    // Lean side of the same multiplicative case: the decomposition lemma
+    // `factTR n acc = mul (factTR n 1) acc` + the main law, closing the
+    // nonlinear residual with the user-monoid→`Nat.*` bridges and the core
+    // `Nat.mul_*` lemmas (no Mathlib). Sorry budget 0.
+    assert_proof_builds_with_sorry_budget(
+        "proof-corpus/handwritten/fact_acc_spec.av",
+        "aver-proof-fact-acc",
+        0,
+    );
+}
+
+#[test]
 fn proof_dafny_verifies_list_length_fold_when_dafny_is_available() {
     // Stage 8c of #232: `ProofStrategy::MatchDispatcherFold` — two
     // structural list folds (`1 + length(t)` vs `length(t) + 1`)
