@@ -1,0 +1,50 @@
+module Prop22
+    intent =
+        "TIP prod prop_22: even(length(x ++ y)) = even(length(y ++ x))."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn length(xs: List<Int>) -> Nat
+    match xs
+        [] -> Nat.Z
+        [y, ..ys] -> Nat.S(length(ys))
+
+fn even(x: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(y) -> match y
+            Nat.Z -> false
+            Nat.S(z) -> even(z)
+
+fn append(x: List<Int>, y: List<Int>) -> List<Int>
+    match x
+        [] -> y
+        [z, ..xs] -> List.concat([z], append(xs, y))
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+verify plus law plusComm
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    plus(x, y) => plus(y, x)
+
+verify length law lengthAppendHomo
+    given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    given y: List<Int> = [[], [9], [8, 7], [5, 6, 7]]
+    length(append(x, y)) => plus(length(x), length(y))
+
+verify even law evenPlusComm
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    even(plus(x, y)) => even(plus(y, x))
+
+verify even law evenLengthAppendComm
+    given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    given y: List<Int> = [[], [9], [8, 7], [5, 6, 7]]
+    even(length(append(x, y))) => even(length(append(y, x)))
