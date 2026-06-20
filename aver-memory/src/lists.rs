@@ -244,10 +244,22 @@ impl<T: ArenaTypes> Arena<T> {
                     ..
                 } => {
                     let (head, tail) = self.list_uncons(head_segment)?;
-                    return Some((
-                        head,
-                        self.push_list_segments_rc(tail, Rc::clone(&rest), start),
-                    ));
+                    if rights.is_empty() {
+                        return Some((
+                            head,
+                            self.push_list_segments_rc(tail, Rc::clone(&rest), start),
+                        ));
+                    }
+                    // This Segments node was reached down the left spine of a
+                    // Concat, so right-siblings were accumulated in `rights`
+                    // (in reverse order). They must follow this node's own
+                    // remaining segments — the Flat/Prepend arms fold `rights`
+                    // in the same way; omitting it here silently drops every
+                    // element to the right of the Segments node.
+                    let mut parts: Vec<NanValue> = rest[start..].to_vec();
+                    rights.reverse();
+                    parts.extend(rights);
+                    return Some((head, self.push_list_segments(tail, parts)));
                 }
             }
         }

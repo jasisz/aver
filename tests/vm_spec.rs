@@ -1538,6 +1538,41 @@ fn vm_list_prepend() {
     );
 }
 
+/// Regression: recursively feeding `List.concat(tail, [head])` back through a
+/// function used to silently drop the MIDDLE elements of the list, because
+/// `Arena::list_uncons`'s `Segments` arm returned without folding in the
+/// right-siblings accumulated while descending a `Concat` left spine. Moving
+/// the head to the back `length` times must return the original list, not a
+/// first-and-last-only stub (`[1,2,3]` came back as `[1,3]`).
+#[test]
+fn vm_recursive_concat_tail_preserves_middle_elements() {
+    let src = "\
+type Nat\n    Z\n    S(Nat)\n\n\
+fn cyc(n: Nat, y: List<Int>) -> List<Int>\n\
+\x20   match n\n\
+\x20       Nat.Z -> y\n\
+\x20       Nat.S(z) -> match y\n\
+\x20           [] -> []\n\
+\x20           [h, ..t] -> cyc(z, List.concat(t, [h]))\n\n\
+fn main() -> List<Int>\n\
+\x20   cyc(Nat.S(Nat.S(Nat.S(Nat.S(Nat.S(Nat.Z))))), [1, 2, 3, 4, 5])\n";
+    let (result, arena) = vm_run_with_arena(src);
+    assert!(result.is_list());
+    let got: Vec<i64> = (0..arena.list_len(result.arena_index()))
+        .map(|i| {
+            arena
+                .list_get(result.arena_index(), i)
+                .unwrap()
+                .as_int(&arena)
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![1, 2, 3, 4, 5],
+        "full rotation must restore the list"
+    );
+}
+
 #[test]
 fn vm_result_with_default() {
     let src = "fn main() -> Int\n    Result.withDefault(Result.Err(0), 42)\n";
