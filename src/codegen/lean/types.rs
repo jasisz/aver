@@ -1,5 +1,41 @@
 /// Aver type → Lean 4 type string mapping.
 use crate::types::Type;
+use std::cell::RefCell;
+use std::collections::HashSet;
+
+thread_local! {
+    /// Type names of the canonical Peano ADTs in the program currently being
+    /// transpiled to Lean. A canonical Peano type (`T { Zero; Succ(T) }`,
+    /// shape-detected by `detect_canonical_peano` — any name, not just `Nat`)
+    /// is lifted to Lean's builtin `Nat`: its VALUES and PATTERNS already lift
+    /// (`Zero`→`0`, `Succ e`→`e + 1`), so its TYPE annotations must lift to
+    /// `Nat` too — otherwise a `T`-typed binder is matched against `Nat`
+    /// literals and the proof is ill-typed. Populated once per
+    /// `transpile_unified`; empty outside it, so a stray `type_to_lean` keeps
+    /// the prior (no-lift) behavior.
+    static CANONICAL_PEANO: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+}
+
+/// Mark `names` as the canonical-Peano types to lift to `Nat` for the lifetime
+/// of the returned guard. The guard clears the set on drop, so a `type_to_lean`
+/// call outside the transpile scope never sees stale lift state.
+pub(crate) fn scope_canonical_peano(names: HashSet<String>) -> CanonicalPeanoGuard {
+    CANONICAL_PEANO.with(|s| *s.borrow_mut() = names);
+    CanonicalPeanoGuard
+}
+
+pub(crate) struct CanonicalPeanoGuard;
+
+impl Drop for CanonicalPeanoGuard {
+    fn drop(&mut self) {
+        CANONICAL_PEANO.with(|s| s.borrow_mut().clear());
+    }
+}
+
+fn is_canonical_peano(name: &str) -> bool {
+    let bare = name.rsplit('.').next().unwrap_or(name);
+    CANONICAL_PEANO.with(|s| s.borrow().contains(bare))
+}
 
 /// Convert an Aver `Type` to a Lean 4 type string.
 pub fn type_to_lean(ty: &Type) -> String {
@@ -47,7 +83,13 @@ pub fn type_to_lean(ty: &Type) -> String {
         // information. Identity-sensitive routing happens at the
         // call layer (see `backend_named_type_key`).
         Type::Named { name, .. } => {
-            if name.contains('.') {
+            if is_canonical_peano(name) {
+                // Lifted to builtin `Nat` (consistent with the value/pattern
+                // lift in `expr.rs`/`pattern.rs`), so any-named Peano ADT — not
+                // just one literally called `Nat` — gets the builtin-`Nat`
+                // proof machinery (`omega`, `Nat.*`).
+                "Nat".to_string()
+            } else if name.contains('.') {
                 name.replace('.', "_")
             } else {
                 name.clone()

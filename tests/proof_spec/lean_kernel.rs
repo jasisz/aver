@@ -1216,3 +1216,62 @@ fn proof_lean_proves_nat_tri_kernel_clean_universal() {
     );
     let _ = std::fs::remove_dir_all(&out);
 }
+
+#[test]
+fn proof_lean_lifts_aliased_peano_type_to_nat_and_proves_universal() {
+    // A Peano natural named other than `Nat` (`Num` with `Zero`/`Succ`) must
+    // get the builtin-`Nat` treatment by SHAPE, not by name: its values lift
+    // (`Zero`→`0`, `Succ e`→`e + 1`) AND its type annotations lift (`Num`→
+    // `Nat`), so the factorial wrapper-over-recursion law closes kernel-clean.
+    // Regression guard: before the type-annotation lift, the binder type
+    // (`Num`) disagreed with the lifted `Nat` literals and the proof failed.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean aliased-peano test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let out = temp_output_dir("aver-peano-aliased-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg("proof-corpus/handwritten/peano_aliased_spec.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean =
+        std::fs::read_to_string(out.join("PeanoAliased.lean")).expect("read PeanoAliased.lean");
+    // The `Num` driver must be lifted to builtin `Nat` in TYPE position too:
+    // the `def` binders read `: Nat`, never `: Num` (a `: Num` binder would
+    // disagree with the lifted `Nat` literals in the bodies).
+    assert!(
+        lean.contains("def factTR (n : Nat)")
+            && lean.contains("def factSpec (n : Nat)")
+            && !lean.contains("(n : Num)"),
+        "the aliased Peano type `Num` must lift to builtin `Nat` in type \
+         annotations (def binders should read `: Nat`, not `: Num`):\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "a non-`Nat`-named Peano factorial must kernel-prove as a GENUINE \
+         universal (passed, 0 sorries, universal:true).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&out);
+}

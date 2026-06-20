@@ -242,6 +242,16 @@ pub(super) fn transpile_unified(
         .collect();
     let recursive_names = recursive_pure_fn_names(ctx);
     let recursive_types = recursive_type_names(ctx);
+    // Lift every canonical Peano ADT's type annotations to builtin `Nat` for
+    // this emit, matching the value/pattern lift — so a Peano type named other
+    // than `Nat` is fully consistent (its binders' types agree with the `Nat`
+    // literals its values lift to). The guard clears the set when this returns.
+    let _peano_guard = crate::codegen::lean::types::scope_canonical_peano(
+        crate::codegen::proof_recognize::collect_peano_types(ctx)
+            .into_iter()
+            .map(|p| p.type_name)
+            .collect(),
+    );
     // Pure-fn param types + every type def's field types feed the
     // entries-measure emission scan: an entries-list spelling
     // (`Map<K, T>` / `List<Tuple<K, T>>`) may appear only in fn
