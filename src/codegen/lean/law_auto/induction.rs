@@ -1648,8 +1648,20 @@ fn wrap_with_fun_induction_rung(
     // is discharged by a PROVEN `_refl` lemma carried in `simp_defs`, never by an
     // in-closer induction. All tactics here (`simp_all`/`omega`) terminate and
     // are sound, so the rung is purely additive and adds no axioms.
+    // Last alternative: after `simp_all` normalizes, exhaust the goal's nested
+    // `if`/`match` branch points with `repeat' split` before `omega`. The cheaper
+    // rungs leave an unsplit `if <userBool> then …` (e.g. `if eqNat x z then …`)
+    // that `omega` treats as an opaque atom and cannot relate across the two
+    // sides; splitting every conditional first collapses each branch to concrete
+    // arithmetic `omega` closes. `repeat' split` is core Lean (Mathlib's
+    // `split_ifs` is unavailable here); it creates no new conditionals and halts
+    // when none remain, so it is bounded by the finitely-many `if`s already
+    // present, and the trailing `omega` throws on any non-arithmetic leftover —
+    // the rung stays sound-by-floor and falls through to `sorry`. Gated LAST so
+    // the cheaper `simp_all` rungs fire first. Closes the count-over-insert
+    // family (count/insert/sort branching on `eqNat`/`lessEq`).
     let closer = format!(
-        "first | (simp_all {defs}; done) | (simp_all {defs}; omega) | (simp_all {defs} <;> omega)"
+        "first | (simp_all {defs}; done) | (simp_all {defs}; omega) | (simp_all {defs} <;> omega) | (simp_all {defs} <;> (repeat' split) <;> omega)"
     );
     let mut out = vec![intro_line, "  first".to_string()];
     for t in targets {
