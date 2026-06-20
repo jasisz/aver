@@ -735,6 +735,38 @@ fn detect_nat_arith_op(fd: &FnDef, ctx: &CodegenContext) -> Option<NatArithKind>
 pub(crate) enum NatCompareKind {
     Le,
     Lt,
+    /// Canonical Peano decidable equality (`eq Z Z = true`, `eq (S a) (S b) =
+    /// eq a b`, mismatches `false`). Bridged to the Prop `a = b` via
+    /// `(eq a b = true) = (a = b)`.
+    Eq,
+}
+
+impl NatCompareKind {
+    /// The Lean Prop relation the bridge maps `f a b = true` onto.
+    pub(crate) fn prop_op(self) -> &'static str {
+        match self {
+            NatCompareKind::Le => "≤",
+            NatCompareKind::Lt => "<",
+            NatCompareKind::Eq => "=",
+        }
+    }
+
+    /// The bridge theorem's name suffix (kept distinct per relation so two
+    /// bridges in one law never collide, and the both-args rung can spot them).
+    pub(crate) fn bridge_suffix(self) -> &'static str {
+        match self {
+            NatCompareKind::Le => "isNatLe",
+            NatCompareKind::Lt => "isNatLt",
+            NatCompareKind::Eq => "isNatEq",
+        }
+    }
+
+    /// Whether the recursion drives on the SECOND argument. `<` destructures its
+    /// second arg first, so its bridge inducts on `b`; `≤` and `=` drive on `a`.
+    /// The bridge proof inducts on the driver and case-splits the passenger.
+    pub(crate) fn induct_on_second(self) -> bool {
+        matches!(self, NatCompareKind::Lt)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -835,6 +867,27 @@ fn detect_nat_compare_op(fd: &FnDef, ctx: &CodegenContext) -> Option<NatCompareK
         && rec_ok(r, q)
     {
         return Some(NatCompareKind::Lt);
+    }
+
+    // Eq: outer on p0; the succ arm matches `≤`'s recursion shape (inner on p1,
+    // `Base -> false`, `Succ(r) -> op(q, r)`), but the BASE arm — unlike `≤`/`<`,
+    // whose base is a bare bool — itself nests a match on p1 (`Z -> true`, `S ->
+    // false`). That second nesting is exactly Peano decidable equality.
+    if outer_on == p0.as_str()
+        && inner_on == p1.as_str()
+        && as_bool_lit(inner_base) == Some(false)
+        && rec_ok(q, r)
+        && let Expr::Match {
+            subject: base_subj,
+            arms: base_arms,
+            ..
+        } = &base_body.node
+        && ln(base_subj) == Some(p1.as_str())
+        && let Some((bb_base, _z, bb_succ)) = split_peano_match(base_arms, &peano)
+        && as_bool_lit(bb_base) == Some(true)
+        && as_bool_lit(bb_succ) == Some(false)
+    {
+        return Some(NatCompareKind::Eq);
     }
 
     None
