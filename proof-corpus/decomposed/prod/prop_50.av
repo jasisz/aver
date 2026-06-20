@@ -1,0 +1,54 @@
+module Prop50
+    intent =
+        "TIP prod prop_50 (isaplanner #53): count x (isort y) = count x y, decomposed via count-insert permutation invariance."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn count(x: Nat, y: List<Nat>) -> Nat
+    match y
+        [] -> Nat.Z
+        [z, ..xs] -> match eqNat(x, z)
+            true -> Nat.S(count(x, xs))
+            false -> count(x, xs)
+
+fn lessEq(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> lessEq(z, x2)
+
+fn insert(x: Nat, y: List<Nat>) -> List<Nat>
+    match y
+        [] -> [x]
+        [z, ..xs] -> match lessEq(x, z)
+            true -> List.concat([x], y)
+            false -> List.concat([z], insert(x, xs))
+
+fn isort(x: List<Nat>) -> List<Nat>
+    match x
+        [] -> []
+        [y, ..xs] -> insert(y, isort(xs))
+
+verify count law countInsertPerm
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given z: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given ys: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z]]
+    count(x, insert(z, ys)) => count(x, List.concat([z], ys))
+
+verify count law countIsort
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: List<Nat> = [[], [Nat.S(Nat.Z)], [Nat.S(Nat.Z), Nat.Z]]
+    count(x, isort(y)) => count(x, y)

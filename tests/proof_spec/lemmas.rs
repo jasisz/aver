@@ -330,6 +330,24 @@ fn lean_proves_relational_both_args_eq_bridge_when_lake_is_available() {
     );
 }
 
+/// Leaf-reach: the `fun_induction` closer now exhausts nested conditionals with
+/// `repeat' split` before `omega`. The count-over-insert lemma
+/// `count(x, insert(z, ys)) = count(x, [z] ++ ys)` (the irreducible leaf of the
+/// insertion-sort count-preservation family) leaves `if eqNat … then …` branches
+/// that the bare `simp_all; omega` rungs leave opaque to `omega`; splitting every
+/// conditional first collapses each to concrete arithmetic. With the leaf proven,
+/// the headline `count(x, isort y) = count(x, y)` closes too — both laws of this
+/// decomposed task are universal. Budget 0. (Removing the `repeat' split` rung
+/// reintroduces the leaf's `sorry`.)
+#[test]
+fn lean_proves_count_insert_split_rung_when_lake_is_available() {
+    assert_proof_builds_with_sorry_budget(
+        "proof-corpus/decomposed/prod/prop_50.av",
+        "aver-count-insert-split",
+        0,
+    );
+}
+
 /// Leaf-reach: the Lean backend auto-proves an ACCUMULATOR-generalizing law —
 /// `qrev(xs, acc) = rev(xs) ++ acc`, where `qrev` recurses on `xs` while
 /// THREADING `acc` (fed `List.concat([h], acc)`). The IH must be `∀ acc,
