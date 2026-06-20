@@ -194,17 +194,6 @@ pub(super) enum LeanEmitMode {
     Proof,
 }
 
-/// Multi-file Lean output for multi-module Aver projects:
-/// - `AverCommon.lean` carries built-in helpers + records (UNION decision
-///   over every module + entry body, so a helper is included only if
-///   something actually references it).
-/// - `<Module>.lean` (one per `depends [...]` entry) wraps that module's
-///   types and pure fns in `namespace M ... end M`. Submodules like
-///   `Models.User` land at `Models/User.lean` to match Lean's path-as-
-///   module-name convention.
-/// - `<ProjectName>.lean` is the entry: trust header (here only),
-///   top-level entry items, lifted effectful fns, decisions, verify
-///   blocks. Imports `AverCommon` plus every dependent module.
 /// `true` iff `fd` is the self-recursive inner loop of a recognized
 /// `WrapperOverRecursion` law (`sumTR`, `factTR`). The strategy's
 /// accumulator-decomposition lemma rewrites with the inner fn's definitional
@@ -223,6 +212,17 @@ fn is_wrapper_over_recursion_inner(ctx: &CodegenContext, fd: &crate::ast::FnDef)
     })
 }
 
+/// Multi-file Lean output for multi-module Aver projects:
+/// - `AverCommon.lean` carries built-in helpers + records (UNION decision
+///   over every module + entry body, so a helper is included only if
+///   something actually references it).
+/// - `<Module>.lean` (one per `depends [...]` entry) wraps that module's
+///   types and pure fns in `namespace M ... end M`. Submodules like
+///   `Models.User` land at `Models/User.lean` to match Lean's path-as-
+///   module-name convention.
+/// - `<ProjectName>.lean` is the entry: trust header (here only),
+///   top-level entry items, lifted effectful fns, decisions, verify
+///   blocks. Imports `AverCommon` plus every dependent module.
 pub(super) fn transpile_unified(
     ctx: &CodegenContext,
     verify_mode: VerifyEmitMode,
