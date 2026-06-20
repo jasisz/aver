@@ -1,1 +1,35 @@
 module Prop82
+    intent =
+        "TIP isaplanner prop_82: take n (zip xs ys) = zip (take n xs) (take n ys)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn zip(x: List<Int>, y: List<Int>) -> List<Tuple<Int, Int>>
+    match x
+        [] -> []
+        [z, ..x2] -> match y
+            [] -> []
+            [x3, ..x4] -> List.concat([(z, x3)], zip(x2, x4))
+
+fn take(n: Nat, xs: List<Int>) -> List<Int>
+    match n
+        Nat.Z -> []
+        Nat.S(z) -> match xs
+            [] -> []
+            [x2, ..x3] -> List.concat([x2], take(z, x3))
+
+fn takePairs(n: Nat, xs: List<Tuple<Int, Int>>) -> List<Tuple<Int, Int>>
+    match n
+        Nat.Z -> []
+        Nat.S(z) -> match xs
+            [] -> []
+            [x2, ..x3] -> List.concat([x2], takePairs(z, x3))
+
+verify zip law takeZip
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    given ys: List<Int> = [[], [4], [4, 5]]
+    takePairs(n, zip(xs, ys)) => zip(take(n, xs), take(n, ys))

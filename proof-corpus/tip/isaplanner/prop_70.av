@@ -17,4 +17,5 @@ fn le(x: Nat, y: Nat) -> Bool
 verify le law leSucc
     given m: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
     given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
-    le(m, n) => le(m, Nat.S(n))
+    when le(m, n)
+    le(m, Nat.S(n)) => true
