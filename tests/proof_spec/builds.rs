@@ -156,6 +156,33 @@ fn proof_export_builds_fact_acc_when_lake_is_available() {
 }
 
 #[test]
+fn proof_dafny_verifies_list_prod_when_dafny_is_available() {
+    // List + Mul corner of the accumulator-fold grid. Z3 knows `int` `*` is
+    // associative/commutative for free, so the `seq<int>` support stack closes
+    // with no extra monoid lemmas — but the strategy must still fire and emit
+    // the decomposition + main lemmas. Regression guard for the `List` driver
+    // under the multiplicative combine.
+    assert_dafny_verifies(
+        "proof-corpus/handwritten/list_prod_spec.av",
+        "aver-dafny-list-prod",
+    );
+}
+
+#[test]
+fn proof_dafny_verifies_nat_tri_when_dafny_is_available() {
+    // Nat + Add corner. The user `plus` is a function over the `Nat` datatype,
+    // so Z3 needs the `plus` monoid lemmas (zero/succ/comm/assoc) supplied by
+    // induction before the additive accumulator-decomposition + main lemmas —
+    // the additive sibling of the factorial support stack. Regression guard
+    // that the Peano-`Nat` support stack covers the additive combine, not just
+    // the multiplicative one.
+    assert_dafny_verifies(
+        "proof-corpus/handwritten/nat_tri_spec.av",
+        "aver-dafny-nat-tri",
+    );
+}
+
+#[test]
 fn proof_dafny_verifies_list_length_fold_when_dafny_is_available() {
     // Stage 8c of #232: `ProofStrategy::MatchDispatcherFold` — two
     // structural list folds (`1 + length(t)` vs `length(t) + 1`)

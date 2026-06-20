@@ -1,0 +1,20 @@
+module ListProd
+    intent = "List + Mul corner of the accumulator-fold grid: a tail-recursive product equals its recurrence."
+    effects []
+
+fn prodTR(xs: List<Int>, acc: Int) -> Int
+    match xs
+        [] -> acc
+        [h, ..t] -> prodTR(t, acc * h)
+
+fn prodFold(xs: List<Int>) -> Int
+    prodTR(xs, 1)
+
+fn prodSpec(xs: List<Int>) -> Int
+    match xs
+        [] -> 1
+        [h, ..t] -> h * prodSpec(t)
+
+verify prodFold law equalsSpec
+    given xs: List<Int> = [[], [2], [2, 3], [4, 5, 6]]
+    prodFold(xs) => prodSpec(xs)

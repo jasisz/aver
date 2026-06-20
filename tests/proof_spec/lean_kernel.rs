@@ -1104,3 +1104,115 @@ fn proof_lean_proves_fact_acc_kernel_clean_universal() {
     );
     let _ = std::fs::remove_dir_all(&out);
 }
+
+#[test]
+fn proof_lean_proves_list_prod_kernel_clean_universal() {
+    // List + Mul corner of the accumulator-fold grid: a tail-recursive product
+    // equals its recurrence. The `List` driver fixes the induction skeleton;
+    // the `*` combine fixes the close — the linear `omega` of the additive
+    // `sum_acc` twin cannot discharge the nonlinear residual, so the emitter
+    // closes with the core `Int.mul_*` associativity/commutativity lemmas (no
+    // Mathlib). Regression guard that the close is chosen by the combine op,
+    // not hardcoded to the `List` driver's original additive `omega`.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean list-prod test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let out = temp_output_dir("aver-list-prod-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg("proof-corpus/handwritten/list_prod_spec.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean = std::fs::read_to_string(out.join("ListProd.lean")).expect("read ListProd.lean");
+    assert!(
+        lean.contains("theorem prodTR_acc") && lean.contains("Int.mul_assoc"),
+        "the `prodTR_acc` decomposition lemma and the `Int.mul_*` multiplicative \
+         close must be emitted (the combine op picks the close):\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "tail-recursive product == its recurrence must kernel-prove as a \
+         GENUINE universal (passed, 0 sorries, universal:true).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_lean_proves_nat_tri_kernel_clean_universal() {
+    // Nat + Add corner of the accumulator-fold grid: a tail-recursive
+    // triangular-sum equals its recurrence. The Peano-`Nat` driver fixes the
+    // induction skeleton; the `+` combine fixes the close — the `plus`→`+`
+    // bridge plus `omega` (no `Nat.mul_*` needed, unlike the factorial twin).
+    // `triTR` must emit as a terminating `def`. Regression guard that the
+    // Peano-`Nat` driver is no longer wired only alongside the multiplicative
+    // close.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean nat-tri test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let out = temp_output_dir("aver-nat-tri-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg("proof-corpus/handwritten/nat_tri_spec.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean = std::fs::read_to_string(out.join("NatTri.lean")).expect("read NatTri.lean");
+    assert!(
+        lean.contains("theorem triTR_acc") && lean.contains("_plus_isNatAdd"),
+        "the `plus`→`+` bridge and the `triTR_acc` decomposition lemma must be \
+         emitted (the additive Peano-Nat path):\n{lean}"
+    );
+    assert!(
+        lean.contains("def triTR") && !lean.contains("partial def triTR"),
+        "triTR must emit as a terminating `def`, not `partial def`:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "tail-recursive triangular-sum == its recurrence must kernel-prove as a \
+         GENUINE universal (passed, 0 sorries, universal:true).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&out);
+}

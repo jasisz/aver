@@ -76,6 +76,18 @@ fn emit_list_fold(
     };
     let acc_thm = format!("{inner_l}_acc");
 
+    // The decomposition residual is linear for `+`/`-` (omega closes it) but
+    // nonlinear for `*` — there the close is core-Lean Int multiplicative
+    // associativity/commutativity/identity (no Mathlib). The combine op picks
+    // the close independently of the `List` driver skeleton.
+    let (acc_close, main_close) = match combine_op {
+        BinOp::Mul => (
+            "simp [Int.one_mul, Int.mul_one, Int.mul_assoc, Int.mul_comm, Int.mul_left_comm]",
+            "simp [ih, Int.one_mul, Int.mul_one, Int.mul_assoc, Int.mul_comm, Int.mul_left_comm]",
+        ),
+        _ => ("omega", "omega"),
+    };
+
     let support_lines = vec![
         format!(
             "theorem {acc_thm} (xs : List Int) (a : Int) : {inner_l} xs a = a {op} {inner_l} xs {neutral} := by"
@@ -83,7 +95,7 @@ fn emit_list_fold(
         "  induction xs generalizing a with".to_string(),
         format!("  | nil => simp [{inner_l}]"),
         format!(
-            "  | cons h t ih => simp only [{inner_l}]; rw [ih (a {op} h), ih ({neutral} {op} h)]; omega"
+            "  | cons h t ih => simp only [{inner_l}]; rw [ih (a {op} h), ih ({neutral} {op} h)]; {acc_close}"
         ),
     ];
 
@@ -98,7 +110,7 @@ fn emit_list_fold(
         format!("    simp only [{wrapper_l}, {inner_l}, {other_l}]"),
         format!("    rw [{acc_thm} t ({neutral} {op} h)]"),
         format!("    simp only [{wrapper_l}] at ih"),
-        "    omega".to_string(),
+        format!("    {main_close}"),
     ];
 
     Some(AutoProof {
@@ -108,13 +120,14 @@ fn emit_list_fold(
     })
 }
 
-/// Peano-`Nat` countdown fold (`factTR`). The decomposition lemma
-/// `inner n acc = combine (inner n 1) acc` is proved by `induction n
+/// Peano-`Nat` countdown fold (`factTR` / `triTR`). The decomposition lemma
+/// `inner n acc = combine (inner n neutral) acc` is proved by `induction n
 /// generalizing acc`; the main law unfolds the wrapper's neutral, peels one
-/// step with the lemma, applies the IH, and closes the nonlinear residual via
-/// the bridged user monoid fn + the core `Nat.mul_*` lemmas. Only the
-/// multiplicative case is emitted here (the additive `List` twin already
-/// covers `+`); other ops decline so the law falls back to the generic ladder.
+/// step with the lemma, applies the IH, and closes the residual. The driver
+/// fixes the `Nat` skeleton; the combine op fixes the close and the neutral:
+/// multiplicative bridges the user monoid fn to `Nat.*` and closes with the
+/// core `Nat.mul_*` lemmas (neutral `1`), additive bridges to `+` and closes
+/// with `omega` (neutral `0`). Other ops decline to the generic ladder.
 #[allow(clippy::too_many_arguments)]
 fn emit_peano_nat_fold(
     vb: &VerifyBlock,
@@ -127,10 +140,10 @@ fn emit_peano_nat_fold(
     combine_fn: &str,
     value_first: bool,
 ) -> Option<AutoProof> {
-    if combine_op != BinOp::Mul {
+    if !matches!(combine_op, BinOp::Add | BinOp::Mul) {
         return None;
     }
-    let neutral = "1";
+    let neutral = if combine_op == BinOp::Mul { "1" } else { "0" };
     let combine_l = aver_name_to_lean(combine_fn);
     let acc_thm = format!("{inner_l}_acc");
     let law_uid = format!(
@@ -155,6 +168,21 @@ fn emit_peano_nat_fold(
     }
     let simp_set = simp_extra.join(", ");
 
+    // The decomposition + main residuals: a multiplicative close needs the core
+    // `Nat.mul_*` lemmas on top of the bridges already in `simp_set`; an
+    // additive residual is linear once `plus` is bridged to `+`, so `omega`
+    // finishes it. The combine op picks the close independently of the driver.
+    let (decomp_close, main_close) = match combine_op {
+        BinOp::Mul => (
+            format!("simp [{simp_set}]"),
+            format!("simp [{simp_set}, Nat.mul_comm]"),
+        ),
+        _ => (
+            format!("simp only [{simp_set}]; omega"),
+            format!("simp only [{simp_set}]; omega"),
+        ),
+    };
+
     // Render the step term in the SAME arg order the source wrote, so the
     // rewrite matches the def's actual `combine(...)` subterm.
     let combine_apply = |value: &str, other: &str| -> String {
@@ -175,7 +203,7 @@ fn emit_peano_nat_fold(
     support_lines.push("  induction n generalizing acc with".to_string());
     support_lines.push(format!("  | zero => simp [{inner_l}, {simp_set}]"));
     support_lines.push(format!(
-        "  | succ m ih => simp only [{inner_l}]; rw [ih ({succ_acc}), ih ({succ_one})]; simp [{simp_set}]"
+        "  | succ m ih => simp only [{inner_l}]; rw [ih ({succ_acc}), ih ({succ_one})]; {decomp_close}"
     ));
 
     // Main law: unfold the wrapper's neutral (`S(Z)` renders as `0 + 1`;
@@ -192,7 +220,7 @@ fn emit_peano_nat_fold(
         format!("    simp only [{inner_l}, {other_l}]"),
         format!("    rw [{acc_thm} m ({main_step})]"),
         "    rw [ih]".to_string(),
-        format!("    simp [{simp_set}, Nat.mul_comm]"),
+        format!("    {main_close}"),
     ];
 
     Some(AutoProof {
