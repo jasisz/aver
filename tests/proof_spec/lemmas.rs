@@ -144,6 +144,10 @@ fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
         // structural-only rung).
         "proof-corpus/decomposed/prod/lemma_14.av",
         "proof-corpus/decomposed/prod/lemma_16.av",
+        // count-preservation under insertion sort: the count-over-insort
+        // permutation leaf closes via the `repeat' split` rung, then the sort
+        // law follows. (prod/prop_50 is its twin, pinned by its own test.)
+        "proof-corpus/decomposed/isaplanner/prop_53.av",
     ];
     for task in tasks {
         let out = temp_output_dir(&format!(
