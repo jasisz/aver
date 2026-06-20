@@ -194,6 +194,24 @@ pub(super) enum LeanEmitMode {
     Proof,
 }
 
+/// `true` iff `fd` is the self-recursive inner loop of a recognized
+/// `WrapperOverRecursion` law (`sumTR`, `factTR`). The strategy's
+/// accumulator-decomposition lemma rewrites with the inner fn's definitional
+/// equations, which a `partial def` would not expose — so such a fn must emit
+/// as a terminating structural `def` even when the generic recursion classifier
+/// (which conservatively rejects a growing accumulator) leaves it unclassified.
+/// Scoped to wrapper inners: an accumulator fn the backend can't prove a law
+/// about (no strategy fires) stays `partial`, preserving the honest decline.
+fn is_wrapper_over_recursion_inner(ctx: &CodegenContext, fd: &crate::ast::FnDef) -> bool {
+    ctx.proof_ir.law_theorems.iter().any(|t| {
+        matches!(
+            &t.strategy,
+            crate::ir::ProofStrategy::WrapperOverRecursion { inner_fn, .. }
+                if *inner_fn == fd.name
+        )
+    })
+}
+
 /// Multi-file Lean output for multi-module Aver projects:
 /// - `AverCommon.lean` carries built-in helpers + records (UNION decision
 ///   over every module + entry body, so a helper is included only if
@@ -285,9 +303,19 @@ pub(super) fn transpile_unified(
                             // recursive fns the ContractLower stage could
                             // classify. Recursive fns without a contract land
                             // in `unclassified_fns` and fall through to the
-                            // partial/non-recursive emit.
+                            // partial/non-recursive emit — EXCEPT the inner loop
+                            // of a recognized `WrapperOverRecursion` law (e.g.
+                            // `factTR`). Such a fn drives structurally on its
+                            // first parameter (Lean's equation compiler infers
+                            // the measure), so emit it as a terminating `def`:
+                            // the strategy's accumulator-decomposition lemma
+                            // needs the definitional equations a `partial def`
+                            // would withhold. Scoped to wrapper inners so a bare
+                            // accumulator fn outside the strategy (whose law the
+                            // backend honestly declines) stays `partial`.
                             if is_recursive
                                 && !crate::codegen::common::fn_contract_exists_for_fn(ctx, fd)
+                                && !is_wrapper_over_recursion_inner(ctx, fd)
                             {
                                 toplevel::emit_fn_def(fd, &recursive_names, ctx)
                             } else {

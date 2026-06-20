@@ -40,24 +40,57 @@ pub(super) fn detect_wrapper_over_recursion(
     }
     let given_name = &law.givens[0].name;
 
-    // Read the loop fn + its fold step from the shared `AccumulatorFold` pattern
-    // (recognized once by `analysis::shape`, consumed by both this strategy and
-    // the `--discover` lemma chains) — no bespoke inner-body re-walk for the OP.
-    // The monoidal strategy needs an additive/multiplicative inline step and an
-    // identity finish (the nil arm returns the accumulator).
-    let (inner_fn, combine_op) = shape.patterns.iter().find_map(|p| match p {
-        ModulePattern::AccumulatorFold {
-            wrapper_fn,
-            loop_fn,
-            step_op: Some(op),
-            finish_fn: None,
-            ..
-        } if wrapper_fn == fn_name && matches!(op, BinOp::Add | BinOp::Mul) => {
-            Some((loop_fn.clone(), *op))
-        }
-        _ => None,
-    })?;
+    // Read the loop fn + its fold roles from the shared `AccumulatorFold`
+    // pattern (recognized once by `analysis::shape`) — no bespoke inner-body
+    // re-walk for the OP. Two drivers: the original `List<_>` fold (inline
+    // `acc <op> h` step) and the Peano-`Nat` countdown (`factTR`, a named
+    // `combine(n, acc)` step). The monoidal strategy needs an additive /
+    // multiplicative step and an identity finish (the base arm returns the
+    // accumulator).
+    let (inner_fn, fold_driver_type, value_first, step_op, step_combine_fn) =
+        shape.patterns.iter().find_map(|p| match p {
+            ModulePattern::AccumulatorFold {
+                wrapper_fn,
+                loop_fn,
+                step_op,
+                step_fn,
+                finish_fn: None,
+                driver_type,
+                step_value_first,
+                ..
+            } if wrapper_fn == fn_name => Some((
+                loop_fn.clone(),
+                driver_type.clone(),
+                *step_value_first,
+                *step_op,
+                step_fn.clone(),
+            )),
+            _ => None,
+        })?;
     let wrapper_fn = fn_name.to_string();
+
+    // Resolve the combine op + typed driver from the fold roles. `List` reads
+    // the inline binop; `PeanoNat` classifies the named combine fn by its base
+    // arm (`Z -> y` is `+`, `Z -> Z` is `*`).
+    let (combine_op, driver, combine_fn) = match fold_driver_type {
+        None => {
+            let op = step_op.filter(|op| matches!(op, BinOp::Add | BinOp::Mul))?;
+            (op, crate::ir::WrapperDriver::List, None)
+        }
+        Some(type_name) => {
+            let combine = step_combine_fn?;
+            let combine_fd = inputs.find_fn_def_by_call_name(&combine)?;
+            let op = nat_monoid_op_of(combine_fd)?;
+            (
+                op,
+                crate::ir::WrapperDriver::PeanoNat {
+                    type_name,
+                    value_first,
+                },
+                Some(combine),
+            )
+        }
+    };
 
     // Law shape: `wrapper(g) == other(g)` (either side).
     let extract = |expr: &Spanned<crate::ast::Expr>| -> Option<String> {
@@ -102,15 +135,25 @@ pub(super) fn detect_wrapper_over_recursion(
     if wargs.len() != 2 {
         return None;
     }
-    let expected_neutral: i64 = match combine_op {
-        BinOp::Add | BinOp::Sub => 0,
-        BinOp::Mul => 1,
-        _ => return None,
+    let neutral_matches = match &driver {
+        crate::ir::WrapperDriver::List => {
+            let expected_neutral: i64 = match combine_op {
+                BinOp::Add | BinOp::Sub => 0,
+                BinOp::Mul => 1,
+                _ => return None,
+            };
+            matches!(
+                &wargs[1].node,
+                Expr::Literal(crate::ast::Literal::Int(n)) if *n == expected_neutral
+            )
+        }
+        crate::ir::WrapperDriver::PeanoNat { .. } => match combine_op {
+            // multiplicative identity `S(Z)`, additive identity `Z`.
+            BinOp::Mul => is_peano_one(&wargs[1]),
+            BinOp::Add => is_peano_zero(&wargs[1]),
+            _ => return None,
+        },
     };
-    let neutral_matches = matches!(
-        &wargs[1].node,
-        Expr::Literal(crate::ast::Literal::Int(n)) if *n == expected_neutral
-    );
     if !neutral_matches {
         return None;
     }
@@ -120,7 +163,77 @@ pub(super) fn detect_wrapper_over_recursion(
         inner_fn,
         other_fn,
         combine_op,
+        driver,
+        combine_fn,
     })
+}
+
+/// A constructor VALUE in any surface form this stage's AST presents: a bare
+/// nullary `Nat.Z` parses as `Attr(Ident("Nat"), "Z")`, a `Nat.S(x)` as
+/// `FnCall`, and some passes leave an `Expr::Constructor`. Returns the short
+/// (type-prefix-stripped) constructor name + its argument exprs, or `None` for
+/// a non-constructor expression. Mirrors `proof_recognize::call_or_ctor`.
+fn peano_ctor_value(
+    e: &Spanned<crate::ast::Expr>,
+) -> Option<(String, Vec<&Spanned<crate::ast::Expr>>)> {
+    use crate::ast::Expr;
+    let short = |name: &str| name.rsplit('.').next().unwrap_or(name).to_string();
+    match &e.node {
+        Expr::FnCall(callee, args) => {
+            let name = expr_to_dotted_name(&callee.node)?;
+            Some((short(&name), args.iter().collect()))
+        }
+        Expr::Constructor(name, arg) => {
+            Some((short(name), arg.iter().map(|b| b.as_ref()).collect()))
+        }
+        Expr::Attr(..) => expr_to_dotted_name(&e.node).map(|n| (short(&n), Vec::new())),
+        _ => None,
+    }
+}
+
+/// Classify a 2-param Peano monoid fn by its base arm: `Z -> y` (returns the
+/// second param) is addition; `Z -> Z` (returns a nullary constructor) is
+/// multiplication. `None` for anything else — the wrapper strategy then
+/// declines and the law falls back to the generic ladder.
+fn nat_monoid_op_of(fd: &crate::ast::FnDef) -> Option<crate::ast::BinOp> {
+    use crate::ast::{BinOp, Expr, Pattern, Stmt};
+    if fd.params.len() != 2 {
+        return None;
+    }
+    let second = fd.params[1].0.as_str();
+    let [Stmt::Expr(body)] = fd.body.stmts() else {
+        return None;
+    };
+    let Expr::Match { arms, .. } = &body.node else {
+        return None;
+    };
+    for arm in arms {
+        let Pattern::Constructor(_, binders) = &arm.pattern else {
+            continue;
+        };
+        if !binders.is_empty() {
+            continue;
+        }
+        if matches_ident_expr(&arm.body, second) {
+            return Some(BinOp::Add);
+        }
+        if peano_ctor_value(&arm.body).is_some_and(|(_, args)| args.is_empty()) {
+            return Some(BinOp::Mul);
+        }
+    }
+    None
+}
+
+/// `Z` — a nullary constructor value (the additive Peano neutral). Name-
+/// agnostic: a Peano `Nat` has exactly one nullary constructor, and a
+/// mis-shaped neutral only degrades the proof to an honest `sorry`.
+fn is_peano_zero(e: &Spanned<crate::ast::Expr>) -> bool {
+    peano_ctor_value(e).is_some_and(|(_, args)| args.is_empty())
+}
+
+/// `S(Z)` — successor of zero (the multiplicative Peano neutral).
+fn is_peano_one(e: &Spanned<crate::ast::Expr>) -> bool {
+    peano_ctor_value(e).is_some_and(|(_, args)| args.len() == 1 && is_peano_zero(args[0]))
 }
 
 /// Return `Some(op)` iff `fn_name` resolves to a 2-arg Int wrapper

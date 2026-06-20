@@ -1039,3 +1039,68 @@ fn proof_lean_proves_map_set_nonempty_kernel_clean() {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+#[test]
+fn proof_lean_proves_fact_acc_kernel_clean_universal() {
+    // Multiplicative twin of `sum_acc`: the `WrapperOverRecursion` strategy
+    // proves a tail-recursive factorial equals its recurrence over a Peano
+    // `Nat`. The accumulator threads through the user `mul`, whose nonlinear
+    // residual `omega` cannot close, so the emitter bridges `mul`→`Nat.*`
+    // (via the proved `isNatMul`/`isNatAdd` bridges) and finishes the
+    // decomposition lemma `factTR n acc = mul (factTR n 1) acc` + the main
+    // law with the core `Nat.mul_*` lemmas — no Mathlib. Result is a GENUINE
+    // universal (`universal:true`, `#print axioms` clean of `sorryAx` /
+    // `ofReduceBool`). Regression guard for the whole Peano-Nat path.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean fact-acc test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let out = temp_output_dir("aver-fact-acc-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg("proof-corpus/handwritten/fact_acc_spec.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean =
+        std::fs::read_to_string(out.join("FactAccSpec.lean")).expect("read FactAccSpec.lean");
+    // The strategy must fire: the multiplicative bridge + the accumulator-
+    // decomposition lemma are what close the law (not the generic ladder).
+    assert!(
+        lean.contains("_mul_isNatMul") && lean.contains("theorem factTR_acc"),
+        "the `mul`→`Nat.*` bridge and the `factTR_acc` decomposition lemma must \
+         be emitted (the WrapperOverRecursion Peano-Nat path):\n{lean}"
+    );
+    // `factTR` must be a terminating `def`, never an opaque `partial def`
+    // (which would make the decomposition lemma unprovable).
+    assert!(
+        lean.contains("def factTR") && !lean.contains("partial def factTR"),
+        "factTR must emit as a terminating `def`, not `partial def`:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "tail-recursive factorial == its recurrence must kernel-prove as a \
+         GENUINE universal (passed, 0 sorries, universal:true).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&out);
+}

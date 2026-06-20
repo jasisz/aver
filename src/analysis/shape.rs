@@ -731,6 +731,17 @@ pub enum ModulePattern {
         /// Nil-arm finishing fn `finish_fn(acc)`, or `None` for an identity
         /// finish (the nil arm returns `acc` unchanged).
         finish_fn: Option<String>,
+        /// `None` for the original `List<_>` structural fold. `Some(ty)` for a
+        /// Peano-`Nat` countdown fold (`match n { Z -> acc; S(m) -> loop(m,
+        /// step) }`) over the ADT named `ty` — `factTR`'s shape, where the
+        /// step multiplies/adds the matched subject value rather than a list
+        /// head. The two share the role-extraction but need different backend
+        /// induction skeletons.
+        driver_type: Option<String>,
+        /// For a Peano-`Nat` fold whose step is `combine(subject, acc)`, `true`
+        /// when the folded subject is the combine fn's FIRST argument
+        /// (`mul(n, acc)`), `false` for `mul(acc, n)`. Ignored for `List`.
+        step_value_first: bool,
     },
 }
 
@@ -1264,6 +1275,96 @@ fn detect_accumulator_fold(
             continue;
         }
 
+        // A `List<_>` fold presents `[]`/`h::t` arms; a Peano-`Nat` countdown
+        // (`factTR`) presents two `Constructor` arms (`Z`/`S(m)`). They share
+        // the wrapper→loop discovery above but extract roles differently.
+        let list_shaped = arms
+            .iter()
+            .any(|a| matches!(a.pattern, Pattern::EmptyList | Pattern::Cons(_, _)));
+        if !list_shaped {
+            // ── Peano-`Nat` countdown fold ──────────────────────────────
+            // `match n { Z -> acc; S(m) -> loop(m, combine(n, acc)) }`, where
+            // the step's folded value is the matched subject `n` itself (not a
+            // list head). Base arm returns the accumulator (identity finish).
+            let mut base_seen = false;
+            let mut combine_fn: Option<String> = None;
+            let mut value_first = false;
+            let mut step_seen = false;
+            let mut ok = true;
+            for arm in arms {
+                let Pattern::Constructor(_, binders) = &arm.pattern else {
+                    ok = false;
+                    continue;
+                };
+                match binders.len() {
+                    0 => {
+                        if plain_ident(&arm.body) == Some(acc_param.as_str()) {
+                            base_seen = true;
+                        } else {
+                            ok = false;
+                        }
+                    }
+                    1 => {
+                        let bind = &binders[0];
+                        let Some((callee, cargs)) = call_target(&arm.body) else {
+                            ok = false;
+                            continue;
+                        };
+                        if callee != loop_fn
+                            || cargs.len() != 2
+                            || plain_ident(&cargs[0]) != Some(bind.as_str())
+                        {
+                            ok = false;
+                            continue;
+                        }
+                        // step = combine(subject, acc) | combine(acc, subject),
+                        // a named 2-arg monoid fn over the matched param + acc.
+                        let Expr::FnCall(sc, sargs) = &cargs[1].node else {
+                            ok = false;
+                            continue;
+                        };
+                        let Expr::Ident(sname) = &sc.node else {
+                            ok = false;
+                            continue;
+                        };
+                        if sargs.len() != 2 {
+                            ok = false;
+                            continue;
+                        }
+                        let a0 = plain_ident(&sargs[0]);
+                        let a1 = plain_ident(&sargs[1]);
+                        if a0 == Some(list_param.as_str()) && a1 == Some(acc_param.as_str()) {
+                            value_first = true;
+                        } else if a0 == Some(acc_param.as_str()) && a1 == Some(list_param.as_str())
+                        {
+                            value_first = false;
+                        } else {
+                            ok = false;
+                            continue;
+                        }
+                        combine_fn = Some(sname.clone());
+                        step_seen = true;
+                    }
+                    _ => ok = false,
+                }
+            }
+            if base_seen && step_seen && ok && combine_fn.is_some() {
+                out.push(ModulePattern::AccumulatorFold {
+                    scope: scope.clone(),
+                    wrapper_fn: fd.name.clone(),
+                    loop_fn,
+                    driver_type: Some(lf.params[0].1.clone()),
+                    list_param,
+                    acc_param,
+                    step_fn: combine_fn,
+                    step_op: None,
+                    finish_fn: None,
+                    step_value_first: value_first,
+                });
+            }
+            continue;
+        }
+
         let mut finish_fn: Option<Option<String>> = None; // outer Option = "arm seen"
         let mut step_fn: Option<String> = None;
         let mut step_op: Option<crate::ast::BinOp> = None;
@@ -1342,6 +1443,8 @@ fn detect_accumulator_fold(
             step_fn,
             step_op,
             finish_fn,
+            driver_type: None,
+            step_value_first: false,
         });
     }
 }

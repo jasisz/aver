@@ -37,7 +37,7 @@ pub use proof_ir::{
     DecreaseProof, EscapePairSpec, FloorDivShrink, FloorWindowFigure, FnContract, FuelMetric,
     LawTheorem, MapUpdatePostconditionKind, Measure, NativeIntCountdownBody, Predicate,
     PreservationProof, ProofIR, ProofStrategy, Quantifier, QuantifierType, RecursionContract,
-    RefinedTypeDecl, SmartGuard, StringEscapeRoundtripPin, UnclassifiedFn,
+    RefinedTypeDecl, SmartGuard, StringEscapeRoundtripPin, UnclassifiedFn, WrapperDriver,
 };
 pub use symbol_table::{CtorEntry, FnEntry, ModuleEntry, SymbolTable, TypeEntry};
 

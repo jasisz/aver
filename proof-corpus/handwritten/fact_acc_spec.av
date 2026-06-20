@@ -1,0 +1,34 @@
+module FactAccSpec
+    intent = "Multiplicative twin of sum_acc_spec: tail-recursive factorial equals the recurrence."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+fn mul(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> Nat.Z
+        Nat.S(z) -> plus(y, mul(z, y))
+
+fn factTR(n: Nat, acc: Nat) -> Nat
+    match n
+        Nat.Z -> acc
+        Nat.S(m) -> factTR(m, mul(n, acc))
+
+fn factFold(n: Nat) -> Nat
+    factTR(n, Nat.S(Nat.Z))
+
+fn factSpec(n: Nat) -> Nat
+    match n
+        Nat.Z -> Nat.S(Nat.Z)
+        Nat.S(m) -> mul(n, factSpec(m))
+
+verify factFold law equalsSpec
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z)), Nat.S(Nat.S(Nat.S(Nat.Z)))]
+    factFold(n) => factSpec(n)
