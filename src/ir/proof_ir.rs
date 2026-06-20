@@ -537,7 +537,10 @@ pub enum WrapperDriver {
     /// subject) is the combine fn's FIRST argument (`mul(n, acc)` →
     /// `true`; `mul(acc, n)` → `false`) so the backend rewrite matches
     /// the def's actual step term.
-    PeanoNat { type_name: String, value_first: bool },
+    PeanoNat {
+        type_name: String,
+        value_first: bool,
+    },
 }
 
 /// `LinearArithmetic` is named for the semantic, not the tactic.
