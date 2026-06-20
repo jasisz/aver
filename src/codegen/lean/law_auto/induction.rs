@@ -118,7 +118,7 @@ fn lean_nat_lift_support(
     law_uid: &str,
     extra_fns: &BTreeSet<String>,
 ) -> (Vec<String>, Vec<String>, BTreeSet<String>) {
-    use crate::codegen::proof_recognize::{NatArithKind, NatCompareKind};
+    use crate::codegen::proof_recognize::NatArithKind;
     let mut support = Vec::new();
     let mut simp_extra = Vec::new();
     let mut bridged_fns: BTreeSet<String> = BTreeSet::new();
@@ -226,25 +226,27 @@ fn lean_nat_lift_support(
     for op in compare {
         let f = aver_name_to_lean(&op.fn_name);
         bridged_fns.insert(f.clone());
-        match op.kind {
-            // `(le a b = true) = (a ≤ b)`: a Prop-equality (propext) so `simp only`
-            // rewrites the Bool goal `le _ _ = true` straight into `_ ≤ _` for omega.
-            NatCompareKind::Le => {
-                let name = format!("{law_uid}_{f}_isNatLe");
-                support.push(format!(
-                    "theorem {name} : ∀ a b, ({f} a b = true) = (a ≤ b) := by\n  intro a b\n  induction a generalizing b with\n  | zero => first | (simp [{f}]) | sorry\n  | succ k ih => cases b with\n    | zero => first | (simp [{f}]) | sorry\n    | succ w => first | (simp [{f}, ih]) | sorry"
-                ));
-                simp_extra.push(name);
-            }
-            // `<` matches its SECOND arg first, so the bridge inducts on `b`.
-            NatCompareKind::Lt => {
-                let name = format!("{law_uid}_{f}_isNatLt");
-                support.push(format!(
-                    "theorem {name} : ∀ a b, ({f} a b = true) = (a < b) := by\n  intro a b\n  induction b generalizing a with\n  | zero => cases a <;> first | (simp [{f}]) | sorry\n  | succ k ih => cases a <;> first | (simp [{f}, ih]) | sorry"
-                ));
-                simp_extra.push(name);
-            }
-        }
+        // ONE bridge for every recognized Peano Bool relation — `≤`, `<`, `=`
+        // (and any later `≥`/`>`/`≠`): the Prop-equality (propext)
+        // `(f a b = true) = (a R b)`, so `simp only` rewrites the Bool goal
+        // `f _ _ = true` straight into the Prop relation for `omega`. All three
+        // close by the SAME double-peel — induct on the argument the fn
+        // destructures first (its DRIVER: `b` for `<`, `a` for `≤`/`=`),
+        // case-split the other in both arms, `simp [f(, ih)]`. They differ only
+        // in the target relation and which arg drives, both read off the kind;
+        // the proof template is shared. Sound-by-floor: a misrecognized shape
+        // fails the bridge proof and lands on the `sorry`, never a false theorem.
+        let name = format!("{law_uid}_{f}_{}", op.kind.bridge_suffix());
+        let prop = op.kind.prop_op();
+        let (driver, passenger) = if op.kind.induct_on_second() {
+            ("b", "a")
+        } else {
+            ("a", "b")
+        };
+        support.push(format!(
+            "theorem {name} : ∀ a b, ({f} a b = true) = (a {prop} b) := by\n  intro a b\n  induction {driver} generalizing {passenger} with\n  | zero => cases {passenger} <;> first | (simp [{f}]) | sorry\n  | succ k ih => cases {passenger} <;> first | (simp [{f}, ih]) | sorry"
+        ));
+        simp_extra.push(name);
     }
 
     // `*` is nonlinear: `omega` treats `a*b` as an opaque atom, and core Lean has
@@ -2729,7 +2731,7 @@ fn emit_both_args_peeling_law(
         lean_nat_lift_support(law, ctx, &law_uid, &BTreeSet::new());
     let has_compare_bridge = bridge_names
         .iter()
-        .any(|n| n.ends_with("_isNatLe") || n.ends_with("_isNatLt"));
+        .any(|n| n.ends_with("_isNatLe") || n.ends_with("_isNatLt") || n.ends_with("_isNatEq"));
     let relational = !is_comm_assoc && law.givens.len() == 2 && has_compare_bridge;
     if !is_comm_assoc && !relational {
         return None;

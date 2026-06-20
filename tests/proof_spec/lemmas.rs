@@ -314,6 +314,22 @@ fn lean_proves_relational_both_args_min_le_when_lake_is_available() {
     );
 }
 
+/// Leaf-reach: a relational both-args law whose subject IS the Peano equality
+/// fn — `(max a b == a) = (b <= a)` — now closes universally. Beyond the `<=`
+/// bridge the residual carries `eq … = true` over the recursion, which only
+/// `omega` can finish once `eq` is itself bridged to the Prop `a = b` via
+/// `(eq a b = true) = (a = b)`. The recognizer learns the Peano decidable-
+/// equality shape and the both-args rung now picks up that `_isNatEq` bridge
+/// alongside `_isNatLe`. Budget 0: fully proven. TIP isaplanner prop_24.
+#[test]
+fn lean_proves_relational_both_args_eq_bridge_when_lake_is_available() {
+    assert_proof_builds_with_sorry_budget(
+        "proof-corpus/tip/isaplanner/prop_24.av",
+        "aver-relational-eq-bridge",
+        0,
+    );
+}
+
 /// Leaf-reach: the Lean backend auto-proves an ACCUMULATOR-generalizing law —
 /// `qrev(xs, acc) = rev(xs) ++ acc`, where `qrev` recurses on `xs` while
 /// THREADING `acc` (fed `List.concat([h], acc)`). The IH must be `∀ acc,
