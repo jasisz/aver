@@ -183,6 +183,18 @@ fn proof_dafny_verifies_nat_tri_when_dafny_is_available() {
 }
 
 #[test]
+fn proof_dafny_verifies_aliased_peano_when_dafny_is_available() {
+    // A Peano natural named other than `Nat` (`Num`). Dafny names the datatype
+    // directly (no builtin-`Nat` lift needed), so the factorial support stack
+    // verifies over `Num` exactly as over `Nat`. Pairs with the Lean
+    // `proof_lean_lifts_aliased_peano_type_to_nat_and_proves_universal` guard.
+    assert_dafny_verifies(
+        "proof-corpus/handwritten/peano_aliased_spec.av",
+        "aver-dafny-peano-aliased",
+    );
+}
+
+#[test]
 fn proof_dafny_verifies_list_length_fold_when_dafny_is_available() {
     // Stage 8c of #232: `ProofStrategy::MatchDispatcherFold` — two
     // structural list folds (`1 + length(t)` vs `length(t) + 1`)

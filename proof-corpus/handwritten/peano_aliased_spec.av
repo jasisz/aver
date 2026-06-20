@@ -1,0 +1,34 @@
+module PeanoAliased
+    intent = "A Peano natural named other than Nat (Num/Zero/Succ) still proves the tail-recursive factorial = recurrence — the driver type is lifted to builtin Nat by shape, not by name."
+    effects []
+
+type Num
+    Zero
+    Succ(Num)
+
+fn add(x: Num, y: Num) -> Num
+    match x
+        Num.Zero -> y
+        Num.Succ(z) -> Num.Succ(add(z, y))
+
+fn mul(x: Num, y: Num) -> Num
+    match x
+        Num.Zero -> Num.Zero
+        Num.Succ(z) -> add(y, mul(z, y))
+
+fn factTR(n: Num, acc: Num) -> Num
+    match n
+        Num.Zero -> acc
+        Num.Succ(m) -> factTR(m, mul(n, acc))
+
+fn factFold(n: Num) -> Num
+    factTR(n, Num.Succ(Num.Zero))
+
+fn factSpec(n: Num) -> Num
+    match n
+        Num.Zero -> Num.Succ(Num.Zero)
+        Num.Succ(m) -> mul(n, factSpec(m))
+
+verify factFold law equalsSpec
+    given n: Num = [Num.Zero, Num.Succ(Num.Zero), Num.Succ(Num.Succ(Num.Zero))]
+    factFold(n) => factSpec(n)
