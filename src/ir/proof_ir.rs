@@ -854,6 +854,35 @@ pub enum ProofStrategy {
         /// name. `None` for an inline-binop `List` fold (`acc + h`).
         combine_fn: Option<String>,
     },
+    /// Tail-recursive fold with a FIXED base parameter — the `qexp`
+    /// shape (TIP prop_35). The law `spec(x, y) == loop(x, y, neutral)`
+    /// equates a 2-arg structural recurrence on the DRIVER `y`:
+    /// `spec(x, y) = match y { Z -> neutral; S n -> combine(x, spec(x, n)) }`
+    /// against a 3-arg tail-recursive form carrying an accumulator:
+    /// `loop(x, y, z) = match y { Z -> z; S n -> loop(x, n, combine(x, z)) }`.
+    /// Unlike `WrapperOverRecursion`, the extra param `x` is FIXED across
+    /// the recursion (the base), the combine multiplies the accumulator by
+    /// `x` (not by the matched subject), and the law binds TWO givens with
+    /// the wrapper call written inline (no separate wrapper fn). Backends
+    /// emit the accumulator-generalization lemma
+    /// `loop x y z = combine (loop x y neutral) z` (induct on `y`,
+    /// generalize `z`; `x` fixed) plus the main universal law; the
+    /// multiplicative algebra closes via the `isNatMul` bridge to core
+    /// `Nat.mul_*` (no Mathlib). Today: multiplicative (`Mul`, neutral
+    /// `S(Z)`) and additive (`Add`, neutral `Z`) Peano combines.
+    TailRecFixedBaseFold {
+        /// Source name of the direct recurrence the law's other side calls
+        /// (e.g. `"exp"`). Recurses on the driver, base param fixed.
+        spec_fn: String,
+        /// Source name of the 3-arg tail-recursive loop (e.g. `"qexp"`).
+        loop_fn: String,
+        /// Source name of the binary monoid combine fn (`mult` / `plus`).
+        combine_fn: String,
+        /// Combine op classified from the monoid fn's base arm.
+        combine_op: crate::ast::BinOp,
+        /// Source type name of the driving Peano `Nat` ADT.
+        type_name: String,
+    },
     /// Ground constant-fold over fixed ADT/enum constructor
     /// arguments. The law's call(s) pin every non-Int param of the
     /// verified fn to a constructor literal (`CellContent.Empty`,

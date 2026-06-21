@@ -326,6 +326,29 @@ fn emit_verify_law_forall_auto_proof_inner(
     {
         return Some(proof);
     }
+    // IR-pinned `TailRecFixedBaseFold` (TIP prop_35, `exp x y = qexp x y one`).
+    // Like `FloorDivWindow`, it renders its own TRUE-universal statement plus the
+    // accumulator-generalization support lemma (`replaces_theorem`); the caller's
+    // law-class marker classes it `universal`, fail-closed behind `#print axioms`.
+    if let Some(crate::ir::ProofStrategy::TailRecFixedBaseFold {
+        spec_fn,
+        loop_fn,
+        combine_fn,
+        combine_op,
+        ..
+    }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
+        && let Some(proof) = spec::emit_tailrec_fixed_base_fold_law(
+            law,
+            ctx,
+            theorem_base,
+            &spec_fn,
+            &loop_fn,
+            &combine_fn,
+            combine_op,
+        )
+    {
+        return Some(proof);
+    }
     // IR-pinned strategies. The lowerer's decision wins over the
     // ad-hoc detection chain that follows; backend just renders the
     // tactic the IR selected. Each variant has a fixed Lean shape;

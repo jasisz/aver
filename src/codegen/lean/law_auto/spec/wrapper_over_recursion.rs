@@ -56,6 +56,114 @@ pub(in super::super) fn emit_wrapper_over_recursion_law(
     }
 }
 
+/// TIP prop_35 (`exp x y = qexp x y one`): a tail-recursive fold with a FIXED
+/// base param. Renders a self-contained, TRUE-universal proof (`replaces_theorem`),
+/// mirroring `FloorDivWindow`'s emission style: the `isNatMul`/`isNatAdd` bridges,
+/// the accumulator-generalization lemma `loop x y z = combine (loop x y neutral) z`
+/// (induct on the driver, generalize the accumulator; the base param is held
+/// fixed), and the main law `spec x y = loop x y neutral` proved by induction on
+/// the driver, peeling one step with the lemma. The multiplicative residual closes
+/// via the bridge to core `Nat.mul_*` (no Mathlib); additive closes with `omega`.
+#[allow(clippy::too_many_arguments)]
+pub(in super::super) fn emit_tailrec_fixed_base_fold_law(
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    theorem_base: &str,
+    spec_fn: &str,
+    loop_fn: &str,
+    combine_fn: &str,
+    combine_op: BinOp,
+) -> Option<AutoProof> {
+    if !matches!(combine_op, BinOp::Add | BinOp::Mul) {
+        return None;
+    }
+    let spec_l = aver_name_to_lean(spec_fn);
+    let loop_l = aver_name_to_lean(loop_fn);
+    let combine_l = aver_name_to_lean(combine_fn);
+    let neutral = if combine_op == BinOp::Mul { "1" } else { "0" };
+    // The main theorem is named for `theorem_base` so the law-class marker
+    // (which keys credit on that name) finds it; support lemmas hang off the
+    // same base to stay collision-free across laws in one file.
+    let base = theorem_base.to_string();
+    let acc_thm = format!("{base}__acc");
+
+    // Bridges (user monoid fn → `Nat` builtin). The `mul` bridge proof rewrites
+    // with the `add` bridge, so seed the scan with the combine fn's own callees
+    // (`plus`) — the law scan only reaches one level deep and would miss it.
+    let mut extra = std::collections::BTreeSet::new();
+    if let Some(cfd) = ctx.fn_def_by_name(combine_fn, ctx.active_module_scope().as_deref()) {
+        crate::codegen::proof_recognize::collect_called_fns_in_body(&cfd.body, &mut extra);
+    }
+    let (bridge_support, simp_extra, _bridged) =
+        super::super::induction::lean_nat_lift_support(law, ctx, &base, &extra);
+    // Keep only the bridge THEOREM names (`{base}_*`); the shared support also
+    // bundles a broad `Nat.mul_*` rewrite set whose `succ_mul`/`mul_add`
+    // directions fight the AC normal form the residual needs. The bridges put
+    // both sides in `*` form; this emit supplies its own minimal close.
+    let bridges: Vec<String> = simp_extra
+        .into_iter()
+        .filter(|n| n.starts_with(&base))
+        .collect();
+    if bridges.is_empty() {
+        // No Peano arith op recognized — decline rather than emit a dead proof.
+        return None;
+    }
+    let bridge_set = bridges.join(", ");
+
+    // The decomposition + main residuals. Multiplicative: bridge both sides to
+    // `*`, then the residual is pure AC reassociation (`Nat.mul_assoc` +
+    // `Nat.mul_comm` normalize, `Nat.mul_one` cancels the neutral). Additive is
+    // linear once the combine is bridged to `+`, so `omega` finishes it.
+    let (decomp_close, main_close) = match combine_op {
+        BinOp::Mul => (
+            format!(
+                "simp [{bridge_set}, Nat.mul_assoc, Nat.mul_comm, Nat.mul_left_comm, Nat.mul_one]"
+            ),
+            format!(
+                "simp [{bridge_set}, Nat.mul_assoc, Nat.mul_comm, Nat.mul_left_comm, Nat.mul_one]"
+            ),
+        ),
+        _ => (
+            format!("simp only [{bridge_set}]; omega"),
+            format!("simp only [{bridge_set}]; omega"),
+        ),
+    };
+
+    let mut lines: Vec<String> = bridge_support;
+    // Accumulator-generalization lemma. `x` is universally bound but held FIXED
+    // through the induction; the recursion shrinks `y`, generalizing `z`.
+    lines.push(format!(
+        "theorem {acc_thm} : ∀ (x y z : Nat), {loop_l} x y z = {combine_l} ({loop_l} x y {neutral}) z := by"
+    ));
+    lines.push("  intro x y z".to_string());
+    lines.push("  induction y generalizing z with".to_string());
+    lines.push(format!("  | zero => simp [{loop_l}, {bridge_set}]"));
+    lines.push(format!(
+        "  | succ m ih => simp only [{loop_l}]; rw [ih ({combine_l} x z), ih ({combine_l} x {neutral})]; {decomp_close}"
+    ));
+
+    // Main law. Unfold the wrapper's inline neutral (`one` / `S(Z)` renders as
+    // `0 + 1`; `Nat.zero_add` normalizes it), induct on the driver, peel one
+    // step with the lemma, apply the IH, and close the residual.
+    lines.push(format!(
+        "theorem {base} : ∀ (x y : Nat), {spec_l} x y = {loop_l} x y {neutral} := by"
+    ));
+    lines.push("  intro x y".to_string());
+    lines.push("  induction y with".to_string());
+    lines.push(format!("  | zero => simp [{spec_l}, {loop_l}]"));
+    lines.push("  | succ m ih =>".to_string());
+    lines.push(format!("    simp only [{spec_l}, {loop_l}]"));
+    lines.push(format!("    rw [{acc_thm} x m ({combine_l} x {neutral})]"));
+    lines.push("    rw [ih]".to_string());
+    lines.push(format!("    {main_close}"));
+
+    Some(AutoProof {
+        support_lines: lines,
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(Vec::new()),
+        replaces_theorem: true,
+    })
+}
+
 /// Original `List<_>` fold (`sum_acc`): the accumulator-decomposition lemma
 /// and the main proof both close with `omega` (linear). Hardcoded `List Int`.
 fn emit_list_fold(

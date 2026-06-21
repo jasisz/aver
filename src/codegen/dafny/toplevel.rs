@@ -1884,6 +1884,154 @@ fn emit_wrapper_nat_support_stack(
     Some(lines.join("\n"))
 }
 
+/// TIP prop_35 (`exp x y = qexp x y one`): Dafny support stack for a
+/// `TailRecFixedBaseFold` — the tail-recursive-with-fixed-base shape. Reuses the
+/// `plus`/`mul` Peano monoid prelude, then the accumulator-decomposition lemma
+/// `qexp(x, n, a) == mul(qexp(x, n, one), a)` (the extra `x` is held fixed
+/// through the induction on `n`) and the main law `exp(x, n) == qexp(x, n, one)`.
+/// The combine multiplies the accumulator by the FIXED base `x` (not the matched
+/// subject). Returns `None` for shapes outside the multiplicative/additive Peano
+/// combine so the caller keeps the honest omitted decline.
+#[allow(clippy::too_many_arguments)]
+fn emit_tailrec_fixed_base_support_stack(
+    ctx: &CodegenContext,
+    spec_fn: &str,
+    loop_fn: &str,
+    combine_fn: &str,
+    combine_op: crate::ast::BinOp,
+    nat_type: &str,
+    impl_dafny: &str,
+    law_name_dafny: &str,
+) -> Option<String> {
+    if !matches!(combine_op, crate::ast::BinOp::Add | crate::ast::BinOp::Mul) {
+        return None;
+    }
+
+    // Peano constructors (nullary base + unary self-recursive succ) and the
+    // additive monoid fn the combine rests on.
+    let bare = nat_type.rsplit('.').next().unwrap_or(nat_type);
+    let td = ctx
+        .type_defs
+        .iter()
+        .chain(ctx.modules.iter().flat_map(|m| m.type_defs.iter()))
+        .find(|td| crate::codegen::common::type_def_name(td) == bare)?;
+    let crate::ast::TypeDef::Sum { variants, .. } = td else {
+        return None;
+    };
+    let base = variants.iter().find(|v| v.fields.is_empty())?.name.clone();
+    let succ = variants
+        .iter()
+        .find(|v| v.fields.len() == 1 && v.fields[0].trim() == bare)?
+        .name
+        .clone();
+    let plus = match combine_op {
+        crate::ast::BinOp::Mul => {
+            let combine_fd =
+                ctx.fn_def_by_name(combine_fn, ctx.active_module_scope().as_deref())?;
+            aver_name_to_dafny(&peano_additive_callee(combine_fd)?)
+        }
+        _ => aver_name_to_dafny(combine_fn),
+    };
+
+    let t = bare.to_string();
+    let spec = aver_name_to_dafny(spec_fn);
+    let loop_d = aver_name_to_dafny(loop_fn);
+    let zero = format!("{t}.{base}");
+    let main = format!("{impl_dafny}_{law_name_dafny}");
+    let p = format!("{main}__"); // law-scoped helper-lemma prefix
+    let acc = format!("{loop_d}__acc");
+
+    // `plus` monoid helper-lemma names (shared by both combine ops).
+    let (pz, ps, pc, pa) = (
+        format!("{p}plus_zero_r"),
+        format!("{p}plus_succ_r"),
+        format!("{p}plus_comm"),
+        format!("{p}plus_assoc"),
+    );
+
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "// Law: {spec_fn}.{law_name_dafny} — tail-recursive fixed-base fold support stack"
+    ));
+    // ── plus monoid (shared) ──
+    lines.push(format!(
+        "lemma {pz}(x: {t})\n  ensures {plus}(x, {zero}) == x\n  decreases x\n{{ match x case {base} => case {succ}(q) => {pz}(q); }}"
+    ));
+    lines.push(format!(
+        "lemma {ps}(x: {t}, y: {t})\n  ensures {plus}(x, {t}.{succ}(y)) == {t}.{succ}({plus}(x, y))\n  decreases x\n{{ match x case {base} => case {succ}(q) => {ps}(q, y); }}"
+    ));
+    lines.push(format!(
+        "lemma {pc}(a: {t}, b: {t})\n  ensures {plus}(a, b) == {plus}(b, a)\n  decreases a\n{{ match a case {base} => {pz}(b); case {succ}(q) => {pc}(q, b); {ps}(b, q); }}"
+    ));
+    lines.push(format!(
+        "lemma {pa}(a: {t}, b: {t}, c: {t})\n  ensures {plus}({plus}(a, b), c) == {plus}(a, {plus}(b, c))\n  decreases a\n{{ match a case {base} => case {succ}(q) => {pa}(q, b, c); }}"
+    ));
+
+    let one = format!("{t}.{succ}({t}.{base})");
+    match combine_op {
+        crate::ast::BinOp::Mul => {
+            // ── mul monoid (built on the plus monoid) ──
+            let mul = aver_name_to_dafny(combine_fn);
+            let psw = format!("{p}plus_swap");
+            let (om, mo, ma, mpd, mc, mz, msr) = (
+                format!("{p}one_mul"),
+                format!("{p}mul_one"),
+                format!("{p}mul_assoc"),
+                format!("{p}mul_plus_dist"),
+                format!("{p}mul_comm"),
+                format!("{p}mul_zero_r"),
+                format!("{p}mul_succ_r"),
+            );
+            lines.push(format!(
+                "lemma {psw}(a: {t}, b: {t}, c: {t})\n  ensures {plus}(a, {plus}(b, c)) == {plus}(b, {plus}(a, c))\n{{ {pa}(a, b, c); {pc}(a, b); {pa}(b, a, c); }}"
+            ));
+            lines.push(format!(
+                "lemma {mz}(b: {t})\n  ensures {mul}(b, {zero}) == {zero}\n  decreases b\n{{ match b case {base} => case {succ}(w) => {mz}(w); }}"
+            ));
+            lines.push(format!(
+                "lemma {om}(x: {t})\n  ensures {mul}({one}, x) == x\n{{ {pz}(x); }}"
+            ));
+            lines.push(format!(
+                "lemma {mo}(a: {t})\n  ensures {mul}(a, {one}) == a\n  decreases a\n{{ match a case {base} => case {succ}(z) => {mo}(z); assert {plus}({one}, z) == {t}.{succ}(z); }}"
+            ));
+            lines.push(format!(
+                "lemma {msr}(b: {t}, z: {t})\n  ensures {mul}(b, {t}.{succ}(z)) == {plus}(b, {mul}(b, z))\n  decreases b\n{{ match b case {base} => case {succ}(w) => {msr}(w, z); {psw}(z, w, {mul}(w, z)); }}"
+            ));
+            lines.push(format!(
+                "lemma {mpd}(a: {t}, b: {t}, c: {t})\n  ensures {mul}({plus}(a, b), c) == {plus}({mul}(a, c), {mul}(b, c))\n  decreases a\n{{ match a case {base} => case {succ}(z) => {mpd}(z, b, c); {pa}(c, {mul}(z, c), {mul}(b, c)); }}"
+            ));
+            lines.push(format!(
+                "lemma {ma}(a: {t}, b: {t}, c: {t})\n  ensures {mul}({mul}(a, b), c) == {mul}(a, {mul}(b, c))\n  decreases a\n{{ match a case {base} => case {succ}(z) => {ma}(z, b, c); {mpd}(b, {mul}(z, b), c); }}"
+            ));
+            lines.push(format!(
+                "lemma {mc}(a: {t}, b: {t})\n  ensures {mul}(a, b) == {mul}(b, a)\n  decreases a\n{{ match a case {base} => {mz}(b); case {succ}(z) => {mc}(z, b); {msr}(b, z); }}"
+            ));
+            // ── accumulator decomposition + main law (multiplicative) ──
+            // `x` is fixed through the induction on `n`; the combine is
+            // `mul(x, acc)` (fixed base × accumulator).
+            lines.push(format!(
+                "lemma {acc}(x: {t}, n: {t}, a: {t})\n  ensures {loop_d}(x, n, a) == {mul}({loop_d}(x, n, {one}), a)\n  decreases n\n{{ match n case {base} => {om}(a); case {succ}(m) => {acc}(x, m, {mul}(x, a)); {acc}(x, m, {mul}(x, {one})); {mo}(x); {ma}({loop_d}(x, m, {one}), x, a); }}"
+            ));
+            lines.push(format!(
+                "lemma {{:fuel {spec}, 5}} {{:fuel {loop_d}, 5}} {main}(x: {t}, n: {t})\n  ensures {spec}(x, n) == {loop_d}(x, n, {one})\n  decreases n\n{{ match n case {base} => case {succ}(m) => {main}(x, m); {acc}(x, m, {mul}(x, {one})); {mo}(x); {mc}({spec}(x, m), x); }}\n"
+            ));
+        }
+        _ => {
+            // ── accumulator decomposition + main law (additive) ──
+            // No `mul` monoid: the close rests on `plus` associativity and
+            // commutativity, neutral is `zero`. Combine is `plus(x, acc)`.
+            let plus_c = aver_name_to_dafny(combine_fn);
+            lines.push(format!(
+                "lemma {acc}(x: {t}, n: {t}, a: {t})\n  ensures {loop_d}(x, n, a) == {plus_c}({loop_d}(x, n, {zero}), a)\n  decreases n\n{{ match n case {base} => {pc}({zero}, a); {pz}(a); case {succ}(m) => {acc}(x, m, {plus_c}(x, a)); {acc}(x, m, {plus_c}(x, {zero})); {pz}(x); {pa}({loop_d}(x, m, {zero}), x, a); }}"
+            ));
+            lines.push(format!(
+                "lemma {{:fuel {spec}, 5}} {{:fuel {loop_d}, 5}} {main}(x: {t}, n: {t})\n  ensures {spec}(x, n) == {loop_d}(x, n, {zero})\n  decreases n\n{{ match n case {base} => case {succ}(m) => {main}(x, m); {acc}(x, m, {plus_c}(x, {zero})); {pz}(x); {pc}({spec}(x, m), x); }}\n"
+            ));
+        }
+    }
+    Some(lines.join("\n"))
+}
+
 /// True when the law's call cone (lhs + rhs, transitively expanded
 /// through fn bodies) reaches a fn carrying the guard-validated
 /// floor-division countdown contract
@@ -2208,6 +2356,40 @@ pub fn emit_verify_law(
     // closed by Dafny's `decreases`-driven induction either; the
     // `__fuel`-style wrapper hides the structural decrease. Sample
     // assertions still cover the declared domain.
+    // TIP prop_35 — `TailRecFixedBaseFold` (the `qexp` shape). The loop is
+    // rejected by the recursion classifier (a growing accumulator) so it lands
+    // in `unclassified_fns` and would trip the fuel gate below, but the strategy
+    // supplies its own complete Peano-monoid support stack that PROVES the
+    // universal. Emit it before the fuel gate (mirror of the Lean fuel-gate
+    // exception). Falls through only if the stack declines the shape.
+    if let Some(crate::ir::ProofStrategy::TailRecFixedBaseFold {
+        spec_fn,
+        loop_fn,
+        combine_fn,
+        combine_op,
+        type_name,
+    }) = vb_fn_id
+        .and_then(|fn_id| {
+            ctx.proof_ir
+                .law_theorems
+                .iter()
+                .find(|t| t.fn_id == fn_id && t.law_name == law.name)
+        })
+        .map(|t| t.strategy.clone())
+        && let Some(stack) = emit_tailrec_fixed_base_support_stack(
+            ctx,
+            &spec_fn,
+            &loop_fn,
+            &combine_fn,
+            combine_op,
+            &type_name,
+            &fn_name,
+            &law_name,
+        )
+    {
+        return stack;
+    }
+
     let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
     let calls_fuel_bounded = crate::codegen::common::law_calls_unclassified_fn(law, &unclassified);
     if singleton_const_rhs || calls_fuel_bounded {
@@ -2389,6 +2571,9 @@ pub fn emit_verify_law(
             }
         }
     }
+    // (`TailRecFixedBaseFold` is dispatched earlier — before the fuel gate —
+    // since its `qexp` loop is classifier-rejected and would otherwise be
+    // omitted; see the early return above.)
 
     // Refinement lift: for each Int given whose value is wrapped in
     // a refinement record on either side (e.g. `IntRange(value = a)`),

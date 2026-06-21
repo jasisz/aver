@@ -534,13 +534,21 @@ fn emit_verify_law_block(
     // would drop the very theorems the strategy exists to close
     // (e.g. `parseEscape.escapeCodeRoundtrip`, whose `parseEscape`
     // is fuel-bounded), so the fuel gate does not apply.
+    // EXCEPTION — `TailRecFixedBaseFold`: the `qexp` loop is rejected by the
+    // recursion classifier (a growing accumulator), so it lands in
+    // `unclassified_fns` and trips the fuel gate. But the strategy re-emits the
+    // loop as a terminating structural `def` (see `transpile`) and supplies its
+    // OWN universal proof from the accumulator-decomposition lemma — there is no
+    // `__fuel` wrapper to drive. Skipping here would drop the very theorem the
+    // strategy exists to close, so the fuel gate does not apply.
     let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
     let calls_fuel_bounded = crate::codegen::common::law_calls_unclassified_fn(law, &unclassified);
-    let pinned_finite_domain_cases = matches!(
+    let pinned_self_universal = matches!(
         pinned_law_strategy,
         Some(crate::ir::ProofStrategy::FiniteDomainCases { .. })
+            | Some(crate::ir::ProofStrategy::TailRecFixedBaseFold { .. })
     );
-    let skip_universal = singleton_const_rhs || (calls_fuel_bounded && !pinned_finite_domain_cases);
+    let skip_universal = singleton_const_rhs || (calls_fuel_bounded && !pinned_self_universal);
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(
             vb,
@@ -573,9 +581,16 @@ fn emit_verify_law_block(
         // marker says `universal`. Credit stays fail-closed: the
         // `#print axioms` whitelist still decides, and a sorry'd or
         // native_decide'd proof can never be credited.
+        // Strategies that emit their OWN true-universal statement
+        // (`replaces_theorem`) and so must override the bounded-domain
+        // default class: `FloorDivWindow` and `TailRecFixedBaseFold`
+        // (the `qexp` tail-recursive-fold shape). Both render a genuine
+        // `∀ givens, ... = ...` theorem named `theorem_base` and route
+        // through the `emit_verify_law_forall_auto_proof` path below.
         let floor_window_universal = matches!(
             pinned_law_strategy,
             Some(crate::ir::ProofStrategy::FloorDivWindow { .. })
+                | Some(crate::ir::ProofStrategy::TailRecFixedBaseFold { .. })
         );
         // The marker carries a THIRD field: the `fn.law` identity label
         // (the SAME `format!("{fn}.{law}")` the when-universal lane keys on,
