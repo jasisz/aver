@@ -2229,6 +2229,17 @@ fn classify_law_strategy(
     {
         return s;
     }
+    // Tail-recursive fold with a FIXED base param (TIP prop_35,
+    // `exp x y = qexp x y one`). The 2-given inline-wrapper shape the
+    // `WrapperOverRecursion` recognizer can't reach: a 3-arg loop whose
+    // extra leading param is held fixed and whose combine multiplies the
+    // accumulator by that fixed param. Emits the accumulator-generalization
+    // lemma plus the main universal law.
+    if law.when.is_none()
+        && let Some(s) = detect_tailrec_fixed_base_fold(law, inputs)
+    {
+        return s;
+    }
     // Structural induction runs first — when any given binds a
     // recursive ADT, induction over its variants is the canonical
     // proof. Reflexive could also fire on `f(t) = f(t)` for `t: Tree`

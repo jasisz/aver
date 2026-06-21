@@ -168,6 +168,245 @@ pub(super) fn detect_wrapper_over_recursion(
     })
 }
 
+/// TIP prop_35 (`exp x y = qexp x y one`): a tail-recursive fold with a FIXED
+/// base parameter. Detect the law `spec(x, y) == loop(x, y, neutral)` where the
+/// extra leading param `x` is threaded unchanged through both fns, the driver
+/// `y` is the structurally-shrinking Peano `Nat`, and the combine multiplies the
+/// accumulator by the fixed `x` (not by the matched subject). Distinct from
+/// `WrapperOverRecursion`: TWO givens, the wrapper call written inline (no
+/// separate non-recursive wrapper fn), a 3-arg loop, and combine-by-fixed-param.
+///
+/// `spec` must be `match y { Z -> neutral; S(n) -> combine(x, spec(x, n)) }`
+/// and `loop` `match y { Z -> z; S(n) -> loop(x, n, combine(x, z)) }`, with the
+/// inline neutral matching the combine op (`S(Z)` for `Mul`, `Z` for `Add`).
+pub(super) fn detect_tailrec_fixed_base_fold(
+    law: &crate::ast::VerifyLaw,
+    inputs: &ProofLowerInputs,
+) -> Option<crate::ir::ProofStrategy> {
+    use crate::ast::{Expr, Pattern, Stmt};
+
+    fn ident_name(e: &Spanned<Expr>) -> Option<&str> {
+        match &e.node {
+            Expr::Ident(n) => Some(n.as_str()),
+            Expr::Resolved { name, .. } => Some(name.as_str()),
+            _ => None,
+        }
+    }
+    // A 0-arg call (`one()` → `FnCall(one, [])`) or bare ctor value the law
+    // wrote inline as the loop's neutral accumulator argument.
+    let is_neutral_one = |e: &Spanned<Expr>| -> bool {
+        if is_peano_one(e) {
+            return true;
+        }
+        // `one()` resolves to a nullary fn whose body is `S(Z)`.
+        if let Expr::FnCall(c, a) = &e.node
+            && a.is_empty()
+            && let Some(name) = expr_to_dotted_name(&c.node)
+            && let Some(fd) = inputs.find_fn_def_by_call_name(&name)
+            && let Some(b) = body_terminal_expr(fd.body.as_ref())
+        {
+            return is_peano_one(b);
+        }
+        false
+    };
+    let is_neutral_zero = |e: &Spanned<Expr>| -> bool {
+        if is_peano_zero(e) {
+            return true;
+        }
+        if let Expr::FnCall(c, a) = &e.node
+            && a.is_empty()
+            && let Some(name) = expr_to_dotted_name(&c.node)
+            && let Some(fd) = inputs.find_fn_def_by_call_name(&name)
+            && let Some(b) = body_terminal_expr(fd.body.as_ref())
+        {
+            return is_peano_zero(b);
+        }
+        false
+    };
+
+    if law.givens.len() != 2 || law.when.is_some() {
+        return None;
+    }
+    let g0 = law.givens[0].name.as_str();
+    let g1 = law.givens[1].name.as_str();
+    let type_name = law.givens[1].type_name.clone();
+
+    // Law sides: `spec(x, y)` (2 args, both givens) and `loop(x, y, neutral)`
+    // (3 args, first two givens, third the inline neutral).
+    let as_spec = |e: &Spanned<Expr>| -> Option<String> {
+        let Expr::FnCall(c, a) = &e.node else {
+            return None;
+        };
+        if a.len() != 2 || ident_name(&a[0])? != g0 || ident_name(&a[1])? != g1 {
+            return None;
+        }
+        expr_to_dotted_name(&c.node)
+    };
+    fn as_loop<'e>(
+        e: &'e Spanned<Expr>,
+        g0: &str,
+        g1: &str,
+    ) -> Option<(String, &'e Spanned<Expr>)> {
+        let id = |x: &Spanned<Expr>| -> Option<String> {
+            match &x.node {
+                Expr::Ident(n) => Some(n.clone()),
+                Expr::Resolved { name, .. } => Some(name.clone()),
+                _ => None,
+            }
+        };
+        let Expr::FnCall(c, a) = &e.node else {
+            return None;
+        };
+        if a.len() != 3 || id(&a[0]).as_deref() != Some(g0) || id(&a[1]).as_deref() != Some(g1) {
+            return None;
+        }
+        Some((expr_to_dotted_name(&c.node)?, &a[2]))
+    }
+    let (spec_fn, loop_fn, neutral) = match (as_spec(&law.lhs), as_loop(&law.rhs, g0, g1)) {
+        (Some(s), Some((l, n))) => (s, l, n),
+        _ => match (as_spec(&law.rhs), as_loop(&law.lhs, g0, g1)) {
+            (Some(s), Some((l, n))) => (s, l, n),
+            _ => return None,
+        },
+    };
+    if spec_fn == loop_fn {
+        return None;
+    }
+
+    // The shared combine must be a Peano monoid fn; its op fixes the neutral.
+    let spec_fd = inputs.find_fn_def_by_call_name(&spec_fn)?;
+    let loop_fd = inputs.find_fn_def_by_call_name(&loop_fn)?;
+    if spec_fd.params.len() != 2 || loop_fd.params.len() != 3 {
+        return None;
+    }
+    let base_p = loop_fd.params[0].0.as_str();
+    let drv_p = loop_fd.params[1].0.as_str();
+    let acc_p = loop_fd.params[2].0.as_str();
+
+    // ── spec: match <drv> { Z -> neutral; S(n) -> combine(base, spec(base, n)) }
+    let spec_base = spec_fd.params[0].0.as_str();
+    let spec_drv = spec_fd.params[1].0.as_str();
+    let [Stmt::Expr(sbody)] = spec_fd.body.stmts() else {
+        return None;
+    };
+    let Expr::Match { subject, arms } = &sbody.node else {
+        return None;
+    };
+    if ident_name(subject) != Some(spec_drv) || arms.len() != 2 {
+        return None;
+    }
+    let mut spec_combine: Option<String> = None;
+    for arm in arms {
+        let Pattern::Constructor(_, binders) = &arm.pattern else {
+            return None;
+        };
+        match binders.len() {
+            0 => {} // base arm returns the neutral; validated against the op below
+            1 => {
+                // S(n) -> combine(base, spec(base, n))
+                let Expr::FnCall(cc, cargs) = &arm.body.node else {
+                    return None;
+                };
+                let cname = expr_to_dotted_name(&cc.node)?;
+                if cargs.len() != 2 || ident_name(&cargs[0])? != spec_base {
+                    return None;
+                }
+                let Expr::FnCall(rc, rargs) = &cargs[1].node else {
+                    return None;
+                };
+                if expr_to_dotted_name(&rc.node)? != spec_fn
+                    || rargs.len() != 2
+                    || ident_name(&rargs[0])? != spec_base
+                    || ident_name(&rargs[1])? != binders[0].as_str()
+                {
+                    return None;
+                }
+                spec_combine = Some(cname);
+            }
+            _ => return None,
+        }
+    }
+    let spec_combine = spec_combine?;
+
+    // ── loop: match <drv> { Z -> acc; S(n) -> loop(base, n, combine(base, acc)) }
+    let [Stmt::Expr(lbody)] = loop_fd.body.stmts() else {
+        return None;
+    };
+    let Expr::Match {
+        subject: lsubj,
+        arms: larms,
+    } = &lbody.node
+    else {
+        return None;
+    };
+    if ident_name(lsubj) != Some(drv_p) || larms.len() != 2 {
+        return None;
+    }
+    let mut loop_combine: Option<String> = None;
+    for arm in larms {
+        let Pattern::Constructor(_, binders) = &arm.pattern else {
+            return None;
+        };
+        match binders.len() {
+            0 => {
+                if ident_name(&arm.body) != Some(acc_p) {
+                    return None;
+                }
+            }
+            1 => {
+                // S(n) -> loop(base, n, combine(base, acc))
+                let (callee, cargs) = match &arm.body.node {
+                    Expr::FnCall(c, a) => (expr_to_dotted_name(&c.node)?, a.clone()),
+                    Expr::TailCall(td) => (td.target.clone(), td.args.clone()),
+                    _ => return None,
+                };
+                if callee != loop_fn
+                    || cargs.len() != 3
+                    || ident_name(&cargs[0])? != base_p
+                    || ident_name(&cargs[1])? != binders[0].as_str()
+                {
+                    return None;
+                }
+                let Expr::FnCall(sc, sargs) = &cargs[2].node else {
+                    return None;
+                };
+                if expr_to_dotted_name(&sc.node)? != spec_combine
+                    || sargs.len() != 2
+                    || ident_name(&sargs[0])? != base_p
+                    || ident_name(&sargs[1])? != acc_p
+                {
+                    return None;
+                }
+                loop_combine = Some(expr_to_dotted_name(&sc.node)?);
+            }
+            _ => return None,
+        }
+    }
+    if loop_combine.as_deref() != Some(spec_combine.as_str()) {
+        return None;
+    }
+
+    // Classify the combine op + check the inline neutral matches it.
+    let combine_fd = inputs.find_fn_def_by_call_name(&spec_combine)?;
+    let combine_op = nat_monoid_op_of(combine_fd)?;
+    let neutral_ok = match combine_op {
+        crate::ast::BinOp::Mul => is_neutral_one(neutral),
+        crate::ast::BinOp::Add => is_neutral_zero(neutral),
+        _ => return None,
+    };
+    if !neutral_ok {
+        return None;
+    }
+
+    Some(crate::ir::ProofStrategy::TailRecFixedBaseFold {
+        spec_fn,
+        loop_fn,
+        combine_fn: spec_combine,
+        combine_op,
+        type_name,
+    })
+}
+
 /// A constructor VALUE in any surface form this stage's AST presents: a bare
 /// nullary `Nat.Z` parses as `Attr(Ident("Nat"), "Z")`, a `Nat.S(x)` as
 /// `FnCall`, and some passes leave an `Expr::Constructor`. Returns the short

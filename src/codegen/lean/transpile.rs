@@ -208,6 +208,15 @@ fn is_wrapper_over_recursion_inner(ctx: &CodegenContext, fd: &crate::ast::FnDef)
             &t.strategy,
             crate::ir::ProofStrategy::WrapperOverRecursion { inner_fn, .. }
                 if *inner_fn == fd.name
+        ) || matches!(
+            &t.strategy,
+            // The `TailRecFixedBaseFold` loop (`qexp`) recurses on its DRIVER
+            // (2nd param); Lean's equation compiler still infers the structural
+            // measure across all params, so it must emit as a terminating `def`
+            // for the accumulator-decomposition lemma's `rw` to see its
+            // definitional equations — a `partial def` would withhold them.
+            crate::ir::ProofStrategy::TailRecFixedBaseFold { loop_fn, .. }
+                if *loop_fn == fd.name
         )
     })
 }
