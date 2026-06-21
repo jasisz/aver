@@ -1831,6 +1831,249 @@ fn zip_nil_helper(
     Some(NilHelper { text, name })
 }
 
+/// Bare given name a goal-argument `Expr` refers to (an `Ident`/`Resolved`),
+/// `None` for anything composite.
+fn given_ident_name(expr: &crate::ast::Spanned<crate::ast::Expr>) -> Option<&str> {
+    use crate::ast::Expr;
+    match &expr.node {
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => Some(n.as_str()),
+        _ => None,
+    }
+}
+
+/// A recognized **count-composition** law: `f(op(a, b), c) = f(a, f(b, c))`
+/// (in either orientation), where the verified fn `f` recurses on a `Nat` driver
+/// with a nested list `match` in its `S` arm (the take/drop shape), `op` is a
+/// recognized canonical Peano addition, `a`/`b` are `Nat` givens and `c` is the
+/// list given. The standard proof inducts on the INNER count `b` generalizing the
+/// list `c` (the outer count `a` fixed), unfolding `f` one step on both sides and
+/// chaining the IH at the peeled tail — which the family's existing rungs (driver
+/// = `a`, or `fun_induction`) do not produce. Returns the inner-count given's name
+/// and the list given's name.
+struct CountComposition {
+    /// Source name of the inner `Nat` count given to induct on (`b`).
+    inner_count: String,
+    /// Source name of the list given to generalize over (`c`).
+    list_given: String,
+}
+
+/// Recognize the count-composition shape on the law. The verified fn `f` must be
+/// a single-list-structural fn with a synchronously-decremented `Nat` driver, and
+/// the law's two sides must be `f(op(a, b), c)` and `f(a, f(b, c))` for a
+/// recognized Peano-addition `op` over bare `Nat`/list givens.
+fn recognize_count_composition(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<CountComposition> {
+    use crate::ast::Expr;
+    use crate::codegen::recursion::detect::{
+        param_decremented_in_recursion, single_list_structural_param_index,
+    };
+    if law.when.is_some() {
+        return None;
+    }
+    let fd = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())?;
+    let list_idx = single_list_structural_param_index(fd)?;
+    // The fn must drive on a synchronously-decremented Nat param (the take/drop
+    // `n`), so its first arg is the count peeled in lockstep with the list.
+    if !fd.params.iter().enumerate().any(|(i, (_, ty))| {
+        i != list_idx
+            && (ty.trim() == "Nat"
+                || crate::codegen::proof_recognize::peano_type_named(ctx, ty.trim()).is_some())
+            && param_decremented_in_recursion(fd, i)
+    }) {
+        return None;
+    }
+
+    // The recognized Peano-addition fns in the law's cone (so we know `op` is a
+    // genuine `+`, bridged to builtin addition by `lean_nat_lift_support`).
+    let add_fns: BTreeSet<String> =
+        crate::codegen::proof_recognize::collect_nat_arith_ops_in_law(law, ctx)
+            .into_iter()
+            .filter(|op| op.kind == crate::codegen::proof_recognize::NatArithKind::Add)
+            .map(|op| op.fn_name)
+            .collect();
+    if add_fns.is_empty() {
+        return None;
+    }
+
+    // `f(op(a, b), c)`: the verified fn applied to a 2-arg add over two givens and
+    // a bare list given. Returns `(a, b, c)` as source names.
+    let composed = |side: &crate::ast::Spanned<Expr>| -> Option<(String, String, String)> {
+        let Expr::FnCall(callee, args) = &side.node else {
+            return None;
+        };
+        if super::shared::expr_dotted_name(callee).as_deref() != Some(vb.fn_name.as_str())
+            || args.len() != 2
+        {
+            return None;
+        }
+        let Expr::FnCall(op_callee, op_args) = &args[0].node else {
+            return None;
+        };
+        let op_name = super::shared::expr_dotted_name(op_callee)?;
+        if !add_fns.contains(&op_name) || op_args.len() != 2 {
+            return None;
+        }
+        let a = given_ident_name(&op_args[0])?.to_string();
+        let b = given_ident_name(&op_args[1])?.to_string();
+        let c = given_ident_name(&args[1])?.to_string();
+        Some((a, b, c))
+    };
+
+    // `f(a, f(b, c))`: the verified fn nested on a bare outer count, an inner
+    // verified-fn call on a second bare count and the same list. Returns
+    // `(a, b, c)` as source names.
+    let nested = |side: &crate::ast::Spanned<Expr>| -> Option<(String, String, String)> {
+        let Expr::FnCall(callee, args) = &side.node else {
+            return None;
+        };
+        if super::shared::expr_dotted_name(callee).as_deref() != Some(vb.fn_name.as_str())
+            || args.len() != 2
+        {
+            return None;
+        }
+        let a = given_ident_name(&args[0])?.to_string();
+        let Expr::FnCall(inner_callee, inner_args) = &args[1].node else {
+            return None;
+        };
+        if super::shared::expr_dotted_name(inner_callee).as_deref() != Some(vb.fn_name.as_str())
+            || inner_args.len() != 2
+        {
+            return None;
+        }
+        let b = given_ident_name(&inner_args[0])?.to_string();
+        let c = given_ident_name(&inner_args[1])?.to_string();
+        Some((a, b, c))
+    };
+
+    // Either orientation: one side composed, the other nested, with matching
+    // `(a, b, c)`. The inner count `b` (op's second arg = nested inner first arg)
+    // is the induction target; `c` is generalized.
+    let (composed_side, nested_side) = composed(&law.lhs)
+        .map(|c| (c, nested(&law.rhs)))
+        .or_else(|| composed(&law.rhs).map(|c| (c, nested(&law.lhs))))?;
+    let (ca, cb, cc) = composed_side;
+    let (na, nb, nc) = nested_side?;
+    if ca != na || cb != nb || cc != nc {
+        return None;
+    }
+    // `b` and `a` must be distinct Nat givens, `c` the list given.
+    let given_type = |name: &str| {
+        law.givens
+            .iter()
+            .find(|g| g.name == name)
+            .map(|g| g.type_name.trim().to_string())
+    };
+    let is_nat = |name: &str| -> bool {
+        given_type(name).is_some_and(|ty| {
+            ty == "Nat" || crate::codegen::proof_recognize::peano_type_named(ctx, &ty).is_some()
+        })
+    };
+    let is_list = |name: &str| -> bool {
+        given_type(name).is_some_and(|ty| ty.starts_with("List<") || ty == "List")
+    };
+    if ca == cb || !is_nat(&ca) || !is_nat(&cb) || !is_list(&cc) {
+        return None;
+    }
+    Some(CountComposition {
+        inner_count: cb,
+        list_given: cc,
+    })
+}
+
+/// ADDITIVE rung for the count-COMPOSITION family (`f(op(a,b), c) =
+/// f(a, f(b,c))`, the `drop`/`take` composition lemmas). Inducts on the INNER
+/// count `b` generalizing the list `c`, with a closer that bridges `op` to
+/// builtin `+`, unfolds `f` one step on both sides, peels the list, and chains
+/// the IH at the tail. The synchronous-driver rung (driver = the FIRST count `a`)
+/// and `fun_induction` both fall through to `sorry` on this shape — inducting on
+/// `a` peels `op(a,b)` and the outer `f`'s list at different rates, never lining
+/// the IH up — so this is the missing pivot. Returns
+/// `(support_helper_theorems, rung_alternative_lines)`: the rung is ONE
+/// parenthesized `first` alternative meant to LEAD the existing ladder. It
+/// carries NO `sorry` floor and every arm ends in `simp_all`/`simp only … <;>`
+/// (which THROW on an open goal), so the alternative either CLOSES the goal or
+/// FAILS and `first` falls through to the existing ladder byte-for-byte. All
+/// tactics (`induction`/`cases`/`simp_all`/`omega` + the kernel-proved
+/// `isNatAdd` bridge and the proved `nil`-helper) are sound, so it can only ever
+/// ADD closures; a non-closing law stays `universal:false` exactly as before.
+fn emit_count_composition_rung(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+    law_uid: &str,
+) -> Option<(Vec<String>, Vec<String>)> {
+    let plan = recognize_count_composition(vb, law, ctx)?;
+    let driver = law
+        .givens
+        .iter()
+        .position(|g| g.name == plan.inner_count)
+        .and_then(|i| intro_names.get(i).cloned())?;
+    let list_intro = law
+        .givens
+        .iter()
+        .position(|g| g.name == plan.list_given)
+        .and_then(|i| intro_names.get(i).cloned())?;
+
+    // The kernel-proved `op a b = a + b` bridge (so `op a (k+1)` reduces — `op`
+    // recurses on its FIRST arg, which here is symbolic) and the `f _ [] = []`
+    // nil-helper. Both ride the same `lean_nat_lift_support` / `take_drop_nil_helper`
+    // the synchronous rung already emits; we re-derive their names and texts so
+    // this rung is self-contained (the caller dedups support lines).
+    let (arith_support, arith_bridges, _bridged) =
+        lean_nat_lift_support(law, ctx, law_uid, &BTreeSet::new());
+    let add_bridge = arith_bridges
+        .iter()
+        .find(|n| n.ends_with("_isNatAdd"))
+        .cloned()?;
+
+    // The `f _ [] = []` helper for the verified fn (same name the synchronous rung
+    // mints).
+    let mut support: Vec<String> = arith_support;
+    let mut nil_simp: Vec<String> = Vec::new();
+    if let Some(fd) = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())
+        && let Some(h) = take_drop_nil_helper(fd, law_uid, ctx)
+    {
+        nil_simp.push(h.name.clone());
+        support.push(h.text);
+    }
+
+    // Arm simp sets. `base`: law defs (`_root_.`-prefixed) + the add bridge + the
+    // nil-helper. The `zero` arm closes by `cases c <;> simp_all [base]` (the
+    // bridge turns `op a 0` into `a + 0 = a`); the `succ` arm peels the list and
+    // chains the IH after rewriting `op a (k+1)` to `(a + k) + 1` (so `f` peels)
+    // — `simp only [bridge, Nat.add_succ, f-defs] at *` exposes the one-step
+    // unfolds, then `simp_all [base, ih]` lands the IH at the tail.
+    let mut base_set: BTreeSet<String> = law_simp_defs(ctx, vb, law);
+    base_set.insert(add_bridge.clone());
+    base_set.extend(nil_simp.iter().cloned());
+    let base = base_set.iter().cloned().collect::<Vec<_>>().join(", ");
+    // The `simp only` unfold set for the succ arm: the law's defs (so `f`'s
+    // equations fire) + the bridge + `Nat.add_succ` (reassociates `a + (k+1)` to
+    // `(a + k) + 1` so `f` recognizes the `_ + 1` driver).
+    let mut unfold_set: BTreeSet<String> = law_simp_defs(ctx, vb, law);
+    unfold_set.insert(add_bridge.clone());
+    unfold_set.insert("Nat.add_succ".to_string());
+    let unfold = unfold_set.iter().cloned().collect::<Vec<_>>().join(", ");
+    // The cons-arm `simp_all` set carries the IH too.
+    let mut cons_set = base_set.clone();
+    cons_set.insert("ih".to_string());
+    let cons = cons_set.iter().cloned().collect::<Vec<_>>().join(", ");
+
+    let rung = vec![
+        "  | (".to_string(),
+        format!("    induction {driver} generalizing {list_intro} with"),
+        format!("    | zero => cases {list_intro} <;> simp_all [{base}]"),
+        format!(
+            "    | succ k ih => cases {list_intro} <;> simp only [{unfold}] at * <;> simp_all [{cons}])"
+        ),
+    ];
+    Some((support, rung))
+}
+
 /// ADDITIVE rung for the SYNCHRONOUS take/drop/zip family. A law whose subject
 /// fn recurses synchronously on a `Nat` and a `List` (take/drop) — or threads two
 /// lists (zip) — closes by generalizing-induction on the DRIVER `Nat` while
@@ -2591,32 +2834,65 @@ fn emit_list_induction(
         // (the `fun_induction`-wrapped `first` chain, or the bare ladder). The
         // rung carries no `sorry` floor and throws on any open goal, so `first`
         // either takes its closure or falls through to the rest byte-for-byte.
-        if let Some((multivar_support, rung)) =
-            emit_synchronous_multivar_induction(vb, law, ctx, intro_names, &law_uid)
-        {
-            support_lines.extend(multivar_support);
+        // Splice a leading `first` alternative (a parenthesized rung block) in
+        // front of whatever ladder is in `proof_lines`. If the ladder is already
+        // a `first` chain the rung becomes its new first alternative; otherwise a
+        // fresh `first | (rung) | (existing body)` wrapper is built. The rung
+        // either CLOSES the goal or THROWS (no `sorry` floor), so `first` falls
+        // through byte-for-byte — purely additive.
+        let splice_leading_rung = |proof_lines: &mut Vec<String>, rung: Vec<String>| {
             let intro_line = proof_lines.remove(0);
-            // If the ladder is already a `first` chain (the `fun_induction` rung
-            // ran), splice the rung in as its new first alternative; otherwise
-            // build a fresh `first | (rung) | (existing body)` wrapper.
             if proof_lines.first().map(String::as_str) == Some("  first") {
                 let mut wrapped = vec![intro_line, "  first".to_string()];
                 wrapped.extend(rung);
-                wrapped.extend(proof_lines.into_iter().skip(1));
-                proof_lines = wrapped;
+                wrapped.extend(proof_lines.drain(1..));
+                *proof_lines = wrapped;
             } else {
                 let mut wrapped = vec![intro_line, "  first".to_string()];
                 wrapped.extend(rung);
                 wrapped.push("  | (".to_string());
-                for line in &proof_lines {
+                for line in proof_lines.iter() {
                     wrapped.push(format!("  {line}"));
                 }
                 if let Some(last) = wrapped.last_mut() {
                     last.push(')');
                 }
-                proof_lines = wrapped;
+                *proof_lines = wrapped;
             }
+        };
+
+        if let Some((multivar_support, rung)) =
+            emit_synchronous_multivar_induction(vb, law, ctx, intro_names, &law_uid)
+        {
+            support_lines.extend(multivar_support);
+            splice_leading_rung(&mut proof_lines, rung);
         }
+
+        // ADDITIVE count-COMPOSITION rung (`f(op(a,b), c) = f(a, f(b,c))`, the
+        // drop/take composition lemmas). Inducts on the INNER count generalizing
+        // the list — the pivot the synchronous-driver rung (driver = the FIRST
+        // count) and `fun_induction` both miss. Spliced LAST so it LEADS the
+        // `first` chain. Same additive contract: it closes or throws and falls
+        // through. The bridge/nil-helper support lines may duplicate the
+        // synchronous rung's; the renderer dedups support theorems by name.
+        if let Some((compose_support, rung)) =
+            emit_count_composition_rung(vb, law, ctx, intro_names, &law_uid)
+        {
+            support_lines.extend(compose_support);
+            splice_leading_rung(&mut proof_lines, rung);
+        }
+    }
+
+    // The leading rungs (synchronous-driver and count-composition) may each emit
+    // the SAME proved support theorem (the `isNatAdd` bridge, the `f _ [] = []`
+    // nil-helper). A verbatim-duplicate `theorem … := by …` block is a Lean
+    // re-declaration error in the single-theorem path (which extends support
+    // lines without dedup), so drop exact-duplicate support theorems here,
+    // preserving first-occurrence order. Identical text = identical declaration,
+    // so this never changes a proof.
+    {
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        support_lines.retain(|line| seen.insert(line.clone()));
     }
 
     Some(AutoProof {
