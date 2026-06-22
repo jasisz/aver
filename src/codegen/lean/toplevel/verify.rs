@@ -549,6 +549,30 @@ fn emit_verify_law_block(
             | Some(crate::ir::ProofStrategy::TailRecFixedBaseFold { .. })
     );
     let skip_universal = singleton_const_rhs || (calls_fuel_bounded && !pinned_self_universal);
+    // Oracle v1: the auto-proof matchers compare law.lhs / law.rhs ASTs. For
+    // effectful laws the theorem statement has been rewritten to target the
+    // lifted fn (BranchPath.root() + oracle args injected); the matchers need to
+    // see the same rewritten form or they'll miss shapes like
+    // `pickOne(root, rnd) == pickOneSpec(root, rnd)` and fall back to `sorry`.
+    let law_for_auto_proof = crate::ast::VerifyLaw {
+        name: law.name.clone(),
+        givens: law.givens.clone(),
+        when: law.when.clone(),
+        lhs: law_lhs.clone(),
+        rhs: law_rhs.clone(),
+        sample_guards: law.sample_guards.clone(),
+    };
+    // A recognized EASY conditional comparison-bridge `when`-law (`prop_70
+    // leSucc`) is proven UNIVERSALLY by the dedicated bridge emit, so its
+    // theorem statement drops the sampled-domain disjunctions (`omit_domain`)
+    // and is classed `universal`. Restricted to non-refinement-lifted laws (the
+    // lifted path already drops the domain through the quantifier type and uses
+    // its own premise handling). Must agree with the proof emitter — both key on
+    // the same recognizer.
+    let conditional_universal = law.when.is_some()
+        && lifted_vars.is_empty()
+        && (super::law_auto::recognize_conditional_comparison_bridge(&law_for_auto_proof, ctx)
+            || super::law_auto::recognize_conditional_inductive_list(vb, &law_for_auto_proof, ctx));
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(
             vb,
@@ -564,6 +588,7 @@ fn emit_verify_law_block(
             &rhs_template,
             when_template.as_deref(),
             &lifted_vars,
+            conditional_universal,
         );
         // Statement-class marker — the channel `aver proof --check`'s
         // `universal` metric keys on (see `LAW_CLASS_MARKER_PREFIX`).
@@ -611,21 +636,6 @@ fn emit_verify_law_block(
             vb.fn_name,
             law.name,
         ));
-        // Oracle v1: the auto-proof matchers compare law.lhs / law.rhs
-        // ASTs. For effectful laws the theorem statement has been
-        // rewritten to target the lifted fn (BranchPath.root() + oracle
-        // args injected); the matchers need to see the same rewritten
-        // form or they'll miss shapes like
-        // `pickOne(root, rnd) == pickOneSpec(root, rnd)` and fall back
-        // to `sorry`. Build a view of the law with the rewritten body.
-        let law_for_auto_proof = crate::ast::VerifyLaw {
-            name: law.name.clone(),
-            givens: law.givens.clone(),
-            when: law.when.clone(),
-            lhs: law_lhs.clone(),
-            rhs: law_rhs.clone(),
-            sample_guards: law.sample_guards.clone(),
-        };
         // (Removed: refinement_auto_proof — Aver-specific bypass.
         // Refinement-lifted laws now flow through law_auto via the
         // IR-pinned `ProofStrategy::LinearArithmetic { lifted: true }`.
@@ -1133,6 +1143,7 @@ fn law_with_sliced_domain(
     part
 }
 
+#[allow(clippy::too_many_arguments)]
 fn law_theorem_parts(
     law: &VerifyLaw,
     ctx: &CodegenContext,
@@ -1141,7 +1152,14 @@ fn law_theorem_parts(
     rhs_template: &str,
     when_template: Option<&str>,
     lifted_vars: &std::collections::HashMap<String, String>,
+    omit_domain: bool,
 ) -> Vec<LawTheoremPart> {
+    // `omit_domain` (a recognized conditional-comparison-bridge `when`-law)
+    // drops the sampled-domain disjunctions, so the statement is the
+    // TRUE-universal `∀ givens, when = true -> claim`. The resulting
+    // `bounded_domain = false` keeps the single-part path (no domain chunking —
+    // there is no large disjunction to split) and flips the law-class marker to
+    // `universal`.
     let (prop, bounded_domain) = law_theorem_prop(
         law,
         ctx,
@@ -1149,7 +1167,7 @@ fn law_theorem_parts(
         rhs_template,
         when_template,
         lifted_vars,
-        false,
+        omit_domain,
     );
     let single = || {
         vec![LawTheoremPart {

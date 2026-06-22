@@ -643,6 +643,115 @@ verify clampNonNegative law clampNonNegativeSpec
 }
 
 #[test]
+fn transpile_proves_conditional_comparison_bridge_law_as_universal() {
+    // `prop_70 leSucc`: `when le(m, n) -> le(m, S n) => true`. The conditional
+    // comparison-bridge emit closes it as the TRUE-universal
+    // `∀ m n, le m n = true -> le m (n + 1) = true` — the sampled-domain
+    // disjunctions are dropped (`omit_domain`) so the law is classed `universal`,
+    // and the premise + goal are bridged to `≤` and discharged by `omega`.
+    let mut ctx = ctx_from_source(
+        r#"
+module CondCmpBridge
+    intent = "conditional comparison bridge: le(m,n) implies le(m, S n)"
+
+type Nat
+    Z
+    S(Nat)
+
+fn le(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> le(z, x2)
+
+verify le law leSucc
+    given m: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    when le(m, n)
+    le(m, Nat.S(n)) => true
+"#,
+        "cond_cmp_bridge",
+    );
+    let out = transpile(&mut ctx);
+    let lean = generated_lean_file(&out);
+
+    // Classed `universal`, NOT `bounded-domain`.
+    assert!(lean.contains("-- aver:law-class le_law_leSucc universal le.leSucc"));
+    // The TRUE-universal conditional statement: no `m = 0 ∨ …` sampled-domain
+    // premise, the `when` survives as the `= true ->` implication.
+    assert!(lean.contains(
+        "theorem le_law_leSucc : ∀ (m : Nat) (n : Nat), le m n = true -> le m (n + 1) = true := by"
+    ));
+    // Law-scoped `≤` bridge support theorem (uid `le_leSucc`, no `_law_` so the
+    // audit never mistakes it for a creditable main theorem).
+    assert!(lean.contains("theorem le_leSucc_le_isNatLe : ∀ a b, (le a b = true) = (a ≤ b) := by"));
+    // Premise introduced as `h_when`; bridged at hypothesis and goal, `omega` closes.
+    assert!(lean.contains("intro m n h_when"));
+    assert!(lean.contains("simp only [le_leSucc_le_isNatLe] at h_when ⊢ <;> omega"));
+}
+
+#[test]
+fn transpile_proves_conditional_inductive_membership_law_as_universal() {
+    // `prop_36 elemConcat`: `when elem(x,y) -> elem(x, y ++ z) => true` (append
+    // monotonicity, shape (A)). The conditional-inductive list emit closes it as
+    // the TRUE-universal `∀ x y z, elem x y = true -> elem x (y ++ z) = true` by
+    // induction on the first list given, threading the premise into the cons arm.
+    let mut ctx = ctx_from_source(
+        r#"
+module CondIndMembership
+    intent = "conditional inductive membership: elem x y implies elem x (y ++ z)"
+
+type Nat
+    Z
+    S(Nat)
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn barbar(x: Bool, y: Bool) -> Bool
+    match x
+        true -> true
+        false -> y
+
+fn elem(x: Nat, y: List<Nat>) -> Bool
+    match y
+        [] -> false
+        [z, ..xs] -> barbar(eqNat(x, z), elem(x, xs))
+
+verify elem law elemConcat
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given y: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z)]]
+    given z: List<Nat> = [[], [Nat.Z]]
+    when elem(x, y)
+    elem(x, List.concat(y, z)) => true
+"#,
+        "cond_ind_membership",
+    );
+    let out = transpile(&mut ctx);
+    let lean = generated_lean_file(&out);
+
+    // Classed `universal`, NOT `bounded-domain` (the sampled-domain disjunctions
+    // are dropped via `omit_domain`).
+    assert!(lean.contains("-- aver:law-class elem_law_elemConcat universal elem.elemConcat"));
+    // The TRUE-universal conditional statement (no `y = [..] ∨ …` domain premise).
+    assert!(lean.contains(
+        "theorem elem_law_elemConcat : ∀ (x : Nat) (y : List Nat) (z : List Nat), elem x y = true -> elem x (y ++ z) = true := by"
+    ));
+    // Induction on the first list given `y`, with the premise threaded INSIDE the
+    // cons arm (`intro h_when` after `induction`, so the IH carries the antecedent).
+    assert!(lean.contains("induction y with"));
+    assert!(lean.contains("| cons hd tl ih =>"));
+    assert!(lean.contains("intro h_when"));
+}
+
+#[test]
 fn transpile_auto_proves_simp_normalized_canonical_spec_law_in_auto_mode() {
     let mut ctx = ctx_from_source(
         r#"

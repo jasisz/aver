@@ -792,6 +792,28 @@ fn is_literal_div_shrink(expr: &Spanned<Expr>, param_name: &str) -> bool {
         )
 }
 
+/// Whether a `when` premise is a 2-arg call to a recognized canonical Peano
+/// comparison fn (`≤` / `<` / `=`). This is the exact condition under which the
+/// Nat-given lockstep-peel induction hint's recursive call satisfies its own
+/// `requires`: the comparison unfolds `f(S a, S b) == f(a, b)`, so the outer
+/// premise on the peeled-successor arguments reduces to the recursive premise.
+/// A non-comparison (or otherwise non-lockstep) premise is rejected, so the
+/// hint is never emitted where its recursion would violate a precondition.
+fn when_is_peano_comparison(when: &Spanned<Expr>, ctx: &CodegenContext) -> bool {
+    let Expr::FnCall(callee, args) = &when.node else {
+        return false;
+    };
+    if args.len() != 2 {
+        return false;
+    }
+    let Some(name) = crate::codegen::common::expr_to_dotted_name(&callee.node) else {
+        return false;
+    };
+    let mut names = std::collections::BTreeSet::new();
+    names.insert(name);
+    !crate::codegen::proof_recognize::collect_nat_compare_ops_for_names(&names, ctx).is_empty()
+}
+
 /// True when a self-recursive fn's termination cannot be justified by
 /// any `decreases` pattern this emitter recognizes AND no parameter
 /// offers Dafny's default lexicographic measure a structural ordering
@@ -2941,6 +2963,53 @@ pub fn emit_verify_law(
             }
             lines.push(format!("    {}({});", lemma_name, other_args.join(", ")));
             lines.push("  }".to_string());
+        }
+    } else if law
+        .when
+        .as_ref()
+        .is_some_and(|w| when_is_peano_comparison(w, ctx))
+        && !law.givens.is_empty()
+        && law.givens.iter().all(|g| {
+            crate::codegen::proof_recognize::peano_type_named(ctx, g.type_name.trim()).is_some()
+        })
+    {
+        // Conditional Peano-`Nat` comparison law (`prop_70 leSucc`:
+        // `requires le(m, n) ensures le(m, S n)`). Z3 cannot discharge the
+        // universal from `{}` + fuel alone (auto-`{:induction}` does not close
+        // it either — measured), so emit explicit structural induction on EVERY
+        // `Nat` given: peel each in lockstep and recurse on the all-predecessors
+        // tuple. The zero arms close from the `requires` + `le`-fuel; the
+        // all-succ arm's recursive call supplies the induction hypothesis (the
+        // `requires le(m', n')` it needs is exactly the unfolded outer
+        // `le(S m', S n')`). Sound by construction: Dafny re-checks the
+        // recursion and its termination, so a shape the lockstep peel does not
+        // actually prove stays an honest verify error, never a false lemma.
+        let lemma_name = format!("{}_{}", fn_name, law_name);
+        let peeled: Vec<String> = law
+            .givens
+            .iter()
+            .map(|g| format!("{}_p", aver_name_to_dafny(&g.name)))
+            .collect();
+        for (depth, g) in law.givens.iter().enumerate() {
+            let peano = crate::codegen::proof_recognize::peano_type_named(ctx, g.type_name.trim())
+                .expect("guarded by the all-Peano-given check above");
+            let pad = "  ".repeat(depth + 1);
+            lines.push(format!("{}match {} {{", pad, aver_name_to_dafny(&g.name)));
+            lines.push(format!("{}  case {} => {{}}", pad, peano.base_ctor));
+            lines.push(format!(
+                "{}  case {}({}) =>",
+                pad, peano.succ_ctor, peeled[depth]
+            ));
+        }
+        let inner_pad = "  ".repeat(law.givens.len() + 1);
+        lines.push(format!(
+            "{}{}({});",
+            inner_pad,
+            lemma_name,
+            peeled.join(", ")
+        ));
+        for depth in (0..law.givens.len()).rev() {
+            lines.push(format!("{}}}", "  ".repeat(depth + 1)));
         }
     }
 
