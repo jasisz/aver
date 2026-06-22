@@ -814,6 +814,35 @@ fn when_is_peano_comparison(when: &Spanned<Expr>, ctx: &CodegenContext) -> bool 
     !crate::codegen::proof_recognize::collect_nat_compare_ops_for_names(&names, ctx).is_empty()
 }
 
+/// Replace every WHOLE-WORD occurrence of identifier `word` in `s` with `repl`
+/// (a substring flanked by identifier chars `[A-Za-z0-9_]` is left untouched).
+/// Used to slice a `when` premise's induction-target reference to its tail
+/// (`y` -> `y[1..]`) when guarding a conditional list lemma's recursive call.
+fn replace_ident_word(s: &str, word: &str, repl: &str) -> String {
+    if word.is_empty() {
+        return s.to_string();
+    }
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let chars: Vec<char> = s.chars().collect();
+    let wlen = word.chars().count();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let matches_here = i + wlen <= chars.len()
+            && chars[i..i + wlen].iter().collect::<String>() == word
+            && (i == 0 || !is_ident(chars[i - 1]))
+            && (i + wlen >= chars.len() || !is_ident(chars[i + wlen]));
+        if matches_here {
+            out.push_str(repl);
+            i += wlen;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 /// True when a self-recursive fn's termination cannot be justified by
 /// any `decreases` pattern this emitter recognizes AND no parameter
 /// offers Dafny's default lexicographic measure a structural ordering
@@ -2961,7 +2990,28 @@ pub fn emit_verify_law(
             for assert in &bridges.step {
                 lines.push(assert.clone());
             }
-            lines.push(format!("    {}({});", lemma_name, other_args.join(", ")));
+            // For a CONDITIONAL list law, guard the recursive call with the
+            // premise applied to the TAIL (the induction target sliced `[1..]`),
+            // so its `requires` holds — the membership analogue of the Lean
+            // premise-threading (`prop_36` `when elem(x, y) -> elem(x, y ++ z)`:
+            // recurse only when `elem(x, y[1..])`, else Z3 closes the head case
+            // from `elem(x, y)` + the cons decomposition). A target-INDEPENDENT
+            // premise (e.g. `prop_71`'s `eqNat(x, y)`) substitutes to itself, so
+            // the guard is the premise — true in context — and the call fires
+            // unconditionally exactly as before (no regression).
+            if let Some(when_expr) = &law.when {
+                let when_str = emit_expr_legacy(when_expr, ctx, None);
+                let when_tail =
+                    replace_ident_word(&when_str, &list_param, &format!("{list_param}[1..]"));
+                lines.push(format!(
+                    "    if {} {{ {}({}); }}",
+                    when_tail,
+                    lemma_name,
+                    other_args.join(", ")
+                ));
+            } else {
+                lines.push(format!("    {}({});", lemma_name, other_args.join(", ")));
+            }
             lines.push("  }".to_string());
         }
     } else if law

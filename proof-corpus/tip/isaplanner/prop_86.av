@@ -37,20 +37,9 @@ fn ins(x: Nat, y: List<Nat>) -> List<Nat>
             true -> List.concat([x], y)
             false -> List.concat([z], ins(x, xs))
 
-fn eqBool(a: Bool, b: Bool) -> Bool
-    match a
-        true -> b
-        false -> match b
-            true -> false
-            false -> true
-
-fn goal(x: Nat, y: Nat, xs: List<Nat>) -> Bool
-    match lt(x, y)
-        true -> eqBool(elem(x, ins(y, xs)), elem(x, xs))
-        false -> true
-
-verify goal law insElemBelow
+verify elem law insElemBelow
     given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.Z]
     given y: Nat = [Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z)), Nat.S(Nat.Z)]
     given xs: List<Nat> = [[], [Nat.S(Nat.Z)], [Nat.Z, Nat.S(Nat.S(Nat.Z))]]
-    goal(x, y, xs) => true
+    when lt(x, y)
+    elem(x, ins(y, xs)) => elem(x, xs)

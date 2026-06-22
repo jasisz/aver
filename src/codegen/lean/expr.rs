@@ -681,15 +681,21 @@ const LEAN_RESERVED: &[&str] = &[
     "local",
     "macro",
     "match",
-    // Not Lean keywords, but GLOBAL Lean 4 functions (via the Max/Min
-    // typeclasses) a bare user fn shadows/collides with — a user `fn max`
-    // emits `def max`/calls `max a b` that resolve to Lean's builtin
-    // (typeclass-dispatched, NOT the user's recursion), so the proof can't
-    // reference the user fn. Escaping to `max'`/`min'` sidesteps it. (Other
-    // stdlib names like `length`/`take`/`drop` are reached as METHODS
-    // `xs.length` and don't collide as bare identifiers.)
+    // Not Lean keywords, but GLOBAL Lean 4 functions a bare user fn
+    // shadows/collides with — a user `fn max` / `fn and` / `fn insert` emits
+    // `def max` / `def and` / `def insert` and references that resolve
+    // AMBIGUOUSLY against Lean's builtin (the `Max`/`Min`/`Insert` typeclass
+    // forms, or the core `and`/`or : Bool -> Bool -> Bool`). The def or a
+    // `simp [insert]` rewrite then fails to elaborate ("ambiguous term" /
+    // "invalid simp theorem"), and the proof can't reference the user fn.
+    // Escaping to `max'`/`and'`/`insert'`/… sidesteps it. (Other stdlib names
+    // like `length`/`take`/`drop` are reached as METHODS `xs.length` and don't
+    // collide as bare identifiers.)
+    "and",
+    "insert",
     "max",
     "min",
+    "or",
     "mutual",
     "namespace",
     "noncomputable",

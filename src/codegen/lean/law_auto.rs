@@ -35,6 +35,11 @@ pub(in crate::codegen::lean) use induction::recognize_conditional_comparison_bri
 /// feeds the `omit_domain` statement driver, kept in lockstep with the emitter.
 pub(in crate::codegen::lean) use induction::recognize_conditional_inductive_list;
 
+/// The sortedness-of-insertion family (`sorted(L) -> sorted(ins x L)`), which the
+/// membership family declines (it needs a synthesized head-of-insert lemma).
+/// Also feeds the `omit_domain` statement driver, kept in lockstep with the emit.
+pub(in crate::codegen::lean) use induction::recognize_conditional_sortedness_law;
+
 /// `aver proof --explain` residual probe: turn an emitted main law theorem's
 /// source lines into a normalization-only twin so Lean reports its residual
 /// (`unsolved goals`). Re-exported up to `codegen::lean` for the `--check`
@@ -316,6 +321,17 @@ fn emit_verify_law_forall_auto_proof_inner(
     if law.when.is_some()
         && let Some(proof) =
             induction::emit_conditional_inductive_list_law(vb, law, ctx, &intro_names)
+    {
+        return Some(proof);
+    }
+
+    // Sortedness-of-insertion conditionals (`prop_77`, `prod/lemma_12`:
+    // `when sorted(L) -> sorted(<ins> x L) => true`). The membership emit above
+    // declines these (the verified fn returns a `List`, not a Bool predicate);
+    // they need a synthesized head-of-insert lower-bound lemma the bare IH cannot
+    // supply. Same `omit_domain` plumbing.
+    if law.when.is_some()
+        && let Some(proof) = induction::emit_conditional_sortedness_law(vb, law, ctx, &intro_names)
     {
         return Some(proof);
     }

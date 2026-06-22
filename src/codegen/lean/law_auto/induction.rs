@@ -1376,14 +1376,43 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_list_law(
     // Normalize a negated Bool premise (`(!p) = true` → `p = false`) so `simp_all`
     // can use it; a no-op `try` when the premise is not negated.
     let norm = "(try simp only [Bool.not_eq_true, Bool.not_eq_false] at h_when)".to_string();
-    // Arm portfolios. Every measured corpus closure (prop_36/37/38/46/47/71,
-    // lemma_19) lands on the FIRST cons branch (`simp only […] at h_when ⊢ <;>
-    // (split <;> simp_all)`) and the first nil branch (`simp [defs]; done`); the
-    // remaining branches are a `done`-terminated speculative hedge for premise /
-    // dispatcher shape variants the family may grow into (a non-closing branch
-    // throws on its `done`, so `first` advances at zero correctness cost — and at
-    // no build-time cost for an admitted law, since the winning branch is tried
-    // first). The trailing `sorry` keeps the whole emit fail-closed.
+    // Peano comparison bridges (`(f a b = true) = (a R b)`) for the relations the
+    // law mentions — premise included. They let `omega` discharge the dispatcher
+    // branches a COMPARISON premise rules out: `prop_86` (`when lt(x,y)`) needs
+    // `eqNat x y = false`, which falls out of the `<`/`=` bridges + `omega`,
+    // whereas a same-relation premise (`prop_71`'s `eqNat`) needs no bridge and
+    // closes on the first branch below. Sound-by-floor: a misrecognized op fails
+    // its own bridge proof and degrades to a sorry, never a false bridge.
+    let law_uid = format!(
+        "{}_{}",
+        aver_name_to_lean(&vb.fn_name),
+        aver_name_to_lean(&law.name)
+    );
+    let mut extra: BTreeSet<String> = BTreeSet::new();
+    if let Some(when) = &law.when {
+        crate::codegen::proof_recognize::collect_called_fns(when, &mut extra);
+    }
+    let (bridge_support, bridge_names, _bridged) =
+        lean_nat_lift_support(law, ctx, &law_uid, &extra);
+    let cmp_bridges: Vec<String> = bridge_names
+        .into_iter()
+        .filter(|n| n.ends_with("_isNatLe") || n.ends_with("_isNatLt") || n.ends_with("_isNatEq"))
+        .collect();
+    // The `simp_all` set with the comparison bridges folded in (for the
+    // omega-closing branches); bare defs when the law has no Peano comparison.
+    let defs_br = if cmp_bridges.is_empty() {
+        defs.clone()
+    } else {
+        format!("{defs}, {}", cmp_bridges.join(", "))
+    };
+    // Arm portfolios. The measured same-relation closures (prop_36/37/38/46/47/71,
+    // lemma_19) land on the FIRST cons branch (`simp only […] at h_when ⊢ <;>
+    // (split <;> simp_all)`) and the first nil branch; the comparison-premise
+    // closure (prop_86) lands on the bridge+`omega` branches. The rest are a
+    // `done`-terminated speculative hedge (a non-closing branch throws on its
+    // `done`, so `first` advances at zero correctness cost, and at no build-time
+    // cost for an admitted law since the winning branch is tried first). The
+    // trailing `sorry` keeps the whole emit fail-closed.
     let body = vec![
         format!("  intro {}", intro_names.join(" ")),
         format!("  induction {target} with"),
@@ -1391,6 +1420,9 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_list_law(
         "    first".to_string(),
         format!("    | (simp [{defs}]; done)"),
         format!("    | (intro h_when; {norm}; simp_all [{defs}]; done)"),
+        format!(
+            "    | (intro h_when; {norm}; simp only [{defs}] <;> (split <;> simp_all [{defs_br}]) <;> (try omega) <;> done)"
+        ),
         "    | sorry".to_string(),
         "  | cons hd tl ih =>".to_string(),
         "    intro h_when".to_string(),
@@ -1404,12 +1436,288 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_list_law(
             "    | (simp only [{with_append}] <;> (split <;> simp_all [{defs}, h_when]) <;> done)"
         ),
         format!("    | (simp only [{with_append}] <;> simp_all [{defs}, h_when] <;> done)"),
+        format!(
+            "    | (simp only [{with_append}] <;> (split <;> simp_all [{defs_br}]) <;> (try omega) <;> done)"
+        ),
+        format!(
+            "    | (simp only [{defs}] <;> (split <;> (simp_all [{defs_br}] <;> (try omega))) <;> done)"
+        ),
         format!("    | (split <;> simp_all [{defs}, h_when] <;> done)"),
         format!("    | (simp_all [{defs}, h_when] <;> done)"),
         "    | sorry".to_string(),
     ];
     Some(AutoProof {
-        support_lines: Vec::new(),
+        support_lines: bridge_support,
+        body: Tactic::raw(body),
+        replaces_theorem: false,
+    })
+}
+
+/// The four fns of a recognized sortedness-of-insert law, by SOURCE name.
+struct SortednessPlan {
+    /// The verified sorted-insertion fn (`insort`/`insert`).
+    ins: String,
+    /// The `sorted` Bool list predicate (premise + conclusion outer fn).
+    sorted: String,
+    /// The canonical Peano `≤` the insertion + sortedness compare with.
+    cmp: String,
+    /// The Bool `&&` combiner `sorted`'s recursive arm uses
+    /// (`and`/`andB`: `f true y = y`, `f false _ = false`).
+    and_fn: String,
+    /// Index of the list given inducted on.
+    target_idx: usize,
+}
+
+/// A canonical Bool `&&` combiner: `fn f(x: Bool, y: Bool) -> Bool` whose body is
+/// `match x { true -> y ; false -> false }` (`f true y = y`, `f false _ = false`).
+fn is_and_combiner(fd: &crate::ast::FnDef) -> bool {
+    use crate::ast::{Expr, Literal, Pattern};
+    if fd.return_type.trim() != "Bool" || fd.params.len() != 2 {
+        return false;
+    }
+    if fd.params[0].1.trim() != "Bool" || fd.params[1].1.trim() != "Bool" {
+        return false;
+    }
+    let (p0, p1) = (&fd.params[0].0, &fd.params[1].0);
+    let Some(body) = fd.body.tail_expr() else {
+        return false;
+    };
+    let Expr::Match { subject, arms } = &body.node else {
+        return false;
+    };
+    if !matches!(&subject.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == p0) {
+        return false;
+    }
+    let mut true_ok = false;
+    let mut false_ok = false;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::Literal(Literal::Bool(true)) => {
+                true_ok = matches!(&arm.body.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == p1);
+            }
+            Pattern::Literal(Literal::Bool(false)) => {
+                false_ok = matches!(&arm.body.node, Expr::Literal(Literal::Bool(false)));
+            }
+            _ => return false,
+        }
+    }
+    true_ok && false_ok
+}
+
+/// Recognize the sortedness-of-insertion shape:
+/// `when sorted(L) -> sorted(<ins>(x, L)) => true`, where `<ins>` is the verified
+/// fn (a sorted insertion that prepends with `List.concat`), `sorted` is the
+/// adjacent-pairs Bool predicate built on a Peano `≤` and a Bool `&&` combiner.
+/// This is the conditional-INDUCTIVE family the membership portfolio declines —
+/// it needs a synthesized head-of-insert lower-bound lemma the bare IH cannot
+/// supply.
+fn recognize_conditional_sortedness(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<SortednessPlan> {
+    use crate::ast::{Expr, Literal};
+    let when = law.when.as_ref()?;
+    // Conclusion `<sorted>(<ins>(.., L, ..)) => true`.
+    if !matches!(&law.rhs.node, Expr::Literal(Literal::Bool(true))) {
+        return None;
+    }
+    // Premise `<sorted>(L)`.
+    let Expr::FnCall(p_callee, p_args) = &when.node else {
+        return None;
+    };
+    let sorted = super::shared::expr_dotted_name(p_callee)?;
+    if p_args.len() != 1 {
+        return None;
+    }
+    let target_name = given_ident_name(&p_args[0])?.to_string();
+    let target_idx = law.givens.iter().position(|g| g.name == target_name)?;
+    // Conclusion LHS: same `sorted` applied to `<ins>(.., L, ..)`.
+    let Expr::FnCall(c_callee, c_args) = &law.lhs.node else {
+        return None;
+    };
+    if super::shared::expr_dotted_name(c_callee).as_deref() != Some(sorted.as_str())
+        || c_args.len() != 1
+    {
+        return None;
+    }
+    let Expr::FnCall(ins_callee, ins_args) = &c_args[0].node else {
+        return None;
+    };
+    let ins = super::shared::expr_dotted_name(ins_callee)?;
+    if ins != vb.fn_name
+        || !ins_args
+            .iter()
+            .any(|a| given_ident_name(a) == Some(target_name.as_str()))
+    {
+        return None;
+    }
+    // `ins` returns `List<_>` and recurses on its list param; `sorted` returns
+    // Bool and recurses on its list param.
+    let ins_fd = ctx.fn_def_by_name(&ins, ctx.active_module_scope().as_deref())?;
+    let sorted_fd = ctx.fn_def_by_name(&sorted, ctx.active_module_scope().as_deref())?;
+    use crate::codegen::recursion::detect::single_list_structural_param_index;
+    if !ins_fd.return_type.trim().starts_with("List<")
+        || single_list_structural_param_index(ins_fd).is_none()
+        || sorted_fd.return_type.trim() != "Bool"
+        || single_list_structural_param_index(sorted_fd).is_none()
+    {
+        return None;
+    }
+    // The single canonical Peano `≤` in the cone (the insertion + sortedness
+    // comparator). Require the `Le` kind: `cmpTotal` (`f a b = false -> f b a =
+    // true`) is the totality of a reflexive order, not of `<`.
+    use crate::codegen::proof_recognize::NatCompareKind;
+    let cmps = crate::codegen::proof_recognize::collect_nat_compare_ops_in_law(law, ctx);
+    let cmp = cmps
+        .iter()
+        .find(|o| o.kind == NatCompareKind::Le)
+        .map(|o| o.fn_name.clone())?;
+    // The Bool `&&` combiner `sorted`'s recursive arm uses.
+    let mut sorted_callees = BTreeSet::new();
+    crate::codegen::proof_recognize::collect_called_fns_in_body(
+        &sorted_fd.body,
+        &mut sorted_callees,
+    );
+    let and_fn = sorted_callees.iter().find_map(|name| {
+        ctx.fn_def_by_name(name, ctx.active_module_scope().as_deref())
+            .filter(|fd| is_and_combiner(fd))
+            .map(|_| name.clone())
+    })?;
+    Some(SortednessPlan {
+        ins,
+        sorted,
+        cmp,
+        and_fn,
+        target_idx,
+    })
+}
+
+/// Whether [`emit_conditional_sortedness_law`] will close this law universally —
+/// the `omit_domain` statement driver reads this, kept in lockstep with the emit.
+pub(in crate::codegen::lean) fn recognize_conditional_sortedness_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> bool {
+    recognize_conditional_sortedness(vb, law, ctx).is_some()
+}
+
+/// Close a sortedness-of-insertion law (`prop_77`, `prod/lemma_12`) as the
+/// TRUE-universal `∀ x L, sorted L = true -> sorted(<ins> x L) = true`. Emits the
+/// six support lemmas the bare list IH cannot supply — the `≤` bridge + its
+/// totality, the HEAD-OF-INSERT lower bound (`<ins> x l`'s head is `≥` anything
+/// `≤` both `x` and `l`'s old head — the structural fact the IH omits), and the
+/// `sorted` head/tail destructors + cons constructor — then the main induction on
+/// the list given, threading the `sorted` premise. FAIL-CLOSED: declines any
+/// other shape (`None`), so the caller keeps the bounded proof; the synthesized
+/// lemmas are themselves kernel-checked (a misrecognized fn fails its own lemma
+/// and `#print axioms` withholds credit), and the law-scoped names avoid `_law_`
+/// so the audit never mistakes a support lemma for the creditable theorem.
+pub(in crate::codegen::lean) fn emit_conditional_sortedness_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<AutoProof> {
+    let plan = recognize_conditional_sortedness(vb, law, ctx)?;
+    let cmp = aver_name_to_lean(&plan.cmp);
+    let ins = aver_name_to_lean(&plan.ins);
+    let and_fn = aver_name_to_lean(&plan.and_fn);
+    let sorted = aver_name_to_lean(&plan.sorted);
+    let uid = format!(
+        "{}_{}",
+        aver_name_to_lean(&vb.fn_name),
+        aver_name_to_lean(&law.name)
+    );
+    // Law-scoped support lemma names (no `_law_`, so the audit never credits
+    // them as the main theorem).
+    let cmp_b = format!("{uid}_cmpB");
+    let cmp_total = format!("{uid}_cmpTotal");
+    let head_lb = format!("{uid}_headLb");
+    let sort_tail = format!("{uid}_sortTail");
+    let sort_hp = format!("{uid}_sortHeadPair");
+    let sort_cons = format!("{uid}_sortConsLb");
+
+    let support_block = format!(
+        r#"theorem {cmp_b} : ∀ a b, ({cmp} a b = true) = (a ≤ b) := by
+  intro a b
+  induction a generalizing b with
+  | zero => cases b <;> first | (simp [{cmp}]) | sorry
+  | succ k ih => cases b <;> first | (simp [{cmp}, ih]) | sorry
+theorem {cmp_total} : ∀ a b, {cmp} a b = false → {cmp} b a = true := by
+  intro a b hp; rw [{cmp_b}]; rw [← Bool.not_eq_true, {cmp_b}, Nat.not_le] at hp; omega
+theorem {head_lb} : ∀ (z x : Nat) (l : List Nat),
+    {cmp} z x = true → (∀ a as, l = a :: as → {cmp} z a = true) → (∀ b bs, {ins} x l = b :: bs → {cmp} z b = true) := by
+  intro z x l hzx hzhead b bs hins
+  cases l with
+  | nil => simp [{ins}] at hins; obtain ⟨rfl, _⟩ := hins; exact hzx
+  | cons a as =>
+    simp only [{ins}] at hins
+    split at hins
+    · simp only [List.singleton_append, List.cons.injEq] at hins
+      obtain ⟨rfl, _⟩ := hins; exact hzx
+    · simp only [List.singleton_append, List.cons.injEq] at hins
+      obtain ⟨rfl, _⟩ := hins; exact hzhead a as rfl
+theorem {sort_tail} : ∀ (a : Nat) (as : List Nat), {sorted} (a :: as) = true → {sorted} as = true := by
+  intro a as hp
+  cases as with
+  | nil => simp [{sorted}]
+  | cons a2 as2 => rw [{sorted}, {and_fn}] at hp; split at hp
+                   · exact hp
+                   · exact absurd hp (by simp)
+theorem {sort_hp} : ∀ (a a2 : Nat) (as2 : List Nat), {sorted} (a :: a2 :: as2) = true → {cmp} a a2 = true := by
+  intro a a2 as2 hp; rw [{sorted}, {and_fn}] at hp; split at hp
+  · assumption
+  · exact absurd hp (by simp)
+theorem {sort_cons} : ∀ (z : Nat) (l : List Nat),
+    (∀ a as, l = a :: as → {cmp} z a = true) → {sorted} l = true → {sorted} (z :: l) = true := by
+  intro z l hlb hsl
+  cases l with
+  | nil => simp [{sorted}]
+  | cons a as => rw [{sorted}, {and_fn}]; rw [hlb a as rfl]; simpa using hsl"#
+    );
+    // Emit the whole support block as ONE `support_lines` element (newlines
+    // embedded) rather than per-line: `emit_verify_law_block` de-duplicates
+    // support lines line-by-line (for shared private theorems across chunked
+    // parts), which would silently drop a proof's REPEATED lines (two `split`
+    // branches with the same `simp only`, two lemmas' `| nil => simp […]`) and
+    // corrupt the multi-lemma block. As a single element the block is unique and
+    // survives intact.
+    let support_lines: Vec<String> = vec![support_block];
+
+    let target = intro_names.get(plan.target_idx)?.clone();
+    let body: Vec<String> = format!(
+        r#"  intro {givens}
+  induction {target} with
+  | nil => intro _; simp [{ins}, {sorted}]
+  | cons a as ih =>
+    intro hsorted
+    rw [{ins}]
+    split
+    · rename_i hxa
+      rw [List.singleton_append, {sorted}, {and_fn}, hxa]
+      simpa using hsorted
+    · rename_i hxa
+      rw [Bool.not_eq_true] at hxa
+      rw [List.singleton_append]
+      have hax : {cmp} a {x} = true := {cmp_total} {x} a hxa
+      have hsas : {sorted} as = true := {sort_tail} a as hsorted
+      have hins_sorted : {sorted} ({ins} {x} as) = true := ih hsas
+      apply {sort_cons}
+      · apply {head_lb} a {x} as hax
+        intro a' as' has; subst has
+        exact {sort_hp} a a' as' hsorted
+      · exact hins_sorted"#,
+        givens = intro_names.join(" "),
+        x = intro_names.first()?,
+    )
+    .lines()
+    .map(|l| l.to_string())
+    .collect();
+
+    Some(AutoProof {
+        support_lines,
         body: Tactic::raw(body),
         replaces_theorem: false,
     })
