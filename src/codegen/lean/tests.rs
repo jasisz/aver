@@ -870,13 +870,13 @@ verify insort law sortedInsort
 }
 
 #[test]
-fn transpile_proves_zip_rev_law_as_universal() {
-    // `prop_85 zipRev`: `when natEq(len xs, len ys) -> zip(rev xs, rev ys) =>
-    // revPair(zip xs ys)`. Absorbed from the `when`-universal lane onto the main
-    // path: closes as the TRUE-universal `∀ xs ys, len xs = len ys -> …` by
-    // reusing the lane's validated proof — the `=`-bridge over Peano `Nat`, the
-    // append/rev length homomorphisms, the `len ys = 0 → ys = []` inversion, and
-    // the snoc-distribution aux lemma the bare list IH cannot supply.
+fn transpile_proves_zip_rev_via_generic_decomposition() {
+    // `prop_85 zipRev` closes through the DECOMPOSITION path, NOT a hardcoded
+    // Lean template: a `zipSnocDistribution` helper `verify ... law` supplies the
+    // algebraic content, and the GENERIC conditional-inductive driver proves
+    // zipRev by list induction + `simp_all` over the fn defs AND that earlier
+    // helper (the laws-as-lemmas pool). The premise `when` law is cited as the
+    // conditional rewrite `… = true -> …`.
     let mut ctx = ctx_from_source(
         r#"
 module ZipRev
@@ -927,6 +927,19 @@ fn zip(xs: List<Int>, ys: List<Int>) -> List<Tuple<Int, Int>>
             [] -> []
             [x3, ..x4] -> List.concat([(z, x3)], zip(x2, x4))
 
+verify len law lenSnocSucc
+    given a: List<Int> = [[], [1], [1, 2]]
+    given x: Int = [9]
+    len(appendInt(a, [x])) => Nat.S(len(a))
+
+verify zip law zipSnocDistribution
+    given as: List<Int> = [[], [1]]
+    given bs: List<Int> = [[], [4]]
+    given x: Int = [7]
+    given y: Int = [9]
+    when natEq(len(as), len(bs))
+    zip(appendInt(as, [x]), appendInt(bs, [y])) => appendPair(zip(as, bs), [(x, y)])
+
 verify zip law zipRev
     given xs: List<Int> = [[], [1], [1, 2]]
     given ys: List<Int> = [[], [4], [4, 5]]
@@ -938,16 +951,17 @@ verify zip law zipRev
     let out = transpile(&mut ctx);
     let lean = generated_lean_file(&out);
 
-    // Classed `universal` (sampled-domain disjunctions dropped).
+    // zipRev is classed `universal` and proved by the GENERIC driver: list
+    // induction threading the premise, with the snoc-distribution HELPER LAW
+    // cited from the pool inside the proof's `simp_all` set.
     assert!(lean.contains("-- aver:law-class zip_law_zipRev universal zip.zipRev"));
-    // The TRUE-universal conditional statement.
     assert!(lean.contains(
         "theorem zip_law_zipRev : ∀ (xs : List Int) (ys : List Int), natEq (len xs) (len ys) = true -> zip (rev xs) (rev ys) = revPair (zip xs ys) := by"
     ));
-    // The snoc-distribution aux lemma, `<fn>_<law>`-scoped (no `_law_` so the
-    // `#print axioms` credit audit never mistakes it for the main theorem).
-    assert!(lean.contains("theorem zip_zipRev_snoc (x y : Int) : ∀ (as bs : List Int),"));
-    assert!(lean.contains("theorem zip_zipRev_bridge_eq"));
+    assert!(lean.contains("induction xs with"));
+    assert!(lean.contains("zip_law_zipSnocDistribution"));
+    // No hardcoded per-figure template (the old `zip_rev_supports_body` path).
+    assert!(!lean.contains("zip_zipRev_snoc"));
 }
 
 #[test]

@@ -125,12 +125,6 @@ mod shared;
 mod sign;
 
 use bridge::{classify_bridge_law, render_bridge_law};
-// The zip-rev figure's recognizer and proof builder are reused by the
-// main conditional-law path (the `when`-as-implication absorption) so the
-// figure is proved on the headline theorem, not only the off-headline
-// lane twin. The lane module owns the validated proof text; the main path
-// borrows it until the lane is retired.
-pub(in crate::codegen::lean) use bridge::{is_zip_rev_bridge, zip_rev_universal_proof};
 use consume::{HelperView, classify_consumption, render_consumption};
 use floor::{classify_floor_law, render_floor_law};
 use sign::{classify_lane_law, collect_pins, render_lane_law};

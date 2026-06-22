@@ -1110,61 +1110,6 @@ induction {xs} with
     (supports, body)
 }
 
-/// True iff `law` is the zip-rev length-equality figure. The main-path
-/// `omit_domain` driver reads this to flip the law-class marker to
-/// `universal` for exactly this shape.
-pub(in crate::codegen::lean) fn is_zip_rev_bridge(
-    vb: &VerifyBlock,
-    law: &VerifyLaw,
-    ctx: &CodegenContext,
-) -> bool {
-    matches!(
-        classify_bridge_law(vb, law, ctx),
-        Some(BridgePlan::ZipRevLenEq { .. })
-    )
-}
-
-/// Build the zip-rev universal proof (support lemmas + body) for the MAIN
-/// path, `prefix`-scoping the support-lemma names so they never collide
-/// with the lane twin or carry the `_law_` substring the credit audit
-/// keys on. `None` for any non-zip-rev law.
-pub(in crate::codegen::lean) fn zip_rev_universal_proof(
-    vb: &VerifyBlock,
-    law: &VerifyLaw,
-    ctx: &CodegenContext,
-    prefix: &str,
-) -> Option<(Vec<String>, String)> {
-    let Some(BridgePlan::ZipRevLenEq {
-        eq_fn,
-        len_fn,
-        zip_fn,
-        rev_fn,
-        rev_pair_fn,
-        append_fn,
-        append_pair_fn,
-        elem_ty,
-        xs,
-        ys,
-    }) = classify_bridge_law(vb, law, ctx)
-    else {
-        return None;
-    };
-    Some(zip_rev_supports_body(
-        &aver_name_to_lean(&eq_fn),
-        &aver_name_to_lean(&len_fn),
-        &aver_name_to_lean(&zip_fn),
-        &aver_name_to_lean(&rev_fn),
-        &aver_name_to_lean(&rev_pair_fn),
-        &aver_name_to_lean(&append_fn),
-        &aver_name_to_lean(&append_pair_fn),
-        &elem_ty,
-        &aver_name_to_lean(&xs),
-        &aver_name_to_lean(&ys),
-        prefix,
-        "",
-    ))
-}
-
 /// Render one bridge-premise lane law: the validated proof template
 /// for `plan`, support lemmas included, into a single hashed module.
 /// Statement built by the SAME `law_theorem_prop` as the manifest

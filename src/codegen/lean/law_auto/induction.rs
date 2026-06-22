@@ -1511,6 +1511,163 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_list_law(
     })
 }
 
+/// Whether [`emit_conditional_inductive_generic_law`] will attempt this law as a
+/// universal — the `omit_domain` driver reads this. A conditional law that
+/// recurses on a list given, with an equational conclusion, that the bespoke
+/// conditional recognizers (comparison/membership/sortedness) all decline. This
+/// is the DECOMPOSITION path: the figure's algebraic content lives as earlier
+/// `verify ... law` helper blocks (the laws-as-lemmas pool), and a GENERIC list
+/// induction + premise threading + `simp_all` over the fn defs AND those pool
+/// lemmas closes it — no per-figure Lean template.
+pub(in crate::codegen::lean) fn recognize_conditional_inductive_generic(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> bool {
+    if law.when.is_none() {
+        return false;
+    }
+    // Equational conclusion (`lhs => rhs`), lhs a fn-call — not a `holds`/Bool
+    // claim (those are the membership family's territory).
+    if !matches!(&law.lhs.node, crate::ast::Expr::FnCall(..)) {
+        return false;
+    }
+    let Some(target_idx) = find_list_induction_target(law) else {
+        return false;
+    };
+    // The binary-recursion shape: induct on one list, case-split EXACTLY ONE
+    // partner list (the length-linked pair, like zip-reverse's `xs`/`ys` or the
+    // snoc-distribution's `as`/`bs`). A single-list conditional law (zero
+    // partners — e.g. json's `parse(render items)` roundtrips) is NOT reliably
+    // closed by this generic `simp_all` portfolio, so it stays on its sound
+    // bounded fallback rather than committing to a universal it would `sorry`.
+    let other_lists = law
+        .givens
+        .iter()
+        .enumerate()
+        .filter(|(i, g)| *i != target_idx && g.type_name.trim().starts_with("List<"))
+        .count();
+    if other_lists != 1 {
+        return false;
+    }
+    // Exclusive with the bespoke arms (they run first; keep the `omit_domain`
+    // gate single-valued so the statement driver and the emit agree).
+    if recognize_conditional_comparison_bridge(law, ctx)
+        || recognize_conditional_inductive_list(vb, law, ctx)
+        || recognize_conditional_sortedness_law(vb, law, ctx)
+    {
+        return false;
+    }
+    // Fire ONLY for a decomposition consumer — a law with at least one eligible
+    // earlier helper in its cone ∪ subject pool. Without helpers the generic
+    // `simp_all` over bare defs cannot supply the algebraic content (e.g.
+    // zip-reverse needs a snoc-distribution helper), so the universal proof
+    // would `sorry`; declining keeps such a law on its sound bounded fallback.
+    // This is the principle made structural: the generic driver proves a
+    // conditional law THROUGH its Aver helper laws, never by guessing.
+    !earlier_law_lemmas(vb, law, ctx).is_empty()
+}
+
+/// Close a conditional inductive law GENERICALLY: list induction on the
+/// recursive given, the premise threaded into each arm, and `simp_all` over the
+/// fn defs PLUS the eligible earlier sibling laws (the laws-as-lemmas pool). The
+/// algebraic content a figure needs (`zip` over append-singleton, length
+/// homomorphisms, …) is supplied by Aver helper `verify ... law` blocks in the
+/// same module, NOT a hardcoded Lean template. FAIL-CLOSED: the portfolio ends
+/// in `sorry`, so a law this generic driver cannot close degrades to a residual
+/// the audit catches; it never fabricates a proof.
+pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<AutoProof> {
+    if !recognize_conditional_inductive_generic(vb, law, ctx) {
+        return None;
+    }
+    let target_idx = find_list_induction_target(law)?;
+    let target = intro_names.get(target_idx)?.clone();
+    let defs = law_simp_defs(ctx, vb, law)
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(", ");
+    // The laws-as-lemmas pool: earlier sibling laws eligible for this proof's
+    // cone ∪ subject. Their NAMES join the induction-arm `simp_all` set (the
+    // membership emit only feeds them to its flat fast path; a conditional
+    // INDUCTIVE consumer like zip-reverse needs them INSIDE the cons arm).
+    let pool_names: Vec<String> = earlier_law_lemmas(vb, law, ctx)
+        .iter()
+        .map(|l| l.name.clone())
+        .collect();
+    let defs_pool = if pool_names.is_empty() {
+        defs.clone()
+    } else {
+        format!("{defs}, {}", pool_names.join(", "))
+    };
+    let with_append =
+        format!("{defs_pool}, List.cons_append, List.nil_append, List.singleton_append");
+    let norm = "(try simp only [Bool.not_eq_true, Bool.not_eq_false] at h_when)".to_string();
+    // The OTHER list givens (a binary recursion like zip-reverse inducts on
+    // `xs` but must case-split the equal-length partner `ys`). At most one is
+    // handled structurally; the membership-style `split` branches cover the
+    // single-list and goal-driven cases.
+    let others: Vec<String> = law
+        .givens
+        .iter()
+        .enumerate()
+        .filter(|(i, g)| *i != target_idx && g.type_name.trim().starts_with("List<"))
+        .map(|(_, g)| aver_name_to_lean(&g.name))
+        .collect();
+    let case_other = if others.len() == 1 {
+        format!("cases {} <;> ", others[0])
+    } else {
+        String::new()
+    };
+    // Induct on the target ONLY; the partner list, scalars, AND the premise stay
+    // universally quantified (intro'd inside each arm) so the IH generalizes over
+    // them — a binary recursion like zip-reverse needs `ys` to vary with `xs`'s
+    // structure. `intro` the givens that PRECEDE the target (fixed parameters),
+    // then re-intro the rest per arm.
+    // Intro the givens UP TO AND INCLUDING the target (so `induction {target}`
+    // sees it in scope), induct, then re-intro the rest + premise per arm so the
+    // IH generalizes over them.
+    let before: Vec<String> = intro_names.iter().take(target_idx + 1).cloned().collect();
+    let after: Vec<String> = intro_names.iter().skip(target_idx + 1).cloned().collect();
+    let arm_intro = if after.is_empty() {
+        "intro h_when".to_string()
+    } else {
+        format!("intro {} h_when", after.join(" "))
+    };
+    let mut body = vec![format!("  intro {}", before.join(" "))];
+    body.extend([
+        format!("  induction {target} with"),
+        "  | nil =>".to_string(),
+        format!("    {arm_intro}"),
+        format!("    {norm}"),
+        "    first".to_string(),
+        format!("    | ({case_other}simp_all [{with_append}] <;> done)"),
+        format!("    | (simp_all [{defs_pool}] <;> done)"),
+        "    | sorry".to_string(),
+        "  | cons hd tl ih =>".to_string(),
+        format!("    {arm_intro}"),
+        format!("    {norm}"),
+        "    first".to_string(),
+        format!("    | ({case_other}simp_all [{with_append}] <;> done)"),
+        format!(
+            "    | ({case_other}simp only [{with_append}] at h_when ⊢ <;> (split <;> simp_all [{defs_pool}]) <;> done)"
+        ),
+        format!("    | (simp only [{with_append}] <;> simp_all [{defs_pool}, h_when] <;> done)"),
+        format!("    | (split <;> simp_all [{defs_pool}, h_when] <;> done)"),
+        format!("    | (simp_all [{defs_pool}, h_when] <;> done)"),
+        "    | sorry".to_string(),
+    ]);
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        body: Tactic::raw(body),
+        replaces_theorem: false,
+    })
+}
+
 /// The four fns of a recognized sortedness-of-insert law, by SOURCE name.
 struct SortednessPlan {
     /// The verified sorted-insertion fn (`insort`/`insert`).
@@ -1777,64 +1934,6 @@ theorem {sort_cons} : ∀ (z : Nat) (l : List Nat),
     Some(AutoProof {
         support_lines,
         body: Tactic::raw(body),
-        replaces_theorem: false,
-    })
-}
-
-/// Whether [`emit_conditional_zip_rev_law`] will close this law universally —
-/// the `omit_domain` statement driver reads this, kept in lockstep with the
-/// emit. The recognizer is the lane's validated `ZipRevLenEq` classifier,
-/// borrowed by the main path during the `when`-universal lane's retirement.
-pub(in crate::codegen::lean) fn recognize_conditional_zip_rev_law(
-    vb: &VerifyBlock,
-    law: &VerifyLaw,
-    ctx: &CodegenContext,
-) -> bool {
-    crate::codegen::lean::universal_lane::is_zip_rev_bridge(vb, law, ctx)
-}
-
-/// Close the zip-reverse length-equality law (`prop_85`:
-/// `when natEq(len xs, len ys) -> zip(rev xs, rev ys) => revPair(zip xs ys)`)
-/// as the TRUE-universal `∀ xs ys, len xs = len ys -> …`. Reuses the lane's
-/// validated proof — the `=`-bridge over Peano `Nat`, append/rev length
-/// homomorphisms, the `len ys = 0 → ys = []` inversion, and the
-/// snoc-distribution aux lemma — then the main induction on `xs`, threading
-/// the length premise through the generalized `ys`. The support lemmas are
-/// `<fn>_<law>`-scoped (no `_law_`, so the `#print axioms` credit audit never
-/// mistakes one for the creditable theorem). FAIL-CLOSED: declines any other
-/// shape (`None`), so the caller keeps the bounded proof.
-pub(in crate::codegen::lean) fn emit_conditional_zip_rev_law(
-    vb: &VerifyBlock,
-    law: &VerifyLaw,
-    ctx: &CodegenContext,
-    _intro_names: &[String],
-) -> Option<AutoProof> {
-    let prefix = format!(
-        "{}_{}",
-        aver_name_to_lean(&vb.fn_name),
-        aver_name_to_lean(&law.name)
-    );
-    let (supports, body) =
-        crate::codegen::lean::universal_lane::zip_rev_universal_proof(vb, law, ctx, &prefix)?;
-    // The lane emits the body at base indentation (its renderer adds the
-    // leading two spaces); the main-path `AutoProof` body carries its own
-    // two-space base indent, so re-indent here (empty lines stay empty).
-    let body_lines: Vec<String> = body
-        .lines()
-        .map(|l| {
-            if l.is_empty() {
-                String::new()
-            } else {
-                format!("  {l}")
-            }
-        })
-        .collect();
-    // ONE `support_lines` element (newlines embedded): `emit_verify_law_block`
-    // de-duplicates support lines line-by-line, which would silently drop the
-    // proof's repeated lines and corrupt the multi-lemma block.
-    Some(AutoProof {
-        support_lines: vec![supports.join("\n")],
-        body: Tactic::raw(body_lines),
         replaces_theorem: false,
     })
 }

@@ -381,15 +381,15 @@ fn proof_when_universal_lane_json_end_to_end() {
 }
 
 /// Bridge-premise family: TIP isaplanner prop_85 (zip-rev under the
-/// relational premise `natEq(len(xs), len(ys))`) now closes GENUINELY on
-/// the MAIN path — the figure was absorbed from the quarantine lane, so
-/// the counted build proves `zip_law_zipRev` universally (file-level
-/// `universal:true`). The lane STILL emits its off-headline twin
-/// transitionally (`when_universal == 1`, kept until the lane is retired),
-/// keyed on per-declaration `#print axioms` evidence within the kernel
-/// whitelist. A sabotage run breaks only the redundant lane twin: the
-/// counted summary stays byte-identical because the main proof is
-/// independent of the lane.
+/// relational premise `natEq(len(xs), len(ys))`). The BARE task carries no
+/// helper laws, so the counted build leaves `zip_law_zipRev` bounded
+/// (file-level `universal:false`) — the genuine universal proof lives in
+/// the decomposed corpus (helper laws + the generic conditional-inductive
+/// driver), a separate metric. The lane still emits its off-headline twin
+/// here (`when_universal == 1`, kept until the lane is retired), keyed on
+/// per-declaration `#print axioms` evidence within the kernel whitelist. A
+/// sabotage run breaks only that twin: the counted summary stays
+/// byte-identical because it never depended on the lane.
 #[test]
 fn proof_when_universal_lane_closes_tip_prop_85() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -412,15 +412,16 @@ fn proof_when_universal_lane_closes_tip_prop_85() {
     assert_eq!(normal["passed"].as_bool(), Some(true));
     assert_eq!(
         normal["universal"].as_bool(),
-        Some(true),
-        "zip-rev was absorbed onto the main path: the counted build now \
-         proves zip_law_zipRev universally, so file-level `universal` is true"
+        Some(false),
+        "the BARE task carries no helper laws, so the counted build leaves \
+         zip_law_zipRev bounded; the universal proof lives in the decomposed \
+         corpus (helper laws + the generic driver), a separate metric"
     );
     assert_eq!(
         normal["when_universal"].as_u64(),
         Some(1),
-        "the lane still emits prop_85's off-headline twin transitionally \
-         (kept until the lane is retired).\n{}",
+        "the lane still emits prop_85's off-headline twin (kept until the \
+         lane is retired).\n{}",
         format_output(&run)
     );
     // Per-law detail artifact: kernel-genuine evidence, quoted.

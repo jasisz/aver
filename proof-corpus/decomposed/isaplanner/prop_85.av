@@ -48,15 +48,22 @@ fn zip(xs: List<Int>, ys: List<Int>) -> List<Tuple<Int, Int>>
             [] -> []
             [x3, ..x4] -> List.concat([(z, x3)], zip(x2, x4))
 
-verify appendInt law appendIntNilR
-    given xs: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
-    appendInt(xs, []) => xs
+verify len law lenSnocSucc
+    given a: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    given x: Int = [9, 5]
+    len(appendInt(a, [x])) => Nat.S(len(a))
 
-verify appendInt law appendIntAssoc
-    given xs: List<Int> = [[], [1], [1, 2]]
-    given ys: List<Int> = [[], [4], [4, 5]]
-    given zs: List<Int> = [[], [7], [7, 8]]
-    appendInt(appendInt(xs, ys), zs) => appendInt(xs, appendInt(ys, zs))
+verify len law lenRevPreserved
+    given xs: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    len(rev(xs)) => len(xs)
+
+verify zip law zipSnocDistribution
+    given as: List<Int> = [[], [1], [1, 2]]
+    given bs: List<Int> = [[], [4], [4, 5]]
+    given x: Int = [7, 8]
+    given y: Int = [9, 0]
+    when natEq(len(as), len(bs))
+    zip(appendInt(as, [x]), appendInt(bs, [y])) => appendPair(zip(as, bs), [(x, y)])
 
 verify zip law zipRev
     given xs: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
