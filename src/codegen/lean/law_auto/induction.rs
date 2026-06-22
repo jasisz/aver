@@ -883,6 +883,13 @@ fn earlier_law_cites<'a>(
         if prev_law.when.is_some() {
             continue;
         }
+        // Drop a law that rewrites to itself (`plus x y = plus y x`): as a Lean
+        // simp rule it never terminates (a `maxHeartbeats` hang `first` cannot
+        // catch), and the engine does not need it — `omega` supplies the
+        // commutativity once the Peano bridge has linearised the goal.
+        if crate::codegen::cite_instantiate::law_rewrites_to_self(prev_law) {
+            continue;
+        }
         let Some((name, stmt)) =
             crate::codegen::lean::toplevel::law_as_lemma_statement(prev, prev_law, ctx)
         else {
@@ -916,15 +923,22 @@ fn earlier_law_cites<'a>(
 /// map to the `| cons head tail ih` binders, `List.concat` to `++`, and a fn
 /// call to a space-separated application; every compound form (a call, a `++`, a
 /// constructor application) is parenthesized as a whole, so each rendered arg is
-/// self-delimiting and joins into a larger application without ambiguity.
-fn render_lean_arg(e: &crate::ast::Spanned<crate::ast::Expr>) -> String {
+/// self-delimiting and joins into a larger application without ambiguity. A
+/// canonical-Peano constructor lifts to its builtin `Nat` form — `S(e)` to
+/// `(e + 1)`, `Z` to `0` — matching how the law statements emit it (a raw
+/// `Nat.S` is not a real Lean constant).
+fn render_lean_arg(e: &crate::ast::Spanned<crate::ast::Expr>, ctx: &CodegenContext) -> String {
     use crate::ast::Expr;
     use crate::codegen::cite_instantiate::{HEAD, TAIL, ident_name};
     if let Some(n) = ident_name(e) {
         return match n {
             HEAD => "head".to_string(),
             TAIL => "tail".to_string(),
-            _ => aver_name_to_lean(n),
+            // A bare canonical-Peano base ctor (`Nat.Z`) lifts to `0`.
+            _ => match peano_role(n, ctx) {
+                Some(crate::codegen::proof_recognize::PeanoCtor::Zero) => "0".to_string(),
+                _ => aver_name_to_lean(n),
+            },
         };
     }
     match &e.node {
@@ -933,27 +947,54 @@ fn render_lean_arg(e: &crate::ast::Spanned<crate::ast::Expr>) -> String {
             "[{}]",
             items
                 .iter()
-                .map(render_lean_arg)
+                .map(|i| render_lean_arg(i, ctx))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
         Expr::FnCall(callee, args) => {
             let name =
                 crate::codegen::common::expr_to_dotted_name(&callee.node).unwrap_or_default();
-            let rendered: Vec<String> = args.iter().map(render_lean_arg).collect();
+            let rendered: Vec<String> = args.iter().map(|a| render_lean_arg(a, ctx)).collect();
+            // Canonical-Peano successor applied as a call (`Nat.S(e)`) → `(e + 1)`.
+            if rendered.len() == 1
+                && matches!(
+                    peano_role(&name, ctx),
+                    Some(crate::codegen::proof_recognize::PeanoCtor::Succ)
+                )
+            {
+                return format!("({} + 1)", rendered[0]);
+            }
             if name == "List.concat" && rendered.len() == 2 {
                 format!("({} ++ {})", rendered[0], rendered[1])
             } else {
                 format!("({} {})", aver_name_to_lean(&name), rendered.join(" "))
             }
         }
-        Expr::Constructor(name, None) => aver_name_to_lean(name),
-        Expr::Constructor(name, Some(inner)) => {
-            format!("({} {})", aver_name_to_lean(name), render_lean_arg(inner))
-        }
-        Expr::Attr(inner, field) => format!("{}.{}", render_lean_arg(inner), field),
+        Expr::Constructor(name, inner) => match peano_role(name, ctx) {
+            Some(crate::codegen::proof_recognize::PeanoCtor::Zero) => "0".to_string(),
+            Some(crate::codegen::proof_recognize::PeanoCtor::Succ) => match inner {
+                Some(e) => format!("({} + 1)", render_lean_arg(e, ctx)),
+                None => "0".to_string(),
+            },
+            None => match inner {
+                None => aver_name_to_lean(name),
+                Some(e) => format!("({} {})", aver_name_to_lean(name), render_lean_arg(e, ctx)),
+            },
+        },
+        Expr::Attr(inner, field) => format!("{}.{}", render_lean_arg(inner, ctx), field),
         _ => String::new(),
     }
+}
+
+/// Role of a dotted constructor name (`Nat.S` / `Nat.Z`) inside a canonical-Peano
+/// type, used to lift it to the builtin `Nat` surface when rendering an
+/// instantiation argument.
+fn peano_role(
+    dotted: &str,
+    ctx: &CodegenContext,
+) -> Option<crate::codegen::proof_recognize::PeanoCtor> {
+    let (type_name, ctor) = dotted.rsplit_once('.')?;
+    crate::codegen::proof_recognize::peano_ctor_role(ctx, type_name, ctor)
 }
 
 /// A literal in argument position — same surface as the Lean expr emitter's
@@ -1053,7 +1094,7 @@ fn b_tight_decomposition_arms(
             cites[inst.law_index].0,
             inst.args
                 .iter()
-                .map(render_lean_arg)
+                .map(|a| render_lean_arg(a, ctx))
                 .collect::<Vec<_>>()
                 .join(" ")
         );
@@ -1089,18 +1130,27 @@ fn b_tight_decomposition_arms(
     // simp into a failure `first` escalates past. The `<;> omega` variants close on
     // their own (omega on 0 goals is a no-op, on a leftover it closes or fails).
     //
-    // NO `sorry` floor here: the arms THROW when the closer cannot finish, so the
+    // The `<;> omega` rungs discharge a linear residual; the `congr 1` rungs
+    // handle a COMMUTED sum under an opaque wrapper (`even (a + b) = even (b + a)`,
+    // where omega cannot see inside `even`) — `congr 1` reduces it to the argument
+    // equality `a + b = b + a`, which omega then closes. Both only ever appear when
+    // a Peano bridge is in play, so they are inert for a pure structural law.
+    //
+    // NO `sorry` floor: the arms THROW when the closer cannot finish, so the
     // caller's `first | (this tight rung) | (existing ladder)` falls through to the
-    // ladder for the laws the engine does not yet close deterministically
-    // (instantiation-completeness gaps, simp-loop shapes). The ladder carries the
-    // graceful `sorry` floor.
-    let omega = if bridges.is_empty() {
+    // ladder for the shapes the engine does not close standalone (a law leaving a
+    // free `Nat` the cone fn must case-split, `drop n (xs ++ ys)`). On the prod
+    // decomposed corpus the tight closer finishes every eligible law, so the ladder
+    // is dead weight there and the tight decomposition is the headline.
+    let arith = if bridges.is_empty() {
         String::new()
     } else {
-        format!(" | (simp_all [{s}] <;> omega) | (simp [{s}] <;> omega)")
+        format!(
+            " | (simp_all [{s}] <;> omega) | (simp [{s}] <;> omega) | (simp_all [{s}]; congr 1 <;> omega) | (simp [{s}]; congr 1 <;> omega)"
+        )
     };
     let cons = format!(
-        "{}; first | (simp_all [{s}]; done) | (simp [{s}]; done){omega}",
+        "{}; first | (simp_all [{s}]; done) | (simp [{s}]; done){arith}",
         have_parts.join("; ")
     );
 
@@ -3999,9 +4049,9 @@ fn emit_list_induction(
         }
     }
 
-    // Engine B — the TIGHT deterministic decomposition. When THIS law's
-    // inductive step closes by citing earlier sibling laws at exact arguments,
-    // PREPEND the precise proof
+    // Engine B — the TIGHT deterministic decomposition. When THIS law's inductive
+    // step closes by citing earlier sibling laws at exact arguments, PREPEND the
+    // precise proof
     //
     //   induction <target> with
     //   | nil => <first | (simp …; done) | …>
@@ -4013,10 +4063,11 @@ fn emit_list_induction(
     // one branch. Gate: unconditional law (the inductive arms re-establish no
     // premise), a SIMPLE shape (`gen_given.is_none()` — no generalizing/accumulator
     // the engine does not model), and ≥1 derived instantiation. The tight arms
-    // carry NO `sorry`, so a law the closer cannot finish (an
-    // instantiation-completeness gap, a simp-loop shape) THROWS and `first` falls
-    // to the ladder byte-for-byte — zero regression by construction, and the
-    // headline IS the exact decomposition facts wherever the engine closes.
+    // carry NO `sorry`, so a law the closer cannot finish (a free `Nat` the cone fn
+    // must case-split, a shape outside the engine's reach) THROWS and `first` falls
+    // to the ladder byte-for-byte — zero regression by construction, and the tight
+    // decomposition is the headline wherever the engine closes (every prod
+    // decomposed law, with all seven completeness fixes).
     if law.when.is_none()
         && gen_given.is_none()
         && let Some((nil_body, cons_body, bridge_support)) =

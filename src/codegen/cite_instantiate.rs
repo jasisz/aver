@@ -37,6 +37,26 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(crate) const HEAD: &str = "__cite_h";
 pub(crate) const TAIL: &str = "__cite_t";
 const UNFOLD_FUEL: usize = 8;
+/// Rounds of rewrite-closure when building the candidate term pool. Each round
+/// applies every rule to the previous round's new terms and re-unfolds, so a term
+/// needing N nested rewrites (a doubly-distributed `rev (rev t)`) surfaces by
+/// round N. Bounded to keep the dedup'd closure from growing without limit.
+const POOL_CLOSURE_FUEL: usize = 4;
+
+/// Whether using `law` LEFT-TO-RIGHT as a rewrite rule would loop: its LHS
+/// pattern (givens as wildcards) matches its own RHS, so applying `lhs -> rhs`
+/// yields a term the same rule still fires on (a commutation `plus x y = plus y
+/// x` is the canonical case). Such a law is fine for Dafny (Z3 instantiates the
+/// universal, it does not rewrite) but a non-terminating simp rule on Lean — the
+/// Lean cite selector drops it, leaning on `omega` for the commutativity instead.
+pub(crate) fn law_rewrites_to_self(law: &VerifyLaw) -> bool {
+    let wildcards: BTreeSet<String> = law.givens.iter().map(|g| g.name.clone()).collect();
+    if wildcards.is_empty() {
+        return false;
+    }
+    let mut binds: BTreeMap<String, Spanned<Expr>> = BTreeMap::new();
+    !expr_eq(&law.lhs, &law.rhs) && match_expr(&law.lhs, &law.rhs, &wildcards, &mut binds)
+}
 
 /// One computed instantiation of a cited law: which cited law (index into the
 /// `cited` slice) and the argument expressions to apply it at, in the cited
@@ -106,15 +126,34 @@ pub(crate) fn compute_instantiations(
         rules.push(rewrite_rule(c));
     }
 
-    // Build the candidate term pool: the unfolded sides, plus every rewrite-closure.
+    // Build the candidate term pool: the unfolded sides, then the rewrite-closure
+    // taken to a (fuel-bounded) FIXPOINT, re-unfolding after each round. One
+    // rewrite often exposes a term a SECOND rewrite must fire on — `rev (rev t)`
+    // (which a cited involution then matches) only appears after the distribution
+    // law has fired twice, and a deeper `qrev t [h]` only after the accumulator
+    // unfolds another step. Applying each rule once (the old behaviour) missed
+    // those, so the engine produced no instantiation and the law fell to the
+    // ladder. Dedup by structural equality keeps the closure from exploding.
     let mut pool: Vec<Spanned<Expr>> = vec![lhs0.clone(), rhs0.clone()];
-    for base in [&lhs0, &rhs0] {
-        for r in &rules {
-            let rewritten = apply_rule_all(base, r);
-            if !expr_eq(&rewritten, base) {
-                pool.push(rewritten);
+    let mut frontier: Vec<Spanned<Expr>> = pool.clone();
+    for _ in 0..POOL_CLOSURE_FUEL {
+        let mut next: Vec<Spanned<Expr>> = Vec::new();
+        for base in &frontier {
+            for r in &rules {
+                let rewritten = unfold_fix(&apply_rule_all(base, r), &cone);
+                if !expr_eq(&rewritten, base)
+                    && !pool.iter().any(|p| expr_eq(p, &rewritten))
+                    && !next.iter().any(|p| expr_eq(p, &rewritten))
+                {
+                    next.push(rewritten);
+                }
             }
         }
+        if next.is_empty() {
+            break;
+        }
+        pool.extend(next.iter().cloned());
+        frontier = next;
     }
 
     // Collect every subterm of every pooled term.
@@ -204,6 +243,12 @@ fn collect_calls(e: &Spanned<Expr>, out: &mut BTreeSet<String>) {
     {
         out.insert(n);
     }
+    // A tail-recursive fn body lowers its self/peer call to `TailCall` — the cone
+    // collector must see that target too, or the accumulator fn never joins the
+    // cone and never unfolds.
+    if let Expr::TailCall(data) = &e.node {
+        out.insert(data.target.clone());
+    }
     for c in children(e) {
         collect_calls(c, out);
     }
@@ -217,6 +262,7 @@ fn children(e: &Spanned<Expr>) -> Vec<&Spanned<Expr>> {
             v.extend(args.iter());
             v
         }
+        Expr::TailCall(data) => data.args.iter().collect(),
         Expr::List(items) | Expr::Tuple(items) => items.iter().collect(),
         Expr::Constructor(_, Some(inner)) => vec![inner.as_ref()],
         Expr::Attr(inner, _) => vec![inner.as_ref()],
@@ -226,7 +272,11 @@ fn children(e: &Spanned<Expr>) -> Vec<&Spanned<Expr>> {
     }
 }
 
-/// Rebuild `e` with each direct child replaced by `f(child)`.
+/// Rebuild `e` with each direct child replaced by `f(child)`. A `TailCall` is
+/// rebuilt as the equivalent `FnCall` (a tail call IS a call) — that both lets
+/// `f` substitute into its arguments (`map_children` is otherwise opaque to the
+/// `TailCall` payload, leaving the lowered `xs`/`acc` slots un-substituted) and
+/// normalises it so the unfolder and matcher see a uniform `FnCall` shape.
 fn map_children(
     e: &Spanned<Expr>,
     f: &mut impl FnMut(&Spanned<Expr>) -> Spanned<Expr>,
@@ -235,6 +285,10 @@ fn map_children(
         Expr::FnCall(callee, args) => {
             Expr::FnCall(Box::new(f(callee)), args.iter().map(&mut *f).collect())
         }
+        Expr::TailCall(data) => Expr::FnCall(
+            Box::new(ident(&data.target)),
+            data.args.iter().map(&mut *f).collect(),
+        ),
         Expr::List(items) => Expr::List(items.iter().map(&mut *f).collect()),
         Expr::Tuple(items) => Expr::Tuple(items.iter().map(&mut *f).collect()),
         Expr::Constructor(name, Some(inner)) => {
@@ -282,17 +336,45 @@ fn subst_many(e: &Spanned<Expr>, map: &BTreeMap<String, Spanned<Expr>>) -> Spann
 // ---- unfolding ------------------------------------------------------------
 
 /// Unfold recursive cone-fn applications whose first arg is a concrete `cons`,
-/// to a fixpoint (bounded by fuel).
+/// to a fixpoint (bounded by fuel), simplifying builtin nil-concatenations after
+/// each round.
 fn unfold_fix(e: &Spanned<Expr>, cone: &BTreeMap<String, &FnDef>) -> Spanned<Expr> {
-    let mut cur = e.clone();
+    let mut cur = simplify_concat_nil(e);
     for _ in 0..UNFOLD_FUEL {
         let (next, changed) = unfold_once(&cur, cone);
-        cur = next;
+        cur = simplify_concat_nil(&next);
         if !changed {
             break;
         }
     }
     cur
+}
+
+/// Simplify builtin nil-concatenations to a fixpoint: `List.concat(a, [])` → `a`
+/// and `List.concat([], a)` → `a`. Unfolding an accumulator recursion threads
+/// `List.concat([head], acc)` into the accumulator, so a step that started from
+/// `[]` leaves junk like `List.concat([head], [])`; without this the engine
+/// matches a cited law at the UN-normalised `List.concat([head], [])` instead of
+/// `[head]`, producing a useless (and simp-looping) instantiation. Builtin concat
+/// has `[]` as a two-sided identity, so this is sound; it touches only the
+/// builtin, never a user `append` (whose nil law is a cited theorem, not a
+/// rewrite the engine may assume).
+fn simplify_concat_nil(e: &Spanned<Expr>) -> Spanned<Expr> {
+    let mut f = |c: &Spanned<Expr>| simplify_concat_nil(c);
+    let mapped = map_children(e, &mut f);
+    if let Expr::FnCall(callee, args) = &mapped.node
+        && expr_to_dotted_name(&callee.node).as_deref() == Some("List.concat")
+        && args.len() == 2
+    {
+        let is_nil = |x: &Spanned<Expr>| matches!(&x.node, Expr::List(items) if items.is_empty());
+        if is_nil(&args[0]) {
+            return args[1].clone();
+        }
+        if is_nil(&args[1]) {
+            return args[0].clone();
+        }
+    }
+    mapped
 }
 
 fn unfold_once(e: &Spanned<Expr>, cone: &BTreeMap<String, &FnDef>) -> (Spanned<Expr>, bool) {
