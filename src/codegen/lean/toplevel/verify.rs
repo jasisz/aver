@@ -572,7 +572,8 @@ fn emit_verify_law_block(
     let conditional_universal = law.when.is_some()
         && lifted_vars.is_empty()
         && (super::law_auto::recognize_conditional_comparison_bridge(&law_for_auto_proof, ctx)
-            || super::law_auto::recognize_conditional_inductive_list(vb, &law_for_auto_proof, ctx));
+            || super::law_auto::recognize_conditional_inductive_list(vb, &law_for_auto_proof, ctx)
+            || super::law_auto::recognize_conditional_sortedness_law(vb, &law_for_auto_proof, ctx));
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(
             vb,

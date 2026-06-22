@@ -33,12 +33,8 @@ fn sorted(x: List<Nat>) -> Bool
             [] -> true
             [y2, ..ys] -> andB(le(y, y2), sorted(z))
 
-fn implies(a: Bool, b: Bool) -> Bool
-    match a
-        true -> b
-        false -> true
-
 verify insort law sortedInsort
     given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
     given xs: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
-    implies(sorted(xs), sorted(insort(x, xs))) => true
+    when sorted(xs)
+    sorted(insort(x, xs)) => true
