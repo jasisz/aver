@@ -4,6 +4,7 @@
 /// one file per dependent module wrapped in `module M { ... }`, plus a
 /// shared `common.dfy` with built-in records/helpers, plus the entry
 /// file holding the trust header, top-level items, and verify lemmas.
+mod cite_instantiate;
 mod expr;
 mod fuel;
 mod lemmas;

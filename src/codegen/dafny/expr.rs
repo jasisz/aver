@@ -290,7 +290,7 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
     }
 }
 
-fn emit_literal(lit: &Literal) -> String {
+pub(super) fn emit_literal(lit: &Literal) -> String {
     match lit {
         Literal::Int(n) => n.to_string(),
         Literal::Float(f) => {

@@ -105,18 +105,21 @@ fn proof_dafny_proves_length_snoc_with_evaluable_samples() {
 }
 
 #[test]
-fn proof_dafny_proves_rev_antihomomorphism() {
-    // `rev (rev x) = x` needs the rev anti-homomorphism `rev(a ++ b) =
-    // rev b ++ rev a` as an auxiliary lemma. The emitter detects the
-    // rev/append fold pair, emits the proved append-nil-right /
-    // associativity / rev-distribution lemmas, hoists the distribution to a
-    // ∀-fact, and adds the per-step cons bridges. Generic over any
-    // reverse-via-left-append fold.
+fn proof_dafny_cites_earlier_helper_law() {
+    // `rev (rev x) = x` decomposed: the user writes `revDist` (the rev anti-
+    // homomorphism over `List.concat`), and the consuming `revRev` proof CITES
+    // it — Z3 does not auto-apply lemmas, so the decomposition closes only
+    // because `emit_verify_law` injects a `forall`-instantiation of every
+    // earlier eligible sibling law into the consumer's body. No synthesized
+    // algebra: the helper law IS the decomposition (what The Method conjectures).
+    // Over the builtin `List.concat` (Dafny seq `+`, associative natively) the
+    // whole chain discharges as a real ∀. (Before #B this closed via a
+    // synthesized `rev` algebra template — that content synthesizer is gone.)
     assert_dafny_proves_inline(
         "module RevHom\n    effects []\n\n\
-         fn append(x: List<Int>, y: List<Int>) -> List<Int>\n    match x\n        [] -> y\n        [z, ..xs] -> List.concat([z], append(xs, y))\n\n\
-         fn rev(x: List<Int>) -> List<Int>\n    match x\n        [] -> []\n        [y, ..xs] -> append(rev(xs), [y])\n\n\
-         verify rev law revRev\n    given x: List<Int> = [[1, 2]]\n    rev(rev(x)) => x\n",
-        "aver-rev-antihom",
+         fn rev(x: List<Int>) -> List<Int>\n    match x\n        [] -> []\n        [y, ..xs] -> List.concat(rev(xs), [y])\n\n\
+         verify rev law revDist\n    given x: List<Int> = [[1], [1, 2], [1, 2, 3]]\n    given y: List<Int> = [[4], [4, 5], [4, 5, 6]]\n    rev(List.concat(x, y)) => List.concat(rev(y), rev(x))\n\n\
+         verify rev law revRev\n    given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]\n    rev(rev(x)) => x\n",
+        "aver-rev-cite",
     );
 }
