@@ -573,7 +573,12 @@ fn emit_verify_law_block(
         && lifted_vars.is_empty()
         && (super::law_auto::recognize_conditional_comparison_bridge(&law_for_auto_proof, ctx)
             || super::law_auto::recognize_conditional_inductive_list(vb, &law_for_auto_proof, ctx)
-            || super::law_auto::recognize_conditional_sortedness_law(vb, &law_for_auto_proof, ctx));
+            || super::law_auto::recognize_conditional_sortedness_law(vb, &law_for_auto_proof, ctx)
+            || super::law_auto::recognize_conditional_inductive_generic(
+                vb,
+                &law_for_auto_proof,
+                ctx,
+            ));
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(
             vb,
@@ -983,7 +988,18 @@ pub(crate) fn law_as_lemma_statement(
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> Option<(String, String)> {
-    if law.when.is_some() {
+    // A `when`-premise law is citable as a CONDITIONAL rewrite (`P = true ->
+    // lhs = rhs`) — but only once it is proven universally, which the
+    // conditional recognizers gate. Before #599 no `when`-law was ever
+    // universal, so the pool declined them wholesale; now a proven conditional
+    // law is a sound conditional simp lemma. Decline a `when`-law the auto-
+    // prover only bounds (it has no universal theorem to cite).
+    if law.when.is_some()
+        && !(super::law_auto::recognize_conditional_comparison_bridge(law, ctx)
+            || super::law_auto::recognize_conditional_inductive_list(vb, law, ctx)
+            || super::law_auto::recognize_conditional_sortedness_law(vb, law, ctx)
+            || super::law_auto::recognize_conditional_inductive_generic(vb, law, ctx))
+    {
         return None;
     }
     if crate::codegen::common::law_lhs_has_trace_projection(&law.lhs) {
@@ -1069,7 +1085,15 @@ pub(crate) fn law_as_lemma_statement(
     }
     let lhs = emit_expr_legacy(&law_lhs, ctx, None);
     let rhs = emit_expr_legacy(&law_rhs, ctx, None);
-    Some((theorem_base, format!("{lhs} = {rhs}")))
+    // A `when`-law is cited as the conditional rewrite the auto-prover proved:
+    // `<premise> = true -> lhs = rhs`, matching the `omit_domain` theorem.
+    match &law.when {
+        Some(when) => {
+            let premise = emit_expr_legacy(when, ctx, None);
+            Some((theorem_base, format!("{premise} = true -> {lhs} = {rhs}")))
+        }
+        None => Some((theorem_base, format!("{lhs} = {rhs}"))),
+    }
 }
 
 #[derive(Clone)]

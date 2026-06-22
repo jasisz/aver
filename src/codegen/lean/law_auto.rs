@@ -40,6 +40,12 @@ pub(in crate::codegen::lean) use induction::recognize_conditional_inductive_list
 /// Also feeds the `omit_domain` statement driver, kept in lockstep with the emit.
 pub(in crate::codegen::lean) use induction::recognize_conditional_sortedness_law;
 
+/// Generic conditional-inductive close (the decomposition path: list induction
+/// threading the premise, then `simp_all` over the fn defs and the laws-as-
+/// lemmas pool). Also feeds the `omit_domain` statement driver, kept in
+/// lockstep with the emit.
+pub(in crate::codegen::lean) use induction::recognize_conditional_inductive_generic;
+
 /// `aver proof --explain` residual probe: turn an emitted main law theorem's
 /// source lines into a normalization-only twin so Lean reports its residual
 /// (`unsolved goals`). Re-exported up to `codegen::lean` for the `--check`
@@ -332,6 +338,20 @@ fn emit_verify_law_forall_auto_proof_inner(
     // supply. Same `omit_domain` plumbing.
     if law.when.is_some()
         && let Some(proof) = induction::emit_conditional_sortedness_law(vb, law, ctx, &intro_names)
+    {
+        return Some(proof);
+    }
+
+    // Generic conditional-inductive close: any `when`-law that recurses on a
+    // list given with an equational conclusion, proved by list induction +
+    // premise threading + `simp_all` over the fn defs AND the laws-as-lemmas
+    // pool (earlier `verify ... law` helper blocks). This is the DECOMPOSITION
+    // path — a figure's algebraic content (e.g. zip-reverse's snoc-distribution)
+    // lives as Aver helper laws, not a hardcoded Lean template. Tried last among
+    // the conditional arms; the bespoke recognizers above decline into it.
+    if law.when.is_some()
+        && let Some(proof) =
+            induction::emit_conditional_inductive_generic_law(vb, law, ctx, &intro_names)
     {
         return Some(proof);
     }

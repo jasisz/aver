@@ -752,6 +752,58 @@ verify elem law elemConcat
 }
 
 #[test]
+fn transpile_proves_count_membership_law_as_universal() {
+    // `prop_76`-shape (`when not(eqNat(n, m)) -> count(n, xs ++ [m]) = count(n, xs)`):
+    // the verified fn `count` returns Nat, not Bool, yet it is a per-element FOLD
+    // (its cons arm COMPARES the head, never returns it), so the membership emit
+    // admits it and closes the law `universal`. Guards the count/`last` boundary —
+    // a Nat-returning SELECTOR like `last` must NOT be admitted.
+    let mut ctx = ctx_from_source(
+        r#"
+module CountMembership
+    intent = "count(n, xs ++ [m]) = count(n, xs) when n /= m"
+
+type Nat
+    Z
+    S(Nat)
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn count(x: Nat, y: List<Nat>) -> Nat
+    match y
+        [] -> Nat.Z
+        [z, ..zs] -> match eqNat(x, z)
+            true -> Nat.S(count(x, zs))
+            false -> count(x, zs)
+
+verify count law countAppendSingleton
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given m: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given xs: List<Nat> = [[], [Nat.Z]]
+    when Bool.not(eqNat(n, m))
+    count(n, List.concat(xs, [m])) => count(n, xs)
+"#,
+        "count_membership",
+    );
+    let out = transpile(&mut ctx);
+    let lean = generated_lean_file(&out);
+
+    // A `Nat`-returning fold still earns the unbounded `universal` statement.
+    assert!(lean.contains(
+        "-- aver:law-class count_law_countAppendSingleton universal count.countAppendSingleton"
+    ));
+    assert!(lean.contains("induction xs with"));
+    assert!(lean.contains("intro h_when"));
+}
+
+#[test]
 fn transpile_proves_sortedness_of_insertion_law_as_universal() {
     // `prop_77 sortedInsort`: `when sorted(xs) -> sorted(insort(x, xs)) => true`.
     // Closes as the TRUE-universal `∀ x xs, sorted xs = true -> sorted (insort x xs)
@@ -815,6 +867,101 @@ verify insort law sortedInsort
     // `_law_` so the audit never credits it as the main theorem).
     assert!(lean.contains("theorem insort_sortedInsort_headLb"));
     assert!(lean.contains("theorem insort_sortedInsort_cmpTotal"));
+}
+
+#[test]
+fn transpile_proves_zip_rev_via_generic_decomposition() {
+    // `prop_85 zipRev` closes through the DECOMPOSITION path, NOT a hardcoded
+    // Lean template: a `zipSnocDistribution` helper `verify ... law` supplies the
+    // algebraic content, and the GENERIC conditional-inductive driver proves
+    // zipRev by list induction + `simp_all` over the fn defs AND that earlier
+    // helper (the laws-as-lemmas pool). The premise `when` law is cited as the
+    // conditional rewrite `… = true -> …`.
+    let mut ctx = ctx_from_source(
+        r#"
+module ZipRev
+    intent = "if len xs = len ys then zip (rev xs) (rev ys) = revPair (zip xs ys)"
+
+type Nat
+    Z
+    S(Nat)
+
+fn natEq(a: Nat, b: Nat) -> Bool
+    match a
+        Nat.Z -> match b
+            Nat.Z -> true
+            Nat.S(y) -> false
+        Nat.S(x) -> match b
+            Nat.Z -> false
+            Nat.S(y) -> natEq(x, y)
+
+fn len(xs: List<Int>) -> Nat
+    match xs
+        [] -> Nat.Z
+        [y, ..ys] -> Nat.S(len(ys))
+
+fn appendInt(xs: List<Int>, ys: List<Int>) -> List<Int>
+    match xs
+        [] -> ys
+        [z, ..zs] -> List.concat([z], appendInt(zs, ys))
+
+fn appendPair(xs: List<Tuple<Int, Int>>, ys: List<Tuple<Int, Int>>) -> List<Tuple<Int, Int>>
+    match xs
+        [] -> ys
+        [z, ..zs] -> List.concat([z], appendPair(zs, ys))
+
+fn rev(xs: List<Int>) -> List<Int>
+    match xs
+        [] -> []
+        [y, ..ys] -> appendInt(rev(ys), [y])
+
+fn revPair(xs: List<Tuple<Int, Int>>) -> List<Tuple<Int, Int>>
+    match xs
+        [] -> []
+        [y, ..ys] -> appendPair(revPair(ys), [y])
+
+fn zip(xs: List<Int>, ys: List<Int>) -> List<Tuple<Int, Int>>
+    match xs
+        [] -> []
+        [z, ..x2] -> match ys
+            [] -> []
+            [x3, ..x4] -> List.concat([(z, x3)], zip(x2, x4))
+
+verify len law lenSnocSucc
+    given a: List<Int> = [[], [1], [1, 2]]
+    given x: Int = [9]
+    len(appendInt(a, [x])) => Nat.S(len(a))
+
+verify zip law zipSnocDistribution
+    given as: List<Int> = [[], [1]]
+    given bs: List<Int> = [[], [4]]
+    given x: Int = [7]
+    given y: Int = [9]
+    when natEq(len(as), len(bs))
+    zip(appendInt(as, [x]), appendInt(bs, [y])) => appendPair(zip(as, bs), [(x, y)])
+
+verify zip law zipRev
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [4], [4, 5]]
+    when natEq(len(xs), len(ys))
+    zip(rev(xs), rev(ys)) => revPair(zip(xs, ys))
+"#,
+        "zip_rev",
+    );
+    let out = transpile(&mut ctx);
+    let lean = generated_lean_file(&out);
+
+    // zipRev is classed `universal` and proved by the GENERIC driver: list
+    // induction threading the premise, with the snoc-distribution HELPER LAW
+    // cited from the pool inside the proof's `simp_all` set.
+    assert!(lean.contains("-- aver:law-class zip_law_zipRev universal zip.zipRev"));
+    assert!(lean.contains(
+        "theorem zip_law_zipRev : ∀ (xs : List Int) (ys : List Int), natEq (len xs) (len ys) = true -> zip (rev xs) (rev ys) = revPair (zip xs ys) := by"
+    ));
+    assert!(lean.contains("induction xs with"));
+    assert!(lean.contains("zip_law_zipSnocDistribution"));
+    // No hardcoded per-figure template (the old `zip_rev_supports_body` path).
+    assert!(!lean.contains("zip_zipRev_snoc"));
 }
 
 #[test]

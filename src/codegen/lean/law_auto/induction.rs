@@ -1242,18 +1242,20 @@ pub(in crate::codegen::lean) fn recognize_conditional_inductive_list(
     if law_simp_defs(ctx, vb, law).is_empty() {
         return false;
     }
-    // The verified fn must be a Bool list PREDICATE that structurally recurses on
-    // a list parameter (so inducting on the list given peels both sides in
-    // lockstep). The Bool-return gate is load-bearing: an element-returning list
-    // fn (`last`/`head` — `prop_59`/`prop_60`) also recurses on a list and can
-    // pass (A)/(B), but its conclusion is an element equation the membership
-    // portfolio cannot close, so admitting it would `sorry` and drop `passed`.
+    // The verified fn must be a PER-ELEMENT LIST FOLD: it structurally recurses
+    // on a list parameter AND its cons arm combines the HEAD element with the
+    // recursive call (so inducting on the list given peels both sides in lockstep
+    // and the portfolio's `split <;> simp_all` closes via the IH). This gate is
+    // load-bearing — it admits `elem` (Bool) AND `count` (Nat) while excluding
+    // element-SELECTORS like `last`/`head` (`prop_59`/`prop_60`): `last`'s cons
+    // arm uses only the recursive tail (not the head), `head`'s only the head
+    // (no recursion), so neither folds — their conclusion is an element equation
+    // the membership portfolio cannot close, and admitting them would `sorry` and
+    // drop `passed`.
     let Some(fd) = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref()) else {
         return false;
     };
-    if fd.return_type.trim() != "Bool"
-        || crate::codegen::recursion::detect::single_list_structural_param_index(fd).is_none()
-    {
+    if !is_per_element_list_fold(fd) {
         return false;
     }
     // VALIDATED-SHAPE GATE. `omit_domain` replaces the bounded `native_decide`
@@ -1337,8 +1339,64 @@ fn expr_mentions_ident(expr: &crate::ast::Spanned<crate::ast::Expr>, name: &str)
             .as_ref()
             .is_some_and(|e| expr_mentions_ident(e, name)),
         Expr::List(es) | Expr::Tuple(es) => es.iter().any(|e| expr_mentions_ident(e, name)),
+        Expr::Match { subject, arms } => {
+            expr_mentions_ident(subject, name)
+                || arms.iter().any(|arm| expr_mentions_ident(&arm.body, name))
+        }
         _ => true,
     }
+}
+
+/// Whether some leaf of `expr` (descending through `match` arms) IS the bare
+/// identifier `name` — i.e. a code path that RETURNS that variable directly. For
+/// the cons head this is the SELECTOR signature: `last`'s `match zs { [] -> z ; …
+/// }` returns the head element, `head`'s cons arm is the bare head. A fold never
+/// returns the head — it only COMPARES it (`eqNat(x, z)`), so the head appears as
+/// a call argument, never as a leaf.
+fn any_leaf_is_ident(expr: &crate::ast::Spanned<crate::ast::Expr>, name: &str) -> bool {
+    use crate::ast::Expr;
+    match &expr.node {
+        Expr::Match { arms, .. } => arms.iter().any(|arm| any_leaf_is_ident(&arm.body, name)),
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => n == name,
+        _ => false,
+    }
+}
+
+/// A per-element list FOLD: the verified fn structurally recurses on a `List<_>`
+/// param AND its cons arm references the head element but NEVER returns it as a
+/// leaf (the head is COMPARED, not selected). Admits `elem` in BOTH spellings —
+/// `barbar(eqNat(x, z), elem(x, xs))` and the explicit `match eqNat(x, z) { true
+/// -> true ; false -> elem(x, xs) }` — and `count` (`match natEq(x, z) { true ->
+/// S(count …) ; false -> count … }`). Excludes element SELECTORS: `last`'s cons
+/// arm has a `[] -> z` leaf returning the head; `head` (which does not even
+/// recurse on the list, so the structural-param gate already rejects it). The
+/// cons-arm structure, not the return type, is the discriminator (so `count`'s
+/// `Nat` return qualifies alongside `elem`'s `Bool`).
+fn is_per_element_list_fold(fd: &crate::ast::FnDef) -> bool {
+    use crate::ast::{Expr, Pattern};
+    let Some(list_idx) = crate::codegen::recursion::detect::single_list_structural_param_index(fd)
+    else {
+        return false;
+    };
+    let list_param = &fd.params[list_idx].0;
+    let Some(body) = fd.body.tail_expr() else {
+        return false;
+    };
+    let Expr::Match { subject, arms } = &body.node else {
+        return false;
+    };
+    if !matches!(&subject.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == list_param)
+    {
+        return false;
+    }
+    arms.iter()
+        .find_map(|arm| {
+            let Pattern::Cons(head, _) = &arm.pattern else {
+                return None;
+            };
+            Some(expr_mentions_ident(&arm.body, head) && !any_leaf_is_ident(&arm.body, head))
+        })
+        .unwrap_or(false)
 }
 
 /// Close a conditional-inductive list-predicate law (`prop_36`, `prop_71`) as the
@@ -1448,6 +1506,163 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_list_law(
     ];
     Some(AutoProof {
         support_lines: bridge_support,
+        body: Tactic::raw(body),
+        replaces_theorem: false,
+    })
+}
+
+/// Whether [`emit_conditional_inductive_generic_law`] will attempt this law as a
+/// universal — the `omit_domain` driver reads this. A conditional law that
+/// recurses on a list given, with an equational conclusion, that the bespoke
+/// conditional recognizers (comparison/membership/sortedness) all decline. This
+/// is the DECOMPOSITION path: the figure's algebraic content lives as earlier
+/// `verify ... law` helper blocks (the laws-as-lemmas pool), and a GENERIC list
+/// induction + premise threading + `simp_all` over the fn defs AND those pool
+/// lemmas closes it — no per-figure Lean template.
+pub(in crate::codegen::lean) fn recognize_conditional_inductive_generic(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> bool {
+    if law.when.is_none() {
+        return false;
+    }
+    // Equational conclusion (`lhs => rhs`), lhs a fn-call — not a `holds`/Bool
+    // claim (those are the membership family's territory).
+    if !matches!(&law.lhs.node, crate::ast::Expr::FnCall(..)) {
+        return false;
+    }
+    let Some(target_idx) = find_list_induction_target(law) else {
+        return false;
+    };
+    // The binary-recursion shape: induct on one list, case-split EXACTLY ONE
+    // partner list (the length-linked pair, like zip-reverse's `xs`/`ys` or the
+    // snoc-distribution's `as`/`bs`). A single-list conditional law (zero
+    // partners — e.g. json's `parse(render items)` roundtrips) is NOT reliably
+    // closed by this generic `simp_all` portfolio, so it stays on its sound
+    // bounded fallback rather than committing to a universal it would `sorry`.
+    let other_lists = law
+        .givens
+        .iter()
+        .enumerate()
+        .filter(|(i, g)| *i != target_idx && g.type_name.trim().starts_with("List<"))
+        .count();
+    if other_lists != 1 {
+        return false;
+    }
+    // Exclusive with the bespoke arms (they run first; keep the `omit_domain`
+    // gate single-valued so the statement driver and the emit agree).
+    if recognize_conditional_comparison_bridge(law, ctx)
+        || recognize_conditional_inductive_list(vb, law, ctx)
+        || recognize_conditional_sortedness_law(vb, law, ctx)
+    {
+        return false;
+    }
+    // Fire ONLY for a decomposition consumer — a law with at least one eligible
+    // earlier helper in its cone ∪ subject pool. Without helpers the generic
+    // `simp_all` over bare defs cannot supply the algebraic content (e.g.
+    // zip-reverse needs a snoc-distribution helper), so the universal proof
+    // would `sorry`; declining keeps such a law on its sound bounded fallback.
+    // This is the principle made structural: the generic driver proves a
+    // conditional law THROUGH its Aver helper laws, never by guessing.
+    !earlier_law_lemmas(vb, law, ctx).is_empty()
+}
+
+/// Close a conditional inductive law GENERICALLY: list induction on the
+/// recursive given, the premise threaded into each arm, and `simp_all` over the
+/// fn defs PLUS the eligible earlier sibling laws (the laws-as-lemmas pool). The
+/// algebraic content a figure needs (`zip` over append-singleton, length
+/// homomorphisms, …) is supplied by Aver helper `verify ... law` blocks in the
+/// same module, NOT a hardcoded Lean template. FAIL-CLOSED: the portfolio ends
+/// in `sorry`, so a law this generic driver cannot close degrades to a residual
+/// the audit catches; it never fabricates a proof.
+pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<AutoProof> {
+    if !recognize_conditional_inductive_generic(vb, law, ctx) {
+        return None;
+    }
+    let target_idx = find_list_induction_target(law)?;
+    let target = intro_names.get(target_idx)?.clone();
+    let defs = law_simp_defs(ctx, vb, law)
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(", ");
+    // The laws-as-lemmas pool: earlier sibling laws eligible for this proof's
+    // cone ∪ subject. Their NAMES join the induction-arm `simp_all` set (the
+    // membership emit only feeds them to its flat fast path; a conditional
+    // INDUCTIVE consumer like zip-reverse needs them INSIDE the cons arm).
+    let pool_names: Vec<String> = earlier_law_lemmas(vb, law, ctx)
+        .iter()
+        .map(|l| l.name.clone())
+        .collect();
+    let defs_pool = if pool_names.is_empty() {
+        defs.clone()
+    } else {
+        format!("{defs}, {}", pool_names.join(", "))
+    };
+    let with_append =
+        format!("{defs_pool}, List.cons_append, List.nil_append, List.singleton_append");
+    let norm = "(try simp only [Bool.not_eq_true, Bool.not_eq_false] at h_when)".to_string();
+    // The OTHER list givens (a binary recursion like zip-reverse inducts on
+    // `xs` but must case-split the equal-length partner `ys`). At most one is
+    // handled structurally; the membership-style `split` branches cover the
+    // single-list and goal-driven cases.
+    let others: Vec<String> = law
+        .givens
+        .iter()
+        .enumerate()
+        .filter(|(i, g)| *i != target_idx && g.type_name.trim().starts_with("List<"))
+        .map(|(_, g)| aver_name_to_lean(&g.name))
+        .collect();
+    let case_other = if others.len() == 1 {
+        format!("cases {} <;> ", others[0])
+    } else {
+        String::new()
+    };
+    // Induct on the target ONLY; the partner list, scalars, AND the premise stay
+    // universally quantified (intro'd inside each arm) so the IH generalizes over
+    // them — a binary recursion like zip-reverse needs `ys` to vary with `xs`'s
+    // structure. `intro` the givens that PRECEDE the target (fixed parameters),
+    // then re-intro the rest per arm.
+    // Intro the givens UP TO AND INCLUDING the target (so `induction {target}`
+    // sees it in scope), induct, then re-intro the rest + premise per arm so the
+    // IH generalizes over them.
+    let before: Vec<String> = intro_names.iter().take(target_idx + 1).cloned().collect();
+    let after: Vec<String> = intro_names.iter().skip(target_idx + 1).cloned().collect();
+    let arm_intro = if after.is_empty() {
+        "intro h_when".to_string()
+    } else {
+        format!("intro {} h_when", after.join(" "))
+    };
+    let mut body = vec![format!("  intro {}", before.join(" "))];
+    body.extend([
+        format!("  induction {target} with"),
+        "  | nil =>".to_string(),
+        format!("    {arm_intro}"),
+        format!("    {norm}"),
+        "    first".to_string(),
+        format!("    | ({case_other}simp_all [{with_append}] <;> done)"),
+        format!("    | (simp_all [{defs_pool}] <;> done)"),
+        "    | sorry".to_string(),
+        "  | cons hd tl ih =>".to_string(),
+        format!("    {arm_intro}"),
+        format!("    {norm}"),
+        "    first".to_string(),
+        format!("    | ({case_other}simp_all [{with_append}] <;> done)"),
+        format!(
+            "    | ({case_other}simp only [{with_append}] at h_when ⊢ <;> (split <;> simp_all [{defs_pool}]) <;> done)"
+        ),
+        format!("    | (simp only [{with_append}] <;> simp_all [{defs_pool}, h_when] <;> done)"),
+        format!("    | (split <;> simp_all [{defs_pool}, h_when] <;> done)"),
+        format!("    | (simp_all [{defs_pool}, h_when] <;> done)"),
+        "    | sorry".to_string(),
+    ]);
+    Some(AutoProof {
+        support_lines: Vec::new(),
         body: Tactic::raw(body),
         replaces_theorem: false,
     })
