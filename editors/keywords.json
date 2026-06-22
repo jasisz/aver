@@ -2,7 +2,7 @@
   "_note": "Source of truth for Aver editor grammars. Edit here, then run `python3 editors/sync.py --write` to regenerate sublime/vscode/highlight.js. CI/release blocks if these are out of sync (see `editors/sync.py --check`).",
 
   "declaration": ["type", "record", "module", "depends", "exposes", "opaque"],
-  "control": ["fn", "match", "verify", "decision", "law", "given", "when", "effects", "trace"],
+  "control": ["fn", "match", "verify", "decision", "law", "given", "when", "holds", "effects", "trace"],
   "header_field": ["intent", "reason", "date", "chosen", "rejected", "impacts", "author"],
 
   "constants": ["true", "false", "Unit"],

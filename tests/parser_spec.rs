@@ -978,6 +978,36 @@ verify max law ordered
 }
 
 #[test]
+fn verify_law_parses_holds_claim_as_predicate_true() {
+    // `P holds` is sugar for `P => true`: the rhs lowers to the Bool literal
+    // `true` and the lhs is the predicate, so downstream case-expansion and
+    // codegen see the same `lhs`/`rhs` pair as the explicit `=> true` form.
+    let src = r#"
+verify max law sane
+    given a: Int = [1, 2]
+    given b: Int = [1, 2]
+    max(a, b) >= b holds
+"#;
+    let items = parse(src);
+    let TopLevel::Verify(vb) = &items[0] else {
+        panic!("expected Verify");
+    };
+    let VerifyKind::Law(law) = &vb.kind else {
+        panic!("expected law verify");
+    };
+    assert!(
+        matches!(&law.rhs.node, Expr::Literal(Literal::Bool(true))),
+        "`holds` rhs must be the implicit `true`: {:?}",
+        law.rhs.node
+    );
+    assert!(
+        matches!(&law.lhs.node, Expr::BinOp(BinOp::Gte, _, _)),
+        "`holds` lhs is the predicate: {:?}",
+        law.lhs.node
+    );
+}
+
+#[test]
 fn verify_law_requires_given_lines() {
     let src = r#"
 verify add law commutative
