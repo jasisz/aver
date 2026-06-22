@@ -42,6 +42,12 @@ const UNFOLD_FUEL: usize = 8;
 /// needing N nested rewrites (a doubly-distributed `rev (rev t)`) surfaces by
 /// round N. Bounded to keep the dedup'd closure from growing without limit.
 const POOL_CLOSURE_FUEL: usize = 4;
+/// Hard ceiling on the candidate-term pool. A pathological rule set (many cited
+/// laws over deeply nested terms) could otherwise make the fixpoint enumerate an
+/// exponential number of distinct rewrites; past this many terms the closure
+/// stops early with a partial pool. Far above any real decomposition (the prod
+/// corpus tops out in the low tens), so it never truncates a genuine instantiation.
+const POOL_SIZE_CAP: usize = 256;
 
 /// Whether using `law` LEFT-TO-RIGHT as a rewrite rule would loop: its LHS
 /// pattern (givens as wildcards) matches its own RHS, so applying `lhs -> rhs`
@@ -121,9 +127,16 @@ pub(crate) fn compute_instantiations(
     let mut rules: Vec<RewriteRule> = Vec::new();
     rules.push(rule_at_tail(law, list_param));
     // Every cited law is also a rewrite (at all its givens) — applying it can
-    // expose the reassociated subterms another cited lemma needs to match.
+    // expose the reassociated subterms another cited lemma needs to match. EXCEPT a
+    // law that rewrites to itself (`plus x y = plus y x`): as a closure rule it is
+    // a permutation, and a FAMILY of them (all-pairs transposition over a
+    // composition's cone) makes the fixpoint below enumerate every permutation —
+    // factorial blow-up that hangs codegen. Such a law is still MATCHED (it stays
+    // in `cited`) for a one-shot instantiation; it just never drives the closure.
     for c in cited {
-        rules.push(rewrite_rule(c));
+        if !law_rewrites_to_self(c) {
+            rules.push(rewrite_rule(c));
+        }
     }
 
     // Build the candidate term pool: the unfolded sides, then the rewrite-closure
@@ -133,10 +146,12 @@ pub(crate) fn compute_instantiations(
     // law has fired twice, and a deeper `qrev t [h]` only after the accumulator
     // unfolds another step. Applying each rule once (the old behaviour) missed
     // those, so the engine produced no instantiation and the law fell to the
-    // ladder. Dedup by structural equality keeps the closure from exploding.
+    // ladder. Dedup by structural equality plus a hard size CAP keep the closure
+    // bounded even when the rule set is adversarial (the cap degrades to a partial
+    // pool — the engine need only be useful, not complete).
     let mut pool: Vec<Spanned<Expr>> = vec![lhs0.clone(), rhs0.clone()];
     let mut frontier: Vec<Spanned<Expr>> = pool.clone();
-    for _ in 0..POOL_CLOSURE_FUEL {
+    'closure: for _ in 0..POOL_CLOSURE_FUEL {
         let mut next: Vec<Spanned<Expr>> = Vec::new();
         for base in &frontier {
             for r in &rules {
@@ -146,6 +161,10 @@ pub(crate) fn compute_instantiations(
                     && !next.iter().any(|p| expr_eq(p, &rewritten))
                 {
                     next.push(rewritten);
+                    if pool.len() + next.len() >= POOL_SIZE_CAP {
+                        pool.extend(next);
+                        break 'closure;
+                    }
                 }
             }
         }
