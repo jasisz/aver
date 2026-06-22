@@ -630,10 +630,7 @@ fn proof_export_builds_rational_ring_laws_kernel_genuine_when_lake_is_available(
     //   brings the 6 caught sorries back);
     // - `universal == true` — keys on the #print-axioms audit
     //   ([propext, Quot.sound] only), so a `native_decide` sneaking
-    //   into a law theorem fails here even at 0 sorries;
-    // - `when_universal == 0` — every law is unconditional (that is
-    //   the point of the non-normalizing representation), so the
-    //   quarantine lane must stay empty.
+    //   into a law theorem fails here even at 0 sorries.
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping rational ring-laws proof test: `lake` not available");
         return;
@@ -653,12 +650,6 @@ fn proof_export_builds_rational_ring_laws_kernel_genuine_when_lake_is_available(
         Some(true),
         "ring laws must be kernel-genuine — #print-axioms within the \
          whitelist, no native_decide, no Mathlib.\n{}",
-        format_output(&run)
-    );
-    assert_eq!(
-        summary["when_universal"].as_u64(),
-        Some(0),
-        "no when-laws in the file; the quarantine lane must stay empty.\n{}",
         format_output(&run)
     );
     assert_eq!(
@@ -716,12 +707,6 @@ fn proof_bounded_laws_counts_distinct_part_named_laws_separately() {
         format_output(&run)
     );
     assert_eq!(summary["passed"].as_bool(), Some(true));
-    assert_eq!(
-        summary["when_universal"].as_u64(),
-        Some(0),
-        "both laws stay bounded; no lane recognizer fires.\n{}",
-        format_output(&run)
-    );
     assert_eq!(
         summary["bounded_laws"].as_u64(),
         Some(2),

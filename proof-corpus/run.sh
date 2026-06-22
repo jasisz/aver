@@ -36,17 +36,11 @@ if [ ! -x "$AVER" ]; then
   exit 1
 fi
 
-# proves <file> <backend> -> "proved <N>" | "open <N>" (retry once to absorb
+# proves <file> <backend> -> "proved" | "open" (retry once to absorb
 # flakiness). The honest key differs per backend: Dafny -> "passed":true,
-# Lean -> "universal":true (see the metric note above). The second word is the
-# ADDITIVE when-universal lane count (the numeric "when_universal" key — Lean
-# only, always 0 for Dafny): conditional `when`-laws whose quarantined twin
-# earned per-declaration kernel credit. It is reported SEPARATELY below and
-# deliberately does NOT feed the proved/open accounting — the headline
-# Lean-genuine metric keys on the file-level "universal":true exactly as
-# before (the numeric when_universal key cannot match that grep).
+# Lean -> "universal":true (see the metric note above).
 proves() {
-  local f="$1" backend="$2" key attempt out json wu=0
+  local f="$1" backend="$2" key attempt out json
   case "$backend" in
     lean) key='"universal":true' ;;
     *)    key='"passed":true' ;;
@@ -55,20 +49,15 @@ proves() {
     out="$(mktemp -d)"
     json="$("$AVER" proof "$f" --backend "$backend" --check --check-json -o "$out" 2>/dev/null | grep '"passed"' | tail -1)"
     rm -rf "$out"
-    if [ "$backend" = lean ]; then
-      wu="$(printf '%s' "$json" | sed -n 's/.*"when_universal":\([0-9][0-9]*\).*/\1/p')"
-      wu="${wu:-0}"
-    fi
-    printf '%s' "$json" | grep -q "$key" && { echo "proved $wu"; return; }
+    printf '%s' "$json" | grep -q "$key" && { echo "proved"; return; }
   done
-  echo "open $wu"
+  echo "open"
 }
 
 lean=0
 dafny=0
 union=0
 total=0
-when_universal=0
 # `decomposed/` holds LLM helper-law-augmented copies of OPEN tip/ tasks (a
 # SEPARATE "loop reach" metric, see decomposed/README.md). `isaplanner-mono/`
 # holds monomorphized renderings of the 8 higher-order isaplanner problems Aver
@@ -79,11 +68,8 @@ when_universal=0
 for f in $(find "$ROOT" -name '*.av' -not -path '*/decomposed/*' -not -path '*/isaplanner-mono/*' | sort); do
   [ -e "$f" ] || continue
   total=$((total + 1))
-  lres=$(proves "$f" lean)
-  l="${lres%% *}"
-  lw="${lres##* }"
-  dres=$(proves "$f" dafny)
-  d="${dres%% *}"
+  l=$(proves "$f" lean)
+  d=$(proves "$f" dafny)
   [ "$l" = proved ] && lean=$((lean + 1))
   [ "$d" = proved ] && dafny=$((dafny + 1))
   if [ "$l" = proved ] || [ "$d" = proved ]; then
@@ -93,16 +79,7 @@ for f in $(find "$ROOT" -name '*.av' -not -path '*/decomposed/*' -not -path '*/i
     [ "$d" = open ] && tag="lean-only"
     printf '  proved  [%-10s] %s\n' "$tag" "${f#"$ROOT"/}"
   fi
-  # ADDITIVE when-universal lane: per-law kernel-credited conditional laws.
-  # Reported separately and never folded into the proved/open numbers above —
-  # a when-law file stays "open" on the headline metric even when its lane
-  # twin closes (the file-level universal flag keeps counted-build semantics).
-  if [ "${lw:-0}" -gt 0 ] 2>/dev/null; then
-    when_universal=$((when_universal + lw))
-    printf '  when-lane [universal ] %s (%s conditional law(s))\n' "${f#"$ROOT"/}" "$lw"
-  fi
 done
 
 echo ""
 echo "coverage (union): ${union} / ${total}   |   lean: ${lean}   dafny: ${dafny}"
-echo "when-universal lane (additive, NOT in the numbers above): ${when_universal} conditional law(s)"

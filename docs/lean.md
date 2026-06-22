@@ -193,9 +193,6 @@ summary line. Fields of the Lean summary:
 Note: a law the emitter declines entirely (no theorem emitted — e.g. a
 shape outside every strategy) appears in NEITHER counter; the counters
 count emitted law THEOREMS, not `verify ... law` blocks in the source.
-- `when_universal` — `when`-laws whose quarantine-lane twin earned
-  per-declaration universal credit (see `when_universal_laws.json` in
-  the output dir); additive, never moves the counted fields above
 - `model_panicked` — the compiler-model panicked while evaluating a
   bounded sample; the check fails regardless of budgets
 - `budget` — the active sorry budget
@@ -204,8 +201,7 @@ count emitted law THEOREMS, not `verify ... law` blocks in the source.
 statement-class markers and the same `#print axioms` audit the `universal`
 bool keys on. A robust CI budget pins all four together:
 `sorries == X`, `universal == true`, `universal_laws == N`,
-`bounded_laws == M` (plus `when_universal == K` if the file has
-quarantine-lane upgrades).
+`bounded_laws == M`.
 
 ## Minimizing a proof (`--minimize`)
 

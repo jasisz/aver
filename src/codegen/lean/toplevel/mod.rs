@@ -13,8 +13,8 @@ pub use type_def::{
     emit_recursive_decidable_eq, emit_recursive_measure, emit_type_def, emit_type_def_in_scope,
 };
 pub(crate) use verify::law_as_lemma_statement;
+pub(super) use verify::law_given_domain_values;
 pub use verify::{emit_decision, emit_verify_block};
-pub(super) use verify::{law_given_domain_values, law_theorem_prop};
 
 // Aliases into the parent `lean` module so the submodules' `super::<item>`
 // paths keep resolving exactly as they did when this was a single file.
