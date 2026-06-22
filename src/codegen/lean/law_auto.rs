@@ -23,6 +23,18 @@ use sampled::emit_guarded_domain_law;
 /// admits, so the emitter writes ONLY those into the build.
 pub(crate) use induction::admitted_dep_law_theorems;
 
+/// `emit_verify_law_block` reads this to decide whether a `when`-law's theorem
+/// statement should drop its sampled-domain disjunctions (`omit_domain`) and be
+/// emitted in TRUE-universal form — exactly when the conditional
+/// comparison-bridge emit will close it. Re-exported so the statement builder
+/// and the proof emitter stay in lockstep.
+pub(in crate::codegen::lean) use induction::recognize_conditional_comparison_bridge;
+
+/// Twin of [`recognize_conditional_comparison_bridge`] for the conditional-
+/// INDUCTIVE list-predicate family (membership monotonicity / identity). Also
+/// feeds the `omit_domain` statement driver, kept in lockstep with the emitter.
+pub(in crate::codegen::lean) use induction::recognize_conditional_inductive_list;
+
 /// `aver proof --explain` residual probe: turn an emitted main law theorem's
 /// source lines into a normalization-only twin so Lean reports its residual
 /// (`unsolved goals`). Re-exported up to `codegen::lean` for the `--check`
@@ -275,6 +287,38 @@ fn emit_verify_law_forall_auto_proof_inner(
         .map(|g| aver_name_to_lean(&g.name))
         .collect();
     let proof_intro_names = extend_intro_names_with_premises(law, &intro_names);
+
+    // Conditional comparison-bridge laws (the `prop_70 leSucc` family):
+    // `when <R1(..)> -> <R2(..)> = true` over canonical Peano relations
+    // (`≤`/`<`/`=`). Tried BEFORE the pinned-strategy dispatch because
+    // `classify_law_strategy` never pins `Induction` on a `when`-law (it routes
+    // them to `LinearArithmetic` / `BackendDispatch`), so this is the only point
+    // a conditional law reaches a genuine universal closer. For exactly this
+    // recognized shape `emit_verify_law_block` emits the unbounded
+    // `∀ givens, when = true -> claim` statement (see
+    // `recognize_conditional_comparison_bridge`); every other conditional shape
+    // declines here and falls through to the bounded guarded-domain proof.
+    if law.when.is_some()
+        && let Some(proof) =
+            induction::emit_conditional_comparison_bridge_law(vb, law, ctx, &intro_names)
+    {
+        return Some(proof);
+    }
+
+    // Conditional-INDUCTIVE list-predicate laws (the membership family: `prop_36`
+    // `when elem(x,y) -> elem(x, y ++ z) => true`, `prop_71` `when not(eqNat(x,y))
+    // -> elem(x, ins(y,xs)) = elem(x,xs)`). Tried right after the flat comparison
+    // bridge and, like it, BEFORE the pinned dispatch (no `when`-law is pinned
+    // `Induction`). Proves by induction on the list given, threading the premise
+    // into the cons IH. Same `omit_domain` universal-statement plumbing as the
+    // bridge family; any other conditional shape declines and keeps the bounded
+    // guarded-domain fallback.
+    if law.when.is_some()
+        && let Some(proof) =
+            induction::emit_conditional_inductive_list_law(vb, law, ctx, &intro_names)
+    {
+        return Some(proof);
+    }
 
     // Structural induction — IR-pinned `ProofStrategy::Induction`
     // wins first. The legacy chain ran induction at this position
