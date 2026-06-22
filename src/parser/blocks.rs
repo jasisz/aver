@@ -391,9 +391,18 @@ impl Parser {
                 let law_start_line = self.current().line;
                 let law_start_col = self.current().col;
                 let mut left = self.parse_expr()?;
-                self.expect_exact(&TokenKind::FatArrow)?;
-                self.skip_formatting();
-                let mut right = self.parse_expr()?;
+                // Claim form: `lhs => rhs` (Yields — an operational equation) OR
+                // `P holds` (Holds — the Bool predicate `P` is true, sugar for
+                // `P => true`). Both lower to the same `lhs`/`rhs` pair, so the
+                // downstream case-expansion and codegen are unchanged.
+                let mut right = if self.current_ident_is("holds") {
+                    self.advance(); // holds
+                    Spanned::bare(Expr::Literal(Literal::Bool(true)))
+                } else {
+                    self.expect_exact(&TokenKind::FatArrow)?;
+                    self.skip_formatting();
+                    self.parse_expr()?
+                };
 
                 // Substitute locals into the single assertion.
                 for (name, value) in &law_locals {

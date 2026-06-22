@@ -690,12 +690,15 @@ const LEAN_RESERVED: &[&str] = &[
     // "invalid simp theorem"), and the proof can't reference the user fn.
     // Escaping to `max'`/`and'`/`insert'`/… sidesteps it. (Other stdlib names
     // like `length`/`take`/`drop` are reached as METHODS `xs.length` and don't
-    // collide as bare identifiers.)
+    // collide as bare identifiers.) The full Bool family `and`/`or`/`not`/`xor`
+    // all resolve against `_root_.<op> : Bool -> Bool -> Bool`.
     "and",
     "insert",
     "max",
     "min",
+    "not",
     "or",
+    "xor",
     "mutual",
     "namespace",
     "noncomputable",
@@ -744,6 +747,12 @@ mod tests {
         // `fn max`/`min` doesn't collide with the typeclass-dispatched form.
         assert_eq!(aver_name_to_lean("max"), "max'");
         assert_eq!(aver_name_to_lean("min"), "min'");
+        // The full Bool family collides with `_root_.and`/`or`/`not`/`xor`
+        // (each `Bool -> Bool -> Bool`); a bare reference is "ambiguous term".
+        assert_eq!(aver_name_to_lean("and"), "and'");
+        assert_eq!(aver_name_to_lean("or"), "or'");
+        assert_eq!(aver_name_to_lean("not"), "not'");
+        assert_eq!(aver_name_to_lean("xor"), "xor'");
     }
 
     #[test]

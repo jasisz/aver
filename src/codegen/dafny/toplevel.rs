@@ -818,6 +818,9 @@ fn when_is_peano_comparison(when: &Spanned<Expr>, ctx: &CodegenContext) -> bool 
 /// (a substring flanked by identifier chars `[A-Za-z0-9_]` is left untouched).
 /// Used to slice a `when` premise's induction-target reference to its tail
 /// (`y` -> `y[1..]`) when guarding a conditional list lemma's recursive call.
+/// String-literal aware: an occurrence INSIDE a `"…"` literal (where the same
+/// spelling is just text, e.g. a premise comparing against `"y"`) is left
+/// untouched — slicing it would corrupt the literal.
 fn replace_ident_word(s: &str, word: &str, repl: &str) -> String {
     if word.is_empty() {
         return s.to_string();
@@ -827,7 +830,29 @@ fn replace_ident_word(s: &str, word: &str, repl: &str) -> String {
     let wlen = word.chars().count();
     let mut out = String::new();
     let mut i = 0;
+    let mut in_string = false;
     while i < chars.len() {
+        // Copy string literals verbatim, honoring `\"` / `\\` escapes, so a
+        // matching identifier spelled inside a literal is never sliced.
+        if in_string {
+            out.push(chars[i]);
+            if chars[i] == '\\' && i + 1 < chars.len() {
+                out.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            if chars[i] == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if chars[i] == '"' {
+            in_string = true;
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
         let matches_here = i + wlen <= chars.len()
             && chars[i..i + wlen].iter().collect::<String>() == word
             && (i == 0 || !is_ident(chars[i - 1]))
@@ -3071,5 +3096,36 @@ pub fn emit_verify_law(
         lines.join("\n")
     } else {
         format!("{}\n{}", op_lemma_defs.join("\n"), lines.join("\n"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::replace_ident_word;
+
+    #[test]
+    fn replace_ident_word_slices_whole_words_but_not_substrings() {
+        // Whole-word identity is sliced; a substring (`yy`) and a dotted member
+        // (`y.len`) keep their `y` untouched on the wrong boundary.
+        assert_eq!(
+            replace_ident_word("elem(x, y)", "y", "y[1..]"),
+            "elem(x, y[1..])"
+        );
+        assert_eq!(replace_ident_word("yy && y", "y", "y[1..]"), "yy && y[1..]");
+    }
+
+    #[test]
+    fn replace_ident_word_leaves_string_literals_untouched() {
+        // The target spelled INSIDE a `"…"` literal must NOT be sliced — that
+        // would corrupt the literal. The bare occurrence still is.
+        assert_eq!(
+            replace_ident_word("tag(y) == \"y\"", "y", "y[1..]"),
+            "tag(y[1..]) == \"y\""
+        );
+        // Escaped quote inside the literal does not end the string early.
+        assert_eq!(
+            replace_ident_word("f(y) || s == \"a\\\"y\\\"b\"", "y", "y[1..]"),
+            "f(y[1..]) || s == \"a\\\"y\\\"b\""
+        );
     }
 }
