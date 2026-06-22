@@ -28,7 +28,7 @@ verify magnitude law idempotent
 
 verify magnitude law nonNegative
     given x: Int = [0, 3, -5, 7]
-    Int.abs(x) >= 0 => true
+    Int.abs(x) >= 0 holds
 
 verify scaledMagnitude law multiplicative
     given x: Int = [0, 3, -5]

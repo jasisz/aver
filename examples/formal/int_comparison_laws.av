@@ -43,4 +43,4 @@ verify notBelow law isAtLeast
 verify comparable law totalOrder
     given a: Int = [0, 1, -2, 5]
     given b: Int = [0, 1, -2, 5]
-    comparable(a, b) => true
+    comparable(a, b) holds

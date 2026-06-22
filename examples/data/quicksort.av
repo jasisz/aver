@@ -20,7 +20,7 @@ verify sort
 
 verify sort law resultOrdered
     given xs: List<Int> = [[], [1], [2, 1], [3, 1, 2], [5, 1, 5, 2, 3], [9, 4, 7, 1, 3, 8, 2]]
-    isOrdered(sort(xs)) => true
+    isOrdered(sort(xs)) holds
 
 verify sort law lengthPreserved
     given xs: List<Int> = [[], [1], [2, 1], [3, 1, 2], [5, 1, 5, 2, 3], [9, 4, 7, 1, 3, 8, 2]]

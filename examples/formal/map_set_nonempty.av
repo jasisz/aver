@@ -20,4 +20,4 @@ verify sizeAfterInsert law nonEmptyAfterInsert
     given reg: Map<String, Int> = [{}, {"a" => 1}, {"a" => 1, "b" => 2}]
     given k: String = ["x", "a"]
     given v: Int = [7]
-    Map.len(Map.set(reg, k, v)) >= 1 => true
+    Map.len(Map.set(reg, k, v)) >= 1 holds
