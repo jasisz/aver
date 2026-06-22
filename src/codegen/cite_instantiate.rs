@@ -25,31 +25,39 @@ use crate::codegen::CodegenContext;
 use crate::codegen::common::expr_to_dotted_name;
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::expr::aver_name_to_dafny;
-
-/// An earlier law eligible to be cited into the current proof.
-pub(super) struct CiteTarget<'a> {
-    /// The Dafny lemma name (`fn_law`).
-    pub dafny_name: String,
-    /// The law itself — its `lhs`/`givens` drive the LHS match.
-    pub law: &'a VerifyLaw,
-}
-
-const HEAD: &str = "__cite_h";
-const TAIL: &str = "__cite_t";
+/// Placeholders for the cons head/tail of the induction variable in the computed
+/// instantiation arguments. Backends map these to their own syntax (Dafny
+/// `xs[0]` / `xs[1..]`, Lean's `head` / `tail` binders).
+pub(crate) const HEAD: &str = "__cite_h";
+pub(crate) const TAIL: &str = "__cite_t";
 const UNFOLD_FUEL: usize = 8;
 
-/// Emit explicit Dafny instantiation calls (e.g. `append_appendAssoc(rev(y),
-/// rev(x[1..]), [x[0]]);`) for the list-induction step of `law` on `list_param`.
-pub(super) fn cited_lemma_instantiations(
+/// One computed instantiation of a cited law: which cited law (index into the
+/// `cited` slice) and the argument expressions to apply it at, in the cited
+/// law's given order. Arguments contain [`HEAD`] / [`TAIL`] placeholders that the
+/// backend renders.
+pub(crate) struct Instantiation {
+    pub law_index: usize,
+    pub args: Vec<Spanned<Expr>>,
+}
+
+/// Backend-neutral core of Engine B: for the list-induction step of `law` on
+/// `ind_param` (the AVER given name), derive the exact arguments at which each
+/// cited law must be applied so the step closes. Substitute the induction
+/// variable by `cons(head, tail)`, unfold the recursive cone fns one step, apply
+/// the induction hypothesis, then first-order-match each cited law's LHS against
+/// the resulting subterms. Backends (Dafny lemma calls, Lean `have`-facts) render
+/// the returned arguments.
+pub(crate) fn compute_instantiations(
     law: &VerifyLaw,
-    list_param: &str,
-    cites: &[CiteTarget<'_>],
+    ind_param: &str,
+    cited: &[&VerifyLaw],
     ctx: &CodegenContext,
-) -> Vec<String> {
-    if cites.is_empty() {
+) -> Vec<Instantiation> {
+    if cited.is_empty() {
         return Vec::new();
     }
+    let list_param = ind_param;
     let mod_scope = ctx.active_module_scope();
     // Recursive cone fns reachable from the law, keyed by call name, for unfolding.
     let mut cone: BTreeMap<String, &FnDef> = BTreeMap::new();
@@ -88,8 +96,8 @@ pub(super) fn cited_lemma_instantiations(
     rules.push(rule_at_tail(law, list_param));
     // Every cited law is also a rewrite (at all its givens) — applying it can
     // expose the reassociated subterms another cited lemma needs to match.
-    for c in cites {
-        rules.push(rewrite_rule(c.law));
+    for c in cited {
+        rules.push(rewrite_rule(c));
     }
 
     // Build the candidate term pool: the unfolded sides, plus every rewrite-closure.
@@ -109,20 +117,21 @@ pub(super) fn cited_lemma_instantiations(
         collect_subterms(t, &mut subterms);
     }
 
-    // Match each cited lemma's LHS against the subterms; emit one call per match.
+    // Match each cited lemma's LHS against the subterms; record one instantiation
+    // per distinct (law, args) match.
     let mut emitted: BTreeSet<String> = BTreeSet::new();
-    let mut out: Vec<String> = Vec::new();
-    for c in cites {
-        let wildcards: BTreeSet<String> = c.law.givens.iter().map(|g| g.name.clone()).collect();
+    let mut out: Vec<Instantiation> = Vec::new();
+    for (law_index, c) in cited.iter().enumerate() {
+        let wildcards: BTreeSet<String> = c.givens.iter().map(|g| g.name.clone()).collect();
         for sub in &subterms {
             let mut binds: BTreeMap<String, Spanned<Expr>> = BTreeMap::new();
-            if match_expr(&c.law.lhs, sub, &wildcards, &mut binds) {
+            if match_expr(&c.lhs, sub, &wildcards, &mut binds) {
                 // Build the arg list in the cited law's given order.
+                let mut args: Vec<Spanned<Expr>> = Vec::new();
                 let mut ok = true;
-                let mut args: Vec<String> = Vec::new();
-                for g in &c.law.givens {
+                for g in &c.givens {
                     match binds.get(&g.name) {
-                        Some(e) => args.push(render(e, list_param)),
+                        Some(e) => args.push(e.clone()),
                         None => {
                             ok = false;
                             break;
@@ -132,9 +141,13 @@ pub(super) fn cited_lemma_instantiations(
                 if !ok {
                     continue;
                 }
-                let call = format!("    {}({});", c.dafny_name, args.join(", "));
-                if emitted.insert(call.clone()) {
-                    out.push(call);
+                // Structural dedup key (placeholder names are stable).
+                let key = format!(
+                    "{law_index}:{:?}",
+                    args.iter().map(|a| &a.node).collect::<Vec<_>>()
+                );
+                if emitted.insert(key) {
+                    out.push(Instantiation { law_index, args });
                 }
             }
         }
@@ -151,7 +164,7 @@ fn ident(name: &str) -> Spanned<Expr> {
 /// A variable reference, whether source-form `Ident` or resolved (fn bodies are
 /// lowered before the proof backend sees them, so both forms appear in the mix
 /// of law sides + unfolded bodies).
-fn ident_name(e: &Spanned<Expr>) -> Option<&str> {
+pub(crate) fn ident_name(e: &Spanned<Expr>) -> Option<&str> {
     match &e.node {
         Expr::Ident(n) => Some(n),
         Expr::Resolved { name, .. } => Some(name),
@@ -457,45 +470,4 @@ fn expr_eq(a: &Spanned<Expr>, b: &Spanned<Expr>) -> bool {
     let mut binds = BTreeMap::new();
     // Structural equality = match with no wildcards.
     match_expr(a, b, &empty, &mut binds)
-}
-
-// ---- Dafny rendering of instantiation arguments ---------------------------
-
-/// Render a matched arg expr to Dafny, mapping the induction placeholders to the
-/// concrete head/tail (`x[0]` / `x[1..]`) and `List.concat` to seq `+`.
-fn render(e: &Spanned<Expr>, list_param: &str) -> String {
-    if let Some(n) = ident_name(e) {
-        return match n {
-            HEAD => format!("{list_param}[0]"),
-            TAIL => format!("{list_param}[1..]"),
-            _ => aver_name_to_dafny(n),
-        };
-    }
-    match &e.node {
-        Expr::Literal(lit) => super::expr::emit_literal(lit),
-        Expr::List(items) => {
-            let inner: Vec<String> = items.iter().map(|i| render(i, list_param)).collect();
-            format!("[{}]", inner.join(", "))
-        }
-        Expr::FnCall(callee, args) => {
-            let name = expr_to_dotted_name(&callee.node).unwrap_or_default();
-            let rendered: Vec<String> = args.iter().map(|a| render(a, list_param)).collect();
-            if name == "List.concat" && rendered.len() == 2 {
-                format!("({} + {})", rendered[0], rendered[1])
-            } else {
-                format!("{}({})", aver_name_to_dafny(&name), rendered.join(", "))
-            }
-        }
-        Expr::Constructor(name, None) => aver_name_to_dafny(name),
-        Expr::Constructor(name, Some(inner)) => {
-            format!(
-                "{}({})",
-                aver_name_to_dafny(name),
-                render(inner, list_param)
-            )
-        }
-        Expr::Attr(inner, field) => format!("{}.{}", render(inner, list_param), field),
-        // Anything else: best-effort, should not appear in matched list args.
-        _ => String::new(),
-    }
 }

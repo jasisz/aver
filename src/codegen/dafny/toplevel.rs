@@ -2318,6 +2318,54 @@ fn emit_floor_window_support_stack(
     }
 }
 
+/// Render a computed instantiation argument (from `cite_instantiate`) to Dafny:
+/// the induction placeholders map to the concrete head/tail (`xs[0]` / `xs[1..]`),
+/// `List.concat` to seq `+`.
+fn render_dafny_arg(e: &Spanned<Expr>, list_param: &str) -> String {
+    use crate::codegen::cite_instantiate::{HEAD, TAIL, ident_name};
+    if let Some(n) = ident_name(e) {
+        return match n {
+            HEAD => format!("{list_param}[0]"),
+            TAIL => format!("{list_param}[1..]"),
+            _ => aver_name_to_dafny(n),
+        };
+    }
+    match &e.node {
+        Expr::Literal(lit) => super::expr::emit_literal(lit),
+        Expr::List(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(|i| render_dafny_arg(i, list_param))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Expr::FnCall(callee, args) => {
+            let name =
+                crate::codegen::common::expr_to_dotted_name(&callee.node).unwrap_or_default();
+            let rendered: Vec<String> = args
+                .iter()
+                .map(|a| render_dafny_arg(a, list_param))
+                .collect();
+            if name == "List.concat" && rendered.len() == 2 {
+                format!("({} + {})", rendered[0], rendered[1])
+            } else {
+                format!("{}({})", aver_name_to_dafny(&name), rendered.join(", "))
+            }
+        }
+        Expr::Constructor(name, None) => aver_name_to_dafny(name),
+        Expr::Constructor(name, Some(inner)) => {
+            format!(
+                "{}({})",
+                aver_name_to_dafny(name),
+                render_dafny_arg(inner, list_param)
+            )
+        }
+        Expr::Attr(inner, field) => format!("{}.{}", render_dafny_arg(inner, list_param), field),
+        _ => String::new(),
+    }
+}
+
 /// Decomposition citation pool — the Dafny analog of the Lean `earlier_law_lemmas`
 /// simp pool. For THIS law, find earlier sibling laws in the same file whose
 /// universal `ensures` can drive the goal, and emit a `forall`-instantiation
@@ -2349,7 +2397,7 @@ fn eligible_cites<'a>(
     ctx: &'a CodegenContext,
     opaque_fns: &std::collections::HashSet<crate::ir::FnId>,
     native_emitted: &std::collections::HashSet<crate::ir::FnId>,
-) -> Vec<super::cite_instantiate::CiteTarget<'a>> {
+) -> Vec<(String, &'a VerifyLaw)> {
     use std::collections::BTreeSet;
 
     let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
@@ -2436,10 +2484,7 @@ fn eligible_cites<'a>(
             aver_name_to_dafny(&prev.fn_name),
             aver_name_to_dafny(&prev_law.name)
         );
-        out.push(super::cite_instantiate::CiteTarget {
-            dafny_name,
-            law: prev_law.as_ref(),
-        });
+        out.push((dafny_name, prev_law.as_ref()));
     }
     out
 }
@@ -2447,13 +2492,9 @@ fn eligible_cites<'a>(
 /// Hoist each eligible earlier law as a `forall`-fact at the body top. Z3 does not
 /// auto-apply lemmas, so a decomposed proof whose helper laws are merely emitted
 /// (not invoked) fails — this makes each one available universally.
-fn earlier_law_citations(
-    cites: &[super::cite_instantiate::CiteTarget<'_>],
-    ctx: &CodegenContext,
-) -> Vec<String> {
+fn earlier_law_citations(cites: &[(String, &VerifyLaw)], ctx: &CodegenContext) -> Vec<String> {
     let mut out = Vec::new();
-    for c in cites {
-        let prev_law = c.law;
+    for (dafny_name, prev_law) in cites {
         let plhs = emit_expr_legacy(&prev_law.lhs, ctx, None);
         let prhs = emit_expr_legacy(&prev_law.rhs, ctx, None);
         // Skip a sibling with an unused given (a binder absent from its own
@@ -2472,7 +2513,7 @@ fn earlier_law_citations(
             continue;
         }
         if prev_law.givens.is_empty() {
-            out.push(format!("  {}();", c.dafny_name));
+            out.push(format!("  {}();", dafny_name));
         } else {
             let binders = prev_law
                 .givens
@@ -2493,8 +2534,7 @@ fn earlier_law_citations(
                 .collect::<Vec<_>>()
                 .join(", ");
             out.push(format!(
-                "  forall {binders} ensures {plhs} == {prhs} {{ {}({args}); }}",
-                c.dafny_name
+                "  forall {binders} ensures {plhs} == {prhs} {{ {dafny_name}({args}); }}"
             ));
         }
     }
@@ -3237,13 +3277,24 @@ pub fn emit_verify_law(
             // derive the instantiation generically (symbolic unfold + IH + match).
             // Inside the `else` (|xs| > 0), so `xs[0]` / `xs[1..]` are in range.
             if !needs_bounded_form {
-                for inst in super::cite_instantiate::cited_lemma_instantiations(
+                let cited: Vec<&VerifyLaw> = cites.iter().map(|(_, l)| *l).collect();
+                let mut seen: std::collections::BTreeSet<String> =
+                    std::collections::BTreeSet::new();
+                for inst in crate::codegen::cite_instantiate::compute_instantiations(
                     law,
-                    &list_param,
-                    &cites,
+                    ind_var_src,
+                    &cited,
                     ctx,
                 ) {
-                    lines.push(inst);
+                    let args: Vec<String> = inst
+                        .args
+                        .iter()
+                        .map(|a| render_dafny_arg(a, &list_param))
+                        .collect();
+                    let call = format!("    {}({});", cites[inst.law_index].0, args.join(", "));
+                    if seen.insert(call.clone()) {
+                        lines.push(call);
+                    }
                 }
             }
             lines.push("  }".to_string());

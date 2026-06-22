@@ -5,6 +5,8 @@
 pub(crate) mod builtin_helpers;
 pub(crate) mod builtin_records;
 pub(crate) mod builtins;
+#[cfg(feature = "runtime")]
+pub(crate) mod cite_instantiate;
 pub mod common;
 #[cfg(feature = "runtime")]
 pub mod dafny;
