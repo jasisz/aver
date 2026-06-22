@@ -752,6 +752,58 @@ verify elem law elemConcat
 }
 
 #[test]
+fn transpile_proves_count_membership_law_as_universal() {
+    // `prop_76`-shape (`when not(eqNat(n, m)) -> count(n, xs ++ [m]) = count(n, xs)`):
+    // the verified fn `count` returns Nat, not Bool, yet it is a per-element FOLD
+    // (its cons arm COMPARES the head, never returns it), so the membership emit
+    // admits it and closes the law `universal`. Guards the count/`last` boundary —
+    // a Nat-returning SELECTOR like `last` must NOT be admitted.
+    let mut ctx = ctx_from_source(
+        r#"
+module CountMembership
+    intent = "count(n, xs ++ [m]) = count(n, xs) when n /= m"
+
+type Nat
+    Z
+    S(Nat)
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn count(x: Nat, y: List<Nat>) -> Nat
+    match y
+        [] -> Nat.Z
+        [z, ..zs] -> match eqNat(x, z)
+            true -> Nat.S(count(x, zs))
+            false -> count(x, zs)
+
+verify count law countAppendSingleton
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given m: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given xs: List<Nat> = [[], [Nat.Z]]
+    when Bool.not(eqNat(n, m))
+    count(n, List.concat(xs, [m])) => count(n, xs)
+"#,
+        "count_membership",
+    );
+    let out = transpile(&mut ctx);
+    let lean = generated_lean_file(&out);
+
+    // A `Nat`-returning fold still earns the unbounded `universal` statement.
+    assert!(lean.contains(
+        "-- aver:law-class count_law_countAppendSingleton universal count.countAppendSingleton"
+    ));
+    assert!(lean.contains("induction xs with"));
+    assert!(lean.contains("intro h_when"));
+}
+
+#[test]
 fn transpile_proves_sortedness_of_insertion_law_as_universal() {
     // `prop_77 sortedInsort`: `when sorted(xs) -> sorted(insort(x, xs)) => true`.
     // Closes as the TRUE-universal `∀ x xs, sorted xs = true -> sorted (insort x xs)

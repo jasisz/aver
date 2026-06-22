@@ -1242,18 +1242,20 @@ pub(in crate::codegen::lean) fn recognize_conditional_inductive_list(
     if law_simp_defs(ctx, vb, law).is_empty() {
         return false;
     }
-    // The verified fn must be a Bool list PREDICATE that structurally recurses on
-    // a list parameter (so inducting on the list given peels both sides in
-    // lockstep). The Bool-return gate is load-bearing: an element-returning list
-    // fn (`last`/`head` — `prop_59`/`prop_60`) also recurses on a list and can
-    // pass (A)/(B), but its conclusion is an element equation the membership
-    // portfolio cannot close, so admitting it would `sorry` and drop `passed`.
+    // The verified fn must be a PER-ELEMENT LIST FOLD: it structurally recurses
+    // on a list parameter AND its cons arm combines the HEAD element with the
+    // recursive call (so inducting on the list given peels both sides in lockstep
+    // and the portfolio's `split <;> simp_all` closes via the IH). This gate is
+    // load-bearing — it admits `elem` (Bool) AND `count` (Nat) while excluding
+    // element-SELECTORS like `last`/`head` (`prop_59`/`prop_60`): `last`'s cons
+    // arm uses only the recursive tail (not the head), `head`'s only the head
+    // (no recursion), so neither folds — their conclusion is an element equation
+    // the membership portfolio cannot close, and admitting them would `sorry` and
+    // drop `passed`.
     let Some(fd) = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref()) else {
         return false;
     };
-    if fd.return_type.trim() != "Bool"
-        || crate::codegen::recursion::detect::single_list_structural_param_index(fd).is_none()
-    {
+    if !is_per_element_list_fold(fd) {
         return false;
     }
     // VALIDATED-SHAPE GATE. `omit_domain` replaces the bounded `native_decide`
@@ -1337,8 +1339,64 @@ fn expr_mentions_ident(expr: &crate::ast::Spanned<crate::ast::Expr>, name: &str)
             .as_ref()
             .is_some_and(|e| expr_mentions_ident(e, name)),
         Expr::List(es) | Expr::Tuple(es) => es.iter().any(|e| expr_mentions_ident(e, name)),
+        Expr::Match { subject, arms } => {
+            expr_mentions_ident(subject, name)
+                || arms.iter().any(|arm| expr_mentions_ident(&arm.body, name))
+        }
         _ => true,
     }
+}
+
+/// Whether some leaf of `expr` (descending through `match` arms) IS the bare
+/// identifier `name` — i.e. a code path that RETURNS that variable directly. For
+/// the cons head this is the SELECTOR signature: `last`'s `match zs { [] -> z ; …
+/// }` returns the head element, `head`'s cons arm is the bare head. A fold never
+/// returns the head — it only COMPARES it (`eqNat(x, z)`), so the head appears as
+/// a call argument, never as a leaf.
+fn any_leaf_is_ident(expr: &crate::ast::Spanned<crate::ast::Expr>, name: &str) -> bool {
+    use crate::ast::Expr;
+    match &expr.node {
+        Expr::Match { arms, .. } => arms.iter().any(|arm| any_leaf_is_ident(&arm.body, name)),
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => n == name,
+        _ => false,
+    }
+}
+
+/// A per-element list FOLD: the verified fn structurally recurses on a `List<_>`
+/// param AND its cons arm references the head element but NEVER returns it as a
+/// leaf (the head is COMPARED, not selected). Admits `elem` in BOTH spellings —
+/// `barbar(eqNat(x, z), elem(x, xs))` and the explicit `match eqNat(x, z) { true
+/// -> true ; false -> elem(x, xs) }` — and `count` (`match natEq(x, z) { true ->
+/// S(count …) ; false -> count … }`). Excludes element SELECTORS: `last`'s cons
+/// arm has a `[] -> z` leaf returning the head; `head` (which does not even
+/// recurse on the list, so the structural-param gate already rejects it). The
+/// cons-arm structure, not the return type, is the discriminator (so `count`'s
+/// `Nat` return qualifies alongside `elem`'s `Bool`).
+fn is_per_element_list_fold(fd: &crate::ast::FnDef) -> bool {
+    use crate::ast::{Expr, Pattern};
+    let Some(list_idx) = crate::codegen::recursion::detect::single_list_structural_param_index(fd)
+    else {
+        return false;
+    };
+    let list_param = &fd.params[list_idx].0;
+    let Some(body) = fd.body.tail_expr() else {
+        return false;
+    };
+    let Expr::Match { subject, arms } = &body.node else {
+        return false;
+    };
+    if !matches!(&subject.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == list_param)
+    {
+        return false;
+    }
+    arms.iter()
+        .find_map(|arm| {
+            let Pattern::Cons(head, _) = &arm.pattern else {
+                return None;
+            };
+            Some(expr_mentions_ident(&arm.body, head) && !any_leaf_is_ident(&arm.body, head))
+        })
+        .unwrap_or(false)
 }
 
 /// Close a conditional-inductive list-predicate law (`prop_36`, `prop_71`) as the
