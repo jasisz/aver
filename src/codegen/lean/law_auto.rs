@@ -40,6 +40,11 @@ pub(in crate::codegen::lean) use induction::recognize_conditional_inductive_list
 /// Also feeds the `omit_domain` statement driver, kept in lockstep with the emit.
 pub(in crate::codegen::lean) use induction::recognize_conditional_sortedness_law;
 
+/// The zip-reverse length-equality figure (`prop_85`), absorbed from the
+/// `when`-universal lane onto the main path. Also feeds the `omit_domain`
+/// statement driver, kept in lockstep with the emit.
+pub(in crate::codegen::lean) use induction::recognize_conditional_zip_rev_law;
+
 /// `aver proof --explain` residual probe: turn an emitted main law theorem's
 /// source lines into a normalization-only twin so Lean reports its residual
 /// (`unsolved goals`). Re-exported up to `codegen::lean` for the `--check`
@@ -332,6 +337,17 @@ fn emit_verify_law_forall_auto_proof_inner(
     // supply. Same `omit_domain` plumbing.
     if law.when.is_some()
         && let Some(proof) = induction::emit_conditional_sortedness_law(vb, law, ctx, &intro_names)
+    {
+        return Some(proof);
+    }
+
+    // Zip-reverse under equal lengths (`prop_85`: `when natEq(len xs, len ys)
+    // -> zip(rev xs, rev ys) => revPair(zip xs ys)`). Absorbed from the
+    // `when`-universal lane: the validated proof carries a snoc-distribution
+    // aux lemma the bare list IH cannot supply, like the sortedness family
+    // above. Same `omit_domain` plumbing; declines any other shape.
+    if law.when.is_some()
+        && let Some(proof) = induction::emit_conditional_zip_rev_law(vb, law, ctx, &intro_names)
     {
         return Some(proof);
     }

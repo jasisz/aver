@@ -380,13 +380,16 @@ fn proof_when_universal_lane_json_end_to_end() {
     let _ = std::fs::remove_dir_all(&output_dir);
 }
 
-/// Bridge-premise family, hard floor: TIP isaplanner prop_85 (zip-rev
-/// under the relational premise `natEq(len(xs), len(ys))`) closes
-/// GENUINELY through the quarantine lane — `when_universal == 1` keyed
-/// on per-declaration `#print axioms` evidence within the kernel
-/// whitelist — while the COUNTED summary stays byte-identical to
-/// main's (passed, 0 sorries, file-level universal:false). A sabotage
-/// run pins the iron guard on this family too.
+/// Bridge-premise family: TIP isaplanner prop_85 (zip-rev under the
+/// relational premise `natEq(len(xs), len(ys))`) now closes GENUINELY on
+/// the MAIN path — the figure was absorbed from the quarantine lane, so
+/// the counted build proves `zip_law_zipRev` universally (file-level
+/// `universal:true`). The lane STILL emits its off-headline twin
+/// transitionally (`when_universal == 1`, kept until the lane is retired),
+/// keyed on per-declaration `#print axioms` evidence within the kernel
+/// whitelist. A sabotage run breaks only the redundant lane twin: the
+/// counted summary stays byte-identical because the main proof is
+/// independent of the lane.
 #[test]
 fn proof_when_universal_lane_closes_tip_prop_85() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -409,14 +412,15 @@ fn proof_when_universal_lane_closes_tip_prop_85() {
     assert_eq!(normal["passed"].as_bool(), Some(true));
     assert_eq!(
         normal["universal"].as_bool(),
-        Some(false),
-        "file-level `universal` keeps counted-build semantics; the lane \
-         credit is per-law via when_universal"
+        Some(true),
+        "zip-rev was absorbed onto the main path: the counted build now \
+         proves zip_law_zipRev universally, so file-level `universal` is true"
     );
     assert_eq!(
         normal["when_universal"].as_u64(),
         Some(1),
-        "prop_85's zip.zipRev must close universally in the lane.\n{}",
+        "the lane still emits prop_85's off-headline twin transitionally \
+         (kept until the lane is retired).\n{}",
         format_output(&run)
     );
     // Per-law detail artifact: kernel-genuine evidence, quoted.

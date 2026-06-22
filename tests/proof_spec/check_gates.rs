@@ -76,19 +76,34 @@ fn proof_check_lean_universal_field_distinguishes_bounded_from_genuine() {
     // depends on `Lean.ofReduceBool` (the kernel trusting the compiler's
     // evaluation over the concrete domain), NOT the universal claim, so
     // `#print axioms` exposes it. `universal` must report `false` there while
-    // `passed` stays `true` — the exact split the field exists for. prop_85
-    // (zip/rev over a bounded sample domain) is the committed corpus instance.
+    // `passed` stays `true` — the exact split the field exists for. The
+    // `fac = qfac · 1` accumulator equivalence is the bounded-only instance:
+    // genuine induction needs an IH generalization over the accumulator the
+    // no-discovery auto-prover does not perform, so it falls back to the bounded
+    // sample proof. (This is the SAME law the Dafny sibling test pins as its
+    // omitted-universal instance — both flip together if the capability lands.)
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping lean universal-field test: `lake` not available");
         return;
     }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-universal-bounded-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("facq.av"),
+        "module FacQ\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         fn mult(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> Nat.Z\n        Nat.S(z) -> plus(y, mult(z, y))\n\n\
+         fn fac(x: Nat) -> Nat\n    match x\n        Nat.Z -> Nat.S(Nat.Z)\n        Nat.S(y) -> mult(x, fac(y))\n\n\
+         fn qfac(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> qfac(z, mult(x, y))\n\n\
+         verify fac law facQfac\n    given x: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    fac(x) => qfac(x, Nat.S(Nat.Z))\n",
+    )
+    .expect("write facq.av");
     let out = temp_output_dir("aver-universal-bounded-out");
     let run = Command::new(aver_bin)
-        .current_dir(&repo_root)
         .arg("proof")
-        .arg("proof-corpus/tip/isaplanner/prop_85.av")
+        .arg(src.join("facq.av"))
         .arg("--backend")
         .arg("lean")
         .arg("-o")
@@ -110,10 +125,11 @@ fn proof_check_lean_universal_field_distinguishes_bounded_from_genuine() {
         (Some(true), Some(false)),
         "a bounded `native_decide` proof must stay lenient on `passed` but report \
          `universal:false` (it depends on `Lean.ofReduceBool`, not the ∀-claim). \
-         If `universal` flipped to true, prop_85 now closes genuinely — celebrate \
-         and re-baseline this test.\n{}",
+         If `universal` flipped to true, the accumulator equivalence now closes \
+         genuinely — celebrate and re-baseline this test (and its Dafny sibling).\n{}",
         format_output(&run)
     );
+    let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
 

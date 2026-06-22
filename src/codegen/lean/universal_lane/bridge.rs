@@ -956,6 +956,215 @@ pub(super) fn classify_bridge_law(
     }
 }
 
+/// The validated zip-rev (`ZipRevLenEq`) proof, factored out of
+/// [`render_bridge_law`] so the SAME proof text backs both the lane twin
+/// and the main-path conditional emit. All fn-name params are already
+/// Lean-mangled; `prefix` scopes the six support-lemma names (the lane
+/// passes its `_universal` theorem, the main path its `<fn>_<law>` base);
+/// `sab` is the test-only sabotage suffix (`""` on the main path). The
+/// body is emitted at base indentation — each caller adds its own.
+#[allow(clippy::too_many_arguments)]
+fn zip_rev_supports_body(
+    eq: &str,
+    len: &str,
+    zip: &str,
+    rev: &str,
+    revp: &str,
+    app: &str,
+    appp: &str,
+    a_ty: &str,
+    xs: &str,
+    ys: &str,
+    prefix: &str,
+    sab: &str,
+) -> (Vec<String>, String) {
+    let supports = vec![
+        format!(
+            r#"private theorem {prefix}_bridge_eq : ∀ (a b : Nat), _root_.{eq} a b = true → a = b := by
+  intro a
+  induction a with
+  | zero =>
+    intro b h
+    cases b with
+    | zero => rfl
+    | succ y => simp [_root_.{eq}] at h
+  | succ x ih =>
+    intro b h
+    cases b with
+    | zero => simp [_root_.{eq}] at h
+    | succ y =>
+      have hx := ih y (by simpa [_root_.{eq}] using h)
+      omega
+"#
+        ),
+        format!(
+            r#"private theorem {prefix}_bridge_refl : ∀ (a : Nat), _root_.{eq} a a = true := by
+  intro a
+  induction a with
+  | zero => rfl
+  | succ x ih => simpa [_root_.{eq}] using ih
+"#
+        ),
+        // Measure homomorphism over append — the premise-stepping
+        // arithmetic below rides on it.
+        format!(
+            r#"private theorem {prefix}_len_append : ∀ (xs ys : List {a_ty}),
+    _root_.{len} (_root_.{app} xs ys) = _root_.{len} xs + _root_.{len} ys := by
+  intro xs
+  induction xs with
+  | nil => intro ys; simp [_root_.{app}, _root_.{len}]
+  | cons z zs ih =>
+    intro ys
+    simp only [_root_.{app}, List.singleton_append, _root_.{len}, ih]
+    omega
+"#
+        ),
+        format!(
+            r#"private theorem {prefix}_len_rev : ∀ (xs : List {a_ty}), _root_.{len} (_root_.{rev} xs) = _root_.{len} xs := by
+  intro xs
+  induction xs with
+  | nil => simp [_root_.{rev}]
+  | cons y ys ih =>
+    simp only [_root_.{rev}, {prefix}_len_append, _root_.{len}, ih]
+"#
+        ),
+        // Premise-driven shape inversion of the non-induction
+        // variable: `len ys = 0 → ys = []`.
+        format!(
+            r#"private theorem {prefix}_len_zero : ∀ (ys : List {a_ty}), _root_.{len} ys = 0 → ys = [] := by
+  intro ys h
+  cases ys with
+  | nil => rfl
+  | cons y ys =>
+    simp only [_root_.{len}] at h
+    exact absurd h (by omega)
+"#
+        ),
+        // The snoc-distribution aux lemma (zip over append-singleton
+        // under length equality) — emitted from the validated template,
+        // never as a sorry. Its own premise threads by per-step
+        // stepping and vacuous discharge.
+        format!(
+            r#"private theorem {prefix}_snoc (x y : {a_ty}) : ∀ (as bs : List {a_ty}),
+    _root_.{len} as = _root_.{len} bs →
+    _root_.{zip} (_root_.{app} as [x]) (_root_.{app} bs [y])
+      = _root_.{appp} (_root_.{zip} as bs) [(x, y)] := by
+  intro as
+  induction as with
+  | nil =>
+    intro bs h
+    have hb : bs = [] := {prefix}_len_zero bs (by simp only [_root_.{len}] at h; omega)
+    subst hb
+    simp [_root_.{app}, _root_.{zip}, _root_.{appp}]
+  | cons a as ih =>
+    intro bs h
+    cases bs with
+    | nil =>
+      simp only [_root_.{len}] at h
+      exact absurd h (by omega)
+    | cons b bs =>
+      have h' : _root_.{len} as = _root_.{len} bs := by simp only [_root_.{len}] at h; omega
+      simp only [_root_.{app}, List.singleton_append, _root_.{zip}, _root_.{appp}, ih bs h']
+"#
+        ),
+    ];
+    let body = format!(
+        r#"intro {xs}{sab}
+induction {xs} with
+| nil =>
+  intro {ys} h
+  have h0 : _root_.{len} {ys} = 0 := by
+    have hh := {prefix}_bridge_eq (_root_.{len} []) (_root_.{len} {ys}) h
+    simp only [_root_.{len}] at hh
+    omega
+  have hy : {ys} = [] := {prefix}_len_zero {ys} h0
+  subst hy
+  simp [_root_.{rev}, _root_.{zip}, _root_.{revp}]
+| cons z x2 ih =>
+  intro {ys} h
+  cases {ys} with
+  | nil =>
+    have hh := {prefix}_bridge_eq (_root_.{len} (z :: x2)) (_root_.{len} []) h
+    simp only [_root_.{len}] at hh
+    exact absurd hh (by omega)
+  | cons y x4 =>
+    have hlen : _root_.{len} x2 = _root_.{len} x4 := by
+      have hh := {prefix}_bridge_eq (_root_.{len} (z :: x2)) (_root_.{len} (y :: x4)) h
+      simp only [_root_.{len}] at hh
+      omega
+    have hrevlen : _root_.{len} (_root_.{rev} x2) = _root_.{len} (_root_.{rev} x4) := by
+      rw [{prefix}_len_rev, {prefix}_len_rev]; exact hlen
+    have hih : _root_.{zip} (_root_.{rev} x2) (_root_.{rev} x4) = _root_.{revp} (_root_.{zip} x2 x4) := by
+      apply ih
+      rw [hlen]
+      exact {prefix}_bridge_refl (_root_.{len} x4)
+    calc _root_.{zip} (_root_.{rev} (z :: x2)) (_root_.{rev} (y :: x4))
+        = _root_.{zip} (_root_.{app} (_root_.{rev} x2) [z]) (_root_.{app} (_root_.{rev} x4) [y]) := by
+          simp only [_root_.{rev}]
+      _ = _root_.{appp} (_root_.{zip} (_root_.{rev} x2) (_root_.{rev} x4)) [(z, y)] :=
+          {prefix}_snoc z y (_root_.{rev} x2) (_root_.{rev} x4) hrevlen
+      _ = _root_.{appp} (_root_.{revp} (_root_.{zip} x2 x4)) [(z, y)] := by rw [hih]
+      _ = _root_.{revp} (_root_.{zip} (z :: x2) (y :: x4)) := by
+          simp only [_root_.{zip}, _root_.{revp}, List.singleton_append]"#
+    );
+    (supports, body)
+}
+
+/// True iff `law` is the zip-rev length-equality figure. The main-path
+/// `omit_domain` driver reads this to flip the law-class marker to
+/// `universal` for exactly this shape.
+pub(in crate::codegen::lean) fn is_zip_rev_bridge(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> bool {
+    matches!(
+        classify_bridge_law(vb, law, ctx),
+        Some(BridgePlan::ZipRevLenEq { .. })
+    )
+}
+
+/// Build the zip-rev universal proof (support lemmas + body) for the MAIN
+/// path, `prefix`-scoping the support-lemma names so they never collide
+/// with the lane twin or carry the `_law_` substring the credit audit
+/// keys on. `None` for any non-zip-rev law.
+pub(in crate::codegen::lean) fn zip_rev_universal_proof(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    prefix: &str,
+) -> Option<(Vec<String>, String)> {
+    let Some(BridgePlan::ZipRevLenEq {
+        eq_fn,
+        len_fn,
+        zip_fn,
+        rev_fn,
+        rev_pair_fn,
+        append_fn,
+        append_pair_fn,
+        elem_ty,
+        xs,
+        ys,
+    }) = classify_bridge_law(vb, law, ctx)
+    else {
+        return None;
+    };
+    Some(zip_rev_supports_body(
+        &aver_name_to_lean(&eq_fn),
+        &aver_name_to_lean(&len_fn),
+        &aver_name_to_lean(&zip_fn),
+        &aver_name_to_lean(&rev_fn),
+        &aver_name_to_lean(&rev_pair_fn),
+        &aver_name_to_lean(&append_fn),
+        &aver_name_to_lean(&append_pair_fn),
+        &elem_ty,
+        &aver_name_to_lean(&xs),
+        &aver_name_to_lean(&ys),
+        prefix,
+        "",
+    ))
+}
+
 /// Render one bridge-premise lane law: the validated proof template
 /// for `plan`, support lemmas included, into a single hashed module.
 /// Statement built by the SAME `law_theorem_prop` as the manifest
@@ -1080,125 +1289,20 @@ pub(super) fn render_bridge_law(
             elem_ty,
             xs,
             ys,
-        } => {
-            let eq = aver_name_to_lean(eq_fn);
-            let len = aver_name_to_lean(len_fn);
-            let zip = aver_name_to_lean(zip_fn);
-            let rev = aver_name_to_lean(rev_fn);
-            let revp = aver_name_to_lean(rev_pair_fn);
-            let app = aver_name_to_lean(append_fn);
-            let appp = aver_name_to_lean(append_pair_fn);
-            let a_ty = elem_ty;
-            let xs = aver_name_to_lean(xs);
-            let ys = aver_name_to_lean(ys);
-            let supports = vec![
-                bridge_eq_lemma(&eq),
-                bridge_refl_lemma(&eq),
-                // Measure homomorphism over append — the premise-stepping
-                // arithmetic below rides on it.
-                format!(
-                    r#"private theorem {theorem}_len_append : ∀ (xs ys : List {a_ty}),
-    _root_.{len} (_root_.{app} xs ys) = _root_.{len} xs + _root_.{len} ys := by
-  intro xs
-  induction xs with
-  | nil => intro ys; simp [_root_.{app}, _root_.{len}]
-  | cons z zs ih =>
-    intro ys
-    simp only [_root_.{app}, List.singleton_append, _root_.{len}, ih]
-    omega
-"#
-                ),
-                format!(
-                    r#"private theorem {theorem}_len_rev : ∀ (xs : List {a_ty}), _root_.{len} (_root_.{rev} xs) = _root_.{len} xs := by
-  intro xs
-  induction xs with
-  | nil => simp [_root_.{rev}]
-  | cons y ys ih =>
-    simp only [_root_.{rev}, {theorem}_len_append, _root_.{len}, ih]
-"#
-                ),
-                // Premise-driven shape inversion of the non-induction
-                // variable: `len ys = 0 → ys = []`.
-                format!(
-                    r#"private theorem {theorem}_len_zero : ∀ (ys : List {a_ty}), _root_.{len} ys = 0 → ys = [] := by
-  intro ys h
-  cases ys with
-  | nil => rfl
-  | cons y ys =>
-    simp only [_root_.{len}] at h
-    exact absurd h (by omega)
-"#
-                ),
-                // The snoc-distribution aux lemma (zip over
-                // append-singleton under length equality) — emitted
-                // from the validated template, never as a sorry. Its
-                // own premise threads by per-step stepping (C) and
-                // vacuous discharge (D).
-                format!(
-                    r#"private theorem {theorem}_snoc (x y : {a_ty}) : ∀ (as bs : List {a_ty}),
-    _root_.{len} as = _root_.{len} bs →
-    _root_.{zip} (_root_.{app} as [x]) (_root_.{app} bs [y])
-      = _root_.{appp} (_root_.{zip} as bs) [(x, y)] := by
-  intro as
-  induction as with
-  | nil =>
-    intro bs h
-    have hb : bs = [] := {theorem}_len_zero bs (by simp only [_root_.{len}] at h; omega)
-    subst hb
-    simp [_root_.{app}, _root_.{zip}, _root_.{appp}]
-  | cons a as ih =>
-    intro bs h
-    cases bs with
-    | nil =>
-      simp only [_root_.{len}] at h
-      exact absurd h (by omega)
-    | cons b bs =>
-      have h' : _root_.{len} as = _root_.{len} bs := by simp only [_root_.{len}] at h; omega
-      simp only [_root_.{app}, List.singleton_append, _root_.{zip}, _root_.{appp}, ih bs h']
-"#
-                ),
-            ];
-            let body = format!(
-                r#"intro {xs}{sab}
-induction {xs} with
-| nil =>
-  intro {ys} h
-  have h0 : _root_.{len} {ys} = 0 := by
-    have hh := {theorem}_bridge_eq (_root_.{len} []) (_root_.{len} {ys}) h
-    simp only [_root_.{len}] at hh
-    omega
-  have hy : {ys} = [] := {theorem}_len_zero {ys} h0
-  subst hy
-  simp [_root_.{rev}, _root_.{zip}, _root_.{revp}]
-| cons z x2 ih =>
-  intro {ys} h
-  cases {ys} with
-  | nil =>
-    have hh := {theorem}_bridge_eq (_root_.{len} (z :: x2)) (_root_.{len} []) h
-    simp only [_root_.{len}] at hh
-    exact absurd hh (by omega)
-  | cons y x4 =>
-    have hlen : _root_.{len} x2 = _root_.{len} x4 := by
-      have hh := {theorem}_bridge_eq (_root_.{len} (z :: x2)) (_root_.{len} (y :: x4)) h
-      simp only [_root_.{len}] at hh
-      omega
-    have hrevlen : _root_.{len} (_root_.{rev} x2) = _root_.{len} (_root_.{rev} x4) := by
-      rw [{theorem}_len_rev, {theorem}_len_rev]; exact hlen
-    have hih : _root_.{zip} (_root_.{rev} x2) (_root_.{rev} x4) = _root_.{revp} (_root_.{zip} x2 x4) := by
-      apply ih
-      rw [hlen]
-      exact {theorem}_bridge_refl (_root_.{len} x4)
-    calc _root_.{zip} (_root_.{rev} (z :: x2)) (_root_.{rev} (y :: x4))
-        = _root_.{zip} (_root_.{app} (_root_.{rev} x2) [z]) (_root_.{app} (_root_.{rev} x4) [y]) := by
-          simp only [_root_.{rev}]
-      _ = _root_.{appp} (_root_.{zip} (_root_.{rev} x2) (_root_.{rev} x4)) [(z, y)] :=
-          {theorem}_snoc z y (_root_.{rev} x2) (_root_.{rev} x4) hrevlen
-      _ = _root_.{appp} (_root_.{revp} (_root_.{zip} x2 x4)) [(z, y)] := by rw [hih]
-      _ = _root_.{revp} (_root_.{zip} (z :: x2) (y :: x4)) := by
-          simp only [_root_.{zip}, _root_.{revp}, List.singleton_append]"#
-            );
-            (supports, body)
-        }
+        } => zip_rev_supports_body(
+            &aver_name_to_lean(eq_fn),
+            &aver_name_to_lean(len_fn),
+            &aver_name_to_lean(zip_fn),
+            &aver_name_to_lean(rev_fn),
+            &aver_name_to_lean(rev_pair_fn),
+            &aver_name_to_lean(append_fn),
+            &aver_name_to_lean(append_pair_fn),
+            elem_ty,
+            &aver_name_to_lean(xs),
+            &aver_name_to_lean(ys),
+            &theorem,
+            sab,
+        ),
         BridgePlan::EqElemInsert {
             eq_fn,
             elem_fn,

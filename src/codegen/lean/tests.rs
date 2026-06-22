@@ -870,6 +870,87 @@ verify insort law sortedInsort
 }
 
 #[test]
+fn transpile_proves_zip_rev_law_as_universal() {
+    // `prop_85 zipRev`: `when natEq(len xs, len ys) -> zip(rev xs, rev ys) =>
+    // revPair(zip xs ys)`. Absorbed from the `when`-universal lane onto the main
+    // path: closes as the TRUE-universal `∀ xs ys, len xs = len ys -> …` by
+    // reusing the lane's validated proof — the `=`-bridge over Peano `Nat`, the
+    // append/rev length homomorphisms, the `len ys = 0 → ys = []` inversion, and
+    // the snoc-distribution aux lemma the bare list IH cannot supply.
+    let mut ctx = ctx_from_source(
+        r#"
+module ZipRev
+    intent = "if len xs = len ys then zip (rev xs) (rev ys) = revPair (zip xs ys)"
+
+type Nat
+    Z
+    S(Nat)
+
+fn natEq(a: Nat, b: Nat) -> Bool
+    match a
+        Nat.Z -> match b
+            Nat.Z -> true
+            Nat.S(y) -> false
+        Nat.S(x) -> match b
+            Nat.Z -> false
+            Nat.S(y) -> natEq(x, y)
+
+fn len(xs: List<Int>) -> Nat
+    match xs
+        [] -> Nat.Z
+        [y, ..ys] -> Nat.S(len(ys))
+
+fn appendInt(xs: List<Int>, ys: List<Int>) -> List<Int>
+    match xs
+        [] -> ys
+        [z, ..zs] -> List.concat([z], appendInt(zs, ys))
+
+fn appendPair(xs: List<Tuple<Int, Int>>, ys: List<Tuple<Int, Int>>) -> List<Tuple<Int, Int>>
+    match xs
+        [] -> ys
+        [z, ..zs] -> List.concat([z], appendPair(zs, ys))
+
+fn rev(xs: List<Int>) -> List<Int>
+    match xs
+        [] -> []
+        [y, ..ys] -> appendInt(rev(ys), [y])
+
+fn revPair(xs: List<Tuple<Int, Int>>) -> List<Tuple<Int, Int>>
+    match xs
+        [] -> []
+        [y, ..ys] -> appendPair(revPair(ys), [y])
+
+fn zip(xs: List<Int>, ys: List<Int>) -> List<Tuple<Int, Int>>
+    match xs
+        [] -> []
+        [z, ..x2] -> match ys
+            [] -> []
+            [x3, ..x4] -> List.concat([(z, x3)], zip(x2, x4))
+
+verify zip law zipRev
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [4], [4, 5]]
+    when natEq(len(xs), len(ys))
+    zip(rev(xs), rev(ys)) => revPair(zip(xs, ys))
+"#,
+        "zip_rev",
+    );
+    let out = transpile(&mut ctx);
+    let lean = generated_lean_file(&out);
+
+    // Classed `universal` (sampled-domain disjunctions dropped).
+    assert!(lean.contains("-- aver:law-class zip_law_zipRev universal zip.zipRev"));
+    // The TRUE-universal conditional statement.
+    assert!(lean.contains(
+        "theorem zip_law_zipRev : ∀ (xs : List Int) (ys : List Int), natEq (len xs) (len ys) = true -> zip (rev xs) (rev ys) = revPair (zip xs ys) := by"
+    ));
+    // The snoc-distribution aux lemma, `<fn>_<law>`-scoped (no `_law_` so the
+    // `#print axioms` credit audit never mistakes it for the main theorem).
+    assert!(lean.contains("theorem zip_zipRev_snoc (x y : Int) : ∀ (as bs : List Int),"));
+    assert!(lean.contains("theorem zip_zipRev_bridge_eq"));
+}
+
+#[test]
 fn transpile_auto_proves_simp_normalized_canonical_spec_law_in_auto_mode() {
     let mut ctx = ctx_from_source(
         r#"

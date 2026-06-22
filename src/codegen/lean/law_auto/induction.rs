@@ -1781,6 +1781,64 @@ theorem {sort_cons} : ∀ (z : Nat) (l : List Nat),
     })
 }
 
+/// Whether [`emit_conditional_zip_rev_law`] will close this law universally —
+/// the `omit_domain` statement driver reads this, kept in lockstep with the
+/// emit. The recognizer is the lane's validated `ZipRevLenEq` classifier,
+/// borrowed by the main path during the `when`-universal lane's retirement.
+pub(in crate::codegen::lean) fn recognize_conditional_zip_rev_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> bool {
+    crate::codegen::lean::universal_lane::is_zip_rev_bridge(vb, law, ctx)
+}
+
+/// Close the zip-reverse length-equality law (`prop_85`:
+/// `when natEq(len xs, len ys) -> zip(rev xs, rev ys) => revPair(zip xs ys)`)
+/// as the TRUE-universal `∀ xs ys, len xs = len ys -> …`. Reuses the lane's
+/// validated proof — the `=`-bridge over Peano `Nat`, append/rev length
+/// homomorphisms, the `len ys = 0 → ys = []` inversion, and the
+/// snoc-distribution aux lemma — then the main induction on `xs`, threading
+/// the length premise through the generalized `ys`. The support lemmas are
+/// `<fn>_<law>`-scoped (no `_law_`, so the `#print axioms` credit audit never
+/// mistakes one for the creditable theorem). FAIL-CLOSED: declines any other
+/// shape (`None`), so the caller keeps the bounded proof.
+pub(in crate::codegen::lean) fn emit_conditional_zip_rev_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    _intro_names: &[String],
+) -> Option<AutoProof> {
+    let prefix = format!(
+        "{}_{}",
+        aver_name_to_lean(&vb.fn_name),
+        aver_name_to_lean(&law.name)
+    );
+    let (supports, body) =
+        crate::codegen::lean::universal_lane::zip_rev_universal_proof(vb, law, ctx, &prefix)?;
+    // The lane emits the body at base indentation (its renderer adds the
+    // leading two spaces); the main-path `AutoProof` body carries its own
+    // two-space base indent, so re-indent here (empty lines stay empty).
+    let body_lines: Vec<String> = body
+        .lines()
+        .map(|l| {
+            if l.is_empty() {
+                String::new()
+            } else {
+                format!("  {l}")
+            }
+        })
+        .collect();
+    // ONE `support_lines` element (newlines embedded): `emit_verify_law_block`
+    // de-duplicates support lines line-by-line, which would silently drop the
+    // proof's repeated lines and corrupt the multi-lemma block.
+    Some(AutoProof {
+        support_lines: vec![supports.join("\n")],
+        body: Tactic::raw(body_lines),
+        replaces_theorem: false,
+    })
+}
+
 /// `discovered` carries the lemma names of an IR-pinned
 /// `ProofStrategy::SimpOverLemmas` (the discovery feedback loop): the emits
 /// below add them to the law's simp sets, embed their texts (first user
