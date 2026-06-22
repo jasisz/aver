@@ -452,13 +452,15 @@ fn proof_lean_proves_count_plus_concat_homomorphism_kernel_clean() {
 
 #[test]
 fn proof_lean_proves_rev_antihomomorphism_kernel_clean() {
-    // SAME backend-neutral `RevOp` recognizer as the Dafny test above, but a
-    // Lean renderer: `rev (rev x) = x` on List<Int> kernel-proves because the
-    // fold lowers to a clean `def … termination_by` (no fuel / no Nat
-    // collision). The renderer prepends the proved append-nil-right /
-    // associativity / rev-distribution theorems and adds rev-distribution to
-    // the list-induction simp set. `lake build` succeeds with ZERO sorries on
-    // the universal, i.e. it is kernel-checked (`#print axioms = [propext]`).
+    // `rev (rev x) = x` decomposed into its standard helper law: the user
+    // writes `revDist` (the rev anti-homomorphism over `List.concat`), and the
+    // earlier-law pool feeds it to the `revRev` proof as a simp rewrite. No
+    // synthesized algebra — the helper law IS the decomposition (exactly what
+    // The Method conjectures). `lake build` succeeds with ZERO sorries on both
+    // universals, i.e. kernel-checked (`#print axioms` free of `ofReduceBool`).
+    // The compiler only CITES the earlier law; it does not invent the rev
+    // anti-homomorphism. (Before #B this closed via a synthesized `rev` algebra
+    // template — that content synthesizer is gone; the decomposition replaces it.)
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping lean rev kernel test: `lake` not available");
         return;
@@ -469,9 +471,9 @@ fn proof_lean_proves_rev_antihomomorphism_kernel_clean() {
     std::fs::write(
         src.join("m.av"),
         "module RevHomLean\n    effects []\n\n\
-         fn append(x: List<Int>, y: List<Int>) -> List<Int>\n    match x\n        [] -> y\n        [z, ..xs] -> List.concat([z], append(xs, y))\n\n\
-         fn rev(x: List<Int>) -> List<Int>\n    match x\n        [] -> []\n        [y, ..xs] -> append(rev(xs), [y])\n\n\
-         verify rev law revRev\n    given x: List<Int> = [[1, 2]]\n    rev(rev(x)) => x\n",
+         fn rev(x: List<Int>) -> List<Int>\n    match x\n        [] -> []\n        [y, ..xs] -> List.concat(rev(xs), [y])\n\n\
+         verify rev law revDist\n    given x: List<Int> = [[1], [1, 2], [1, 2, 3]]\n    given y: List<Int> = [[4], [4, 5], [4, 5, 6]]\n    rev(List.concat(x, y)) => List.concat(rev(y), rev(x))\n\n\
+         verify rev law revRev\n    given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]\n    rev(rev(x)) => x\n",
     )
     .expect("write m.av");
     let out = temp_output_dir("aver-rev-lean-out");

@@ -31,63 +31,6 @@ fn simp_done_omega_first(simp: &str) -> Tactic {
     ])
 }
 
-/// Lean renderer for the backend-neutral rev anti-homomorphism recognizer
-/// (`crate::codegen::proof_recognize::collect_rev_ops_in_law` — shared with the
-/// Dafny backend; despite the module path it returns source-name structs only).
-/// Produces the proved append-nil-right, associativity, rev-distribution, and
-/// rev-INVOLUTION theorems (prepended as `support_lines`) and the distribution
-/// and involution lemma names to add to the induction's `simp` set. List<Int>
-/// folds lower to clean `def … termination_by`, so these close kernel-clean
-/// (`#print axioms = [propext]`) — the Lean counterpart of the Dafny rev
-/// strategy, SAME recognizer.
-fn lean_rev_support(
-    ops: &[crate::codegen::proof_recognize::RevOp],
-    law_uid: &str,
-) -> (Vec<String>, Vec<String>) {
-    let mut support = Vec::new();
-    let mut simp_extra = Vec::new();
-    for op in ops {
-        let r = aver_name_to_lean(&op.rev);
-        let a = aver_name_to_lean(&op.append);
-        let nilr = format!("{law_uid}_{a}_nilR");
-        let assoc = format!("{law_uid}_{a}_assoc");
-        let dist = format!("{law_uid}_{r}_revDist");
-        let invol = format!("{law_uid}_{r}_revInvol");
-        support.push(format!(
-            "theorem {nilr} : ∀ (xa : List Int), {a} xa [] = xa := by\n  intro xa; induction xa with\n  | nil => simp [{a}]\n  | cons h t ih => simp [{a}, ih]"
-        ));
-        support.push(format!(
-            "theorem {assoc} : ∀ (xa xb xc : List Int), {a} ({a} xa xb) xc = {a} xa ({a} xb xc) := by\n  intro xa xb xc; induction xa with\n  | nil => simp [{a}]\n  | cons h t ih => simp [{a}, ih]"
-        ));
-        support.push(format!(
-            "theorem {dist} : ∀ (xa xb : List Int), {r} ({a} xa xb) = {a} ({r} xb) ({r} xa) := by\n  intro xa xb; induction xa with\n  | nil => simp [{r}, {a}, {nilr}]\n  | cons h t ih => simp [{r}, {a}, ih, {assoc}]"
-        ));
-        // rev INVOLUTION (`rev (rev x) = x`) — the missing rung for the
-        // double-rev anti-homomorphism family (TIP prod/prop_11
-        // `rev (app (rev x) (rev y)) = app y x`). Once the law's `simp only`
-        // distributes `rev` over the inner append (the `revDist` rule above),
-        // the residual `app (rev (rev y)) (rev (rev x))` only collapses to
-        // `app y x` when each doubled `rev` cancels — exactly this lemma. Its
-        // own cons case is proved by the SAME ladder: `simp [rev, append,
-        // revDist, ih]` rewrites `rev (rev (h :: t))` = `rev (app (rev t) [h])`
-        // = `app (rev [h]) (rev (rev t))` = `app [h] t` = `h :: t` under the IH.
-        // PROVED, not trusted — a misrecognized rev fails this proof and
-        // degrades to an honest `sorry` (caught by the `#print axioms` gate),
-        // never a false theorem. Terminating as a simp rewrite (each use strips
-        // two `rev`s), so adding its name to the simp set cannot loop; it only
-        // ever ADDS closures to the rev-family ladders.
-        support.push(format!(
-            "theorem {invol} : ∀ (xa : List Int), {r} ({r} xa) = xa := by\n  intro xa; induction xa with\n  | nil => simp [{r}]\n  | cons h t ih => simp [{r}, {a}, {dist}, ih]"
-        ));
-        // The append fn name is needed in the main induction's simp set too
-        // (revDist rewrites into `append`, which must then unfold).
-        simp_extra.push(a);
-        simp_extra.push(dist);
-        simp_extra.push(invol);
-    }
-    (support, simp_extra)
-}
-
 /// Lean renderer for the backend-neutral canonical-Peano operation recognizers
 /// (`collect_nat_arith_ops_in_law` + `collect_nat_compare_ops_in_law`). For each
 /// user fn the law invokes that IS a standard Peano `+`/`-`/`*` or `≤`/`<`, emit
@@ -3126,17 +3069,11 @@ fn emit_list_induction(
         ));
     }
     let mut simp_defs: BTreeSet<String> = law_simp_defs(ctx, vb, law);
-    // Rev anti-homomorphism: prepend the proved aux lemmas (support_lines) and
-    // add the rev-distribution + append fn to the simp set so the cons arm
-    // closes. Shared recognizer with the Dafny backend.
     let law_uid = format!(
         "{}_{}",
         aver_name_to_lean(&vb.fn_name),
         aver_name_to_lean(&law.name)
     );
-    let rev_ops = crate::codegen::proof_recognize::collect_rev_ops_in_law(law, ctx);
-    let (rev_support, rev_simp) = lean_rev_support(&rev_ops, &law_uid);
-    simp_defs.extend(rev_simp);
     // Discovery feedback: the COMMITTED pinned lemmas (from `--discover`) join
     // the induction arms' simp sets as rewrite rules (e.g. a count/length
     // homomorphism collapsing `g (a ++ b)`). EARLIER sibling user laws
@@ -3678,8 +3615,6 @@ fn emit_list_induction(
         support_lines.extend(discovered_support_lines(ctx, vb, law, discovered));
         support_lines.extend(arith_support);
     }
-    support_lines.extend(rev_support);
-
     // ADDITIVE `fun_induction` first-rung. When the law's goal calls a user-
     // recursive fn on FREE-VARIABLE args, prepend `fun_induction <fn> <args>`
     // before the ladder above as `first | (fun_induction …) | (<ladder>)`. The

@@ -2318,6 +2318,189 @@ fn emit_floor_window_support_stack(
     }
 }
 
+/// Decomposition citation pool — the Dafny analog of the Lean `earlier_law_lemmas`
+/// simp pool. For THIS law, find earlier sibling laws in the same file whose
+/// universal `ensures` can drive the goal, and emit a `forall`-instantiation
+/// block that CALLS each one. Z3 does not auto-apply lemmas, so a decomposed
+/// proof whose helper laws are merely emitted (not invoked) fails — each
+/// inductive arm closes only once its dependency facts are in context.
+///
+/// Eligibility mirrors the Lean pool: the shared [`LawProofCone`] ∪ subject
+/// gate, restricted to strictly-EARLIER (source order = emit order, so cyclic
+/// citation is impossible), universal-form (non-opaque / non-native-mutual —
+/// those carry a sampled `requires` so their `ensures` is not a true ∀),
+/// unconditional (no `when`) siblings with plain givens (no oracle / refined
+/// types the `forall` cannot quantify). Sound by construction: Dafny re-proves
+/// every cited lemma and the `forall` body must discharge the asserted fact, so
+/// a wrong or sample-only citation fails closed — never a false proof.
+/// Earlier sibling laws eligible to be cited into THIS law's proof, shared by the
+/// `forall`-citation hoist and the explicit-instantiation engine ([`super::cite_instantiate`]).
+///
+/// Eligibility mirrors the Lean pool: the shared [`LawProofCone`] ∪ subject gate,
+/// restricted to strictly-EARLIER (source order = emit order, so cyclic citation
+/// is impossible), universal-form (non-opaque / non-native-mutual — those carry a
+/// sampled `requires` so their `ensures` is not a true ∀), unconditional (no
+/// `when`) siblings with plain givens (no oracle / refined types). Sound by
+/// construction: Dafny re-proves every cited lemma, so a wrong citation fails
+/// closed — never a false proof.
+fn eligible_cites<'a>(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &'a CodegenContext,
+    opaque_fns: &std::collections::HashSet<crate::ir::FnId>,
+    native_emitted: &std::collections::HashSet<crate::ir::FnId>,
+) -> Vec<super::cite_instantiate::CiteTarget<'a>> {
+    use std::collections::BTreeSet;
+
+    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
+    let mut scope: BTreeSet<String> = cone.pure_fns().iter().map(|fd| fd.name.clone()).collect();
+    scope.insert(vb.fn_name.clone());
+    let subject = vb.fn_name.clone();
+    let mod_scope = ctx.active_module_scope();
+
+    // Program (user-defined) fns called inside a law side — the cone is
+    // expressed in these names, so builtins (`List.concat`, …) are filtered out.
+    let program_fns = |expr: &Spanned<Expr>| -> BTreeSet<String> {
+        let mut s = BTreeSet::new();
+        crate::codegen::proof_recognize::collect_called_fns(expr, &mut s);
+        s.into_iter()
+            .filter(|n| ctx.fn_def_by_name(n, mod_scope.as_deref()).is_some())
+            .collect()
+    };
+
+    let mut out = Vec::new();
+    for item in &ctx.items {
+        let TopLevel::Verify(prev) = item else {
+            continue;
+        };
+        // Only blocks earlier in source are eligible; stop at the consumer.
+        if prev.line == vb.line && prev.fn_name == vb.fn_name {
+            break;
+        }
+        let VerifyKind::Law(prev_law) = &prev.kind else {
+            continue;
+        };
+        // Unconditional only: a `when` law's universal is `P -> lhs == rhs`.
+        if prev_law.when.is_some() {
+            continue;
+        }
+        // Universal-form only: opaque / native-mutual siblings are emitted with
+        // a sampled `requires` (or `assume {:axiom}`), so calling them over the
+        // whole quantified domain violates their precondition.
+        if law_refs_opaque_fn(&prev_law.lhs, ctx, opaque_fns)
+            || law_refs_opaque_fn(&prev_law.rhs, ctx, opaque_fns)
+            || law_refs_opaque_fn(&prev_law.lhs, ctx, native_emitted)
+            || law_refs_opaque_fn(&prev_law.rhs, ctx, native_emitted)
+        {
+            continue;
+        }
+        // Plain givens only: an oracle / refinement-lifted given does not map to
+        // a bare Dafny binder the `forall` can quantify over.
+        if prev_law.givens.iter().any(|g| {
+            crate::types::checker::effect_classification::oracle_signature(&g.type_name).is_some()
+                || crate::codegen::common::refinement_lift_for_given(
+                    &g.name,
+                    &g.type_name,
+                    &prev_law.lhs,
+                    &prev_law.rhs,
+                    ctx,
+                )
+                .is_some()
+        }) {
+            continue;
+        }
+        // Cone eligibility — the three Lean admission gates, in Aver-name space:
+        // (1) the sibling stays inside this law's cone ∪ subject; (2) it mentions
+        // the consumer's SUBJECT and its own subject is in scope (a decomposition
+        // that introduces a combinator); (3) its LHS is cone-rooted and its own
+        // subject is in scope. Loop safety rides on the strict source ordering.
+        let mut mentions = program_fns(&prev_law.lhs);
+        mentions.extend(program_fns(&prev_law.rhs));
+        if mentions.is_empty() {
+            continue;
+        }
+        let lhs_mentions = program_fns(&prev_law.lhs);
+        let prev_subject = prev.fn_name.clone();
+        let lhs_rooted = !lhs_mentions.is_empty()
+            && lhs_mentions.is_subset(&scope)
+            && scope.contains(&prev_subject);
+        let eligible = mentions.is_subset(&scope)
+            || (mentions.contains(&subject) && scope.contains(&prev_subject))
+            || lhs_rooted;
+        if !eligible {
+            continue;
+        }
+        let dafny_name = format!(
+            "{}_{}",
+            aver_name_to_dafny(&prev.fn_name),
+            aver_name_to_dafny(&prev_law.name)
+        );
+        out.push(super::cite_instantiate::CiteTarget {
+            dafny_name,
+            law: prev_law.as_ref(),
+        });
+    }
+    out
+}
+
+/// Hoist each eligible earlier law as a `forall`-fact at the body top. Z3 does not
+/// auto-apply lemmas, so a decomposed proof whose helper laws are merely emitted
+/// (not invoked) fails — this makes each one available universally.
+fn earlier_law_citations(
+    cites: &[super::cite_instantiate::CiteTarget<'_>],
+    ctx: &CodegenContext,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for c in cites {
+        let prev_law = c.law;
+        let plhs = emit_expr_legacy(&prev_law.lhs, ctx, None);
+        let prhs = emit_expr_legacy(&prev_law.rhs, ctx, None);
+        // Skip a sibling with an unused given (a binder absent from its own
+        // statement): the `forall` would quantify a variable with no trigger,
+        // which Dafny rejects under `--allow-warnings false`. Such a law is also
+        // weak as a rewrite, so dropping it only reverts to the un-cited proof.
+        let words: std::collections::BTreeSet<&str> = plhs
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .chain(prhs.split(|c: char| !c.is_alphanumeric() && c != '_'))
+            .collect();
+        if prev_law
+            .givens
+            .iter()
+            .any(|g| !words.contains(aver_name_to_dafny(&g.name).as_str()))
+        {
+            continue;
+        }
+        if prev_law.givens.is_empty() {
+            out.push(format!("  {}();", c.dafny_name));
+        } else {
+            let binders = prev_law
+                .givens
+                .iter()
+                .map(|g| {
+                    format!(
+                        "{}: {}",
+                        aver_name_to_dafny(&g.name),
+                        emit_type(&g.type_name)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let args = prev_law
+                .givens
+                .iter()
+                .map(|g| aver_name_to_dafny(&g.name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push(format!(
+                "  forall {binders} ensures {plhs} == {prhs} {{ {}({args}); }}",
+                c.dafny_name
+            ));
+        }
+    }
+    out
+}
+
 pub fn emit_verify_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -2882,11 +3065,21 @@ pub fn emit_verify_law(
     lines.push(format!("  ensures {} == {}", lhs, rhs));
     lines.push("{".to_string());
 
+    // Earlier sibling laws eligible to be cited into this proof — shared by the
+    // `forall` hoist (here) and the explicit-instantiation engine (list-induction
+    // step, below).
+    let cites = eligible_cites(vb, law, ctx, opaque_fns, native_emitted);
+
     // Hoist additive-op facts at the top of the body (inductive paths only;
     // bounded-form bodies dispatch to samples and never reach the universal).
     if !needs_bounded_form {
         for lift in &op_lifts {
             lines.push(lift.clone());
+        }
+        // Decomposition pool: bring earlier sibling laws' universal facts into
+        // scope by CALLING them — Z3 will not auto-apply the proved lemmas.
+        for citation in earlier_law_citations(&cites, ctx) {
+            lines.push(citation);
         }
     }
 
@@ -3036,6 +3229,22 @@ pub fn emit_verify_law(
                 ));
             } else {
                 lines.push(format!("    {}({});", lemma_name, other_args.join(", ")));
+            }
+            // Engine B: explicit instantiation of the cited lemmas at the exact
+            // arguments this inductive step needs. The `forall` hoist suffices when
+            // Z3 can instantiate the universal itself (builtin `concat`); for a
+            // user-defined operator it cannot materialise the nested term, so we
+            // derive the instantiation generically (symbolic unfold + IH + match).
+            // Inside the `else` (|xs| > 0), so `xs[0]` / `xs[1..]` are in range.
+            if !needs_bounded_form {
+                for inst in super::cite_instantiate::cited_lemma_instantiations(
+                    law,
+                    &list_param,
+                    &cites,
+                    ctx,
+                ) {
+                    lines.push(inst);
+                }
             }
             lines.push("  }".to_string());
         }

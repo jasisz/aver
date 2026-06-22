@@ -306,70 +306,6 @@ fn additive_op_lemmas(ops: &[AdditiveOp], law_uid: &str) -> (Vec<String>, Vec<St
     (defs, lifts)
 }
 
-/// For each rev/append pair a law uses, emit the proved append-nil-right,
-/// append-associativity and rev-distribution (anti-homomorphism) lemmas and
-/// the `forall`-lift of the distribution fact, so a `rev(rev x) = x` /
-/// `rev(x ++ y) = rev y ++ rev x` style law closes by list induction. The
-/// per-step cons bridges (`rev(x) == A(rev(x[1..]), [x[0]])` etc.) are emitted
-/// at the induction site where the list parameter is in scope.
-fn rev_algebra_lemmas(
-    ops: &[crate::codegen::proof_recognize::RevOp],
-    law_uid: &str,
-) -> (Vec<String>, Vec<String>) {
-    let mut defs = Vec::new();
-    let mut lifts = Vec::new();
-    for op in ops {
-        let r = aver_name_to_dafny(&op.rev);
-        let a = aver_name_to_dafny(&op.append);
-        let nilr = format!("{law_uid}_{a}_nilR");
-        let assoc = format!("{law_uid}_{a}_assoc");
-        let dist = format!("{law_uid}_{r}_revDist");
-        defs.push(format!(
-            "lemma {nilr}(a: seq<int>)\n  ensures {a}(a, []) == a\n  decreases |a|\n{{\n  if |a| > 0 {{ {nilr}(a[1..]); }}\n}}"
-        ));
-        defs.push(format!(
-            "lemma {assoc}(a: seq<int>, b: seq<int>, c: seq<int>)\n  ensures {a}({a}(a, b), c) == {a}(a, {a}(b, c))\n  decreases |a|\n{{\n  if |a| > 0 {{ {assoc}(a[1..], b, c); }}\n}}"
-        ));
-        defs.push(format!(
-            "lemma {dist}(a: seq<int>, b: seq<int>)\n  ensures {r}({a}(a, b)) == {a}({r}(b), {r}(a))\n  decreases |a|\n{{\n  if |a| == 0 {{ {nilr}({r}(b)); }} else {{ {dist}(a[1..], b); {assoc}({r}(b), {r}(a[1..]), [a[0]]); }}\n}}"
-        ));
-        lifts.push(format!(
-            "  forall a: seq<int>, b: seq<int> ensures {r}({a}(a, b)) == {a}({r}(b), {r}(a)) {{ {dist}(a, b); }}"
-        ));
-    }
-    (defs, lifts)
-}
-
-/// Per-step cons bridges for rev/append laws: unfold each `rev` at the
-/// induction variable and pin the singleton-prepend identity, so Z3 lands on
-/// the right `revDist` instantiation instead of searching (which times out).
-fn rev_step_bridges(
-    ops: &[crate::codegen::proof_recognize::RevOp],
-    list_param: &str,
-) -> Vec<String> {
-    let mut out = Vec::new();
-    if ops.is_empty() {
-        return out;
-    }
-    out.push(format!(
-        "    assert {p} == [{p}[0]] + {p}[1..];",
-        p = list_param
-    ));
-    for op in ops {
-        let r = aver_name_to_dafny(&op.rev);
-        let a = aver_name_to_dafny(&op.append);
-        out.push(format!(
-            "    assert {r}({p}) == {a}({r}({p}[1..]), [{p}[0]]);",
-            p = list_param
-        ));
-        out.push(format!(
-            "    assert {a}([{p}[0]], {p}[1..]) == {p};",
-            p = list_param
-        ));
-    }
-    out
-}
-
 /// Proved helper lemmas (prepended before the law lemma) and the `forall`
 /// facts that hoist them into the law lemma body. Branch-agnostic: emitted for
 /// every inductive law regardless of the induction variable's type.
@@ -387,42 +323,8 @@ pub(super) fn algebra_lemmas(
     law_uid: &str,
 ) -> AlgebraLemmas {
     let additive = collect_additive_ops_in_law(law, ctx);
-    let (mut defs, mut lifts) = additive_op_lemmas(&additive, law_uid);
-    let rev = crate::codegen::proof_recognize::collect_rev_ops_in_law(law, ctx);
-    let (rev_defs, rev_lifts) = rev_algebra_lemmas(&rev, law_uid);
-    defs.extend(rev_defs);
-    lifts.extend(rev_lifts);
-    let len_folds = crate::codegen::proof_recognize::collect_len_folds_in_law(law, ctx);
-    let (len_defs, len_lifts) = len_snoc_lemmas(&len_folds, law_uid);
-    defs.extend(len_defs);
-    lifts.extend(len_lifts);
+    let (defs, lifts) = additive_op_lemmas(&additive, law_uid);
     AlgebraLemmas { defs, lifts }
-}
-
-/// For each list-length fold a law uses, emit the proved snoc lemma
-/// `L(s ++ [e]) == Succ(L(s))` and hoist it to a `forall`-fact. Closes
-/// length-preservation laws (`length(rev x) == length x`) and the snoc law
-/// itself (`length(xs ++ [y]) == S(length xs)`) by list induction — the fold's
-/// own recursion + the IH handle the rest. `succ` is reproduced verbatim from
-/// the recognizer, so it works for any unary successor wrapper.
-fn len_snoc_lemmas(
-    folds: &[crate::codegen::proof_recognize::LenFold],
-    law_uid: &str,
-) -> (Vec<String>, Vec<String>) {
-    let mut defs = Vec::new();
-    let mut lifts = Vec::new();
-    for fold in folds {
-        let l = aver_name_to_dafny(&fold.name);
-        let succ = &fold.succ;
-        let snoc = format!("{law_uid}_{l}_snoc");
-        defs.push(format!(
-            "lemma {snoc}(s: seq<int>, e: int)\n  ensures {l}(s + [e]) == {succ}({l}(s))\n  decreases |s|\n{{\n  if |s| > 0 {{ {snoc}(s[1..], e); assert s + [e] == [s[0]] + (s[1..] + [e]); }}\n}}"
-        ));
-        lifts.push(format!(
-            "  forall s: seq<int>, e: int ensures {l}(s + [e]) == {succ}({l}(s)) {{ {snoc}(s, e); }}"
-        ));
-    }
-    (defs, lifts)
 }
 
 /// Cons-decomposition asserts for the list-induction case split: `base` lands in
@@ -455,7 +357,5 @@ pub(super) fn list_bridges(
             c_full, list_param, c_tail
         ));
     }
-    let rev_ops = crate::codegen::proof_recognize::collect_rev_ops_in_law(law, ctx);
-    step.extend(rev_step_bridges(&rev_ops, list_param));
     ListBridges { base, step }
 }
