@@ -835,6 +835,235 @@ fn earlier_law_lemmas(
     out
 }
 
+/// Earlier sibling laws eligible to be CITED into THIS law's tight decomposition
+/// (Engine B). The Lean sibling of the Dafny `eligible_cites`: the same
+/// `LawProofCone` ∪ subject ∪ lhs-rooted gate as [`earlier_law_lemmas`], but
+/// returning the cited law's [`VerifyLaw`] alongside its Lean theorem name, so
+/// the instantiation engine ([`compute_instantiations`]) can derive the exact
+/// application arguments and the rung can name the `have`-fact. In-file siblings
+/// only — the cross-file dep pool would need namespace-qualified theorem names
+/// the tight rung does not yet render. Unconditional (`when.is_none`) universal-
+/// form laws only; the per-declaration `#print axioms` gate keeps soundness, so
+/// the dafny-only opaque/native-mutual/oracle filters are not mirrored here.
+fn earlier_law_cites<'a>(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &'a CodegenContext,
+) -> Vec<(String, &'a VerifyLaw)> {
+    use crate::ast::{TopLevel, VerifyKind};
+    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
+    let mut scope: BTreeSet<String> = cone
+        .pure_fns()
+        .iter()
+        .map(|fd| aver_name_to_lean(&fd.name))
+        .collect();
+    let subject = aver_name_to_lean(&vb.fn_name);
+    scope.insert(subject.clone());
+
+    let program_index: std::collections::BTreeMap<String, String> = program_fn_lean_names(ctx)
+        .into_iter()
+        .map(|l| (l.clone(), l))
+        .collect();
+
+    let mut out = Vec::new();
+    for item in &ctx.items {
+        let TopLevel::Verify(prev) = item else {
+            continue;
+        };
+        // Only blocks earlier in source are eligible; stop at the consumer.
+        if prev.line == vb.line && prev.fn_name == vb.fn_name {
+            break;
+        }
+        let VerifyKind::Law(prev_law) = &prev.kind else {
+            continue;
+        };
+        // Unconditional only: a `when`-law's universal is `P -> lhs = rhs`, not a
+        // plain rewrite the engine can instantiate by first-order matching.
+        if prev_law.when.is_some() {
+            continue;
+        }
+        let Some((name, stmt)) =
+            crate::codegen::lean::toplevel::law_as_lemma_statement(prev, prev_law, ctx)
+        else {
+            continue;
+        };
+        let text = format!("theorem {name} : {stmt} := by");
+        let mentions = crate::codegen::lemma_discovery::mentioned_fns(&text, &program_index);
+        if mentions.is_empty() {
+            continue;
+        }
+        // SAME three admission rules as `earlier_law_lemmas`: the sibling stays in
+        // the cone, OR it mentions the consumer's subject (decomposition that
+        // introduces a combinator), OR its LHS is cone-rooted.
+        let prev_subject = aver_name_to_lean(&prev.fn_name);
+        let lhs_mentions = crate::codegen::lemma_discovery::lemma_lhs_fns(&text, &program_index);
+        let lhs_rooted = !lhs_mentions.is_empty()
+            && lhs_mentions.is_subset(&scope)
+            && scope.contains(&prev_subject);
+        if mentions.is_subset(&scope)
+            || (mentions.contains(&subject) && scope.contains(&prev_subject))
+            || lhs_rooted
+        {
+            out.push((name, prev_law.as_ref()));
+        }
+    }
+    out
+}
+
+/// Render a computed instantiation argument (from `cite_instantiate`) to a Lean
+/// TERM — the mirror of the Dafny `render_dafny_arg`. The induction placeholders
+/// map to the `| cons head tail ih` binders, `List.concat` to `++`, and a fn
+/// call to a space-separated application; every compound form (a call, a `++`, a
+/// constructor application) is parenthesized as a whole, so each rendered arg is
+/// self-delimiting and joins into a larger application without ambiguity.
+fn render_lean_arg(e: &crate::ast::Spanned<crate::ast::Expr>) -> String {
+    use crate::ast::Expr;
+    use crate::codegen::cite_instantiate::{HEAD, TAIL, ident_name};
+    if let Some(n) = ident_name(e) {
+        return match n {
+            HEAD => "head".to_string(),
+            TAIL => "tail".to_string(),
+            _ => aver_name_to_lean(n),
+        };
+    }
+    match &e.node {
+        Expr::Literal(lit) => render_lean_literal(lit),
+        Expr::List(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(render_lean_arg)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Expr::FnCall(callee, args) => {
+            let name =
+                crate::codegen::common::expr_to_dotted_name(&callee.node).unwrap_or_default();
+            let rendered: Vec<String> = args.iter().map(render_lean_arg).collect();
+            if name == "List.concat" && rendered.len() == 2 {
+                format!("({} ++ {})", rendered[0], rendered[1])
+            } else {
+                format!("({} {})", aver_name_to_lean(&name), rendered.join(" "))
+            }
+        }
+        Expr::Constructor(name, None) => aver_name_to_lean(name),
+        Expr::Constructor(name, Some(inner)) => {
+            format!("({} {})", aver_name_to_lean(name), render_lean_arg(inner))
+        }
+        Expr::Attr(inner, field) => format!("{}.{}", render_lean_arg(inner), field),
+        _ => String::new(),
+    }
+}
+
+/// A literal in argument position — same surface as the Lean expr emitter's
+/// `emit_literal`, with a negative numeral parenthesized so it never glues onto
+/// the preceding application head.
+fn render_lean_literal(lit: &crate::ast::Literal) -> String {
+    use crate::ast::Literal;
+    match lit {
+        Literal::Int(i) if *i < 0 => format!("({})", i),
+        Literal::Int(i) => format!("{}", i),
+        Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),
+        Literal::Str(s) => format!("\"{}\"", crate::codegen::common::escape_string_literal(s)),
+        Literal::Float(f) => {
+            let s = f.to_string();
+            if s.contains('.') {
+                s
+            } else {
+                format!("{}.0", s)
+            }
+        }
+        Literal::Unit => "()".to_string(),
+    }
+}
+
+/// Engine B (Lean) — the TIGHT deterministic decomposition rung. When THIS law's
+/// inductive step closes by citing earlier sibling laws at exact arguments
+/// (computed by [`compute_instantiations`]), emit the precise proof
+///
+/// ```text
+/// induction <target> with
+/// | nil => simp [<defs>, <cited names>]
+/// | cons head tail ih => have key0 := <law0> <args0>; …; simp [<defs>, ih, key0, …]
+/// ```
+///
+/// instead of the fat `first | (simp…) | (induction…) | sorry` portfolio. The
+/// caller splices it as the LEADING `first` alternative, so the existing ladder
+/// stays as the fallback — zero regression by construction (the rung throws on
+/// any open goal and `first` moves on). Soundness rides on the same fail-closed
+/// guarantee as Dafny: each `have` is a type-checked instance of a kernel-proven
+/// sibling theorem, and the per-declaration `#print axioms` gate downstream flips
+/// `universal:false` on any `sorry`. Returns `None` when no sibling is eligible
+/// or the engine derives no instantiation (fall through to the ladder).
+fn b_tight_decomposition_rung(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    target_lean: &str,
+    ind_aver_name: &str,
+) -> Option<Vec<String>> {
+    let cites = earlier_law_cites(vb, law, ctx);
+    if cites.is_empty() {
+        return None;
+    }
+    let cited: Vec<&VerifyLaw> = cites.iter().map(|(_, l)| *l).collect();
+    let insts =
+        crate::codegen::cite_instantiate::compute_instantiations(law, ind_aver_name, &cited, ctx);
+    if insts.is_empty() {
+        return None;
+    }
+
+    let defs: Vec<String> = law_simp_defs(ctx, vb, law).into_iter().collect();
+    let cited_names: Vec<String> = cites.iter().map(|(n, _)| n.clone()).collect();
+
+    // cons arm: one `have key{i} := <law> <args>` per distinct instantiation,
+    // then `simp [defs, ih, keys]`. The specific instances (not the universal
+    // sibling theorems) drive the close, so the cited names go to `nil` only.
+    let mut have_parts: Vec<String> = Vec::new();
+    let mut keys: Vec<String> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for inst in &insts {
+        let call = format!(
+            "{} {}",
+            cites[inst.law_index].0,
+            inst.args
+                .iter()
+                .map(render_lean_arg)
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        if !seen.insert(call.clone()) {
+            continue;
+        }
+        let key = format!("key{}", keys.len());
+        have_parts.push(format!("have {key} := {call}"));
+        keys.push(key);
+    }
+    if keys.is_empty() {
+        return None;
+    }
+
+    // nil arm: defs + every cited law NAME as a rewrite — a base case like
+    // `rev (append [] y) = append (rev y) (rev [])` needs the cited `appendNilR`
+    // to fire, and a sibling that does not apply is an inert simp rule.
+    let mut nil_simp = defs.clone();
+    nil_simp.extend(cited_names);
+    let mut cons_simp = defs;
+    cons_simp.push("ih".to_string());
+    cons_simp.extend(keys.iter().cloned());
+
+    Some(vec![
+        format!("  | (induction {target_lean} with"),
+        format!("     | nil => simp [{}]", nil_simp.join(", ")),
+        format!(
+            "     | cons head tail ih => {}; simp [{}])",
+            have_parts.join("; "),
+            cons_simp.join(", ")
+        ),
+    ])
+}
+
 /// Fast-path `simp` set for the feedback emit: the committed pinned lemmas
 /// (`committed_names` → `ctx.discovered_lemmas`) PLUS the eligible earlier
 /// sibling laws, run together through `lemma_discovery::simp_entries` so the
@@ -3708,6 +3937,42 @@ fn emit_list_induction(
         {
             support_lines.extend(compose_support);
             splice_leading_rung(&mut proof_lines, rung);
+        }
+    }
+
+    // Engine B — the TIGHT deterministic decomposition. When THIS law's
+    // inductive step closes by citing earlier sibling laws at exact arguments,
+    // splice the precise `have key := <law> <args>; simp […]` proof as the
+    // LEADING `first` alternative. Reached on EVERY induction path (plain,
+    // generalizing, discovery-feedback), so it is gated and spliced here rather
+    // than inside any one branch. Gate: unconditional law (the inductive arms
+    // re-establish no premise), a SIMPLE shape (`gen_given.is_none()` — no
+    // generalizing/accumulator the engine does not model), and ≥1 derived
+    // instantiation. The rung throws on any open goal and `first` falls through
+    // to the existing ladder byte-for-byte, so this can only ADD a tighter proof
+    // — zero regression by construction.
+    if law.when.is_none()
+        && gen_given.is_none()
+        && let Some(rung) =
+            b_tight_decomposition_rung(vb, law, ctx, target_lean, &law.givens[target_idx].name)
+    {
+        let intro_line = proof_lines.remove(0);
+        if proof_lines.first().map(String::as_str) == Some("  first") {
+            let mut wrapped = vec![intro_line, "  first".to_string()];
+            wrapped.extend(rung);
+            wrapped.extend(proof_lines.drain(1..));
+            proof_lines = wrapped;
+        } else {
+            let mut wrapped = vec![intro_line, "  first".to_string()];
+            wrapped.extend(rung);
+            wrapped.push("  | (".to_string());
+            for line in &proof_lines {
+                wrapped.push(format!("  {line}"));
+            }
+            if let Some(last) = wrapped.last_mut() {
+                last.push(')');
+            }
+            proof_lines = wrapped;
         }
     }
 

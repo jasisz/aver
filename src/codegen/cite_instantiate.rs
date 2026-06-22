@@ -1,19 +1,25 @@
-//! Engine B — generic cited-lemma INSTANTIATION in the Dafny inductive step.
+//! Engine B — generic cited-lemma INSTANTIATION in the list-induction step,
+//! shared by both proof backends.
 //!
-//! The keystone (`earlier_law_citations`) hoists each eligible earlier law as a
-//! `forall`-fact at the body top. That suffices when Z3 can instantiate the
-//! universal itself — true for the builtin `List.concat` (Dafny `seq` `+`, whose
-//! associativity Z3 knows natively), but NOT for a USER-defined `append`: Z3
-//! never materialises the nested term `append(append(rev y, rev t), [h])`, so it
-//! cannot fire the cited associativity there. Lean closes the same goal because
-//! `simp_all` applies the pool laws as directed rewrites.
+//! The keystone (each backend's `forall`-citation / simp-pool hoist) makes every
+//! eligible earlier law available as a universal fact. That suffices when the
+//! backend can instantiate the universal itself — Z3 for the builtin
+//! `List.concat` (Dafny `seq` `+`, whose associativity it knows natively), or
+//! Lean's `simp_all` applying the pool laws as directed rewrites. It does NOT
+//! suffice for a USER-defined `append` on Dafny: Z3 never materialises the nested
+//! term `append(append(rev y, rev t), [h])`, so it cannot fire the cited
+//! associativity there.
 //!
-//! This module recovers that power on Dafny by emitting EXPLICIT instantiation
-//! calls of the cited lemmas at exactly the arguments the inductive step needs —
-//! the same thing the retired `rev` synthesizer hand-coded, but derived
-//! generically: substitute the induction variable by its `cons(head, tail)`,
-//! unfold the recursive cone fns one step, apply the induction hypothesis, then
-//! first-order-match each cited lemma's LHS against the resulting subterms.
+//! This module recovers that power generically by computing EXPLICIT
+//! instantiations of the cited lemmas at exactly the arguments the inductive step
+//! needs — the same thing the retired `rev` synthesizer hand-coded, but derived
+//! from the law itself: substitute the induction variable by its
+//! `cons(head, tail)`, unfold the recursive cone fns one step, apply the
+//! induction hypothesis, then first-order-match each cited lemma's LHS against
+//! the resulting subterms. Each backend renders the returned argument terms — the
+//! Dafny consumer as explicit lemma CALLS (`rev_revDist(rev(x[1..]), [x[0]])`),
+//! the Lean consumer as `have`-facts driving a tight `simp` (`have key :=
+//! rev_law_revDist (rev tail) [head]; simp […]`).
 //!
 //! Fail-closed: every cited lemma is universal-form, so any type-correct
 //! instantiation is a valid lemma call Dafny re-proves — a redundant one is
