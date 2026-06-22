@@ -349,14 +349,40 @@ pub fn simp_entries(lemmas: &[&CommittedLemma], program_fns: &BTreeSet<String>) 
 }
 
 /// [`statement_of`] with the `∀ binders,` prefix stripped — the equation body
-/// the orientation/loop analyses operate on.
+/// the orientation/loop analyses operate on. For a conditional (`when`-premise)
+/// law the body reads `<premise> = true -> lhs = rhs`; the analyses must key on
+/// the CONCLUSION equation, so any depth-0 implication premises are stripped
+/// (else `split_after_top_eq` splits on the premise's `= true`, misorienting the
+/// rule). An unconditional law has no top-level `->` and is returned verbatim.
 fn statement_body(text: &str) -> Option<&str> {
     let stmt = statement_of(text)?.trim_start();
-    if let Some(rest) = stmt.strip_prefix('∀') {
-        split_after_depth0(rest, ',')
+    let body = if let Some(rest) = stmt.strip_prefix('∀') {
+        split_after_depth0(rest, ',')?
     } else {
-        Some(stmt)
+        stmt
+    };
+    Some(strip_implication_premises(body))
+}
+
+/// The conclusion of an implication chain: the slice after the LAST depth-0
+/// `->` (`->` with no intervening space is the only top-level arrow the law
+/// templates emit; subtraction and `>` carry spaces). Verbatim when there is
+/// none.
+fn strip_implication_premises(text: &str) -> &str {
+    let mut depth = 0i32;
+    let mut after_last_arrow = 0usize;
+    let bytes = text.as_bytes();
+    for (i, c) in text.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            '-' if depth == 0 && bytes.get(i + 1) == Some(&b'>') => {
+                after_last_arrow = i + 2;
+            }
+            _ => {}
+        }
     }
+    text[after_last_arrow..].trim_start()
 }
 
 /// First identifier-shaped token, skipping leading whitespace and `(`.
@@ -811,6 +837,17 @@ verify count law countPlusConcat
                 &efns
             ),
             None
+        );
+        // CONDITIONAL (`when`-premise) law: orientation must key on the
+        // CONCLUSION equation, not the premise's `= true`. The premise's first
+        // depth-0 `=` (`natEq a b = true`) must NOT be mistaken for the rewrite,
+        // else the program-fn-headed conclusion `count … = count …` is missed.
+        assert_eq!(
+            simp_orientation(
+                "theorem t8 (a b : Nat) (xs : List Nat) : natEq a b = true -> count a (xs ++ [b]) = count a xs := by\n  simp",
+                &fns
+            ),
+            Some(SimpDirection::Forward)
         );
     }
 
