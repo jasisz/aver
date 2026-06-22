@@ -31,17 +31,17 @@ verify plus
 verify plus law commutative
     given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
     given b: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
-    sameValue(plus(a, b), plus(b, a)) => true
+    sameValue(plus(a, b), plus(b, a)) holds
 
 verify plus law associative
     given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 5, bottom = -3)]
     given b: Fraction = [Fraction(top = 0, bottom = 1), Fraction(top = 2, bottom = 5), Fraction(top = -1, bottom = 2)]
     given c: Fraction = [Fraction(top = 1, bottom = 1), Fraction(top = -2, bottom = -7), Fraction(top = 3, bottom = 8)]
-    sameValue(plus(plus(a, b), c), plus(a, plus(b, c))) => true
+    sameValue(plus(plus(a, b), c), plus(a, plus(b, c))) holds
 
 verify plus law zeroIsNeutral
     given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
-    sameValue(plus(a, zeroFraction()), a) => true
+    sameValue(plus(a, zeroFraction()), a) holds
 
 fn times(a: Fraction, b: Fraction) -> Fraction
     ? "Fraction multiplication without normalization: (ac)/(bd)."
@@ -54,27 +54,27 @@ verify times
 verify times law commutative
     given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
     given b: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
-    sameValue(times(a, b), times(b, a)) => true
+    sameValue(times(a, b), times(b, a)) holds
 
 verify times law associative
     given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 5, bottom = -3)]
     given b: Fraction = [Fraction(top = 0, bottom = 1), Fraction(top = 2, bottom = 5), Fraction(top = -1, bottom = 2)]
     given c: Fraction = [Fraction(top = 1, bottom = 1), Fraction(top = -2, bottom = -7), Fraction(top = 3, bottom = 8)]
-    sameValue(times(times(a, b), c), times(a, times(b, c))) => true
+    sameValue(times(times(a, b), c), times(a, times(b, c))) holds
 
 verify times law distributesOverPlus
     given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 5, bottom = -3)]
     given b: Fraction = [Fraction(top = 0, bottom = 1), Fraction(top = 2, bottom = 5), Fraction(top = -1, bottom = 2)]
     given c: Fraction = [Fraction(top = 1, bottom = 1), Fraction(top = -2, bottom = -7), Fraction(top = 3, bottom = 8)]
-    sameValue(times(a, plus(b, c)), plus(times(a, b), times(a, c))) => true
+    sameValue(times(a, plus(b, c)), plus(times(a, b), times(a, c))) holds
 
 verify times law oneIsNeutral
     given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
-    sameValue(times(a, oneFraction()), a) => true
+    sameValue(times(a, oneFraction()), a) holds
 
 verify times law zeroAbsorbs
     given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
-    sameValue(times(a, zeroFraction()), zeroFraction()) => true
+    sameValue(times(a, zeroFraction()), zeroFraction()) holds
 
 fn negate(a: Fraction) -> Fraction
     ? "Fraction negation: flips the numerator sign, keeps the denominator."
@@ -82,7 +82,7 @@ fn negate(a: Fraction) -> Fraction
 
 verify negate law involutive
     given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
-    sameValue(negate(negate(a)), a) => true
+    sameValue(negate(negate(a)), a) holds
 
 fn minus(a: Fraction, b: Fraction) -> Fraction
     ? "Fraction subtraction without normalization: a/b - c/d = (ad - cb)/(bd)."
@@ -91,7 +91,7 @@ fn minus(a: Fraction, b: Fraction) -> Fraction
 verify minus law equalsPlusNegate
     given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 5, bottom = -3)]
     given b: Fraction = [Fraction(top = 0, bottom = 1), Fraction(top = 2, bottom = 5), Fraction(top = -1, bottom = 2)]
-    sameValue(minus(a, b), plus(a, negate(b))) => true
+    sameValue(minus(a, b), plus(a, negate(b))) holds
 
 fn sameValue(a: Fraction, b: Fraction) -> Bool
     ? "Cross-multiplication equality: a/b equals c/d exactly when ad == cb."

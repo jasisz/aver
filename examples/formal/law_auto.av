@@ -86,7 +86,7 @@ fn incCount(counts: Map<String, Int>, word: String) -> Map<String, Int>
 verify incCount law keyPresent
     given counts: Map<String, Int> = [{}, {"a" => 1}, {"x" => 2, "y" => 4}]
     given word: String = ["a", "z", "new"]
-    Map.has(incCount(counts, word), word) => true
+    Map.has(incCount(counts, word), word) holds
 
 verify incCount law existingKeyIncrements
     given counts: Map<String, Int> = [{"a" => 1}, {"a" => 5, "x" => 2}]

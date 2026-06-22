@@ -18,7 +18,7 @@ fn twoFloatsDistinct() -> Bool
 
 verify twoFloatsDistinct law alwaysDistinct
     given rnd: Random.float = [distinctStub]
-    twoFloatsDistinct() => true
+    twoFloatsDistinct() holds
 
 fn main() -> Unit
     ! [Console.print]
