@@ -596,118 +596,107 @@ fn proof_check_lean_chunked_checked_domain_builds_and_keeps_universal_credit() {
 // test is guarded by the standard `lake --version` skip.
 
 /// The two-law base task (scout `base.av`): both laws prove UNIVERSALLY via
-/// the when-universal floor lane.
-const RATCHET_BASE_AV: &str = "module CellFloorGrid\n\
+/// the comparison-bridge strategy.
+const RATCHET_BASE_AV: &str = "module CmpBridge\n\
     \x20   intent =\n\
-    \x20       \"Rounding-grid proof task.\"\n\
+    \x20       \"Comparison-bridge proof task.\"\n\
     \x20   effects []\n\n\
-    fn floorQ(a: Int, b: Int) -> Int\n\
-    \x20   ? \"Floor of a/b for b > 0.\"\n\
-    \x20   match Int.div(a, b)\n\
-    \x20       Result.Ok(q) -> q\n\
-    \x20       Result.Err(msg) -> 0\n\n\
-    verify floorQ law cellFloorStable\n\
-    \x20   given a: Int = [13, 15]\n\
-    \x20   given b: Int = [4]\n\
-    \x20   given w: Int = [3]\n\
-    \x20   given d: Int = [2]\n\
-    \x20   when Bool.and(b > 0, Bool.and(d > 0, Bool.and(w * b < a, a < (w + 1) * b)))\n\
-    \x20   floorQ(a, b * d) == floorQ(w, d) => true\n\n\
-    fn coarseFloorEq(an: Int, ad: Int, bn: Int, bd: Int, d: Int) -> Bool\n\
-    \x20   ? \"Both rationals floored on the coarser grid agree.\"\n\
-    \x20   floorQ(an, ad * d) == floorQ(bn, bd * d)\n\n\
-    verify coarseFloorEq law sharedCellFloor\n\
-    \x20   given an: Int = [13, 15]\n\
-    \x20   given ad: Int = [4]\n\
-    \x20   given bn: Int = [25, 30]\n\
-    \x20   given bd: Int = [8]\n\
-    \x20   given w: Int = [3]\n\
-    \x20   given d: Int = [2]\n\
-    \x20   when Bool.and(ad > 0, Bool.and(bd > 0, Bool.and(d > 0, Bool.and(w * ad < an, Bool.and(an < (w + 1) * ad, Bool.and(w * bd < bn, bn < (w + 1) * bd))))))\n\
-    \x20   coarseFloorEq(an, ad, bn, bd, d) => true\n";
+    type Nat\n\
+    \x20   Z\n\
+    \x20   S(Nat)\n\n\
+    fn le(x: Nat, y: Nat) -> Bool\n\
+    \x20   match x\n\
+    \x20       Nat.Z -> true\n\
+    \x20       Nat.S(z) -> match y\n\
+    \x20           Nat.Z -> false\n\
+    \x20           Nat.S(w) -> le(z, w)\n\n\
+    verify le law leSucc\n\
+    \x20   given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   when le(m, n)\n\
+    \x20   le(m, Nat.S(n)) => true\n\n\
+    verify le law succLe\n\
+    \x20   given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   when le(m, n)\n\
+    \x20   le(Nat.S(m), Nat.S(n)) => true\n";
 
-/// `base.av` with `sharedCellFloor` removed (scout `deleted.av`).
-const RATCHET_DELETED_AV: &str = "module CellFloorGrid\n\
+/// `base.av` with `succLe` removed (scout `deleted.av`).
+const RATCHET_DELETED_AV: &str = "module CmpBridge\n\
     \x20   intent =\n\
-    \x20       \"Rounding-grid proof task.\"\n\
+    \x20       \"Comparison-bridge proof task.\"\n\
     \x20   effects []\n\n\
-    fn floorQ(a: Int, b: Int) -> Int\n\
-    \x20   ? \"Floor of a/b for b > 0.\"\n\
-    \x20   match Int.div(a, b)\n\
-    \x20       Result.Ok(q) -> q\n\
-    \x20       Result.Err(msg) -> 0\n\n\
-    verify floorQ law cellFloorStable\n\
-    \x20   given a: Int = [13, 15]\n\
-    \x20   given b: Int = [4]\n\
-    \x20   given w: Int = [3]\n\
-    \x20   given d: Int = [2]\n\
-    \x20   when Bool.and(b > 0, Bool.and(d > 0, Bool.and(w * b < a, a < (w + 1) * b)))\n\
-    \x20   floorQ(a, b * d) == floorQ(w, d) => true\n\n\
-    fn coarseFloorEq(an: Int, ad: Int, bn: Int, bd: Int, d: Int) -> Bool\n\
-    \x20   ? \"Both rationals floored on the coarser grid agree.\"\n\
-    \x20   floorQ(an, ad * d) == floorQ(bn, bd * d)\n";
+    type Nat\n\
+    \x20   Z\n\
+    \x20   S(Nat)\n\n\
+    fn le(x: Nat, y: Nat) -> Bool\n\
+    \x20   match x\n\
+    \x20       Nat.Z -> true\n\
+    \x20       Nat.S(z) -> match y\n\
+    \x20           Nat.Z -> false\n\
+    \x20           Nat.S(w) -> le(z, w)\n\n\
+    verify le law leSucc\n\
+    \x20   given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   when le(m, n)\n\
+    \x20   le(m, Nat.S(n)) => true\n";
 
-/// `base.av` with `cellFloorStable`'s LHS weakened so it leaves the universal
-/// lane — both laws fall out of universal crediting and drop to bounded
-/// (scout `weakened.av`). This is the SUBTLE soundness case: a silent
-/// universal -> bounded slide the count-based gate keeps green.
-const RATCHET_WEAKENED_AV: &str = "module CellFloorGrid\n\
+/// `base.av` with `leSucc`'s premise weakened to a compound `Bool.and` the
+/// comparison-bridge recognizer declines, so it slides universal -> bounded
+/// (scout `weakened.av`). The SUBTLE soundness case: a silent universal ->
+/// bounded slide a count-based gate keeps green.
+const RATCHET_WEAKENED_AV: &str = "module CmpBridge\n\
     \x20   intent =\n\
-    \x20       \"Rounding-grid proof task.\"\n\
+    \x20       \"Comparison-bridge proof task.\"\n\
     \x20   effects []\n\n\
-    fn floorQ(a: Int, b: Int) -> Int\n\
-    \x20   ? \"Floor of a/b for b > 0.\"\n\
-    \x20   match Int.div(a, b)\n\
-    \x20       Result.Ok(q) -> q\n\
-    \x20       Result.Err(msg) -> 0\n\n\
-    verify floorQ law cellFloorStable\n\
-    \x20   given a: Int = [13, 15]\n\
-    \x20   given b: Int = [4]\n\
-    \x20   given w: Int = [3]\n\
-    \x20   given d: Int = [2]\n\
-    \x20   when Bool.and(b > 0, Bool.and(d > 0, Bool.and(w * b < a, a < (w + 1) * b)))\n\
-    \x20   floorQ(floorQ(a, b), d) == floorQ(w, d) => true\n\n\
-    fn coarseFloorEq(an: Int, ad: Int, bn: Int, bd: Int, d: Int) -> Bool\n\
-    \x20   ? \"Both rationals floored on the coarser grid agree.\"\n\
-    \x20   floorQ(an, ad * d) == floorQ(bn, bd * d)\n\n\
-    verify coarseFloorEq law sharedCellFloor\n\
-    \x20   given an: Int = [13, 15]\n\
-    \x20   given ad: Int = [4]\n\
-    \x20   given bn: Int = [25, 30]\n\
-    \x20   given bd: Int = [8]\n\
-    \x20   given w: Int = [3]\n\
-    \x20   given d: Int = [2]\n\
-    \x20   when Bool.and(ad > 0, Bool.and(bd > 0, Bool.and(d > 0, Bool.and(w * ad < an, Bool.and(an < (w + 1) * ad, Bool.and(w * bd < bn, bn < (w + 1) * bd))))))\n\
-    \x20   coarseFloorEq(an, ad, bn, bd, d) => true\n";
+    type Nat\n\
+    \x20   Z\n\
+    \x20   S(Nat)\n\n\
+    fn le(x: Nat, y: Nat) -> Bool\n\
+    \x20   match x\n\
+    \x20       Nat.Z -> true\n\
+    \x20       Nat.S(z) -> match y\n\
+    \x20           Nat.Z -> false\n\
+    \x20           Nat.S(w) -> le(z, w)\n\n\
+    verify le law leSucc\n\
+    \x20   given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   when Bool.and(le(m, n), le(m, n))\n\
+    \x20   le(m, Nat.S(n)) => true\n\n\
+    verify le law succLe\n\
+    \x20   given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   when le(m, n)\n\
+    \x20   le(Nat.S(m), Nat.S(n)) => true\n";
 
-/// Two distinct `verify floorQ law cellFloorStable` blocks sharing ONE
-/// `fn.law` identity — the MAJOR 3 collision. The manifest keys on `fn.law`,
-/// so without a guard the second block would collapse onto the first
-/// (strongest-tier-wins), hiding the weaker (second) duplicate. The ratchet
-/// must fail CLOSED (exit 2). The second block's claim is the weakened one.
-const RATCHET_DUP_LAW_AV: &str = "module CellFloorGrid\n\
+/// Two distinct `verify le law leSucc` blocks sharing ONE `fn.law` identity
+/// — the MAJOR 3 collision. The manifest keys on `fn.law`, so without a guard
+/// the second block would collapse onto the first (strongest-tier-wins),
+/// hiding the weaker (second) duplicate. The ratchet must fail CLOSED (exit 2).
+/// The second block's premise is the weakened (bounded) one.
+const RATCHET_DUP_LAW_AV: &str = "module CmpBridge\n\
     \x20   intent =\n\
-    \x20       \"Rounding-grid proof task.\"\n\
+    \x20       \"Comparison-bridge proof task.\"\n\
     \x20   effects []\n\n\
-    fn floorQ(a: Int, b: Int) -> Int\n\
-    \x20   ? \"Floor of a/b for b > 0.\"\n\
-    \x20   match Int.div(a, b)\n\
-    \x20       Result.Ok(q) -> q\n\
-    \x20       Result.Err(msg) -> 0\n\n\
-    verify floorQ law cellFloorStable\n\
-    \x20   given a: Int = [13, 15]\n\
-    \x20   given b: Int = [4]\n\
-    \x20   given w: Int = [3]\n\
-    \x20   given d: Int = [2]\n\
-    \x20   when Bool.and(b > 0, Bool.and(d > 0, Bool.and(w * b < a, a < (w + 1) * b)))\n\
-    \x20   floorQ(a, b * d) == floorQ(w, d) => true\n\n\
-    verify floorQ law cellFloorStable\n\
-    \x20   given a: Int = [13, 15]\n\
-    \x20   given b: Int = [4]\n\
-    \x20   given w: Int = [3]\n\
-    \x20   given d: Int = [2]\n\
-    \x20   when Bool.and(b > 0, Bool.and(d > 0, Bool.and(w * b < a, a < (w + 1) * b)))\n\
-    \x20   floorQ(floorQ(a, b), d) == floorQ(w, d) => true\n";
+    type Nat\n\
+    \x20   Z\n\
+    \x20   S(Nat)\n\n\
+    fn le(x: Nat, y: Nat) -> Bool\n\
+    \x20   match x\n\
+    \x20       Nat.Z -> true\n\
+    \x20       Nat.S(z) -> match y\n\
+    \x20           Nat.Z -> false\n\
+    \x20           Nat.S(w) -> le(z, w)\n\n\
+    verify le law leSucc\n\
+    \x20   given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   when le(m, n)\n\
+    \x20   le(m, Nat.S(n)) => true\n\n\
+    verify le law leSucc\n\
+    \x20   given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   when Bool.and(le(m, n), le(m, n))\n\
+    \x20   le(m, Nat.S(n)) => true\n";
 
 /// Write `src` to a fresh temp `.av`, run `aver proof --backend lean` with the
 /// given trailing args, and return `(exit_code, stderr)`. Exit code is read
@@ -768,7 +757,7 @@ fn ratchet_gate_catches_deleted_law() {
         "deleting a proven law must FAIL the gate (exit 1)\n{stderr}"
     );
     assert!(
-        stderr.contains("coarseFloorEq.sharedCellFloor") && stderr.contains("MISSING"),
+        stderr.contains("le.succLe") && stderr.contains("MISSING"),
         "the gate must name the deleted law as MISSING\n{stderr}"
     );
     let _ = std::fs::remove_file(&baseline);
@@ -805,7 +794,7 @@ fn ratchet_gate_catches_demoted_law() {
         "a universal -> bounded demotion must FAIL the gate (exit 1)\n{stderr}"
     );
     assert!(
-        stderr.contains("floorQ.cellFloorStable") && stderr.contains("tier universal -> "),
+        stderr.contains("le.leSucc") && stderr.contains("tier universal -> "),
         "the gate must name the demoted law with its before/after tier\n{stderr}"
     );
     let _ = std::fs::remove_file(&baseline);
@@ -847,7 +836,7 @@ fn ratchet_regenerated_baseline_is_green() {
 #[test]
 fn ratchet_added_law_is_green() {
     // (d) Adding a law is allowed. Baseline from the 1-law deleted file; gating
-    // the 2-law base file (which ADDS `sharedCellFloor`) against it is GREEN —
+    // the 2-law base file (which ADDS `succLe`) against it is GREEN —
     // the new law is reported INFO, not a regression.
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping ratchet add test: `lake` not available");
@@ -903,7 +892,7 @@ fn ratchet_duplicate_law_identity_fails_closed() {
         "a duplicate law identity must be a harness error (exit 2)\n{stderr}"
     );
     assert!(
-        stderr.contains("floorQ.cellFloorStable") && stderr.contains("duplicate law identity"),
+        stderr.contains("le.leSucc") && stderr.contains("duplicate law identity"),
         "the harness error must name the colliding `fn.law` identity\n{stderr}"
     );
     let _ = std::fs::remove_file(&baseline);

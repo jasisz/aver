@@ -624,8 +624,7 @@ fn emit_verify_law_block(
                 | Some(crate::ir::ProofStrategy::TailRecFixedBaseFold { .. })
         );
         // The marker carries a THIRD field: the `fn.law` identity label
-        // (the SAME `format!("{fn}.{law}")` the when-universal lane keys on,
-        // `universal_lane::mod.rs`). The file-level audit reads it to key the
+        // (`format!("{fn}.{law}")`). The file-level audit reads it to key the
         // per-law proof manifest on the stable, edit-robust identity instead
         // of reverse-parsing the (mangled, `_law_`-ambiguous) theorem name.
         // Additive: the marker parser consumes only the first two fields, so
@@ -1227,7 +1226,7 @@ fn law_theorem_parts(
                 // Manifest-vs-manifest collision hazard: a `<base>_part<N>`
                 // chunk name can in principle collide with a sibling law
                 // literally named `<base>_part<N>`. This is fail-closed today —
-                // the file-level collision guard (universal_lane) demotes a
+                // the file-level collision guard demotes a
                 // duplicated theorem name, and the audit keys `bounded_laws` on
                 // each part's class marker (direct-lookup-first), so a real law
                 // named `<base>_partN` is never folded onto a phantom base. A
@@ -1252,12 +1251,12 @@ fn law_theorem_parts(
 /// it is a conditional but still universally quantified claim (the
 /// refinement-lifted case, where every given's domain premise is dropped).
 ///
-/// `omit_domain` is the when-universal quarantine lane's statement mode
-/// (see `lean::universal_lane`): the SAME builder renders the lane twin
-/// — `∀ givens, <when> = true -> claim` — by skipping the sampled-domain
-/// disjunctions entirely, so the twin's statement provably differs from
-/// the manifest theorem only by those premises (zero second renderer).
-/// The manifest pipeline always passes `false`.
+/// `omit_domain` is the universal statement mode for a conditional law the
+/// auto-prover closes through induction + the laws-as-lemmas pool: it renders
+/// `∀ givens, <when> = true -> claim` by skipping the sampled-domain
+/// disjunctions entirely, so the universal statement differs from the bounded
+/// manifest theorem only by those premises. A law the conditional recognizers
+/// decline passes `false` and keeps the bounded sampled-domain statement.
 pub(in crate::codegen::lean) fn law_theorem_prop(
     law: &VerifyLaw,
     ctx: &CodegenContext,

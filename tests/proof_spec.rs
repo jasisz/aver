@@ -327,9 +327,9 @@ fn dafny_check_with_budgets(
 
 /// Run `aver proof <file> --backend lean --check --check-json` with
 /// optional extra env vars; returns the parsed JSON summary line plus
-/// the raw output for diagnostics. Shared by the when-universal
-/// quarantine-lane tests, which need several runs against the SAME
-/// output dir (lake's content-addressed cache keeps re-runs cheap).
+/// the raw output for diagnostics. Shared by the proof gate tests, which
+/// need several runs against the SAME output dir (lake's content-addressed
+/// cache keeps re-runs cheap).
 fn run_lean_check_json(
     example_path: &str,
     output_dir: &std::path::Path,
@@ -461,17 +461,6 @@ fn proof_minimize_collapses_grind_portfolios_and_stays_passing() {
     );
 
     let _ = std::fs::remove_dir_all(&output_dir);
-}
-
-/// The COUNTED summary — everything the budget pins and run.sh
-/// consumers key on — with the lane's additive field stripped, for
-/// byte-level comparison across lane-on / lane-sabotaged / lane-off
-/// runs. The iron guard's observable form: the lane may only ever
-/// append, never perturb.
-fn counted_summary(summary: &serde_json::Value) -> serde_json::Value {
-    let mut obj = summary.as_object().cloned().unwrap_or_default();
-    obj.remove("when_universal");
-    serde_json::Value::Object(obj)
 }
 
 /// Shared probe source for the fuel-exhaustion soundness tests: a recursive

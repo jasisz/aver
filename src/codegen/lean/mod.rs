@@ -17,7 +17,6 @@ mod tests;
 mod toplevel;
 mod transpile;
 mod types;
-pub mod universal_lane;
 
 // Crate-wide re-export: committed-lemma handling (`codegen::lemma_discovery`)
 // and the law-auto rungs map Aver fn names to their Lean spelling through the
@@ -34,7 +33,7 @@ pub(crate) use prelude::prelude_spec_lemmas_for_builtins;
 /// (`unsolved goals`). Used by the `--check` harness in the `aver` binary.
 pub use law_auto::residual_probe_body;
 #[cfg(test)]
-use prelude::{generate_lakefile_with_roots, generate_prelude};
+use prelude::generate_prelude;
 use transpile::{LeanEmitMode, transpile_unified};
 
 use std::collections::HashSet;
