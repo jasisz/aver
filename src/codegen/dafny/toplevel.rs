@@ -881,6 +881,25 @@ fn dafny_threaded_accumulator_arg(
     Some(rendered)
 }
 
+/// The law given the fold structurally recurses on — its `match` subject mapped
+/// back to a law given. `None` when the fn body isn't a single match on a given.
+fn datatype_driver_given_name(fd: &FnDef, law: &VerifyLaw) -> Option<String> {
+    let [Stmt::Expr(body)] = fd.body.stmts() else {
+        return None;
+    };
+    let Expr::Match { subject, .. } = &body.node else {
+        return None;
+    };
+    let subj = match &subject.node {
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => n,
+        _ => return None,
+    };
+    law.givens
+        .iter()
+        .find(|g| &g.name == subj)
+        .map(|g| g.name.clone())
+}
+
 /// Datatype-induction inductive hint for a law over a recursive USER ADT
 /// (`triTR(n, acc) => plus(triSpec(n), acc)`), the Dafny counterpart of Lean's
 /// `induction <n> generalizing acc`. Mirrors the verified fn's own `match` on
@@ -896,6 +915,7 @@ fn dafny_datatype_inductive_hint(
     fd: &FnDef,
     given_name: &str,
     lemma_name: &str,
+    law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> Option<Vec<String>> {
     use crate::codegen::recursion::detect::{call_matches, collect_calls_from_expr};
@@ -909,6 +929,31 @@ fn dafny_datatype_inductive_hint(
     {
         return None;
     }
+    // The lemma's params are the law givens in DECLARED order, but the fn's
+    // self-call passes its args in FN-PARAM order — which the law's lhs call
+    // binds to givens positionally. Build, for each lemma param (given), the
+    // fn-param index it occupies, so the recursive lemma call's args are
+    // reordered to the lemma signature regardless of how the law declared its
+    // givens vs the fn's parameter order. Declines (omit, safe) if the lhs is not
+    // a plain `fn(given, …)` call covering every given.
+    let ident_of = |e: &Spanned<Expr>| -> Option<String> {
+        match &e.node {
+            Expr::Ident(n) | Expr::Resolved { name: n, .. } => Some(n.clone()),
+            _ => None,
+        }
+    };
+    let Expr::FnCall(_, lhs_args) = &law.lhs.node else {
+        return None;
+    };
+    let lhs_idents: Vec<String> = lhs_args.iter().filter_map(ident_of).collect();
+    if lhs_idents.len() != lhs_args.len() {
+        return None;
+    }
+    let given_to_fn_pos: Vec<usize> = law
+        .givens
+        .iter()
+        .map(|g| lhs_idents.iter().position(|n| n == &g.name))
+        .collect::<Option<Vec<usize>>>()?;
     let given_dafny = aver_name_to_dafny(given_name);
     let mut lines = vec![format!("  match {} {{", given_dafny)];
     for arm in arms {
@@ -929,18 +974,18 @@ fn dafny_datatype_inductive_hint(
             )
         };
         // Recurse the lemma at each self-call's arguments (the predecessor driver
-        // plus the threaded accumulator), rendered in the lemma's binders.
+        // plus the threaded accumulator), reordered to the lemma's given order.
         let mut calls = Vec::new();
         collect_calls_from_expr(&arm.body, &mut calls);
         let recs: Vec<String> = calls
             .iter()
             .filter(|(n, _)| call_matches(n, &fd.name))
-            .map(|(_, args)| {
-                let rendered: Vec<String> = args
+            .filter_map(|(_, args)| {
+                let rendered: Vec<String> = given_to_fn_pos
                     .iter()
-                    .map(|x| emit_expr_legacy(x, ctx, None))
-                    .collect();
-                format!("{}({});", lemma_name, rendered.join(", "))
+                    .map(|&i| args.get(i).map(|x| emit_expr_legacy(x, ctx, None)))
+                    .collect::<Option<Vec<String>>>()?;
+                Some(format!("{}({});", lemma_name, rendered.join(", ")))
             })
             .collect();
         if recs.is_empty() {
@@ -3319,6 +3364,19 @@ pub fn emit_verify_law(
     }
 
     lines.push(format!("  ensures {} == {}", lhs, rhs));
+    // Datatype accumulator-generalization: the structurally-shrinking driver
+    // given may not be the lemma's FIRST param (givens can be declared in any
+    // order), so Dafny's default lexicographic measure — which tries params
+    // left-to-right and would hit the GROWING accumulator first — fails. Pin the
+    // measure to the driver. (The datatype-induction hint below recurses on its
+    // field predecessor, which decreases this driver.)
+    if law.when.is_none()
+        && crate::codegen::common::accumulator_fold_fn_names(ctx).contains(&vb.fn_name)
+        && let Some(fd) = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())
+        && let Some(driver) = datatype_driver_given_name(fd, law)
+    {
+        lines.push(format!("  decreases {}", aver_name_to_dafny(&driver)));
+    }
     lines.push("{".to_string());
 
     // Earlier sibling laws eligible to be cited into this proof — shared by the
@@ -3546,7 +3604,7 @@ pub fn emit_verify_law(
         if let Some(hint) = law
             .givens
             .iter()
-            .find_map(|g| dafny_datatype_inductive_hint(fd, &g.name, &lemma_name, ctx))
+            .find_map(|g| dafny_datatype_inductive_hint(fd, &g.name, &lemma_name, law, ctx))
         {
             lines.extend(hint);
         }

@@ -1820,7 +1820,11 @@ fn law_is_associativity(vb: &VerifyBlock, combine: &str) -> bool {
 /// cannot sorry), so it must stay sample-only. The List corner never reaches
 /// here (its accumulator combine is a builtin `BinOp`, so `accfold_combine_fn`
 /// is `None`, and list folds are excluded from `accumulator_fold_fn_names`).
-pub fn nat_accfold_self_closeable(ctx: &CodegenContext, verified_fn: &str) -> bool {
+pub fn nat_accfold_self_closeable(
+    ctx: &CodegenContext,
+    verified_fn: &str,
+    accgen_law_name: &str,
+) -> bool {
     if !accumulator_fold_fn_names(ctx).contains(verified_fn) {
         return false;
     }
@@ -1842,17 +1846,26 @@ pub fn nat_accfold_self_closeable(ctx: &CodegenContext, verified_fn: &str) -> bo
     {
         return false;
     }
-    let laws = || {
-        ctx.items
-            .iter()
-            .filter_map(|i| match i {
-                TopLevel::Verify(vb) => Some(vb),
-                _ => None,
-            })
-            .chain(ctx.modules.iter().flat_map(|m| m.verify_laws.iter()))
-    };
-    let has_comm = laws().any(|vb| law_is_commutativity(vb, &combine));
-    let has_assoc = laws().any(|vb| law_is_associativity(vb, &combine));
+    // Only count comm/assoc helpers the citation engine will actually hoist into
+    // the proof: laws EARLIER in source than the accGen block in THIS module
+    // (`eligible_cites` is earlier-in-source, same-module). A helper declared
+    // after the accGen — or in a dependency — is present but un-citable, so
+    // ungating on it would emit a body missing the algebra it needs and Dafny
+    // would error instead of cleanly omitting.
+    let citable: Vec<&VerifyBlock> = ctx
+        .items
+        .iter()
+        .filter_map(|i| match i {
+            TopLevel::Verify(vb) => Some(vb),
+            _ => None,
+        })
+        .take_while(|vb| {
+            !matches!(&vb.kind, VerifyKind::Law(l)
+                if vb.fn_name == verified_fn && l.name == accgen_law_name)
+        })
+        .collect();
+    let has_comm = citable.iter().any(|vb| law_is_commutativity(vb, &combine));
+    let has_assoc = citable.iter().any(|vb| law_is_associativity(vb, &combine));
     has_comm && has_assoc
 }
 
@@ -1920,7 +1933,7 @@ pub fn dafny_should_bound_accumulator_fold(
 ) -> bool {
     law_calls_foreign_accumulator_fold(ctx, law, verified_fn)
         || (accumulator_fold_fn_names(ctx).contains(verified_fn)
-            && !nat_accfold_self_closeable(ctx, verified_fn))
+            && !nat_accfold_self_closeable(ctx, verified_fn, &law.name))
 }
 
 /// Issue #128: is the law's RHS independent of every given identifier?
