@@ -784,25 +784,6 @@ pub enum ProofStrategy {
     /// Bounded universal: case-split over the declared `given`
     /// domain, dispatch each case to a per-sample lemma.
     BoundedUniversal,
-    /// Two `MatchDispatcherFold` fns over the same `List<T>` param
-    /// compute the same result via slightly different but structurally
-    /// identical match-on-list bodies. The law states
-    /// `fold_fn(xs) == spec_fn(xs)`; the proof closes by induction on
-    /// `xs` with both nil and cons cases reducing to arithmetic
-    /// identities. Demonstrated by `examples/data/list_length_fold.av`
-    /// (`lengthFwd(xs) = 1 + lengthFwd(t)` vs
-    /// `lengthSwap(xs) = lengthSwap(t) + 1` — equivalent via
-    /// commutativity, closes via `omega`).
-    ///
-    /// Stage 8c of #232 — third typed-pattern consumer in
-    /// `proof_lower`.
-    MatchDispatcherFold {
-        /// Source name of the LHS fold fn (the law's surrounding fn).
-        fold_fn: String,
-        /// Source name of the RHS spec fn — also a list-fold of the
-        /// same shape.
-        spec_fn: String,
-    },
     /// `?`-propagating Result chain equals a manual `match`-version:
     /// the law states `chain_qm(x) == chain_manual(x)` where the
     /// LHS uses `?` for short-circuit Err propagation and the RHS
