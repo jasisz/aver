@@ -1162,6 +1162,71 @@ fn proof_lean_proves_list_prod_kernel_clean_universal() {
 }
 
 #[test]
+fn proof_lean_speculative_proves_single_list_conditional_universal() {
+    // Gap-1 speculative-universal mechanism: a SINGLE-LIST conditional law
+    // (`when allZero(xs) -> sumList(xs) = Z`) cannot be statically classified as
+    // universal-closeable (the generic conditional driver closes some single-list
+    // shapes and `sorry`s others), so the probe states it universally, learns
+    // from ONE instrumented build that it CLOSES — the `cases hd` rung splits the
+    // per-element premise (`allZero (hd :: tl)`) so the conditional IH applies —
+    // and commits it as a genuine universal. Result is `universal:true`, 0
+    // sorries, `#print axioms` clean of `sorryAx`. The helper `sumCons` is the
+    // homomorphism the conditional law decomposes through. Regression guard for
+    // the whole single-list conditional try-universal-fall-back-to-sampled path.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean speculative-universal test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let out = temp_output_dir("aver-speculative-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg("proof-corpus/decomposed/handwritten/all_zero_sum.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean = std::fs::read_to_string(out.join("AllZeroSum.lean")).expect("read AllZeroSum.lean");
+    // The conditional law must be COMMITTED as a universal-classed theorem (no
+    // sampled-domain disjunction premises) — the probe promoted it after the
+    // build proved it closes.
+    assert!(
+        lean.contains("-- aver:law-class sumList_law_sumAllZero universal"),
+        "sumAllZero must be committed as a universal-classed conditional:\n{lean}"
+    );
+    // The committed proof must carry neither the probe's transient trace floor
+    // nor a reachable sorry.
+    assert!(
+        !lean.contains("AVERSPEC_SORRY"),
+        "the committed proof must not carry the probe's trace floor:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "the single-list conditional must kernel-prove as a GENUINE universal \
+         (passed, 0 sorries, universal:true).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
 fn proof_lean_proves_nat_tri_kernel_clean_universal() {
     // Nat + Add corner of the accumulator-fold grid: a tail-recursive
     // triangular-sum equals its recurrence. The Peano-`Nat` driver fixes the
