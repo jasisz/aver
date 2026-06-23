@@ -1401,6 +1401,21 @@ fn is_peano_compare_call(
 /// compound premise, or a conclusion that is not a single comparison `= true`,
 /// is rejected so the law keeps the bounded guarded-domain fallback (the HARD
 /// conditional-inductive family — sortedness/insertion — is out of scope here).
+/// The inner comparison call of a NEGATED premise `Bool.not(<compare>)`, if the
+/// premise has that shape. `Bool.not` is the dotted builtin (not a prefix `not`).
+fn negated_compare_inner(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+) -> Option<&crate::ast::Spanned<crate::ast::Expr>> {
+    use crate::ast::Expr;
+    let Expr::FnCall(callee, args) = &expr.node else {
+        return None;
+    };
+    if super::shared::expr_dotted_name(callee).as_deref() != Some("Bool.not") || args.len() != 1 {
+        return None;
+    }
+    Some(&args[0])
+}
+
 fn conditional_comparison_bridge_shape(law: &VerifyLaw, ctx: &CodegenContext) -> bool {
     use crate::ast::{Expr, Literal};
     let Some(when) = &law.when else {
@@ -1414,8 +1429,13 @@ fn conditional_comparison_bridge_shape(law: &VerifyLaw, ctx: &CodegenContext) ->
     if !is_peano_compare_call(&law.lhs, ctx) {
         return false;
     }
-    // Premise is an un-negated recognized comparison call.
-    is_peano_compare_call(when, ctx)
+    // Premise is a recognized comparison call, bare OR negated `Bool.not(...)`.
+    // The negated form (`le-totality`: `not(le a b) -> le b a`) bridges the
+    // premise via the FALSE bridge `(f a b = false) = (complement)`.
+    match negated_compare_inner(when) {
+        Some(inner) => is_peano_compare_call(inner, ctx),
+        None => is_peano_compare_call(when, ctx),
+    }
 }
 
 /// Whether [`emit_conditional_comparison_bridge_law`] will close this law as a
@@ -1481,14 +1501,50 @@ pub(in crate::codegen::lean) fn emit_conditional_comparison_bridge_law(
         return None;
     }
     let bridges = bridge_names.join(", ");
-    // `intro <givens> h_when`; rewrite the premise hypothesis AND the goal
-    // through the Prop bridges, then `omega` over the linear residual. `<;>
-    // omega` (not `; omega`) so a `simp` that fully closes the goal does not
-    // leave `omega` with no goals.
     let intro = format!("  intro {} h_when", intro_names.join(" "));
-    let close = format!("  first | (simp only [{bridges}] at h_when ⊢ <;> omega) | sorry");
+
+    // NEGATED premise (`when Bool.not(le a b)`): the bridge `(le a b = true) =
+    // (a ≤ b)` cannot rewrite `(!le a b) = true`. Emit the FALSE bridge `(f a b =
+    // false) = (complement)` for the premise's relation (the omega-ready negation
+    // of its true Prop), normalize the Bool negation (`Bool.not_eq_true'`), then
+    // bridge the goal + premise and discharge with `omega`. The false bridge is
+    // sound-by-floor like the true one (a misrecognized op fails its own induction
+    // and lands on `sorry`, never a false theorem).
+    let mut support = bridge_support;
+    let close = if let Some(inner) = law.when.as_ref().and_then(negated_compare_inner) {
+        let mut premise_fns: BTreeSet<String> = BTreeSet::new();
+        crate::codegen::proof_recognize::collect_called_fns(inner, &mut premise_fns);
+        let false_bridges: Vec<String> = crate::codegen::proof_recognize::collect_nat_compare_ops_for_names(
+            &premise_fns, ctx,
+        )
+        .into_iter()
+        .map(|op| {
+            let f = aver_name_to_lean(&op.fn_name);
+            let name = format!("{law_uid}_{f}_{}False", op.kind.bridge_suffix());
+            let false_prop = op.kind.false_prop();
+            let (driver, passenger) = if op.kind.induct_on_second() {
+                ("b", "a")
+            } else {
+                ("a", "b")
+            };
+            support.push(format!(
+                "theorem {name} : ∀ a b, ({f} a b = false) = ({false_prop}) := by\n  intro a b\n  induction {driver} generalizing {passenger} with\n  | zero => cases {passenger} <;> first | (simp [{f}]) | (simp [{f}]; omega) | sorry\n  | succ k ih => cases {passenger} <;> first | (simp [{f}, ih]) | (simp [{f}, ih]; omega) | sorry"
+            ));
+            name
+        })
+        .collect();
+        let false_set = false_bridges.join(", ");
+        format!(
+            "  first | (simp only [{bridges}] at ⊢; simp only [Bool.not_eq_true', {false_set}, {bridges}] at h_when; omega) | sorry"
+        )
+    } else {
+        // Un-negated premise: rewrite the premise hypothesis AND the goal through
+        // the Prop bridges, then `omega`. `<;> omega` (not `; omega`) so a `simp`
+        // that fully closes the goal does not leave `omega` with no goals.
+        format!("  first | (simp only [{bridges}] at h_when ⊢ <;> omega) | sorry")
+    };
     Some(AutoProof {
-        support_lines: bridge_support,
+        support_lines: support,
         body: Tactic::raw(vec![intro, close]),
         replaces_theorem: false,
     })
