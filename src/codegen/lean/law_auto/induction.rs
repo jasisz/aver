@@ -3663,11 +3663,26 @@ fn emit_list_induction(
         // at the predecessor; for a threaded accumulator (`qrev`'s `acc`) no
         // split is needed (the IH applies at `h::acc` directly). The ladder is
         // the same sound first|simp|omega|split|sorry chain.
+        // Monoid-AC rung for a multiplicative accumulator (`prodTR(xs, acc) =>
+        // acc * prodSpec xs`): after the IH the residual is `(acc * h) * p = acc
+        // * (h * p)`, pure `Int.*` associativity/commutativity that `omega`
+        // (linear only) cannot decide. The core `Int.mul_*` lemmas form simp's
+        // permutative AC normal form (no Mathlib, no loop); a non-multiplicative
+        // law just fails the rung (the `; done` throws) and falls through, so it
+        // is strictly additive. `acc`/`Int.one_mul` cancel the wrapper's neutral.
+        let mul_ac_set = if simp_list.is_empty() {
+            "Int.mul_assoc, Int.mul_comm, Int.mul_left_comm, Int.mul_one, Int.one_mul".to_string()
+        } else {
+            format!(
+                "{simp_list}, Int.mul_assoc, Int.mul_comm, Int.mul_left_comm, Int.mul_one, Int.one_mul"
+            )
+        };
         let ladder = |s: &str| -> String {
             format!(
-                "first | ({s} [{d}]; done) | ({s} [{d}]; omega) | (simp only [{sp}]; split <;> simp_all [{d}] <;> omega) | sorry",
+                "first | ({s} [{d}]; done) | ({s} [{d}]; omega) | ({s} [{ac}]; done) | (simp only [{sp}]; split <;> simp_all [{d}] <;> omega) | sorry",
                 d = simp_list,
-                sp = split_set
+                sp = split_set,
+                ac = mul_ac_set
             )
         };
         let wrap = |arm: &str| -> String {
@@ -4404,6 +4419,45 @@ fn emit_simple_induction(
         ))
     };
 
+    // Multiplicative monoid-AC rung — a Nat accumulator fold (`factTR(n, acc) =>
+    // mul (factSpec n) acc`) leaves, after the IH, a nonlinear residual `mul
+    // (factSpec m) (mul (m+1) acc) = mul (mul (m+1) (factSpec m)) acc` that
+    // `omega` (linear) cannot decide. Close it by the core `Nat.mul_*` AC normal
+    // form after bridging `mul`/`plus` to the builtins. The bridged fns' OWN defs
+    // are DROPPED (unfolding `mul`'s def alongside its proven `= *` bridge strands
+    // the goal), and the broad `Nat.mul_*` set `lean_nat_lift_support` bundles is
+    // narrowed to the AC lemmas only (its `succ_mul` / `mul_add` directions fight
+    // the AC normal form). Fires only when a Nat `*` bridge is in scope; sound and
+    // additive — a non-multiplicative arm fails the `; done` and falls through.
+    let mul_ac_arm: Option<(String, String)> = if arith_bridges.iter().any(|b| b == "Nat.mul_assoc")
+    {
+        let bridge_thms = arith_bridges.iter().filter(|b| b.starts_with(&law_uid));
+        // `law_simp_defs` may `_root_.`-prefix an entry-module fn; `bridged_fns`
+        // holds the bare lean name, so strip the prefix before testing membership
+        // (otherwise the bridged `mul`/`plus` def survives and fights its bridge).
+        let mut acset: Vec<String> = law_simp_defs(ctx, vb, law)
+            .into_iter()
+            .filter(|d| !bridged_fns.contains(d.trim_start_matches("_root_.")))
+            .collect();
+        acset.extend(bridge_thms.cloned());
+        for lemma in [
+            "Nat.mul_assoc",
+            "Nat.mul_comm",
+            "Nat.mul_left_comm",
+            "Nat.mul_one",
+            "Nat.one_mul",
+        ] {
+            acset.push(lemma.to_string());
+        }
+        let set = acset.join(", ");
+        Some((
+            format!(" | (simp [{set}]; done)"),
+            format!(" | (simp_all [{set}]; done)"),
+        ))
+    } else {
+        None
+    };
+
     let mut arm_lines: Vec<String> = Vec::new();
     for variant in variants {
         let lean_variant = match &peano {
@@ -4430,8 +4484,12 @@ fn emit_simple_induction(
                     .as_ref()
                     .map(|(leaf, _)| leaf.as_str())
                     .unwrap_or_default();
+                let mul_ac = mul_ac_arm
+                    .as_ref()
+                    .map(|(leaf, _)| leaf.as_str())
+                    .unwrap_or_default();
                 arm_lines.push(format!(
-                    "| {v}{b} => first | (simp [{d}]; done) | (simp [{d}]; omega){bridge}{comm} | sorry",
+                    "| {v}{b} => first | (simp [{d}]; done) | (simp [{d}]; omega){bridge}{comm}{mul_ac} | sorry",
                     v = lean_variant,
                     b = binders,
                     d = simp_list
@@ -4459,8 +4517,12 @@ fn emit_simple_induction(
                     .as_ref()
                     .map(|(_, rec)| rec.as_str())
                     .unwrap_or_default();
+                let mul_ac = mul_ac_arm
+                    .as_ref()
+                    .map(|(_, rec)| rec.as_str())
+                    .unwrap_or_default();
                 arm_lines.push(format!(
-                    "| {v} {b} {ih} => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega){bridge}{comm} | sorry",
+                    "| {v} {b} {ih} => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega){bridge}{comm}{mul_ac} | sorry",
                     v = lean_variant,
                     b = field_binders.join(" "),
                     ih = ih_names.join(" "),
