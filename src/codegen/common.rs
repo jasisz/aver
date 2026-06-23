@@ -1672,30 +1672,66 @@ fn expr_calls_named(expr: &Spanned<Expr>, names: &HashSet<String>) -> bool {
 /// `qrev` law — re-gating those would regress the cross-file law pool.
 pub fn accumulator_fold_fn_names(ctx: &CodegenContext) -> HashSet<String> {
     use crate::codegen::recursion::detect::{
-        param_threaded_in_recursion, single_list_structural_param_index,
+        param_decremented_in_recursion, param_threaded_in_recursion,
+        single_list_structural_param_index,
     };
-    let threads_over_adt = |fd: &FnDef| -> bool {
+    // Exactly the shape the new classifier arm mints
+    // (`single_adt_structural_param_index`): a recursive USER-ADT driver that
+    // strictly shrinks every call, a threaded sibling accumulator, and NO
+    // structural `List` param. The recursive-ADT-driver requirement is what keeps
+    // this OFF fns an EARLIER classifier arm already handled — an Int-countdown /
+    // floor-division / ascending fold also "threads" a non-bare-local arg
+    // (`acc + n`, `n - 1`), was always classified and never fuel-bounded, and its
+    // laws must keep proving universally.
+    let threads_over_recursive_adt = |fd: &FnDef| -> bool {
         single_list_structural_param_index(fd).is_none()
             && (0..fd.params.len()).any(|i| param_threaded_in_recursion(fd, i))
+            && fd.params.iter().enumerate().any(|(i, (_, ty))| {
+                ctx_type_is_recursive_sum(ctx, ty.trim()) && param_decremented_in_recursion(fd, i)
+            })
     };
     ctx.fn_defs
         .iter()
         .chain(ctx.modules.iter().flat_map(|m| m.fn_defs.iter()))
-        .filter(|fd| threads_over_adt(fd))
+        .filter(|fd| threads_over_recursive_adt(fd))
         .map(|fd| fd.name.clone())
         .collect()
+}
+
+/// `true` iff `type_name` names a directly-recursive user sum type in `ctx`
+/// (some variant field carries the type itself, bare or inside a generic) —
+/// the `Nat` of a Peano accumulator fold. Mirrors `is_recursive_sum` /
+/// `variants_fields_contain_type` in the Lean induction codegen.
+fn ctx_type_is_recursive_sum(ctx: &CodegenContext, type_name: &str) -> bool {
+    use crate::ast::TypeDef;
+    ctx.type_defs
+        .iter()
+        .chain(ctx.modules.iter().flat_map(|m| m.type_defs.iter()))
+        .any(|td| match td {
+            TypeDef::Sum { name, variants, .. } if name == type_name => variants.iter().any(|v| {
+                v.fields.iter().any(|f| {
+                    let f = f.trim();
+                    f == type_name
+                        || f.contains(&format!("<{type_name}"))
+                        || f.contains(&format!("{type_name}>"))
+                        || f.contains(&format!(", {type_name}"))
+                        || f.contains(&format!("{type_name},"))
+                })
+            }),
+            _ => false,
+        })
 }
 
 /// `true` iff `law`'s lhs/rhs calls a recursive accumulator-threading fn OTHER
 /// than `verified_fn` — the foreign-fold hazard (see
 /// [`accumulator_fold_fn_names`]). Such a law can't close by simple induction
 /// (it needs the inner fn's accumulator-decomposition lemma) and must stay
-/// bounded on BOTH backends, exactly as it did before the recursion classifier
-/// learned the threaded-accumulator shape. The verified fn is excluded so an
-/// accumulator-generalizing law verified ON the fold (`triTR(n, acc) =>
-/// plus(triSpec(n), acc)`) is NOT gated — it closes by `induction … generalizing
-/// acc`. Both Lean and Dafny consult this where they consult
-/// [`law_calls_unclassified_fn`], keeping the bounded decision in sync.
+/// bounded, exactly as it did before the recursion classifier learned the
+/// threaded-accumulator shape. The verified fn is excluded so an accumulator-
+/// generalizing law verified ON the fold (`triTR(n, acc) => plus(triSpec(n),
+/// acc)`) is NOT gated — Lean closes it by `induction … generalizing acc`.
+/// Lean uses THIS (it has the generalizing emit); Dafny uses
+/// [`law_calls_any_accumulator_fold`] because it has no such emit.
 pub fn law_calls_foreign_accumulator_fold(
     ctx: &CodegenContext,
     law: &crate::ast::VerifyLaw,
@@ -1706,6 +1742,17 @@ pub fn law_calls_foreign_accumulator_fold(
         .filter(|n| n != verified_fn)
         .collect();
     law_calls_unclassified_fn(law, &foreign)
+}
+
+/// `true` iff `law`'s lhs/rhs calls ANY recursive accumulator-threading fold,
+/// the verified fn INCLUDED. Dafny consults this (not the foreign-only variant):
+/// it lacks the `induction … generalizing acc` emit the Lean backend gained, so
+/// even a law verified ON the fold cannot close its universal there — it stays
+/// sample-only, exactly as it did when the fold was unclassified. Excluding the
+/// verified fn (as Lean does) would let Dafny ATTEMPT an empty-body universal
+/// lemma that Z3 rejects, turning a clean omission into a hard verify error.
+pub fn law_calls_any_accumulator_fold(ctx: &CodegenContext, law: &crate::ast::VerifyLaw) -> bool {
+    law_calls_unclassified_fn(law, &accumulator_fold_fn_names(ctx))
 }
 
 /// Issue #128: is the law's RHS independent of every given identifier?

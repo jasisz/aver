@@ -4473,48 +4473,59 @@ fn emit_simple_induction(
 
     // Threaded-accumulator generalization (the user-ADT counterpart of the
     // `gen_given` branch in `emit_list_induction`). When the verified fn
-    // structurally recurses on the induction TARGET while THREADING a sibling
+    // structurally recurses on a DRIVER param while THREADING a sibling
     // accumulator (`triTR(n, acc)` recurses on `n`, feeds `plus(n, acc)`),
-    // inducting on the target alone fixes the cons IH at the original `acc` and
-    // the law never closes. `induction <target> generalizing <acc>` makes the IH
+    // inducting on the driver alone fixes the cons IH at the original `acc` and
+    // the law never closes. `induction <driver> generalizing <acc>` makes the IH
     // `∀ acc, P <pred> acc`, so it applies at the threaded value. The bare
     // accumulator needs no `cases` (it is not a scrutinee, unlike the take/drop
-    // Nat the list path also generalizes). The arm ladders are unchanged — they
-    // already discharge the generalized IH through `simp_all`/the op bridge.
+    // Nat the list path also generalizes). The arm ladders are unchanged.
+    //
+    // The induction target is chosen as the structurally-DECREMENTED driver,
+    // NOT `target_idx`: `find_induction_target` picks the first recursive-sum
+    // given, which — when the driver and accumulator share one ADT type and the
+    // author lists the accumulator first — is the accumulator, and inducting on
+    // the threaded accumulator never closes. Falls back to the passed-in target
+    // when no threaded-accumulator shape is present.
     use crate::codegen::recursion::detect::{
         param_decremented_in_recursion, param_threaded_in_recursion,
     };
-    let gen_given: Option<String> = ctx
+    let acc_generalize: Option<(String, String)> = ctx
         .fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())
         .and_then(|fd| {
-            // Map the induction target's given back to the fn param and confirm
-            // it is the one the recursion structurally decrements — otherwise a
-            // sibling is not a threaded accumulator OF this recursion.
-            let target_given = &law.givens.get(target_idx)?.name;
-            let driver_idx = fd.params.iter().position(|(p, _)| p == target_given)?;
-            if !param_decremented_in_recursion(fd, driver_idx) {
+            let driver_idx =
+                (0..fd.params.len()).find(|&i| param_decremented_in_recursion(fd, i))?;
+            let acc_idx = (0..fd.params.len())
+                .find(|&i| i != driver_idx && param_threaded_in_recursion(fd, i))?;
+            let driver_given = law
+                .givens
+                .iter()
+                .position(|g| g.name == fd.params[driver_idx].0)?;
+            // The driver must be the SAME inductive type the arms were built for
+            // (`type_name`), so re-targeting keeps the per-variant arms valid.
+            if law.givens[driver_given].type_name.trim() != type_name {
                 return None;
             }
-            let (_, (acc_name, _)) = fd
-                .params
+            let acc_intro = law
+                .givens
                 .iter()
-                .enumerate()
-                .find(|(i, _)| *i != driver_idx && param_threaded_in_recursion(fd, *i))?;
-            law.givens
-                .iter()
-                .position(|g| g.name == *acc_name)
-                .map(|gi| intro_names[gi].clone())
+                .position(|g| g.name == fd.params[acc_idx].0)
+                .map(|gi| intro_names[gi].clone())?;
+            Some((intro_names[driver_given].clone(), acc_intro))
         });
-    let gen_clause = gen_given
-        .as_deref()
-        .map(|gv| format!(" generalizing {gv}"))
-        .unwrap_or_default();
+    let (effective_target, gen_clause) = match &acc_generalize {
+        Some((driver, acc)) => (driver.clone(), format!(" generalizing {acc}")),
+        None => (target_lean.clone(), String::new()),
+    };
 
     let mut proof_lines = vec![format!("  intro {}", intro_parts.join(" "))];
     if arith_bridges.is_empty() && fast_simp.is_empty() {
         // No arithmetic to lift, no committed/sibling lemmas: plain structural
         // induction.
-        proof_lines.push(format!("  induction {}{} with", target_lean, gen_clause));
+        proof_lines.push(format!(
+            "  induction {}{} with",
+            effective_target, gen_clause
+        ));
         proof_lines.extend(arm_lines.into_iter().map(|a| format!("  {a}")));
     } else {
         // Try the arithmetic fast path first; fall back to induction. The fast
@@ -4577,7 +4588,10 @@ fn emit_simple_induction(
                 ));
             }
         }
-        proof_lines.push(format!("  | (induction {}{} with", target_lean, gen_clause));
+        proof_lines.push(format!(
+            "  | (induction {}{} with",
+            effective_target, gen_clause
+        ));
         let last = arm_lines.len().saturating_sub(1);
         for (idx, arm) in arm_lines.into_iter().enumerate() {
             if idx == last {
