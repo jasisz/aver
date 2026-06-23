@@ -865,10 +865,19 @@ fn dafny_threaded_accumulator_arg(
         Pattern::Cons(h, t) => Some((h.clone(), t.clone())),
         _ => None,
     })?;
-    let mut rendered = emit_expr_legacy(acc_arg, ctx, None);
-    rendered = replace_ident_word(&rendered, &head, &format!("{list_dafny}[0]"));
-    rendered = replace_ident_word(&rendered, &tail, &format!("{list_dafny}[1..]"));
-    rendered = replace_ident_word(&rendered, list_param_name, list_dafny);
+    // Substitute on the DAFNY-RENDERED binder names (`emit_expr_legacy` mangles
+    // a leading-underscore / reserved-word binder, so the source spelling would
+    // miss), in ONE pass so the cons head/tail rewrites cannot cascade into each
+    // other when a binder name collides with the list param. The list param, if
+    // the accumulator arg mentions it, already renders as `list_dafny` (the fn's
+    // list param shares the given's name — checked above), so no rewrite is
+    // needed for it.
+    let rendered = emit_expr_legacy(acc_arg, ctx, None);
+    let subs = vec![
+        (aver_name_to_dafny(&head), format!("{list_dafny}[0]")),
+        (aver_name_to_dafny(&tail), format!("{list_dafny}[1..]")),
+    ];
+    let rendered = replace_ident_words(&rendered, &subs);
     Some(rendered)
 }
 
@@ -916,6 +925,64 @@ fn replace_ident_word(s: &str, word: &str, repl: &str) -> String {
             out.push_str(repl);
             i += wlen;
         } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Single-pass whole-word identifier substitution: at each identifier boundary
+/// the FIRST matching `(from, to)` pair replaces the token, and the inserted
+/// text is NOT re-scanned — so substitutions cannot cascade into one another
+/// (mapping `h -> xs[0]` then `t -> xs[1..]` leaves an already-inserted `xs[0]`
+/// intact even when a binder name collides with the list param). String literals
+/// are copied verbatim. Used by `dafny_threaded_accumulator_arg`, where the cons
+/// head/tail binder spellings can otherwise collide on a sequential rewrite.
+fn replace_ident_words(s: &str, subs: &[(String, String)]) -> String {
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    let mut in_string = false;
+    while i < chars.len() {
+        if in_string {
+            out.push(chars[i]);
+            if chars[i] == '\\' && i + 1 < chars.len() {
+                out.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            if chars[i] == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if chars[i] == '"' {
+            in_string = true;
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        let at_boundary = i == 0 || !is_ident(chars[i - 1]);
+        let mut matched = false;
+        if at_boundary {
+            for (from, to) in subs {
+                let wlen = from.chars().count();
+                if wlen > 0
+                    && i + wlen <= chars.len()
+                    && chars[i..i + wlen].iter().collect::<String>() == *from
+                    && (i + wlen >= chars.len() || !is_ident(chars[i + wlen]))
+                {
+                    out.push_str(to);
+                    i += wlen;
+                    matched = true;
+                    break;
+                }
+            }
+        }
+        if !matched {
             out.push(chars[i]);
             i += 1;
         }

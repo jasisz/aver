@@ -140,3 +140,20 @@ fn proof_dafny_proves_list_accumulator_generalization() {
         "aver-dafny-sumacc-gen",
     );
 }
+
+#[test]
+fn proof_dafny_accumulator_hint_handles_mangled_cons_binder() {
+    // The threaded-accumulator render substitutes on the DAFNY-rendered binder
+    // name, in one pass — so a cons binder whose spelling Dafny mangles (a
+    // leading-underscore `_h` becomes `aver_h`) is still re-expressed as
+    // `xs[0]`, not left as an out-of-scope identifier. Without the fix the
+    // emitted recursive call references `aver_h` and Dafny reports an
+    // unresolved identifier.
+    assert_dafny_proves_inline(
+        "module UHeadAcc\n    effects []\n\n\
+         fn sumTR(xs: List<Int>, acc: Int) -> Int\n    match xs\n        [] -> acc\n        [_h, ..t] -> sumTR(t, acc + _h)\n\n\
+         fn sumSpec(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [h, ..t] -> h + sumSpec(t)\n\n\
+         verify sumTR law accGeneralizes\n    given xs: List<Int> = [[], [1], [1, 2]]\n    given acc: Int = [0, 5]\n    sumTR(xs, acc) => acc + sumSpec(xs)\n",
+        "aver-dafny-uhead-acc",
+    );
+}
