@@ -157,3 +157,76 @@ fn proof_dafny_accumulator_hint_handles_mangled_cons_binder() {
         "aver-dafny-uhead-acc",
     );
 }
+
+#[test]
+fn proof_dafny_proves_nat_additive_accumulator_via_algebra_helpers() {
+    // User-ADT accumulator-generalization on Dafny (`triTR(n, acc) =>
+    // plus(triSpec(n), acc)`): the datatype-induction hint mirrors the fold's
+    // `match` on its driver and recurses at the threaded accumulator, while the
+    // file's commutativity/associativity helper laws for `plus` (which prove
+    // generically) supply the algebra Z3 cannot derive over the opaque ADT. The
+    // smart gate only ungates this self-fold because those additive helpers are
+    // present.
+    assert_dafny_proves_inline(
+        "module NatTriAccGen\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         fn triTR(n: Nat, acc: Nat) -> Nat\n    match n\n        Nat.Z -> acc\n        Nat.S(m) -> triTR(m, plus(n, acc))\n\n\
+         fn triSpec(n: Nat) -> Nat\n    match n\n        Nat.Z -> Nat.Z\n        Nat.S(m) -> plus(n, triSpec(m))\n\n\
+         verify plus law plusZeroR\n    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    plus(x, Nat.Z) => x\n\n\
+         verify plus law plusSuccR\n    given x: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given y: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    plus(x, Nat.S(y)) => Nat.S(plus(x, y))\n\n\
+         verify plus law plusComm\n    given a: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given b: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    plus(a, b) => plus(b, a)\n\n\
+         verify plus law plusAssoc\n    given a: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given b: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given c: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    plus(plus(a, b), c) => plus(a, plus(b, c))\n\n\
+         verify triTR law accGeneralizes\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    given acc: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    triTR(n, acc) => plus(triSpec(n), acc)\n",
+        "aver-dafny-nat-tri-accgen",
+    );
+}
+
+#[test]
+fn proof_dafny_nat_accumulator_is_given_order_independent() {
+    // The datatype-induction hint reorders the recursive lemma call to the
+    // lemma's given order and pins `decreases` to the driver, so the additive
+    // accumulator law closes even when the accumulator given is declared BEFORE
+    // the driver — not a hard verify error from a wrong-instance / non-
+    // terminating recursive call.
+    assert_dafny_proves_inline(
+        "module NatTriOrder\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         fn triTR(n: Nat, acc: Nat) -> Nat\n    match n\n        Nat.Z -> acc\n        Nat.S(m) -> triTR(m, plus(n, acc))\n\n\
+         fn triSpec(n: Nat) -> Nat\n    match n\n        Nat.Z -> Nat.Z\n        Nat.S(m) -> plus(n, triSpec(m))\n\n\
+         verify plus law plusZeroR\n    given x: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    plus(x, Nat.Z) => x\n\n\
+         verify plus law plusSuccR\n    given x: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given y: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    plus(x, Nat.S(y)) => Nat.S(plus(x, y))\n\n\
+         verify plus law plusComm\n    given a: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given b: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    plus(a, b) => plus(b, a)\n\n\
+         verify plus law plusAssoc\n    given a: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given b: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given c: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    plus(plus(a, b), c) => plus(a, plus(b, c))\n\n\
+         verify triTR law accGen\n    given acc: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    triTR(n, acc) => plus(triSpec(n), acc)\n",
+        "aver-dafny-nat-accgen-order",
+    );
+}
+
+#[test]
+fn proof_dafny_nat_accumulator_omits_when_algebra_helpers_not_citable() {
+    // The gate ungates a Nat accumulator-generalization only when its
+    // commutativity/associativity helpers are CITABLE — earlier in source. With
+    // the helpers declared AFTER the accGen law (the citation engine cannot hoist
+    // them) the universal must stay sample-only — a clean omission, never a hard
+    // verify error from a body missing the algebra it needs.
+    if Command::new("dafny").arg("--version").output().is_err() {
+        eprintln!("skipping dafny accgen-order omit test: `dafny` not available");
+        return;
+    }
+    let source = "module NatTriAcAfter\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         fn triTR(n: Nat, acc: Nat) -> Nat\n    match n\n        Nat.Z -> acc\n        Nat.S(m) -> triTR(m, plus(n, acc))\n\n\
+         fn triSpec(n: Nat) -> Nat\n    match n\n        Nat.Z -> Nat.Z\n        Nat.S(m) -> plus(n, triSpec(m))\n\n\
+         verify triTR law accGen\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given acc: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    triTR(n, acc) => plus(triSpec(n), acc)\n\n\
+         verify plus law plusComm\n    given a: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given b: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    plus(a, b) => plus(b, a)\n\n\
+         verify plus law plusAssoc\n    given a: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given b: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given c: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    plus(plus(a, b), c) => plus(a, plus(b, c))\n";
+    let summary = crate::lemmas::proof_check_summary(source, "dafny", "aver-dafny-acafter");
+    assert_eq!(
+        summary["errors"].as_u64(),
+        Some(0),
+        "a Nat accumulator law whose algebra helpers are declared after it must OMIT, not error\n{summary}"
+    );
+}

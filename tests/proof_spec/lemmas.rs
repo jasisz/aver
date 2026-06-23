@@ -460,7 +460,7 @@ fn lean_proves_accumulator_generalizing_nat_when_lake_is_available() {
 /// Run `aver proof --backend <backend> --check --check-json` on one inline
 /// module and return the parsed summary. Shared by the ordering / over-bound /
 /// cross-backend regression guards below.
-fn proof_check_summary(source: &str, backend: &str, prefix: &str) -> serde_json::Value {
+pub(crate) fn proof_check_summary(source: &str, backend: &str, prefix: &str) -> serde_json::Value {
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let src = temp_output_dir(&format!("{prefix}-src"));
     std::fs::create_dir_all(&src).expect("src dir");
