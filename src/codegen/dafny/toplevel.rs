@@ -1139,7 +1139,14 @@ fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenC
         && crate::codegen::common::all_givens_are_singletons(law)
         && crate::codegen::common::law_rhs_is_independent_of_givens(law);
     let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
-    if singleton_const_rhs || crate::codegen::common::law_calls_unclassified_fn(law, &unclassified)
+    // Accumulator-fold reference — kept in sync with the universal-lemma gate in
+    // `emit_verify_law` so the seed never references a lemma that gate omitted.
+    // Dafny gates ANY fold reference (the verified fn included): it has no
+    // `induction … generalizing acc` emit, so even a law verified ON the fold
+    // stays sample-only here.
+    if singleton_const_rhs
+        || crate::codegen::common::law_calls_unclassified_fn(law, &unclassified)
+        || crate::codegen::common::law_calls_any_accumulator_fold(ctx, law)
     {
         return false;
     }
@@ -2691,11 +2698,21 @@ pub fn emit_verify_law(
 
     let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
     let calls_fuel_bounded = crate::codegen::common::law_calls_unclassified_fn(law, &unclassified);
-    if singleton_const_rhs || calls_fuel_bounded {
+    // An accumulator-fold reference (the verified fn INCLUDED — see
+    // `law_calls_any_accumulator_fold`). Dafny has no `induction … generalizing
+    // acc` emit, so neither a `fac(x) => qfac(x, 1)` reference NOR a law verified
+    // ON the fold can close its universal here; both stay sample-only, exactly as
+    // they did when the fold was unclassified. The wrapper-over-recursion and
+    // tail-rec-fixed-base strategies have already returned their own support stack
+    // above, so they never reach this gate.
+    let calls_acc_fold = crate::codegen::common::law_calls_any_accumulator_fold(ctx, law);
+    if singleton_const_rhs || calls_fuel_bounded || calls_acc_fold {
         let reason = if singleton_const_rhs {
             "singleton-domain givens with constant RHS"
-        } else {
+        } else if calls_fuel_bounded {
             "calls a fuel-bounded fn outside the proof subset"
+        } else {
+            "references an accumulator-fold fn with no Dafny decomposition lemma"
         };
         return format!(
             "// Law {}.{}{}: {}, sample-only (universal lemma omitted)",

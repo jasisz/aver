@@ -985,6 +985,58 @@ pub(crate) fn supports_single_sizeof_structural(fd: &FnDef, inputs: &ProofLowerI
     })
 }
 
+/// The user-ADT analog of [`single_list_structural_param_index`]: a single
+/// recursive-ADT param such that EVERY recursive self-call passes, at that
+/// position, a STRICT recursive-subterm binder of it (the `m` of
+/// `match n { S(m) -> rec(m, …) }`). Other params are IGNORED — a THREADED
+/// accumulator (`triTR`'s `acc`, fed `plus(n, acc)`) does NOT disqualify,
+/// exactly as the list path ignores `qrev`'s threaded `acc`. Lean's equation
+/// compiler infers structural recursion on the returned param regardless of
+/// what the other args do, so the single shrinking param is a sound termination
+/// witness even when a sibling param grows.
+///
+/// This catches the accumulator-fold inner loop (`triTR` / `factTR`) that the
+/// multi-param [`supports_single_sizeof_structural`] rejects: that measure
+/// requires EVERY non-scalar param to shrink-or-stay, which the reconstructed
+/// accumulator violates. Both are ORed in the classifier, so this only ever ADDS
+/// the threaded-accumulator ADT shape — a previously-unclassified fn that fell
+/// to `partial def` (and bounded sampling) now emits as a structural `def` and
+/// becomes induction-provable.
+pub(crate) fn single_adt_structural_param_index(
+    fd: &FnDef,
+    inputs: &ProofLowerInputs,
+) -> Option<usize> {
+    let recursive_calls: Vec<Vec<&Spanned<Expr>>> = collect_calls_from_body(fd.body.as_ref())
+        .into_iter()
+        .filter(|(name, _)| call_matches(name, &fd.name))
+        .map(|(_, args)| args)
+        .collect();
+    if recursive_calls.is_empty() {
+        return None;
+    }
+    let recursive_types = inputs.recursive_type_names();
+    fd.params
+        .iter()
+        .enumerate()
+        .find_map(|(param_index, (param_name, param_type))| {
+            if !recursive_types.contains(param_type) {
+                return None;
+            }
+            let binders = collect_recursive_subterm_binders(fd, param_name, param_type, inputs);
+            if binders.is_empty() {
+                return None;
+            }
+            recursive_calls
+                .iter()
+                .all(|args| {
+                    args.get(param_index)
+                        .and_then(|a| local_name_of(a))
+                        .is_some_and(|id| binders.contains(id))
+                })
+                .then_some(param_index)
+        })
+}
+
 pub(crate) fn single_list_structural_param_index(fd: &FnDef) -> Option<usize> {
     fd.params
         .iter()
@@ -2114,7 +2166,19 @@ pub fn analyze_plans_in_scope(
                     helper_fn,
                 },
             );
-        } else if supports_single_sizeof_structural(fd, inputs) {
+        } else if supports_single_sizeof_structural(fd, inputs)
+            || (single_list_structural_param_index(fd).is_none()
+                && single_adt_structural_param_index(fd, inputs).is_some())
+        {
+            // Single-param ADT structural recursion (the OR's second arm) covers
+            // the accumulator-fold inner loop (`triTR` / `factTR`): one recursive-
+            // ADT param strictly shrinks every call while a sibling accumulator is
+            // threaded. Lean infers structural termination on the shrinking param,
+            // so it emits as a plain `def` (no fuel) just like the multi-param
+            // measure case. Gated on NOT being list-structural so a fn that also
+            // peels a `List` (`drop(n, xs)` shrinks both the `Nat` and the list)
+            // keeps its `ListStructural` plan — its laws induct on the list, and
+            // stealing it to the ADT driver regressed `drop`-concat decomposition.
             plans.insert(fd.name.clone(), RecursionPlan::SizeOfStructural);
         } else if let Some(param_index) = single_list_structural_param_index(fd) {
             plans.insert(

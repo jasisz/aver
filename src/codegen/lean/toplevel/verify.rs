@@ -543,12 +543,25 @@ fn emit_verify_law_block(
     // strategy exists to close, so the fuel gate does not apply.
     let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
     let calls_fuel_bounded = crate::codegen::common::law_calls_unclassified_fn(law, &unclassified);
+    // A FOREIGN accumulator-fold reference is the same fuel-gate hazard now that
+    // the classifier accepts threaded-accumulator inner loops as structural
+    // `def`s: a law calling such a fn (other than the one it is verified on) —
+    // e.g. `fac(x) => qfac(x, 1)` verified on `fac` — can't close by simple
+    // induction (it needs `qfac`'s own accumulator-decomposition lemma). Before
+    // the classifier learned the shape, `qfac` was unclassified and the fuel
+    // gate above caught it; now it must be caught here. The verified fn is
+    // excluded so an accumulator-generalizing law verified ON the fold
+    // (`triTR(n, acc) => plus(triSpec(n), acc)`, which DOES close via
+    // `induction … generalizing acc`) is not skipped.
+    let calls_foreign_acc_fold =
+        crate::codegen::common::law_calls_foreign_accumulator_fold(ctx, law, &vb.fn_name);
     let pinned_self_universal = matches!(
         pinned_law_strategy,
         Some(crate::ir::ProofStrategy::FiniteDomainCases { .. })
             | Some(crate::ir::ProofStrategy::TailRecFixedBaseFold { .. })
     );
-    let skip_universal = singleton_const_rhs || (calls_fuel_bounded && !pinned_self_universal);
+    let skip_universal = singleton_const_rhs
+        || ((calls_fuel_bounded || calls_foreign_acc_fold) && !pinned_self_universal);
     // Oracle v1: the auto-proof matchers compare law.lhs / law.rhs ASTs. For
     // effectful laws the theorem statement has been rewritten to target the
     // lifted fn (BranchPath.root() + oracle args injected); the matchers need to

@@ -402,6 +402,171 @@ fn lean_proves_accumulator_generalizing_qrev_when_lake_is_available() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// The user-ADT twin of the qrev accumulator-generalizing leaf-reach: the same
+/// shape over a Peano `Nat` instead of a `List`. `triTR(n, acc)` recurses on
+/// the ADT `n` while THREADING `acc` (fed `plus(n, acc)`); the law
+/// `triTR(n, acc) = plus(triSpec(n), acc)` only closes if the IH is generalized
+/// over `acc`, so the backend must emit `induction n generalizing acc`. Two
+/// engine pieces combine here: the recursion classifier must accept the
+/// threaded non-scalar accumulator (so `triTR` emits as a structural `def`, not
+/// `partial def` → bounded sampling), and `emit_simple_induction` must thread
+/// the `generalizing acc` clause. Before both, this law fell to `native_decide`
+/// over its samples (`universal:false`).
+#[test]
+fn lean_proves_accumulator_generalizing_nat_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping nat accumulator-gen test: `lake` not available");
+        return;
+    }
+    let source = "module NatAccGen\n    intent = \"nat acc-generalization\"\n    effects []\n\n\
+        type Nat\n    Z\n    S(Nat)\n\n\
+        fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+        fn triTR(n: Nat, acc: Nat) -> Nat\n    match n\n        Nat.Z -> acc\n        Nat.S(m) -> triTR(m, plus(n, acc))\n\n\
+        fn triSpec(n: Nat) -> Nat\n    match n\n        Nat.Z -> Nat.Z\n        Nat.S(m) -> plus(n, triSpec(m))\n\n\
+        verify triTR law triTRAccGen\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    given acc: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    triTR(n, acc) => plus(triSpec(n), acc)\n";
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-nataccgen-src");
+    std::fs::create_dir_all(&src).expect("src dir");
+    std::fs::write(src.join("m.av"), source).expect("write");
+    let out = temp_output_dir("aver-nataccgen-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("aver proof ran");
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON:\n{}", format_output(&run)));
+    let summary: serde_json::Value = serde_json::from_str(json).expect("json");
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "accumulator-generalizing must close triTR(n,acc)=plus(triSpec(n),acc) on a user ADT\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// Run `aver proof --backend <backend> --check --check-json` on one inline
+/// module and return the parsed summary. Shared by the ordering / over-bound /
+/// cross-backend regression guards below.
+fn proof_check_summary(source: &str, backend: &str, prefix: &str) -> serde_json::Value {
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir(&format!("{prefix}-src"));
+    std::fs::create_dir_all(&src).expect("src dir");
+    std::fs::write(src.join("m.av"), source).expect("write");
+    let out = temp_output_dir(&format!("{prefix}-out"));
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg(backend)
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("aver proof ran");
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON:\n{}", format_output(&run)))
+        .to_string();
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+    serde_json::from_str(&json).expect("json")
+}
+
+/// The accumulator-generalizing law must close regardless of `given` ORDER.
+/// `find_induction_target` picks the first recursive-sum given; when the author
+/// lists the threaded accumulator BEFORE the driver (both share the `Nat` type),
+/// the induction target must still be the structurally-decremented driver, with
+/// the accumulator generalized — not the accumulator (inducting on it never
+/// closes). A purely cosmetic given-reorder must not flip a passing proof.
+#[test]
+fn lean_accumulator_generalizing_is_given_order_independent_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping given-order test: `lake` not available");
+        return;
+    }
+    // `given acc` listed BEFORE `given n` — the order that mis-selected the
+    // induction target before the fix.
+    let source = "module NatAccOrder\n    intent = \"acc-before-driver given order\"\n    effects []\n\n\
+        type Nat\n    Z\n    S(Nat)\n\n\
+        fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+        fn triTR(n: Nat, acc: Nat) -> Nat\n    match n\n        Nat.Z -> acc\n        Nat.S(m) -> triTR(m, plus(n, acc))\n\n\
+        fn triSpec(n: Nat) -> Nat\n    match n\n        Nat.Z -> Nat.Z\n        Nat.S(m) -> plus(n, triSpec(m))\n\n\
+        verify triTR law triTRAccGen\n    given acc: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    triTR(n, acc) => plus(triSpec(n), acc)\n";
+    let summary = proof_check_summary(source, "lean", "aver-accorder");
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "accumulator-generalizing must close with the accumulator given listed first\n{summary}"
+    );
+}
+
+/// The foreign-accumulator-fold bounded gate must NOT capture an Int-countdown
+/// accumulator fn (`sumTo(n, acc)` recurses `sumTo(n-1, acc+n)`). It threads a
+/// reconstructed arg but is classified by an EARLIER recursion arm
+/// (IntCountdown), was never fuel-bounded, and a law referencing it
+/// (`wrap(n) => sumTo(n, 0)`) closes universally by simp. Force-bounding it
+/// would be a silent coverage loss.
+#[test]
+fn lean_does_not_force_bound_int_countdown_accumulator_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping int-countdown gate test: `lake` not available");
+        return;
+    }
+    let source = "module IntCountAcc\n    intent = \"int-countdown accumulator must keep its universal\"\n    effects []\n\n\
+        fn sumTo(n: Int, acc: Int) -> Int\n    match n == 0\n        true -> acc\n        false -> sumTo(n - 1, acc + n)\n\n\
+        fn wrap(n: Int) -> Int\n    sumTo(n, 0)\n\n\
+        verify wrap law wrapDef\n    given n: Int = [0, 1, 5]\n    wrap(n) => sumTo(n, 0)\n";
+    let summary = proof_check_summary(source, "lean", "aver-intcountacc");
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "a law over an Int-countdown accumulator fold must keep proving universally\n{summary}"
+    );
+}
+
+/// Dafny has no `induction ... generalizing acc` emit, so the user-ADT
+/// accumulator-generalizing law (`triTR(n,acc) => plus(triSpec(n),acc)`) must
+/// stay sample-only there — a clean OMISSION, never a hard verify ERROR. Guards
+/// the cross-backend regression where reclassifying `triTR` let Dafny attempt
+/// an empty-body universal lemma that Z3 rejects.
+#[test]
+fn dafny_omits_user_adt_accumulator_generalizing_without_error() {
+    if Command::new("dafny").arg("--version").output().is_err() {
+        eprintln!("skipping dafny acc-gen omission test: `dafny` not available");
+        return;
+    }
+    let source = "module NatAccDfy\n    intent = \"dafny omits, never errors, on a user-ADT accumulator law\"\n    effects []\n\n\
+        type Nat\n    Z\n    S(Nat)\n\n\
+        fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+        fn triTR(n: Nat, acc: Nat) -> Nat\n    match n\n        Nat.Z -> acc\n        Nat.S(m) -> triTR(m, plus(n, acc))\n\n\
+        fn triSpec(n: Nat) -> Nat\n    match n\n        Nat.Z -> Nat.Z\n        Nat.S(m) -> plus(n, triSpec(m))\n\n\
+        verify triTR law triTRAccGen\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    given acc: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    triTR(n, acc) => plus(triSpec(n), acc)\n";
+    let summary = proof_check_summary(source, "dafny", "aver-nataccdfy");
+    assert_eq!(
+        summary["errors"].as_u64(),
+        Some(0),
+        "Dafny must OMIT the user-ADT accumulator universal (sample-only), never \
+         emit a body that fails to verify\n{summary}"
+    );
+}
+
 /// A law whose verified fn body propagates errors with `?` must still collect
 /// the `?`-wrapped calls into its unfold set. `sumSafe`'s body is
 /// `x = safe(a)?; y = safe(b)?; Ok(x + y)` — every call hides behind `?`
