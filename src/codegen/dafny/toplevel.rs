@@ -817,6 +817,61 @@ fn when_is_peano_comparison(when: &Spanned<Expr>, ctx: &CodegenContext) -> bool 
 /// Replace every WHOLE-WORD occurrence of identifier `word` in `s` with `repl`
 /// (a substring flanked by identifier chars `[A-Za-z0-9_]` is left untouched).
 /// Used to slice a `when` premise's induction-target reference to its tail
+/// The Dafny-rendered THREADED accumulator argument for the inductive-hint
+/// self-call of a list-accumulator-fold lemma — the Dafny counterpart of Lean's
+/// `generalizing acc`. `fd` recurses via `match xs { [] -> _; [h, ..t] ->
+/// fd(t, <acc_arg>) }`; this renders `<acc_arg>` (e.g. `acc + h`) in the lemma's
+/// binders by re-expressing the cons head/tail binders as `<list>[0]` / `<list>
+/// [1..]`. With the recursive lemma call at this threaded value (not the
+/// unchanged param) the IH lands where the fold actually fed the accumulator, so
+/// Z3 closes `fd(xs, acc) == acc <op> spec(xs)`. Returns `None` (caller keeps the
+/// unchanged-arg fallback) unless `fd` is a single self-recursive list match
+/// whose accumulator given name matches a threaded param.
+fn dafny_threaded_accumulator_arg(
+    fd: &FnDef,
+    acc_given_name: &str,
+    list_param_name: &str,
+    list_dafny: &str,
+    ctx: &CodegenContext,
+) -> Option<String> {
+    use crate::codegen::recursion::detect::{
+        call_matches, collect_calls_from_body, param_threaded_in_recursion,
+    };
+    // The fn param the accumulator given binds to (by name), and it must be a
+    // threaded accumulator of THIS recursion.
+    let acc_idx = fd.params.iter().position(|(p, _)| p == acc_given_name)?;
+    if !param_threaded_in_recursion(fd, acc_idx) {
+        return None;
+    }
+    // The single self-call's accumulator argument (the threaded value).
+    let calls: Vec<Vec<&Spanned<Expr>>> = collect_calls_from_body(fd.body.as_ref())
+        .into_iter()
+        .filter(|(name, _)| call_matches(name, &fd.name))
+        .map(|(_, args)| args)
+        .collect();
+    let acc_arg = calls.first()?.get(acc_idx).copied()?;
+    // The list match's head/tail binders, to re-express in the lemma's terms.
+    let [Stmt::Expr(body)] = fd.body.stmts() else {
+        return None;
+    };
+    let Expr::Match { subject, arms } = &body.node else {
+        return None;
+    };
+    if !matches!(&subject.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == list_param_name)
+    {
+        return None;
+    }
+    let (head, tail) = arms.iter().find_map(|a| match &a.pattern {
+        Pattern::Cons(h, t) => Some((h.clone(), t.clone())),
+        _ => None,
+    })?;
+    let mut rendered = emit_expr_legacy(acc_arg, ctx, None);
+    rendered = replace_ident_word(&rendered, &head, &format!("{list_dafny}[0]"));
+    rendered = replace_ident_word(&rendered, &tail, &format!("{list_dafny}[1..]"));
+    rendered = replace_ident_word(&rendered, list_param_name, list_dafny);
+    Some(rendered)
+}
+
 /// (`y` -> `y[1..]`) when guarding a conditional list lemma's recursive call.
 /// String-literal aware: an occurrence INSIDE a `"…"` literal (where the same
 /// spelling is just text, e.g. a premise comparing against `"y"`) is left
@@ -3238,6 +3293,13 @@ pub fn emit_verify_law(
         if any_recursive {
             let list_param = aver_name_to_dafny(&law.givens[list_given_idx].name);
             let lemma_name = format!("{}_{}", fn_name, law_name);
+            // A THREADED accumulator given recurses at the value the fold feeds
+            // it (`acc + xs[0]`), not the unchanged param — the Dafny counterpart
+            // of Lean's `induction generalizing acc`. Without it the IH lands at
+            // the wrong accumulator and Z3 cannot close `fold(xs, acc) == acc <op>
+            // spec(xs)`. Falls back to the unchanged name for a non-accumulator
+            // given (the verified fn is the top fn of the law's lhs/rhs).
+            let verified_fd = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref());
             let other_args: Vec<String> = law
                 .givens
                 .iter()
@@ -3245,6 +3307,16 @@ pub fn emit_verify_law(
                 .map(|(i, g)| {
                     if i == list_given_idx {
                         format!("{}[1..]", list_param)
+                    } else if let Some(threaded) = verified_fd.and_then(|fd| {
+                        dafny_threaded_accumulator_arg(
+                            fd,
+                            &g.name,
+                            &law.givens[list_given_idx].name,
+                            &list_param,
+                            ctx,
+                        )
+                    }) {
+                        threaded
                     } else {
                         aver_name_to_dafny(&g.name)
                     }

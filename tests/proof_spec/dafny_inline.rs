@@ -123,3 +123,20 @@ fn proof_dafny_cites_earlier_helper_law() {
         "aver-rev-cite",
     );
 }
+
+#[test]
+fn proof_dafny_proves_list_accumulator_generalization() {
+    // The Dafny counterpart of Lean's `induction ... generalizing acc`: the
+    // inductive-hint self-call for a THREADED accumulator must recurse at the
+    // value the fold feeds it (`acc + xs[0]`), not the unchanged param. With the
+    // self-call at the threaded accumulator, Z3 closes `sumTR(xs, acc) == acc +
+    // sumSpec(xs)` as a real universal (and the multiplicative twin over `*`,
+    // which Z3's nonlinear arithmetic discharges with the same threaded hint).
+    assert_dafny_proves_inline(
+        "module SumAccGen\n    effects []\n\n\
+         fn sumTR(xs: List<Int>, acc: Int) -> Int\n    match xs\n        [] -> acc\n        [h, ..t] -> sumTR(t, acc + h)\n\n\
+         fn sumSpec(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [h, ..t] -> h + sumSpec(t)\n\n\
+         verify sumTR law accGeneralizes\n    given xs: List<Int> = [[], [1], [1, 2, 3]]\n    given acc: Int = [0, 5]\n    sumTR(xs, acc) => acc + sumSpec(xs)\n",
+        "aver-dafny-sumacc-gen",
+    );
+}
