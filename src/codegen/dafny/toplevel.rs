@@ -1139,7 +1139,13 @@ fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenC
         && crate::codegen::common::all_givens_are_singletons(law)
         && crate::codegen::common::law_rhs_is_independent_of_givens(law);
     let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
-    if singleton_const_rhs || crate::codegen::common::law_calls_unclassified_fn(law, &unclassified)
+    // Foreign accumulator-fold reference — kept in sync with the universal-lemma
+    // gate in `emit_verify_law` so the seed never references a lemma that gate
+    // omitted (a `fac(x) => qfac(x, 1)`-shaped law: `qfac` is now a classified
+    // structural `def`, but the law still can't close by simple induction).
+    if singleton_const_rhs
+        || crate::codegen::common::law_calls_unclassified_fn(law, &unclassified)
+        || crate::codegen::common::law_calls_foreign_accumulator_fold(ctx, law, &vb.fn_name)
     {
         return false;
     }
@@ -2691,7 +2697,16 @@ pub fn emit_verify_law(
 
     let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
     let calls_fuel_bounded = crate::codegen::common::law_calls_unclassified_fn(law, &unclassified);
-    if singleton_const_rhs || calls_fuel_bounded {
+    // A FOREIGN accumulator-fold reference is the same hazard now that the
+    // recursion classifier accepts threaded-accumulator inner loops: a
+    // `fac(x) => qfac(x, 1)`-shaped law (verified on `fac`, calling the now-
+    // classified `qfac`) can't close by simple induction and stays bounded, as
+    // it did when `qfac` was unclassified. The wrapper-over-recursion and
+    // tail-rec-fixed-base strategies have already returned their own support
+    // stack above, so they never reach this gate.
+    let calls_foreign_acc_fold =
+        crate::codegen::common::law_calls_foreign_accumulator_fold(ctx, law, &vb.fn_name);
+    if singleton_const_rhs || calls_fuel_bounded || calls_foreign_acc_fold {
         let reason = if singleton_const_rhs {
             "singleton-domain givens with constant RHS"
         } else {

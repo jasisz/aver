@@ -402,6 +402,61 @@ fn lean_proves_accumulator_generalizing_qrev_when_lake_is_available() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// The user-ADT twin of the qrev accumulator-generalizing leaf-reach: the same
+/// shape over a Peano `Nat` instead of a `List`. `triTR(n, acc)` recurses on
+/// the ADT `n` while THREADING `acc` (fed `plus(n, acc)`); the law
+/// `triTR(n, acc) = plus(triSpec(n), acc)` only closes if the IH is generalized
+/// over `acc`, so the backend must emit `induction n generalizing acc`. Two
+/// engine pieces combine here: the recursion classifier must accept the
+/// threaded non-scalar accumulator (so `triTR` emits as a structural `def`, not
+/// `partial def` → bounded sampling), and `emit_simple_induction` must thread
+/// the `generalizing acc` clause. Before both, this law fell to `native_decide`
+/// over its samples (`universal:false`).
+#[test]
+fn lean_proves_accumulator_generalizing_nat_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping nat accumulator-gen test: `lake` not available");
+        return;
+    }
+    let source = "module NatAccGen\n    intent = \"nat acc-generalization\"\n    effects []\n\n\
+        type Nat\n    Z\n    S(Nat)\n\n\
+        fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+        fn triTR(n: Nat, acc: Nat) -> Nat\n    match n\n        Nat.Z -> acc\n        Nat.S(m) -> triTR(m, plus(n, acc))\n\n\
+        fn triSpec(n: Nat) -> Nat\n    match n\n        Nat.Z -> Nat.Z\n        Nat.S(m) -> plus(n, triSpec(m))\n\n\
+        verify triTR law triTRAccGen\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    given acc: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    triTR(n, acc) => plus(triSpec(n), acc)\n";
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-nataccgen-src");
+    std::fs::create_dir_all(&src).expect("src dir");
+    std::fs::write(src.join("m.av"), source).expect("write");
+    let out = temp_output_dir("aver-nataccgen-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("aver proof ran");
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON:\n{}", format_output(&run)));
+    let summary: serde_json::Value = serde_json::from_str(json).expect("json");
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "accumulator-generalizing must close triTR(n,acc)=plus(triSpec(n),acc) on a user ADT\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// A law whose verified fn body propagates errors with `?` must still collect
 /// the `?`-wrapped calls into its unfold set. `sumSafe`'s body is
 /// `x = safe(a)?; y = safe(b)?; Ok(x + y)` — every call hides behind `?`

@@ -1654,6 +1654,60 @@ fn expr_calls_named(expr: &Spanned<Expr>, names: &HashSet<String>) -> bool {
     }
 }
 
+/// The pure recursive fns that THREAD an accumulator over a USER-ADT driver —
+/// a param fed a RECONSTRUCTED expression in every self-call
+/// (`param_threaded_in_recursion`) while NO param is a structural `List`
+/// (`single_list_structural_param_index` is `None`), the `triTR` / `qfac` /
+/// `qexp` shape. These are exactly the fns the recursion classifier learned to
+/// accept as structural `def`s (`single_adt_structural_param_index`): before, a
+/// growing accumulator left them unclassified, so [`law_calls_unclassified_fn`]
+/// bounded every law that referenced them; now they are classified and that gate
+/// no longer fires. A law verified ON such a fn closes by `induction …
+/// generalizing acc`, but a law that merely REFERENCES one (`fac(x) => qfac(x,
+/// 1)` verified on `fac`) still can't close by simple induction — it needs the
+/// inner fn's accumulator-decomposition lemma. The list-accumulator folds
+/// (`qrev`) are DELIBERATELY excluded: they were always `ListStructural`
+/// (classified), the fuel gate never bounded laws over them, and a consumer law
+/// `myRev(x) => Lib.qrev(x, [])` genuinely closes by citing the dep's proven
+/// `qrev` law — re-gating those would regress the cross-file law pool.
+pub fn accumulator_fold_fn_names(ctx: &CodegenContext) -> HashSet<String> {
+    use crate::codegen::recursion::detect::{
+        param_threaded_in_recursion, single_list_structural_param_index,
+    };
+    let threads_over_adt = |fd: &FnDef| -> bool {
+        single_list_structural_param_index(fd).is_none()
+            && (0..fd.params.len()).any(|i| param_threaded_in_recursion(fd, i))
+    };
+    ctx.fn_defs
+        .iter()
+        .chain(ctx.modules.iter().flat_map(|m| m.fn_defs.iter()))
+        .filter(|fd| threads_over_adt(fd))
+        .map(|fd| fd.name.clone())
+        .collect()
+}
+
+/// `true` iff `law`'s lhs/rhs calls a recursive accumulator-threading fn OTHER
+/// than `verified_fn` — the foreign-fold hazard (see
+/// [`accumulator_fold_fn_names`]). Such a law can't close by simple induction
+/// (it needs the inner fn's accumulator-decomposition lemma) and must stay
+/// bounded on BOTH backends, exactly as it did before the recursion classifier
+/// learned the threaded-accumulator shape. The verified fn is excluded so an
+/// accumulator-generalizing law verified ON the fold (`triTR(n, acc) =>
+/// plus(triSpec(n), acc)`) is NOT gated — it closes by `induction … generalizing
+/// acc`. Both Lean and Dafny consult this where they consult
+/// [`law_calls_unclassified_fn`], keeping the bounded decision in sync.
+pub fn law_calls_foreign_accumulator_fold(
+    ctx: &CodegenContext,
+    law: &crate::ast::VerifyLaw,
+    verified_fn: &str,
+) -> bool {
+    let foreign: HashSet<String> = accumulator_fold_fn_names(ctx)
+        .into_iter()
+        .filter(|n| n != verified_fn)
+        .collect();
+    law_calls_unclassified_fn(law, &foreign)
+}
+
 /// Issue #128: is the law's RHS independent of every given identifier?
 ///
 /// `checkRight L V R => Tree.Black Empty 1 Empty` — RHS mentions no
