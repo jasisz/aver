@@ -5130,6 +5130,13 @@ pub(super) fn cmd_proof(
             // evaluation path to go vacuous through).
             ctx.sample_expected = collect_verify_ground_truth(file, &module_root);
             cmd_proof_lean(file, output_dir, &mut ctx, verify_mode);
+            // Speculative-universal: a SINGLE-LIST conditional law cannot be
+            // statically classified as universal-closeable, so try each
+            // universally in one probe build and re-emit with the ones that
+            // CLOSED stated universally and the rest on their bounded fallback
+            // (try-universal, fall-back-to-sampled — analog of `--minimize` for
+            // the statement form). No-op when the file has no such candidate.
+            run_lean_speculative(file, output_dir, &mut ctx, verify_mode);
             // `--minimize`: learn each portfolio's winning branch from one
             // instrumented build, then re-emit collapsed (fail-safe — restores
             // the normal proof if the collapsed project does not build).
@@ -7219,6 +7226,137 @@ fn cmd_proof_lean(
 
     let build_hint = format!("cd {} && lake build", output_dir);
     write_codegen_output(file, output_dir, "Lean 4", &build_hint, &output);
+}
+
+/// Speculative-universal (Lean): the "try-universal, fall-back-to-sampled"
+/// statement-form decision for SINGLE-LIST conditional laws (Gap 1). A single
+/// list given with a `when` premise is too diverse to classify statically — the
+/// generic conditional driver closes some (sortedness, the per-element-fold
+/// shape) and `sorry`s others (the json roundtrips, whose conclusion is a
+/// String/parse equation the list-induction portfolio cannot peel). So the
+/// decision is made EMPIRICALLY, exactly as `--minimize` learns a portfolio's
+/// winning branch from one instrumented build:
+///
+/// 1. PROBE — state EVERY single-list candidate universally (floored with an
+///    `AVERSPEC_SORRY:<fn.law>` trace) and run one `lake build`. A candidate
+///    whose portfolio fell through to the floor surfaces its id in the log (it
+///    did not close). The bounded sample cross-checks still pass, so the probe
+///    build always succeeds (a `sorry` is a warning).
+/// 2. COMMIT — re-emit with the laws that CLOSED (`probed − failed`) stated
+///    universally and the rest reverted to their sound bounded sampled-domain
+///    statement.
+///
+/// No-op when the file has no single-list candidate (the probe emit records
+/// none — the byte-identical baseline is restored without a build, so the
+/// decomposed corpus pays nothing). Fail-safe: if the committed project does not
+/// build, the bounded baseline is restored. `lake`'s content-addressed cache
+/// keeps the probe + commit builds cheap.
+fn run_lean_speculative(
+    file: &str,
+    output_dir: &str,
+    ctx: &mut codegen::CodegenContext,
+    verify_mode: &super::cli::ProofVerifyMode,
+) {
+    use aver::ast::{TopLevel, VerifyKind};
+    use aver::codegen::lean::tactic_ir::speculative;
+    use std::process::Command;
+
+    // Cheap necessary-condition pre-filter: the speculative path only fires for a
+    // `when`-law with EXACTLY ONE `List<_>` given (the single-list shape —
+    // `other_lists == 0`). With no such law in the file the probe would admit
+    // nothing, so skip the extra emits + build entirely and leave the baseline
+    // untouched (a true no-op — the decomposed corpus pays nothing).
+    let has_single_list_candidate = ctx.items.iter().any(|item| {
+        let TopLevel::Verify(vb) = item else {
+            return false;
+        };
+        let VerifyKind::Law(law) = &vb.kind else {
+            return false;
+        };
+        law.when.is_some()
+            && law
+                .givens
+                .iter()
+                .filter(|g| g.type_name.trim().starts_with("List<"))
+                .count()
+                == 1
+    });
+    if !has_single_list_candidate {
+        return;
+    }
+
+    let lake_ok = Command::new("lake")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !lake_ok {
+        // Leave the baseline (already on disk) untouched.
+        return;
+    }
+    let build = |dir: &str| -> (bool, String) {
+        match Command::new("lake").arg("build").current_dir(dir).output() {
+            Ok(o) => (
+                o.status.success(),
+                format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&o.stdout),
+                    String::from_utf8_lossy(&o.stderr)
+                ),
+            ),
+            Err(_) => (false, String::new()),
+        }
+    };
+
+    // 1) PROBE emit — single-list conditionals stated universally with trace floors.
+    speculative::begin_probe();
+    cmd_proof_lean(file, output_dir, ctx, verify_mode);
+    let probed = speculative::probed_ids();
+    if probed.is_empty() {
+        // No single-list candidate — restore the byte-identical baseline (no
+        // build needed; the probe emit only differs on single-list laws).
+        speculative::clear();
+        cmd_proof_lean(file, output_dir, ctx, verify_mode);
+        return;
+    }
+
+    let (probe_ok, probe_out) = build(output_dir);
+    if !probe_ok {
+        // A `sorry` is only a warning, so the probe build succeeds even when
+        // every candidate fails to close — a HARD failure means a speculative
+        // statement did not elaborate, and the per-law verdict can't be trusted.
+        // Restore the bounded baseline rather than commit a guess.
+        speculative::clear();
+        cmd_proof_lean(file, output_dir, ctx, verify_mode);
+        return;
+    }
+    let failed = speculative::parse_failures(&probe_out);
+    let closed: std::collections::HashSet<String> = probed.difference(&failed).cloned().collect();
+
+    // 2) COMMIT re-emit — the laws that closed go universal, the rest fall back.
+    speculative::set_committed(closed.clone());
+    cmd_proof_lean(file, output_dir, ctx, verify_mode);
+
+    // 3) FAIL-SAFE verify — the committed project must still build.
+    let (commit_ok, _) = build(output_dir);
+    if !commit_ok {
+        speculative::clear();
+        cmd_proof_lean(file, output_dir, ctx, verify_mode);
+        eprintln!(
+            "{}",
+            "speculative-universal: committed proof did not build — restored the bounded baseline"
+                .yellow()
+        );
+    } else if !closed.is_empty() {
+        println!(
+            "{}",
+            format!(
+                "speculative-universal: proved {} single-list conditional law(s) universally",
+                closed.len()
+            )
+            .green()
+        );
+    }
 }
 
 /// `--minimize` (Lean): collapse each emitted `first | … | sorry` portfolio to

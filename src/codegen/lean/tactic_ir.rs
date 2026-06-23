@@ -487,6 +487,145 @@ pub mod minimize {
     }
 }
 
+/// The speculative-universal driver state — the "try-universal,
+/// fall-back-to-sampled" mechanism for SINGLE-LIST conditional laws (the Gap-1
+/// statement-form decision layer; analog of [`minimize`] but choosing the
+/// theorem's STATEMENT FORM, not collapsing a tactic portfolio).
+///
+/// A single-list `when`-law (zero partner lists — sortedness, the
+/// per-element-fold-with-Bool-fold-premise shape, json roundtrips) cannot be
+/// statically classified as "the generic conditional driver will close it
+/// universally": the shapes are too diverse. So the decision is made
+/// EMPIRICALLY by a probe build, exactly as `--minimize` learns the winning
+/// branch from one instrumented build:
+///   - [`begin_probe`] makes [`admits`] return `true` for EVERY such law (so the
+///     probe emit states each universally, floored with an `AVERSPEC_SORRY:<id>`
+///     trace) and records the admitted `fn.law` ids in a sink.
+///   - one `lake build` runs; a law whose portfolio fell through to the trace
+///     floor (didn't close) surfaces its id in the build log (see
+///     [`parse_failures`]).
+///   - [`set_committed`] is then given `probed − failures` (the laws that
+///     CLOSED). In the committed (Off) mode [`admits`] returns `true` only for
+///     that set, so the re-emit states the closed laws universally and the rest
+///     fall back to their sound bounded sampled-domain statement.
+///
+/// `COMMITTED` PERSISTS across the commit re-emit, any `--minimize` re-emit, and
+/// the final `--check` build (the recognizer is the single source of truth for
+/// the statement form, the `omit_domain` driver, the class marker, AND the proof
+/// emit — all keyed on [`admits`], so they always agree). The default state
+/// (`Off` + `COMMITTED = None`) admits nothing, leaving single-list conditionals
+/// on their current bounded fallback — byte-identical to before this mechanism.
+pub mod speculative {
+    use std::cell::RefCell;
+    use std::collections::HashSet;
+
+    #[derive(Clone, PartialEq)]
+    enum Mode {
+        Off,
+        Probe,
+    }
+
+    thread_local! {
+        // (mode, committed `fn.law` ids admitted in Off mode, probe sink).
+        static STATE: RefCell<(Mode, Option<HashSet<String>>, HashSet<String>)> =
+            RefCell::new((Mode::Off, None, HashSet::new()));
+    }
+
+    /// Enter the probe pass: [`admits`] returns `true` for every single-list
+    /// candidate (and records it), so the emit states each universally with an
+    /// `AVERSPEC_SORRY` trace floor. Clears the probe sink.
+    pub fn begin_probe() {
+        STATE.with(|s| {
+            let mut st = s.borrow_mut();
+            st.0 = Mode::Probe;
+            st.2 = HashSet::new();
+        });
+    }
+
+    /// Commit the empirically-determined set of laws that CLOSED universally:
+    /// switch to Off mode where [`admits`] returns `true` only for `closed`.
+    /// Persists through subsequent re-emits and the `--check` build.
+    pub fn set_committed(closed: HashSet<String>) {
+        STATE.with(|s| {
+            let mut st = s.borrow_mut();
+            st.0 = Mode::Off;
+            st.1 = Some(closed);
+        });
+    }
+
+    /// Full reset to the default (admit nothing) — the fail-safe path and the
+    /// no-candidate skip both restore byte-identical baseline emission.
+    pub fn clear() {
+        STATE.with(|s| *s.borrow_mut() = (Mode::Off, None, HashSet::new()));
+    }
+
+    /// Whether a single-list speculative law with this `fn.law` id should be
+    /// stated universally. In probe mode: always. In Off mode: only if it is in
+    /// the committed-closed set (`None` ⇒ admit nothing). Pure — does NOT record;
+    /// the probe sink is populated at the floor-emission site (see
+    /// [`record_probed`]) so it counts only laws that actually emit a trace floor.
+    pub fn admits(id: &str) -> bool {
+        STATE.with(|s| {
+            let st = s.borrow();
+            match st.0 {
+                Mode::Probe => true,
+                Mode::Off => st.1.as_ref().is_some_and(|set| set.contains(id)),
+            }
+        })
+    }
+
+    /// Whether a probe pass is active — the emit reads this to floor each
+    /// speculative portfolio with the `AVERSPEC_SORRY:<id>` trace instead of a
+    /// bare `sorry`, so a non-closing law is observable in the build log.
+    pub fn probing() -> bool {
+        STATE.with(|s| s.borrow().0 == Mode::Probe)
+    }
+
+    /// Record that this law actually EMITTED an `AVERSPEC_SORRY` trace floor in
+    /// the probe — i.e. its universal `∀`-theorem was emitted (not suppressed by
+    /// `skip_universal`) and can surface a failure. `closed = probed_ids −
+    /// parse_failures`, so the sink must hold exactly the laws that can trace,
+    /// never one whose theorem was dropped (which would never trace and be
+    /// miscounted "closed"). Called only under [`probing`].
+    pub fn record_probed(id: &str) {
+        STATE.with(|s| {
+            s.borrow_mut().2.insert(id.to_string());
+        });
+    }
+
+    /// The `fn.law` ids that emitted a probe trace floor (single-list candidates
+    /// whose universal `∀`-theorem was actually emitted). `closed = probed_ids −
+    /// parse_failures`.
+    pub fn probed_ids() -> HashSet<String> {
+        STATE.with(|s| s.borrow().2.clone())
+    }
+
+    /// Parse the `fn.law` ids whose speculative portfolio fell through to its
+    /// `AVERSPEC_SORRY:<id>` trace floor (did NOT close) from a `lake build` log.
+    /// `first` commits to the leftmost closing branch and never runs a later
+    /// branch's trace, so the marker surfaces IFF the portfolio reached its
+    /// sorry floor — a direct "this law did not close", no warning-location
+    /// mapping or separate `#print axioms` run required.
+    pub fn parse_failures(build_output: &str) -> HashSet<String> {
+        const MARKER: &str = "AVERSPEC_SORRY:";
+        let mut failed = HashSet::new();
+        for line in build_output.lines() {
+            let Some(pos) = line.find(MARKER) else {
+                continue;
+            };
+            let rest = &line[pos + MARKER.len()..];
+            let id: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+                .collect();
+            if !id.is_empty() {
+                failed.insert(id);
+            }
+        }
+        failed
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -645,6 +784,55 @@ mod tests {
             minimized.render(),
             vec!["intro a b".to_string(), "the_winner <;> omega".to_string()]
         );
+    }
+
+    #[test]
+    fn speculative_parse_failures_reads_fn_law_ids() {
+        // A single-list portfolio that fell through to its floor traces
+        // `AVERSPEC_SORRY:<fn.law>`; one that closed never runs the floor's
+        // trace, so its id is absent. The id allows dots and underscores.
+        let log = "\
+info: F.lean:50:5: AVERSPEC_SORRY:parseArrayElems.renderJsonListElemsRoundtrip
+info: F.lean:62:5: AVERSPEC_SORRY:parseObjFields.renderJsonEntriesFieldsRoundtrip
+warning: declaration uses 'sorry'
+";
+        let failed = super::speculative::parse_failures(log);
+        assert!(failed.contains("parseArrayElems.renderJsonListElemsRoundtrip"));
+        assert!(failed.contains("parseObjFields.renderJsonEntriesFieldsRoundtrip"));
+        assert_eq!(failed.len(), 2);
+        // A closed law (no trace) is not reported failed.
+        assert!(!failed.contains("sumList.sumAllZero"));
+    }
+
+    #[test]
+    fn speculative_admits_only_committed_in_off_mode() {
+        use super::speculative;
+        // Default: admit nothing (single-list conditionals stay on their bounded
+        // fallback — byte-identical to before the mechanism).
+        speculative::clear();
+        assert!(!speculative::admits("f.law"));
+        assert!(!speculative::probing());
+        // Probe: admit everything; the sink is populated by `record_probed` at
+        // the floor-emission site (not by `admits`), so it holds only laws that
+        // actually emitted a trace floor.
+        speculative::begin_probe();
+        assert!(speculative::probing());
+        assert!(speculative::admits("f.law"));
+        assert!(speculative::admits("g.other"));
+        assert!(speculative::probed_ids().is_empty());
+        speculative::record_probed("f.law");
+        speculative::record_probed("g.other");
+        assert!(speculative::probed_ids().contains("f.law"));
+        assert!(speculative::probed_ids().contains("g.other"));
+        // Commit: admit only the closed set, in Off mode.
+        let mut closed = std::collections::HashSet::new();
+        closed.insert("f.law".to_string());
+        speculative::set_committed(closed);
+        assert!(!speculative::probing());
+        assert!(speculative::admits("f.law"));
+        assert!(!speculative::admits("g.other"));
+        speculative::clear();
+        assert!(!speculative::admits("f.law"));
     }
 
     #[test]

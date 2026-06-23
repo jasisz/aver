@@ -1884,9 +1884,17 @@ pub(in crate::codegen::lean) fn recognize_conditional_inductive_generic(
         .enumerate()
         .filter(|(i, g)| *i != target_idx && g.type_name.trim().starts_with("List<"))
         .count();
-    if other_lists != 1 {
+    // The two-list (exactly one partner) shape is the proven binary recursion —
+    // always attempted universally (unchanged). The single-list shape (zero
+    // partners — sortedness, json roundtrips, the per-element-fold-with-Bool-fold
+    // premise) is the Gap-1 SPECULATIVE case: too diverse to classify statically
+    // (the generic portfolio closes some and `sorry`s others), so it is admitted
+    // only under the speculative probe / commit driver — try-universal, fall back
+    // to the bounded sampled statement. More than one partner declines outright.
+    if other_lists > 1 {
         return false;
     }
+    let single_list = other_lists == 0;
     // Exclusive with the bespoke arms (they run first; keep the `omit_domain`
     // gate single-valued so the statement driver and the emit agree).
     if recognize_conditional_comparison_bridge(law, ctx)
@@ -1902,7 +1910,29 @@ pub(in crate::codegen::lean) fn recognize_conditional_inductive_generic(
     // would `sorry`; declining keeps such a law on its sound bounded fallback.
     // This is the principle made structural: the generic driver proves a
     // conditional law THROUGH its Aver helper laws, never by guessing.
-    !earlier_law_lemmas(vb, law, ctx).is_empty()
+    if earlier_law_lemmas(vb, law, ctx).is_empty() {
+        return false;
+    }
+    if single_list {
+        // Class-1 recursion-incompatibility: a cone fn that DECREMENTS a co-given
+        // (a non-target given) synchronously with the list — `drop`/`take` over a
+        // free `Nat` (`prop_39`'s `elem(x, drop(y, z))`) — is not closed by plain
+        // induction on the target list (the cons IH lands at the wrong
+        // predecessor of the co-given), so it keeps its sound bounded fallback.
+        if law_recurses_on_cogiven(law, ctx, target_idx) {
+            return false;
+        }
+        // SPECULATIVE: a single-list conditional is admitted only under an active
+        // probe pass (admit all, to measure which close) or a commit that
+        // recorded THIS `fn.law` as one that closed universally. The default
+        // state admits nothing, so single-list conditionals stay byte-identical
+        // to their pre-mechanism bounded fallback.
+        let id = format!("{}.{}", vb.fn_name, law.name);
+        if !super::super::tactic_ir::speculative::admits(&id) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Close a conditional inductive law GENERICALLY: list induction on the
@@ -1975,6 +2005,23 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
     } else {
         format!("intro {} h_when", after.join(" "))
     };
+    // The `sorry` floor. Under the speculative PROBE pass it carries an
+    // `AVERSPEC_SORRY:<fn.law>` trace so a non-closing single-list portfolio is
+    // observable in the build log (Lean's `first` never runs the floor's trace
+    // when an earlier branch closes). Both induction arms share the floor: if
+    // EITHER arm falls through, the law did not close universally.
+    let floor = if super::super::tactic_ir::speculative::probing() && others.is_empty() {
+        // Record HERE (not at the recognizer's `admits`): the probe sink must
+        // hold only laws that actually emit this trace floor. A single-list
+        // candidate the recognizer admits but whose `∀`-theorem is then suppressed
+        // (`skip_universal` — e.g. a singleton-domain const-RHS law) emits no
+        // floor, never traces, and so must NOT be counted "closed".
+        let id = format!("{}.{}", vb.fn_name, law.name);
+        super::super::tactic_ir::speculative::record_probed(&id);
+        format!("    | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
+    } else {
+        "    | sorry".to_string()
+    };
     let mut body = vec![format!("  intro {}", before.join(" "))];
     body.extend([
         format!("  induction {target} with"),
@@ -1984,7 +2031,7 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         "    first".to_string(),
         format!("    | ({case_other}simp_all [{with_append}] <;> done)"),
         format!("    | (simp_all [{defs_pool}] <;> done)"),
-        "    | sorry".to_string(),
+        floor.clone(),
         "  | cons hd tl ih =>".to_string(),
         format!("    {arm_intro}"),
         format!("    {norm}"),
@@ -1996,7 +2043,12 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         format!("    | (simp only [{with_append}] <;> simp_all [{defs_pool}, h_when] <;> done)"),
         format!("    | (split <;> simp_all [{defs_pool}, h_when] <;> done)"),
         format!("    | (simp_all [{defs_pool}, h_when] <;> done)"),
-        "    | sorry".to_string(),
+        // Single-list per-element-fold shape (`when allZ(xs) -> sumN(xs) => Z`):
+        // the cons-head premise (`allZ (hd :: tl)` unfolds to a match on `hd`)
+        // needs the head split before the conditional IH applies. Fail-closed for
+        // a non-inductive head (`cases hd` on an `Int` fails, `first` advances).
+        format!("    | (cases hd <;> simp_all [{defs_pool}, h_when] <;> done)"),
+        floor,
     ]);
     Some(AutoProof {
         support_lines: Vec::new(),
@@ -2383,6 +2435,71 @@ fn find_list_induction_target(law: &VerifyLaw) -> Option<usize> {
     law.givens
         .iter()
         .position(|given| given.type_name.trim().starts_with("List<"))
+}
+
+/// Whether the law applies some fn that DECREMENTS a CO-GIVEN (a given other than
+/// the list induction `target_idx`) at the parameter position that fn recurses
+/// on — the drop/take-over-a-free-`Nat` shape. In `elem(x, drop(y, z))` the cone
+/// fn `drop` recurses by decrementing its first parameter (the `Nat` `y`, a
+/// co-given) in lockstep with peeling the list `z`; plain induction on the target
+/// list `z` does not track `y`'s decrement, so the cons IH lands at the wrong
+/// predecessor and the generic portfolio cannot close it. Such a single-list
+/// conditional must keep its sound bounded fallback rather than be admitted
+/// speculatively. Scans `lhs`, `rhs`, and the `when` premise; conservative
+/// (`param_decremented_in_recursion` only fires on the clean succ-binder shape).
+fn law_recurses_on_cogiven(law: &VerifyLaw, ctx: &CodegenContext, target_idx: usize) -> bool {
+    use crate::ast::Expr;
+    let cogivens: BTreeSet<&str> = law
+        .givens
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != target_idx)
+        .map(|(_, g)| g.name.as_str())
+        .collect();
+    fn scan(
+        expr: &crate::ast::Spanned<Expr>,
+        cogivens: &BTreeSet<&str>,
+        ctx: &CodegenContext,
+    ) -> bool {
+        match &expr.node {
+            Expr::FnCall(callee, args) => {
+                if let Some(name) = super::shared::expr_dotted_name(callee)
+                    && let Some(fd) =
+                        ctx.fn_def_by_name(&name, ctx.active_module_scope().as_deref())
+                {
+                    for (i, arg) in args.iter().enumerate() {
+                        let arg_is_cogiven = matches!(
+                            &arg.node,
+                            Expr::Ident(n) | Expr::Resolved { name: n, .. } if cogivens.contains(n.as_str())
+                        );
+                        if arg_is_cogiven
+                            && crate::codegen::recursion::detect::param_decremented_in_recursion(
+                                fd, i,
+                            )
+                        {
+                            return true;
+                        }
+                    }
+                }
+                args.iter().any(|a| scan(a, cogivens, ctx)) || scan(callee, cogivens, ctx)
+            }
+            Expr::Attr(e, _) | Expr::Neg(e) | Expr::ErrorProp(e) => scan(e, cogivens, ctx),
+            Expr::BinOp(_, l, r) => scan(l, cogivens, ctx) || scan(r, cogivens, ctx),
+            Expr::Constructor(_, payload) => {
+                payload.as_ref().is_some_and(|e| scan(e, cogivens, ctx))
+            }
+            Expr::List(es) | Expr::Tuple(es) => es.iter().any(|e| scan(e, cogivens, ctx)),
+            Expr::Match { subject, arms } => {
+                scan(subject, cogivens, ctx)
+                    || arms.iter().any(|arm| scan(&arm.body, cogivens, ctx))
+            }
+            _ => false,
+        }
+    }
+    [Some(&law.lhs), Some(&law.rhs), law.when.as_ref()]
+        .into_iter()
+        .flatten()
+        .any(|e| scan(e, &cogivens, ctx))
 }
 
 /// Which map query a fold-homomorphism law inspects on the map built by the
