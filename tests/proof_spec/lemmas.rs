@@ -567,6 +567,55 @@ fn dafny_omits_user_adt_accumulator_generalizing_without_error() {
     );
 }
 
+/// MULTIPLICATIVE accumulator-generalization over a `List<Int>` (`prodTR(xs,
+/// acc) => acc * prodSpec xs`). After the IH the residual is `(acc * h) * p =
+/// acc * (h * p)` — pure `Int.*` associativity/commutativity that `omega`
+/// (linear only) cannot decide. The generalizing closer must inject the core
+/// `Int.mul_*` AC lemmas.
+#[test]
+fn lean_proves_multiplicative_list_accumulator_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping list-mul accumulator test: `lake` not available");
+        return;
+    }
+    let source = "module ListProdAcc\n    intent = \"list multiplicative accumulator-generalization\"\n    effects []\n\n\
+        fn prodTR(xs: List<Int>, acc: Int) -> Int\n    match xs\n        [] -> acc\n        [h, ..t] -> prodTR(t, acc * h)\n\n\
+        fn prodSpec(xs: List<Int>) -> Int\n    match xs\n        [] -> 1\n        [h, ..t] -> h * prodSpec(t)\n\n\
+        verify prodTR law accGeneralizes\n    given xs: List<Int> = [[], [2], [2, 3], [4, 5, 6]]\n    given acc: Int = [1, 2, 3]\n    prodTR(xs, acc) => acc * prodSpec(xs)\n";
+    let summary = proof_check_summary(source, "lean", "aver-listprodacc");
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "the multiplicative List accumulator-generalization must close via the Int.mul AC closer\n{summary}"
+    );
+}
+
+/// MULTIPLICATIVE accumulator-generalization over a user Peano `Nat`
+/// (`factTR(n, acc) => mul(factSpec n, acc)`). The closer must drop the bridged
+/// user `mul`/`plus` defs (unfolding them alongside their `= *`/`= +` bridges
+/// strands the goal) and close the nonlinear residual by the core `Nat.mul_*`
+/// AC normal form — the multiplicative twin of the additive Nat win.
+#[test]
+fn lean_proves_multiplicative_nat_accumulator_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping nat-mul accumulator test: `lake` not available");
+        return;
+    }
+    let source = "module FactAccGen\n    intent = \"nat multiplicative accumulator-generalization\"\n    effects []\n\n\
+        type Nat\n    Z\n    S(Nat)\n\n\
+        fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+        fn mul(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> Nat.Z\n        Nat.S(z) -> plus(y, mul(z, y))\n\n\
+        fn factTR(n: Nat, acc: Nat) -> Nat\n    match n\n        Nat.Z -> acc\n        Nat.S(m) -> factTR(m, mul(n, acc))\n\n\
+        fn factSpec(n: Nat) -> Nat\n    match n\n        Nat.Z -> Nat.S(Nat.Z)\n        Nat.S(m) -> mul(n, factSpec(m))\n\n\
+        verify factTR law accGeneralizes\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z)), Nat.S(Nat.S(Nat.S(Nat.Z)))]\n    given acc: Nat = [Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    factTR(n, acc) => mul(factSpec(n), acc)\n";
+    let summary = proof_check_summary(source, "lean", "aver-factaccgen");
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "the multiplicative Nat accumulator-generalization must close via the dropped-def + Nat.mul AC closer\n{summary}"
+    );
+}
+
 /// A law whose verified fn body propagates errors with `?` must still collect
 /// the `?`-wrapped calls into its unfold set. `sumSafe`'s body is
 /// `x = safe(a)?; y = safe(b)?; Ok(x + y)` — every call hides behind `?`
