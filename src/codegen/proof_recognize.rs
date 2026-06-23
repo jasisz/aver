@@ -549,6 +549,18 @@ impl NatCompareKind {
         }
     }
 
+    /// The Prop the FALSE bridge maps `f a b = false` onto — the complement of
+    /// `prop_op`, written in the `omega`-ready form: `¬(a ≤ b)` is `b < a`,
+    /// `¬(a < b)` is `b ≤ a`, `¬(a = b)` is `a ≠ b`. Used to bridge a NEGATED
+    /// premise (`when Bool.not(le a b)`) into a linear-`Nat` fact.
+    pub(crate) fn false_prop(self) -> &'static str {
+        match self {
+            NatCompareKind::Le => "b < a",
+            NatCompareKind::Lt => "b ≤ a",
+            NatCompareKind::Eq => "a ≠ b",
+        }
+    }
+
     /// The bridge theorem's name suffix (kept distinct per relation so two
     /// bridges in one law never collide, and the both-args rung can spot them).
     pub(crate) fn bridge_suffix(self) -> &'static str {

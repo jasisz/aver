@@ -1637,3 +1637,27 @@ fn lean_escape_roundtrip_template_regression_degrades_to_caught_sorry_when_lake_
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+/// Negated-premise comparison bridge (`le-totality`: `when Bool.not(le a b)`
+/// -> `le b a => true`). The `(le a b = true) = (a ≤ b)` bridge cannot rewrite
+/// the negated hypothesis `(!le a b) = true`, so the emitter adds the FALSE
+/// bridge `(le a b = false) = (b < a)`, normalizes the Bool negation, and closes
+/// the linear residual with `omega`. Before this the negated premise was
+/// rejected and the law stayed bounded (`universal:false`).
+#[test]
+fn lean_proves_negated_premise_comparison_bridge_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping negated-premise bridge test: `lake` not available");
+        return;
+    }
+    let source = "module LeTotal\n    intent = \"not(le a b) implies le b a\"\n    effects []\n\n\
+        type Nat\n    Z\n    S(Nat)\n\n\
+        fn le(x: Nat, y: Nat) -> Bool\n    match x\n        Nat.Z -> true\n        Nat.S(z) -> match y\n            Nat.Z -> false\n            Nat.S(w) -> le(z, w)\n\n\
+        verify le law leTotality\n    given a: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    given b: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    when Bool.not(le(a, b))\n    le(b, a) => true\n";
+    let summary = proof_check_summary(source, "lean", "aver-letotality");
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "the negated-premise comparison bridge must close le-totality as a universal\n{summary}"
+    );
+}
