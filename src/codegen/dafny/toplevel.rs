@@ -881,6 +881,83 @@ fn dafny_threaded_accumulator_arg(
     Some(rendered)
 }
 
+/// Datatype-induction inductive hint for a law over a recursive USER ADT
+/// (`triTR(n, acc) => plus(triSpec(n), acc)`), the Dafny counterpart of Lean's
+/// `induction <n> generalizing acc`. Mirrors the verified fn's own `match` on
+/// the driver given: each constructor arm that contains a self-call recurses the
+/// LEMMA at that self-call's arguments (so the recursion lands on the field
+/// predecessor while the accumulator is threaded exactly as the fold feeds it).
+/// The cited commutativity/associativity laws (hoisted as `forall` facts above)
+/// then discharge the residual. Returns the `match … { … }` body lines, or
+/// `None` when the fn does not match the given or an arm is not a constructor
+/// pattern. The lemma's params are the law givens in the fn's parameter order
+/// (the law's lhs is `fn(givens…)`), so the self-call args render directly.
+fn dafny_datatype_inductive_hint(
+    fd: &FnDef,
+    given_name: &str,
+    lemma_name: &str,
+    ctx: &CodegenContext,
+) -> Option<Vec<String>> {
+    use crate::codegen::recursion::detect::{call_matches, collect_calls_from_expr};
+    let [Stmt::Expr(body)] = fd.body.stmts() else {
+        return None;
+    };
+    let Expr::Match { subject, arms } = &body.node else {
+        return None;
+    };
+    if !matches!(&subject.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == given_name)
+    {
+        return None;
+    }
+    let given_dafny = aver_name_to_dafny(given_name);
+    let mut lines = vec![format!("  match {} {{", given_dafny)];
+    for arm in arms {
+        let Pattern::Constructor(cname, binders) = &arm.pattern else {
+            return None;
+        };
+        let short = cname.rsplit('.').next().unwrap_or(cname);
+        let binder_str = if binders.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "({})",
+                binders
+                    .iter()
+                    .map(|b| aver_name_to_dafny(b))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        // Recurse the lemma at each self-call's arguments (the predecessor driver
+        // plus the threaded accumulator), rendered in the lemma's binders.
+        let mut calls = Vec::new();
+        collect_calls_from_expr(&arm.body, &mut calls);
+        let recs: Vec<String> = calls
+            .iter()
+            .filter(|(n, _)| call_matches(n, &fd.name))
+            .map(|(_, args)| {
+                let rendered: Vec<String> = args
+                    .iter()
+                    .map(|x| emit_expr_legacy(x, ctx, None))
+                    .collect();
+                format!("{}({});", lemma_name, rendered.join(", "))
+            })
+            .collect();
+        if recs.is_empty() {
+            lines.push(format!("    case {}{} =>", short, binder_str));
+        } else {
+            lines.push(format!(
+                "    case {}{} => {}",
+                short,
+                binder_str,
+                recs.join(" ")
+            ));
+        }
+    }
+    lines.push("  }".to_string());
+    Some(lines)
+}
+
 /// (`y` -> `y[1..]`) when guarding a conditional list lemma's recursive call.
 /// String-literal aware: an occurrence INSIDE a `"…"` literal (where the same
 /// spelling is just text, e.g. a premise comparing against `"y"`) is left
@@ -1263,12 +1340,11 @@ fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenC
     let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
     // Accumulator-fold reference — kept in sync with the universal-lemma gate in
     // `emit_verify_law` so the seed never references a lemma that gate omitted.
-    // Dafny gates ANY fold reference (the verified fn included): it has no
-    // `induction … generalizing acc` emit, so even a law verified ON the fold
-    // stays sample-only here.
+    // A foreign fold, or a self-fold whose universal can't close here (no
+    // algebra helpers for its combine fn), stays sample-only.
     if singleton_const_rhs
         || crate::codegen::common::law_calls_unclassified_fn(law, &unclassified)
-        || crate::codegen::common::law_calls_any_accumulator_fold(ctx, law)
+        || crate::codegen::common::dafny_should_bound_accumulator_fold(ctx, law, &vb.fn_name)
     {
         return false;
     }
@@ -2820,15 +2896,16 @@ pub fn emit_verify_law(
 
     let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
     let calls_fuel_bounded = crate::codegen::common::law_calls_unclassified_fn(law, &unclassified);
-    // An accumulator-fold reference (the verified fn INCLUDED — see
-    // `law_calls_any_accumulator_fold`). Dafny has no `induction … generalizing
-    // acc` emit, so neither a `fac(x) => qfac(x, 1)` reference NOR a law verified
-    // ON the fold can close its universal here; both stay sample-only, exactly as
-    // they did when the fold was unclassified. The wrapper-over-recursion and
-    // tail-rec-fixed-base strategies have already returned their own support stack
-    // above, so they never reach this gate.
-    let calls_acc_fold = crate::codegen::common::law_calls_any_accumulator_fold(ctx, law);
-    if singleton_const_rhs || calls_fuel_bounded || calls_acc_fold {
+    // An accumulator-fold reference that can't close here: a FOREIGN fold (`fac(x)
+    // => qfac(x, 1)` needs `qfac`'s own decomposition lemma), or a Nat self-fold
+    // whose combine fn has no commutativity/associativity helper laws (Z3 can't
+    // derive ADT algebra). A self-fold WITH those helpers attempts and closes via
+    // the datatype-induction hint. The wrapper-over-recursion and tail-rec-fixed-
+    // base strategies have already returned their own support stack above, so they
+    // never reach this gate.
+    let bound_acc_fold =
+        crate::codegen::common::dafny_should_bound_accumulator_fold(ctx, law, &vb.fn_name);
+    if singleton_const_rhs || calls_fuel_bounded || bound_acc_fold {
         let reason = if singleton_const_rhs {
             "singleton-domain givens with constant RHS"
         } else if calls_fuel_bounded {
@@ -3454,6 +3531,24 @@ pub fn emit_verify_law(
                 }
             }
             lines.push("  }".to_string());
+        }
+    } else if law.when.is_none()
+        && crate::codegen::common::accumulator_fold_fn_names(ctx).contains(&vb.fn_name)
+        && let Some(fd) = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())
+    {
+        // User-ADT accumulator-generalization (`triTR(n, acc) => plus(triSpec(n),
+        // acc)`). The gate only reaches here when this self-fold is closeable
+        // (`dafny_should_bound_accumulator_fold` is false — its combine fn has the
+        // commutativity/associativity helpers), so emit the datatype-induction
+        // hint mirroring the fold's `match` on its driver given. The cited algebra
+        // (forall-hoisted above) discharges the residual.
+        let lemma_name = format!("{}_{}", fn_name, law_name);
+        if let Some(hint) = law
+            .givens
+            .iter()
+            .find_map(|g| dafny_datatype_inductive_hint(fd, &g.name, &lemma_name, ctx))
+        {
+            lines.extend(hint);
         }
     } else if law
         .when

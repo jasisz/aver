@@ -1722,6 +1722,162 @@ fn ctx_type_is_recursive_sum(ctx: &CodegenContext, type_name: &str) -> bool {
         })
 }
 
+/// The user fn an accumulator fold COMBINES with — the head of the threaded
+/// accumulator argument in its single self-call (`plus` of `triTR(m, plus(n,
+/// acc))`, `mul` of `factTR(m, mul(n, acc))`). `None` for a non-fold or a
+/// non-`FnCall` accumulator step (a builtin `+`/`*` step lowers to a `BinOp`,
+/// not a user fn, and the List corner needs no algebraic helpers).
+fn accfold_combine_fn(fd: &FnDef) -> Option<String> {
+    use crate::ast::Expr;
+    use crate::codegen::recursion::detect::{
+        call_matches, collect_calls_from_body, param_threaded_in_recursion,
+    };
+    let acc_idx = (0..fd.params.len()).find(|&i| param_threaded_in_recursion(fd, i))?;
+    let calls: Vec<Vec<&Spanned<Expr>>> = collect_calls_from_body(fd.body.as_ref())
+        .into_iter()
+        .filter(|(name, _)| call_matches(name, &fd.name))
+        .map(|(_, args)| args)
+        .collect();
+    let acc_arg = calls.first()?.get(acc_idx).copied()?;
+    let Expr::FnCall(callee, _) = &acc_arg.node else {
+        return None;
+    };
+    expr_to_dotted_name(&callee.node)
+}
+
+/// `e` is `fn(arg0, arg1, …)` with each arg the bare ident named in `arg_names`.
+fn call_args_are_idents(e: &Spanned<Expr>, fn_name: &str, arg_names: &[&str]) -> bool {
+    let Expr::FnCall(callee, args) = &e.node else {
+        return false;
+    };
+    expr_to_dotted_name(&callee.node).as_deref() == Some(fn_name)
+        && args.len() == arg_names.len()
+        && args.iter().zip(arg_names).all(
+            |(a, n)| matches!(&a.node, Expr::Ident(x) | Expr::Resolved { name: x, .. } if x == n),
+        )
+}
+
+/// `true` iff `vb` is a commutativity law for `combine`: `combine(a, b) =>
+/// combine(b, a)` over two givens, no premise.
+fn law_is_commutativity(vb: &VerifyBlock, combine: &str) -> bool {
+    let crate::ast::VerifyKind::Law(law) = &vb.kind else {
+        return false;
+    };
+    if law.givens.len() != 2 || law.when.is_some() {
+        return false;
+    }
+    let a = law.givens[0].name.as_str();
+    let b = law.givens[1].name.as_str();
+    (call_args_are_idents(&law.lhs, combine, &[a, b])
+        && call_args_are_idents(&law.rhs, combine, &[b, a]))
+        || (call_args_are_idents(&law.lhs, combine, &[b, a])
+            && call_args_are_idents(&law.rhs, combine, &[a, b]))
+}
+
+/// `true` iff `vb` is an associativity law for `combine`: `combine(combine(a,
+/// b), c) => combine(a, combine(b, c))` over three givens, no premise (either
+/// nesting may be on the lhs).
+fn law_is_associativity(vb: &VerifyBlock, combine: &str) -> bool {
+    let crate::ast::VerifyKind::Law(law) = &vb.kind else {
+        return false;
+    };
+    if law.givens.len() != 3 || law.when.is_some() {
+        return false;
+    }
+    let a = law.givens[0].name.as_str();
+    let b = law.givens[1].name.as_str();
+    let c = law.givens[2].name.as_str();
+    // `combine(combine(a, b), c)` — outer call, inner first arg.
+    let nested = |e: &Spanned<Expr>| -> bool {
+        let Expr::FnCall(callee, args) = &e.node else {
+            return false;
+        };
+        expr_to_dotted_name(&callee.node).as_deref() == Some(combine)
+            && args.len() == 2
+            && call_args_are_idents(&args[0], combine, &[a, b])
+            && matches!(&args[1].node, Expr::Ident(x) | Expr::Resolved { name: x, .. } if x == c)
+    };
+    // `combine(a, combine(b, c))` — outer call, inner second arg.
+    let flat = |e: &Spanned<Expr>| -> bool {
+        let Expr::FnCall(callee, args) = &e.node else {
+            return false;
+        };
+        expr_to_dotted_name(&callee.node).as_deref() == Some(combine)
+            && args.len() == 2
+            && matches!(&args[0].node, Expr::Ident(x) | Expr::Resolved { name: x, .. } if x == a)
+            && call_args_are_idents(&args[1], combine, &[b, c])
+    };
+    (nested(&law.lhs) && flat(&law.rhs)) || (nested(&law.rhs) && flat(&law.lhs))
+}
+
+/// `true` iff a Nat accumulator-generalizing law verified ON `verified_fn` can
+/// CLOSE its universal on Dafny. Unlike Lean (which bridges the user monoid fn
+/// to builtin `Nat` arithmetic that Z3 knows is associative/commutative), Dafny
+/// sees the user `plus` / `mul` over the ADT as opaque, so the datatype-induction
+/// proof only discharges when the file ALSO provides commutativity AND
+/// associativity laws for the fold's combine fn — which the generic driver
+/// proves and cites. Absent those helpers the universal would ERROR (Dafny
+/// cannot sorry), so it must stay sample-only. The List corner never reaches
+/// here (its accumulator combine is a builtin `BinOp`, so `accfold_combine_fn`
+/// is `None`, and list folds are excluded from `accumulator_fold_fn_names`).
+pub fn nat_accfold_self_closeable(ctx: &CodegenContext, verified_fn: &str) -> bool {
+    if !accumulator_fold_fn_names(ctx).contains(verified_fn) {
+        return false;
+    }
+    let Some(fd) = ctx.fn_def_by_name(verified_fn, ctx.active_module_scope().as_deref()) else {
+        return false;
+    };
+    let Some(combine) = accfold_combine_fn(fd) else {
+        return false;
+    };
+    // Restrict to an ADDITIVE monoid combine (`plus`: base arm returns the 2nd
+    // param). Its commutativity / associativity prove generically by structural
+    // induction, so comm+assoc helpers are SUFFICIENT to close the accGen. A
+    // multiplicative combine (`mul`: base arm returns the zero constructor) also
+    // needs distributivity — comm+assoc alone do not even prove there — so it
+    // stays sample-only rather than ungating into a Z3 error.
+    if !ctx
+        .fn_def_by_name(&combine, ctx.active_module_scope().as_deref())
+        .is_some_and(combine_is_additive_monoid)
+    {
+        return false;
+    }
+    let laws = || {
+        ctx.items
+            .iter()
+            .filter_map(|i| match i {
+                TopLevel::Verify(vb) => Some(vb),
+                _ => None,
+            })
+            .chain(ctx.modules.iter().flat_map(|m| m.verify_laws.iter()))
+    };
+    let has_comm = laws().any(|vb| law_is_commutativity(vb, &combine));
+    let has_assoc = laws().any(|vb| law_is_associativity(vb, &combine));
+    has_comm && has_assoc
+}
+
+/// `true` iff `fd` is a 2-param ADDITIVE-monoid fn — some base (nullary-
+/// constructor) match arm returns the second parameter unchanged (`plus`'s
+/// `Z -> y`). A multiplicative monoid's base arm returns the zero constructor
+/// (`mul`'s `Z -> Z`) instead, so it fails this test.
+fn combine_is_additive_monoid(fd: &FnDef) -> bool {
+    use crate::ast::{Expr, Pattern, Stmt};
+    if fd.params.len() != 2 {
+        return false;
+    }
+    let second = fd.params[1].0.as_str();
+    let [Stmt::Expr(body)] = fd.body.stmts() else {
+        return false;
+    };
+    let Expr::Match { arms, .. } = &body.node else {
+        return false;
+    };
+    arms.iter().any(|arm| {
+        matches!(&arm.pattern, Pattern::Constructor(_, binders) if binders.is_empty())
+            && matches!(&arm.body.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == second)
+    })
+}
+
 /// `true` iff `law`'s lhs/rhs calls a recursive accumulator-threading fn OTHER
 /// than `verified_fn` — the foreign-fold hazard (see
 /// [`accumulator_fold_fn_names`]). Such a law can't close by simple induction
@@ -1744,15 +1900,27 @@ pub fn law_calls_foreign_accumulator_fold(
     law_calls_unclassified_fn(law, &foreign)
 }
 
-/// `true` iff `law`'s lhs/rhs calls ANY recursive accumulator-threading fold,
-/// the verified fn INCLUDED. Dafny consults this (not the foreign-only variant):
-/// it lacks the `induction … generalizing acc` emit the Lean backend gained, so
-/// even a law verified ON the fold cannot close its universal there — it stays
-/// sample-only, exactly as it did when the fold was unclassified. Excluding the
-/// verified fn (as Lean does) would let Dafny ATTEMPT an empty-body universal
-/// lemma that Z3 rejects, turning a clean omission into a hard verify error.
-pub fn law_calls_any_accumulator_fold(ctx: &CodegenContext, law: &crate::ast::VerifyLaw) -> bool {
-    law_calls_unclassified_fn(law, &accumulator_fold_fn_names(ctx))
+/// Dafny's bound-vs-attempt decision for a law touching an accumulator fold,
+/// now that the Dafny backend HAS a datatype-induction generalizing emit. Bound
+/// (sample-only) when:
+///   * the law references a FOREIGN fold (needs that fold's own decomposition
+///     lemma, never available — the `fac(x) => qfac(x, 1)` shape), OR
+///   * the law is verified ON a Nat fold whose universal cannot close here
+///     (`nat_accfold_self_closeable` is false — no commutativity / associativity
+///     helper laws for the combine fn, which Z3 needs over the opaque ADT).
+///
+/// A self-fold WITH those helpers is NOT bound: the datatype-induction hint plus
+/// the cited algebra discharge it as a real universal. The List corner is never
+/// in `accumulator_fold_fn_names`, so its accumulator law always attempts (and
+/// closes — builtin `Int` arithmetic needs no helper).
+pub fn dafny_should_bound_accumulator_fold(
+    ctx: &CodegenContext,
+    law: &crate::ast::VerifyLaw,
+    verified_fn: &str,
+) -> bool {
+    law_calls_foreign_accumulator_fold(ctx, law, verified_fn)
+        || (accumulator_fold_fn_names(ctx).contains(verified_fn)
+            && !nat_accfold_self_closeable(ctx, verified_fn))
 }
 
 /// Issue #128: is the law's RHS independent of every given identifier?

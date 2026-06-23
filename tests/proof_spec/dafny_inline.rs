@@ -157,3 +157,27 @@ fn proof_dafny_accumulator_hint_handles_mangled_cons_binder() {
         "aver-dafny-uhead-acc",
     );
 }
+
+#[test]
+fn proof_dafny_proves_nat_additive_accumulator_via_algebra_helpers() {
+    // User-ADT accumulator-generalization on Dafny (`triTR(n, acc) =>
+    // plus(triSpec(n), acc)`): the datatype-induction hint mirrors the fold's
+    // `match` on its driver and recurses at the threaded accumulator, while the
+    // file's commutativity/associativity helper laws for `plus` (which prove
+    // generically) supply the algebra Z3 cannot derive over the opaque ADT. The
+    // smart gate only ungates this self-fold because those additive helpers are
+    // present.
+    assert_dafny_proves_inline(
+        "module NatTriAccGen\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         fn triTR(n: Nat, acc: Nat) -> Nat\n    match n\n        Nat.Z -> acc\n        Nat.S(m) -> triTR(m, plus(n, acc))\n\n\
+         fn triSpec(n: Nat) -> Nat\n    match n\n        Nat.Z -> Nat.Z\n        Nat.S(m) -> plus(n, triSpec(m))\n\n\
+         verify plus law plusZeroR\n    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    plus(x, Nat.Z) => x\n\n\
+         verify plus law plusSuccR\n    given x: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given y: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    plus(x, Nat.S(y)) => Nat.S(plus(x, y))\n\n\
+         verify plus law plusComm\n    given a: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given b: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    plus(a, b) => plus(b, a)\n\n\
+         verify plus law plusAssoc\n    given a: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given b: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given c: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    plus(plus(a, b), c) => plus(a, plus(b, c))\n\n\
+         verify triTR law accGeneralizes\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    given acc: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    triTR(n, acc) => plus(triSpec(n), acc)\n",
+        "aver-dafny-nat-tri-accgen",
+    );
+}
