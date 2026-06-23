@@ -2198,15 +2198,6 @@ fn classify_law_strategy(
 ) -> crate::ir::ProofStrategy {
     use crate::ir::ProofStrategy;
 
-    // Match-dispatcher fold equivalence (stage 8c of #232) — two
-    // self-recursive `MatchDispatcherFold` fns over the same list
-    // param. Closes by structural induction on `xs` + `omega` on
-    // each arm.
-    if law.when.is_none()
-        && let Some(s) = detect_match_dispatcher_fold_equivalence(law, fn_name, inputs)
-    {
-        return s;
-    }
     // Result-pipeline chain equivalence (stage 8b of #232) — `?`
     // propagation `chain_qm(x)` vs nested-match `chain_manual(x)`.
     // Both sides unfold to the same nested match; the proof closes

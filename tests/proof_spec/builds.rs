@@ -196,11 +196,11 @@ fn proof_dafny_verifies_aliased_peano_when_dafny_is_available() {
 
 #[test]
 fn proof_dafny_verifies_list_length_fold_when_dafny_is_available() {
-    // Stage 8c of #232: `ProofStrategy::MatchDispatcherFold` — two
-    // structural list folds (`1 + length(t)` vs `length(t) + 1`)
-    // closing by induction on `xs`. Dafny's default Induction path
-    // already verifies this shape; the explicit strategy makes the
-    // recognition observable in proof_ir.
+    // Two structural list folds (`1 + length(t)` vs `length(t) + 1`)
+    // closing by induction on `xs`. The generic structural-induction
+    // path verifies this shape on both backends (the bespoke
+    // `MatchDispatcherFold` strategy that used to pin it was removed as
+    // redundant — the generic driver subsumes it).
     assert_dafny_verifies(
         "examples/data/list_length_fold.av",
         "aver-dafny-list-length-fold",
@@ -209,8 +209,9 @@ fn proof_dafny_verifies_list_length_fold_when_dafny_is_available() {
 
 #[test]
 fn proof_export_builds_list_length_fold_when_lake_is_available() {
-    // Lean template: `induction xs with | nil => simp | cons => simp;
-    // omega`. The omega discharge handles `1 + x = x + 1`.
+    // The generic list-induction ladder closes it: `induction xs with
+    // | nil => simp | cons => simp_all; omega`, the omega discharge
+    // handling `1 + x = x + 1`. Sorry budget 0.
     assert_proof_builds_with_sorry_budget(
         "examples/data/list_length_fold.av",
         "aver-proof-list-length-fold",
