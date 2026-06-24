@@ -2075,11 +2075,18 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
     // true` a `false`/`¬(… = true)` split branch produces — which `solve_by_elim`
     // cannot construct without an explicit intro. Proved by `cases`, kernel-clean.
     // Law-scoped names avoid `_law_` (so the audit never credits them as a main
-    // law) and collisions across siblings. Emitted only for the wrapper shape.
+    // law). Emitted only for the wrapper shape. The uid carries the verify block's
+    // source LINE because the bare `{fn}_{law}` join is ambiguous — a fn named
+    // `X_Y` with law `Z` and a fn `X` with law `Y_Z` both yield `X_Y_Z`, and a
+    // duplicate `private theorem` is a HARD Lean error that fails the probe build
+    // and silently degrades the WHOLE module to its bounded fallback. The line is
+    // unique per law block, so it disambiguates any such pair (these adapters are
+    // content-identical across laws; only their names must stay distinct).
     let law_uid = format!(
-        "{}_{}",
+        "{}_{}_L{}",
         aver_name_to_lean(&vb.fn_name),
-        aver_name_to_lean(&law.name)
+        aver_name_to_lean(&law.name),
+        vb.line
     );
     let and_intro = format!("{law_uid}_andTrue");
     let not_false = format!("{law_uid}_notTrueOfFalse");
