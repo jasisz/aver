@@ -7261,27 +7261,26 @@ fn run_lean_speculative(
     use aver::codegen::lean::tactic_ir::speculative;
     use std::process::Command;
 
-    // Cheap necessary-condition pre-filter: the speculative path only fires for a
-    // `when`-law with EXACTLY ONE `List<_>` given (the single-list shape —
-    // `other_lists == 0`). With no such law in the file the probe would admit
-    // nothing, so skip the extra emits + build entirely and leave the baseline
-    // untouched (a true no-op — the decomposed corpus pays nothing).
-    let has_single_list_candidate = ctx.items.iter().any(|item| {
+    // Cheap necessary-condition pre-filter: the speculative path fires for a
+    // `when`-law with ONE or TWO `List<_>` givens (the single-list and two-list
+    // conditional-inductive shapes the generic driver probes). With no such law
+    // the probe would admit nothing, so skip the extra emits + build entirely and
+    // leave the baseline untouched (a true no-op).
+    let has_conditional_list_candidate = ctx.items.iter().any(|item| {
         let TopLevel::Verify(vb) = item else {
             return false;
         };
         let VerifyKind::Law(law) = &vb.kind else {
             return false;
         };
-        law.when.is_some()
-            && law
-                .givens
-                .iter()
-                .filter(|g| g.type_name.trim().starts_with("List<"))
-                .count()
-                == 1
+        let lists = law
+            .givens
+            .iter()
+            .filter(|g| g.type_name.trim().starts_with("List<"))
+            .count();
+        law.when.is_some() && (lists == 1 || lists == 2)
     });
-    if !has_single_list_candidate {
+    if !has_conditional_list_candidate {
         return;
     }
 

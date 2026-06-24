@@ -30,11 +30,6 @@ pub(crate) use induction::admitted_dep_law_theorems;
 /// and the proof emitter stay in lockstep.
 pub(in crate::codegen::lean) use induction::recognize_conditional_comparison_bridge;
 
-/// Twin of [`recognize_conditional_comparison_bridge`] for the conditional-
-/// INDUCTIVE list-predicate family (membership monotonicity / identity). Also
-/// feeds the `omit_domain` statement driver, kept in lockstep with the emitter.
-pub(in crate::codegen::lean) use induction::recognize_conditional_inductive_list;
-
 /// Generic conditional-inductive close (the decomposition path: list induction
 /// threading the premise, then `simp_all` over the fn defs and the laws-as-
 /// lemmas pool). Also feeds the `omit_domain` statement driver, kept in
@@ -307,21 +302,6 @@ fn emit_verify_law_forall_auto_proof_inner(
     if law.when.is_some()
         && let Some(proof) =
             induction::emit_conditional_comparison_bridge_law(vb, law, ctx, &intro_names)
-    {
-        return Some(proof);
-    }
-
-    // Conditional-INDUCTIVE list-predicate laws (the membership family: `prop_36`
-    // `when elem(x,y) -> elem(x, y ++ z) => true`, `prop_71` `when not(eqNat(x,y))
-    // -> elem(x, ins(y,xs)) = elem(x,xs)`). Tried right after the flat comparison
-    // bridge and, like it, BEFORE the pinned dispatch (no `when`-law is pinned
-    // `Induction`). Proves by induction on the list given, threading the premise
-    // into the cons IH. Same `omit_domain` universal-statement plumbing as the
-    // bridge family; any other conditional shape declines and keeps the bounded
-    // guarded-domain fallback.
-    if law.when.is_some()
-        && let Some(proof) =
-            induction::emit_conditional_inductive_list_law(vb, law, ctx, &intro_names)
     {
         return Some(proof);
     }
