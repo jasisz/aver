@@ -586,7 +586,6 @@ fn emit_verify_law_block(
         && lifted_vars.is_empty()
         && (super::law_auto::recognize_conditional_comparison_bridge(&law_for_auto_proof, ctx)
             || super::law_auto::recognize_conditional_inductive_list(vb, &law_for_auto_proof, ctx)
-            || super::law_auto::recognize_conditional_sortedness_law(vb, &law_for_auto_proof, ctx)
             || super::law_auto::recognize_conditional_inductive_generic(
                 vb,
                 &law_for_auto_proof,
@@ -1009,7 +1008,6 @@ pub(crate) fn law_as_lemma_statement(
     if law.when.is_some()
         && !(super::law_auto::recognize_conditional_comparison_bridge(law, ctx)
             || super::law_auto::recognize_conditional_inductive_list(vb, law, ctx)
-            || super::law_auto::recognize_conditional_sortedness_law(vb, law, ctx)
             || super::law_auto::recognize_conditional_inductive_generic(vb, law, ctx))
     {
         return None;

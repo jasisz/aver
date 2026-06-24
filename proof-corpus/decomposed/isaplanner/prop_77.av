@@ -1,0 +1,78 @@
+module Prop77
+    intent =
+        "TIP isaplanner prop_77 decomposed: sorted xs implies sorted (insort x xs), proven through Aver helper laws (a leHead lower-bound fn + totality, tail, head-bound, insert-preservation, cons-under-bound) rather than a bespoke emitter."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn le(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> le(z, x2)
+
+fn insort(x: Nat, y: List<Nat>) -> List<Nat>
+    match y
+        [] -> [x]
+        [z, ..xs] -> match le(x, z)
+            true -> List.concat([x], y)
+            false -> List.concat([z], insort(x, xs))
+
+fn andB(x: Bool, y: Bool) -> Bool
+    match x
+        true -> y
+        false -> false
+
+fn leHead(z: Nat, l: List<Nat>) -> Bool
+    match l
+        [] -> true
+        [a, ..as] -> le(z, a)
+
+fn sorted(x: List<Nat>) -> Bool
+    match x
+        [] -> true
+        [y, ..z] -> match z
+            [] -> true
+            [y2, ..ys] -> andB(le(y, y2), sorted(z))
+
+verify le law leTotal
+    given a: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given b: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    when Bool.not(le(a, b))
+    le(b, a) => true
+
+verify sorted law sortTail
+    given a: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given l: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    when sorted(List.concat([a], l))
+    sorted(l) => true
+
+verify sorted law sortedConsLeHead
+    given a: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given l: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    when sorted(List.concat([a], l))
+    leHead(a, l) => true
+
+verify insort law leHeadInsort
+    given z: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given l: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    when leHead(z, l)
+    when le(z, x)
+    leHead(z, insort(x, l)) => true
+
+verify sorted law sortedCons
+    given z: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given l: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    when leHead(z, l)
+    when sorted(l)
+    sorted(List.concat([z], l)) => true
+
+verify insort law sortedInsort
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    when sorted(xs)
+    sorted(insort(x, xs)) => true
