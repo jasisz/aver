@@ -148,6 +148,16 @@ fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
         // permutation leaf closes via the `repeat' split` rung, then the sort
         // law follows. (prod/prop_50 is its twin, pinned by its own test.)
         "proof-corpus/decomposed/isaplanner/prop_53.av",
+        // sortedness-of-insertion, decomposed: `sorted xs -> sorted (insort x xs)`
+        // proven through a `leHead` lower-bound fn + five Aver helper laws and the
+        // GENERIC conditional driver (totality / tail / head-bound close on the
+        // subject-split rung; the insertion-preserves-sortedness main law closes
+        // on the goal-directed `apply`-the-pool + `solve_by_elim` rung). Replaces
+        // the bespoke sortedness emitter. `prop_77`/`lemma_12` are the isaplanner
+        // and prod spellings (independent fn names — `le`/`lessEq`, `insort`/
+        // `insert`), so they also pin the driver's name-independence.
+        "proof-corpus/decomposed/isaplanner/prop_77.av",
+        "proof-corpus/decomposed/prod/lemma_12.av",
     ];
     for task in tasks {
         let out = temp_output_dir(&format!(
