@@ -1,0 +1,43 @@
+module Prop11
+    intent =
+        "TIP prod prop_11: rev (rev x ++ rev y) = y ++ x."
+    effects []
+
+fn app(x: List<Int>, y: List<Int>) -> List<Int>
+    match x
+        [] -> y
+        [z, ..xs] -> List.concat([z], app(xs, y))
+
+fn rev(x: List<Int>) -> List<Int>
+    match x
+        [] -> []
+        [y, ..xs] -> app(rev(xs), [y])
+
+verify app law appBridge
+    given a: List<Int> = [[], [1], [1, 2, 3], [3, 1, 2]]
+    given b: List<Int> = [[], [9], [8, 7], [4, 5, 6]]
+    app(a, b) => List.concat(a, b)
+
+verify app law appRightId
+    given a: List<Int> = [[], [1], [1, 2, 3], [3, 1, 2]]
+    app(a, []) => a
+
+verify app law appAssoc
+    given a: List<Int> = [[], [1], [1, 2, 3]]
+    given b: List<Int> = [[], [9], [8, 7]]
+    given c: List<Int> = [[], [4], [5, 6]]
+    app(app(a, b), c) => app(a, app(b, c))
+
+verify rev law revAppDistributes
+    given a: List<Int> = [[], [1], [1, 2, 3], [3, 1, 2]]
+    given b: List<Int> = [[], [9], [8, 7], [4, 5, 6]]
+    rev(app(a, b)) => app(rev(b), rev(a))
+
+verify rev law revInvolutive
+    given x: List<Int> = [[], [1], [1, 2, 3], [3, 1, 2]]
+    rev(rev(x)) => x
+
+verify rev law revAppRev
+    given x: List<Int> = [[], [1], [1, 2, 3]]
+    given y: List<Int> = [[], [2], [4, 5]]
+    rev(app(rev(x), rev(y))) => app(y, x)

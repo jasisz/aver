@@ -1,0 +1,33 @@
+module Prop16
+    intent =
+        "TIP prod prop_16: even(x + x) for all x."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn even(x: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(y) -> match y
+            Nat.Z -> false
+            Nat.S(z) -> even(z)
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+verify plus law plusSuccRight
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    plus(x, Nat.S(y)) => Nat.S(plus(x, y))
+
+verify even law evenPlusTwo
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    even(Nat.S(Nat.S(n))) => even(n)
+
+verify even law evenDouble
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    even(plus(x, x)) => true

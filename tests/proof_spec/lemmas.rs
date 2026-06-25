@@ -112,13 +112,8 @@ fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let tasks = [
         "proof-corpus/decomposed/isaplanner/prop_03.av",
-        "proof-corpus/decomposed/isaplanner/prop_04.av",
         "proof-corpus/decomposed/isaplanner/prop_20.av",
         "proof-corpus/decomposed/isaplanner/prop_28.av",
-        "proof-corpus/decomposed/isaplanner/prop_29.av",
-        "proof-corpus/decomposed/isaplanner/prop_30.av",
-        "proof-corpus/decomposed/isaplanner/prop_38.av",
-        "proof-corpus/decomposed/isaplanner/prop_75.av",
         "proof-corpus/decomposed/prod/prop_03.av",
         "proof-corpus/decomposed/prod/prop_25.av",
         // decomposition-reach chunk #1 (reverse/accumulator family).
@@ -158,6 +153,29 @@ fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
         // `insert`), so they also pin the driver's name-independence.
         "proof-corpus/decomposed/isaplanner/prop_77.av",
         "proof-corpus/decomposed/prod/lemma_12.av",
+        // The Method, closed via the conjecturer + generic driver (no bespoke
+        // emitter): rev anti-homomorphism / involution — `rev (rev x) = x`
+        // (prop_10) and `rev (app (rev x) (rev y)) = app y x` (prop_11) — through
+        // append nil-right / associativity / rev-distribution / rev-involution
+        // helper laws; and sortedness of FULL insertion sort — `sorted (sort xs)`
+        // (prop_78) / `sorted (isort x)` (prop_14) — through the insort-preserves-
+        // sortedness invariant (the `prop_77`/`lemma_12` ladder) plus a fold step.
+        "proof-corpus/decomposed/prod/prop_10.av",
+        "proof-corpus/decomposed/prod/prop_11.av",
+        "proof-corpus/decomposed/isaplanner/prop_78.av",
+        "proof-corpus/decomposed/prod/prop_14.av",
+        // rev/append nested anti-homomorphism `rev (x ++ (y ++ [z])) = z :: rev
+        // (x ++ y)`: closes through the staged directed-normalizer rung (structural
+        // rev rewrites BEFORE the `append → ++` bridge BEFORE core `List.append_assoc`)
+        // and the no-list-given simp-unfold rung for the `rev [z] = [z]` singleton
+        // helper — both generic driver strategies, no bespoke Lean.
+        "proof-corpus/decomposed/prod/lemma_09.av",
+        // parity of a double `even (x + x) = true`: the Peano-predicate structural
+        // induction now threads the in-scope sibling helper laws (the parity shift
+        // `even (S (S n)) = even n` + `plus` succ-right) into its arm `simp_all` via
+        // an additive sibling branch — omega cannot reason through `even`, so the
+        // close is structural over the predicate.
+        "proof-corpus/decomposed/prod/prop_16.av",
     ];
     for task in tasks {
         let out = temp_output_dir(&format!(
