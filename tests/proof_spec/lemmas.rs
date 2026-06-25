@@ -169,6 +169,12 @@ fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
         "proof-corpus/decomposed/prod/prop_11.av",
         "proof-corpus/decomposed/isaplanner/prop_78.av",
         "proof-corpus/decomposed/prod/prop_14.av",
+        // rev/append nested anti-homomorphism `rev (x ++ (y ++ [z])) = z :: rev
+        // (x ++ y)`: closes through the staged directed-normalizer rung (structural
+        // rev rewrites BEFORE the `append → ++` bridge BEFORE core `List.append_assoc`)
+        // and the no-list-given simp-unfold rung for the `rev [z] = [z]` singleton
+        // helper — both generic driver strategies, no bespoke Lean.
+        "proof-corpus/decomposed/prod/lemma_09.av",
     ];
     for task in tasks {
         let out = temp_output_dir(&format!(

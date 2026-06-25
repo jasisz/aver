@@ -857,6 +857,49 @@ fn earlier_law_lemmas(
     out
 }
 
+/// A `userFn(args) = builtinOp(args)` BRIDGE law — the LHS heads a user function,
+/// the RHS heads a builtin (a dotted stdlib call like `List.concat`, or a binary
+/// operator). These must be applied AFTER the structural rewrites in the staged
+/// normalizer: a bridge rewrites the user fn to its builtin, which destroys the
+/// `g (userFn …)` pattern a distribution law (`rev (append a b) = …`) needs to
+/// fire. Shape only — conservative (a non-bridge falls into the structural group,
+/// which is harmless).
+fn law_is_userfn_to_builtin_bridge(law: &VerifyLaw) -> bool {
+    use crate::ast::Expr;
+    let dotted =
+        |e: &crate::ast::Spanned<Expr>| crate::codegen::common::expr_to_dotted_name(&e.node);
+    let Expr::FnCall(lc, _) = &law.lhs.node else {
+        return false;
+    };
+    let Some(lname) = dotted(lc) else {
+        return false;
+    };
+    if lname.contains('.') {
+        return false; // LHS must head a USER fn
+    }
+    match &law.rhs.node {
+        Expr::FnCall(rc, _) => dotted(rc).is_some_and(|n| n.contains('.')),
+        Expr::BinOp(..) => true,
+        _ => false,
+    }
+}
+
+/// Lean theorem NAMES of the earlier sibling laws that are user-fn→builtin
+/// bridges (see [`law_is_userfn_to_builtin_bridge`]). Reuses [`earlier_law_cites`]
+/// so the names match the fast-path `simp` entries exactly; the staged normalizer
+/// rung splits its pool by membership in this set to order bridge-after-structural.
+fn bridge_law_lean_names(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> BTreeSet<String> {
+    earlier_law_cites(vb, law, ctx)
+        .into_iter()
+        .filter(|(_, l)| law_is_userfn_to_builtin_bridge(l))
+        .map(|(name, _)| name)
+        .collect()
+}
+
 /// Earlier sibling laws eligible to be CITED into THIS law's tight decomposition
 /// (Engine B). The Lean sibling of the Dafny `eligible_cites`: the same
 /// `LawProofCone` ∪ subject ∪ lhs-rooted gate as [`earlier_law_lemmas`], but
@@ -3634,6 +3677,40 @@ fn emit_list_induction(
         // run there, so it adds no new simp-loop surface.
         if !fast_simp.is_empty() {
             proof_lines.push(format!("  | (simp only [{}]; done)", fast_simp.join(", ")));
+        }
+        // STAGED directed-normalizer rung — a pure-rewrite list-algebra law
+        // (rev/append anti-homomorphism, e.g. `rev (x ++ (y ++ [z])) = z :: rev
+        // (x ++ y)`) closes WITHOUT induction, but only if the helpers fire in
+        // ORDER: the structural rewrites (rev-distribution, right-identity,
+        // singleton) BEFORE the builtin bridge (`append → ++`), which would
+        // otherwise eat the `rev (append …)` pattern a distribution law needs to
+        // match — and only THEN core-Lean `List.append_assoc` to normalize the
+        // `++` associativity. The single `simp only [fast_lemmas]` rung below
+        // throws everything together and cannot enforce that order. Emitted only
+        // when the pool actually splits into a bridge AND a non-bridge group (an
+        // ordering to enforce). Fail-closed by the trailing `done`; loop-safe (the
+        // names are the already loop-excluded `fast_simp`, and `List.append_assoc`
+        // is confluent), so it strictly ADDS closures.
+        {
+            let bridge_names = bridge_law_lean_names(vb, law, ctx);
+            let strip = |e: &String| e.trim_start_matches("← ").to_string();
+            let non_bridge: Vec<String> = fast_simp
+                .iter()
+                .filter(|e| !bridge_names.contains(&strip(e)))
+                .cloned()
+                .collect();
+            let bridge: Vec<String> = fast_simp
+                .iter()
+                .filter(|e| bridge_names.contains(&strip(e)))
+                .cloned()
+                .collect();
+            if !non_bridge.is_empty() && !bridge.is_empty() {
+                proof_lines.push(format!(
+                    "  | (simp only [{}] <;> (try simp only [{}]) <;> (try simp only [List.append_assoc, List.cons_append, List.nil_append, List.singleton_append]) <;> done)",
+                    non_bridge.join(", "),
+                    bridge.join(", ")
+                ));
+            }
         }
         proof_lines.push(format!(
             "  | (simp only [{}] <;> omega)",

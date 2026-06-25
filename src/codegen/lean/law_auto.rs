@@ -1014,6 +1014,38 @@ fn emit_verify_law_forall_auto_proof_inner(
             // shape-driven, so it cannot perturb any existing proof.
             emit_string_append_monoid_law(law, &proof_intro_names)
         })
+        .or_else(|| {
+            // Last-resort universal close for a no-`when` EQUATIONAL law that no
+            // strategy above claimed — typically a no-list-given rewrite with no
+            // induction variable (`rev [z] = [z]`: `z : Int`, so there is nothing
+            // to induct on, and every pin/recognizer declined). Unfold the law's
+            // own def cone and let `simp` discharge the goal. `done` forces
+            // closure, so a goal `simp` cannot close falls to the honest `sorry`
+            // floor — never an unsolved-goals build error. Shape-driven and LAST
+            // in the cascade, reached only where the result would otherwise be a
+            // bare `sorry`, so it can only turn a would-be sorry into a kernel
+            // close and never perturbs a proof an earlier rung produced. Loop-safe:
+            // the simp set is the fn DEFS alone (no commutativity lemmas), which
+            // unfold structurally and cannot reduce a match on a free variable.
+            if law.when.is_some() {
+                return None;
+            }
+            let defs: Vec<String> = shared::law_simp_defs(ctx, vb, law).into_iter().collect();
+            if defs.is_empty() {
+                return None;
+            }
+            Some(AutoProof {
+                support_lines: Vec::new(),
+                body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
+                    &proof_intro_names,
+                    vec![format!(
+                        "first | (simp [{}] <;> done) | sorry",
+                        defs.join(", ")
+                    )],
+                )),
+                replaces_theorem: false,
+            })
+        })
 }
 
 /// Fixed core AC-ring lemma package for the `RingIdentity` rung —
