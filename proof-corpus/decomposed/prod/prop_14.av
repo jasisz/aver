@@ -1,0 +1,87 @@
+module Prop14
+    intent =
+        "TIP prod prop_14 (isaplanner #78) decomposed: sorted(isort(x)) holds for all lists, proven through Aver helper laws (a leHead lower-bound fn + totality, tail, head-bound, insert-preservation, cons-under-bound, sorted-insert) rather than a bespoke emitter."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn lessEq(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> lessEq(z, x2)
+
+fn insert(x: Nat, y: List<Nat>) -> List<Nat>
+    match y
+        [] -> [x]
+        [z, ..xs] -> match lessEq(x, z)
+            true -> List.concat([x], y)
+            false -> List.concat([z], insert(x, xs))
+
+fn isort(x: List<Nat>) -> List<Nat>
+    match x
+        [] -> []
+        [y, ..xs] -> insert(y, isort(xs))
+
+fn andBool(x: Bool, y: Bool) -> Bool
+    match x
+        true -> y
+        false -> false
+
+fn sorted(x: List<Nat>) -> Bool
+    match x
+        [] -> true
+        [y, ..z] -> match z
+            [] -> true
+            [y2, ..xs] -> andBool(lessEq(y, y2), sorted(z))
+
+fn leHead(z: Nat, l: List<Nat>) -> Bool
+    match l
+        [] -> true
+        [a, ..as] -> lessEq(z, a)
+
+verify lessEq law lessEqTotal
+    given a: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given b: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    when Bool.not(lessEq(a, b))
+    lessEq(b, a) => true
+
+verify sorted law sortedTail
+    given a: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given l: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    when sorted(List.concat([a], l))
+    sorted(l) => true
+
+verify sorted law sortedConsLeHead
+    given a: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given l: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    when sorted(List.concat([a], l))
+    leHead(a, l) => true
+
+verify insert law leHeadInsert
+    given z: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given l: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    when leHead(z, l)
+    when lessEq(z, x)
+    leHead(z, insert(x, l)) => true
+
+verify sorted law sortedCons
+    given z: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given l: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    when leHead(z, l)
+    when sorted(l)
+    sorted(List.concat([z], l)) => true
+
+verify insert law sortedInsert
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    when sorted(xs)
+    sorted(insert(x, xs)) => true
+
+verify isort law sortedIsort
+    given x: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.Z]]
+    sorted(isort(x)) => true

@@ -158,6 +158,17 @@ fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
         // `insert`), so they also pin the driver's name-independence.
         "proof-corpus/decomposed/isaplanner/prop_77.av",
         "proof-corpus/decomposed/prod/lemma_12.av",
+        // The Method, closed via the conjecturer + generic driver (no bespoke
+        // emitter): rev anti-homomorphism / involution — `rev (rev x) = x`
+        // (prop_10) and `rev (app (rev x) (rev y)) = app y x` (prop_11) — through
+        // append nil-right / associativity / rev-distribution / rev-involution
+        // helper laws; and sortedness of FULL insertion sort — `sorted (sort xs)`
+        // (prop_78) / `sorted (isort x)` (prop_14) — through the insort-preserves-
+        // sortedness invariant (the `prop_77`/`lemma_12` ladder) plus a fold step.
+        "proof-corpus/decomposed/prod/prop_10.av",
+        "proof-corpus/decomposed/prod/prop_11.av",
+        "proof-corpus/decomposed/isaplanner/prop_78.av",
+        "proof-corpus/decomposed/prod/prop_14.av",
     ];
     for task in tasks {
         let out = temp_output_dir(&format!(
