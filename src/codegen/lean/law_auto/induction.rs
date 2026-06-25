@@ -1686,7 +1686,44 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
     };
     let with_append =
         format!("{defs_pool}, List.cons_append, List.nil_append, List.singleton_append");
+    // Peano comparison bridges (`(f a b = true) = (a R b)`) for the relations the
+    // law mentions — premise included (seeded into `extra`). They let `omega`
+    // discharge a dispatcher branch a COMPARISON premise rules out (`prop_86`'s
+    // `when lt(x,y)` needs `eqNat x y = false`, which falls out of the `<`/`=`
+    // bridges + `omega`). Empty for a law with no Peano comparison, so a
+    // non-comparison conditional is byte-unchanged. Sound-by-floor: a misrecognized
+    // op fails its own bridge proof and degrades to a sorry, never a false bridge.
+    let bridge_uid = format!(
+        "{}_{}_L{}",
+        aver_name_to_lean(&vb.fn_name),
+        aver_name_to_lean(&law.name),
+        vb.line
+    );
+    let mut bridge_extra: BTreeSet<String> = BTreeSet::new();
+    if let Some(when) = &law.when {
+        crate::codegen::proof_recognize::collect_called_fns(when, &mut bridge_extra);
+    }
+    let (bridge_support, bridge_names, _bridged) =
+        lean_nat_lift_support(law, ctx, &bridge_uid, &bridge_extra);
+    let cmp_bridges: Vec<String> = bridge_names
+        .into_iter()
+        .filter(|n| n.ends_with("_isNatLe") || n.ends_with("_isNatLt") || n.ends_with("_isNatEq"))
+        .collect();
     let norm = "(try simp only [Bool.not_eq_true, Bool.not_eq_false] at h_when)".to_string();
+    // Bridge rung: rewrite the COMPARISON premise (`lt x y = true`) and the goal's
+    // comparison calls into `<`/`≤`/`=` via the kernel-proved bridges, dispatch the
+    // subject's `split`, then let `omega` discharge the branch the premise rules
+    // out (`prop_86`). Emitted only when the law has a Peano comparison — otherwise
+    // the conditional emit is byte-identical to before.
+    let bridge_rung: Option<String> = if cmp_bridges.is_empty() {
+        None
+    } else {
+        let defs_pool_br = format!("{defs_pool}, {}", cmp_bridges.join(", "));
+        let bridges_csv = cmp_bridges.join(", ");
+        Some(format!(
+            "    | (simp only [{with_append}, {bridges_csv}] at h_when ⊢ <;> (split <;> simp_all [{defs_pool_br}]) <;> (try omega) <;> done)"
+        ))
+    };
     // The OTHER list givens (a binary recursion like zip-reverse inducts on
     // `xs` but must case-split the equal-length partner `ys`). At most one is
     // handled structurally; the membership-style `split` branches cover the
@@ -1836,7 +1873,15 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         // verified fn unfolded then `simp_all`; the bare `simp_all` above leaves
         // it under a stuck dependent match.
         format!("    | (simp only [{subject}] <;> simp_all [{defs_pool}, h_when] <;> done)"),
-        floor.clone(),
+    ]);
+    // Comparison-premise rung in the BASE case too (`prop_86`'s `elem x (ins y [])
+    // = elem x []` reduces to `elem x [y] = false`, which needs `eqNat x y = false`
+    // from `x < y` — the same bridge + `omega` the cons arm uses).
+    if let Some(rung) = &bridge_rung {
+        body.push(rung.clone());
+    }
+    body.push(floor.clone());
+    body.extend([
         "  | cons hd tl ih =>".to_string(),
         format!("    {arm_intro}"),
         format!("    {norm}"),
@@ -1856,13 +1901,20 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         // Cheap subject-unfold + split (closes the wrapper helper laws).
         subject_split_rung,
     ]);
+    // Comparison-premise rung (`prop_86`): bridges + `omega` — only when the law
+    // carries a Peano comparison.
+    if let Some(rung) = bridge_rung {
+        body.push(rung);
+    }
     // The expensive goal-directed rung — only for the wrapper shape.
     if let Some(rung) = wrapper_rung {
         body.push(rung);
     }
     body.push(floor);
+    let mut support = bridge_support;
+    support.extend(adapters);
     Some(AutoProof {
-        support_lines: adapters,
+        support_lines: support,
         body: Tactic::raw(body),
         replaces_theorem: false,
     })

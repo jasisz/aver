@@ -7290,7 +7290,13 @@ fn run_lean_speculative(
         .map(|o| o.status.success())
         .unwrap_or(false);
     if !lake_ok {
-        // Leave the baseline (already on disk) untouched.
+        // No prover to run the probe, so we cannot learn which candidates close.
+        // The baseline directly admits two-list conditionals (the `default`), which
+        // would stamp a non-closer `universal` over a `sorry` floor. Commit an
+        // EMPTY closed-set instead: every conditional law falls back to its sound
+        // bounded statement (honest — nothing was proven). Then re-emit.
+        speculative::set_committed(std::collections::HashSet::new());
+        cmd_proof_lean(file, output_dir, ctx, verify_mode);
         return;
     }
     let build = |dir: &str| -> (bool, String) {
@@ -7324,8 +7330,10 @@ fn run_lean_speculative(
         // A `sorry` is only a warning, so the probe build succeeds even when
         // every candidate fails to close — a HARD failure means a speculative
         // statement did not elaborate, and the per-law verdict can't be trusted.
-        // Restore the bounded baseline rather than commit a guess.
-        speculative::clear();
+        // Commit an empty closed-set so every candidate falls back to bounded
+        // (NOT `clear()`, which would re-expose the default-admit baseline and
+        // stamp a two-list non-closer `universal` over a `sorry`).
+        speculative::set_committed(std::collections::HashSet::new());
         cmd_proof_lean(file, output_dir, ctx, verify_mode);
         return;
     }
@@ -7339,12 +7347,14 @@ fn run_lean_speculative(
     // 3) FAIL-SAFE verify — the committed project must still build.
     let (commit_ok, _) = build(output_dir);
     if !commit_ok {
-        speculative::clear();
+        // Commit an empty closed-set so every conditional law falls back to
+        // bounded (NOT `clear()` — the default-admit baseline would stamp a
+        // two-list non-closer `universal` over a `sorry`).
+        speculative::set_committed(std::collections::HashSet::new());
         cmd_proof_lean(file, output_dir, ctx, verify_mode);
         eprintln!(
             "{}",
-            "speculative-universal: committed proof did not build — restored the bounded baseline"
-                .yellow()
+            "speculative-universal: committed proof did not build — fell back to bounded".yellow()
         );
     } else if !closed.is_empty() {
         println!(

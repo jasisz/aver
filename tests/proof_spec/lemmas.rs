@@ -196,6 +196,56 @@ fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
     }
 }
 
+/// `tip/isaplanner/prop_86` (`x < y -> elem x (ins y xs) = elem x xs`): a
+/// single-list conditional MEMBERSHIP law whose premise is a Peano comparison.
+/// It closes universally only through the speculative probe (single-list) + the
+/// generic conditional driver's comparison-bridge rung — the `(lt a b = true) =
+/// (a < b)` / `(eqNat a b = true) = (a = b)` lifts that let `omega` discharge the
+/// `eqNat x y = false` the premise forces in BOTH the base (`ins y [] = [y]`)
+/// and cons arms. This is the regression the bespoke-membership-emitter removal
+/// had to preserve (the driver subsumes it, no per-figure Lean template), so it
+/// is pinned here. Lake-gated (CLI probe). Genuinely kernel-clean (no `sorryAx`).
+#[test]
+fn prop_86_comparison_premise_membership_stays_universal_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping prop_86 comparison-premise test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let task = "proof-corpus/tip/isaplanner/prop_86.av";
+    let out = temp_output_dir("aver-prop_86-comparison-membership");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg(task)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .unwrap_or_else(|e| panic!("{task}: aver proof failed to run: {e}"));
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("{task}: no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json).unwrap_or_else(|e| panic!("{task}: bad JSON ({e})"));
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "{task}: comparison-premise membership must stay universal via the generic \
+         driver (the bespoke membership emitter was removed — the comparison-bridge \
+         rung in BOTH induction arms must carry it).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// część C — ARM injection of Forward sibling laws. Some laws need a helper
 /// applied INSIDE the induction cons-arm, not just at the top-level fast path:
 /// `count n xs = count n (rev xs)` only closes if the count-homomorphism
