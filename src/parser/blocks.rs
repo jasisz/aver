@@ -509,22 +509,39 @@ impl Parser {
                         ));
                     }
                     self.expect_exact(&TokenKind::FatArrow)?;
-                    // Oracle v1: allow the RHS to wrap to the next
-                    // (indented) line. Long event-literal records
-                    // (Http responses, nested records) don't fit on
-                    // one line; requiring it makes the surface feel
-                    // cramped. Skips Newline + Indent so the RHS
-                    // expression parser sees the first real token.
-                    self.skip_formatting();
-                    let right = self.parse_expr()?;
-                    // Drop any trailing Dedent that belonged to the
-                    // wrapped RHS before the outer case loop's
-                    // dedent-check fires.
-                    while matches!(self.current().kind, TokenKind::Dedent) {
+                    // Oracle v1: allow the RHS to wrap to the next (indented) line.
+                    // Long event-literal records (Http responses, nested records)
+                    // don't fit on one line. COUNT the net INDENT depth crossed to
+                    // reach the RHS so exactly the matching DEDENT(s) can be consumed
+                    // AFTER it (below) — otherwise a wrapped RHS's closing DEDENT is
+                    // taken as the end of the whole case block, and every case after a
+                    // wrapped one is orphaned (parsed at the top level, surfacing a
+                    // cryptic "expected expression, found '=>'" on the next case).
+                    // Same-line RHS crosses no INDENT, so the depth is 0 and the post
+                    // logic is a no-op — byte-identical to before for unwrapped cases.
+                    let mut wrap_depth = 0i32;
+                    loop {
+                        match self.current().kind {
+                            TokenKind::Indent => wrap_depth += 1,
+                            TokenKind::Dedent => wrap_depth -= 1,
+                            TokenKind::Newline => {}
+                            _ => break,
+                        }
                         self.advance();
                     }
+                    let right = self.parse_expr()?;
+                    // Span ends at the RHS (capture before skipping trailing
+                    // formatting, which would otherwise point the span at the next
+                    // case's start).
                     let end_line = self.current().line;
                     let end_col = self.current().col;
+                    self.skip_newlines();
+                    // Consume the DEDENT(s) that close the wrap; a further DEDENT that
+                    // ends the case block is left for the loop's `is_dedent` check.
+                    while wrap_depth > 0 && matches!(self.current().kind, TokenKind::Dedent) {
+                        self.advance();
+                        wrap_depth -= 1;
+                    }
                     cases.push((left, right));
                     case_spans.push(SourceSpan {
                         line: start_line,
