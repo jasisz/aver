@@ -1815,6 +1815,19 @@ fn run_verify_for_file(
         ExpansionMode::Declared
     };
     for (path, source, items) in units {
+        // `collect_check_units` swallows a parse error into empty `items` so that
+        // `aver check` can surface it as a canonical line/col diagnostic via its
+        // own analysis pass. `verify` has no such pass, so an unparseable file
+        // would silently report "no verify blocks" and exit 0 — hiding both the
+        // parse error and any real blocks behind it. Re-parse ONLY when there are
+        // no items (cheap and rare — an empty/comment-only file parses to no items
+        // with no error, and is left alone) and surface the real parse error so
+        // `verify` fails loudly instead of passing green.
+        if items.is_empty()
+            && let Err(e) = parse_file(&source)
+        {
+            return Err(e);
+        }
         let blocks = if wasm_gc {
             #[cfg(feature = "wasm")]
             {
