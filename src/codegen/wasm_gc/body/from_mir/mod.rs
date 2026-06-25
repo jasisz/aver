@@ -482,6 +482,53 @@ pub(crate) fn emit_mir_expr(
                 }
                 Ok(Some(true))
             }
+            Literal::BigInt(s) => {
+                // A `>i64` literal: materialize its decimal digits as a `$string`
+                // data segment, then run the SAME string→bignum parser `Int.n`
+                // uses (`Int.fromString`) and keep its `Ok` `$AverInt` payload
+                // (Result fields: 0=tag, 1=ok `$aint`, 2=err). The lexer validated
+                // the digits, so the parse never errs. A big-int is never
+                // raw-i64-compatible, so `result_raw` is always false here.
+                let bytes = s.as_bytes();
+                let seg_idx = ctx.registry.string_literal_segment(bytes).ok_or(
+                    WasmGcError::Validation(format!(
+                        "Big-int literal `{s:?}` digit string was not registered in the data segment table"
+                    )),
+                )?;
+                let string_type_idx =
+                    ctx.registry
+                        .string_array_type_idx
+                        .ok_or(WasmGcError::Validation(
+                            "Big-int literal reachable but no String type slot allocated".into(),
+                        ))?;
+                func.instruction(&Instruction::I32Const(0));
+                func.instruction(&Instruction::I32Const(bytes.len() as i32));
+                func.instruction(&Instruction::ArrayNewData {
+                    array_type_index: string_type_idx,
+                    array_data_index: seg_idx,
+                });
+                let from_string =
+                    ctx.fn_map
+                        .builtins
+                        .get("Int.fromString")
+                        .copied()
+                        .ok_or(WasmGcError::Validation(
+                        "big-int literal needs the Int.fromString helper but it was not registered"
+                            .into(),
+                    ))?;
+                func.instruction(&Instruction::Call(from_string));
+                let result_idx = ctx.registry.result_type_idx("Result<Int,String>").ok_or(
+                    WasmGcError::Validation(
+                        "big-int literal needs the Result<Int,String> type slot but it was not allocated"
+                            .into(),
+                    ),
+                )?;
+                func.instruction(&Instruction::StructGet {
+                    struct_type_index: result_idx,
+                    field_index: 1,
+                });
+                Ok(Some(true))
+            }
             Literal::Float(f) => {
                 func.instruction(&Instruction::F64Const((*f).into()));
                 Ok(Some(true))

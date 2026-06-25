@@ -89,6 +89,13 @@ impl<T> Spanned<T> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Int(i64),
+    /// An integer literal whose magnitude does not fit `i64`. Aver's `Int` is
+    /// arbitrary-precision (ℤ) at runtime, so such a literal is kept as its
+    /// decimal digit string (unsigned magnitude — any sign is the surrounding
+    /// negation/subtraction, exactly as for `Int`) and lowered to the same
+    /// arbitrary-precision construction `Int.n("…")` uses on every backend.
+    /// Small literals stay `Int(i64)` so the common path is byte-identical.
+    BigInt(String),
     Float(f64),
     Str(String),
     Bool(bool),

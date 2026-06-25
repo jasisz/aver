@@ -430,6 +430,7 @@ fn format_cover_pattern(pat: &CoverPat) -> String {
     match pat {
         CoverPat::Wild => "_".to_string(),
         CoverPat::Lit(Literal::Int(i)) => i.to_string(),
+        CoverPat::Lit(Literal::BigInt(s)) => s.clone(),
         CoverPat::Lit(Literal::Float(f)) => f.to_string(),
         CoverPat::Lit(Literal::Str(s)) => format!("{:?}", s),
         CoverPat::Lit(Literal::Bool(b)) => b.to_string(),
@@ -483,6 +484,9 @@ fn pattern_sig(pat: &CoverPat) -> String {
     match pat {
         CoverPat::Wild => "_".to_string(),
         CoverPat::Lit(Literal::Int(i)) => format!("i{}", i),
+        // Distinct prefix from `i{}` so a big literal never collides with an
+        // i64 literal that happens to share digits in the dedup state key.
+        CoverPat::Lit(Literal::BigInt(s)) => format!("big{}", s),
         CoverPat::Lit(Literal::Float(f)) => format!("f{}", f),
         CoverPat::Lit(Literal::Str(s)) => format!("s{:?}", s),
         CoverPat::Lit(Literal::Bool(b)) => format!("b{}", b),

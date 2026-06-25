@@ -124,6 +124,11 @@ pub(super) fn emit_literal(lit: &Literal) -> String {
         // emits `from_i64(-N)` directly (no `(-…)` wrapper — `AverInt`
         // has no std `Neg`).
         Literal::Int(i) => format!("aver_rt::AverInt::from_i64({})", i),
+        // A `>i64` literal: parse the decimal digits into an `AverInt` at runtime
+        // (the same `FromStr` path `Int.n` uses). Not const-foldable like the
+        // `from_i64` path, but a big literal never appears in a const context.
+        // The lexer validated the digits, so `unwrap` cannot fire.
+        Literal::BigInt(s) => format!("{:?}.parse::<aver_rt::AverInt>().unwrap()", s),
         Literal::Float(f) => {
             let s = f.to_string();
             if s.contains('.') || s.contains('e') || s.contains('E') {

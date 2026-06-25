@@ -70,6 +70,11 @@ fn expr_to_value(expr: &Expr) -> Result<Value, String> {
         // expressions must be round-trippable through the JSON schema.
         Expr::Neg(inner) => match &inner.node {
             Expr::Literal(Literal::Int(n)) => Ok(Value::int(-*n)),
+            Expr::Literal(Literal::BigInt(s)) => Ok(Value::Int(
+                s.parse::<aver_rt::AverInt>()
+                    .map_err(|_| "invalid integer literal in entry args".to_string())?
+                    .neg(),
+            )),
             Expr::Literal(Literal::Float(f)) => Ok(Value::Float(-*f)),
             _ => Err("unary '-' must be applied to a numeric literal in entry args".to_string()),
         },
@@ -115,6 +120,10 @@ fn expr_to_value(expr: &Expr) -> Result<Value, String> {
 fn literal_to_value(lit: &Literal) -> Value {
     match lit {
         Literal::Int(i) => Value::int(*i),
+        Literal::BigInt(s) => Value::Int(
+            s.parse::<aver_rt::AverInt>()
+                .expect("lexer-validated big integer literal"),
+        ),
         Literal::Float(f) => Value::Float(*f),
         Literal::Str(s) => Value::Str(s.clone()),
         Literal::Bool(b) => Value::Bool(*b),

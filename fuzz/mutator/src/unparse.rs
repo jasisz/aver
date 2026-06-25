@@ -516,6 +516,9 @@ fn binop_str(op: BinOp) -> &'static str {
 fn write_literal(out: &mut String, lit: &Literal) -> Result<()> {
     match lit {
         Literal::Int(i) => write!(out, "{i}")?,
+        // A `>i64` literal — emit the validated decimal magnitude verbatim
+        // (sign, if any, is the surrounding negation).
+        Literal::BigInt(s) => write!(out, "{s}")?,
         Literal::Float(f) => {
             // Emit at full precision and force a decimal point so
             // the result is unambiguously parsed as Float (the

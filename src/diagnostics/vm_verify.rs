@@ -1339,6 +1339,9 @@ fn expr_to_effect_event(expr: &Spanned<Expr>) -> Option<Value> {
 fn literal_expr_to_value(expr: &Spanned<Expr>) -> Option<Value> {
     match &expr.node {
         Expr::Literal(crate::ast::Literal::Int(i)) => Some(Value::int(*i)),
+        Expr::Literal(crate::ast::Literal::BigInt(s)) => {
+            Some(Value::Int(s.parse::<aver_rt::AverInt>().ok()?))
+        }
         Expr::Literal(crate::ast::Literal::Float(f)) => Some(Value::Float(*f)),
         Expr::Literal(crate::ast::Literal::Str(s)) => Some(Value::Str(s.clone())),
         Expr::Literal(crate::ast::Literal::Bool(b)) => Some(Value::Bool(*b)),

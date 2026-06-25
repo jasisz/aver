@@ -1650,7 +1650,10 @@ fn fn_uses_int_arithmetic(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
     fn walk(e: &ResolvedExpr) -> bool {
         use crate::ast::Literal;
         match e {
-            ResolvedExpr::Literal(Literal::Int(_)) => true,
+            // A big-int literal MUST flip the bignum gate on: it lowers to the
+            // `$AverInt` string-parse path, which assumes the `$AverInt` slots and
+            // bignum prelude exist. Missing this is a silent miscompile.
+            ResolvedExpr::Literal(Literal::Int(_) | Literal::BigInt(_)) => true,
             ResolvedExpr::Neg(_) => true,
             ResolvedExpr::BinOp(op, l, r) => {
                 use crate::ast::BinOp;
@@ -1743,6 +1746,12 @@ fn collect_string_literals_in_expr(
     use crate::ir::hir::{ResolvedExpr, ResolvedStrPart};
     match expr {
         ResolvedExpr::Literal(Literal::Str(s)) => intern_literal(s.as_bytes().to_vec(), out, idx),
+        // A big-int literal lowers through `Int.fromString`, which takes a
+        // `$string` of the decimal digits — intern that segment here so the
+        // codegen `string_literal_segment(bytes)` lookup resolves.
+        ResolvedExpr::Literal(Literal::BigInt(s)) => {
+            intern_literal(s.as_bytes().to_vec(), out, idx)
+        }
         ResolvedExpr::InterpolatedStr(parts) => {
             for p in parts {
                 match p {

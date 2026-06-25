@@ -59,6 +59,7 @@ fn expr_to_short_str(expr: &Expr) -> String {
     match expr {
         Expr::Literal(lit) => match lit {
             Literal::Int(i) => i.to_string(),
+            Literal::BigInt(s) => s.clone(),
             Literal::Float(f) => f.to_string(),
             Literal::Str(s) => format!("\"{}\"", s),
             Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),

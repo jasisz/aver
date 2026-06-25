@@ -30,6 +30,7 @@ pub fn emit_pattern(pat: &ResolvedPattern, ctx: &CodegenContext) -> String {
 fn emit_literal_pattern(lit: &Literal) -> String {
     match lit {
         Literal::Int(i) => format!("{}", i),
+        Literal::BigInt(s) => s.clone(),
         Literal::Float(f) => format!("{}", f),
         Literal::Str(s) => format!("{:?}", s),
         Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),

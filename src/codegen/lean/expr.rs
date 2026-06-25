@@ -260,6 +260,9 @@ fn emit_expr_atom(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String 
 fn emit_literal(lit: &Literal) -> String {
     match lit {
         Literal::Int(i) => format!("{}", i),
+        // Lean numerals are arbitrary-precision; emit the digits bare and let
+        // expected-type elaboration pin them to `Int` (same as the i64 path).
+        Literal::BigInt(s) => s.clone(),
         Literal::Float(f) => {
             let s = f.to_string();
             if s.contains('.') {

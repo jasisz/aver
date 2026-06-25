@@ -293,6 +293,8 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
 pub(super) fn emit_literal(lit: &Literal) -> String {
     match lit {
         Literal::Int(n) => n.to_string(),
+        // Dafny's `int` is arbitrary-precision: emit the decimal digits directly.
+        Literal::BigInt(s) => s.clone(),
         Literal::Float(f) => {
             let s = f.to_string();
             if s.contains('.') {
