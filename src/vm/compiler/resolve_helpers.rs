@@ -7,11 +7,12 @@
 use crate::ast::Literal;
 use crate::ir::hir::BuiltinIntrinsic;
 use crate::ir::identity::{FnId, FnKey};
-use crate::nan_value::NanValue;
+use crate::nan_value::{NanIntExt, NanValue};
 use crate::vm::opcode::{
     BUFFER_APPEND_SEP_UNLESS_FIRST, BUFFER_APPEND_STR, BUFFER_FINALIZE, BUFFER_NEW, INT_DIV_EUCLID,
     INT_MOD_EUCLID,
 };
+use std::str::FromStr;
 
 use super::{CompileError, FnCompiler};
 
@@ -75,6 +76,10 @@ impl FnCompiler<'_> {
     pub(super) fn nan_literal(&mut self, lit: &Literal) -> NanValue {
         match lit {
             Literal::Int(i) => NanValue::new_int(*i, self.arena),
+            Literal::BigInt(s) => NanValue::from_aver_int(
+                aver_rt::AverInt::from_str(s).expect("lexer-validated big integer literal"),
+                self.arena,
+            ),
             Literal::Float(f) => NanValue::new_float(*f),
             Literal::Bool(true) => NanValue::TRUE,
             Literal::Bool(false) => NanValue::FALSE,

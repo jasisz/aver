@@ -38,6 +38,13 @@ pub fn emit_pattern(pat: &ResolvedPattern, string_context: bool, ctx: &CodegenCo
 fn emit_literal_pattern(lit: &Literal, _string_context: bool) -> String {
     match lit {
         Literal::Int(i) => format!("{}i64", i),
+        // A big-int literal has no valid Rust structural pattern (`AverInt` is
+        // not a constant). Such patterns are routed to the equality-guard chain
+        // (`try_emit_int_literal_match`) via `pattern_has_int_literal`, so this
+        // structural emitter is never reached for a big-int.
+        Literal::BigInt(_) => unreachable!(
+            "BigInt literal patterns lower via the equality-guard chain, not a structural pattern"
+        ),
         Literal::Float(f) => {
             let s = f.to_string();
             if s.contains('.') || s.contains('e') || s.contains('E') {

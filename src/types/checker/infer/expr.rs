@@ -530,6 +530,7 @@ impl TypeChecker {
         match &expr.node {
             Expr::Literal(lit) => match lit {
                 crate::ast::Literal::Int(_) => Type::Int,
+                crate::ast::Literal::BigInt(_) => Type::Int,
                 crate::ast::Literal::Float(_) => Type::Float,
                 crate::ast::Literal::Str(_) => Type::Str,
                 crate::ast::Literal::Bool(_) => Type::Bool,

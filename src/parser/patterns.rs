@@ -163,6 +163,10 @@ impl Parser {
                 self.advance();
                 Ok(Pattern::Literal(Literal::Int(i)))
             }
+            TokenKind::BigInt(_) => Err(self.error(
+                "integer literal patterns beyond 64 bits are not supported — \
+                 match on a comparison instead, e.g. `match n == 1267650600228229401496703205376`",
+            )),
             TokenKind::Float(f) => {
                 self.advance();
                 Ok(Pattern::Literal(Literal::Float(f)))

@@ -615,6 +615,7 @@ fn expr_to_short_str(expr: &Expr) -> String {
     match expr {
         Expr::Literal(lit) => match lit {
             crate::ast::Literal::Int(i) => i.to_string(),
+            crate::ast::Literal::BigInt(s) => s.clone(),
             crate::ast::Literal::Float(f) => f.to_string(),
             crate::ast::Literal::Str(s) => format!("\"{}\"", s),
             crate::ast::Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),

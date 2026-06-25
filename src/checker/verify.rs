@@ -168,6 +168,7 @@ pub fn expr_to_str(expr: &Spanned<Expr>) -> String {
     match &expr.node {
         Expr::Literal(lit) => match lit {
             Literal::Int(i) => i.to_string(),
+            Literal::BigInt(s) => s.clone(),
             Literal::Float(f) => f.to_string(),
             Literal::Str(s) => format!("\"{}\"", s),
             Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),

@@ -304,6 +304,7 @@ fn dump_resolved_pattern(pat: &ResolvedPattern) -> String {
 fn dump_literal(l: &Literal) -> String {
     match l {
         Literal::Int(i) => i.to_string(),
+        Literal::BigInt(s) => s.clone(),
         Literal::Float(f) => format!("{f}"),
         Literal::Str(s) => format!("\"{s}\""),
         Literal::Bool(b) => b.to_string(),

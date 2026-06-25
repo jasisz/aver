@@ -5,6 +5,10 @@ use thiserror::Error;
 pub enum TokenKind {
     // Literals
     Int(i64),
+    /// A decimal integer literal whose magnitude overflows `i64`. The digits are
+    /// validated at lex time; the parser turns this into `Literal::BigInt`, which
+    /// every backend lowers through its arbitrary-precision `Int` construction.
+    BigInt(String),
     Float(f64),
     Str(String),
     InterpStr(Vec<(bool, String)>), // (is_expr, text)
@@ -59,6 +63,7 @@ impl fmt::Display for TokenKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TokenKind::Int(n) => write!(f, "integer '{}'", n),
+            TokenKind::BigInt(s) => write!(f, "integer '{}'", s),
             TokenKind::Float(n) => write!(f, "float '{}'", n),
             TokenKind::Str(s) => write!(f, "string \"{}\"", s),
             TokenKind::InterpStr(_) => write!(f, "interpolated string"),
@@ -515,33 +520,34 @@ impl Lexer {
                 col,
             })
         } else {
-            // Aver's `Int` is arbitrary-precision (ℤ) at runtime, but an integer
-            // LITERAL is still lexed into an i64. A literal whose digits exceed the
-            // 64-bit range is therefore rejected here — distinguish that (valid
-            // digits, too big) from a genuinely malformed literal and point at the
-            // working path (`Int.n("…")` builds a larger constant from a string)
-            // instead of a cryptic "invalid literal".
-            let i: i64 = match num_str.parse::<i64>() {
-                Ok(v) => v,
+            // Aver's `Int` is arbitrary-precision (ℤ) at runtime AND in source: a
+            // literal that fits `i64` becomes `TokenKind::Int` (the byte-identical
+            // common path), while one whose magnitude overflows 64 bits becomes
+            // `TokenKind::BigInt` carrying the validated decimal digits. The parser
+            // lowers that to `Literal::BigInt`, which every backend constructs via
+            // the same arbitrary-precision path `Int.n("…")` uses. `num_str` here is
+            // pure ASCII digits (no sign, no separators), so the overflow case is a
+            // valid bignum magnitude — only a genuinely malformed literal errors.
+            match num_str.parse::<i64>() {
+                Ok(i) => Ok(Token {
+                    kind: TokenKind::Int(i),
+                    line,
+                    col,
+                }),
                 Err(e)
                     if matches!(
                         e.kind(),
                         std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow
                     ) =>
                 {
-                    return Err(self.error(format!(
-                        "integer literal '{num_str}' is too large for a 64-bit literal — \
-                         Aver's Int is arbitrary-precision at runtime, so build a larger \
-                         constant from a string with Int.n(\"{num_str}\")"
-                    )));
+                    Ok(Token {
+                        kind: TokenKind::BigInt(num_str),
+                        line,
+                        col,
+                    })
                 }
-                Err(_) => return Err(self.error("Invalid integer literal")),
-            };
-            Ok(Token {
-                kind: TokenKind::Int(i),
-                line,
-                col,
-            })
+                Err(_) => Err(self.error("Invalid integer literal")),
+            }
         }
     }
 

@@ -1,14 +1,27 @@
 use super::{CompileError, FnCompiler};
 use crate::ast::Literal;
-use crate::nan_value::NanValue;
+use crate::nan_value::{NanIntExt, NanValue};
 use crate::vm::opcode::*;
 use crate::vm::symbol::VmSymbolTable;
+use aver_rt::AverInt;
+use std::str::FromStr;
 
 impl<'a> FnCompiler<'a> {
     pub(super) fn compile_literal(&mut self, lit: &Literal) -> Result<(), CompileError> {
         match lit {
             Literal::Int(i) => {
                 let nv = NanValue::new_int(*i, self.arena);
+                let idx = self.add_constant(nv);
+                self.emit_op(LOAD_CONST);
+                self.emit_u16(idx);
+            }
+            Literal::BigInt(s) => {
+                // A `>i64` literal: build the exact `AverInt` from its decimal
+                // digits (the same string→bignum path `Int.n` uses) and store it
+                // as an arena-backed heap constant, never an inline NaN-box. The
+                // lexer validated the digits, so `from_str` cannot fail.
+                let n = AverInt::from_str(s).expect("lexer-validated big integer literal");
+                let nv = NanValue::from_aver_int(n, self.arena);
                 let idx = self.add_constant(nv);
                 self.emit_op(LOAD_CONST);
                 self.emit_u16(idx);

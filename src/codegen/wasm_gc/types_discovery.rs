@@ -175,11 +175,35 @@ pub(super) fn collect_results_from_builtin_uses(
                     walk(&e.node, out, order, next_idx);
                 }
             }
-            ResolvedExpr::List(items) => {
+            ResolvedExpr::List(items) | ResolvedExpr::Tuple(items) => {
                 for x in items {
                     walk(&x.node, out, order, next_idx);
                 }
             }
+            ResolvedExpr::IndependentProduct(items, _) => {
+                for x in items {
+                    walk(&x.node, out, order, next_idx);
+                }
+            }
+            ResolvedExpr::MapLiteral(entries) => {
+                for (k, v) in entries {
+                    walk(&k.node, out, order, next_idx);
+                    walk(&v.node, out, order, next_idx);
+                }
+            }
+            // A `Result<Int,String>`-returning call (or a big-int literal, below)
+            // can be buried inside interpolation — recurse so its result slot is
+            // still interned. Mirrors the builtin-discovery walk in `module.rs`.
+            ResolvedExpr::InterpolatedStr(parts) => {
+                for p in parts {
+                    if let crate::ir::hir::ResolvedStrPart::Parsed(inner) = p {
+                        walk(&inner.node, out, order, next_idx);
+                    }
+                }
+            }
+            // A big-int literal lowers through `Int.fromString` (returns
+            // `Result<Int,String>`), so its result type slot must exist.
+            ResolvedExpr::Literal(crate::ast::Literal::BigInt(_)) => intern("Result<Int,String>"),
             _ => {}
         }
     }

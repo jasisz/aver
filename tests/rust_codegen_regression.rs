@@ -40,6 +40,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// HTTP / Disk / Tcp, deterministic execution. Order is
 /// alphabetical for stable test names.
 const RUST_REGRESSION_CORPUS: &[&str] = &[
+    "examples/core/big_integers.av",
     "examples/core/calculator.av",
     "examples/core/hello.av",
     "examples/core/lambda.av",

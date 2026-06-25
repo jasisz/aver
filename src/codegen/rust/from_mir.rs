@@ -892,7 +892,11 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             let inner_is_int = ty_is_int(inner.ty())
                 || matches!(
                     &inner.node,
-                    MirExpr::Literal(l) if matches!(l.node, crate::ast::Literal::Int(_))
+                    MirExpr::Literal(l)
+                        if matches!(
+                            l.node,
+                            crate::ast::Literal::Int(_) | crate::ast::Literal::BigInt(_)
+                        )
                 );
             let code = emit_mir_expr(inner, emit_ctx)?;
             if inner_is_int {
@@ -2184,7 +2188,12 @@ fn emit_mir_match_with(
 /// `match_on_ref` path (where the guard would compare `&AverInt`).
 fn pattern_has_int_literal(pat: &ResolvedPattern) -> bool {
     match pat {
-        ResolvedPattern::Literal(crate::ast::Literal::Int(_)) => true,
+        // A big-int literal pattern is also routed through the equality-guard
+        // chain (an `AverInt` cannot be a Rust `match` literal) — it compares via
+        // `AverInt: PartialEq`, just like the i64 case but parsed from digits.
+        ResolvedPattern::Literal(crate::ast::Literal::Int(_) | crate::ast::Literal::BigInt(_)) => {
+            true
+        }
         ResolvedPattern::Tuple(pats) => pats.iter().any(pattern_has_int_literal),
         _ => false,
     }
@@ -2299,6 +2308,25 @@ fn try_emit_int_literal_match(
                     body,
                 ));
             }
+            ResolvedPattern::Literal(crate::ast::Literal::BigInt(s)) => {
+                // A big-int literal pattern: compare the subject against the
+                // exact `AverInt` parsed from the digits. A bare i64 subject can
+                // never equal a `>i64` value, but boxing it keeps the comparison
+                // well-typed (and correctly false at runtime).
+                let lhs = if subject_is_bare {
+                    format!("aver_rt::AverInt::from_i64({})", subject_name)
+                } else {
+                    subject_name.to_string()
+                };
+                let cond = format!("{} == {:?}.parse::<aver_rt::AverInt>().unwrap()", lhs, s);
+                plans.push((
+                    ArmPlan::Guard {
+                        cond,
+                        prelude: String::new(),
+                    },
+                    body,
+                ));
+            }
             ResolvedPattern::Tuple(pats) => {
                 // Tuple subjects are never bare in this slice (only scalar
                 // counters go bare); the bare guard machinery does not
@@ -2402,6 +2430,15 @@ fn lower_int_literal_subpatterns(
             // `place` is a value place; `&{place}` is `&AverInt`, comparable to
             // the literal reference.
             conds.push(format!("&{} == &aver_rt::AverInt::from_i64({})", place, n));
+            true
+        }
+        ResolvedPattern::Literal(crate::ast::Literal::BigInt(s)) => {
+            // Nested tuple elements are always boxed `AverInt`s; compare against
+            // the exact value parsed from the digits.
+            conds.push(format!(
+                "&{} == &{:?}.parse::<aver_rt::AverInt>().unwrap()",
+                place, s
+            ));
             true
         }
         ResolvedPattern::Wildcard => true,

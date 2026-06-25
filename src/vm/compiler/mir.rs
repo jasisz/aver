@@ -1225,17 +1225,17 @@ fn try_emit_match_dispatch_const(
             MirExpr::Literal(spanned_lit) => &spanned_lit.node,
             _ => return Ok(None),
         };
-        let expected = literal_dispatch_bits(fc, pattern_lit);
-        let result = literal_dispatch_bits(fc, body_lit);
-        // Strings would need DISPATCH_KIND_STRING + arena-side
-        // interning to compare; keep this wave focused on
-        // bit-equal dispatch (Int / Bool / Unit / Float-as-bits).
-        // Str / non-bit-comparable literals abort the fast-path.
-        if pattern_is_dispatchable_bits(pattern_lit) && body_is_dispatchable_bits(body_lit) {
-            entries.push((0u8, expected, result)); // DISPATCH_KIND_EXACT = 0
-        } else {
+        // Strings (and big-ints) would need arena-side interning to compare;
+        // keep this wave focused on bit-equal dispatch (Int / Bool / Unit /
+        // Float-as-bits). Non-bit-comparable literals abort the fast-path here —
+        // BEFORE `literal_dispatch_bits`, whose bits are only meaningful for
+        // dispatchable literals (an arena-backed value's bits are an index).
+        if !(pattern_is_dispatchable_bits(pattern_lit) && body_is_dispatchable_bits(body_lit)) {
             return Ok(None);
         }
+        let expected = literal_dispatch_bits(fc, pattern_lit);
+        let result = literal_dispatch_bits(fc, body_lit);
+        entries.push((0u8, expected, result)); // DISPATCH_KIND_EXACT = 0
     }
 
     if entries.is_empty() {
@@ -1297,7 +1297,11 @@ fn pattern_is_dispatchable_bits(lit: &Literal) -> bool {
     match lit {
         Literal::Int(i) => is_inline_int(*i),
         Literal::Bool(_) | Literal::Unit | Literal::Float(_) => true,
-        Literal::Str(_) => false,
+        // A big-int (like a string, and like an out-of-inline-range int) is
+        // arena-backed: its `NanValue` bits hold an arena index, not the value,
+        // so it can never key the raw-bits dispatch table. Route it through the
+        // value-aware `DUP + LOAD_CONST + EQ` path instead.
+        Literal::Str(_) | Literal::BigInt(_) => false,
     }
 }
 
@@ -1322,6 +1326,12 @@ fn literal_dispatch_bits(fc: &mut FnCompiler<'_>, lit: &Literal) -> u64 {
         Literal::Bool(b) => NanValue::new_bool(*b),
         Literal::Unit => NanValue::UNIT,
         Literal::Str(s) => NanValue::new_string_value(s, fc.arena),
+        // Unreachable: `pattern_is_dispatchable_bits` returns `false` for a
+        // big-int, so it never enters the bit-dispatch table whose keys this
+        // function computes (its arena-index bits would be a meaningless key).
+        Literal::BigInt(_) => {
+            unreachable!("BigInt is not bit-dispatchable; excluded by pattern_is_dispatchable_bits")
+        }
     };
     nv.bits()
 }

@@ -422,6 +422,10 @@ impl Parser {
                 self.advance();
                 Ok(self.spanned(Expr::Literal(Literal::Int(i)), line))
             }
+            TokenKind::BigInt(s) => {
+                self.advance();
+                Ok(self.spanned(Expr::Literal(Literal::BigInt(s)), line))
+            }
             TokenKind::Float(f) => {
                 self.advance();
                 Ok(self.spanned(Expr::Literal(Literal::Float(f)), line))

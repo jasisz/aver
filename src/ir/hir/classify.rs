@@ -379,6 +379,11 @@ pub fn classify_dispatch_pattern_resolved(
     pattern: &ResolvedPattern,
 ) -> Option<SemanticDispatchPattern> {
     match pattern {
+        // A big-int literal pattern is never dispatch-tableable (its runtime
+        // value is an arena-backed `Int`, not a small jump-table key). Returning
+        // `None` makes the table classifier bail, so the match falls back to the
+        // value-aware generic path that compares `AverInt`s correctly.
+        ResolvedPattern::Literal(crate::ast::Literal::BigInt(_)) => None,
         ResolvedPattern::Literal(lit) => Some(SemanticDispatchPattern::Literal(
             dispatch_literal_from_ast(lit),
         )),
@@ -535,6 +540,11 @@ fn dispatch_literal_from_ast(lit: &Literal) -> DispatchLiteral {
         Literal::Bool(b) => DispatchLiteral::Bool(*b),
         Literal::Str(s) => DispatchLiteral::Str(s.clone()),
         Literal::Unit => DispatchLiteral::Unit,
+        // Excluded upstream by `classify_dispatch_pattern_resolved` (returns
+        // `None` for a big-int literal pattern, so no dispatch table forms).
+        Literal::BigInt(_) => {
+            unreachable!("BigInt literal patterns are excluded from dispatch tables")
+        }
     }
 }
 

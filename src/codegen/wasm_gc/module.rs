@@ -5509,6 +5509,11 @@ fn discover_builtins_in_expr(
                 );
             }
         }
+        // A big-int literal lowers through `Int.fromString` (the string→bignum
+        // parser); register that helper so its wasm fn index is allocated.
+        ResolvedExpr::Literal(crate::ast::Literal::BigInt(_)) => {
+            builtins.register(BuiltinName::IntFromString);
+        }
         _ => {}
     }
 }

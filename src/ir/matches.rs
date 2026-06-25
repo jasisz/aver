@@ -183,6 +183,10 @@ pub fn classify_dispatch_pattern(
     ctx: &impl CallLowerCtx,
 ) -> Option<SemanticDispatchPattern> {
     match pattern {
+        // A big-int literal pattern is never dispatch-tableable (see the resolved
+        // twin in `ir::hir::classify`): bail so the match uses the value-aware
+        // generic path that compares `AverInt`s.
+        Pattern::Literal(Literal::BigInt(_)) => None,
         Pattern::Literal(lit) => Some(SemanticDispatchPattern::Literal(dispatch_literal_from_ast(
             lit,
         ))),
@@ -279,6 +283,11 @@ fn dispatch_literal_from_ast(lit: &Literal) -> DispatchLiteral {
         Literal::Bool(b) => DispatchLiteral::Bool(*b),
         Literal::Str(s) => DispatchLiteral::Str(s.clone()),
         Literal::Unit => DispatchLiteral::Unit,
+        // Excluded upstream by `classify_dispatch_pattern` (returns `None` for a
+        // big-int literal pattern, so no dispatch table forms).
+        Literal::BigInt(_) => {
+            unreachable!("BigInt literal patterns are excluded from dispatch tables")
+        }
     }
 }
 

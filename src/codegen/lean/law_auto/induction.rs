@@ -1070,6 +1070,8 @@ fn render_lean_literal(lit: &crate::ast::Literal) -> String {
     match lit {
         Literal::Int(i) if *i < 0 => format!("({})", i),
         Literal::Int(i) => format!("{}", i),
+        // Unsigned decimal magnitude (sign is a separate `Neg`), so never parenthesized.
+        Literal::BigInt(s) => s.clone(),
         Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),
         Literal::Str(s) => format!("\"{}\"", crate::codegen::common::escape_string_literal(s)),
         Literal::Float(f) => {

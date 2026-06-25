@@ -1,0 +1,69 @@
+module BigIntegers
+    intent =
+        "Aver's Int is mathematical ℤ — arbitrary precision — in source as well"
+        "as at runtime. An integer literal whose magnitude exceeds 64 bits is"
+        "written directly (no Int.n(\"…\") wrapper) and behaves like any other"
+        "Int: in arithmetic, through parameters, and as a verify expected value."
+    exposes [twoToThe100, factorial, mersenne, sum]
+    effects [Console]
+
+decision IntIsZahlen
+    date = "2026-06-25"
+    reason =
+        "A language whose Int is ℤ at runtime but caps literals at 64 bits leaks"
+        "the machine word back into the source. Making literals arbitrary-precision"
+        "too keeps the mental model honest: there is one Int, and it is the integers."
+    chosen = "ArbitraryPrecisionLiterals"
+    rejected = ["I64Literals", "RequireIntFromString"]
+    impacts = [twoToThe100, factorial, mersenne]
+
+fn twoToThe100() -> Int
+    ? "2^100 written as a literal — far beyond i64::MAX."
+    1267650600228229401496703205376
+
+fn factorial(n: Int) -> Int
+    ? "Plain recursion; factorial(30) overflows i64 many times over, yet the"
+    "result is exact because Int is ℤ end to end."
+    match n < 1
+        true  -> 1
+        false -> n * factorial(n - 1)
+
+fn twoPow(p: Int) -> Int
+    ? "2^p by repeated doubling — builds a big result from small steps."
+    match p < 1
+        true  -> 1
+        false -> 2 * twoPow(p - 1)
+
+fn mersenne(p: Int) -> Int
+    ? "The Mersenne number 2^p - 1, a precise large value reached by computation."
+    twoPow(p) - 1
+
+fn sum(a: Int, b: Int) -> Int
+    ? "Addition over ℤ; either operand may be a >i64 literal."
+    a + b
+
+verify twoToThe100
+    twoToThe100() => 1267650600228229401496703205376
+
+verify factorial
+    factorial(0)  => 1
+    factorial(30) => 265252859812191058636308480000000
+
+verify twoPow
+    twoPow(0)  => 1
+    twoPow(64) => 18446744073709551616
+
+verify mersenne
+    mersenne(89) => 618970019642690137449562111
+
+verify sum
+    sum(9223372036854775807, 1) => 9223372036854775808
+    sum(1267650600228229401496703205376, 1267650600228229401496703205376) => 2535301200456458802993406410752
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("2^100            = {twoToThe100()}")
+    Console.print("30!              = {factorial(30)}")
+    Console.print("2^89 - 1         = {mersenne(89)}")
+    Console.print("i64::MAX + 1     = {sum(9223372036854775807, 1)}")
+    Console.print("2^100 + 2^100    = {sum(twoToThe100(), twoToThe100())}")
