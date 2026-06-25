@@ -1572,304 +1572,6 @@ pub(in crate::codegen::lean) fn emit_conditional_comparison_bridge_law(
     })
 }
 
-/// Whether a `when`-law is a conditional-INDUCTIVE list-predicate law (the
-/// membership family — `prop_36` `when elem(x,y) -> elem(x, y ++ z) => true`,
-/// `prop_71` `when not(eqNat(x,y)) -> elem(x, ins(y,xs)) = elem(x,xs)`): there is
-/// a `List<_>` given to induct on, and the verified fn structurally recurses on
-/// a list parameter (so inducting on the list given peels both sides). Distinct
-/// from the flat comparison-bridge family — here the conclusion is a recursive
-/// list predicate, not an `omega`-shaped comparison, so it is proved by
-/// premise-threaded list induction rather than a bridge. Used by both the proof
-/// emitter and the `omit_domain` statement driver, which must agree.
-pub(in crate::codegen::lean) fn recognize_conditional_inductive_list(
-    vb: &VerifyBlock,
-    law: &VerifyLaw,
-    ctx: &CodegenContext,
-) -> bool {
-    let Some(when) = &law.when else {
-        return false;
-    };
-    let Some(target_idx) = find_list_induction_target(law) else {
-        return false;
-    };
-    // The bridge family owns the flat-comparison shape; never claim it here.
-    if conditional_comparison_bridge_shape(law, ctx) {
-        return false;
-    }
-    // A non-empty unfold cone is required (the induction arms `simp` the verified
-    // fn's defs); without one the portfolio has nothing to drive.
-    if law_simp_defs(ctx, vb, law).is_empty() {
-        return false;
-    }
-    // The verified fn must be a PER-ELEMENT LIST FOLD: it structurally recurses
-    // on a list parameter AND its cons arm combines the HEAD element with the
-    // recursive call (so inducting on the list given peels both sides in lockstep
-    // and the portfolio's `split <;> simp_all` closes via the IH). This gate is
-    // load-bearing — it admits `elem` (Bool) AND `count` (Nat) while excluding
-    // element-SELECTORS like `last`/`head` (`prop_59`/`prop_60`): `last`'s cons
-    // arm uses only the recursive tail (not the head), `head`'s only the head
-    // (no recursion), so neither folds — their conclusion is an element equation
-    // the membership portfolio cannot close, and admitting them would `sorry` and
-    // drop `passed`.
-    let Some(fd) = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref()) else {
-        return false;
-    };
-    if !is_per_element_list_fold(fd) {
-        return false;
-    }
-    // VALIDATED-SHAPE GATE. `omit_domain` replaces the bounded `native_decide`
-    // proof (which earns `passed`) with the universal portfolio; if that portfolio
-    // cannot close, its `sorry` floor would drop `passed` (sorries > budget). So
-    // restrict to the two shapes the probe + a measured corpus sweep proved the
-    // portfolio CLOSES, both driven by induction on the first list given:
-    //   (A) the conclusion applies the verified fn to a BUILTIN `List.concat(
-    //       <target>, _)` — the target is the spine the cons step peels
-    //       (`(h :: t) ++ z = h :: (t ++ z)`). Narrow by construction: only the
-    //       literal `List.concat` spelling qualifies, so the sole corpus hit is
-    //       `prop_36`; an append written as a USER fn (`prop_37`'s `append`)
-    //       reaches the portfolio through (B) instead, not here.
-    //   (B) target-independent premise — the `when` does not mention the
-    //       induction target, so it is a fixed side condition available in every
-    //       arm while the conclusion peels structurally. The broad branch: it
-    //       admits the whole neq-/eq-membership family (`prop_37`, `prop_46`,
-    //       `prop_47`, `prop_71`, `lemma_19`) plus `prop_38`.
-    // Other conditional-inductive shapes fail BOTH and decline — keeping their
-    // bounded `passed`: a premise that mentions the target over a non-`concat`
-    // conclusion (drop-relative `prop_39`, sort-relative `prop_49`,
-    // `prop_42`/`prop_43`/`prop_44`), and the sortedness/insertion family that
-    // needs a head-of-insert aux lemma (`prop_77`, `lemma_12`). The Bool-return
-    // gate above additionally drops element-returning `last`/`head` (`prop_59`/
-    // `prop_60`) and the `count`/`union`/`zip` value-returning list fns.
-    let target_name = &law.givens[target_idx].name;
-    let append_on_target = law_applies_verified_fn_to_concat(law, &vb.fn_name, target_name);
-    let premise_target_independent = !expr_mentions_ident(when, target_name);
-    append_on_target || premise_target_independent
-}
-
-/// Whether the law applies its verified fn to a `List.concat(<target>, _)` — the
-/// append-monotonicity shape (`elem(x, concat(y, z))` with `y` the induction
-/// target). Scans both sides of the claim.
-fn law_applies_verified_fn_to_concat(law: &VerifyLaw, fn_name: &str, target: &str) -> bool {
-    use crate::ast::Expr;
-    fn concat_first_arg_is(expr: &crate::ast::Spanned<Expr>, target: &str) -> bool {
-        let Expr::FnCall(callee, args) = &expr.node else {
-            return false;
-        };
-        super::shared::expr_dotted_name(callee).as_deref() == Some("List.concat")
-            && args
-                .first()
-                .is_some_and(|a| matches!(&a.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == target))
-    }
-    fn scan(expr: &crate::ast::Spanned<Expr>, fn_name: &str, target: &str) -> bool {
-        use crate::ast::Expr;
-        if let Expr::FnCall(callee, args) = &expr.node {
-            if super::shared::expr_dotted_name(callee).as_deref() == Some(fn_name)
-                && args.iter().any(|a| concat_first_arg_is(a, target))
-            {
-                return true;
-            }
-            if args.iter().any(|a| scan(a, fn_name, target)) {
-                return true;
-            }
-            return scan(callee, fn_name, target);
-        }
-        false
-    }
-    scan(&law.lhs, fn_name, target) || scan(&law.rhs, fn_name, target)
-}
-
-/// Whether an expression syntactically references the identifier `name`.
-/// Conservative on exotic node kinds (returns `true`): a premise whose shape we
-/// do not destructure is assumed to possibly mention the target, so it is
-/// EXCLUDED from the target-independent `(B)` branch rather than wrongly admitted
-/// — admitting a target-dependent premise there would risk a non-closing proof
-/// and a `passed` regression.
-fn expr_mentions_ident(expr: &crate::ast::Spanned<crate::ast::Expr>, name: &str) -> bool {
-    use crate::ast::Expr;
-    match &expr.node {
-        Expr::Literal(_) => false,
-        Expr::Ident(n) | Expr::Resolved { name: n, .. } => n == name,
-        Expr::Attr(e, _) | Expr::Neg(e) | Expr::ErrorProp(e) => expr_mentions_ident(e, name),
-        Expr::FnCall(callee, args) => {
-            expr_mentions_ident(callee, name) || args.iter().any(|a| expr_mentions_ident(a, name))
-        }
-        Expr::BinOp(_, l, r) => expr_mentions_ident(l, name) || expr_mentions_ident(r, name),
-        Expr::Constructor(_, payload) => payload
-            .as_ref()
-            .is_some_and(|e| expr_mentions_ident(e, name)),
-        Expr::List(es) | Expr::Tuple(es) => es.iter().any(|e| expr_mentions_ident(e, name)),
-        Expr::Match { subject, arms } => {
-            expr_mentions_ident(subject, name)
-                || arms.iter().any(|arm| expr_mentions_ident(&arm.body, name))
-        }
-        _ => true,
-    }
-}
-
-/// Whether some leaf of `expr` (descending through `match` arms) IS the bare
-/// identifier `name` — i.e. a code path that RETURNS that variable directly. For
-/// the cons head this is the SELECTOR signature: `last`'s `match zs { [] -> z ; …
-/// }` returns the head element, `head`'s cons arm is the bare head. A fold never
-/// returns the head — it only COMPARES it (`eqNat(x, z)`), so the head appears as
-/// a call argument, never as a leaf.
-fn any_leaf_is_ident(expr: &crate::ast::Spanned<crate::ast::Expr>, name: &str) -> bool {
-    use crate::ast::Expr;
-    match &expr.node {
-        Expr::Match { arms, .. } => arms.iter().any(|arm| any_leaf_is_ident(&arm.body, name)),
-        Expr::Ident(n) | Expr::Resolved { name: n, .. } => n == name,
-        _ => false,
-    }
-}
-
-/// A per-element list FOLD: the verified fn structurally recurses on a `List<_>`
-/// param AND its cons arm references the head element but NEVER returns it as a
-/// leaf (the head is COMPARED, not selected). Admits `elem` in BOTH spellings —
-/// `barbar(eqNat(x, z), elem(x, xs))` and the explicit `match eqNat(x, z) { true
-/// -> true ; false -> elem(x, xs) }` — and `count` (`match natEq(x, z) { true ->
-/// S(count …) ; false -> count … }`). Excludes element SELECTORS: `last`'s cons
-/// arm has a `[] -> z` leaf returning the head; `head` (which does not even
-/// recurse on the list, so the structural-param gate already rejects it). The
-/// cons-arm structure, not the return type, is the discriminator (so `count`'s
-/// `Nat` return qualifies alongside `elem`'s `Bool`).
-fn is_per_element_list_fold(fd: &crate::ast::FnDef) -> bool {
-    use crate::ast::{Expr, Pattern};
-    let Some(list_idx) = crate::codegen::recursion::detect::single_list_structural_param_index(fd)
-    else {
-        return false;
-    };
-    let list_param = &fd.params[list_idx].0;
-    let Some(body) = fd.body.tail_expr() else {
-        return false;
-    };
-    let Expr::Match { subject, arms } = &body.node else {
-        return false;
-    };
-    if !matches!(&subject.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == list_param)
-    {
-        return false;
-    }
-    arms.iter()
-        .find_map(|arm| {
-            let Pattern::Cons(head, _) = &arm.pattern else {
-                return None;
-            };
-            Some(expr_mentions_ident(&arm.body, head) && !any_leaf_is_ident(&arm.body, head))
-        })
-        .unwrap_or(false)
-}
-
-/// Close a conditional-inductive list-predicate law (`prop_36`, `prop_71`) as the
-/// TRUE-universal `∀ givens, <when> = true -> <claim>` by induction on the first
-/// `List` given, THREADING the premise: the premise is introduced INSIDE each
-/// arm (not before `induction`) so the cons induction hypothesis carries it as an
-/// antecedent — the essential difference from the unconditional `emit_list_induction`
-/// ladder. Each arm runs a `first | … | sorry` portfolio that unfolds the verified
-/// fn's defs + the `List.*_append` peel lemmas, normalizes a negated premise
-/// (`Bool.not_eq_true`), case-splits the recursive predicate's inner Bool
-/// dispatcher (`split`), and discharges with `simp_all` (which applies the IH at
-/// the tail using the premise-derived hypothesis). FAIL-CLOSED on two axes: any
-/// non-matching shape returns `None` (caller keeps the bounded guarded-domain
-/// proof), and every arm is `done`-terminated under a `sorry` floor, so a residual
-/// the portfolio cannot close degrades to an honest sorry (`universal:false`,
-/// `passed` via `_checked_domain`) rather than a build error or a false closure.
-pub(in crate::codegen::lean) fn emit_conditional_inductive_list_law(
-    vb: &VerifyBlock,
-    law: &VerifyLaw,
-    ctx: &CodegenContext,
-    intro_names: &[String],
-) -> Option<AutoProof> {
-    if !recognize_conditional_inductive_list(vb, law, ctx) {
-        return None;
-    }
-    let target_idx = find_list_induction_target(law)?;
-    let target = intro_names.get(target_idx)?.clone();
-    let defs = law_simp_defs(ctx, vb, law)
-        .into_iter()
-        .collect::<Vec<_>>()
-        .join(", ");
-    // The builtin `++` peel lemmas the recursive list expression needs (e.g.
-    // `(hd :: tl) ++ z = hd :: (tl ++ z)`, `[x] ++ y = x :: y`).
-    let with_append = format!("{defs}, List.cons_append, List.nil_append, List.singleton_append");
-    // Normalize a negated Bool premise (`(!p) = true` → `p = false`) so `simp_all`
-    // can use it; a no-op `try` when the premise is not negated.
-    let norm = "(try simp only [Bool.not_eq_true, Bool.not_eq_false] at h_when)".to_string();
-    // Peano comparison bridges (`(f a b = true) = (a R b)`) for the relations the
-    // law mentions — premise included. They let `omega` discharge the dispatcher
-    // branches a COMPARISON premise rules out: `prop_86` (`when lt(x,y)`) needs
-    // `eqNat x y = false`, which falls out of the `<`/`=` bridges + `omega`,
-    // whereas a same-relation premise (`prop_71`'s `eqNat`) needs no bridge and
-    // closes on the first branch below. Sound-by-floor: a misrecognized op fails
-    // its own bridge proof and degrades to a sorry, never a false bridge.
-    let law_uid = format!(
-        "{}_{}",
-        aver_name_to_lean(&vb.fn_name),
-        aver_name_to_lean(&law.name)
-    );
-    let mut extra: BTreeSet<String> = BTreeSet::new();
-    if let Some(when) = &law.when {
-        crate::codegen::proof_recognize::collect_called_fns(when, &mut extra);
-    }
-    let (bridge_support, bridge_names, _bridged) =
-        lean_nat_lift_support(law, ctx, &law_uid, &extra);
-    let cmp_bridges: Vec<String> = bridge_names
-        .into_iter()
-        .filter(|n| n.ends_with("_isNatLe") || n.ends_with("_isNatLt") || n.ends_with("_isNatEq"))
-        .collect();
-    // The `simp_all` set with the comparison bridges folded in (for the
-    // omega-closing branches); bare defs when the law has no Peano comparison.
-    let defs_br = if cmp_bridges.is_empty() {
-        defs.clone()
-    } else {
-        format!("{defs}, {}", cmp_bridges.join(", "))
-    };
-    // Arm portfolios. The measured same-relation closures (prop_36/37/38/46/47/71,
-    // lemma_19) land on the FIRST cons branch (`simp only […] at h_when ⊢ <;>
-    // (split <;> simp_all)`) and the first nil branch; the comparison-premise
-    // closure (prop_86) lands on the bridge+`omega` branches. The rest are a
-    // `done`-terminated speculative hedge (a non-closing branch throws on its
-    // `done`, so `first` advances at zero correctness cost, and at no build-time
-    // cost for an admitted law since the winning branch is tried first). The
-    // trailing `sorry` keeps the whole emit fail-closed.
-    let body = vec![
-        format!("  intro {}", intro_names.join(" ")),
-        format!("  induction {target} with"),
-        "  | nil =>".to_string(),
-        "    first".to_string(),
-        format!("    | (simp [{defs}]; done)"),
-        format!("    | (intro h_when; {norm}; simp_all [{defs}]; done)"),
-        format!(
-            "    | (intro h_when; {norm}; simp only [{defs}] <;> (split <;> simp_all [{defs_br}]) <;> (try omega) <;> done)"
-        ),
-        "    | sorry".to_string(),
-        "  | cons hd tl ih =>".to_string(),
-        "    intro h_when".to_string(),
-        format!("    {norm}"),
-        "    first".to_string(),
-        format!(
-            "    | (simp only [{with_append}] at h_when ⊢ <;> (split <;> simp_all [{defs}]) <;> done)"
-        ),
-        format!("    | (simp only [{with_append}] at h_when ⊢ <;> simp_all [{defs}] <;> done)"),
-        format!(
-            "    | (simp only [{with_append}] <;> (split <;> simp_all [{defs}, h_when]) <;> done)"
-        ),
-        format!("    | (simp only [{with_append}] <;> simp_all [{defs}, h_when] <;> done)"),
-        format!(
-            "    | (simp only [{with_append}] <;> (split <;> simp_all [{defs_br}]) <;> (try omega) <;> done)"
-        ),
-        format!(
-            "    | (simp only [{defs}] <;> (split <;> (simp_all [{defs_br}] <;> (try omega))) <;> done)"
-        ),
-        format!("    | (split <;> simp_all [{defs}, h_when] <;> done)"),
-        format!("    | (simp_all [{defs}, h_when] <;> done)"),
-        "    | sorry".to_string(),
-    ];
-    Some(AutoProof {
-        support_lines: bridge_support,
-        body: Tactic::raw(body),
-        replaces_theorem: false,
-    })
-}
-
 /// Whether [`emit_conditional_inductive_generic_law`] will attempt this law as a
 /// universal — the `omit_domain` driver reads this. A conditional law that
 /// recurses on a list given, with an equational conclusion, that the bespoke
@@ -1917,43 +1619,33 @@ pub(in crate::codegen::lean) fn recognize_conditional_inductive_generic(
         return false;
     }
     let single_list = other_lists == 0;
-    // Exclusive with the bespoke arms (they run first; keep the `omit_domain`
-    // gate single-valued so the statement driver and the emit agree).
-    if recognize_conditional_comparison_bridge(law, ctx)
-        || recognize_conditional_inductive_list(vb, law, ctx)
-    {
+    // Exclusive with the comparison-bridge arm (it runs first; keep the
+    // `omit_domain` gate single-valued so the statement driver and the emit
+    // agree). The membership family is now subsumed by this generic driver
+    // (probe-decided, no helper-pool gate), so it flows straight through.
+    if recognize_conditional_comparison_bridge(law, ctx) {
         return false;
     }
-    // Fire ONLY for a decomposition consumer — a law with at least one eligible
-    // earlier helper in its cone ∪ subject pool. Without helpers the generic
-    // `simp_all` over bare defs cannot supply the algebraic content (e.g.
-    // zip-reverse needs a snoc-distribution helper), so the universal proof
-    // would `sorry`; declining keeps such a law on its sound bounded fallback.
-    // This is the principle made structural: the generic driver proves a
-    // conditional law THROUGH its Aver helper laws, never by guessing.
-    if earlier_law_lemmas(vb, law, ctx).is_empty() {
+    // Class-1 recursion-incompatibility (single-list only): a cone fn that
+    // DECREMENTS a co-given synchronously with the list — `drop`/`take` over a
+    // free `Nat` (`prop_39`'s `elem(x, drop(y, z))`) — is not closed by plain
+    // induction on the target list (the cons IH lands at the wrong predecessor),
+    // so it keeps its sound bounded fallback rather than being probed.
+    if single_list && law_recurses_on_cogiven(law, ctx, target_idx) {
         return false;
     }
-    if single_list {
-        // Class-1 recursion-incompatibility: a cone fn that DECREMENTS a co-given
-        // (a non-target given) synchronously with the list — `drop`/`take` over a
-        // free `Nat` (`prop_39`'s `elem(x, drop(y, z))`) — is not closed by plain
-        // induction on the target list (the cons IH lands at the wrong
-        // predecessor of the co-given), so it keeps its sound bounded fallback.
-        if law_recurses_on_cogiven(law, ctx, target_idx) {
-            return false;
-        }
-        // SPECULATIVE: a single-list conditional is admitted only under an active
-        // probe pass (admit all, to measure which close) or a commit that
-        // recorded THIS `fn.law` as one that closed universally. The default
-        // state admits nothing, so single-list conditionals stay byte-identical
-        // to their pre-mechanism bounded fallback.
-        let id = format!("{}.{}", vb.fn_name, law.name);
-        if !super::super::tactic_ir::speculative::admits(&id) {
-            return false;
-        }
-    }
-    true
+    // SPECULATIVE admission — the probe is the proof-success oracle, not a static
+    // helper-count heuristic (a no-helper law can close by bare `simp_all` + the
+    // IH; a helper-rich one can still fail). The structural checks above decide
+    // whether the driver may TRY; the probe decides whether it actually CLOSED.
+    // `default` = the law's pre-probe disposition (two-list conditionals attempted
+    // directly, single-list declined to bounded), so a no-probe `transpile` stays
+    // byte-compatible; a probe-then-commit run overrides it from the empirical
+    // result (promoting a single-list closer, demoting a two-list non-closer like
+    // `prop_42`). The earlier helper laws still join the proof as MATERIAL (the
+    // emit's pool), they are simply no longer an admission gate.
+    let id = format!("{}.{}", vb.fn_name, law.name);
+    super::super::tactic_ir::speculative::admits(&id, other_lists == 1)
 }
 
 /// Close a conditional inductive law GENERICALLY: list induction on the
@@ -1994,7 +1686,44 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
     };
     let with_append =
         format!("{defs_pool}, List.cons_append, List.nil_append, List.singleton_append");
+    // Peano comparison bridges (`(f a b = true) = (a R b)`) for the relations the
+    // law mentions — premise included (seeded into `extra`). They let `omega`
+    // discharge a dispatcher branch a COMPARISON premise rules out (`prop_86`'s
+    // `when lt(x,y)` needs `eqNat x y = false`, which falls out of the `<`/`=`
+    // bridges + `omega`). Empty for a law with no Peano comparison, so a
+    // non-comparison conditional is byte-unchanged. Sound-by-floor: a misrecognized
+    // op fails its own bridge proof and degrades to a sorry, never a false bridge.
+    let bridge_uid = format!(
+        "{}_{}_L{}",
+        aver_name_to_lean(&vb.fn_name),
+        aver_name_to_lean(&law.name),
+        vb.line
+    );
+    let mut bridge_extra: BTreeSet<String> = BTreeSet::new();
+    if let Some(when) = &law.when {
+        crate::codegen::proof_recognize::collect_called_fns(when, &mut bridge_extra);
+    }
+    let (bridge_support, bridge_names, _bridged) =
+        lean_nat_lift_support(law, ctx, &bridge_uid, &bridge_extra);
+    let cmp_bridges: Vec<String> = bridge_names
+        .into_iter()
+        .filter(|n| n.ends_with("_isNatLe") || n.ends_with("_isNatLt") || n.ends_with("_isNatEq"))
+        .collect();
     let norm = "(try simp only [Bool.not_eq_true, Bool.not_eq_false] at h_when)".to_string();
+    // Bridge rung: rewrite the COMPARISON premise (`lt x y = true`) and the goal's
+    // comparison calls into `<`/`≤`/`=` via the kernel-proved bridges, dispatch the
+    // subject's `split`, then let `omega` discharge the branch the premise rules
+    // out (`prop_86`). Emitted only when the law has a Peano comparison — otherwise
+    // the conditional emit is byte-identical to before.
+    let bridge_rung: Option<String> = if cmp_bridges.is_empty() {
+        None
+    } else {
+        let defs_pool_br = format!("{defs_pool}, {}", cmp_bridges.join(", "));
+        let bridges_csv = cmp_bridges.join(", ");
+        Some(format!(
+            "    | (simp only [{with_append}, {bridges_csv}] at h_when ⊢ <;> (split <;> simp_all [{defs_pool_br}]) <;> (try omega) <;> done)"
+        ))
+    };
     // The OTHER list givens (a binary recursion like zip-reverse inducts on
     // `xs` but must case-split the equal-length partner `ys`). At most one is
     // handled structurally; the membership-style `split` branches cover the
@@ -2027,14 +1756,14 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         format!("intro {} h_when", after.join(" "))
     };
     // The `sorry` floor. Under the speculative PROBE pass it carries an
-    // `AVERSPEC_SORRY:<fn.law>` trace so a non-closing single-list portfolio is
-    // observable in the build log (Lean's `first` never runs the floor's trace
-    // when an earlier branch closes). Both induction arms share the floor: if
-    // EITHER arm falls through, the law did not close universally.
-    let floor = if super::super::tactic_ir::speculative::probing() && others.is_empty() {
+    // `AVERSPEC_SORRY:<fn.law>` trace so a non-closing portfolio (single- OR
+    // two-list) is observable in the build log (Lean's `first` never runs the
+    // floor's trace when an earlier branch closes). Both induction arms share the
+    // floor: if EITHER arm falls through, the law did not close universally.
+    let floor = if super::super::tactic_ir::speculative::probing() {
         // Record HERE (not at the recognizer's `admits`): the probe sink must
-        // hold only laws that actually emit this trace floor. A single-list
-        // candidate the recognizer admits but whose `∀`-theorem is then suppressed
+        // hold only laws that actually emit this trace floor. A candidate the
+        // recognizer admits but whose `∀`-theorem is then suppressed
         // (`skip_universal` — e.g. a singleton-domain const-RHS law) emits no
         // floor, never traces, and so must NOT be counted "closed".
         let id = format!("{}.{}", vb.fn_name, law.name);
@@ -2144,7 +1873,15 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         // verified fn unfolded then `simp_all`; the bare `simp_all` above leaves
         // it under a stuck dependent match.
         format!("    | (simp only [{subject}] <;> simp_all [{defs_pool}, h_when] <;> done)"),
-        floor.clone(),
+    ]);
+    // Comparison-premise rung in the BASE case too (`prop_86`'s `elem x (ins y [])
+    // = elem x []` reduces to `elem x [y] = false`, which needs `eqNat x y = false`
+    // from `x < y` — the same bridge + `omega` the cons arm uses).
+    if let Some(rung) = &bridge_rung {
+        body.push(rung.clone());
+    }
+    body.push(floor.clone());
+    body.extend([
         "  | cons hd tl ih =>".to_string(),
         format!("    {arm_intro}"),
         format!("    {norm}"),
@@ -2164,13 +1901,20 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         // Cheap subject-unfold + split (closes the wrapper helper laws).
         subject_split_rung,
     ]);
+    // Comparison-premise rung (`prop_86`): bridges + `omega` — only when the law
+    // carries a Peano comparison.
+    if let Some(rung) = bridge_rung {
+        body.push(rung);
+    }
     // The expensive goal-directed rung — only for the wrapper shape.
     if let Some(rung) = wrapper_rung {
         body.push(rung);
     }
     body.push(floor);
+    let mut support = bridge_support;
+    support.extend(adapters);
     Some(AutoProof {
-        support_lines: adapters,
+        support_lines: support,
         body: Tactic::raw(body),
         replaces_theorem: false,
     })

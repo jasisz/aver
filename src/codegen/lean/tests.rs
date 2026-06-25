@@ -694,9 +694,11 @@ verify le law leSucc
 #[test]
 fn transpile_proves_conditional_inductive_membership_law_as_universal() {
     // `prop_36 elemConcat`: `when elem(x,y) -> elem(x, y ++ z) => true` (append
-    // monotonicity, shape (A)). The conditional-inductive list emit closes it as
-    // the TRUE-universal `∀ x y z, elem x y = true -> elem x (y ++ z) = true` by
-    // induction on the first list given, threading the premise into the cons arm.
+    // monotonicity). The GENERIC conditional-inductive driver (no bespoke
+    // membership emitter) closes it as the TRUE-universal `∀ x y z, elem x y =
+    // true -> elem x (y ++ z) = true` by induction on the first list given,
+    // threading the premise into the cons arm. Admitted with no helper-pool gate;
+    // the partner list `z` is intro'd before the premise (`intro z h_when`).
     let mut ctx = ctx_from_source(
         r#"
 module CondIndMembership
@@ -744,63 +746,12 @@ verify elem law elemConcat
     assert!(lean.contains(
         "theorem elem_law_elemConcat : ∀ (x : Nat) (y : List Nat) (z : List Nat), elem x y = true -> elem x (y ++ z) = true := by"
     ));
-    // Induction on the first list given `y`, with the premise threaded INSIDE the
-    // cons arm (`intro h_when` after `induction`, so the IH carries the antecedent).
+    // Induction on the first list given `y`, with the partner list + premise
+    // threaded INSIDE the cons arm (`intro z h_when` after `induction`, so the IH
+    // carries the antecedent and generalizes over the partner).
     assert!(lean.contains("induction y with"));
     assert!(lean.contains("| cons hd tl ih =>"));
-    assert!(lean.contains("intro h_when"));
-}
-
-#[test]
-fn transpile_proves_count_membership_law_as_universal() {
-    // `prop_76`-shape (`when not(eqNat(n, m)) -> count(n, xs ++ [m]) = count(n, xs)`):
-    // the verified fn `count` returns Nat, not Bool, yet it is a per-element FOLD
-    // (its cons arm COMPARES the head, never returns it), so the membership emit
-    // admits it and closes the law `universal`. Guards the count/`last` boundary —
-    // a Nat-returning SELECTOR like `last` must NOT be admitted.
-    let mut ctx = ctx_from_source(
-        r#"
-module CountMembership
-    intent = "count(n, xs ++ [m]) = count(n, xs) when n /= m"
-
-type Nat
-    Z
-    S(Nat)
-
-fn eqNat(x: Nat, y: Nat) -> Bool
-    match x
-        Nat.Z -> match y
-            Nat.Z -> true
-            Nat.S(z) -> false
-        Nat.S(x2) -> match y
-            Nat.Z -> false
-            Nat.S(y2) -> eqNat(x2, y2)
-
-fn count(x: Nat, y: List<Nat>) -> Nat
-    match y
-        [] -> Nat.Z
-        [z, ..zs] -> match eqNat(x, z)
-            true -> Nat.S(count(x, zs))
-            false -> count(x, zs)
-
-verify count law countAppendSingleton
-    given n: Nat = [Nat.Z, Nat.S(Nat.Z)]
-    given m: Nat = [Nat.Z, Nat.S(Nat.Z)]
-    given xs: List<Nat> = [[], [Nat.Z]]
-    when Bool.not(eqNat(n, m))
-    count(n, List.concat(xs, [m])) => count(n, xs)
-"#,
-        "count_membership",
-    );
-    let out = transpile(&mut ctx);
-    let lean = generated_lean_file(&out);
-
-    // A `Nat`-returning fold still earns the unbounded `universal` statement.
-    assert!(lean.contains(
-        "-- aver:law-class count_law_countAppendSingleton universal count.countAppendSingleton"
-    ));
-    assert!(lean.contains("induction xs with"));
-    assert!(lean.contains("intro h_when"));
+    assert!(lean.contains("intro z h_when"));
 }
 
 #[test]

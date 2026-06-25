@@ -559,17 +559,28 @@ pub mod speculative {
         STATE.with(|s| *s.borrow_mut() = (Mode::Off, None, HashSet::new()));
     }
 
-    /// Whether a single-list speculative law with this `fn.law` id should be
-    /// stated universally. In probe mode: always. In Off mode: only if it is in
-    /// the committed-closed set (`None` ⇒ admit nothing). Pure — does NOT record;
-    /// the probe sink is populated at the floor-emission site (see
-    /// [`record_probed`]) so it counts only laws that actually emit a trace floor.
-    pub fn admits(id: &str) -> bool {
+    /// Whether a conditional law with this `fn.law` id should be stated
+    /// universally. In probe mode: always (the probe attempts every structurally
+    /// eligible candidate). In Off mode WITH a committed set: only if it closed
+    /// (`set.contains(id)`). In Off mode with NO committed set (a direct
+    /// `transpile` outside any probe — a unit test, or the CLI's pre-probe
+    /// baseline): fall back to `default`. `default` is the law's PRE-probe
+    /// disposition — two-list conditionals were attempted directly (default
+    /// `true`), single-list ones declined to bounded (default `false`) — so a
+    /// no-probe emission stays byte-compatible with the pre-probe behavior, while
+    /// a probe-then-commit run lets the empirical result override it (promoting a
+    /// single-list closer, DEMOTING a two-list non-closer like `prop_42`). Pure —
+    /// does NOT record; the probe sink is populated at the floor-emission site
+    /// (see [`record_probed`]) so it counts only laws that emit a trace floor.
+    pub fn admits(id: &str, default: bool) -> bool {
         STATE.with(|s| {
             let st = s.borrow();
             match st.0 {
                 Mode::Probe => true,
-                Mode::Off => st.1.as_ref().is_some_and(|set| set.contains(id)),
+                Mode::Off => match st.1.as_ref() {
+                    Some(set) => set.contains(id),
+                    None => default,
+                },
             }
         })
     }
@@ -807,32 +818,33 @@ warning: declaration uses 'sorry'
     #[test]
     fn speculative_admits_only_committed_in_off_mode() {
         use super::speculative;
-        // Default: admit nothing (single-list conditionals stay on their bounded
-        // fallback — byte-identical to before the mechanism).
+        // No committed set: `admits` returns the law's `default` disposition — a
+        // single-list candidate (default false) stays bounded, a two-list one
+        // (default true) is attempted directly. Byte-compatible with pre-probe.
         speculative::clear();
-        assert!(!speculative::admits("f.law"));
+        assert!(!speculative::admits("f.law", false));
+        assert!(speculative::admits("g.two", true));
         assert!(!speculative::probing());
-        // Probe: admit everything; the sink is populated by `record_probed` at
-        // the floor-emission site (not by `admits`), so it holds only laws that
-        // actually emitted a trace floor.
+        // Probe: admit everything regardless of default; the sink is populated by
+        // `record_probed` at the floor-emission site (not by `admits`).
         speculative::begin_probe();
         assert!(speculative::probing());
-        assert!(speculative::admits("f.law"));
-        assert!(speculative::admits("g.other"));
+        assert!(speculative::admits("f.law", false));
+        assert!(speculative::admits("g.two", true));
         assert!(speculative::probed_ids().is_empty());
         speculative::record_probed("f.law");
-        speculative::record_probed("g.other");
+        speculative::record_probed("g.two");
         assert!(speculative::probed_ids().contains("f.law"));
-        assert!(speculative::probed_ids().contains("g.other"));
-        // Commit: admit only the closed set, in Off mode.
+        // Commit: admit only the closed set, IGNORING default — so a two-list
+        // non-closer (default true) is DEMOTED, a single-list closer promoted.
         let mut closed = std::collections::HashSet::new();
         closed.insert("f.law".to_string());
         speculative::set_committed(closed);
         assert!(!speculative::probing());
-        assert!(speculative::admits("f.law"));
-        assert!(!speculative::admits("g.other"));
+        assert!(speculative::admits("f.law", false));
+        assert!(!speculative::admits("g.two", true));
         speculative::clear();
-        assert!(!speculative::admits("f.law"));
+        assert!(!speculative::admits("f.law", false));
     }
 
     #[test]
