@@ -529,7 +529,7 @@ impl Lexer {
                         std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow
                     ) =>
                 {
-                    return Err(self.error(&format!(
+                    return Err(self.error(format!(
                         "integer literal '{num_str}' is too large for a 64-bit literal — \
                          Aver's Int is arbitrary-precision at runtime, so build a larger \
                          constant from a string with Int.n(\"{num_str}\")"
