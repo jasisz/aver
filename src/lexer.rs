@@ -515,9 +515,28 @@ impl Lexer {
                 col,
             })
         } else {
-            let i: i64 = num_str
-                .parse()
-                .map_err(|_| self.error("Invalid integer literal"))?;
+            // Aver's `Int` is arbitrary-precision (ℤ) at runtime, but an integer
+            // LITERAL is still lexed into an i64. A literal whose digits exceed the
+            // 64-bit range is therefore rejected here — distinguish that (valid
+            // digits, too big) from a genuinely malformed literal and point at the
+            // working path (`Int.n("…")` builds a larger constant from a string)
+            // instead of a cryptic "invalid literal".
+            let i: i64 = match num_str.parse::<i64>() {
+                Ok(v) => v,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow
+                    ) =>
+                {
+                    return Err(self.error(format!(
+                        "integer literal '{num_str}' is too large for a 64-bit literal — \
+                         Aver's Int is arbitrary-precision at runtime, so build a larger \
+                         constant from a string with Int.n(\"{num_str}\")"
+                    )));
+                }
+                Err(_) => return Err(self.error("Invalid integer literal")),
+            };
             Ok(Token {
                 kind: TokenKind::Int(i),
                 line,
