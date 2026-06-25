@@ -4321,6 +4321,31 @@ fn emit_simple_induction(
         None
     };
 
+    // In-scope sibling helper laws (`fast_simp`) threaded into the induction arms
+    // as an EXTRA branch — `even (plus x x) = true` (prop_16) closes once the succ
+    // arm has the parity shift `even (S (S n)) = even n` and `plus`'s succ-right
+    // helper in its `simp_all` set. The base arms keep using `simp_list` (defs +
+    // committed only), so a law that already closed on its plain ladder is
+    // BYTE-IDENTICAL; this branch is appended just before the `sorry` floor, so it
+    // can only ADD closures, never demote a working arm. Loop-safe: `fast_simp` is
+    // already loop-excluded by `simp_entries`. Empty `fast_simp` → no branch → the
+    // emit is unchanged.
+    let sibling_set = if fast_simp.is_empty() {
+        None
+    } else if simp_list.is_empty() {
+        Some(fast_simp.join(", "))
+    } else {
+        Some(format!("{simp_list}, {}", fast_simp.join(", ")))
+    };
+    let sibling_leaf = sibling_set
+        .as_deref()
+        .map(|s| format!(" | (simp [{s}]; done)"))
+        .unwrap_or_default();
+    let sibling_rec = sibling_set
+        .as_deref()
+        .map(|s| format!(" | (simp_all [{s}]; done)"))
+        .unwrap_or_default();
+
     let mut arm_lines: Vec<String> = Vec::new();
     for variant in variants {
         let lean_variant = match &peano {
@@ -4352,10 +4377,11 @@ fn emit_simple_induction(
                     .map(|(leaf, _)| leaf.as_str())
                     .unwrap_or_default();
                 arm_lines.push(format!(
-                    "| {v}{b} => first | (simp [{d}]; done) | (simp [{d}]; omega){bridge}{comm}{mul_ac} | sorry",
+                    "| {v}{b} => first | (simp [{d}]; done) | (simp [{d}]; omega){bridge}{comm}{mul_ac}{sibling} | sorry",
                     v = lean_variant,
                     b = binders,
-                    d = simp_list
+                    d = simp_list,
+                    sibling = sibling_leaf
                 ));
             }
             VariantKind::DirectRec => {
@@ -4385,11 +4411,12 @@ fn emit_simple_induction(
                     .map(|(_, rec)| rec.as_str())
                     .unwrap_or_default();
                 arm_lines.push(format!(
-                    "| {v} {b} {ih} => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega){bridge}{comm}{mul_ac} | sorry",
+                    "| {v} {b} {ih} => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega){bridge}{comm}{mul_ac}{sibling} | sorry",
                     v = lean_variant,
                     b = field_binders.join(" "),
                     ih = ih_names.join(" "),
-                    d = simp_list
+                    d = simp_list,
+                    sibling = sibling_rec
                 ));
             }
             VariantKind::IndirectRec => return None,

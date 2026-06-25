@@ -175,6 +175,12 @@ fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
         // and the no-list-given simp-unfold rung for the `rev [z] = [z]` singleton
         // helper — both generic driver strategies, no bespoke Lean.
         "proof-corpus/decomposed/prod/lemma_09.av",
+        // parity of a double `even (x + x) = true`: the Peano-predicate structural
+        // induction now threads the in-scope sibling helper laws (the parity shift
+        // `even (S (S n)) = even n` + `plus` succ-right) into its arm `simp_all` via
+        // an additive sibling branch — omega cannot reason through `even`, so the
+        // close is structural over the predicate.
+        "proof-corpus/decomposed/prod/prop_16.av",
     ];
     for task in tasks {
         let out = temp_output_dir(&format!(
