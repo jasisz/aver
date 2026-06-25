@@ -7096,12 +7096,29 @@ fn emit_handler_wrapper(
     f.instruction(&Instruction::Call(user_handler_wasm_idx));
     f.instruction(&Instruction::LocalSet(6));
 
-    // status = resp.status (i64)
+    // status = resp.status — under `Int = ℤ` the `HttpResponse.status` field is
+    // the `$AverInt` carrier (the factory lifts the host's i64 to a Small via
+    // `__aint_from_i64`), so lower it back to i64 before storing into the i64
+    // local the `Response.text` host import consumes. Mirror of
+    // `emit_factory_http_response_make`; saturating is safe — a status code
+    // always fits i64. Without this the wrapper stores a `(ref null $aint)` into
+    // an i64 local and the module fails wasm validation.
     f.instruction(&Instruction::LocalGet(6));
     f.instruction(&Instruction::StructGet {
         struct_type_index: resp_idx,
         field_index: 0,
     });
+    if registry.bignum {
+        let to_i64 =
+            fn_map
+                .builtins
+                .get("__aint_to_i64_sat")
+                .copied()
+                .ok_or(WasmGcError::Validation(
+                    "bignum aver_http_handle wrapper needs the __aint_to_i64_sat helper".into(),
+                ))?;
+        f.instruction(&Instruction::Call(to_i64));
+    }
     f.instruction(&Instruction::LocalSet(7));
     // resp_body = resp.body
     f.instruction(&Instruction::LocalGet(6));
