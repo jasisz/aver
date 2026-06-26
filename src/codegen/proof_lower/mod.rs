@@ -2361,15 +2361,15 @@ fn classify_law_strategy(
             helper_fn,
         };
     }
-    // Nonnegativity over a NONLINEAR Int product (`E >= 0`) — the
-    // inequality sibling of `RingIdentity`. Placed BEFORE the
-    // `LinearArithmetic` catch-all because that rung claims any all-Int
-    // law (these nonlinear `when`-guarded ones included) and, unable to
-    // close `0 <= a*b` with `omega`, renders them on the bounded sampled
-    // fallback. The detector requires a genuine variable×variable product,
-    // so it claims ONLY goals `omega` provably cannot decide — every
-    // linear nonnegativity law still flows to `LinearArithmetic`. NOT
-    // `when`-gated: the Newton-Raphson factor-sign guards ride in as a
+    // Nonnegativity / order over a NONLINEAR Int product (`E >= 0` or
+    // `prod <= prod`) — the inequality sibling of `RingIdentity`. Placed
+    // BEFORE the `LinearArithmetic` catch-all because that rung claims any
+    // all-Int law (these nonlinear `when`-guarded ones included) and, unable
+    // to close `0 <= a*b` / `e*e <= b*b` with `omega`, renders them on the
+    // bounded sampled fallback. The detector requires a genuine
+    // variable×variable product, so it claims ONLY goals `omega` provably
+    // cannot decide — every linear law still flows to `LinearArithmetic`.
+    // NOT `when`-gated: the Newton-Raphson factor-sign guards ride in as a
     // `when` premise threaded into the universal statement.
     if let Some(unfold_fns) = detect_nonlinear_nonneg(law, fn_name, inputs) {
         return ProofStrategy::NonlinearNonneg { unfold_fns };

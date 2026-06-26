@@ -179,12 +179,12 @@ fn maybe_wrap_with_grind_rung(
     if lines.iter().any(|l| l.contains("grind")) {
         return proof;
     }
-    // A `NonlinearNonneg` proof closes via `aver_int_nonneg`, the generic
+    // A `NonlinearNonneg` proof closes via `aver_int_order`, the generic
     // nonlinear-nonnegativity primitive — a goal `grind` has already been
     // measured to NOT decide (`0 <= x*x` and friends). Prepending the rung
     // would only spend a guaranteed-failing grind saturation before falling
     // to the primitive, so skip it the same way an own-grind body does.
-    if lines.iter().any(|l| l.contains("aver_int_nonneg")) {
+    if lines.iter().any(|l| l.contains("aver_int_order")) {
         return proof;
     }
     // SHAPE GATE: only wrap a grind-amenable (flat algebraic/ring/order)
@@ -385,7 +385,7 @@ fn emit_verify_law_forall_auto_proof_inner(
     // `∀ givens, <when> = true -> claim` form (for a `when`-law, via the
     // `conditional_universal` driver that drops the sampled domain; a
     // no-`when` `holds` law is universal as stated). This emits only the
-    // proof body — one generic decision step (`aver_int_nonneg`) under a
+    // proof body — one generic decision step (`aver_int_order`) under a
     // `first | (…) | sorry` floor.
     if let Some(proof) = inequality::emit_nonlinear_nonneg_law(vb, law, ctx) {
         return Some(proof);

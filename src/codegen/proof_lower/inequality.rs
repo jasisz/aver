@@ -1,35 +1,39 @@
-//! `NonlinearNonneg` strategy detector — nonnegativity laws over
-//! nonlinear Int products (`E >= 0`), the Newton-Raphson error-bound
-//! family of the K5 division proof.
+//! `NonlinearNonneg` strategy detector — nonnegativity / order laws over
+//! nonlinear Int products (`E >= 0`, or `prod <= prod`), the Newton-Raphson
+//! error-bound family of the K5 division proof.
 //!
 //! This is the inequality sibling of [`super::ring`]: where the ring
 //! detector keys on unconditional *equality* identities over Int-record
-//! carriers, this one keys on *order* claims of the shape `E >= 0` over
-//! a pure-Int product cone, and — unlike the ring rung — admits a
-//! `when` premise (the guards that constrain the factors to be
-//! nonnegative). The closing primitive on the Lean side is a single
-//! generic tactic (`aver_int_nonneg`, shipped in the prelude), the
-//! nonlinear analog of `omega` for the products-and-squares fragment:
-//! it decomposes the product with `Int.mul_nonneg`, bottoms squares out
-//! on `aver_sq_nonneg`, and discharges the leaves from the premise — one
-//! generic decision step, never a per-figure template. Z3 carries these
+//! carriers, this one keys on *order* claims — a nonnegativity `E >= 0` or
+//! a product-order `L <= R` (both sides products) — over a pure-Int product
+//! cone, and, unlike the ring rung, admits a `when` premise (the guards
+//! that constrain the factor signs). The closing primitive on the Lean side
+//! is a single generic tactic (`aver_int_order`, shipped in the prelude),
+//! the nonlinear analog of `omega` for the products-and-squares fragment:
+//! it recurses with `Int.mul_nonneg` (nonneg goal) or `Int.mul_le_mul`
+//! (product order), bottoms squares out on `aver_sq_nonneg`, and discharges
+//! the leaves from the premise — one generic decision step, never a
+//! per-figure template. A `prod <= var` transitivity claim is NOT admitted
+//! (it needs a witness the step cannot synthesize). Z3 carries these
 //! natively, so the Dafny backend treats the pin like `BackendDispatch`.
 
 use super::*;
 
-/// Detector for [`crate::ir::ProofStrategy::NonlinearNonneg`]. Runs after
-/// the unconditional [`RingIdentity`](super::ring) rung and BEFORE the
-/// bounded sampled-domain fallback, so a nonnegativity law that no
-/// cheaper rung closes is lifted to its true universal statement instead
-/// of being pinned to its finite `given` sample. Keys on STRUCTURE only
-/// — never on identifier names:
+/// Detector for [`crate::ir::ProofStrategy::NonlinearNonneg`]. Runs just
+/// ahead of the `LinearArithmetic` catch-all (which would otherwise claim
+/// these all-Int laws and, unable to decide the nonlinear goal with
+/// `omega`, render them on the bounded sampled fallback), so a nonneg/order
+/// law no cheaper rung closes is lifted to its true universal statement
+/// instead of being pinned to its finite `given` sample. Keys on STRUCTURE
+/// only — never on identifier names:
 ///
 /// - every given is `Int` (the family is pure scaled-integer algebra;
 ///   the paper cross-multiplies the rationals into `Int` form), and
 ///   there is at least one;
 /// - the claim is `subject(args…) = true` where `subject` is a pure
-///   non-recursive `Bool` fn whose body is a single nonnegativity
-///   comparison `E >= 0` (or `0 <= E`);
+///   non-recursive `Bool` fn whose body is a recognized comparison — a
+///   nonnegativity `E >= 0` (`0 <= E`) or a product-order `L <= R` / `L >= R`
+///   with both sides products — carrying a genuine nonlinear product;
 /// - `E`, and the whole transitively-reached call cone, is pure
 ///   non-recursive Int arithmetic — Int literals, `+`, `-`, `*`, unary
 ///   negation, and calls to value-returning cone fns of the same shape;
@@ -88,12 +92,12 @@ pub(super) fn detect_nonlinear_nonneg(
         return None;
     }
 
-    // Subject body: exactly one expression, a nonnegativity comparison
-    // `E >= 0` / `0 <= E` over a pure-Int-arithmetic `E`.
+    // Subject body: exactly one expression, a recognized nonneg/order
+    // comparison (`E >= 0`, or `prod <= prod`) over pure-Int arithmetic.
     let [crate::ast::Stmt::Expr(body)] = subject.body.stmts() else {
         return None;
     };
-    let nonneg_operand = nonneg_against_zero(&body.node)?;
+    let operands = recognized_comparison(&body.node)?;
 
     // Seed the unfold cone from both law sides plus the nonnegativity
     // operand, then expand transitively through cone bodies (mirrors
@@ -139,9 +143,9 @@ pub(super) fn detect_nonlinear_nonneg(
         };
         match fd.return_type.as_str() {
             "Bool" => {
-                // Only the nonnegativity subject is allowed in Bool
-                // position; any other Bool body is out of this family.
-                nonneg_against_zero(&cone_body.node)?;
+                // Only a recognized nonneg/order comparison is allowed in
+                // Bool position; any other Bool body is out of this family.
+                recognized_comparison(&cone_body.node)?;
             }
             "Int" => {
                 if !is_int_arith_expr(cone_body, inputs, &cone) {
@@ -151,17 +155,14 @@ pub(super) fn detect_nonlinear_nonneg(
             _ => return None,
         }
     }
-    // The nonnegativity operand itself must be pure Int arithmetic AND
-    // genuinely NONLINEAR — it must contain a variable×variable product.
-    // A purely linear `E >= 0` is decided by `omega`, so it belongs to the
-    // `LinearArithmetic` rung this detector runs ahead of; claiming only
-    // the nonlinear shape keeps the pin from stealing any law that cheaper
-    // rung closes.
-    if !is_int_arith_expr_node(nonneg_operand, inputs, &cone) {
-        return None;
-    }
-    if !has_nonlinear_product(nonneg_operand) {
-        return None;
+    // Every comparison operand must be pure Int arithmetic. (The nonlinearity
+    // requirement — that `omega` provably cannot decide the goal, so the pin
+    // steals nothing the `LinearArithmetic` rung it runs ahead of closes — is
+    // already enforced inside `recognized_comparison`.)
+    for operand in &operands {
+        if !is_int_arith_expr_node(operand, inputs, &cone) {
+            return None;
+        }
     }
 
     // Subject first (the Lean emit unfolds the outermost layer first),
@@ -171,15 +172,46 @@ pub(super) fn detect_nonlinear_nonneg(
     Some(unfold_fns)
 }
 
-/// If `expr` is a nonnegativity comparison against the literal `0`
-/// (`E >= 0` or `0 <= E`), return the operand `E`; otherwise `None`.
-fn nonneg_against_zero(expr: &crate::ast::Expr) -> Option<&crate::ast::Expr> {
+/// If `expr` is a nonneg/order comparison the generic `aver_int_order` step
+/// decides, return its operand expressions (for arithmetic validation);
+/// otherwise `None`. Two admitted shapes:
+///
+///  - NONNEG: `E >= 0` / `0 <= E` where `E` carries a nonlinear product
+///    (`Int.mul_nonneg` recursion, sign-split squares);
+///  - PRODUCT ORDER: `L <= R` / `L >= R` where BOTH `L` and `R` are
+///    top-level products (so `Int.mul_le_mul` unifies) and at least one is
+///    nonlinear (`e*e <= b*b`, `(d·x-s)⁴ <= s²`).
+///
+/// A `prod <= var` order claim (`a*c <= m`, the transitivity figure) is
+/// deliberately NOT admitted: closing it needs a `≤`-chain witness this
+/// generic step does not synthesize, so the pin would only land it on the
+/// honest `sorry` floor — a regression from its sound bounded fallback.
+fn recognized_comparison(expr: &crate::ast::Expr) -> Option<Vec<&crate::ast::Expr>> {
     use crate::ast::{BinOp, Expr};
     match expr {
-        Expr::BinOp(BinOp::Gte, lhs, rhs) if is_int_zero(&rhs.node) => Some(&lhs.node),
-        Expr::BinOp(BinOp::Lte, lhs, rhs) if is_int_zero(&lhs.node) => Some(&rhs.node),
+        // Nonnegativity against the literal `0`.
+        Expr::BinOp(BinOp::Gte, l, r) if is_int_zero(&r.node) => {
+            has_nonlinear_product(&l.node).then(|| vec![&l.node])
+        }
+        Expr::BinOp(BinOp::Lte, l, r) if is_int_zero(&l.node) => {
+            has_nonlinear_product(&r.node).then(|| vec![&r.node])
+        }
+        // Product-order: both sides top-level products, at least one nonlinear.
+        Expr::BinOp(BinOp::Lte | BinOp::Gte, l, r)
+            if is_product(&l.node)
+                && is_product(&r.node)
+                && (has_nonlinear_product(&l.node) || has_nonlinear_product(&r.node)) =>
+        {
+            Some(vec![&l.node, &r.node])
+        }
         _ => None,
     }
+}
+
+/// True when `expr` is a top-level multiplication — the shape `Int.mul_le_mul`
+/// unifies its `?a * ?c ≤ ?b * ?d` conclusion against.
+fn is_product(expr: &crate::ast::Expr) -> bool {
+    matches!(expr, crate::ast::Expr::BinOp(crate::ast::BinOp::Mul, _, _))
 }
 
 /// True for the integer literal `0` (`Int(0)` — the canonical small-literal

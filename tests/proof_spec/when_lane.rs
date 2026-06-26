@@ -6,21 +6,24 @@ use super::*;
 /// (`omega` on a var×var goal, `by_cases` over a hypothesis name,
 /// Nat-truncated sample guards) is a build error, not an honest sorry.
 ///
-/// Two generic engine steps now close the nonnegativity sub-family
+/// Two generic engine steps now close the nonneg/order sub-family
 /// kernel-genuine, so the wall lands on ZERO sorries:
 ///   - the `NonlinearNonneg` strategy + its shipped prelude primitive
-///     `aver_int_nonneg` (the `omega`-analog for the products-and-squares
-///     fragment — decompose with `Int.mul_nonneg`, sign-split squares)
-///     closes `sqNonneg` (`x·x ≥ 0`), `mulNonneg`, and `tripleNonneg` —
-///     the last two as TRUE universals `∀ …, <guard> = true -> claim`
-///     (the `when`-guard threaded in as a hypothesis, not a finite sample);
+///     `aver_int_order` (the `omega`-analog for the products-and-squares
+///     fragment — recurse with `Int.mul_nonneg` on a nonneg goal or
+///     `Int.mul_le_mul` on a `prod ≤ prod` goal, sign-split squares) closes
+///     `sqNonneg` (`x·x ≥ 0`), `mulNonneg`, `tripleNonneg`, the squaring
+///     monotonicity `sqMono` (`e·e ≤ b·b`), and the contraction bound
+///     `nrContraction` (`((d·x-s)²)² ≤ s²`) — the premised ones as TRUE
+///     universals `∀ …, <guard> = true -> claim` (the `when`-guard threaded
+///     in as a hypothesis, not a finite sample);
 ///   - the shape-gated `grind` rung closes the unconditional nonlinear
 ///     polynomial ring identity `nrNewErrNum ≍ nrOldErrSq`
 ///     (`s⁴ - d·(x·(2s² - dx)) = (s² - dx)²`).
-/// The order sub-family (`sqMono`, `mulLeTrans`) and the contraction
-/// bound (`nrContraction`) are `<= `-claims this nonneg step does not
-/// reach, so they keep their sound bounded sampled fallback — bounded,
-/// not sorries. axioms stay within {propext, Classical.choice, Quot.sound}.
+/// Only `mulLeTrans` (`a·c ≤ m`, a `prod ≤ var` transitivity needing a
+/// `≤`-chain witness this step does not synthesize) keeps its sound bounded
+/// sampled fallback — bounded, not a sorry. axioms stay within {propext,
+/// Classical.choice, Quot.sound}.
 #[test]
 fn proof_nonlinear_nonneg_laws_close_via_generic_primitive() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -32,10 +35,11 @@ fn proof_nonlinear_nonneg_laws_close_via_generic_primitive() {
     assert_eq!(
         summary["sorries"].as_u64(),
         Some(0),
-        "the nonlinear-nonneg wall must close on ZERO sorries — the \
-         `aver_int_nonneg` primitive closes sqNonneg/mulNonneg/tripleNonneg \
-         and the grind rung closes nrNewErrNum≍nrOldErrSq (a residual sorry, \
-         a build error, or the bounded order laws regressing is a failure).\n{}",
+        "the nonlinear-nonneg/order wall must close on ZERO sorries — the \
+         `aver_int_order` primitive closes sqNonneg/mulNonneg/tripleNonneg/\
+         sqMono/nrContraction and the grind rung closes nrNewErrNum≍nrOldErrSq \
+         (a residual sorry, a build error, or mulLeTrans regressing off its \
+         bounded fallback is a failure).\n{}",
         format_output(&run)
     );
     assert_eq!(

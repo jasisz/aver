@@ -2884,7 +2884,7 @@ pub fn emit_verify_law(
                     // its exports stay byte-identical.
                     | crate::ir::ProofStrategy::RingIdentity { .. }
                     // Same guard for the nonlinear-nonnegativity strategy:
-                    // its closer is the Lean prelude tactic `aver_int_nonneg`;
+                    // its closer is the Lean prelude tactic `aver_int_order`;
                     // Z3 carries these `E >= 0` bounds push-button on the
                     // default universal lemma, so Dafny treats the pin as
                     // `BackendDispatch` and its exports stay byte-identical.

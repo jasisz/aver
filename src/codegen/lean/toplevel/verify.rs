@@ -598,7 +598,7 @@ fn emit_verify_law_block(
             )
             // A `when`-premised `NonlinearNonneg` law (the Newton-Raphson
             // factor-sign guards) is proved UNIVERSALLY by the generic
-            // `aver_int_nonneg` step, so its statement drops the sampled
+            // `aver_int_order` step, so its statement drops the sampled
             // domain (`omit_domain`) to `∀ givens, <when> = true -> claim`
             // and is classed `universal`. The proof emit keys on the same
             // pin, so statement and proof agree. Credit stays fail-closed:

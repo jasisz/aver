@@ -897,22 +897,27 @@ def fromHex (s : String) : Except String Int :=
   | _ => .error ("Byte.fromHex: expected exactly 2 hex chars, got '" ++ s ++ "'")
 end AverByte"#;
 
-/// The nonlinear-nonnegativity closing kit for the `NonlinearNonneg`
+/// The nonlinear nonneg/order closing kit for the `NonlinearNonneg`
 /// strategy (the Newton-Raphson error bounds of `projects/k5_fdiv`).
 /// Core `Int` only — no Mathlib, no `nlinarith`/`positivity`. Shipped
-/// demand-driven (only when a proof actually invokes `aver_int_nonneg`),
+/// demand-driven (only when a proof actually invokes `aver_int_order`),
 /// so corpora that never need it get byte-identical output.
 ///
-/// `aver_int_nonneg` is the nonlinear analog of `omega` for the
+/// `aver_int_order` is the nonlinear analog of `omega` for the
 /// products-and-squares fragment: ONE generic decision step, not a
-/// per-figure template. It decomposes a product goal `0 ≤ a * b` with
-/// `Int.mul_nonneg`, bottoms a square `0 ≤ t * t` out on `aver_sq_nonneg`
-/// (the sign-split base case — `Int.mul_self_nonneg` does not exist in
-/// core), splits a conjunctive premise, and discharges the remaining
-/// linear leaves from context. The emitter wraps every use in
-/// `first | (…; aver_int_nonneg) | sorry`, so a goal outside the fragment
-/// falls to an honest caught `sorry`, never a build error — credit stays
-/// fail-closed behind the `#print axioms` whitelist.
+/// per-figure template. On a nonnegativity goal `0 ≤ a * b` it recurses
+/// with `Int.mul_nonneg`; on an order goal `a*c ≤ b*d` (two products) it
+/// recurses with `Int.mul_le_mul`; a square `0 ≤ t * t` (or its bound)
+/// bottoms out on `aver_sq_nonneg` (the sign-split base case —
+/// `Int.mul_self_nonneg` does not exist in core); a conjunctive premise is
+/// split; and the remaining LINEAR leaves are closed by `omega` (placed
+/// second so it disposes of them before the product rungs can backtrack on
+/// a linear goal — the ordering that keeps the search shallow and fast).
+/// The emitter wraps every use in `first | (…; aver_int_order) | sorry`,
+/// so a goal outside the fragment (e.g. a `prod ≤ var` transitivity, which
+/// needs a witness this step does not synthesize) falls to an honest caught
+/// `sorry` — never a build error — and credit stays fail-closed behind the
+/// `#print axioms` whitelist.
 const LEAN_PRELUDE_NONLINEAR_NONNEG: &str = r#"/-- A square is never negative — the sign-split base case the product
 closer bottoms out on (`Int.mul_self_nonneg` is absent from core Int). -/
 theorem aver_sq_nonneg (t : Int) : 0 ≤ t * t := by
@@ -922,19 +927,21 @@ theorem aver_sq_nonneg (t : Int) : 0 ≤ t * t := by
     have := Int.mul_nonneg h2 h2
     rwa [Int.neg_mul_neg] at this
 
-/-- Generic nonnegativity decision step for nonlinear Int products: the
-`omega`-analog for the products-and-squares fragment. Decompose a product
-with `Int.mul_nonneg`, bottom squares out on `aver_sq_nonneg`, split a
-conjunctive premise, then discharge the linear leaves. -/
-syntax "aver_int_nonneg" : tactic
+/-- Generic nonneg/order decision step for nonlinear Int products: the
+`omega`-analog for the products-and-squares fragment. Recurse on a product
+with `Int.mul_nonneg` (nonneg goal) or `Int.mul_le_mul` (product ≤ product),
+bottom squares out on `aver_sq_nonneg`, split a conjunctive premise, and
+discharge the linear leaves with `omega`. -/
+syntax "aver_int_order" : tactic
 macro_rules
-  | `(tactic| aver_int_nonneg) => `(tactic|
+  | `(tactic| aver_int_order) => `(tactic|
       first
         | assumption
+        | omega
         | exact aver_sq_nonneg _
-        | (apply Int.mul_nonneg <;> aver_int_nonneg)
-        | (obtain ⟨hl, hr⟩ := ‹_ ∧ _›; aver_int_nonneg)
-        | omega)"#;
+        | (apply Int.mul_nonneg <;> aver_int_order)
+        | (apply Int.mul_le_mul <;> aver_int_order)
+        | (obtain ⟨hl, hr⟩ := ‹_ ∧ _›; aver_int_order))"#;
 
 #[cfg(test)]
 pub(super) fn generate_prelude() -> String {
@@ -1006,7 +1013,7 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
         }
     }
 
-    if include_all_helpers || body.contains("aver_int_nonneg") {
+    if include_all_helpers || body.contains("aver_int_order") {
         parts.push(LEAN_PRELUDE_NONLINEAR_NONNEG.to_string());
     }
 
@@ -1190,7 +1197,7 @@ pub(super) fn build_common_lean(union_body: &str) -> String {
     // stay byte-identical. Not a `BUILTIN_HELPERS` key: it is Lean-only
     // proof infrastructure (Z3 carries these natively, so Dafny ships
     // nothing), keyed on emitted tactic text rather than a builtin call.
-    if union_body.contains("aver_int_nonneg") {
+    if union_body.contains("aver_int_order") {
         parts.push(LEAN_PRELUDE_NONLINEAR_NONNEG.to_string());
     }
     parts.join("\n\n")
