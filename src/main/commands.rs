@@ -4900,6 +4900,12 @@ fn run_optimize_pipeline(wasm_file: &Path, mode: super::cli::WasmOptMode) -> Res
         .arg("--enable-tail-call")
         .arg("--enable-gc")
         .arg("--enable-reference-types")
+        // The bignum f64->Int helper emits `i64.trunc_sat_f64_u` (exact integer
+        // over the full f64 range); `--strip-target-features` above drops the
+        // feature section, so wasm-opt must be told this proposal is allowed or
+        // it rejects the input. Every wasm-gc target engine (Chrome 119+ / FF
+        // 120+ / Safari 18.2+ / wasmtime / Node 22+) supports it.
+        .arg("--enable-nontrapping-float-to-int")
         .arg(&stage1_file)
         .arg("-o")
         .arg(&optimized_file)
