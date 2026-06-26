@@ -2085,6 +2085,55 @@ fn keystone_pool_names(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) 
     out
 }
 
+/// The power-of-two function the keystone's cited pool reasons about, if any:
+/// the `pow_fn` of an EARLIER sibling law (in this law's cone) whose proof
+/// strategy is a `FloorDivWindow` figure (the power-of-two homomorphism /
+/// window family), returned in Lean form. `None` when no cited pool law is
+/// about a power-of-two fn — the keystone then keeps its plain simp+grind
+/// emission unchanged.
+///
+/// Shape-keyed and name-blind: the trigger is the `FloorDivWindow` figure
+/// (which the lowerer only pins after its `is_pow2_shape` gate), never a
+/// hard-coded fn name. When present, the keystone prepends the generic
+/// [`pow2_linear_form_normalizer_support`](super::floor_window) stack so
+/// `grind` can canonicalize `pow` of ANY nonneg linear form.
+fn keystone_pow2_fn(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option<String> {
+    use crate::ast::{TopLevel, VerifyKind};
+    use crate::ir::{FloorWindowFigure, ProofStrategy};
+    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
+    let cone_fns: std::collections::HashSet<String> =
+        cone.pure_fns().iter().map(|fd| fd.name.clone()).collect();
+    for item in &ctx.items {
+        let TopLevel::Verify(prev) = item else {
+            continue;
+        };
+        // Only earlier-in-source siblings — same gate as `keystone_pool_names`.
+        if prev.line == vb.line && prev.fn_name == vb.fn_name {
+            break;
+        }
+        let VerifyKind::Law(prev_law) = &prev.kind else {
+            continue;
+        };
+        if !cone_fns.contains(&prev.fn_name) {
+            continue;
+        }
+        let Some(ProofStrategy::FloorDivWindow { figure }) =
+            super::law_strategy_for(ctx, &prev.fn_name, &prev_law.name)
+        else {
+            continue;
+        };
+        let pow_fn = match figure {
+            FloorWindowFigure::PowPositive { pow_fn }
+            | FloorWindowFigure::PowSumSplit { pow_fn }
+            | FloorWindowFigure::SigWindow { pow_fn, .. }
+            | FloorWindowFigure::ProductWindow { pow_fn, .. } => pow_fn,
+        };
+        return Some(aver_name_to_lean(&pow_fn));
+    }
+    None
+}
+
 /// One eligible ORDER-BRIDGE citation for the keystone: an EARLIER sibling law
 /// asserting an inequality `L <op> R` (its subject fn's body is a single
 /// comparison, both sides non-atomic, `… holds`) whose two sides match subterms
@@ -2561,20 +2610,57 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
     let order_citations = keystone_order_bridge_citations(vb, law, ctx);
     let mut hints: Vec<String> = pool_names;
     hints.extend(order_citations.iter().map(|c| c.name.clone()));
-    let grind_hints = hints.join(", ");
     let mut support_lines: Vec<String> = Vec::new();
     for citation in &order_citations {
         support_lines.extend(citation.support.iter().cloned());
     }
+
+    // GENERIC pow2-of-nonneg-linear-form normalizer. When the cited pool
+    // reasons about a power-of-two fn (any `is_pow2_shape` fn, detected via the
+    // cited law's `FloorDivWindow` figure — name-blind), prepend its normalizer
+    // support stack (the homomorphism keyed on the PRODUCT side + the successor
+    // step, both with `grind_pattern`s) and add those lemmas to the grind hints.
+    // This is what lets `grind` canonicalize `pow` of a REARRANGED / shifted
+    // exponent — `pow (w_a + w_b - 2)` unifies with `pow (w_a-1) * pow (w_b-1)`
+    // by the product pattern + linear-arith congruence, and an odd offset peels
+    // via the successor pattern — closing the homomorphism COMPOSITION (e.g. the
+    // folklore `fpMulValue`) that the default LHS (`pow (m+n)`) e-match misses on
+    // a subtraction. Scoped to a fresh per-law prefix: no global pattern clash.
+    let pow2_normalizer = keystone_pow2_fn(vb, law, ctx).map(|pow| {
+        let nlbase = format!(
+            "{}_law_{}__pow2lf",
+            aver_name_to_lean(&vb.fn_name),
+            law.name
+        );
+        let support = super::floor_window::pow2_linear_form_normalizer_support(&nlbase, &pow);
+        (nlbase, support)
+    });
+    if let Some((nlbase, support)) = &pow2_normalizer {
+        support_lines.extend(support.lines().map(|l| l.to_string()));
+        hints.push(format!("{nlbase}__pow_add"));
+        hints.push(format!("{nlbase}__pow_succ"));
+    }
+    let grind_hints = hints.join(", ");
 
     let intro = format!("  intro {} h_when", intro_names.join(" "));
     // Bridge set matches the de-risked `e1`: `Bool.and_eq_true` splits the `&&`
     // guard, `decide_eq_true_eq` peels `decide p = true` to `p`. The earlier
     // `ge_iff_le, gt_iff_lt` are dropped — they are unnecessary for this shape
     // (`grind` orders relations itself) and `e1` closes without them.
-    let close = format!(
-        "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq] at h_when ⊢ <;> grind [{grind_hints}])"
-    );
+    let close = if pow2_normalizer.is_some() {
+        // A multiplication-value law (`fpMul`) normalizes its significand with
+        // an `if`-branch (shift 0 vs 1); `split` discharges that branch before
+        // `grind`, and the `first | (split <;> …) | …` covers both the branching
+        // and the flat (no-`if`) shapes uniformly — the bare `grind` arm is the
+        // path the scaling / product-exponent laws (no `if`) take.
+        format!(
+            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq] at h_when ⊢ <;> (first | (split <;> grind [{grind_hints}]) | grind [{grind_hints}]))"
+        )
+    } else {
+        format!(
+            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq] at h_when ⊢ <;> grind [{grind_hints}])"
+        )
+    };
     let floor = if super::super::tactic_ir::speculative::probing() {
         let id = format!("{}.{}", vb.fn_name, law.name);
         super::super::tactic_ir::speculative::record_probed(&id);

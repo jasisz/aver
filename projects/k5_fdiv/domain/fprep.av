@@ -167,23 +167,30 @@ fn fpMulValue(a: Fp, b: Fp) -> Bool
     ? "Multiplication denotes the product of the denoted values (folklore)."
     Domain.Rational.sameValue(fpValue(fpMul(a, b)), Domain.Rational.times(fpValue(a), fpValue(b)))
 
-// Floating-point folklore (the denotation of multiplication): the product float
-// denotes the product of the values. NOT a numbered paper lemma, and DEFERRED as a
-// universal law. The normalization case-split is NOT the obstacle -- the same generic
-// match-splitting that closes Lemma 7.1.7 above (grind splits fpMul's branch) reduces
-// each branch cleanly. The open frontier is the pow2 HOMOMORPHISM REARRANGEMENT: the
-// product denominator pow2(width_a + width_b - 2) must equal pow2(width_a - 1) *
-// pow2(width_b - 1), i.e. the homomorphism instantiated at the rearranged exponent
-// (width_a - 1) + (width_b - 1). grind's e-matcher splits the term's syntactic `+`,
-// reading width_a + width_b - 2 as (width_a + width_b - 1) + (-1) -- whose negative
-// second summand the homomorphism's nonneg premise rejects -- so it never instantiates
-// m := width_a - 1, n := width_b - 1. The scaling value law above composes because its
-// only homomorphism use, pow2(exp + j) = pow2(exp) * pow2(j), is a DIRECT syntactic
-// match. Closing this needs a pow2 abelian-group-homomorphism normalizer (canonicalize
-// pow2 of any nonneg linear form into a product of pow2 of atoms) -- a new generic
-// mechanism, not a case-split. Sample-verified here; universal on Z3/Dafny, which
-// carries the nonlinear arithmetic natively.
 verify fpMulValue
     fpMulValue(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => true
     fpMulValue(Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 0, width = 4)) => true
     fpMulValue(Fp(sign = -1, sigBits = 10, exp = 2, width = 4), Fp(sign = 1, sigBits = 11, exp = 1, width = 4)) => true
+
+// Floating-point folklore (the denotation of multiplication): the product float
+// denotes the product of the values. NOT a numbered paper lemma -- labelled folklore,
+// the denotation of multiplication. Universal on the Lean kernel. It is the project's
+// laws-as-lemmas composition at its sharpest: it re-proves nothing about powers of two,
+// it CITES the proven homomorphism pow2(m+n) == pow2(m)*pow2(n). The composition needs
+// the homomorphism at a REARRANGED exponent -- the product denominator
+// pow2(width_a + width_b - 2) is pow2(width_a - 1) * pow2(width_b - 1), the homomorphism
+// at (width_a - 1) + (width_b - 1), and the normalization branch shifts the width/exp by
+// one, asking pow2 of an odd offset too. grind's default match keys on the homomorphism's
+// LHS pow2(m+n) and never splits a subtraction. The engine closes it with one GENERIC
+// mechanism: a pow2-of-nonneg-linear-form normalizer that registers the homomorphism on
+// its PRODUCT side and a successor step, so grind canonicalizes pow2 of any nonneg linear
+// form into a product of pow2 of atoms (shape-keyed on the power-of-two fn, never a
+// per-figure template). Whichever branch fpMul takes, the two sides cross-multiply equal.
+verify fpMulValue law denotesProduct
+    given a: Fp = [Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = -1, sigBits = 10, exp = 2, width = 4)]
+    given b: Fp = [Fp(sign = 1, sigBits = 12, exp = 1, width = 4), Fp(sign = 1, sigBits = 11, exp = 0, width = 4)]
+    when a.exp >= 0
+    when b.exp >= 0
+    when a.width >= 1
+    when b.width >= 1
+    fpMulValue(a, b) holds

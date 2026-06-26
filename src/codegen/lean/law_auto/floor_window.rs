@@ -120,6 +120,46 @@ pub(super) fn emit_floor_window_law(
     })
 }
 
+/// The generic **power-of-two-of-a-nonneg-linear-form normalizer**: a
+/// self-contained support stack about a power-of-two function `pow`
+/// (any [`is_pow2_shape`](super::super::proof_lower::floor_window) fn —
+/// recognized by shape, not by name) that lets `grind` canonicalize
+/// `pow` of an ARBITRARY nonneg linear form into a product of `pow` of
+/// its atoms. Used by the keystone pool-composition rung when the cited
+/// laws-as-lemmas pool reasons about such a `pow`.
+///
+/// It opens with the def equations and the sum homomorphism, then adds
+/// the successor step `pow (n+1) = 2 * pow n`, and finally registers two
+/// `grind_pattern`s that are the whole point:
+///   * `__pow_add => pow m * pow n` — the homomorphism keyed on the
+///     PRODUCT side. When `grind` sees any `pow p * pow q` it learns
+///     `pow (p+q) = pow p * pow q`; its linear-arith normalizer then
+///     identifies `p+q` with any other exponent equal to it (e.g.
+///     `(w_a-1)+(w_b-1)` with `w_a+w_b-2`), so a regrouped/shifted
+///     exponent unifies by congruence — the exact match `grind`'s
+///     default LHS (`pow (m+n)`) pattern misses on a subtraction.
+///   * `__pow_succ => pow (n+1)` — peels a `+1` constant shift, so an
+///     odd offset (`w_a+w_b-1`, `e_a+e_b+1`) reduces to the even case.
+///
+/// `base` is the CONSUMER law's fresh prefix, so the stack and its
+/// patterns are scoped to one emission — no global `grind_pattern`
+/// collision, no dependence on the cited law's own support names.
+pub(in crate::codegen::lean) fn pow2_linear_form_normalizer_support(
+    base: &str,
+    pow: &str,
+) -> String {
+    let equations = pow_equation_lemmas(base, pow);
+    let add = pow_add_lemma(base, pow);
+    format!(
+        r#"{equations}
+{add}
+theorem {base}__pow_succ (n : Int) (h : 0 <= n) : {pow} (n + 1) = 2 * {pow} n := by
+  rw [{base}__pow_of_pos (n + 1) (by omega), show n + 1 - 1 = n by omega]
+grind_pattern {base}__pow_add => {pow} m * {pow} n
+grind_pattern {base}__pow_succ => {pow} (n + 1)"#
+    )
+}
+
 /// The power-of-two equation pair every figure's stack opens with:
 /// `<base>__pow_of_nonpos` / `<base>__pow_of_pos`.
 fn pow_equation_lemmas(base: &str, pow: &str) -> String {
