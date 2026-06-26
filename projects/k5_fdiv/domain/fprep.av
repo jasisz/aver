@@ -9,14 +9,16 @@ module Fprep
         "* 2^e as the Stage-0 exact rational (domain/rational.av Fraction)."
         "The landed laws are Lemma 7.1.2 (p.18): scaling by a power of two leaves the"
         "significand unchanged and shifts the exponent -- s(x*2^j) = s_x, e(x*2^j) = e_x"
-        "+ j -- which hold DEFINITIONALLY here because fpScale renormalizes nothing. The"
-        "two value-preservation facts (scaling and multiplication denote the scaled /"
-        "multiplied rational) are floating-point folklore, NOT numbered paper lemmas;"
-        "they are the project's laws-as-lemmas composition in action -- they re-prove"
-        "nothing about powers of two, they CITE the proven homomorphism pow2(m+n) =="
+        "+ j -- which hold DEFINITIONALLY here because fpScale renormalizes nothing; and"
+        "Lemma 7.1.7 (p.18): e_x + e_y <= e(x*y) <= e_x + e_y + 1, the product-exponent"
+        "range, proven by splitting fpMul's normalization match (grind case-splits the"
+        "branch) and bounding each arm. The scaling value-preservation fact (scaling"
+        "denotes the scaled rational) is floating-point folklore, NOT a numbered paper"
+        "lemma; it is the project's laws-as-lemmas composition in action -- it re-proves"
+        "nothing about powers of two, it CITES the proven homomorphism pow2(m+n) =="
         "pow2(m)*pow2(n) and the compiler composes it via one generic strategy."
     depends [Domain.Rational]
-    exposes [pow2, Fp, isFp, fpValue, fpScale, fpMul, pow2Fraction, fpScaleKeepsSignificand, fpScaleShiftsExponent, fpScalePreservesValue, fpMulValue]
+    exposes [pow2, Fp, isFp, fpValue, fpScale, fpMul, pow2Fraction, fpScaleKeepsSignificand, fpScaleShiftsExponent, fpScalePreservesValue, productExp, productExpInRange, fpMulValue]
     effects []
 
 fn pow2(n: Int) -> Int
@@ -137,17 +139,50 @@ verify fpMul
     fpMul(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => Fp(sign = 1, sigBits = 96, exp = 1, width = 7)
     fpMul(Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 0, width = 4)) => Fp(sign = 1, sigBits = 144, exp = 1, width = 8)
 
+fn productExp(a: Fp, b: Fp) -> Int
+    ? "The exponent of the product float e(x*y) -- either e_a+e_b or e_a+e_b+1 depending on whether the significand product overflows [1,2)."
+    fpMul(a, b).exp
+
+fn productExpInRange(a: Fp, b: Fp) -> Bool
+    ? "Lemma 7.1.7 (p.18): the product exponent lies in [e_a + e_b, e_a + e_b + 1]."
+    Bool.and(a.exp + b.exp <= productExp(a, b), productExp(a, b) <= a.exp + b.exp + 1)
+
+verify productExpInRange
+    productExpInRange(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => true
+    productExpInRange(Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 0, width = 4)) => true
+
+// Lemma 7.1.7 (p.18): "If x != 0 and y != 0 then e_x + e_y <= e(x*y) <= e_x +
+// e_y + 1." The product exponent is e_a + e_b plus the normalization shift of 0
+// or 1, so it lands in that closed range whichever branch fpMul takes. A
+// nonzero float here is one with a nonzero significand (a zero significand is
+// the only way the denoted rational vanishes), matching the paper's x != 0.
+verify productExpInRange law productExponentBounds
+    given a: Fp = [Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = -1, sigBits = 12, exp = 2, width = 4)]
+    given b: Fp = [Fp(sign = 1, sigBits = 12, exp = 1, width = 4), Fp(sign = 1, sigBits = 11, exp = 0, width = 4)]
+    when a.sigBits != 0
+    when b.sigBits != 0
+    productExpInRange(a, b) holds
+
 fn fpMulValue(a: Fp, b: Fp) -> Bool
     ? "Multiplication denotes the product of the denoted values (folklore)."
     Domain.Rational.sameValue(fpValue(fpMul(a, b)), Domain.Rational.times(fpValue(a), fpValue(b)))
 
 // Floating-point folklore (the denotation of multiplication): the product float
 // denotes the product of the values. NOT a numbered paper lemma, and DEFERRED as a
-// universal law: cross-multiplied it asks the pow2 homomorphism, but composed ACROSS
-// fpMul's normalization case-split (the exponent/width shift of 0 or 1) -- the
-// magnitude split s_a*s_b < 2 vs >= 2 that Lemma 7.1.7 needs. The keystone closes the
-// no-split scaling value law above; this split is the open frontier (sample-verified
-// here, universal on Z3/Dafny which carries the case-analysis natively).
+// universal law. The normalization case-split is NOT the obstacle -- the same generic
+// match-splitting that closes Lemma 7.1.7 above (grind splits fpMul's branch) reduces
+// each branch cleanly. The open frontier is the pow2 HOMOMORPHISM REARRANGEMENT: the
+// product denominator pow2(width_a + width_b - 2) must equal pow2(width_a - 1) *
+// pow2(width_b - 1), i.e. the homomorphism instantiated at the rearranged exponent
+// (width_a - 1) + (width_b - 1). grind's e-matcher splits the term's syntactic `+`,
+// reading width_a + width_b - 2 as (width_a + width_b - 1) + (-1) -- whose negative
+// second summand the homomorphism's nonneg premise rejects -- so it never instantiates
+// m := width_a - 1, n := width_b - 1. The scaling value law above composes because its
+// only homomorphism use, pow2(exp + j) = pow2(exp) * pow2(j), is a DIRECT syntactic
+// match. Closing this needs a pow2 abelian-group-homomorphism normalizer (canonicalize
+// pow2 of any nonneg linear form into a product of pow2 of atoms) -- a new generic
+// mechanism, not a case-split. Sample-verified here; universal on Z3/Dafny, which
+// carries the nonlinear arithmetic natively.
 verify fpMulValue
     fpMulValue(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => true
     fpMulValue(Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 0, width = 4)) => true
