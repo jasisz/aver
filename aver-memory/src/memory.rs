@@ -1,5 +1,45 @@
 use super::*;
 
+#[derive(Clone, Copy)]
+struct LocalEvacuatedSlot {
+    target: AllocSpace,
+    compacted_pos: u32,
+}
+
+struct LocalTailEntry<T: ArenaTypes> {
+    value: NanValue,
+    entry: ArenaEntry<T>,
+    slot: LocalEvacuatedSlot,
+}
+
+enum LocalTailStep<T: ArenaTypes> {
+    Done(NanValue),
+    Taken(LocalTailEntry<T>),
+}
+
+#[derive(Clone, Copy)]
+enum PromoteRewriteSlot {
+    InPlace {
+        space: HeapSpace,
+        raw_index: usize,
+    },
+    Promoted {
+        target: AllocSpace,
+        raw_index: usize,
+    },
+}
+
+struct PromoteTailEntry<T: ArenaTypes> {
+    value: NanValue,
+    entry: ArenaEntry<T>,
+    slot: PromoteRewriteSlot,
+}
+
+enum PromoteTailStep<T: ArenaTypes> {
+    Done(NanValue),
+    Taken(PromoteTailEntry<T>),
+}
+
 impl<T: ArenaTypes> Arena<T> {
     pub fn truncate_to(&mut self, mark: u32) {
         self.young_entries.truncate(mark as usize);
@@ -154,6 +194,21 @@ impl<T: ArenaTypes> Arena<T> {
             AllocSpace::Handoff => compacted_handoff[compacted_pos as usize] = entry,
             AllocSpace::Young => unreachable!(),
         }
+    }
+
+    fn store_local_evacuated_slot(
+        slot: LocalEvacuatedSlot,
+        entry: ArenaEntry<T>,
+        compacted_yard: &mut [ArenaEntry<T>],
+        compacted_handoff: &mut [ArenaEntry<T>],
+    ) {
+        Self::store_local_target_entry(
+            slot.target,
+            slot.compacted_pos,
+            entry,
+            compacted_yard,
+            compacted_handoff,
+        );
     }
 
     #[inline(always)]
@@ -530,6 +585,302 @@ impl<T: ArenaTypes> Arena<T> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn take_local_tail_value(
+        &mut self,
+        value: NanValue,
+        young_mark: u32,
+        yard_mark: u32,
+        handoff_mark: u32,
+        young_target: AllocSpace,
+        relocated_young: &mut [u32],
+        relocated_yard: &mut [u32],
+        relocated_handoff: &mut [u32],
+        compacted_yard: &mut Vec<ArenaEntry<T>>,
+        compacted_handoff: &mut Vec<ArenaEntry<T>>,
+    ) -> LocalTailStep<T> {
+        let Some(index) = value.heap_index() else {
+            return LocalTailStep::Done(value);
+        };
+        let (space, raw_index) = Self::decode_index(index);
+
+        match space {
+            HeapSpace::Young if self.is_young_index_in_region(index, young_mark) => {
+                let relocation_slot = (raw_index - young_mark) as usize;
+                let relocated_index = relocated_young[relocation_slot];
+                if relocated_index != u32::MAX {
+                    return LocalTailStep::Done(value.with_heap_index(relocated_index));
+                }
+
+                let (new_index, compacted_pos) = Self::allocate_local_target_slot(
+                    young_target,
+                    yard_mark,
+                    handoff_mark,
+                    compacted_yard,
+                    compacted_handoff,
+                );
+                relocated_young[relocation_slot] = new_index;
+                let entry = core::mem::replace(
+                    &mut self.young_entries[raw_index as usize],
+                    ArenaEntry::Int(0),
+                );
+                LocalTailStep::Taken(LocalTailEntry {
+                    value: value.with_heap_index(new_index),
+                    entry,
+                    slot: LocalEvacuatedSlot {
+                        target: young_target,
+                        compacted_pos,
+                    },
+                })
+            }
+            HeapSpace::Yard if self.is_yard_index_in_region(index, yard_mark) => {
+                let relocation_slot = (raw_index - yard_mark) as usize;
+                let relocated_index = relocated_yard[relocation_slot];
+                if relocated_index != u32::MAX {
+                    return LocalTailStep::Done(value.with_heap_index(relocated_index));
+                }
+
+                let target = match young_target {
+                    AllocSpace::Yard => AllocSpace::Yard,
+                    AllocSpace::Handoff => AllocSpace::Handoff,
+                    AllocSpace::Young => {
+                        unreachable!("local evacuation must target yard or handoff")
+                    }
+                };
+                let (new_index, compacted_pos) = Self::allocate_local_target_slot(
+                    target,
+                    yard_mark,
+                    handoff_mark,
+                    compacted_yard,
+                    compacted_handoff,
+                );
+                relocated_yard[relocation_slot] = new_index;
+                let entry = core::mem::replace(
+                    &mut self.yard_entries[raw_index as usize],
+                    ArenaEntry::Int(0),
+                );
+                LocalTailStep::Taken(LocalTailEntry {
+                    value: value.with_heap_index(new_index),
+                    entry,
+                    slot: LocalEvacuatedSlot {
+                        target,
+                        compacted_pos,
+                    },
+                })
+            }
+            HeapSpace::Handoff if self.is_handoff_index_in_region(index, handoff_mark) => {
+                let relocation_slot = (raw_index - handoff_mark) as usize;
+                let relocated_index = relocated_handoff[relocation_slot];
+                if relocated_index != u32::MAX {
+                    return LocalTailStep::Done(value.with_heap_index(relocated_index));
+                }
+
+                let target = match young_target {
+                    AllocSpace::Yard => AllocSpace::Yard,
+                    AllocSpace::Handoff => AllocSpace::Handoff,
+                    AllocSpace::Young => {
+                        unreachable!("local evacuation must target yard or handoff")
+                    }
+                };
+                let (new_index, compacted_pos) = Self::allocate_local_target_slot(
+                    target,
+                    yard_mark,
+                    handoff_mark,
+                    compacted_yard,
+                    compacted_handoff,
+                );
+                relocated_handoff[relocation_slot] = new_index;
+                let entry = core::mem::replace(
+                    &mut self.handoff_entries[raw_index as usize],
+                    ArenaEntry::Int(0),
+                );
+                LocalTailStep::Taken(LocalTailEntry {
+                    value: value.with_heap_index(new_index),
+                    entry,
+                    slot: LocalEvacuatedSlot {
+                        target,
+                        compacted_pos,
+                    },
+                })
+            }
+            _ => LocalTailStep::Done(value),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn evacuate_local_list(
+        &mut self,
+        list: ArenaList,
+        young_mark: u32,
+        yard_mark: u32,
+        handoff_mark: u32,
+        young_target: AllocSpace,
+        relocated_young: &mut [u32],
+        relocated_yard: &mut [u32],
+        relocated_handoff: &mut [u32],
+        compacted_yard: &mut Vec<ArenaEntry<T>>,
+        compacted_handoff: &mut Vec<ArenaEntry<T>>,
+    ) -> ArenaList {
+        match list {
+            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
+                head: self.evacuate_local_root(
+                    head,
+                    young_mark,
+                    yard_mark,
+                    handoff_mark,
+                    young_target,
+                    relocated_young,
+                    relocated_yard,
+                    relocated_handoff,
+                    compacted_yard,
+                    compacted_handoff,
+                ),
+                tail: self.evacuate_local_prepend_tail_iterative(
+                    tail,
+                    young_mark,
+                    yard_mark,
+                    handoff_mark,
+                    young_target,
+                    relocated_young,
+                    relocated_yard,
+                    relocated_handoff,
+                    compacted_yard,
+                    compacted_handoff,
+                ),
+                len,
+            },
+            other => {
+                let mut rewrite = |arena: &mut Arena<T>, value: NanValue| {
+                    arena.evacuate_local_root(
+                        value,
+                        young_mark,
+                        yard_mark,
+                        handoff_mark,
+                        young_target,
+                        relocated_young,
+                        relocated_yard,
+                        relocated_handoff,
+                        compacted_yard,
+                        compacted_handoff,
+                    )
+                };
+                self.rewrite_list_with(other, &mut rewrite)
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn evacuate_local_prepend_tail_iterative(
+        &mut self,
+        tail: NanValue,
+        young_mark: u32,
+        yard_mark: u32,
+        handoff_mark: u32,
+        young_target: AllocSpace,
+        relocated_young: &mut [u32],
+        relocated_yard: &mut [u32],
+        relocated_handoff: &mut [u32],
+        compacted_yard: &mut Vec<ArenaEntry<T>>,
+        compacted_handoff: &mut Vec<ArenaEntry<T>>,
+    ) -> NanValue {
+        let mut current = match self.take_local_tail_value(
+            tail,
+            young_mark,
+            yard_mark,
+            handoff_mark,
+            young_target,
+            relocated_young,
+            relocated_yard,
+            relocated_handoff,
+            compacted_yard,
+            compacted_handoff,
+        ) {
+            LocalTailStep::Done(value) => return value,
+            LocalTailStep::Taken(taken) => taken,
+        };
+        let first_value = current.value;
+
+        loop {
+            match current.entry {
+                ArenaEntry::List(ArenaList::Prepend { head, tail, len }) => {
+                    let rewritten_head = self.evacuate_local_root(
+                        head,
+                        young_mark,
+                        yard_mark,
+                        handoff_mark,
+                        young_target,
+                        relocated_young,
+                        relocated_yard,
+                        relocated_handoff,
+                        compacted_yard,
+                        compacted_handoff,
+                    );
+                    let next = self.take_local_tail_value(
+                        tail,
+                        young_mark,
+                        yard_mark,
+                        handoff_mark,
+                        young_target,
+                        relocated_young,
+                        relocated_yard,
+                        relocated_handoff,
+                        compacted_yard,
+                        compacted_handoff,
+                    );
+                    match next {
+                        LocalTailStep::Done(rewritten_tail) => {
+                            Self::store_local_evacuated_slot(
+                                current.slot,
+                                ArenaEntry::List(ArenaList::Prepend {
+                                    head: rewritten_head,
+                                    tail: rewritten_tail,
+                                    len,
+                                }),
+                                compacted_yard,
+                                compacted_handoff,
+                            );
+                            return first_value;
+                        }
+                        LocalTailStep::Taken(next_entry) => {
+                            Self::store_local_evacuated_slot(
+                                current.slot,
+                                ArenaEntry::List(ArenaList::Prepend {
+                                    head: rewritten_head,
+                                    tail: next_entry.value,
+                                    len,
+                                }),
+                                compacted_yard,
+                                compacted_handoff,
+                            );
+                            current = next_entry;
+                        }
+                    }
+                }
+                other => {
+                    let new_entry = self.evacuate_local_entry(
+                        other,
+                        young_mark,
+                        yard_mark,
+                        handoff_mark,
+                        young_target,
+                        relocated_young,
+                        relocated_yard,
+                        relocated_handoff,
+                        compacted_yard,
+                        compacted_handoff,
+                    );
+                    Self::store_local_evacuated_slot(
+                        current.slot,
+                        new_entry,
+                        compacted_yard,
+                        compacted_handoff,
+                    );
+                    return first_value;
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn evacuate_local_entry(
         &mut self,
         entry: ArenaEntry<T>,
@@ -543,6 +894,21 @@ impl<T: ArenaTypes> Arena<T> {
         compacted_yard: &mut Vec<ArenaEntry<T>>,
         compacted_handoff: &mut Vec<ArenaEntry<T>>,
     ) -> ArenaEntry<T> {
+        if let ArenaEntry::List(list) = entry {
+            return ArenaEntry::List(self.evacuate_local_list(
+                list,
+                young_mark,
+                yard_mark,
+                handoff_mark,
+                young_target,
+                relocated_young,
+                relocated_yard,
+                relocated_handoff,
+                compacted_yard,
+                compacted_handoff,
+            ));
+        }
+
         let mut rewrite = |arena: &mut Arena<T>, value: NanValue| {
             arena.evacuate_local_root(
                 value,
@@ -817,6 +1183,187 @@ impl<T: ArenaTypes> Arena<T> {
         self.promote_region_root_to_target(value, mark, relocated, AllocSpace::Handoff)
     }
 
+    fn store_promote_rewrite_slot(&mut self, slot: PromoteRewriteSlot, entry: ArenaEntry<T>) {
+        match slot {
+            PromoteRewriteSlot::InPlace { space, raw_index } => match space {
+                HeapSpace::Young => self.young_entries[raw_index] = entry,
+                HeapSpace::Yard => self.yard_entries[raw_index] = entry,
+                HeapSpace::Handoff => self.handoff_entries[raw_index] = entry,
+                HeapSpace::Stable => self.stable_entries[raw_index] = entry,
+            },
+            PromoteRewriteSlot::Promoted { target, raw_index } => match target {
+                AllocSpace::Yard => self.yard_entries[raw_index] = entry,
+                AllocSpace::Handoff => self.handoff_entries[raw_index] = entry,
+                AllocSpace::Young => unreachable!("promotion target must be yard or handoff"),
+            },
+        }
+    }
+
+    fn take_promote_tail_value(
+        &mut self,
+        value: NanValue,
+        mark: u32,
+        relocated: &mut [u32],
+        target: AllocSpace,
+    ) -> PromoteTailStep<T> {
+        let Some(index) = value.heap_index() else {
+            return PromoteTailStep::Done(value);
+        };
+        let (space, raw_index) = Self::decode_index(index);
+
+        if matches!(space, HeapSpace::Young) && raw_index >= mark {
+            let relocation_slot = raw_index as usize;
+            let relocated_index = relocated[relocation_slot];
+            if relocated_index != u32::MAX {
+                return PromoteTailStep::Done(value.with_heap_index(relocated_index));
+            }
+
+            let (new_index, target_raw_index) = match target {
+                AllocSpace::Yard => {
+                    let raw = self.yard_entries.len();
+                    self.yard_entries.push(ArenaEntry::Int(0));
+                    (Self::encode_yard_index(raw as u32), raw)
+                }
+                AllocSpace::Handoff => {
+                    let raw = self.handoff_entries.len();
+                    self.handoff_entries.push(ArenaEntry::Int(0));
+                    (Self::encode_handoff_index(raw as u32), raw)
+                }
+                AllocSpace::Young => unreachable!("promotion target must be yard or handoff"),
+            };
+            relocated[relocation_slot] = new_index;
+            self.note_peak_usage();
+            let entry = core::mem::replace(
+                &mut self.young_entries[raw_index as usize],
+                ArenaEntry::Int(0),
+            );
+            return PromoteTailStep::Taken(PromoteTailEntry {
+                value: value.with_heap_index(new_index),
+                entry,
+                slot: PromoteRewriteSlot::Promoted {
+                    target,
+                    raw_index: target_raw_index,
+                },
+            });
+        }
+
+        let raw_index = raw_index as usize;
+        let entry = match space {
+            HeapSpace::Young => {
+                if raw_index >= self.young_entries.len() || raw_index >= mark as usize {
+                    return PromoteTailStep::Done(value);
+                }
+                core::mem::replace(&mut self.young_entries[raw_index], ArenaEntry::Int(0))
+            }
+            HeapSpace::Yard => {
+                if raw_index >= self.yard_entries.len() {
+                    return PromoteTailStep::Done(value);
+                }
+                core::mem::replace(&mut self.yard_entries[raw_index], ArenaEntry::Int(0))
+            }
+            HeapSpace::Handoff => {
+                if raw_index >= self.handoff_entries.len() {
+                    return PromoteTailStep::Done(value);
+                }
+                core::mem::replace(&mut self.handoff_entries[raw_index], ArenaEntry::Int(0))
+            }
+            HeapSpace::Stable => {
+                if raw_index >= self.stable_entries.len() {
+                    return PromoteTailStep::Done(value);
+                }
+                core::mem::replace(&mut self.stable_entries[raw_index], ArenaEntry::Int(0))
+            }
+        };
+
+        PromoteTailStep::Taken(PromoteTailEntry {
+            value,
+            entry,
+            slot: PromoteRewriteSlot::InPlace { space, raw_index },
+        })
+    }
+
+    fn promote_list_young_refs_to_target(
+        &mut self,
+        list: ArenaList,
+        mark: u32,
+        relocated: &mut [u32],
+        target: AllocSpace,
+    ) -> ArenaList {
+        match list {
+            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
+                head: self.promote_region_root_to_target(head, mark, relocated, target),
+                tail: self.promote_prepend_tail_iterative(tail, mark, relocated, target),
+                len,
+            },
+            other => {
+                let mut rewrite = |arena: &mut Arena<T>, value: NanValue| {
+                    arena.promote_region_root_to_target(value, mark, relocated, target)
+                };
+                self.rewrite_list_with(other, &mut rewrite)
+            }
+        }
+    }
+
+    fn promote_prepend_tail_iterative(
+        &mut self,
+        tail: NanValue,
+        mark: u32,
+        relocated: &mut [u32],
+        target: AllocSpace,
+    ) -> NanValue {
+        let mut current = match self.take_promote_tail_value(tail, mark, relocated, target) {
+            PromoteTailStep::Done(value) => return value,
+            PromoteTailStep::Taken(taken) => taken,
+        };
+        let first_value = current.value;
+
+        loop {
+            match current.entry {
+                ArenaEntry::List(ArenaList::Prepend { head, tail, len }) => {
+                    let rewritten_head =
+                        self.promote_region_root_to_target(head, mark, relocated, target);
+                    let next = self.take_promote_tail_value(tail, mark, relocated, target);
+                    match next {
+                        PromoteTailStep::Done(rewritten_tail) => {
+                            self.store_promote_rewrite_slot(
+                                current.slot,
+                                ArenaEntry::List(ArenaList::Prepend {
+                                    head: rewritten_head,
+                                    tail: rewritten_tail,
+                                    len,
+                                }),
+                            );
+                            return first_value;
+                        }
+                        PromoteTailStep::Taken(next_entry) => {
+                            self.store_promote_rewrite_slot(
+                                current.slot,
+                                ArenaEntry::List(ArenaList::Prepend {
+                                    head: rewritten_head,
+                                    tail: next_entry.value,
+                                    len,
+                                }),
+                            );
+                            current = next_entry;
+                        }
+                    }
+                }
+                other => {
+                    let new_entry = match current.slot {
+                        PromoteRewriteSlot::Promoted { .. } => {
+                            self.promote_entry_to_target(other, mark, relocated, target)
+                        }
+                        PromoteRewriteSlot::InPlace { .. } => {
+                            self.rewrite_promoted_young_entry(other, mark, relocated, target)
+                        }
+                    };
+                    self.store_promote_rewrite_slot(current.slot, new_entry);
+                    return first_value;
+                }
+            }
+        }
+    }
+
     fn rewrite_promoted_young_refs_in_place(
         &mut self,
         space: HeapSpace,
@@ -873,6 +1420,12 @@ impl<T: ArenaTypes> Arena<T> {
         relocated: &mut [u32],
         target: AllocSpace,
     ) -> ArenaEntry<T> {
+        if let ArenaEntry::List(list) = entry {
+            return ArenaEntry::List(
+                self.promote_list_young_refs_to_target(list, mark, relocated, target),
+            );
+        }
+
         let mut rewrite = |arena: &mut Arena<T>, value: NanValue| {
             arena.promote_region_root_to_target(value, mark, relocated, target)
         };
@@ -971,6 +1524,12 @@ impl<T: ArenaTypes> Arena<T> {
             }
             _ => {}
         }
+        if let ArenaEntry::List(list) = entry {
+            return ArenaEntry::List(
+                self.promote_list_young_refs_to_target(list, mark, relocated, target),
+            );
+        }
+
         let mut rewrite = |arena: &mut Arena<T>, value: NanValue| {
             arena.promote_region_root_to_target(value, mark, relocated, target)
         };
