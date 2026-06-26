@@ -194,10 +194,12 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
                     format!("{} := {}", aver_name_to_lean(name), emit_expr(expr, ctx))
                 })
                 .collect();
-            // Dotted type names (e.g. `Terminal.Size`, `Tcp.Connection`)
-            // map to underscored Lean structure names — same translation
-            // as `lean::types`'s `Type::Named` rendering.
-            let lean_type_name = type_name.replace('.', "_");
+            // Builtin HOST carrier records (`Terminal.Size`,
+            // `Tcp.Connection`, …) map to underscored Lean structure
+            // names; a USER dep-module record keeps its dotted
+            // namespaced path (it is emitted inside `namespace M`).
+            // Same translation as `lean::types`'s `Type::Named`.
+            let lean_type_name = super::types::lean_named_type_name(type_name);
             format!("{{ {} : {} }}", parts.join(", "), lean_type_name)
         }
         ResolvedExpr::RecordUpdate {

@@ -63,16 +63,16 @@ verify isFp
 
 fn fpValue(f: Fp) -> Fraction
     ? "The denoted value as an exact rational (for exp >= 0): sign * sigBits * 2^exp over 2^(width-1) = sign * (sigBits/2^(width-1)) * 2^exp."
-    Domain.Rational.makeFraction(f.sign * f.sigBits * pow2(f.exp), pow2(f.width - 1))
+    Domain.Rational.Fraction(top = f.sign * f.sigBits * pow2(f.exp), bottom = pow2(f.width - 1))
 
 verify fpValue
-    fpValue(Fp(sign = 1, sigBits = 8, exp = 0, width = 4)) => Domain.Rational.makeFraction(8, 8)
-    fpValue(Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => Domain.Rational.makeFraction(24, 8)
-    fpValue(Fp(sign = -1, sigBits = 10, exp = 2, width = 4)) => Domain.Rational.makeFraction(-40, 8)
+    fpValue(Fp(sign = 1, sigBits = 8, exp = 0, width = 4)) => Domain.Rational.Fraction(top = 8, bottom = 8)
+    fpValue(Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => Domain.Rational.Fraction(top = 24, bottom = 8)
+    fpValue(Fp(sign = -1, sigBits = 10, exp = 2, width = 4)) => Domain.Rational.Fraction(top = -40, bottom = 8)
 
 fn pow2Fraction(j: Int) -> Fraction
     ? "The rational 2^j (for j >= 0) as the fraction 2^j / 1 -- the scale factor of Lemma 7.1.2."
-    Domain.Rational.makeFraction(pow2(j), 1)
+    Domain.Rational.Fraction(top = pow2(j), bottom = 1)
 
 fn fpScale(f: Fp, j: Int) -> Fp
     ? "Scale by 2^j (Lemma 7.1.2, p.18): shift the exponent by j, renormalizing NOTHING -- sign, significand and width are untouched."
