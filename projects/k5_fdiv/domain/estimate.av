@@ -1,0 +1,137 @@
+module Estimate
+    intent =
+        "Stage 2 of the K5 division proof: the Newton-Raphson error analysis, as"
+        "nonlinear integer inequality laws. The reciprocal estimate is refined by"
+        "Newton steps (x' = x*(2 - d*x)); the key fact is that one step SQUARES the"
+        "scaled error, so the error contracts. Everything is cross-multiplied into"
+        "pure Int form (the paper models the scaled rationals this way), so these are"
+        "ordinary integer laws."
+        "These prove universally on Z3/Dafny today (Z3 carries nonlinear arithmetic"
+        "natively). The Lean-kernel side is the project's open frontier: the leaves"
+        "close in core Lean 4 from a small fixed lemma kit (Int.mul_nonneg,"
+        "Int.mul_le_mul, Int.mul_le_mul_of_nonneg_right, Int.le_trans, sign-split),"
+        "applied as ONE generic decision step (the nonlinear analog of omega) -- not"
+        "a per-figure tactic -- with the harder facts composing from the simpler via"
+        "laws-as-lemmas."
+    exposes [sqNonneg, mulNonneg, tripleNonneg, sqMono, mulLeTrans, nrNewErrNum, nrOldErrSq, nrErrorSquares, nrContraction]
+    effects []
+
+fn sqNonneg(x: Int) -> Bool
+    ? "A square is never negative."
+    x * x >= 0
+
+verify sqNonneg
+    sqNonneg(0) => true
+    sqNonneg(-3) => true
+
+verify sqNonneg law universal
+    given x: Int = [-7, -1, 0, 1, 9]
+    sqNonneg(x) holds
+
+fn mulNonneg(a: Int, b: Int) -> Bool
+    ? "The product of two nonnegative ints is nonnegative."
+    a * b >= 0
+
+verify mulNonneg
+    mulNonneg(2, 3) => true
+    mulNonneg(0, 5) => true
+
+verify mulNonneg law guarded
+    given a: Int = [0, 1, 4]
+    given b: Int = [0, 2, 7]
+    when a >= 0
+    when b >= 0
+    mulNonneg(a, b) holds
+
+fn tripleNonneg(a: Int, b: Int, c: Int) -> Bool
+    ? "The product of three nonnegative ints is nonnegative."
+    a * b * c >= 0
+
+verify tripleNonneg
+    tripleNonneg(1, 2, 3) => true
+    tripleNonneg(0, 4, 5) => true
+
+verify tripleNonneg law guarded
+    given a: Int = [0, 1, 2]
+    given b: Int = [0, 3]
+    given c: Int = [0, 5]
+    when a >= 0
+    when b >= 0
+    when c >= 0
+    tripleNonneg(a, b, c) holds
+
+fn sqMono(e: Int, b: Int) -> Bool
+    ? "Squaring preserves order on nonnegative ints."
+    e * e <= b * b
+
+verify sqMono
+    sqMono(2, 3) => true
+    sqMono(0, 0) => true
+
+verify sqMono law guarded
+    given e: Int = [0, 1, 3]
+    given b: Int = [0, 2, 5]
+    when 0 <= e
+    when e <= b
+    sqMono(e, b) holds
+
+fn mulLeTrans(a: Int, b: Int, c: Int, m: Int) -> Bool
+    ? "a*c stays under m when a <= b, c is nonnegative, and b*c <= m."
+    a * c <= m
+
+verify mulLeTrans
+    mulLeTrans(1, 2, 3, 10) => true
+    mulLeTrans(0, 2, 0, 0) => true
+
+verify mulLeTrans law guarded
+    given a: Int = [0, 1, 2]
+    given b: Int = [2, 3]
+    given c: Int = [0, 1, 4]
+    given m: Int = [12, 20]
+    when 0 <= a
+    when a <= b
+    when 0 <= c
+    when b * c <= m
+    mulLeTrans(a, b, c, m) holds
+
+fn nrNewErrNum(d: Int, x: Int, s: Int) -> Int
+    ? "Scaled numerator of the post-step reciprocal error: with x' = x*(2 - d*x) at scale s, the new error numerator over s^4."
+    s * s * s * s - d * (x * (2 * s * s - d * x))
+
+fn nrOldErrSq(d: Int, x: Int, s: Int) -> Int
+    ? "Square of the pre-step scaled error numerator s^2 - d*x."
+    (s * s - d * x) * (s * s - d * x)
+
+verify nrNewErrNum
+    nrNewErrNum(1, 1, 1) => 0
+    nrNewErrNum(3, 2, 2) => 4
+
+verify nrNewErrNum law nrErrorSquares
+    given d: Int = [1, 3, 7]
+    given x: Int = [-2, 0, 5]
+    given s: Int = [1, 2, 10]
+    nrNewErrNum(d, x, s) => nrOldErrSq(d, x, s)
+
+fn nrErrorSquares(d: Int, x: Int, s: Int) -> Bool
+    ? "The Newton step squares the scaled error: the new error numerator equals the old one squared."
+    nrNewErrNum(d, x, s) == nrOldErrSq(d, x, s)
+
+verify nrErrorSquares
+    nrErrorSquares(1, 1, 1) => true
+    nrErrorSquares(3, 2, 2) => true
+
+fn nrContraction(d: Int, x: Int, s: Int) -> Bool
+    ? "If the squared scaled error is at most the scale s, its square is at most s*s -- the step contracts."
+    ((d * x - s) * (d * x - s)) * ((d * x - s) * (d * x - s)) <= s * s
+
+verify nrContraction
+    nrContraction(1, 1, 1) => true
+    nrContraction(3, 2, 4) => true
+
+verify nrContraction law guarded
+    given d: Int = [1, 3]
+    given x: Int = [0, 1, 2]
+    given s: Int = [1, 4, 9]
+    when s > 0
+    when (d * x - s) * (d * x - s) <= s
+    nrContraction(d, x, s) holds

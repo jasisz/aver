@@ -43,7 +43,7 @@ Each stage is independently useful as a verified corpus.
 |-------|------|--------|
 | **0. Rationals** | exact `num/den` rationals, ring algebra (the paper models floats as exact rationals) | ✅ **proven** — `domain/rational.av`, 10 ring laws, `universal` on Lean (`[propext, Quot.sound]`) and Dafny/Z3 |
 | **1. Float-as-rational + rounding** | format predicates, the six rounding modes ("floating-point folklore") | ⏳ planned |
-| **2. Newton–Raphson bounds** | the nonlinear error estimates — Z3 carries them push-button; Lean needs one generic *inequality-family* strategy | ⏳ planned (strategy is the next compiler build) |
+| **2. Newton–Raphson bounds** | the nonlinear error estimates — `domain/estimate.av`: square/product nonneg, monotonicity, transitivity-through-products, the error-squaring identity, the contraction bound | 🟡 **proven on Z3/Dafny** (7 laws, push-button). Lean frontier: the leaves close in **core Lean 4** from a fixed lemma kit (`Int.mul_nonneg` / `Int.mul_le_mul` / `Int.le_trans` + a sign-split) applied as **one generic step** — verified by probe; the generic nonneg/order primitive (an omega-analog, *not* a per-figure tactic) is the next engine build, with the harder facts composing from the simpler via laws-as-lemmas |
 | **3. Kernel divide** | the 32 straight-line steps + the final theorem: the result is the input quotient, correctly rounded | ⏳ planned |
 
 Why it's tractable: the algorithm is **straight-line** (two Newton iterations + four
