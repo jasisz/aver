@@ -230,7 +230,7 @@ fn replay_variant_field_type(type_name: &str, field_type: &str) -> String {
 }
 
 fn http_type_impls() -> String {
-    r#"impl aver_replay::ReplayValue for aver_rt::HttpResponse {
+    r#"impl aver_replay::ReplayValue for crate::HttpResponse {
     fn to_replay_json(&self) -> serde_json::Value {
         let mut fields = serde_json::Map::new();
         fields.insert("status".to_string(), ReplayValue::to_replay_json(&self.status));
@@ -250,7 +250,7 @@ fn http_type_impls() -> String {
             "$record.fields",
         )?;
         Ok(Self {
-            status: <i64 as ReplayValue>::from_replay_json(
+            status: <aver_rt::AverInt as ReplayValue>::from_replay_json(
                 fields.get("status").ok_or_else(|| "$record HttpResponse missing field 'status'".to_string())?,
             )?,
             body: <aver_rt::AverStr as ReplayValue>::from_replay_json(

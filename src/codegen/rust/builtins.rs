@@ -165,9 +165,18 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
             "aver_rt::tcp::connect(&{}, crate::to_host_i64(&{}, \"Tcp.connect: port must be an Int\"))",
             args[0], args[1]
         )),
-        "Tcp.writeLine" => Some(format!("aver_rt::tcp::write_line(&{}, &{})", args[0], args[1])),
-        "Tcp.readLine" => Some(format!("aver_rt::tcp::read_line(&{})", args[0])),
-        "Tcp.close" => Some(format!("aver_rt::tcp::close(&{})", args[0])),
+        "Tcp.writeLine" => Some(format!(
+            "aver_rt::tcp::write_line(&crate::tcp_connection_to_host(&{}), &{})",
+            args[0], args[1]
+        )),
+        "Tcp.readLine" => Some(format!(
+            "aver_rt::tcp::read_line(&crate::tcp_connection_to_host(&{}))",
+            args[0]
+        )),
+        "Tcp.close" => Some(format!(
+            "aver_rt::tcp::close(&crate::tcp_connection_to_host(&{}))",
+            args[0]
+        )),
         "Terminal.enableRawMode" => Some("aver_rt::terminal_enable_raw_mode().unwrap()".to_string()),
         "Terminal.disableRawMode" => {
             Some("aver_rt::terminal_disable_raw_mode().unwrap()".to_string())
@@ -356,9 +365,19 @@ pub(super) fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Opti
             a(0),
             a(1)
         )),
-        "Tcp.writeLine" => Some(format!("aver_rt::tcp::write_line(&{}, &{})", a(0), a(1))),
-        "Tcp.readLine" => Some(format!("aver_rt::tcp::read_line(&{})", a(0))),
-        "Tcp.close" => Some(format!("aver_rt::tcp::close(&{})", a(0))),
+        "Tcp.writeLine" => Some(format!(
+            "aver_rt::tcp::write_line(&crate::tcp_connection_to_host(&{}), &{})",
+            a(0),
+            a(1)
+        )),
+        "Tcp.readLine" => Some(format!(
+            "aver_rt::tcp::read_line(&crate::tcp_connection_to_host(&{}))",
+            a(0)
+        )),
+        "Tcp.close" => Some(format!(
+            "aver_rt::tcp::close(&crate::tcp_connection_to_host(&{}))",
+            a(0)
+        )),
         "Tcp.send" => Some(format!(
             "aver_rt::tcp::send(&{}, crate::to_host_i64(&{}, \"Tcp.send: port must be an Int\"), &{})",
             a(0),
