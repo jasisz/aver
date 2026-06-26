@@ -2022,10 +2022,17 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     }) {
         return false;
     }
-    // The defining signal: there ARE earlier sibling laws about a fn in this
-    // law's call cone (the laws-as-lemmas to cite). Without a pool this rung
-    // adds nothing the simp / grind rungs lack.
-    if keystone_pool_names(vb, law, ctx).is_empty() {
+    // The defining signal: there are earlier sibling laws to cite. Two kinds
+    // qualify, both shape-keyed and name-blind:
+    //   * the EQUATIONAL pool — an earlier law whose subject fn is in this law's
+    //     call cone (a `pow2` homomorphism abstracting cone recursion); and
+    //   * the ORDER-BRIDGE pool — an earlier inequality law `L <op> R` whose two
+    //     comparison sides both match subterms of this law's goal / premises (a
+    //     `mulLeMonoRight` monotonicity feeding a transitivity step).
+    // Without either pool this rung adds nothing the simp / grind rungs lack.
+    if keystone_pool_names(vb, law, ctx).is_empty()
+        && keystone_order_bridge_citations(vb, law, ctx).is_empty()
+    {
         return false;
     }
     let id = format!("{}.{}", vb.fn_name, law.name);
@@ -2078,6 +2085,428 @@ fn keystone_pool_names(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) 
     out
 }
 
+/// One eligible ORDER-BRIDGE citation for the keystone: an EARLIER sibling law
+/// asserting an inequality `L <op> R` (its subject fn's body is a single
+/// comparison, both sides non-atomic, `… holds`) whose two sides match subterms
+/// of the citing law's goal / premises under one consistent substitution of the
+/// cited law's givens. `name` is the Prop-form RESTATEMENT theorem (a `grind`
+/// hint for the citing law); `support` is that theorem's declaration plus its
+/// `grind_pattern` over the two comparison sides. The restatement is DERIVED
+/// from the cited law's Bool theorem (`simpa … using (<thm> …)`), so deleting
+/// the Aver law breaks it — a genuine citation, not a re-proof.
+struct OrderBridgeCitation {
+    name: String,
+    support: Vec<String>,
+}
+
+/// The Lean infix for a comparison `BinOp`, or `None` for a non-comparison op
+/// (an order law's body must be one of these four).
+fn comparison_op_lean(op: crate::ast::BinOp) -> Option<&'static str> {
+    use crate::ast::BinOp;
+    match op {
+        BinOp::Lt => Some("<"),
+        BinOp::Gt => Some(">"),
+        BinOp::Lte => Some("<="),
+        BinOp::Gte => Some(">="),
+        _ => None,
+    }
+}
+
+/// The variable NAME of a leaf, treating a source `Ident` and a resolver-pass
+/// `Resolved` slot uniformly — function bodies are emitted in resolved form
+/// (`Resolved`), while law claims/premises are source form (`Ident`), and the
+/// order-bridge matches one against the other.
+fn expr_var_name(e: &crate::ast::Expr) -> Option<&str> {
+    match e {
+        crate::ast::Expr::Ident(n) => Some(n),
+        crate::ast::Expr::Resolved { name, .. } => Some(name),
+        _ => None,
+    }
+}
+
+/// An atomic term (bare variable or literal) is neither a valid `grind_pattern`
+/// trigger nor a meaningful comparison side, so an order law with an atomic side
+/// is rejected.
+fn expr_is_atomic(e: &crate::ast::Expr) -> bool {
+    expr_var_name(e).is_some() || matches!(e, crate::ast::Expr::Literal(_))
+}
+
+/// Structural equality on arithmetic terms, span-insensitive and identifying a
+/// source `Ident(n)` with a resolved `Resolved{name:n}` (used to re-bind a
+/// matched pattern variable consistently).
+fn arith_eq(a: &crate::ast::Expr, b: &crate::ast::Expr) -> bool {
+    use crate::ast::Expr;
+    match (expr_var_name(a), expr_var_name(b)) {
+        (Some(na), Some(nb)) => return na == nb,
+        (None, None) => {}
+        _ => return false,
+    }
+    match (a, b) {
+        (Expr::Literal(x), Expr::Literal(y)) => x == y,
+        (Expr::BinOp(o1, a1, b1), Expr::BinOp(o2, a2, b2)) => {
+            o1 == o2 && arith_eq(&a1.node, &a2.node) && arith_eq(&b1.node, &b2.node)
+        }
+        (Expr::Neg(x), Expr::Neg(y)) => arith_eq(&x.node, &y.node),
+        (Expr::FnCall(c1, a1), Expr::FnCall(c2, a2)) => {
+            a1.len() == a2.len()
+                && arith_eq(&c1.node, &c2.node)
+                && a1.iter().zip(a2).all(|(p, q)| arith_eq(&p.node, &q.node))
+        }
+        (Expr::Attr(b1, f1), Expr::Attr(b2, f2)) => f1 == f2 && arith_eq(&b1.node, &b2.node),
+        _ => false,
+    }
+}
+
+/// Whether `name` occurs as a free variable anywhere in the arithmetic term.
+fn ident_occurs(e: &crate::ast::Expr, name: &str) -> bool {
+    use crate::ast::Expr;
+    if expr_var_name(e) == Some(name) {
+        return true;
+    }
+    match e {
+        Expr::BinOp(_, a, b) => ident_occurs(&a.node, name) || ident_occurs(&b.node, name),
+        Expr::Neg(a) => ident_occurs(&a.node, name),
+        Expr::FnCall(c, args) => {
+            ident_occurs(&c.node, name) || args.iter().any(|x| ident_occurs(&x.node, name))
+        }
+        Expr::Attr(b, _) => ident_occurs(&b.node, name),
+        _ => false,
+    }
+}
+
+/// Push every arithmetic subterm of `expr` (itself included) onto `out`, by
+/// value. Walks the product/sum/comparison/call/negation/field skeleton; opaque
+/// leaves (matches, constructors, …) stop the recursion.
+fn collect_arith_subterms(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    out: &mut Vec<crate::ast::Expr>,
+) {
+    use crate::ast::Expr;
+    out.push(expr.node.clone());
+    match &expr.node {
+        Expr::BinOp(_, a, b) => {
+            collect_arith_subterms(a, out);
+            collect_arith_subterms(b, out);
+        }
+        Expr::Neg(a) => collect_arith_subterms(a, out),
+        Expr::FnCall(c, args) => {
+            collect_arith_subterms(c, out);
+            for a in args {
+                collect_arith_subterms(a, out);
+            }
+        }
+        Expr::Attr(b, _) => collect_arith_subterms(b, out),
+        _ => {}
+    }
+}
+
+/// Deep-clone `e`, replacing any free `Ident(n)` with `map[n]` (substitute a
+/// function's parameters by a call's argument terms). `Spanned::bare` is fine —
+/// the result feeds the Lean expr emitter, which ignores spans.
+fn substitute_idents(
+    e: &crate::ast::Spanned<crate::ast::Expr>,
+    map: &std::collections::HashMap<String, crate::ast::Spanned<crate::ast::Expr>>,
+) -> crate::ast::Spanned<crate::ast::Expr> {
+    use crate::ast::{Expr, Spanned};
+    let node = match &e.node {
+        Expr::Ident(n) => {
+            if let Some(rep) = map.get(n) {
+                return rep.clone();
+            }
+            Expr::Ident(n.clone())
+        }
+        // Function bodies are emitted in resolved form, so a parameter reference
+        // is a `Resolved` slot, not a source `Ident`. Substitute it by name too.
+        Expr::Resolved { name, .. } => {
+            if let Some(rep) = map.get(name) {
+                return rep.clone();
+            }
+            e.node.clone()
+        }
+        Expr::BinOp(op, a, b) => Expr::BinOp(
+            *op,
+            Box::new(substitute_idents(a, map)),
+            Box::new(substitute_idents(b, map)),
+        ),
+        Expr::Neg(a) => Expr::Neg(Box::new(substitute_idents(a, map))),
+        Expr::FnCall(c, args) => Expr::FnCall(
+            Box::new(substitute_idents(c, map)),
+            args.iter().map(|x| substitute_idents(x, map)).collect(),
+        ),
+        Expr::Attr(b, f) => Expr::Attr(Box::new(substitute_idents(b, map)), f.clone()),
+        other => other.clone(),
+    };
+    Spanned::bare(node)
+}
+
+/// Inline a `fn(args)` call: substitute the callee's parameters by `args` in its
+/// (single-expression) body. Returns the inlined body — for an order law this is
+/// the comparison `L <op> R`; for the citing law it is the goal arithmetic. Bails
+/// on anything that is not a direct call to a known single-tail function with a
+/// matching arity.
+fn inline_fn_call(
+    call: &crate::ast::Spanned<crate::ast::Expr>,
+    ctx: &CodegenContext,
+) -> Option<crate::ast::Spanned<crate::ast::Expr>> {
+    use crate::ast::Expr;
+    let Expr::FnCall(callee, args) = &call.node else {
+        return None;
+    };
+    let name = super::shared::expr_dotted_name(callee)?;
+    let fd = ctx.fn_def_by_name(&name, ctx.active_module_scope().as_deref())?;
+    if fd.params.len() != args.len() {
+        return None;
+    }
+    let body = fd.body.tail_expr()?;
+    let mut map: std::collections::HashMap<String, crate::ast::Spanned<crate::ast::Expr>> =
+        std::collections::HashMap::new();
+    for ((pname, _), arg) in fd.params.iter().zip(args.iter()) {
+        map.insert(pname.clone(), arg.clone());
+    }
+    Some(substitute_idents(body, &map))
+}
+
+/// First-order matching: does `pat` (over pattern variables `vars`) match the
+/// ground term `term`, extending `subst` consistently? Re-binding a variable
+/// checks `arith_eq` (span-insensitive, `Ident`/`Resolved`-agnostic).
+fn match_arith_pattern(
+    pat: &crate::ast::Expr,
+    term: &crate::ast::Expr,
+    vars: &std::collections::HashSet<String>,
+    subst: &mut std::collections::HashMap<String, crate::ast::Expr>,
+) -> bool {
+    use crate::ast::Expr;
+    // Leaf variable (source `Ident` or resolved slot): a pattern variable binds /
+    // re-checks; a non-variable leaf must be the same variable.
+    if let Some(pname) = expr_var_name(pat) {
+        if vars.contains(pname) {
+            return match subst.get(pname) {
+                Some(prev) => arith_eq(prev, term),
+                None => {
+                    subst.insert(pname.to_string(), term.clone());
+                    true
+                }
+            };
+        }
+        return expr_var_name(term) == Some(pname);
+    }
+    match pat {
+        Expr::Literal(l) => matches!(term, Expr::Literal(tl) if tl == l),
+        Expr::Neg(a) => {
+            if let Expr::Neg(ta) = term {
+                match_arith_pattern(&a.node, &ta.node, vars, subst)
+            } else {
+                false
+            }
+        }
+        Expr::BinOp(op, a, b) => {
+            if let Expr::BinOp(top, ta, tb) = term {
+                op == top
+                    && match_arith_pattern(&a.node, &ta.node, vars, subst)
+                    && match_arith_pattern(&b.node, &tb.node, vars, subst)
+            } else {
+                false
+            }
+        }
+        Expr::FnCall(c, args) => {
+            if let Expr::FnCall(tc, targs) = term {
+                args.len() == targs.len()
+                    && match_arith_pattern(&c.node, &tc.node, vars, subst)
+                    && args
+                        .iter()
+                        .zip(targs.iter())
+                        .all(|(p, t)| match_arith_pattern(&p.node, &t.node, vars, subst))
+            } else {
+                false
+            }
+        }
+        Expr::Attr(b, f) => {
+            if let Expr::Attr(tb, tf) = term {
+                f == tf && match_arith_pattern(&b.node, &tb.node, vars, subst)
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Whether both comparison sides match subterms of the citing law under ONE
+/// consistent substitution (a variable shared between the sides — `c` in
+/// `a*c`/`b*c` — must map to the same citing subterm on both).
+fn order_sides_match_subterms(
+    lhs_side: &crate::ast::Expr,
+    rhs_side: &crate::ast::Expr,
+    vars: &std::collections::HashSet<String>,
+    subterms: &[crate::ast::Expr],
+) -> bool {
+    for t1 in subterms {
+        let mut s = std::collections::HashMap::new();
+        if match_arith_pattern(lhs_side, t1, vars, &mut s) {
+            for t2 in subterms {
+                let mut s2 = s.clone();
+                if match_arith_pattern(rhs_side, t2, vars, &mut s2) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// The keystone's ORDER-BRIDGE pool for `law`: every earlier sibling inequality
+/// law whose two comparison sides match subterms of this law's goal / premises,
+/// each carried as a Prop-form restatement + `grind_pattern` (see
+/// [`OrderBridgeCitation`]). Deterministic (static IR + source order), so the
+/// recognizer, the statement gate, and the emit all see the same set.
+fn keystone_order_bridge_citations(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Vec<OrderBridgeCitation> {
+    use crate::ast::{Expr, Literal, Spanned, TopLevel, VerifyKind};
+
+    // Subterms of the citing law's GOAL (the inlined subject body) and PREMISES.
+    let mut subterms: Vec<Expr> = Vec::new();
+    if let Some(when) = &law.when {
+        collect_arith_subterms(when, &mut subterms);
+    }
+    if let Some(goal) = inline_fn_call(&law.lhs, ctx) {
+        collect_arith_subterms(&goal, &mut subterms);
+    }
+    collect_arith_subterms(&law.rhs, &mut subterms);
+    if subterms.is_empty() {
+        return Vec::new();
+    }
+
+    let citing_uid = format!(
+        "{}_{}",
+        aver_name_to_lean(&vb.fn_name),
+        aver_name_to_lean(&law.name)
+    );
+
+    let mut out = Vec::new();
+    for item in &ctx.items {
+        let TopLevel::Verify(prev) = item else {
+            continue;
+        };
+        // Only EARLIER blocks — source order is emit order, so the cited theorem
+        // precedes this one and cyclic citation is impossible.
+        if prev.line == vb.line && prev.fn_name == vb.fn_name {
+            break;
+        }
+        let VerifyKind::Law(prev_law) = &prev.kind else {
+            continue;
+        };
+        // The cited law must assert the inequality HOLDS (`… holds` / `=> true`),
+        // so its Bool theorem concludes `<fn> args = true` and the restatement is
+        // sound; and it must expose that universal theorem to derive from.
+        if !matches!(&prev_law.rhs.node, Expr::Literal(Literal::Bool(true))) {
+            continue;
+        }
+        let Some((thm_name, _stmt)) =
+            crate::codegen::lean::toplevel::law_as_lemma_statement(prev, prev_law, ctx)
+        else {
+            continue;
+        };
+        // ORDER-LAW SHAPE: the cited fn's body is a single comparison `L <op> R`,
+        // inlined at the law's call args, with BOTH sides non-atomic.
+        let Some(inlined) = inline_fn_call(&prev_law.lhs, ctx) else {
+            continue;
+        };
+        let Expr::BinOp(op, l_box, r_box) = &inlined.node else {
+            continue;
+        };
+        let Some(op_lean) = comparison_op_lean(*op) else {
+            continue;
+        };
+        let lhs_side = &l_box.node;
+        let rhs_side = &r_box.node;
+        if expr_is_atomic(lhs_side) || expr_is_atomic(rhs_side) {
+            continue;
+        }
+        let given_names: Vec<String> = prev_law.givens.iter().map(|g| g.name.clone()).collect();
+        if given_names.is_empty() {
+            continue;
+        }
+        // Every quantified given must occur in a comparison side, so the
+        // `grind_pattern` over the two sides covers all the restatement's binders
+        // (`grind_pattern` errors on an uncovered variable).
+        if !given_names
+            .iter()
+            .all(|g| ident_occurs(lhs_side, g) || ident_occurs(rhs_side, g))
+        {
+            continue;
+        }
+        let vars: std::collections::HashSet<String> = given_names.iter().cloned().collect();
+        if !order_sides_match_subterms(lhs_side, rhs_side, &vars, &subterms) {
+            continue;
+        }
+
+        // Build the Prop-form restatement DERIVED from the Bool theorem. The name
+        // carries neither `_law_` nor `_eq_`, so the `--check` audit never mistakes
+        // a restatement for a creditable main-law theorem.
+        let rname = format!(
+            "{}_order_{}_{}",
+            citing_uid,
+            aver_name_to_lean(&prev.fn_name),
+            aver_name_to_lean(&prev_law.name)
+        );
+        let cited_fn_lean = aver_name_to_lean(&prev.fn_name);
+        let quant = prev_law
+            .givens
+            .iter()
+            .map(|g| {
+                format!(
+                    "({} : {})",
+                    aver_name_to_lean(&g.name),
+                    crate::codegen::lean::types::type_annotation_to_lean(&g.type_name)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let names_csv = given_names
+            .iter()
+            .map(|n| aver_name_to_lean(n))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let l_span: &Spanned<Expr> = l_box;
+        let r_span: &Spanned<Expr> = r_box;
+        let l_lean = super::super::expr::emit_expr_legacy(l_span, ctx, None);
+        let r_lean = super::super::expr::emit_expr_legacy(r_span, ctx, None);
+        let (premise_clause, intro, apply_args) = match &prev_law.when {
+            Some(when) => {
+                let p = super::super::expr::emit_expr_legacy(when, ctx, None);
+                (
+                    format!("{p} = true -> "),
+                    format!("  intro {names_csv} hp"),
+                    format!("{names_csv} hp"),
+                )
+            }
+            None => (
+                String::new(),
+                format!("  intro {names_csv}"),
+                names_csv.clone(),
+            ),
+        };
+        let support = vec![
+            format!(
+                "theorem {rname} : ∀ {quant}, {premise_clause}({l_lean}) {op_lean} ({r_lean}) := by"
+            ),
+            intro,
+            format!(
+                "  simpa only [{cited_fn_lean}, decide_eq_true_eq] using ({thm_name} {apply_args})"
+            ),
+            format!("grind_pattern {rname} => ({l_lean}), ({r_lean})"),
+        ];
+        out.push(OrderBridgeCitation {
+            name: rname,
+            support,
+        });
+    }
+    out
+}
+
 /// Emit the keystone proof: `intro <givens> h_when; first | (simp only [<cone>,
 /// <bridges>] at h_when ⊢ <;> grind [<cone>, <pool law names>]) | <floor>`. The
 /// `simp` unfolds the cone and bridges the Bool comparison / splits a
@@ -2117,12 +2546,26 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
         .filter(|d| !recursive.contains(strip_root(d)))
         .collect();
     let defs_csv = defs.join(", ");
-    // `grind` gets ONLY the pool law names (not the cone defs): the `simp` already
-    // unfolds the non-recursive cone, and feeding grind the recursive defs risks
-    // it re-unfolding into a loop. grind e-matches each pool law, instantiates it,
-    // discharges its premise from context, and closes the residual.
+    // `grind` gets the laws-as-lemmas pool names (not the cone defs): the `simp`
+    // already unfolds the non-recursive cone, and feeding grind the recursive defs
+    // risks it re-unfolding into a loop. Two pools, both fed to the same `grind`:
+    //   * EQUATIONAL — earlier laws whose subject fn is in the cone (e.g. a `pow2`
+    //     homomorphism). grind e-matches each, instantiates it, discharges its
+    //     premise from context, and closes the residual ring/linear identity.
+    //   * ORDER-BRIDGE — each cited inequality law, restated in Prop form with a
+    //     `grind_pattern` over its two comparison sides (emitted as `support_lines`
+    //     BEFORE this theorem). The pattern fires when grind sees those sides in
+    //     the goal/premises, instantiating the order fact (e.g. `a*c ≤ b*c`) that
+    //     omega/grind then chains with a premise (`b*c ≤ m`) to the conclusion.
     let pool_names: Vec<String> = keystone_pool_names(vb, law, ctx);
-    let grind_hints = pool_names.join(", ");
+    let order_citations = keystone_order_bridge_citations(vb, law, ctx);
+    let mut hints: Vec<String> = pool_names;
+    hints.extend(order_citations.iter().map(|c| c.name.clone()));
+    let grind_hints = hints.join(", ");
+    let mut support_lines: Vec<String> = Vec::new();
+    for citation in &order_citations {
+        support_lines.extend(citation.support.iter().cloned());
+    }
 
     let intro = format!("  intro {} h_when", intro_names.join(" "));
     // Bridge set matches the de-risked `e1`: `Bool.and_eq_true` splits the `&&`
@@ -2140,7 +2583,7 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
         "  | sorry".to_string()
     };
     Some(AutoProof {
-        support_lines: Vec::new(),
+        support_lines,
         body: Tactic::raw(vec![intro, "  first".to_string(), close, floor]),
         replaces_theorem: false,
     })

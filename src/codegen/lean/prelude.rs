@@ -906,8 +906,11 @@ end AverByte"#;
 /// `aver_int_order` is the nonlinear analog of `omega` for the
 /// products-and-squares fragment: ONE generic decision step, not a
 /// per-figure template. On a nonnegativity goal `0 ≤ a * b` it recurses
-/// with `Int.mul_nonneg`; on an order goal `a*c ≤ b*d` (two products) it
-/// recurses with `Int.mul_le_mul`; a square `0 ≤ t * t` (or its bound)
+/// with `Int.mul_nonneg`; on an order goal where the two products share their
+/// right factor (`a*c ≤ b*c` from `a ≤ b`, `0 ≤ c`, with no `0 ≤ b` in hand)
+/// it uses `Int.mul_le_mul_of_nonneg_right`, and on a general two-product
+/// order `a*c ≤ b*d` it recurses with `Int.mul_le_mul`; a square `0 ≤ t * t`
+/// (or its bound)
 /// bottoms out on `aver_sq_nonneg` (the sign-split base case —
 /// `Int.mul_self_nonneg` does not exist in core); a conjunctive premise is
 /// split; and the remaining LINEAR leaves are closed by `omega` (placed
@@ -930,8 +933,20 @@ theorem aver_sq_nonneg (t : Int) : 0 ≤ t * t := by
 /-- Generic nonneg/order decision step for nonlinear Int products: the
 `omega`-analog for the products-and-squares fragment. Recurse on a product
 with `Int.mul_nonneg` (nonneg goal) or `Int.mul_le_mul` (product ≤ product),
-bottom squares out on `aver_sq_nonneg`, split a conjunctive premise, and
-discharge the linear leaves with `omega`. -/
+close a product order whose two sides share their right factor (`a*c ≤ b*c`
+from `a ≤ b`, `0 ≤ c`) with `Int.mul_le_mul_of_nonneg_right`, bottom squares
+out on `aver_sq_nonneg`, split a conjunctive premise, and discharge the linear
+leaves with `omega`. The `mul_le_mul_of_nonneg_right` rung sits BEFORE
+`mul_le_mul`, and that order is load-bearing for performance: `mul_le_mul`
+would also unify with `a*c ≤ b*c` (taking `d := c`) but spawns a `0 ≤ b` leaf
+that is NOT derivable when the law carries no `0 ≤ a` guard, and the three
+product rungs then thrash on that atomic leaf with metavariable products until
+the heartbeat limit. Trying `mul_le_mul_of_nonneg_right` first closes such a
+goal directly from `a ≤ b` / `0 ≤ c` and never spawns `0 ≤ b`; on the squared
+shapes (`e*e ≤ b*b`, the contraction's `s²` bound) its shared-right-factor
+unification fails fast (the two right factors differ), so `mul_le_mul` still
+takes them — and any genuine `0 ≤ b` leaf there is closed by the early `omega`
+rung from that family's `0 ≤ e ≤ b` guards. -/
 syntax "aver_int_order" : tactic
 macro_rules
   | `(tactic| aver_int_order) => `(tactic|
@@ -940,6 +955,7 @@ macro_rules
         | omega
         | exact aver_sq_nonneg _
         | (apply Int.mul_nonneg <;> aver_int_order)
+        | (apply Int.mul_le_mul_of_nonneg_right <;> aver_int_order)
         | (apply Int.mul_le_mul <;> aver_int_order)
         | (obtain ⟨hl, hr⟩ := ‹_ ∧ _›; aver_int_order))"#;
 

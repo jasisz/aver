@@ -13,7 +13,7 @@ module Estimate
         "applied as ONE generic decision step (the nonlinear analog of omega) -- not"
         "a per-figure tactic -- with the harder facts composing from the simpler via"
         "laws-as-lemmas."
-    exposes [sqNonneg, mulNonneg, tripleNonneg, sqMono, mulLeTrans, nrNewErrNum, nrOldErrSq, nrErrorSquares, nrContraction]
+    exposes [sqNonneg, mulNonneg, tripleNonneg, sqMono, mulLeMonoRight, mulLeTrans, nrNewErrNum, nrOldErrSq, nrErrorSquares, nrContraction]
     effects []
 
 fn sqNonneg(x: Int) -> Bool
@@ -74,6 +74,22 @@ verify sqMono law guarded
     when 0 <= e
     when e <= b
     sqMono(e, b) holds
+
+fn mulLeMonoRight(a: Int, b: Int, c: Int) -> Bool
+    ? "Multiplying both sides of a <= b by a nonnegative c preserves the order."
+    a * c <= b * c
+
+verify mulLeMonoRight
+    mulLeMonoRight(1, 2, 3) => true
+    mulLeMonoRight(-2, 0, 5) => true
+
+verify mulLeMonoRight law guarded
+    given a: Int = [-2, 0, 1]
+    given b: Int = [0, 2, 3]
+    given c: Int = [0, 1, 4]
+    when a <= b
+    when 0 <= c
+    mulLeMonoRight(a, b, c) holds
 
 fn mulLeTrans(a: Int, b: Int, c: Int, m: Int) -> Bool
     ? "a*c stays under m when a <= b, c is nonnegative, and b*c <= m."
