@@ -607,7 +607,13 @@ fn emit_verify_law_block(
             || matches!(
                 pinned_law_strategy,
                 Some(crate::ir::ProofStrategy::NonlinearNonneg { .. })
-            ));
+            )
+            // Keystone — the non-recursive laws-as-lemmas composition (`grind`
+            // over the earlier-sibling pool). Drops the sampled domain to the
+            // true `∀ givens, <when> = true -> claim`; the proof emit keys on the
+            // same recognizer, and the speculative probe commits the universal
+            // only when `grind`+pool actually closes (else bounded fallback).
+            || super::law_auto::recognize_pool_composition_generic(vb, &law_for_auto_proof, ctx));
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(
             vb,
@@ -1022,9 +1028,42 @@ pub(crate) fn law_as_lemma_statement(
     // universal, so the pool declined them wholesale; now a proven conditional
     // law is a sound conditional simp lemma. Decline a `when`-law the auto-
     // prover only bounds (it has no universal theorem to cite).
+    // A `when`-law is also a sound conditional rewrite when an IR-pinned
+    // strategy proves it universally as a clean `∀ givens, <when> = true ->
+    // claim` theorem named `<fn>_law_<name>` — the power-of-two homomorphism
+    // (`FloorDivWindow`), the Newton-Raphson nonneg/order laws
+    // (`NonlinearNonneg`), and the `qexp` fold (`TailRecFixedBaseFold`). Citing
+    // those is exactly what the keystone laws-as-lemmas composition needs.
+    // (`recognize_pool_composition_generic` is deliberately NOT consulted here —
+    // it calls back into this fn, which would recurse.)
+    //
+    // SOUNDNESS: this gate is permissive at the STATEMENT level and fail-closed at
+    // the CREDIT level. It keys on the IR strategy TYPE, not on whether that law's
+    // emit actually closed without `sorry` — a pinned law whose `first | (…) |
+    // sorry` portfolio fell to its floor still has a (sorry-carrying) theorem to
+    // cite. That cannot launder credit: `sorry` propagates transitively, so any
+    // proof that cites a sorry-floored law inherits `sorryAx`, and the final
+    // `--check` axiom whitelist (blacklist `{ofReduceBool, sorryAx}`) refuses it
+    // universal. The worst case is a previously-universal citing law LOSING credit
+    // (a regression caught by the proof corpus), never a false universal.
+    let pinned_when_universal = matches!(
+        ctx.law_target_fn_id(&vb.fn_name)
+            .and_then(|fn_id| ctx
+                .proof_ir
+                .law_theorems
+                .iter()
+                .find(|t| t.fn_id == fn_id && t.law_name == law.name))
+            .map(|t| &t.strategy),
+        Some(
+            crate::ir::ProofStrategy::FloorDivWindow { .. }
+                | crate::ir::ProofStrategy::NonlinearNonneg { .. }
+                | crate::ir::ProofStrategy::TailRecFixedBaseFold { .. }
+        )
+    );
     if law.when.is_some()
         && !(super::law_auto::recognize_conditional_comparison_bridge(law, ctx)
-            || super::law_auto::recognize_conditional_inductive_generic(vb, law, ctx))
+            || super::law_auto::recognize_conditional_inductive_generic(vb, law, ctx)
+            || pinned_when_universal)
     {
         return None;
     }

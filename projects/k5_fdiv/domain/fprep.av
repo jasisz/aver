@@ -1,0 +1,62 @@
+module Fprep
+    intent =
+        "Stage 1 of the K5 division proof: floats as exact rationals. A float is a"
+        "significand times a power of two (sig * 2^exp), the representation the paper"
+        "uses so that float arithmetic is ordinary exact arithmetic. The first"
+        "'floating-point folklore' fact: float multiplication denotes the product of"
+        "the denoted values -- fpValue(fpMul(a, b)) == fpValue(a) * fpValue(b)."
+        "Its proof is the project's laws-as-lemmas composition in action: the value"
+        "law does NOT re-prove anything about powers of two; it CITES the already-"
+        "proven power-of-two homomorphism pow2(m + n) == pow2(m) * pow2(n) and the"
+        "compiler composes the two. The engine supplies only the citation; the"
+        "algebraic content lives entirely as Aver laws."
+    exposes [pow2, Fp, fpValue, fpMul, fpMulValue]
+    effects []
+
+fn pow2(n: Int) -> Int
+    ? "Two to the n for n >= 0 (and 1 for n <= 0): the scale factor of an exponent."
+    match n <= 0
+        true -> 1
+        false -> 2 * pow2(n - 1)
+
+verify pow2
+    pow2(0) => 1
+    pow2(3) => 8
+
+// The power-of-two homomorphism: adding exponents multiplies scales. This is the
+// pool law the value-preservation proof below cites; it proves on its own first.
+verify pow2 law homomorphism
+    given m: Int = [0, 1, 4]
+    given n: Int = [0, 2, 3]
+    when m >= 0
+    when n >= 0
+    pow2(m + n) => pow2(m) * pow2(n)
+
+record Fp
+    sig: Int
+    exp: Int
+
+fn fpValue(f: Fp) -> Int
+    ? "The exact value of a float: significand times two to the exponent."
+    f.sig * pow2(f.exp)
+
+fn fpMul(a: Fp, b: Fp) -> Fp
+    ? "Multiply floats: multiply significands, add exponents."
+    Fp(sig = a.sig * b.sig, exp = a.exp + b.exp)
+
+fn fpMulValue(a: Fp, b: Fp) -> Bool
+    ? "Float multiplication denotes the product of the denoted values."
+    fpValue(fpMul(a, b)) == fpValue(a) * fpValue(b)
+
+verify fpMulValue
+    fpMulValue(Fp(sig = 3, exp = 1), Fp(sig = 5, exp = 2)) => true
+
+// The Stage-1 keystone result. With nonnegative exponents (so every scale is a
+// genuine power of two), the value of a product is the product of the values. The
+// proof composes the pow2 homomorphism above -- no bespoke reasoning about powers.
+verify fpMulValue law preservesValue
+    given a: Fp = [Fp(sig = 3, exp = 1), Fp(sig = 5, exp = 0)]
+    given b: Fp = [Fp(sig = 2, exp = 2), Fp(sig = 7, exp = 1)]
+    when a.exp >= 0
+    when b.exp >= 0
+    fpMulValue(a, b) holds

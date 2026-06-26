@@ -7282,10 +7282,14 @@ fn run_lean_speculative(
 
     // Cheap necessary-condition pre-filter: the speculative path fires for a
     // `when`-law with ONE or TWO `List<_>` givens (the single-list and two-list
-    // conditional-inductive shapes the generic driver probes). With no such law
-    // the probe would admit nothing, so skip the extra emits + build entirely and
-    // leave the baseline untouched (a true no-op).
-    let has_conditional_list_candidate = ctx.items.iter().any(|item| {
+    // conditional-inductive shapes), OR for a `when`-law with NO list givens that
+    // FOLLOWS an earlier law block (a possible laws-as-lemmas pool — the keystone
+    // `recognize_pool_composition_generic` shape). With no such law the probe
+    // would admit nothing, so skip the extra emits + build entirely and leave the
+    // baseline untouched. A loose match here is harmless: a file whose probe emit
+    // traces no candidate (`probed_ids` empty) short-circuits before any build.
+    let mut seen_law = false;
+    let has_candidate = ctx.items.iter().any(|item| {
         let TopLevel::Verify(vb) = item else {
             return false;
         };
@@ -7297,9 +7301,12 @@ fn run_lean_speculative(
             .iter()
             .filter(|g| g.type_name.trim().starts_with("List<"))
             .count();
-        law.when.is_some() && (lists == 1 || lists == 2)
+        let is_candidate =
+            law.when.is_some() && ((lists == 1 || lists == 2) || (lists == 0 && seen_law));
+        seen_law = true;
+        is_candidate
     });
-    if !has_conditional_list_candidate {
+    if !has_candidate {
         return;
     }
 

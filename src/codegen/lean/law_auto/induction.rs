@@ -1965,6 +1965,187 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
     })
 }
 
+/// Keystone — the NON-recursive analog of [`recognize_conditional_inductive_generic`].
+/// A conditional claim with NO list to induct on, decomposed purely by citing
+/// the laws-as-lemmas pool: EARLIER sibling laws in the file abstract whatever
+/// recursion the cone hides (a `pow2` homomorphism, a `mulLeMonoRight`
+/// monotonicity), so `grind` over those pool laws + the cone closes the goal
+/// WITHOUT inducting — grind e-matches each pool law, instantiates it, discharges
+/// its premise from context, and finishes the residual ring / linear identity.
+/// This is The Method's composition step made generic: the algebraic content
+/// lives as Aver helper laws (proven on their own), and the engine only supplies
+/// the citation skeleton, never a per-figure template.
+///
+/// Speculative: the probe is the oracle (grind either closes from the pool or it
+/// does not), and `default` is OFF — a no-probe transpile keeps the bounded
+/// sampled statement, so a law `grind`+pool cannot close never regresses off its
+/// sound bounded fallback.
+pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> bool {
+    if law.when.is_none() {
+        return false;
+    }
+    // The inductive path owns list-recursion laws; this is the residue with no
+    // list-induction target.
+    if find_list_induction_target(law).is_some() {
+        return false;
+    }
+    // Exclusive with the comparison-bridge arm (it runs first).
+    if recognize_conditional_comparison_bridge(law, ctx) {
+        return false;
+    }
+    // The claim goes through the subject fn (`holds`, or an equational `=> rhs`).
+    if !matches!(&law.lhs.node, crate::ast::Expr::FnCall(..)) {
+        return false;
+    }
+    // Fail closed on refinement-lifted givens. A `@Nat>=0`-style refined given
+    // takes a DIFFERENT statement path: the `conditional_universal` gate requires
+    // `lifted_vars.is_empty()` (verify.rs), so a lifted law's universal statement
+    // carries the domain through the lifted quantifier / extra premises — which the
+    // keystone's fixed `intro <givens> h_when` proof shape does not match (the intro
+    // count would disagree with the statement's binders). Mirroring that gate here
+    // keeps the recognizer's contract symmetric across EVERY call site (statement
+    // and emit), so a lifted law can never trigger a keystone proof out of step with
+    // its statement. (No corpus law hits this today; this is a fail-closed guard.)
+    if law.givens.iter().any(|g| {
+        crate::codegen::common::refinement_lift_for_given(
+            &g.name,
+            &g.type_name,
+            &law.lhs,
+            &law.rhs,
+            ctx,
+        )
+        .is_some()
+    }) {
+        return false;
+    }
+    // The defining signal: there ARE earlier sibling laws about a fn in this
+    // law's call cone (the laws-as-lemmas to cite). Without a pool this rung
+    // adds nothing the simp / grind rungs lack.
+    if keystone_pool_names(vb, law, ctx).is_empty() {
+        return false;
+    }
+    let id = format!("{}.{}", vb.fn_name, law.name);
+    super::super::tactic_ir::speculative::admits(&id, false)
+}
+
+/// The laws-as-lemmas pool for the keystone: the Lean theorem NAMES of EARLIER
+/// sibling laws whose SUBJECT fn lies in this law's call cone. Looser than
+/// [`earlier_law_lemmas`] (the inductive simp path) on purpose — the keystone's
+/// whole point is to cite a law ABOUT a recursive cone fn (a `pow2`
+/// homomorphism) to abstract that recursion, which the strict pure-fn-subset
+/// eligibility excludes. `grind` instantiates and discharges each cited law;
+/// an irrelevant one is simply unused, so subject-in-cone is the right gate.
+///
+/// Pool membership is decided DETERMINISTICALLY by `law_as_lemma_statement`
+/// (static IR / source-order checks), NOT by the speculative `admits` tracking
+/// that gates the keystone law itself — so the cited set is identical in the
+/// probe build and the committed build. Soundness of citing a pool member does
+/// not rest on this stability anyway: if a cited law's own proof carries `sorry`,
+/// the citing theorem inherits `sorryAx` and the `--check` whitelist refuses it
+/// credit (see the `pinned_when_universal` note in `law_as_lemma_statement`).
+fn keystone_pool_names(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Vec<String> {
+    use crate::ast::{TopLevel, VerifyKind};
+    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
+    let cone_fns: std::collections::HashSet<String> =
+        cone.pure_fns().iter().map(|fd| fd.name.clone()).collect();
+    let mut out = Vec::new();
+    for item in &ctx.items {
+        let TopLevel::Verify(prev) = item else {
+            continue;
+        };
+        // Only blocks EARLIER in source — source order is emit order, so the
+        // cited theorem precedes this one and cyclic use is impossible.
+        if prev.line == vb.line && prev.fn_name == vb.fn_name {
+            break;
+        }
+        let VerifyKind::Law(prev_law) = &prev.kind else {
+            continue;
+        };
+        if !cone_fns.contains(&prev.fn_name) {
+            continue;
+        }
+        if let Some((name, _stmt)) =
+            crate::codegen::lean::toplevel::law_as_lemma_statement(prev, prev_law, ctx)
+        {
+            out.push(name);
+        }
+    }
+    out
+}
+
+/// Emit the keystone proof: `intro <givens> h_when; first | (simp only [<cone>,
+/// <bridges>] at h_when ⊢ <;> grind [<cone>, <pool law names>]) | <floor>`. The
+/// `simp` unfolds the cone and bridges the Bool comparison / splits a
+/// conjunctive guard; `grind` then composes the laws-as-lemmas pool (cone defs
+/// AND the earlier-law theorem names) to close the residual. The `first | … |
+/// sorry` floor keeps credit fail-closed; under the speculative probe the floor
+/// carries the `AVERSPEC_SORRY:<fn.law>` trace so a non-closing portfolio is
+/// observable and the law falls back to its bounded statement.
+pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<AutoProof> {
+    if !recognize_pool_composition_generic(vb, law, ctx) {
+        return None;
+    }
+    // `simp only [<cone>]` unfolds the cone — but RECURSIVE cone fns (`pow2`)
+    // must be EXCLUDED: `simp only [pow2]` errors trying to reduce the recursive
+    // match on a symbolic argument, failing the whole arm. They stay abstract
+    // and the pool law (the `pow2` homomorphism) reasons about them instead.
+    // `law_simp_defs` emits fully-qualified `_root_.<name>` simp targets, but
+    // `recursive_pure_fn_names` (via `aver_name_to_lean`) yields bare names. Strip
+    // the `_root_.` namespace prefix on BOTH sides before comparing, or the
+    // recursive filter silently misses (`"_root_.pow2" != "pow2"`) and a
+    // recursive cone fn leaks into `simp only`, breaking simp on its symbolic
+    // recursive match (the measured `e2` failure mode).
+    fn strip_root(n: &str) -> &str {
+        n.strip_prefix("_root_.").unwrap_or(n)
+    }
+    let recursive: std::collections::HashSet<String> = super::recursive_pure_fn_names(ctx)
+        .iter()
+        .map(|n| strip_root(&aver_name_to_lean(n)).to_string())
+        .collect();
+    let defs: Vec<String> = law_simp_defs(ctx, vb, law)
+        .into_iter()
+        .filter(|d| !recursive.contains(strip_root(d)))
+        .collect();
+    let defs_csv = defs.join(", ");
+    // `grind` gets ONLY the pool law names (not the cone defs): the `simp` already
+    // unfolds the non-recursive cone, and feeding grind the recursive defs risks
+    // it re-unfolding into a loop. grind e-matches each pool law, instantiates it,
+    // discharges its premise from context, and closes the residual.
+    let pool_names: Vec<String> = keystone_pool_names(vb, law, ctx);
+    let grind_hints = pool_names.join(", ");
+
+    let intro = format!("  intro {} h_when", intro_names.join(" "));
+    // Bridge set matches the de-risked `e1`: `Bool.and_eq_true` splits the `&&`
+    // guard, `decide_eq_true_eq` peels `decide p = true` to `p`. The earlier
+    // `ge_iff_le, gt_iff_lt` are dropped — they are unnecessary for this shape
+    // (`grind` orders relations itself) and `e1` closes without them.
+    let close = format!(
+        "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq] at h_when ⊢ <;> grind [{grind_hints}])"
+    );
+    let floor = if super::super::tactic_ir::speculative::probing() {
+        let id = format!("{}.{}", vb.fn_name, law.name);
+        super::super::tactic_ir::speculative::record_probed(&id);
+        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
+    } else {
+        "  | sorry".to_string()
+    };
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        body: Tactic::raw(vec![intro, "  first".to_string(), close, floor]),
+        replaces_theorem: false,
+    })
+}
+
 /// `discovered` carries the lemma names of an IR-pinned
 /// `ProofStrategy::SimpOverLemmas` (the discovery feedback loop): the emits
 /// below add them to the law's simp sets, embed their texts (first user

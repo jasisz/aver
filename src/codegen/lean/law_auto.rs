@@ -36,6 +36,7 @@ pub(in crate::codegen::lean) use induction::recognize_conditional_comparison_bri
 /// lemmas pool). Also feeds the `omit_domain` statement driver, kept in
 /// lockstep with the emit.
 pub(in crate::codegen::lean) use induction::recognize_conditional_inductive_generic;
+pub(in crate::codegen::lean) use induction::recognize_pool_composition_generic;
 
 /// `aver proof --explain` residual probe: turn an emitted main law theorem's
 /// source lines into a normalization-only twin so Lean reports its residual
@@ -325,6 +326,26 @@ fn emit_verify_law_forall_auto_proof_inner(
     if law.when.is_some()
         && let Some(proof) =
             induction::emit_conditional_inductive_generic_law(vb, law, ctx, &intro_names)
+    {
+        return Some(proof);
+    }
+
+    // Keystone — the non-recursive laws-as-lemmas composition: a conditional
+    // claim with no list to induct on, closed by `grind` over the earlier
+    // sibling laws (the pool). The algebraic content lives as Aver helper laws;
+    // the engine supplies only the citation skeleton (`grind [<cone>, <pool>]`).
+    // Tried after the inductive arm, which owns the list-recursion shapes, and
+    // BEFORE the pinned strategies below: a law that is both keystone-eligible AND
+    // carries a pinned strategy (e.g. a `FloorDivWindow` law that ALSO has an
+    // earlier pool law in its cone) is closed by the generic citation skeleton in
+    // preference to the strategy-specific template. There is no conflict for the
+    // pinned laws that have NO pool — the empty-pool gate in the recognizer
+    // declines them, so they fall through to their own strategy unchanged (this is
+    // why the `pow2` homomorphism itself, a `FloorDivWindow` law with no earlier
+    // cone law, is NOT stolen by the keystone).
+    if law.when.is_some()
+        && let Some(proof) =
+            induction::emit_pool_composition_generic_law(vb, law, ctx, &intro_names)
     {
         return Some(proof);
     }
