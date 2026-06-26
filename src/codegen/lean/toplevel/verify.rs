@@ -502,6 +502,12 @@ fn emit_verify_law_block(
                 // promise to close, so a singleton-given +
                 // constant-RHS law keeps today's skip.
                 | crate::ir::ProofStrategy::RingIdentity { .. }
+                // NonlinearNonneg (the inequality sibling) has the same
+                // honest-sorry floor (`first | (…) | sorry`), and its
+                // detector requires a given-dependent `E >= 0` claim, so
+                // the singleton-const-rhs skip can't apply anyway —
+                // listed for the same conservatism as RingIdentity.
+                | crate::ir::ProofStrategy::NonlinearNonneg { .. }
                 // IntDecimalRoundtrip shares the same honest-sorry
                 // floor (`first | (…; done) | sorry`); its detector
                 // also requires a given-dependent rhs, so the
@@ -589,6 +595,18 @@ fn emit_verify_law_block(
                 vb,
                 &law_for_auto_proof,
                 ctx,
+            )
+            // A `when`-premised `NonlinearNonneg` law (the Newton-Raphson
+            // factor-sign guards) is proved UNIVERSALLY by the generic
+            // `aver_int_nonneg` step, so its statement drops the sampled
+            // domain (`omit_domain`) to `∀ givens, <when> = true -> claim`
+            // and is classed `universal`. The proof emit keys on the same
+            // pin, so statement and proof agree. Credit stays fail-closed:
+            // the `#print axioms` whitelist still decides, and the
+            // `first | (…) | sorry` floor can never be credited.
+            || matches!(
+                pinned_law_strategy,
+                Some(crate::ir::ProofStrategy::NonlinearNonneg { .. })
             ));
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(

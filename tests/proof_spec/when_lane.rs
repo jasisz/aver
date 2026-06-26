@@ -2,41 +2,40 @@ use super::*;
 
 /// Nonlinear-arithmetic wall (`tests/fixtures/nr_wall.av`):
 /// laws whose unfolded cone multiplies two VARIABLES (`x * x`,
-/// `(s*s - d*x)^2`) must DEGRADE to honest caught sorries, never to a
-/// failing tactic. Pre-fix this file produced three distinct build
-/// errors: `by_cases h_h_a : h_a ≥ 0` (case over a premise-HYPOTHESIS
-/// name — application type mismatch), `omega` failing on a nonlinear
-/// goal, and `_sample_N` theorems FALSE AS STATED (when-guard numerals
-/// elaborated as Nat, truncating subtraction). Post-fix the export
-/// builds GREEN: every `when`-guarded law closed bounded over its
-/// declared domain and every emitted sample theorem true (Int-ascribed
-/// guards).
+/// `(s*s - d*x)^2`). The export must BUILD green — a failing tactic
+/// (`omega` on a var×var goal, `by_cases` over a hypothesis name,
+/// Nat-truncated sample guards) is a build error, not an honest sorry.
 ///
-/// The SHAPE-GATED `grind` rung (admitted on flat algebraic/ring goals,
-/// skipped on inductive ones) now closes the unconditional nonlinear
-/// polynomial ring identity `nrNewErrNum ≍ nrOldErrSq`
-/// (`s⁴ - d·(x·(2s² - dx)) = (s² - dx)²`) — grind's `+ring` subsolver
-/// carries the multi-variable nonlinear identity the hand-rolled AC-ring
-/// simp package stopped normalizing at Lean 4.31. So the wall now lands
-/// on exactly 1 honest caught sorry — the genuinely undecidable-by-grind
-/// `sqNonneg` (`x·x ≥ 0`, needs `mul_self_nonneg`, off the whitelist
-/// here) — down from 2. grind pulls `Classical.choice` on the closure
-/// (whitelisted: ⊆ {propext, Classical.choice, Quot.sound}).
+/// Two generic engine steps now close the nonnegativity sub-family
+/// kernel-genuine, so the wall lands on ZERO sorries:
+///   - the `NonlinearNonneg` strategy + its shipped prelude primitive
+///     `aver_int_nonneg` (the `omega`-analog for the products-and-squares
+///     fragment — decompose with `Int.mul_nonneg`, sign-split squares)
+///     closes `sqNonneg` (`x·x ≥ 0`), `mulNonneg`, and `tripleNonneg` —
+///     the last two as TRUE universals `∀ …, <guard> = true -> claim`
+///     (the `when`-guard threaded in as a hypothesis, not a finite sample);
+///   - the shape-gated `grind` rung closes the unconditional nonlinear
+///     polynomial ring identity `nrNewErrNum ≍ nrOldErrSq`
+///     (`s⁴ - d·(x·(2s² - dx)) = (s² - dx)²`).
+/// The order sub-family (`sqMono`, `mulLeTrans`) and the contraction
+/// bound (`nrContraction`) are `<= `-claims this nonneg step does not
+/// reach, so they keep their sound bounded sampled fallback — bounded,
+/// not sorries. axioms stay within {propext, Classical.choice, Quot.sound}.
 #[test]
-fn proof_nonlinear_laws_degrade_to_honest_sorries() {
+fn proof_nonlinear_nonneg_laws_close_via_generic_primitive() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping nonlinear-wall proof test: `lake` not available");
         return;
     }
     let output_dir = temp_output_dir("aver-proof-nr-wall");
-    let (summary, run) = run_lean_check_json("tests/fixtures/nr_wall.av", &output_dir, 1, &[]);
+    let (summary, run) = run_lean_check_json("tests/fixtures/nr_wall.av", &output_dir, 0, &[]);
     assert_eq!(
         summary["sorries"].as_u64(),
-        Some(1),
-        "the nonlinear wall must land on exactly 1 honest caught sorry — \
-         the shape-gated grind rung closes the nrNewErrNum≍nrOldErrSq ring \
-         identity, leaving only sqNonneg (a build error OR a different count \
-         is a regression).\n{}",
+        Some(0),
+        "the nonlinear-nonneg wall must close on ZERO sorries — the \
+         `aver_int_nonneg` primitive closes sqNonneg/mulNonneg/tripleNonneg \
+         and the grind rung closes nrNewErrNum≍nrOldErrSq (a residual sorry, \
+         a build error, or the bounded order laws regressing is a failure).\n{}",
         format_output(&run)
     );
     assert_eq!(

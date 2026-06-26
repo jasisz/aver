@@ -1078,6 +1078,27 @@ pub enum ProofStrategy {
         /// backends translate to their lemma vocabulary.
         unfold_fns: Vec<String>,
     },
+    /// Nonnegativity over a nonlinear Int product (`E >= 0`) — the
+    /// inequality sibling of [`RingIdentity`], and the Newton-Raphson
+    /// error-bound family of the K5 division proof. The claim is
+    /// `subject(args) = true` for a pure non-recursive `Bool` fn whose
+    /// body is a single `E >= 0` over a pure-Int product cone; the law
+    /// MAY carry a `when` premise constraining the factor signs (it is
+    /// threaded into the universal statement as a hypothesis). The Lean
+    /// backend renders it as one generic decision step — the shipped
+    /// prelude tactic `aver_int_nonneg`, the nonlinear analog of `omega`
+    /// for the products-and-squares fragment (decompose with
+    /// `Int.mul_nonneg`, bottom squares out on `aver_sq_nonneg`,
+    /// discharge the premise leaves) — NOT a per-figure template; an
+    /// honest `sorry` floor keeps credit fail-closed. Dafny needs no
+    /// special handling (Z3 carries nonlinear arithmetic push-button) and
+    /// treats the pin like `BackendDispatch`. Demonstrated by
+    /// `projects/k5_fdiv/domain/estimate.av`.
+    NonlinearNonneg {
+        /// Ordered fn unfold list — subject fn first, then the
+        /// transitively-reached pure-Int callees (sorted). Source names.
+        unfold_fns: Vec<String>,
+    },
     /// Floor-division window family — laws over a power-of-two fn
     /// (`match n <= 0 { true -> 1; false -> 2 * pow(n - 1) }`), a
     /// floor-halving binary-exponent fn (the

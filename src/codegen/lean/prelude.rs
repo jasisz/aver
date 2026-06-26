@@ -897,6 +897,45 @@ def fromHex (s : String) : Except String Int :=
   | _ => .error ("Byte.fromHex: expected exactly 2 hex chars, got '" ++ s ++ "'")
 end AverByte"#;
 
+/// The nonlinear-nonnegativity closing kit for the `NonlinearNonneg`
+/// strategy (the Newton-Raphson error bounds of `projects/k5_fdiv`).
+/// Core `Int` only — no Mathlib, no `nlinarith`/`positivity`. Shipped
+/// demand-driven (only when a proof actually invokes `aver_int_nonneg`),
+/// so corpora that never need it get byte-identical output.
+///
+/// `aver_int_nonneg` is the nonlinear analog of `omega` for the
+/// products-and-squares fragment: ONE generic decision step, not a
+/// per-figure template. It decomposes a product goal `0 ≤ a * b` with
+/// `Int.mul_nonneg`, bottoms a square `0 ≤ t * t` out on `aver_sq_nonneg`
+/// (the sign-split base case — `Int.mul_self_nonneg` does not exist in
+/// core), splits a conjunctive premise, and discharges the remaining
+/// linear leaves from context. The emitter wraps every use in
+/// `first | (…; aver_int_nonneg) | sorry`, so a goal outside the fragment
+/// falls to an honest caught `sorry`, never a build error — credit stays
+/// fail-closed behind the `#print axioms` whitelist.
+const LEAN_PRELUDE_NONLINEAR_NONNEG: &str = r#"/-- A square is never negative — the sign-split base case the product
+closer bottoms out on (`Int.mul_self_nonneg` is absent from core Int). -/
+theorem aver_sq_nonneg (t : Int) : 0 ≤ t * t := by
+  rcases Int.le_total 0 t with h | h
+  · exact Int.mul_nonneg h h
+  · have h2 : 0 ≤ -t := by omega
+    have := Int.mul_nonneg h2 h2
+    rwa [Int.neg_mul_neg] at this
+
+/-- Generic nonnegativity decision step for nonlinear Int products: the
+`omega`-analog for the products-and-squares fragment. Decompose a product
+with `Int.mul_nonneg`, bottom squares out on `aver_sq_nonneg`, split a
+conjunctive premise, then discharge the linear leaves. -/
+syntax "aver_int_nonneg" : tactic
+macro_rules
+  | `(tactic| aver_int_nonneg) => `(tactic|
+      first
+        | assumption
+        | exact aver_sq_nonneg _
+        | (apply Int.mul_nonneg <;> aver_int_nonneg)
+        | (obtain ⟨hl, hr⟩ := ‹_ ∧ _›; aver_int_nonneg)
+        | omega)"#;
+
 #[cfg(test)]
 pub(super) fn generate_prelude() -> String {
     generate_prelude_for_body("", true)
@@ -965,6 +1004,10 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
                 other
             ),
         }
+    }
+
+    if include_all_helpers || body.contains("aver_int_nonneg") {
+        parts.push(LEAN_PRELUDE_NONLINEAR_NONNEG.to_string());
     }
 
     parts.join("\n\n")
@@ -1141,6 +1184,14 @@ pub(super) fn build_common_lean(union_body: &str) -> String {
                 other
             ),
         }
+    }
+    // Nonlinear-nonnegativity closing kit — demand-driven on the tactic
+    // name the `NonlinearNonneg` emit invokes, so files that never need it
+    // stay byte-identical. Not a `BUILTIN_HELPERS` key: it is Lean-only
+    // proof infrastructure (Z3 carries these natively, so Dafny ships
+    // nothing), keyed on emitted tactic text rather than a builtin call.
+    if union_body.contains("aver_int_nonneg") {
+        parts.push(LEAN_PRELUDE_NONLINEAR_NONNEG.to_string());
     }
     parts.join("\n\n")
 }

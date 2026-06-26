@@ -5,6 +5,7 @@
 mod decimal;
 mod floor_window;
 mod induction;
+mod inequality;
 mod sampled;
 mod shared;
 mod spec;
@@ -176,6 +177,14 @@ fn maybe_wrap_with_grind_rung(
     // arm — pure waste (a second grind saturation on the same goal). Skip.
     let lines = proof.body.render();
     if lines.iter().any(|l| l.contains("grind")) {
+        return proof;
+    }
+    // A `NonlinearNonneg` proof closes via `aver_int_nonneg`, the generic
+    // nonlinear-nonnegativity primitive — a goal `grind` has already been
+    // measured to NOT decide (`0 <= x*x` and friends). Prepending the rung
+    // would only spend a guaranteed-failing grind saturation before falling
+    // to the primitive, so skip it the same way an own-grind body does.
+    if lines.iter().any(|l| l.contains("aver_int_nonneg")) {
         return proof;
     }
     // SHAPE GATE: only wrap a grind-amenable (flat algebraic/ring/order)
@@ -368,6 +377,17 @@ fn emit_verify_law_forall_auto_proof_inner(
     if let Some(proof) =
         floor_window::emit_floor_window_law(vb, law, ctx, theorem_base, quant_params)
     {
+        return Some(proof);
+    }
+    // IR-pinned `NonlinearNonneg` — nonnegativity over a nonlinear Int
+    // product (`E >= 0`). Unlike `FloorDivWindow` it does NOT replace the
+    // theorem statement: the caller already builds the TRUE-universal
+    // `∀ givens, <when> = true -> claim` form (for a `when`-law, via the
+    // `conditional_universal` driver that drops the sampled domain; a
+    // no-`when` `holds` law is universal as stated). This emits only the
+    // proof body — one generic decision step (`aver_int_nonneg`) under a
+    // `first | (…) | sorry` floor.
+    if let Some(proof) = inequality::emit_nonlinear_nonneg_law(vb, law, ctx) {
         return Some(proof);
     }
     // IR-pinned `TailRecFixedBaseFold` (TIP prop_35, `exp x y = qexp x y one`).

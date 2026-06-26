@@ -1375,6 +1375,7 @@ fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenC
                 | crate::ir::ProofStrategy::FiniteDomainCases { .. }
                 | crate::ir::ProofStrategy::SimpOverPreludeLemmas { .. }
                 | crate::ir::ProofStrategy::RingIdentity { .. }
+                | crate::ir::ProofStrategy::NonlinearNonneg { .. }
                 | crate::ir::ProofStrategy::IntDecimalRoundtrip { .. }
                 | crate::ir::ProofStrategy::StringEscapeRoundtrip(_)
         )
@@ -2882,6 +2883,12 @@ pub fn emit_verify_law(
                     // Dafny treats the pin as `BackendDispatch` and
                     // its exports stay byte-identical.
                     | crate::ir::ProofStrategy::RingIdentity { .. }
+                    // Same guard for the nonlinear-nonnegativity strategy:
+                    // its closer is the Lean prelude tactic `aver_int_nonneg`;
+                    // Z3 carries these `E >= 0` bounds push-button on the
+                    // default universal lemma, so Dafny treats the pin as
+                    // `BackendDispatch` and its exports stay byte-identical.
+                    | crate::ir::ProofStrategy::NonlinearNonneg { .. }
                     // Same guard for the decimal-Int roundtrip strategy:
                     // Lean-only (its skeleton cites the synthesized
                     // `__fuel_scan` lemma and Lean prelude names), so
