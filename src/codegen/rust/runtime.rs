@@ -70,12 +70,6 @@ impl IntoAverStr for Result<aver_rt::AverList<String>, String> {
         self.map(|l| l.into_aver()).map_err(AverStr::from)
     }
 }
-impl IntoAverStr for Result<aver_rt::HttpResponse, String> {
-    type Output = Result<aver_rt::HttpResponse, AverStr>;
-    fn into_aver(self) -> Result<aver_rt::HttpResponse, AverStr> {
-        self.map_err(AverStr::from)
-    }
-}
 impl IntoAverStr for Result<i64, String> {
     type Output = Result<i64, AverStr>;
     fn into_aver(self) -> Result<i64, AverStr> {
@@ -213,20 +207,23 @@ pub(crate) fn should_skip_http_server() -> bool {{
 
 pub fn http_server_listen<F>(port: i64, mut handler: F) -> Result<(), AverStr>
 where
-    F: FnMut(&aver_rt::HttpRequest) -> aver_rt::HttpResponse,
+    F: FnMut(&aver_rt::HttpRequest) -> HttpResponse,
 {{
     if should_skip_http_server() {{
         return Ok(());
     }}
     // User handlers are emitted borrow-by-default (`fn(&HttpRequest)`),
     // so adapt the owned-value `aver_rt` callback to a by-reference call.
-    aver_rt::http_server::listen(port, move |req| handler(&req)).map_err(AverStr::from)
+    // The handler yields the surface `HttpResponse` (`AverInt` status); lower
+    // it to the host struct (`i64` status) before `aver_rt::http_server`.
+    aver_rt::http_server::listen(port, move |req| http_response_to_host(handler(&req)))
+        .map_err(AverStr::from)
 }}
 
 pub fn http_server_listen_with<C, F>(port: i64, context: C, mut handler: F) -> Result<(), AverStr>
 where
     C: Clone,
-    F: FnMut(&C, &aver_rt::HttpRequest) -> aver_rt::HttpResponse,
+    F: FnMut(&C, &aver_rt::HttpRequest) -> HttpResponse,
 {{
     if should_skip_http_server() {{
         return Ok(());
@@ -234,8 +231,10 @@ where
     // User handlers take both the context and the request by reference
     // (`fn(&Ctx, &HttpRequest)`); adapt the owned-value `aver_rt`
     // callback accordingly.
-    aver_rt::http_server::listen_with(port, context, move |ctx, req| handler(&ctx, &req))
-        .map_err(AverStr::from)
+    aver_rt::http_server::listen_with(port, context, move |ctx, req| {{
+        http_response_to_host(handler(&ctx, &req))
+    }})
+    .map_err(AverStr::from)
 }}"#
     )
 }
@@ -272,6 +271,17 @@ fn convert_tcp_connection(c: aver_rt::TcpConnection) -> Tcp_Connection {
         port: aver_rt::AverInt::from_i64(c.port),
     }
 }
+/// Surface (`AverInt` port) -> host `aver_rt::TcpConnection` (`i64` port),
+/// applied before `Tcp.writeLine`/`readLine`/`close`. The host keeps live
+/// sockets in a thread-local keyed by `id`, so rebuilding the host record
+/// from the surface fields is enough to find the connection.
+pub fn tcp_connection_to_host(c: &Tcp_Connection) -> aver_rt::TcpConnection {
+    aver_rt::TcpConnection {
+        id: c.id.clone(),
+        host: c.host.clone(),
+        port: c.port.to_i64().unwrap_or(0),
+    }
+}
 /// `Tcp.connect` (and friends) return the host struct as `Result<_, String>`;
 /// the `.into_aver()` post-step lands the surface `Tcp_Connection` + AverStr
 /// error. Lives here (gated on Tcp usage) so the base runtime never names the
@@ -294,8 +304,60 @@ pub fn generate_branch_path_types() -> String {
 }
 
 /// Bring shared HTTP record types into the generated program.
+///
+/// The Aver typechecker types `HttpResponse.status` as `Int` (→
+/// `aver_rt::AverInt`), while the host `aver_rt::HttpResponse` keeps an `i64`
+/// `status`. Like `Tcp.Connection` / `Terminal.Size`, we emit a SURFACE
+/// record (`AverInt` status) and convert at the effect boundary: `Http.*`
+/// lands the host struct as the surface (`convert_http_response`), and an
+/// `HttpServer` handler's surface response is lowered back to the host struct
+/// (`http_response_to_host`) before `aver_rt::http_server` sends it. Keeping
+/// the surface type distinct is what lets `resp.status.add(&…)` typecheck.
 pub fn generate_http_types() -> String {
-    "pub use aver_rt::HttpResponse;".to_string()
+    r#"#[derive(Clone, Debug, PartialEq)]
+pub struct HttpResponse {
+    pub status: aver_rt::AverInt,
+    pub body: aver_rt::AverStr,
+    pub headers: aver_rt::HttpHeaders,
+}
+impl aver_rt::AverDisplay for HttpResponse {
+    fn aver_display(&self) -> String {
+        format!(
+            "HttpResponse(status: {}, body: {}, headers: {})",
+            self.status.aver_display_inner(),
+            self.body.aver_display_inner(),
+            self.headers.aver_display_inner()
+        )
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+/// Host `aver_rt::HttpResponse` (`i64` status) → surface (`AverInt` status),
+/// applied at the `Http.*` effect boundary via `.into_aver()`.
+fn convert_http_response(r: aver_rt::HttpResponse) -> HttpResponse {
+    HttpResponse {
+        status: aver_rt::AverInt::from_i64(r.status),
+        body: r.body,
+        headers: r.headers,
+    }
+}
+/// Surface (`AverInt` status) → host `aver_rt::HttpResponse` (`i64` status),
+/// applied before a handler's response reaches `aver_rt::http_server`.
+pub fn http_response_to_host(r: HttpResponse) -> aver_rt::HttpResponse {
+    aver_rt::HttpResponse {
+        status: r.status.to_i64().unwrap_or(0),
+        body: r.body,
+        headers: r.headers,
+    }
+}
+impl IntoAverStr for Result<aver_rt::HttpResponse, String> {
+    type Output = Result<HttpResponse, AverStr>;
+    fn into_aver(self) -> Result<HttpResponse, AverStr> {
+        self.map(convert_http_response).map_err(AverStr::from)
+    }
+}"#
+    .to_string()
 }
 
 /// Bring shared HTTP server request type into the generated program.

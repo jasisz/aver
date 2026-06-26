@@ -171,7 +171,10 @@ fn val_to_http_response(value: Val) -> Result<crate::aver_rt::HttpResponse, Aver
     }
 
     Ok(crate::aver_rt::HttpResponse {
-        status: status.ok_or_else(|| AverStr::from("HttpResponse.status is required"))?,
+        status: status
+            .ok_or_else(|| AverStr::from("HttpResponse.status is required"))?
+            .to_i64()
+            .ok_or_else(|| AverStr::from("HttpResponse.status out of i64 range"))?,
         body: body.ok_or_else(|| AverStr::from("HttpResponse.body is required"))?,
         headers,
     })
