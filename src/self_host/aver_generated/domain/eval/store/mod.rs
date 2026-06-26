@@ -7,7 +7,7 @@ use crate::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FnStore {
-    pub nameToId: aver_rt::AverMap<AverStr, i64>,
+    pub nameToId: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     pub byId: aver_rt::AverVector<FnDef>,
 }
 
@@ -64,11 +64,12 @@ impl aver_replay::ReplayValue for FnStore {
             "$record.fields",
         )?;
         Ok(Self {
-            nameToId: <aver_rt::AverMap<AverStr, i64> as ReplayValue>::from_replay_json(
-                fields
-                    .get("nameToId")
-                    .ok_or_else(|| "$record FnStore missing field 'nameToId'".to_string())?,
-            )?,
+            nameToId:
+                <aver_rt::AverMap<AverStr, aver_rt::AverInt> as ReplayValue>::from_replay_json(
+                    fields
+                        .get("nameToId")
+                        .ok_or_else(|| "$record FnStore missing field 'nameToId'".to_string())?,
+                )?,
             byId: <aver_rt::AverVector<FnDef> as ReplayValue>::from_replay_json(
                 fields
                     .get("byId")
@@ -99,7 +100,7 @@ pub fn emptyFnStore() -> FnStore {
 
 /// Look up a function id by name.
 #[inline(always)]
-pub fn lookupFnId(fns: &FnStore, name: AverStr) -> Result<i64, AverStr> {
+pub fn lookupFnId(fns: &FnStore, name: AverStr) -> Result<aver_rt::AverInt, AverStr> {
     crate::cancel_checkpoint();
     match fns.nameToId.get(&name).cloned() {
         Some(id) => Ok(id),
@@ -109,13 +110,15 @@ pub fn lookupFnId(fns: &FnStore, name: AverStr) -> Result<i64, AverStr> {
 
 /// Look up a function definition by id.
 #[inline(always)]
-pub fn lookupFnById(fns: &FnStore, id: i64) -> Result<FnDef, AverStr> {
+pub fn lookupFnById(fns: &FnStore, id: aver_rt::AverInt) -> Result<FnDef, AverStr> {
     crate::cancel_checkpoint();
-    match fns.byId.get(id as usize).cloned() {
+    match (id).to_usize().and_then(|__i| fns.byId.get(__i).cloned()) {
         Some(fd) => Ok(fd),
         None => Err(aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity((39i64) as usize);
+                let mut __b = aver_rt::Buffer::with_capacity(
+                    (aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0),
+                );
                 __b.push_str(&AverStr::from("undefined function id: "));
                 __b
             };
@@ -132,7 +135,7 @@ pub fn lookupFnById(fns: &FnStore, id: i64) -> Result<FnDef, AverStr> {
 pub fn lookupFnOption(fns: &FnStore, name: AverStr) -> Option<FnDef> {
     crate::cancel_checkpoint();
     match fns.nameToId.get(&name).cloned() {
-        Some(id) => fns.byId.get(id as usize).cloned(),
+        Some(id) => (id).to_usize().and_then(|__i| fns.byId.get(__i).cloned()),
         None => None,
     }
 }
@@ -189,8 +192,11 @@ pub fn mergeBindings(
 /// Build a function store with a name->id index and id->FnDef table.
 pub fn fnsToStore(fns: &aver_rt::AverList<FnDef>) -> FnStore {
     crate::cancel_checkpoint();
-    let nameToId =
-        crate::aver_generated::domain::eval::store::fnsToIdMap(fns.clone(), HashMap::new(), 0i64);
+    let nameToId = crate::aver_generated::domain::eval::store::fnsToIdMap(
+        fns.clone(),
+        HashMap::new(),
+        aver_rt::AverInt::from_i64(0),
+    );
     crate::aver_generated::domain::eval::store::FnStore {
         nameToId: nameToId,
         byId: aver_rt::AverVector::from_vec(fns.to_vec()),
@@ -201,15 +207,15 @@ pub fn fnsToStore(fns: &aver_rt::AverList<FnDef>) -> FnStore {
 #[inline(always)]
 pub fn fnsToIdMap(
     mut fns: aver_rt::AverList<FnDef>,
-    mut acc: aver_rt::AverMap<AverStr, i64>,
-    mut idx: i64,
-) -> aver_rt::AverMap<AverStr, i64> {
+    mut acc: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut idx: aver_rt::AverInt,
+) -> aver_rt::AverMap<AverStr, aver_rt::AverInt> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fns, [] => { return acc; }, [f, rest] => { {
             let __tco0 = rest;
-            let __tco1 = acc.insert_owned(f.name.clone(), idx);
-            let __tco2 = (idx + 1i64);
+            let __tco1 = acc.insert_owned(f.name.clone(), idx.clone());
+            let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
             fns = __tco0;
             acc = __tco1;
             idx = __tco2;

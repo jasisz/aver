@@ -43,7 +43,11 @@ fn __mutual_tco_trampoline_1(
             }
             __MutualTco1::LoadOneModule(mut dep, mut rest, mut moduleRoot, mut acc, mut loaded) => {
                 crate::cancel_checkpoint();
-                let path = findModulePath(dep.clone(), moduleRoot.clone(), 0i64);
+                let path = findModulePath(
+                    dep.clone(),
+                    moduleRoot.clone(),
+                    aver_rt::AverInt::from_i64(0),
+                );
                 let source = {
                     let __effect_arg0 = path;
                     crate::cancel_checkpoint();
@@ -67,7 +71,7 @@ fn __mutual_tco_trampoline_1(
                             &accWithInner.clone(),
                             &shiftFnIdsInFns(
                                 moduleFns,
-                                (accWithInner.len() as i64),
+                                aver_rt::AverInt::from_i64(accWithInner.len() as i64),
                                 aver_rt::AverList::empty(),
                             ),
                         ),
@@ -135,7 +139,7 @@ fn __mutual_tco_trampoline_2(mut __state: __MutualTco2) -> aver_rt::AverList<FnD
                     name: ((prefix.clone() + &AverStr::from(".")) + &f.name),
                     params: f.params.clone(),
                     body: f.body.clone(),
-                    slotCount: f.slotCount,
+                    slotCount: f.slotCount.clone(),
                     slotMap: f.slotMap.clone(),
                     fastPath: f.fastPath.clone(),
                     tailLoop: f.tailLoop,
@@ -226,7 +230,7 @@ pub fn runGuestProgram(
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::eval::evalProgramWithFns(
-        &shiftFnIdsInProgram(prog, (moduleFns.len() as i64)),
+        &shiftFnIdsInProgram(prog, aver_rt::AverInt::from_i64(moduleFns.len() as i64)),
         moduleFns,
     )
 }
@@ -260,7 +264,7 @@ pub fn runGuestCliProgram(
 }
 
 /// Find module file, trying root then parent dirs.
-pub fn findModulePath(mut dep: AverStr, mut root: AverStr, mut depth: i64) -> AverStr {
+pub fn findModulePath(mut dep: AverStr, mut root: AverStr, mut depth: aver_rt::AverInt) -> AverStr {
     loop {
         crate::cancel_checkpoint();
         let path = modulePathFromName(dep.clone(), root.clone());
@@ -275,10 +279,10 @@ pub fn findModulePath(mut dep: AverStr, mut root: AverStr, mut depth: i64) -> Av
         } {
             return path;
         } else {
-            if (depth < 3i64) {
+            if (depth < aver_rt::AverInt::from_i64(3)) {
                 {
                     let __tco1 = (root + &AverStr::from("/.."));
-                    let __tco2 = (depth + 1i64);
+                    let __tco2 = depth.add(&aver_rt::AverInt::from_i64(1));
                     root = __tco1;
                     depth = __tco2;
                     continue;
@@ -296,8 +300,8 @@ pub fn modulePathFromName(name: AverStr, moduleRoot: AverStr) -> AverStr {
     (((moduleRoot + &AverStr::from("/"))
         + &dotToSlash(
             name.clone(),
-            0i64,
-            (name.chars().count() as i64),
+            aver_rt::AverInt::from_i64(0),
+            aver_rt::AverInt::from_i64(name.chars().count() as i64),
             AverStr::from(""),
         ))
         + &AverStr::from(".av"))
@@ -305,12 +309,21 @@ pub fn modulePathFromName(name: AverStr, moduleRoot: AverStr) -> AverStr {
 
 /// Replace dots with slashes and lowercase first char of each segment.
 #[inline(always)]
-pub fn dotToSlash(mut name: AverStr, mut pos: i64, mut total: i64, mut acc: AverStr) -> AverStr {
+pub fn dotToSlash(
+    mut name: AverStr,
+    mut pos: aver_rt::AverInt,
+    mut total: aver_rt::AverInt,
+    mut acc: AverStr,
+) -> AverStr {
     loop {
         crate::cancel_checkpoint();
-        let nextPos = (pos + 1i64);
+        let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
         if (pos < total) {
-            match (name.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
+            match ((pos)
+                .to_usize()
+                .and_then(|__i| name.chars().nth(__i).map(|c| c.to_string())))
+            .into_aver()
+            {
                 Some(c) => {
                     if (c == AverStr::from(".")) {
                         {
@@ -355,15 +368,17 @@ pub fn resolveQualifiedModuleFns(prog: &Program, dep: AverStr) -> aver_rt::AverL
 #[inline(always)]
 pub fn shiftFnIdsInFns(
     mut fns: aver_rt::AverList<FnDef>,
-    mut offset: i64,
+    mut offset: aver_rt::AverInt,
     mut acc: aver_rt::AverList<FnDef>,
 ) -> aver_rt::AverList<FnDef> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fns, [] => { return acc.reverse(); }, [fd, rest] => { {
             let __tco0 = rest;
+            let __tco1 = offset.clone();
             let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInFn(&fd, offset), &acc);
             fns = __tco0;
+            offset = __tco1;
             acc = __tco2;
             continue;
         } })
@@ -371,23 +386,23 @@ pub fn shiftFnIdsInFns(
 }
 
 /// Shift entry-program direct-call ids before prepending loaded module functions.
-pub fn shiftFnIdsInProgram(prog: &Program, offset: i64) -> Program {
+pub fn shiftFnIdsInProgram(prog: &Program, offset: aver_rt::AverInt) -> Program {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::ast::Program {
         deps: prog.deps.clone(),
-        fns: shiftFnIdsInFns(prog.fns.clone(), offset, aver_rt::AverList::empty()),
+        fns: shiftFnIdsInFns(prog.fns.clone(), offset.clone(), aver_rt::AverList::empty()),
         stmts: shiftFnIdsInStmts(prog.stmts.clone(), offset, aver_rt::AverList::empty()),
     }
 }
 
 /// Shift all embedded direct-call ids in one function definition.
-pub fn shiftFnIdsInFn(fd: &FnDef, offset: i64) -> FnDef {
+pub fn shiftFnIdsInFn(fd: &FnDef, offset: aver_rt::AverInt) -> FnDef {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::ast::FnDef {
         name: fd.name.clone(),
         params: fd.params.clone(),
-        body: shiftFnIdsInStmts(fd.body.clone(), offset, aver_rt::AverList::empty()),
-        slotCount: fd.slotCount,
+        body: shiftFnIdsInStmts(fd.body.clone(), offset.clone(), aver_rt::AverList::empty()),
+        slotCount: fd.slotCount.clone(),
         slotMap: fd.slotMap.clone(),
         fastPath: shiftFnIdsInFastPath(&fd.fastPath, offset),
         tailLoop: fd.tailLoop,
@@ -395,12 +410,12 @@ pub fn shiftFnIdsInFn(fd: &FnDef, offset: i64) -> FnDef {
 }
 
 /// Shift fast-path target ids that were resolved against a module-local function list.
-pub fn shiftFnIdsInFastPath(path: &FnFastPath, offset: i64) -> FnFastPath {
+pub fn shiftFnIdsInFastPath(path: &FnFastPath, offset: aver_rt::AverInt) -> FnFastPath {
     crate::cancel_checkpoint();
     match path.clone() {
         crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(targetId, slotArgs) => {
             crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(
-                (targetId + offset),
+                targetId.add(&offset),
                 slotArgs,
             )
         }
@@ -412,15 +427,17 @@ pub fn shiftFnIdsInFastPath(path: &FnFastPath, offset: i64) -> FnFastPath {
 #[inline(always)]
 pub fn shiftFnIdsInStmts(
     mut stmts: aver_rt::AverList<Stmt>,
-    mut offset: i64,
+    mut offset: aver_rt::AverInt,
     mut acc: aver_rt::AverList<Stmt>,
 ) -> aver_rt::AverList<Stmt> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(stmts, [] => { return acc.reverse(); }, [stmt, rest] => { {
             let __tco0 = rest;
+            let __tco1 = offset.clone();
             let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInStmt(&stmt, offset), &acc);
             stmts = __tco0;
+            offset = __tco1;
             acc = __tco2;
             continue;
         } })
@@ -428,7 +445,7 @@ pub fn shiftFnIdsInStmts(
 }
 
 /// Shift direct-call ids in one statement.
-pub fn shiftFnIdsInStmt(stmt: &Stmt, offset: i64) -> Stmt {
+pub fn shiftFnIdsInStmt(stmt: &Stmt, offset: aver_rt::AverInt) -> Stmt {
     crate::cancel_checkpoint();
     match stmt.clone() {
         crate::aver_generated::domain::ast::Stmt::StmtBind(name, expr) => {
@@ -450,7 +467,7 @@ pub fn shiftFnIdsInStmt(stmt: &Stmt, offset: i64) -> Stmt {
 }
 
 /// Shift direct-call ids in one expression tree.
-pub fn shiftFnIdsInExpr(expr: &Expr, offset: i64) -> Expr {
+pub fn shiftFnIdsInExpr(expr: &Expr, offset: aver_rt::AverInt) -> Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
         crate::aver_generated::domain::ast::Expr::ExprBoolBranch(cond, thenExpr, elseExpr) => {
@@ -458,8 +475,8 @@ pub fn shiftFnIdsInExpr(expr: &Expr, offset: i64) -> Expr {
             let thenExpr = (*thenExpr).clone();
             let elseExpr = (*elseExpr).clone();
             crate::aver_generated::domain::ast::Expr::ExprBoolBranch(
-                std::sync::Arc::new(shiftFnIdsInExpr(&cond, offset)),
-                std::sync::Arc::new(shiftFnIdsInExpr(&thenExpr, offset)),
+                std::sync::Arc::new(shiftFnIdsInExpr(&cond, offset.clone())),
+                std::sync::Arc::new(shiftFnIdsInExpr(&thenExpr, offset.clone())),
                 std::sync::Arc::new(shiftFnIdsInExpr(&elseExpr, offset)),
             )
         }
@@ -471,7 +488,7 @@ pub fn shiftFnIdsInExpr(expr: &Expr, offset: i64) -> Expr {
             let vecExpr = (*vecExpr).clone();
             let idxExpr = (*idxExpr).clone();
             crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(
-                std::sync::Arc::new(shiftFnIdsInExpr(&vecExpr, offset)),
+                std::sync::Arc::new(shiftFnIdsInExpr(&vecExpr, offset.clone())),
                 std::sync::Arc::new(shiftFnIdsInExpr(&idxExpr, offset)),
                 defaultValue,
             )
@@ -480,7 +497,7 @@ pub fn shiftFnIdsInExpr(expr: &Expr, offset: i64) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(
-                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
+                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset.clone())),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
                 defaultValue,
             )
@@ -489,7 +506,7 @@ pub fn shiftFnIdsInExpr(expr: &Expr, offset: i64) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::ast::Expr::ExprAdd(
-                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
+                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset.clone())),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
@@ -497,7 +514,7 @@ pub fn shiftFnIdsInExpr(expr: &Expr, offset: i64) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::ast::Expr::ExprSub(
-                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
+                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset.clone())),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
@@ -505,7 +522,7 @@ pub fn shiftFnIdsInExpr(expr: &Expr, offset: i64) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::ast::Expr::ExprMul(
-                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
+                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset.clone())),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
@@ -513,7 +530,7 @@ pub fn shiftFnIdsInExpr(expr: &Expr, offset: i64) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::ast::Expr::ExprDiv(
-                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
+                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset.clone())),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
@@ -521,7 +538,7 @@ pub fn shiftFnIdsInExpr(expr: &Expr, offset: i64) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::ast::Expr::ExprEq(
-                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
+                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset.clone())),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
@@ -529,7 +546,7 @@ pub fn shiftFnIdsInExpr(expr: &Expr, offset: i64) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::ast::Expr::ExprNeq(
-                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
+                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset.clone())),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
@@ -538,14 +555,14 @@ pub fn shiftFnIdsInExpr(expr: &Expr, offset: i64) -> Expr {
 }
 
 /// Finish shifting direct-call ids through the remaining aggregate forms.
-pub fn shiftFnIdsInExprTail(expr: &Expr, offset: i64) -> Expr {
+pub fn shiftFnIdsInExprTail(expr: &Expr, offset: aver_rt::AverInt) -> Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
         crate::aver_generated::domain::ast::Expr::ExprLt(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::ast::Expr::ExprLt(
-                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
+                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset.clone())),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
@@ -553,7 +570,7 @@ pub fn shiftFnIdsInExprTail(expr: &Expr, offset: i64) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::ast::Expr::ExprGt(
-                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
+                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset.clone())),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
@@ -561,7 +578,7 @@ pub fn shiftFnIdsInExprTail(expr: &Expr, offset: i64) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::ast::Expr::ExprLte(
-                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
+                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset.clone())),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
@@ -569,7 +586,7 @@ pub fn shiftFnIdsInExprTail(expr: &Expr, offset: i64) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::ast::Expr::ExprGte(
-                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
+                std::sync::Arc::new(shiftFnIdsInExpr(&a, offset.clone())),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
@@ -605,7 +622,7 @@ pub fn shiftFnIdsInExprTail(expr: &Expr, offset: i64) -> Expr {
 }
 
 /// Finish shifting direct-call ids through access, call, and match forms.
-pub fn shiftFnIdsInExprCalls(expr: &Expr, offset: i64) -> Expr {
+pub fn shiftFnIdsInExprCalls(expr: &Expr, offset: aver_rt::AverInt) -> Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
         crate::aver_generated::domain::ast::Expr::ExprFieldAccess(obj, field) => {
@@ -623,7 +640,7 @@ pub fn shiftFnIdsInExprCalls(expr: &Expr, offset: i64) -> Expr {
         }
         crate::aver_generated::domain::ast::Expr::ExprCallDirect(fnId, args) => {
             crate::aver_generated::domain::ast::Expr::ExprCallDirect(
-                (fnId + offset),
+                fnId.add(&offset),
                 shiftFnIdsInExprs(args, offset, aver_rt::AverList::empty()),
             )
         }
@@ -642,7 +659,7 @@ pub fn shiftFnIdsInExprCalls(expr: &Expr, offset: i64) -> Expr {
         crate::aver_generated::domain::ast::Expr::ExprMatch(scrutinee, arms) => {
             let scrutinee = (*scrutinee).clone();
             crate::aver_generated::domain::ast::Expr::ExprMatch(
-                std::sync::Arc::new(shiftFnIdsInExpr(&scrutinee, offset)),
+                std::sync::Arc::new(shiftFnIdsInExpr(&scrutinee, offset.clone())),
                 shiftFnIdsInArms(arms, offset, aver_rt::AverList::empty()),
             )
         }
@@ -666,15 +683,17 @@ pub fn shiftFnIdsInExprCalls(expr: &Expr, offset: i64) -> Expr {
 #[inline(always)]
 pub fn shiftFnIdsInExprs(
     mut exprs: aver_rt::AverList<Expr>,
-    mut offset: i64,
+    mut offset: aver_rt::AverInt,
     mut acc: aver_rt::AverList<Expr>,
 ) -> aver_rt::AverList<Expr> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return acc.reverse(); }, [expr, rest] => { {
             let __tco0 = rest;
+            let __tco1 = offset.clone();
             let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInExpr(&expr, offset), &acc);
             exprs = __tco0;
+            offset = __tco1;
             acc = __tco2;
             continue;
         } })
@@ -685,15 +704,17 @@ pub fn shiftFnIdsInExprs(
 #[inline(always)]
 pub fn shiftFnIdsInFields(
     mut fields: aver_rt::AverList<(AverStr, Expr)>,
-    mut offset: i64,
+    mut offset: aver_rt::AverInt,
     mut acc: aver_rt::AverList<(AverStr, Expr)>,
 ) -> aver_rt::AverList<(AverStr, Expr)> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fields, [] => { return acc.reverse(); }, [pair, rest] => { { let (name, expr) = pair; {
             let __tco0 = rest;
+            let __tco1 = offset.clone();
             let __tco2 = aver_rt::AverList::prepend((name, shiftFnIdsInExpr(&expr, offset)), &acc);
             fields = __tco0;
+            offset = __tco1;
             acc = __tco2;
             continue;
         } } })
@@ -704,15 +725,17 @@ pub fn shiftFnIdsInFields(
 #[inline(always)]
 pub fn shiftFnIdsInArms(
     mut arms: aver_rt::AverList<MatchArm>,
-    mut offset: i64,
+    mut offset: aver_rt::AverInt,
     mut acc: aver_rt::AverList<MatchArm>,
 ) -> aver_rt::AverList<MatchArm> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return acc.reverse(); }, [arm, rest] => { {
             let __tco0 = rest;
+            let __tco1 = offset.clone();
             let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern.clone(), body: shiftFnIdsInExpr(&arm.body, offset), bindingSlots: arm.bindingSlots.clone() }, &acc);
             arms = __tco0;
+            offset = __tco1;
             acc = __tco2;
             continue;
         } })
@@ -726,7 +749,9 @@ pub fn runRepr(source: AverStr) -> AverStr {
         Ok(val) => crate::aver_generated::domain::value::valRepr(&val),
         Err(e) => aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity((23i64) as usize);
+                let mut __b = aver_rt::Buffer::with_capacity(
+                    (aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0),
+                );
                 __b.push_str(&AverStr::from("ERROR: "));
                 __b
             };
@@ -922,7 +947,9 @@ pub fn runDemo() -> Result<(), AverStr> {
     {
         let __effect_arg0 = aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity((31i64) as usize);
+                let mut __b = aver_rt::Buffer::with_capacity(
+                    (aver_rt::AverInt::from_i64(31)).to_usize().unwrap_or(0),
+                );
                 __b.push_str(&AverStr::from("  x=3+4; x*2 = "));
                 __b
             };
@@ -941,7 +968,9 @@ pub fn runDemo() -> Result<(), AverStr> {
     {
         let __effect_arg0 = aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity((31i64) as usize);
+                let mut __b = aver_rt::Buffer::with_capacity(
+                    (aver_rt::AverInt::from_i64(31)).to_usize().unwrap_or(0),
+                );
                 __b.push_str(&AverStr::from("  double(21) = "));
                 __b
             };
@@ -960,7 +989,9 @@ pub fn runDemo() -> Result<(), AverStr> {
     {
         let __effect_arg0 = aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity((28i64) as usize);
+                let mut __b = aver_rt::Buffer::with_capacity(
+                    (aver_rt::AverInt::from_i64(28)).to_usize().unwrap_or(0),
+                );
                 __b.push_str(&AverStr::from("  fib(10) = "));
                 __b
             };

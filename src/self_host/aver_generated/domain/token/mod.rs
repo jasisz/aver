@@ -3,7 +3,7 @@ use crate::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Token {
-    TkInt(i64),
+    TkInt(aver_rt::AverInt),
     TkFloat(f64),
     TkStr(AverStr),
     TkIdent(AverStr),
@@ -453,11 +453,13 @@ impl aver_replay::ReplayValue for Token {
             "$variant.fields",
         )?;
         match variant_name {
-            "TkInt" => Ok(Token::TkInt(<i64 as ReplayValue>::from_replay_json(
-                fields
-                    .get(0)
-                    .ok_or_else(|| format!("$variant TkInt missing field #{}", 0))?,
-            )?)),
+            "TkInt" => Ok(Token::TkInt(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields
+                        .get(0)
+                        .ok_or_else(|| format!("$variant TkInt missing field #{}", 0))?,
+                )?,
+            )),
             "TkFloat" => Ok(Token::TkFloat(<f64 as ReplayValue>::from_replay_json(
                 fields
                     .get(0)
@@ -520,7 +522,9 @@ pub fn tokenRepr(t: &Token) -> AverStr {
         crate::aver_generated::domain::token::Token::TkInt(n) => aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity((21i64) as usize);
+                    let mut __b = aver_rt::Buffer::with_capacity(
+                        (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
+                    );
                     __b.push_str(&AverStr::from("Int("));
                     __b
                 };
@@ -534,7 +538,9 @@ pub fn tokenRepr(t: &Token) -> AverStr {
         crate::aver_generated::domain::token::Token::TkStr(s) => aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity((21i64) as usize);
+                    let mut __b = aver_rt::Buffer::with_capacity(
+                        (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
+                    );
                     __b.push_str(&AverStr::from("Str("));
                     __b
                 };
@@ -547,7 +553,9 @@ pub fn tokenRepr(t: &Token) -> AverStr {
         crate::aver_generated::domain::token::Token::TkIdent(s) => aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity((23i64) as usize);
+                    let mut __b = aver_rt::Buffer::with_capacity(
+                        (aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0),
+                    );
                     __b.push_str(&AverStr::from("Ident("));
                     __b
                 };

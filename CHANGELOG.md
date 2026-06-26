@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.26.0 "Zahlen" (unreleased)
+## 0.26.0 "Zahlen" — 2026-06-26
 
 Named for ℤ — the *Zahlen*. `Int` becomes the mathematical integer on every backend, so a verified program can no longer disagree with its proof at runtime; and the prover learns to close whole families of laws from the helper laws you write, instead of carrying a built-in proof for each shape.
 

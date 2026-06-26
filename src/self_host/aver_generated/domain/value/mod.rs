@@ -3,7 +3,7 @@ use crate::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Val {
-    ValInt(i64),
+    ValInt(aver_rt::AverInt),
     ValFloat(f64),
     ValStr(AverStr),
     ValBool(bool),
@@ -16,7 +16,7 @@ pub enum Val {
     ValNone,
     ValTuple(aver_rt::AverList<Val>),
     ValRecord(AverStr, aver_rt::AverList<(AverStr, Val)>),
-    ValVariant(i64, AverStr, aver_rt::AverList<Val>),
+    ValVariant(aver_rt::AverInt, AverStr, aver_rt::AverList<Val>),
     ValMap(aver_rt::AverMap<AverStr, Val>),
     ValUnit,
 }
@@ -271,11 +271,13 @@ impl aver_replay::ReplayValue for Val {
             "$variant.fields",
         )?;
         match variant_name {
-            "ValInt" => Ok(Val::ValInt(<i64 as ReplayValue>::from_replay_json(
-                fields
-                    .get(0)
-                    .ok_or_else(|| format!("$variant ValInt missing field #{}", 0))?,
-            )?)),
+            "ValInt" => Ok(Val::ValInt(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields
+                        .get(0)
+                        .ok_or_else(|| format!("$variant ValInt missing field #{}", 0))?,
+                )?,
+            )),
             "ValFloat" => Ok(Val::ValFloat(<f64 as ReplayValue>::from_replay_json(
                 fields
                     .get(0)
@@ -352,7 +354,7 @@ impl aver_replay::ReplayValue for Val {
                 )?,
             )),
             "ValVariant" => Ok(Val::ValVariant(
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ValVariant missing field #{}", 0))?,
@@ -396,7 +398,7 @@ pub fn valListRepr(
 ) -> AverStr {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(items, [] => { return aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((18i64) as usize); __b.push_str(&AverStr::from("[")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc)))); __b }; __b.push_str(&AverStr::from("]")); __b }); }, [v, rest] => { if first { {
+        aver_list_match!(items, [] => { return aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("[")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc)))); __b }; __b.push_str(&AverStr::from("]")); __b }); }, [v, rest] => { if first { {
             let __tco0 = rest;
             let __tco1 = crate::aver_generated::domain::value::valReprInner(&v);
             let __tco2 = false;
@@ -427,7 +429,9 @@ pub fn valRepr(v: &Val) -> AverStr {
         crate::aver_generated::domain::value::Val::ValFnRef(name) => aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity((21i64) as usize);
+                    let mut __b = aver_rt::Buffer::with_capacity(
+                        (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
+                    );
                     __b.push_str(&AverStr::from("<fn "));
                     __b
                 };
@@ -453,7 +457,9 @@ pub fn valRepr(v: &Val) -> AverStr {
             aver_rt::AverStr::from({
                 let mut __b = {
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity((27i64) as usize);
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(27)).to_usize().unwrap_or(0),
+                        );
                         __b.push_str(&AverStr::from("Result.Ok("));
                         __b
                     };
@@ -471,7 +477,9 @@ pub fn valRepr(v: &Val) -> AverStr {
             aver_rt::AverStr::from({
                 let mut __b = {
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity((28i64) as usize);
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(28)).to_usize().unwrap_or(0),
+                        );
                         __b.push_str(&AverStr::from("Result.Err("));
                         __b
                     };
@@ -487,7 +495,9 @@ pub fn valRepr(v: &Val) -> AverStr {
         crate::aver_generated::domain::value::Val::ValTuple(items) => aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity((18i64) as usize);
+                    let mut __b = aver_rt::Buffer::with_capacity(
+                        (aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0),
+                    );
                     __b.push_str(&AverStr::from("("));
                     __b
                 };
@@ -508,7 +518,9 @@ pub fn valRepr(v: &Val) -> AverStr {
             aver_rt::AverStr::from({
                 let mut __b = {
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity((29i64) as usize);
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0),
+                        );
                         __b.push_str(&AverStr::from("Option.Some("));
                         __b
                     };
@@ -524,7 +536,9 @@ pub fn valRepr(v: &Val) -> AverStr {
         crate::aver_generated::domain::value::Val::ValNone => AverStr::from("Option.None"),
         crate::aver_generated::domain::value::Val::ValRecord(name, _) => aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity((21i64) as usize);
+                let mut __b = aver_rt::Buffer::with_capacity(
+                    (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
+                );
                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
                 __b
             };
@@ -559,7 +573,9 @@ pub fn valReprInner(v: &Val) -> AverStr {
         crate::aver_generated::domain::value::Val::ValFnRef(name) => aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity((21i64) as usize);
+                    let mut __b = aver_rt::Buffer::with_capacity(
+                        (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
+                    );
                     __b.push_str(&AverStr::from("<fn "));
                     __b
                 };
@@ -572,7 +588,9 @@ pub fn valReprInner(v: &Val) -> AverStr {
         crate::aver_generated::domain::value::Val::ValTuple(items) => aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity((18i64) as usize);
+                    let mut __b = aver_rt::Buffer::with_capacity(
+                        (aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0),
+                    );
                     __b.push_str(&AverStr::from("("));
                     __b
                 };
@@ -612,7 +630,7 @@ pub fn valMapRepr(
 ) -> AverStr {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(entries, [] => { return aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((18i64) as usize); __b.push_str(&AverStr::from("{")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc)))); __b }; __b.push_str(&AverStr::from("}")); __b }); }, [pair, rest] => { { let (k, v) = pair; if first { {
+        aver_list_match!(entries, [] => { return aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("{")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc)))); __b }; __b.push_str(&AverStr::from("}")); __b }); }, [pair, rest] => { { let (k, v) = pair; if first { {
             let __tco0 = rest;
             let __tco1 = ((crate::aver_generated::domain::value::quoteString(k) + &AverStr::from(": ")) + &crate::aver_generated::domain::value::valReprInner(&v));
             let __tco2 = false;
@@ -656,7 +674,9 @@ pub fn valVariantReprTagged(fullName: AverStr, fields: &aver_rt::AverList<Val>) 
                 let mut __b = {
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity((34i64) as usize);
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(34)).to_usize().unwrap_or(0),
+                            );
                             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
                                 &(fullName),
                             )));

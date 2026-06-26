@@ -60,7 +60,7 @@ pub fn expectList(v: &Val) -> Result<aver_rt::AverList<Val>, AverStr> {
 }
 
 /// Extract int from Val or error.
-pub fn expectInt(v: &Val) -> Result<i64, AverStr> {
+pub fn expectInt(v: &Val) -> Result<aver_rt::AverInt, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValInt(n) => Ok(n),

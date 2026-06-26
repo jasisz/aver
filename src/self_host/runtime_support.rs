@@ -47,18 +47,6 @@ impl IntoAverStr for Result<aver_rt::AverList<String>, String> {
         self.map(|l| l.into_aver()).map_err(AverStr::from)
     }
 }
-impl IntoAverStr for Result<aver_rt::HttpResponse, String> {
-    type Output = Result<aver_rt::HttpResponse, AverStr>;
-    fn into_aver(self) -> Result<aver_rt::HttpResponse, AverStr> {
-        self.map_err(AverStr::from)
-    }
-}
-impl IntoAverStr for Result<aver_rt::TcpConnection, String> {
-    type Output = Result<aver_rt::TcpConnection, AverStr>;
-    fn into_aver(self) -> Result<aver_rt::TcpConnection, AverStr> {
-        self.map_err(AverStr::from)
-    }
-}
 impl IntoAverStr for Result<i64, String> {
     type Output = Result<i64, AverStr>;
     fn into_aver(self) -> Result<i64, AverStr> {
@@ -70,6 +58,36 @@ impl IntoAverStr for Result<f64, String> {
     fn into_aver(self) -> Result<f64, AverStr> {
         self.map_err(AverStr::from)
     }
+}
+impl IntoAverStr for Result<aver_rt::AverInt, String> {
+    type Output = Result<aver_rt::AverInt, AverStr>;
+    fn into_aver(self) -> Result<aver_rt::AverInt, AverStr> {
+        self.map_err(AverStr::from)
+    }
+}
+
+/// Saturate an `AverInt` to `i64` for an index/slice boundary that clamps
+/// (never errors): a Big-positive value clamps to `i64::MAX`, a Big-negative
+/// to `i64::MIN`. The downstream `string_slice` then clamps the i64 into the
+/// string's actual range, matching the VM exactly.
+pub fn aver_int_clamp_i64(n: &aver_rt::AverInt) -> i64 {
+    n.to_i64().unwrap_or_else(|| {
+        if *n < aver_rt::AverInt::zero() {
+            i64::MIN
+        } else {
+            i64::MAX
+        }
+    })
+}
+
+/// Convert an `AverInt` to `i64` at an effectful HOST boundary that the VM
+/// ERRORS on for out-of-range values (e.g. `Random.int` bounds, host ports,
+/// `Time.sleep` ms, `Terminal.moveTo` coords). There is no `Result` channel
+/// at these call sites, so an out-of-`i64` value ABORTS with the VM's exact
+/// message — never a silent `unwrap_or(0)` (which would substitute a wrong
+/// value and diverge from the VM's hard error).
+pub fn to_host_i64(n: &aver_rt::AverInt, vm_message: &str) -> i64 {
+    n.to_i64().expect(vm_message)
 }
 
 fn independence_mode_is_cancel() -> bool {
@@ -156,20 +174,23 @@ pub(crate) fn should_skip_http_server() -> bool {
 
 pub fn http_server_listen<F>(port: i64, mut handler: F) -> Result<(), AverStr>
 where
-    F: FnMut(&aver_rt::HttpRequest) -> aver_rt::HttpResponse,
+    F: FnMut(&aver_rt::HttpRequest) -> HttpResponse,
 {
     if should_skip_http_server() {
         return Ok(());
     }
     // User handlers are emitted borrow-by-default (`fn(&HttpRequest)`),
     // so adapt the owned-value `aver_rt` callback to a by-reference call.
-    aver_rt::http_server::listen(port, move |req| handler(&req)).map_err(AverStr::from)
+    // The handler yields the surface `HttpResponse` (`AverInt` status); lower
+    // it to the host struct (`i64` status) before `aver_rt::http_server`.
+    aver_rt::http_server::listen(port, move |req| http_response_to_host(handler(&req)))
+        .map_err(AverStr::from)
 }
 
 pub fn http_server_listen_with<C, F>(port: i64, context: C, mut handler: F) -> Result<(), AverStr>
 where
     C: Clone,
-    F: FnMut(&C, &aver_rt::HttpRequest) -> aver_rt::HttpResponse,
+    F: FnMut(&C, &aver_rt::HttpRequest) -> HttpResponse,
 {
     if should_skip_http_server() {
         return Ok(());
@@ -177,14 +198,113 @@ where
     // User handlers take both the context and the request by reference
     // (`fn(&Ctx, &HttpRequest)`); adapt the owned-value `aver_rt`
     // callback accordingly.
-    aver_rt::http_server::listen_with(port, context, move |ctx, req| handler(&ctx, &req))
-        .map_err(AverStr::from)
+    aver_rt::http_server::listen_with(port, context, move |ctx, req| {
+        http_response_to_host(handler(&ctx, &req))
+    })
+    .map_err(AverStr::from)
 }
 
-pub use aver_rt::TcpConnection as Tcp_Connection;
+#[derive(Clone, Debug, PartialEq)]
+pub struct Tcp_Connection {
+    pub id: aver_rt::AverStr,
+    pub host: aver_rt::AverStr,
+    pub port: aver_rt::AverInt,
+}
+impl aver_rt::AverDisplay for Tcp_Connection {
+    fn aver_display(&self) -> String {
+        format!(
+            "Tcp.Connection {{ id: {}, host: {}, port: {} }}",
+            self.id, self.host, self.port
+        )
+    }
+}
+/// Convert the host `aver_rt::TcpConnection` (`i64` port) into the surface
+/// record (`AverInt` port) at the effect boundary.
+fn convert_tcp_connection(c: aver_rt::TcpConnection) -> Tcp_Connection {
+    Tcp_Connection {
+        id: c.id,
+        host: c.host,
+        port: aver_rt::AverInt::from_i64(c.port),
+    }
+}
+/// Surface (`AverInt` port) -> host `aver_rt::TcpConnection` (`i64` port),
+/// applied before `Tcp.writeLine`/`readLine`/`close`. The host keeps live
+/// sockets in a thread-local keyed by `id`, so rebuilding the host record
+/// from the surface fields is enough to find the connection.
+pub fn tcp_connection_to_host(c: &Tcp_Connection) -> aver_rt::TcpConnection {
+    aver_rt::TcpConnection {
+        id: c.id.clone(),
+        host: c.host.clone(),
+        port: c.port.to_i64().unwrap_or(0),
+    }
+}
+/// `Tcp.connect` (and friends) return the host struct as `Result<_, String>`;
+/// the `.into_aver()` post-step lands the surface `Tcp_Connection` + AverStr
+/// error. Lives here (gated on Tcp usage) so the base runtime never names the
+/// surface type when Tcp is unused.
+impl IntoAverStr for Result<aver_rt::TcpConnection, String> {
+    type Output = Result<Tcp_Connection, AverStr>;
+    fn into_aver(self) -> Result<Tcp_Connection, AverStr> {
+        self.map(convert_tcp_connection).map_err(AverStr::from)
+    }
+}
 
-pub use aver_rt::HttpResponse;
+#[derive(Clone, Debug, PartialEq)]
+pub struct HttpResponse {
+    pub status: aver_rt::AverInt,
+    pub body: aver_rt::AverStr,
+    pub headers: aver_rt::HttpHeaders,
+}
+impl aver_rt::AverDisplay for HttpResponse {
+    fn aver_display(&self) -> String {
+        format!(
+            "HttpResponse(status: {}, body: {}, headers: {})",
+            self.status.aver_display_inner(),
+            self.body.aver_display_inner(),
+            self.headers.aver_display_inner()
+        )
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+/// Host `aver_rt::HttpResponse` (`i64` status) → surface (`AverInt` status),
+/// applied at the `Http.*` effect boundary via `.into_aver()`.
+fn convert_http_response(r: aver_rt::HttpResponse) -> HttpResponse {
+    HttpResponse {
+        status: aver_rt::AverInt::from_i64(r.status),
+        body: r.body,
+        headers: r.headers,
+    }
+}
+/// Surface (`AverInt` status) → host `aver_rt::HttpResponse` (`i64` status),
+/// applied before a handler's response reaches `aver_rt::http_server`.
+pub fn http_response_to_host(r: HttpResponse) -> aver_rt::HttpResponse {
+    aver_rt::HttpResponse {
+        status: r.status.to_i64().unwrap_or(0),
+        body: r.body,
+        headers: r.headers,
+    }
+}
+impl IntoAverStr for Result<aver_rt::HttpResponse, String> {
+    type Output = Result<HttpResponse, AverStr>;
+    fn into_aver(self) -> Result<HttpResponse, AverStr> {
+        self.map(convert_http_response).map_err(AverStr::from)
+    }
+}
 
 pub use aver_rt::HttpRequest;
 
-pub use aver_rt::TerminalSize as Terminal_Size;
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Terminal_Size {
+    pub width: aver_rt::AverInt,
+    pub height: aver_rt::AverInt,
+}
+impl aver_rt::AverDisplay for Terminal_Size {
+    fn aver_display(&self) -> String {
+        format!(
+            "Terminal.Size {{ width: {}, height: {} }}",
+            self.width, self.height
+        )
+    }
+}

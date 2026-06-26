@@ -31,7 +31,7 @@ pub fn rewriteInternalFn(fd: &FnDef) -> FnDef {
             fd.body.clone(),
             aver_rt::AverList::empty(),
         ),
-        slotCount: fd.slotCount,
+        slotCount: fd.slotCount.clone(),
         slotMap: fd.slotMap.clone(),
         fastPath: fd.fastPath.clone(),
         tailLoop: fd.tailLoop,
@@ -478,7 +478,7 @@ pub fn rewriteInternalBinop(op: &BinOp, left: &Expr, right: &Expr) -> Expr {
 }
 
 /// Rewrite arithmetic with a slot on the left when the right side is simple.
-pub fn rewriteInternalBinopSlotLeft(op: &BinOp, slot: i64, right: &Expr) -> Expr {
+pub fn rewriteInternalBinopSlotLeft(op: &BinOp, slot: aver_rt::AverInt, right: &Expr) -> Expr {
     crate::cancel_checkpoint();
     match right.clone() {
         crate::aver_generated::domain::ast::Expr::ExprInt(n) => {
@@ -496,7 +496,7 @@ pub fn rewriteInternalBinopSlotLeft(op: &BinOp, slot: i64, right: &Expr) -> Expr
 }
 
 /// Rewrite commutative arithmetic when the slot appears on the right.
-pub fn rewriteInternalBinopSlotRight(op: &BinOp, left: &Expr, slot: i64) -> Expr {
+pub fn rewriteInternalBinopSlotRight(op: &BinOp, left: &Expr, slot: aver_rt::AverInt) -> Expr {
     crate::cancel_checkpoint();
     match left.clone() {
         crate::aver_generated::domain::ast::Expr::ExprSlot(lhs) => {
@@ -641,7 +641,10 @@ pub fn rewriteInternalOptionWithDefaultArgs(optionExpr: &Expr, defaultExpr: &Exp
 }
 
 /// Fuse Vector.get(vec, idx) with an integer fallback.
-pub fn rewriteInternalVectorGetOrInt(args: &aver_rt::AverList<Expr>, defaultValue: i64) -> Expr {
+pub fn rewriteInternalVectorGetOrInt(
+    args: &aver_rt::AverList<Expr>,
+    defaultValue: aver_rt::AverInt,
+) -> Expr {
     crate::cancel_checkpoint();
     {
         let __list_subject = args.clone();
@@ -683,7 +686,7 @@ pub fn rewriteInternalVectorGetOrInt(args: &aver_rt::AverList<Expr>, defaultValu
 pub fn rewriteInternalVectorGetOrIntArgs(
     vecExpr: &Expr,
     idxExpr: &Expr,
-    defaultValue: i64,
+    defaultValue: aver_rt::AverInt,
 ) -> Expr {
     crate::cancel_checkpoint();
     if crate::aver_generated::domain::resolver::rewrite::exprHasSlotShape(vecExpr) {
@@ -776,7 +779,10 @@ pub fn rewriteInternalResultWithDefaultArgs(resultExpr: &Expr, defaultExpr: &Exp
 }
 
 /// Fuse Int.mod(a, b) with an integer fallback when the operands are slot-shaped.
-pub fn rewriteInternalIntModOrInt(args: &aver_rt::AverList<Expr>, defaultValue: i64) -> Expr {
+pub fn rewriteInternalIntModOrInt(
+    args: &aver_rt::AverList<Expr>,
+    defaultValue: aver_rt::AverInt,
+) -> Expr {
     crate::cancel_checkpoint();
     {
         let __list_subject = args.clone();
@@ -819,7 +825,7 @@ pub fn rewriteInternalIntModOrInt(args: &aver_rt::AverList<Expr>, defaultValue: 
 
 /// Only fuse Int.mod-with-default when at least one operand is already slot-shaped.
 #[inline(always)]
-pub fn rewriteInternalIntModOrIntArgs(a: &Expr, b: &Expr, defaultValue: i64) -> Expr {
+pub fn rewriteInternalIntModOrIntArgs(a: &Expr, b: &Expr, defaultValue: aver_rt::AverInt) -> Expr {
     crate::cancel_checkpoint();
     if crate::aver_generated::domain::resolver::rewrite::exprHasSlotShape(a) {
         crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(
@@ -887,7 +893,7 @@ pub fn rewriteInternalCmp(op: &CmpOp, left: &Expr, right: &Expr) -> Expr {
 }
 
 /// Rewrite comparisons with a slot on the left when the right side is simple.
-pub fn rewriteInternalCmpSlotLeft(op: &CmpOp, slot: i64, right: &Expr) -> Expr {
+pub fn rewriteInternalCmpSlotLeft(op: &CmpOp, slot: aver_rt::AverInt, right: &Expr) -> Expr {
     crate::cancel_checkpoint();
     match right.clone() {
         crate::aver_generated::domain::ast::Expr::ExprInt(n) => {
@@ -905,7 +911,7 @@ pub fn rewriteInternalCmpSlotLeft(op: &CmpOp, slot: i64, right: &Expr) -> Expr {
 }
 
 /// Rewrite comparisons with a slot on the right when the left side is a simple integer.
-pub fn rewriteInternalCmpSlotRight(op: &CmpOp, left: &Expr, slot: i64) -> Expr {
+pub fn rewriteInternalCmpSlotRight(op: &CmpOp, left: &Expr, slot: aver_rt::AverInt) -> Expr {
     crate::cancel_checkpoint();
     match left.clone() {
         crate::aver_generated::domain::ast::Expr::ExprInt(n) => {

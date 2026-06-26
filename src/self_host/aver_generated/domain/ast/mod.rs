@@ -3,7 +3,7 @@ use crate::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
-    ExprInt(i64),
+    ExprInt(aver_rt::AverInt),
     ExprFloat(f64),
     ExprStr(AverStr),
     ExprBool(bool),
@@ -13,13 +13,13 @@ pub enum Expr {
         std::sync::Arc<Expr>,
     ),
     ExprVar(AverStr),
-    ExprSlot(i64),
-    ExprBinopSlotInt(BinOp, i64, i64),
-    ExprBinopSlots(BinOp, i64, i64),
-    ExprCmpSlotInt(CmpOp, i64, i64),
-    ExprCmpSlots(CmpOp, i64, i64),
-    ExprVectorGetOrInt(std::sync::Arc<Expr>, std::sync::Arc<Expr>, i64),
-    ExprIntModOrInt(std::sync::Arc<Expr>, std::sync::Arc<Expr>, i64),
+    ExprSlot(aver_rt::AverInt),
+    ExprBinopSlotInt(BinOp, aver_rt::AverInt, aver_rt::AverInt),
+    ExprBinopSlots(BinOp, aver_rt::AverInt, aver_rt::AverInt),
+    ExprCmpSlotInt(CmpOp, aver_rt::AverInt, aver_rt::AverInt),
+    ExprCmpSlots(CmpOp, aver_rt::AverInt, aver_rt::AverInt),
+    ExprVectorGetOrInt(std::sync::Arc<Expr>, std::sync::Arc<Expr>, aver_rt::AverInt),
+    ExprIntModOrInt(std::sync::Arc<Expr>, std::sync::Arc<Expr>, aver_rt::AverInt),
     ExprAdd(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
     ExprSub(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
     ExprMul(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
@@ -37,9 +37,9 @@ pub enum Expr {
     ExprRecord(AverStr, aver_rt::AverList<(AverStr, Expr)>),
     ExprFieldAccess(std::sync::Arc<Expr>, AverStr),
     ExprCall(AverStr, aver_rt::AverList<Expr>),
-    ExprCallDirect(i64, aver_rt::AverList<Expr>),
+    ExprCallDirect(aver_rt::AverInt, aver_rt::AverList<Expr>),
     ExprCallBuiltin(AverStr, aver_rt::AverList<Expr>),
-    ExprCallBuiltinId(i64, aver_rt::AverList<Expr>),
+    ExprCallBuiltinId(aver_rt::AverInt, aver_rt::AverList<Expr>),
     ExprMatch(std::sync::Arc<Expr>, aver_rt::AverList<MatchArm>),
     ExprPropagate(std::sync::Arc<Expr>),
     ExprIndependentProduct(aver_rt::AverList<Expr>, bool),
@@ -715,11 +715,13 @@ impl aver_replay::ReplayValue for Expr {
             "$variant.fields",
         )?;
         match variant_name {
-            "ExprInt" => Ok(Expr::ExprInt(<i64 as ReplayValue>::from_replay_json(
-                fields
-                    .get(0)
-                    .ok_or_else(|| format!("$variant ExprInt missing field #{}", 0))?,
-            )?)),
+            "ExprInt" => Ok(Expr::ExprInt(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields
+                        .get(0)
+                        .ok_or_else(|| format!("$variant ExprInt missing field #{}", 0))?,
+                )?,
+            )),
             "ExprFloat" => Ok(Expr::ExprFloat(<f64 as ReplayValue>::from_replay_json(
                 fields
                     .get(0)
@@ -757,22 +759,28 @@ impl aver_replay::ReplayValue for Expr {
                     .get(0)
                     .ok_or_else(|| format!("$variant ExprVar missing field #{}", 0))?,
             )?)),
-            "ExprSlot" => Ok(Expr::ExprSlot(<i64 as ReplayValue>::from_replay_json(
-                fields
-                    .get(0)
-                    .ok_or_else(|| format!("$variant ExprSlot missing field #{}", 0))?,
-            )?)),
+            "ExprSlot" => Ok(Expr::ExprSlot(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields
+                        .get(0)
+                        .ok_or_else(|| format!("$variant ExprSlot missing field #{}", 0))?,
+                )?,
+            )),
             "ExprBinopSlotInt" => {
                 Ok(Expr::ExprBinopSlotInt(
                     <BinOp as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
                         format!("$variant ExprBinopSlotInt missing field #{}", 0)
                     })?)?,
-                    <i64 as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(|| {
-                        format!("$variant ExprBinopSlotInt missing field #{}", 1)
-                    })?)?,
-                    <i64 as ReplayValue>::from_replay_json(fields.get(2).ok_or_else(|| {
-                        format!("$variant ExprBinopSlotInt missing field #{}", 2)
-                    })?)?,
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(1).ok_or_else(|| {
+                            format!("$variant ExprBinopSlotInt missing field #{}", 1)
+                        })?,
+                    )?,
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(2).ok_or_else(|| {
+                            format!("$variant ExprBinopSlotInt missing field #{}", 2)
+                        })?,
+                    )?,
                 ))
             }
             "ExprBinopSlots" => Ok(Expr::ExprBinopSlots(
@@ -781,12 +789,12 @@ impl aver_replay::ReplayValue for Expr {
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprBinopSlots missing field #{}", 0))?,
                 )?,
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprBinopSlots missing field #{}", 1))?,
                 )?,
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(2)
                         .ok_or_else(|| format!("$variant ExprBinopSlots missing field #{}", 2))?,
@@ -798,12 +806,12 @@ impl aver_replay::ReplayValue for Expr {
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprCmpSlotInt missing field #{}", 0))?,
                 )?,
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprCmpSlotInt missing field #{}", 1))?,
                 )?,
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(2)
                         .ok_or_else(|| format!("$variant ExprCmpSlotInt missing field #{}", 2))?,
@@ -815,51 +823,51 @@ impl aver_replay::ReplayValue for Expr {
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprCmpSlots missing field #{}", 0))?,
                 )?,
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprCmpSlots missing field #{}", 1))?,
                 )?,
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(2)
                         .ok_or_else(|| format!("$variant ExprCmpSlots missing field #{}", 2))?,
                 )?,
             )),
-            "ExprVectorGetOrInt" => {
-                Ok(Expr::ExprVectorGetOrInt(
-                    <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
-                        fields.get(0).ok_or_else(|| {
-                            format!("$variant ExprVectorGetOrInt missing field #{}", 0)
-                        })?,
-                    )?,
-                    <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
-                        fields.get(1).ok_or_else(|| {
-                            format!("$variant ExprVectorGetOrInt missing field #{}", 1)
-                        })?,
-                    )?,
-                    <i64 as ReplayValue>::from_replay_json(fields.get(2).ok_or_else(|| {
+            "ExprVectorGetOrInt" => Ok(Expr::ExprVectorGetOrInt(
+                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                    fields.get(0).ok_or_else(|| {
+                        format!("$variant ExprVectorGetOrInt missing field #{}", 0)
+                    })?,
+                )?,
+                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                    fields.get(1).ok_or_else(|| {
+                        format!("$variant ExprVectorGetOrInt missing field #{}", 1)
+                    })?,
+                )?,
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields.get(2).ok_or_else(|| {
                         format!("$variant ExprVectorGetOrInt missing field #{}", 2)
-                    })?)?,
-                ))
-            }
-            "ExprIntModOrInt" => {
-                Ok(Expr::ExprIntModOrInt(
-                    <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
-                        fields.get(0).ok_or_else(|| {
-                            format!("$variant ExprIntModOrInt missing field #{}", 0)
-                        })?,
-                    )?,
-                    <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
-                        fields.get(1).ok_or_else(|| {
-                            format!("$variant ExprIntModOrInt missing field #{}", 1)
-                        })?,
-                    )?,
-                    <i64 as ReplayValue>::from_replay_json(fields.get(2).ok_or_else(|| {
-                        format!("$variant ExprIntModOrInt missing field #{}", 2)
-                    })?)?,
-                ))
-            }
+                    })?,
+                )?,
+            )),
+            "ExprIntModOrInt" => Ok(Expr::ExprIntModOrInt(
+                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                    fields
+                        .get(0)
+                        .ok_or_else(|| format!("$variant ExprIntModOrInt missing field #{}", 0))?,
+                )?,
+                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                    fields
+                        .get(1)
+                        .ok_or_else(|| format!("$variant ExprIntModOrInt missing field #{}", 1))?,
+                )?,
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields
+                        .get(2)
+                        .ok_or_else(|| format!("$variant ExprIntModOrInt missing field #{}", 2))?,
+                )?,
+            )),
             "ExprAdd" => Ok(Expr::ExprAdd(
                 <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
                     fields
@@ -1045,7 +1053,7 @@ impl aver_replay::ReplayValue for Expr {
                 )?,
             )),
             "ExprCallDirect" => Ok(Expr::ExprCallDirect(
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprCallDirect missing field #{}", 0))?,
@@ -1068,18 +1076,18 @@ impl aver_replay::ReplayValue for Expr {
                     )?,
                 ))
             }
-            "ExprCallBuiltinId" => {
-                Ok(Expr::ExprCallBuiltinId(
-                    <i64 as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
+            "ExprCallBuiltinId" => Ok(Expr::ExprCallBuiltinId(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields.get(0).ok_or_else(|| {
                         format!("$variant ExprCallBuiltinId missing field #{}", 0)
-                    })?)?,
-                    <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
-                        fields.get(1).ok_or_else(|| {
-                            format!("$variant ExprCallBuiltinId missing field #{}", 1)
-                        })?,
-                    )?,
-                ))
-            }
+                    })?,
+                )?,
+                <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
+                    fields.get(1).ok_or_else(|| {
+                        format!("$variant ExprCallBuiltinId missing field #{}", 1)
+                    })?,
+                )?,
+            )),
             "ExprMatch" => Ok(Expr::ExprMatch(
                 <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
                     fields
@@ -1118,7 +1126,7 @@ impl aver_replay::ReplayValue for Expr {
 pub struct MatchArm {
     pub pattern: Pattern,
     pub body: Expr,
-    pub bindingSlots: aver_rt::AverMap<AverStr, i64>,
+    pub bindingSlots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 }
 
 impl aver_rt::AverDisplay for MatchArm {
@@ -1189,25 +1197,26 @@ impl aver_replay::ReplayValue for MatchArm {
                     .get("body")
                     .ok_or_else(|| "$record MatchArm missing field 'body'".to_string())?,
             )?,
-            bindingSlots: <aver_rt::AverMap<AverStr, i64> as ReplayValue>::from_replay_json(
-                fields
-                    .get("bindingSlots")
-                    .ok_or_else(|| "$record MatchArm missing field 'bindingSlots'".to_string())?,
-            )?,
+            bindingSlots:
+                <aver_rt::AverMap<AverStr, aver_rt::AverInt> as ReplayValue>::from_replay_json(
+                    fields.get("bindingSlots").ok_or_else(|| {
+                        "$record MatchArm missing field 'bindingSlots'".to_string()
+                    })?,
+                )?,
         })
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Pattern {
-    PatInt(i64),
+    PatInt(aver_rt::AverInt),
     PatFloat(f64),
     PatBool(bool),
     PatStr(AverStr),
     PatEmpty,
     PatCons(AverStr, AverStr),
     PatConstructor(AverStr, aver_rt::AverList<AverStr>),
-    PatConstructorId(i64, AverStr, aver_rt::AverList<AverStr>),
+    PatConstructorId(aver_rt::AverInt, AverStr, aver_rt::AverList<AverStr>),
     PatTuple(aver_rt::AverList<Pattern>),
     PatWild,
     PatVar(AverStr),
@@ -1409,11 +1418,13 @@ impl aver_replay::ReplayValue for Pattern {
             "$variant.fields",
         )?;
         match variant_name {
-            "PatInt" => Ok(Pattern::PatInt(<i64 as ReplayValue>::from_replay_json(
-                fields
-                    .get(0)
-                    .ok_or_else(|| format!("$variant PatInt missing field #{}", 0))?,
-            )?)),
+            "PatInt" => Ok(Pattern::PatInt(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields
+                        .get(0)
+                        .ok_or_else(|| format!("$variant PatInt missing field #{}", 0))?,
+                )?,
+            )),
             "PatFloat" => Ok(Pattern::PatFloat(<f64 as ReplayValue>::from_replay_json(
                 fields
                     .get(0)
@@ -1456,9 +1467,11 @@ impl aver_replay::ReplayValue for Pattern {
             )),
             "PatConstructorId" => {
                 Ok(Pattern::PatConstructorId(
-                    <i64 as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
-                        format!("$variant PatConstructorId missing field #{}", 0)
-                    })?)?,
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(0).ok_or_else(|| {
+                            format!("$variant PatConstructorId missing field #{}", 0)
+                        })?,
+                    )?,
                     <AverStr as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(
                         || format!("$variant PatConstructorId missing field #{}", 1),
                     )?)?,
@@ -1490,7 +1503,7 @@ impl aver_replay::ReplayValue for Pattern {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Stmt {
     StmtBind(AverStr, Expr),
-    StmtBindSlot(i64, Expr),
+    StmtBindSlot(aver_rt::AverInt, Expr),
     StmtExpr(Expr),
 }
 
@@ -1601,7 +1614,7 @@ impl aver_replay::ReplayValue for Stmt {
                 )?,
             )),
             "StmtBindSlot" => Ok(Stmt::StmtBindSlot(
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant StmtBindSlot missing field #{}", 0))?,
@@ -1624,21 +1637,21 @@ impl aver_replay::ReplayValue for Stmt {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum FastLeaf {
-    LeafConstInt(i64),
+    LeafConstInt(aver_rt::AverInt),
     LeafConstFloat(f64),
     LeafConstStr(AverStr),
     LeafConstBool(bool),
-    LeafSlot(i64),
-    LeafFieldAccess(i64, AverStr),
-    LeafMapGet(i64, i64),
-    LeafMapSet(i64, i64, i64),
-    LeafMapHas(i64, i64),
-    LeafMapRemove(i64, i64),
-    LeafVectorNew(i64, i64),
-    LeafVectorLen(i64),
-    LeafVectorGetOrInt(i64, i64, i64),
-    LeafBinopSlots(BinOp, i64, i64),
-    LeafCmpSlots(CmpOp, i64, i64),
+    LeafSlot(aver_rt::AverInt),
+    LeafFieldAccess(aver_rt::AverInt, AverStr),
+    LeafMapGet(aver_rt::AverInt, aver_rt::AverInt),
+    LeafMapSet(aver_rt::AverInt, aver_rt::AverInt, aver_rt::AverInt),
+    LeafMapHas(aver_rt::AverInt, aver_rt::AverInt),
+    LeafMapRemove(aver_rt::AverInt, aver_rt::AverInt),
+    LeafVectorNew(aver_rt::AverInt, aver_rt::AverInt),
+    LeafVectorLen(aver_rt::AverInt),
+    LeafVectorGetOrInt(aver_rt::AverInt, aver_rt::AverInt, aver_rt::AverInt),
+    LeafBinopSlots(BinOp, aver_rt::AverInt, aver_rt::AverInt),
+    LeafCmpSlots(CmpOp, aver_rt::AverInt, aver_rt::AverInt),
 }
 
 impl aver_rt::AverDisplay for FastLeaf {
@@ -1946,7 +1959,7 @@ impl aver_replay::ReplayValue for FastLeaf {
         )?;
         match variant_name {
             "LeafConstInt" => Ok(FastLeaf::LeafConstInt(
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant LeafConstInt missing field #{}", 0))?,
@@ -1973,118 +1986,126 @@ impl aver_replay::ReplayValue for FastLeaf {
                         .ok_or_else(|| format!("$variant LeafConstBool missing field #{}", 0))?,
                 )?,
             )),
-            "LeafSlot" => Ok(FastLeaf::LeafSlot(<i64 as ReplayValue>::from_replay_json(
-                fields
-                    .get(0)
-                    .ok_or_else(|| format!("$variant LeafSlot missing field #{}", 0))?,
-            )?)),
+            "LeafSlot" => Ok(FastLeaf::LeafSlot(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields
+                        .get(0)
+                        .ok_or_else(|| format!("$variant LeafSlot missing field #{}", 0))?,
+                )?,
+            )),
             "LeafFieldAccess" => {
                 Ok(FastLeaf::LeafFieldAccess(
-                    <i64 as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
-                        format!("$variant LeafFieldAccess missing field #{}", 0)
-                    })?)?,
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(0).ok_or_else(|| {
+                            format!("$variant LeafFieldAccess missing field #{}", 0)
+                        })?,
+                    )?,
                     <AverStr as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(
                         || format!("$variant LeafFieldAccess missing field #{}", 1),
                     )?)?,
                 ))
             }
             "LeafMapGet" => Ok(FastLeaf::LeafMapGet(
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant LeafMapGet missing field #{}", 0))?,
                 )?,
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant LeafMapGet missing field #{}", 1))?,
                 )?,
             )),
             "LeafMapSet" => Ok(FastLeaf::LeafMapSet(
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant LeafMapSet missing field #{}", 0))?,
                 )?,
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant LeafMapSet missing field #{}", 1))?,
                 )?,
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(2)
                         .ok_or_else(|| format!("$variant LeafMapSet missing field #{}", 2))?,
                 )?,
             )),
             "LeafMapHas" => Ok(FastLeaf::LeafMapHas(
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant LeafMapHas missing field #{}", 0))?,
                 )?,
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant LeafMapHas missing field #{}", 1))?,
                 )?,
             )),
             "LeafMapRemove" => Ok(FastLeaf::LeafMapRemove(
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant LeafMapRemove missing field #{}", 0))?,
                 )?,
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant LeafMapRemove missing field #{}", 1))?,
                 )?,
             )),
             "LeafVectorNew" => Ok(FastLeaf::LeafVectorNew(
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant LeafVectorNew missing field #{}", 0))?,
                 )?,
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant LeafVectorNew missing field #{}", 1))?,
                 )?,
             )),
             "LeafVectorLen" => Ok(FastLeaf::LeafVectorLen(
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant LeafVectorLen missing field #{}", 0))?,
                 )?,
             )),
-            "LeafVectorGetOrInt" => {
-                Ok(FastLeaf::LeafVectorGetOrInt(
-                    <i64 as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
+            "LeafVectorGetOrInt" => Ok(FastLeaf::LeafVectorGetOrInt(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields.get(0).ok_or_else(|| {
                         format!("$variant LeafVectorGetOrInt missing field #{}", 0)
-                    })?)?,
-                    <i64 as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(|| {
+                    })?,
+                )?,
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields.get(1).ok_or_else(|| {
                         format!("$variant LeafVectorGetOrInt missing field #{}", 1)
-                    })?)?,
-                    <i64 as ReplayValue>::from_replay_json(fields.get(2).ok_or_else(|| {
+                    })?,
+                )?,
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields.get(2).ok_or_else(|| {
                         format!("$variant LeafVectorGetOrInt missing field #{}", 2)
-                    })?)?,
-                ))
-            }
+                    })?,
+                )?,
+            )),
             "LeafBinopSlots" => Ok(FastLeaf::LeafBinopSlots(
                 <BinOp as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant LeafBinopSlots missing field #{}", 0))?,
                 )?,
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant LeafBinopSlots missing field #{}", 1))?,
                 )?,
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(2)
                         .ok_or_else(|| format!("$variant LeafBinopSlots missing field #{}", 2))?,
@@ -2096,12 +2117,12 @@ impl aver_replay::ReplayValue for FastLeaf {
                         .get(0)
                         .ok_or_else(|| format!("$variant LeafCmpSlots missing field #{}", 0))?,
                 )?,
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant LeafCmpSlots missing field #{}", 1))?,
                 )?,
-                <i64 as ReplayValue>::from_replay_json(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(2)
                         .ok_or_else(|| format!("$variant LeafCmpSlots missing field #{}", 2))?,
@@ -2117,12 +2138,18 @@ pub enum FnFastPath {
     FastNone,
     FastSingleExpr,
     FastLeaf(FastLeaf),
-    FastForwardCall(i64, aver_rt::AverList<i64>),
-    FastBoolSlotBranch(i64, FastLeaf, FastLeaf),
-    FastEqIntBranch(i64, i64, FastLeaf, FastLeaf),
-    FastEqStringBranch(i64, AverStr, FastLeaf, FastLeaf),
-    FastLtIntSlotsBranch(i64, i64, FastLeaf, FastLeaf),
-    FastListSlotBranch(i64, FastLeaf, i64, i64, FastLeaf),
+    FastForwardCall(aver_rt::AverInt, aver_rt::AverList<aver_rt::AverInt>),
+    FastBoolSlotBranch(aver_rt::AverInt, FastLeaf, FastLeaf),
+    FastEqIntBranch(aver_rt::AverInt, aver_rt::AverInt, FastLeaf, FastLeaf),
+    FastEqStringBranch(aver_rt::AverInt, AverStr, FastLeaf, FastLeaf),
+    FastLtIntSlotsBranch(aver_rt::AverInt, aver_rt::AverInt, FastLeaf, FastLeaf),
+    FastListSlotBranch(
+        aver_rt::AverInt,
+        FastLeaf,
+        aver_rt::AverInt,
+        aver_rt::AverInt,
+        FastLeaf,
+    ),
 }
 
 impl aver_rt::AverDisplay for FnFastPath {
@@ -2358,23 +2385,25 @@ impl aver_replay::ReplayValue for FnFastPath {
                         .ok_or_else(|| format!("$variant FastLeaf missing field #{}", 0))?,
                 )?,
             )),
-            "FastForwardCall" => {
-                Ok(FnFastPath::FastForwardCall(
-                    <i64 as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
-                        format!("$variant FastForwardCall missing field #{}", 0)
-                    })?)?,
-                    <aver_rt::AverList<i64> as ReplayValue>::from_replay_json(
-                        fields.get(1).ok_or_else(|| {
-                            format!("$variant FastForwardCall missing field #{}", 1)
-                        })?,
-                    )?,
-                ))
-            }
+            "FastForwardCall" => Ok(FnFastPath::FastForwardCall(
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields
+                        .get(0)
+                        .ok_or_else(|| format!("$variant FastForwardCall missing field #{}", 0))?,
+                )?,
+                <aver_rt::AverList<aver_rt::AverInt> as ReplayValue>::from_replay_json(
+                    fields
+                        .get(1)
+                        .ok_or_else(|| format!("$variant FastForwardCall missing field #{}", 1))?,
+                )?,
+            )),
             "FastBoolSlotBranch" => {
                 Ok(FnFastPath::FastBoolSlotBranch(
-                    <i64 as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
-                        format!("$variant FastBoolSlotBranch missing field #{}", 0)
-                    })?)?,
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(0).ok_or_else(|| {
+                            format!("$variant FastBoolSlotBranch missing field #{}", 0)
+                        })?,
+                    )?,
                     <FastLeaf as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(
                         || format!("$variant FastBoolSlotBranch missing field #{}", 1),
                     )?)?,
@@ -2385,12 +2414,16 @@ impl aver_replay::ReplayValue for FnFastPath {
             }
             "FastEqIntBranch" => {
                 Ok(FnFastPath::FastEqIntBranch(
-                    <i64 as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
-                        format!("$variant FastEqIntBranch missing field #{}", 0)
-                    })?)?,
-                    <i64 as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(|| {
-                        format!("$variant FastEqIntBranch missing field #{}", 1)
-                    })?)?,
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(0).ok_or_else(|| {
+                            format!("$variant FastEqIntBranch missing field #{}", 0)
+                        })?,
+                    )?,
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(1).ok_or_else(|| {
+                            format!("$variant FastEqIntBranch missing field #{}", 1)
+                        })?,
+                    )?,
                     <FastLeaf as ReplayValue>::from_replay_json(fields.get(2).ok_or_else(
                         || format!("$variant FastEqIntBranch missing field #{}", 2),
                     )?)?,
@@ -2401,9 +2434,11 @@ impl aver_replay::ReplayValue for FnFastPath {
             }
             "FastEqStringBranch" => {
                 Ok(FnFastPath::FastEqStringBranch(
-                    <i64 as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
-                        format!("$variant FastEqStringBranch missing field #{}", 0)
-                    })?)?,
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(0).ok_or_else(|| {
+                            format!("$variant FastEqStringBranch missing field #{}", 0)
+                        })?,
+                    )?,
                     <AverStr as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(
                         || format!("$variant FastEqStringBranch missing field #{}", 1),
                     )?)?,
@@ -2416,12 +2451,12 @@ impl aver_replay::ReplayValue for FnFastPath {
                 ))
             }
             "FastLtIntSlotsBranch" => Ok(FnFastPath::FastLtIntSlotsBranch(
-                <i64 as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
-                    format!("$variant FastLtIntSlotsBranch missing field #{}", 0)
-                })?)?,
-                <i64 as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(|| {
-                    format!("$variant FastLtIntSlotsBranch missing field #{}", 1)
-                })?)?,
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(
+                    || format!("$variant FastLtIntSlotsBranch missing field #{}", 0),
+                )?)?,
+                <aver_rt::AverInt as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(
+                    || format!("$variant FastLtIntSlotsBranch missing field #{}", 1),
+                )?)?,
                 <FastLeaf as ReplayValue>::from_replay_json(fields.get(2).ok_or_else(|| {
                     format!("$variant FastLtIntSlotsBranch missing field #{}", 2)
                 })?)?,
@@ -2431,18 +2466,24 @@ impl aver_replay::ReplayValue for FnFastPath {
             )),
             "FastListSlotBranch" => {
                 Ok(FnFastPath::FastListSlotBranch(
-                    <i64 as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
-                        format!("$variant FastListSlotBranch missing field #{}", 0)
-                    })?)?,
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(0).ok_or_else(|| {
+                            format!("$variant FastListSlotBranch missing field #{}", 0)
+                        })?,
+                    )?,
                     <FastLeaf as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(
                         || format!("$variant FastListSlotBranch missing field #{}", 1),
                     )?)?,
-                    <i64 as ReplayValue>::from_replay_json(fields.get(2).ok_or_else(|| {
-                        format!("$variant FastListSlotBranch missing field #{}", 2)
-                    })?)?,
-                    <i64 as ReplayValue>::from_replay_json(fields.get(3).ok_or_else(|| {
-                        format!("$variant FastListSlotBranch missing field #{}", 3)
-                    })?)?,
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(2).ok_or_else(|| {
+                            format!("$variant FastListSlotBranch missing field #{}", 2)
+                        })?,
+                    )?,
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(3).ok_or_else(|| {
+                            format!("$variant FastListSlotBranch missing field #{}", 3)
+                        })?,
+                    )?,
                     <FastLeaf as ReplayValue>::from_replay_json(fields.get(4).ok_or_else(
                         || format!("$variant FastListSlotBranch missing field #{}", 4),
                     )?)?,
@@ -2458,8 +2499,8 @@ pub struct FnDef {
     pub name: AverStr,
     pub params: aver_rt::AverList<AverStr>,
     pub body: aver_rt::AverList<Stmt>,
-    pub slotCount: i64,
-    pub slotMap: aver_rt::AverMap<AverStr, i64>,
+    pub slotCount: aver_rt::AverInt,
+    pub slotMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     pub fastPath: FnFastPath,
     pub tailLoop: bool,
 }
@@ -2554,16 +2595,17 @@ impl aver_replay::ReplayValue for FnDef {
                     .get("body")
                     .ok_or_else(|| "$record FnDef missing field 'body'".to_string())?,
             )?,
-            slotCount: <i64 as ReplayValue>::from_replay_json(
+            slotCount: <aver_rt::AverInt as ReplayValue>::from_replay_json(
                 fields
                     .get("slotCount")
                     .ok_or_else(|| "$record FnDef missing field 'slotCount'".to_string())?,
             )?,
-            slotMap: <aver_rt::AverMap<AverStr, i64> as ReplayValue>::from_replay_json(
-                fields
-                    .get("slotMap")
-                    .ok_or_else(|| "$record FnDef missing field 'slotMap'".to_string())?,
-            )?,
+            slotMap:
+                <aver_rt::AverMap<AverStr, aver_rt::AverInt> as ReplayValue>::from_replay_json(
+                    fields
+                        .get("slotMap")
+                        .ok_or_else(|| "$record FnDef missing field 'slotMap'".to_string())?,
+                )?,
             fastPath: <FnFastPath as ReplayValue>::from_replay_json(
                 fields
                     .get("fastPath")
@@ -2880,60 +2922,61 @@ impl aver_replay::ReplayValue for CmpOp {
 }
 
 /// Tag ID for Result.Ok constructor.
-pub fn tagResultOk() -> i64 {
+pub fn tagResultOk() -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    1i64
+    aver_rt::AverInt::from_i64(1)
 }
 
 /// Tag ID for Result.Err constructor.
-pub fn tagResultErr() -> i64 {
+pub fn tagResultErr() -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    2i64
+    aver_rt::AverInt::from_i64(2)
 }
 
 /// Tag ID for Option.Some constructor.
-pub fn tagOptionSome() -> i64 {
+pub fn tagOptionSome() -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    3i64
+    aver_rt::AverInt::from_i64(3)
 }
 
 /// Tag ID for Option.None constructor.
-pub fn tagOptionNone() -> i64 {
+pub fn tagOptionNone() -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    4i64
+    aver_rt::AverInt::from_i64(4)
 }
 
 /// Base tag ID for user-defined constructors. User tags start from this value.
-pub fn tagUserBase() -> i64 {
+pub fn tagUserBase() -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    100i64
+    aver_rt::AverInt::from_i64(100)
 }
 
 /// Modulo span used to keep hashed user constructor tags bounded.
-pub fn userTagSpan() -> i64 {
+pub fn userTagSpan() -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    1000003i64
+    aver_rt::AverInt::from_i64(1000003)
 }
 
 /// Map constructor names to tag IDs. Builtins keep fixed tags; user constructors get stable hashed tags.
 #[inline(always)]
-pub fn ctorNameToTag(name: AverStr) -> i64 {
+pub fn ctorNameToTag(name: AverStr) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = name.clone();
         if &*__dispatch_subject == "Result.Ok" {
-            1i64
+            aver_rt::AverInt::from_i64(1)
         } else {
             if &*__dispatch_subject == "Result.Err" {
-                2i64
+                aver_rt::AverInt::from_i64(2)
             } else {
                 if &*__dispatch_subject == "Option.Some" {
-                    3i64
+                    aver_rt::AverInt::from_i64(3)
                 } else {
                     if &*__dispatch_subject == "Option.None" {
-                        4i64
+                        aver_rt::AverInt::from_i64(4)
                     } else {
-                        (100i64 + crate::aver_generated::domain::ast::userCtorTagOffset(name))
+                        aver_rt::AverInt::from_i64(100)
+                            .add(&crate::aver_generated::domain::ast::userCtorTagOffset(name))
                     }
                 }
             }
@@ -2943,24 +2986,38 @@ pub fn ctorNameToTag(name: AverStr) -> i64 {
 
 /// Compute a stable non-zero offset for a user-defined constructor tag from its full dotted name.
 #[inline(always)]
-pub fn userCtorTagOffset(name: AverStr) -> i64 {
+pub fn userCtorTagOffset(name: AverStr) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::ast::userCtorTagOffsetLoop(name, 0i64, 0i64)
+    crate::aver_generated::domain::ast::userCtorTagOffsetLoop(
+        name,
+        aver_rt::AverInt::from_i64(0),
+        aver_rt::AverInt::from_i64(0),
+    )
 }
 
 /// Walk the constructor name and accumulate a bounded rolling hash.
 #[inline(always)]
-pub fn userCtorTagOffsetLoop(mut name: AverStr, mut pos: i64, mut acc: i64) -> i64 {
+pub fn userCtorTagOffsetLoop(
+    mut name: AverStr,
+    mut pos: aver_rt::AverInt,
+    mut acc: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let accPlusOne = (acc + 1i64);
-        if (pos < (name.chars().count() as i64)) {
-            match (name.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
+        let accPlusOne = acc.add(&aver_rt::AverInt::from_i64(1));
+        if (pos < aver_rt::AverInt::from_i64(name.chars().count() as i64)) {
+            match ((pos)
+                .to_usize()
+                .and_then(|__i| name.chars().nth(__i).map(|c| c.to_string())))
+            .into_aver()
+            {
                 Some(ch) => {
-                    let __tco1 = (pos + 1i64);
+                    let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
                     let __tco2 = crate::aver_generated::domain::ast::userCtorTagStep(
                         acc,
-                        (ch.chars().next().map(|c| c as i64).unwrap_or(0i64)),
+                        aver_rt::AverInt::from_i64(
+                            ch.chars().next().map(|c| c as i64).unwrap_or(0),
+                        ),
                     );
                     pos = __tco1;
                     acc = __tco2;
@@ -2977,82 +3034,88 @@ pub fn userCtorTagOffsetLoop(mut name: AverStr, mut pos: i64, mut acc: i64) -> i
 }
 
 /// Update the user constructor rolling hash and keep it in a bounded range.
-pub fn userCtorTagStep(acc: i64, code: i64) -> i64 {
+pub fn userCtorTagStep(acc: aver_rt::AverInt, code: aver_rt::AverInt) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    let next = ((acc * 131i64) + code);
-    (next).rem_euclid(1000003i64)
+    let next = acc.mul(&aver_rt::AverInt::from_i64(131)).add(&code);
+    (next)
+        .rem_euclid(&(aver_rt::AverInt::from_i64(1000003)))
+        .unwrap()
 }
 
 /// Map builtin function names to integer IDs for fast dispatch.
 #[inline(always)]
-pub fn builtinNameToId(name: AverStr) -> Option<i64> {
+pub fn builtinNameToId(name: AverStr) -> Option<aver_rt::AverInt> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = name;
         if &*__dispatch_subject == "Map.set" {
-            Some(1i64)
+            Some(aver_rt::AverInt::from_i64(1))
         } else {
             if &*__dispatch_subject == "Map.get" {
-                Some(2i64)
+                Some(aver_rt::AverInt::from_i64(2))
             } else {
                 if &*__dispatch_subject == "Map.has" {
-                    Some(3i64)
+                    Some(aver_rt::AverInt::from_i64(3))
                 } else {
                     if &*__dispatch_subject == "Map.fromList" {
-                        Some(4i64)
+                        Some(aver_rt::AverInt::from_i64(4))
                     } else {
                         if &*__dispatch_subject == "Map.entries" {
-                            Some(5i64)
+                            Some(aver_rt::AverInt::from_i64(5))
                         } else {
                             if &*__dispatch_subject == "Map.remove" {
-                                Some(6i64)
+                                Some(aver_rt::AverInt::from_i64(6))
                             } else {
                                 if &*__dispatch_subject == "Vector.new" {
-                                    Some(7i64)
+                                    Some(aver_rt::AverInt::from_i64(7))
                                 } else {
                                     if &*__dispatch_subject == "Vector.get" {
-                                        Some(8i64)
+                                        Some(aver_rt::AverInt::from_i64(8))
                                     } else {
                                         if &*__dispatch_subject == "Vector.set" {
-                                            Some(9i64)
+                                            Some(aver_rt::AverInt::from_i64(9))
                                         } else {
                                             if &*__dispatch_subject == "Vector.len" {
-                                                Some(10i64)
+                                                Some(aver_rt::AverInt::from_i64(10))
                                             } else {
                                                 if &*__dispatch_subject == "Vector.fromList" {
-                                                    Some(11i64)
+                                                    Some(aver_rt::AverInt::from_i64(11))
                                                 } else {
                                                     if &*__dispatch_subject == "List.fromVector" {
-                                                        Some(12i64)
+                                                        Some(aver_rt::AverInt::from_i64(12))
                                                     } else {
                                                         if &*__dispatch_subject == "Option.None" {
-                                                            Some(13i64)
+                                                            Some(aver_rt::AverInt::from_i64(13))
                                                         } else {
                                                             if &*__dispatch_subject == "Option.Some"
                                                             {
-                                                                Some(14i64)
+                                                                Some(aver_rt::AverInt::from_i64(14))
                                                             } else {
                                                                 if &*__dispatch_subject
                                                                     == "Option.withDefault"
                                                                 {
-                                                                    Some(15i64)
+                                                                    Some(
+                                                                        aver_rt::AverInt::from_i64(
+                                                                            15,
+                                                                        ),
+                                                                    )
                                                                 } else {
                                                                     if &*__dispatch_subject
                                                                         == "Result.Ok"
                                                                     {
-                                                                        Some(16i64)
+                                                                        Some(aver_rt::AverInt::from_i64(16))
                                                                     } else {
                                                                         if &*__dispatch_subject
                                                                             == "Result.Err"
                                                                         {
-                                                                            Some(17i64)
+                                                                            Some(aver_rt::AverInt::from_i64(17))
                                                                         } else {
                                                                             if &*__dispatch_subject
                                                                                 == "Result.withDefault"
                                                                             {
-                                                                                Some(18i64)
+                                                                                Some(aver_rt::AverInt::from_i64(18))
                                                                             } else {
-                                                                                if &*__dispatch_subject == "String.fromInt" { Some(19i64) } else { if &*__dispatch_subject == "List.take" { Some(20i64) } else { if &*__dispatch_subject == "List.drop" { Some(21i64) } else { None } } }
+                                                                                if &*__dispatch_subject == "String.fromInt" { Some(aver_rt::AverInt::from_i64(19)) } else { if &*__dispatch_subject == "List.take" { Some(aver_rt::AverInt::from_i64(20)) } else { if &*__dispatch_subject == "List.drop" { Some(aver_rt::AverInt::from_i64(21)) } else { None } } }
                                                                             }
                                                                         }
                                                                     }

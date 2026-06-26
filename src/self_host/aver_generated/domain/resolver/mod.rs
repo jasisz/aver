@@ -21,7 +21,7 @@ pub fn resolveProgram(prog: &Program) -> Program {
     let fnMap = crate::aver_generated::domain::resolver::calls::buildFnMap(
         resolvedFns.clone(),
         HashMap::new(),
-        0i64,
+        aver_rt::AverInt::from_i64(0),
     );
     let calledFns = crate::aver_generated::domain::resolver::calls::resolveCallsInFns(
         resolvedFns,

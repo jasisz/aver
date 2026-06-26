@@ -7,15 +7,15 @@ use crate::*;
 #[inline(always)]
 pub fn buildFnMap(
     mut fns: aver_rt::AverList<FnDef>,
-    mut acc: aver_rt::AverMap<AverStr, i64>,
-    mut idx: i64,
-) -> aver_rt::AverMap<AverStr, i64> {
+    mut acc: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut idx: aver_rt::AverInt,
+) -> aver_rt::AverMap<AverStr, aver_rt::AverInt> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fns, [] => { return acc; }, [f, rest] => { {
             let __tco0 = rest;
-            let __tco1 = acc.insert_owned(f.name.clone(), idx);
-            let __tco2 = (idx + 1i64);
+            let __tco1 = acc.insert_owned(f.name.clone(), idx.clone());
+            let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
             fns = __tco0;
             acc = __tco1;
             idx = __tco2;
@@ -28,7 +28,7 @@ pub fn buildFnMap(
 #[inline(always)]
 pub fn resolveCallsInFns(
     mut fns: aver_rt::AverList<FnDef>,
-    mut fnMap: aver_rt::AverMap<AverStr, i64>,
+    mut fnMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc: aver_rt::AverList<FnDef>,
 ) -> aver_rt::AverList<FnDef> {
     loop {
@@ -46,7 +46,7 @@ pub fn resolveCallsInFns(
 }
 
 /// Transform calls in one function body.
-pub fn resolveCallsInFn(fd: &FnDef, fnMap: &aver_rt::AverMap<AverStr, i64>) -> FnDef {
+pub fn resolveCallsInFn(fd: &FnDef, fnMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>) -> FnDef {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::ast::FnDef {
         name: fd.name.clone(),
@@ -56,7 +56,7 @@ pub fn resolveCallsInFn(fd: &FnDef, fnMap: &aver_rt::AverMap<AverStr, i64>) -> F
             fnMap.clone(),
             aver_rt::AverList::empty(),
         ),
-        slotCount: fd.slotCount,
+        slotCount: fd.slotCount.clone(),
         slotMap: fd.slotMap.clone(),
         fastPath: fd.fastPath.clone(),
         tailLoop: fd.tailLoop,
@@ -67,7 +67,7 @@ pub fn resolveCallsInFn(fd: &FnDef, fnMap: &aver_rt::AverMap<AverStr, i64>) -> F
 #[inline(always)]
 pub fn resolveCallsInStmts(
     mut stmts: aver_rt::AverList<Stmt>,
-    mut fnMap: aver_rt::AverMap<AverStr, i64>,
+    mut fnMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc: aver_rt::AverList<Stmt>,
 ) -> aver_rt::AverList<Stmt> {
     loop {
@@ -85,7 +85,7 @@ pub fn resolveCallsInStmts(
 }
 
 /// Resolve calls in a single statement.
-pub fn resolveCallsInStmt(s: &Stmt, fnMap: &aver_rt::AverMap<AverStr, i64>) -> Stmt {
+pub fn resolveCallsInStmt(s: &Stmt, fnMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>) -> Stmt {
     crate::cancel_checkpoint();
     match s.clone() {
         crate::aver_generated::domain::ast::Stmt::StmtBind(name, expr) => {
@@ -109,7 +109,10 @@ pub fn resolveCallsInStmt(s: &Stmt, fnMap: &aver_rt::AverMap<AverStr, i64>) -> S
 }
 
 /// Replace ExprCall with ExprCallDirect for known user functions.
-pub fn resolveCallsInExpr(expr: &Expr, fnMap: &aver_rt::AverMap<AverStr, i64>) -> Expr {
+pub fn resolveCallsInExpr(
+    expr: &Expr,
+    fnMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) -> Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
         crate::aver_generated::domain::ast::Expr::ExprBoolBranch(cond, thenExpr, elseExpr) => {
@@ -184,7 +187,10 @@ pub fn resolveCallsInExpr(expr: &Expr, fnMap: &aver_rt::AverMap<AverStr, i64>) -
 }
 
 /// Continue direct-call linking for specialized internal and arithmetic forms.
-pub fn resolveCallsInExprInternal(expr: &Expr, fnMap: &aver_rt::AverMap<AverStr, i64>) -> Expr {
+pub fn resolveCallsInExprInternal(
+    expr: &Expr,
+    fnMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) -> Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
         crate::aver_generated::domain::ast::Expr::ExprBinopSlotInt(_, _, _) => expr.clone(),
@@ -284,7 +290,10 @@ pub fn resolveCallsInExprInternal(expr: &Expr, fnMap: &aver_rt::AverMap<AverStr,
 }
 
 /// Finish direct-call linking for comparisons, aggregates, and product forms.
-pub fn resolveCallsInExprTail(expr: &Expr, fnMap: &aver_rt::AverMap<AverStr, i64>) -> Expr {
+pub fn resolveCallsInExprTail(
+    expr: &Expr,
+    fnMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) -> Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
         crate::aver_generated::domain::ast::Expr::ExprEq(a, b) => {
@@ -445,7 +454,7 @@ pub fn resolveCallsInExprTail(expr: &Expr, fnMap: &aver_rt::AverMap<AverStr, i64
 pub fn resolveOneCall(
     name: AverStr,
     args: &aver_rt::AverList<Expr>,
-    fnMap: &aver_rt::AverMap<AverStr, i64>,
+    fnMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> Expr {
     crate::cancel_checkpoint();
     let resolvedArgs = crate::aver_generated::domain::resolver::calls::resolveCallsInExprs(
@@ -626,7 +635,7 @@ pub fn isBuiltinCallNameFrom(
 #[inline(always)]
 pub fn resolveCallsInExprs(
     mut exprs: aver_rt::AverList<Expr>,
-    mut fnMap: aver_rt::AverMap<AverStr, i64>,
+    mut fnMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc: aver_rt::AverList<Expr>,
 ) -> aver_rt::AverList<Expr> {
     loop {
@@ -647,7 +656,7 @@ pub fn resolveCallsInExprs(
 #[inline(always)]
 pub fn resolveCallsInArms(
     mut arms: aver_rt::AverList<MatchArm>,
-    mut fnMap: aver_rt::AverMap<AverStr, i64>,
+    mut fnMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc: aver_rt::AverList<MatchArm>,
 ) -> aver_rt::AverList<MatchArm> {
     loop {
@@ -668,7 +677,7 @@ pub fn resolveCallsInArms(
 #[inline(always)]
 pub fn resolveCallsInFields(
     mut fields: aver_rt::AverList<(AverStr, Expr)>,
-    mut fnMap: aver_rt::AverMap<AverStr, i64>,
+    mut fnMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc: aver_rt::AverList<(AverStr, Expr)>,
 ) -> aver_rt::AverList<(AverStr, Expr)> {
     loop {

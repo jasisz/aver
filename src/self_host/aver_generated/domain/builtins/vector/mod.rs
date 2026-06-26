@@ -35,8 +35,11 @@ pub fn call(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, AverStr
                             } else {
                                 Err(aver_rt::AverStr::from({
                                     let mut __b = {
-                                        let mut __b =
-                                            aver_rt::Buffer::with_capacity((40i64) as usize);
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(40))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
                                         __b.push_str(&AverStr::from("unknown vector builtin: "));
                                         __b
                                     };
@@ -59,11 +62,14 @@ pub fn builtinVectorNew(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     match pair {
-        (crate::aver_generated::domain::value::Val::ValInt(size), defaultVal) => {
-            Ok(crate::aver_generated::domain::value::Val::ValVector(
-                aver_rt::AverVector::new(size as usize, defaultVal),
-            ))
-        }
+        (crate::aver_generated::domain::value::Val::ValInt(size), defaultVal) => Ok(
+            crate::aver_generated::domain::value::Val::ValVector(aver_rt::AverVector::new(
+                (size)
+                    .to_usize()
+                    .expect("Vector.new: size must be a non-negative, machine-sized Int"),
+                defaultVal,
+            )),
+        ),
         _ => Err(AverStr::from("Vector.new: first arg must be Int")),
     }
 }
@@ -76,7 +82,7 @@ pub fn builtinVectorGet(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
         (
             crate::aver_generated::domain::value::Val::ValVector(vec),
             crate::aver_generated::domain::value::Val::ValInt(idx),
-        ) => match vec.get(idx as usize).cloned() {
+        ) => match (idx).to_usize().and_then(|__i| vec.get(__i).cloned()) {
             Some(v) => Ok(crate::aver_generated::domain::value::Val::ValSome(
                 std::sync::Arc::new(v),
             )),
@@ -123,10 +129,10 @@ pub fn builtinVectorSetInner(vecV: &Val, idxV: &Val, valV: &Val) -> Result<Val, 
         crate::aver_generated::domain::value::Val::ValVector(vec) => {
             match idxV.clone() {
                 crate::aver_generated::domain::value::Val::ValInt(idx) => {
-                    if (idx < 0i64) {
+                    if (idx < aver_rt::AverInt::from_i64(0)) {
                         Ok(crate::aver_generated::domain::value::Val::ValNone)
                     } else {
-                        if (idx < (vec.len() as i64)) {
+                        if (idx < aver_rt::AverInt::from_i64(vec.len() as i64)) {
                             crate::aver_generated::domain::builtins::vector::builtinVectorSetInBounds(&vec, idx, valV)
                         } else {
                             Ok(crate::aver_generated::domain::value::Val::ValNone)
@@ -144,11 +150,14 @@ pub fn builtinVectorSetInner(vecV: &Val, idxV: &Val, valV: &Val) -> Result<Val, 
 #[inline(always)]
 pub fn builtinVectorSetInBounds(
     vec: &aver_rt::AverVector<Val>,
-    idx: i64,
+    idx: aver_rt::AverInt,
     valV: &Val,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
-    match vec.clone().set_owned(idx as usize, valV.clone()) {
+    match (idx)
+        .to_usize()
+        .and_then(|__i| vec.clone().set_owned(__i, valV.clone()))
+    {
         Some(newVec) => Ok(crate::aver_generated::domain::value::Val::ValSome(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValVector(newVec)),
         )),
@@ -161,9 +170,11 @@ pub fn builtinVectorLen(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
-        crate::aver_generated::domain::value::Val::ValVector(vec) => Ok(
-            crate::aver_generated::domain::value::Val::ValInt((vec.len() as i64)),
-        ),
+        crate::aver_generated::domain::value::Val::ValVector(vec) => {
+            Ok(crate::aver_generated::domain::value::Val::ValInt(
+                aver_rt::AverInt::from_i64(vec.len() as i64),
+            ))
+        }
         _ => Err(AverStr::from("Vector.len: expected Vector")),
     }
 }

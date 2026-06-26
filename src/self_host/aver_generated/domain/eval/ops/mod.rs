@@ -6,24 +6,25 @@ use crate::aver_generated::domain::value::*;
 use crate::*;
 
 /// Apply a binary operation to two integers.
-pub fn applyBinop(x: i64, y: i64, op: &BinOp) -> Result<Val, AverStr> {
+pub fn applyBinop(x: aver_rt::AverInt, y: aver_rt::AverInt, op: &BinOp) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     match op {
         crate::aver_generated::domain::ast::BinOp::OpAdd => {
-            Ok(crate::aver_generated::domain::value::Val::ValInt((x + y)))
+            Ok(crate::aver_generated::domain::value::Val::ValInt(x.add(&y)))
         }
         crate::aver_generated::domain::ast::BinOp::OpSub => {
-            Ok(crate::aver_generated::domain::value::Val::ValInt((x - y)))
+            Ok(crate::aver_generated::domain::value::Val::ValInt(x.sub(&y)))
         }
         crate::aver_generated::domain::ast::BinOp::OpMul => {
-            Ok(crate::aver_generated::domain::value::Val::ValInt((x * y)))
+            Ok(crate::aver_generated::domain::value::Val::ValInt(x.mul(&y)))
         }
         crate::aver_generated::domain::ast::BinOp::OpDiv => {
-            if (y == 0i64) {
+            if (y == aver_rt::AverInt::from_i64(0)) {
                 Err(AverStr::from("division by zero"))
             } else {
                 Ok(crate::aver_generated::domain::value::Val::ValInt(
-                    (x).checked_div_euclid(y).unwrap_or(0i64),
+                    (x).div_euclid(&(y))
+                        .unwrap_or(aver_rt::AverInt::from_i64(0)),
                 ))
             }
         }
@@ -54,7 +55,7 @@ pub fn applyBinopFloat(x: f64, y: f64, op: &BinOp) -> Result<Val, AverStr> {
 }
 
 /// Apply a comparison operation to two integers.
-pub fn applyCmp(x: i64, y: i64, op: &CmpOp) -> Val {
+pub fn applyCmp(x: aver_rt::AverInt, y: aver_rt::AverInt, op: &CmpOp) -> Val {
     crate::cancel_checkpoint();
     match op {
         crate::aver_generated::domain::ast::CmpOp::CmpEq => {
@@ -118,11 +119,11 @@ pub fn evalBinopVals(va: &Val, vb: &Val, op: &BinOp) -> Result<Val, AverStr> {
         (
             crate::aver_generated::domain::value::Val::ValInt(x),
             crate::aver_generated::domain::value::Val::ValFloat(y),
-        ) => crate::aver_generated::domain::eval::ops::applyBinopFloat(x as f64, y, op),
+        ) => crate::aver_generated::domain::eval::ops::applyBinopFloat(x.to_f64(), y, op),
         (
             crate::aver_generated::domain::value::Val::ValFloat(x),
             crate::aver_generated::domain::value::Val::ValInt(y),
-        ) => crate::aver_generated::domain::eval::ops::applyBinopFloat(x, y as f64, op),
+        ) => crate::aver_generated::domain::eval::ops::applyBinopFloat(x, y.to_f64(), op),
         (
             crate::aver_generated::domain::value::Val::ValStr(x),
             crate::aver_generated::domain::value::Val::ValStr(y),
@@ -140,9 +141,11 @@ pub fn evalBinopVals(va: &Val, vb: &Val, op: &BinOp) -> Result<Val, AverStr> {
 pub fn evalNegVals(v: &Val) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
-        crate::aver_generated::domain::value::Val::ValInt(n) => Ok(
-            crate::aver_generated::domain::value::Val::ValInt((0i64 - n)),
-        ),
+        crate::aver_generated::domain::value::Val::ValInt(n) => {
+            Ok(crate::aver_generated::domain::value::Val::ValInt(
+                aver_rt::AverInt::from_i64(0).sub(&n),
+            ))
+        }
         crate::aver_generated::domain::value::Val::ValFloat(f) => Ok(
             crate::aver_generated::domain::value::Val::ValFloat((0.0f64 - f)),
         ),
@@ -168,13 +171,17 @@ pub fn evalCmpVals(va: &Val, vb: &Val, op: &CmpOp) -> Result<Val, AverStr> {
             crate::aver_generated::domain::value::Val::ValInt(x),
             crate::aver_generated::domain::value::Val::ValFloat(y),
         ) => Ok(crate::aver_generated::domain::eval::ops::applyCmpFloat(
-            x as f64, y, op,
+            x.to_f64(),
+            y,
+            op,
         )),
         (
             crate::aver_generated::domain::value::Val::ValFloat(x),
             crate::aver_generated::domain::value::Val::ValInt(y),
         ) => Ok(crate::aver_generated::domain::eval::ops::applyCmpFloat(
-            x, y as f64, op,
+            x,
+            y.to_f64(),
+            op,
         )),
         (
             crate::aver_generated::domain::value::Val::ValStr(x),
@@ -251,7 +258,9 @@ pub fn evalCmpRepr(va: &Val, vb: &Val, op: &CmpOp) -> Result<Val, AverStr> {
                     let mut __b = {
                         let mut __b = {
                             let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity((83i64) as usize);
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(83)).to_usize().unwrap_or(0),
+                                );
                                 __b.push_str(&AverStr::from("comparison "));
                                 __b
                             };
@@ -294,7 +303,11 @@ pub fn cmpOpName(op: &CmpOp) -> AverStr {
 
 /// Read a vector cell and return an integer fallback when the index misses.
 #[inline(always)]
-pub fn evalVectorGetOrIntVals(vecV: &Val, idxV: &Val, defaultValue: i64) -> Result<Val, AverStr> {
+pub fn evalVectorGetOrIntVals(
+    vecV: &Val,
+    idxV: &Val,
+    defaultValue: aver_rt::AverInt,
+) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::ops::evalVectorGetMaybeDefault(vecV, idxV) {
         Ok(maybeV) => match maybeV {
@@ -308,21 +321,24 @@ pub fn evalVectorGetOrIntVals(vecV: &Val, idxV: &Val, defaultValue: i64) -> Resu
 }
 
 /// Apply Int.mod and return an integer fallback when the result would be Err.
-pub fn evalIntModOrIntVals(aV: &Val, bV: &Val, defaultValue: i64) -> Result<Val, AverStr> {
+pub fn evalIntModOrIntVals(
+    aV: &Val,
+    bV: &Val,
+    defaultValue: aver_rt::AverInt,
+) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     match aV.clone() {
         crate::aver_generated::domain::value::Val::ValInt(a) => match bV.clone() {
             crate::aver_generated::domain::value::Val::ValInt(b) => {
-                if (b == 0i64) {
+                if (b == aver_rt::AverInt::from_i64(0)) {
                     Ok(crate::aver_generated::domain::value::Val::ValInt(
                         defaultValue,
                     ))
                 } else {
                     Ok(crate::aver_generated::domain::value::Val::ValInt(
-                        (if (b) == 0i64 {
-                            Err("division by zero".to_string())
-                        } else {
-                            Ok((a).rem_euclid(b))
+                        (match (a).rem_euclid(&(b)) {
+                            Some(__r) => Ok(__r),
+                            None => Err("division by zero".to_string()),
                         })
                         .into_aver()
                         .unwrap_or(defaultValue),
@@ -345,18 +361,18 @@ pub fn evalVectorSetMaybeDefault(
     match vecV.clone() {
         crate::aver_generated::domain::value::Val::ValVector(vec) => match idxV.clone() {
             crate::aver_generated::domain::value::Val::ValInt(idx) => {
-                if (idx < 0i64) {
+                if (idx < aver_rt::AverInt::from_i64(0)) {
                     Ok(None)
                 } else {
-                    if (idx < (vec.len() as i64)) {
+                    if (idx < aver_rt::AverInt::from_i64(vec.len() as i64)) {
                         Ok(Some(crate::aver_generated::domain::value::Val::ValVector(
                             {
                                 let __vec = vec.clone();
-                                let __idx = idx as usize;
-                                if __idx < __vec.len() {
-                                    __vec.set_unchecked(__idx, valueV.clone())
-                                } else {
-                                    __vec
+                                match (idx).to_usize() {
+                                    Some(__idx) if __idx < __vec.len() => {
+                                        __vec.set_unchecked(__idx, valueV.clone())
+                                    }
+                                    _ => __vec,
                                 }
                             },
                         )))
@@ -377,7 +393,7 @@ pub fn evalVectorGetMaybeDefault(vecV: &Val, idxV: &Val) -> Result<Option<Val>, 
     match vecV.clone() {
         crate::aver_generated::domain::value::Val::ValVector(vec) => match idxV.clone() {
             crate::aver_generated::domain::value::Val::ValInt(idx) => {
-                match vec.get(idx as usize).cloned() {
+                match (idx).to_usize().and_then(|__i| vec.get(__i).cloned()) {
                     Some(v) => Ok(Some(v)),
                     None => Ok(None),
                 }

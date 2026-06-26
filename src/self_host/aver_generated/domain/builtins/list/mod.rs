@@ -47,7 +47,9 @@ pub fn call(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, AverStr
                                                     let mut __b = {
                                                         let mut __b =
                                                             aver_rt::Buffer::with_capacity(
-                                                                (38i64) as usize,
+                                                                (aver_rt::AverInt::from_i64(38))
+                                                                    .to_usize()
+                                                                    .unwrap_or(0),
                                                             );
                                                         __b.push_str(&AverStr::from(
                                                             "unknown list builtin: ",
@@ -97,7 +99,7 @@ pub fn builtinListLen(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let items = crate::aver_generated::domain::builtins::helpers::expectList(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValInt(
-        (items.len() as i64),
+        aver_rt::AverInt::from_i64(items.len() as i64),
     ))
 }
 
@@ -123,10 +125,10 @@ pub fn builtinListTakeInner(lstV: &Val, nV: &Val) -> Result<Val, AverStr> {
 
 /// Keep the first count elements; negative counts produce empty lists.
 #[inline(always)]
-pub fn listTake(items: &aver_rt::AverList<Val>, count: i64) -> aver_rt::AverList<Val> {
+pub fn listTake(items: &aver_rt::AverList<Val>, count: aver_rt::AverInt) -> aver_rt::AverList<Val> {
     crate::cancel_checkpoint();
-    if (count > 0i64) {
-        aver_list_match!(items.clone(), [] => aver_rt::AverList::empty(), [item, rest] => aver_rt::AverList::prepend(item, &crate::aver_generated::domain::builtins::list::listTake(&rest, (count - 1i64))))
+    if (count > aver_rt::AverInt::from_i64(0)) {
+        aver_list_match!(items.clone(), [] => aver_rt::AverList::empty(), [item, rest] => aver_rt::AverList::prepend(item, &crate::aver_generated::domain::builtins::list::listTake(&rest, count.sub(&aver_rt::AverInt::from_i64(1)))))
     } else {
         aver_rt::AverList::empty()
     }
@@ -154,13 +156,16 @@ pub fn builtinListDropInner(lstV: &Val, nV: &Val) -> Result<Val, AverStr> {
 
 /// Skip the first count elements; negative counts leave the list unchanged.
 #[inline(always)]
-pub fn listDrop(mut items: aver_rt::AverList<Val>, mut count: i64) -> aver_rt::AverList<Val> {
+pub fn listDrop(
+    mut items: aver_rt::AverList<Val>,
+    mut count: aver_rt::AverInt,
+) -> aver_rt::AverList<Val> {
     loop {
         crate::cancel_checkpoint();
-        if (count > 0i64) {
+        if (count > aver_rt::AverInt::from_i64(0)) {
             aver_list_match!(items, [] => { return aver_rt::AverList::empty(); }, [_item, rest] => { {
             let __tco0 = rest;
-            let __tco1 = (count - 1i64);
+            let __tco1 = count.sub(&aver_rt::AverInt::from_i64(1));
             items = __tco0;
             count = __tco1;
             continue;

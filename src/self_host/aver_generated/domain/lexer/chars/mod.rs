@@ -94,7 +94,7 @@ pub fn isLetterOrUnderscore(c: AverStr) -> bool {
 #[inline(always)]
 pub fn isAlpha(c: AverStr) -> bool {
     crate::cancel_checkpoint();
-    if ((c.chars().count() as i64) == 1i64) {
+    if (aver_rt::AverInt::from_i64(c.chars().count() as i64) == aver_rt::AverInt::from_i64(1)) {
         crate::aver_generated::domain::lexer::chars::isLetterOrUnderscore(c)
     } else {
         false
@@ -114,41 +114,41 @@ pub fn isAlphaNum(c: AverStr) -> bool {
 
 /// Convert a digit character to its integer value.
 #[inline(always)]
-pub fn digitVal(c: AverStr) -> i64 {
+pub fn digitVal(c: AverStr) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = c;
         if &*__dispatch_subject == "0" {
-            0i64
+            aver_rt::AverInt::from_i64(0)
         } else {
             if &*__dispatch_subject == "1" {
-                1i64
+                aver_rt::AverInt::from_i64(1)
             } else {
                 if &*__dispatch_subject == "2" {
-                    2i64
+                    aver_rt::AverInt::from_i64(2)
                 } else {
                     if &*__dispatch_subject == "3" {
-                        3i64
+                        aver_rt::AverInt::from_i64(3)
                     } else {
                         if &*__dispatch_subject == "4" {
-                            4i64
+                            aver_rt::AverInt::from_i64(4)
                         } else {
                             if &*__dispatch_subject == "5" {
-                                5i64
+                                aver_rt::AverInt::from_i64(5)
                             } else {
                                 if &*__dispatch_subject == "6" {
-                                    6i64
+                                    aver_rt::AverInt::from_i64(6)
                                 } else {
                                     if &*__dispatch_subject == "7" {
-                                        7i64
+                                        aver_rt::AverInt::from_i64(7)
                                     } else {
                                         if &*__dispatch_subject == "8" {
-                                            8i64
+                                            aver_rt::AverInt::from_i64(8)
                                         } else {
                                             if &*__dispatch_subject == "9" {
-                                                9i64
+                                                aver_rt::AverInt::from_i64(9)
                                             } else {
-                                                0i64
+                                                aver_rt::AverInt::from_i64(0)
                                             }
                                         }
                                     }
@@ -164,17 +164,26 @@ pub fn digitVal(c: AverStr) -> i64 {
 
 /// Read consecutive digits from pos, return (number, newPos).
 #[inline(always)]
-pub fn readNumberLoop(mut src: AverStr, mut pos: i64, mut acc: i64) -> (i64, i64) {
+pub fn readNumberLoop(
+    mut src: AverStr,
+    mut pos: aver_rt::AverInt,
+    mut acc: aver_rt::AverInt,
+) -> (aver_rt::AverInt, aver_rt::AverInt) {
     loop {
         crate::cancel_checkpoint();
-        if (pos < (src.chars().count() as i64)) {
-            match (src.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
+        if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+            match ((pos)
+                .to_usize()
+                .and_then(|__i| src.chars().nth(__i).map(|c| c.to_string())))
+            .into_aver()
+            {
                 Some(c) => {
                     if crate::aver_generated::domain::lexer::chars::isDigit(c.clone()) {
                         {
-                            let __tco1 = (pos + 1i64);
-                            let __tco2 = ((acc * 10i64)
-                                + crate::aver_generated::domain::lexer::chars::digitVal(c));
+                            let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
+                            let __tco2 = acc
+                                .mul(&aver_rt::AverInt::from_i64(10))
+                                .add(&crate::aver_generated::domain::lexer::chars::digitVal(c));
                             pos = __tco1;
                             acc = __tco2;
                             continue;
@@ -195,7 +204,11 @@ pub fn readNumberLoop(mut src: AverStr, mut pos: i64, mut acc: i64) -> (i64, i64
 
 /// Read consecutive digits from pos, return (number, newPos).
 #[inline(always)]
-pub fn readNumber(src: AverStr, pos: i64, acc: i64) -> (i64, i64) {
+pub fn readNumber(
+    src: AverStr,
+    pos: aver_rt::AverInt,
+    acc: aver_rt::AverInt,
+) -> (aver_rt::AverInt, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::lexer::chars::readNumberLoop(src, pos, acc)
 }
@@ -220,15 +233,23 @@ pub fn isIdentCharPlain(c: AverStr) -> bool {
 
 /// Read identifier including dots (for qualified names like List.prepend).
 #[inline(always)]
-pub fn readIdentLoopDotted(mut src: AverStr, mut pos: i64, mut acc: AverStr) -> (AverStr, i64) {
+pub fn readIdentLoopDotted(
+    mut src: AverStr,
+    mut pos: aver_rt::AverInt,
+    mut acc: AverStr,
+) -> (AverStr, aver_rt::AverInt) {
     loop {
         crate::cancel_checkpoint();
-        if (pos < (src.chars().count() as i64)) {
-            match (src.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
+        if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+            match ((pos)
+                .to_usize()
+                .and_then(|__i| src.chars().nth(__i).map(|c| c.to_string())))
+            .into_aver()
+            {
                 Some(c) => {
                     if crate::aver_generated::domain::lexer::chars::isIdentCharDotted(c.clone()) {
                         {
-                            let __tco1 = (pos + 1i64);
+                            let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
                             let __tco2 = (acc + &c);
                             pos = __tco1;
                             acc = __tco2;
@@ -250,15 +271,23 @@ pub fn readIdentLoopDotted(mut src: AverStr, mut pos: i64, mut acc: AverStr) -> 
 
 /// Read identifier without dots (for local variables).
 #[inline(always)]
-pub fn readIdentLoopPlain(mut src: AverStr, mut pos: i64, mut acc: AverStr) -> (AverStr, i64) {
+pub fn readIdentLoopPlain(
+    mut src: AverStr,
+    mut pos: aver_rt::AverInt,
+    mut acc: AverStr,
+) -> (AverStr, aver_rt::AverInt) {
     loop {
         crate::cancel_checkpoint();
-        if (pos < (src.chars().count() as i64)) {
-            match (src.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
+        if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+            match ((pos)
+                .to_usize()
+                .and_then(|__i| src.chars().nth(__i).map(|c| c.to_string())))
+            .into_aver()
+            {
                 Some(c) => {
                     if crate::aver_generated::domain::lexer::chars::isIdentCharPlain(c.clone()) {
                         {
-                            let __tco1 = (pos + 1i64);
+                            let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
                             let __tco2 = (acc + &c);
                             pos = __tco1;
                             acc = __tco2;
@@ -280,7 +309,12 @@ pub fn readIdentLoopPlain(mut src: AverStr, mut pos: i64, mut acc: AverStr) -> (
 
 /// Read identifier, dotted if starts with uppercase.
 #[inline(always)]
-pub fn readIdent(src: AverStr, pos: i64, acc: AverStr, dotted: bool) -> (AverStr, i64) {
+pub fn readIdent(
+    src: AverStr,
+    pos: aver_rt::AverInt,
+    acc: AverStr,
+    dotted: bool,
+) -> (AverStr, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     if dotted {
         crate::aver_generated::domain::lexer::chars::readIdentLoopDotted(src, pos, acc)

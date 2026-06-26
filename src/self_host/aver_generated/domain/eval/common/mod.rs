@@ -25,7 +25,9 @@ pub fn evalVarFallback(name: AverStr, fns: &FnStore) -> Result<Val, AverStr> {
             )),
             None => Err(aver_rt::AverStr::from({
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity((36i64) as usize);
+                    let mut __b = aver_rt::Buffer::with_capacity(
+                        (aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0),
+                    );
                     __b.push_str(&AverStr::from("undefined variable: "));
                     __b
                 };
@@ -57,8 +59,10 @@ pub fn unwrapPropagatedError(err: AverStr) -> Option<AverStr> {
         Some(
             (aver_rt::string_slice(
                 &err,
-                (prefix.chars().count() as i64),
-                (err.chars().count() as i64),
+                crate::aver_int_clamp_i64(&aver_rt::AverInt::from_i64(
+                    prefix.chars().count() as i64
+                )),
+                crate::aver_int_clamp_i64(&aver_rt::AverInt::from_i64(err.chars().count() as i64)),
             ))
             .into_aver(),
         )

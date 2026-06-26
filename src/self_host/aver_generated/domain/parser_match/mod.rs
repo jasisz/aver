@@ -9,19 +9,21 @@ use crate::*;
 enum __MutualTco1 {
     ParseConstructorPatternBindings(
         aver_rt::AverList<Token>,
-        i64,
+        aver_rt::AverInt,
         AverStr,
         aver_rt::AverList<AverStr>,
     ),
     ParseConstructorPatternTail(
         aver_rt::AverList<Token>,
-        i64,
+        aver_rt::AverInt,
         AverStr,
         aver_rt::AverList<AverStr>,
     ),
 }
 
-fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> Result<(Pattern, i64), AverStr> {
+fn __mutual_tco_trampoline_1(
+    mut __state: __MutualTco1,
+) -> Result<(Pattern, aver_rt::AverInt), AverStr> {
     loop {
         __state = match __state {
             __MutualTco1::ParseConstructorPatternBindings(
@@ -31,20 +33,20 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> Result<(Pattern, i64)
                 mut acc,
             ) => {
                 crate::cancel_checkpoint();
-                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkRParen => {
                         return Ok((
                             crate::aver_generated::domain::ast::Pattern::PatConstructor(
                                 name,
                                 acc.reverse(),
                             ),
-                            (pos + 1i64),
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     crate::aver_generated::domain::token::Token::TkIdent(binding) => {
                         __MutualTco1::ParseConstructorPatternTail(
                             tokens,
-                            (pos + 1i64),
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
                             name,
                             aver_rt::AverList::prepend(binding, &acc),
                         )
@@ -58,11 +60,11 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> Result<(Pattern, i64)
             }
             __MutualTco1::ParseConstructorPatternTail(mut tokens, mut pos, mut name, mut acc) => {
                 crate::cancel_checkpoint();
-                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkComma => {
                         __MutualTco1::ParseConstructorPatternBindings(
                             tokens,
-                            (pos + 1i64),
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
                             name,
                             acc,
                         )
@@ -73,7 +75,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> Result<(Pattern, i64)
                                 name,
                                 acc.reverse(),
                             ),
-                            (pos + 1i64),
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     _ => return Err(AverStr::from("Expected ',' or ')' in constructor pattern")),
@@ -86,10 +88,10 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> Result<(Pattern, i64)
 /// Parse bindings inside constructor pattern: Ctor(a, b) or Ctor().
 pub fn parseConstructorPatternBindings(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     name: AverStr,
     acc: &aver_rt::AverList<AverStr>,
-) -> Result<(Pattern, i64), AverStr> {
+) -> Result<(Pattern, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_1(__MutualTco1::ParseConstructorPatternBindings(
         tokens.clone(),
         pos,
@@ -101,10 +103,10 @@ pub fn parseConstructorPatternBindings(
 /// After binding: ',' for more or ')' to end.
 pub fn parseConstructorPatternTail(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     name: AverStr,
     acc: &aver_rt::AverList<AverStr>,
-) -> Result<(Pattern, i64), AverStr> {
+) -> Result<(Pattern, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_1(__MutualTco1::ParseConstructorPatternTail(
         tokens.clone(),
         pos,
@@ -115,17 +117,19 @@ pub fn parseConstructorPatternTail(
 
 #[allow(non_camel_case_types)]
 enum __MutualTco2 {
-    ParseIdentPatternMaybeConstructor(aver_rt::AverList<Token>, i64, AverStr),
-    ParseIdentPatternDotted(aver_rt::AverList<Token>, i64, AverStr),
+    ParseIdentPatternMaybeConstructor(aver_rt::AverList<Token>, aver_rt::AverInt, AverStr),
+    ParseIdentPatternDotted(aver_rt::AverList<Token>, aver_rt::AverInt, AverStr),
 }
 
-fn __mutual_tco_trampoline_2(mut __state: __MutualTco2) -> Result<(Pattern, i64), AverStr> {
+fn __mutual_tco_trampoline_2(
+    mut __state: __MutualTco2,
+) -> Result<(Pattern, aver_rt::AverInt), AverStr> {
     loop {
         __state = match __state {
             __MutualTco2::ParseIdentPatternMaybeConstructor(mut tokens, mut pos, mut name) => {
                 crate::cancel_checkpoint();
-                let nextPos = (pos + 1i64);
-                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+                let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
+                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkDot => {
             __MutualTco2::ParseIdentPatternDotted(tokens, nextPos, name)
         },
@@ -139,11 +143,11 @@ fn __mutual_tco_trampoline_2(mut __state: __MutualTco2) -> Result<(Pattern, i64)
             }
             __MutualTco2::ParseIdentPatternDotted(mut tokens, mut pos, mut prefix) => {
                 crate::cancel_checkpoint();
-                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkIdent(s) => {
                         __MutualTco2::ParseIdentPatternMaybeConstructor(
                             tokens,
-                            (pos + 1i64),
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
                             ((prefix + &AverStr::from(".")) + &s),
                         )
                     }
@@ -157,9 +161,9 @@ fn __mutual_tco_trampoline_2(mut __state: __MutualTco2) -> Result<(Pattern, i64)
 /// Check for dot-qualified name, constructor pattern, or plain variable.
 pub fn parseIdentPatternMaybeConstructor(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     name: AverStr,
-) -> Result<(Pattern, i64), AverStr> {
+) -> Result<(Pattern, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_2(__MutualTco2::ParseIdentPatternMaybeConstructor(
         tokens.clone(),
         pos,
@@ -170,9 +174,9 @@ pub fn parseIdentPatternMaybeConstructor(
 /// After dot: read next ident and check for ( or another dot.
 pub fn parseIdentPatternDotted(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     prefix: AverStr,
-) -> Result<(Pattern, i64), AverStr> {
+) -> Result<(Pattern, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_2(__MutualTco2::ParseIdentPatternDotted(
         tokens.clone(),
         pos,
@@ -182,27 +186,35 @@ pub fn parseIdentPatternDotted(
 
 #[allow(non_camel_case_types)]
 enum __MutualTco3 {
-    ParseParamList(aver_rt::AverList<Token>, i64, aver_rt::AverList<AverStr>),
-    ParseParamListTail(aver_rt::AverList<Token>, i64, aver_rt::AverList<AverStr>),
+    ParseParamList(
+        aver_rt::AverList<Token>,
+        aver_rt::AverInt,
+        aver_rt::AverList<AverStr>,
+    ),
+    ParseParamListTail(
+        aver_rt::AverList<Token>,
+        aver_rt::AverInt,
+        aver_rt::AverList<AverStr>,
+    ),
 }
 
 fn __mutual_tco_trampoline_3(
     mut __state: __MutualTco3,
-) -> Result<(aver_rt::AverList<AverStr>, i64), AverStr> {
+) -> Result<(aver_rt::AverList<AverStr>, aver_rt::AverInt), AverStr> {
     loop {
         __state = match __state {
             __MutualTco3::ParseParamList(mut tokens, mut pos, mut acc) => {
                 crate::cancel_checkpoint();
-                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkRParen => {
-                        return Ok((acc.reverse(), (pos + 1i64)));
+                        return Ok((acc.reverse(), pos.add(&aver_rt::AverInt::from_i64(1))));
                     }
                     crate::aver_generated::domain::token::Token::TkIdent(name) => {
                         __MutualTco3::ParseParamListTail(
                             tokens.clone(),
                             crate::aver_generated::domain::parser_match::skipTypeAnnotation(
                                 &tokens,
-                                (pos + 1i64),
+                                pos.add(&aver_rt::AverInt::from_i64(1)),
                             ),
                             aver_rt::AverList::prepend(name, &acc),
                         )
@@ -212,12 +224,16 @@ fn __mutual_tco_trampoline_3(
             }
             __MutualTco3::ParseParamListTail(mut tokens, mut pos, mut acc) => {
                 crate::cancel_checkpoint();
-                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkRParen => {
-                        return Ok((acc.reverse(), (pos + 1i64)));
+                        return Ok((acc.reverse(), pos.add(&aver_rt::AverInt::from_i64(1))));
                     }
                     crate::aver_generated::domain::token::Token::TkComma => {
-                        __MutualTco3::ParseParamList(tokens, (pos + 1i64), acc)
+                        __MutualTco3::ParseParamList(
+                            tokens,
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            acc,
+                        )
                     }
                     _ => return Err(AverStr::from("Expected ',' or ')' in parameter list")),
                 }
@@ -229,9 +245,9 @@ fn __mutual_tco_trampoline_3(
 /// Parse comma-separated parameter names until ')'.
 pub fn parseParamList(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     acc: &aver_rt::AverList<AverStr>,
-) -> Result<(aver_rt::AverList<AverStr>, i64), AverStr> {
+) -> Result<(aver_rt::AverList<AverStr>, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_3(__MutualTco3::ParseParamList(
         tokens.clone(),
         pos,
@@ -242,9 +258,9 @@ pub fn parseParamList(
 /// After a param name: ',' for more or ')' to end.
 pub fn parseParamListTail(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     acc: &aver_rt::AverList<AverStr>,
-) -> Result<(aver_rt::AverList<AverStr>, i64), AverStr> {
+) -> Result<(aver_rt::AverList<AverStr>, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_3(__MutualTco3::ParseParamListTail(
         tokens.clone(),
         pos,
@@ -254,21 +270,35 @@ pub fn parseParamListTail(
 
 #[allow(non_camel_case_types)]
 enum __MutualTco4 {
-    ParseTuplePatternElements(aver_rt::AverList<Token>, i64, aver_rt::AverList<Pattern>),
-    ParseTuplePatternElement(aver_rt::AverList<Token>, i64, aver_rt::AverList<Pattern>),
-    ParseTuplePatternElementTail(aver_rt::AverList<Token>, i64, aver_rt::AverList<Pattern>),
+    ParseTuplePatternElements(
+        aver_rt::AverList<Token>,
+        aver_rt::AverInt,
+        aver_rt::AverList<Pattern>,
+    ),
+    ParseTuplePatternElement(
+        aver_rt::AverList<Token>,
+        aver_rt::AverInt,
+        aver_rt::AverList<Pattern>,
+    ),
+    ParseTuplePatternElementTail(
+        aver_rt::AverList<Token>,
+        aver_rt::AverInt,
+        aver_rt::AverList<Pattern>,
+    ),
 }
 
-fn __mutual_tco_trampoline_4(mut __state: __MutualTco4) -> Result<(Pattern, i64), AverStr> {
+fn __mutual_tco_trampoline_4(
+    mut __state: __MutualTco4,
+) -> Result<(Pattern, aver_rt::AverInt), AverStr> {
     loop {
         __state = match __state {
             __MutualTco4::ParseTuplePatternElements(mut tokens, mut pos, mut acc) => {
                 crate::cancel_checkpoint();
-                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkRParen => {
                         return Ok((
                             crate::aver_generated::domain::ast::Pattern::PatTuple(acc.reverse()),
-                            (pos + 1i64),
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     _ => __MutualTco4::ParseTuplePatternElement(tokens, pos, acc),
@@ -288,14 +318,18 @@ fn __mutual_tco_trampoline_4(mut __state: __MutualTco4) -> Result<(Pattern, i64)
             }
             __MutualTco4::ParseTuplePatternElementTail(mut tokens, mut pos, mut acc) => {
                 crate::cancel_checkpoint();
-                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkComma => {
-                        __MutualTco4::ParseTuplePatternElements(tokens, (pos + 1i64), acc)
+                        __MutualTco4::ParseTuplePatternElements(
+                            tokens,
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            acc,
+                        )
                     }
                     crate::aver_generated::domain::token::Token::TkRParen => {
                         return Ok((
                             crate::aver_generated::domain::ast::Pattern::PatTuple(acc.reverse()),
-                            (pos + 1i64),
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     _ => return Err(AverStr::from("Expected ',' or ')' in tuple pattern")),
@@ -308,9 +342,9 @@ fn __mutual_tco_trampoline_4(mut __state: __MutualTco4) -> Result<(Pattern, i64)
 /// Parse elements of a tuple pattern.
 pub fn parseTuplePatternElements(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     acc: &aver_rt::AverList<Pattern>,
-) -> Result<(Pattern, i64), AverStr> {
+) -> Result<(Pattern, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::ParseTuplePatternElements(
         tokens.clone(),
         pos,
@@ -321,9 +355,9 @@ pub fn parseTuplePatternElements(
 /// Parse one pattern element and continue.
 pub fn parseTuplePatternElement(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     acc: &aver_rt::AverList<Pattern>,
-) -> Result<(Pattern, i64), AverStr> {
+) -> Result<(Pattern, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::ParseTuplePatternElement(
         tokens.clone(),
         pos,
@@ -334,9 +368,9 @@ pub fn parseTuplePatternElement(
 /// After element: ',' for more or ')' to end.
 pub fn parseTuplePatternElementTail(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     acc: &aver_rt::AverList<Pattern>,
-) -> Result<(Pattern, i64), AverStr> {
+) -> Result<(Pattern, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::ParseTuplePatternElementTail(
         tokens.clone(),
         pos,
@@ -346,17 +380,17 @@ pub fn parseTuplePatternElementTail(
 
 #[allow(non_camel_case_types)]
 enum __MutualTco5 {
-    SkipBlockFlat(aver_rt::AverList<Token>, i64),
-    SkipBlockFlatAfterNewline(aver_rt::AverList<Token>, i64),
+    SkipBlockFlat(aver_rt::AverList<Token>, aver_rt::AverInt),
+    SkipBlockFlatAfterNewline(aver_rt::AverList<Token>, aver_rt::AverInt),
 }
 
-fn __mutual_tco_trampoline_5(mut __state: __MutualTco5) -> i64 {
+fn __mutual_tco_trampoline_5(mut __state: __MutualTco5) -> aver_rt::AverInt {
     loop {
         __state = match __state {
             __MutualTco5::SkipBlockFlat(mut tokens, mut pos) => {
                 crate::cancel_checkpoint();
-                let nextPos = (pos + 1i64);
-                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+                let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
+                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkEof => return pos,
                     crate::aver_generated::domain::token::Token::TkNewline => {
                         __MutualTco5::SkipBlockFlatAfterNewline(tokens, nextPos)
@@ -366,7 +400,7 @@ fn __mutual_tco_trampoline_5(mut __state: __MutualTco5) -> i64 {
             }
             __MutualTco5::SkipBlockFlatAfterNewline(mut tokens, mut pos) => {
                 crate::cancel_checkpoint();
-                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkEof => return pos,
                     crate::aver_generated::domain::token::Token::TkNewline => return pos,
                     crate::aver_generated::domain::token::Token::TkFn => return pos,
@@ -402,30 +436,41 @@ fn __mutual_tco_trampoline_5(mut __state: __MutualTco5) -> i64 {
 }
 
 /// Fallback: skip until blank line, fn, or EOF.
-pub fn skipBlockFlat(tokens: &aver_rt::AverList<Token>, pos: i64) -> i64 {
+pub fn skipBlockFlat(tokens: &aver_rt::AverList<Token>, pos: aver_rt::AverInt) -> aver_rt::AverInt {
     __mutual_tco_trampoline_5(__MutualTco5::SkipBlockFlat(tokens.clone(), pos))
 }
 
 /// After newline: another newline or fn/type/record/verify/EOF = end of block.
-pub fn skipBlockFlatAfterNewline(tokens: &aver_rt::AverList<Token>, pos: i64) -> i64 {
+pub fn skipBlockFlatAfterNewline(
+    tokens: &aver_rt::AverList<Token>,
+    pos: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     __mutual_tco_trampoline_5(__MutualTco5::SkipBlockFlatAfterNewline(tokens.clone(), pos))
 }
 
 /// Token at position, or TkEof if past end.
 #[inline(always)]
-pub fn tokenAt(tokens: &aver_rt::AverList<Token>, pos: i64) -> Token {
+pub fn tokenAt(tokens: &aver_rt::AverList<Token>, pos: aver_rt::AverInt) -> Token {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::parser_match::tokenAtWalk(tokens.clone(), pos, 0i64)
+    crate::aver_generated::domain::parser_match::tokenAtWalk(
+        tokens.clone(),
+        pos,
+        aver_rt::AverInt::from_i64(0),
+    )
 }
 
 /// Walk the list to find token at target index.
 #[inline(always)]
-pub fn tokenAtWalk(mut tokens: aver_rt::AverList<Token>, mut target: i64, mut idx: i64) -> Token {
+pub fn tokenAtWalk(
+    mut tokens: aver_rt::AverList<Token>,
+    mut target: aver_rt::AverInt,
+    mut idx: aver_rt::AverInt,
+) -> Token {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(tokens, [] => { return crate::aver_generated::domain::token::Token::TkEof; }, [t, rest] => { if (idx == target) { return t; } else { {
             let __tco0 = rest;
-            let __tco2 = (idx + 1i64);
+            let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
             tokens = __tco0;
             idx = __tco2;
             continue;
@@ -444,19 +489,21 @@ pub fn isToken(t: &Token, expected: &Token) -> bool {
 #[inline(always)]
 pub fn expect(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     expected: &Token,
-) -> Result<i64, AverStr> {
+) -> Result<aver_rt::AverInt, AverStr> {
     crate::cancel_checkpoint();
-    let t = crate::aver_generated::domain::parser_match::tokenAt(tokens, pos);
+    let t = crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone());
     if crate::aver_generated::domain::parser_match::isToken(&t, expected) {
-        Ok((pos + 1i64))
+        Ok(pos.add(&aver_rt::AverInt::from_i64(1)))
     } else {
         Err(aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = {
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity((47i64) as usize);
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(47)).to_usize().unwrap_or(0),
+                        );
                         __b.push_str(&AverStr::from("Expected "));
                         __b
                     };
@@ -477,12 +524,15 @@ pub fn expect(
 }
 
 /// Skip past any newline tokens.
-pub fn skipNewlines(mut tokens: aver_rt::AverList<Token>, mut pos: i64) -> i64 {
+pub fn skipNewlines(
+    mut tokens: aver_rt::AverList<Token>,
+    mut pos: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+        match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkNewline => {
-                let __tco1 = (pos + 1i64);
+                let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
                 pos = __tco1;
                 continue;
             }
@@ -494,11 +544,14 @@ pub fn skipNewlines(mut tokens: aver_rt::AverList<Token>, mut pos: i64) -> i64 {
 }
 
 /// Skip newlines and stray DEDENT tokens at top level.
-pub fn skipNewlinesAndDedents(mut tokens: aver_rt::AverList<Token>, mut pos: i64) -> i64 {
+pub fn skipNewlinesAndDedents(
+    mut tokens: aver_rt::AverList<Token>,
+    mut pos: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos = (pos + 1i64);
-        match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+        let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
+        match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkNewline => {
                 let __tco1 = nextPos;
                 pos = __tco1;
@@ -519,10 +572,10 @@ pub fn skipNewlinesAndDedents(mut tokens: aver_rt::AverList<Token>, mut pos: i64
 /// Parse a match pattern: INT literal, _ (wildcard), or variable.
 pub fn parsePattern(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
-) -> Result<(Pattern, i64), AverStr> {
+    pos: aver_rt::AverInt,
+) -> Result<(Pattern, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
-    let nextPos = (pos + 1i64);
+    let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
     let t = crate::aver_generated::domain::parser_match::tokenAt(tokens, pos);
     match t.clone() {
         crate::aver_generated::domain::token::Token::TkInt(n) => Ok((
@@ -556,7 +609,9 @@ pub fn parsePattern(
         }
         _ => Err(aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity((38i64) as usize);
+                let mut __b = aver_rt::Buffer::with_capacity(
+                    (aver_rt::AverInt::from_i64(38)).to_usize().unwrap_or(0),
+                );
                 __b.push_str(&AverStr::from("Expected pattern, got "));
                 __b
             };
@@ -572,9 +627,9 @@ pub fn parsePattern(
 #[inline(always)]
 pub fn parseIdentPattern(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     name: AverStr,
-) -> Result<(Pattern, i64), AverStr> {
+) -> Result<(Pattern, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     if (name == AverStr::from("_")) {
         Ok((crate::aver_generated::domain::ast::Pattern::PatWild, pos))
@@ -588,8 +643,8 @@ pub fn parseIdentPattern(
 /// Parse tuple pattern: (pat, pat, ...).
 pub fn parseTuplePattern(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
-) -> Result<(Pattern, i64), AverStr> {
+    pos: aver_rt::AverInt,
+) -> Result<(Pattern, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::parser_match::parseTuplePatternElements(
         tokens,
@@ -601,18 +656,18 @@ pub fn parseTuplePattern(
 /// Parse [] or [h, ..t] list pattern.
 pub fn parseListPattern(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
-) -> Result<(Pattern, i64), AverStr> {
+    pos: aver_rt::AverInt,
+) -> Result<(Pattern, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos) {
+    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkRBracket => Ok((
             crate::aver_generated::domain::ast::Pattern::PatEmpty,
-            (pos + 1i64),
+            pos.add(&aver_rt::AverInt::from_i64(1)),
         )),
         crate::aver_generated::domain::token::Token::TkIdent(head) => {
             crate::aver_generated::domain::parser_match::parseConsPattern(
                 tokens,
-                (pos + 1i64),
+                pos.add(&aver_rt::AverInt::from_i64(1)),
                 head,
             )
         }
@@ -623,9 +678,9 @@ pub fn parseListPattern(
 /// Parse [h, ..t] after reading head ident.
 pub fn parseConsPattern(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     head: AverStr,
-) -> Result<(Pattern, i64), AverStr> {
+) -> Result<(Pattern, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let pos2 = crate::aver_generated::domain::parser_match::expect(
         tokens,
@@ -643,7 +698,7 @@ pub fn parseConsPattern(
             crate::aver_generated::domain::ast::Pattern::PatCons(head, tail),
             crate::aver_generated::domain::parser_match::expect(
                 tokens,
-                (pos3 + 1i64),
+                pos3.add(&aver_rt::AverInt::from_i64(1)),
                 &crate::aver_generated::domain::token::Token::TkRBracket,
             )?,
         )),
@@ -652,21 +707,27 @@ pub fn parseConsPattern(
 }
 
 /// Skip optional : Type annotation.
-pub fn skipTypeAnnotation(tokens: &aver_rt::AverList<Token>, pos: i64) -> i64 {
+pub fn skipTypeAnnotation(
+    tokens: &aver_rt::AverList<Token>,
+    pos: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos) {
+    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkColon => {
-            crate::aver_generated::domain::parser_match::skipTypeExpr(tokens, (pos + 1i64))
+            crate::aver_generated::domain::parser_match::skipTypeExpr(
+                tokens,
+                pos.add(&aver_rt::AverInt::from_i64(1)),
+            )
         }
         _ => pos,
     }
 }
 
 /// Skip a type expression (ident, possibly with generics).
-pub fn skipTypeExpr(tokens: &aver_rt::AverList<Token>, pos: i64) -> i64 {
+pub fn skipTypeExpr(tokens: &aver_rt::AverList<Token>, pos: aver_rt::AverInt) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    let nextPos = (pos + 1i64);
-    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos) {
+    let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
+    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkIdent(_) => {
             crate::aver_generated::domain::parser_match::skipTypeExprTail(tokens.clone(), nextPos)
         }
@@ -674,7 +735,7 @@ pub fn skipTypeExpr(tokens: &aver_rt::AverList<Token>, pos: i64) -> i64 {
             crate::aver_generated::domain::parser_match::skipUntilClose(
                 tokens.clone(),
                 nextPos,
-                1i64,
+                aver_rt::AverInt::from_i64(1),
             )
         }
         _ => pos,
@@ -682,20 +743,25 @@ pub fn skipTypeExpr(tokens: &aver_rt::AverList<Token>, pos: i64) -> i64 {
 }
 
 /// After type ident: possibly <...> generics or .Qualified.
-pub fn skipTypeExprTail(mut tokens: aver_rt::AverList<Token>, mut pos: i64) -> i64 {
+pub fn skipTypeExprTail(
+    mut tokens: aver_rt::AverList<Token>,
+    mut pos: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos = (pos + 1i64);
-        match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+        let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
+        match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkLt => {
                 return crate::aver_generated::domain::parser_match::skipUntilGt(
-                    tokens, nextPos, 1i64,
+                    tokens,
+                    nextPos,
+                    aver_rt::AverInt::from_i64(1),
                 );
             }
             crate::aver_generated::domain::token::Token::TkDot => {
                 match crate::aver_generated::domain::parser_match::tokenAt(&tokens, nextPos) {
                     crate::aver_generated::domain::token::Token::TkIdent(_) => {
-                        let __tco1 = (pos + 2i64);
+                        let __tco1 = pos.add(&aver_rt::AverInt::from_i64(2));
                         pos = __tco1;
                         continue;
                     }
@@ -713,27 +779,31 @@ pub fn skipTypeExprTail(mut tokens: aver_rt::AverList<Token>, mut pos: i64) -> i
 
 /// Skip until matching > for generic type params.
 #[inline(always)]
-pub fn skipUntilGt(mut tokens: aver_rt::AverList<Token>, mut pos: i64, mut depth: i64) -> i64 {
+pub fn skipUntilGt(
+    mut tokens: aver_rt::AverList<Token>,
+    mut pos: aver_rt::AverInt,
+    mut depth: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos = (pos + 1i64);
-        if (depth == 0i64) {
+        let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
+        if (depth == aver_rt::AverInt::from_i64(0)) {
             return pos;
         } else {
-            match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+            match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
                 crate::aver_generated::domain::token::Token::TkEof => {
                     return pos;
                 }
                 crate::aver_generated::domain::token::Token::TkLt => {
                     let __tco1 = nextPos;
-                    let __tco2 = (depth + 1i64);
+                    let __tco2 = depth.add(&aver_rt::AverInt::from_i64(1));
                     pos = __tco1;
                     depth = __tco2;
                     continue;
                 }
                 crate::aver_generated::domain::token::Token::TkGt => {
                     let __tco1 = nextPos;
-                    let __tco2 = (depth - 1i64);
+                    let __tco2 = depth.sub(&aver_rt::AverInt::from_i64(1));
                     pos = __tco1;
                     depth = __tco2;
                     continue;
@@ -750,27 +820,31 @@ pub fn skipUntilGt(mut tokens: aver_rt::AverList<Token>, mut pos: i64, mut depth
 
 /// Skip until matching ) for tuple types.
 #[inline(always)]
-pub fn skipUntilClose(mut tokens: aver_rt::AverList<Token>, mut pos: i64, mut depth: i64) -> i64 {
+pub fn skipUntilClose(
+    mut tokens: aver_rt::AverList<Token>,
+    mut pos: aver_rt::AverInt,
+    mut depth: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos = (pos + 1i64);
-        if (depth == 0i64) {
+        let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
+        if (depth == aver_rt::AverInt::from_i64(0)) {
             return pos;
         } else {
-            match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+            match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
                 crate::aver_generated::domain::token::Token::TkEof => {
                     return pos;
                 }
                 crate::aver_generated::domain::token::Token::TkLParen => {
                     let __tco1 = nextPos;
-                    let __tco2 = (depth + 1i64);
+                    let __tco2 = depth.add(&aver_rt::AverInt::from_i64(1));
                     pos = __tco1;
                     depth = __tco2;
                     continue;
                 }
                 crate::aver_generated::domain::token::Token::TkRParen => {
                     let __tco1 = nextPos;
-                    let __tco2 = (depth - 1i64);
+                    let __tco2 = depth.sub(&aver_rt::AverInt::from_i64(1));
                     pos = __tco1;
                     depth = __tco2;
                     continue;
@@ -786,22 +860,31 @@ pub fn skipUntilClose(mut tokens: aver_rt::AverList<Token>, mut pos: i64, mut de
 }
 
 /// Skip optional -> ReturnType annotation.
-pub fn skipReturnType(tokens: &aver_rt::AverList<Token>, pos: i64) -> i64 {
+pub fn skipReturnType(
+    tokens: &aver_rt::AverList<Token>,
+    pos: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos) {
+    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkArrow => {
-            crate::aver_generated::domain::parser_match::skipTypeExpr(tokens, (pos + 1i64))
+            crate::aver_generated::domain::parser_match::skipTypeExpr(
+                tokens,
+                pos.add(&aver_rt::AverInt::from_i64(1)),
+            )
         }
         _ => pos,
     }
 }
 
 /// Skip optional ? description and ! [effects] lines (including multi-line effects).
-pub fn skipDescAndEffects(mut tokens: aver_rt::AverList<Token>, mut pos: i64) -> i64 {
+pub fn skipDescAndEffects(
+    mut tokens: aver_rt::AverList<Token>,
+    mut pos: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos = (pos + 1i64);
-        match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+        let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
+        match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkQuestion => {
                 let __tco0 = tokens.clone();
                 let __tco1 =
@@ -826,13 +909,16 @@ pub fn skipDescAndEffects(mut tokens: aver_rt::AverList<Token>, mut pos: i64) ->
 }
 
 /// Skip ! [effects] block — may span multiple lines with INDENT/DEDENT.
-pub fn skipEffectsBlock(tokens: &aver_rt::AverList<Token>, pos: i64) -> i64 {
+pub fn skipEffectsBlock(
+    tokens: &aver_rt::AverList<Token>,
+    pos: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos) {
+    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkLBracket => {
             crate::aver_generated::domain::parser_match::skipUntilRBracket(
                 tokens.clone(),
-                (pos + 1i64),
+                pos.add(&aver_rt::AverInt::from_i64(1)),
             )
         }
         _ => crate::aver_generated::domain::parser_match::skipToNextLine(tokens.clone(), pos),
@@ -840,11 +926,14 @@ pub fn skipEffectsBlock(tokens: &aver_rt::AverList<Token>, pos: i64) -> i64 {
 }
 
 /// Skip tokens until ] then past any trailing newline.
-pub fn skipUntilRBracket(mut tokens: aver_rt::AverList<Token>, mut pos: i64) -> i64 {
+pub fn skipUntilRBracket(
+    mut tokens: aver_rt::AverList<Token>,
+    mut pos: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos = (pos + 1i64);
-        match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+        let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
+        match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkEof => {
                 return pos;
             }
@@ -861,11 +950,14 @@ pub fn skipUntilRBracket(mut tokens: aver_rt::AverList<Token>, mut pos: i64) -> 
 }
 
 /// Skip tokens until newline, then past it.
-pub fn skipToNextLine(mut tokens: aver_rt::AverList<Token>, mut pos: i64) -> i64 {
+pub fn skipToNextLine(
+    mut tokens: aver_rt::AverList<Token>,
+    mut pos: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos = (pos + 1i64);
-        match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+        let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
+        match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkEof => {
                 return pos;
             }
@@ -882,15 +974,15 @@ pub fn skipToNextLine(mut tokens: aver_rt::AverList<Token>, mut pos: i64) -> i64
 }
 
 /// Skip tokens until matching DEDENT, or fall back to heuristic for flat streams.
-pub fn skipBlock(tokens: &aver_rt::AverList<Token>, pos: i64) -> i64 {
+pub fn skipBlock(tokens: &aver_rt::AverList<Token>, pos: aver_rt::AverInt) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     let pos2 = crate::aver_generated::domain::parser_match::skipNewlines(tokens.clone(), pos);
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos2.clone()) {
         crate::aver_generated::domain::token::Token::TkIndent => {
             crate::aver_generated::domain::parser_match::skipIndentBlock(
                 tokens.clone(),
-                (pos2 + 1i64),
-                1i64,
+                pos2.add(&aver_rt::AverInt::from_i64(1)),
+                aver_rt::AverInt::from_i64(1),
             )
         }
         crate::aver_generated::domain::token::Token::TkEof => pos2,
@@ -899,26 +991,30 @@ pub fn skipBlock(tokens: &aver_rt::AverList<Token>, pos: i64) -> i64 {
 }
 
 /// Skip until matching DEDENT.
-pub fn skipIndentBlock(mut tokens: aver_rt::AverList<Token>, mut pos: i64, mut depth: i64) -> i64 {
+pub fn skipIndentBlock(
+    mut tokens: aver_rt::AverList<Token>,
+    mut pos: aver_rt::AverInt,
+    mut depth: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos = (pos + 1i64);
-        match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+        let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
+        match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkEof => {
                 return pos;
             }
             crate::aver_generated::domain::token::Token::TkIndent => {
                 let __tco1 = nextPos;
-                let __tco2 = (depth + 1i64);
+                let __tco2 = depth.add(&aver_rt::AverInt::from_i64(1));
                 pos = __tco1;
                 depth = __tco2;
                 continue;
             }
             crate::aver_generated::domain::token::Token::TkDedent => {
-                if (depth > 1i64) {
+                if (depth > aver_rt::AverInt::from_i64(1)) {
                     {
                         let __tco1 = nextPos;
-                        let __tco2 = (depth - 1i64);
+                        let __tco2 = depth.sub(&aver_rt::AverInt::from_i64(1));
                         pos = __tco1;
                         depth = __tco2;
                         continue;
@@ -939,10 +1035,10 @@ pub fn skipIndentBlock(mut tokens: aver_rt::AverList<Token>, mut pos: i64, mut d
 /// Parse module header: find depends list, skip everything else. Returns (deps, endPos).
 pub fn parseModuleHeader(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
-) -> (aver_rt::AverList<AverStr>, i64) {
+    pos: aver_rt::AverInt,
+) -> (aver_rt::AverList<AverStr>, aver_rt::AverInt) {
     crate::cancel_checkpoint();
-    let endPos = crate::aver_generated::domain::parser_match::skipBlock(tokens, pos);
+    let endPos = crate::aver_generated::domain::parser_match::skipBlock(tokens, pos.clone());
     let depList = crate::aver_generated::domain::parser_match::findDependsInRange(
         tokens.clone(),
         pos,
@@ -955,12 +1051,12 @@ pub fn parseModuleHeader(
 #[inline(always)]
 pub fn findDependsInRange(
     mut tokens: aver_rt::AverList<Token>,
-    mut pos: i64,
-    mut endPos: i64,
+    mut pos: aver_rt::AverInt,
+    mut endPos: aver_rt::AverInt,
 ) -> aver_rt::AverList<AverStr> {
     loop {
         crate::cancel_checkpoint();
-        let nextPos = (pos + 1i64);
+        let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
         if (pos < endPos) {
             match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
                 crate::aver_generated::domain::token::Token::TkIdent(kw) => {
@@ -991,15 +1087,15 @@ pub fn findDependsInRange(
 /// Parse [Name, Name] after depends keyword.
 pub fn findDependsListAt(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
-    endPos: i64,
+    pos: aver_rt::AverInt,
+    endPos: aver_rt::AverInt,
 ) -> aver_rt::AverList<AverStr> {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos) {
+    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkLBracket => {
             crate::aver_generated::domain::parser_match::collectDependsNames(
                 tokens.clone(),
-                (pos + 1i64),
+                pos.add(&aver_rt::AverInt::from_i64(1)),
                 endPos,
                 aver_rt::AverList::empty(),
             )
@@ -1012,13 +1108,13 @@ pub fn findDependsListAt(
 #[inline(always)]
 pub fn collectDependsNames(
     mut tokens: aver_rt::AverList<Token>,
-    mut pos: i64,
-    mut endPos: i64,
+    mut pos: aver_rt::AverInt,
+    mut endPos: aver_rt::AverInt,
     mut acc: aver_rt::AverList<AverStr>,
 ) -> aver_rt::AverList<AverStr> {
     loop {
         crate::cancel_checkpoint();
-        let nextPos = (pos + 1i64);
+        let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
         if (pos < endPos) {
             match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
                 crate::aver_generated::domain::token::Token::TkRBracket => {
@@ -1044,7 +1140,7 @@ pub fn collectDependsNames(
 }
 
 /// Check if we've reached the end of a function body (flat mode).
-pub fn isBodyEndFlat(tokens: &aver_rt::AverList<Token>, pos: i64) -> bool {
+pub fn isBodyEndFlat(tokens: &aver_rt::AverList<Token>, pos: aver_rt::AverInt) -> bool {
     crate::cancel_checkpoint();
     let t = crate::aver_generated::domain::parser_match::tokenAt(tokens, pos);
     match t {
@@ -1057,7 +1153,7 @@ pub fn isBodyEndFlat(tokens: &aver_rt::AverList<Token>, pos: i64) -> bool {
 }
 
 /// Check if position looks like a match arm start.
-pub fn isArmStart(tokens: &aver_rt::AverList<Token>, pos: i64) -> bool {
+pub fn isArmStart(tokens: &aver_rt::AverList<Token>, pos: aver_rt::AverInt) -> bool {
     crate::cancel_checkpoint();
     let t = crate::aver_generated::domain::parser_match::tokenAt(tokens, pos);
     match t {

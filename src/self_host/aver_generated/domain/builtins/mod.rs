@@ -189,81 +189,81 @@ pub fn callBuiltinFast(
 
 /// Dispatch pre-evaluated args by integer builtin ID. IDs assigned in Ast.builtinNameToId.
 #[inline(always)]
-pub fn callBuiltinByIdValues(id: i64, args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn callBuiltinByIdValues(
+    id: aver_rt::AverInt,
+    args: &aver_rt::AverList<Val>,
+) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = id;
-        if __dispatch_subject == 1i64 {
+        let __dispatch_subject = id.clone();
+        if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
             crate::aver_generated::domain::builtins::builtinMapSet(args)
         } else {
-            if __dispatch_subject == 2i64 {
+            if __dispatch_subject == aver_rt::AverInt::from_i64(2) {
                 crate::aver_generated::domain::builtins::builtinMapGet(args)
             } else {
-                if __dispatch_subject == 3i64 {
+                if __dispatch_subject == aver_rt::AverInt::from_i64(3) {
                     crate::aver_generated::domain::builtins::builtinMapHas(args)
                 } else {
-                    if __dispatch_subject == 4i64 {
+                    if __dispatch_subject == aver_rt::AverInt::from_i64(4) {
                         crate::aver_generated::domain::builtins::builtinMapFromList(args)
                     } else {
-                        if __dispatch_subject == 5i64 {
+                        if __dispatch_subject == aver_rt::AverInt::from_i64(5) {
                             crate::aver_generated::domain::builtins::builtinMapEntries(args)
                         } else {
-                            if __dispatch_subject == 6i64 {
+                            if __dispatch_subject == aver_rt::AverInt::from_i64(6) {
                                 crate::aver_generated::domain::builtins::builtinMapRemove(args)
                             } else {
-                                if __dispatch_subject == 7i64 {
+                                if __dispatch_subject == aver_rt::AverInt::from_i64(7) {
                                     crate::aver_generated::domain::builtins::vector::call(
                                         AverStr::from("Vector.new"),
                                         args,
                                     )
                                 } else {
-                                    if __dispatch_subject == 8i64 {
+                                    if __dispatch_subject == aver_rt::AverInt::from_i64(8) {
                                         crate::aver_generated::domain::builtins::vector::call(
                                             AverStr::from("Vector.get"),
                                             args,
                                         )
                                     } else {
-                                        if __dispatch_subject == 9i64 {
+                                        if __dispatch_subject == aver_rt::AverInt::from_i64(9) {
                                             crate::aver_generated::domain::builtins::vector::call(
                                                 AverStr::from("Vector.set"),
                                                 args,
                                             )
                                         } else {
-                                            if __dispatch_subject == 10i64 {
+                                            if __dispatch_subject == aver_rt::AverInt::from_i64(10)
+                                            {
                                                 crate::aver_generated::domain::builtins::vector::call(AverStr::from("Vector.len"), args)
                                             } else {
-                                                if __dispatch_subject == 11i64 {
+                                                if __dispatch_subject
+                                                    == aver_rt::AverInt::from_i64(11)
+                                                {
                                                     crate::aver_generated::domain::builtins::vector::call(AverStr::from("Vector.fromList"), args)
                                                 } else {
-                                                    if __dispatch_subject == 12i64 {
+                                                    if __dispatch_subject
+                                                        == aver_rt::AverInt::from_i64(12)
+                                                    {
                                                         crate::aver_generated::domain::builtins::vector::call(AverStr::from("List.fromVector"), args)
                                                     } else {
-                                                        if __dispatch_subject == 13i64 {
+                                                        if __dispatch_subject
+                                                            == aver_rt::AverInt::from_i64(13)
+                                                        {
                                                             Ok(crate::aver_generated::domain::value::Val::ValNone)
                                                         } else {
-                                                            if __dispatch_subject == 14i64 {
+                                                            if __dispatch_subject
+                                                                == aver_rt::AverInt::from_i64(14)
+                                                            {
                                                                 crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Option.Some"), args)
                                                             } else {
-                                                                if __dispatch_subject == 15i64 {
+                                                                if __dispatch_subject
+                                                                    == aver_rt::AverInt::from_i64(
+                                                                        15,
+                                                                    )
+                                                                {
                                                                     crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Option.withDefault"), args)
                                                                 } else {
-                                                                    if __dispatch_subject == 16i64 {
-                                                                        crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.Ok"), args)
-                                                                    } else {
-                                                                        if __dispatch_subject
-                                                                            == 17i64
-                                                                        {
-                                                                            crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.Err"), args)
-                                                                        } else {
-                                                                            if __dispatch_subject
-                                                                                == 18i64
-                                                                            {
-                                                                                crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.withDefault"), args)
-                                                                            } else {
-                                                                                if __dispatch_subject == 19i64 { crate::aver_generated::domain::builtins::primitives::callInt(AverStr::from("String.fromInt"), args) } else { if __dispatch_subject == 20i64 { crate::aver_generated::domain::builtins::list::call(AverStr::from("List.take"), args) } else { if __dispatch_subject == 21i64 { crate::aver_generated::domain::builtins::list::call(AverStr::from("List.drop"), args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((36i64) as usize); __b.push_str(&AverStr::from("Unknown builtin ID: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&((id.to_string()).into_aver())))); __b })) } } }
-                                                                            }
-                                                                        }
-                                                                    }
+                                                                    if __dispatch_subject == aver_rt::AverInt::from_i64(16) { crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.Ok"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(17) { crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.Err"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(18) { crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.withDefault"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(19) { crate::aver_generated::domain::builtins::primitives::callInt(AverStr::from("String.fromInt"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(20) { crate::aver_generated::domain::builtins::list::call(AverStr::from("List.take"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(21) { crate::aver_generated::domain::builtins::list::call(AverStr::from("List.drop"), args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("Unknown builtin ID: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&((id.to_string()).into_aver())))); __b })) } } } } } }
                                                                 }
                                                             }
                                                         }
@@ -658,9 +658,11 @@ pub fn builtinMapSize(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
-        crate::aver_generated::domain::value::Val::ValMap(m) => Ok(
-            crate::aver_generated::domain::value::Val::ValInt((m.len() as i64)),
-        ),
+        crate::aver_generated::domain::value::Val::ValMap(m) => {
+            Ok(crate::aver_generated::domain::value::Val::ValInt(
+                aver_rt::AverInt::from_i64(m.len() as i64),
+            ))
+        }
         _ => Err(AverStr::from("Map.size requires a Map")),
     }
 }
@@ -799,7 +801,9 @@ pub fn builtinUnsupportedHostService(name: AverStr) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     Err(aver_rt::AverStr::from({
         let mut __b = {
-            let mut __b = aver_rt::Buffer::with_capacity((68i64) as usize);
+            let mut __b = aver_rt::Buffer::with_capacity(
+                (aver_rt::AverInt::from_i64(68)).to_usize().unwrap_or(0),
+            );
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
             __b
         };
@@ -834,7 +838,15 @@ pub fn builtinHttpServerListenInner(portV: &Val, handlerV: &Val) -> Result<Val, 
                 aver_replay::ReplayValue::to_replay_json(&__effect_arg0),
                 serde_json::Value::String("<handler>".to_string()),
             ],
-            || crate::self_host_support::http_server_listen(__effect_arg0, __effect_arg1),
+            || {
+                crate::self_host_support::http_server_listen(
+                    crate::to_host_i64(
+                        &__effect_arg0,
+                        "HttpServer.listen: port must fit a 64-bit integer",
+                    ),
+                    __effect_arg1,
+                )
+            },
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValUnit),
@@ -893,7 +905,10 @@ pub fn builtinHttpServerListenWithInner(
             ],
             || {
                 crate::self_host_support::http_server_listen_with(
-                    __effect_arg0,
+                    crate::to_host_i64(
+                        &__effect_arg0,
+                        "HttpServer.listen: port must fit a 64-bit integer",
+                    ),
                     __effect_arg1.clone(),
                     __effect_arg2,
                 )
@@ -930,7 +945,21 @@ pub fn builtinRandomIntInner(minV: &Val, maxV: &Val) -> Result<Val, AverStr> {
                 aver_replay::ReplayValue::to_replay_json(&__effect_arg0),
                 aver_replay::ReplayValue::to_replay_json(&__effect_arg1),
             ],
-            || aver_rt::random::random_int(__effect_arg0, __effect_arg1).unwrap(),
+            || {
+                aver_rt::AverInt::from_i64(
+                    aver_rt::random::random_int(
+                        crate::to_host_i64(
+                            &__effect_arg0,
+                            "Random.int: bounds must fit a 64-bit integer",
+                        ),
+                        crate::to_host_i64(
+                            &__effect_arg1,
+                            "Random.int: bounds must fit a 64-bit integer",
+                        ),
+                    )
+                    .unwrap(),
+                )
+            },
         )
     }))
 }
@@ -946,7 +975,12 @@ pub fn builtinTimeSleep(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
         aver_replay::invoke_effect(
             "Time.sleep",
             vec![aver_replay::ReplayValue::to_replay_json(&__effect_arg0)],
-            || aver_rt::time_sleep(__effect_arg0),
+            || {
+                aver_rt::time_sleep(crate::to_host_i64(
+                    &__effect_arg0,
+                    "Time.sleep: ms must fit a 64-bit integer",
+                ))
+            },
         )
     };
     Ok(crate::aver_generated::domain::value::Val::ValUnit)
@@ -957,7 +991,9 @@ pub fn builtinTimeUnixMs(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> 
     crate::cancel_checkpoint();
     Ok(crate::aver_generated::domain::value::Val::ValInt({
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect("Time.unixMs", vec![], || aver_rt::time_unix_ms())
+        aver_replay::invoke_effect("Time.unixMs", vec![], || {
+            aver_rt::AverInt::from_i64(aver_rt::time_unix_ms())
+        })
     }))
 }
 
@@ -989,8 +1025,11 @@ pub fn builtinTerminalNoArg(name: AverStr, args: &aver_rt::AverList<Val>) -> Res
                                 } else {
                                     Err(aver_rt::AverStr::from({
                                         let mut __b = {
-                                            let mut __b =
-                                                aver_rt::Buffer::with_capacity((42i64) as usize);
+                                            let mut __b = aver_rt::Buffer::with_capacity(
+                                                (aver_rt::AverInt::from_i64(42))
+                                                    .to_usize()
+                                                    .unwrap_or(0),
+                                            );
                                             __b.push_str(&AverStr::from(
                                                 "unknown terminal command: ",
                                             ));
@@ -1118,9 +1157,9 @@ pub fn builtinTerminalSize(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr
         crate::cancel_checkpoint();
         aver_replay::invoke_effect("Terminal.size", vec![], || {
             let (w, h) = aver_rt::terminal_size().unwrap();
-            aver_rt::TerminalSize {
-                width: w,
-                height: h,
+            crate::Terminal_Size {
+                width: aver_rt::AverInt::from_i64(w),
+                height: aver_rt::AverInt::from_i64(h),
             }
         })
     };
@@ -1213,7 +1252,19 @@ pub fn builtinTerminalMoveToInner(xV: &Val, yV: &Val) -> Result<Val, AverStr> {
                 aver_replay::ReplayValue::to_replay_json(&__effect_arg0),
                 aver_replay::ReplayValue::to_replay_json(&__effect_arg1),
             ],
-            || aver_rt::terminal_move_to(__effect_arg0, __effect_arg1).unwrap(),
+            || {
+                aver_rt::terminal_move_to(
+                    crate::to_host_i64(
+                        &__effect_arg0,
+                        "Terminal.moveTo: coordinates must fit a 64-bit integer",
+                    ),
+                    crate::to_host_i64(
+                        &__effect_arg1,
+                        "Terminal.moveTo: coordinates must fit a 64-bit integer",
+                    ),
+                )
+                .unwrap()
+            },
         )
     };
     Ok(crate::aver_generated::domain::value::Val::ValUnit)
@@ -1418,7 +1469,9 @@ pub fn tryVariantConstructor(name: AverStr, args: &aver_rt::AverList<Val>) -> Re
         )),
         None => Err(aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity((36i64) as usize);
+                let mut __b = aver_rt::Buffer::with_capacity(
+                    (aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0),
+                );
                 __b.push_str(&AverStr::from("undefined function: "));
                 __b
             };
@@ -1434,8 +1487,8 @@ pub fn splitDotted(name: AverStr) -> Option<(AverStr, AverStr)> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::builtins::splitDottedLoop(
         name.clone(),
-        0i64,
-        (name.chars().count() as i64),
+        aver_rt::AverInt::from_i64(0),
+        aver_rt::AverInt::from_i64(name.chars().count() as i64),
     )
 }
 
@@ -1443,22 +1496,36 @@ pub fn splitDotted(name: AverStr) -> Option<(AverStr, AverStr)> {
 #[inline(always)]
 pub fn splitDottedLoop(
     mut name: AverStr,
-    mut pos: i64,
-    mut total: i64,
+    mut pos: aver_rt::AverInt,
+    mut total: aver_rt::AverInt,
 ) -> Option<(AverStr, AverStr)> {
     loop {
         crate::cancel_checkpoint();
         if (pos < total) {
-            match (name.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
+            match ((pos)
+                .to_usize()
+                .and_then(|__i| name.chars().nth(__i).map(|c| c.to_string())))
+            .into_aver()
+            {
                 Some(c) => {
                     if (c == AverStr::from(".")) {
                         return Some((
-                            (aver_rt::string_slice(&name, 0i64, pos)).into_aver(),
-                            (aver_rt::string_slice(&name, (pos + 1i64), total)).into_aver(),
+                            (aver_rt::string_slice(
+                                &name,
+                                crate::aver_int_clamp_i64(&aver_rt::AverInt::from_i64(0)),
+                                crate::aver_int_clamp_i64(&pos),
+                            ))
+                            .into_aver(),
+                            (aver_rt::string_slice(
+                                &name,
+                                crate::aver_int_clamp_i64(&pos.add(&aver_rt::AverInt::from_i64(1))),
+                                crate::aver_int_clamp_i64(&total),
+                            ))
+                            .into_aver(),
                         ));
                     } else {
                         {
-                            let __tco1 = (pos + 1i64);
+                            let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
                             pos = __tco1;
                             continue;
                         }
@@ -1977,7 +2044,14 @@ pub fn builtinTcpSendInner(hostV: &Val, portV: &Val, msgV: &Val) -> Result<Val, 
                 aver_replay::ReplayValue::to_replay_json(&__effect_arg1),
                 aver_replay::ReplayValue::to_replay_json(&__effect_arg2),
             ],
-            || (aver_rt::tcp::send(&__effect_arg0, __effect_arg1, &__effect_arg2)).into_aver(),
+            || {
+                (aver_rt::tcp::send(
+                    &__effect_arg0,
+                    crate::to_host_i64(&__effect_arg1, "Tcp.send: port must be an Int"),
+                    &__effect_arg2,
+                ))
+                .into_aver()
+            },
         )
     } {
         Ok(resp) => Ok(crate::aver_generated::domain::value::Val::ValOk(
@@ -2014,7 +2088,13 @@ pub fn builtinTcpPingInner(hostV: &Val, portV: &Val) -> Result<Val, AverStr> {
                 aver_replay::ReplayValue::to_replay_json(&__effect_arg0),
                 aver_replay::ReplayValue::to_replay_json(&__effect_arg1),
             ],
-            || (aver_rt::tcp::ping(&__effect_arg0, __effect_arg1)).into_aver(),
+            || {
+                (aver_rt::tcp::ping(
+                    &__effect_arg0,
+                    crate::to_host_i64(&__effect_arg1, "Tcp.ping: port must be an Int"),
+                ))
+                .into_aver()
+            },
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
@@ -2051,7 +2131,13 @@ pub fn builtinTcpConnectInner(hostV: &Val, portV: &Val) -> Result<Val, AverStr> 
                 aver_replay::ReplayValue::to_replay_json(&__effect_arg0),
                 aver_replay::ReplayValue::to_replay_json(&__effect_arg1),
             ],
-            || (aver_rt::tcp::connect(&__effect_arg0, __effect_arg1)).into_aver(),
+            || {
+                (aver_rt::tcp::connect(
+                    &__effect_arg0,
+                    crate::to_host_i64(&__effect_arg1, "Tcp.connect: port must be an Int"),
+                ))
+                .into_aver()
+            },
         )
     } {
         Ok(conn) => Ok(crate::aver_generated::domain::value::Val::ValOk(
@@ -2167,7 +2253,13 @@ pub fn builtinTcpWriteLineInner(connV: &Val, lineV: &Val) -> Result<Val, AverStr
                 aver_replay::ReplayValue::to_replay_json(&__effect_arg0),
                 aver_replay::ReplayValue::to_replay_json(&__effect_arg1),
             ],
-            || (aver_rt::tcp::write_line(&__effect_arg0, &__effect_arg1)).into_aver(),
+            || {
+                (aver_rt::tcp::write_line(
+                    &crate::tcp_connection_to_host(&__effect_arg0),
+                    &__effect_arg1,
+                ))
+                .into_aver()
+            },
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
@@ -2190,7 +2282,10 @@ pub fn builtinTcpReadLine(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr>
         aver_replay::invoke_effect(
             "Tcp.readLine",
             vec![aver_replay::ReplayValue::to_replay_json(&__effect_arg0)],
-            || (aver_rt::tcp::read_line(&__effect_arg0)).into_aver(),
+            || {
+                (aver_rt::tcp::read_line(&crate::tcp_connection_to_host(&__effect_arg0)))
+                    .into_aver()
+            },
         )
     } {
         Ok(line) => Ok(crate::aver_generated::domain::value::Val::ValOk(
@@ -2213,7 +2308,7 @@ pub fn builtinTcpClose(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
         aver_replay::invoke_effect(
             "Tcp.close",
             vec![aver_replay::ReplayValue::to_replay_json(&__effect_arg0)],
-            || (aver_rt::tcp::close(&__effect_arg0)).into_aver(),
+            || (aver_rt::tcp::close(&crate::tcp_connection_to_host(&__effect_arg0))).into_aver(),
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(

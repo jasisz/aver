@@ -80,7 +80,7 @@ pub fn runFastLeafSlot(
 /// Execute a bool-slot branch with precomputed leaf results.
 pub fn fastBoolSlotBranch(
     calleeEnv: &aver_rt::AverVector<Val>,
-    slot: i64,
+    slot: aver_rt::AverInt,
     thenLeaf: &FastLeaf,
     elseLeaf: &FastLeaf,
 ) -> Result<Val, AverStr> {
@@ -99,8 +99,8 @@ pub fn fastBoolSlotBranch(
 /// Execute an int equality branch with precomputed leaf results.
 pub fn fastEqIntBranch(
     calleeEnv: &aver_rt::AverVector<Val>,
-    slot: i64,
-    expected: i64,
+    slot: aver_rt::AverInt,
+    expected: aver_rt::AverInt,
     thenLeaf: &FastLeaf,
     elseLeaf: &FastLeaf,
 ) -> Result<Val, AverStr> {
@@ -122,7 +122,7 @@ pub fn fastEqIntBranch(
 /// Execute a string equality branch with precomputed leaf results.
 pub fn fastEqStringBranch(
     calleeEnv: &aver_rt::AverVector<Val>,
-    slot: i64,
+    slot: aver_rt::AverInt,
     expected: AverStr,
     thenLeaf: &FastLeaf,
     elseLeaf: &FastLeaf,
@@ -145,8 +145,8 @@ pub fn fastEqStringBranch(
 /// Execute an int less-than branch with precomputed leaf results.
 pub fn fastLtIntSlotsBranch(
     calleeEnv: &aver_rt::AverVector<Val>,
-    lhsSlot: i64,
-    rhsSlot: i64,
+    lhsSlot: aver_rt::AverInt,
+    rhsSlot: aver_rt::AverInt,
     thenLeaf: &FastLeaf,
     elseLeaf: &FastLeaf,
 ) -> Result<Val, AverStr> {
@@ -188,10 +188,10 @@ pub fn selectFastLeaf(
 /// Execute a two-arm [] / [h, ..t] list branch with precomputed leaf bodies.
 pub fn fastListSlotBranch(
     calleeEnv: &aver_rt::AverVector<Val>,
-    slot: i64,
+    slot: aver_rt::AverInt,
     emptyLeaf: &FastLeaf,
-    headSlot: i64,
-    tailSlot: i64,
+    headSlot: aver_rt::AverInt,
+    tailSlot: aver_rt::AverInt,
     consLeaf: &FastLeaf,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -212,8 +212,8 @@ pub fn fastListSlotBranchItems(
     items: &aver_rt::AverList<Val>,
     calleeEnv: &aver_rt::AverVector<Val>,
     emptyLeaf: &FastLeaf,
-    headSlot: i64,
-    tailSlot: i64,
+    headSlot: aver_rt::AverInt,
+    tailSlot: aver_rt::AverInt,
     consLeaf: &FastLeaf,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -223,7 +223,7 @@ pub fn fastListSlotBranchItems(
 /// Read a record field directly from a resolved slot.
 pub fn fastFieldAccessSlot(
     calleeEnv: &aver_rt::AverVector<Val>,
-    slot: i64,
+    slot: aver_rt::AverInt,
     field: AverStr,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -239,8 +239,8 @@ pub fn fastFieldAccessSlot(
 /// Read a map key directly from resolved slots.
 pub fn fastMapGetSlot(
     calleeEnv: &aver_rt::AverVector<Val>,
-    mapSlot: i64,
-    keySlot: i64,
+    mapSlot: aver_rt::AverInt,
+    keySlot: aver_rt::AverInt,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let mapV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, mapSlot)?;
@@ -270,9 +270,9 @@ pub fn fastMapGetSlotInner(mapV: &Val, keyV: &Val) -> Result<Val, AverStr> {
 /// Update a map directly from resolved slots.
 pub fn fastMapSetSlot(
     calleeEnv: &aver_rt::AverVector<Val>,
-    mapSlot: i64,
-    keySlot: i64,
-    valueSlot: i64,
+    mapSlot: aver_rt::AverInt,
+    keySlot: aver_rt::AverInt,
+    valueSlot: aver_rt::AverInt,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let mapV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, mapSlot)?;
@@ -298,8 +298,8 @@ pub fn fastMapSetSlotInner(mapV: &Val, keyV: &Val, valueV: &Val) -> Result<Val, 
 /// Fast path for Vector.new(slot, int) wrappers.
 pub fn fastVectorNewSlot(
     calleeEnv: &aver_rt::AverVector<Val>,
-    sizeSlot: i64,
-    fill: i64,
+    sizeSlot: aver_rt::AverInt,
+    fill: aver_rt::AverInt,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let sizeV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, sizeSlot)?;
@@ -307,12 +307,14 @@ pub fn fastVectorNewSlot(
 }
 
 /// Allocate a vector when the wrapper shape is known in advance.
-pub fn fastVectorNewSlotInner(sizeV: &Val, fill: i64) -> Result<Val, AverStr> {
+pub fn fastVectorNewSlotInner(sizeV: &Val, fill: aver_rt::AverInt) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     match sizeV.clone() {
         crate::aver_generated::domain::value::Val::ValInt(size) => Ok(
             crate::aver_generated::domain::value::Val::ValVector(aver_rt::AverVector::new(
-                size as usize,
+                (size)
+                    .to_usize()
+                    .expect("Vector.new: size must be a non-negative, machine-sized Int"),
                 crate::aver_generated::domain::value::Val::ValInt(fill),
             )),
         ),
@@ -323,9 +325,9 @@ pub fn fastVectorNewSlotInner(sizeV: &Val, fill: i64) -> Result<Val, AverStr> {
 /// Fast path for Option.withDefault(Vector.get(slotVec, slotIdx), int).
 pub fn fastVectorGetOrIntSlot(
     calleeEnv: &aver_rt::AverVector<Val>,
-    vecSlot: i64,
-    idxSlot: i64,
-    defaultValue: i64,
+    vecSlot: aver_rt::AverInt,
+    idxSlot: aver_rt::AverInt,
+    defaultValue: aver_rt::AverInt,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let vecV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, vecSlot)?;
@@ -341,13 +343,13 @@ pub fn fastVectorGetOrIntSlot(
 pub fn fastVectorGetOrIntSlotInner(
     vecV: &Val,
     idxV: &Val,
-    defaultValue: i64,
+    defaultValue: aver_rt::AverInt,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     match vecV.clone() {
         crate::aver_generated::domain::value::Val::ValVector(vec) => match idxV.clone() {
             crate::aver_generated::domain::value::Val::ValInt(idx) => {
-                match vec.get(idx as usize).cloned() {
+                match (idx).to_usize().and_then(|__i| vec.get(__i).cloned()) {
                     Some(v) => Ok(v),
                     None => Ok(crate::aver_generated::domain::value::Val::ValInt(
                         defaultValue,
@@ -363,8 +365,8 @@ pub fn fastVectorGetOrIntSlotInner(
 /// Check map membership directly from resolved slots.
 pub fn fastMapHasSlot(
     calleeEnv: &aver_rt::AverVector<Val>,
-    mapSlot: i64,
-    keySlot: i64,
+    mapSlot: aver_rt::AverInt,
+    keySlot: aver_rt::AverInt,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let mapV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, mapSlot)?;
@@ -382,8 +384,8 @@ pub fn fastMapHasSlot(
 /// Remove a map key directly from resolved slots.
 pub fn fastMapRemoveSlot(
     calleeEnv: &aver_rt::AverVector<Val>,
-    mapSlot: i64,
-    keySlot: i64,
+    mapSlot: aver_rt::AverInt,
+    keySlot: aver_rt::AverInt,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let mapV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, mapSlot)?;
@@ -401,14 +403,16 @@ pub fn fastMapRemoveSlot(
 /// Get vector length directly from a resolved slot.
 pub fn fastVectorLenSlot(
     calleeEnv: &aver_rt::AverVector<Val>,
-    vecSlot: i64,
+    vecSlot: aver_rt::AverInt,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let vecV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, vecSlot)?;
     match vecV {
-        crate::aver_generated::domain::value::Val::ValVector(vec) => Ok(
-            crate::aver_generated::domain::value::Val::ValInt((vec.len() as i64)),
-        ),
+        crate::aver_generated::domain::value::Val::ValVector(vec) => {
+            Ok(crate::aver_generated::domain::value::Val::ValInt(
+                aver_rt::AverInt::from_i64(vec.len() as i64),
+            ))
+        }
         _ => Err(AverStr::from("Vector.len expects a Vector")),
     }
 }
@@ -417,8 +421,8 @@ pub fn fastVectorLenSlot(
 pub fn fastBinopSlots(
     calleeEnv: &aver_rt::AverVector<Val>,
     op: &BinOp,
-    slotA: i64,
-    slotB: i64,
+    slotA: aver_rt::AverInt,
+    slotB: aver_rt::AverInt,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let va = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slotA)?;
@@ -430,8 +434,8 @@ pub fn fastBinopSlots(
 pub fn fastCmpSlots(
     calleeEnv: &aver_rt::AverVector<Val>,
     op: &CmpOp,
-    slotA: i64,
-    slotB: i64,
+    slotA: aver_rt::AverInt,
+    slotB: aver_rt::AverInt,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let va = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slotA)?;

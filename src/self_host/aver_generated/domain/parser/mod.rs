@@ -13,19 +13,32 @@ use crate::*;
 
 #[allow(non_camel_case_types)]
 enum __MutualTco1 {
-    ParseFnBodyStmtsFlat(aver_rt::AverList<Token>, i64, aver_rt::AverList<Stmt>),
-    ParseFnBodyOneStmtFlat(aver_rt::AverList<Token>, i64, aver_rt::AverList<Stmt>),
-    ParseFnBodyAfterStmtFlat(aver_rt::AverList<Token>, i64, aver_rt::AverList<Stmt>),
+    ParseFnBodyStmtsFlat(
+        aver_rt::AverList<Token>,
+        aver_rt::AverInt,
+        aver_rt::AverList<Stmt>,
+    ),
+    ParseFnBodyOneStmtFlat(
+        aver_rt::AverList<Token>,
+        aver_rt::AverInt,
+        aver_rt::AverList<Stmt>,
+    ),
+    ParseFnBodyAfterStmtFlat(
+        aver_rt::AverList<Token>,
+        aver_rt::AverInt,
+        aver_rt::AverList<Stmt>,
+    ),
 }
 
 fn __mutual_tco_trampoline_1(
     mut __state: __MutualTco1,
-) -> Result<(aver_rt::AverList<Stmt>, i64), AverStr> {
+) -> Result<(aver_rt::AverList<Stmt>, aver_rt::AverInt), AverStr> {
     loop {
         __state = match __state {
             __MutualTco1::ParseFnBodyStmtsFlat(mut tokens, mut pos, mut acc) => {
                 crate::cancel_checkpoint();
-                if crate::aver_generated::domain::parser_match::isBodyEndFlat(&tokens, pos) {
+                if crate::aver_generated::domain::parser_match::isBodyEndFlat(&tokens, pos.clone())
+                {
                     return Ok((acc, pos));
                 } else {
                     __MutualTco1::ParseFnBodyOneStmtFlat(tokens, pos, acc)
@@ -45,9 +58,13 @@ fn __mutual_tco_trampoline_1(
             }
             __MutualTco1::ParseFnBodyAfterStmtFlat(mut tokens, mut pos, mut acc) => {
                 crate::cancel_checkpoint();
-                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+                match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkNewline => {
-                        __MutualTco1::ParseFnBodyStmtsFlat(tokens, (pos + 1i64), acc)
+                        __MutualTco1::ParseFnBodyStmtsFlat(
+                            tokens,
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            acc,
+                        )
                     }
                     _ => return Ok((acc, pos)),
                 }
@@ -59,9 +76,9 @@ fn __mutual_tco_trampoline_1(
 /// Parse statements in function body (flat mode).
 pub fn parseFnBodyStmtsFlat(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     acc: &aver_rt::AverList<Stmt>,
-) -> Result<(aver_rt::AverList<Stmt>, i64), AverStr> {
+) -> Result<(aver_rt::AverList<Stmt>, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_1(__MutualTco1::ParseFnBodyStmtsFlat(
         tokens.clone(),
         pos,
@@ -72,9 +89,9 @@ pub fn parseFnBodyStmtsFlat(
 /// Parse one statement in function body and continue (flat mode).
 pub fn parseFnBodyOneStmtFlat(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     acc: &aver_rt::AverList<Stmt>,
-) -> Result<(aver_rt::AverList<Stmt>, i64), AverStr> {
+) -> Result<(aver_rt::AverList<Stmt>, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_1(__MutualTco1::ParseFnBodyOneStmtFlat(
         tokens.clone(),
         pos,
@@ -85,9 +102,9 @@ pub fn parseFnBodyOneStmtFlat(
 /// After a body statement: single newline continues, anything else ends (flat mode).
 pub fn parseFnBodyAfterStmtFlat(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     acc: &aver_rt::AverList<Stmt>,
-) -> Result<(aver_rt::AverList<Stmt>, i64), AverStr> {
+) -> Result<(aver_rt::AverList<Stmt>, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_1(__MutualTco1::ParseFnBodyAfterStmtFlat(
         tokens.clone(),
         pos,
@@ -97,13 +114,21 @@ pub fn parseFnBodyAfterStmtFlat(
 
 #[allow(non_camel_case_types)]
 enum __MutualTco2 {
-    ParseFnBodyStmtsIndented(aver_rt::AverList<Token>, i64, aver_rt::AverList<Stmt>),
-    ParseFnBodyOneStmtIndented(aver_rt::AverList<Token>, i64, aver_rt::AverList<Stmt>),
+    ParseFnBodyStmtsIndented(
+        aver_rt::AverList<Token>,
+        aver_rt::AverInt,
+        aver_rt::AverList<Stmt>,
+    ),
+    ParseFnBodyOneStmtIndented(
+        aver_rt::AverList<Token>,
+        aver_rt::AverInt,
+        aver_rt::AverList<Stmt>,
+    ),
 }
 
 fn __mutual_tco_trampoline_2(
     mut __state: __MutualTco2,
-) -> Result<(aver_rt::AverList<Stmt>, i64), AverStr> {
+) -> Result<(aver_rt::AverList<Stmt>, aver_rt::AverInt), AverStr> {
     loop {
         __state = match __state {
             __MutualTco2::ParseFnBodyStmtsIndented(mut tokens, mut pos, mut acc) => {
@@ -112,7 +137,7 @@ fn __mutual_tco_trampoline_2(
                     crate::aver_generated::domain::parser_match::skipNewlines(tokens.clone(), pos);
                 match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos2.clone()) {
                     crate::aver_generated::domain::token::Token::TkDedent => {
-                        return Ok((acc, (pos2 + 1i64)));
+                        return Ok((acc, pos2.add(&aver_rt::AverInt::from_i64(1))));
                     }
                     crate::aver_generated::domain::token::Token::TkEof => return Ok((acc, pos2)),
                     _ => __MutualTco2::ParseFnBodyOneStmtIndented(tokens, pos2, acc),
@@ -137,9 +162,9 @@ fn __mutual_tco_trampoline_2(
 /// Parse statements until DEDENT or EOF.
 pub fn parseFnBodyStmtsIndented(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     acc: &aver_rt::AverList<Stmt>,
-) -> Result<(aver_rt::AverList<Stmt>, i64), AverStr> {
+) -> Result<(aver_rt::AverList<Stmt>, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_2(__MutualTco2::ParseFnBodyStmtsIndented(
         tokens.clone(),
         pos,
@@ -150,9 +175,9 @@ pub fn parseFnBodyStmtsIndented(
 /// Parse one statement and continue with indented body.
 pub fn parseFnBodyOneStmtIndented(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     acc: &aver_rt::AverList<Stmt>,
-) -> Result<(aver_rt::AverList<Stmt>, i64), AverStr> {
+) -> Result<(aver_rt::AverList<Stmt>, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_2(__MutualTco2::ParseFnBodyOneStmtIndented(
         tokens.clone(),
         pos,
@@ -164,14 +189,14 @@ pub fn parseFnBodyOneStmtIndented(
 enum __MutualTco3 {
     ParseProgram(
         aver_rt::AverList<Token>,
-        i64,
+        aver_rt::AverInt,
         aver_rt::AverList<AverStr>,
         aver_rt::AverList<FnDef>,
         aver_rt::AverList<Stmt>,
     ),
     ParseProgramKeyword(
         aver_rt::AverList<Token>,
-        i64,
+        aver_rt::AverInt,
         aver_rt::AverList<AverStr>,
         aver_rt::AverList<FnDef>,
         aver_rt::AverList<Stmt>,
@@ -179,20 +204,20 @@ enum __MutualTco3 {
     ),
     ParseProgramModuleHeader(
         aver_rt::AverList<Token>,
-        i64,
+        aver_rt::AverInt,
         aver_rt::AverList<FnDef>,
         aver_rt::AverList<Stmt>,
     ),
     ParseProgramFn(
         aver_rt::AverList<Token>,
-        i64,
+        aver_rt::AverInt,
         aver_rt::AverList<AverStr>,
         aver_rt::AverList<FnDef>,
         aver_rt::AverList<Stmt>,
     ),
     ParseProgramStmt(
         aver_rt::AverList<Token>,
-        i64,
+        aver_rt::AverInt,
         aver_rt::AverList<AverStr>,
         aver_rt::AverList<FnDef>,
         aver_rt::AverList<Stmt>,
@@ -217,7 +242,13 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> Result<Program, AverS
                         });
                     }
                     crate::aver_generated::domain::token::Token::TkFn => {
-                        __MutualTco3::ParseProgramFn(tokens, (pos2 + 1i64), deps, fns, stmts)
+                        __MutualTco3::ParseProgramFn(
+                            tokens,
+                            pos2.add(&aver_rt::AverInt::from_i64(1)),
+                            deps,
+                            fns,
+                            stmts,
+                        )
                     }
                     crate::aver_generated::domain::token::Token::TkIdent(kw) => {
                         __MutualTco3::ParseProgramKeyword(tokens, pos2, deps, fns, stmts, kw)
@@ -234,7 +265,7 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> Result<Program, AverS
                 mut kw,
             ) => {
                 crate::cancel_checkpoint();
-                let nextPos = (pos + 1i64);
+                let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
                 {
                     let __dispatch_subject = kw;
                     if &*__dispatch_subject == "module" {
@@ -338,7 +369,7 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> Result<Program, AverS
 /// Parse top-level items until EOF.
 pub fn parseProgram(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     deps: &aver_rt::AverList<AverStr>,
     fns: &aver_rt::AverList<FnDef>,
     stmts: &aver_rt::AverList<Stmt>,
@@ -355,7 +386,7 @@ pub fn parseProgram(
 /// Handle keywords: module (extract depends), type/record/verify/decision (skip).
 pub fn parseProgramKeyword(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     deps: &aver_rt::AverList<AverStr>,
     fns: &aver_rt::AverList<FnDef>,
     stmts: &aver_rt::AverList<Stmt>,
@@ -374,7 +405,7 @@ pub fn parseProgramKeyword(
 /// Parse module header and continue with program.
 pub fn parseProgramModuleHeader(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     fns: &aver_rt::AverList<FnDef>,
     stmts: &aver_rt::AverList<Stmt>,
 ) -> Result<Program, AverStr> {
@@ -389,7 +420,7 @@ pub fn parseProgramModuleHeader(
 /// Parse a function definition and continue.
 pub fn parseProgramFn(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     deps: &aver_rt::AverList<AverStr>,
     fns: &aver_rt::AverList<FnDef>,
     stmts: &aver_rt::AverList<Stmt>,
@@ -406,7 +437,7 @@ pub fn parseProgramFn(
 /// Parse a statement and continue.
 pub fn parseProgramStmt(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     deps: &aver_rt::AverList<AverStr>,
     fns: &aver_rt::AverList<FnDef>,
     stmts: &aver_rt::AverList<Stmt>,
@@ -421,12 +452,19 @@ pub fn parseProgramStmt(
 }
 
 /// Parse a statement: binding (name = expr) or expression.
-pub fn parseStmt(tokens: &aver_rt::AverList<Token>, pos: i64) -> Result<(Stmt, i64), AverStr> {
+pub fn parseStmt(
+    tokens: &aver_rt::AverList<Token>,
+    pos: aver_rt::AverInt,
+) -> Result<(Stmt, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
-    let t = crate::aver_generated::domain::parser_match::tokenAt(tokens, pos);
+    let t = crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone());
     match t {
         crate::aver_generated::domain::token::Token::TkIdent(name) => {
-            crate::aver_generated::domain::parser::parseStmtAfterIdent(tokens, (pos + 1i64), name)
+            crate::aver_generated::domain::parser::parseStmtAfterIdent(
+                tokens,
+                pos.add(&aver_rt::AverInt::from_i64(1)),
+                name,
+            )
         }
         _ => crate::aver_generated::domain::parser::parseStmtExpr(tokens, pos),
     }
@@ -435,13 +473,17 @@ pub fn parseStmt(tokens: &aver_rt::AverList<Token>, pos: i64) -> Result<(Stmt, i
 /// After ident: if '=' or ':' follows it's a binding, otherwise reparse as expr.
 pub fn parseStmtAfterIdent(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     name: AverStr,
-) -> Result<(Stmt, i64), AverStr> {
+) -> Result<(Stmt, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos) {
+    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkEq => {
-            crate::aver_generated::domain::parser::parseBinding(tokens, (pos + 1i64), name)
+            crate::aver_generated::domain::parser::parseBinding(
+                tokens,
+                pos.add(&aver_rt::AverInt::from_i64(1)),
+                name,
+            )
         }
         crate::aver_generated::domain::token::Token::TkColon => {
             crate::aver_generated::domain::parser::parseBinding(
@@ -455,11 +497,16 @@ pub fn parseStmtAfterIdent(
 }
 
 /// Skip : Type = and return position after =.
-pub fn skipTypeAnnotationAndEq(tokens: &aver_rt::AverList<Token>, pos: i64) -> i64 {
+pub fn skipTypeAnnotationAndEq(
+    tokens: &aver_rt::AverList<Token>,
+    pos: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     let pos2 = crate::aver_generated::domain::parser_match::skipTypeAnnotation(tokens, pos);
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos2.clone()) {
-        crate::aver_generated::domain::token::Token::TkEq => (pos2 + 1i64),
+        crate::aver_generated::domain::token::Token::TkEq => {
+            pos2.add(&aver_rt::AverInt::from_i64(1))
+        }
         _ => pos2,
     }
 }
@@ -467,11 +514,11 @@ pub fn skipTypeAnnotationAndEq(tokens: &aver_rt::AverList<Token>, pos: i64) -> i
 /// Parse: name = expr. Skips leading NL+INDENT and trailing DEDENT for multi-line exprs.
 pub fn parseBinding(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     name: AverStr,
-) -> Result<(Stmt, i64), AverStr> {
+) -> Result<(Stmt, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
-    let r = crate::aver_generated::domain::parser::expr::parseExpr(tokens, pos)?;
+    let r = crate::aver_generated::domain::parser::expr::parseExpr(tokens, pos.clone())?;
     {
         let (expr, pos2) = r;
         Ok((
@@ -482,16 +529,25 @@ pub fn parseBinding(
 }
 
 /// If expression consumed an INDENT (multi-line), skip the trailing DEDENT.
-pub fn skipTrailingDedent(tokens: &aver_rt::AverList<Token>, pos: i64, startPos: i64) -> i64 {
+pub fn skipTrailingDedent(
+    tokens: &aver_rt::AverList<Token>,
+    pos: aver_rt::AverInt,
+    startPos: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::parser::countIndentsInRange(
-        tokens.clone(),
-        startPos,
-        pos,
-        0i64,
-    ) {
-        0i64 => pos,
-        n => crate::aver_generated::domain::parser::skipNDedents(tokens.clone(), pos, n),
+    {
+        let __int_match_subject = crate::aver_generated::domain::parser::countIndentsInRange(
+            tokens.clone(),
+            startPos,
+            pos.clone(),
+            aver_rt::AverInt::from_i64(0),
+        );
+        if __int_match_subject == aver_rt::AverInt::from_i64(0) {
+            pos
+        } else {
+            let n = __int_match_subject.clone();
+            crate::aver_generated::domain::parser::skipNDedents(tokens.clone(), pos, n)
+        }
     }
 }
 
@@ -499,25 +555,25 @@ pub fn skipTrailingDedent(tokens: &aver_rt::AverList<Token>, pos: i64, startPos:
 #[inline(always)]
 pub fn countIndentsInRange(
     mut tokens: aver_rt::AverList<Token>,
-    mut pos: i64,
-    mut endPos: i64,
-    mut count: i64,
-) -> i64 {
+    mut pos: aver_rt::AverInt,
+    mut endPos: aver_rt::AverInt,
+    mut count: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos = (pos + 1i64);
+        let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
         if (pos < endPos) {
             match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
                 crate::aver_generated::domain::token::Token::TkIndent => {
                     let __tco1 = nextPos;
-                    let __tco3 = (count + 1i64);
+                    let __tco3 = count.add(&aver_rt::AverInt::from_i64(1));
                     pos = __tco1;
                     count = __tco3;
                     continue;
                 }
                 crate::aver_generated::domain::token::Token::TkDedent => {
                     let __tco1 = nextPos;
-                    let __tco3 = (count - 1i64);
+                    let __tco3 = count.sub(&aver_rt::AverInt::from_i64(1));
                     pos = __tco1;
                     count = __tco3;
                     continue;
@@ -536,12 +592,16 @@ pub fn countIndentsInRange(
 
 /// Skip n DEDENT tokens (and interleaved newlines) after multi-line expression.
 #[inline(always)]
-pub fn skipNDedents(mut tokens: aver_rt::AverList<Token>, mut pos: i64, mut n: i64) -> i64 {
+pub fn skipNDedents(
+    mut tokens: aver_rt::AverList<Token>,
+    mut pos: aver_rt::AverInt,
+    mut n: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos = (pos + 1i64);
-        if (n > 0i64) {
-            match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
+        let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
+        if (n > aver_rt::AverInt::from_i64(0)) {
+            match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos.clone()) {
                 crate::aver_generated::domain::token::Token::TkNewline => {
                     let __tco1 = nextPos;
                     pos = __tco1;
@@ -549,7 +609,7 @@ pub fn skipNDedents(mut tokens: aver_rt::AverList<Token>, mut pos: i64, mut n: i
                 }
                 crate::aver_generated::domain::token::Token::TkDedent => {
                     let __tco1 = nextPos;
-                    let __tco2 = (n - 1i64);
+                    let __tco2 = n.sub(&aver_rt::AverInt::from_i64(1));
                     pos = __tco1;
                     n = __tco2;
                     continue;
@@ -565,9 +625,12 @@ pub fn skipNDedents(mut tokens: aver_rt::AverList<Token>, mut pos: i64, mut n: i
 }
 
 /// Parse an expression statement.
-pub fn parseStmtExpr(tokens: &aver_rt::AverList<Token>, pos: i64) -> Result<(Stmt, i64), AverStr> {
+pub fn parseStmtExpr(
+    tokens: &aver_rt::AverList<Token>,
+    pos: aver_rt::AverInt,
+) -> Result<(Stmt, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
-    let r = crate::aver_generated::domain::parser::expr::parseExpr(tokens, pos)?;
+    let r = crate::aver_generated::domain::parser::expr::parseExpr(tokens, pos.clone())?;
     {
         let (expr, pos2) = r;
         Ok((
@@ -580,9 +643,9 @@ pub fn parseStmtExpr(tokens: &aver_rt::AverList<Token>, pos: i64) -> Result<(Stm
 /// Reparse as expression starting from an identifier (might be call or var in expr).
 pub fn parseStmtExprFrom(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     name: AverStr,
-) -> Result<(Stmt, i64), AverStr> {
+) -> Result<(Stmt, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let ir = crate::aver_generated::domain::parser::expr::parseIdentOrCall(tokens, pos, name)?;
     {
@@ -594,9 +657,9 @@ pub fn parseStmtExprFrom(
 /// Continue parsing expression statement from multiplicative level.
 pub fn parseStmtExprFromMul(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     expr: &Expr,
-) -> Result<(Stmt, i64), AverStr> {
+) -> Result<(Stmt, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let mr = crate::aver_generated::domain::parser::expr::parseMulExprTail(tokens, pos, expr)?;
     {
@@ -608,9 +671,9 @@ pub fn parseStmtExprFromMul(
 /// Continue parsing expression statement from additive level.
 pub fn parseStmtExprFromAdd(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     expr: &Expr,
-) -> Result<(Stmt, i64), AverStr> {
+) -> Result<(Stmt, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let ar = crate::aver_generated::domain::parser::expr::parseAddExprTail(tokens, pos, expr)?;
     {
@@ -622,9 +685,9 @@ pub fn parseStmtExprFromAdd(
 /// Continue parsing expression statement from comparison level.
 pub fn parseStmtExprFromCmp(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     expr: &Expr,
-) -> Result<(Stmt, i64), AverStr> {
+) -> Result<(Stmt, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let cr = crate::aver_generated::domain::parser::expr::parseCmpExprTail(tokens, pos, expr)?;
     {
@@ -636,7 +699,11 @@ pub fn parseStmtExprFromCmp(
 }
 
 /// Check for postfix ? on expression statement.
-pub fn parseStmtExprFromQ(tokens: &aver_rt::AverList<Token>, pos: i64, expr: &Expr) -> (Stmt, i64) {
+pub fn parseStmtExprFromQ(
+    tokens: &aver_rt::AverList<Token>,
+    pos: aver_rt::AverInt,
+    expr: &Expr,
+) -> (Stmt, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     let qr = crate::aver_generated::domain::parser::expr::parsePostfixQuestion(tokens, pos, expr);
     {
@@ -649,12 +716,19 @@ pub fn parseStmtExprFromQ(tokens: &aver_rt::AverList<Token>, pos: i64, expr: &Ex
 }
 
 /// Parse: fn NAME(params) NEWLINE body
-pub fn parseFnDef(tokens: &aver_rt::AverList<Token>, pos: i64) -> Result<(FnDef, i64), AverStr> {
+pub fn parseFnDef(
+    tokens: &aver_rt::AverList<Token>,
+    pos: aver_rt::AverInt,
+) -> Result<(FnDef, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
-    let t = crate::aver_generated::domain::parser_match::tokenAt(tokens, pos);
+    let t = crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone());
     match t {
         crate::aver_generated::domain::token::Token::TkIdent(name) => {
-            crate::aver_generated::domain::parser::parseFnDefParams(tokens, (pos + 1i64), name)
+            crate::aver_generated::domain::parser::parseFnDefParams(
+                tokens,
+                pos.add(&aver_rt::AverInt::from_i64(1)),
+                name,
+            )
         }
         _ => Err(AverStr::from("Expected function name after 'fn'")),
     }
@@ -663,9 +737,9 @@ pub fn parseFnDef(tokens: &aver_rt::AverList<Token>, pos: i64) -> Result<(FnDef,
 /// Parse parameter list and body.
 pub fn parseFnDefParams(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     name: AverStr,
-) -> Result<(FnDef, i64), AverStr> {
+) -> Result<(FnDef, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let pos2 = crate::aver_generated::domain::parser_match::expect(
         tokens,
@@ -686,10 +760,10 @@ pub fn parseFnDefParams(
 /// Parse function body: skip return type, newline, INDENT, ?, !, then statements until DEDENT.
 pub fn parseFnDefBody(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     name: AverStr,
     params: &aver_rt::AverList<AverStr>,
-) -> Result<(FnDef, i64), AverStr> {
+) -> Result<(FnDef, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let pos2 = crate::aver_generated::domain::parser_match::skipReturnType(tokens, pos);
     let pos3 = crate::aver_generated::domain::parser_match::skipNewlines(tokens.clone(), pos2);
@@ -697,7 +771,7 @@ pub fn parseFnDefBody(
         crate::aver_generated::domain::token::Token::TkIndent => {
             crate::aver_generated::domain::parser::parseFnDefBodyIndented(
                 tokens,
-                (pos3 + 1i64),
+                pos3.add(&aver_rt::AverInt::from_i64(1)),
                 name,
                 params,
             )
@@ -709,10 +783,10 @@ pub fn parseFnDefBody(
 /// Parse function body with INDENT/DEDENT.
 pub fn parseFnDefBodyIndented(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     name: AverStr,
     params: &aver_rt::AverList<AverStr>,
-) -> Result<(FnDef, i64), AverStr> {
+) -> Result<(FnDef, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let pos2 = crate::aver_generated::domain::parser_match::skipDescAndEffects(tokens.clone(), pos);
     let sr = crate::aver_generated::domain::parser::parseFnBodyStmtsIndented(
@@ -727,7 +801,7 @@ pub fn parseFnDefBodyIndented(
                 name: name,
                 params: params.clone(),
                 body: stmts.reverse(),
-                slotCount: 0i64,
+                slotCount: aver_rt::AverInt::from_i64(0),
                 slotMap: HashMap::new(),
                 fastPath: crate::aver_generated::domain::ast::FnFastPath::FastNone,
                 tailLoop: false,
@@ -740,10 +814,10 @@ pub fn parseFnDefBodyIndented(
 /// Parse function body without INDENT/DEDENT (fallback).
 pub fn parseFnDefBodyFlat(
     tokens: &aver_rt::AverList<Token>,
-    pos: i64,
+    pos: aver_rt::AverInt,
     name: AverStr,
     params: &aver_rt::AverList<AverStr>,
-) -> Result<(FnDef, i64), AverStr> {
+) -> Result<(FnDef, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let pos2 = crate::aver_generated::domain::parser_match::skipDescAndEffects(tokens.clone(), pos);
     let sr = crate::aver_generated::domain::parser::parseFnBodyStmtsFlat(
@@ -758,7 +832,7 @@ pub fn parseFnDefBodyFlat(
                 name: name,
                 params: params.clone(),
                 body: stmts.reverse(),
-                slotCount: 0i64,
+                slotCount: aver_rt::AverInt::from_i64(0),
                 slotMap: HashMap::new(),
                 fastPath: crate::aver_generated::domain::ast::FnFastPath::FastNone,
                 tailLoop: false,
@@ -774,7 +848,7 @@ pub fn parse(tokens: &aver_rt::AverList<Token>) -> Result<Program, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::parser::parseProgram(
         tokens,
-        0i64,
+        aver_rt::AverInt::from_i64(0),
         &aver_rt::AverList::empty(),
         &aver_rt::AverList::empty(),
         &aver_rt::AverList::empty(),

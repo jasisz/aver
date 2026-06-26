@@ -212,7 +212,7 @@ enum __MutualTco2 {
         aver_rt::AverList<Expr>,
         aver_rt::AverList<AverStr>,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
         aver_rt::AverMap<AverStr, Val>,
     ),
@@ -220,7 +220,7 @@ enum __MutualTco2 {
         aver_rt::AverList<Expr>,
         aver_rt::AverList<AverStr>,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
         aver_rt::AverMap<AverStr, Val>,
         Val,
@@ -264,7 +264,7 @@ pub fn evalArgsSlotToNamedEnv(
     exprs: &aver_rt::AverList<Expr>,
     params: &aver_rt::AverList<AverStr>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
     acc: &aver_rt::AverMap<AverStr, Val>,
 ) -> Result<aver_rt::AverMap<AverStr, Val>, AverStr> {
@@ -283,7 +283,7 @@ pub fn evalArgsSlotToNamedEnvBind(
     restExprs: &aver_rt::AverList<Expr>,
     params: &aver_rt::AverList<AverStr>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
     acc: &aver_rt::AverMap<AverStr, Val>,
     v: &Val,
@@ -314,7 +314,7 @@ enum __MutualTco3 {
         FnStore,
     ),
     EvalCallBuiltinById(
-        i64,
+        aver_rt::AverInt,
         aver_rt::AverList<Expr>,
         aver_rt::AverMap<AverStr, Val>,
         FnStore,
@@ -642,7 +642,9 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> Result<Val, AverStr> 
                     _ => {
                         return Err(aver_rt::AverStr::from({
                             let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity((50i64) as usize);
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(50)).to_usize().unwrap_or(0),
+                                );
                                 __b.push_str(&AverStr::from("unsupported named-env expression: "));
                                 __b
                             };
@@ -685,9 +687,11 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> Result<Val, AverStr> 
             }
             __MutualTco3::EvalCallBuiltinById(mut id, mut argExprs, mut env, mut fns) => {
                 crate::cancel_checkpoint();
-                match id {
-                    15i64 => __MutualTco3::EvalOptionWithDefaultExpr(argExprs, env, fns),
-                    _ => {
+                {
+                    let __int_match_subject = id.clone();
+                    if __int_match_subject == aver_rt::AverInt::from_i64(15) {
+                        __MutualTco3::EvalOptionWithDefaultExpr(argExprs, env, fns)
+                    } else {
                         match crate::aver_generated::domain::eval::core::evalArgs(&argExprs, &env, &fns) { Err(e) => { return Err(e) }, Ok(args) => { return crate::aver_generated::domain::builtins::callBuiltinByIdValues(id, &args) } }
                     }
                 }
@@ -1083,7 +1087,7 @@ pub fn evalMatchExpr(
 
 /// Builtin dispatch by integer ID — no string comparison.
 pub fn evalCallBuiltinById(
-    id: i64,
+    id: aver_rt::AverInt,
     argExprs: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverMap<AverStr, Val>,
     fns: &FnStore,
@@ -1261,31 +1265,31 @@ enum __MutualTco4 {
     EvalExprSlot(
         Expr,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalExprSlotBasic(
         Expr,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalExprSlotInternal(
         Expr,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalExprSlotAggregate(
         Expr,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalExprSlotCalls(
         Expr,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalBoolBranchSlot(
@@ -1293,41 +1297,41 @@ enum __MutualTco4 {
         Expr,
         Expr,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalCallBuiltinByIdSlot(
-        i64,
+        aver_rt::AverInt,
         aver_rt::AverList<Expr>,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalCallBuiltinSlotMaybeSpecial(
         AverStr,
         aver_rt::AverList<Expr>,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalOptionWithDefaultExprSlot(
         aver_rt::AverList<Expr>,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalOptionWithDefaultExprSlotInner(
         Expr,
         Expr,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalVectorSetWithDefaultExprSlot(
         aver_rt::AverList<Expr>,
         Expr,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalVectorSetWithDefaultExprSlotValues(
@@ -1336,7 +1340,7 @@ enum __MutualTco4 {
         Expr,
         Expr,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalVectorSetWithDefaultExprSlotResult(
@@ -1345,14 +1349,14 @@ enum __MutualTco4 {
         Val,
         Expr,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalVectorGetWithDefaultExprSlot(
         aver_rt::AverList<Expr>,
         Expr,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalVectorGetWithDefaultExprSlotValues(
@@ -1360,7 +1364,7 @@ enum __MutualTco4 {
         Expr,
         Expr,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalVectorGetWithDefaultExprSlotResult(
@@ -1368,21 +1372,21 @@ enum __MutualTco4 {
         Val,
         Expr,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalMatchExprSlot(
         Expr,
         aver_rt::AverList<MatchArm>,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalMatchSlot(
         Val,
         aver_rt::AverList<MatchArm>,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
 }
@@ -1661,7 +1665,7 @@ fn __mutual_tco_trampoline_4(mut __state: __MutualTco4) -> Result<Val, AverStr> 
             return crate::aver_generated::domain::eval::core::evalIndependentProductSlot(&exprs, unwrap, &env, &slotMap, &fns)
         },
         _ => {
-            return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((45i64) as usize); __b.push_str(&AverStr::from("unsupported slot expression: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(expr)))); __b }))
+            return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(45)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported slot expression: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(expr)))); __b }))
         }
     }
             }
@@ -1700,11 +1704,11 @@ fn __mutual_tco_trampoline_4(mut __state: __MutualTco4) -> Result<Val, AverStr> 
                 mut fns,
             ) => {
                 crate::cancel_checkpoint();
-                match id {
-                    15i64 => {
+                {
+                    let __int_match_subject = id.clone();
+                    if __int_match_subject == aver_rt::AverInt::from_i64(15) {
                         __MutualTco4::EvalOptionWithDefaultExprSlot(argExprs, env, slotMap, fns)
-                    }
-                    _ => {
+                    } else {
                         match crate::aver_generated::domain::eval::core::evalArgsSlot(&argExprs, &env, &slotMap, &fns) { Err(e) => { return Err(e) }, Ok(args) => { return crate::aver_generated::domain::builtins::callBuiltinByIdValues(id, &args) } }
                     }
                 }
@@ -2026,7 +2030,7 @@ fn __mutual_tco_trampoline_4(mut __state: __MutualTco4) -> Result<Val, AverStr> 
 pub fn evalExprSlot(
     expr: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalExprSlot(
@@ -2041,7 +2045,7 @@ pub fn evalExprSlot(
 pub fn evalExprSlotBasic(
     expr: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalExprSlotBasic(
@@ -2056,7 +2060,7 @@ pub fn evalExprSlotBasic(
 pub fn evalExprSlotInternal(
     expr: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalExprSlotInternal(
@@ -2071,7 +2075,7 @@ pub fn evalExprSlotInternal(
 pub fn evalExprSlotAggregate(
     expr: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalExprSlotAggregate(
@@ -2086,7 +2090,7 @@ pub fn evalExprSlotAggregate(
 pub fn evalExprSlotCalls(
     expr: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalExprSlotCalls(
@@ -2103,7 +2107,7 @@ pub fn evalBoolBranchSlot(
     thenExpr: &Expr,
     elseExpr: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalBoolBranchSlot(
@@ -2118,10 +2122,10 @@ pub fn evalBoolBranchSlot(
 
 /// Builtin dispatch by integer ID (slot-based path) — no string comparison.
 pub fn evalCallBuiltinByIdSlot(
-    id: i64,
+    id: aver_rt::AverInt,
     argExprs: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalCallBuiltinByIdSlot(
@@ -2138,7 +2142,7 @@ pub fn evalCallBuiltinSlotMaybeSpecial(
     name: AverStr,
     argExprs: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalCallBuiltinSlotMaybeSpecial(
@@ -2154,7 +2158,7 @@ pub fn evalCallBuiltinSlotMaybeSpecial(
 pub fn evalOptionWithDefaultExprSlot(
     argExprs: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalOptionWithDefaultExprSlot(
@@ -2170,7 +2174,7 @@ pub fn evalOptionWithDefaultExprSlotInner(
     optionExpr: &Expr,
     defaultExpr: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalOptionWithDefaultExprSlotInner(
@@ -2187,7 +2191,7 @@ pub fn evalVectorSetWithDefaultExprSlot(
     vecArgs: &aver_rt::AverList<Expr>,
     defaultExpr: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalVectorSetWithDefaultExprSlot(
@@ -2206,7 +2210,7 @@ pub fn evalVectorSetWithDefaultExprSlotValues(
     valueExpr: &Expr,
     defaultExpr: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalVectorSetWithDefaultExprSlotValues(
@@ -2227,7 +2231,7 @@ pub fn evalVectorSetWithDefaultExprSlotResult(
     valueV: &Val,
     defaultExpr: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalVectorSetWithDefaultExprSlotResult(
@@ -2246,7 +2250,7 @@ pub fn evalVectorGetWithDefaultExprSlot(
     vecArgs: &aver_rt::AverList<Expr>,
     defaultExpr: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalVectorGetWithDefaultExprSlot(
@@ -2264,7 +2268,7 @@ pub fn evalVectorGetWithDefaultExprSlotValues(
     idxExpr: &Expr,
     defaultExpr: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalVectorGetWithDefaultExprSlotValues(
@@ -2283,7 +2287,7 @@ pub fn evalVectorGetWithDefaultExprSlotResult(
     idxV: &Val,
     defaultExpr: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalVectorGetWithDefaultExprSlotResult(
@@ -2301,7 +2305,7 @@ pub fn evalMatchExprSlot(
     scrutinee: &Expr,
     arms: &aver_rt::AverList<MatchArm>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalMatchExprSlot(
@@ -2318,7 +2322,7 @@ pub fn evalMatchSlot(
     v: &Val,
     arms: &aver_rt::AverList<MatchArm>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_4(__MutualTco4::EvalMatchSlot(
@@ -2333,18 +2337,18 @@ pub fn evalMatchSlot(
 #[allow(non_camel_case_types)]
 enum __MutualTco5 {
     EvalStmtBindSlotNext(
-        i64,
+        aver_rt::AverInt,
         Expr,
         aver_rt::AverList<Stmt>,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalStmtExprSlotNext(
         Expr,
         aver_rt::AverList<Stmt>,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalStmtBindFallbackSlotNext(
@@ -2352,13 +2356,13 @@ enum __MutualTco5 {
         Expr,
         aver_rt::AverList<Stmt>,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalStmtsSlot(
         aver_rt::AverList<Stmt>,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
 }
@@ -2443,11 +2447,11 @@ fn __mutual_tco_trampoline_5(mut __state: __MutualTco5) -> Result<Val, AverStr> 
 
 /// Evaluate a slot binding and continue statement execution without packing a tuple.
 pub fn evalStmtBindSlotNext(
-    slot: i64,
+    slot: aver_rt::AverInt,
     e: &Expr,
     rest: &aver_rt::AverList<Stmt>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_5(__MutualTco5::EvalStmtBindSlotNext(
@@ -2465,7 +2469,7 @@ pub fn evalStmtExprSlotNext(
     e: &Expr,
     rest: &aver_rt::AverList<Stmt>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_5(__MutualTco5::EvalStmtExprSlotNext(
@@ -2483,7 +2487,7 @@ pub fn evalStmtBindFallbackSlotNext(
     e: &Expr,
     rest: &aver_rt::AverList<Stmt>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_5(__MutualTco5::EvalStmtBindFallbackSlotNext(
@@ -2500,7 +2504,7 @@ pub fn evalStmtBindFallbackSlotNext(
 pub fn evalStmtsSlot(
     stmts: &aver_rt::AverList<Stmt>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     __mutual_tco_trampoline_5(__MutualTco5::EvalStmtsSlot(
@@ -2514,39 +2518,39 @@ pub fn evalStmtsSlot(
 #[allow(non_camel_case_types)]
 enum __MutualTco6 {
     EvalStmtsSlotTail(
-        i64,
+        aver_rt::AverInt,
         aver_rt::AverList<Stmt>,
-        i64,
+        aver_rt::AverInt,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalStmtsSlotTailNext(
-        i64,
+        aver_rt::AverInt,
         Stmt,
         aver_rt::AverList<Stmt>,
-        i64,
+        aver_rt::AverInt,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalStmtsSlotTailBind(
-        i64,
-        i64,
+        aver_rt::AverInt,
+        aver_rt::AverInt,
         Expr,
         aver_rt::AverList<Stmt>,
-        i64,
+        aver_rt::AverInt,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalStmtsSlotTailExpr(
-        i64,
+        aver_rt::AverInt,
         Expr,
         aver_rt::AverList<Stmt>,
-        i64,
+        aver_rt::AverInt,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
 }
@@ -2635,11 +2639,11 @@ fn __mutual_tco_trampoline_6(mut __state: __MutualTco6) -> Result<SlotTailStep, 
 
 /// Evaluate slot statements when the final expression may self-tail-recur.
 pub fn evalStmtsSlotTail(
-    selfId: i64,
+    selfId: aver_rt::AverInt,
     stmts: &aver_rt::AverList<Stmt>,
-    slotCount: i64,
+    slotCount: aver_rt::AverInt,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<SlotTailStep, AverStr> {
     __mutual_tco_trampoline_6(__MutualTco6::EvalStmtsSlotTail(
@@ -2654,12 +2658,12 @@ pub fn evalStmtsSlotTail(
 
 /// Evaluate one non-final slot statement before continuing the tail-aware slot loop.
 pub fn evalStmtsSlotTailNext(
-    selfId: i64,
+    selfId: aver_rt::AverInt,
     stmt: &Stmt,
     rest: &aver_rt::AverList<Stmt>,
-    slotCount: i64,
+    slotCount: aver_rt::AverInt,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<SlotTailStep, AverStr> {
     __mutual_tco_trampoline_6(__MutualTco6::EvalStmtsSlotTailNext(
@@ -2675,13 +2679,13 @@ pub fn evalStmtsSlotTailNext(
 
 /// Evaluate one slot binding before continuing the tail-aware slot loop.
 pub fn evalStmtsSlotTailBind(
-    selfId: i64,
-    slot: i64,
+    selfId: aver_rt::AverInt,
+    slot: aver_rt::AverInt,
     e: &Expr,
     rest: &aver_rt::AverList<Stmt>,
-    slotCount: i64,
+    slotCount: aver_rt::AverInt,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<SlotTailStep, AverStr> {
     __mutual_tco_trampoline_6(__MutualTco6::EvalStmtsSlotTailBind(
@@ -2698,12 +2702,12 @@ pub fn evalStmtsSlotTailBind(
 
 /// Evaluate one non-final expression statement before continuing the tail-aware slot loop.
 pub fn evalStmtsSlotTailExpr(
-    selfId: i64,
+    selfId: aver_rt::AverInt,
     e: &Expr,
     rest: &aver_rt::AverList<Stmt>,
-    slotCount: i64,
+    slotCount: aver_rt::AverInt,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<SlotTailStep, AverStr> {
     __mutual_tco_trampoline_6(__MutualTco6::EvalStmtsSlotTailExpr(
@@ -2720,39 +2724,39 @@ pub fn evalStmtsSlotTailExpr(
 #[allow(non_camel_case_types)]
 enum __MutualTco7 {
     EvalTailExprSlot(
-        i64,
+        aver_rt::AverInt,
         Expr,
-        i64,
+        aver_rt::AverInt,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalTailBoolBranchSlot(
-        i64,
+        aver_rt::AverInt,
         Expr,
         Expr,
         Expr,
-        i64,
+        aver_rt::AverInt,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalTailMatchExprSlot(
-        i64,
+        aver_rt::AverInt,
         Expr,
         aver_rt::AverList<MatchArm>,
-        i64,
+        aver_rt::AverInt,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
     EvalTailMatchSlot(
-        i64,
+        aver_rt::AverInt,
         Val,
         aver_rt::AverList<MatchArm>,
-        i64,
+        aver_rt::AverInt,
         aver_rt::AverVector<Val>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         FnStore,
     ),
 }
@@ -2772,7 +2776,7 @@ fn __mutual_tco_trampoline_7(mut __state: __MutualTco7) -> Result<SlotTailStep, 
                 match expr.clone() {
                     crate::aver_generated::domain::ast::Expr::ExprCallDirect(fnId, argExprs) => {
                         if (fnId == selfId) {
-                            match crate::aver_generated::domain::eval::core::evalArgsSlotToSlotEnv(argExprs, env, slotMap, fns, aver_rt::AverVector::new(slotCount as usize, crate::aver_generated::domain::value::Val::ValUnit), 0i64) { Ok(nextEnv) => { return Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailRecurEnv(nextEnv)) }, Err(e) => { return Err(e) } }
+                            match crate::aver_generated::domain::eval::core::evalArgsSlotToSlotEnv(argExprs, env, slotMap, fns, aver_rt::AverVector::new((slotCount).to_usize().expect("Vector.new: size must be a non-negative, machine-sized Int"), crate::aver_generated::domain::value::Val::ValUnit), aver_rt::AverInt::from_i64(0)) { Ok(nextEnv) => { return Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailRecurEnv(nextEnv)) }, Err(e) => { return Err(e) } }
                         } else {
                             match crate::aver_generated::domain::eval::core::evalCallDirectSlot(fnId, &argExprs, &env, &slotMap, &fns) { Ok(v) => { return Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v)) }, Err(e) => { return Err(e) } }
                         }
@@ -2866,11 +2870,11 @@ fn __mutual_tco_trampoline_7(mut __state: __MutualTco7) -> Result<SlotTailStep, 
 
 /// Evaluate a tail-position expression in slot mode, converting self-recursive direct calls into loop re-entry.
 pub fn evalTailExprSlot(
-    selfId: i64,
+    selfId: aver_rt::AverInt,
     expr: &Expr,
-    slotCount: i64,
+    slotCount: aver_rt::AverInt,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<SlotTailStep, AverStr> {
     __mutual_tco_trampoline_7(__MutualTco7::EvalTailExprSlot(
@@ -2885,13 +2889,13 @@ pub fn evalTailExprSlot(
 
 /// Evaluate a tail-position bool branch in slot mode.
 pub fn evalTailBoolBranchSlot(
-    selfId: i64,
+    selfId: aver_rt::AverInt,
     cond: &Expr,
     thenExpr: &Expr,
     elseExpr: &Expr,
-    slotCount: i64,
+    slotCount: aver_rt::AverInt,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<SlotTailStep, AverStr> {
     __mutual_tco_trampoline_7(__MutualTco7::EvalTailBoolBranchSlot(
@@ -2908,12 +2912,12 @@ pub fn evalTailBoolBranchSlot(
 
 /// Evaluate a tail-position match expression in slot mode.
 pub fn evalTailMatchExprSlot(
-    selfId: i64,
+    selfId: aver_rt::AverInt,
     scrutinee: &Expr,
     arms: &aver_rt::AverList<MatchArm>,
-    slotCount: i64,
+    slotCount: aver_rt::AverInt,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<SlotTailStep, AverStr> {
     __mutual_tco_trampoline_7(__MutualTco7::EvalTailMatchExprSlot(
@@ -2929,12 +2933,12 @@ pub fn evalTailMatchExprSlot(
 
 /// Evaluate a tail-position match arm in slot mode, preserving binding slots.
 pub fn evalTailMatchSlot(
-    selfId: i64,
+    selfId: aver_rt::AverInt,
     v: &Val,
     arms: &aver_rt::AverList<MatchArm>,
-    slotCount: i64,
+    slotCount: aver_rt::AverInt,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<SlotTailStep, AverStr> {
     __mutual_tco_trampoline_7(__MutualTco7::EvalTailMatchSlot(
@@ -2952,14 +2956,14 @@ pub fn evalTailMatchSlot(
 enum __MutualTco8 {
     MergeBindingsSlot(
         aver_rt::AverList<(AverStr, Val)>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         aver_rt::AverVector<Val>,
     ),
     MergeOneBindingSlot(
         AverStr,
         Val,
         aver_rt::AverList<(AverStr, Val)>,
-        aver_rt::AverMap<AverStr, i64>,
+        aver_rt::AverMap<AverStr, aver_rt::AverInt>,
         aver_rt::AverVector<Val>,
     ),
 }
@@ -2995,7 +2999,7 @@ fn __mutual_tco_trampoline_8(mut __state: __MutualTco8) -> aver_rt::AverVector<V
 /// Merge pattern bindings into slot env using the slots assigned for this specific arm.
 pub fn mergeBindingsSlot(
     bindings: &aver_rt::AverList<(AverStr, Val)>,
-    bindingSlots: &aver_rt::AverMap<AverStr, i64>,
+    bindingSlots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     env: &aver_rt::AverVector<Val>,
 ) -> aver_rt::AverVector<Val> {
     __mutual_tco_trampoline_8(__MutualTco8::MergeBindingsSlot(
@@ -3010,7 +3014,7 @@ pub fn mergeOneBindingSlot(
     name: AverStr,
     val: &Val,
     rest: &aver_rt::AverList<(AverStr, Val)>,
-    bindingSlots: &aver_rt::AverMap<AverStr, i64>,
+    bindingSlots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     env: &aver_rt::AverVector<Val>,
 ) -> aver_rt::AverVector<Val> {
     __mutual_tco_trampoline_8(__MutualTco8::MergeOneBindingSlot(
@@ -3073,7 +3077,7 @@ pub fn evalVar(
 pub fn evalVectorGetOrIntExpr(
     vecExpr: &Expr,
     idxExpr: &Expr,
-    defaultValue: i64,
+    defaultValue: aver_rt::AverInt,
     env: &aver_rt::AverMap<AverStr, Val>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
@@ -3087,7 +3091,7 @@ pub fn evalVectorGetOrIntExpr(
 pub fn evalIntModOrIntExpr(
     a: &Expr,
     b: &Expr,
-    defaultValue: i64,
+    defaultValue: aver_rt::AverInt,
     env: &aver_rt::AverMap<AverStr, Val>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
@@ -3569,17 +3573,17 @@ pub fn callResolved(
 
 /// Call a function with a known store id: slot-based if resolved, map-based otherwise.
 pub fn callResolvedById(
-    fnId: i64,
+    fnId: aver_rt::AverInt,
     fd: &FnDef,
     args: &aver_rt::AverList<Val>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
-    if (fd.slotCount > 0i64) {
+    if (fd.slotCount > aver_rt::AverInt::from_i64(0)) {
         crate::aver_generated::domain::eval::core::evalResolvedSlotFn(
             fnId,
             fd,
-            &crate::aver_generated::domain::eval::slots::buildSlotEnv(args, fd.slotCount),
+            &crate::aver_generated::domain::eval::slots::buildSlotEnv(args, fd.slotCount.clone()),
             fns,
         )
     } else {
@@ -3597,7 +3601,7 @@ pub fn callResolvedById(
 
 /// Evaluate a resolved function body in slot mode, looping self-tail-calls instead of recursing on the host stack.
 pub fn evalResolvedSlotFn(
-    fnId: i64,
+    fnId: aver_rt::AverInt,
     fd: &FnDef,
     calleeEnv: &aver_rt::AverVector<Val>,
     fns: &FnStore,
@@ -3617,7 +3621,7 @@ pub fn evalResolvedSlotFn(
 
 /// Run the tail-aware slot evaluator only for functions that actually end in self-tail-calls.
 pub fn evalResolvedSlotLoop(
-    mut fnId: i64,
+    mut fnId: aver_rt::AverInt,
     mut fd: FnDef,
     mut calleeEnv: aver_rt::AverVector<Val>,
     mut fns: FnStore,
@@ -3625,7 +3629,10 @@ pub fn evalResolvedSlotLoop(
     loop {
         crate::cancel_checkpoint();
         let step = crate::aver_generated::domain::eval::core::evalResolvedSlotStep(
-            fnId, &fd, &calleeEnv, &fns,
+            fnId.clone(),
+            &fd,
+            &calleeEnv,
+            &fns,
         )?;
         match step {
             crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v) => {
@@ -3718,7 +3725,7 @@ pub fn evalResolvedSlotDirect(
 
 /// Run one slot-frame step and either finish with a value or request a self-tail-call re-entry.
 pub fn evalResolvedSlotStep(
-    fnId: i64,
+    fnId: aver_rt::AverInt,
     fd: &FnDef,
     calleeEnv: &aver_rt::AverVector<Val>,
     fns: &FnStore,
@@ -3822,7 +3829,7 @@ pub fn evalResolvedSlotStep(
             crate::aver_generated::domain::eval::core::evalResolvedSingleExprSlotTail(
                 fnId,
                 &fd.body,
-                fd.slotCount,
+                fd.slotCount.clone(),
                 &fd.slotMap,
                 calleeEnv,
                 fns,
@@ -3832,7 +3839,7 @@ pub fn evalResolvedSlotStep(
             crate::aver_generated::domain::eval::core::evalStmtsSlotTail(
                 fnId,
                 &fd.body,
-                fd.slotCount,
+                fd.slotCount.clone(),
                 calleeEnv,
                 &fd.slotMap,
                 fns,
@@ -3877,7 +3884,7 @@ pub fn evalResolvedNamedFn(
 pub fn evalResolvedSingleExprSlot(
     body: &aver_rt::AverList<Stmt>,
     calleeEnv: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -3901,10 +3908,10 @@ pub fn evalResolvedSingleExprSlot(
 
 /// Tail-aware version of the single-expression fast path for slot functions.
 pub fn evalResolvedSingleExprSlotTail(
-    selfId: i64,
+    selfId: aver_rt::AverInt,
     body: &aver_rt::AverList<Stmt>,
-    slotCount: i64,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotCount: aver_rt::AverInt,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     calleeEnv: &aver_rt::AverVector<Val>,
     fns: &FnStore,
 ) -> Result<SlotTailStep, AverStr> {
@@ -3941,11 +3948,11 @@ pub fn evalResolvedSingleExprSlotTail(
 
 /// Evaluate a final statement in slot mode, capturing self-tail-calls as loop re-entry requests.
 pub fn evalTailStmtSlot(
-    selfId: i64,
+    selfId: aver_rt::AverInt,
     stmt: &Stmt,
-    slotCount: i64,
+    slotCount: aver_rt::AverInt,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<SlotTailStep, AverStr> {
     crate::cancel_checkpoint();
@@ -3975,7 +3982,7 @@ pub fn evalTailStmtSlot(
 pub fn evalResolvedSingleStmtSlot(
     stmt: &Stmt,
     calleeEnv: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4072,8 +4079,8 @@ pub fn runFastLeafNamed(
 /// Forward a direct call by reading already-resolved slot arguments without evaluating an AST arg list.
 pub fn fastForwardCall(
     calleeEnv: &aver_rt::AverVector<Val>,
-    fnId: i64,
-    slotArgs: &aver_rt::AverList<i64>,
+    fnId: aver_rt::AverInt,
+    slotArgs: &aver_rt::AverList<aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4082,14 +4089,14 @@ pub fn fastForwardCall(
         calleeEnv.clone(),
         aver_rt::AverList::empty(),
     )?;
-    let fd = crate::aver_generated::domain::eval::store::lookupFnById(fns, fnId)?;
+    let fd = crate::aver_generated::domain::eval::store::lookupFnById(fns, fnId.clone())?;
     crate::aver_generated::domain::eval::core::callResolvedById(fnId, &fd, &args, fns)
 }
 
 /// Collect forwarded slot arguments in call order.
 #[inline(always)]
 pub fn collectFastForwardArgs(
-    mut slotArgs: aver_rt::AverList<i64>,
+    mut slotArgs: aver_rt::AverList<aver_rt::AverInt>,
     mut calleeEnv: aver_rt::AverVector<Val>,
     mut acc: aver_rt::AverList<Val>,
 ) -> Result<aver_rt::AverList<Val>, AverStr> {
@@ -4121,14 +4128,14 @@ pub fn evalCall(
 
 /// Call a pre-resolved function directly using the function store.
 pub fn evalCallDirect(
-    fnId: i64,
+    fnId: aver_rt::AverInt,
     argExprs: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverMap<AverStr, Val>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
-    let fd = crate::aver_generated::domain::eval::store::lookupFnById(fns, fnId)?;
-    if (fd.slotCount > 0i64) {
+    let fd = crate::aver_generated::domain::eval::store::lookupFnById(fns, fnId.clone())?;
+    if (fd.slotCount > aver_rt::AverInt::from_i64(0)) {
         crate::aver_generated::domain::eval::core::evalCallDirectMapToSlot(
             fnId, &fd, argExprs, env, fns,
         )
@@ -4139,7 +4146,7 @@ pub fn evalCallDirect(
 
 /// Call resolved function by evaluating args directly into the callee slot env.
 pub fn evalCallDirectMapToSlot(
-    fnId: i64,
+    fnId: aver_rt::AverInt,
     fd: &FnDef,
     argExprs: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverMap<AverStr, Val>,
@@ -4151,10 +4158,12 @@ pub fn evalCallDirectMapToSlot(
         env.clone(),
         fns.clone(),
         aver_rt::AverVector::new(
-            fd.slotCount as usize,
+            (fd.slotCount)
+                .to_usize()
+                .expect("Vector.new: size must be a non-negative, machine-sized Int"),
             crate::aver_generated::domain::value::Val::ValUnit,
         ),
-        0i64,
+        aver_rt::AverInt::from_i64(0),
     )?;
     crate::aver_generated::domain::eval::core::evalResolvedSlotFn(fnId, fd, &calleeEnv, fns)
 }
@@ -4345,8 +4354,8 @@ pub fn evalVarSlot(name: AverStr, fns: &FnStore) -> Result<Val, AverStr> {
 /// Evaluate a specialized slot-vs-int arithmetic expression.
 pub fn evalBinopSlotInt(
     op: &BinOp,
-    slot: i64,
-    rhs: i64,
+    slot: aver_rt::AverInt,
+    rhs: aver_rt::AverInt,
     env: &aver_rt::AverVector<Val>,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4361,8 +4370,8 @@ pub fn evalBinopSlotInt(
 /// Evaluate a specialized slot-vs-slot arithmetic expression.
 pub fn evalBinopSlots(
     op: &BinOp,
-    lhs: i64,
-    rhs: i64,
+    lhs: aver_rt::AverInt,
+    rhs: aver_rt::AverInt,
     env: &aver_rt::AverVector<Val>,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4374,8 +4383,8 @@ pub fn evalBinopSlots(
 /// Evaluate a specialized slot-vs-int comparison.
 pub fn evalCmpSlotInt(
     op: &CmpOp,
-    slot: i64,
-    rhs: i64,
+    slot: aver_rt::AverInt,
+    rhs: aver_rt::AverInt,
     env: &aver_rt::AverVector<Val>,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4390,8 +4399,8 @@ pub fn evalCmpSlotInt(
 /// Evaluate a specialized slot-vs-slot comparison.
 pub fn evalCmpSlots(
     op: &CmpOp,
-    lhs: i64,
-    rhs: i64,
+    lhs: aver_rt::AverInt,
+    rhs: aver_rt::AverInt,
     env: &aver_rt::AverVector<Val>,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4404,9 +4413,9 @@ pub fn evalCmpSlots(
 pub fn evalVectorGetOrIntExprSlot(
     vecExpr: &Expr,
     idxExpr: &Expr,
-    defaultValue: i64,
+    defaultValue: aver_rt::AverInt,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4419,9 +4428,9 @@ pub fn evalVectorGetOrIntExprSlot(
 pub fn evalIntModOrIntExprSlot(
     a: &Expr,
     b: &Expr,
-    defaultValue: i64,
+    defaultValue: aver_rt::AverInt,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4435,7 +4444,7 @@ pub fn evalBinopSlot(
     a: &Expr,
     b: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
     op: &BinOp,
 ) -> Result<Val, AverStr> {
@@ -4449,7 +4458,7 @@ pub fn evalBinopSlot(
 pub fn evalNegSlot(
     inner: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4462,7 +4471,7 @@ pub fn evalCmpSlot(
     a: &Expr,
     b: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
     op: &CmpOp,
 ) -> Result<Val, AverStr> {
@@ -4476,7 +4485,7 @@ pub fn evalCmpSlot(
 pub fn evalConcatSlot(
     parts: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4493,7 +4502,7 @@ pub fn evalConcatSlot(
 pub fn evalConcatPartsSlot(
     mut parts: aver_rt::AverList<Expr>,
     mut env: aver_rt::AverVector<Val>,
-    mut slotMap: aver_rt::AverMap<AverStr, i64>,
+    mut slotMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut fns: FnStore,
     mut acc: AverStr,
 ) -> Result<Val, AverStr> {
@@ -4513,7 +4522,7 @@ pub fn evalConcatPartsSlot(
 pub fn evalTupleSlot(
     exprs: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4526,7 +4535,7 @@ pub fn evalTupleSlot(
 pub fn evalListSlot(
     exprs: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4539,7 +4548,7 @@ pub fn evalListSlot(
 pub fn evalListItemsSlot(
     exprs: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<aver_rt::AverList<Val>, AverStr> {
     crate::cancel_checkpoint();
@@ -4556,7 +4565,7 @@ pub fn evalListItemsSlot(
 pub fn evalListItemsSlotRev(
     mut exprs: aver_rt::AverList<Expr>,
     mut env: aver_rt::AverVector<Val>,
-    mut slotMap: aver_rt::AverMap<AverStr, i64>,
+    mut slotMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut fns: FnStore,
     mut acc: aver_rt::AverList<Val>,
 ) -> Result<aver_rt::AverList<Val>, AverStr> {
@@ -4577,7 +4586,7 @@ pub fn evalRecordSlot(
     name: AverStr,
     fieldExprs: &aver_rt::AverList<(AverStr, Expr)>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4593,7 +4602,7 @@ pub fn evalRecordSlot(
 pub fn evalRecordFieldsSlot(
     fieldExprs: &aver_rt::AverList<(AverStr, Expr)>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
     crate::cancel_checkpoint();
@@ -4606,7 +4615,7 @@ pub fn evalRecordFieldOneSlot(
     expr: &Expr,
     rest: &aver_rt::AverList<(AverStr, Expr)>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
     crate::cancel_checkpoint();
@@ -4621,7 +4630,7 @@ pub fn evalFieldAccessSlot(
     obj: &Expr,
     field: AverStr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4639,7 +4648,7 @@ pub fn evalCallSlot(
     name: AverStr,
     argExprs: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4650,15 +4659,15 @@ pub fn evalCallSlot(
 
 /// Call a pre-resolved function directly from slot mode using the function store.
 pub fn evalCallDirectSlot(
-    fnId: i64,
+    fnId: aver_rt::AverInt,
     argExprs: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
-    let fd = crate::aver_generated::domain::eval::store::lookupFnById(fns, fnId)?;
-    if (fd.slotCount > 0i64) {
+    let fd = crate::aver_generated::domain::eval::store::lookupFnById(fns, fnId.clone())?;
+    if (fd.slotCount > aver_rt::AverInt::from_i64(0)) {
         crate::aver_generated::domain::eval::core::evalCallDirectSlotToSlot(
             fnId, &fd, argExprs, env, slotMap, fns,
         )
@@ -4671,11 +4680,11 @@ pub fn evalCallDirectSlot(
 
 /// Call resolved function by evaluating args directly into a callee slot env from slot caller state.
 pub fn evalCallDirectSlotToSlot(
-    fnId: i64,
+    fnId: aver_rt::AverInt,
     fd: &FnDef,
     argExprs: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4685,10 +4694,12 @@ pub fn evalCallDirectSlotToSlot(
         slotMap.clone(),
         fns.clone(),
         aver_rt::AverVector::new(
-            fd.slotCount as usize,
+            (fd.slotCount)
+                .to_usize()
+                .expect("Vector.new: size must be a non-negative, machine-sized Int"),
             crate::aver_generated::domain::value::Val::ValUnit,
         ),
-        0i64,
+        aver_rt::AverInt::from_i64(0),
     )?;
     crate::aver_generated::domain::eval::core::evalResolvedSlotFn(fnId, fd, &calleeEnv, fns)
 }
@@ -4698,7 +4709,7 @@ pub fn evalCallDirectSlotToNamed(
     fd: &FnDef,
     argExprs: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4718,7 +4729,7 @@ pub fn evalCallBuiltinSlot(
     name: AverStr,
     argExprs: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4731,7 +4742,7 @@ pub fn evalCallBuiltinSlot(
 pub fn evalArgsSlot(
     exprs: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<aver_rt::AverList<Val>, AverStr> {
     crate::cancel_checkpoint();
@@ -4742,7 +4753,7 @@ pub fn evalArgsSlot(
 pub fn evalArgsSlot1(
     e0: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<aver_rt::AverList<Val>, AverStr> {
     crate::cancel_checkpoint();
@@ -4755,7 +4766,7 @@ pub fn evalArgsSlot2(
     e0: &Expr,
     e1: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<aver_rt::AverList<Val>, AverStr> {
     crate::cancel_checkpoint();
@@ -4770,7 +4781,7 @@ pub fn evalArgsSlot3(
     e1: &Expr,
     e2: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<aver_rt::AverList<Val>, AverStr> {
     crate::cancel_checkpoint();
@@ -4784,7 +4795,7 @@ pub fn evalArgsSlot3(
 pub fn evalArgsSlotRev(
     mut exprs: aver_rt::AverList<Expr>,
     mut env: aver_rt::AverVector<Val>,
-    mut slotMap: aver_rt::AverMap<AverStr, i64>,
+    mut slotMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut fns: FnStore,
     mut acc: aver_rt::AverList<Val>,
 ) -> Result<aver_rt::AverList<Val>, AverStr> {
@@ -4806,14 +4817,14 @@ pub fn evalArgsMapToSlotEnv(
     mut env: aver_rt::AverMap<AverStr, Val>,
     mut fns: FnStore,
     mut acc: aver_rt::AverVector<Val>,
-    mut idx: i64,
+    mut idx: aver_rt::AverInt,
 ) -> Result<aver_rt::AverVector<Val>, AverStr> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return Ok(acc); }, [e, rest] => { match crate::aver_generated::domain::eval::core::evalExpr(&e, &env, &fns) { Err(err) => { return Err(err); }, Ok(v) => { {
             let __tco0 = rest;
-            let __tco3 = crate::aver_generated::domain::eval::slots::setSlot(&acc, idx, &v);
-            let __tco4 = (idx + 1i64);
+            let __tco3 = crate::aver_generated::domain::eval::slots::setSlot(&acc, idx.clone(), &v);
+            let __tco4 = idx.add(&aver_rt::AverInt::from_i64(1));
             exprs = __tco0;
             acc = __tco3;
             idx = __tco4;
@@ -4826,17 +4837,17 @@ pub fn evalArgsMapToSlotEnv(
 pub fn evalArgsSlotToSlotEnv(
     mut exprs: aver_rt::AverList<Expr>,
     mut env: aver_rt::AverVector<Val>,
-    mut slotMap: aver_rt::AverMap<AverStr, i64>,
+    mut slotMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut fns: FnStore,
     mut acc: aver_rt::AverVector<Val>,
-    mut idx: i64,
+    mut idx: aver_rt::AverInt,
 ) -> Result<aver_rt::AverVector<Val>, AverStr> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return Ok(acc); }, [e, rest] => { match crate::aver_generated::domain::eval::core::evalExprSlot(&e, &env, &slotMap, &fns) { Err(err) => { return Err(err); }, Ok(v) => { {
             let __tco0 = rest;
-            let __tco4 = crate::aver_generated::domain::eval::slots::setSlot(&acc, idx, &v);
-            let __tco5 = (idx + 1i64);
+            let __tco4 = crate::aver_generated::domain::eval::slots::setSlot(&acc, idx.clone(), &v);
+            let __tco5 = idx.add(&aver_rt::AverInt::from_i64(1));
             exprs = __tco0;
             acc = __tco4;
             idx = __tco5;
@@ -4849,7 +4860,7 @@ pub fn evalArgsSlotToSlotEnv(
 pub fn evalPropagateSlot(
     inner: &Expr,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4881,7 +4892,7 @@ pub fn evalIndependentProductSlot(
     exprs: &aver_rt::AverList<Expr>,
     unwrap: bool,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4902,7 +4913,7 @@ pub fn evalIndependentProductSlot(
 pub fn evalIndependentItemsSlot(
     exprs: &aver_rt::AverList<Expr>,
     env: &aver_rt::AverVector<Val>,
-    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns: &FnStore,
 ) -> Result<aver_rt::AverList<Val>, AverStr> {
     crate::cancel_checkpoint();

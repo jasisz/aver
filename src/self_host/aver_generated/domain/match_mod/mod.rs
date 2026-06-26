@@ -120,7 +120,10 @@ pub fn matchPattern(pat: &Pattern, v: &Val) -> Result<aver_rt::AverList<(AverStr
 }
 
 /// Match a PatInt pattern against a value.
-pub fn matchPatInt(n: i64, v: &Val) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+pub fn matchPatInt(
+    n: aver_rt::AverInt,
+    v: &Val,
+) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValInt(m) => {
@@ -319,26 +322,36 @@ pub fn matchGenericCtorCheck(
 /// Match constructor pattern by integer tag ID. Builtins dispatch directly; user variants confirm both tag and full name.
 #[inline(always)]
 pub fn matchPatConstructorById(
-    tag: i64,
+    tag: aver_rt::AverInt,
     ctorName: AverStr,
     bindings: &aver_rt::AverList<AverStr>,
     v: &Val,
 ) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = tag;
-        if __dispatch_subject == 1i64 {
-            crate::aver_generated::domain::match_mod::matchWrapperPatDirect(v, 1i64, bindings)
+        let __dispatch_subject = tag.clone();
+        if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
+            crate::aver_generated::domain::match_mod::matchWrapperPatDirect(
+                v,
+                aver_rt::AverInt::from_i64(1),
+                bindings,
+            )
         } else {
-            if __dispatch_subject == 2i64 {
-                crate::aver_generated::domain::match_mod::matchWrapperPatDirect(v, 2i64, bindings)
+            if __dispatch_subject == aver_rt::AverInt::from_i64(2) {
+                crate::aver_generated::domain::match_mod::matchWrapperPatDirect(
+                    v,
+                    aver_rt::AverInt::from_i64(2),
+                    bindings,
+                )
             } else {
-                if __dispatch_subject == 3i64 {
+                if __dispatch_subject == aver_rt::AverInt::from_i64(3) {
                     crate::aver_generated::domain::match_mod::matchWrapperPatDirect(
-                        v, 3i64, bindings,
+                        v,
+                        aver_rt::AverInt::from_i64(3),
+                        bindings,
                     )
                 } else {
-                    if __dispatch_subject == 4i64 {
+                    if __dispatch_subject == aver_rt::AverInt::from_i64(4) {
                         crate::aver_generated::domain::match_mod::matchNonePat(v)
                     } else {
                         crate::aver_generated::domain::match_mod::matchGenericCtorById(
@@ -355,13 +368,13 @@ pub fn matchPatConstructorById(
 #[inline(always)]
 pub fn matchWrapperPatDirect(
     v: &Val,
-    tag: i64,
+    tag: aver_rt::AverInt,
     bindings: &aver_rt::AverList<AverStr>,
 ) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = tag;
-        if __dispatch_subject == 1i64 {
+        if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
             match v.clone() {
                 crate::aver_generated::domain::value::Val::ValOk(inner) => {
                     let inner = (*inner).clone();
@@ -373,7 +386,7 @@ pub fn matchWrapperPatDirect(
                 _ => Err(AverStr::from("no match")),
             }
         } else {
-            if __dispatch_subject == 2i64 {
+            if __dispatch_subject == aver_rt::AverInt::from_i64(2) {
                 match v.clone() {
                     crate::aver_generated::domain::value::Val::ValErr(inner) => {
                         let inner = (*inner).clone();
@@ -385,7 +398,7 @@ pub fn matchWrapperPatDirect(
                     _ => Err(AverStr::from("no match")),
                 }
             } else {
-                if __dispatch_subject == 3i64 {
+                if __dispatch_subject == aver_rt::AverInt::from_i64(3) {
                     match v.clone() {
                         crate::aver_generated::domain::value::Val::ValSome(inner) => {
                             let inner = (*inner).clone();
@@ -406,7 +419,7 @@ pub fn matchWrapperPatDirect(
 
 /// Match a user-defined variant by integer tag first, then full constructor name for collision safety.
 pub fn matchGenericCtorById(
-    tag: i64,
+    tag: aver_rt::AverInt,
     ctorName: AverStr,
     bindings: &aver_rt::AverList<AverStr>,
     v: &Val,

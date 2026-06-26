@@ -7,7 +7,7 @@ use crate::*;
 #[inline(always)]
 pub fn annotateFastFns(
     mut fns: aver_rt::AverList<FnDef>,
-    mut fnMap: aver_rt::AverMap<AverStr, i64>,
+    mut fnMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc: aver_rt::AverList<FnDef>,
 ) -> aver_rt::AverList<FnDef> {
     loop {
@@ -25,14 +25,17 @@ pub fn annotateFastFns(
 }
 
 /// Attach a narrow fast-path tag to a function definition.
-pub fn annotateFastFn(fd: &FnDef, fnMap: &aver_rt::AverMap<AverStr, i64>) -> FnDef {
+pub fn annotateFastFn(fd: &FnDef, fnMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>) -> FnDef {
     crate::cancel_checkpoint();
-    let selfId = fnMap.get(&fd.name).cloned().unwrap_or((-1i64));
+    let selfId = fnMap
+        .get(&fd.name)
+        .cloned()
+        .unwrap_or(aver_rt::AverInt::from_i64(-1));
     crate::aver_generated::domain::ast::FnDef {
         name: fd.name.clone(),
         params: fd.params.clone(),
         body: fd.body.clone(),
-        slotCount: fd.slotCount,
+        slotCount: fd.slotCount.clone(),
         slotMap: fd.slotMap.clone(),
         fastPath: crate::aver_generated::domain::resolver::fast::classifyFastPath(&fd.body),
         tailLoop: crate::aver_generated::domain::resolver::fast::classifyTailLoop(
@@ -44,7 +47,7 @@ pub fn annotateFastFn(fd: &FnDef, fnMap: &aver_rt::AverMap<AverStr, i64>) -> FnD
 
 /// Precompute whether the final expression position can self-tail-call directly.
 #[inline(always)]
-pub fn classifyTailLoop(mut selfId: i64, mut body: aver_rt::AverList<Stmt>) -> bool {
+pub fn classifyTailLoop(mut selfId: aver_rt::AverInt, mut body: aver_rt::AverList<Stmt>) -> bool {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(body, [] => { return false; }, [stmt, rest] => { { let __list_subject = rest.clone(); if __list_subject.is_empty() { return crate::aver_generated::domain::resolver::fast::stmtNeedsTailLoop(selfId, &stmt); } else { {
@@ -56,7 +59,7 @@ pub fn classifyTailLoop(mut selfId: i64, mut body: aver_rt::AverList<Stmt>) -> b
 }
 
 /// Only the final expression statement can trigger the tail-loop slot evaluator.
-pub fn stmtNeedsTailLoop(selfId: i64, stmt: &Stmt) -> bool {
+pub fn stmtNeedsTailLoop(selfId: aver_rt::AverInt, stmt: &Stmt) -> bool {
     crate::cancel_checkpoint();
     match stmt.clone() {
         crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
@@ -67,7 +70,7 @@ pub fn stmtNeedsTailLoop(selfId: i64, stmt: &Stmt) -> bool {
 }
 
 /// Recognize direct self-calls in tail position, including bool branches and matches.
-pub fn exprNeedsTailLoop(mut selfId: i64, mut expr: Expr) -> bool {
+pub fn exprNeedsTailLoop(mut selfId: aver_rt::AverInt, mut expr: Expr) -> bool {
     loop {
         crate::cancel_checkpoint();
         match expr {
@@ -78,7 +81,8 @@ pub fn exprNeedsTailLoop(mut selfId: i64, mut expr: Expr) -> bool {
                 let thenExpr = (*thenExpr).clone();
                 let elseExpr = (*elseExpr).clone();
                 if crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(
-                    selfId, thenExpr,
+                    selfId.clone(),
+                    thenExpr,
                 ) {
                     return true;
                 } else {
@@ -103,10 +107,13 @@ pub fn exprNeedsTailLoop(mut selfId: i64, mut expr: Expr) -> bool {
 
 /// Return true when any match arm ends in a direct self-tail-call.
 #[inline(always)]
-pub fn armsNeedTailLoop(mut selfId: i64, mut arms: aver_rt::AverList<MatchArm>) -> bool {
+pub fn armsNeedTailLoop(
+    mut selfId: aver_rt::AverInt,
+    mut arms: aver_rt::AverList<MatchArm>,
+) -> bool {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(arms, [] => { return false; }, [arm, rest] => { if crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(selfId, arm.body.clone()) { return true; } else { {
+        aver_list_match!(arms, [] => { return false; }, [arm, rest] => { if crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(selfId.clone(), arm.body.clone()) { return true; } else { {
             let __tco1 = rest;
             arms = __tco1;
             continue;
@@ -715,7 +722,10 @@ pub fn classifyFastListMatch(scrutinee: &Expr, arms: &aver_rt::AverList<MatchArm
 }
 
 /// Extract fixed empty/cons list arms regardless of order.
-pub fn classifyFastListArms(slot: i64, arms: &aver_rt::AverList<MatchArm>) -> FnFastPath {
+pub fn classifyFastListArms(
+    slot: aver_rt::AverInt,
+    arms: &aver_rt::AverList<MatchArm>,
+) -> FnFastPath {
     crate::cancel_checkpoint();
     {
         let __list_subject = arms.clone();
@@ -742,7 +752,11 @@ pub fn classifyFastListArms(slot: i64, arms: &aver_rt::AverList<MatchArm>) -> Fn
 
 /// Convert two list-pattern arms into a direct slot branch.
 #[inline(always)]
-pub fn classifyFastListArmPair(slot: i64, arm1: &MatchArm, arm2: &MatchArm) -> FnFastPath {
+pub fn classifyFastListArmPair(
+    slot: aver_rt::AverInt,
+    arm1: &MatchArm,
+    arm2: &MatchArm,
+) -> FnFastPath {
     crate::cancel_checkpoint();
     let leaf1 = crate::aver_generated::domain::resolver::fast::classifyFastLeafExpr(&arm1.body);
     let leaf2 = crate::aver_generated::domain::resolver::fast::classifyFastLeafExpr(&arm2.body);
@@ -765,12 +779,12 @@ pub fn classifyFastListArmPair(slot: i64, arm1: &MatchArm, arm2: &MatchArm) -> F
 
 /// Order empty/cons arms into a direct list branch.
 pub fn classifyFastListPatterns(
-    slot: i64,
+    slot: aver_rt::AverInt,
     p1: &Pattern,
-    bindingSlots1: &aver_rt::AverMap<AverStr, i64>,
+    bindingSlots1: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     leaf1: &FastLeaf,
     p2: &Pattern,
-    bindingSlots2: &aver_rt::AverMap<AverStr, i64>,
+    bindingSlots2: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     leaf2: &FastLeaf,
 ) -> FnFastPath {
     crate::cancel_checkpoint();
@@ -801,10 +815,10 @@ pub fn classifyFastListPatterns(
 
 /// Finish list fast-path classification when the empty arm is known.
 pub fn classifyFastListOther(
-    slot: i64,
+    slot: aver_rt::AverInt,
     emptyLeaf: &FastLeaf,
     other: &Pattern,
-    bindingSlots: &aver_rt::AverMap<AverStr, i64>,
+    bindingSlots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     otherLeaf: &FastLeaf,
 ) -> FnFastPath {
     crate::cancel_checkpoint();
@@ -825,10 +839,10 @@ pub fn classifyFastListOther(
 
 /// Handle reversed list arms where the cons case appears first.
 pub fn classifyFastListConsFirst(
-    slot: i64,
+    slot: aver_rt::AverInt,
     head: AverStr,
     tail: AverStr,
-    bindingSlots: &aver_rt::AverMap<AverStr, i64>,
+    bindingSlots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     consLeaf: &FastLeaf,
     other: &Pattern,
     otherLeaf: &FastLeaf,
@@ -852,11 +866,11 @@ pub fn classifyFastListConsFirst(
 /// Build the list-slot branch once head/tail binding slots are known.
 #[inline(always)]
 pub fn classifyFastListCons(
-    slot: i64,
+    slot: aver_rt::AverInt,
     emptyLeaf: &FastLeaf,
     head: AverStr,
     tail: AverStr,
-    bindingSlots: &aver_rt::AverMap<AverStr, i64>,
+    bindingSlots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     consLeaf: &FastLeaf,
 ) -> FnFastPath {
     crate::cancel_checkpoint();
@@ -877,7 +891,10 @@ pub fn classifyFastListCons(
 
 /// Recognize tiny direct-call wrappers that only forward slot arguments.
 #[inline(always)]
-pub fn classifyFastForwardCall(fnId: i64, args: &aver_rt::AverList<Expr>) -> FnFastPath {
+pub fn classifyFastForwardCall(
+    fnId: aver_rt::AverInt,
+    args: &aver_rt::AverList<Expr>,
+) -> FnFastPath {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::resolver::fast::classifyFastForwardSlots(
         args.clone(),
@@ -894,8 +911,8 @@ pub fn classifyFastForwardCall(fnId: i64, args: &aver_rt::AverList<Expr>) -> FnF
 #[inline(always)]
 pub fn classifyFastForwardSlots(
     mut args: aver_rt::AverList<Expr>,
-    mut acc: aver_rt::AverList<i64>,
-) -> Option<aver_rt::AverList<i64>> {
+    mut acc: aver_rt::AverList<aver_rt::AverInt>,
+) -> Option<aver_rt::AverList<aver_rt::AverInt>> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(args, [] => { return Some(acc.reverse()); }, [arg, rest] => { match arg {
@@ -1079,7 +1096,7 @@ pub fn classifyFastEqScrutinee(
 
 /// Encode equality against a constant once the slot side is known.
 pub fn classifyFastEqOther(
-    slot: i64,
+    slot: aver_rt::AverInt,
     other: &Expr,
     thenLeaf: &FastLeaf,
     elseLeaf: &FastLeaf,

@@ -96,7 +96,7 @@ pub fn isRecordUpdate(name: AverStr, args: &aver_rt::AverList<Val>) -> bool {
 #[inline(always)]
 pub fn hasNamedRecord(args: &aver_rt::AverList<Val>) -> bool {
     crate::cancel_checkpoint();
-    if ((args.len() as i64) == 2i64) {
+    if (aver_rt::AverInt::from_i64(args.len() as i64) == aver_rt::AverInt::from_i64(2)) {
         crate::aver_generated::domain::eval::records::isNamedSentinel(args)
     } else {
         false

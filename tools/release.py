@@ -88,45 +88,106 @@ PUBLISH_BLOCKERS = {
 }
 
 
+def crate_source_changed_since_version_set(crate: str, version: str) -> bool:
+    """True if the crate's source changed since the commit that last set its
+    current package version.
+
+    More robust than diffing `last_tag..HEAD`: a crate can change in an earlier
+    release window without ever being version-bumped (and thus never published),
+    so the published version is stale even though nothing changed since the most
+    recent tag. We baseline against "where this crate's version was last set"
+    instead, which tracks the last time it was actually (re)published.
+
+    Manifest/lockfile churn (version bumps, dep-pin updates) is ignored.
+    """
+    toml = VERSION_FILES[crate]
+    crate_dir = toml.parent
+    ver_commit = subprocess.run(
+        ["git", "log", "-n", "1", "--format=%H", "-S", f'version = "{version}"', "--", str(toml)],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    ).stdout.strip()
+    if not ver_commit:
+        return True  # cannot establish a baseline -> bump to be safe
+    changed = subprocess.run(
+        ["git", "diff", "--name-only", f"{ver_commit}..HEAD", "--", str(crate_dir)],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    ).stdout.strip().splitlines()
+    return any(not f.endswith(("Cargo.toml", "Cargo.lock")) for f in changed)
+
+
+def published_versions(crate: str) -> set[str]:
+    """Versions of `crate` already on crates.io. Empty set on any network error
+    (the caller then skips the already-published guard, as before)."""
+    import json
+    import urllib.request
+
+    url = f"https://crates.io/api/v1/crates/{crate}"
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "aver-release-script (https://github.com/jasisz/aver)"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.load(resp)
+        return {v["num"] for v in data.get("versions", [])}
+    except Exception as e:  # noqa: BLE001 — best-effort guard, never block release on it
+        print(f"  warning: could not query crates.io for {crate} ({e}); skipping already-published check")
+        return set()
+
+
+def _cascade(new: dict[str, str], old_versions: dict[str, str]) -> bool:
+    """One pass of the publish-blocker cascade. Returns whether anything bumped."""
+    changed = False
+    for upstream, blockers in PUBLISH_BLOCKERS.items():
+        if new[upstream] == old_versions[upstream]:
+            continue
+        for ds in blockers:
+            if new[ds] == old_versions[ds]:
+                new[ds] = bump_patch(old_versions[ds])
+                changed = True
+    return changed
+
+
 def compute_new_versions(old_versions: dict[str, str], new_main: str) -> dict[str, str]:
     """Compute new versions for every crate.
 
-    aver-lang gets the requested version. Other crates patch-bump if
-    either (a) they have direct changes since last tag, or (b) skipping
-    their bump would create a publish-time resolution conflict for
-    aver-lang (see PUBLISH_BLOCKERS).
+    aver-lang gets the requested version. Other crates patch-bump if either
+    (a) their source changed since their version was last set, or (b) skipping
+    their bump would create a publish-time resolution conflict for aver-lang
+    (see PUBLISH_BLOCKERS). Finally, any computed version that is already on
+    crates.io is bumped past — so a re-run cleanly recovers from a partial
+    publish instead of failing on "crate version already uploaded".
     """
-    last_tag = subprocess.run(
-        ["git", "describe", "--tags", "--abbrev=0"],
-        cwd=REPO_ROOT, capture_output=True, text=True,
-    ).stdout.strip()
-
     new = dict(old_versions)
     new["aver-lang"] = new_main
 
-    # Pass 1: direct changes since last tag
+    # Pass 1: bump any non-main crate whose SOURCE changed since its version
+    # was last set (not merely since the last tag).
     for crate in CRATE_ORDER:
         if crate == "aver-lang":
             continue
-        result = subprocess.run(
-            ["git", "log", f"{last_tag}..HEAD", "--oneline", "--", f"{VERSION_FILES[crate].parent}/"],
-            cwd=REPO_ROOT, capture_output=True, text=True,
-        )
-        if result.stdout.strip():
+        if crate_source_changed_since_version_set(crate, old_versions[crate]):
             new[crate] = bump_patch(old_versions[crate])
 
-    # Pass 2: forced cascade only for publish-blockers. Fixpoint in
-    # case of multi-step chains (rt→memory→… if we ever add another).
+    # Pass 2: forced cascade for publish-blockers (fixpoint).
     for _ in range(len(CRATE_ORDER)):
-        changed = False
-        for upstream, blockers in PUBLISH_BLOCKERS.items():
-            if new[upstream] == old_versions[upstream]:
-                continue
-            for ds in blockers:
-                if new[ds] == old_versions[ds]:
-                    new[ds] = bump_patch(old_versions[ds])
-                    changed = True
-        if not changed:
+        if not _cascade(new, old_versions):
+            break
+
+    # Pass 3: never assign a version already on crates.io. Bump past taken
+    # versions, then re-run the cascade so downstreams re-pin to the final
+    # upstream version. (Recovers from a partial publish: e.g. aver-memory
+    # 0.2.10 already uploaded -> land on 0.2.11.)
+    for _ in range(len(CRATE_ORDER) * 4):
+        bumped = False
+        for crate in CRATE_ORDER:
+            if new[crate] == old_versions[crate]:
+                continue  # not being published this run
+            taken = published_versions(crate)
+            while new[crate] in taken:
+                new[crate] = bump_patch(new[crate])
+                bumped = True
+        _cascade(new, old_versions)
+        if not bumped:
             break
 
     return new
