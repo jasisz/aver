@@ -8,12 +8,20 @@ module Rational
         "denominator, zero and negatives included, with no `when` premise."
         "The AMD K5 paper models floating-point values as exact rationals, so this is"
         "the algebra every later stage is built on."
-    exposes [Fraction, zeroFraction, oneFraction, plus, times, negate, minus, sameValue]
+    exposes [Fraction, makeFraction, zeroFraction, oneFraction, plus, times, negate, minus, sameValue]
     effects []
 
 record Fraction
     top: Int
     bottom: Int
+
+fn makeFraction(top: Int, bottom: Int) -> Fraction
+    ? "Construct the fraction top/bottom (the primitive Fraction constructor)."
+    Fraction(top = top, bottom = bottom)
+
+verify makeFraction
+    makeFraction(3, 4) => Fraction(top = 3, bottom = 4)
+    makeFraction(-1, 2) => Fraction(top = -1, bottom = 2)
 
 fn zeroFraction() -> Fraction
     ? "The fraction zero, written 0/1."

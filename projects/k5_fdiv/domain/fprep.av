@@ -1,20 +1,26 @@
 module Fprep
     intent =
-        "Stage 1 of the K5 division proof: floats as exact rationals. A float is a"
-        "significand times a power of two (sig * 2^exp), the representation the paper"
-        "uses so that float arithmetic is ordinary exact arithmetic. The first"
-        "'floating-point folklore' fact: float multiplication denotes the product of"
-        "the denoted values -- fpValue(fpMul(a, b)) == fpValue(a) * fpValue(b)."
-        "Its proof is the project's laws-as-lemmas composition in action: the value"
-        "law does NOT re-prove anything about powers of two; it CITES the already-"
-        "proven power-of-two homomorphism pow2(m + n) == pow2(m) * pow2(n) and the"
-        "compiler composes the two. The engine supplies only the citation; the"
-        "algebraic content lives entirely as Aver laws."
-    exposes [pow2, Fp, fpValue, fpMul, fpMulValue]
+        "Stage 1 of the K5 division proof: the paper's FAITHFUL floating-point model"
+        "(Section 5.1, p.10). Every non-zero rational is sigma * s * 2^e with the sign"
+        "sigma either +1 or -1, a NORMALIZED rational significand s in [1, 2), and an"
+        "integer exponent e (p.10). We represent s as an n-bit integer `sigBits` in"
+        "[2^(n-1), 2^n) -- so the rational significand is sigBits / 2^(n-1) in [1, 2) --"
+        "carrying the width n as a field, and the denoted value sigma * (sigBits/2^(n-1))"
+        "* 2^e as the Stage-0 exact rational (domain/rational.av Fraction)."
+        "The landed laws are Lemma 7.1.2 (p.18): scaling by a power of two leaves the"
+        "significand unchanged and shifts the exponent -- s(x*2^j) = s_x, e(x*2^j) = e_x"
+        "+ j -- which hold DEFINITIONALLY here because fpScale renormalizes nothing. The"
+        "two value-preservation facts (scaling and multiplication denote the scaled /"
+        "multiplied rational) are floating-point folklore, NOT numbered paper lemmas;"
+        "they are the project's laws-as-lemmas composition in action -- they re-prove"
+        "nothing about powers of two, they CITE the proven homomorphism pow2(m+n) =="
+        "pow2(m)*pow2(n) and the compiler composes it via one generic strategy."
+    depends [Domain.Rational]
+    exposes [pow2, Fp, isFp, fpValue, fpScale, fpMul, pow2Fraction, fpScaleKeepsSignificand, fpScaleShiftsExponent, fpScalePreservesValue, fpMulValue]
     effects []
 
 fn pow2(n: Int) -> Int
-    ? "Two to the n for n >= 0 (and 1 for n <= 0): the scale factor of an exponent."
+    ? "Two to the n for n >= 0 (and 1 for n <= 0): the scale factor 2^n of an exponent."
     match n <= 0
         true -> 1
         false -> 2 * pow2(n - 1)
@@ -22,9 +28,10 @@ fn pow2(n: Int) -> Int
 verify pow2
     pow2(0) => 1
     pow2(3) => 8
+    pow2(7) => 128
 
 // The power-of-two homomorphism: adding exponents multiplies scales. This is the
-// pool law the value-preservation proof below cites; it proves on its own first.
+// pool law the value-preservation proofs below CITE; it proves on its own first.
 verify pow2 law homomorphism
     given m: Int = [0, 1, 4]
     given n: Int = [0, 2, 3]
@@ -32,31 +39,116 @@ verify pow2 law homomorphism
     when n >= 0
     pow2(m + n) => pow2(m) * pow2(n)
 
+// A float in the paper's representation (Section 5.1, p.10): a sign in {+1,-1}, a
+// normalized n-bit significand integer, an integer exponent, and the width n. The
+// rational significand is sigBits / 2^(width-1), normalized into [1, 2).
 record Fp
-    sig: Int
+    sign: Int
+    sigBits: Int
     exp: Int
+    width: Int
 
-fn fpValue(f: Fp) -> Int
-    ? "The exact value of a float: significand times two to the exponent."
-    f.sig * pow2(f.exp)
+fn isFp(f: Fp) -> Bool
+    ? "The format/normalization predicate (p.10-11): sign +1 or -1 and the significand integer normalized into [2^(width-1), 2^width), i.e. the rational significand in [1, 2)."
+    Bool.and(Bool.or(f.sign == 1, f.sign == -1), Bool.and(pow2(f.width - 1) <= f.sigBits, f.sigBits < pow2(f.width)))
+
+verify isFp
+    isFp(Fp(sign = 1, sigBits = 8, exp = 0, width = 4)) => true
+    isFp(Fp(sign = -1, sigBits = 15, exp = 3, width = 4)) => true
+    isFp(Fp(sign = 1, sigBits = 16, exp = 0, width = 4)) => false
+    isFp(Fp(sign = 1, sigBits = 7, exp = 0, width = 4)) => false
+    isFp(Fp(sign = 2, sigBits = 8, exp = 0, width = 4)) => false
+
+fn fpValue(f: Fp) -> Fraction
+    ? "The denoted value as an exact rational (for exp >= 0): sign * sigBits * 2^exp over 2^(width-1) = sign * (sigBits/2^(width-1)) * 2^exp."
+    Domain.Rational.makeFraction(f.sign * f.sigBits * pow2(f.exp), pow2(f.width - 1))
+
+verify fpValue
+    fpValue(Fp(sign = 1, sigBits = 8, exp = 0, width = 4)) => Domain.Rational.makeFraction(8, 8)
+    fpValue(Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => Domain.Rational.makeFraction(24, 8)
+    fpValue(Fp(sign = -1, sigBits = 10, exp = 2, width = 4)) => Domain.Rational.makeFraction(-40, 8)
+
+fn pow2Fraction(j: Int) -> Fraction
+    ? "The rational 2^j (for j >= 0) as the fraction 2^j / 1 -- the scale factor of Lemma 7.1.2."
+    Domain.Rational.makeFraction(pow2(j), 1)
+
+fn fpScale(f: Fp, j: Int) -> Fp
+    ? "Scale by 2^j (Lemma 7.1.2, p.18): shift the exponent by j, renormalizing NOTHING -- sign, significand and width are untouched."
+    Fp(sign = f.sign, sigBits = f.sigBits, exp = f.exp + j, width = f.width)
+
+verify fpScale
+    fpScale(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), 3) => Fp(sign = 1, sigBits = 8, exp = 3, width = 4)
+    fpScale(Fp(sign = -1, sigBits = 10, exp = 2, width = 4), -5) => Fp(sign = -1, sigBits = 10, exp = -3, width = 4)
+
+fn fpScaleKeepsSignificand(f: Fp, j: Int) -> Bool
+    ? "Lemma 7.1.2 (p.18), significand half: s(x*2^j) = s_x."
+    fpScale(f, j).sigBits == f.sigBits
+
+verify fpScaleKeepsSignificand
+    fpScaleKeepsSignificand(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), 3) => true
+
+// Lemma 7.1.2 (p.18): "If j is an integer, s(x*2^j) = s_x." The significand is
+// invariant under scaling -- here definitional, because fpScale touches only exp.
+verify fpScaleKeepsSignificand law significandInvariant
+    given f: Fp = [Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = -1, sigBits = 12, exp = 2, width = 4)]
+    given j: Int = [-5, 0, 3]
+    fpScaleKeepsSignificand(f, j) holds
+
+fn fpScaleShiftsExponent(f: Fp, j: Int) -> Bool
+    ? "Lemma 7.1.2 (p.18), exponent half: e(x*2^j) = e_x + j."
+    fpScale(f, j).exp == f.exp + j
+
+verify fpScaleShiftsExponent
+    fpScaleShiftsExponent(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), 3) => true
+
+// Lemma 7.1.2 (p.18): "If j is an integer, e(x*2^j) = e_x + j." The exponent shifts
+// by exactly j under scaling -- here definitional.
+verify fpScaleShiftsExponent law exponentShift
+    given f: Fp = [Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = -1, sigBits = 12, exp = 2, width = 4)]
+    given j: Int = [-5, 0, 3]
+    fpScaleShiftsExponent(f, j) holds
+
+fn fpScalePreservesValue(f: Fp, j: Int) -> Bool
+    ? "Folklore corollary of Lemma 7.1.2: scaling multiplies the denoted value by 2^j."
+    Domain.Rational.sameValue(fpValue(fpScale(f, j)), Domain.Rational.times(fpValue(f), pow2Fraction(j)))
+
+verify fpScalePreservesValue
+    fpScalePreservesValue(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), 3) => true
+
+// Floating-point folklore (the value form of Lemma 7.1.2, p.18): scaling by 2^j
+// multiplies the denoted rational by 2^j. NOT a numbered paper lemma -- it is the
+// laws-as-lemmas composition: cross-multiplied it asks pow2(exp+j) = pow2(exp)*
+// pow2(j), so it CITES the pow2 homomorphism above; the engine adds only the
+// citation skeleton, the algebra lives entirely as the cited Aver law.
+verify fpScalePreservesValue law scalesByPowerOfTwo
+    given f: Fp = [Fp(sign = 1, sigBits = 8, exp = 1, width = 4), Fp(sign = -1, sigBits = 12, exp = 0, width = 4)]
+    given j: Int = [0, 2, 3]
+    when f.exp >= 0
+    when j >= 0
+    fpScalePreservesValue(f, j) holds
 
 fn fpMul(a: Fp, b: Fp) -> Fp
-    ? "Multiply floats: multiply significands, add exponents."
-    Fp(sig = a.sig * b.sig, exp = a.exp + b.exp)
+    ? "Multiply floats (p.18 structure): multiply significands, add exponents, then NORMALIZE the rational significand s_a*s_b in [1,4) back into [1,2) by shifting the exponent 0 or 1 (Lemma 7.1.7) -- value-preserving, never rounding, so the product is exact in width_a+width_b bits (Lemma 7.2.12)."
+    match a.sigBits * b.sigBits < pow2(a.width + b.width - 1)
+        true -> Fp(sign = a.sign * b.sign, sigBits = a.sigBits * b.sigBits, exp = a.exp + b.exp, width = a.width + b.width - 1)
+        false -> Fp(sign = a.sign * b.sign, sigBits = a.sigBits * b.sigBits, exp = a.exp + b.exp + 1, width = a.width + b.width)
+
+verify fpMul
+    fpMul(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => Fp(sign = 1, sigBits = 96, exp = 1, width = 7)
+    fpMul(Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 0, width = 4)) => Fp(sign = 1, sigBits = 144, exp = 1, width = 8)
 
 fn fpMulValue(a: Fp, b: Fp) -> Bool
-    ? "Float multiplication denotes the product of the denoted values."
-    fpValue(fpMul(a, b)) == fpValue(a) * fpValue(b)
+    ? "Multiplication denotes the product of the denoted values (folklore)."
+    Domain.Rational.sameValue(fpValue(fpMul(a, b)), Domain.Rational.times(fpValue(a), fpValue(b)))
 
+// Floating-point folklore (the denotation of multiplication): the product float
+// denotes the product of the values. NOT a numbered paper lemma, and DEFERRED as a
+// universal law: cross-multiplied it asks the pow2 homomorphism, but composed ACROSS
+// fpMul's normalization case-split (the exponent/width shift of 0 or 1) -- the
+// magnitude split s_a*s_b < 2 vs >= 2 that Lemma 7.1.7 needs. The keystone closes the
+// no-split scaling value law above; this split is the open frontier (sample-verified
+// here, universal on Z3/Dafny which carries the case-analysis natively).
 verify fpMulValue
-    fpMulValue(Fp(sig = 3, exp = 1), Fp(sig = 5, exp = 2)) => true
-
-// The Stage-1 keystone result. With nonnegative exponents (so every scale is a
-// genuine power of two), the value of a product is the product of the values. The
-// proof composes the pow2 homomorphism above -- no bespoke reasoning about powers.
-verify fpMulValue law preservesValue
-    given a: Fp = [Fp(sig = 3, exp = 1), Fp(sig = 5, exp = 0)]
-    given b: Fp = [Fp(sig = 2, exp = 2), Fp(sig = 7, exp = 1)]
-    when a.exp >= 0
-    when b.exp >= 0
-    fpMulValue(a, b) holds
+    fpMulValue(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => true
+    fpMulValue(Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 0, width = 4)) => true
+    fpMulValue(Fp(sign = -1, sigBits = 10, exp = 2, width = 4), Fp(sign = 1, sigBits = 11, exp = 1, width = 4)) => true
