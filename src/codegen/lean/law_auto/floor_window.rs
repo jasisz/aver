@@ -264,6 +264,39 @@ grind_pattern {base}__sgn_add_succ => ({sgn} (m + n + 1)).top"#
     )
 }
 
+/// The signed-power-of-two POSITIVITY support stack: the integer power-of-two
+/// equation pair + `<base>__pow_pos`, plus `<base>__sgnt_pos` / `<base>__sgnb_pos`
+/// — the numerator and denominator of a SIGNED power-of-two cone fn `sgn`
+/// (`if k < 0 then 1/2^(-k) else 2^k/1`) are each strictly positive (the `k < 0`
+/// branch case-split bottoms out on `<base>__pow_pos` of the negated/plain
+/// exponent). Shape-keyed on the `sgn` fn (any [`signed_pow2_shape`]), never a
+/// per-figure template. Supplies the positivity the rational strict-order rung
+/// (the all-exponent rounding-error bound) hands to its `aver_int_order` close so
+/// the signed power of two can stay an abstract atom instead of being unfolded
+/// into a four-way exponent-sign case explosion.
+pub(in crate::codegen::lean) fn pow2_signed_pos_support(
+    base: &str,
+    pow: &str,
+    sgn: &str,
+) -> String {
+    let equations = pow_equation_lemmas(base, pow);
+    let pos = pow_pos_lemma(base, pow);
+    format!(
+        r#"{equations}
+{pos}
+theorem {base}__sgnt_pos (k : Int) : 0 < ({sgn} k).top := by
+  unfold {sgn}
+  split
+  · simp
+  · simpa using {base}__pow_pos k
+theorem {base}__sgnb_pos (k : Int) : 0 < ({sgn} k).bottom := by
+  unfold {sgn}
+  split
+  · simpa using {base}__pow_pos (0 - k)
+  · simp"#
+    )
+}
+
 /// The power-of-two POSITIVITY support stack — the equation pair plus the
 /// `<base>__pow_pos` functional-induction positivity theorem — scoped to a
 /// fresh `base` prefix. The generic positivity fact (`0 < pow n` for every

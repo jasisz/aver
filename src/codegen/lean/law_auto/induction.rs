@@ -2454,7 +2454,14 @@ fn signed_pow2_shape(fd: &crate::ast::FnDef, int_pow: &str) -> bool {
     for arm in arms {
         collect_fncall_names(&arm.body.node, &mut called);
     }
-    called.iter().any(|n| aver_name_to_lean(n) == int_pow)
+    // Compare on the BARE basename: a cross-module consumer holds `int_pow`
+    // qualified (`Domain.Fprep.pow2`) while the signed fn's own body calls the
+    // pow fn by its in-module bare name (`pow2`) — match the tails so the
+    // recognizer fires for a dep-module signed power of two too.
+    let want = rf_bare_basename(int_pow);
+    called
+        .iter()
+        .any(|n| rf_bare_basename(&aver_name_to_lean(n)) == want)
 }
 
 /// Collect the dotted names of every `FnCall` in `e` (recursively).
@@ -3627,6 +3634,483 @@ fn rf_homomorphism_name(ctx: &CodegenContext, pow_lean: &str) -> Option<String> 
 /// ring-bridges (`grind`). Returns `None` (decline → bounded fallback) on any
 /// structural surprise — credit stays fail-closed behind the probe + axiom
 /// whitelist.
+/// The four general-exponent value accessors read off an inlined
+/// `fpValueGeneral(F)` body `times(pow2Signed(F.exp), Fraction(top = F.sign *
+/// F.sigBits, bottom = pow(F.width - 1)))`: the signed-power-of-two cone fn (the
+/// `times` factor whose call shape is [`signed_pow2_shape`]), its exponent
+/// argument, and the sign / significand / width off the inner `Fraction`.
+/// Name-blind — derived from the value's own structure, never hard-coded.
+struct RfGeneralFields {
+    sgn_fn: String,
+    exp: String,
+    sign: String,
+    sig: String,
+    width: String,
+}
+
+/// Read the general-exponent value fields off an inlined `fpValueGeneral(F)`
+/// (`times(SGN(exp), Fraction(top = sign * sig, bottom = pow(width - 1)))`).
+/// Returns `None` if the value is not in that signed-power-of-two × fraction
+/// form (e.g. the clamped `fpValue`, a bare `Fraction`).
+fn rf_general_value_fields(
+    val: &crate::ast::Spanned<crate::ast::Expr>,
+    ctx: &CodegenContext,
+    int_pow: &str,
+) -> Option<RfGeneralFields> {
+    use crate::ast::{BinOp, Expr};
+    // val = times(A, B)
+    let Expr::FnCall(tcallee, targs) = &val.node else {
+        return None;
+    };
+    if super::shared::expr_dotted_name(tcallee)?.rsplit('.').next() != Some("times")
+        || targs.len() != 2
+    {
+        return None;
+    }
+    // A = SGN(exp), with SGN a signed-power-of-two cone fn (shape-recognized).
+    let Expr::FnCall(acallee, aargs) = &targs[0].node else {
+        return None;
+    };
+    if aargs.len() != 1 {
+        return None;
+    }
+    let sgn_dotted = super::shared::expr_dotted_name(acallee)?;
+    let sgn_fd = rf_resolve_fn(ctx, &sgn_dotted)?;
+    if !signed_pow2_shape(sgn_fd, int_pow) {
+        return None;
+    }
+    // B = Fraction { top = sign * sig, bottom = pow(width - 1) }.
+    let Expr::RecordCreate { fields, .. } = &targs[1].node else {
+        return None;
+    };
+    let top = fields.iter().find(|(n, _)| n == "top").map(|(_, e)| e)?;
+    let bottom = fields.iter().find(|(n, _)| n == "bottom").map(|(_, e)| e)?;
+    let Expr::BinOp(BinOp::Mul, sign_b, sig_b) = &top.node else {
+        return None;
+    };
+    let Expr::FnCall(_, bargs) = &bottom.node else {
+        return None;
+    };
+    let Expr::BinOp(BinOp::Sub, wbase, _) = &bargs.first()?.node else {
+        return None;
+    };
+    Some(RfGeneralFields {
+        sgn_fn: aver_name_to_lean(&sgn_dotted),
+        exp: rf_emit(ctx, &aargs[0]),
+        sign: rf_emit(ctx, sign_b),
+        sig: rf_emit(ctx, sig_b),
+        width: rf_emit(ctx, wbase),
+    })
+}
+
+/// The all-exponent rational strict-order rung for the rounding-error bound
+/// `|epsilon| < 2^(e_x - i + 1)` over the GENERAL-exponent value `fpValueGeneral`
+/// (Lemma 7.2.2's bound, faithful for the fractional floats `exp < 0` the kernel
+/// divider lives in). The error reads `minus(fpValueGeneral(F), fpValueGeneral(G))`
+/// (`G` the rounded value), so the SIGNED power of two `pow2Signed(e_x)` is the
+/// shared factor of both terms. The rung:
+///   * keeps the signed power of two an ABSTRACT atom (supplies its top/bottom
+///     positivity from `pow2_signed_pos_support`) — routing AWAY from the pow2
+///     normalizer that explodes on the squared denominators;
+///   * factors the error magnitude (sign cancels, floor remainder `r` is the
+///     nonneg core), resolves the two `absInt` matches;
+///   * CROSS-MULTIPLIES into a sign-aware INTEGER inequality and rewrites it into
+///     the multiply-by-positive shape `M * r < M * 2^(width-1)`;
+///   * derives the exponent link `2^(e_x) = 2^(e_x-i+1) * 2^(i-1)` GENERICALLY
+///     (one sign case-split, each arm CITING the power-of-two homomorphism pool
+///     law) and lets `grind` discharge the ring rewrite with it;
+///   * closes via the cited floor window (`r < 2^(width-1)`) and the
+///     multiply-by-positive rung in `aver_int_order`.
+///
+/// Returns `None` (→ legacy `fpValue` arm / bounded fallback) when the value is
+/// not the signed-power-of-two × fraction form.
+fn emit_rational_floor_bound_general(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<AutoProof> {
+    use crate::ast::Expr;
+    let pow = rf_pow2_fn(vb, law, ctx)?;
+    let inlined = inline_fn_call(&law.lhs, ctx)?;
+    let Expr::FnCall(_lt, lt_args) = &inlined.node else {
+        return None;
+    };
+    if lt_args.len() != 2 {
+        return None;
+    }
+    let Expr::FnCall(_abs, abs_args) = &lt_args[0].node else {
+        return None;
+    };
+    let err_call = abs_args.first()?;
+    let Expr::FnCall(_ps, ps_args) = &lt_args[1].node else {
+        return None;
+    };
+    let le_expr = ps_args.first()?;
+    let Expr::FnCall(_te, te_args) = &err_call.node else {
+        return None;
+    };
+    if te_args.len() != 2 {
+        return None;
+    }
+    let f_name = expr_var_name(&te_args[0].node)?.to_string();
+    let i_name = expr_var_name(&te_args[1].node)?.to_string();
+    // truncError ↦ minus(fpValueGeneral(F), fpValueGeneral(G)).
+    let minus_inlined = rf_inline_fn_call(err_call, ctx)?;
+    let Expr::FnCall(_m, m_args) = &minus_inlined.node else {
+        return None;
+    };
+    if m_args.len() != 2 {
+        return None;
+    }
+    let rounded_call = match &m_args[1].node {
+        Expr::FnCall(_, fv_args) => fv_args.first()?,
+        _ => return None,
+    };
+    // fpValueGeneral(F) ↦ times(SGN(exp), Fraction): read the field accessors.
+    let fpv_f = rf_inline_fn_call(&m_args[0], ctx)?;
+    let gf = rf_general_value_fields(&fpv_f, ctx, &pow)?;
+    // rounded(F, I) ↦ Fp record: the rounded significand integer (the floor q).
+    let rounded_rec = rf_inline_fn_call(rounded_call, ctx)?;
+    let Expr::RecordCreate {
+        fields: rf_fields, ..
+    } = &rounded_rec.node
+    else {
+        return None;
+    };
+    let q_spanned = rf_fields
+        .iter()
+        .find(|(n, _)| n == "sigBits")
+        .map(|(_, e)| e)?;
+    let q = rf_emit(ctx, q_spanned);
+    let le = rf_emit(ctx, le_expr);
+
+    // Cited pool laws: the floor window (strict remainder bound) and the
+    // power-of-two homomorphism (the exponent link, generically sign-split).
+    let (window_thm, window_fn) = rf_window_law(vb, law, ctx)?;
+    let hom = rf_homomorphism_name(ctx, &pow)?;
+
+    // The format predicate conjunct (its leading disjunction is the float sign).
+    let when = law.when.as_ref()?;
+    let conjs = rf_flatten_bool_and(when);
+    let sign_conj = rf_sign_conjunct(law, ctx)?;
+    let fmt_idx = conjs
+        .iter()
+        .position(|c| arith_eq(&c.node, &sign_conj.node))?;
+    let isfp_lean = match &sign_conj.node {
+        Expr::FnCall(callee, _) => aver_name_to_lean(&super::shared::expr_dotted_name(callee)?),
+        _ => return None,
+    };
+    let n = conjs.len();
+    let mut pat = "h_rfbp0".to_string();
+    for k in 1..n {
+        pat = format!("⟨{pat}, h_rfbp{k}⟩");
+    }
+    let fmtname = format!("h_rfbp{fmt_idx}");
+
+    // Cone simp set EXCLUDING the signed power of two (kept abstract) — the
+    // recursive `pow` and the floor wrapper are already excluded by the filter.
+    let sgn_base = rf_bare_basename(&gf.sgn_fn).to_string();
+    let defs = rf_filtered_defs(ctx, vb, law)
+        .into_iter()
+        .filter(|d| rf_bare_basename(d) != sgn_base)
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    // Power-of-two + signed-power positivity support, scoped to a fresh prefix.
+    let base = format!("{}_law_{}__rfb", aver_name_to_lean(&vb.fn_name), law.name);
+    let support_lines: Vec<String> =
+        super::floor_window::pow2_signed_pos_support(&base, &pow, &gf.sgn_fn)
+            .lines()
+            .map(|l| l.to_string())
+            .collect();
+
+    // Derived sub-expressions (all from the cone defs, so they parse-match the
+    // unfolded goal). `pe*` are the shared signed power of two at `exp`; `pl*`
+    // the bound's signed power of two at `le`.
+    let exp = gf.exp.clone();
+    let sgn = gf.sgn_fn.clone();
+    let pet = format!("({sgn} ({exp})).top");
+    let peb = format!("({sgn} ({exp})).bottom");
+    let plt = format!("({sgn} ({le})).top");
+    let plb = format!("({sgn} ({le})).bottom");
+    let pw = format!("{pow} ({} - 1)", gf.width);
+    let pp = format!("{pow} ({i_name} - 1)");
+    let sg = &gf.sign;
+    let s = &gf.sig;
+    let r = format!("{s} * {pp} - {pw} * {q}");
+    let minustop =
+        format!("{pet} * ({sg} * {s}) * ({peb} * {pp}) - {pet} * ({sg} * {q}) * ({peb} * {pw})");
+    let t_abs = format!("{pet} * {peb} * ({r})");
+    let absbot = format!("{peb} * {pw} * ({peb} * {pp})");
+    let m = format!("{pet} * {peb} * ({absbot}) * {plb} * {plb}");
+
+    let intro = format!("  intro {} h_when", intro_names.join(" "));
+    let mut body: Vec<String> = vec![intro, "  first".to_string(), "  | (".to_string()];
+    body.push("    simp only [Bool.and_eq_true, decide_eq_true_eq] at h_when".to_string());
+    body.push(format!("    obtain {pat} := h_when"));
+    body.push(format!("    have hpp : 0 < {pp} := {base}__pow_pos _"));
+    body.push(format!("    have hpw : 0 < {pw} := {base}__pow_pos _"));
+    body.push(format!("    have hPSeT : 0 < {pet} := {base}__sgnt_pos _"));
+    body.push(format!("    have hPSeB : 0 < {peb} := {base}__sgnb_pos _"));
+    body.push(format!("    have hPSlT : 0 < {plt} := {base}__sgnt_pos _"));
+    body.push(format!("    have hPSlB : 0 < {plb} := {base}__sgnb_pos _"));
+    body.push(format!("    have hsign : {sg} = 1 ∨ {sg} = -1 := by unfold {isfp_lean} at {fmtname}; simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq] at {fmtname}; exact {fmtname}.1"));
+    body.push(format!("    have h_win := {window_thm} {f_name} {i_name}"));
+    body.push(format!(
+        "    simp only [{window_fn}, Bool.and_eq_true, decide_eq_true_eq] at h_win"
+    ));
+    body.push(format!(
+        "    have hr0 : 0 ≤ {r} := by have := h_win.1; omega"
+    ));
+    body.push(format!(
+        "    have hrW : {r} < {pw} := by have hexp : {pw} * ({q} + 1) = {pw} * {q} + {pw} := (by rw [Int.mul_add, Int.mul_one]); have := h_win.2; omega"
+    ));
+    // The exponent link 2^exp = 2^le * 2^(i-1), derived GENERICALLY by one
+    // exponent-sign case-split, each arm CITING the integer power-of-two
+    // homomorphism on nonnegative arguments.
+    body.push(format!(
+        "    have hlink : {pet} * {plb} = {plt} * {pp} * {peb} := by"
+    ));
+    body.push(format!("      by_cases hE : {exp} < 0"));
+    body.push(format!("      · have hLE : {le} < 0 := by omega"));
+    body.push(format!(
+        "        have hh := {hom} ({i_name} - 1) (0 - {exp}) (by simp only [Bool.and_eq_true, ge_iff_le, decide_eq_true_eq]; omega)"
+    ));
+    body.push(format!(
+        "        rw [show ({i_name} - 1) + (0 - {exp}) = 0 - ({le}) by omega] at hh"
+    ));
+    body.push(format!(
+        "        unfold {sgn}; rw [if_pos hE, if_pos hLE]; grind"
+    ));
+    body.push(format!("      · by_cases hLE : {le} < 0"));
+    body.push(format!(
+        "        · have hh := {hom} {exp} (0 - ({le})) (by simp only [Bool.and_eq_true, ge_iff_le, decide_eq_true_eq]; omega)"
+    ));
+    body.push(format!(
+        "          rw [show {exp} + (0 - ({le})) = {i_name} - 1 by omega] at hh"
+    ));
+    body.push(format!(
+        "          unfold {sgn}; rw [if_neg hE, if_pos hLE]; grind"
+    ));
+    body.push(format!(
+        "        · have hh := {hom} ({le}) ({i_name} - 1) (by simp only [Bool.and_eq_true, ge_iff_le, decide_eq_true_eq]; omega)"
+    ));
+    body.push(format!(
+        "          rw [show ({le}) + ({i_name} - 1) = {exp} by omega] at hh"
+    ));
+    body.push(format!(
+        "          unfold {sgn}; rw [if_neg hE, if_neg hLE]; grind"
+    ));
+    body.push(format!("    simp only [{defs}, decide_eq_true_eq]"));
+    body.push(format!(
+        "    have habsN : (if {minustop} < 0 then 0 - ({minustop}) else {minustop}) = {t_abs} := by have hfact : {minustop} = {sg} * ({t_abs}) := (by grind); have hnn : 0 ≤ {t_abs} := Int.mul_nonneg (Int.mul_nonneg (Int.le_of_lt hPSeT) (Int.le_of_lt hPSeB)) hr0; rw [hfact]; rcases hsign with h | h <;> rw [h] <;> split <;> omega"
+    ));
+    body.push("    rw [habsN]".to_string());
+    body.push(format!(
+        "    have hBotpos : 0 < {absbot} := by aver_int_order"
+    ));
+    body.push(format!("    rw [if_neg (show ¬ ({absbot} < 0) by omega)]"));
+    body.push(format!(
+        "    have hL : {t_abs} * ({absbot}) * ({plb} * {plb}) = ({m}) * ({r}) := by grind"
+    ));
+    body.push(format!(
+        "    have hR : {plt} * {plb} * (({absbot}) * ({absbot})) = ({m}) * {pw} := by grind"
+    ));
+    body.push("    rw [hL, hR]".to_string());
+    body.push("    apply Int.mul_lt_mul_of_pos_left hrW".to_string());
+    body.push("    aver_int_order".to_string());
+    body.push("  )".to_string());
+
+    let floor = if super::super::tactic_ir::speculative::probing() {
+        let id = format!("{}.{}", vb.fn_name, law.name);
+        super::super::tactic_ir::speculative::record_probed(&id);
+        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
+    } else {
+        "  | sorry".to_string()
+    };
+    body.push(floor);
+
+    Some(AutoProof {
+        support_lines,
+        body: Tactic::raw(body),
+        replaces_theorem: false,
+    })
+}
+
+/// The all-exponent rational SIGN-condition arm for the rounding-error sign
+/// law (Lemma 7.2.2's same-sign half) over the GENERAL-exponent value: the error
+/// `epsilon` has the sign of `x` — `match isNonNeg(fpValueGeneral(F)) { true =>
+/// isNonNeg(epsilon) ; false => isNonPos(epsilon) }`. The value's signed product
+/// `x.top·x.bottom` is `sign · A` with `A = (pow2Signed e_x).top·(pow2Signed
+/// e_x).bottom·sigBits·2^(width-1) > 0`, and the error's signed product is `sign ·
+/// B` with `B = (… · r · …) ≥ 0` (the same shared signed power of two and the
+/// nonneg floor remainder `r`). So whichever way the value's sign falls, the error
+/// matches it. The arm supplies the signed-power positivity (so the signed power
+/// of two stays abstract), the floor window (`r ≥ 0`) and `isFp`'s `sigBits > 0`,
+/// factors both products through `sign`, and closes by the sign case-split + the
+/// `if`/`decide` split + `omega`. Returns `None` (→ generic Sign arm) when the
+/// value is not the signed-power-of-two × fraction form.
+fn emit_rational_floor_sign_general(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<AutoProof> {
+    use crate::ast::Expr;
+    let pow = rf_pow2_fn(vb, law, ctx)?;
+    let inlined = inline_fn_call(&law.lhs, ctx)?;
+    let Expr::Match { subject, arms } = &inlined.node else {
+        return None;
+    };
+    if arms.len() != 2 {
+        return None;
+    }
+    // subject = isNonNeg(fpValueGeneral(F)).
+    let Expr::FnCall(_nn, nn_args) = &subject.node else {
+        return None;
+    };
+    let value_call = nn_args.first()?;
+    let fpv_f = rf_inline_fn_call(value_call, ctx)?;
+    let gf = rf_general_value_fields(&fpv_f, ctx, &pow)?;
+    // arms[0].body = isNonNeg(truncError(F, I)); get the error call.
+    let Expr::FnCall(_, a0_args) = &arms[0].body.node else {
+        return None;
+    };
+    let err_call = a0_args.first()?;
+    let Expr::FnCall(_, te_args) = &err_call.node else {
+        return None;
+    };
+    if te_args.len() != 2 {
+        return None;
+    }
+    let f_name = expr_var_name(&te_args[0].node)?.to_string();
+    let i_name = expr_var_name(&te_args[1].node)?.to_string();
+    // truncError ↦ minus(fpValueGeneral(F), fpValueGeneral(G)); read the floor q.
+    let minus_inlined = rf_inline_fn_call(err_call, ctx)?;
+    let Expr::FnCall(_m, m_args) = &minus_inlined.node else {
+        return None;
+    };
+    if m_args.len() != 2 {
+        return None;
+    }
+    let rounded_call = match &m_args[1].node {
+        Expr::FnCall(_, fv_args) => fv_args.first()?,
+        _ => return None,
+    };
+    let rounded_rec = rf_inline_fn_call(rounded_call, ctx)?;
+    let Expr::RecordCreate {
+        fields: rf_fields, ..
+    } = &rounded_rec.node
+    else {
+        return None;
+    };
+    let q_spanned = rf_fields
+        .iter()
+        .find(|(n, _)| n == "sigBits")
+        .map(|(_, e)| e)?;
+    let q = rf_emit(ctx, q_spanned);
+
+    let (window_thm, window_fn) = rf_window_law(vb, law, ctx)?;
+    let when = law.when.as_ref()?;
+    let conjs = rf_flatten_bool_and(when);
+    let sign_conj = rf_sign_conjunct(law, ctx)?;
+    let fmt_idx = conjs
+        .iter()
+        .position(|c| arith_eq(&c.node, &sign_conj.node))?;
+    let isfp_lean = match &sign_conj.node {
+        Expr::FnCall(callee, _) => aver_name_to_lean(&super::shared::expr_dotted_name(callee)?),
+        _ => return None,
+    };
+    let n = conjs.len();
+    let mut pat = "h_rfbp0".to_string();
+    for k in 1..n {
+        pat = format!("⟨{pat}, h_rfbp{k}⟩");
+    }
+    let fmtname = format!("h_rfbp{fmt_idx}");
+
+    let sgn_base = rf_bare_basename(&gf.sgn_fn).to_string();
+    let defs = rf_filtered_defs(ctx, vb, law)
+        .into_iter()
+        .filter(|d| rf_bare_basename(d) != sgn_base)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let base = format!("{}_law_{}__rfs", aver_name_to_lean(&vb.fn_name), law.name);
+    let support_lines: Vec<String> =
+        super::floor_window::pow2_signed_pos_support(&base, &pow, &gf.sgn_fn)
+            .lines()
+            .map(|l| l.to_string())
+            .collect();
+
+    let exp = gf.exp.clone();
+    let pet = format!("({} ({exp})).top", gf.sgn_fn);
+    let peb = format!("({} ({exp})).bottom", gf.sgn_fn);
+    let pw = format!("{pow} ({} - 1)", gf.width);
+    let pp = format!("{pow} ({i_name} - 1)");
+    let sg = &gf.sign;
+    let s = &gf.sig;
+    let r = format!("{s} * {pp} - {pw} * {q}");
+    let minustop =
+        format!("{pet} * ({sg} * {s}) * ({peb} * {pp}) - {pet} * ({sg} * {q}) * ({peb} * {pw})");
+    let absbot = format!("{peb} * {pw} * ({peb} * {pp})");
+    let vprod = format!("{pet} * ({sg} * {s}) * ({peb} * {pw})");
+    let a_pos = format!("{pet} * {peb} * {s} * {pw}");
+    let teprod = format!("({minustop}) * ({absbot})");
+    let b_nn = format!("{pet} * {peb} * ({r}) * ({absbot})");
+
+    let intro = format!("  intro {} h_when", intro_names.join(" "));
+    let mut body: Vec<String> = vec![intro, "  first".to_string(), "  | (".to_string()];
+    body.push("    simp only [Bool.and_eq_true, decide_eq_true_eq] at h_when".to_string());
+    body.push(format!("    obtain {pat} := h_when"));
+    body.push(format!("    have hpp : 0 < {pp} := {base}__pow_pos _"));
+    body.push(format!("    have hpw : 0 < {pw} := {base}__pow_pos _"));
+    body.push(format!("    have hPSeT : 0 < {pet} := {base}__sgnt_pos _"));
+    body.push(format!("    have hPSeB : 0 < {peb} := {base}__sgnb_pos _"));
+    body.push(format!("    have hfpu := {fmtname}"));
+    body.push(format!("    unfold {isfp_lean} at hfpu"));
+    body.push(
+        "    simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq] at hfpu"
+            .to_string(),
+    );
+    body.push(format!("    have hsign : {sg} = 1 ∨ {sg} = -1 := hfpu.1"));
+    body.push(format!(
+        "    have hsig : 0 < {s} := by have := hfpu.2.1; omega"
+    ));
+    body.push(format!("    have h_win := {window_thm} {f_name} {i_name}"));
+    body.push(format!(
+        "    simp only [{window_fn}, Bool.and_eq_true, decide_eq_true_eq] at h_win"
+    ));
+    body.push(format!(
+        "    have hr0 : 0 ≤ {r} := by have := h_win.1; omega"
+    ));
+    body.push(format!("    simp only [{defs}, decide_eq_true_eq]"));
+    body.push(format!(
+        "    have hVfact : {vprod} = {sg} * ({a_pos}) := by grind"
+    ));
+    body.push(format!(
+        "    have hTfact : {teprod} = {sg} * ({b_nn}) := by grind"
+    ));
+    body.push(format!("    have hVA : 0 < {a_pos} := by aver_int_order"));
+    body.push(format!("    have hTB : 0 ≤ {b_nn} := by aver_int_order"));
+    body.push("    simp only [hVfact, hTfact]".to_string());
+    body.push("    rcases hsign with h | h <;> simp only [h] <;> split <;> simp only [decide_eq_true_eq] <;> omega".to_string());
+    body.push("  )".to_string());
+    let floor = if super::super::tactic_ir::speculative::probing() {
+        let id = format!("{}.{}", vb.fn_name, law.name);
+        super::super::tactic_ir::speculative::record_probed(&id);
+        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
+    } else {
+        "  | sorry".to_string()
+    };
+    body.push(floor);
+
+    Some(AutoProof {
+        support_lines,
+        body: Tactic::raw(body),
+        replaces_theorem: false,
+    })
+}
+
 fn emit_rational_floor_bound(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -3634,6 +4118,11 @@ fn emit_rational_floor_bound(
     intro_names: &[String],
 ) -> Option<AutoProof> {
     use crate::ast::Expr;
+    // The general-exponent value (fpValueGeneral) takes the signed strict-order
+    // rung; the legacy clamped value (fpValue) keeps the arm below.
+    if let Some(p) = emit_rational_floor_bound_general(vb, law, ctx, intro_names) {
+        return Some(p);
+    }
     let pow = rf_pow2_fn(vb, law, ctx)?;
     // Walk the recognized shape:
     //   lessThan(absFraction(truncError(F, I)), pow2Signed(LE))
@@ -3823,6 +4312,14 @@ fn emit_rational_floor_family(
     // multiply-by-positive, none of which the NonnegPos / Sign skeletons cover.
     if shape == RationalFloorShape::Bound {
         return emit_rational_floor_bound(vb, law, ctx, intro_names);
+    }
+    // The general-exponent same-sign condition (Lemma 7.2.2 sign half over
+    // fpValueGeneral) takes its own signed-power-of-two arm; the legacy clamped
+    // value keeps the generic Sign skeleton below.
+    if shape == RationalFloorShape::Sign
+        && let Some(p) = emit_rational_floor_sign_general(vb, law, ctx, intro_names)
+    {
+        return Some(p);
     }
     let pow = rf_pow2_fn(vb, law, ctx)?;
     let citations = rf_citations(vb, law, ctx, intro_names);

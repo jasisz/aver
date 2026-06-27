@@ -169,8 +169,8 @@ verify truncKeepsExponent law exponentInvariant
     truncKeepsExponent(f, n) holds
 
 fn truncError(f: Fp, i: Int) -> Fraction
-    ? "The truncation error epsilon of Lemma 7.2.2: epsilon = x - trunc(x,i), the exact rational the truncation throws away (x = fpValue(f), trunc(x,i) = fpValue(fpTrunc(f,i)))."
-    Domain.Rational.minus(Domain.Fprep.fpValue(f), Domain.Fprep.fpValue(fpTrunc(f, i)))
+    ? "The truncation error epsilon of Lemma 7.2.2: epsilon = x - trunc(x,i), the exact rational the truncation throws away (x = fpValueGeneral(f), trunc(x,i) = fpValueGeneral(fpTrunc(f,i))). Read off the general-exponent value so the error -- and its strict bound -- is faithful at EVERY exponent, including the fractional floats (exp < 0) the kernel divider lives in, not only exp >= 0."
+    Domain.Rational.minus(Domain.Fprep.fpValueGeneral(f), Domain.Fprep.fpValueGeneral(fpTrunc(f, i)))
 
 verify truncError
     truncError(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => Domain.Rational.Fraction(top = 4, bottom = 32)
@@ -219,7 +219,7 @@ verify fpValueMagnitudePos law positive
 
 fn truncErrorReconstructs(f: Fp, i: Int) -> Bool
     ? "Lemma 7.2.2 (p.19), the reconstruction half: trunc(x,i) = x - epsilon. Holds by definition of epsilon = x - trunc(x,i); an exact-rational ring identity."
-    Domain.Rational.sameValue(Domain.Fprep.fpValue(fpTrunc(f, i)), Domain.Rational.minus(Domain.Fprep.fpValue(f), truncError(f, i)))
+    Domain.Rational.sameValue(Domain.Fprep.fpValueGeneral(fpTrunc(f, i)), Domain.Rational.minus(Domain.Fprep.fpValueGeneral(f), truncError(f, i)))
 
 verify truncErrorReconstructs
     truncErrorReconstructs(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
@@ -242,35 +242,35 @@ verify truncErrorBound
     truncErrorBound(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
     truncErrorBound(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 2) => true
     truncErrorBound(Domain.Fprep.Fp(sign = 1, sigBits = 9, exp = 0, width = 4), 3) => true
+    truncErrorBound(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = -3, width = 4), 3) => true
+    truncErrorBound(Domain.Fprep.Fp(sign = -1, sigBits = 8, exp = -2, width = 4), 1) => true
 
 // Lemma 7.2.2 (p.19), the strict bound: "|epsilon| < 2^(e_x - i + 1)" -- the
 // truncation discards strictly less than one ulp. Stated EXACTLY as the paper's
-// signed power of two (pow2Signed denotes 2^k for any integer k). RESTRICTED to
-// nonnegative exponents (the added `when 0 <= f.exp`): this normalized model
-// denotes the value with pow2(f.exp), which CLAMPS to 1 for exp <= 0, so for
-// exp < 0 the modelled value is wrong and the bound genuinely fails (e.g.
-// f = {sign 1, sigBits 13, exp -5, width 4}, i 3 gives |eps| = 4/32, not
-// < 1/128). The unrestricted paper lemma needs the general-exponent value (the
-// fraction form with pow2Signed for negative exp) -- a separate follow-up the
-// whole float corpus shares; we do NOT claim it here. Proven universal by the
-// rational-floor-bound keystone arm: it factors |epsilon|'s numerator
-// (sign * 2^(e_x) * remainder), splits the ulp-exponent sign, CITES
-// truncFitsWindow's euclideanWindow (the strict floor remainder r < 2^(width-1))
-// and pow2's homomorphism (the exponent link 2^(e_x) = 2^(e_x-i+1) * 2^(i-1)),
-// and MULTIPLIES the cited window bound by the positive product factor (the
-// generic multiply-by-positive rung). The algebra lives entirely in the two
-// cited Aver laws -- no per-figure proof.
+// signed power of two (pow2Signed denotes 2^k for any integer k), and universal at
+// EVERY exponent: the error reads the general-exponent value fpValueGeneral, whose
+// 2^(e_x) is the SIGNED power of two pow2Signed(e_x), faithful for the fractional
+// floats (exp < 0) the kernel divider lives in -- so there is no `when 0 <= f.exp`
+// restriction. Proven universal by the rational strict-order rung: it factors
+// |epsilon| into the SHARED signed power-of-two pow2Signed(e_x) times the floor
+// remainder r over the positive width/precision powers, cross-multiplies the
+// rational order into a sign-aware INTEGER inequality (eliminating the squared
+// denominators), CITES truncFitsWindow's euclideanWindow (the strict floor
+// remainder r < 2^(width-1)) and the SIGNED power-of-two homomorphism
+// pow2SignedHomomorphism (the exponent link 2^(e_x) = 2^(e_x-i+1) * 2^(i-1), valid
+// for negative exponents too), and MULTIPLIES the cited window bound by the positive
+// product factor (the generic multiply-by-positive rung). The algebra lives entirely
+// in the two cited Aver laws -- no per-figure proof.
 verify truncErrorBound law strictBound
-    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = -3, width = 4)]
     given i: Int = [1, 2, 3]
     when Domain.Fprep.isFp(f)
     when 1 <= i
-    when 0 <= f.exp
     truncErrorBound(f, i) holds
 
 fn truncErrorSameSign(f: Fp, i: Int) -> Bool
     ? "Lemma 7.2.2 (p.19), the sign condition: epsilon has the same sign as x -- if x < 0 then epsilon <= 0, otherwise 0 <= epsilon. Truncation toward zero never overshoots, so x - trunc(x,i) keeps x's sign."
-    match Domain.Rational.isNonNeg(Domain.Fprep.fpValue(f))
+    match Domain.Rational.isNonNeg(Domain.Fprep.fpValueGeneral(f))
         true -> Domain.Rational.isNonNeg(truncError(f, i))
         false -> Domain.Rational.isNonPos(truncError(f, i))
 
