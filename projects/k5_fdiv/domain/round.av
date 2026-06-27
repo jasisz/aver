@@ -1,0 +1,76 @@
+module Round
+    intent =
+        "Rounding module of the K5 division proof: the paper's trunc procedure"
+        "(Section 5.2, p.13) on the Stage-1 normalized representation. The paper"
+        "defines trunc(x, n) = sigma_x * truncn(s_x, n) * 2^(e_x), where the"
+        "significand truncation is truncn(s, n) = floor(s * 2^(n-1)) / 2^(n-1)"
+        "(Section 5.1, p.11). On the normalized model a value is sigma * sigBits *"
+        "2^exp / 2^(width-1) with s_x = sigBits / 2^(width-1) in [1,2), so the"
+        "truncated significand INTEGER (the n-bit significand scaled by 2^(n-1)) is"
+        "floor(sigBits * 2^(n-1) / 2^(width-1)) -- a single Euclidean floor division."
+        "trunc keeps the sign and the stored exponent and sets the width to n; using"
+        "the STORED exponent sidesteps the recursive binary-exponent function, and is"
+        "exactly faithful because the model is already normalized (s_x in [1,2))."
+        "Landed universal on the Lean kernel: Lemma 7.2.1 (p.19) -- trunc is"
+        "sign-symmetric, trunc(-x,i) = -trunc(x,i); and Lemma 7.2.6 (p.19) -- trunc"
+        "keeps the exponent of a non-zero x."
+    depends [Domain.Fprep, Domain.Rational]
+    exposes [floorDiv, fpTrunc, fpNegate, truncNegateSymmetric, truncKeepsExponent]
+    effects []
+
+fn floorDiv(a: Int, d: Int) -> Int
+    ? "Euclidean floor division a / d (the floor of the exact quotient for d > 0); guarded to 0 at d = 0. The divisor here is always a positive power of two, so it is the exact floor."
+    Result.withDefault(Int.div(a, d), 0)
+
+verify floorDiv
+    floorDiv(7, 2) => 3
+    floorDiv(52, 8) => 6
+    floorDiv(96, 8) => 12
+
+fn fpTrunc(f: Fp, n: Int) -> Fp
+    ? "trunc(x, n) (Section 5.2, p.13): the truncated significand integer is floor(sigBits * 2^(n-1) / 2^(width-1)) = truncn(s_x, n) * 2^(n-1); the sign and stored exponent are unchanged and the width becomes n. The denoted value is sigma_x * truncn(s_x, n) * 2^(e_x), exactly the paper's trunc."
+    Domain.Fprep.Fp(sign = f.sign, sigBits = floorDiv(f.sigBits * Domain.Fprep.pow2(n - 1), Domain.Fprep.pow2(f.width - 1)), exp = f.exp, width = n)
+
+verify fpTrunc
+    fpTrunc(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => Domain.Fprep.Fp(sign = 1, sigBits = 6, exp = 0, width = 3)
+    fpTrunc(Domain.Fprep.Fp(sign = -1, sigBits = 13, exp = 2, width = 4), 2) => Domain.Fprep.Fp(sign = -1, sigBits = 3, exp = 2, width = 2)
+
+fn fpNegate(f: Fp) -> Fp
+    ? "Negation on the normalized model: flip the sign sigma_x, leaving the significand, exponent and width untouched (the paper's -x for a float x)."
+    Domain.Fprep.Fp(sign = 0 - f.sign, sigBits = f.sigBits, exp = f.exp, width = f.width)
+
+verify fpNegate
+    fpNegate(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 2, width = 4)) => Domain.Fprep.Fp(sign = -1, sigBits = 13, exp = 2, width = 4)
+
+fn truncNegateSymmetric(f: Fp, n: Int) -> Bool
+    ? "Lemma 7.2.1 (p.19): trunc(-x,i) = -trunc(x,i). Truncation is toward zero -- it acts on the nonnegative significand and carries the sign through unchanged -- so negating commutes with truncating. Stated as exact-rational equality of the denoted values."
+    Domain.Rational.sameValue(Domain.Fprep.fpValue(fpTrunc(fpNegate(f), n)), Domain.Fprep.fpValue(fpNegate(fpTrunc(f, n))))
+
+verify truncNegateSymmetric
+    truncNegateSymmetric(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
+    truncNegateSymmetric(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 2) => true
+
+// Lemma 7.2.1 (p.19): "trunc(-x,i) = -trunc(x,i)." Unconditional sign-symmetry
+// of truncation toward zero.
+verify truncNegateSymmetric law signSymmetry
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
+    given n: Int = [1, 2, 3]
+    truncNegateSymmetric(f, n) holds
+
+fn truncKeepsExponent(f: Fp, n: Int) -> Bool
+    ? "Lemma 7.2.6 (p.19): if x != 0 then e(trunc(x,i)) = e_x. trunc keeps the stored exponent and the result stays normalized, so the stored exponent IS the true exponent of trunc(x,i)."
+    fpTrunc(f, n).exp == f.exp
+
+verify truncKeepsExponent
+    truncKeepsExponent(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 2, width = 4), 3) => true
+    truncKeepsExponent(Domain.Fprep.Fp(sign = -1, sigBits = 8, exp = -3, width = 4), 1) => true
+
+// Lemma 7.2.6 (p.19): "If x != 0 then e(trunc(x,i)) = e_x." A nonzero normalized
+// float (isFp, nonzero significand) truncated to i >= 1 bits keeps its exponent.
+verify truncKeepsExponent law exponentInvariant
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 2, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 8, exp = -3, width = 4)]
+    given n: Int = [1, 2, 3]
+    when Domain.Fprep.isFp(f)
+    when f.sigBits != 0
+    when 1 <= n
+    truncKeepsExponent(f, n) holds

@@ -2022,18 +2022,42 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     }) {
         return false;
     }
-    // The defining signal: there are earlier sibling laws to cite. Two kinds
-    // qualify, both shape-keyed and name-blind:
-    //   * the EQUATIONAL pool — an earlier law whose subject fn is in this law's
-    //     call cone (a `pow2` homomorphism abstracting cone recursion); and
-    //   * the ORDER-BRIDGE pool — an earlier inequality law `L <op> R` whose two
-    //     comparison sides both match subterms of this law's goal / premises (a
-    //     `mulLeMonoRight` monotonicity feeding a transitivity step).
-    // Without either pool this rung adds nothing the simp / grind rungs lack.
-    if keystone_pool_names(vb, law, ctx).is_empty()
-        && keystone_order_bridge_citations(vb, law, ctx).is_empty()
-    {
-        return false;
+    // This rung earns its keep over the (when-gated-off) plain simp / grind
+    // rungs in two ways, both probe-decided:
+    //   * a citable POOL — an earlier law whose subject fn is in this law's
+    //     call cone (the EQUATIONAL pool, e.g. a `pow2` homomorphism abstracting
+    //     cone recursion) or an earlier inequality `L <op> R` matching subterms
+    //     of the goal / premises (the ORDER-BRIDGE pool, e.g. a `mulLeMonoRight`
+    //     monotonicity feeding a transitivity step); OR
+    //   * NO pool at all, but the conditional goal is a flat definitional
+    //     identity `grind` closes outright once the cone is unfolded — a
+    //     record-field projection through `trunc` / `fpScale`, a Bool predicate
+    //     that reduces to `rfl` under the premises. The plain grind rung NEVER
+    //     runs on a `when`-law (it is gated to `law.when.is_none()`), so without
+    //     this arm such a law has no universal path and silently degrades to the
+    //     bounded sampled statement.
+    // The speculative probe is the oracle in BOTH cases: a candidate that does
+    // not close falls back to bounded (default `false`), so admitting the
+    // no-pool case is fail-safe and leaves a non-probe `transpile` byte-identical.
+    //
+    // The no-pool case is gated to laws WITHOUT a dedicated template strategy of
+    // their own. A `when`-law pinned to a bespoke template (the `FloorDivWindow`
+    // pow / window family — its own PowSumSplit / SigWindow / ProductWindow
+    // proofs need functional induction the keystone's bare `grind` can't do) is
+    // dispatched LATER and must keep that template; admitting it here would let
+    // the probe steal it with a grind that can only fail. Pool-citing laws skip
+    // this gate entirely (they are never `FloorDivWindow`-shaped and the pool is
+    // the whole point).
+    let has_pool = !keystone_pool_names(vb, law, ctx).is_empty()
+        || !keystone_order_bridge_citations(vb, law, ctx).is_empty();
+    if !has_pool {
+        use crate::ir::ProofStrategy;
+        match super::law_strategy_for(ctx, &vb.fn_name, &law.name) {
+            None
+            | Some(ProofStrategy::BackendDispatch)
+            | Some(ProofStrategy::LinearArithmetic { .. }) => {}
+            _ => return false,
+        }
     }
     let id = format!("{}.{}", vb.fn_name, law.name);
     super::super::tactic_ir::speculative::admits(&id, false)
@@ -2583,16 +2607,26 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
     // recursive filter silently misses (`"_root_.pow2" != "pow2"`) and a
     // recursive cone fn leaks into `simp only`, breaking simp on its symbolic
     // recursive match (the measured `e2` failure mode).
-    fn strip_root(n: &str) -> &str {
-        n.strip_prefix("_root_.").unwrap_or(n)
+    // Compare on the BARE basename. `recursive_pure_fn_names` yields bare names
+    // (`pow2`), but `law_simp_defs` QUALIFIES a dep-module fn (`Domain.Fprep.pow2`,
+    // and entry fns carry a `_root_.` prefix). Stripping only `_root_.` left a dep
+    // recursive fn (`Domain.Fprep.pow2`) unmatched against the bare `pow2`, so it
+    // leaked into `simp only [...]` — and `simp only` on a recursive fn's symbolic
+    // match ERRORS, failing the whole keystone arm (the cross-module miss that
+    // sent every dep-cone conditional law to its bounded fallback). Drop the
+    // `_root_.` prefix AND the module path on both sides so a dep recursive cone
+    // fn is excluded exactly like an entry one.
+    fn bare_basename(n: &str) -> &str {
+        let n = n.strip_prefix("_root_.").unwrap_or(n);
+        n.rsplit('.').next().unwrap_or(n)
     }
     let recursive: std::collections::HashSet<String> = super::recursive_pure_fn_names(ctx)
         .iter()
-        .map(|n| strip_root(&aver_name_to_lean(n)).to_string())
+        .map(|n| bare_basename(&aver_name_to_lean(n)).to_string())
         .collect();
     let defs: Vec<String> = law_simp_defs(ctx, vb, law)
         .into_iter()
-        .filter(|d| !recursive.contains(strip_root(d)))
+        .filter(|d| !recursive.contains(bare_basename(d)))
         .collect();
     let defs_csv = defs.join(", ");
     // `grind` gets the laws-as-lemmas pool names (not the cone defs): the `simp`
@@ -2641,6 +2675,13 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
         hints.push(format!("{nlbase}__pow_succ"));
     }
     let grind_hints = hints.join(", ");
+    // With no citable pool and no normalizer the hint list is empty; emit a bare
+    // `grind` (not `grind []`) for the flat definitional close.
+    let grind_call = if grind_hints.is_empty() {
+        "grind".to_string()
+    } else {
+        format!("grind [{grind_hints}]")
+    };
 
     let intro = format!("  intro {} h_when", intro_names.join(" "));
     // Bridge set matches the de-risked `e1`: `Bool.and_eq_true` splits the `&&`
@@ -2654,11 +2695,11 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
         // and the flat (no-`if`) shapes uniformly — the bare `grind` arm is the
         // path the scaling / product-exponent laws (no `if`) take.
         format!(
-            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq] at h_when ⊢ <;> (first | (split <;> grind [{grind_hints}]) | grind [{grind_hints}]))"
+            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq] at h_when ⊢ <;> (first | (split <;> {grind_call}) | {grind_call}))"
         )
     } else {
         format!(
-            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq] at h_when ⊢ <;> grind [{grind_hints}])"
+            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq] at h_when ⊢ <;> {grind_call})"
         )
     };
     let floor = if super::super::tactic_ir::speculative::probing() {

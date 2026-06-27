@@ -2119,23 +2119,43 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     // measure bare). Scoped on purpose: a pow-shaped fn in a file
     // with no recognized window law keeps its established fuel
     // emission, so nothing outside the family moves.
-    let window_pow_fns: HashSet<String> = ir
+    // Scope-aware resolution: a floor-window law that lives in a DEP
+    // module cites its power-of-two fn in THAT module's scope, so the
+    // graduation must resolve the pow fn relative to the law's own
+    // owning scope (derived from the law subject's `FnId`), not entry
+    // only. Without this, a dep module keeps its pow fn on the fuel
+    // encoding while the dep's own window support theorems demand the
+    // well-founded `.induct` / `.eq_def`, breaking the dep build (the
+    // emitted dep module references `<pow>.induct`, which a fuel def
+    // doesn't have).
+    let window_pow_ids: HashSet<crate::ir::FnId> = ir
         .law_theorems
         .iter()
-        .filter_map(|t| match &t.strategy {
-            crate::ir::ProofStrategy::FloorDivWindow { figure } => Some(match figure {
-                crate::ir::FloorWindowFigure::PowPositive { pow_fn } => pow_fn.clone(),
-                crate::ir::FloorWindowFigure::PowSumSplit { pow_fn } => pow_fn.clone(),
-                crate::ir::FloorWindowFigure::SigWindow { pow_fn, .. } => pow_fn.clone(),
-                crate::ir::FloorWindowFigure::ProductWindow { pow_fn, .. } => pow_fn.clone(),
-            }),
-            _ => None,
+        .filter_map(|t| {
+            let pow_fn = match &t.strategy {
+                crate::ir::ProofStrategy::FloorDivWindow { figure } => match figure {
+                    crate::ir::FloorWindowFigure::PowPositive { pow_fn } => pow_fn,
+                    crate::ir::FloorWindowFigure::PowSumSplit { pow_fn } => pow_fn,
+                    crate::ir::FloorWindowFigure::SigWindow { pow_fn, .. } => pow_fn,
+                    crate::ir::FloorWindowFigure::ProductWindow { pow_fn, .. } => pow_fn,
+                },
+                _ => return None,
+            };
+            let scope = symbols
+                .fn_entry(t.fn_id)
+                .key
+                .scope_str()
+                .map(|s| s.to_string());
+            let key = match &scope {
+                Some(prefix) => crate::ir::FnKey::in_module(prefix.clone(), pow_fn),
+                None => crate::ir::FnKey::entry(pow_fn),
+            };
+            symbols
+                .fn_id_of(&key)
+                .or_else(|| symbols.fn_id_of(&crate::ir::FnKey::entry(pow_fn)))
         })
         .collect();
-    for pow_fn in window_pow_fns {
-        let Some(fn_id) = symbols.fn_id_of(&crate::ir::FnKey::entry(&pow_fn)) else {
-            continue;
-        };
+    for fn_id in window_pow_ids {
         let Some(contract) = ir.fn_contracts.get_mut(&fn_id) else {
             continue;
         };
