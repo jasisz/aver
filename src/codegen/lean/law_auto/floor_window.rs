@@ -186,6 +186,84 @@ grind_pattern {base}__pow_succ => {pow} (n + 1)"#
     )
 }
 
+/// The generic **signed-power-of-two homomorphism normalizer**: a
+/// self-contained support stack about a SIGNED power-of-two cone fn
+/// `sgn` — a `Fraction`-valued `2^k` faithful for every integer `k`
+/// (`if k < 0 then 1/2^(-k) else 2^k/1`, recognized by shape, not by
+/// name) — that lets `grind` canonicalize a CROSS-MULTIPLIED product of
+/// `sgn` of summed exponents. It is the `Fraction`-level analog of
+/// [`pow2_linear_form_normalizer_support`]: where that one canonicalizes
+/// `pow` (an `Int` power-of-two) of a nonneg linear form, this one
+/// canonicalizes `sgn` (a `Fraction` signed power-of-two) of `m + n` and
+/// `m + n + 1`, the two exponent offsets a float-product's normalization
+/// branch produces.
+///
+/// Unlike the integer normalizer, `sgn (m + n)` is NOT structurally equal
+/// to `times (sgn m) (sgn n)` (mixed signs disagree on the unnormalized
+/// fraction) — only `sameValue` (cross-multiply) holds. So the support
+/// CITES the proven Aver homomorphism law `cited_hom`
+/// (`sameValue (sgn (m+n)) (times (sgn m) (sgn n))`) and restates it in
+/// cross-multiplied `Int` form. That is a genuine citation: delete the
+/// Aver law and the stack stops compiling. The successor companion folds
+/// in `sgn 1 = 2/1` and the add+succ companion combines them by cancelling
+/// the (positive) `(sgn (m+n)).top` factor — so each is keyed on the SUM
+/// side (`(sgn (m + n)).top` / `(sgn (m + n + 1)).top`), a single literal
+/// term that binds both `m` and `n` from a `_ + _` exponent without the
+/// product-side adjacency the integer pattern needs, and fires once per
+/// such term (no e-matching cascade).
+///
+/// `base` is the CONSUMER law's fresh prefix; `pow` is the underlying
+/// `Int` power-of-two `sgn` calls (its positivity backs the cancellation),
+/// `hom_fn` the Bool homomorphism fn (unfolded to expose the cross-multiply
+/// equation), `cited_hom` the proven homomorphism law theorem to cite.
+pub(in crate::codegen::lean) fn pow2_signed_homomorphism_normalizer_support(
+    base: &str,
+    pow: &str,
+    sgn: &str,
+    hom_fn: &str,
+    cited_hom: &str,
+) -> String {
+    let equations = pow_equation_lemmas(base, pow);
+    let pos = pow_pos_lemma(base, pow);
+    format!(
+        r#"{equations}
+{pos}
+theorem {base}__sgn_top_pos (x : Int) : 0 < ({sgn} x).top := by
+  unfold {sgn}
+  split
+  · simp
+  · simpa using {base}__pow_pos x
+theorem {base}__sgn_one : {sgn} 1 = {{ top := 2, bottom := 1 }} := by
+  have h1 := {base}__pow_of_pos 1 (show ¬(1 : Int) ≤ 0 by omega)
+  have h0 := {base}__pow_of_nonpos 0 (show (0 : Int) ≤ 0 by omega)
+  rw [show (1 : Int) - 1 = (0 : Int) by omega, h0, Int.mul_one] at h1
+  unfold {sgn}
+  rw [if_neg (show ¬(1 : Int) < 0 by omega), h1]
+theorem {base}__sgn_add (m n : Int) :
+    ({sgn} (m + n)).top * (({sgn} m).bottom * ({sgn} n).bottom)
+      = ({sgn} m).top * ({sgn} n).top * ({sgn} (m + n)).bottom := by
+  have h := {cited_hom} m n
+  simp only [{hom_fn}, sameValue, times, beq_iff_eq] at h
+  exact h
+theorem {base}__sgn_succ (k : Int) :
+    ({sgn} (k + 1)).top * ({sgn} k).bottom
+      = 2 * ({sgn} k).top * ({sgn} (k + 1)).bottom := by
+  have h := {cited_hom} k 1
+  simp only [{hom_fn}, sameValue, times, {base}__sgn_one, beq_iff_eq] at h
+  grind
+theorem {base}__sgn_add_succ (m n : Int) :
+    ({sgn} (m + n + 1)).top * (({sgn} m).bottom * ({sgn} n).bottom)
+      = 2 * ({sgn} m).top * ({sgn} n).top * ({sgn} (m + n + 1)).bottom := by
+  have hadd := {base}__sgn_add m n
+  have hsucc := {base}__sgn_succ (m + n)
+  have hpos := {base}__sgn_top_pos (m + n)
+  apply Int.eq_of_mul_eq_mul_left (a := ({sgn} (m + n)).top) (by omega)
+  grind
+grind_pattern {base}__sgn_add => ({sgn} (m + n)).top
+grind_pattern {base}__sgn_add_succ => ({sgn} (m + n + 1)).top"#
+    )
+}
+
 /// The power-of-two POSITIVITY support stack — the equation pair plus the
 /// `<base>__pow_pos` functional-induction positivity theorem — scoped to a
 /// fresh `base` prefix. The generic positivity fact (`0 < pow n` for every

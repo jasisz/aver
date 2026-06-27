@@ -242,32 +242,35 @@ verify productExpInRange law productExponentBounds
 
 fn fpMulValue(a: Fp, b: Fp) -> Bool
     ? "Multiplication denotes the product of the denoted values (folklore)."
-    Domain.Rational.sameValue(fpValue(fpMul(a, b)), Domain.Rational.times(fpValue(a), fpValue(b)))
+    Domain.Rational.sameValue(fpValueGeneral(fpMul(a, b)), Domain.Rational.times(fpValueGeneral(a), fpValueGeneral(b)))
 
 verify fpMulValue
     fpMulValue(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => true
     fpMulValue(Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 0, width = 4)) => true
     fpMulValue(Fp(sign = -1, sigBits = 10, exp = 2, width = 4), Fp(sign = 1, sigBits = 11, exp = 1, width = 4)) => true
+    fpMulValue(Fp(sign = 1, sigBits = 8, exp = -3, width = 4), Fp(sign = -1, sigBits = 12, exp = -2, width = 4)) => true
 
 // Floating-point folklore (the denotation of multiplication): the product float
 // denotes the product of the values. NOT a numbered paper lemma -- labelled folklore,
-// the denotation of multiplication. Universal on the Lean kernel. It is the project's
+// the denotation of multiplication. Universal on the Lean kernel at EVERY exponent --
+// it reads the general-exponent value fpValueGeneral, so it holds for the fractional
+// floats (exp < 0) the kernel divider lives in, not just exp >= 0. It is the project's
 // laws-as-lemmas composition at its sharpest: it re-proves nothing about powers of two,
-// it CITES the proven homomorphism pow2(m+n) == pow2(m)*pow2(n). The composition needs
-// the homomorphism at a REARRANGED exponent -- the product denominator
-// pow2(width_a + width_b - 2) is pow2(width_a - 1) * pow2(width_b - 1), the homomorphism
-// at (width_a - 1) + (width_b - 1), and the normalization branch shifts the width/exp by
-// one, asking pow2 of an odd offset too. grind's default match keys on the homomorphism's
-// LHS pow2(m+n) and never splits a subtraction. The engine closes it with one GENERIC
-// mechanism: a pow2-of-nonneg-linear-form normalizer that registers the homomorphism on
-// its PRODUCT side and a successor step, so grind canonicalizes pow2 of any nonneg linear
-// form into a product of pow2 of atoms (shape-keyed on the power-of-two fn, never a
-// per-figure template). Whichever branch fpMul takes, the two sides cross-multiply equal.
+// it CITES two proven homomorphisms. The WIDTH denominator pow2(width_a + width_b - 2)
+// is pow2(width_a - 1) * pow2(width_b - 1) -- the integer homomorphism pow2(m+n) ==
+// pow2(m)*pow2(n) at a rearranged/shifted exponent, canonicalized by the
+// pow2-of-nonneg-linear-form normalizer (product-side + successor patterns). The
+// EXPONENT factor pow2Signed(a.exp + b.exp [+1]) is times(pow2Signed a.exp,
+// pow2Signed b.exp) [* 2] -- the SIGNED homomorphism pow2SignedHomomorphism above,
+// which (unlike the integer one) holds for negative exponents too. Because the signed
+// power of two is only sameValue-equal (not structurally equal) across mixed signs, the
+// engine cites it in cross-multiplied form through a second GENERIC normalizer keyed on
+// the SUM side pow2Signed(m+n) / pow2Signed(m+n+1) (shape-keyed on the signed
+// power-of-two cone fn, never a per-figure template). Whichever branch fpMul takes, the
+// two sides cross-multiply equal.
 verify fpMulValue law denotesProduct
-    given a: Fp = [Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = -1, sigBits = 10, exp = 2, width = 4)]
-    given b: Fp = [Fp(sign = 1, sigBits = 12, exp = 1, width = 4), Fp(sign = 1, sigBits = 11, exp = 0, width = 4)]
-    when a.exp >= 0
-    when b.exp >= 0
+    given a: Fp = [Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = -1, sigBits = 10, exp = 2, width = 4), Fp(sign = 1, sigBits = 8, exp = -3, width = 4)]
+    given b: Fp = [Fp(sign = 1, sigBits = 12, exp = 1, width = 4), Fp(sign = 1, sigBits = 11, exp = 0, width = 4), Fp(sign = -1, sigBits = 12, exp = -2, width = 4)]
     when a.width >= 1
     when b.width >= 1
     fpMulValue(a, b) holds

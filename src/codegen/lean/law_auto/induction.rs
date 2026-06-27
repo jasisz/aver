@@ -2269,6 +2269,288 @@ fn keystone_pow2_fn(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> 
     None
 }
 
+/// A SIGNED-power-of-two homomorphism citation for the keystone: when an
+/// earlier sibling law proves the homomorphism of a `Fraction`-valued
+/// signed power-of-two cone fn (`2^k` faithful for every integer `k`),
+/// and that fn is in this law's cone, the keystone can canonicalize a
+/// cross-multiplied product of it through the proven law — the `Fraction`
+/// analog of [`keystone_pow2_fn`]. All Lean names; `cited` is the proven
+/// homomorphism law theorem to cite.
+///
+/// Shape-keyed and name-blind: the trigger is (a) an earlier `… holds` law
+/// whose inlined body is `sameValue(F(m+n), times(F(m), F(n)))` for a
+/// single-arg fn `F`, (b) `F` returning `Fraction` with a `k < 0` sign
+/// match (the signed-power-of-two shape), and (c) `F`'s underlying integer
+/// power-of-two being exactly the one [`keystone_pow2_fn`] already
+/// canonicalizes (so both normalizers are present and consistent). No
+/// hard-coded fn or law name.
+struct Pow2SignedCite {
+    sgn: String,
+    pow: String,
+    hom_fn: String,
+    cited: String,
+}
+
+fn keystone_pow2signed_cite(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<Pow2SignedCite> {
+    use crate::ast::{Expr, Literal, TopLevel, VerifyKind};
+    let int_pow = keystone_pow2_fn(vb, law, ctx)?;
+    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
+    let cone_fns: std::collections::HashSet<String> =
+        cone.pure_fns().iter().map(|fd| fd.name.clone()).collect();
+    let all_fns: Vec<&crate::ast::FnDef> = inputs.pure_fns();
+    for item in &ctx.items {
+        let TopLevel::Verify(prev) = item else {
+            continue;
+        };
+        if prev.line == vb.line && prev.fn_name == vb.fn_name {
+            break;
+        }
+        let VerifyKind::Law(prev_law) = &prev.kind else {
+            continue;
+        };
+        if !matches!(&prev_law.rhs.node, Expr::Literal(Literal::Bool(true))) {
+            continue;
+        }
+        let Some(inlined) = inline_fn_call(&prev_law.lhs, ctx) else {
+            continue;
+        };
+        let Some(sgn_dotted) = match_signed_homomorphism_shape(&inlined.node) else {
+            continue;
+        };
+        let sgn_basename = sgn_dotted
+            .rsplit('.')
+            .next()
+            .unwrap_or(&sgn_dotted)
+            .to_string();
+        if !cone_fns.contains(&sgn_basename) {
+            continue;
+        }
+        let Some(sgn_fd) = all_fns.iter().copied().find(|fd| fd.name == sgn_basename) else {
+            continue;
+        };
+        if !signed_pow2_shape(sgn_fd, &int_pow) {
+            continue;
+        }
+        // The signed homomorphism only earns its keep when the goal applies `F`
+        // to a SUM of exponents — produced by a cone fn that builds a record with
+        // an ADDITIVE field (e.g. a float product's `exp = a.exp + b.exp`). A law
+        // that applies `F` only to a bare variable (`F(f.exp)`, the
+        // nonneg-exponent agreement) needs `F` UNFOLDED and reduced by its sign
+        // premise, not folded + canonicalized — folding it there would strand the
+        // single `F(var)` term. Gate on that additive-record shape (name-blind):
+        // no cone fn building a sum-valued field ⇒ no `F(sum)` ⇒ decline.
+        if !cone_has_additive_record(&cone_fns, &sgn_basename, &prev.fn_name, &all_fns) {
+            continue;
+        }
+        let Some((thm_name, _stmt)) =
+            crate::codegen::lean::toplevel::law_as_lemma_statement(prev, prev_law, ctx)
+        else {
+            continue;
+        };
+        return Some(Pow2SignedCite {
+            sgn: aver_name_to_lean(&sgn_basename),
+            pow: int_pow,
+            hom_fn: aver_name_to_lean(&prev.fn_name),
+            cited: thm_name,
+        });
+    }
+    None
+}
+
+/// Match the signed-power-of-two homomorphism body shape
+/// `sameValue(F(A + B), times(F(A), F(B)))`, returning `F`'s dotted name.
+/// `sameValue` / `times` are matched by basename (the Rational ops), `F`
+/// by structural consistency across the three calls — name-blind in `F`.
+fn match_signed_homomorphism_shape(e: &crate::ast::Expr) -> Option<String> {
+    use crate::ast::{BinOp, Expr};
+    let Expr::FnCall(callee, args) = e else {
+        return None;
+    };
+    if args.len() != 2 {
+        return None;
+    }
+    let cname = super::shared::expr_dotted_name(callee)?;
+    if cname.rsplit('.').next() != Some("sameValue") {
+        return None;
+    }
+    let Expr::FnCall(f0, f0args) = &args[0].node else {
+        return None;
+    };
+    if f0args.len() != 1 {
+        return None;
+    }
+    let f0name = super::shared::expr_dotted_name(f0)?;
+    let Expr::BinOp(BinOp::Add, a, b) = &f0args[0].node else {
+        return None;
+    };
+    let Expr::FnCall(tcallee, targs) = &args[1].node else {
+        return None;
+    };
+    if targs.len() != 2 {
+        return None;
+    }
+    let tname = super::shared::expr_dotted_name(tcallee)?;
+    if tname.rsplit('.').next() != Some("times") {
+        return None;
+    }
+    let Expr::FnCall(fa, faargs) = &targs[0].node else {
+        return None;
+    };
+    let Expr::FnCall(fb, fbargs) = &targs[1].node else {
+        return None;
+    };
+    if faargs.len() != 1 || fbargs.len() != 1 {
+        return None;
+    }
+    if super::shared::expr_dotted_name(fa)? != f0name
+        || super::shared::expr_dotted_name(fb)? != f0name
+    {
+        return None;
+    }
+    if faargs[0].node != a.node || fbargs[0].node != b.node {
+        return None;
+    }
+    Some(f0name)
+}
+
+/// `F` is a signed-power-of-two fn: one `Int` param, returns `Fraction`,
+/// body is a `k < 0` sign match, and it calls the SAME integer
+/// power-of-two `int_pow` (Lean name) the keystone already canonicalizes.
+fn signed_pow2_shape(fd: &crate::ast::FnDef, int_pow: &str) -> bool {
+    use crate::ast::{BinOp, Expr, Stmt};
+    let [(p, ty)] = fd.params.as_slice() else {
+        return false;
+    };
+    if ty != "Int" || fd.return_type.rsplit('.').next() != Some("Fraction") {
+        return false;
+    }
+    let [Stmt::Expr(body)] = fd.body.stmts() else {
+        return false;
+    };
+    let Expr::Match { subject, arms } = &body.node else {
+        return false;
+    };
+    let Expr::BinOp(BinOp::Lt, sl, sr) = &subject.node else {
+        return false;
+    };
+    if super::shared::expr_dotted_name(sl).as_deref() != Some(p)
+        || !matches!(&sr.node, Expr::Literal(crate::ast::Literal::Int(0)))
+    {
+        return false;
+    }
+    if arms.len() != 2 {
+        return false;
+    }
+    // The body must canonicalize through the SAME integer power-of-two the
+    // keystone's pow2 normalizer uses — collect every fn the arms call and
+    // require `int_pow` among them (name-blind: matched by Lean name equality
+    // with the already-detected `int_pow`, never a literal).
+    let mut called: Vec<String> = Vec::new();
+    for arm in arms {
+        collect_fncall_names(&arm.body.node, &mut called);
+    }
+    called.iter().any(|n| aver_name_to_lean(n) == int_pow)
+}
+
+/// Collect the dotted names of every `FnCall` in `e` (recursively).
+fn collect_fncall_names(e: &crate::ast::Expr, out: &mut Vec<String>) {
+    use crate::ast::Expr;
+    match e {
+        Expr::FnCall(callee, args) => {
+            if let Some(n) = super::shared::expr_dotted_name(callee) {
+                out.push(n);
+            }
+            for a in args {
+                collect_fncall_names(&a.node, out);
+            }
+        }
+        Expr::BinOp(_, a, b) => {
+            collect_fncall_names(&a.node, out);
+            collect_fncall_names(&b.node, out);
+        }
+        Expr::Neg(a) => collect_fncall_names(&a.node, out),
+        Expr::Attr(b, _) => collect_fncall_names(&b.node, out),
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                collect_fncall_names(&v.node, out);
+            }
+        }
+        Expr::Match { subject, arms } => {
+            collect_fncall_names(&subject.node, out);
+            for arm in arms {
+                collect_fncall_names(&arm.body.node, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// True when some fn in `cone_fns` (other than the signed fn itself or the
+/// homomorphism fn) builds a record with at least one field whose value is a
+/// `BinOp::Add` — the static signature of a fn that produces a sum-valued
+/// exponent the signed power-of-two is then applied to (e.g. a float product's
+/// `exp = a.exp + b.exp`). Name-blind: keyed on the `RecordCreate` + `Add`
+/// shape, never on a fn name.
+fn cone_has_additive_record(
+    cone_fns: &std::collections::HashSet<String>,
+    sgn_basename: &str,
+    hom_basename: &str,
+    all_fns: &[&crate::ast::FnDef],
+) -> bool {
+    for fd in all_fns {
+        if !cone_fns.contains(&fd.name) || fd.name == sgn_basename || fd.name == hom_basename {
+            continue;
+        }
+        for stmt in fd.body.stmts() {
+            if let crate::ast::Stmt::Expr(e) = stmt
+                && expr_has_additive_record_field(&e.node)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Recursively: does `e` contain a `RecordCreate` with a field whose value is a
+/// `BinOp::Add`?
+fn expr_has_additive_record_field(e: &crate::ast::Expr) -> bool {
+    use crate::ast::Expr;
+    match e {
+        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, v)| {
+            matches!(&v.node, Expr::BinOp(crate::ast::BinOp::Add, _, _))
+                || expr_has_additive_record_field(&v.node)
+        }),
+        Expr::FnCall(c, args) => {
+            expr_has_additive_record_field(&c.node)
+                || args.iter().any(|a| expr_has_additive_record_field(&a.node))
+        }
+        Expr::BinOp(_, a, b) => {
+            expr_has_additive_record_field(&a.node) || expr_has_additive_record_field(&b.node)
+        }
+        Expr::Neg(a) => expr_has_additive_record_field(&a.node),
+        Expr::Attr(b, _) => expr_has_additive_record_field(&b.node),
+        Expr::Match { subject, arms } => {
+            expr_has_additive_record_field(&subject.node)
+                || arms
+                    .iter()
+                    .any(|arm| expr_has_additive_record_field(&arm.body.node))
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            updates.iter().any(|(_, v)| {
+                matches!(&v.node, Expr::BinOp(crate::ast::BinOp::Add, _, _))
+                    || expr_has_additive_record_field(&v.node)
+            }) || expr_has_additive_record_field(&base.node)
+        }
+        _ => false,
+    }
+}
+
 /// One eligible ORDER-BRIDGE citation for the keystone: an EARLIER sibling law
 /// asserting an inequality `L <op> R` (its subject fn's body is a single
 /// comparison, both sides non-atomic, `… holds`) whose two sides match subterms
@@ -3684,6 +3966,16 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
     for subj in keystone_pool_subject_fns(vb, law, ctx) {
         abstract_fns.insert(bare_basename(&subj).to_string());
     }
+    // SIGNED power-of-two homomorphism: when an earlier law proves the
+    // homomorphism of a `Fraction`-valued signed `2^k` cone fn `F` and the goal
+    // applies `F` to a sum of exponents, keep `F` FOLDED (like a recursive cone
+    // fn) so the cited cross-multiply canonicalizer can e-match its `F(m+n)` /
+    // `F(m+n+1)` terms — unfolding `F` would bury the float-product `if` inside
+    // `F`'s sign match and explode the split. Name-blind via the recognizer.
+    let pow2signed = keystone_pow2signed_cite(vb, law, ctx);
+    if let Some(cite) = &pow2signed {
+        abstract_fns.insert(bare_basename(&cite.sgn).to_string());
+    }
     let defs: Vec<String> = law_simp_defs(ctx, vb, law)
         .into_iter()
         .filter(|d| !abstract_fns.contains(bare_basename(d)))
@@ -3742,6 +4034,30 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
         hints.push(format!("{nlbase}__pow_add"));
         hints.push(format!("{nlbase}__pow_succ"));
     }
+    // GENERIC signed-power-of-two homomorphism normalizer (the `Fraction`-level
+    // companion of the `pow2lf` integer normalizer above). Emits a self-contained
+    // support stack about the signed fn `F` — its positivity, `F(1) = 2/1`, and
+    // the cross-multiplied homomorphism CITED from the proven Aver law, keyed on
+    // the SUM side `F(m+n)` / `F(m+n+1)` — so `grind` canonicalizes `F` of a
+    // summed/shifted exponent the way the integer normalizer canonicalizes `pow`
+    // of a summed/shifted one. Scoped to a fresh per-law prefix.
+    if let Some(cite) = &pow2signed {
+        let sgnbase = format!(
+            "{}_law_{}__pow2sgn",
+            aver_name_to_lean(&vb.fn_name),
+            law.name
+        );
+        let support = super::floor_window::pow2_signed_homomorphism_normalizer_support(
+            &sgnbase,
+            &cite.pow,
+            &cite.sgn,
+            &cite.hom_fn,
+            &cite.cited,
+        );
+        support_lines.extend(support.lines().map(|l| l.to_string()));
+        hints.push(format!("{sgnbase}__sgn_add"));
+        hints.push(format!("{sgnbase}__sgn_add_succ"));
+    }
     let grind_hints = hints.join(", ");
     // With no citable pool and no normalizer the hint list is empty; emit a bare
     // `grind` (not `grind []`) for the flat definitional close.
@@ -3767,6 +4083,18 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
     // guard, `decide_eq_true_eq` peels `decide p = true` to `p`. The earlier
     // `ge_iff_le, gt_iff_lt` are dropped — they are unnecessary for this shape
     // (`grind` orders relations itself) and `e1` closes without them.
+    //
+    // The signed-power-of-two homomorphism path adds `beq_iff_eq`: with `F`
+    // FOLDED the goal stays a `Fraction` `sameValue` (a `==`), and turning it into
+    // a Prop `=` lets `grind`'s commutative-ring solver consume the cited
+    // cross-multiply facts (it rejects a bare `decide (… == …)` wrapper). Added
+    // ONLY on the signed path — the integer-only pow2 laws close without it, so
+    // their emission stays byte-identical.
+    let bridge_extra = if pow2signed.is_some() {
+        ", beq_iff_eq"
+    } else {
+        ""
+    };
     let close = if pow2_normalizer.is_some() {
         // A multiplication-value law (`fpMul`) normalizes its significand with
         // an `if`-branch (shift 0 vs 1); `repeat' split` discharges that branch
@@ -3781,11 +4109,11 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
         // For a single-match law `repeat' split` peels exactly the one match, so
         // the fpMul / fpScale / product-exponent laws are unaffected.
         format!(
-            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq] {simp_at} <;> (first | ((repeat' split) <;> {grind_call}) | {grind_call}))"
+            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq{bridge_extra}] {simp_at} <;> (first | ((repeat' split) <;> {grind_call}) | {grind_call}))"
         )
     } else {
         format!(
-            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq] {simp_at} <;> {grind_call})"
+            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq{bridge_extra}] {simp_at} <;> {grind_call})"
         )
     };
     let floor = if super::super::tactic_ir::speculative::probing() {

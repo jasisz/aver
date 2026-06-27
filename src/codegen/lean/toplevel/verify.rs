@@ -742,12 +742,27 @@ fn emit_verify_law_block(
                         // inside its support lines; it is not shared across parts
                         // and must stay in this part's body.
                         body.extend(auto_proof.support_lines);
-                    } else {
+                    } else if partitioned {
+                        // Multiple parts share `{theorem_base}`-keyed support
+                        // theorems; collect them once and dedup the IDENTICAL
+                        // declarations each part re-emits. (Only safe across parts:
+                        // a single part's support stack may legitimately repeat a
+                        // tactic line — `unfold F`, `rw [F.eq_def, …]` — inside
+                        // distinct theorems, which a line-level dedup would wrongly
+                        // strip, so the unpartitioned arm below keeps them verbatim.)
                         for line in auto_proof.support_lines {
                             if !support_lines.contains(&line) {
                                 support_lines.push(line);
                             }
                         }
+                        body.push(format!(
+                            "{}theorem {} : ∀ {}, {} := by",
+                            header_prefix, part.name, quant_params, part.prop
+                        ));
+                    } else {
+                        // Single part: emit the support stack verbatim before the
+                        // theorem (no cross-part sharing, so no dedup — see above).
+                        body.extend(auto_proof.support_lines);
                         body.push(format!(
                             "{}theorem {} : ∀ {}, {} := by",
                             header_prefix, part.name, quant_params, part.prop
