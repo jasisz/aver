@@ -1,0 +1,77 @@
+module FracRound
+    intent =
+        "The rounding error bounds of the K5 division proof restated on the exact"
+        "RATIONAL model the kernel divider actually runs on. domain/round.av proves"
+        "Lemma 7.2.2 / 7.2.3 (p.19) on the NORMALIZED Fp model (fpTrunc / fpAway,"
+        "keyed on the stored exponent f.exp); the kernel divider (domain/kernel.av)"
+        "and the Section 8.2 remainder reasoning instead live on plain Fractions and"
+        "round with truncFrac / awayFrac (Fraction -> Fraction), keyed on the runnable"
+        "binary exponent fracExpo. This module states the SAME strict bounds on those"
+        "Fraction operations:"
+        "  Lemma 7.2.2: |x - truncFrac(x,n)| < 2^(fracExpo(x) - n + 1)"
+        "  Lemma 7.2.3: |awayFrac(x,n) - x| < 2^(fracExpo(x) - n + 1)"
+        "stated EXACTLY as the paper's strict signed-power-of-two ulp(x,n) ="
+        "2^(e_x - n + 1) (Section 5.1, p.13), and faithful at EVERY exponent --"
+        "the kernel divider lives in fractional floats (fracExpo < 0), and pow2Signed"
+        "denotes 2^k for negative k too, so there is no nonnegative-exponent guard."
+        "The proof reduces, after the rational order is cross-multiplied and the"
+        "fracSign branch factored out, to the SAME Euclidean floor window the Fp bound"
+        "uses -- here over the generic positive divisor |x.bottom| * (the ulp"
+        "numerator) -- so it CITES the generic floor window law and multiplies the"
+        "window remainder by the positive denominators. No per-figure proof."
+    depends [Domain.Rational, Domain.Fprep, Domain.Round, Domain.Kernel]
+    effects []
+
+fn truncFracError(x: Fraction, n: Int) -> Fraction
+    ? "The truncation error epsilon of Lemma 7.2.2 (p.19) on the rational model: epsilon = x - truncFrac(x,n), the exact rational truncation toward zero throws away. The complement of the Fp truncError, read directly off the Fraction the divider rounds."
+    Domain.Rational.minus(x, Domain.Kernel.truncFrac(x, n))
+
+verify truncFracError
+    truncFracError(Domain.Rational.Fraction(top = 13, bottom = 8), 3) => Domain.Rational.Fraction(top = 4, bottom = 32)
+    truncFracError(Domain.Rational.Fraction(top = 13, bottom = 64), 3) => Domain.Rational.Fraction(top = 32, bottom = 2048)
+
+fn truncFracErrorBound(x: Fraction, n: Int) -> Bool
+    ? "Lemma 7.2.2 (p.19), the strict bound on the rational model: |x - truncFrac(x,n)| < 2^(fracExpo(x) - n + 1). Truncation toward zero discards strictly less than one ulp(x,n) = 2^(e_x - n + 1) (Section 5.1, p.13). e_x = fracExpo(x), the runnable binary exponent; the bound is the signed power of two, a true fraction < 1 when n > e_x + 1, faithful for the fractional floats (fracExpo < 0) the kernel divider lives in."
+    Domain.Rational.lessThan(Domain.Rational.absFraction(truncFracError(x, n)), Domain.Fprep.pow2Signed(Domain.Kernel.fracExpo(x) - n + 1))
+
+verify truncFracErrorBound
+    truncFracErrorBound(Domain.Rational.Fraction(top = 13, bottom = 8), 3) => true
+    truncFracErrorBound(Domain.Rational.Fraction(top = -13, bottom = 8), 3) => true
+    truncFracErrorBound(Domain.Rational.Fraction(top = 7, bottom = 2), 24) => true
+    truncFracErrorBound(Domain.Rational.Fraction(top = 13, bottom = 64), 3) => true
+    truncFracErrorBound(Domain.Rational.Fraction(top = 1, bottom = 8), 3) => true
+    truncFracErrorBound(Domain.Rational.Fraction(top = -13, bottom = 64), 4) => true
+
+verify truncFracErrorBound law strictBound
+    given x: Fraction = [Domain.Rational.Fraction(top = 13, bottom = 8), Domain.Rational.Fraction(top = -13, bottom = 8), Domain.Rational.Fraction(top = 13, bottom = 64), Domain.Rational.Fraction(top = -13, bottom = 64)]
+    given n: Int = [1, 3, 4]
+    when x.top != 0
+    when x.bottom != 0
+    truncFracErrorBound(x, n) holds
+
+fn awayFracError(x: Fraction, n: Int) -> Fraction
+    ? "The round-away error epsilon of Lemma 7.2.3 (p.19) on the rational model: epsilon = awayFrac(x,n) - x, the exact rational rounding away from zero adds to x. The complement of truncFracError -- where trunc throws the floor remainder away, away adds the rest of the ulp cell."
+    Domain.Rational.minus(Domain.Kernel.awayFrac(x, n), x)
+
+verify awayFracError
+    awayFracError(Domain.Rational.Fraction(top = 13, bottom = 8), 3) => Domain.Rational.Fraction(top = 4, bottom = 32)
+    awayFracError(Domain.Rational.Fraction(top = 13, bottom = 64), 3) => Domain.Rational.Fraction(top = 32, bottom = 2048)
+
+fn awayFracErrorBound(x: Fraction, n: Int) -> Bool
+    ? "Lemma 7.2.3 (p.19), the strict bound on the rational model: |awayFrac(x,n) - x| < 2^(fracExpo(x) - n + 1). Rounding away from zero adds strictly less than one ulp(x,n) = 2^(e_x - n + 1) (Section 5.1, p.13). e_x = fracExpo(x); faithful at every exponent, including the fractional floats (fracExpo < 0) the kernel divider lives in."
+    Domain.Rational.lessThan(Domain.Rational.absFraction(awayFracError(x, n)), Domain.Fprep.pow2Signed(Domain.Kernel.fracExpo(x) - n + 1))
+
+verify awayFracErrorBound
+    awayFracErrorBound(Domain.Rational.Fraction(top = 13, bottom = 8), 3) => true
+    awayFracErrorBound(Domain.Rational.Fraction(top = -13, bottom = 8), 3) => true
+    awayFracErrorBound(Domain.Rational.Fraction(top = 7, bottom = 2), 24) => true
+    awayFracErrorBound(Domain.Rational.Fraction(top = 13, bottom = 64), 3) => true
+    awayFracErrorBound(Domain.Rational.Fraction(top = 1, bottom = 8), 3) => true
+    awayFracErrorBound(Domain.Rational.Fraction(top = -13, bottom = 64), 4) => true
+
+verify awayFracErrorBound law strictBound
+    given x: Fraction = [Domain.Rational.Fraction(top = 13, bottom = 8), Domain.Rational.Fraction(top = -13, bottom = 8), Domain.Rational.Fraction(top = 13, bottom = 64), Domain.Rational.Fraction(top = -13, bottom = 64)]
+    given n: Int = [1, 3, 4]
+    when x.top != 0
+    when x.bottom != 0
+    awayFracErrorBound(x, n) holds

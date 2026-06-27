@@ -93,7 +93,75 @@ fn rf_pow2_fn(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option
             }
         }
     }
+    // Final fallback: ANY power-of-two recursion-shape fn reachable in this
+    // law's cone, INCLUDING dependency modules. The floor-window family pins its
+    // figure only on an `is_pow2_shape` fn; the Fraction-model rounding bounds
+    // (truncFrac/awayFrac) reach `pow2` through `pow2Signed` in a DEPENDENCY
+    // module (Fprep), where no in-file FloorDivWindow law pins it — so detect the
+    // recursion shape directly. Name-blind, qualified with the module prefix.
+    for fd in &ctx.fn_defs {
+        if rf_is_pow2_rec(fd) && cone.iter().any(|c| rf_bare_basename(c) == fd.name) {
+            return Some(aver_name_to_lean(&fd.name));
+        }
+    }
+    for m in &ctx.modules {
+        for fd in &m.fn_defs {
+            if rf_is_pow2_rec(fd) && cone.iter().any(|c| rf_bare_basename(c) == fd.name) {
+                return Some(format!("{}.{}", m.prefix, aver_name_to_lean(&fd.name)));
+            }
+        }
+    }
     None
+}
+
+/// The power-of-two recursion shape `match n <= 0 { true -> 1; false -> 2 *
+/// self(n - 1) }` over `(n: Int) -> Int`. Name-blind detector mirroring
+/// `proof_lower::floor_window::is_pow2_shape`, used to locate the `pow2` cone fn
+/// of a rounding bound whose floor-window family lives in a dependency module.
+fn rf_is_pow2_rec(fd: &crate::ast::FnDef) -> bool {
+    use crate::ast::{BinOp, Expr, Literal};
+    if fd.params.len() != 1 {
+        return false;
+    }
+    let Some(body) = fd.body.tail_expr() else {
+        return false;
+    };
+    let Expr::Match { subject, arms } = &body.node else {
+        return false;
+    };
+    let Expr::BinOp(BinOp::Lte, sl, sr) = &subject.node else {
+        return false;
+    };
+    let p = &fd.params[0].0;
+    if expr_var_name(&sl.node) != Some(p.as_str())
+        || !matches!(&sr.node, Expr::Literal(Literal::Int(0)))
+        || arms.len() != 2
+    {
+        return false;
+    }
+    let has_one = arms
+        .iter()
+        .any(|a| matches!(&a.body.node, Expr::Literal(Literal::Int(1))));
+    let has_rec = arms.iter().any(|a| {
+        let Expr::BinOp(BinOp::Mul, ml, mr) = &a.body.node else {
+            return false;
+        };
+        if !matches!(&ml.node, Expr::Literal(Literal::Int(2))) {
+            return false;
+        }
+        let Expr::FnCall(c, args) = &mr.node else {
+            return false;
+        };
+        let self_call = super::super::shared::expr_dotted_name(c)
+            .map(|n| rf_bare_basename(&n).to_string())
+            == Some(fd.name.clone());
+        let arg_ok = args.len() == 1
+            && matches!(&args[0].node, Expr::BinOp(BinOp::Sub, dl, dr)
+                if expr_var_name(&dl.node) == Some(p.as_str())
+                    && matches!(&dr.node, Expr::Literal(Literal::Int(1))));
+        self_call && arg_ok
+    });
+    has_one && has_rec
 }
 
 /// Recognize the rational-over-floor sign/magnitude family on `(vb, law)`.
@@ -1333,6 +1401,423 @@ fn emit_rational_floor_bound_matched(
 }
 
 /// The all-exponent rational strict-order rung for the rounding-error bound
+/// The generic positive-divisor Euclidean floor window + the rational
+/// truncation-error magnitude factoring + the abstract leaf, scoped to a fresh
+/// `base` prefix. Shared, name-blind support for the rational-model rounding
+/// error bound (Lemma 7.2.2 / 7.2.3 on Fractions) — the value `x` is a plain
+/// `Fraction` (not the normalized `Fp`), the ulp `pow2Signed(e_x-n+1)` appears
+/// in BOTH the rounded value and the bound, and `e_x = fracExpo(x)` stays an
+/// OPAQUE integer (its value is never needed). `{abs}` is the integer-abs fn,
+/// `{floor}` the Euclidean floor wrapper. The leaf reduces the squared-denominator
+/// rational order, after the `fracSign` branch is factored out of the error
+/// magnitude, to one strict floor-window remainder bound times the positive
+/// denominators — the same window engine the Fp bound uses, here over the generic
+/// positive divisor `|x.bottom| * (pow2Signed(e_x-n+1)).top`.
+fn render_frac_bound_support(base: &str, abs: &str, floor: &str) -> String {
+    format!(
+        r#"theorem {base}__floordiv_eq (a d : Int) (hd : 0 < d) : {floor} a d = a / d := by
+  have hne : ¬((d == 0) = true) := by simp only [beq_iff_eq]; omega
+  simp only [{floor}]
+  rw [if_neg hne]
+  simp only [Except.withDefault]
+theorem {base}__floor_window (a d : Int) (hd : 0 < d) :
+    d * ({floor} a d) ≤ a ∧ a < d * ({floor} a d + 1) := by
+  rw [{base}__floordiv_eq a d hd]
+  have hd0 : d ≠ 0 := by omega
+  have heq := Int.ediv_add_emod a d
+  have h0 := Int.emod_nonneg a hd0
+  have h1 := Int.emod_lt_of_pos a hd
+  have hexp : d * (a / d + 1) = d * (a / d) + d := by rw [Int.mul_add, Int.mul_one]
+  refine ⟨by omega, ?_⟩
+  rw [hexp]; omega
+theorem {base}__abs_trunc_mag (a b Ut Ub q : Int)
+    (ha0 : a ≠ 0) (hb0 : b ≠ 0)
+    (hwlo : {abs} b * Ut * q ≤ {abs} a * Ub) :
+    {abs} (a * Ub - (if a * b ≥ 0 then (1:Int) else 0 - 1) * q * Ut * b)
+      = {abs} a * Ub - {abs} b * Ut * q := by
+  have hR : 0 ≤ {abs} a * Ub - {abs} b * Ut * q := by omega
+  have hcases :
+      a * Ub - (if a * b ≥ 0 then (1:Int) else 0 - 1) * q * Ut * b
+        = ({abs} a * Ub - {abs} b * Ut * q)
+      ∨ a * Ub - (if a * b ≥ 0 then (1:Int) else 0 - 1) * q * Ut * b
+        = -({abs} a * Ub - {abs} b * Ut * q) := by
+    unfold {abs}
+    rcases Int.lt_or_le a 0 with ha | ha <;> rcases Int.lt_or_le b 0 with hb | hb
+    · have hab : a * b ≥ 0 := by
+        have h := Int.mul_pos (show (0:Int) < -a by omega) (show (0:Int) < -b by omega)
+        rw [Int.neg_mul, Int.mul_neg, Int.neg_neg] at h; omega
+      rw [if_pos hab, if_pos ha, if_pos hb]; right; grind
+    · have hbp : 0 < b := by omega
+      have hab : ¬ (a * b ≥ 0) := by
+        have h := Int.mul_pos (show (0:Int) < -a by omega) hbp
+        rw [Int.neg_mul] at h; omega
+      rw [if_neg hab, if_pos ha, if_neg (by omega)]; right; grind
+    · have hap : 0 < a := by omega
+      have hab : ¬ (a * b ≥ 0) := by
+        have h := Int.mul_pos hap (show (0:Int) < -b by omega)
+        rw [Int.mul_neg] at h; omega
+      rw [if_neg hab, if_neg (by omega), if_pos hb]; left; grind
+    · have hap : 0 < a := by omega
+      have hbp : 0 < b := by omega
+      have hab : a * b ≥ 0 := by have := Int.mul_pos hap hbp; omega
+      rw [if_pos hab, if_neg (by omega), if_neg (by omega)]; left; grind
+  have absId : ∀ z : Int, 0 ≤ z → {abs} z = z := by
+    intro z hz; unfold {abs}; rw [if_neg (by omega)]
+  have absNeg : ∀ z : Int, 0 ≤ z → {abs} (-z) = z := by
+    intro z hz; unfold {abs}; split <;> omega
+  rcases hcases with h | h
+  · rw [h]; exact absId _ hR
+  · rw [h]; exact absNeg _ hR
+theorem {base}__frac_bound_leaf (a b Ut Ub q : Int)
+    (ha : a ≠ 0) (hb : b ≠ 0) (hUt : 0 < Ut) (hUb : 0 < Ub)
+    (hwlo : {abs} b * Ut * q ≤ {abs} a * Ub)
+    (hwhi : {abs} a * Ub < {abs} b * Ut * (q + 1)) :
+    {abs} (a * Ub - (if a * b ≥ 0 then (1:Int) else 0 - 1) * q * Ut * b)
+        * {abs} (b * Ub) * (Ub * Ub)
+      < Ut * Ub * ({abs} (b * Ub) * {abs} (b * Ub)) := by
+  have hET := {base}__abs_trunc_mag a b Ut Ub q ha hb hwlo
+  have hEB : {abs} (b * Ub) = {abs} b * Ub := by
+    unfold {abs}
+    rcases Int.lt_or_le b 0 with hbn | hbp
+    · rw [if_pos (by have := Int.mul_pos (show (0:Int) < -b by omega) hUb; rw [Int.neg_mul] at this; omega), if_pos hbn]; grind
+    · rw [if_neg (by have := Int.mul_nonneg hbp (Int.le_of_lt hUb); omega), if_neg (by omega)]
+  rw [hET, hEB]
+  have hbb : 0 < {abs} b := by unfold {abs}; split <;> omega
+  have hkey : {abs} a * Ub - {abs} b * Ut * q < {abs} b * Ut := by
+    have hexp : {abs} b * Ut * (q + 1) = {abs} b * Ut * q + {abs} b * Ut := by
+      rw [Int.mul_add, Int.mul_one]
+    omega
+  have hP : 0 < {abs} b * Ub * Ub * Ub :=
+    Int.mul_pos (Int.mul_pos (Int.mul_pos hbb hUb) hUb) hUb
+  have hLrw : ({abs} a * Ub - {abs} b * Ut * q) * ({abs} b * Ub) * (Ub * Ub)
+      = ({abs} a * Ub - {abs} b * Ut * q) * ({abs} b * Ub * Ub * Ub) := by grind
+  have hRrw : Ut * Ub * (({abs} b * Ub) * ({abs} b * Ub))
+      = ({abs} b * Ut) * ({abs} b * Ub * Ub * Ub) := by grind
+  rw [hLrw, hRrw]
+  exact Int.mul_lt_mul_of_pos_right hkey hP"#
+    )
+}
+
+/// The away (round-from-zero) sibling of [`render_frac_bound_support`]: the
+/// generic floor window + a NO-window magnitude equality + the away leaf. The
+/// away figure rounds with `ceilDiv` (`= floorDiv((a+b)-1, b)`), so its error
+/// `away(x,n) - x` factors to the COMPLEMENT `|x.bottom|·U.top·cq - |x.top|·U.bottom`
+/// of the truncation remainder (the floor of `N+D-1` gives `N ≤ D·cq`, so the
+/// magnitude `R ≤ 0` and `absInt R = -R`), and the denoted error's denominator
+/// is `U.bottom · x.bottom` (the mirror order). Same window engine, same
+/// squared-denominator cross-multiply, name-blind. `{abs}` the integer-abs fn,
+/// `{floor}` the Euclidean floor wrapper.
+fn render_frac_away_support(base: &str, abs: &str, floor: &str) -> String {
+    format!(
+        r#"theorem {base}__floordiv_eq (a d : Int) (hd : 0 < d) : {floor} a d = a / d := by
+  have hne : ¬((d == 0) = true) := by simp only [beq_iff_eq]; omega
+  simp only [{floor}]
+  rw [if_neg hne]
+  simp only [Except.withDefault]
+theorem {base}__floor_window (a d : Int) (hd : 0 < d) :
+    d * ({floor} a d) ≤ a ∧ a < d * ({floor} a d + 1) := by
+  rw [{base}__floordiv_eq a d hd]
+  have hd0 : d ≠ 0 := by omega
+  have heq := Int.ediv_add_emod a d
+  have h0 := Int.emod_nonneg a hd0
+  have h1 := Int.emod_lt_of_pos a hd
+  have hexp : d * (a / d + 1) = d * (a / d) + d := by rw [Int.mul_add, Int.mul_one]
+  refine ⟨by omega, ?_⟩
+  rw [hexp]; omega
+theorem {base}__abs_mag (a b Ut Ub q : Int) (ha0 : a ≠ 0) (hb0 : b ≠ 0) :
+    {abs} (a * Ub - (if a * b ≥ 0 then (1:Int) else 0 - 1) * q * Ut * b)
+      = {abs} ({abs} a * Ub - {abs} b * Ut * q) := by
+  have hcases :
+      a * Ub - (if a * b ≥ 0 then (1:Int) else 0 - 1) * q * Ut * b
+        = ({abs} a * Ub - {abs} b * Ut * q)
+      ∨ a * Ub - (if a * b ≥ 0 then (1:Int) else 0 - 1) * q * Ut * b
+        = -({abs} a * Ub - {abs} b * Ut * q) := by
+    unfold {abs}
+    rcases Int.lt_or_le a 0 with ha | ha <;> rcases Int.lt_or_le b 0 with hb | hb
+    · have hab : a * b ≥ 0 := by
+        have h := Int.mul_pos (show (0:Int) < -a by omega) (show (0:Int) < -b by omega)
+        rw [Int.neg_mul, Int.mul_neg, Int.neg_neg] at h; omega
+      rw [if_pos hab, if_pos ha, if_pos hb]; right; grind
+    · have hbp : 0 < b := by omega
+      have hab : ¬ (a * b ≥ 0) := by
+        have h := Int.mul_pos (show (0:Int) < -a by omega) hbp
+        rw [Int.neg_mul] at h; omega
+      rw [if_neg hab, if_pos ha, if_neg (by omega)]; right; grind
+    · have hap : 0 < a := by omega
+      have hab : ¬ (a * b ≥ 0) := by
+        have h := Int.mul_pos hap (show (0:Int) < -b by omega)
+        rw [Int.mul_neg] at h; omega
+      rw [if_neg hab, if_neg (by omega), if_pos hb]; left; grind
+    · have hap : 0 < a := by omega
+      have hbp : 0 < b := by omega
+      have hab : a * b ≥ 0 := by have := Int.mul_pos hap hbp; omega
+      rw [if_pos hab, if_neg (by omega), if_neg (by omega)]; left; grind
+  rcases hcases with h | h
+  · rw [h]
+  · rw [h]; unfold {abs}; split <;> split <;> omega
+theorem {base}__absNonpos (z : Int) (hz : z ≤ 0) : {abs} z = -z := by
+  unfold {abs}; split <;> omega
+theorem {base}__absMul (b Ub : Int) (hUb : 0 < Ub) : {abs} (Ub * b) = {abs} b * Ub := by
+  unfold {abs}
+  rcases Int.lt_or_le b 0 with hbn | hbp
+  · rw [if_pos (by have := Int.mul_pos hUb (show (0:Int) < -b by omega); rw [Int.mul_neg] at this; omega), if_pos hbn]; grind
+  · rw [if_neg (by have := Int.mul_nonneg (Int.le_of_lt hUb) hbp; omega), if_neg (by omega)]; grind
+theorem {base}__away_leaf (a b Ut Ub cq : Int)
+    (ha : a ≠ 0) (hb : b ≠ 0) (hUt : 0 < Ut) (hUb : 0 < Ub)
+    (hwlo : ({abs} b * Ut) * cq ≤ {abs} a * Ub + {abs} b * Ut - 1)
+    (hwhi : {abs} a * Ub + {abs} b * Ut - 1 < ({abs} b * Ut) * (cq + 1)) :
+    {abs} ((if a * b ≥ 0 then (1:Int) else 0 - 1) * cq * Ut * b - a * Ub)
+        * {abs} (Ub * b) * (Ub * Ub)
+      < Ut * Ub * ({abs} (Ub * b) * {abs} (Ub * b)) := by
+  have hflip : (if a * b ≥ 0 then (1:Int) else 0 - 1) * cq * Ut * b - a * Ub
+      = -(a * Ub - (if a * b ≥ 0 then (1:Int) else 0 - 1) * cq * Ut * b) := by grind
+  rw [hflip]
+  have habsneg : {abs} (-(a * Ub - (if a * b ≥ 0 then (1:Int) else 0 - 1) * cq * Ut * b))
+      = {abs} (a * Ub - (if a * b ≥ 0 then (1:Int) else 0 - 1) * cq * Ut * b) := by
+    unfold {abs}; split <;> split <;> omega
+  rw [habsneg, {base}__abs_mag a b Ut Ub cq ha hb]
+  have hexpHi : {abs} b * Ut * (cq + 1) = {abs} b * Ut * cq + {abs} b * Ut := by
+    rw [Int.mul_add, Int.mul_one]
+  have hRle : {abs} a * Ub - {abs} b * Ut * cq ≤ 0 := by omega
+  rw [{base}__absNonpos _ hRle, {base}__absMul b Ub hUb]
+  have hbb : 0 < {abs} b := by unfold {abs}; split <;> omega
+  have hkey : -({abs} a * Ub - {abs} b * Ut * cq) < {abs} b * Ut := by omega
+  have hP : 0 < {abs} b * Ub * Ub * Ub :=
+    Int.mul_pos (Int.mul_pos (Int.mul_pos hbb hUb) hUb) hUb
+  have hLrw : -({abs} a * Ub - {abs} b * Ut * cq) * ({abs} b * Ub) * (Ub * Ub)
+      = -({abs} a * Ub - {abs} b * Ut * cq) * ({abs} b * Ub * Ub * Ub) := by grind
+  have hRrw : Ut * Ub * (({abs} b * Ub) * ({abs} b * Ub))
+      = ({abs} b * Ut) * ({abs} b * Ub * Ub * Ub) := by grind
+  rw [hLrw, hRrw]
+  exact Int.mul_lt_mul_of_pos_right hkey hP"#
+    )
+}
+
+/// The rational-model rounding-error STRICT BOUND on plain Fractions (Lemma
+/// 7.2.2 `truncFrac`): `|x - truncFrac(x,n)| < 2^(fracExpo(x) - n + 1)`. The
+/// value `x` is a bare `Fraction` given (NOT the normalized `Fp`), so the
+/// `fpValueGeneral`-keyed arms decline; this arm fires on the bare-var value
+/// whose rounded counterpart inlines to the `truncFrac` else-record. Name-blind:
+/// the value field accessors, the sign / abs / floor / signed-power fns and the
+/// ulp exponent are all read off the recognized shape. The proof unfolds the
+/// rounding layer, supplies the signed-power positivity + the generic
+/// positive-divisor floor window, and closes by the shared abstract leaf — the
+/// algebra is the floor window reduction, generic over `trunc`'s figure. Returns
+/// `None` (→ the `Fp`-record arms / bounded fallback) for the `Fp` value model
+/// or the `ceilDiv` (away) figure.
+fn emit_rational_frac_bound(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<AutoProof> {
+    use crate::ast::{BinOp, Expr};
+    let pow = rf_pow2_fn(vb, law, ctx)?;
+    let inlined = inline_fn_call(&law.lhs, ctx)?;
+    let Expr::FnCall(lt_callee, lt_args) = &inlined.node else {
+        return None;
+    };
+    if lt_args.len() != 2 {
+        return None;
+    }
+    let lessthan_lean = aver_name_to_lean(&super::super::shared::expr_dotted_name(lt_callee)?);
+    let Expr::FnCall(abs_callee, abs_args) = &lt_args[0].node else {
+        return None;
+    };
+    let absfrac_lean = aver_name_to_lean(&super::super::shared::expr_dotted_name(abs_callee)?);
+    let err_call = abs_args.first()?;
+    let Expr::FnCall(ps_callee, ps_args) = &lt_args[1].node else {
+        return None;
+    };
+    let ps_lean = aver_name_to_lean(&super::super::shared::expr_dotted_name(ps_callee)?);
+    let le = rf_emit(ctx, ps_args.first()?);
+    let Expr::FnCall(err_callee, te_args) = &err_call.node else {
+        return None;
+    };
+    if te_args.len() != 2 {
+        return None;
+    }
+    let errfn_lean = aver_name_to_lean(&super::super::shared::expr_dotted_name(err_callee)?);
+    let f_name = expr_var_name(&te_args[0].node)?.to_string();
+    let minus_inlined = rf_inline_fn_call(err_call, ctx)?;
+    let Expr::FnCall(minus_callee, m_args) = &minus_inlined.node else {
+        return None;
+    };
+    let minus_lean = aver_name_to_lean(&super::super::shared::expr_dotted_name(minus_callee)?);
+    if m_args.len() != 2 {
+        return None;
+    }
+    let is_val = |e: &Expr| expr_var_name(e) == Some(f_name.as_str());
+    let (rounded_call, is_away) = if is_val(&m_args[0].node) {
+        (&m_args[1], false)
+    } else if is_val(&m_args[1].node) {
+        (&m_args[0], true)
+    } else {
+        return None;
+    };
+    let Expr::FnCall(round_callee, _) = &rounded_call.node else {
+        return None;
+    };
+    let roundfn_lean = aver_name_to_lean(&super::super::shared::expr_dotted_name(round_callee)?);
+    let rounded_inl = rf_inline_fn_call(rounded_call, ctx)?;
+    let Expr::Match { arms, .. } = &rounded_inl.node else {
+        return None;
+    };
+    let record = arms.iter().find_map(|a| {
+        if let Expr::RecordCreate { fields, .. } = &a.body.node {
+            Some(fields)
+        } else {
+            None
+        }
+    })?;
+    let top = record.iter().find(|(n, _)| n == "top").map(|(_, e)| e)?;
+    let Expr::BinOp(BinOp::Mul, l, _ut) = &top.node else {
+        return None;
+    };
+    let Expr::BinOp(BinOp::Mul, sgn_e, floor_e) = &l.node else {
+        return None;
+    };
+    let Expr::FnCall(sgn_callee, _) = &sgn_e.node else {
+        return None;
+    };
+    let signfn_lean = aver_name_to_lean(&super::super::shared::expr_dotted_name(sgn_callee)?);
+    let Expr::FnCall(floor_callee, floor_args) = &floor_e.node else {
+        return None;
+    };
+    let floorfn_dotted = super::super::shared::expr_dotted_name(floor_callee)?;
+    // The trunc figure's floor IS the Euclidean floor wrapper
+    // (`Result.withDefault(Int.div(..), _)`); the away figure rounds with a
+    // ceiling fn whose body is `floorDiv((a+b)-1, b)` — one level above the
+    // wrapper. Resolve across dependency modules (the wrapper lives in a dep
+    // module here) and read the REAL wrapper name through the ceiling for away.
+    let is_wrapper_body = |body: &Expr| {
+        matches!(body, Expr::FnCall(c, a)
+            if a.len() == 2
+                && super::super::shared::expr_dotted_name(c).as_deref()
+                    == Some("Result.withDefault"))
+    };
+    let floor_body = rf_resolve_fn(ctx, &floorfn_dotted)?
+        .body
+        .tail_expr()?
+        .clone();
+    let direct_wrapper = is_wrapper_body(&floor_body.node);
+    // trunc ⇔ direct wrapper ∧ minus(val, rounded); away ⇔ ceiling ∧ minus(rounded, val).
+    if direct_wrapper == is_away {
+        return None;
+    }
+    let (floorfn_lean, ceilfn_lean): (String, Option<String>) = if direct_wrapper {
+        (aver_name_to_lean(&floorfn_dotted), None)
+    } else {
+        let Expr::FnCall(inner_c, inner_a) = &floor_body.node else {
+            return None;
+        };
+        if inner_a.len() != 2 {
+            return None;
+        }
+        let inner_dotted = super::super::shared::expr_dotted_name(inner_c)?;
+        let inner_body = rf_resolve_fn(ctx, &inner_dotted)?.body.tail_expr()?.clone();
+        if !is_wrapper_body(&inner_body.node) {
+            return None;
+        }
+        (
+            aver_name_to_lean(&inner_dotted),
+            Some(aver_name_to_lean(&floorfn_dotted)),
+        )
+    };
+    // abs fn off the floor numerator |x.top| · U.bottom (same shape for both figures).
+    let n_arg = floor_args.first()?;
+    let Expr::BinOp(BinOp::Mul, abs_call, _) = &n_arg.node else {
+        return None;
+    };
+    let Expr::FnCall(abs_callee2, _) = &abs_call.node else {
+        return None;
+    };
+    let absfn_lean = aver_name_to_lean(&super::super::shared::expr_dotted_name(abs_callee2)?);
+
+    let law_fn_lean = aver_name_to_lean(&vb.fn_name);
+    let val = aver_name_to_lean(&f_name);
+    let base = format!("{law_fn_lean}_law_{}__frb", law.name);
+
+    let mut support: Vec<String> =
+        super::super::floor_window::pow2_signed_pos_support(&base, &pow, &ps_lean)
+            .lines()
+            .map(|s| s.to_string())
+            .collect();
+    let extra = if is_away {
+        render_frac_away_support(&base, &absfn_lean, &floorfn_lean)
+    } else {
+        render_frac_bound_support(&base, &absfn_lean, &floorfn_lean)
+    };
+    support.extend(extra.lines().map(|s| s.to_string()));
+
+    let ut = format!("({ps_lean} ({le})).top");
+    let ub = format!("({ps_lean} ({le})).bottom");
+
+    let intro = format!("  intro {} h_when", intro_names.join(" "));
+    let mut body: Vec<String> = vec![intro, "  first".to_string(), "  | (".to_string()];
+    body.push(
+        "    simp only [Bool.and_eq_true, bne_iff_ne, decide_eq_true_eq] at h_when".to_string(),
+    );
+    body.push("    obtain ⟨ha, hb⟩ := h_when".to_string());
+    let unfold_ceil = ceilfn_lean
+        .as_deref()
+        .map(|c| format!(" {c}"))
+        .unwrap_or_default();
+    body.push(format!(
+        "    unfold {law_fn_lean} {errfn_lean} {roundfn_lean}{unfold_ceil}"
+    ));
+    body.push("    rw [if_neg (by simp only [beq_iff_eq]; exact ha)]".to_string());
+    body.push(format!(
+        "    simp only [{minus_lean}, {absfrac_lean}, {lessthan_lean}, {signfn_lean}, decide_eq_true_eq]"
+    ));
+    body.push(format!("    have hUt : 0 < {ut} := {base}__sgnt_pos _"));
+    body.push(format!("    have hUb : 0 < {ub} := {base}__sgnb_pos _"));
+    body.push(format!(
+        "    have hbb : 0 < {absfn_lean} {val}.bottom := by unfold {absfn_lean}; split <;> omega"
+    ));
+    body.push(format!(
+        "    have hD : 0 < {absfn_lean} {val}.bottom * {ut} := Int.mul_pos hbb hUt"
+    ));
+    if is_away {
+        // The away (ceiling) figure: the window is taken on `N + D - 1` (the
+        // ceiling-as-floor numerator) and the leaf reverses the error sign.
+        let numn = format!("{absfn_lean} {val}.top * {ub} + {absfn_lean} {val}.bottom * {ut} - 1");
+        let den = format!("{absfn_lean} {val}.bottom * {ut}");
+        body.push(format!(
+            "    obtain ⟨hwlo, hwhi⟩ := {base}__floor_window ({numn}) ({den}) hD"
+        ));
+        body.push(format!(
+            "    exact {base}__away_leaf {val}.top {val}.bottom {ut} {ub} ({floorfn_lean} ({numn}) ({den})) ha hb hUt hUb hwlo hwhi"
+        ));
+    } else {
+        let q = format!(
+            "{floorfn_lean} ({absfn_lean} {val}.top * {ub}) ({absfn_lean} {val}.bottom * {ut})"
+        );
+        body.push(format!(
+            "    obtain ⟨hwlo, hwhi⟩ := {base}__floor_window ({absfn_lean} {val}.top * {ub}) ({absfn_lean} {val}.bottom * {ut}) hD"
+        ));
+        body.push(format!(
+            "    exact {base}__frac_bound_leaf {val}.top {val}.bottom {ut} {ub} ({q}) ha hb hUt hUb hwlo hwhi"
+        ));
+    }
+    body.push("  )".to_string());
+
+    let floor = if super::super::super::tactic_ir::speculative::probing() {
+        let id = format!("{}.{}", vb.fn_name, law.name);
+        super::super::super::tactic_ir::speculative::record_probed(&id);
+        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
+    } else {
+        "  | sorry".to_string()
+    };
+    body.push(floor);
+
+    Some(AutoProof {
+        support_lines: support,
+        body: Tactic::raw(body),
+        replaces_theorem: false,
+    })
+}
+
 /// `|epsilon| < 2^(e_x - i + 1)` over the GENERAL-exponent value `fpValueGeneral`
 /// (Lemma 7.2.2's bound, faithful for the fractional floats `exp < 0` the kernel
 /// divider lives in). The error reads `minus(fpValueGeneral(F), fpValueGeneral(G))`
@@ -1751,6 +2236,12 @@ fn emit_rational_floor_bound(
     intro_names: &[String],
 ) -> Option<AutoProof> {
     use crate::ast::Expr;
+    // The rational-MODEL bound on a bare `Fraction` value (truncFrac on plain
+    // rationals, keyed on fracExpo) — the Fp-record arms below decline on a
+    // bare-var value, so this arm fires first.
+    if let Some(p) = emit_rational_frac_bound(vb, law, ctx, intro_names) {
+        return Some(p);
+    }
     // A PIECEWISE rounded value (record-returning match — `away`/`sticky`) takes
     // the matched-leaf rung; a single clean record (`trunc`) takes the
     // single-record general rung; the legacy clamped value keeps the arm below.
