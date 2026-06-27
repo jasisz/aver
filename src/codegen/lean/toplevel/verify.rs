@@ -619,7 +619,13 @@ fn emit_verify_law_block(
             // pure-kernel enumeration (`decide` over a bounded-`Nat` forall).
             // The emit replaces the theorem with the `Prop`-hypothesis universal
             // form, so dropping the sampled domain here keeps them in lockstep.
-            || super::law_auto::recognize_finite_int_domain(vb, &law_for_auto_proof, ctx));
+            || super::law_auto::recognize_finite_int_domain(vb, &law_for_auto_proof, ctx)
+            // Interval-monotonicity law (the K5 reciprocal table bucket bound):
+            // an affine-in-interval-var magnitude bound over the exact-rational
+            // order, proven universally by the rational interval-monotonicity
+            // argument. The emit replaces the theorem with the `Prop`-hypothesis
+            // universal form, so dropping the sampled domain keeps them aligned.
+            || super::law_auto::recognize_interval_monotonicity(vb, &law_for_auto_proof, ctx));
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(
             vb,

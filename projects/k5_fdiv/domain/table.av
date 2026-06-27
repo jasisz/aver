@@ -89,6 +89,30 @@ fn relError(d: Fraction, i: Int) -> Fraction
 verify relError
     Domain.Rational.sameValue(relError(key(64), 64), Domain.Rational.Fraction(top = 1, bottom = 256)) => true
 
+fn seedBelow(d: Fraction, v: Fraction, e: Fraction) -> Bool
+    ? "The seed error bound predicate of Lemma 8.1.1 (page 26): the relative error"
+      "|d * v - 1| of using reciprocal estimate v for divisor d is strictly below e."
+      "Written with d, v, e free so the bucket-monotonicity argument can quantify the"
+      "magnitude bound over a whole divisor interval [lo, hi] from its two endpoints."
+    Domain.Rational.lessThan(Domain.Rational.absFraction(Domain.Rational.minus(Domain.Rational.times(d, v), Domain.Rational.oneFraction())), e)
+
+verify seedBelow
+    seedBelow(Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 1, bottom = 2), Domain.Rational.Fraction(top = 1, bottom = 1)) => true
+
+verify seedBelow law intervalErrorBound
+    given d: Fraction = [Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 5, bottom = 3)]
+    given lo: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 1)]
+    given hi: Fraction = [Domain.Rational.Fraction(top = 2, bottom = 1)]
+    given v: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 2)]
+    given e: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 1)]
+    when Domain.Rational.isNonNeg(Domain.Rational.minus(d, lo))
+    when Domain.Rational.isNonNeg(Domain.Rational.minus(hi, d))
+    when Domain.Rational.isNonNeg(v)
+    when d.bottom != 0
+    when seedBelow(lo, v, e)
+    when seedBelow(hi, v, e)
+    seedBelow(d, v, e) holds
+
 fn tableEntryOk(i: Int) -> Bool
     ? "The Lemma 8.1.1 seed bound at bucket i, evaluated at the bucket key: with k ="
       "key(i) and v = lookup(i), the relative error |k * v - 1| is below epsilon ="

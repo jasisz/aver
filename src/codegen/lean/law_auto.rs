@@ -6,6 +6,7 @@ mod decimal;
 mod floor_window;
 mod induction;
 mod inequality;
+mod interval_mono;
 mod sampled;
 mod shared;
 mod spec;
@@ -37,6 +38,12 @@ pub(in crate::codegen::lean) use induction::recognize_conditional_comparison_bri
 /// lockstep with the emit.
 pub(in crate::codegen::lean) use induction::recognize_conditional_inductive_generic;
 pub(in crate::codegen::lean) use induction::recognize_pool_composition_generic;
+
+/// Interval-monotonicity rung — the affine-in-interval-var magnitude bound
+/// over the exact-rational order (the K5 reciprocal table bucket family).
+/// Feeds the `omit_domain` statement driver so the universal statement and
+/// the helper-kit-plus-assembly proof stay in lockstep.
+pub(in crate::codegen::lean) use interval_mono::recognize_interval_monotonicity;
 
 // (Defined in this module.) The finite bounded-Int-domain recognizer — see
 // `recognize_finite_int_domain` — feeds the `omit_domain` statement driver so
@@ -561,6 +568,25 @@ fn emit_verify_law_forall_auto_proof_inner(
     // `fpMulValue`; lifting the conditional-only restriction is shape-keyed and
     // name-blind. Every other unconditional shape keeps its own strategy.
     if let Some(proof) = induction::emit_pool_composition_generic_law(vb, law, ctx, &intro_names) {
+        return Some(proof);
+    }
+
+    // Interval-monotonicity — a magnitude bound `|d·v − 1| < e` that is
+    // affine in an interval variable `d ∈ [lo, hi]` over the exact-rational
+    // order, closed from the two endpoint bounds by the rational
+    // interval-monotonicity argument (a generic helper-lemma kit — `lessThan`
+    // transitivity, the abs sign-split, the scaled-difference monotonicities
+    // — plus a fixed assembly). Tried AFTER the keystone (so a law that is
+    // also a pool composition keeps that path) and BEFORE the
+    // `NonlinearNonneg` arm: this shape carries a `lessThan`/`absFraction`
+    // claim the nonlinear product rung does not admit. Emits its OWN
+    // TRUE-universal theorem (`replaces_theorem`) under a `first | (…) |
+    // sorry` floor, so credit stays fail-closed behind the `#print axioms`
+    // whitelist.
+    if law.when.is_some()
+        && let Some(proof) =
+            interval_mono::emit_interval_monotonicity_law(vb, law, ctx, theorem_base)
+    {
         return Some(proof);
     }
 
