@@ -39,6 +39,12 @@ pub(in crate::codegen::lean) use induction::recognize_conditional_comparison_bri
 pub(in crate::codegen::lean) use induction::recognize_conditional_inductive_generic;
 pub(in crate::codegen::lean) use induction::recognize_pool_composition_generic;
 
+/// Multi-citation composition — the generic "premises from one earlier
+/// universal's conclusion, goal from another earlier universal's conclusion"
+/// orchestration. Feeds the `omit_domain` statement driver, kept in lockstep
+/// with the emit (both probe-gated).
+pub(in crate::codegen::lean) use induction::recognize_multicite_composition;
+
 /// Interval-monotonicity rung — the affine-in-interval-var magnitude bound
 /// over the exact-rational order (the K5 reciprocal table bucket family).
 /// Feeds the `omit_domain` statement driver so the universal statement and
@@ -567,6 +573,19 @@ fn emit_verify_law_forall_auto_proof_inner(
     // atoms). That is the same generic mechanism that closes the conditional
     // `fpMulValue`; lifting the conditional-only restriction is shape-keyed and
     // name-blind. Every other unconditional shape keeps its own strategy.
+    // Multi-citation composition — the generic orchestration that discharges a
+    // law's premises from an EARLIER universal's conclusion and then APPLIES a
+    // second earlier universal whose conclusion aliases this law's goal. Tried
+    // BEFORE the keystone: the keystone's single `grind` over a pool cannot
+    // instantiate a supplying universal whose conclusion head is absent from the
+    // goal, nor fold the goal's definitional alias onto an applied universal's
+    // trigger — this arm emits that obtain-conjuncts-then-apply skeleton from the
+    // shape (name-blind). Probe-gated like the keystone, so a plan whose
+    // orchestration does not close falls back to its bounded sampled statement.
+    if let Some(proof) = induction::emit_multicite_composition_law(vb, law, ctx, &intro_names) {
+        return Some(proof);
+    }
+
     if let Some(proof) = induction::emit_pool_composition_generic_law(vb, law, ctx, &intro_names) {
         return Some(proof);
     }

@@ -614,6 +614,14 @@ fn emit_verify_law_block(
             // same recognizer, and the speculative probe commits the universal
             // only when `grind`+pool actually closes (else bounded fallback).
             || super::law_auto::recognize_pool_composition_generic(vb, &law_for_auto_proof, ctx)
+            // Multi-citation composition (the K5 reciprocal bucket bound): the
+            // goal is supplied by APPLYING an earlier universal whose premises
+            // are themselves discharged from an earlier universal's conclusion.
+            // Drops the sampled domain to the true `∀ givens, <when> = true ->
+            // claim`; the proof emit keys on the same recognizer, and the
+            // speculative probe commits the universal only when the orchestration
+            // actually closes (else bounded fallback).
+            || super::law_auto::recognize_multicite_composition(vb, &law_for_auto_proof, ctx)
             // Finite bounded-Int-domain law (the K5 reciprocal seed table): a
             // single `Int` given guarded into `[LO, HI)`, proven universally by
             // pure-kernel enumeration (`decide` over a bounded-`Nat` forall).

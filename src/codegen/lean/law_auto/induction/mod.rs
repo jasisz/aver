@@ -20,9 +20,13 @@ use crate::codegen::CodegenContext;
 
 mod floor_bound;
 mod keystone;
+mod multicite;
 
 pub(in crate::codegen::lean) use keystone::{
     emit_pool_composition_generic_law, recognize_pool_composition_generic,
+};
+pub(in crate::codegen::lean) use multicite::{
+    emit_multicite_composition_law, recognize_multicite_composition,
 };
 
 /// `first | (<simp>; done) | (<simp>; omega) | sorry` — the per-arm portfolio

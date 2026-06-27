@@ -60,6 +60,20 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     if recognize_conditional_comparison_bridge(law, ctx) {
         return false;
     }
+    // Decline a law the DETERMINISTIC interval-monotonicity rung already closes:
+    // it has its own complete universal proof (a `replaces_theorem` helper kit +
+    // assembly, separate-arrow statement), so the keystone must not speculatively
+    // steal it. Stealing it would only matter under the probe — the keystone's
+    // bare `grind` cannot close an interval-monotonicity goal and would fall to
+    // its sorry floor — but the theft also swaps the law's STATEMENT shape (the
+    // keystone uses the single-conjunction `omit_domain` form, interval-mono uses
+    // separate arrows). Any later law that CITES this universal (the
+    // multi-citation arm) then sees a different premise shape in the probe than
+    // in the commit and mis-probes. Declining here keeps interval-monotonicity
+    // laws deterministic in BOTH passes, so citations stay stable.
+    if super::super::recognize_interval_monotonicity(vb, law, ctx) {
+        return false;
+    }
     // The claim goes through the subject fn (`holds`, or an equational `=> rhs`).
     if !matches!(&law.lhs.node, crate::ast::Expr::FnCall(..)) {
         return false;
