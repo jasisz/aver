@@ -3709,6 +3709,7 @@ fn rf_general_value_fields(
 struct RfLeaf {
     sig: crate::ast::Spanned<crate::ast::Expr>,
     exp: crate::ast::Spanned<crate::ast::Expr>,
+    width: crate::ast::Spanned<crate::ast::Expr>,
 }
 
 /// Expand a record `sigBits` expression into the significand integers it can
@@ -3745,6 +3746,115 @@ fn rf_expand_sig(
     vec![sig.clone()]
 }
 
+/// Recursively inline every non-recursive, non-`floorDiv`-wrapper user-fn call in
+/// `e` — mirroring what the rung's `set1` simp does to the goal, so the leaf's
+/// significand / floor terms computed here parse-match the unfolded goal. The
+/// Euclidean `floorDiv` wrapper and the recursive power-of-two stay opaque (a
+/// round-to-odd leaf's `2 * stickyHalf(f, n)` thus becomes `2 * floorDiv(...)`,
+/// exposing the half-precision floor the window law is about).
+fn rf_inline_wrappers(
+    e: &crate::ast::Spanned<crate::ast::Expr>,
+    ctx: &CodegenContext,
+) -> crate::ast::Spanned<crate::ast::Expr> {
+    let recursive: std::collections::HashSet<String> = super::recursive_pure_fn_names(ctx)
+        .iter()
+        .map(|n| rf_bare_basename(&aver_name_to_lean(n)).to_string())
+        .collect();
+    rf_inline_wrappers_inner(e, ctx, &recursive)
+}
+
+fn rf_inline_wrappers_inner(
+    e: &crate::ast::Spanned<crate::ast::Expr>,
+    ctx: &CodegenContext,
+    recursive: &std::collections::HashSet<String>,
+) -> crate::ast::Spanned<crate::ast::Expr> {
+    use crate::ast::{Expr, Spanned};
+    let rec = |x: &crate::ast::Spanned<Expr>| rf_inline_wrappers_inner(x, ctx, recursive);
+    let mapped = match &e.node {
+        Expr::BinOp(op, a, b) => {
+            Spanned::bare(Expr::BinOp(*op, Box::new(rec(a)), Box::new(rec(b))))
+        }
+        Expr::Neg(a) => Spanned::bare(Expr::Neg(Box::new(rec(a)))),
+        Expr::FnCall(c, args) => {
+            Spanned::bare(Expr::FnCall(c.clone(), args.iter().map(rec).collect()))
+        }
+        _ => e.clone(),
+    };
+    if let Expr::FnCall(c, _) = &mapped.node
+        && let Some(name) = super::shared::expr_dotted_name(c)
+    {
+        let base = rf_bare_basename(&aver_name_to_lean(&name)).to_string();
+        if !recursive.contains(&base)
+            && !rf_is_floordiv_wrapper(ctx, &base)
+            && let Some(inl) = rf_inline_fn_call(&mapped, ctx)
+        {
+            return rf_inline_wrappers_inner(&inl, ctx, recursive);
+        }
+    }
+    mapped
+}
+
+/// The per-leaf floor placement of a PIECEWISE rounded value's significand, read
+/// off the goal-form (wrapper-inlined) significand expression. A leaf significand
+/// is `c * floorDiv(S * pow(E), W) [+ off]` (`c` the precision factor — `1` full,
+/// `2` the round-to-odd half-cell — and `off` the round-UP / odd `+ 1`); from it
+/// the rung supplies the window floor `m = floorDiv(...)`, its numerator
+/// `u = S * pow(E)`, the precision exponent `E` (the window is cited at `E + 1`),
+/// and `c`. Returns `None` when the significand has no floor (the carry
+/// renormalization `pow(i-1)` or the round-to-odd `n ≤ 1` constant) — those leaves
+/// borrow a sibling floor or read the format-normalization window.
+struct RfFloorInfo {
+    m: String,
+    u: String,
+    eexp: String,
+    c: u8,
+}
+
+fn rf_leaf_floor(
+    sig: &crate::ast::Spanned<crate::ast::Expr>,
+    ctx: &CodegenContext,
+) -> Option<RfFloorInfo> {
+    use crate::ast::{BinOp, Expr, Literal};
+    let is_one = |e: &Expr| matches!(e, Expr::Literal(Literal::Int(1)));
+    let is_two = |e: &Expr| matches!(e, Expr::Literal(Literal::Int(2)));
+    let is_floordiv = |e: &crate::ast::Spanned<Expr>| -> bool {
+        matches!(&e.node, Expr::FnCall(c, _)
+            if super::shared::expr_dotted_name(c)
+                .map(|n| rf_is_floordiv_wrapper(ctx, rf_bare_basename(&aver_name_to_lean(&n))))
+                == Some(true))
+    };
+    // Strip a trailing `+ 1` (round-up / round-to-odd).
+    let inner = match &sig.node {
+        Expr::BinOp(BinOp::Add, a, b) if is_one(&b.node) => a.as_ref(),
+        _ => sig,
+    };
+    // `c * floorDiv(...)` (c = 2) or a bare `floorDiv(...)` (c = 1).
+    let (fd, c): (&crate::ast::Spanned<Expr>, u8) = match &inner.node {
+        Expr::BinOp(BinOp::Mul, a, b) if is_two(&a.node) && is_floordiv(b) => (b.as_ref(), 2),
+        Expr::BinOp(BinOp::Mul, a, b) if is_two(&b.node) && is_floordiv(a) => (a.as_ref(), 2),
+        _ if is_floordiv(inner) => (inner, 1),
+        _ => return None,
+    };
+    let Expr::FnCall(_, fargs) = &fd.node else {
+        return None;
+    };
+    let numer = fargs.first()?;
+    // numer = S * pow(E).
+    let Expr::BinOp(BinOp::Mul, _s, powcall) = &numer.node else {
+        return None;
+    };
+    let Expr::FnCall(_, pargs) = &powcall.node else {
+        return None;
+    };
+    let eexp = rf_emit(ctx, pargs.first()?);
+    Some(RfFloorInfo {
+        m: rf_emit(ctx, fd),
+        u: rf_emit(ctx, numer),
+        eexp,
+        c,
+    })
+}
+
 /// Walk a (possibly nested) record-returning `match` — a PIECEWISE rounded value
 /// `fpValueGeneral`'s argument inlines to — and collect its leaf records'
 /// `(sigBits, exp)` fields, expanding each record's `sigBits` through
@@ -3770,10 +3880,12 @@ fn rf_collect_leaves(
                 .find(|(n, _)| n == "sigBits")
                 .map(|(_, e)| e)?;
             let exp = fields.iter().find(|(n, _)| n == "exp").map(|(_, e)| e)?;
+            let width = fields.iter().find(|(n, _)| n == "width").map(|(_, e)| e)?;
             for s in rf_expand_sig(sig, ctx) {
                 out.push(RfLeaf {
                     sig: s,
                     exp: exp.clone(),
+                    width: width.clone(),
                 });
             }
             Some(())
@@ -3895,25 +4007,29 @@ fn emit_rational_floor_bound_matched(
     let pw = format!("{pow} ({} - 1)", gf.width);
     let pp = format!("{pow} ({i_name} - 1)");
 
-    // The trunc floor `tf` — the leaf significand that is a bare floorDiv wrapper
-    // call (the window law is stated about it).
-    let tf = leaves.iter().find_map(|l| match &l.sig.node {
-        Expr::FnCall(c, _) => {
-            let name = super::shared::expr_dotted_name(c)?;
-            let b = rf_bare_basename(&name);
-            rf_is_floordiv_wrapper(ctx, b).then(|| rf_emit(ctx, &l.sig))
-        }
-        _ => None,
-    })?;
-
-    // Classify each leaf's exponent offset (0 → no carry, 1 → carry); decline on
-    // any other shift. Dedup by (significand string, offset).
+    // The PRIMARY floor — the first leaf bearing a floorDiv (its half/full
+    // precision window); a carry-renormalization leaf (no floor of its own) borrows
+    // it. At least one leaf must bear a floor.
     let base = format!("{}_law_{}__rfb", aver_name_to_lean(&vb.fn_name), law.name);
+    let primary = leaves
+        .iter()
+        .find_map(|l| rf_leaf_floor(&rf_inline_wrappers(&l.sig, ctx), ctx));
+
+    // Classify each leaf's exponent offset (0 → no carry, 1 → carry) and its floor
+    // placement. Dedup by (goal-form significand, offset). Each leaf is one apply of
+    // the generic two-sided leaf lemma; name-blind, keyed on the significand shape:
+    //  * floor-bearing → its own (m, u, c) and a window cited at its precision;
+    //  * carry (no floor, exp + 1) → borrows the primary floor, k2 = 2;
+    //  * degenerate (no floor, exp + 0 — the round-to-odd n ≤ 1 constant) → m = 1,
+    //    u = S, c = 1 and the format-normalization window (1 ≤ s_x < 2).
     let mut alts: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<(String, u8)> = std::collections::HashSet::new();
     let mut has_carry = false;
+    let mut needs_degenerate = false;
+    let mut win_exps: Vec<String> = Vec::new();
     for l in &leaves {
-        let q = rf_emit(ctx, &l.sig);
+        let goal_sig = rf_inline_wrappers(&l.sig, ctx);
+        let q = rf_emit(ctx, &goal_sig);
         let le_exp = rf_emit(ctx, &l.exp);
         let offset: u8 = if le_exp == exp {
             0
@@ -3933,8 +4049,43 @@ fn emit_rational_floor_bound_matched(
             has_carry = true;
             (pe1t.clone(), pe1b.clone(), "2")
         };
+        let width_leaf = rf_emit(ctx, &l.width);
+        let p_leaf = format!("{pow} ({width_leaf} - 1)");
+        let (m, u, c, ehalf) = match rf_leaf_floor(&goal_sig, ctx) {
+            Some(fi) => {
+                if !win_exps.contains(&fi.eexp) {
+                    win_exps.push(fi.eexp.clone());
+                }
+                let e = fi.eexp.clone();
+                (fi.m, fi.u, fi.c, Some(e))
+            }
+            None if offset == 1 => {
+                let pr = primary.as_ref()?;
+                if !win_exps.contains(&pr.eexp) {
+                    win_exps.push(pr.eexp.clone());
+                }
+                (pr.m.clone(), pr.u.clone(), pr.c, Some(pr.eexp.clone()))
+            }
+            None => {
+                needs_degenerate = true;
+                (String::from("1"), sig.clone(), 1u8, None)
+            }
+        };
+        // The precision-halving discharge: `S * p = c * u` needs
+        // `pow(E+1) = 2 * pow(E)` for the half-cell (c = 2) leaf, whose `pow(i-1)`
+        // the `pow_succ_p` grind pattern (keyed on `pow(n+1)`) misses (the index is
+        // `i - 1`, not `n + 1`). Cite `pow_succ_p` at the leaf's own exponent E so
+        // grind sees the link; the `by omega` side condition (`0 ≤ E`) holds in the
+        // leaf's split branch and harmlessly fails (→ falls through) for the
+        // degenerate leaf.
+        let half = match &ehalf {
+            Some(e) => {
+                format!(" | (have hps := {base}__pow_succ_p ({e}) (by omega); grind)")
+            }
+            None => String::new(),
+        };
         alts.push(format!(
-            "    | (apply {base}__away_leaf ({pet}) ({peb}) ({plt}) ({plb}) ({av}) ({ab}) ({pw}) ({pp}) {k2} ({q}) ({sig}) ({sign}) ({tf}) <;> first | assumption | omega | grind)"
+            "    | (apply {base}__away_leaf ({pet}) ({peb}) ({plt}) ({plb}) ({av}) ({ab}) ({pw}) ({p_leaf}) ({u}) {c} {k2} ({q}) ({sig}) ({sign}) ({m}) <;> first | assumption | omega | grind{half})"
         ));
     }
 
@@ -3962,7 +4113,7 @@ fn emit_rational_floor_bound_matched(
             .map(|l| l.to_string())
             .collect();
     support_lines.extend(
-        super::floor_window::matched_leaf_support(&base)
+        super::floor_window::matched_leaf_support(&base, &pow)
             .lines()
             .map(|l| l.to_string()),
     );
@@ -4027,11 +4178,63 @@ fn emit_rational_floor_bound_matched(
     if has_carry {
         body.push(format!("    have hp1 : {pow} 1 = 2 := by have hx := {base}__pow_of_pos 1 (by omega); rw [show (1:Int) - 1 = 0 by omega, {base}__pow_of_nonpos 0 (by omega)] at hx; omega"));
     }
-    body.push(format!("    have h_win := {window_thm} {f_name} {i_name}"));
-    body.push(format!(
-        "    simp only [{window_fn}, Bool.and_eq_true, decide_eq_true_eq] at h_win"
-    ));
-    body.push("    obtain ⟨hwlo, hwhi⟩ := h_win".to_string());
+    // The floor windows, one per distinct precision the leaves use: cite
+    // truncFitsWindow at the leaf's own precision E + 1 and normalize the unfolded
+    // exponent (E + 1) - 1 back to E so the floor matches the goal's
+    // floorDiv(S * pow(E), W). The away/trunc precision is i (E = i-1); the
+    // round-to-odd half-cell precision is i-1 (E = i-2).
+    for (wi, ee) in win_exps.iter().enumerate() {
+        body.push(format!(
+            "    have h_win{wi} := {window_thm} {f_name} (({ee}) + 1)"
+        ));
+        body.push(format!(
+            "    simp only [{window_fn}, Bool.and_eq_true, decide_eq_true_eq] at h_win{wi}"
+        ));
+        body.push(format!(
+            "    rw [show (({ee}) + 1) - 1 = ({ee}) by omega] at h_win{wi}"
+        ));
+        body.push(format!("    obtain ⟨hwlo{wi}, hwhi{wi}⟩ := h_win{wi}"));
+    }
+    // The format-normalization window for the degenerate (round-to-odd n ≤ 1) leaf:
+    // 1 ≤ s_x < 2, i.e. pow(width-1) ≤ S < 2 * pow(width-1), read off isFp.
+    if needs_degenerate {
+        body.push(format!("    have hnorm := {fmtname}"));
+        body.push(format!("    unfold {isfp_lean} at hnorm"));
+        body.push("    simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq] at hnorm".to_string());
+        body.push(format!(
+            "    have hp0 : {pow} (1 - 1) = 1 := {base}__pow_of_nonpos (1 - 1) (by omega)"
+        ));
+        body.push(format!("    have hwgt : ¬ ({} <= 0) := by", gf.width));
+        body.push("      intro hle".to_string());
+        body.push("      have hn1 := hnorm.2.1".to_string());
+        body.push("      have hn2 := hnorm.2.2".to_string());
+        body.push(format!(
+            "      rw [{base}__pow_of_nonpos ({} - 1) (by omega)] at hn1",
+            gf.width
+        ));
+        body.push(format!(
+            "      rw [{base}__pow_of_nonpos {} (by omega)] at hn2",
+            gf.width
+        ));
+        body.push("      omega".to_string());
+        body.push(format!(
+            "    have hwsucc : {pow} {} = 2 * {pow} ({} - 1) := {base}__pow_of_pos {} hwgt",
+            gf.width, gf.width, gf.width
+        ));
+        body.push(format!(
+            "    have hwlo_deg : {pow} ({} - 1) * 1 <= {sig} := by have := hnorm.2.1; omega",
+            gf.width
+        ));
+        body.push(format!(
+            "    have hwhi_deg : {sig} < {pow} ({} - 1) * (1 + 1) := by",
+            gf.width
+        ));
+        body.push(format!(
+            "      rw [show {pow} ({} - 1) * (1 + 1) = 2 * {pow} ({} - 1) by omega, ← hwsucc]",
+            gf.width, gf.width
+        ));
+        body.push("      exact hnorm.2.2".to_string());
+    }
     // hlink: pet * plb = plt * p * peb (signed-power exponent link).
     body.push(format!(
         "    have hlink : {pet} * {plb} = {plt} * {pp} * {peb} := by"

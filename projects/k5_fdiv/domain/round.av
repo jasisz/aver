@@ -551,16 +551,16 @@ verify awayErrorSameSign
 // case-split generalization. Deferred together with awayErrorBound.
 
 fn stickyError(f: Fp, i: Int) -> Fraction
-    ? "The sticky rounding error epsilon of Lemma 7.2.4 (p.19): epsilon = sticky(x,i) - x (sticky(x,i) = fpValue(fpSticky(f,i)), x = fpValue(f)). Lemma 7.2.4 states sticky(x,i) = x + epsilon with |epsilon| < 2^(e_x - i + 1) -- and, unlike trunc/away, NO sign condition: round-to-odd may move x either way (the n-th bit is forced to 1)."
-    Domain.Rational.minus(Domain.Fprep.fpValue(fpSticky(f, i)), Domain.Fprep.fpValue(f))
+    ? "The sticky rounding error epsilon of Lemma 7.2.4 (p.19): epsilon = sticky(x,i) - x (sticky(x,i) = fpValueGeneral(fpSticky(f,i)), x = fpValueGeneral(f)). Read off the general-exponent value so the error -- and its strict bound -- is faithful at EVERY exponent, including the fractional floats (exp < 0) the kernel divider lives in. Lemma 7.2.4 states sticky(x,i) = x + epsilon with |epsilon| < 2^(e_x - i + 1) -- and, unlike trunc/away, NO sign condition: round-to-odd may move x either way (the n-th bit is forced to 1)."
+    Domain.Rational.minus(Domain.Fprep.fpValueGeneral(fpSticky(f, i)), Domain.Fprep.fpValueGeneral(f))
 
 verify stickyError
     stickyError(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => Domain.Rational.Fraction(top = 4, bottom = 32)
     stickyError(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), 3) => Domain.Rational.Fraction(top = 0, bottom = 32)
 
 fn stickyErrorReconstructs(f: Fp, i: Int) -> Bool
-    ? "Lemma 7.2.4 (p.19), the reconstruction half: sticky(x,i) = x + epsilon. Holds by definition of epsilon = sticky(x,i) - x; an exact-rational ring identity."
-    Domain.Rational.sameValue(Domain.Fprep.fpValue(fpSticky(f, i)), Domain.Rational.plus(Domain.Fprep.fpValue(f), stickyError(f, i)))
+    ? "Lemma 7.2.4 (p.19), the reconstruction half: sticky(x,i) = x + epsilon. Holds by definition of epsilon = sticky(x,i) - x; an exact-rational ring identity (read off the general-exponent value, faithful at every exponent)."
+    Domain.Rational.sameValue(Domain.Fprep.fpValueGeneral(fpSticky(f, i)), Domain.Rational.plus(Domain.Fprep.fpValueGeneral(f), stickyError(f, i)))
 
 verify stickyErrorReconstructs
     stickyErrorReconstructs(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
@@ -584,15 +584,27 @@ verify stickyErrorBound
     stickyErrorBound(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
     stickyErrorBound(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), 3) => true
     stickyErrorBound(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 2) => true
+    stickyErrorBound(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = -3, width = 4), 3) => true
+    stickyErrorBound(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = -2, width = 4), 1) => true
 
-// Lemma 7.2.4 (p.19), the strict bound |epsilon| < 2^(e_x - i + 1), stated EXACTLY
-// as the paper and sample-verified. NOT yet universal (DEFERRED kwiatek): the
-// round-to-odd fpSticky is even further from the trunc bound arm -- THREE branches
-// (n <= 1, exact, last-bit forced to 1) and a half-cell scaled by 2^(n-2), so the
-// error is neither the trunc remainder r nor the away complement W - r but a
-// round-to-odd half-step. Closing it universal needs the matched-rounded-value
-// generalization plus a round-to-odd remainder shape -- a genuinely new piece.
-// Like truncErrorBound, this bound also carries the pow2-clamp restriction: the
-// normalized model denotes the value with pow2(f.exp), which clamps to 1 for
-// exp <= 0, so the sample checks above use exp >= 0 and the eventual universal law
-// will need the general-exponent value (or the same `when 0 <= f.exp` guard).
+// Lemma 7.2.4 (p.19), the strict bound: "|epsilon| < 2^(e_x - i + 1)" -- round-to-odd
+// sticky changes x by strictly less than one ulp. Stated EXACTLY as the paper's signed
+// power of two, with NO sign condition (round-to-odd may move x either way), and
+// universal at EVERY exponent (the error reads the general-exponent value
+// fpValueGeneral, faithful for the fractional floats exp < 0 the kernel divider lives
+// in). Proven universal by the rational strict-order rung driven through the GENERIC
+// matched-rounded-value case-split: the round-to-odd fpSticky is PIECEWISE -- three
+// leaves (n <= 1; the (n-1)-bit truncation exact; the last bit forced to 1) -- and,
+// crucially, it moves x in EITHER direction (the n <= 1 leaf rounds DOWN), so the rung
+// reduces every leaf to the same TWO-SIDED integer window inequality |k2*Q*W - S*p| < W
+// (the away bound's one-sided 0 <= . < W generalized by a sign-split before the
+// cross-multiply). The (n-1)-bit half-precision floor is cited from truncFitsWindow at
+// the leaf's own precision and the round-to-odd half-cell is the placement k2*Q = 2*m+1;
+// the n <= 1 leaf reads its window off the isFp normalization (1 <= s_x < 2). Same leaf
+// support lemma as the away bound -- name-blind, no per-figure proof.
+verify stickyErrorBound law strictBound
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = -3, width = 4)]
+    given i: Int = [1, 2, 3]
+    when Domain.Fprep.isFp(f)
+    when 1 <= i
+    stickyErrorBound(f, i) holds

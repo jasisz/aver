@@ -297,28 +297,35 @@ theorem {base}__sgnb_pos (k : Int) : 0 < ({sgn} k).bottom := by
     )
 }
 
-/// The matched-rounded-value leaf support stack: the two generic integer lemmas
+/// The matched-rounded-value leaf support stack: the generic integer lemmas
 /// the all-exponent rounding-error bound rung applies once per leaf of a
 /// PIECEWISE rounded value (a record-returning match — `away`'s exact/round-up +
-/// carry-renormalization split, `sticky`'s round-to-odd split). Both are pure
-/// `Int` facts, scoped to a fresh `base` prefix.
+/// carry-renormalization split, `sticky`'s round-to-odd split). All pure `Int`
+/// facts, scoped to a fresh `base` prefix.
 ///
 ///   * `<base>__cross_lt` — a positive-denominator rational order step: from the
 ///     cross-multiplied `a*d < c*b` (denominators `b, d > 0`) it derives the
 ///     squared-denominator `lessThan` form `a*b*(d*d) < c*d*(b*b)`. Factors the
 ///     squared-denominator regroup out of every leaf.
-///   * `<base>__away_leaf` — the per-leaf bound itself. A leaf denotes the rounded
-///     value with significand `Q` at exponent `e_x + log2 k2` (`k2 = 1` no carry,
-///     `k2 = 2` the carry renormalization), `av/ab` its signed power of two. Given
-///     the trunc floor window (`W*tf ≤ S*p < W*(tf+1)`), the signed-power exponent
-///     link `hlink` and the carry link `hatlink` (`av*peb = k2*pet*ab`, the
-///     pow2/pow2Signed homomorphism — `k2=1` trivial, `k2=2` the value-uniformity
-///     across the carry), and the LINEAR placement `hQe` of the effective
-///     significand `k2*Q` at the floor or its successor, it factors the error
-///     magnitude through the shared signed power of two, cross-multiplies and
-///     closes via `cross_lt`. Every leaf — `away` and `sticky` — is one
+///   * `<base>__away_leaf` — the per-leaf bound itself, TWO-SIDED. A leaf denotes
+///     the rounded value with significand `Q` at exponent `e_x + log2 k2` (`k2 = 1`
+///     no carry, `k2 = 2` the carry renormalization), `av/ab` its signed power of
+///     two, `p` its precision denominator. A floor window `W*m ≤ u < W*(m+1)`
+///     bounds the half/full-precision floor `m` of the window numerator `u`, with
+///     the precision link `hSpu` (`S*p = c*u`, `c = 1` full / `c = 2` the
+///     round-to-odd half-cell). From the placement `hQe` of the effective
+///     significand `k2*Q` at the floor (exact), its successor (round-UP / odd) or
+///     the floor itself with `c = 1` (round-DOWN, the round-to-odd `n ≤ 1` leaf),
+///     it derives the TWO-SIDED inner bound `|k2*Q*W - S*p| < W` by a sign split
+///     (the away bound's one-sided `0 ≤ . < W` generalized — round-to-odd moves `x`
+///     either way), factors the error magnitude through the shared signed power of
+///     two (`hlink`, `hatlink`), cross-multiplies (taking `|·|` before `cross_lt`)
+///     and closes. Every leaf — `away`, `trunc` and `sticky` — is one
 ///     `apply <base>__away_leaf … <;> (assumption | omega | grind)`.
-pub(in crate::codegen::lean) fn matched_leaf_support(base: &str) -> String {
+///   * `<base>__pow_succ_p` — the precision-halving step `pow (n+1) = 2 * pow n`
+///     (registered as a `grind_pattern` keyed on `pow (n+1)`), so the per-leaf
+///     `hSpu` discharge sees the round-to-odd `2^(i-1) = 2 * 2^(i-2)` link.
+pub(in crate::codegen::lean) fn matched_leaf_support(base: &str, pow: &str) -> String {
     format!(
         r#"theorem {base}__cross_lt (a b c d : Int) (hb : 0 < b) (hd : 0 < d) (h : a * d < c * b) :
     a * b * (d * d) < c * d * (b * b) := by
@@ -327,14 +334,21 @@ pub(in crate::codegen::lean) fn matched_leaf_support(base: &str) -> String {
   have e1 : a * b * (d * d) = a * d * (b * d) := by grind
   have e2 : c * d * (b * b) = c * b * (b * d) := by grind
   rw [e1, e2]; exact h2
-theorem {base}__away_leaf (pet peb plt plb av ab W p k2 Q S sgn tf : Int)
+theorem {base}__pow_succ_p (n : Int) (h : 0 <= n) : {pow} (n + 1) = 2 * {pow} n := by
+  rw [{base}__pow_of_pos (n + 1) (by omega), show n + 1 - 1 = n by omega]
+grind_pattern {base}__pow_succ_p => {pow} (n + 1)
+theorem {base}__away_leaf (pet peb plt plb av ab W p u c k2 Q S sgn m : Int)
     (hpet : 0 < pet) (hpeb : 0 < peb) (hplt : 0 < plt) (hplb : 0 < plb)
     (hab : 0 < ab) (hW : 0 < W) (hp : 0 < p)
     (hsign : sgn = 1 ∨ sgn = -1)
+    (hc : c = 1 ∨ c = 2)
     (hlink : pet * plb = plt * p * peb)
     (hatlink : av * peb = k2 * pet * ab)
-    (hwlo : W * tf ≤ S * p) (hwhi : S * p < W * (tf + 1))
-    (hQe : (k2 * Q = tf ∧ S * p = W * tf) ∨ (k2 * Q = tf + 1 ∧ W * tf < S * p)) :
+    (hSpu : S * p = c * u)
+    (hwlo : W * m ≤ u) (hwhi : u < W * (m + 1))
+    (hQe : (k2 * Q = c * m ∧ u = W * m)
+         ∨ (k2 * Q = c * m + 1 ∧ W * m < u)
+         ∨ (k2 * Q = c * m ∧ c = 1)) :
     (if av * (sgn * Q) * (peb * W) - pet * (sgn * S) * (ab * p) < 0 then
         0 - (av * (sgn * Q) * (peb * W) - pet * (sgn * S) * (ab * p))
       else av * (sgn * Q) * (peb * W) - pet * (sgn * S) * (ab * p))
@@ -343,37 +357,45 @@ theorem {base}__away_leaf (pet peb plt plb av ab W p k2 Q S sgn tf : Int)
       < plt * plb
         * ((if ab * p * (peb * W) < 0 then 0 - ab * p * (peb * W) else ab * p * (peb * W))
           * (if ab * p * (peb * W) < 0 then 0 - ab * p * (peb * W) else ab * p * (peb * W))) := by
-  have hbound : 0 ≤ k2 * Q * W - S * p ∧ k2 * Q * W - S * p < W := by
-    have ec1 : (tf + 1) * W = tf * W + W := by grind
-    have ec2 : tf * W = W * tf := by grind
-    have ec3 : W * (tf + 1) = W * tf + W := by grind
-    rcases hQe with ⟨h1, h2⟩ | ⟨h1, h2⟩
-    · have hq : k2 * Q * W = tf * W := by rw [h1]
-      omega
-    · have hq : k2 * Q * W = (tf + 1) * W := by rw [h1]
-      omega
+  have hbound : -W < k2 * Q * W - S * p ∧ k2 * Q * W - S * p < W := by
+    rcases hc with rfl | rfl <;>
+      rcases hQe with ⟨h1, h2⟩ | ⟨h1, h2⟩ | ⟨h1, h2⟩ <;>
+        rw [hSpu] <;> rw [h1] <;> constructor <;> grind
   obtain ⟨hlo, hhi⟩ := hbound
   have hXBpos : 0 < peb * W := Int.mul_pos hpeb hW
   have hABpos : 0 < ab * p := Int.mul_pos hab hp
   have hAXpos : 0 < ab * p * (peb * W) := Int.mul_pos hABpos hXBpos
   rw [if_neg (show ¬ (ab * p * (peb * W) < 0) by omega)]
+  have hpab : 0 < pet * ab := Int.mul_pos hpet hab
   have hfact : av * (sgn * Q) * (peb * W) - pet * (sgn * S) * (ab * p)
       = sgn * (pet * ab * (k2 * Q * W - S * p)) := by grind
-  have hmagnn : 0 ≤ pet * ab * (k2 * Q * W - S * p) :=
-    Int.mul_nonneg (Int.mul_nonneg (Int.le_of_lt hpet) (Int.le_of_lt hab)) hlo
-  rw [show (if av * (sgn * Q) * (peb * W) - pet * (sgn * S) * (ab * p) < 0 then
+  have hda : (if av * (sgn * Q) * (peb * W) - pet * (sgn * S) * (ab * p) < 0 then
         0 - (av * (sgn * Q) * (peb * W) - pet * (sgn * S) * (ab * p))
       else av * (sgn * Q) * (peb * W) - pet * (sgn * S) * (ab * p))
-      = pet * ab * (k2 * Q * W - S * p) by
-    rw [hfact]; rcases hsign with h | h <;> rw [h] <;> split <;> omega]
+      = pet * ab * (if k2 * Q * W - S * p < 0 then 0 - (k2 * Q * W - S * p) else k2 * Q * W - S * p) := by
+    rw [hfact]
+    rcases hsign with rfl | rfl <;>
+      (by_cases hdn : k2 * Q * W - S * p < 0
+       · have hneg : pet * ab * (k2 * Q * W - S * p) < 0 := by
+           have := Int.mul_lt_mul_of_pos_left hdn hpab; simpa using this
+         rw [if_pos hdn]; split <;> grind
+       · have hnn : 0 ≤ pet * ab * (k2 * Q * W - S * p) :=
+           Int.mul_nonneg (Int.le_of_lt hpab) (by omega)
+         rw [if_neg hdn]; split <;> grind)
+  rw [hda]
+  have hmaglt : (if k2 * Q * W - S * p < 0 then 0 - (k2 * Q * W - S * p) else k2 * Q * W - S * p) < W := by
+    split <;> omega
   have hcommon : 0 < pet * plb * ab := by aver_int_order
-  have key : pet * plb * ab * (k2 * Q * W - S * p) < pet * plb * ab * W :=
-    Int.mul_lt_mul_of_pos_left hhi hcommon
-  have hcross : pet * ab * (k2 * Q * W - S * p) * plb < plt * (ab * p * (peb * W)) := by
-    have eL : pet * ab * (k2 * Q * W - S * p) * plb = pet * plb * ab * (k2 * Q * W - S * p) := by grind
+  have key : pet * plb * ab * (if k2 * Q * W - S * p < 0 then 0 - (k2 * Q * W - S * p) else k2 * Q * W - S * p)
+      < pet * plb * ab * W :=
+    Int.mul_lt_mul_of_pos_left hmaglt hcommon
+  have hcross : pet * ab * (if k2 * Q * W - S * p < 0 then 0 - (k2 * Q * W - S * p) else k2 * Q * W - S * p) * plb
+      < plt * (ab * p * (peb * W)) := by
+    have eL : pet * ab * (if k2 * Q * W - S * p < 0 then 0 - (k2 * Q * W - S * p) else k2 * Q * W - S * p) * plb
+        = pet * plb * ab * (if k2 * Q * W - S * p < 0 then 0 - (k2 * Q * W - S * p) else k2 * Q * W - S * p) := by grind
     have eR : plt * (ab * p * (peb * W)) = pet * plb * ab * W := by grind
     rw [eL, eR]; exact key
-  exact {base}__cross_lt (pet * ab * (k2 * Q * W - S * p)) (ab * p * (peb * W)) plt plb hAXpos hplb hcross"#
+  exact {base}__cross_lt (pet * ab * (if k2 * Q * W - S * p < 0 then 0 - (k2 * Q * W - S * p) else k2 * Q * W - S * p)) (ab * p * (peb * W)) plt plb hAXpos hplb hcross"#
     )
 }
 
