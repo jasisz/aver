@@ -8,7 +8,7 @@ module Rational
         "denominator, zero and negatives included, with no `when` premise."
         "The AMD K5 paper models floating-point values as exact rationals, so this is"
         "the algebra every later stage is built on."
-    exposes [Fraction, zeroFraction, oneFraction, plus, times, negate, minus, sameValue]
+    exposes [Fraction, zeroFraction, oneFraction, plus, times, negate, minus, sameValue, absInt, absFraction, lessThan, isNonNeg, isNonPos]
     effects []
 
 record Fraction
@@ -104,3 +104,51 @@ verify sameValue
     sameValue(Fraction(top = 1, bottom = 2), Fraction(top = 2, bottom = 4)) => true
     sameValue(Fraction(top = 1, bottom = 2), Fraction(top = 2, bottom = 3)) => false
     sameValue(Fraction(top = -1, bottom = 2), Fraction(top = 1, bottom = -2)) => true
+
+fn absInt(n: Int) -> Int
+    ? "Integer absolute value."
+    match n < 0
+        true -> 0 - n
+        false -> n
+
+verify absInt
+    absInt(-5) => 5
+    absInt(7) => 7
+    absInt(0) => 0
+
+fn absFraction(a: Fraction) -> Fraction
+    ? "Absolute value of a fraction: |a/b| = |a| / |b|, with a nonnegative numerator and a positive denominator (the canonical form for the rational order)."
+    Fraction(top = absInt(a.top), bottom = absInt(a.bottom))
+
+verify absFraction
+    absFraction(Fraction(top = -3, bottom = 4)) => Fraction(top = 3, bottom = 4)
+    absFraction(Fraction(top = 2, bottom = -5)) => Fraction(top = 2, bottom = 5)
+
+fn lessThan(a: Fraction, b: Fraction) -> Bool
+    ? "Ordinary rational strict order a/b < c/d. Robust for denominators of either sign: multiply both sides by the positive square b^2 d^2, giving a*b*d^2 < c*d*b^2 -- the genuine order of the rationals, not merely a positive-denominator cross-multiplication."
+    a.top * a.bottom * (b.bottom * b.bottom) < b.top * b.bottom * (a.bottom * a.bottom)
+
+verify lessThan
+    lessThan(Fraction(top = 1, bottom = 2), Fraction(top = 2, bottom = 3)) => true
+    lessThan(Fraction(top = 2, bottom = 3), Fraction(top = 1, bottom = 2)) => false
+    lessThan(Fraction(top = -1, bottom = 2), Fraction(top = 0, bottom = 1)) => true
+    lessThan(Fraction(top = 1, bottom = -2), Fraction(top = 0, bottom = 1)) => true
+    lessThan(Fraction(top = -1, bottom = 2), Fraction(top = 1, bottom = -2)) => false
+
+fn isNonNeg(a: Fraction) -> Bool
+    ? "Nonnegativity of a fraction: 0 <= a/b, robust for either denominator sign (a/b has the sign of a*b, since b^2 > 0)."
+    a.top * a.bottom >= 0
+
+fn isNonPos(a: Fraction) -> Bool
+    ? "Nonpositivity of a fraction: a/b <= 0 (the sign of a*b is nonpositive)."
+    a.top * a.bottom <= 0
+
+verify isNonNeg
+    isNonNeg(Fraction(top = 3, bottom = 4)) => true
+    isNonNeg(Fraction(top = -3, bottom = 4)) => false
+    isNonNeg(Fraction(top = -3, bottom = -4)) => true
+
+verify isNonPos
+    isNonPos(Fraction(top = -3, bottom = 4)) => true
+    isNonPos(Fraction(top = 0, bottom = 1)) => true
+    isNonPos(Fraction(top = 3, bottom = 4)) => false

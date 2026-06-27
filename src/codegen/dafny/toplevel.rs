@@ -2566,7 +2566,47 @@ fn emit_floor_window_support_stack(
             ));
             s
         }
+        FloorWindowFigure::FloorPow2Window { pow_fn, .. } => {
+            // The Euclidean floor window over a power-of-two divisor. Z3
+            // carries integer division push-button once it knows the divisor
+            // is positive; the only hint needed is `pow(E) >= 1` at the
+            // exponent the predicate divides by. `pow_pos` is auto-inducted
+            // (empty body); the exponent expression is read off the window
+            // predicate body so the hint instantiates the right divisor.
+            let pow = d(pow_fn);
+            let e_hint = floor_pow2_window_exponent_dafny(fn_name, ctx)
+                .map(|e| format!("\n  {u}pow_pos({e});"))
+                .unwrap_or_default();
+            format!(
+                "// Law: {fn_name}.{law_name} — recursive-expo-free floor window over a power-of-two divisor\nlemma {u}pow_pos(n: int)\n  ensures {pow}(n) >= 1\n{{ }}\nlemma {fuel_attrs} {main_thm}({params})\n  ensures {lhs} == {rhs}\n{{{e_hint}\n}}\n",
+            )
+        }
     }
+}
+
+/// Read the exponent expression `E` the floor window's divisor `pow(E)`
+/// uses, off the window predicate body, rendered to Dafny — so the
+/// generated lemma can instantiate `pow_pos(E)` at the right divisor.
+/// Returns `None` (no hint) if the body does not match the expected shape.
+fn floor_pow2_window_exponent_dafny(window_fn: &str, ctx: &CodegenContext) -> Option<String> {
+    let fd = ctx.fn_def_by_name(window_fn, ctx.active_module_scope().as_deref())?;
+    let body = fd.body.tail_expr()?;
+    // body = Bool.and(pow(E) * floor(...) <= N, ...)
+    let Expr::FnCall(_, args) = &body.node else {
+        return None;
+    };
+    let lo = args.first()?;
+    let Expr::BinOp(BinOp::Lte, lo_l, _) = &lo.node else {
+        return None;
+    };
+    let Expr::BinOp(BinOp::Mul, pow_call, _) = &lo_l.node else {
+        return None;
+    };
+    let Expr::FnCall(_, pow_args) = &pow_call.node else {
+        return None;
+    };
+    let e = pow_args.first()?;
+    Some(emit_expr_legacy(e, ctx, None))
 }
 
 /// Render a computed instantiation argument (from `cite_instantiate`) to Dafny:

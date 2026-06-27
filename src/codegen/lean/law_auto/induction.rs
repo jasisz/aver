@@ -2151,7 +2151,8 @@ fn keystone_pow2_fn(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> 
             FloorWindowFigure::PowPositive { pow_fn }
             | FloorWindowFigure::PowSumSplit { pow_fn }
             | FloorWindowFigure::SigWindow { pow_fn, .. }
-            | FloorWindowFigure::ProductWindow { pow_fn, .. } => pow_fn,
+            | FloorWindowFigure::ProductWindow { pow_fn, .. }
+            | FloorWindowFigure::FloorPow2Window { pow_fn, .. } => pow_fn,
         };
         return Some(aver_name_to_lean(&pow_fn));
     }

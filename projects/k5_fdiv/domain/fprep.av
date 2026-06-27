@@ -18,7 +18,7 @@ module Fprep
         "nothing about powers of two, it CITES the proven homomorphism pow2(m+n) =="
         "pow2(m)*pow2(n) and the compiler composes it via one generic strategy."
     depends [Domain.Rational]
-    exposes [pow2, Fp, isFp, fpValue, fpScale, fpMul, pow2Fraction, fpScaleKeepsSignificand, fpScaleShiftsExponent, fpScalePreservesValue, productExp, productExpInRange, fpMulValue]
+    exposes [pow2, Fp, isFp, fpValue, fpScale, fpMul, pow2Fraction, pow2Signed, fpScaleKeepsSignificand, fpScaleShiftsExponent, fpScalePreservesValue, productExp, productExpInRange, fpMulValue]
     effects []
 
 fn pow2(n: Int) -> Int
@@ -73,6 +73,25 @@ verify fpValue
 fn pow2Fraction(j: Int) -> Fraction
     ? "The rational 2^j (for j >= 0) as the fraction 2^j / 1 -- the scale factor of Lemma 7.1.2."
     Domain.Rational.Fraction(top = pow2(j), bottom = 1)
+
+fn pow2Signed(k: Int) -> Fraction
+    ? "The exact rational 2^k for ANY integer k (Section 5.1, p.13: ulp(x,n) = 2^(e_x - n + 1) is a true fraction when e_x - n + 1 < 0). For k >= 0 it is 2^k / 1; for k < 0 it is 1 / 2^(-k). Faithful denotation of 2^k over the rationals -- the form the rounding error bound 2^(e_x - i + 1) of Lemma 7.2.2 needs, since that exponent is negative whenever i > e_x + 1."
+    match k < 0
+        true -> Domain.Rational.Fraction(top = 1, bottom = pow2(0 - k))
+        false -> Domain.Rational.Fraction(top = pow2(k), bottom = 1)
+
+verify pow2Signed
+    pow2Signed(0) => Domain.Rational.Fraction(top = 1, bottom = 1)
+    pow2Signed(3) => Domain.Rational.Fraction(top = 8, bottom = 1)
+    pow2Signed(-2) => Domain.Rational.Fraction(top = 1, bottom = 4)
+
+// For a nonnegative exponent the signed power of two is the ordinary
+// 2^k / 1 -- pow2Signed extends pow2Fraction to negative exponents and
+// agrees with it on the nonnegative half.
+verify pow2Signed law agreesWithPow2Fraction
+    given k: Int = [0, 1, 4]
+    when k >= 0
+    Domain.Rational.sameValue(pow2Signed(k), pow2Fraction(k)) holds
 
 fn fpScale(f: Fp, j: Int) -> Fp
     ? "Scale by 2^j (Lemma 7.1.2, p.18): shift the exponent by j, renormalizing NOTHING -- sign, significand and width are untouched."

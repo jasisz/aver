@@ -1162,6 +1162,27 @@ pub enum FloorWindowFigure {
         fits_fn: String,
         claim_fn: String,
     },
+    /// The recursive-expo-FREE Euclidean floor window over a
+    /// power-of-two divisor: `window(args) == true` (no premise) where
+    /// `window`'s body is
+    /// `pow(E) * floor(N, pow(E)) <= N  &&  N < pow(E) * (floor(N, pow(E)) + 1)`
+    /// for ARBITRARY numerator expression `N` and exponent expression
+    /// `E` over the law's givens, `floor` the `Result.withDefault(
+    /// Int.div(a, d), 0)` Euclidean-floor wrapper, and `pow` any
+    /// [`is_pow2_shape`] fn. Unlike [`SigWindow`] there is NO binary-
+    /// exponent recursion — the divisor is `pow(E)` directly — so the
+    /// figure is generic over `N`/`E` (a bare-given `floorDivWindow(a,
+    /// k)` and a compound `truncFitsWindow(f, i)` both match). Closed by
+    /// the core `Int.ediv_add_emod` / `Int.emod_nonneg` /
+    /// `Int.emod_lt_of_pos` bridge plus power-of-two positivity, generic
+    /// over the inferred `N`/`pow(E)`. `pow_fn`/`floor_fn` are the
+    /// (possibly module-qualified) dotted call names; `window_fn` is the
+    /// law's subject predicate.
+    FloorPow2Window {
+        pow_fn: String,
+        floor_fn: String,
+        window_fn: String,
+    },
 }
 
 /// Parameter pack for [`ProofStrategy::StringEscapeRoundtrip`] —

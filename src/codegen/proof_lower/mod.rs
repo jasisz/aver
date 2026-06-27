@@ -2138,6 +2138,7 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                     crate::ir::FloorWindowFigure::PowSumSplit { pow_fn } => pow_fn,
                     crate::ir::FloorWindowFigure::SigWindow { pow_fn, .. } => pow_fn,
                     crate::ir::FloorWindowFigure::ProductWindow { pow_fn, .. } => pow_fn,
+                    crate::ir::FloorWindowFigure::FloorPow2Window { pow_fn, .. } => pow_fn,
                 },
                 _ => return None,
             };

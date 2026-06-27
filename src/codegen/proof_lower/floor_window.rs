@@ -40,7 +40,208 @@ pub(super) fn detect_floor_window(
     if let Some(figure) = detect_pow_positive(law, fn_name, inputs) {
         return Some(figure);
     }
+    if let Some(figure) = detect_floor_pow2_window(law, fn_name, inputs) {
+        return Some(figure);
+    }
     None
+}
+
+/// Span-insensitive structural equality over the arithmetic skeleton
+/// (idents, literals, field projections, calls, binops, negation). Used
+/// to confirm the floor window's numerator `N` and exponent `E` appear
+/// IDENTICALLY in both the lower (`pow(E)*floor(N,pow(E)) <= N`) and the
+/// upper (`N < pow(E)*(floor(N,pow(E))+1)`) conjuncts.
+fn expr_struct_eq(a: &Spanned<Expr>, b: &Spanned<Expr>) -> bool {
+    use crate::ast::Expr;
+    // Function bodies are emitted in RESOLVED form (`Expr::Resolved`),
+    // while law claims are source `Ident`s — identify them by name so a
+    // numerator/exponent matches whether it reads as a slot or an ident.
+    let var_name = |e: &Expr| -> Option<String> {
+        match e {
+            Expr::Ident(n) => Some(n.clone()),
+            Expr::Resolved { name, .. } => Some(name.clone()),
+            _ => None,
+        }
+    };
+    if let (Some(na), Some(nb)) = (var_name(&a.node), var_name(&b.node)) {
+        return na == nb;
+    }
+    match (&a.node, &b.node) {
+        (Expr::Ident(x), Expr::Ident(y)) => x == y,
+        (Expr::Literal(x), Expr::Literal(y)) => x == y,
+        (Expr::Attr(x, fx), Expr::Attr(y, fy)) => fx == fy && expr_struct_eq(x, y),
+        (Expr::Neg(x), Expr::Neg(y)) => expr_struct_eq(x, y),
+        (Expr::BinOp(o1, a1, b1), Expr::BinOp(o2, a2, b2)) => {
+            o1 == o2 && expr_struct_eq(a1, a2) && expr_struct_eq(b1, b2)
+        }
+        (Expr::FnCall(c1, a1), Expr::FnCall(c2, a2)) => {
+            a1.len() == a2.len()
+                && expr_struct_eq(c1, c2)
+                && a1.iter().zip(a2).all(|(p, q)| expr_struct_eq(p, q))
+        }
+        _ => false,
+    }
+}
+
+/// `pow_fn(E)` where `pow_fn` resolves to an `is_pow2_shape` fn — returns
+/// the dotted pow name and the exponent argument `E`.
+fn match_pow_call<'a>(
+    expr: &'a Spanned<Expr>,
+    inputs: &ProofLowerInputs,
+) -> Option<(String, &'a Spanned<Expr>)> {
+    let Expr::FnCall(callee, args) = &expr.node else {
+        return None;
+    };
+    let name = expr_to_dotted_name(&callee.node)?;
+    if args.len() != 1 {
+        return None;
+    }
+    let fd = resolve_pure_fn(&name, inputs)?;
+    if !is_pow2_shape(fd) {
+        return None;
+    }
+    Some((name, &args[0]))
+}
+
+/// `floor_fn(N, <divisor>)` where `floor_fn` resolves to the Euclidean
+/// floor wrapper `Result.withDefault(Int.div(a, d), 0)` — returns the
+/// dotted floor name, the numerator `N`, and the divisor expression.
+fn match_floor_call<'a>(
+    expr: &'a Spanned<Expr>,
+    inputs: &ProofLowerInputs,
+) -> Option<(String, &'a Spanned<Expr>, &'a Spanned<Expr>)> {
+    let Expr::FnCall(callee, args) = &expr.node else {
+        return None;
+    };
+    let name = expr_to_dotted_name(&callee.node)?;
+    if args.len() != 2 {
+        return None;
+    }
+    let fd = resolve_pure_fn(&name, inputs)?;
+    if !is_floordiv_shape(fd) {
+        return None;
+    }
+    Some((name, &args[0], &args[1]))
+}
+
+/// The Euclidean floor wrapper shape: `(a: Int, d: Int) -> Int` whose
+/// body is `Result.withDefault(Int.div(a, d), <lit>)` over the two
+/// params in order.
+fn is_floordiv_shape(fd: &FnDef) -> bool {
+    use crate::ast::Stmt;
+    let [(a, ta), (d, td)] = fd.params.as_slice() else {
+        return false;
+    };
+    if ta != "Int" || td != "Int" || fd.return_type != "Int" {
+        return false;
+    }
+    let [Stmt::Expr(body)] = fd.body.stmts() else {
+        return false;
+    };
+    let Some((num, den)) = with_default_div_operands(body) else {
+        return false;
+    };
+    matches_ident(num, a) && matches_ident(den, d)
+}
+
+/// Recognize the floor window predicate body
+/// `Bool.and(pow(E) * floor(N, pow(E)) <= N, N < pow(E) * (floor(N, pow(E)) + 1))`
+/// — returns the dotted `(pow_fn, floor_fn)` names. Generic over the
+/// numerator `N` and exponent `E` expressions (only their consistency
+/// across the two conjuncts is checked).
+fn floor_pow2_window_body(fd: &FnDef, inputs: &ProofLowerInputs) -> Option<(String, String)> {
+    use crate::ast::{BinOp, Stmt};
+    let [Stmt::Expr(body)] = fd.body.stmts() else {
+        return None;
+    };
+    let Expr::FnCall(callee, args) = &body.node else {
+        return None;
+    };
+    if expr_to_dotted_name(&callee.node).as_deref() != Some("Bool.and") || args.len() != 2 {
+        return None;
+    }
+    let (lo, hi) = (&args[0], &args[1]);
+    // lo: pow(E) * floor(N, pow(E)) <= N
+    let Expr::BinOp(BinOp::Lte, lo_l, lo_r) = &lo.node else {
+        return None;
+    };
+    let Expr::BinOp(BinOp::Mul, lo_pow, lo_floor) = &lo_l.node else {
+        return None;
+    };
+    let (pow_fn, e_expr) = match_pow_call(lo_pow, inputs)?;
+    let (floor_fn, n_expr, lo_floor_div) = match_floor_call(lo_floor, inputs)?;
+    let (pow_fn_b, e_expr_b) = match_pow_call(lo_floor_div, inputs)?;
+    if pow_fn_b != pow_fn || !expr_struct_eq(e_expr_b, e_expr) || !expr_struct_eq(lo_r, n_expr) {
+        return None;
+    }
+    // hi: N < pow(E) * (floor(N, pow(E)) + 1)
+    let Expr::BinOp(BinOp::Lt, hi_l, hi_r) = &hi.node else {
+        return None;
+    };
+    if !expr_struct_eq(hi_l, n_expr) {
+        return None;
+    }
+    let Expr::BinOp(BinOp::Mul, hi_pow, hi_add) = &hi_r.node else {
+        return None;
+    };
+    let (pow_fn_c, e_expr_c) = match_pow_call(hi_pow, inputs)?;
+    if pow_fn_c != pow_fn || !expr_struct_eq(e_expr_c, e_expr) {
+        return None;
+    }
+    let Expr::BinOp(BinOp::Add, add_l, add_r) = &hi_add.node else {
+        return None;
+    };
+    if !is_int_lit(add_r, 1) {
+        return None;
+    }
+    let (floor_fn_d, n_expr_d, hi_floor_div) = match_floor_call(add_l, inputs)?;
+    let (_, e_expr_d) = match_pow_call(hi_floor_div, inputs)?;
+    if floor_fn_d != floor_fn
+        || !expr_struct_eq(n_expr_d, n_expr)
+        || !expr_struct_eq(e_expr_d, e_expr)
+    {
+        return None;
+    }
+    Some((pow_fn, floor_fn))
+}
+
+/// Figure: `window(givens) => true` (no premise) where `window`'s body is
+/// the recursive-expo-free floor window over a power-of-two divisor.
+fn detect_floor_pow2_window(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<FloorWindowFigure> {
+    // The window holds UNCONDITIONALLY (`pow(E) > 0` for every `E`), so a
+    // premise would belong to a different figure; decline.
+    if law.when.is_some() {
+        return None;
+    }
+    if !matches!(law.rhs.node, Expr::Literal(crate::ast::Literal::Bool(true))) {
+        return None;
+    }
+    // lhs: window(givens) — the predicate applied to every given in order.
+    let Expr::FnCall(callee, args) = &law.lhs.node else {
+        return None;
+    };
+    if expr_to_dotted_name(&callee.node).as_deref() != Some(fn_name)
+        || args.len() != law.givens.len()
+        || law.givens.is_empty()
+    {
+        return None;
+    }
+    for (arg, g) in args.iter().zip(&law.givens) {
+        if !matches_ident(arg, &g.name) {
+            return None;
+        }
+    }
+    let window_fd = resolve_pure_fn(fn_name, inputs)?;
+    let (pow_fn, floor_fn) = floor_pow2_window_body(window_fd, inputs)?;
+    Some(FloorWindowFigure::FloorPow2Window {
+        pow_fn,
+        floor_fn,
+        window_fn: window_fd.name.clone(),
+    })
 }
 
 /// Resolve `name` to a pure entry/dep fn def, rejecting effectful

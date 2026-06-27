@@ -112,6 +112,20 @@ pub(super) fn emit_floor_window_law(
             &aver_name_to_lean(fits_fn),
             &aver_name_to_lean(claim_fn),
         ),
+        FloorWindowFigure::FloorPow2Window {
+            pow_fn,
+            floor_fn,
+            window_fn,
+        } => render_floor_pow2_window(
+            theorem_base,
+            quant_params,
+            &lhs,
+            &rhs,
+            &givens,
+            &aver_name_to_lean(pow_fn),
+            &aver_name_to_lean(floor_fn),
+            &aver_name_to_lean(window_fn),
+        ),
     };
     Some(AutoProof {
         support_lines: text.lines().map(|l| l.to_string()).collect(),
@@ -384,6 +398,53 @@ theorem {base} : ∀ {quant_params}, {when} = true -> {lhs} = {rhs} := by
   obtain ⟨hr0, hr1⟩ := {base}__sig_window {g0} {g1} {g2} (by omega) (by omega) (by omega)
   simp only [{window}, Bool.and_eq_true, decide_eq_true_eq]
   exact ⟨hr0, hr1⟩"#
+    )
+}
+
+/// The recursive-expo-FREE Euclidean floor window over a power-of-two
+/// divisor. Generic over the numerator `N` and exponent `E` inside the
+/// window predicate: the support stack proves the floor characterization
+/// for an ARBITRARY `(a, d)` with `0 < d` from the core ediv bridge, and
+/// the main theorem discharges the predicate by `exact … _ _ (pow_pos _)`
+/// — Lean infers `N` and `pow E` by unification, so the renderer never
+/// names them. This is what makes one figure close both a bare-given
+/// `floorDivWindow(a, k)` and a compound `truncFitsWindow(f, i)`.
+#[allow(clippy::too_many_arguments)]
+fn render_floor_pow2_window(
+    base: &str,
+    quant_params: &str,
+    lhs: &str,
+    rhs: &str,
+    givens: &[String],
+    pow: &str,
+    floor: &str,
+    window: &str,
+) -> String {
+    let equations = pow_equation_lemmas(base, pow);
+    let pos = pow_pos_lemma(base, pow);
+    let intro = givens.join(" ");
+    format!(
+        r#"{equations}
+{pos}
+theorem {base}__floordiv_eq (a d : Int) (hd : 0 < d) : {floor} a d = a / d := by
+  have hne : ¬((d == 0) = true) := by simp only [beq_iff_eq]; omega
+  simp only [{floor}]
+  rw [if_neg hne]
+  simp only [Except.withDefault]
+theorem {base}__floor_window (a d : Int) (hd : 0 < d) :
+    d * ({floor} a d) <= a ∧ a < d * ({floor} a d + 1) := by
+  rw [{base}__floordiv_eq a d hd]
+  have hd0 : d ≠ 0 := by omega
+  have heq := Int.ediv_add_emod a d
+  have h0 := Int.emod_nonneg a hd0
+  have h1 := Int.emod_lt_of_pos a hd
+  have hexp : d * (a / d + 1) = d * (a / d) + d := by rw [Int.mul_add, Int.mul_one]
+  refine ⟨by omega, ?_⟩
+  rw [hexp]; omega
+theorem {base} : ∀ {quant_params}, {lhs} = {rhs} := by
+  intro {intro}
+  simp only [{window}, Bool.and_eq_true, decide_eq_true_eq]
+  exact {base}__floor_window _ _ ({base}__pow_pos _)"#
     )
 }
 
