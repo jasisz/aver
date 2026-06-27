@@ -932,11 +932,15 @@ theorem aver_sq_nonneg (t : Int) : 0 ≤ t * t := by
 
 /-- Generic nonneg/order decision step for nonlinear Int products: the
 `omega`-analog for the products-and-squares fragment. Recurse on a product
-with `Int.mul_nonneg` (nonneg goal) or `Int.mul_le_mul` (product ≤ product),
+with `Int.mul_nonneg` (nonneg goal `0 ≤ a*b`), `Int.mul_pos` (strict goal
+`0 < a*b`, the value-magnitude positivity the rounding sign condition needs),
+or `Int.mul_le_mul` (product ≤ product),
 close a product order whose two sides share their right factor (`a*c ≤ b*c`
 from `a ≤ b`, `0 ≤ c`) with `Int.mul_le_mul_of_nonneg_right`, bottom squares
 out on `aver_sq_nonneg`, split a conjunctive premise, and discharge the linear
-leaves with `omega`. The `mul_le_mul_of_nonneg_right` rung sits BEFORE
+leaves with `omega`. The `mul_pos` rung sits right after `mul_nonneg` (their
+conclusions `0 < _` / `0 ≤ _` never unify, so neither shadows the other). The
+`mul_le_mul_of_nonneg_right` rung sits BEFORE
 `mul_le_mul`, and that order is load-bearing for performance: `mul_le_mul`
 would also unify with `a*c ≤ b*c` (taking `d := c`) but spawns a `0 ≤ b` leaf
 that is NOT derivable when the law carries no `0 ≤ a` guard, and the three
@@ -955,6 +959,7 @@ macro_rules
         | omega
         | exact aver_sq_nonneg _
         | (apply Int.mul_nonneg <;> aver_int_order)
+        | (apply Int.mul_pos <;> aver_int_order)
         | (apply Int.mul_le_mul_of_nonneg_right <;> aver_int_order)
         | (apply Int.mul_le_mul <;> aver_int_order)
         | (obtain ⟨hl, hr⟩ := ‹_ ∧ _›; aver_int_order))"#;

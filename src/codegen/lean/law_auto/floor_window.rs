@@ -174,6 +174,20 @@ grind_pattern {base}__pow_succ => {pow} (n + 1)"#
     )
 }
 
+/// The power-of-two POSITIVITY support stack — the equation pair plus the
+/// `<base>__pow_pos` functional-induction positivity theorem — scoped to a
+/// fresh `base` prefix. The generic positivity fact (`0 < pow n` for every
+/// integer `n`) the rational-over-floor sign/magnitude keystone arm supplies
+/// as `have`s so its `aver_int_order` close can discharge the power-of-two
+/// factor leaves. Shape-keyed on the `pow` fn (any `is_pow2_shape`), never a
+/// per-figure template — it is the SAME positivity every floor-window figure
+/// proves, lifted out for reuse.
+pub(in crate::codegen::lean) fn pow_pos_support(base: &str, pow: &str) -> String {
+    let equations = pow_equation_lemmas(base, pow);
+    let pos = pow_pos_lemma(base, pow);
+    format!("{equations}\n{pos}")
+}
+
 /// The power-of-two equation pair every figure's stack opens with:
 /// `<base>__pow_of_nonpos` / `<base>__pow_of_pos`.
 fn pow_equation_lemmas(base: &str, pow: &str) -> String {

@@ -2050,7 +2050,12 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     // the whole point).
     let has_pool = !keystone_pool_names(vb, law, ctx).is_empty()
         || !keystone_order_bridge_citations(vb, law, ctx).is_empty();
-    if !has_pool {
+    // The rational-over-floor sign/magnitude family (Lemma 7.2.2) cites its
+    // earlier window/magnitude helper laws through its OWN dedicated arm
+    // (`rf_citations`), not the equational/order-bridge pools, so admit it here
+    // regardless of those pools or any catch-all strategy pin.
+    let rational_floor = rational_floor_shape(vb, law, ctx).is_some();
+    if !has_pool && !rational_floor {
         use crate::ir::ProofStrategy;
         match super::law_strategy_for(ctx, &vb.fn_name, &law.name) {
             None
@@ -2581,6 +2586,475 @@ fn keystone_order_bridge_citations(
     out
 }
 
+// ===========================================================================
+// Rational-over-floor sign / magnitude family (Lemma 7.2.2, p.19 sign half).
+//
+// A `when`-law whose subject reduces to either a comparison-against-zero
+// (a nonnegativity / strict-positivity magnitude fact) or a `match` on a Bool
+// predicate (the sign split), AND whose call cone reaches a power-of-two fn.
+// The keystone arm here is a GENERIC, name-blind skeleton:
+//   * it CITES earlier sibling `holds` laws whose subject is a single
+//     order comparison or a `Bool.and` of comparisons (the floor window, the
+//     magnitude/positivity helper laws) over a prefix of this law's givens,
+//     discharging each cited law's premise by projecting this law's `when`;
+//   * it supplies power-of-two positivity `have`s (shape-keyed on the cone's
+//     `pow2` fn) at the record-field exponents, so the nonlinear closer can
+//     discharge the power-of-two factor leaves;
+//   * the nonneg/pos shape closes with `aver_int_order` (the same nonlinear
+//     primitive the Newton-Raphson bounds use); the sign shape `rcases` the
+//     predicate's leading disjunction (the float sign) and `grind`s each arm
+//     against the cited magnitude/positivity facts.
+// The whole arm sits inside the keystone's `first | … | sorry` floor, so any
+// citation/discharge that does not typecheck falls to the honest floor and the
+// law degrades to its bounded sampled statement — credit stays fail-closed.
+// The algebraic content (the magnitude product, the value-magnitude product,
+// the window bounds) lives ENTIRELY in the cited Aver laws; deleting any of
+// them breaks the proof.
+// ===========================================================================
+
+#[derive(Clone, Copy, PartialEq)]
+enum RationalFloorShape {
+    /// subject body is `E >= 0` / `0 <= E` / `E > 0` / `0 < E`.
+    NonnegPos,
+    /// subject body is `match <pred-call> { true -> …; false -> … }`.
+    Sign,
+}
+
+/// The power-of-two fn (Lean name) reachable in this law's cone, if any. Tries
+/// the keystone's cited-pool detector first (same-module homomorphism cone),
+/// then falls back to the `pow_fn` of ANY `FloorDivWindow`-figured law in the
+/// module — the floor-window family pins that figure only on an `is_pow2_shape`
+/// fn, so this is name-blind. Guarded to a `pow` that actually appears in this
+/// law's cone, so an unrelated module's `pow` never leaks in.
+fn rf_pow2_fn(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option<String> {
+    use crate::ast::{TopLevel, VerifyKind};
+    use crate::ir::{FloorWindowFigure, ProofStrategy};
+    let cone = super::shared::law_simp_source_names(ctx, vb, law);
+    if let Some(p) = keystone_pow2_fn(vb, law, ctx) {
+        return Some(p);
+    }
+    for item in &ctx.items {
+        let TopLevel::Verify(prev) = item else {
+            continue;
+        };
+        let VerifyKind::Law(prev_law) = &prev.kind else {
+            continue;
+        };
+        if let Some(ProofStrategy::FloorDivWindow { figure }) =
+            super::law_strategy_for(ctx, &prev.fn_name, &prev_law.name)
+        {
+            let pow = match figure {
+                FloorWindowFigure::PowPositive { pow_fn }
+                | FloorWindowFigure::PowSumSplit { pow_fn }
+                | FloorWindowFigure::SigWindow { pow_fn, .. }
+                | FloorWindowFigure::ProductWindow { pow_fn, .. }
+                | FloorWindowFigure::FloorPow2Window { pow_fn, .. } => pow_fn,
+            };
+            let pbare = rf_bare_basename(&pow);
+            if cone.iter().any(|c| rf_bare_basename(c) == pbare) {
+                return Some(aver_name_to_lean(&pow));
+            }
+        }
+    }
+    None
+}
+
+/// Recognize the rational-over-floor sign/magnitude family on `(vb, law)`.
+/// Name-blind: keyed on the inlined subject body shape plus the presence of a
+/// power-of-two fn in the cone (via [`rf_pow2_fn`]). Returns `None` (decline)
+/// for every other keystone law, so their emission stays byte-identical.
+fn rational_floor_shape(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<RationalFloorShape> {
+    use crate::ast::{BinOp, Expr, Literal};
+    rf_pow2_fn(vb, law, ctx)?;
+    let inlined = inline_fn_call(&law.lhs, ctx)?;
+    let is_zero = |e: &Expr| matches!(e, Expr::Literal(Literal::Int(0)));
+    match &inlined.node {
+        Expr::BinOp(BinOp::Gte | BinOp::Gt, _l, r) if is_zero(&r.node) => {
+            Some(RationalFloorShape::NonnegPos)
+        }
+        Expr::BinOp(BinOp::Lte | BinOp::Lt, l, _r) if is_zero(&l.node) => {
+            Some(RationalFloorShape::NonnegPos)
+        }
+        Expr::Match { subject, arms }
+            if matches!(&subject.node, Expr::FnCall(..)) && arms.len() == 2 =>
+        {
+            Some(RationalFloorShape::Sign)
+        }
+        _ => None,
+    }
+}
+
+/// Flatten a left-folded `Bool.and(a, b)` premise (how the parser composes
+/// multiple `when` lines) into its atomic conjuncts.
+fn rf_flatten_bool_and(
+    e: &crate::ast::Spanned<crate::ast::Expr>,
+) -> Vec<&crate::ast::Spanned<crate::ast::Expr>> {
+    use crate::ast::Expr;
+    if let Expr::FnCall(callee, args) = &e.node
+        && super::shared::expr_dotted_name(callee).as_deref() == Some("Bool.and")
+        && args.len() == 2
+    {
+        let mut out = rf_flatten_bool_and(&args[0]);
+        out.extend(rf_flatten_bool_and(&args[1]));
+        return out;
+    }
+    vec![e]
+}
+
+/// A Lean proof term for `<cited_when> = true`, projected out of this law's
+/// `h_when` (the citing law's composite premise). `None` when the cited premise
+/// is not one of the citing law's conjuncts (then the citation is skipped — the
+/// arm keeps its honest floor).
+fn rf_premise_proof(
+    citing_when: &crate::ast::Spanned<crate::ast::Expr>,
+    cited_when: &crate::ast::Spanned<crate::ast::Expr>,
+) -> Option<String> {
+    let conjs = rf_flatten_bool_and(citing_when);
+    let n = conjs.len();
+    let idx = conjs
+        .iter()
+        .position(|c| arith_eq(&c.node, &cited_when.node))?;
+    if n == 1 {
+        return Some("h_when".to_string());
+    }
+    // `simp only [Bool.and_eq_true] at h_when` turns `(c0 && … && c_{n-1}) = true`
+    // into the LEFT-nested `((c0=true ∧ c1=true) ∧ …) ∧ c_{n-1}=true`. The flat
+    // conjunct at `idx` is reached by `.1` down the left spine then `.2`
+    // (`c0` is the whole left spine, `.1`×(n-1)). A `by`-block keeps the `at
+    // h_when` mutation local to this premise's elaboration. The omega arms are a
+    // fallback for a numeric Bool conjunct whose standalone elaboration differs
+    // from the composed `decide (…)` form (projection then fails the type-check).
+    let path = if idx == 0 {
+        ".1".repeat(n - 1)
+    } else if idx == n - 1 {
+        ".2".to_string()
+    } else {
+        format!("{}.2", ".1".repeat(n - 1 - idx))
+    };
+    Some(format!(
+        "(by first | (simp only [Bool.and_eq_true] at h_when; exact h_when{path}) | (simp only [Bool.and_eq_true, decide_eq_true_eq] at h_when ⊢ <;> omega) | (simp only [Bool.and_eq_true] at h_when; omega))"
+    ))
+}
+
+/// Whether an expression's head is a `Bool.or` (directly, or as the first
+/// conjunct of a `Bool.and`) — the shape of a sign/format predicate's body
+/// (`isFp`: `(sign == 1 || sign == -1) && …`), so its first projection is the
+/// sign disjunction to `rcases`.
+fn rf_starts_with_or(e: &crate::ast::Expr) -> bool {
+    use crate::ast::Expr;
+    if let Expr::FnCall(callee, args) = e {
+        let name = super::shared::expr_dotted_name(callee);
+        if name.as_deref() == Some("Bool.or") {
+            return true;
+        }
+        if name.as_deref() == Some("Bool.and")
+            && let Some(first) = args.first()
+        {
+            return rf_starts_with_or(&first.node);
+        }
+    }
+    false
+}
+
+/// Resolve a (possibly module-qualified) fn name to its def, searching the entry
+/// module and every dependency module by basename — `ctx.fn_def_by_name` does
+/// not resolve a dep fn by its qualified call name in the consumer scope.
+fn rf_resolve_fn<'a>(ctx: &'a CodegenContext, dotted: &str) -> Option<&'a crate::ast::FnDef> {
+    if let Some(fd) = ctx.fn_def_by_name(dotted, ctx.active_module_scope().as_deref()) {
+        return Some(fd);
+    }
+    let bare = dotted.rsplit('.').next().unwrap_or(dotted);
+    ctx.fn_defs.iter().find(|fd| fd.name == bare).or_else(|| {
+        ctx.modules
+            .iter()
+            .flat_map(|m| m.fn_defs.iter())
+            .find(|fd| fd.name == bare)
+    })
+}
+
+/// The `when`-conjunct that is the sign/format predicate (a fn call whose body
+/// leads with a disjunction), if any — the conjunct `rcases` splits on.
+fn rf_sign_conjunct<'a>(
+    law: &'a VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<&'a crate::ast::Spanned<crate::ast::Expr>> {
+    use crate::ast::Expr;
+    let when = law.when.as_ref()?;
+    rf_flatten_bool_and(when).into_iter().find(|c| {
+        let Expr::FnCall(callee, _) = &c.node else {
+            return false;
+        };
+        super::shared::expr_dotted_name(callee)
+            .and_then(|name| rf_resolve_fn(ctx, &name))
+            .and_then(|fd| fd.body.tail_expr())
+            .is_some_and(|body| rf_starts_with_or(&body.node))
+    })
+}
+
+/// Whether the named fn is the Euclidean floor wrapper
+/// (`Result.withDefault(Int.div(…), <lit>)`) — excluded from the simp unfold
+/// set so the floor term stays an opaque atom shared between the goal and the
+/// cited window bound (the consistency the nonlinear closer relies on).
+fn rf_is_floordiv_wrapper(ctx: &CodegenContext, bare: &str) -> bool {
+    use crate::ast::Expr;
+    let Some(fd) = ctx.fn_def_by_name(bare, ctx.active_module_scope().as_deref()) else {
+        return false;
+    };
+    let Some(body) = fd.body.tail_expr() else {
+        return false;
+    };
+    let Expr::FnCall(callee, args) = &body.node else {
+        return false;
+    };
+    super::shared::expr_dotted_name(callee).as_deref() == Some("Result.withDefault")
+        && args.len() == 2
+}
+
+fn rf_bare_basename(n: &str) -> &str {
+    let n = n.strip_prefix("_root_.").unwrap_or(n);
+    n.rsplit('.').next().unwrap_or(n)
+}
+
+/// The cone simp set for a law, EXCLUDING the recursive power-of-two fn and the
+/// Euclidean floor wrapper (both must stay opaque atoms). Used both for the
+/// citing goal and for unfolding each cited hypothesis.
+fn rf_filtered_defs(ctx: &CodegenContext, vb: &VerifyBlock, law: &VerifyLaw) -> Vec<String> {
+    let recursive: std::collections::HashSet<String> = super::recursive_pure_fn_names(ctx)
+        .iter()
+        .map(|n| rf_bare_basename(&aver_name_to_lean(n)).to_string())
+        .collect();
+    law_simp_defs(ctx, vb, law)
+        .into_iter()
+        .filter(|d| {
+            let b = rf_bare_basename(d);
+            !recursive.contains(b) && !rf_is_floordiv_wrapper(ctx, b)
+        })
+        .collect()
+}
+
+/// Int-typed field names of a (possibly dep-module) record type.
+fn rf_record_int_fields(ctx: &CodegenContext, type_name: &str) -> Vec<String> {
+    use crate::ast::TypeDef;
+    let base = type_name.rsplit('.').next().unwrap_or(type_name).trim();
+    let find = |tds: &[TypeDef]| -> Option<Vec<String>> {
+        tds.iter().find_map(|td| match td {
+            TypeDef::Product { name, fields, .. } if name == base => Some(
+                fields
+                    .iter()
+                    .filter(|(_, ty)| ty.trim() == "Int")
+                    .map(|(n, _)| n.clone())
+                    .collect(),
+            ),
+            _ => None,
+        })
+    };
+    if let Some(v) = find(&ctx.type_defs) {
+        return v;
+    }
+    for m in &ctx.modules {
+        if let Some(v) = find(&m.type_defs) {
+            return v;
+        }
+    }
+    Vec::new()
+}
+
+/// One cited earlier law for the rational-floor arm.
+struct RfCitation {
+    have_name: String,
+    apply: String,
+    simp_set: String,
+}
+
+/// Discover the earlier sibling `holds` laws to cite: subject body is a single
+/// order comparison or a `Bool.and` of comparisons, givens are a prefix (same
+/// names and types, in order) of this law's givens, and any premise projects
+/// out of this law's `when`. Deterministic (static IR + source order).
+fn rf_citations(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Vec<RfCitation> {
+    use crate::ast::{BinOp, Expr, TopLevel, VerifyKind};
+    let mut out = Vec::new();
+    let citing_when = law.when.as_ref();
+    for item in &ctx.items {
+        let TopLevel::Verify(prev) = item else {
+            continue;
+        };
+        if prev.line == vb.line && prev.fn_name == vb.fn_name {
+            break; // only earlier-in-source siblings
+        }
+        let VerifyKind::Law(prev_law) = &prev.kind else {
+            continue;
+        };
+        if !matches!(
+            &prev_law.rhs.node,
+            Expr::Literal(crate::ast::Literal::Bool(true))
+        ) {
+            continue;
+        }
+        // Givens must be a prefix of the citing law's givens (same name+type).
+        if prev_law.givens.len() > law.givens.len() {
+            continue;
+        }
+        if !prev_law
+            .givens
+            .iter()
+            .zip(law.givens.iter())
+            .all(|(a, b)| a.name == b.name && a.type_name.trim() == b.type_name.trim())
+        {
+            continue;
+        }
+        // Subject body: a single order comparison, or a `Bool.and` of comparisons.
+        let Some(inlined) = inline_fn_call(&prev_law.lhs, ctx) else {
+            continue;
+        };
+        let is_cmp = |e: &Expr| {
+            matches!(
+                e,
+                Expr::BinOp(BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte, _, _)
+            )
+        };
+        let is_order_content = match &inlined.node {
+            Expr::FnCall(callee, args)
+                if super::shared::expr_dotted_name(callee).as_deref() == Some("Bool.and")
+                    && args.len() == 2 =>
+            {
+                is_cmp(&args[0].node) && is_cmp(&args[1].node)
+            }
+            other => is_cmp(other),
+        };
+        if !is_order_content {
+            continue;
+        }
+        // Premise discharge (if any) must project out of this law's `when`.
+        let prem = match &prev_law.when {
+            None => String::new(),
+            Some(w) => {
+                let Some(citing) = citing_when else {
+                    continue;
+                };
+                match rf_premise_proof(citing, w) {
+                    Some(p) => format!(" {p}"),
+                    None => continue,
+                }
+            }
+        };
+        let thm = format!("{}_law_{}", aver_name_to_lean(&prev.fn_name), prev_law.name);
+        let args = intro_names[..prev_law.givens.len()].join(" ");
+        let mut simp: Vec<String> = rf_filtered_defs(ctx, prev, prev_law);
+        simp.extend(
+            [
+                "Bool.and_eq_true",
+                "decide_eq_true_eq",
+                "ge_iff_le",
+                "gt_iff_lt",
+            ]
+            .iter()
+            .map(|s| s.to_string()),
+        );
+        let have_name = format!("h_{}_{}", aver_name_to_lean(&prev.fn_name), prev_law.name);
+        out.push(RfCitation {
+            apply: format!("{thm} {args}{prem}"),
+            simp_set: simp.join(", "),
+            have_name,
+        });
+    }
+    out
+}
+
+/// The rational-over-floor sign/magnitude keystone arm. Returns the full
+/// auto-proof (support stack + body) or `None` to fall through to the generic
+/// keystone emission.
+fn emit_rational_floor_family(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<AutoProof> {
+    let shape = rational_floor_shape(vb, law, ctx)?;
+    let pow = rf_pow2_fn(vb, law, ctx)?;
+    let citations = rf_citations(vb, law, ctx, intro_names);
+    let defs = rf_filtered_defs(ctx, vb, law).join(", ");
+    let intro = format!("  intro {} h_when", intro_names.join(" "));
+
+    // Citation `have`s (shared by both shapes): bring each cited law's order
+    // content into context, unfolded to its Int facts.
+    let mut steps: Vec<String> = Vec::new();
+    for c in &citations {
+        steps.push(format!("have {} := {}", c.have_name, c.apply));
+        steps.push(format!("simp only [{}] at {}", c.simp_set, c.have_name));
+    }
+
+    let mut support_lines: Vec<String> = Vec::new();
+    let arm: String = match shape {
+        RationalFloorShape::NonnegPos => {
+            // Power-of-two positivity at the record-field exponents.
+            let base = format!("{}_law_{}__rfpp", aver_name_to_lean(&vb.fn_name), law.name);
+            support_lines = super::floor_window::pow_pos_support(&base, &pow)
+                .lines()
+                .map(|l| l.to_string())
+                .collect();
+            let mut idx = 0usize;
+            let mut push_pow = |steps: &mut Vec<String>, expr: String| {
+                steps.push(format!("have h_rfpp{idx} := {base}__pow_pos ({expr})"));
+                idx += 1;
+            };
+            for g in &law.givens {
+                let gl = aver_name_to_lean(&g.name);
+                if g.type_name.trim() == "Int" {
+                    push_pow(&mut steps, gl.clone());
+                    push_pow(&mut steps, format!("{gl} - 1"));
+                } else {
+                    for fld in rf_record_int_fields(ctx, &g.type_name) {
+                        push_pow(&mut steps, format!("{gl}.{fld}"));
+                        push_pow(&mut steps, format!("{gl}.{fld} - 1"));
+                    }
+                }
+            }
+            let close = format!(
+                "simp only [{defs}, Bool.and_eq_true, Bool.or_eq_true, ge_iff_le, gt_iff_lt, decide_eq_true_eq, beq_iff_eq] at h_when ⊢ <;> aver_int_order"
+            );
+            steps.push(close);
+            format!("  | ({})", steps.join("; "))
+        }
+        RationalFloorShape::Sign => {
+            // The sign/format predicate conjunct (`isFp`): `rcases` its leading
+            // disjunction (the float sign) after unfolding it.
+            let sign_conj = rf_sign_conjunct(law, ctx)?;
+            let when = law.when.as_ref()?;
+            let prem = rf_premise_proof(when, sign_conj)?;
+            steps.push(format!("have h_rfsign := {prem}"));
+            steps.push(format!(
+                "simp only [{defs}, Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq] at h_rfsign"
+            ));
+            steps.push(format!("simp only [{defs}]"));
+            steps.push("rcases h_rfsign.1 with hs | hs <;> simp only [hs] <;> grind".to_string());
+            format!("  | ({})", steps.join("; "))
+        }
+    };
+
+    let floor = if super::super::tactic_ir::speculative::probing() {
+        let id = format!("{}.{}", vb.fn_name, law.name);
+        super::super::tactic_ir::speculative::record_probed(&id);
+        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
+    } else {
+        "  | sorry".to_string()
+    };
+
+    Some(AutoProof {
+        support_lines,
+        body: Tactic::raw(vec![intro, "  first".to_string(), arm, floor]),
+        replaces_theorem: false,
+    })
+}
+
 /// Emit the keystone proof: `intro <givens> h_when; first | (simp only [<cone>,
 /// <bridges>] at h_when ⊢ <;> grind [<cone>, <pool law names>]) | <floor>`. The
 /// `simp` unfolds the cone and bridges the Bool comparison / splits a
@@ -2597,6 +3071,14 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
 ) -> Option<AutoProof> {
     if !recognize_pool_composition_generic(vb, law, ctx) {
         return None;
+    }
+    // The rational-over-floor sign/magnitude family (Lemma 7.2.2 sign half) takes
+    // a dedicated cite-window + pow-positivity + `aver_int_order` / sign-split
+    // arm, and deliberately bypasses the `pow2` homomorphism normalizer below
+    // (it explodes on the squared-denominator rational goals). Every other
+    // keystone law declines `rational_floor_shape` and keeps the emission below.
+    if let Some(proof) = emit_rational_floor_family(vb, law, ctx, intro_names) {
+        return Some(proof);
     }
     // `simp only [<cone>]` unfolds the cone — but RECURSIVE cone fns (`pow2`)
     // must be EXCLUDED: `simp only [pow2]` errors trying to reduce the recursive
