@@ -473,8 +473,8 @@ verify awayTruncComposes law composesToInner
     awayTruncComposes(f, i, j) holds
 
 fn awayError(f: Fp, i: Int) -> Fraction
-    ? "The away rounding error epsilon of Lemma 7.2.3 (p.19): epsilon = away(x,i) - x, the exact rational that rounding away from zero ADDS to x (away(x,i) = fpValue(fpAway(f,i)), x = fpValue(f)). Lemma 7.2.3 states away(x,i) = x + epsilon, with epsilon of the same sign as x and |epsilon| < 2^(e_x - i + 1) -- the complement of the truncation error: where trunc throws |r| away, away adds the rest of the cell |W - r|."
-    Domain.Rational.minus(Domain.Fprep.fpValue(fpAway(f, i)), Domain.Fprep.fpValue(f))
+    ? "The away rounding error epsilon of Lemma 7.2.3 (p.19): epsilon = away(x,i) - x, the exact rational that rounding away from zero ADDS to x (away(x,i) = fpValueGeneral(fpAway(f,i)), x = fpValueGeneral(f)). Read off the general-exponent value so the error -- and its strict bound -- is faithful at EVERY exponent, including the fractional floats (exp < 0) the kernel divider lives in. Lemma 7.2.3 states away(x,i) = x + epsilon, with epsilon of the same sign as x and |epsilon| < 2^(e_x - i + 1) -- the complement of the truncation error: where trunc throws |r| away, away adds the rest of the cell |W - r|."
+    Domain.Rational.minus(Domain.Fprep.fpValueGeneral(fpAway(f, i)), Domain.Fprep.fpValueGeneral(f))
 
 verify awayError
     awayError(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => Domain.Rational.Fraction(top = 4, bottom = 32)
@@ -483,7 +483,7 @@ verify awayError
 
 fn awayErrorReconstructs(f: Fp, i: Int) -> Bool
     ? "Lemma 7.2.3 (p.19), the reconstruction half: away(x,i) = x + epsilon. Holds by definition of epsilon = away(x,i) - x; an exact-rational ring identity (the additive complement of Lemma 7.2.2's trunc(x,i) = x - epsilon)."
-    Domain.Rational.sameValue(Domain.Fprep.fpValue(fpAway(f, i)), Domain.Rational.plus(Domain.Fprep.fpValue(f), awayError(f, i)))
+    Domain.Rational.sameValue(Domain.Fprep.fpValueGeneral(fpAway(f, i)), Domain.Rational.plus(Domain.Fprep.fpValueGeneral(f), awayError(f, i)))
 
 verify awayErrorReconstructs
     awayErrorReconstructs(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
@@ -508,23 +508,30 @@ verify awayErrorBound
     awayErrorBound(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
     awayErrorBound(Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), 3) => true
     awayErrorBound(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 2) => true
+    awayErrorBound(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = -3, width = 4), 3) => true
+    awayErrorBound(Domain.Fprep.Fp(sign = -1, sigBits = 15, exp = -2, width = 4), 3) => true
 
-// Lemma 7.2.3 (p.19), the strict bound |epsilon| < 2^(e_x - i + 1), stated EXACTLY
-// as the paper (the away analog of Lemma 7.2.2's bound) and sample-verified. It is
-// NOT yet a universal law (DEFERRED kwiatek): the trunc bound's universal arm reads
-// a SINGLE floor quotient q off the rounded value's clean record, but a faithful
-// fpAway is PIECEWISE -- awaySig case-splits exact (q) vs round-up (q+1), and the
-// carry-to-2 renormalization (required by the already-universal Lemma 7.2.7, which
-// bumps the exponent) makes the rounded value a nested match, not one record. So
-// the away error magnitude is the COMPLEMENT |W - r| of the truncation remainder r
-// (W = 2^(width-1)), strictly below W because r > 0 whenever away moves x -- a
-// closed-form q does not exist, and the bound arm needs a genuinely new
-// matched-rounded-value case-split (each branch a record, with value-uniformity
-// across the carry) before it can fire. Closing it universal is the open piece.
-// Like truncErrorBound, this bound also carries the pow2-clamp restriction: the
-// normalized model denotes the value with pow2(f.exp), which clamps to 1 for
-// exp <= 0, so the sample checks above use exp >= 0 and the eventual universal law
-// will need the general-exponent value (or the same `when 0 <= f.exp` guard).
+// Lemma 7.2.3 (p.19), the strict bound: "|epsilon| < 2^(e_x - i + 1)" -- rounding
+// away from zero adds strictly less than one ulp. Stated EXACTLY as the paper's
+// signed power of two and universal at EVERY exponent (the error reads the
+// general-exponent value fpValueGeneral, faithful for the fractional floats exp < 0
+// the kernel divider lives in). Proven universal by the rational strict-order rung
+// driven through the GENERIC matched-rounded-value case-split: a faithful fpAway is
+// PIECEWISE (awaySig splits exact vs round-up, and the carry-to-2 renormalization of
+// Lemma 7.2.7 makes the rounded value a NESTED record-returning match), so the rung
+// peels the rounded value's match to its leaf records, discharges value-uniformity
+// across the carry by CITING the power-of-two homomorphism (the renormalized carry
+// record sigBits = 2^(n-1), exp = e_x+1 denotes the same rational as the
+// un-renormalized significand at exponent e_x), and reduces every leaf to the SAME
+// integer window inequality the trunc bound closes -- the away error is the
+// complement |W - r| of the truncation remainder r, strictly below W because r > 0
+// whenever away moves x. The sigBits=15 case exercises the carry-to-2 leaf.
+verify awayErrorBound law strictBound
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = -3, width = 4)]
+    given i: Int = [1, 2, 3]
+    when Domain.Fprep.isFp(f)
+    when 1 <= i
+    awayErrorBound(f, i) holds
 
 fn awayErrorSameSign(f: Fp, i: Int) -> Bool
     ? "Lemma 7.2.3 (p.19), the sign condition: epsilon has the same sign as x -- if x < 0 then epsilon <= 0, otherwise 0 <= epsilon. Rounding away from zero increases the magnitude, so away(x,i) - x keeps x's sign (the same same-sign statement as Lemma 7.2.2's trunc error)."

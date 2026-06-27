@@ -3703,6 +3703,422 @@ fn rf_general_value_fields(
     })
 }
 
+/// One leaf of a piecewise rounded value: its significand integer `sig` (the
+/// `sigBits` field) and its exponent `exp`, as inlined record fields. The bound
+/// rung emits one `away_leaf` application per DISTINCT leaf.
+struct RfLeaf {
+    sig: crate::ast::Spanned<crate::ast::Expr>,
+    exp: crate::ast::Spanned<crate::ast::Expr>,
+}
+
+/// Expand a record `sigBits` expression into the significand integers it can
+/// take: if it is a fn call that inlines to a (record-free) `match` — `awaySig`'s
+/// exact/round-up split — return one per arm (recursively); otherwise the bare
+/// expression. The arms here are integer terms (`floorDiv …`, `floorDiv … + 1`),
+/// not records, so the recursion bottoms out immediately for `away`/`sticky`.
+fn rf_expand_sig(
+    sig: &crate::ast::Spanned<crate::ast::Expr>,
+    ctx: &CodegenContext,
+) -> Vec<crate::ast::Spanned<crate::ast::Expr>> {
+    use crate::ast::Expr;
+    // Only expand a significand SELECTOR (`awaySig`) — never the recursive
+    // power-of-two or the floor wrapper (both stay opaque atoms).
+    if let Expr::FnCall(c, _) = &sig.node
+        && let Some(name) = super::shared::expr_dotted_name(c)
+    {
+        let base = rf_bare_basename(&name);
+        let recursive: std::collections::HashSet<String> = super::recursive_pure_fn_names(ctx)
+            .iter()
+            .map(|n| rf_bare_basename(&aver_name_to_lean(n)).to_string())
+            .collect();
+        if !recursive.contains(base)
+            && !rf_is_floordiv_wrapper(ctx, base)
+            && let Some(inl) = rf_inline_fn_call(sig, ctx)
+            && let Expr::Match { arms, .. } = &inl.node
+        {
+            return arms
+                .iter()
+                .flat_map(|a| rf_expand_sig(&a.body, ctx))
+                .collect();
+        }
+    }
+    vec![sig.clone()]
+}
+
+/// Walk a (possibly nested) record-returning `match` — a PIECEWISE rounded value
+/// `fpValueGeneral`'s argument inlines to — and collect its leaf records'
+/// `(sigBits, exp)` fields, expanding each record's `sigBits` through
+/// [`rf_expand_sig`] (so `awaySig`'s own match contributes its arms). Returns
+/// `None` if a leaf is neither a `match` nor a `RecordCreate` (an unrecognized
+/// shape — decline rather than emit a wrong split).
+fn rf_collect_leaves(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    ctx: &CodegenContext,
+    out: &mut Vec<RfLeaf>,
+) -> Option<()> {
+    use crate::ast::Expr;
+    match &expr.node {
+        Expr::Match { arms, .. } => {
+            for a in arms {
+                rf_collect_leaves(&a.body, ctx, out)?;
+            }
+            Some(())
+        }
+        Expr::RecordCreate { fields, .. } => {
+            let sig = fields
+                .iter()
+                .find(|(n, _)| n == "sigBits")
+                .map(|(_, e)| e)?;
+            let exp = fields.iter().find(|(n, _)| n == "exp").map(|(_, e)| e)?;
+            for s in rf_expand_sig(sig, ctx) {
+                out.push(RfLeaf {
+                    sig: s,
+                    exp: exp.clone(),
+                });
+            }
+            Some(())
+        }
+        _ => None,
+    }
+}
+
+/// The all-exponent rational strict-order rung for a PIECEWISE rounded value
+/// (Lemma 7.2.3 `away` / 7.2.4 `sticky` strict bounds): the same bound as the
+/// single-record arm, but the rounded value `fpValueGeneral(G)` inlines to a
+/// RECORD-RETURNING MATCH (the `awaySig` exact/round-up split plus the carry-to-2
+/// renormalization, or `sticky`'s round-to-odd split), not one clean record. The
+/// rung unfolds the rounding layer, `repeat' split`s the match into its leaf
+/// records, and closes EVERY leaf by one application of the generic
+/// `away_leaf` support lemma — shape-keyed on the leaf's significand `Q` and its
+/// exponent offset relative to `e_x` (`k2 = 1` no carry, `k2 = 2` the carry, whose
+/// value-uniformity is discharged by the cited pow2 homomorphism `hdbl`). The
+/// per-leaf placement `hQe` is the LINEAR fact that the effective significand sits
+/// at the floor or its successor — closed by `omega`. Name-blind, reused
+/// unchanged for `away` and `sticky`. Returns `None` (→ single-record arm) when
+/// the rounded value is not a record-returning match.
+fn emit_rational_floor_bound_matched(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<AutoProof> {
+    use crate::ast::Expr;
+    let pow = rf_pow2_fn(vb, law, ctx)?;
+    let inlined = inline_fn_call(&law.lhs, ctx)?;
+    let Expr::FnCall(_lt, lt_args) = &inlined.node else {
+        return None;
+    };
+    if lt_args.len() != 2 {
+        return None;
+    }
+    let Expr::FnCall(_abs, abs_args) = &lt_args[0].node else {
+        return None;
+    };
+    let err_call = abs_args.first()?;
+    let Expr::FnCall(_ps, ps_args) = &lt_args[1].node else {
+        return None;
+    };
+    let le_expr = ps_args.first()?;
+    let Expr::FnCall(_te, te_args) = &err_call.node else {
+        return None;
+    };
+    if te_args.len() != 2 {
+        return None;
+    }
+    let f_name = expr_var_name(&te_args[0].node)?.to_string();
+    let i_name = expr_var_name(&te_args[1].node)?.to_string();
+    let minus_inlined = rf_inline_fn_call(err_call, ctx)?;
+    let Expr::FnCall(_m, m_args) = &minus_inlined.node else {
+        return None;
+    };
+    if m_args.len() != 2 {
+        return None;
+    }
+    // Identify which `minus` arg is the ORIGINAL value `fpValueGeneral(F)` (a bare
+    // given) and which is the ROUNDED value `fpValueGeneral(round(F, i))`. The
+    // single-record arm assumes `(orig, rounded)`; `awayError` is `(rounded, orig)`.
+    let arg_round_call = |e: &crate::ast::Spanned<Expr>| -> Option<crate::ast::Spanned<Expr>> {
+        let Expr::FnCall(_, a) = &e.node else {
+            return None;
+        };
+        let inner = a.first()?;
+        matches!(&inner.node, Expr::FnCall(..)).then(|| inner.clone())
+    };
+    let (orig_value, rounded_call) = match (arg_round_call(&m_args[0]), arg_round_call(&m_args[1]))
+    {
+        // both are calls (round(...)): the rounded one is whichever has 2 args.
+        (Some(a0), Some(a1)) => {
+            let two = |c: &crate::ast::Spanned<Expr>| matches!(&c.node, Expr::FnCall(_, ar) if ar.len() == 2);
+            if two(&a1) {
+                (m_args[0].clone(), a1)
+            } else {
+                (m_args[1].clone(), a0)
+            }
+        }
+        (Some(a0), None) => (m_args[1].clone(), a0),
+        (None, Some(a1)) => (m_args[0].clone(), a1),
+        (None, None) => return None,
+    };
+    let fpv_f = rf_inline_fn_call(&orig_value, ctx)?;
+    let gf = rf_general_value_fields(&fpv_f, ctx, &pow)?;
+    let value_base = match &orig_value.node {
+        Expr::FnCall(c, _) => rf_bare_basename(&super::shared::expr_dotted_name(c)?).to_string(),
+        _ => return None,
+    };
+    // The rounded value must inline to a record-returning MATCH (else the
+    // single-record arm handles it).
+    let rounded_rec = rf_inline_fn_call(&rounded_call, ctx)?;
+    if !matches!(&rounded_rec.node, Expr::Match { .. }) {
+        return None;
+    }
+    let mut leaves: Vec<RfLeaf> = Vec::new();
+    rf_collect_leaves(&rounded_rec, ctx, &mut leaves)?;
+    if leaves.is_empty() {
+        return None;
+    }
+
+    let (window_thm, window_fn) = rf_window_law(vb, law, ctx)?;
+    let hom = rf_homomorphism_name(ctx, &pow)?;
+    let le = rf_emit(ctx, le_expr);
+
+    // Sub-expression strings (signed power of two kept ABSTRACT).
+    let sgnfn = gf.sgn_fn.clone();
+    let exp = gf.exp.clone();
+    let sign = gf.sign.clone();
+    let sig = gf.sig.clone();
+    let pet = format!("({sgnfn} ({exp})).top");
+    let peb = format!("({sgnfn} ({exp})).bottom");
+    let plt = format!("({sgnfn} ({le})).top");
+    let plb = format!("({sgnfn} ({le})).bottom");
+    let pe1t = format!("({sgnfn} ({exp} + 1)).top");
+    let pe1b = format!("({sgnfn} ({exp} + 1)).bottom");
+    let pw = format!("{pow} ({} - 1)", gf.width);
+    let pp = format!("{pow} ({i_name} - 1)");
+
+    // The trunc floor `tf` — the leaf significand that is a bare floorDiv wrapper
+    // call (the window law is stated about it).
+    let tf = leaves.iter().find_map(|l| match &l.sig.node {
+        Expr::FnCall(c, _) => {
+            let name = super::shared::expr_dotted_name(c)?;
+            let b = rf_bare_basename(&name);
+            rf_is_floordiv_wrapper(ctx, b).then(|| rf_emit(ctx, &l.sig))
+        }
+        _ => None,
+    })?;
+
+    // Classify each leaf's exponent offset (0 → no carry, 1 → carry); decline on
+    // any other shift. Dedup by (significand string, offset).
+    let base = format!("{}_law_{}__rfb", aver_name_to_lean(&vb.fn_name), law.name);
+    let mut alts: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<(String, u8)> = std::collections::HashSet::new();
+    let mut has_carry = false;
+    for l in &leaves {
+        let q = rf_emit(ctx, &l.sig);
+        let le_exp = rf_emit(ctx, &l.exp);
+        let offset: u8 = if le_exp == exp {
+            0
+        } else if matches!(&l.exp.node, Expr::BinOp(crate::ast::BinOp::Add, a, b)
+            if rf_emit(ctx, a) == exp && matches!(&b.node, Expr::Literal(crate::ast::Literal::Int(1))))
+        {
+            1
+        } else {
+            return None;
+        };
+        if !seen.insert((q.clone(), offset)) {
+            continue;
+        }
+        let (av, ab, k2) = if offset == 0 {
+            (pet.clone(), peb.clone(), "1")
+        } else {
+            has_carry = true;
+            (pe1t.clone(), pe1b.clone(), "2")
+        };
+        alts.push(format!(
+            "    | (apply {base}__away_leaf ({pet}) ({peb}) ({plt}) ({plb}) ({av}) ({ab}) ({pw}) ({pp}) {k2} ({q}) ({sig}) ({sign}) ({tf}) <;> first | assumption | omega | grind)"
+        ));
+    }
+
+    // The `when` conjuncts → intro pattern + the `isFp` sign conjunct.
+    let when = law.when.as_ref()?;
+    let conjs = rf_flatten_bool_and(when);
+    let sign_conj = rf_sign_conjunct(law, ctx)?;
+    let fmt_idx = conjs
+        .iter()
+        .position(|c| arith_eq(&c.node, &sign_conj.node))?;
+    let isfp_lean = match &sign_conj.node {
+        Expr::FnCall(callee, _) => aver_name_to_lean(&super::shared::expr_dotted_name(callee)?),
+        _ => return None,
+    };
+    let ncj = conjs.len();
+    let mut pat = "h_rfbp0".to_string();
+    for k in 1..ncj {
+        pat = format!("⟨{pat}, h_rfbp{k}⟩");
+    }
+    let fmtname = format!("h_rfbp{fmt_idx}");
+
+    let mut support_lines: Vec<String> =
+        super::floor_window::pow2_signed_pos_support(&base, &pow, &sgnfn)
+            .lines()
+            .map(|l| l.to_string())
+            .collect();
+    support_lines.extend(
+        super::floor_window::matched_leaf_support(&base)
+            .lines()
+            .map(|l| l.to_string()),
+    );
+
+    // The two unfold sets: the rounding layer (set1, before the split) and the
+    // value/rational layer (set2, per leaf after the split). The signed power of
+    // two stays abstract throughout; `pow`/floorDiv are already excluded.
+    let rational_prims = [
+        "absFraction",
+        "absInt",
+        "lessThan",
+        "minus",
+        "times",
+        "plus",
+        "sameValue",
+        "negate",
+    ];
+    let sgn_base = rf_bare_basename(&sgnfn).to_string();
+    let filtered = rf_filtered_defs(ctx, vb, law)
+        .into_iter()
+        .filter(|d| rf_bare_basename(d) != sgn_base)
+        .collect::<Vec<_>>();
+    let is_set2 = |d: &str| {
+        let b = rf_bare_basename(d);
+        b == value_base || rational_prims.contains(&b)
+    };
+    let set1 = filtered
+        .iter()
+        .filter(|d| !is_set2(d))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let set2 = filtered
+        .iter()
+        .filter(|d| is_set2(d))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let intro = format!("  intro {} h_when", intro_names.join(" "));
+    let mut body: Vec<String> = vec![intro, "  first".to_string(), "  | (".to_string()];
+    body.push("    simp only [Bool.and_eq_true, decide_eq_true_eq] at h_when".to_string());
+    body.push(format!("    obtain {pat} := h_when"));
+    body.push(format!("    have hpp : 0 < {pp} := {base}__pow_pos _"));
+    body.push(format!("    have hpw : 0 < {pw} := {base}__pow_pos _"));
+    body.push(format!("    have hPSeT : 0 < {pet} := {base}__sgnt_pos _"));
+    body.push(format!("    have hPSeB : 0 < {peb} := {base}__sgnb_pos _"));
+    body.push(format!("    have hPSlT : 0 < {plt} := {base}__sgnt_pos _"));
+    body.push(format!("    have hPSlB : 0 < {plb} := {base}__sgnb_pos _"));
+    if has_carry {
+        body.push(format!(
+            "    have hPSe1T : 0 < {pe1t} := {base}__sgnt_pos _"
+        ));
+        body.push(format!(
+            "    have hPSe1B : 0 < {pe1b} := {base}__sgnb_pos _"
+        ));
+    }
+    body.push(format!("    have hsign : {sign} = 1 ∨ {sign} = -1 := by unfold {isfp_lean} at {fmtname}; simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq] at {fmtname}; exact {fmtname}.1"));
+    body.push(format!(
+        "    have hpowi : {pow} {i_name} = 2 * {pp} := {base}__pow_of_pos {i_name} (by omega)"
+    ));
+    if has_carry {
+        body.push(format!("    have hp1 : {pow} 1 = 2 := by have hx := {base}__pow_of_pos 1 (by omega); rw [show (1:Int) - 1 = 0 by omega, {base}__pow_of_nonpos 0 (by omega)] at hx; omega"));
+    }
+    body.push(format!("    have h_win := {window_thm} {f_name} {i_name}"));
+    body.push(format!(
+        "    simp only [{window_fn}, Bool.and_eq_true, decide_eq_true_eq] at h_win"
+    ));
+    body.push("    obtain ⟨hwlo, hwhi⟩ := h_win".to_string());
+    // hlink: pet * plb = plt * p * peb (signed-power exponent link).
+    body.push(format!(
+        "    have hlink : {pet} * {plb} = {plt} * {pp} * {peb} := by"
+    ));
+    body.push(format!("      by_cases hE : {exp} < 0"));
+    body.push(format!("      · have hLE : {le} < 0 := by omega"));
+    body.push(format!("        have hh := {hom} ({i_name} - 1) (0 - {exp}) (by simp only [Bool.and_eq_true, ge_iff_le, decide_eq_true_eq]; omega)"));
+    body.push(format!(
+        "        rw [show ({i_name} - 1) + (0 - {exp}) = 0 - ({le}) by omega] at hh"
+    ));
+    body.push(format!(
+        "        unfold {sgnfn}; rw [if_pos hE, if_pos hLE]; grind"
+    ));
+    body.push(format!("      · by_cases hLE : {le} < 0"));
+    body.push(format!("        · have hh := {hom} {exp} (0 - ({le})) (by simp only [Bool.and_eq_true, ge_iff_le, decide_eq_true_eq]; omega)"));
+    body.push(format!(
+        "          rw [show {exp} + (0 - ({le})) = {i_name} - 1 by omega] at hh"
+    ));
+    body.push(format!(
+        "          unfold {sgnfn}; rw [if_neg hE, if_pos hLE]; grind"
+    ));
+    body.push(format!("        · have hh := {hom} ({le}) ({i_name} - 1) (by simp only [Bool.and_eq_true, ge_iff_le, decide_eq_true_eq]; omega)"));
+    body.push(format!(
+        "          rw [show ({le}) + ({i_name} - 1) = {exp} by omega] at hh"
+    ));
+    body.push(format!(
+        "          unfold {sgnfn}; rw [if_neg hE, if_neg hLE]; grind"
+    ));
+    if has_carry {
+        // hdbl: pe1t * peb = 2 * pet * pe1b (the carry value-uniformity, via the
+        // same cited pow2 homomorphism with precision shift 1).
+        body.push(format!(
+            "    have hdbl : {pe1t} * {peb} = 2 * {pet} * {pe1b} := by"
+        ));
+        body.push(format!("      by_cases hE : ({exp} + 1) < 0"));
+        body.push(format!("      · have hLE : {exp} < 0 := by omega"));
+        body.push(format!("        have hh := {hom} 1 (0 - ({exp} + 1)) (by simp only [Bool.and_eq_true, ge_iff_le, decide_eq_true_eq]; omega)"));
+        body.push(format!(
+            "        rw [show (1 : Int) + (0 - ({exp} + 1)) = 0 - {exp} by omega, hp1] at hh"
+        ));
+        body.push(format!(
+            "        unfold {sgnfn}; rw [if_pos hE, if_pos hLE]; grind"
+        ));
+        body.push(format!("      · by_cases hLE : {exp} < 0"));
+        body.push(format!("        · have hh := {hom} ({exp} + 1) (0 - {exp}) (by simp only [Bool.and_eq_true, ge_iff_le, decide_eq_true_eq]; omega)"));
+        body.push(format!(
+            "          rw [show ({exp} + 1) + (0 - {exp}) = 1 by omega, hp1] at hh"
+        ));
+        body.push(format!(
+            "          unfold {sgnfn}; rw [if_neg hE, if_pos hLE]; grind"
+        ));
+        body.push(format!("        · have hh := {hom} {exp} 1 (by simp only [Bool.and_eq_true, ge_iff_le, decide_eq_true_eq]; omega)"));
+        body.push("          rw [hp1] at hh".to_string());
+        body.push(format!(
+            "          unfold {sgnfn}; rw [if_neg hE, if_neg hLE]; grind"
+        ));
+    }
+    body.push(format!("    simp only [{set1}]"));
+    body.push("    repeat' split".to_string());
+    body.push(format!(
+        "    all_goals (simp only [{set2}, decide_eq_true_eq])"
+    ));
+    body.push("    all_goals (try simp only [beq_iff_eq] at *)".to_string());
+    body.push("    all_goals (".to_string());
+    body.push("      first".to_string());
+    for a in &alts {
+        body.push(a.clone());
+    }
+    body.push("    )".to_string());
+    body.push("  )".to_string());
+
+    let floor = if super::super::tactic_ir::speculative::probing() {
+        let id = format!("{}.{}", vb.fn_name, law.name);
+        super::super::tactic_ir::speculative::record_probed(&id);
+        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
+    } else {
+        "  | sorry".to_string()
+    };
+    body.push(floor);
+
+    Some(AutoProof {
+        support_lines,
+        body: Tactic::raw(body),
+        replaces_theorem: false,
+    })
+}
+
 /// The all-exponent rational strict-order rung for the rounding-error bound
 /// `|epsilon| < 2^(e_x - i + 1)` over the GENERAL-exponent value `fpValueGeneral`
 /// (Lemma 7.2.2's bound, faithful for the fractional floats `exp < 0` the kernel
@@ -4118,6 +4534,12 @@ fn emit_rational_floor_bound(
     intro_names: &[String],
 ) -> Option<AutoProof> {
     use crate::ast::Expr;
+    // A PIECEWISE rounded value (record-returning match — `away`/`sticky`) takes
+    // the matched-leaf rung; a single clean record (`trunc`) takes the
+    // single-record general rung; the legacy clamped value keeps the arm below.
+    if let Some(p) = emit_rational_floor_bound_matched(vb, law, ctx, intro_names) {
+        return Some(p);
+    }
     // The general-exponent value (fpValueGeneral) takes the signed strict-order
     // rung; the legacy clamped value (fpValue) keeps the arm below.
     if let Some(p) = emit_rational_floor_bound_general(vb, law, ctx, intro_names) {
