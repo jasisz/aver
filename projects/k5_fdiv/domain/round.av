@@ -39,10 +39,22 @@ module Round
         "floor: floor(s*2^b / 2^a) * 2^a = s*2^b when 0 <= a <= b, valid because"
         "2^a | 2^b (the power-of-two homomorphism). That cancel is itself a generic"
         "Aver law on floorDiv (dividesPow2Multiple, universal); the composition"
-        "lemmas CITE it -- no per-figure proof. Deferred (kwiatki): the away/sticky"
-        "error bounds 7.2.3/7.2.4."
+        "lemmas CITE it -- no per-figure proof. Lemma 7.2.3 (p.19) and Lemma 7.2.4"
+        "(p.19), the RECONSTRUCTION halves -- away(x,i) = x + epsilon and sticky(x,i) ="
+        "x + epsilon, with epsilon = round(x,i) - x -- both landed universal (the"
+        "additive complement of Lemma 7.2.2's trunc(x,i) = x - epsilon; the exact"
+        "rational ring identity x + (round(x,i) - x) = round(x,i), closed by the"
+        "equational keystone case-splitting the rounding match). Deferred (kwiatki):"
+        "Lemma 7.2.3/7.2.4's STRICT BOUND |epsilon| < 2^(e_x - i + 1) and Lemma 7.2.3's"
+        "SAME-SIGN condition (both stated EXACTLY as the paper and sample-verified, NOT"
+        "yet universal): the away error is the COMPLEMENT |W - r| of the truncation"
+        "remainder and the sticky error is a round-to-odd half-step, but a faithful"
+        "fpAway/fpSticky is PIECEWISE (awaySig's exact/round-up split, the carry"
+        "renormalization Lemma 7.2.7 needs, sticky's three branches), so the trunc bound"
+        "arm -- which reads a SINGLE floor quotient off one clean record -- needs a"
+        "genuinely new matched-rounded-value case-split before it can fire."
     depends [Domain.Fprep, Domain.Rational]
-    exposes [floorDiv, floorDivWindow, truncFitsWindow, fpTrunc, fpNegate, truncNegateSymmetric, truncKeepsExponent, truncError, truncErrorMagnitude, truncErrorMagnitudeNonneg, fpValueMagnitude, fpValueMagnitudePos, truncErrorReconstructs, truncErrorBound, truncErrorSameSign, truncComposes, awaySig, fpAway, awayNegateSymmetric, awayExpInRange, awayTruncComposes, stickyHalf, fpSticky, stickyNegateSymmetric, stickyKeepsExponent]
+    exposes [floorDiv, floorDivWindow, truncFitsWindow, fpTrunc, fpNegate, truncNegateSymmetric, truncKeepsExponent, truncError, truncErrorMagnitude, truncErrorMagnitudeNonneg, fpValueMagnitude, fpValueMagnitudePos, truncErrorReconstructs, truncErrorBound, truncErrorSameSign, truncComposes, awaySig, fpAway, awayNegateSymmetric, awayExpInRange, awayTruncComposes, awayError, awayErrorReconstructs, awayErrorBound, awayErrorSameSign, stickyHalf, fpSticky, stickyNegateSymmetric, stickyKeepsExponent, stickyError, stickyErrorReconstructs, stickyErrorBound]
     effects []
 
 fn floorDiv(a: Int, d: Int) -> Int
@@ -459,3 +471,121 @@ verify awayTruncComposes law composesToInner
     when 1 <= i
     when i <= j
     awayTruncComposes(f, i, j) holds
+
+fn awayError(f: Fp, i: Int) -> Fraction
+    ? "The away rounding error epsilon of Lemma 7.2.3 (p.19): epsilon = away(x,i) - x, the exact rational that rounding away from zero ADDS to x (away(x,i) = fpValue(fpAway(f,i)), x = fpValue(f)). Lemma 7.2.3 states away(x,i) = x + epsilon, with epsilon of the same sign as x and |epsilon| < 2^(e_x - i + 1) -- the complement of the truncation error: where trunc throws |r| away, away adds the rest of the cell |W - r|."
+    Domain.Rational.minus(Domain.Fprep.fpValue(fpAway(f, i)), Domain.Fprep.fpValue(f))
+
+verify awayError
+    awayError(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => Domain.Rational.Fraction(top = 4, bottom = 32)
+    awayError(Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), 3) => Domain.Rational.Fraction(top = 4, bottom = 32)
+    awayError(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 2) => Domain.Rational.Fraction(top = -4, bottom = 16)
+
+fn awayErrorReconstructs(f: Fp, i: Int) -> Bool
+    ? "Lemma 7.2.3 (p.19), the reconstruction half: away(x,i) = x + epsilon. Holds by definition of epsilon = away(x,i) - x; an exact-rational ring identity (the additive complement of Lemma 7.2.2's trunc(x,i) = x - epsilon)."
+    Domain.Rational.sameValue(Domain.Fprep.fpValue(fpAway(f, i)), Domain.Rational.plus(Domain.Fprep.fpValue(f), awayError(f, i)))
+
+verify awayErrorReconstructs
+    awayErrorReconstructs(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
+    awayErrorReconstructs(Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), 3) => true
+    awayErrorReconstructs(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 2) => true
+
+// Lemma 7.2.3 (p.19), reconstruction half: "away(x,i) = x + epsilon." With
+// epsilon := away(x,i) - x this is the exact-rational ring identity
+// x + (away(x,i) - x) = away(x,i). The additive complement of Lemma 7.2.2's
+// reconstruction; the paper's i is a positive integer.
+verify awayErrorReconstructs law reconstructsValue
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
+    given i: Int = [1, 2, 3]
+    when 1 <= i
+    awayErrorReconstructs(f, i) holds
+
+fn awayErrorBound(f: Fp, i: Int) -> Bool
+    ? "Lemma 7.2.3 (p.19), the strict bound: |epsilon| < 2^(e_x - i + 1). Rounding away from zero adds strictly less than one ulp(x,i) = 2^(e_x - i + 1) (Section 5.1, p.13). The away error magnitude is the complement |W - r| of the truncation remainder r (W = 2^(width-1)), strictly below W because r > 0 whenever away differs from x; e_x = f.exp on the normalized model."
+    Domain.Rational.lessThan(Domain.Rational.absFraction(awayError(f, i)), Domain.Fprep.pow2Signed(f.exp - i + 1))
+
+verify awayErrorBound
+    awayErrorBound(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
+    awayErrorBound(Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), 3) => true
+    awayErrorBound(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 2) => true
+
+// Lemma 7.2.3 (p.19), the strict bound |epsilon| < 2^(e_x - i + 1), stated EXACTLY
+// as the paper (the away analog of Lemma 7.2.2's bound) and sample-verified. It is
+// NOT yet a universal law (DEFERRED kwiatek): the trunc bound's universal arm reads
+// a SINGLE floor quotient q off the rounded value's clean record, but a faithful
+// fpAway is PIECEWISE -- awaySig case-splits exact (q) vs round-up (q+1), and the
+// carry-to-2 renormalization (required by the already-universal Lemma 7.2.7, which
+// bumps the exponent) makes the rounded value a nested match, not one record. So
+// the away error magnitude is the COMPLEMENT |W - r| of the truncation remainder r
+// (W = 2^(width-1)), strictly below W because r > 0 whenever away moves x -- a
+// closed-form q does not exist, and the bound arm needs a genuinely new
+// matched-rounded-value case-split (each branch a record, with value-uniformity
+// across the carry) before it can fire. Closing it universal is the open piece.
+// Like truncErrorBound, this bound also carries the pow2-clamp restriction: the
+// normalized model denotes the value with pow2(f.exp), which clamps to 1 for
+// exp <= 0, so the sample checks above use exp >= 0 and the eventual universal law
+// will need the general-exponent value (or the same `when 0 <= f.exp` guard).
+
+fn awayErrorSameSign(f: Fp, i: Int) -> Bool
+    ? "Lemma 7.2.3 (p.19), the sign condition: epsilon has the same sign as x -- if x < 0 then epsilon <= 0, otherwise 0 <= epsilon. Rounding away from zero increases the magnitude, so away(x,i) - x keeps x's sign (the same same-sign statement as Lemma 7.2.2's trunc error)."
+    match Domain.Rational.isNonNeg(Domain.Fprep.fpValue(f))
+        true -> Domain.Rational.isNonNeg(awayError(f, i))
+        false -> Domain.Rational.isNonPos(awayError(f, i))
+
+verify awayErrorSameSign
+    awayErrorSameSign(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
+    awayErrorSameSign(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 2) => true
+
+// Lemma 7.2.3 (p.19), the same-sign condition (epsilon has the sign of x), stated
+// EXACTLY as the paper and sample-verified. NOT yet universal (DEFERRED kwiatek):
+// like the bound, its magnitude core runs through the piecewise fpAway / awaySig
+// matches (exact vs round-up vs carry), so the trunc sign arm's single-record
+// magnitude helper does not transfer -- it needs the same matched-rounded-value
+// case-split generalization. Deferred together with awayErrorBound.
+
+fn stickyError(f: Fp, i: Int) -> Fraction
+    ? "The sticky rounding error epsilon of Lemma 7.2.4 (p.19): epsilon = sticky(x,i) - x (sticky(x,i) = fpValue(fpSticky(f,i)), x = fpValue(f)). Lemma 7.2.4 states sticky(x,i) = x + epsilon with |epsilon| < 2^(e_x - i + 1) -- and, unlike trunc/away, NO sign condition: round-to-odd may move x either way (the n-th bit is forced to 1)."
+    Domain.Rational.minus(Domain.Fprep.fpValue(fpSticky(f, i)), Domain.Fprep.fpValue(f))
+
+verify stickyError
+    stickyError(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => Domain.Rational.Fraction(top = 4, bottom = 32)
+    stickyError(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), 3) => Domain.Rational.Fraction(top = 0, bottom = 32)
+
+fn stickyErrorReconstructs(f: Fp, i: Int) -> Bool
+    ? "Lemma 7.2.4 (p.19), the reconstruction half: sticky(x,i) = x + epsilon. Holds by definition of epsilon = sticky(x,i) - x; an exact-rational ring identity."
+    Domain.Rational.sameValue(Domain.Fprep.fpValue(fpSticky(f, i)), Domain.Rational.plus(Domain.Fprep.fpValue(f), stickyError(f, i)))
+
+verify stickyErrorReconstructs
+    stickyErrorReconstructs(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
+    stickyErrorReconstructs(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), 3) => true
+    stickyErrorReconstructs(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 1) => true
+
+// Lemma 7.2.4 (p.19), reconstruction half: "sticky(x,i) = x + epsilon." With
+// epsilon := sticky(x,i) - x this is the exact-rational ring identity
+// x + (sticky(x,i) - x) = sticky(x,i). The paper's i is a positive integer.
+verify stickyErrorReconstructs law reconstructsValue
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
+    given i: Int = [1, 2, 3]
+    when 1 <= i
+    stickyErrorReconstructs(f, i) holds
+
+fn stickyErrorBound(f: Fp, i: Int) -> Bool
+    ? "Lemma 7.2.4 (p.19), the strict bound: |epsilon| < 2^(e_x - i + 1). Round-to-odd sticky changes x by strictly less than one ulp(x,i) = 2^(e_x - i + 1) (Section 5.1, p.13); e_x = f.exp on the normalized model."
+    Domain.Rational.lessThan(Domain.Rational.absFraction(stickyError(f, i)), Domain.Fprep.pow2Signed(f.exp - i + 1))
+
+verify stickyErrorBound
+    stickyErrorBound(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
+    stickyErrorBound(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), 3) => true
+    stickyErrorBound(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 2) => true
+
+// Lemma 7.2.4 (p.19), the strict bound |epsilon| < 2^(e_x - i + 1), stated EXACTLY
+// as the paper and sample-verified. NOT yet universal (DEFERRED kwiatek): the
+// round-to-odd fpSticky is even further from the trunc bound arm -- THREE branches
+// (n <= 1, exact, last-bit forced to 1) and a half-cell scaled by 2^(n-2), so the
+// error is neither the trunc remainder r nor the away complement W - r but a
+// round-to-odd half-step. Closing it universal needs the matched-rounded-value
+// generalization plus a round-to-odd remainder shape -- a genuinely new piece.
+// Like truncErrorBound, this bound also carries the pow2-clamp restriction: the
+// normalized model denotes the value with pow2(f.exp), which clamps to 1 for
+// exp <= 0, so the sample checks above use exp >= 0 and the eventual universal law
+// will need the general-exponent value (or the same `when 0 <= f.exp` guard).
