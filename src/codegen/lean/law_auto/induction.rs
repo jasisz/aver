@@ -2404,6 +2404,40 @@ fn substitute_idents(
             args.iter().map(|x| substitute_idents(x, map)).collect(),
         ),
         Expr::Attr(b, f) => Expr::Attr(Box::new(substitute_idents(b, map)), f.clone()),
+        // Record construction / update: a value-level fn (`fpValue`, `fpTrunc`)
+        // whose body builds a record must have its FIELD expressions substituted
+        // too, or a parameter referenced only inside a field (e.g. `fpTrunc`'s
+        // `n` inside `sigBits = floorDiv(.. pow2(n-1) ..)`) would survive
+        // un-renamed — the catch-all `other.clone()` did not recurse here.
+        Expr::RecordCreate { type_name, fields } => Expr::RecordCreate {
+            type_name: type_name.clone(),
+            fields: fields
+                .iter()
+                .map(|(fname, v)| (fname.clone(), substitute_idents(v, map)))
+                .collect(),
+        },
+        Expr::RecordUpdate {
+            type_name,
+            base,
+            updates,
+        } => Expr::RecordUpdate {
+            type_name: type_name.clone(),
+            base: Box::new(substitute_idents(base, map)),
+            updates: updates
+                .iter()
+                .map(|(fname, v)| (fname.clone(), substitute_idents(v, map)))
+                .collect(),
+        },
+        Expr::Match { subject, arms } => Expr::Match {
+            subject: Box::new(substitute_idents(subject, map)),
+            arms: arms
+                .iter()
+                .map(|arm| crate::ast::MatchArm {
+                    body: Box::new(substitute_idents(&arm.body, map)),
+                    ..arm.clone()
+                })
+                .collect(),
+        },
         other => other.clone(),
     };
     Spanned::bare(node)
@@ -2709,6 +2743,14 @@ enum RationalFloorShape {
     NonnegPos,
     /// subject body is `match <pred-call> { true -> …; false -> … }`.
     Sign,
+    /// subject body is the rational-order truncation-error bound
+    /// `lessThan(absFraction(minus(fpValue(F), fpValue(G))), pow2Signed(LE))`
+    /// (Lemma 7.2.2's strict bound). `G` is the rounded value of `F`; the
+    /// bound arm factors the error magnitude, splits the `pow2Signed` sign
+    /// branch, CITES the floor window + power-of-two homomorphism pool laws,
+    /// and multiplies the cited window remainder bound by the positive product
+    /// factor (the generic multiply-by-positive rung).
+    Bound,
 }
 
 /// The power-of-two fn (Lean name) reachable in this law's cone, if any. Tries
@@ -2764,6 +2806,20 @@ fn rational_floor_shape(
     rf_pow2_fn(vb, law, ctx)?;
     let inlined = inline_fn_call(&law.lhs, ctx)?;
     let is_zero = |e: &Expr| matches!(e, Expr::Literal(Literal::Int(0)));
+    // The rational-order bound `lessThan(absFraction(_), pow2Signed(_))`: a
+    // `lessThan` whose left arg is an `absFraction` and right arg a `pow2Signed`.
+    // Name-blind (basename match), keyed on the call shape; the `Bound` arm
+    // below extracts the float / precision givens and the rounded value from it.
+    if let Expr::FnCall(callee, args) = &inlined.node
+        && rf_callee_basename(callee).as_deref() == Some("lessThan")
+        && args.len() == 2
+        && matches!(&args[0].node, Expr::FnCall(c, a)
+            if rf_callee_basename(c).as_deref() == Some("absFraction") && a.len() == 1)
+        && matches!(&args[1].node, Expr::FnCall(c, a)
+            if rf_callee_basename(c).as_deref() == Some("pow2Signed") && a.len() == 1)
+    {
+        return Some(RationalFloorShape::Bound);
+    }
     match &inlined.node {
         Expr::BinOp(BinOp::Gte | BinOp::Gt, _l, r) if is_zero(&r.node) => {
             Some(RationalFloorShape::NonnegPos)
@@ -2778,6 +2834,12 @@ fn rational_floor_shape(
         }
         _ => None,
     }
+}
+
+/// Basename of a call's callee (last dotted component), or `None` if the callee
+/// is not a name.
+fn rf_callee_basename(callee: &crate::ast::Spanned<crate::ast::Expr>) -> Option<String> {
+    super::shared::expr_dotted_name(callee).map(|n| rf_bare_basename(&n).to_string())
 }
 
 /// Flatten a left-folded `Bool.and(a, b)` premise (how the parser composes
@@ -3061,6 +3123,395 @@ fn rf_citations(
     out
 }
 
+/// Emit a Lean string for an inlined sub-expression (used to derive the
+/// float-format field accessors and the floor term from the recognized shape —
+/// produced from the SAME definitions the goal unfolds, so they parse-match).
+fn rf_emit(ctx: &CodegenContext, e: &crate::ast::Spanned<crate::ast::Expr>) -> String {
+    super::super::expr::emit_expr_legacy(e, ctx, None)
+}
+
+/// One-level inline of a fn call, resolving the callee across the entry module
+/// AND dependency modules (unlike [`inline_fn_call`], which only resolves entry
+/// scope — a cross-module `fpValue` call would not resolve there). Substitutes
+/// the call's args for the resolved fn's params in its tail body.
+fn rf_inline_fn_call(
+    call: &crate::ast::Spanned<crate::ast::Expr>,
+    ctx: &CodegenContext,
+) -> Option<crate::ast::Spanned<crate::ast::Expr>> {
+    use crate::ast::Expr;
+    let Expr::FnCall(callee, args) = &call.node else {
+        return None;
+    };
+    let name = super::shared::expr_dotted_name(callee)?;
+    let fd = rf_resolve_fn(ctx, &name)?;
+    if fd.params.len() != args.len() {
+        return None;
+    }
+    let body = fd.body.tail_expr()?;
+    let mut map: std::collections::HashMap<String, crate::ast::Spanned<crate::ast::Expr>> =
+        std::collections::HashMap::new();
+    for ((pname, _), arg) in fd.params.iter().zip(args.iter()) {
+        map.insert(pname.clone(), arg.clone());
+    }
+    Some(substitute_idents(body, &map))
+}
+
+/// The four float-format value accessors (`f.sign`, `f.sigBits`, `f.exp`,
+/// `f.width` as emitted Lean strings) read off the inlined `fpValue(F)` body
+/// `Fraction(top = F.sign * F.sigBits * pow(F.exp), bottom = pow(F.width - 1))`.
+/// Name-blind — derived from `fpValue`'s own definition, never hard-coded.
+struct RfFpFields {
+    sign: String,
+    sig: String,
+    exp: String,
+    width: String,
+}
+
+fn rf_fpvalue_fields(
+    frac: &crate::ast::Spanned<crate::ast::Expr>,
+    ctx: &CodegenContext,
+) -> Option<RfFpFields> {
+    use crate::ast::{BinOp, Expr};
+    let Expr::RecordCreate { fields, .. } = &frac.node else {
+        return None;
+    };
+    let top = fields.iter().find(|(n, _)| n == "top").map(|(_, e)| e)?;
+    let bottom = fields.iter().find(|(n, _)| n == "bottom").map(|(_, e)| e)?;
+    // bottom = pow(Sub(Attr(F, width), _))
+    let Expr::FnCall(_, bargs) = &bottom.node else {
+        return None;
+    };
+    let Expr::BinOp(BinOp::Sub, wbase, _) = &bargs.first()?.node else {
+        return None;
+    };
+    // top = Mul(Mul(Attr(F, sign), Attr(F, sig)), pow(Attr(F, exp)))
+    let Expr::BinOp(BinOp::Mul, l, r) = &top.node else {
+        return None;
+    };
+    let Expr::BinOp(BinOp::Mul, sign_b, sig_b) = &l.node else {
+        return None;
+    };
+    let Expr::FnCall(_, eargs) = &r.node else {
+        return None;
+    };
+    let exp_b = eargs.first()?;
+    Some(RfFpFields {
+        sign: rf_emit(ctx, sign_b),
+        sig: rf_emit(ctx, sig_b),
+        exp: rf_emit(ctx, exp_b),
+        width: rf_emit(ctx, wbase),
+    })
+}
+
+/// The earlier-in-source sibling FLOOR WINDOW law to cite: a `holds` law whose
+/// givens are a prefix of this law's and whose inlined body is a `Bool.and` of
+/// two comparisons (the Euclidean window `W*q <= N ∧ N < W*(q+1)`). Returns its
+/// Lean theorem name and the unfold target. Name-blind (keyed on the body
+/// shape), deterministic (source order).
+fn rf_window_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<(String, String)> {
+    use crate::ast::{BinOp, Expr, TopLevel, VerifyKind};
+    let is_cmp = |e: &Expr| {
+        matches!(
+            e,
+            Expr::BinOp(BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte, _, _)
+        )
+    };
+    for item in &ctx.items {
+        let TopLevel::Verify(prev) = item else {
+            continue;
+        };
+        if prev.line == vb.line && prev.fn_name == vb.fn_name {
+            break; // earlier-in-source only
+        }
+        let VerifyKind::Law(prev_law) = &prev.kind else {
+            continue;
+        };
+        if !matches!(
+            &prev_law.rhs.node,
+            Expr::Literal(crate::ast::Literal::Bool(true))
+        ) {
+            continue;
+        }
+        if prev_law.givens.len() > law.givens.len()
+            || !prev_law
+                .givens
+                .iter()
+                .zip(law.givens.iter())
+                .all(|(a, b)| a.name == b.name && a.type_name.trim() == b.type_name.trim())
+        {
+            continue;
+        }
+        let Some(inlined) = inline_fn_call(&prev_law.lhs, ctx) else {
+            continue;
+        };
+        let Expr::FnCall(callee, args) = &inlined.node else {
+            continue;
+        };
+        if super::shared::expr_dotted_name(callee).as_deref() != Some("Bool.and") || args.len() != 2
+        {
+            continue;
+        }
+        if !is_cmp(&args[0].node) || !is_cmp(&args[1].node) {
+            continue;
+        }
+        let thm = format!("{}_law_{}", aver_name_to_lean(&prev.fn_name), prev_law.name);
+        let unfold = format!("_root_.{}", aver_name_to_lean(&prev.fn_name));
+        return Some((thm, unfold));
+    }
+    None
+}
+
+/// The power-of-two HOMOMORPHISM pool law's Lean theorem name (`pow(m+n) =
+/// pow(m)*pow(n)`), found by shape over the in-file laws and dep-module law
+/// pools. Name-blind: matches any law whose subject is the `pow` fn and whose
+/// claim's rhs is a product of two `pow` calls. The dep-module name is qualified
+/// with the module prefix (`Domain.Fprep.pow2_law_homomorphism`).
+fn rf_homomorphism_name(ctx: &CodegenContext, pow_lean: &str) -> Option<String> {
+    use crate::ast::{BinOp, Expr, TopLevel, VerifyKind};
+    let pow_base = rf_bare_basename(pow_lean);
+    let is_hom = |lw: &VerifyLaw| -> bool {
+        // rhs is `pow(_) * pow(_)`.
+        if let Expr::BinOp(BinOp::Mul, a, b) = &lw.rhs.node {
+            let is_pow_call = |e: &Expr| {
+                matches!(e, Expr::FnCall(c, _)
+                    if super::shared::expr_dotted_name(c)
+                        .as_deref()
+                        .map(rf_bare_basename) == Some(pow_base))
+            };
+            return is_pow_call(&a.node) && is_pow_call(&b.node);
+        }
+        false
+    };
+    // In-file (entry module) first.
+    for item in &ctx.items {
+        if let TopLevel::Verify(prev) = item
+            && let VerifyKind::Law(prev_law) = &prev.kind
+            && rf_bare_basename(&prev.fn_name) == pow_base
+            && is_hom(prev_law)
+        {
+            return Some(format!(
+                "{}_law_{}",
+                aver_name_to_lean(&prev.fn_name),
+                prev_law.name
+            ));
+        }
+    }
+    // Dep modules — qualify with the module prefix.
+    for m in &ctx.modules {
+        for prev in &m.verify_laws {
+            if let VerifyKind::Law(prev_law) = &prev.kind
+                && rf_bare_basename(&prev.fn_name) == pow_base
+                && is_hom(prev_law)
+            {
+                return Some(format!(
+                    "{}.{}_law_{}",
+                    m.prefix,
+                    aver_name_to_lean(&prev.fn_name),
+                    prev_law.name
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// The rational-order truncation-error bound arm (Lemma 7.2.2's strict bound
+/// `|epsilon| < 2^(e_x - i + 1)`). Mirrors the de-risked litmus-clean proof: it
+/// factors the error magnitude (the sign cancels, the floor remainder is the
+/// nonneg core), splits the `pow2Signed` ulp-exponent sign branch, CITES the
+/// floor window pool law for the strict remainder bound `r < W` and the
+/// power-of-two homomorphism pool law for the ulp/significand exponent link, and
+/// MULTIPLIES the window bound by the positive product factor via the generic
+/// multiply-by-positive rung in `aver_int_order`. The algebra lives ENTIRELY in
+/// the two cited Aver laws; the arm only factors / sign-splits / multiplies /
+/// ring-bridges (`grind`). Returns `None` (decline → bounded fallback) on any
+/// structural surprise — credit stays fail-closed behind the probe + axiom
+/// whitelist.
+fn emit_rational_floor_bound(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<AutoProof> {
+    use crate::ast::Expr;
+    let pow = rf_pow2_fn(vb, law, ctx)?;
+    // Walk the recognized shape:
+    //   lessThan(absFraction(truncError(F, I)), pow2Signed(LE))
+    //   truncError(F, I)  ↦  minus(fpValue(F), fpValue(G)),  G = rounded(F, I)
+    let inlined = inline_fn_call(&law.lhs, ctx)?;
+    let Expr::FnCall(_lt, lt_args) = &inlined.node else {
+        return None;
+    };
+    if lt_args.len() != 2 {
+        return None;
+    }
+    let Expr::FnCall(_abs, abs_args) = &lt_args[0].node else {
+        return None;
+    };
+    let err_call = abs_args.first()?;
+    let Expr::FnCall(_ps, ps_args) = &lt_args[1].node else {
+        return None;
+    };
+    let le_expr = ps_args.first()?;
+    // truncError(F, I): grab the float / precision givens directly.
+    let Expr::FnCall(_te, te_args) = &err_call.node else {
+        return None;
+    };
+    if te_args.len() != 2 {
+        return None;
+    }
+    let f_name = expr_var_name(&te_args[0].node)?.to_string();
+    let i_name = expr_var_name(&te_args[1].node)?.to_string();
+    // truncError ↦ minus(fpValue(F), fpValue(G)).
+    let minus_inlined = rf_inline_fn_call(err_call, ctx)?;
+    let Expr::FnCall(_m, m_args) = &minus_inlined.node else {
+        return None;
+    };
+    if m_args.len() != 2 {
+        return None;
+    }
+    let rounded_call = match &m_args[1].node {
+        Expr::FnCall(_, fv_args) => fv_args.first()?,
+        _ => return None,
+    };
+    // fpValue(F) ↦ Fraction record: read the field accessors off it.
+    let fpv_f = rf_inline_fn_call(&m_args[0], ctx)?;
+    let fields = rf_fpvalue_fields(&fpv_f, ctx)?;
+    // rounded(F, I) ↦ Fp record: the rounded significand integer (the floor q).
+    let rounded_rec = rf_inline_fn_call(rounded_call, ctx)?;
+    let Expr::RecordCreate {
+        fields: rf_fields, ..
+    } = &rounded_rec.node
+    else {
+        return None;
+    };
+    let q_spanned = rf_fields
+        .iter()
+        .find(|(n, _)| n == "sigBits")
+        .map(|(_, e)| e)?;
+    let q = rf_emit(ctx, q_spanned);
+    let le = rf_emit(ctx, le_expr);
+
+    // The cited pool laws.
+    let (window_thm, window_fn) = rf_window_law(vb, law, ctx)?;
+    let hom = rf_homomorphism_name(ctx, &pow)?;
+    let defs = rf_filtered_defs(ctx, vb, law).join(", ");
+
+    // The format predicate conjunct (its leading disjunction is the float sign).
+    let when = law.when.as_ref()?;
+    let conjs = rf_flatten_bool_and(when);
+    let sign_conj = rf_sign_conjunct(law, ctx)?;
+    let fmt_idx = conjs
+        .iter()
+        .position(|c| arith_eq(&c.node, &sign_conj.node))?;
+    let isfp_lean = match &sign_conj.node {
+        Expr::FnCall(callee, _) => aver_name_to_lean(&super::shared::expr_dotted_name(callee)?),
+        _ => return None,
+    };
+    let n = conjs.len();
+    let mut pat = "h_rfbp0".to_string();
+    for k in 1..n {
+        pat = format!("⟨{pat}, h_rfbp{k}⟩");
+    }
+    let fmtname = format!("h_rfbp{fmt_idx}");
+
+    // The power-of-two positivity support, scoped to a fresh per-law prefix.
+    let base = format!("{}_law_{}__rfb", aver_name_to_lean(&vb.fn_name), law.name);
+    let support_lines: Vec<String> = super::floor_window::pow_pos_support(&base, &pow)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+
+    // Derived sub-expression strings (all from the cone defs, so they parse-match
+    // the unfolded goal).
+    let pe = format!("{pow} ({})", fields.exp);
+    let pw = format!("{pow} ({} - 1)", fields.width);
+    let pp = format!("{pow} ({i_name} - 1)");
+    let pr = format!("{pow} (0 - ({le}))");
+    let ple = format!("{pow} ({le})");
+    let sgn = &fields.sign;
+    let sig = &fields.sig;
+    let exa = &fields.exp;
+    let r = format!("{sig} * {pp} - {pw} * {q}");
+    let num = format!("{sgn} * {sig} * {pe} * {pp} - {sgn} * {q} * {pe} * {pw}");
+
+    let intro = format!("  intro {} h_when", intro_names.join(" "));
+    let mut body: Vec<String> = vec![intro, "  first".to_string(), "  | (".to_string()];
+    body.push("    simp only [Bool.and_eq_true, decide_eq_true_eq] at h_when".to_string());
+    body.push(format!("    obtain {pat} := h_when"));
+    body.push(format!("    have hP : 0 < {pp} := {base}__pow_pos _"));
+    body.push(format!("    have hW : 0 < {pw} := {base}__pow_pos _"));
+    body.push(format!("    have hpe : 0 < {pe} := {base}__pow_pos _"));
+    body.push(format!(
+        "    have hWP : 0 < {pw} * {pp} := Int.mul_pos hW hP"
+    ));
+    body.push(format!("    have h_win := {window_thm} {f_name} {i_name}"));
+    body.push(format!(
+        "    simp only [{window_fn}, Bool.and_eq_true, decide_eq_true_eq] at h_win"
+    ));
+    body.push(format!(
+        "    have hr0 : 0 ≤ {r} := by have := h_win.1; omega"
+    ));
+    body.push(format!(
+        "    have hrW : {r} < {pw} := by have hexp : {pw} * ({q} + 1) = {pw} * {q} + {pw} := (by rw [Int.mul_add, Int.mul_one]); have := h_win.2; omega"
+    ));
+    body.push(format!("    have hsign : {sgn} = 1 ∨ {sgn} = -1 := by unfold {isfp_lean} at {fmtname}; simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq] at {fmtname}; exact {fmtname}.1"));
+    body.push(format!("    simp only [{defs}, decide_eq_true_eq]"));
+    body.push(format!(
+        "    have habsN : (if {num} < 0 then 0 - ({num}) else {num}) = {pe} * ({r}) := by have hfact : {num} = {sgn} * ({pe} * ({r})) := (by grind); have hnn : 0 ≤ {pe} * ({r}) := Int.mul_nonneg (by omega) hr0; rw [hfact]; rcases hsign with h | h <;> rw [h] <;> split <;> omega"
+    ));
+    body.push("    rw [habsN]".to_string());
+    body.push(format!(
+        "    rw [if_neg (show ¬ ({pw} * {pp} < 0) by omega)]"
+    ));
+    body.push(format!("    by_cases hk : {le} < 0"));
+    // k < 0 branch
+    body.push("    · rw [if_pos hk]; dsimp only".to_string());
+    body.push(format!("      have hRb : 0 < {pr} := {base}__pow_pos _"));
+    body.push(format!(
+        "      have hlink : {pe} * {pr} = {pp} := by have h := {hom} ({exa}) (0 - ({le})) (by simp only [Bool.and_eq_true, ge_iff_le, decide_eq_true_eq]; omega); rw [show {exa} + (0 - ({le})) = {i_name} - 1 by omega] at h; omega"
+    ));
+    body.push(format!(
+        "      have lhs_eq : {pe} * ({r}) * ({pw} * {pp}) * ({pr} * {pr}) = {pe} * ({pw} * {pp}) * ({pr} * {pr}) * ({r}) := by grind"
+    ));
+    body.push(format!(
+        "      have rhs_eq : 1 * {pr} * (({pw} * {pp}) * ({pw} * {pp})) = {pe} * ({pw} * {pp}) * ({pr} * {pr}) * {pw} := by rw [← hlink]; grind"
+    ));
+    body.push("      rw [lhs_eq, rhs_eq]; aver_int_order".to_string());
+    // k >= 0 branch
+    body.push("    · rw [if_neg hk]; dsimp only".to_string());
+    body.push(format!(
+        "      have hlink : {ple} * {pp} = {pe} := by have h := {hom} ({le}) ({i_name} - 1) (by simp only [Bool.and_eq_true, ge_iff_le, decide_eq_true_eq]; omega); rw [show ({le}) + ({i_name} - 1) = {exa} by omega] at h; omega"
+    ));
+    body.push(format!(
+        "      have lhs_eq : {pe} * ({r}) * ({pw} * {pp}) * (1 * 1) = {pe} * ({pw} * {pp}) * ({r}) := by grind"
+    ));
+    body.push(format!(
+        "      have rhs_eq : {ple} * 1 * (({pw} * {pp}) * ({pw} * {pp})) = {pe} * ({pw} * {pp}) * {pw} := by rw [← hlink]; grind"
+    ));
+    body.push("      rw [lhs_eq, rhs_eq]; aver_int_order".to_string());
+    body.push("  )".to_string());
+
+    let floor = if super::super::tactic_ir::speculative::probing() {
+        let id = format!("{}.{}", vb.fn_name, law.name);
+        super::super::tactic_ir::speculative::record_probed(&id);
+        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
+    } else {
+        "  | sorry".to_string()
+    };
+    body.push(floor);
+
+    Some(AutoProof {
+        support_lines,
+        body: Tactic::raw(body),
+        replaces_theorem: false,
+    })
+}
+
 /// The rational-over-floor sign/magnitude keystone arm. Returns the full
 /// auto-proof (support stack + body) or `None` to fall through to the generic
 /// keystone emission.
@@ -3071,6 +3522,12 @@ fn emit_rational_floor_family(
     intro_names: &[String],
 ) -> Option<AutoProof> {
     let shape = rational_floor_shape(vb, law, ctx)?;
+    // The rational-order truncation-error bound (Lemma 7.2.2) has its own
+    // dedicated arm: factor + sign-split + cite-window + cite-homomorphism +
+    // multiply-by-positive, none of which the NonnegPos / Sign skeletons cover.
+    if shape == RationalFloorShape::Bound {
+        return emit_rational_floor_bound(vb, law, ctx, intro_names);
+    }
     let pow = rf_pow2_fn(vb, law, ctx)?;
     let citations = rf_citations(vb, law, ctx, intro_names);
     let defs = rf_filtered_defs(ctx, vb, law).join(", ");
@@ -3129,6 +3586,10 @@ fn emit_rational_floor_family(
             steps.push(format!("simp only [{defs}]"));
             steps.push("rcases h_rfsign.1 with hs | hs <;> simp only [hs] <;> grind".to_string());
             format!("  | ({})", steps.join("; "))
+        }
+        // Handled by the dedicated arm above (early return); never reached here.
+        RationalFloorShape::Bound => {
+            unreachable!("Bound shape handled by emit_rational_floor_bound")
         }
     };
 

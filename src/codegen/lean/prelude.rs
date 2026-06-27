@@ -950,7 +950,22 @@ goal directly from `a ≤ b` / `0 ≤ c` and never spawns `0 ≤ b`; on the squa
 shapes (`e*e ≤ b*b`, the contraction's `s²` bound) its shared-right-factor
 unification fails fast (the two right factors differ), so `mul_le_mul` still
 takes them — and any genuine `0 ≤ b` leaf there is closed by the early `omega`
-rung from that family's `0 ≤ e ≤ b` guards. -/
+rung from that family's `0 ≤ e ≤ b` guards.
+
+The MULTIPLY-BY-POSITIVE rungs (`mul_lt_mul_of_pos_left` / `_right` for a strict
+product order `m*a < m*b` / `a*m < b*m`, and `mul_le_mul_of_nonneg_left` for the
+nonstrict `m*a ≤ m*b`) sit LAST, after the `<=`-conclusion rungs. They are the
+generic non-recursive composition step `omega`/`grind` cannot do — multiplying an
+inequality `a < b` by a positive factor `m` — and close any goal already in the
+multiplied form `m*a < m*b` from `a < b` (`assumption`) and `0 < m` (the
+`mul_pos` recursion on the positive factor). The rational-floor truncation-error
+bound (Lemma 7.2.2) ring-bridges its goal into exactly that shape and hands it to
+this rung; the same rung is the general non-recursive `mulLeTrans`/`fpMulValue`
+composition step. Placed last so their strict (`<`) conclusion never shadows a
+`<=`/`0 <=`/`0 <` goal the earlier rungs own (a strict-conclusion lemma cannot
+unify with a non-strict goal, but keeping them last also keeps the common
+nonneg/positivity search shallow and the output byte-identical for corpora that
+never hit a multiplied-form goal). -/
 syntax "aver_int_order" : tactic
 macro_rules
   | `(tactic| aver_int_order) => `(tactic|
@@ -962,6 +977,9 @@ macro_rules
         | (apply Int.mul_pos <;> aver_int_order)
         | (apply Int.mul_le_mul_of_nonneg_right <;> aver_int_order)
         | (apply Int.mul_le_mul <;> aver_int_order)
+        | (apply Int.mul_lt_mul_of_pos_left <;> aver_int_order)
+        | (apply Int.mul_lt_mul_of_pos_right <;> aver_int_order)
+        | (apply Int.mul_le_mul_of_nonneg_left <;> aver_int_order)
         | (obtain ⟨hl, hr⟩ := ‹_ ∧ _›; aver_int_order))"#;
 
 #[cfg(test)]

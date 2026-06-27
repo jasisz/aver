@@ -231,6 +231,31 @@ verify truncErrorBound
     truncErrorBound(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 2) => true
     truncErrorBound(Domain.Fprep.Fp(sign = 1, sigBits = 9, exp = 0, width = 4), 3) => true
 
+// Lemma 7.2.2 (p.19), the strict bound: "|epsilon| < 2^(e_x - i + 1)" -- the
+// truncation discards strictly less than one ulp. Stated EXACTLY as the paper's
+// signed power of two (pow2Signed denotes 2^k for any integer k). RESTRICTED to
+// nonnegative exponents (the added `when 0 <= f.exp`): this normalized model
+// denotes the value with pow2(f.exp), which CLAMPS to 1 for exp <= 0, so for
+// exp < 0 the modelled value is wrong and the bound genuinely fails (e.g.
+// f = {sign 1, sigBits 13, exp -5, width 4}, i 3 gives |eps| = 4/32, not
+// < 1/128). The unrestricted paper lemma needs the general-exponent value (the
+// fraction form with pow2Signed for negative exp) -- a separate follow-up the
+// whole float corpus shares; we do NOT claim it here. Proven universal by the
+// rational-floor-bound keystone arm: it factors |epsilon|'s numerator
+// (sign * 2^(e_x) * remainder), splits the ulp-exponent sign, CITES
+// truncFitsWindow's euclideanWindow (the strict floor remainder r < 2^(width-1))
+// and pow2's homomorphism (the exponent link 2^(e_x) = 2^(e_x-i+1) * 2^(i-1)),
+// and MULTIPLIES the cited window bound by the positive product factor (the
+// generic multiply-by-positive rung). The algebra lives entirely in the two
+// cited Aver laws -- no per-figure proof.
+verify truncErrorBound law strictBound
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
+    given i: Int = [1, 2, 3]
+    when Domain.Fprep.isFp(f)
+    when 1 <= i
+    when 0 <= f.exp
+    truncErrorBound(f, i) holds
+
 fn truncErrorSameSign(f: Fp, i: Int) -> Bool
     ? "Lemma 7.2.2 (p.19), the sign condition: epsilon has the same sign as x -- if x < 0 then epsilon <= 0, otherwise 0 <= epsilon. Truncation toward zero never overshoots, so x - trunc(x,i) keeps x's sign."
     match Domain.Rational.isNonNeg(Domain.Fprep.fpValue(f))
