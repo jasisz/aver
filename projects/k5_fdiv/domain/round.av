@@ -1,21 +1,39 @@
 module Round
     intent =
-        "Rounding module of the K5 division proof: the paper's trunc procedure"
-        "(Section 5.2, p.13) on the Stage-1 normalized representation. The paper"
-        "defines trunc(x, n) = sigma_x * truncn(s_x, n) * 2^(e_x), where the"
-        "significand truncation is truncn(s, n) = floor(s * 2^(n-1)) / 2^(n-1)"
-        "(Section 5.1, p.11). On the normalized model a value is sigma * sigBits *"
-        "2^exp / 2^(width-1) with s_x = sigBits / 2^(width-1) in [1,2), so the"
-        "truncated significand INTEGER (the n-bit significand scaled by 2^(n-1)) is"
-        "floor(sigBits * 2^(n-1) / 2^(width-1)) -- a single Euclidean floor division."
-        "trunc keeps the sign and the stored exponent and sets the width to n; using"
-        "the STORED exponent sidesteps the recursive binary-exponent function, and is"
-        "exactly faithful because the model is already normalized (s_x in [1,2))."
-        "Landed universal on the Lean kernel: Lemma 7.2.1 (p.19) -- trunc is"
-        "sign-symmetric, trunc(-x,i) = -trunc(x,i); and Lemma 7.2.6 (p.19) -- trunc"
-        "keeps the exponent of a non-zero x."
+        "Rounding module of the K5 division proof: the paper's three rounding"
+        "procedures trunc, away and sticky (Section 5.2, p.13) on the Stage-1"
+        "normalized representation. The paper defines each as an operation on the"
+        "significand, signed and scaled: round(x,n) = sigma_x * roundn(s_x,n) *"
+        "2^(e_x), where the significand truncation is truncn(s,n) = floor(s*2^(n-1))"
+        "/ 2^(n-1) (Section 5.1, p.11). On the normalized model a value is sigma *"
+        "sigBits * 2^exp / 2^(width-1) with s_x = sigBits / 2^(width-1) in [1,2), so"
+        "the truncated significand INTEGER (the n-bit significand scaled by 2^(n-1))"
+        "is floor(sigBits * 2^(n-1) / 2^(width-1)) -- a single Euclidean floor"
+        "division. trunc keeps the sign and the stored exponent and sets the width"
+        "to n; using the STORED exponent sidesteps the recursive binary-exponent"
+        "function, and is exactly faithful because the model is already normalized"
+        "(s_x in [1,2))."
+        "away(x,n) (Section 5.2, p.13) rounds the significand AWAY from zero:"
+        "awayn(s,n) = s if truncn(s,n) = s, else truncn(s,n) + 2^(1-n) -- truncn"
+        "rounded up. Its integer significand is awaySig(f,n) (= awayn*2^(n-1), the"
+        "ceiling of sigBits*2^(n-1) / 2^(width-1)); when rounding up carries the"
+        "significand to 2 the result is renormalized value-preservingly (exponent"
+        "+1), exactly like fpMul, so the stored exponent stays the true exponent."
+        "sticky(x,n) is modelled in the FAITHFUL round-to-odd (RTL/rto) TRUNCATING"
+        "form of the ACL2 RTL lineage (rel1 lib1/round.lisp `defun sticky`, Russinoff"
+        "AMD 1996-98; renamed `rto` in rel11) -- NOT the draft paper's printed stickyn"
+        "branch, which is a known transcription typo (it returns x unchanged when the"
+        "kept bit is already 1, falsifying Lemma 7.3.2 Sticky Plus on ~17% of cases)."
+        "RTL sticky truncates to n-1 bits then forces the n-th bit to 1, which keeps"
+        "the significand strictly below 2 -- sticky never carries."
+        "Landed universal on the Lean kernel: Lemma 7.2.1 (p.19) -- trunc, away and"
+        "sticky are all sign-symmetric, round(-x,i) = -round(x,i) ('Analogous lemmas"
+        "hold for away and sticky'); Lemma 7.2.6 (p.19) -- trunc keeps the exponent of"
+        "a non-zero x; Lemma 7.2.7 (p.19) -- e(away(x,i)) is e_x or 1+e_x (the"
+        "[e_x, e_x+1] range); and Lemma 7.2.8 (p.19) -- e(sticky(x,i)) = e_x, sticky keeps"
+        "the exponent. Deferred (kwiatki): the away/sticky error bounds 7.2.3/7.2.4."
     depends [Domain.Fprep, Domain.Rational]
-    exposes [floorDiv, floorDivWindow, truncFitsWindow, fpTrunc, fpNegate, truncNegateSymmetric, truncKeepsExponent, truncError, truncErrorMagnitude, truncErrorMagnitudeNonneg, fpValueMagnitude, fpValueMagnitudePos, truncErrorReconstructs, truncErrorBound, truncErrorSameSign]
+    exposes [floorDiv, floorDivWindow, truncFitsWindow, fpTrunc, fpNegate, truncNegateSymmetric, truncKeepsExponent, truncError, truncErrorMagnitude, truncErrorMagnitudeNonneg, fpValueMagnitude, fpValueMagnitudePos, truncErrorReconstructs, truncErrorBound, truncErrorSameSign, awaySig, fpAway, awayNegateSymmetric, awayExpInRange, stickyHalf, fpSticky, stickyNegateSymmetric, stickyKeepsExponent]
     effects []
 
 fn floorDiv(a: Int, d: Int) -> Int
@@ -206,3 +224,134 @@ verify truncErrorSameSign law signCondition
     when Domain.Fprep.isFp(f)
     when 1 <= i
     truncErrorSameSign(f, i) holds
+
+fn awaySig(f: Fp, n: Int) -> Int
+    ? "awayn(s_x, n) scaled to the n-bit significand integer (Section 5.2, p.13): the paper's awayn(s,n) = s if truncn(s,n) = s, else truncn(s,n) + 2^(1-n). Scaled by 2^(n-1) this is floor(sigBits*2^(n-1) / 2^(width-1)) when the truncation is exact (sigBits*2^(n-1) divides evenly by 2^(width-1)) and that floor + 1 otherwise -- i.e. the significand rounded UP (the ceiling, away from zero) to the next integer. This is the literal awayn(s_x,n)*2^(n-1)."
+    match f.sigBits * Domain.Fprep.pow2(n - 1) == Domain.Fprep.pow2(f.width - 1) * floorDiv(f.sigBits * Domain.Fprep.pow2(n - 1), Domain.Fprep.pow2(f.width - 1))
+        true -> floorDiv(f.sigBits * Domain.Fprep.pow2(n - 1), Domain.Fprep.pow2(f.width - 1))
+        false -> floorDiv(f.sigBits * Domain.Fprep.pow2(n - 1), Domain.Fprep.pow2(f.width - 1)) + 1
+
+verify awaySig
+    awaySig(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => 7
+    awaySig(Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), 3) => 8
+    awaySig(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), 3) => 6
+
+fn fpAway(f: Fp, n: Int) -> Fp
+    ? "away(x, n) (Section 5.2, p.13): away(x,n) = sigma_x * awayn(s_x,n) * 2^(e_x), rounding the significand AWAY from zero to n bits. The away significand integer is awaySig(f,n); the sign and exponent are carried through and the width becomes n. When rounding up carries the significand to 2 (awaySig = 2^n, i.e. awayn = 2) the result is renormalized value-preservingly to sigBits = 2^(n-1), exponent e_x + 1 -- so the STORED exponent is the TRUE exponent e(away(x,n)) (Lemma 7.2.7). Renormalization preserves the denoted value exactly, like fpMul's; fpValue(fpAway(f,n)) is exactly the paper's away(x,n)."
+    match awaySig(f, n) == Domain.Fprep.pow2(n)
+        true -> Domain.Fprep.Fp(sign = f.sign, sigBits = Domain.Fprep.pow2(n - 1), exp = f.exp + 1, width = n)
+        false -> Domain.Fprep.Fp(sign = f.sign, sigBits = awaySig(f, n), exp = f.exp, width = n)
+
+verify fpAway
+    fpAway(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => Domain.Fprep.Fp(sign = 1, sigBits = 7, exp = 0, width = 3)
+    fpAway(Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), 3) => Domain.Fprep.Fp(sign = 1, sigBits = 4, exp = 1, width = 3)
+    fpAway(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), 3) => Domain.Fprep.Fp(sign = 1, sigBits = 6, exp = 0, width = 3)
+    fpAway(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 2) => Domain.Fprep.Fp(sign = -1, sigBits = 3, exp = 1, width = 2)
+
+fn awayNegateSymmetric(f: Fp, n: Int) -> Bool
+    ? "Lemma 7.2.1 (p.19), away analog ('Analogous lemmas hold for away and sticky'): away(-x,i) = -away(x,i). Rounding away from zero acts on the nonnegative significand and carries the sign through unchanged, so negating commutes with rounding away. Stated as exact-rational equality of the denoted values."
+    Domain.Rational.sameValue(Domain.Fprep.fpValue(fpAway(fpNegate(f), n)), Domain.Fprep.fpValue(fpNegate(fpAway(f, n))))
+
+verify awayNegateSymmetric
+    awayNegateSymmetric(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
+    awayNegateSymmetric(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 2) => true
+    awayNegateSymmetric(Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), 3) => true
+
+// Lemma 7.2.1 (p.19), the away analog ("Analogous lemmas hold for away and
+// sticky"): "away(-x,i) = -away(x,i)." Sign-symmetry of rounding away from zero --
+// away acts on the nonnegative significand and threads the sign through, so the
+// carry/renormalization branch is the same under negation. The sigBits=15 case
+// exercises the carry-to-2 branch. The `when 1 <= n` is the paper's global
+// hypothesis (Section 7, p.18: "i is a positive integer"); it routes the proof
+// through the generic case-splitting strategy that resolves away's branch.
+verify awayNegateSymmetric law signSymmetry
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4)]
+    given n: Int = [1, 2, 3]
+    when 1 <= n
+    awayNegateSymmetric(f, n) holds
+
+fn awayExpInRange(f: Fp, n: Int) -> Bool
+    ? "Lemma 7.2.7 (p.19): if x != 0 then e(away(x,i)) is e_x or 1 + e_x -- away keeps the exponent unless rounding up carries the significand to 2 (the case 2 < s_x + 2^(1-i)), which bumps it by one. On the renormalized model the stored exponent IS e(away(x,i)), so this brackets it in [e_x, e_x + 1]."
+    Bool.and(f.exp <= fpAway(f, n).exp, fpAway(f, n).exp <= f.exp + 1)
+
+verify awayExpInRange
+    awayExpInRange(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
+    awayExpInRange(Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), 3) => true
+
+// Lemma 7.2.7 (p.19): "If x != 0 then e(away(x,i)) = 1 + e_x if 2 < s_x + 2^(-i+1),
+// e_x otherwise." Away's exponent is e_x or e_x + 1: it stays put unless rounding
+// up carries the significand to 2. The renormalization branch shifts the stored
+// exponent by exactly 0 or 1, so it lands in the closed range [e_x, e_x + 1]
+// whichever branch fpAway takes -- the same generic match-split that closes the
+// product-exponent range (Lemma 7.1.7). The exact branch point 2 < s_x + 2^(-i+1)
+// (the floor-window equivalence) is the open piece, deferred (kwiatek).
+verify awayExpInRange law exponentInRange
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4)]
+    given n: Int = [1, 2, 3]
+    when Domain.Fprep.isFp(f)
+    when f.sigBits != 0
+    when 1 <= n
+    awayExpInRange(f, n) holds
+
+fn stickyHalf(f: Fp, n: Int) -> Int
+    ? "trunc(x, n-1)'s significand integer scaled to n-1 bits (the RTL sticky's truncate-to-(n-1)-bits step): floor(sigBits*2^(n-2) / 2^(width-1)). Doubling it gives the n-bit significand integer of trunc(x,n-1); adding one forces the n-th (last) bit to 1 -- the round-to-odd step."
+    floorDiv(f.sigBits * Domain.Fprep.pow2(n - 2), Domain.Fprep.pow2(f.width - 1))
+
+verify stickyHalf
+    stickyHalf(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => 3
+    stickyHalf(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), 3) => 3
+
+fn fpSticky(f: Fp, n: Int) -> Fp
+    ? "sticky(x, n) in the FAITHFUL round-to-odd (RTL/rto) TRUNCATING form -- ACL2 RTL rel1 lib1/round.lisp `defun sticky` (Russinoff, AMD, 1996-98; renamed `rto`, round-to-odd, in rel11): sticky(x,1) = sigma_x*2^(e_x); if x already fits in n-1 bits (truncn(s_x,n-1) = s_x) then x; otherwise trunc(x,n-1) + sigma_x*2^(1+e_x-n) -- truncate to n-1 bits and FORCE the last (n-th) bit to 1. So the n-bit significand integer is 2*stickyHalf(f,n) (last bit 0, the exact case = x) or 2*stickyHalf(f,n)+1 (last bit forced to 1). NOTE on faithfulness: the draft paper's PRINTED stickyn (Section 5.2, p.13) instead returns x UNCHANGED when bitn(s,1-n)=1; that printed branch is a known transcription typo -- it falsifies Lemma 7.3.2 (Sticky Plus) on ~17% of cases, and the whole surviving ACL2 RTL lineage (rel1 1998 -> rel11 today) uses this truncating form. We model the RTL form. Forcing the n-th bit to 1 keeps the significand strictly below 2, so sticky never carries (Lemma 7.2.8) -- the stored exponent stays the true exponent."
+    match n <= 1
+        true -> Domain.Fprep.Fp(sign = f.sign, sigBits = 1, exp = f.exp, width = 1)
+        false -> match f.sigBits * Domain.Fprep.pow2(n - 2) == Domain.Fprep.pow2(f.width - 1) * stickyHalf(f, n)
+            true -> Domain.Fprep.Fp(sign = f.sign, sigBits = 2 * stickyHalf(f, n), exp = f.exp, width = n)
+            false -> Domain.Fprep.Fp(sign = f.sign, sigBits = 2 * stickyHalf(f, n) + 1, exp = f.exp, width = n)
+
+verify fpSticky
+    fpSticky(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => Domain.Fprep.Fp(sign = 1, sigBits = 7, exp = 0, width = 3)
+    fpSticky(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), 3) => Domain.Fprep.Fp(sign = 1, sigBits = 6, exp = 0, width = 3)
+    fpSticky(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 1) => Domain.Fprep.Fp(sign = -1, sigBits = 1, exp = 1, width = 1)
+
+fn stickyNegateSymmetric(f: Fp, n: Int) -> Bool
+    ? "Lemma 7.2.1 (p.19), sticky analog ('Analogous lemmas hold for away and sticky'): sticky(-x,i) = -sticky(x,i). Round-to-odd sticky acts on the nonnegative significand and carries the sign through unchanged, so negating commutes with sticky rounding. Stated as exact-rational equality of the denoted values."
+    Domain.Rational.sameValue(Domain.Fprep.fpValue(fpSticky(fpNegate(f), n)), Domain.Fprep.fpValue(fpNegate(fpSticky(f, n))))
+
+verify stickyNegateSymmetric
+    stickyNegateSymmetric(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
+    stickyNegateSymmetric(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 2) => true
+    stickyNegateSymmetric(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), 1) => true
+
+// Lemma 7.2.1 (p.19), the sticky analog ("Analogous lemmas hold for away and
+// sticky"): "sticky(-x,i) = -sticky(x,i)." Sign-symmetry of round-to-odd sticky --
+// it acts on the nonnegative significand and threads the sign through every branch
+// (the n=1, exact and odd-bit cases all flip together under negation). The n=1
+// case exercises the special RTL branch. The `when 1 <= n` is the paper's global
+// hypothesis (Section 7, p.18: "i is a positive integer"); it routes the proof
+// through the generic case-splitting strategy that resolves sticky's branches.
+verify stickyNegateSymmetric law signSymmetry
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4)]
+    given n: Int = [1, 2, 3]
+    when 1 <= n
+    stickyNegateSymmetric(f, n) holds
+
+fn stickyKeepsExponent(f: Fp, n: Int) -> Bool
+    ? "Lemma 7.2.8 (p.19): if x != 0 then e(sticky(x,i)) = e_x. Round-to-odd sticky forces the n-th bit to 1, which keeps the significand strictly inside [1,2) -- it never carries -- so sticky keeps the stored exponent, which is the true exponent."
+    fpSticky(f, n).exp == f.exp
+
+verify stickyKeepsExponent
+    stickyKeepsExponent(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 2, width = 4), 3) => true
+    stickyKeepsExponent(Domain.Fprep.Fp(sign = -1, sigBits = 8, exp = -3, width = 4), 1) => true
+
+// Lemma 7.2.8 (p.19): "If x != 0 then e(sticky(x,i)) = e_x." A nonzero normalized
+// float (isFp, nonzero significand) sticky-rounded to i >= 1 bits keeps its
+// exponent -- round-to-odd never carries (the n-th bit is forced to 1, keeping
+// the significand below 2), so every branch leaves the stored exponent untouched.
+verify stickyKeepsExponent law exponentInvariant
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 2, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 8, exp = -3, width = 4)]
+    given n: Int = [1, 2, 3]
+    when Domain.Fprep.isFp(f)
+    when f.sigBits != 0
+    when 1 <= n
+    stickyKeepsExponent(f, n) holds
