@@ -1985,7 +1985,21 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> bool {
-    if law.when.is_none() {
+    // A non-conditional law is admitted ONLY for the equational power-of-two
+    // homomorphism composition: an earlier-sibling homomorphism law about a
+    // recursive power-of-two cone fn (detected name-blind via its `FloorDivWindow`
+    // figure) cited through the pow2 normalizer — the SIGNED pow2 homomorphism
+    // `2^(m+n) = 2^m·2^n` for ANY integers, whose sign branches each reduce to a
+    // product of `pow2` of nonneg atoms the normalizer canonicalizes. Every other
+    // unconditional shape keeps its own strategy (RingIdentity, LinearArithmetic,
+    // SimpOverPreludeLemmas, …): this can never steal one, because admission here
+    // requires both a power-of-two normalizer fn AND a non-empty equational pool,
+    // which those shapes do not have. (`when`-laws keep the full keystone surface —
+    // order-bridge, rational-floor and no-pool definitional arms below.)
+    if law.when.is_none()
+        && (keystone_pow2_fn(vb, law, ctx).is_none()
+            || keystone_pool_names(vb, law, ctx).is_empty())
+    {
         return false;
     }
     // The inductive path owns list-recursion laws; this is the residue with no
@@ -3737,23 +3751,41 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
         format!("grind [{grind_hints}]")
     };
 
-    let intro = format!("  intro {} h_when", intro_names.join(" "));
+    // A non-conditional law (the unconditional signed pow2 homomorphism) has no
+    // premise to introduce, so `intro` binds only the givens and `simp` rewrites
+    // the goal alone (`at ⊢`); a `when`-law also introduces and simplifies the
+    // premise hypothesis (`at h_when ⊢`).
+    let (intro, simp_at) = if law.when.is_some() {
+        (
+            format!("  intro {} h_when", intro_names.join(" ")),
+            "at h_when ⊢",
+        )
+    } else {
+        (format!("  intro {}", intro_names.join(" ")), "at ⊢")
+    };
     // Bridge set matches the de-risked `e1`: `Bool.and_eq_true` splits the `&&`
     // guard, `decide_eq_true_eq` peels `decide p = true` to `p`. The earlier
     // `ge_iff_le, gt_iff_lt` are dropped — they are unnecessary for this shape
     // (`grind` orders relations itself) and `e1` closes without them.
     let close = if pow2_normalizer.is_some() {
         // A multiplication-value law (`fpMul`) normalizes its significand with
-        // an `if`-branch (shift 0 vs 1); `split` discharges that branch before
-        // `grind`, and the `first | (split <;> …) | …` covers both the branching
-        // and the flat (no-`if`) shapes uniformly — the bare `grind` arm is the
-        // path the scaling / product-exponent laws (no `if`) take.
+        // an `if`-branch (shift 0 vs 1); `repeat' split` discharges that branch
+        // before `grind`, and the `first | (repeat' split <;> …) | …` covers both
+        // the branching and the flat (no-`if`) shapes uniformly — the bare `grind`
+        // arm is the path the scaling / product-exponent laws (no `if`) take.
+        // `repeat'` (not a single `split`) is load-bearing for the SIGNED pow2
+        // homomorphism: its goal carries THREE independent `pow2Signed` sign
+        // matches (for `m`, `n`, and `m+n`), and `grind` does not case-split the
+        // residual matches itself — every sign arm must be peeled before `grind`
+        // sees a product of `pow2` of nonneg atoms the normalizer can canonicalize.
+        // For a single-match law `repeat' split` peels exactly the one match, so
+        // the fpMul / fpScale / product-exponent laws are unaffected.
         format!(
-            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq] at h_when ⊢ <;> (first | (split <;> {grind_call}) | {grind_call}))"
+            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq] {simp_at} <;> (first | ((repeat' split) <;> {grind_call}) | {grind_call}))"
         )
     } else {
         format!(
-            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq] at h_when ⊢ <;> {grind_call})"
+            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq] {simp_at} <;> {grind_call})"
         )
     };
     let floor = if super::super::tactic_ir::speculative::probing() {

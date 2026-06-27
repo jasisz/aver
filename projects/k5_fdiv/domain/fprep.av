@@ -18,7 +18,7 @@ module Fprep
         "nothing about powers of two, it CITES the proven homomorphism pow2(m+n) =="
         "pow2(m)*pow2(n) and the compiler composes it via one generic strategy."
     depends [Domain.Rational]
-    exposes [pow2, Fp, isFp, fpValue, fpScale, fpMul, pow2Fraction, pow2Signed, fpScaleKeepsSignificand, fpScaleShiftsExponent, fpScalePreservesValue, productExp, productExpInRange, fpMulValue]
+    exposes [pow2, Fp, isFp, fpValue, fpValueGeneral, fpScale, fpMul, pow2Fraction, pow2Signed, pow2SignedHomomorphism, fpValueEqualsGeneralWhenNonnegExp, fpScaleKeepsSignificand, fpScaleShiftsExponent, fpScalePreservesValue, productExp, productExpInRange, fpMulValue]
     effects []
 
 fn pow2(n: Int) -> Int
@@ -92,6 +92,64 @@ verify pow2Signed law agreesWithPow2Fraction
     given k: Int = [0, 1, 4]
     when k >= 0
     Domain.Rational.sameValue(pow2Signed(k), pow2Fraction(k)) holds
+
+fn pow2SignedHomomorphism(m: Int, n: Int) -> Bool
+    ? "The signed power-of-two homomorphism over the rationals: 2^(m+n) = 2^m * 2^n for ANY integers m, n (Section 5.1, p.10 -- the value model 2^e is an exact rational for every integer e). The integer law pow2(m+n) = pow2(m)*pow2(n) holds only for nonnegative m, n (pow2 clamps to 1 below zero); pow2Signed denotes 2^e faithfully for negative e, so its homomorphism is unconditional. The kernel divider lives in fractional floats (exp < 0), so this is the law the general-exponent value fpValueGeneral and the all-exponent rounding bounds compose through."
+    Domain.Rational.sameValue(pow2Signed(m + n), Domain.Rational.times(pow2Signed(m), pow2Signed(n)))
+
+verify pow2SignedHomomorphism
+    pow2SignedHomomorphism(0, 0) => true
+    pow2SignedHomomorphism(2, 3) => true
+    pow2SignedHomomorphism(-2, 3) => true
+    pow2SignedHomomorphism(-2, -3) => true
+    pow2SignedHomomorphism(3, -5) => true
+    pow2SignedHomomorphism(1, -2) => true
+
+// The signed power-of-two homomorphism 2^(m+n) = 2^m * 2^n for ANY integers m, n
+// (Section 5.1, p.10). The plain pow2 homomorphism above holds only for nonnegative
+// exponents (pow2 clamps to 1 below zero); pow2Signed is the faithful 2^e for every
+// integer e, so its homomorphism drops the nonnegativity premise -- the law the
+// fractional-float kernel (exp < 0) needs. pow2Signed only ever calls pow2 on a
+// NONNEGATIVE argument (it negates the exponent in the k < 0 branch), so after the
+// sign branches are case-split every arm reduces to a product of pow2 of nonnegative
+// atoms: the existing pow2-of-nonneg-linear-form normalizer (the homomorphism keyed
+// on its PRODUCT side, plus the successor step) canonicalizes each, CITING the proven
+// pow2 homomorphism -- the same generic mechanism that closes fpMulValue, no
+// per-figure proof.
+verify pow2SignedHomomorphism law signedHomomorphism
+    given m: Int = [-3, -1, 0, 2, 5]
+    given n: Int = [-2, 0, 3]
+    pow2SignedHomomorphism(m, n) holds
+
+fn fpValueGeneral(f: Fp) -> Fraction
+    ? "The denoted value as an exact rational for ANY exponent (Section 5.1, p.10): sign * (sigBits/2^(width-1)) * 2^exp, with 2^exp the signed power of two pow2Signed(exp). Faithful for negative exponents too -- where fpValue's pow2(exp) clamps to 1 -- and equal to fpValue for exp >= 0. The kernel divider's reciprocal estimate and quotient digits all have exp < 0, so this is the value the §8/§9 lemmas read."
+    Domain.Rational.times(pow2Signed(f.exp), Domain.Rational.Fraction(top = f.sign * f.sigBits, bottom = pow2(f.width - 1)))
+
+verify fpValueGeneral
+    fpValueGeneral(Fp(sign = 1, sigBits = 8, exp = 0, width = 4)) => Domain.Rational.Fraction(top = 8, bottom = 8)
+    fpValueGeneral(Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => Domain.Rational.Fraction(top = 24, bottom = 8)
+    fpValueGeneral(Fp(sign = 1, sigBits = 8, exp = -3, width = 4)) => Domain.Rational.Fraction(top = 8, bottom = 64)
+    fpValueGeneral(Fp(sign = -1, sigBits = 10, exp = -2, width = 4)) => Domain.Rational.Fraction(top = -10, bottom = 32)
+
+fn fpValueEqualsGeneralWhenNonnegExp(f: Fp) -> Bool
+    ? "For a nonnegative exponent the general-exponent value agrees with fpValue: pow2Signed(exp) = pow2(exp)/1 when exp >= 0, so the two denotations cross-multiply equal. fpValueGeneral extends fpValue to negative exponents and reproduces it on the nonnegative half."
+    Domain.Rational.sameValue(fpValue(f), fpValueGeneral(f))
+
+verify fpValueEqualsGeneralWhenNonnegExp
+    fpValueEqualsGeneralWhenNonnegExp(Fp(sign = 1, sigBits = 8, exp = 0, width = 4)) => true
+    fpValueEqualsGeneralWhenNonnegExp(Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => true
+    fpValueEqualsGeneralWhenNonnegExp(Fp(sign = -1, sigBits = 10, exp = 2, width = 4)) => true
+
+// The general-exponent value agrees with fpValue on nonnegative exponents:
+// pow2Signed(exp) reduces to pow2(exp)/1 when exp >= 0 (its k < 0 branch is dead),
+// so fpValueGeneral cross-multiplies equal to fpValue -- a commutative-ring identity
+// closed by the equational keystone after the `when 0 <= f.exp` premise reduces the
+// pow2Signed match. No power-of-two rearrangement: the single pow2(exp) factor stands
+// identically on both sides.
+verify fpValueEqualsGeneralWhenNonnegExp law agreesOnNonnegExp
+    given f: Fp = [Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = -1, sigBits = 12, exp = 2, width = 4), Fp(sign = 1, sigBits = 10, exp = 1, width = 4)]
+    when 0 <= f.exp
+    fpValueEqualsGeneralWhenNonnegExp(f) holds
 
 fn fpScale(f: Fp, j: Int) -> Fp
     ? "Scale by 2^j (Lemma 7.1.2, p.18): shift the exponent by j, renormalizing NOTHING -- sign, significand and width are untouched."

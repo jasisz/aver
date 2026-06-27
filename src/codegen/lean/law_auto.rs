@@ -330,23 +330,29 @@ fn emit_verify_law_forall_auto_proof_inner(
         return Some(proof);
     }
 
-    // Keystone — the non-recursive laws-as-lemmas composition: a conditional
-    // claim with no list to induct on, closed by `grind` over the earlier
-    // sibling laws (the pool). The algebraic content lives as Aver helper laws;
-    // the engine supplies only the citation skeleton (`grind [<cone>, <pool>]`).
-    // Tried after the inductive arm, which owns the list-recursion shapes, and
-    // BEFORE the pinned strategies below: a law that is both keystone-eligible AND
-    // carries a pinned strategy (e.g. a `FloorDivWindow` law that ALSO has an
-    // earlier pool law in its cone) is closed by the generic citation skeleton in
-    // preference to the strategy-specific template. There is no conflict for the
-    // pinned laws that have NO pool — the empty-pool gate in the recognizer
-    // declines them, so they fall through to their own strategy unchanged (this is
-    // why the `pow2` homomorphism itself, a `FloorDivWindow` law with no earlier
-    // cone law, is NOT stolen by the keystone).
-    if law.when.is_some()
-        && let Some(proof) =
-            induction::emit_pool_composition_generic_law(vb, law, ctx, &intro_names)
-    {
+    // Keystone — the non-recursive laws-as-lemmas composition: a claim with no
+    // list to induct on, closed by `grind` over the earlier sibling laws (the
+    // pool). The algebraic content lives as Aver helper laws; the engine supplies
+    // only the citation skeleton (`grind [<cone>, <pool>]`). Tried after the
+    // inductive arm, which owns the list-recursion shapes, and BEFORE the pinned
+    // strategies below: a law that is both keystone-eligible AND carries a pinned
+    // strategy (e.g. a `FloorDivWindow` law that ALSO has an earlier pool law in
+    // its cone) is closed by the generic citation skeleton in preference to the
+    // strategy-specific template. There is no conflict for the pinned laws that
+    // have NO pool — the empty-pool gate in the recognizer declines them, so they
+    // fall through to their own strategy unchanged (this is why the `pow2`
+    // homomorphism itself, a `FloorDivWindow` law with no earlier cone law, is NOT
+    // stolen by the keystone).
+    //
+    // NOT gated to `when`-laws: the recognizer admits a NON-conditional law only
+    // for the equational power-of-two homomorphism composition (an earlier-sibling
+    // homomorphism law about a power-of-two cone fn, cited through the pow2
+    // normalizer — e.g. the SIGNED pow2 homomorphism `2^(m+n) = 2^m·2^n` for any
+    // integers, whose sign branches each reduce to a product of `pow2` of nonneg
+    // atoms). That is the same generic mechanism that closes the conditional
+    // `fpMulValue`; lifting the conditional-only restriction is shape-keyed and
+    // name-blind. Every other unconditional shape keeps its own strategy.
+    if let Some(proof) = induction::emit_pool_composition_generic_law(vb, law, ctx, &intro_names) {
         return Some(proof);
     }
 
