@@ -613,7 +613,13 @@ fn emit_verify_law_block(
             // true `∀ givens, <when> = true -> claim`; the proof emit keys on the
             // same recognizer, and the speculative probe commits the universal
             // only when `grind`+pool actually closes (else bounded fallback).
-            || super::law_auto::recognize_pool_composition_generic(vb, &law_for_auto_proof, ctx));
+            || super::law_auto::recognize_pool_composition_generic(vb, &law_for_auto_proof, ctx)
+            // Finite bounded-Int-domain law (the K5 reciprocal seed table): a
+            // single `Int` given guarded into `[LO, HI)`, proven universally by
+            // pure-kernel enumeration (`decide` over a bounded-`Nat` forall).
+            // The emit replaces the theorem with the `Prop`-hypothesis universal
+            // form, so dropping the sampled domain here keeps them in lockstep.
+            || super::law_auto::recognize_finite_int_domain(vb, &law_for_auto_proof, ctx));
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(
             vb,
