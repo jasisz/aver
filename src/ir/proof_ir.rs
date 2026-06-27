@@ -1183,6 +1183,28 @@ pub enum FloorWindowFigure {
         floor_fn: String,
         window_fn: String,
     },
+    /// The exact-division cancel sibling of [`FloorPow2Window`]: the
+    /// EQUATIONAL fact that flooring a manifest multiple of a power of two
+    /// by that power is exact. The law claim is
+    /// `floor(s * pow(b), pow(a)) == s * pow(b - a)` with premise
+    /// `0 <= a && a <= b` — the divisor `pow(a)` divides the dividend
+    /// `s * pow(b)` because `pow(a) | pow(b)` when `a <= b` (the power-of-two
+    /// homomorphism `pow(b) = pow(a) * pow(b - a)`), so the Euclidean floor
+    /// returns the exact quotient `s * pow(b - a)`. Generic over the integer
+    /// `s` and the two exponents `a`/`b` — "the exact cancel works for any
+    /// provably-dividing floorDiv". Closed by the homomorphism split plus
+    /// `Int.mul_ediv_cancel_left` (core, no Mathlib), the same power algebra
+    /// every floor-window figure proves. `pow_fn`/`floor_fn` are the
+    /// (possibly module-qualified) dotted call names; `cancel_fn` is the
+    /// law's subject (the floor wrapper itself), so the lemma sits in the
+    /// call cone of any rounding-composition law and the keystone cites it
+    /// by name. Demonstrated by Lemmas 7.2.10 / 7.2.11 of the K5 division
+    /// proof (`projects/k5_fdiv/domain/round.av`).
+    FloorPow2Cancel {
+        pow_fn: String,
+        floor_fn: String,
+        cancel_fn: String,
+    },
 }
 
 /// Parameter pack for [`ProofStrategy::StringEscapeRoundtrip`] —

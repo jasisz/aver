@@ -43,6 +43,9 @@ pub(super) fn detect_floor_window(
     if let Some(figure) = detect_floor_pow2_window(law, fn_name, inputs) {
         return Some(figure);
     }
+    if let Some(figure) = detect_floor_pow2_cancel(law, fn_name, inputs) {
+        return Some(figure);
+    }
     None
 }
 
@@ -242,6 +245,95 @@ fn detect_floor_pow2_window(
         floor_fn,
         window_fn: window_fd.name.clone(),
     })
+}
+
+/// Figure: `when 0 <= a; a <= b -> floor(s * pow(b), pow(a)) * pow(a) => s * pow(b)`
+/// — the exact-division cancel over a power-of-two divisor that manifestly
+/// divides the dividend (the times-back form: flooring then scaling by the
+/// divisor recovers the dividend exactly). Generic over the integer `s` and
+/// the two exponents `a`/`b`; the subject fn is the floor wrapper itself, so
+/// the lemma lands in the call cone of every rounding-composition law.
+fn detect_floor_pow2_cancel(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<FloorWindowFigure> {
+    use crate::ast::BinOp;
+    let when = law.when.as_ref()?;
+    let [gs, ga, gb] = law.givens.as_slice() else {
+        return None;
+    };
+    if law.givens.iter().any(|g| g.type_name != "Int") {
+        return None;
+    }
+    // lhs: floor(s * pow(b), pow(a)) * pow(a) — the floor wrapper subject
+    // scaled back by the divisor.
+    let Expr::BinOp(BinOp::Mul, floor_call, scale) = &law.lhs.node else {
+        return None;
+    };
+    let (floor_fn, num, den) = match_floor_call(floor_call, inputs)?;
+    if floor_fn != fn_name {
+        return None;
+    }
+    let Expr::BinOp(BinOp::Mul, num_l, num_r) = &num.node else {
+        return None;
+    };
+    if !matches_ident(num_l, &gs.name) {
+        return None;
+    }
+    let (pow_fn, b_expr) = match_pow_call(num_r, inputs)?;
+    if !matches_ident(b_expr, &gb.name) {
+        return None;
+    }
+    let (pow_fn_d, a_expr) = match_pow_call(den, inputs)?;
+    if pow_fn_d != pow_fn || !matches_ident(a_expr, &ga.name) {
+        return None;
+    }
+    // The outer scale must be pow(a), the same divisor.
+    let (pow_fn_s, sa_expr) = match_pow_call(scale, inputs)?;
+    if pow_fn_s != pow_fn || !matches_ident(sa_expr, &ga.name) {
+        return None;
+    }
+    // rhs: s * pow(b).
+    let Expr::BinOp(BinOp::Mul, rhs_l, rhs_r) = &law.rhs.node else {
+        return None;
+    };
+    if !matches_ident(rhs_l, &gs.name) {
+        return None;
+    }
+    let (pow_fn_r, rb_expr) = match_pow_call(rhs_r, inputs)?;
+    if pow_fn_r != pow_fn || !matches_ident(rb_expr, &gb.name) {
+        return None;
+    }
+    // when: 0 <= a; a <= b.
+    let conj = when_conjuncts(when);
+    let [w1, w2] = conj.as_slice() else {
+        return None;
+    };
+    if !is_le_lit_left(w1, 0, &ga.name) || !is_le_ident(w2, &ga.name, &gb.name) {
+        return None;
+    }
+    Some(FloorWindowFigure::FloorPow2Cancel {
+        pow_fn,
+        floor_fn,
+        cancel_fn: fn_name.to_string(),
+    })
+}
+
+/// `<lit> <= <name>` over a given.
+fn is_le_lit_left(expr: &Spanned<Expr>, lit: i64, name: &str) -> bool {
+    let Expr::BinOp(crate::ast::BinOp::Lte, l, r) = &expr.node else {
+        return false;
+    };
+    is_int_lit(l, lit) && matches_ident(r, name)
+}
+
+/// `<name1> <= <name2>` over two givens.
+fn is_le_ident(expr: &Spanned<Expr>, n1: &str, n2: &str) -> bool {
+    let Expr::BinOp(crate::ast::BinOp::Lte, l, r) = &expr.node else {
+        return false;
+    };
+    matches_ident(l, n1) && matches_ident(r, n2)
 }
 
 /// Resolve `name` to a pure entry/dep fn def, rejecting effectful

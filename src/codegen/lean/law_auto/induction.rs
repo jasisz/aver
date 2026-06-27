@@ -2114,6 +2114,96 @@ fn keystone_pool_names(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) 
     out
 }
 
+/// The SUBJECT fns (Lean names) of the keystone's cited equational pool —
+/// the fn each cited pool law is a rewrite ABOUT. Mirrors
+/// [`keystone_pool_names`] one-for-one but returns the subject fn instead
+/// of the lemma name. The keystone keeps these fns FOLDED (out of its
+/// `simp only` cone unfold) so the cited rewrite can e-match the goal term:
+/// the floorDiv exact-cancel `floor(s·pow(b), pow(a)) = s·pow(b−a)` can only
+/// fire while `floorDiv` is still abstract, exactly as the `pow2`
+/// homomorphism needs `pow2` abstract (recursive fns are folded for the same
+/// reason). Shape-keyed and name-blind — driven by which laws are cited, not
+/// by any hard-coded fn name.
+fn keystone_pool_subject_fns(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Vec<String> {
+    use crate::ast::{TopLevel, VerifyKind};
+    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
+    let cone_fns: std::collections::HashSet<String> =
+        cone.pure_fns().iter().map(|fd| fd.name.clone()).collect();
+    let mut out = Vec::new();
+    for item in &ctx.items {
+        let TopLevel::Verify(prev) = item else {
+            continue;
+        };
+        if prev.line == vb.line && prev.fn_name == vb.fn_name {
+            break;
+        }
+        let VerifyKind::Law(prev_law) = &prev.kind else {
+            continue;
+        };
+        if !cone_fns.contains(&prev.fn_name) {
+            continue;
+        }
+        if crate::codegen::lean::toplevel::law_as_lemma_statement(prev, prev_law, ctx).is_some() {
+            out.push(aver_name_to_lean(&prev.fn_name));
+        }
+    }
+    out
+}
+
+/// The cited pool laws (by Lean theorem name) that REGISTER THEMSELVES as
+/// `@[grind]` via a `grind_pattern` — the `FloorPow2Cancel` exact-division
+/// cancel, keyed on its floor term. They are already in `grind`'s lemma set
+/// globally, so re-listing them in `grind [...]` only earns a "redundant
+/// parameter" warning. The keystone drops them from its explicit hint list
+/// (but still keeps their subject fn FOLDED, via [`keystone_pool_subject_fns`],
+/// so their floor term survives the cone unfold for the pattern to fire).
+fn keystone_self_registering_pool_names(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> std::collections::HashSet<String> {
+    use crate::ast::{TopLevel, VerifyKind};
+    use crate::ir::{FloorWindowFigure, ProofStrategy};
+    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
+    let cone_fns: std::collections::HashSet<String> =
+        cone.pure_fns().iter().map(|fd| fd.name.clone()).collect();
+    let mut out = std::collections::HashSet::new();
+    for item in &ctx.items {
+        let TopLevel::Verify(prev) = item else {
+            continue;
+        };
+        if prev.line == vb.line && prev.fn_name == vb.fn_name {
+            break;
+        }
+        let VerifyKind::Law(prev_law) = &prev.kind else {
+            continue;
+        };
+        if !cone_fns.contains(&prev.fn_name) {
+            continue;
+        }
+        if !matches!(
+            super::law_strategy_for(ctx, &prev.fn_name, &prev_law.name),
+            Some(ProofStrategy::FloorDivWindow {
+                figure: FloorWindowFigure::FloorPow2Cancel { .. }
+            })
+        ) {
+            continue;
+        }
+        if let Some((name, _stmt)) =
+            crate::codegen::lean::toplevel::law_as_lemma_statement(prev, prev_law, ctx)
+        {
+            out.insert(name);
+        }
+    }
+    out
+}
+
 /// The power-of-two function the keystone's cited pool reasons about, if any:
 /// the `pow_fn` of an EARLIER sibling law (in this law's cone) whose proof
 /// strategy is a `FloorDivWindow` figure (the power-of-two homomorphism /
@@ -2157,7 +2247,8 @@ fn keystone_pow2_fn(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> 
             | FloorWindowFigure::PowSumSplit { pow_fn }
             | FloorWindowFigure::SigWindow { pow_fn, .. }
             | FloorWindowFigure::ProductWindow { pow_fn, .. }
-            | FloorWindowFigure::FloorPow2Window { pow_fn, .. } => pow_fn,
+            | FloorWindowFigure::FloorPow2Window { pow_fn, .. }
+            | FloorWindowFigure::FloorPow2Cancel { pow_fn, .. } => pow_fn,
         };
         return Some(aver_name_to_lean(&pow_fn));
     }
@@ -2648,7 +2739,8 @@ fn rf_pow2_fn(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option
                 | FloorWindowFigure::PowSumSplit { pow_fn }
                 | FloorWindowFigure::SigWindow { pow_fn, .. }
                 | FloorWindowFigure::ProductWindow { pow_fn, .. }
-                | FloorWindowFigure::FloorPow2Window { pow_fn, .. } => pow_fn,
+                | FloorWindowFigure::FloorPow2Window { pow_fn, .. }
+                | FloorWindowFigure::FloorPow2Cancel { pow_fn, .. } => pow_fn,
             };
             let pbare = rf_bare_basename(&pow);
             if cone.iter().any(|c| rf_bare_basename(c) == pbare) {
@@ -3103,13 +3195,23 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
         let n = n.strip_prefix("_root_.").unwrap_or(n);
         n.rsplit('.').next().unwrap_or(n)
     }
-    let recursive: std::collections::HashSet<String> = super::recursive_pure_fn_names(ctx)
+    let mut abstract_fns: std::collections::HashSet<String> = super::recursive_pure_fn_names(ctx)
         .iter()
         .map(|n| bare_basename(&aver_name_to_lean(n)).to_string())
         .collect();
+    // Also keep FOLDED any cone fn that a CITED pool law is keyed on: that
+    // law is a rewrite ABOUT the fn (the floorDiv exact-cancel is about
+    // `floorDiv`), so it can only e-match while the fn is still abstract —
+    // the same reason a recursive cone fn (the `pow2` homomorphism's `pow2`)
+    // is excluded. Without this the `simp only` would unfold `floorDiv` to its
+    // `Result.withDefault`/`Int.div` body and the cancel citation would find
+    // nothing to fire on.
+    for subj in keystone_pool_subject_fns(vb, law, ctx) {
+        abstract_fns.insert(bare_basename(&subj).to_string());
+    }
     let defs: Vec<String> = law_simp_defs(ctx, vb, law)
         .into_iter()
-        .filter(|d| !recursive.contains(bare_basename(d)))
+        .filter(|d| !abstract_fns.contains(bare_basename(d)))
         .collect();
     let defs_csv = defs.join(", ");
     // `grind` gets the laws-as-lemmas pool names (not the cone defs): the `simp`
@@ -3123,7 +3225,15 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
     //     BEFORE this theorem). The pattern fires when grind sees those sides in
     //     the goal/premises, instantiating the order fact (e.g. `a*c ≤ b*c`) that
     //     omega/grind then chains with a premise (`b*c ≤ m`) to the conclusion.
-    let pool_names: Vec<String> = keystone_pool_names(vb, law, ctx);
+    // Drop self-registering (`grind_pattern`-annotated, so already `@[grind]`)
+    // cancel laws from the explicit hint list — `grind` picks them up globally,
+    // and re-listing them only warns. They stay folded via `abstract_fns` above
+    // so their floor term survives for the pattern to e-match.
+    let self_registering = keystone_self_registering_pool_names(vb, law, ctx);
+    let pool_names: Vec<String> = keystone_pool_names(vb, law, ctx)
+        .into_iter()
+        .filter(|n| !self_registering.contains(n))
+        .collect();
     let order_citations = keystone_order_bridge_citations(vb, law, ctx);
     let mut hints: Vec<String> = pool_names;
     hints.extend(order_citations.iter().map(|c| c.name.clone()));

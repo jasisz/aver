@@ -2581,6 +2581,19 @@ fn emit_floor_window_support_stack(
                 "// Law: {fn_name}.{law_name} — recursive-expo-free floor window over a power-of-two divisor\nlemma {u}pow_pos(n: int)\n  ensures {pow}(n) >= 1\n{{ }}\nlemma {fuel_attrs} {main_thm}({params})\n  ensures {lhs} == {rhs}\n{{{e_hint}\n}}\n",
             )
         }
+        FloorWindowFigure::FloorPow2Cancel { pow_fn, .. } => {
+            // The exact-division cancel `floor(s·pow(b), pow(a)) = s·pow(b−a)`
+            // for `0 <= a <= b`. Z3 carries the division once it knows the
+            // dividend is the divisor times the quotient: the homomorphism
+            // `pow(b) = pow(a)·pow(b−a)` (auto-inducted `pow_add`) makes
+            // `s·pow(b) = pow(a)·(s·pow(b−a))`, and `pow_pos` gives the divisor
+            // positive, so the floor returns the exact quotient.
+            let pow = d(pow_fn);
+            let (_s, a, b) = (&givens[0], &givens[1], &givens[2]);
+            format!(
+                "// Law: {fn_name}.{law_name} — exact-division cancel over a power-of-two divisor\nlemma {u}pow_pos(n: int)\n  ensures {pow}(n) >= 1\n{{ }}\nlemma {{:vcs_split_on_every_assert}} {u}pow_add(m: int, n: int)\n  requires m >= 0 && n >= 0\n  ensures {pow}(m + n) == {pow}(m) * {pow}(n)\n{{\n  if m > 0 {{\n    {u}pow_add(m - 1, n);\n  }}\n}}\nlemma {fuel_attrs} {main_thm}({params})\n  requires {when}\n  ensures {lhs} == {rhs}\n{{\n  {u}pow_pos({a});\n  {u}pow_add({a}, {b} - {a});\n  assert {pow}({b}) == {pow}({a}) * {pow}({b} - {a});\n}}\n",
+            )
+        }
     }
 }
 

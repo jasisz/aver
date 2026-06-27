@@ -30,10 +30,19 @@ module Round
         "sticky are all sign-symmetric, round(-x,i) = -round(x,i) ('Analogous lemmas"
         "hold for away and sticky'); Lemma 7.2.6 (p.19) -- trunc keeps the exponent of"
         "a non-zero x; Lemma 7.2.7 (p.19) -- e(away(x,i)) is e_x or 1+e_x (the"
-        "[e_x, e_x+1] range); and Lemma 7.2.8 (p.19) -- e(sticky(x,i)) = e_x, sticky keeps"
-        "the exponent. Deferred (kwiatki): the away/sticky error bounds 7.2.3/7.2.4."
+        "[e_x, e_x+1] range); Lemma 7.2.8 (p.19) -- e(sticky(x,i)) = e_x, sticky keeps"
+        "the exponent; and the rounding-COMPOSITION lemmas Lemma 7.2.10 (p.20) --"
+        "trunc(trunc(x,i),j) = trunc(x,i) for i <= j -- and Lemma 7.2.11 (p.20) --"
+        "trunc(away(x,i),j) = away(x,i) for i <= j (re-truncating an already-i-bit"
+        "value to the wider j >= i is the identity). Both reduce after"
+        "cross-multiplication to one EXACT-DIVISION CANCEL on the outer truncation's"
+        "floor: floor(s*2^b / 2^a) * 2^a = s*2^b when 0 <= a <= b, valid because"
+        "2^a | 2^b (the power-of-two homomorphism). That cancel is itself a generic"
+        "Aver law on floorDiv (dividesPow2Multiple, universal); the composition"
+        "lemmas CITE it -- no per-figure proof. Deferred (kwiatki): the away/sticky"
+        "error bounds 7.2.3/7.2.4."
     depends [Domain.Fprep, Domain.Rational]
-    exposes [floorDiv, floorDivWindow, truncFitsWindow, fpTrunc, fpNegate, truncNegateSymmetric, truncKeepsExponent, truncError, truncErrorMagnitude, truncErrorMagnitudeNonneg, fpValueMagnitude, fpValueMagnitudePos, truncErrorReconstructs, truncErrorBound, truncErrorSameSign, awaySig, fpAway, awayNegateSymmetric, awayExpInRange, stickyHalf, fpSticky, stickyNegateSymmetric, stickyKeepsExponent]
+    exposes [floorDiv, floorDivWindow, truncFitsWindow, fpTrunc, fpNegate, truncNegateSymmetric, truncKeepsExponent, truncError, truncErrorMagnitude, truncErrorMagnitudeNonneg, fpValueMagnitude, fpValueMagnitudePos, truncErrorReconstructs, truncErrorBound, truncErrorSameSign, truncComposes, awaySig, fpAway, awayNegateSymmetric, awayExpInRange, awayTruncComposes, stickyHalf, fpSticky, stickyNegateSymmetric, stickyKeepsExponent]
     effects []
 
 fn floorDiv(a: Int, d: Int) -> Int
@@ -44,6 +53,25 @@ verify floorDiv
     floorDiv(7, 2) => 3
     floorDiv(52, 8) => 6
     floorDiv(96, 8) => 12
+
+// The exact-division cancel over a power-of-two divisor that manifestly
+// divides the dividend: flooring s * 2^b by 2^a and scaling back by 2^a
+// recovers s * 2^b exactly, floor(s * 2^b / 2^a) * 2^a = s * 2^b, when
+// 0 <= a <= b. The divisor 2^a divides s * 2^b because 2^a | 2^b (the
+// power-of-two homomorphism 2^b = 2^a * 2^(b-a)), so the Euclidean floor
+// loses nothing. Generic over the integer s and the two exponents -- the
+// exact-division cancel for ANY provably-dividing floorDiv. This is the
+// integer engine the rounding-composition lemmas 7.2.10 / 7.2.11 reduce to
+// after cross-multiplication: their outer truncation floor-divides an
+// already-fitting significand by a power of two it is a multiple of, then the
+// other side scales by that same power.
+verify floorDiv law dividesPow2Multiple
+    given s: Int = [13, 3, 1]
+    given a: Int = [0, 1, 2]
+    given b: Int = [2, 3, 4]
+    when 0 <= a
+    when a <= b
+    floorDiv(s * Domain.Fprep.pow2(b), Domain.Fprep.pow2(a)) * Domain.Fprep.pow2(a) => s * Domain.Fprep.pow2(b)
 
 fn floorDivWindow(a: Int, k: Int) -> Bool
     ? "The Euclidean floor window of a / 2^k: the quotient q = floor(a / 2^k) satisfies 2^k * q <= a < 2^k * (q + 1). This is the recursive-exponent-FREE floor characterization -- the divisor is the power of two 2^k directly, not a binary-exponent recursion -- and it holds unconditionally because 2^k > 0 for every k. The workhorse the rounding error bounds reduce to after cross-multiplication."
@@ -355,3 +383,54 @@ verify stickyKeepsExponent law exponentInvariant
     when f.sigBits != 0
     when 1 <= n
     stickyKeepsExponent(f, n) holds
+
+fn truncComposes(f: Fp, i: Int, j: Int) -> Bool
+    ? "Lemma 7.2.10 (p.20): if i <= j then trunc(trunc(x,i),j) = trunc(x,i). Re-truncating an already-i-bit value to j >= i bits is the identity -- the value already fits in i <= j bits, so widening the truncation keeps every bit it kept. Stated as exact-rational equality of the denoted values."
+    Domain.Rational.sameValue(Domain.Fprep.fpValue(fpTrunc(fpTrunc(f, i), j)), Domain.Fprep.fpValue(fpTrunc(f, i)))
+
+verify truncComposes
+    truncComposes(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3, 5) => true
+    truncComposes(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 2, 3) => true
+
+// Lemma 7.2.10 (p.20): "If j is an integer and i <= j then
+// trunc(trunc(x,i),j) = trunc(x,i)." Truncating an already-i-bit value to
+// the wider precision j >= i changes nothing. After cross-multiplication the
+// equality reduces to the outer truncation's floor being exact:
+// floor(t_i * 2^(j-1) / 2^(i-1)) * 2^(i-1) = t_i * 2^(j-1), valid because
+// 2^(i-1) | 2^(j-1) when i <= j. The keystone CITES the floorDiv exact-cancel
+// (dividesPow2Multiple) to rewrite that outer floor to its exact quotient and
+// the power-of-two homomorphism to regroup the exponents -- no per-figure
+// proof, just the laws-as-lemmas composition. The paper's i, j are positive.
+verify truncComposes law composesToInner
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
+    given i: Int = [1, 2, 3]
+    given j: Int = [3, 5]
+    when 1 <= i
+    when i <= j
+    truncComposes(f, i, j) holds
+
+fn awayTruncComposes(f: Fp, i: Int, j: Int) -> Bool
+    ? "Lemma 7.2.11 (p.20): if i <= j then trunc(away(x,i),j) = away(x,i). away(x,i) already fits in i <= j bits, so truncating it to j bits is the identity. The paper notes this is exactly the lemma that captures 'the result of rounding away to i bits fits in j bits if i <= j' (the fit test is trunc(x,j) = x). Stated as exact-rational equality of the denoted values."
+    Domain.Rational.sameValue(Domain.Fprep.fpValue(fpTrunc(fpAway(f, i), j)), Domain.Fprep.fpValue(fpAway(f, i)))
+
+verify awayTruncComposes
+    awayTruncComposes(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3, 5) => true
+    awayTruncComposes(Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), 3, 5) => true
+    awayTruncComposes(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 2, 3) => true
+
+// Lemma 7.2.11 (p.20): "If j is an integer and i <= j then
+// trunc(away(x,i),j) = away(x,i)." Rounding away from zero to i bits produces
+// a value that already fits in i <= j bits, so the wider truncation is the
+// identity -- the away analog of 7.2.10. The same outer-floor exact-cancel
+// applies: after the away branch (carry vs no-carry) is case-split, the outer
+// truncation floor-divides the away significand times 2^(j-1) by 2^(i-1), a
+// multiple of it, so the keystone CITES the floorDiv exact-cancel and the
+// power-of-two homomorphism. The sigBits=15 case exercises the carry-to-2
+// branch. The paper's i, j are positive integers.
+verify awayTruncComposes law composesToInner
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
+    given i: Int = [1, 2, 3]
+    given j: Int = [3, 5]
+    when 1 <= i
+    when i <= j
+    awayTruncComposes(f, i, j) holds

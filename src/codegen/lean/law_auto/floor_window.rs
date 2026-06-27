@@ -126,6 +126,18 @@ pub(super) fn emit_floor_window_law(
             &aver_name_to_lean(floor_fn),
             &aver_name_to_lean(window_fn),
         ),
+        FloorWindowFigure::FloorPow2Cancel {
+            pow_fn, floor_fn, ..
+        } => render_floor_pow2_cancel(
+            theorem_base,
+            quant_params,
+            when.as_deref()?,
+            &lhs,
+            &rhs,
+            &givens,
+            &aver_name_to_lean(pow_fn),
+            &aver_name_to_lean(floor_fn),
+        ),
     };
     Some(AutoProof {
         support_lines: text.lines().map(|l| l.to_string()).collect(),
@@ -459,6 +471,65 @@ theorem {base} : ∀ {quant_params}, {lhs} = {rhs} := by
   intro {intro}
   simp only [{window}, Bool.and_eq_true, decide_eq_true_eq]
   exact {base}__floor_window _ _ ({base}__pow_pos _)"#
+    )
+}
+
+/// The exact-division cancel over a power-of-two divisor that manifestly
+/// divides the dividend, in the times-back form
+/// `floor(s * pow(b), pow(a)) * pow(a) = s * pow(b)` for `0 <= a <= b`.
+/// Generic over the integer `s` and exponents `a`/`b`. The divisor `pow(a)`
+/// divides `s * pow(b)` because the homomorphism gives
+/// `pow(b) = pow(a) * pow(b - a)`, so the Euclidean floor loses nothing —
+/// closed by `Int.ediv_mul_cancel` with that divisibility witness, the same
+/// power algebra (`pow.induct` / `pow.eq_def`) every floor-window figure
+/// proves. No Mathlib, no `ring`.
+///
+/// A trailing `grind_pattern` keys the lemma on the bare floor term
+/// `floor(s * pow(b), pow(a))`, so the keystone laws-as-lemmas composition
+/// e-matches it on a rounding law's outer truncation (the scaled-back product
+/// is never a syntactic subterm there). With the floor abstract, `grind` adds
+/// the ground fact `floor(…) * pow(a) = s * pow(b)` and its commutative-ring
+/// normalizer cancels the matching `pow(a)` factor against the other side's
+/// `pow(b)` — no homomorphism rearrangement on the goal. Premise-gated
+/// (`0 <= a <= b`), so it stays inert on any floor whose divisor is not a
+/// provable divisor.
+#[allow(clippy::too_many_arguments)]
+fn render_floor_pow2_cancel(
+    base: &str,
+    quant_params: &str,
+    when: &str,
+    lhs: &str,
+    rhs: &str,
+    givens: &[String],
+    pow: &str,
+    floor: &str,
+) -> String {
+    let (s, a, b) = (&givens[0], &givens[1], &givens[2]);
+    let equations = pow_equation_lemmas(base, pow);
+    let pos = pow_pos_lemma(base, pow);
+    let add = pow_add_lemma(base, pow);
+    format!(
+        r#"{equations}
+{pos}
+{add}
+theorem {base}__floordiv_eq (a d : Int) (hd : 0 < d) : {floor} a d = a / d := by
+  have hne : ¬((d == 0) = true) := by simp only [beq_iff_eq]; omega
+  simp only [{floor}]
+  rw [if_neg hne]
+  simp only [Except.withDefault]
+theorem {base} : ∀ {quant_params}, {when} = true -> {lhs} = {rhs} := by
+  intro {s} {a} {b} h_when
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at h_when
+  obtain ⟨ha, hab⟩ := h_when
+  have hsplit : {pow} {b} = {pow} {a} * {pow} ({b} - {a}) := by
+    have h := {base}__pow_add {a} ({b} - {a}) (by omega) ha
+    rw [show {a} + ({b} - {a}) = {b} by omega] at h
+    exact h
+  have hdvd : {pow} {a} ∣ {s} * {pow} {b} :=
+    ⟨{s} * {pow} ({b} - {a}), by rw [hsplit, Int.mul_left_comm]⟩
+  rw [{base}__floordiv_eq ({s} * {pow} {b}) ({pow} {a}) ({base}__pow_pos {a})]
+  exact Int.ediv_mul_cancel hdvd
+grind_pattern {base} => {floor} ({s} * {pow} {b}) ({pow} {a})"#
     )
 }
 
