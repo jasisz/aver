@@ -3,11 +3,15 @@
 //! exact-rational order (`Domain.Rational`), the rounded Newton-Raphson
 //! reciprocal step family of `projects/k5_fdiv`.
 //!
-//! The rung closes ONE generic shape, name-blind on the law and figure
-//! names (keyed only on the rational order primitives `lessThan` /
-//! `absFraction` / `minus` / `plus` / `times` / `oneFraction` / `sameValue`
-//! and the rounding primitives `awayFrac` / `truncFrac` / `compFrac` /
-//! `fracExpo` / `pow2Signed`): a conditional `holds` law whose claim is
+//! This is a BESPOKE K5 figure — the rounded Newton-Raphson reciprocal
+//! step-error bound (`recip.av` `nrRoundedStepError` / `oneStepBound`), not a
+//! general mechanism. The reusable part is the triangle-inequality KIT it
+//! emits (below); the ASSEMBLY is a fixed composition pinned to this one
+//! lemma. It is name-blind on the law and figure names (keyed only on the
+//! rational order primitives `lessThan` / `absFraction` / `minus` / `plus` /
+//! `times` / `oneFraction` / `sameValue` and the rounding primitives
+//! `awayFrac` / `truncFrac` / `compFrac` / `fracExpo` / `pow2Signed`). The
+//! recognized shape is a conditional `holds` law whose claim is
 //!
 //! ```text
 //! lessThan (absFraction E) B

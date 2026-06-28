@@ -20,7 +20,11 @@ use crate::codegen::CodegenContext;
 // A `when`-law whose subject reduces to either a comparison-against-zero
 // (a nonnegativity / strict-positivity magnitude fact) or a `match` on a Bool
 // predicate (the sign split), AND whose call cone reaches a power-of-two fn.
-// The keystone arm here is a GENERIC, name-blind skeleton:
+// This is a BESPOKE K5 figure (the Lemma 7.2.2/7.2.3/7.2.4 rounding-error
+// bounds), NOT a general mechanism: its shape is pinned to the K5 float model
+// (the `Fp` record / `fpValue` / `pow2Signed`) and it supplies power-of-two-
+// specific positivity `have`s. What is generic lives in the cited Aver laws,
+// not here. The arm is name-blind on law/figure names and:
 //   * it CITES earlier sibling `holds` laws whose subject is a single
 //     order comparison or a `Bool.and` of comparisons (the floor window, the
 //     magnitude/positivity helper laws) over a prefix of this law's givens,
