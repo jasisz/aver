@@ -647,6 +647,7 @@ fn emit_verify_law_block(
             || super::law_auto::recognize_frac_positivity(vb, &law_for_auto_proof, ctx)
             || super::law_auto::recognize_frac_geone(vb, &law_for_auto_proof, ctx)
             || super::law_auto::recognize_frac_monotone_compose(vb, &law_for_auto_proof, ctx)
+            || super::law_auto::recognize_monotone_reflect(vb, &law_for_auto_proof, ctx)
             // General recursive-monotonicity law (`f(LO) <= f(HI)` for any pure
             // recursive `Int -> Int` `f` under `LO <= HI`): proven universally by
             // the shared recursive-mono kit (`f.induct` positivity + monotonicity)
@@ -1168,6 +1169,7 @@ pub(crate) fn law_as_lemma_statement(
             // at-least-one) can cite.
             || super::law_auto::recognize_frac_geone(vb, law, ctx)
             || super::law_auto::recognize_frac_monotone_compose(vb, law, ctx)
+            || super::law_auto::recognize_monotone_reflect(vb, law, ctx)
             || pinned_when_universal)
     {
         return None;

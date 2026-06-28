@@ -682,6 +682,24 @@ pub(crate) fn admitted_dep_law_theorems(
         });
     }
 
+    // Strict-order reflection consumers: the rung CITES monotonicity and
+    // denominator-positivity sibling laws that are not necessarily in the
+    // consumer's call cone. Denominator-positivity itself cites the broader
+    // positivity law. Admit exactly those discovered dependencies under the dep
+    // module's scope, keyed on the same recognizers as the emitter.
+    for module in &ctx.modules {
+        ctx.with_module_scope(Some(module.prefix.as_str()), || {
+            for vb in &module.verify_laws {
+                let VerifyKind::Law(law) = &vb.kind else {
+                    continue;
+                };
+                for dep in super::monotone_reflect_cited_deps(vb, law, ctx) {
+                    admitted.insert(dep);
+                }
+            }
+        });
+    }
+
     admitted
 }
 

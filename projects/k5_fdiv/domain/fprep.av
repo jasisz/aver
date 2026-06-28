@@ -18,7 +18,7 @@ module Fprep
         "nothing about powers of two, it CITES the proven homomorphism pow2(m+n) =="
         "pow2(m)*pow2(n) and the compiler composes it via one generic strategy."
     depends [Domain.Rational]
-    exposes [pow2, Fp, isFp, fpValue, fpValueGeneral, fpScale, fpMul, pow2Fraction, pow2Signed, pow2SignedHomomorphism, pow2SignedPositive, pow2SignedAtLeastOne, pow2SignedMonotone, fpValueEqualsGeneralWhenNonnegExp, fpScaleKeepsSignificand, fpScaleShiftsExponent, fpScalePreservesValue, productExp, productExpInRange, fpMulValue]
+    exposes [pow2, Fp, isFp, fpValue, fpValueGeneral, fpScale, fpMul, pow2Fraction, pow2Signed, pow2SignedHomomorphism, pow2SignedPositive, pow2SignedDenomPositive, pow2SignedAtLeastOne, pow2SignedMonotone, fpValueEqualsGeneralWhenNonnegExp, fpScaleKeepsSignificand, fpScaleShiftsExponent, fpScalePreservesValue, productExp, productExpInRange, fpMulValue]
     effects []
 
 fn pow2(n: Int) -> Int
@@ -298,6 +298,19 @@ verify pow2SignedPositive law positive
     given k: Int = [-3, -1, 0, 2, 5]
     pow2SignedPositive(k) holds
 
+fn pow2SignedDenomPositive(k: Int) -> Bool
+    ? "The signed power of two always has a strictly positive denominator. This factors out the denominator half of pow2SignedPositive as a citable pool law for rational-order reflection proofs."
+    pow2Signed(k).bottom > 0
+
+verify pow2SignedDenomPositive
+    pow2SignedDenomPositive(0) => true
+    pow2SignedDenomPositive(3) => true
+    pow2SignedDenomPositive(-2) => true
+
+verify pow2SignedDenomPositive law positive
+    given k: Int = [-3, -1, 0, 2, 5]
+    pow2SignedDenomPositive(k) holds
+
 fn pow2SignedAtLeastOne(k: Int) -> Bool
     ? "The signed power of two is at least one for a nonnegative exponent: 2^k >= 1 when k >= 0 (Section 5.1, p.13). In the exact-rational order this is isNonNeg(2^k - 1)."
     Domain.Rational.isNonNeg(Domain.Rational.minus(pow2Signed(k), Domain.Rational.oneFraction()))
@@ -339,3 +352,13 @@ verify pow2SignedMonotone law allExponents
     given n: Int = [-2, 0, 3]
     when m <= n
     pow2SignedMonotone(m, n) holds
+
+fn pow2SignedLtReflect(a: Int, b: Int) -> Bool
+    ? "The order-inverse of pow2SignedMonotone: the signed power of two reflects strict order, 2^a < 2^b implies a < b for ANY integers a, b (Section 5.1, p.13). This is the magnitude-to-exponent direction the digit-separation Lemma 8.2.1 needs: a strict magnitude bound 2^a < 2^b forces the exponent inequality a < b."
+    a < b
+
+verify pow2SignedLtReflect law fromStrictOrder
+    given a: Int = [-3, -1, 0, 2, 5]
+    given b: Int = [-2, 0, 3, 6]
+    when Domain.Rational.lessThan(pow2Signed(a), pow2Signed(b))
+    pow2SignedLtReflect(a, b) holds

@@ -116,6 +116,8 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     if super::super::recognize_frac_positivity(vb, law, ctx)
         || super::super::recognize_frac_geone(vb, law, ctx)
         || super::super::recognize_frac_monotone_compose(vb, law, ctx)
+        || super::super::recognize_denom_positive(vb, law, ctx)
+        || super::super::recognize_monotone_reflect(vb, law, ctx)
     {
         return false;
     }

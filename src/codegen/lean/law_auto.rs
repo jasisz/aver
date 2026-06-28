@@ -10,6 +10,7 @@ mod homomorphism;
 mod induction;
 mod inequality;
 mod interval_mono;
+mod monotone_reflect;
 mod recursive_mono;
 mod sampled;
 mod shared;
@@ -66,6 +67,16 @@ pub(in crate::codegen::lean) use interval_mono::recognize_interval_monotonicity;
 pub(in crate::codegen::lean) use frac_monotone_compose::{
     frac_monotone_compose_cited_deps, recognize_frac_geone, recognize_frac_monotone_compose,
     recognize_frac_positivity,
+};
+
+/// Strict-order reflection for opaque unary `Fraction` cone functions:
+/// `lessThan(F(a), F(b)) -> a < b`, closed by citing earlier monotonicity and
+/// denominator-positivity pool laws for the same captured `F` plus a generic
+/// integer cross-order contradiction kit. The denominator-positivity subshape is
+/// also emitted here as a citable pool law derived from the broader positivity
+/// law.
+pub(in crate::codegen::lean) use monotone_reflect::{
+    monotone_reflect_cited_deps, recognize_denom_positive, recognize_monotone_reflect,
 };
 
 /// General recursive positivity / monotonicity rung — the name-blind,
@@ -613,13 +624,20 @@ fn emit_verify_law_forall_auto_proof_inner(
     // recursive-positivity pool law of the recursive integer fn in `F`'s cone.
     // Emits its OWN TRUE-universal theorem (`replaces_theorem`) under a
     // `first | (…) | sorry` floor.
-    if let Some(proof) = frac_monotone_compose::emit_frac_positivity_law(
-        vb,
-        law,
-        ctx,
-        theorem_base,
-        quant_params,
-    ) {
+    if let Some(proof) =
+        frac_monotone_compose::emit_frac_positivity_law(vb, law, ctx, theorem_base, quant_params)
+    {
+        return Some(proof);
+    }
+
+    // Denominator positivity for the same opaque unary `Fraction` cone family:
+    // a citable pool law `F(k).bottom > 0`, closed by citing the earlier broader
+    // positivity law `F(k).top > 0 && F(k).bottom > 0`. This gives downstream
+    // rational-order reflection proofs a precise denominator fact without
+    // unfolding `F`.
+    if let Some(proof) =
+        monotone_reflect::emit_denom_positive_law(vb, law, ctx, theorem_base, quant_params)
+    {
         return Some(proof);
     }
 
@@ -628,13 +646,8 @@ fn emit_verify_law_forall_auto_proof_inner(
     // exponent. The premise kills the negative arm; closed by citing the same
     // recursive-positivity pool law.
     if law.when.is_some()
-        && let Some(proof) = frac_monotone_compose::emit_frac_geone_law(
-            vb,
-            law,
-            ctx,
-            theorem_base,
-            quant_params,
-        )
+        && let Some(proof) =
+            frac_monotone_compose::emit_frac_geone_law(vb, law, ctx, theorem_base, quant_params)
     {
         return Some(proof);
     }
@@ -660,6 +673,19 @@ fn emit_verify_law_forall_auto_proof_inner(
             theorem_base,
             quant_params,
         )
+    {
+        return Some(proof);
+    }
+
+    // Strict-order reflection for the same opaque unary `Fraction` cone family:
+    // `when lessThan(F(a), F(b)) -> a < b`. Closed by contradiction, citing the
+    // earlier monotonicity pool law with the reversed non-strict order and the
+    // earlier denominator-positivity pool law on both sides, then applying a
+    // generic integer cross-order contradiction kit. `F` is captured from the
+    // premise AST and never unfolded.
+    if law.when.is_some()
+        && let Some(proof) =
+            monotone_reflect::emit_monotone_reflect_law(vb, law, ctx, theorem_base, quant_params)
     {
         return Some(proof);
     }
@@ -690,13 +716,8 @@ fn emit_verify_law_forall_auto_proof_inner(
     // pow2 literal; the pow2Signed Fraction-order law reuses the SAME kit through
     // its thin sign-split adapter above.
     if law.when.is_some()
-        && let Some(proof) = recursive_mono::emit_recursive_monotone_law(
-            vb,
-            law,
-            ctx,
-            theorem_base,
-            quant_params,
-        )
+        && let Some(proof) =
+            recursive_mono::emit_recursive_monotone_law(vb, law, ctx, theorem_base, quant_params)
     {
         return Some(proof);
     }
