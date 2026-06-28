@@ -642,6 +642,15 @@ fn emit_verify_law_block(
             // emit replaces the theorem with the universal form, so dropping the
             // sampled domain keeps statement and proof aligned.
             || super::law_auto::recognize_pow2_signed_monotone(vb, &law_for_auto_proof, ctx)
+            // Rational-order chaining law (the reciprocal-magnitude composition,
+            // Lemma 8.2.4): the conclusion is the Fraction order fact `isNonNeg
+            // (minus (pow2Signed BIG) A)`, proven universally by chaining the
+            // scaled-bound / envelope / placement premises through the generic
+            // `frac_le_trans` kit and citing the signed power-of-two
+            // monotonicity + homomorphism pool laws. The emit replaces the
+            // theorem with the universal form, so dropping the sampled domain
+            // keeps statement and proof aligned.
+            || super::law_auto::recognize_frac_order_chain(vb, &law_for_auto_proof, ctx)
             // Triangle-sum law (the rounded Newton-Raphson reciprocal step): a
             // strict `absFraction`-of-a-three-term-sum bound over the exact-
             // rational order, proven universally by the generic triangle kit

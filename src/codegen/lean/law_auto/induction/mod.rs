@@ -646,6 +646,23 @@ pub(crate) fn admitted_dep_law_theorems(
         }
     }
 
+    // Rational-order chaining consumers: the rung CITES the signed power-of-two
+    // monotonicity + homomorphism pool laws (whose subject fns are NOT in the
+    // consumer law's call cone — the consumer only calls `pow2Signed`, never the
+    // monotonicity/homomorphism predicate), so the structural gate above does
+    // not reach them. The rung knows exactly which laws it cites, so admit them
+    // directly — keyed on the SAME recognizer the emit uses, so the cited
+    // theorem is emitted iff the proof that cites it is.
+    for item in &ctx.items {
+        let TopLevel::Verify(vb) = item else { continue };
+        let VerifyKind::Law(law) = &vb.kind else {
+            continue;
+        };
+        for dep in super::frac_order_chain_cited_deps(vb, law, ctx) {
+            admitted.insert(dep);
+        }
+    }
+
     admitted
 }
 

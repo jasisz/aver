@@ -65,7 +65,7 @@ module Remainder
         "real trunc/away of kernel.av, sample-verified) demonstrates the model mirrors"
         "Figure 1; the Lean side is bounded (credit is Dafny), not kernel-universal."
     depends [Domain.Rational, Domain.Fprep, Domain.Kernel, Domain.FracRound, Domain.Recip]
-    exposes [firstTruncRem, firstQuotientDigit, exactFirstDigit, firstRemainderError, remainderRhs, firstRemainderHolds, alphaFactor, betaFactor, signsSeparated, reciprocalMagnitudeRhs, reciprocalMagnitudeHolds, maxInt, productMagnitudeBound, remainderBound_8_2_3, awayDigitOvershoot, oppositeSignSumBounded, signsDifferent_8_2_2]
+    exposes [firstTruncRem, firstQuotientDigit, exactFirstDigit, firstRemainderError, remainderRhs, firstRemainderHolds, alphaFactor, betaFactor, signsSeparated, reciprocalMagnitudeRhs, reciprocalMagnitudeHolds, maxInt, productMagnitudeBound, remainderBound_8_2_3, awayDigitOvershoot, oppositeSignSumBounded, signsDifferent_8_2_2, reciprocalMagnitudeBound_8_2_4]
     effects []
 
 // ---------------------------------------------------------------------------
@@ -149,6 +149,49 @@ verify reciprocalMagnitudeHolds
     reciprocalMagnitudeHolds(Domain.Rational.Fraction(top = 7, bottom = 4), Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 2, bottom = 3)) => true
     reciprocalMagnitudeHolds(Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1)) => true
     reciprocalMagnitudeHolds(Domain.Rational.Fraction(top = 5, bottom = 4), Domain.Rational.Fraction(top = 4, bottom = 5), Domain.Rational.Fraction(top = 5, bottom = 4)) => true
+
+// ---------------------------------------------------------------------------
+// The reciprocal-magnitude bound (Lemma 8.2.4, p.30) as a UNIVERSAL order fact
+// on the exact-rational model -- the abstract composition the runnable
+// reciprocalMagnitudeHolds above instantiates. |1/d| <= 2^(e(q0)-e(p0)+2)
+// follows by chaining the reciprocal envelope and the away/product exponent
+// placement through the generic rational-order rung, citing pow2SignedMonotone.
+// ---------------------------------------------------------------------------
+
+fn reciprocalMagnitudeBound_8_2_4(recipMag: Fraction, eP0: Int, eQ0: Int) -> Bool
+    ? "Lemma 8.2.4 (p.30) as a universal exact-rational order fact: the reciprocal magnitude recipMag = |1/d| is at most 2^(e(q0) - e(p0) + 2), stated recipMagBound - recipMag >= 0 (the non-strict <= of the lemma). recipMag is the abstract magnitude the runnable reciprocalMagnitudeHolds reads off the genuine kernel reciprocal; eP0 = e(p0) and eQ0 = e(q0) are the binary exponents of the initial remainder and the first digit."
+    Domain.Rational.isNonNeg(Domain.Rational.minus(Domain.Fprep.pow2Signed(eQ0 - eP0 + 2), recipMag))
+
+verify reciprocalMagnitudeBound_8_2_4
+    reciprocalMagnitudeBound_8_2_4(Domain.Rational.Fraction(top = 1, bottom = 1), 0, 3) => true
+    reciprocalMagnitudeBound_8_2_4(Domain.Rational.Fraction(top = 1, bottom = 2), -1, 2) => true
+
+// Lemma 8.2.4 (p.30): if p0 != 0 then |1/d| <= 2^(e(q0) - e(p0) + 2). The proof
+// (hint p.30) composes the reciprocal estimate envelope with the away/product/
+// trunc exponent placement of Lemmas 7.2.7, 7.1.7, 7.2.6:
+//   |1/d| <= 2*|sd2|            (reciprocalBound, the two-doubling reciprocal slack)
+//          <  2 * 2^(e(sd2)+1)  (the magnitude envelope |sd2| < 2^(e(sd2)+1))
+//          =  2^(e(sd2)+2)      (doubling: 2 * 2^k = 2^(k+1), pow2SignedHomomorphism)
+//          <= 2^(e(q0)-e(p0)+2) (pow2SignedMonotone, via e(sd2)+e(p0) <= e(q0)).
+// The exponent placement e(sd2) + e(p0) <= e(q0) is LOAD-BEARING: it is exactly
+// what the cited monotonicity needs to land the doubled envelope under the digit
+// exponent. The paper's p0 != 0 hypothesis guards e(p0); it is not needed for
+// this magnitude composition (the chain holds for any well-formed sd2Mag), so it
+// is omitted. The composition is a generic rational-order chain (frac_le_trans
+// over the cited <=-shaped envelope, lt->le, scale-by-two and the doubling
+// sameValue), citing pow2SignedMonotone for the final step -- the same
+// laws-as-lemmas discipline as the rest of the project.
+verify reciprocalMagnitudeBound_8_2_4 law reciprocalMagnitudeComposition
+    given recipMag: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 1)]
+    given sd2Mag: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 1)]
+    given eSd2: Int = [0, 2]
+    given eP0: Int = [0, -1]
+    given eQ0: Int = [3]
+    when Domain.Rational.isNonNeg(Domain.Rational.minus(Domain.Rational.times(Domain.Rational.Fraction(top = 2, bottom = 1), sd2Mag), recipMag))
+    when Domain.Rational.lessThan(sd2Mag, Domain.Fprep.pow2Signed(eSd2 + 1))
+    when sd2Mag.bottom != 0
+    when eSd2 + eP0 <= eQ0
+    reciprocalMagnitudeBound_8_2_4(recipMag, eP0, eQ0) holds
 
 // ---------------------------------------------------------------------------
 // The cross-multiplied INTEGER certificates (Z3/Dafny backend, SMT trust).

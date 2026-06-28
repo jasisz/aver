@@ -85,6 +85,18 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     if super::super::recognize_pow2_signed_monotone(vb, law, ctx) {
         return false;
     }
+    // Decline the rational-order chaining shape (the reciprocal-magnitude
+    // composition): its dedicated rung is a DETERMINISTIC `replaces_theorem`
+    // closer (the `frac_le_trans` kit + the cited monotonicity/homomorphism
+    // chain), dispatched before the keystone. The keystone's bare `grind` over
+    // the pool can never synthesize the chain's intermediate magnitudes, so
+    // under the probe it would only fall to its sorry floor; declining here
+    // keeps the law deterministic in BOTH passes and lets the dedicated rung
+    // own its (separate-arrow) universal statement, exactly as the
+    // interval-monotonicity / pow2-monotonicity guards above do.
+    if super::super::recognize_frac_order_chain(vb, law, ctx) {
+        return false;
+    }
     // The claim goes through the subject fn (`holds`, or an equational `=> rhs`).
     if !matches!(&law.lhs.node, crate::ast::Expr::FnCall(..)) {
         return false;

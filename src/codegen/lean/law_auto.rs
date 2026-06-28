@@ -4,6 +4,7 @@
 /// matching and proof-shape logic lives in one place.
 mod decimal;
 mod floor_window;
+mod frac_order_chain;
 mod induction;
 mod inequality;
 mod interval_mono;
@@ -60,6 +61,18 @@ pub(in crate::codegen::lean) use interval_mono::recognize_interval_monotonicity;
 /// universal statement and the helper-kit-plus-sign-scaffold proof stay in
 /// lockstep.
 pub(in crate::codegen::lean) use pow2_monotone::recognize_pow2_signed_monotone;
+
+/// Rational-order chaining rung — the broad, reusable Fraction `<=`
+/// (`isNonNeg (minus C A)`) rung and its first consumer, the reciprocal-
+/// magnitude composition (Lemma 8.2.4). Feeds the `omit_domain` statement
+/// driver so the universal statement and the helper-kit-plus-chain proof stay
+/// in lockstep.
+pub(in crate::codegen::lean) use frac_order_chain::recognize_frac_order_chain;
+
+/// The `(module_prefix, theorem_base)` pool laws a chaining law cites
+/// (signed power-of-two monotonicity + homomorphism) — unioned into the
+/// cross-file admission set so those dep theorems are emitted into the build.
+pub(in crate::codegen::lean) use frac_order_chain::frac_order_chain_cited_deps;
 
 /// Triangle-sum rung — the strict bound on an `absFraction`-of-a-three-term-
 /// sum over the exact-rational order (the rounded Newton-Raphson reciprocal
@@ -591,6 +604,24 @@ fn emit_verify_law_forall_auto_proof_inner(
             theorem_base,
             quant_params,
         )
+    {
+        return Some(proof);
+    }
+
+    // Rational-order chaining — a conditional `holds` law whose conclusion is
+    // the Fraction order fact `isNonNeg (minus (pow2Signed BIG) A)` (i.e.
+    // `A <= 2^BIG`), closed by chaining the scaled-bound / envelope / placement
+    // premises through the generic `frac_le_trans` kit and CITING the signed
+    // power-of-two monotonicity + homomorphism pool laws (the reciprocal-
+    // magnitude composition, Lemma 8.2.4). Emits its OWN TRUE-universal theorem
+    // (`replaces_theorem`) under a `first | (…) | sorry` floor, so credit stays
+    // fail-closed behind the `#print axioms` whitelist. Tried BEFORE the
+    // keystone/multicite arms (the keystone declines this shape explicitly) so
+    // this deterministic closer wins over the speculative pool composition (a
+    // bare `grind` could never synthesize the chain's intermediate magnitudes).
+    if law.when.is_some()
+        && let Some(proof) =
+            frac_order_chain::emit_frac_order_chain_law(vb, law, ctx, theorem_base, quant_params)
     {
         return Some(proof);
     }
