@@ -26,11 +26,12 @@
 //!    second, non-pow2 function (e.g. a triangular-number `tri n = n + tri(n-1)`
 //!    monotonicity law) with no pow2-specific gating.
 //!
-//! The signed-power-of-two Fraction order `isNonNeg(minus(pow2Signed HI,
-//! pow2Signed LO))` is a thin DOMAIN wrapper (a sign-split over the recursive
-//! `pow2`, in the exact-rational order) that consumes the SAME kit through its
-//! own adapter in `pow2_monotone.rs`; the recursive monotonicity algebra lives
-//! here, once.
+//! The Fraction-order monotonicity of a `Fraction`-valued cone fn `F`
+//! (`isNonNeg(minus(F HI, F LO))`) is NOT handled here: it is closed generically
+//! by `frac_monotone_compose.rs`, which treats `F` as OPAQUE and cites `F`'s
+//! homomorphism / positivity / `>= 1` pool laws — the recursion is abstracted
+//! behind those laws, not re-derived. This rung owns only the PLAIN integer order
+//! `f(LO) <= f(HI)` (the `tri` / `fct` family), where the recursion is exposed.
 
 use super::AutoProof;
 use super::aver_name_to_lean;
@@ -43,12 +44,8 @@ use crate::codegen::CodegenContext;
 pub(super) struct RecKit {
     /// The full helper-kit Lean source (the five theorems).
     pub text: String,
-    /// `{base}__rec_pos` — `BASE <= f n`.
-    pub pos: String,
     /// `{base}__rec_mono` — `∀ n m, m <= n -> f m <= f n`.
     pub mono: String,
-    /// `{base}__rec_one_le_mul` — `1 <= a -> 1 <= b -> 1 <= a * b`.
-    pub one_le_mul: String,
 }
 
 /// Whether `fd` is a `p <= 0`-guarded single-step recursion on a lone `Int`
@@ -159,9 +156,7 @@ theorem {base}__rec_mono : ∀ (n m : Int), m <= n -> {f} m <= {f} n := by
     );
     RecKit {
         text,
-        pos: format!("{base}__rec_pos"),
         mono: format!("{base}__rec_mono"),
-        one_le_mul: format!("{base}__rec_one_le_mul"),
     }
 }
 

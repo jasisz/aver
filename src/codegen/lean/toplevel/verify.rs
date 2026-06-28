@@ -634,14 +634,19 @@ fn emit_verify_law_block(
             // argument. The emit replaces the theorem with the `Prop`-hypothesis
             // universal form, so dropping the sampled domain keeps them aligned.
             || super::law_auto::recognize_interval_monotonicity(vb, &law_for_auto_proof, ctx)
-            // Signed-power-of-two monotonicity law (the K5 all-exponent order
-            // fact `2^E_lo <= 2^E_hi` for `E_lo <= E_hi`): the subject body is
-            // `isNonNeg (minus (pow2Signed E_hi) (pow2Signed E_lo))`, proven
-            // universally by the generic power-of-two helper kit (`pow.induct`
-            // positivity + monotonicity) and the four-way sign scaffold. The
+            // Exact-rational order facts about an opaque unary `Fraction` cone fn
+            // `F` (the K5 signed power of two): its POSITIVITY (`F(k).top > 0 &&
+            // F(k).bottom > 0`), its AT-LEAST-ONE (`when k >= 0 -> isNonNeg(minus(
+            // F(k), oneFraction))`), and the all-exponent MONOTONICITY (`isNonNeg
+            // (minus (F E_hi) (F E_lo))` under `E_lo <= E_hi`). The first two cite
+            // the recursive-positivity pool law; the monotonicity is laws-as-lemmas
+            // composition citing `F`'s homomorphism + positivity + `>= 1` laws,
+            // chained through the generic Fraction order kit (`F` opaque). Each
             // emit replaces the theorem with the universal form, so dropping the
             // sampled domain keeps statement and proof aligned.
-            || super::law_auto::recognize_pow2_signed_monotone(vb, &law_for_auto_proof, ctx)
+            || super::law_auto::recognize_frac_positivity(vb, &law_for_auto_proof, ctx)
+            || super::law_auto::recognize_frac_geone(vb, &law_for_auto_proof, ctx)
+            || super::law_auto::recognize_frac_monotone_compose(vb, &law_for_auto_proof, ctx)
             // General recursive-monotonicity law (`f(LO) <= f(HI)` for any pure
             // recursive `Int -> Int` `f` under `LO <= HI`): proven universally by
             // the shared recursive-mono kit (`f.induct` positivity + monotonicity)
@@ -1147,6 +1152,13 @@ pub(crate) fn law_as_lemma_statement(
     if law.when.is_some()
         && !(super::law_auto::recognize_conditional_comparison_bridge(law, ctx)
             || super::law_auto::recognize_conditional_inductive_generic(vb, law, ctx)
+            // The exact-rational at-least-one (`F(k) >= 1` for `k >= 0`) and
+            // monotonicity (`F(LO) <= F(HI)` for `LO <= HI`) conditional laws are
+            // proven universally by their dedicated composition rungs, so they are
+            // sound conditional rewrites a later law (the monotonicity citing the
+            // at-least-one) can cite.
+            || super::law_auto::recognize_frac_geone(vb, law, ctx)
+            || super::law_auto::recognize_frac_monotone_compose(vb, law, ctx)
             || pinned_when_universal)
     {
         return None;

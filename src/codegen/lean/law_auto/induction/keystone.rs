@@ -14,6 +14,36 @@ use super::*;
 use crate::ast::{VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 
+/// The verify-law blocks of the SAME module as `vb`, in source order — the pool
+/// the keystone's laws-as-lemmas composition searches for earlier siblings. When
+/// `vb` is the entry's own law it lives in `ctx.items`; when `vb` belongs to a
+/// DEPENDENCY module (the cross-file re-emit path — a dep law admitted by a
+/// consumer and re-proved inside the dep's namespace) it lives in that module's
+/// `verify_laws`, NOT `ctx.items` (which holds the unrelated entry's blocks).
+/// Searching the right collection keeps the keystone firing identically in the
+/// standalone export and the dependency export: the entry case returns exactly
+/// the `ctx.items` verify blocks (byte-identical to the old `for item in
+/// &ctx.items` iteration), the dependency case finds the module's siblings.
+fn enclosing_verify_blocks<'a>(vb: &VerifyBlock, ctx: &'a CodegenContext) -> Vec<&'a VerifyBlock> {
+    use crate::ast::TopLevel;
+    for module in &ctx.modules {
+        if module
+            .verify_laws
+            .iter()
+            .any(|b| b.line == vb.line && b.fn_name == vb.fn_name)
+        {
+            return module.verify_laws.iter().collect();
+        }
+    }
+    ctx.items
+        .iter()
+        .filter_map(|it| match it {
+            TopLevel::Verify(b) => Some(b),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Keystone — the NON-recursive analog of [`recognize_conditional_inductive_generic`].
 /// A conditional claim with NO list to induct on, decomposed purely by citing
 /// the laws-as-lemmas pool: EARLIER sibling laws in the file abstract whatever
@@ -74,15 +104,19 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     if super::super::recognize_interval_monotonicity(vb, law, ctx) {
         return false;
     }
-    // Decline the signed-power-of-two monotonicity shape: its dedicated rung is
-    // a DETERMINISTIC `replaces_theorem` closer (the power-of-two helper kit +
-    // four-way sign scaffold), dispatched before the keystone. The keystone's
-    // bare `grind` over the pool can never close it (it needs `pow.induct`), so
-    // under the probe it would only fall to its sorry floor; declining here keeps
-    // the law deterministic in BOTH passes and lets the dedicated rung own its
-    // (separate-arrow) universal statement, exactly as the interval-monotonicity
-    // guard above does.
-    if super::super::recognize_pow2_signed_monotone(vb, law, ctx) {
+    // Decline the exact-rational positivity / at-least-one / monotonicity shapes
+    // over an opaque `Fraction` cone fn `F`: each has a dedicated DETERMINISTIC
+    // `replaces_theorem` closer (citing `F`'s recursive-positivity / homomorphism
+    // pool laws and chaining through the generic Fraction order kit), dispatched
+    // before the keystone. The keystone's bare `grind` over the pool can never
+    // assemble that chain, so under the probe it would only fall to its sorry
+    // floor; declining here keeps the law deterministic in BOTH passes and lets
+    // the dedicated rung own its (separate-arrow) universal statement, exactly as
+    // the interval-monotonicity guard above does.
+    if super::super::recognize_frac_positivity(vb, law, ctx)
+        || super::super::recognize_frac_geone(vb, law, ctx)
+        || super::super::recognize_frac_monotone_compose(vb, law, ctx)
+    {
         return false;
     }
     // Decline the general recursive-monotonicity shape for the same reason: its
@@ -193,16 +227,13 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
 /// the citing theorem inherits `sorryAx` and the `--check` whitelist refuses it
 /// credit (see the `pinned_when_universal` note in `law_as_lemma_statement`).
 fn keystone_pool_names(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Vec<String> {
-    use crate::ast::{TopLevel, VerifyKind};
+    use crate::ast::VerifyKind;
     let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
     let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
     let cone_fns: std::collections::HashSet<String> =
         cone.pure_fns().iter().map(|fd| fd.name.clone()).collect();
     let mut out = Vec::new();
-    for item in &ctx.items {
-        let TopLevel::Verify(prev) = item else {
-            continue;
-        };
+    for prev in enclosing_verify_blocks(vb, ctx) {
         // Only blocks EARLIER in source — source order is emit order, so the
         // cited theorem precedes this one and cyclic use is impossible.
         if prev.line == vb.line && prev.fn_name == vb.fn_name {
@@ -238,16 +269,13 @@ fn keystone_pool_subject_fns(
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> Vec<String> {
-    use crate::ast::{TopLevel, VerifyKind};
+    use crate::ast::VerifyKind;
     let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
     let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
     let cone_fns: std::collections::HashSet<String> =
         cone.pure_fns().iter().map(|fd| fd.name.clone()).collect();
     let mut out = Vec::new();
-    for item in &ctx.items {
-        let TopLevel::Verify(prev) = item else {
-            continue;
-        };
+    for prev in enclosing_verify_blocks(vb, ctx) {
         if prev.line == vb.line && prev.fn_name == vb.fn_name {
             break;
         }
@@ -276,17 +304,14 @@ fn keystone_self_registering_pool_names(
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> std::collections::HashSet<String> {
-    use crate::ast::{TopLevel, VerifyKind};
+    use crate::ast::VerifyKind;
     use crate::ir::{FloorWindowFigure, ProofStrategy};
     let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
     let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
     let cone_fns: std::collections::HashSet<String> =
         cone.pure_fns().iter().map(|fd| fd.name.clone()).collect();
     let mut out = std::collections::HashSet::new();
-    for item in &ctx.items {
-        let TopLevel::Verify(prev) = item else {
-            continue;
-        };
+    for prev in enclosing_verify_blocks(vb, ctx) {
         if prev.line == vb.line && prev.fn_name == vb.fn_name {
             break;
         }
@@ -330,16 +355,13 @@ pub(super) fn keystone_pow2_fn(
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> Option<String> {
-    use crate::ast::{TopLevel, VerifyKind};
+    use crate::ast::VerifyKind;
     use crate::ir::{FloorWindowFigure, ProofStrategy};
     let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
     let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
     let cone_fns: std::collections::HashSet<String> =
         cone.pure_fns().iter().map(|fd| fd.name.clone()).collect();
-    for item in &ctx.items {
-        let TopLevel::Verify(prev) = item else {
-            continue;
-        };
+    for prev in enclosing_verify_blocks(vb, ctx) {
         // Only earlier-in-source siblings — same gate as `keystone_pool_names`.
         if prev.line == vb.line && prev.fn_name == vb.fn_name {
             break;
@@ -395,17 +417,14 @@ fn keystone_pow2signed_cite(
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> Option<Pow2SignedCite> {
-    use crate::ast::{Expr, Literal, TopLevel, VerifyKind};
+    use crate::ast::{Expr, Literal, VerifyKind};
     let int_pow = keystone_pow2_fn(vb, law, ctx)?;
     let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
     let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
     let cone_fns: std::collections::HashSet<String> =
         cone.pure_fns().iter().map(|fd| fd.name.clone()).collect();
     let all_fns: Vec<&crate::ast::FnDef> = inputs.pure_fns();
-    for item in &ctx.items {
-        let TopLevel::Verify(prev) = item else {
-            continue;
-        };
+    for prev in enclosing_verify_blocks(vb, ctx) {
         if prev.line == vb.line && prev.fn_name == vb.fn_name {
             break;
         }
@@ -970,7 +989,7 @@ fn keystone_order_bridge_citations(
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> Vec<OrderBridgeCitation> {
-    use crate::ast::{Expr, Literal, Spanned, TopLevel, VerifyKind};
+    use crate::ast::{Expr, Literal, Spanned, VerifyKind};
 
     // Subterms of the citing law's GOAL (the inlined subject body) and PREMISES.
     let mut subterms: Vec<Expr> = Vec::new();
@@ -992,10 +1011,7 @@ fn keystone_order_bridge_citations(
     );
 
     let mut out = Vec::new();
-    for item in &ctx.items {
-        let TopLevel::Verify(prev) = item else {
-            continue;
-        };
+    for prev in enclosing_verify_blocks(vb, ctx) {
         // Only EARLIER blocks — source order is emit order, so the cited theorem
         // precedes this one and cyclic citation is impossible.
         if prev.line == vb.line && prev.fn_name == vb.fn_name {

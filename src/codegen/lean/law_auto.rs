@@ -4,11 +4,11 @@
 /// matching and proof-shape logic lives in one place.
 mod decimal;
 mod floor_window;
+mod frac_monotone_compose;
 mod frac_order_chain;
 mod induction;
 mod inequality;
 mod interval_mono;
-mod pow2_monotone;
 mod recursive_mono;
 mod sampled;
 mod shared;
@@ -55,13 +55,17 @@ pub(in crate::codegen::lean) use induction::recognize_multicite_composition;
 /// the helper-kit-plus-assembly proof stay in lockstep.
 pub(in crate::codegen::lean) use interval_mono::recognize_interval_monotonicity;
 
-/// Signed-power-of-two monotonicity rung — the order-monotonicity sibling of
-/// the rational strict-order bound: a conditional `holds` law whose subject
-/// body is `isNonNeg (minus (pow2Signed E_hi) (pow2Signed E_lo))` under a
-/// premise `E_lo <= E_hi`. Feeds the `omit_domain` statement driver so the
-/// universal statement and the helper-kit-plus-sign-scaffold proof stay in
-/// lockstep.
-pub(in crate::codegen::lean) use pow2_monotone::recognize_pow2_signed_monotone;
+/// Exact-rational order facts about an OPAQUE unary `Fraction`-valued cone fn
+/// `F` — its positivity, its `>= 1` (at-least-one) fact, and the headline
+/// MONOTONICITY composition (`isNonNeg (minus (F HI) (F LO))` under `LO <= HI`,
+/// closed by citing `F`'s homomorphism + positivity + `>= 1` pool laws and
+/// chaining through the generic Fraction order kit — `F` is never unfolded).
+/// Each feeds the `omit_domain` statement driver so the universal statement and
+/// the laws-as-lemmas proof stay in lockstep.
+pub(in crate::codegen::lean) use frac_monotone_compose::{
+    frac_monotone_compose_cited_deps, recognize_frac_geone, recognize_frac_monotone_compose,
+    recognize_frac_positivity,
+};
 
 /// General recursive-monotonicity rung — the name-blind, structurally-keyed core
 /// (`f(LO) <= f(HI)` for ANY pure recursive `Int -> Int` `f` with a `p <= 0`
@@ -593,19 +597,53 @@ fn emit_verify_law_forall_auto_proof_inner(
         return Some(proof);
     }
 
-    // Signed-power-of-two monotonicity — a conditional `holds` law whose subject
-    // body is `isNonNeg (minus (pow2Signed E_hi) (pow2Signed E_lo))` under a
-    // premise `E_lo <= E_hi`, i.e. `2^E_lo <= 2^E_hi` over the exact-rational
-    // order for ANY integer exponents. Closed UNIVERSALLY by the generic
-    // power-of-two helper kit (`pow.induct` positivity + monotonicity) and the
-    // four-way sign scaffold. Emits its OWN TRUE-universal theorem
-    // (`replaces_theorem`) under a `first | (…) | sorry` floor, so credit stays
-    // fail-closed behind the `#print axioms` whitelist. Tried BEFORE the
-    // keystone/multicite arms (the keystone declines this shape explicitly) so
-    // this deterministic closer wins over the speculative pool composition,
-    // which a bare `grind` could never close on the recursive `pow2`.
+    // Exact-rational POSITIVITY of an opaque unary `Fraction` cone fn `F` — a
+    // `holds` law whose subject body is `Bool.and(F(k).top > 0, F(k).bottom > 0)`.
+    // Closed UNIVERSALLY by unfolding the (non-recursive) `F` and CITING the
+    // recursive-positivity pool law of the recursive integer fn in `F`'s cone.
+    // Emits its OWN TRUE-universal theorem (`replaces_theorem`) under a
+    // `first | (…) | sorry` floor.
+    if let Some(proof) = frac_monotone_compose::emit_frac_positivity_law(
+        vb,
+        law,
+        ctx,
+        theorem_base,
+        quant_params,
+    ) {
+        return Some(proof);
+    }
+
+    // Exact-rational AT-LEAST-ONE of `F` — a conditional `holds` law `when k >= 0
+    // -> isNonNeg(minus(F(k), oneFraction))`, i.e. `F(k) >= 1` for a nonnegative
+    // exponent. The premise kills the negative arm; closed by citing the same
+    // recursive-positivity pool law.
     if law.when.is_some()
-        && let Some(proof) = pow2_monotone::emit_pow2_signed_monotone_law(
+        && let Some(proof) = frac_monotone_compose::emit_frac_geone_law(
+            vb,
+            law,
+            ctx,
+            theorem_base,
+            quant_params,
+        )
+    {
+        return Some(proof);
+    }
+
+    // Exact-rational MONOTONICITY by laws-as-lemmas composition — a conditional
+    // `holds` law whose subject body is `isNonNeg (minus (F E_hi) (F E_lo))` under
+    // a premise `E_lo <= E_hi`, i.e. `F(E_lo) <= F(E_hi)` over the sign-robust
+    // rational order for an OPAQUE unary `Fraction` cone fn `F`. Closed
+    // UNIVERSALLY by CITING three earlier sibling pool laws about the SAME `F` —
+    // its homomorphism `sameValue(F(a+b), times(F(a), F(b)))`, its positivity, and
+    // its `>= 1` fact — and chaining them through the generic Fraction order kit
+    // (`frac_le_mul_pos` + `frac_le_samevalue_right`). `F` is never unfolded: no
+    // sign-split, no recursion, the recursion is fully abstracted behind the cited
+    // laws. Emits its OWN TRUE-universal theorem (`replaces_theorem`) under a
+    // `first | (…) | sorry` floor. Tried BEFORE the keystone/multicite arms (the
+    // keystone declines this shape explicitly) so this deterministic composition
+    // wins over the speculative pool grind, which could never assemble the chain.
+    if law.when.is_some()
+        && let Some(proof) = frac_monotone_compose::emit_frac_monotone_compose_law(
             vb,
             law,
             ctx,

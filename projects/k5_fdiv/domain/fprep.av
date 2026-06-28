@@ -18,7 +18,7 @@ module Fprep
         "nothing about powers of two, it CITES the proven homomorphism pow2(m+n) =="
         "pow2(m)*pow2(n) and the compiler composes it via one generic strategy."
     depends [Domain.Rational]
-    exposes [pow2, Fp, isFp, fpValue, fpValueGeneral, fpScale, fpMul, pow2Fraction, pow2Signed, pow2SignedHomomorphism, pow2SignedMonotone, fpValueEqualsGeneralWhenNonnegExp, fpScaleKeepsSignificand, fpScaleShiftsExponent, fpScalePreservesValue, productExp, productExpInRange, fpMulValue]
+    exposes [pow2, Fp, isFp, fpValue, fpValueGeneral, fpScale, fpMul, pow2Fraction, pow2Signed, pow2SignedHomomorphism, pow2SignedPositive, pow2SignedAtLeastOne, pow2SignedMonotone, fpValueEqualsGeneralWhenNonnegExp, fpScaleKeepsSignificand, fpScaleShiftsExponent, fpScalePreservesValue, productExp, productExpInRange, fpMulValue]
     effects []
 
 fn pow2(n: Int) -> Int
@@ -40,6 +40,13 @@ verify pow2 law homomorphism
     when m >= 0
     when n >= 0
     pow2(m + n) => pow2(m) * pow2(n)
+
+// The power of two is always at least one (it clamps to 1 at and below zero, and
+// doubles a value already >= 1 above it). This recursive positivity is the fact the
+// signed power-of-two positivity and >= 1 laws below bottom out in.
+verify pow2 law positive
+    given k: Int = [0, 1, 4]
+    pow2(k) >= 1 holds
 
 // A float in the paper's representation (Section 5.1, p.10): a sign in {+1,-1}, a
 // normalized n-bit significand integer, an integer exponent, and the width n. The
@@ -274,6 +281,38 @@ verify fpMulValue law denotesProduct
     when a.width >= 1
     when b.width >= 1
     fpMulValue(a, b) holds
+
+fn pow2SignedPositive(k: Int) -> Bool
+    ? "Positivity of the signed power of two over the rationals: both the numerator and the denominator of 2^k are strictly positive, for ANY integer k (Section 5.1, p.13). Each sign branch of pow2Signed is a power of two over 1 or 1 over a power of two, and the power of two is always positive."
+    Bool.and(pow2Signed(k).top > 0, pow2Signed(k).bottom > 0)
+
+verify pow2SignedPositive
+    pow2SignedPositive(0) => true
+    pow2SignedPositive(3) => true
+    pow2SignedPositive(-2) => true
+
+// Positivity of the signed power of two: numerator and denominator are both strictly
+// positive for ANY integer k. Each arm of pow2Signed reduces to the recursive
+// positivity pow2(_) >= 1, cited from the pool law above.
+verify pow2SignedPositive law positive
+    given k: Int = [-3, -1, 0, 2, 5]
+    pow2SignedPositive(k) holds
+
+fn pow2SignedAtLeastOne(k: Int) -> Bool
+    ? "The signed power of two is at least one for a nonnegative exponent: 2^k >= 1 when k >= 0 (Section 5.1, p.13). In the exact-rational order this is isNonNeg(2^k - 1)."
+    Domain.Rational.isNonNeg(Domain.Rational.minus(pow2Signed(k), Domain.Rational.oneFraction()))
+
+verify pow2SignedAtLeastOne
+    pow2SignedAtLeastOne(0) => true
+    pow2SignedAtLeastOne(3) => true
+
+// The signed power of two is at least one for a nonnegative exponent: 2^k >= 1 when
+// k >= 0. The premise kills the negative arm of pow2Signed, reducing the claim to the
+// recursive positivity pow2(k) >= 1 cited from the pool law above.
+verify pow2SignedAtLeastOne law geOne
+    given k: Int = [0, 1, 4]
+    when k >= 0
+    pow2SignedAtLeastOne(k) holds
 
 fn pow2SignedMonotone(m: Int, n: Int) -> Bool
     ? "Monotonicity of the signed power of two over the rationals: m <= n implies 2^m <= 2^n for ANY integers m, n (Section 5.1, p.13). In the project's exact-rational order, 2^m <= 2^n is isNonNeg(2^n - 2^m). The integer pow2 is monotone only on the nonnegative half (it clamps to 1 below zero); pow2Signed denotes 2^k faithfully for every integer k, so its monotonicity is unconditional once m <= n -- the order fact the rounding-error bounds (each 2^(e - i + 1) with the exponent often negative) and the reciprocal-estimate refinement chain in sections 8 and 9 compose through."

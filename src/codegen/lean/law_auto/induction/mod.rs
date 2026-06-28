@@ -663,6 +663,25 @@ pub(crate) fn admitted_dep_law_theorems(
         }
     }
 
+    // Exact-rational monotonicity / at-least-one / positivity laws: each CITES
+    // its module's homomorphism / positivity / `>= 1` / recursive-positivity
+    // sibling laws (whose subject fns are NOT in its call cone), so the structural
+    // gate does not reach them. A dependency export must carry the whole citation
+    // chain for the monotonicity theorem to close, so admit them directly — run
+    // under the dep module's scope so the recognizers resolve its fns and laws.
+    for module in &ctx.modules {
+        ctx.with_module_scope(Some(module.prefix.as_str()), || {
+            for vb in &module.verify_laws {
+                let VerifyKind::Law(law) = &vb.kind else {
+                    continue;
+                };
+                for dep in super::frac_monotone_compose_cited_deps(vb, law, ctx) {
+                    admitted.insert(dep);
+                }
+            }
+        });
+    }
+
     admitted
 }
 
