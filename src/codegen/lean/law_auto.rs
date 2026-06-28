@@ -68,12 +68,15 @@ pub(in crate::codegen::lean) use frac_monotone_compose::{
     recognize_frac_positivity,
 };
 
-/// General recursive-monotonicity rung — the name-blind, structurally-keyed core
-/// (`f(LO) <= f(HI)` for ANY pure recursive `Int -> Int` `f` with a `p <= 0`
-/// single-step recursion) that the pow2Signed Fraction-order wrapper also feeds.
-/// Drives the `omit_domain` statement so the universal statement and the shared
-/// kit proof stay in lockstep.
-pub(in crate::codegen::lean) use recursive_mono::recognize_recursive_monotone;
+/// General recursive positivity / monotonicity rung — the name-blind,
+/// structurally-keyed core (`BASE <= f(ARG)` and `f(LO) <= f(HI)` for ANY pure
+/// recursive `Int -> Int` `f` with a `p <= 0` single-step recursion) that the
+/// pow2Signed Fraction-order wrapper also feeds. Drives the `omit_domain`
+/// statement so the universal statement and the shared kit proof stay in
+/// lockstep.
+pub(in crate::codegen::lean) use recursive_mono::{
+    recognize_recursive_monotone, recognize_recursive_positive,
+};
 
 /// Content-blind homomorphism rung — the name-blind, shape-only recognizer for
 /// `subject(OP1(a, b)) = OP2(subject(a), subject(b))` (subject recursive, OP1 /
@@ -657,6 +660,20 @@ fn emit_verify_law_forall_auto_proof_inner(
             theorem_base,
             quant_params,
         )
+    {
+        return Some(proof);
+    }
+
+    // General recursive positivity — a `holds` law whose conclusion is the
+    // plain integer lower bound `BASE <= f(ARG)` (also accepted as
+    // `f(ARG) >= BASE`), for ANY pure recursive `Int -> Int` `f` with a `p <= 0`
+    // single-step recursion whose base arm is exactly the literal `BASE`.
+    // Closed UNIVERSALLY by the shared recursive-mono kit and a citation of the
+    // subject-prefixed `__rec_pos` lemma. This subsumes the old
+    // power-of-two-specific `PowPositive` Lean template; the proof-lower figure
+    // remains for backends that still need it.
+    if let Some(proof) =
+        recursive_mono::emit_recursive_positive_law(vb, law, ctx, theorem_base, quant_params)
     {
         return Some(proof);
     }

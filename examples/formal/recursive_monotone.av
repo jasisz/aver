@@ -22,6 +22,10 @@ verify tri
     tri(3) => 6
     tri(5) => 15
 
+verify tri law nonneg
+    given n: Int = [0, 1, 4]
+    tri(n) >= 0 holds
+
 fn triMonotone(m: Int, n: Int) -> Bool
     ? "Monotonicity of triangular numbers as an order predicate: m <= n implies tri(m) <= tri(n). A non-pow2 recurrence proven by the SAME general recursive-monotonicity rung."
     tri(m) <= tri(n)

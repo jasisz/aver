@@ -119,13 +119,16 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     {
         return false;
     }
-    // Decline the general recursive-monotonicity shape for the same reason: its
-    // dedicated rung is a DETERMINISTIC `replaces_theorem` closer (the shared
-    // recursive-mono kit + a monotonicity citation), dispatched before the
-    // keystone. The keystone's bare `grind` over the pool can never close it (it
-    // needs `f.induct`), so declining here keeps the law deterministic in BOTH
-    // passes and lets the dedicated rung own its (separate-arrow) statement.
-    if super::super::recognize_recursive_monotone(vb, law, ctx) {
+    // Decline the general recursive-positivity / monotonicity shapes for the
+    // same reason: their dedicated rung is a DETERMINISTIC `replaces_theorem`
+    // closer (the shared recursive-mono kit + a positivity / monotonicity
+    // citation), dispatched before the keystone. The keystone's bare `grind` over
+    // the pool can never close them (they need `f.induct`), so declining here
+    // keeps the law deterministic in BOTH passes and lets the dedicated rung own
+    // its statement.
+    if super::super::recognize_recursive_positive(vb, law, ctx)
+        || super::super::recognize_recursive_monotone(vb, law, ctx)
+    {
         return false;
     }
     // Decline the rational-order chaining shape (the reciprocal-magnitude

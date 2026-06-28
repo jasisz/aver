@@ -17,7 +17,13 @@
 //!    on `f` having an auto `.induct` principle (i.e. being recursive); it knows
 //!    nothing about pow2 or any specific function.
 //!
-//! 2. The DIRECT order-law rung ([`emit_recursive_monotone_law`]) — a
+//! 2. The DIRECT positivity rung ([`emit_recursive_positive_law`]) — a
+//!    `holds` law whose claim is `f(ARG) >= BASE` or `BASE <= f(ARG)`, for any
+//!    such recursive `f`. It emits the shared kit and closes by citing the
+//!    kit's positivity theorem. This is intentionally BASE-blind: the literal
+//!    lower bound is captured from the law and must equal the recursive base arm.
+//!
+//! 3. The DIRECT order-law rung ([`emit_recursive_monotone_law`]) — a
 //!    conditional `holds` law whose conclusion is the plain integer order
 //!    `f(LO) <= f(HI)` (the subject fn body is `f(LO) <= f(HI)`, or the law
 //!    claim is that comparison directly) under a premise `LO <= HI`, for any
@@ -44,8 +50,16 @@ use crate::codegen::CodegenContext;
 pub(super) struct RecKit {
     /// The full helper-kit Lean source (the five theorems).
     pub text: String,
+    /// `{base}__rec_pos` — `∀ n, BASE <= f n`.
+    pub pos: String,
     /// `{base}__rec_mono` — `∀ n m, m <= n -> f m <= f n`.
     pub mono: String,
+}
+
+struct RecArms {
+    base_int: i64,
+    base_arm: String,
+    step_arm: String,
 }
 
 /// Whether `fd` is a `p <= 0`-guarded single-step recursion on a lone `Int`
@@ -54,10 +68,7 @@ pub(super) struct RecKit {
 /// arms rendered to Lean with the param canonicalized to `n` (so they slot into
 /// the kit's `(n : Int)` binders). Keyed purely on this structure; any other
 /// shape is declined.
-pub(super) fn recursive_decrement_arms(
-    fd: &FnDef,
-    ctx: &CodegenContext,
-) -> Option<(String, String)> {
+fn recursive_decrement_arm_info(fd: &FnDef, ctx: &CodegenContext) -> Option<RecArms> {
     let [(p, ty)] = fd.params.as_slice() else {
         return None;
     };
@@ -91,9 +102,9 @@ pub(super) fn recursive_decrement_arms(
     let step = arm_for(false)?;
     // BASE must be a bare integer literal — the kit treats it as the constant
     // lower bound the step preserves; a param-dependent base is declined.
-    if !matches!(&base.node, Expr::Literal(Literal::Int(_))) {
+    let Expr::Literal(Literal::Int(base_int)) = &base.node else {
         return None;
-    }
+    };
     // Render both arms with the param canonicalized to `n`.
     let n_ident = Spanned::bare(Expr::Ident("n".to_string()));
     let mut map = std::collections::HashMap::new();
@@ -102,7 +113,19 @@ pub(super) fn recursive_decrement_arms(
         let subbed = substitute_expr(e, &map);
         super::super::expr::emit_expr_legacy(&subbed, ctx, None)
     };
-    Some((render(base), render(step)))
+    Some(RecArms {
+        base_int: *base_int,
+        base_arm: render(base),
+        step_arm: render(step),
+    })
+}
+
+pub(super) fn recursive_decrement_arms(
+    fd: &FnDef,
+    ctx: &CodegenContext,
+) -> Option<(String, String)> {
+    let arms = recursive_decrement_arm_info(fd, ctx)?;
+    Some((arms.base_arm, arms.step_arm))
 }
 
 /// Emit the SHARED recursive-monotonicity helper kit for `f_lean` (Lean name)
@@ -156,8 +179,149 @@ theorem {base}__rec_mono : ∀ (n m : Int), m <= n -> {f} m <= {f} n := by
     );
     RecKit {
         text,
+        pos: format!("{base}__rec_pos"),
         mono: format!("{base}__rec_mono"),
     }
+}
+
+/// The recognized direct positivity-law shape: `BASE <= f(ARG)`, possibly
+/// written as `f(ARG) >= BASE`.
+pub(super) struct RecPositive {
+    /// The recursive `Int -> Int` fn (source name).
+    f_src: String,
+    /// The single argument supplied to the recursive fn.
+    arg: Spanned<Expr>,
+}
+
+fn int_literal(e: &Spanned<Expr>) -> Option<i64> {
+    match &e.node {
+        Expr::Literal(Literal::Int(n)) => Some(*n),
+        _ => None,
+    }
+}
+
+fn subject_call(e: &Spanned<Expr>) -> Option<(String, Spanned<Expr>)> {
+    let Expr::FnCall(callee, args) = &e.node else {
+        return None;
+    };
+    if args.len() != 1 {
+        return None;
+    }
+    Some((expr_dotted_name(callee)?, args[0].clone()))
+}
+
+fn as_positive_comparison(cmp: &Spanned<Expr>) -> Option<(String, Spanned<Expr>, i64)> {
+    match &cmp.node {
+        Expr::BinOp(BinOp::Gte, l, r) => {
+            let (f_src, arg) = subject_call(l)?;
+            Some((f_src, arg, int_literal(r)?))
+        }
+        Expr::BinOp(BinOp::Lte, l, r) => {
+            let (f_src, arg) = subject_call(r)?;
+            Some((f_src, arg, int_literal(l)?))
+        }
+        _ => None,
+    }
+}
+
+/// Recognize a direct integer-positivity law: `f(ARG) >= BASE` or
+/// `BASE <= f(ARG)`, for a pure recursive `Int -> Int` `f` whose guarded base
+/// arm is exactly the literal `BASE`. Shape-only: no power-of-two recognizer,
+/// no multiplier/base constants beyond the literal captured from the AST.
+pub(super) fn recognize_recursive_positive_shape(
+    _vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<RecPositive> {
+    if !matches!(law.rhs.node, Expr::Literal(Literal::Bool(true))) {
+        return None;
+    }
+    let (f_src, arg, lower_bound) = as_positive_comparison(&law.lhs)?;
+
+    let short = f_src.rsplit('.').next().unwrap_or(&f_src).to_string();
+    if !crate::codegen::lean::recursive_pure_fn_names(ctx).contains(&short) {
+        return None;
+    }
+    let f_fd = find_fn_def_by_call_name(ctx, &f_src)?;
+    if !f_fd.effects.is_empty() {
+        return None;
+    }
+    let arms = recursive_decrement_arm_info(f_fd, ctx)?;
+    if arms.base_int != lower_bound {
+        return None;
+    }
+
+    Some(RecPositive { f_src, arg })
+}
+
+/// Statement-builder hook: whether the direct recursive-positivity emit will
+/// close this law universally.
+pub(in crate::codegen::lean) fn recognize_recursive_positive(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> bool {
+    recognize_recursive_positive_shape(vb, law, ctx).is_some()
+}
+
+/// Close a direct integer-positivity law. Emits the shared recursive-mono kit
+/// for the inner fn plus a citation of its positivity lemma.
+pub(super) fn emit_recursive_positive_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    theorem_base: &str,
+    quant_params: &str,
+) -> Option<AutoProof> {
+    let shape = recognize_recursive_positive_shape(vb, law, ctx)?;
+    let f_fd = find_fn_def_by_call_name(ctx, &shape.f_src)?;
+    let arms = recursive_decrement_arm_info(f_fd, ctx)?;
+    let f_lean = aver_name_to_lean(&shape.f_src);
+    let kit_base = aver_name_to_lean(shape.f_src.rsplit('.').next().unwrap_or(&shape.f_src));
+    let kit = render_recursive_mono_kit(&kit_base, &f_lean, &arms.base_arm, &arms.step_arm);
+
+    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let lhs = render(&law.lhs);
+    let rhs = render(&law.rhs);
+    let arg = render(&shape.arg);
+    let intros: Vec<String> = law
+        .givens
+        .iter()
+        .map(|g| aver_name_to_lean(&g.name))
+        .collect();
+    let intro_line = if intros.is_empty() {
+        String::new()
+    } else {
+        format!("  intro {}\n", intros.join(" "))
+    };
+    let theorem = if let Some(when) = law.when.as_ref() {
+        let when = render(when);
+        format!(
+            r#"theorem {base} : ∀ {quant}, {when} = true -> {lhs} = {rhs} := by
+{intro_line}  intro _h_when
+  have hpos := {pos} ({arg})
+  simpa only [ge_iff_le, eq_iff_iff, iff_true] using hpos"#,
+            base = theorem_base,
+            quant = quant_params,
+            pos = kit.pos,
+        )
+    } else {
+        format!(
+            r#"theorem {base} : ∀ {quant}, {lhs} = {rhs} := by
+{intro_line}  have hpos := {pos} ({arg})
+  simpa only [ge_iff_le, eq_iff_iff, iff_true] using hpos"#,
+            base = theorem_base,
+            quant = quant_params,
+            pos = kit.pos,
+        )
+    };
+
+    let text = format!("{}\n{}", kit.text, theorem);
+    Some(AutoProof {
+        support_lines: text.lines().map(|l| l.to_string()).collect(),
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(Vec::new()),
+        replaces_theorem: true,
+    })
 }
 
 /// The recognized direct order-law shape: the inner recursive fn, the two

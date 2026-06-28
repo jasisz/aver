@@ -51,17 +51,25 @@ pub(super) fn emit_floor_window_law(
     let render = |e: &crate::ast::Spanned<crate::ast::Expr>| {
         super::super::expr::emit_expr_legacy(e, ctx, None)
     };
-    // The recursive power-of-two sum homomorphism (`pow(m + n) = pow(m) *
-    // pow(n)`) is SUBSUMED by the content-blind homomorphism rung
-    // (`homomorphism::emit_homomorphism_law`), which captures the subject and
-    // both combine operators from the AST and closes ANY such law (the integer
-    // power-of-two AND a cross-domain list-length homomorphism) through ONE
-    // induction skeleton. That rung is tried earlier in the dispatch, so this arm
-    // is normally unreached; delegate here too so the Lean proof of this figure
-    // always comes from the single content-blind rung. The `PowSumSplit` figure
-    // itself is retained only as the IR pin the Dafny backend (which independently
-    // needs the inductive `main_thm(g0 - 1, g1)` lemma hint) and the well-founded
-    // graduation pass read.
+    // The recursive power-of-two positivity (`pow(k) >= BASE`) is SUBSUMED by
+    // the content-blind recursive-positivity rung, and the recursive
+    // power-of-two sum homomorphism (`pow(m + n) = pow(m) * pow(n)`) is SUBSUMED
+    // by the content-blind homomorphism rung. Those rungs capture the subject /
+    // literal / operators from the AST and close through ONE generic induction
+    // skeleton. They are tried earlier in the dispatch, so these arms are
+    // normally unreached; delegate here too so the Lean proof of each figure
+    // always comes from the single content-blind rung. The figures themselves
+    // are retained only as IR pins the Dafny backend and the well-founded
+    // graduation pass still read.
+    if matches!(figure, FloorWindowFigure::PowPositive { .. }) {
+        return super::recursive_mono::emit_recursive_positive_law(
+            vb,
+            law,
+            ctx,
+            theorem_base,
+            quant_params,
+        );
+    }
     if matches!(figure, FloorWindowFigure::PowSumSplit { .. }) {
         return super::homomorphism::emit_homomorphism_law(
             vb,
@@ -82,14 +90,11 @@ pub(super) fn emit_floor_window_law(
         .collect();
 
     let text = match &figure {
-        FloorWindowFigure::PowPositive { pow_fn } => render_pow_positive(
-            theorem_base,
-            quant_params,
-            &lhs,
-            &rhs,
-            &givens,
-            &aver_name_to_lean(pow_fn),
-        ),
+        FloorWindowFigure::PowPositive { .. } => {
+            // Subsumed by the content-blind recursive-positivity rung and handled
+            // by the early `return` above — unreachable here.
+            unreachable!("PowPositive is delegated to the recursive-positivity rung")
+        }
         FloorWindowFigure::PowSumSplit { .. } => {
             // Subsumed by the content-blind homomorphism rung and handled by the
             // early `return` above — unreachable here.
@@ -467,28 +472,6 @@ fn pow_add_lemma(base: &str, pow: &str) -> String {
       rw [{base}__pow_of_pos (m + n) (by omega), {base}__pow_of_pos m (by omega),
           show m + n - 1 = (m - 1) + n by omega, ih (by omega)]
       rw [Int.mul_assoc]"#
-    )
-}
-
-fn render_pow_positive(
-    base: &str,
-    quant_params: &str,
-    lhs: &str,
-    rhs: &str,
-    givens: &[String],
-    pow: &str,
-) -> String {
-    let g0 = &givens[0];
-    let equations = pow_equation_lemmas(base, pow);
-    let pos = pow_pos_lemma(base, pow);
-    format!(
-        r#"{equations}
-{pos}
-theorem {base} : ∀ {quant_params}, {lhs} = {rhs} := by
-  intro {g0}
-  have hpos := {base}__pow_pos {g0}
-  simp only [eq_self_iff_true, eq_iff_iff, iff_true]
-  omega"#
     )
 }
 
