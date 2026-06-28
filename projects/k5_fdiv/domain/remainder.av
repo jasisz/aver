@@ -1,0 +1,204 @@
+module Remainder
+    intent =
+        "Stage 3, Section 8.2 of the K5 division proof: the FIRST quotient digit's"
+        "remainder bound (Lemma 8.2.3, p.29) and the sign-separation helper it rests"
+        "on (Lemma 8.2.2, p.28). The kernel divider (domain/kernel.av divideBang,"
+        "Figure 1, p.2) forms the first quotient digit and its remainder in three"
+        "straight-line steps the runnable layer here mirrors one-for-one:"
+        "  ph0 = trunc(p0, 32)                 (kernel.av line 277, the 32-bit remainder)"
+        "  q0  = away(sd2 * ph0, 24)           (kernel.av line 278, the 24-bit digit)"
+        "  p1  = p0 - q0*d  (= p0 - q0*dh - q0*dl)   (kernel.av lines 281-282)"
+        "with sd2 the reciprocal estimate of Section 8.1 (|d*sd2 - 1| < 2^-28,"
+        "reciprocalBound of domain/recip.av), p0 the initial remainder, d the divisor."
+        "LEMMA 8.2.3 (p.29): |p0 - sd2*d*ph0| < 2^(e(p0) - 26), where e(p0) = fracExpo(p0)."
+        "Its proof decomposes the remainder error along the two roundings it folds in:"
+        "  p0 - sd2*d*ph0 = (p0 - ph0) + ph0*(1 - sd2*d)"
+        "so by the triangle inequality and the cited building blocks"
+        "  |p0 - sd2*d*ph0| <= |p0 - ph0| + |ph0|*|1 - sd2*d|"
+        "                    < 2^(e(p0)-31)          (truncFracErrorBound on p0 at 32)"
+        "                    + 2^(e(p0)+1) * 2^-28    (|ph0| <= |p0| < 2^(e(p0)+1);"
+        "                                              |1 - sd2*d| < 2^-28 by reciprocalBound)"
+        "                    = 17 * 2^(e(p0)-31)  <  32 * 2^(e(p0)-31)  =  2^(e(p0)-26)."
+        "The k = e(p0) factor cancels; the numeric core is 1 + 2^4 < 2^5, i.e. 17 < 32."
+        "LEMMA 8.2.2 (p.28), sign separation: the two error factors"
+        "  alpha = sd2*(p0 - sd2*d*ph0)   and   beta = sd2*d*(sd2*ph0 - q0)"
+        "(whose sum alpha + beta = sd2*(p0 - q0*d) = sd2*p1 is the scaled next remainder)"
+        "have OPPOSITE signs, so |alpha + beta| <= max(|alpha|, |beta|) -- the digits do"
+        "not reinforce, which is what bounds the next remainder for digit separation 8.2.1."
+        "The opposition is rooted in the away rounding of the digit: q0 = away(sd2*ph0, 24)"
+        "rounds AWAY from zero, so it overshoots -- the exact digit g = sd2*ph0 and the"
+        "rounding remainder g - q0 have opposite signs (awayDigitOvershoot below, the"
+        "direction half of awayFracErrorBound)."
+        "BACKEND / HONESTY: the nonlinear remainder algebra is certified on the Z3/Dafny"
+        "backend (SMT trust), the same backend and discipline domain/recip.av's"
+        "reciprocalBound and domain/estimate.av's Newton bounds use. The laws are stated"
+        "on the paper's cross-multiplied INTEGER model (the scaled rationals, as in"
+        "estimate.av): the remainder error decomposition remNum = truncNum + phNum*recipNum"
+        "over a common positive scale, the building-block bounds as integer magnitude"
+        "premises (truncNum from truncFracErrorBound, recipNum from reciprocalBound, phNum"
+        "the digit/remainder magnitude), and the numeric closure truncBound +"
+        "phBound*recipBound <= finalBound (the 17 < 32 core). The Z3 nonlinear products"
+        "are carried directly. The runnable Fraction layer (firstRemainderError on the"
+        "real trunc/away of kernel.av, sample-verified) demonstrates the model mirrors"
+        "Figure 1; the Lean side is bounded (credit is Dafny), not kernel-universal."
+    depends [Domain.Rational, Domain.Fprep, Domain.Kernel, Domain.FracRound, Domain.Recip]
+    exposes [firstTruncRem, firstQuotientDigit, exactFirstDigit, firstRemainderError, remainderRhs, firstRemainderHolds, alphaFactor, betaFactor, signsSeparated, maxInt, productMagnitudeBound, remainderBound_8_2_3, awayDigitOvershoot, signSeparation_8_2_2]
+    effects []
+
+// ---------------------------------------------------------------------------
+// The runnable first-digit / first-remainder layer (kernel.av lines 277-282).
+// These compute the genuine kernel quantities on exact Fractions, so the
+// Section 8.2 statements can be sample-verified at runtime against the model.
+// ---------------------------------------------------------------------------
+
+fn firstTruncRem(p0: Fraction) -> Fraction
+    ? "ph0 = trunc(p0, 32), the 32-bit truncated initial remainder (kernel.av line 277, Figure 1 p.2)."
+    Domain.Kernel.truncFrac(p0, 32)
+
+verify firstTruncRem
+    Domain.Rational.sameValue(firstTruncRem(Domain.Rational.Fraction(top = 7, bottom = 4)), Domain.Rational.Fraction(top = 7, bottom = 4)) => true
+
+fn exactFirstDigit(p0: Fraction, sd2: Fraction) -> Fraction
+    ? "g = sd2 * ph0, the exact (unrounded) first quotient digit value -- what q0 rounds away to 24 bits (kernel.av line 278, the argument of awayFrac)."
+    Domain.Rational.times(sd2, firstTruncRem(p0))
+
+fn firstQuotientDigit(p0: Fraction, sd2: Fraction) -> Fraction
+    ? "q0 = away(sd2 * ph0, 24), the first 24-bit round-away quotient digit (kernel.av line 278, Figure 1 p.2)."
+    Domain.Kernel.awayFrac(exactFirstDigit(p0, sd2), 24)
+
+verify firstQuotientDigit
+    Domain.Rational.sameValue(firstQuotientDigit(Domain.Rational.Fraction(top = 7, bottom = 4), Domain.Rational.Fraction(top = 1, bottom = 1)), Domain.Rational.Fraction(top = 7, bottom = 4)) => true
+
+fn firstRemainderError(p0: Fraction, d: Fraction, sd2: Fraction) -> Fraction
+    ? "The first remainder error p0 - sd2*d*ph0 of Lemma 8.2.3 (p.29): how far the scaled first digit sd2*d*ph0 sits from the initial remainder p0. Equals (p0 - ph0) + ph0*(1 - sd2*d), the truncation slack plus the reciprocal slack scaled by ph0."
+    Domain.Rational.minus(p0, Domain.Rational.times(Domain.Rational.times(sd2, d), firstTruncRem(p0)))
+
+verify firstRemainderError
+    Domain.Rational.sameValue(firstRemainderError(Domain.Rational.Fraction(top = 7, bottom = 4), Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 2, bottom = 3)), Domain.Rational.zeroFraction()) => true
+
+fn remainderRhs(p0: Fraction) -> Fraction
+    ? "The Lemma 8.2.3 bound 2^(e(p0) - 26) = 2^(fracExpo(p0) - 26), the strict bound on the first remainder error. fracExpo(p0) is the runnable binary exponent e(p0) (Section 5.1, p.13)."
+    Domain.Fprep.pow2Signed(Domain.Kernel.fracExpo(p0) - 26)
+
+fn firstRemainderHolds(p0: Fraction, d: Fraction, sd2: Fraction) -> Bool
+    ? "Lemma 8.2.3 (p.29) as a runnable check on the kernel model: |p0 - sd2*d*ph0| < 2^(e(p0)-26). Sample-verified against the genuine trunc/expo of kernel.av; the universal certificate is remainderBound_8_2_3 (Z3/Dafny, cross-multiplied integer form)."
+    Domain.Rational.lessThan(Domain.Rational.absFraction(firstRemainderError(p0, d, sd2)), remainderRhs(p0))
+
+verify firstRemainderHolds
+    firstRemainderHolds(Domain.Rational.Fraction(top = 7, bottom = 4), Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 2, bottom = 3)) => true
+    firstRemainderHolds(Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1)) => true
+    firstRemainderHolds(Domain.Rational.Fraction(top = 8589934593, bottom = 8589934592), Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1)) => true
+    firstRemainderHolds(Domain.Rational.Fraction(top = 5, bottom = 4), Domain.Rational.Fraction(top = 4, bottom = 5), Domain.Rational.Fraction(top = 5, bottom = 4)) => true
+
+// ---------------------------------------------------------------------------
+// The two sign-separation error factors (Lemma 8.2.2, p.28) on the model.
+// ---------------------------------------------------------------------------
+
+fn alphaFactor(p0: Fraction, d: Fraction, sd2: Fraction) -> Fraction
+    ? "alpha = sd2*(p0 - sd2*d*ph0), the reciprocal/truncation error factor of Lemma 8.2.2 (p.28)."
+    Domain.Rational.times(sd2, firstRemainderError(p0, d, sd2))
+
+fn betaFactor(p0: Fraction, d: Fraction, sd2: Fraction) -> Fraction
+    ? "beta = sd2*d*(sd2*ph0 - q0), the digit-rounding error factor of Lemma 8.2.2 (p.28). sd2*ph0 - q0 is the away-rounding slack of the first digit."
+    Domain.Rational.times(Domain.Rational.times(sd2, d), Domain.Rational.minus(exactFirstDigit(p0, sd2), firstQuotientDigit(p0, sd2)))
+
+fn signsSeparated(p0: Fraction, d: Fraction, sd2: Fraction) -> Bool
+    ? "Lemma 8.2.2 (p.28) as a runnable check: alpha and beta have opposite signs (alpha*beta <= 0). Sample-verified against the kernel model; the universal consequence is signSeparation_8_2_2 (Z3/Dafny)."
+    Domain.Rational.isNonPos(Domain.Rational.times(alphaFactor(p0, d, sd2), betaFactor(p0, d, sd2)))
+
+verify signsSeparated
+    signsSeparated(Domain.Rational.Fraction(top = 8589934593, bottom = 8589934592), Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1)) => true
+    signsSeparated(Domain.Rational.Fraction(top = 5, bottom = 4), Domain.Rational.Fraction(top = 4, bottom = 5), Domain.Rational.Fraction(top = 5, bottom = 4)) => true
+
+// ---------------------------------------------------------------------------
+// The cross-multiplied INTEGER certificates (Z3/Dafny backend, SMT trust).
+// The paper's scaled-rational model: each quantity is an integer numerator over
+// a common positive scale; the building-block bounds are integer magnitude
+// premises. Same discipline as domain/estimate.av.
+// ---------------------------------------------------------------------------
+
+fn maxInt(a: Int, b: Int) -> Int
+    ? "The larger of two integers."
+    match a >= b
+        true -> a
+        false -> b
+
+verify maxInt
+    maxInt(3, 7) => 7
+    maxInt(5, 2) => 5
+
+fn productMagnitudeBound(x: Int, y: Int, bx: Int, by: Int) -> Bool
+    ? "Product magnitude monotonicity: |x*y| <= bx*by when |x| <= bx, |y| <= by and the bounds are nonnegative. The deg-2 step of Lemma 8.2.3 -- the reciprocal slack scaled by the remainder magnitude, |ph0*(1 - sd2*d)| <= |ph0| * |1 - sd2*d|, cross-multiplied to integer numerators. Carried natively by Z3."
+    Domain.Rational.absInt(x * y) <= bx * by
+
+verify productMagnitudeBound
+    productMagnitudeBound(3, -4, 3, 5) => true
+    productMagnitudeBound(0, 7, 2, 9) => true
+
+verify productMagnitudeBound law guarded
+    given x: Int = [-3, 0, 2]
+    given y: Int = [-5, 0, 4]
+    given bx: Int = [3, 6]
+    given by: Int = [5, 9]
+    when Domain.Rational.absInt(x) <= bx
+    when Domain.Rational.absInt(y) <= by
+    when 0 <= bx
+    when 0 <= by
+    productMagnitudeBound(x, y, bx, by) holds
+
+fn remainderBound_8_2_3(remNum: Int, finalBound: Int) -> Bool
+    ? "Lemma 8.2.3 (p.29), the first remainder bound, on the cross-multiplied integer model: |p0 - sd2*d*ph0| < 2^(e(p0)-26). remNum is the remainder-error numerator over the common scale, finalBound the bound numerator 2^(e(p0)-26). The premises CITE the building blocks: the exact decomposition remNum = truncNum + phNum*recipNum (p0 - sd2*d*ph0 = (p0-ph0) + ph0*(1 - sd2*d)); |truncNum| < truncBound (truncFracErrorBound on p0 at 32, 2^(e(p0)-31)); |phNum| <= phBound (|ph0| <= |p0| < 2^(e(p0)+1)); |recipNum| < recipBound (reciprocalBound, |1 - sd2*d| < 2^-28); the product magnitude |phNum*recipNum| <= phBound*recipBound (productMagnitudeBound); and the numeric closure truncBound + phBound*recipBound <= finalBound (the 17 < 32 core). Certified on Z3/Dafny."
+    Domain.Rational.absInt(remNum) < finalBound
+
+verify remainderBound_8_2_3
+    remainderBound_8_2_3(17, 32) => true
+    remainderBound_8_2_3(-30, 32) => true
+
+verify remainderBound_8_2_3 law lemma_8_2_3
+    given remNum: Int = [17, -17, 15, -15]
+    given truncNum: Int = [1, -1]
+    given phNum: Int = [16, -16]
+    given recipNum: Int = [1, -1]
+    given truncBound: Int = [2]
+    given phBound: Int = [16]
+    given recipBound: Int = [2]
+    given finalBound: Int = [34]
+    when remNum == truncNum + phNum * recipNum
+    when Domain.Rational.absInt(truncNum) < truncBound
+    when Domain.Rational.absInt(phNum) <= phBound
+    when Domain.Rational.absInt(recipNum) < recipBound
+    when 0 <= phBound
+    when 0 <= recipBound
+    when Domain.Rational.absInt(phNum * recipNum) <= phBound * recipBound
+    when truncBound + phBound * recipBound <= finalBound
+    remainderBound_8_2_3(remNum, finalBound) holds
+
+fn awayDigitOvershoot(g: Int, q: Int) -> Bool
+    ? "The away-rounding overshoot sign fact, the root of Lemma 8.2.2 (p.28): the away-rounded digit q = away(g, .) overshoots the exact digit g (rounds AWAY from zero, so |q| >= |g| with the same sign, the direction half of awayFracErrorBound). Hence g and the rounding remainder g - q have opposite signs: g*(g - q) <= 0. Premise g*q >= g*g is the cross-multiplied 'same sign and |q| >= |g|'. Carried by Z3."
+    g * (g - q) <= 0
+
+verify awayDigitOvershoot
+    awayDigitOvershoot(3, 5) => true
+    awayDigitOvershoot(-3, -5) => true
+    awayDigitOvershoot(0, 0) => true
+
+verify awayDigitOvershoot law guarded
+    given g: Int = [-3, 0, 3]
+    given q: Int = [-5, 0, 5]
+    when g * q >= g * g
+    awayDigitOvershoot(g, q) holds
+
+fn signSeparation_8_2_2(alpha: Int, beta: Int) -> Bool
+    ? "Lemma 8.2.2 (p.28), sign separation consequence: when the two error factors alpha = sd2*(p0 - sd2*d*ph0) and beta = sd2*d*(sd2*ph0 - q0) have opposite signs (alpha*beta <= 0, the opposition rooted in awayDigitOvershoot), their sum does not reinforce -- |alpha + beta| <= max(|alpha|, |beta|). Since alpha + beta = sd2*p1, this bounds the next remainder for the digit separation of Lemma 8.2.1. Cross-multiplied integer form; carried by Z3."
+    Domain.Rational.absInt(alpha + beta) <= maxInt(Domain.Rational.absInt(alpha), Domain.Rational.absInt(beta))
+
+verify signSeparation_8_2_2
+    signSeparation_8_2_2(5, -2) => true
+    signSeparation_8_2_2(-5, 2) => true
+    signSeparation_8_2_2(0, 7) => true
+
+verify signSeparation_8_2_2 law guarded
+    given alpha: Int = [-5, 0, 5]
+    given beta: Int = [-2, 0, 2]
+    when alpha * beta <= 0
+    signSeparation_8_2_2(alpha, beta) holds
