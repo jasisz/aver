@@ -2431,13 +2431,47 @@ fn emit_floor_window_support_stack(
     law_name: &str,
 ) -> String {
     use crate::ir::FloorWindowFigure;
-    let d = aver_name_to_dafny;
+    // Cross-module fn citations in the support lemmas (`pow_fn`,
+    // `halve_fn`, ...) carry the canonical dotted Aver name
+    // (`Domain.Fprep.pow2`); render them with the Dafny module
+    // qualifier (`Aver_Domain_Fprep.pow2`) unless the owning module is
+    // the one being emitted, in which case the name stays bare (a Dafny
+    // module name is not in scope for self-qualification). Bare names —
+    // param givens and same-module fns — have no `.` segment and pass
+    // through `aver_name_to_dafny` unchanged.
+    let active = ctx.active_module_scope();
+    let d = |name: &str| -> String {
+        if let Some(dot) = name.rfind('.') {
+            let module_part = &name[..dot];
+            let local = &name[dot + 1..];
+            if active.as_deref() == Some(module_part) {
+                aver_name_to_dafny(local)
+            } else {
+                format!(
+                    "Aver_{}.{}",
+                    module_part.replace('.', "_"),
+                    aver_name_to_dafny(local)
+                )
+            }
+        } else {
+            aver_name_to_dafny(name)
+        }
+    };
     let render = |e: &Spanned<Expr>| emit_expr_legacy(e, ctx, None);
     let lhs = render(&law.lhs);
     let rhs = render(&law.rhs);
     let when = law.when.as_ref().map(render).unwrap_or_default();
     let givens: Vec<String> = law.givens.iter().map(|g| d(&g.name)).collect();
-    let params: Vec<String> = givens.iter().map(|g| format!("{}: int", g)).collect();
+    // Carry each given's DECLARED type, not a blanket `int`: a law over a
+    // record driver (e.g. `truncFitsWindow given f: Fp`) needs `f: Fp` so
+    // the main-thm body can project its fields (`f.width`) and the sample
+    // call sites can pass the constructed record.
+    let params: Vec<String> = law
+        .givens
+        .iter()
+        .zip(givens.iter())
+        .map(|(g, name)| format!("{}: {}", name, emit_type(&g.type_name)))
+        .collect();
     let params = params.join(", ");
 
     // Fuel attrs over the law's (transitive) fn cone — same shape as
