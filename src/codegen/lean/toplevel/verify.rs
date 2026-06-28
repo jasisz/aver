@@ -642,6 +642,13 @@ fn emit_verify_law_block(
             // emit replaces the theorem with the universal form, so dropping the
             // sampled domain keeps statement and proof aligned.
             || super::law_auto::recognize_pow2_signed_monotone(vb, &law_for_auto_proof, ctx)
+            // General recursive-monotonicity law (`f(LO) <= f(HI)` for any pure
+            // recursive `Int -> Int` `f` under `LO <= HI`): proven universally by
+            // the shared recursive-mono kit (`f.induct` positivity + monotonicity)
+            // and a one-line citation. The emit replaces the theorem with the
+            // universal form, so dropping the sampled domain keeps statement and
+            // proof aligned.
+            || super::law_auto::recognize_recursive_monotone(vb, &law_for_auto_proof, ctx)
             // Rational-order chaining law (the reciprocal-magnitude composition,
             // Lemma 8.2.4): the conclusion is the Fraction order fact `isNonNeg
             // (minus (pow2Signed BIG) A)`, proven universally by chaining the

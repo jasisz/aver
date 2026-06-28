@@ -9,6 +9,7 @@ mod induction;
 mod inequality;
 mod interval_mono;
 mod pow2_monotone;
+mod recursive_mono;
 mod sampled;
 mod shared;
 mod spec;
@@ -61,6 +62,13 @@ pub(in crate::codegen::lean) use interval_mono::recognize_interval_monotonicity;
 /// universal statement and the helper-kit-plus-sign-scaffold proof stay in
 /// lockstep.
 pub(in crate::codegen::lean) use pow2_monotone::recognize_pow2_signed_monotone;
+
+/// General recursive-monotonicity rung — the name-blind, structurally-keyed core
+/// (`f(LO) <= f(HI)` for ANY pure recursive `Int -> Int` `f` with a `p <= 0`
+/// single-step recursion) that the pow2Signed Fraction-order wrapper also feeds.
+/// Drives the `omit_domain` statement so the universal statement and the shared
+/// kit proof stay in lockstep.
+pub(in crate::codegen::lean) use recursive_mono::recognize_recursive_monotone;
 
 /// Rational-order chaining rung — the broad, reusable Fraction `<=`
 /// (`isNonNeg (minus C A)`) rung and its first consumer, the reciprocal-
@@ -598,6 +606,29 @@ fn emit_verify_law_forall_auto_proof_inner(
     // which a bare `grind` could never close on the recursive `pow2`.
     if law.when.is_some()
         && let Some(proof) = pow2_monotone::emit_pow2_signed_monotone_law(
+            vb,
+            law,
+            ctx,
+            theorem_base,
+            quant_params,
+        )
+    {
+        return Some(proof);
+    }
+
+    // General recursive-monotonicity — a conditional `holds` law whose
+    // conclusion is the plain integer order `f(LO) <= f(HI)` (the subject body,
+    // or the claim directly) under a premise `LO <= HI`, for ANY pure recursive
+    // `Int -> Int` `f` with a `p <= 0` single-step recursion. Closed UNIVERSALLY
+    // by the shared recursive-mono kit (`f.induct` positivity + monotonicity,
+    // additive/doubling/multiplicative portfolio closer) and a one-line citation
+    // of its monotonicity. Emits its OWN TRUE-universal theorem
+    // (`replaces_theorem`) under a `first | (…) | sorry` floor. Keyed only on `f`
+    // being recursive (so `f.induct` exists) and the order shape — name-blind, no
+    // pow2 literal; the pow2Signed Fraction-order law reuses the SAME kit through
+    // its thin sign-split adapter above.
+    if law.when.is_some()
+        && let Some(proof) = recursive_mono::emit_recursive_monotone_law(
             vb,
             law,
             ctx,

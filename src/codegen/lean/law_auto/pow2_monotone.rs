@@ -18,21 +18,23 @@
 //! `pow2Signed` denotes `2^k` faithfully for every `k`, so its monotonicity
 //! needs only `E_lo <= E_hi`).
 //!
-//! The emitted proof is the de-risked, kernel-checked, core-Lean (no Mathlib,
-//! no `native_decide`) monotonicity argument: five generic power-of-two helper
-//! lemmas about the underlying recursive `pow` fn (the def equations
-//! `pow_of_nonpos` / `pow_of_pos`; positivity `pow_pos` = `1 <= pow n` by
-//! `pow.induct`; monotonicity `pow_mono` = `m <= n -> pow m <= pow n` by
-//! `pow.induct` with NO `0 <= m` premise; and `one_le_mul`), then a four-way
-//! `by_cases` on `(E_hi < 0)` and `(E_lo < 0)` that reduces each `pow2Signed`
-//! sign branch and discharges the resulting `Int` product nonnegativity from
-//! those helpers. The four-way scaffold is rendered as a `<;> first | ...`
-//! portfolio so the same emission closes every sign combination uniformly, and
-//! the whole assembly sits under a `first | (...) | sorry` floor: a shape the
-//! recognizer admits but whose closing slips falls to an honest caught
-//! `sorry`, so credit stays fail-closed behind the `#print axioms` whitelist.
-//! The helper lemmas always typecheck (they do not mention the law), so only
-//! the assembly can fall through.
+//! This module is now a THIN DOMAIN ADAPTER: the recursive monotonicity algebra
+//! is NOT pow2-specific and lives in the SHARED [`super::recursive_mono`] kit
+//! (`recursive_decrement_arms` + `render_recursive_mono_kit`) — the def
+//! equations (`rec_lo` / `rec_hi`), positivity (`rec_pos` = `BASE <= pow n` by
+//! `pow.induct`), monotonicity (`rec_mono` = `m <= n -> pow m <= pow n` by
+//! `pow.induct`, NO `0 <= m` premise), and the product helper (`rec_one_le_mul`)
+//! — the exact same kit that closes the `tri` / `fct` monotonicity laws. This
+//! adapter contributes ONLY the domain part: recognizing the Fraction sign-split
+//! shape and emitting the four-way `by_cases` on `(E_hi < 0)` / `(E_lo < 0)` that
+//! reduces each `pow2Signed` sign branch and discharges the resulting `Int`
+//! product nonnegativity from the shared kit. The four-way scaffold is rendered
+//! as a `<;> first | ...` portfolio so the same emission closes every sign
+//! combination uniformly, and the whole assembly sits under a `first | (...) |
+//! sorry` floor: a shape the recognizer admits but whose closing slips falls to
+//! an honest caught `sorry`, so credit stays fail-closed behind the `#print
+//! axioms` whitelist. The kit lemmas always typecheck (they do not mention the
+//! law), so only the assembly can fall through.
 //!
 //! Soundness: the `E_lo <= E_hi` premise is load-bearing — without it the
 //! signed power of two is not monotone, and the recognizer requires the
@@ -309,10 +311,12 @@ pub(in crate::codegen::lean) fn recognize_pow2_signed_monotone(
     recognize_pow2_signed_monotone_shape(vb, law, ctx).is_some()
 }
 
-/// Close a signed-power-of-two monotonicity law. Emits the five generic
-/// power-of-two helper lemmas plus the four-way sign scaffold as a
-/// self-contained TRUE-universal theorem (`replaces_theorem`), wrapped
-/// `first | (…) | sorry`.
+/// Close a signed-power-of-two monotonicity law. Emits the SHARED recursive-
+/// monotonicity kit for the inner power-of-two `pow` (the `pow.induct`
+/// positivity + monotonicity algebra, identical to every other recursive
+/// monotonicity) plus the DOMAIN-specific four-way sign scaffold that unwraps
+/// the Fraction sign-split — all as a self-contained TRUE-universal theorem
+/// (`replaces_theorem`), wrapped `first | (…) | sorry`.
 pub(super) fn emit_pow2_signed_monotone_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -330,6 +334,17 @@ pub(super) fn emit_pow2_signed_monotone_law(
     let sgn = aver_name_to_lean(&shape.sgn);
     let pow = aver_name_to_lean(&shape.pow);
 
+    // The recursive-monotonicity algebra (positivity + monotonicity of the inner
+    // `pow`) is the SHARED kit — no pow2-specific helper code lives here.
+    let pow_fd = find_fn_def_by_call_name(ctx, &shape.pow)?;
+    let (base_arm, step_arm) = super::recursive_mono::recursive_decrement_arms(pow_fd, ctx)?;
+    let kit = super::recursive_mono::render_recursive_mono_kit(
+        theorem_base,
+        &pow,
+        &base_arm,
+        &step_arm,
+    );
+
     let lhs = render(&law.lhs);
     let rhs = render(&law.rhs);
     let when = render(law.when.as_ref()?);
@@ -339,80 +354,8 @@ pub(super) fn emit_pow2_signed_monotone_law(
         .map(|g| aver_name_to_lean(&g.name))
         .collect();
 
-    let text = render_pow2_monotone(
-        theorem_base,
-        quant_params,
-        &intros.join(" "),
-        &when,
-        &lhs,
-        &rhs,
-        &subject,
-        &isnonneg,
-        &minus,
-        &sgn,
-        &pow,
-        &hi,
-        &lo,
-    );
-    Some(AutoProof {
-        support_lines: text.lines().map(|l| l.to_string()).collect(),
-        body: crate::codegen::lean::tactic_ir::Tactic::raw(Vec::new()),
-        replaces_theorem: true,
-    })
-}
-
-/// The five generic power-of-two helper lemmas (verbatim transcription of the
-/// de-risked kernel-checked proof, scoped to `{base}__` so two such laws in one
-/// file never collide) followed by the four-way sign scaffold. Every name is a
-/// parameter — no per-figure literal.
-#[allow(clippy::too_many_arguments)]
-fn render_pow2_monotone(
-    base: &str,
-    quant_params: &str,
-    intros: &str,
-    when: &str,
-    lhs: &str,
-    rhs: &str,
-    subject: &str,
-    isnonneg: &str,
-    minus: &str,
-    sgn: &str,
-    pow: &str,
-    hi: &str,
-    lo: &str,
-) -> String {
-    let helpers = format!(
-        r#"theorem {base}__pow_of_nonpos (n : Int) (h : n <= 0) : {pow} n = 1 := by
-  rw [{pow}.eq_def, if_pos h]
-theorem {base}__pow_of_pos (n : Int) (h : ¬n <= 0) : {pow} n = 2 * {pow} (n - 1) := by
-  rw [{pow}.eq_def, if_neg h]
-theorem {base}__pow_pos : ∀ (n : Int), 1 <= {pow} n := by
-  intro n
-  induction n using {pow}.induct with
-  | case1 n h => rw [{base}__pow_of_nonpos n h]; omega
-  | case2 n h ih => rw [{base}__pow_of_pos n h]; omega
-theorem {base}__pow_mono : ∀ (n m : Int), m <= n -> {pow} m <= {pow} n := by
-  intro n
-  induction n using {pow}.induct with
-  | case1 n h =>
-      intro m hm
-      rw [{base}__pow_of_nonpos n h, {base}__pow_of_nonpos m (by omega)]
-      omega
-  | case2 n h ih =>
-      intro m hm
-      rw [{base}__pow_of_pos n h]
-      by_cases hmn : m <= n - 1
-      · have hle := ih m hmn
-        have hp := {base}__pow_pos (n - 1)
-        omega
-      · have hmeq : m = n := by omega
-        rw [hmeq, {base}__pow_of_pos n h]
-        omega
-theorem {base}__one_le_mul (a b : Int) (ha : 1 <= a) (hb : 1 <= b) : 1 <= a * b := by
-  calc (1 : Int) = 1 * 1 := by omega
-    _ <= a * b := Int.mul_le_mul ha hb (by omega) (by omega)"#
-    );
-
+    // The ONLY domain-specific code: the four-way sign scaffold that unwraps the
+    // `pow2Signed` sign-split and hands each Int product to the shared kit.
     let assembly = format!(
         r#"set_option maxHeartbeats 1000000 in
 theorem {base} : ∀ {quant_params}, {when} = true -> {lhs} = {rhs} := by
@@ -426,16 +369,25 @@ theorem {base} : ∀ {quant_params}, {when} = true -> {lhs} = {rhs} := by
        | (exfalso; omega)
        | (apply Int.mul_nonneg <;>
           first
-          | (have hle := {base}__pow_mono (0 - ({lo})) (0 - ({hi})) (by omega); omega)
-          | (exact Int.mul_nonneg (by have := {base}__pow_pos (0 - ({hi})); omega)
-                                  (by have := {base}__pow_pos (0 - ({lo})); omega))
-          | (have h1 := {base}__one_le_mul ({pow} ({hi})) ({pow} (0 - ({lo})))
-               ({base}__pow_pos ({hi})) ({base}__pow_pos (0 - ({lo}))); omega)
-          | (have := {base}__pow_pos (0 - ({lo})); omega)
-          | (have hle := {base}__pow_mono ({hi}) ({lo}) (by omega); omega)
+          | (have hle := {mono} (0 - ({lo})) (0 - ({hi})) (by omega); omega)
+          | (exact Int.mul_nonneg (by have := {pos} (0 - ({hi})); omega)
+                                  (by have := {pos} (0 - ({lo})); omega))
+          | (have h1 := {one_le_mul} ({pow} ({hi})) ({pow} (0 - ({lo})))
+               ({pos} ({hi})) ({pos} (0 - ({lo}))); omega)
+          | (have := {pos} (0 - ({lo})); omega)
+          | (have hle := {mono} ({hi}) ({lo}) (by omega); omega)
           | omega))
-  | sorry"#
+  | sorry"#,
+        base = theorem_base,
+        intros = intros.join(" "),
+        mono = kit.mono,
+        pos = kit.pos,
+        one_le_mul = kit.one_le_mul,
     );
-
-    format!("{helpers}\n{assembly}")
+    let text = format!("{}\n{}", kit.text, assembly);
+    Some(AutoProof {
+        support_lines: text.lines().map(|l| l.to_string()).collect(),
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(Vec::new()),
+        replaces_theorem: true,
+    })
 }

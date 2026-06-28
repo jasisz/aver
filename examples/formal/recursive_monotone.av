@@ -1,0 +1,68 @@
+module RecursiveMonotone
+    intent =
+        "Genericity witness for the general recursive-monotonicity rung."
+        "The signed-power-of-two monotonicity proof (the AMD K5 divider's order"
+        "fact) is NOT pow2-specific: ONE induction-on-f.induct skeleton with a"
+        "small additive/doubling/multiplicative portfolio closer proves"
+        "monotonicity for any p<=0-guarded single-step recursion. Here two"
+        "structurally different recurrences -- triangular numbers (additive step"
+        "n + tri(n-1)) and factorial (multiplicative step n * fct(n-1)) -- close"
+        "GENUINELY UNIVERSAL on the Lean kernel through the SAME rung, with no"
+        "power-of-two shape anywhere."
+    exposes [tri, triMonotone, fct, fctMonotone]
+
+fn tri(n: Int) -> Int
+    ? "Triangular numbers: tri(n) = n + (n-1) + ... + 1 for n >= 0, and 0 below. The additive single-step recurrence the general monotonicity rung closes with `omega`."
+    match n <= 0
+        true -> 0
+        false -> n + tri(n - 1)
+
+verify tri
+    tri(0) => 0
+    tri(3) => 6
+    tri(5) => 15
+
+fn triMonotone(m: Int, n: Int) -> Bool
+    ? "Monotonicity of triangular numbers as an order predicate: m <= n implies tri(m) <= tri(n). A non-pow2 recurrence proven by the SAME general recursive-monotonicity rung."
+    tri(m) <= tri(n)
+
+verify triMonotone
+    triMonotone(0, 0) => true
+    triMonotone(1, 3) => true
+    triMonotone(2, 5) => true
+
+// The genericity gate: the general rung closes this UNIVERSALLY (a real
+// `forall m n, m <= n -> tri m <= tri n`, kernel axioms within {propext,
+// Classical.choice, Quot.sound}) -- proving the monotonicity CORE is not
+// pow2-specific. The additive step is discharged by the portfolio's `omega` arm.
+verify triMonotone law mono
+    given m: Int = [0, 1, 2, 4]
+    given n: Int = [1, 3, 6]
+    when m <= n
+    triMonotone(m, n) holds
+
+fn fct(n: Int) -> Int
+    ? "Factorial: fct(n) = n * (n-1) * ... * 1 for n >= 0, and 1 below. The MULTIPLICATIVE single-step recurrence the general rung closes via the portfolio's Int.mul_le_mul_of_nonneg_right arm (`omega` cannot, the step is nonlinear)."
+    match n <= 0
+        true -> 1
+        false -> n * fct(n - 1)
+
+verify fct
+    fct(0) => 1
+    fct(3) => 6
+    fct(4) => 24
+
+fn fctMonotone(m: Int, n: Int) -> Bool
+    ? "Monotonicity of factorial as an order predicate: m <= n implies fct(m) <= fct(n). The multiplicative sibling, proven by the SAME general rung -- only the portfolio's closer branch differs."
+    fct(m) <= fct(n)
+
+verify fctMonotone
+    fctMonotone(0, 0) => true
+    fctMonotone(1, 3) => true
+    fctMonotone(2, 4) => true
+
+verify fctMonotone law mono
+    given m: Int = [0, 1, 2, 4]
+    given n: Int = [1, 3, 6]
+    when m <= n
+    fctMonotone(m, n) holds
