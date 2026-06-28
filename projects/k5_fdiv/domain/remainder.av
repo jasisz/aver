@@ -1,8 +1,10 @@
 module Remainder
     intent =
         "Stage 3, Section 8.2 of the K5 division proof: the FIRST quotient digit's"
-        "remainder bound (Lemma 8.2.3, p.29) and the sign-separation helper it rests"
-        "on (Lemma 8.2.2, p.28). The kernel divider (domain/kernel.av divideBang,"
+        "remainder bound (Lemma 8.2.3, p.29), the reciprocal-magnitude bound"
+        "(Lemma 8.2.4, p.30), the NAMED sign arithmetic lemma (Lemma 8.2.2, p.29,"
+        "signsDifferent_8_2_2), and the unnamed sum-bound step it feeds. The kernel"
+        "divider (domain/kernel.av divideBang,"
         "Figure 1, p.2) forms the first quotient digit and its remainder in three"
         "straight-line steps the runnable layer here mirrors one-for-one:"
         "  ph0 = trunc(p0, 32)                 (kernel.av line 277, the 32-bit remainder)"
@@ -20,15 +22,36 @@ module Remainder
         "                                              |1 - sd2*d| < 2^-28 by reciprocalBound)"
         "                    = 17 * 2^(e(p0)-31)  <  32 * 2^(e(p0)-31)  =  2^(e(p0)-26)."
         "The k = e(p0) factor cancels; the numeric core is 1 + 2^4 < 2^5, i.e. 17 < 32."
-        "LEMMA 8.2.2 (p.28), sign separation: the two error factors"
-        "  alpha = sd2*(p0 - sd2*d*ph0)   and   beta = sd2*d*(sd2*ph0 - q0)"
-        "(whose sum alpha + beta = sd2*(p0 - q0*d) = sd2*p1 is the scaled next remainder)"
-        "have OPPOSITE signs, so |alpha + beta| <= max(|alpha|, |beta|) -- the digits do"
-        "not reinforce, which is what bounds the next remainder for digit separation 8.2.1."
-        "The opposition is rooted in the away rounding of the digit: q0 = away(sd2*ph0, 24)"
-        "rounds AWAY from zero, so it overshoots -- the exact digit g = sd2*ph0 and the"
-        "rounding remainder g - q0 have opposite signs (awayDigitOvershoot below, the"
-        "direction half of awayFracErrorBound)."
+        "LEMMA 8.2.2 (p.29), the NAMED arithmetic lemma (signsDifferent_8_2_2): if x, y, z"
+        "are rationals then (x - y) and (y - z) have DIFFERENT signs -- i.e. their product"
+        "(x-y)*(y-z) <= 0 -- whenever (i) |y| <= |x| and (ii) |y| <= |z| and either"
+        "(iii) 0 < x and 0 <= y and 0 <= z, or (iv) x <= 0 and y <= 0 and z <= 0. Aver"
+        "`when` lines are ANDed, so the (iii)-OR-(iv) disjunction is stated as TWO law"
+        "blocks (branchPositive / branchNonpositive). The 8.2.1 proof instantiates"
+        "x = p0, y = sd2*d*ph0, z = d*q0; condition (ii) is exactly the away overshoot"
+        "|sd2*ph0| <= |q0| (awayDigitOvershoot below, the magnitude half of"
+        "awayFracErrorBound)."
+        "UNNAMED STEP (10) of the 8.2.1 proof (p.28), oppositeSignSumBounded: the two"
+        "error factors alpha = sd2*(p0 - sd2*d*ph0) and beta = sd2*d*(sd2*ph0 - q0) (whose"
+        "sum alpha + beta = sd2*(p0 - q0*d) = sd2*p1 is the scaled next remainder) have"
+        "opposite signs, so |alpha + beta| <= max(|alpha|, |beta|) -- the digits do not"
+        "reinforce, which bounds the next remainder for digit separation 8.2.1. This is"
+        "NOT paper Lemma 8.2.2; it is the |a+b| <= max(|a|,|b|) consequence used at line"
+        "(10) of the 8.2.1 proof, once alpha and beta are known to have different signs."
+        "LEMMA 8.2.4 (p.30): if p0 != 0 then |1/d| <= 2^(e(q0) - e(p0) + 2) (equivalently"
+        "|1/d|*2^(e(p0)) <= 2^(e(q0)+2)). Multiplied by Lemma 8.2.3 it gives eq (12),"
+        "|1/d|*|p0 - sd2*d*ph0| < 2^(e(q0)-24), the bound (8) needs. Its proof (hint p.30)"
+        "uses Lemma 8.1.1 to relate sd2 to 1/d, the away exponent of q0 = away(sd2*ph0,24)"
+        "(Lemma 7.2.7, away does not lower the exponent), e(ph0) = e(p0) (Lemma 7.2.6,"
+        "trunc preserves the exponent) and e(sd2*ph0) >= e(sd2)+e(ph0) (Lemma 7.1.7), so"
+        "e(q0) >= e(sd2) + e(p0); with |1/d| <= 2|sd2| (reciprocalBound) and the envelope"
+        "|sd2| < 2^(e(sd2)+1) this composes to |1/d| < 2^(e(sd2)+2) <= 2^(e(q0)-e(p0)+2)."
+        "8.2.4 STATUS: the runnable Fraction model (reciprocalMagnitudeHolds) is sample-"
+        "verified here; the UNIVERSAL law is pending the pow2-monotone exponent-placement"
+        "link e(sd2)+e(p0) <= e(q0) ==> 2^(e(sd2)+2) <= 2^(e(q0)-e(p0)+2) -- a generic"
+        "pow2Monotone law (derivable from the proven pow2 homomorphism), shared with 8.2.1."
+        "Stated bare-numerically a first cut left those exponent premises dead, so the"
+        "universal law is deferred until the placement is genuinely load-bearing."
         "BACKEND / HONESTY: the nonlinear remainder algebra is certified on the Z3/Dafny"
         "backend (SMT trust), the same backend and discipline domain/recip.av's"
         "reciprocalBound and domain/estimate.av's Newton bounds use. The laws are stated"
@@ -42,7 +65,7 @@ module Remainder
         "real trunc/away of kernel.av, sample-verified) demonstrates the model mirrors"
         "Figure 1; the Lean side is bounded (credit is Dafny), not kernel-universal."
     depends [Domain.Rational, Domain.Fprep, Domain.Kernel, Domain.FracRound, Domain.Recip]
-    exposes [firstTruncRem, firstQuotientDigit, exactFirstDigit, firstRemainderError, remainderRhs, firstRemainderHolds, alphaFactor, betaFactor, signsSeparated, maxInt, productMagnitudeBound, remainderBound_8_2_3, awayDigitOvershoot, signSeparation_8_2_2]
+    exposes [firstTruncRem, firstQuotientDigit, exactFirstDigit, firstRemainderError, remainderRhs, firstRemainderHolds, alphaFactor, betaFactor, signsSeparated, reciprocalMagnitudeRhs, reciprocalMagnitudeHolds, maxInt, productMagnitudeBound, remainderBound_8_2_3, awayDigitOvershoot, oppositeSignSumBounded, signsDifferent_8_2_2]
     effects []
 
 // ---------------------------------------------------------------------------
@@ -103,12 +126,29 @@ fn betaFactor(p0: Fraction, d: Fraction, sd2: Fraction) -> Fraction
     Domain.Rational.times(Domain.Rational.times(sd2, d), Domain.Rational.minus(exactFirstDigit(p0, sd2), firstQuotientDigit(p0, sd2)))
 
 fn signsSeparated(p0: Fraction, d: Fraction, sd2: Fraction) -> Bool
-    ? "Lemma 8.2.2 (p.28) as a runnable check: alpha and beta have opposite signs (alpha*beta <= 0). Sample-verified against the kernel model; the universal consequence is signSeparation_8_2_2 (Z3/Dafny)."
+    ? "The step-(10) opposition of the Lemma 8.2.1 proof (p.28) as a runnable check: alpha and beta have opposite signs (alpha*beta <= 0). NOT paper Lemma 8.2.2 (that named lemma is signsDifferent_8_2_2). Sample-verified against the kernel model; the universal consequence is oppositeSignSumBounded (Z3/Dafny)."
     Domain.Rational.isNonPos(Domain.Rational.times(alphaFactor(p0, d, sd2), betaFactor(p0, d, sd2)))
 
 verify signsSeparated
     signsSeparated(Domain.Rational.Fraction(top = 8589934593, bottom = 8589934592), Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1)) => true
     signsSeparated(Domain.Rational.Fraction(top = 5, bottom = 4), Domain.Rational.Fraction(top = 4, bottom = 5), Domain.Rational.Fraction(top = 5, bottom = 4)) => true
+
+// ---------------------------------------------------------------------------
+// The reciprocal-magnitude bound (Lemma 8.2.4, p.30) on the model.
+// ---------------------------------------------------------------------------
+
+fn reciprocalMagnitudeRhs(p0: Fraction, sd2: Fraction) -> Fraction
+    ? "The Lemma 8.2.4 (p.30) bound 2^(e(q0) - e(p0) + 2): e(q0) = fracExpo(firstQuotientDigit(p0, sd2)) is the binary exponent of the first 24-bit digit q0 = away(sd2*ph0, 24), e(p0) = fracExpo(p0). The exponent placement e(q0) - e(p0) + 2 is exactly the away/product/trunc exponent chain of the proof (Lemmas 7.2.7, 7.1.7, 7.2.6) plus the two-doubling slack the reciprocal-magnitude envelope contributes."
+    Domain.Fprep.pow2Signed(Domain.Kernel.fracExpo(firstQuotientDigit(p0, sd2)) - Domain.Kernel.fracExpo(p0) + 2)
+
+fn reciprocalMagnitudeHolds(p0: Fraction, d: Fraction, sd2: Fraction) -> Bool
+    ? "Lemma 8.2.4 (p.30) as a runnable check on the kernel model: |1/d| <= 2^(e(q0)-e(p0)+2). 1/d is the exact reciprocal fraction d.bottom/d.top; the bound is reciprocalMagnitudeRhs on the genuine kernel q0. Stated as reciprocalMagnitudeRhs - |1/d| >= 0 (the non-strict <= of the lemma). Sample-verified against the genuine away/expo of kernel.av; the universal certificate is pending the pow2-monotone exponent-placement link (only this runnable model is verified so far)."
+    Domain.Rational.isNonNeg(Domain.Rational.minus(reciprocalMagnitudeRhs(p0, sd2), Domain.Rational.absFraction(Domain.Rational.Fraction(top = d.bottom, bottom = d.top))))
+
+verify reciprocalMagnitudeHolds
+    reciprocalMagnitudeHolds(Domain.Rational.Fraction(top = 7, bottom = 4), Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 2, bottom = 3)) => true
+    reciprocalMagnitudeHolds(Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1)) => true
+    reciprocalMagnitudeHolds(Domain.Rational.Fraction(top = 5, bottom = 4), Domain.Rational.Fraction(top = 4, bottom = 5), Domain.Rational.Fraction(top = 5, bottom = 4)) => true
 
 // ---------------------------------------------------------------------------
 // The cross-multiplied INTEGER certificates (Z3/Dafny backend, SMT trust).
@@ -174,7 +214,7 @@ verify remainderBound_8_2_3 law lemma_8_2_3
     remainderBound_8_2_3(remNum, finalBound) holds
 
 fn awayDigitOvershoot(g: Int, q: Int) -> Bool
-    ? "The away-rounding overshoot sign fact, the root of Lemma 8.2.2 (p.28): the away-rounded digit q = away(g, .) overshoots the exact digit g (rounds AWAY from zero, so |q| >= |g| with the same sign, the direction half of awayFracErrorBound). Hence g and the rounding remainder g - q have opposite signs: g*(g - q) <= 0. Premise g*q >= g*g is the cross-multiplied 'same sign and |q| >= |g|'. Carried by Z3."
+    ? "The away-rounding overshoot sign fact that supplies condition (ii) of Lemma 8.2.2 (p.29, signsDifferent_8_2_2): the away-rounded digit q = away(g, .) overshoots the exact digit g (rounds AWAY from zero, so |q| >= |g| with the same sign, the direction half of awayFracErrorBound) -- this is |sd2*ph0| <= |q0|, i.e. condition (ii) |y| <= |z| under x=p0, y=sd2*d*ph0, z=d*q0. Hence g and the rounding remainder g - q have opposite signs: g*(g - q) <= 0. Premise g*q >= g*g is the cross-multiplied 'same sign and |q| >= |g|'. Carried by Z3."
     g * (g - q) <= 0
 
 verify awayDigitOvershoot
@@ -188,17 +228,48 @@ verify awayDigitOvershoot law guarded
     when g * q >= g * g
     awayDigitOvershoot(g, q) holds
 
-fn signSeparation_8_2_2(alpha: Int, beta: Int) -> Bool
-    ? "Lemma 8.2.2 (p.28), sign separation consequence: when the two error factors alpha = sd2*(p0 - sd2*d*ph0) and beta = sd2*d*(sd2*ph0 - q0) have opposite signs (alpha*beta <= 0, the opposition rooted in awayDigitOvershoot), their sum does not reinforce -- |alpha + beta| <= max(|alpha|, |beta|). Since alpha + beta = sd2*p1, this bounds the next remainder for the digit separation of Lemma 8.2.1. Cross-multiplied integer form; carried by Z3."
+fn oppositeSignSumBounded(alpha: Int, beta: Int) -> Bool
+    ? "The unnamed |a+b| <= max(|a|,|b|) consequence used in the Lemma 8.2.1 proof (step (10)), NOT paper Lemma 8.2.2. When the two error factors alpha = sd2*(p0 - sd2*d*ph0) and beta = sd2*d*(sd2*ph0 - q0) have opposite signs (alpha*beta <= 0, the opposition supplied by the NAMED Lemma 8.2.2 signsDifferent_8_2_2 through awayDigitOvershoot), their sum does not reinforce -- |alpha + beta| <= max(|alpha|, |beta|). Since alpha + beta = sd2*p1, this bounds the next remainder for the digit separation of Lemma 8.2.1; it is the move at line (10) of that proof. Cross-multiplied integer form; carried by Z3."
     Domain.Rational.absInt(alpha + beta) <= maxInt(Domain.Rational.absInt(alpha), Domain.Rational.absInt(beta))
 
-verify signSeparation_8_2_2
-    signSeparation_8_2_2(5, -2) => true
-    signSeparation_8_2_2(-5, 2) => true
-    signSeparation_8_2_2(0, 7) => true
+verify oppositeSignSumBounded
+    oppositeSignSumBounded(5, -2) => true
+    oppositeSignSumBounded(-5, 2) => true
+    oppositeSignSumBounded(0, 7) => true
 
-verify signSeparation_8_2_2 law guarded
+verify oppositeSignSumBounded law guarded
     given alpha: Int = [-5, 0, 5]
     given beta: Int = [-2, 0, 2]
     when alpha * beta <= 0
-    signSeparation_8_2_2(alpha, beta) holds
+    oppositeSignSumBounded(alpha, beta) holds
+
+fn signsDifferent_8_2_2(x: Int, y: Int, z: Int) -> Bool
+    ? "Lemma 8.2.2 (p.29), the NAMED arithmetic lemma: (x - y) and (y - z) have DIFFERENT signs, encoded as the cross-multiplied product-nonpositive (x - y)*(y - z) <= 0. The 8.2.1 proof reduces sign separation to this lemma under x = p0, y = sd2*d*ph0, z = d*q0. The hypotheses are (i) |y| <= |x|, (ii) |y| <= |z| (the away overshoot awayDigitOvershoot), and either (iii) 0 < x and 0 <= y and 0 <= z or (iv) x <= 0 and y <= 0 and z <= 0. Aver `when` lines are ANDed, so the (iii)-OR-(iv) disjunction is split into two law blocks. Carried by Z3."
+    (x - y) * (y - z) <= 0
+
+verify signsDifferent_8_2_2
+    signsDifferent_8_2_2(3, 1, 2) => true
+    signsDifferent_8_2_2(-1, -1, -3) => true
+    signsDifferent_8_2_2(2, 2, 2) => true
+
+verify signsDifferent_8_2_2 law branchPositive
+    given x: Int = [1, 3]
+    given y: Int = [0, 1]
+    given z: Int = [1, 2]
+    when 0 < x
+    when 0 <= y
+    when 0 <= z
+    when Domain.Rational.absInt(y) <= Domain.Rational.absInt(x)
+    when Domain.Rational.absInt(y) <= Domain.Rational.absInt(z)
+    signsDifferent_8_2_2(x, y, z) holds
+
+verify signsDifferent_8_2_2 law branchNonpositive
+    given x: Int = [-3, -1, 0]
+    given y: Int = [-1, 0]
+    given z: Int = [-2, -1]
+    when x <= 0
+    when y <= 0
+    when z <= 0
+    when Domain.Rational.absInt(y) <= Domain.Rational.absInt(x)
+    when Domain.Rational.absInt(y) <= Domain.Rational.absInt(z)
+    signsDifferent_8_2_2(x, y, z) holds
