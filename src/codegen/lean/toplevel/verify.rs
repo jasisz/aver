@@ -633,7 +633,14 @@ fn emit_verify_law_block(
             // order, proven universally by the rational interval-monotonicity
             // argument. The emit replaces the theorem with the `Prop`-hypothesis
             // universal form, so dropping the sampled domain keeps them aligned.
-            || super::law_auto::recognize_interval_monotonicity(vb, &law_for_auto_proof, ctx));
+            || super::law_auto::recognize_interval_monotonicity(vb, &law_for_auto_proof, ctx)
+            // Triangle-sum law (the rounded Newton-Raphson reciprocal step): a
+            // strict `absFraction`-of-a-three-term-sum bound over the exact-
+            // rational order, proven universally by the generic triangle kit
+            // (`tri_sum3`) citing the two rounding bound universals. The emit
+            // replaces the theorem with the universal form, so dropping the
+            // sampled domain keeps statement and proof aligned.
+            || super::law_auto::recognize_triangle_sum(vb, &law_for_auto_proof, ctx));
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(
             vb,
@@ -1052,6 +1059,24 @@ fn emit_verify_law_block(
 /// subtype — not a useful rewrite over the carrier). The name is the SAME
 /// `<fn>_eq_<spec>` / `<fn>_law_<name>` the block emits, so a later law's
 /// `simp [<name>]` resolves against the earlier theorem already in scope.
+/// The Lean theorem name `emit_verify_law_block` gives this law's universal
+/// theorem — `<fn>_eq_<spec>` for an equational spec law, else `<fn>_law_<name>`.
+/// Mirrors the `theorem_base` computation in `emit_verify_law_block` exactly, so
+/// a caller can key the cross-file admission set on the same name the block
+/// emits even for a law `law_as_lemma_statement` declines to state as a plain
+/// rewrite (a `when`-premised universal the keystone closes, cited by name).
+pub(crate) fn law_theorem_base(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> String {
+    let fn_name = aver_name_to_lean(&vb.fn_name);
+    match canonical_spec_ref(&vb.fn_name, law, ctx) {
+        Some(spec_ref) => format!(
+            "{}_eq_{}",
+            fn_name,
+            aver_name_to_lean(&spec_ref.spec_fn_name)
+        ),
+        None => format!("{}_law_{}", fn_name, aver_name_to_lean(&law.name)),
+    }
+}
+
 pub(crate) fn law_as_lemma_statement(
     vb: &VerifyBlock,
     law: &VerifyLaw,

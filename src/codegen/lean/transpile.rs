@@ -448,20 +448,24 @@ pub(super) fn transpile_unified(
                 let mut dep_verify_counters: HashMap<String, usize> = HashMap::new();
                 for vb in &module.verify_laws {
                     // Compute this law's theorem base under the dep scope and
-                    // emit only if it is in the admitted set. A law
-                    // `law_as_lemma_statement` declines (no universal theorem)
-                    // is never admitted, so it is skipped here too.
-                    let admitted = toplevel::law_as_lemma_statement(
-                        vb,
-                        match &vb.kind {
-                            crate::ast::VerifyKind::Law(l) => l,
-                            _ => continue,
-                        },
-                        ctx,
-                    )
-                    .map(|(base, _)| (module.prefix.clone(), base))
-                    .is_some_and(|key| admitted_dep_laws.contains(&key));
-                    if !admitted {
+                    // emit only if it is in the admitted set. The base is the
+                    // one `law_as_lemma_statement` reports when it states the law
+                    // as a plain rewrite; otherwise the canonical
+                    // `<fn>_law_<name>` the block emits anyway. The second case
+                    // covers a `when`-premised universal a consumer cites by name
+                    // (the rounded-step triangle rung's rounding bounds) — the
+                    // law-as-lemma rewrite gate declines a conditional law, but
+                    // the keystone still emits its universal theorem, so the
+                    // citation must reach it. A law no consumer admits stays
+                    // out of the set and is skipped regardless.
+                    let law_ref = match &vb.kind {
+                        crate::ast::VerifyKind::Law(l) => l,
+                        _ => continue,
+                    };
+                    let base = toplevel::law_as_lemma_statement(vb, law_ref, ctx)
+                        .map(|(base, _)| base)
+                        .unwrap_or_else(|| toplevel::law_theorem_base(vb, law_ref, ctx));
+                    if !admitted_dep_laws.contains(&(module.prefix.clone(), base)) {
                         continue;
                     }
                     let key = verify_counter_key(vb);

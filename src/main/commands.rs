@@ -7289,24 +7289,46 @@ fn run_lean_speculative(
     // baseline untouched. A loose match here is harmless: a file whose probe emit
     // traces no candidate (`probed_ids` empty) short-circuits before any build.
     let mut seen_law = false;
-    let has_candidate = ctx.items.iter().any(|item| {
+    let candidate_law = |law: &aver::ast::VerifyLaw, seen_law: bool| -> bool {
+        let lists = law
+            .givens
+            .iter()
+            .filter(|g| g.type_name.trim().starts_with("List<"))
+            .count();
+        law.when.is_some() && ((lists == 1 || lists == 2) || (lists == 0 && seen_law))
+    };
+    let entry_candidate = ctx.items.iter().any(|item| {
         let TopLevel::Verify(vb) = item else {
             return false;
         };
         let VerifyKind::Law(law) = &vb.kind else {
             return false;
         };
-        let lists = law
-            .givens
-            .iter()
-            .filter(|g| g.type_name.trim().starts_with("List<"))
-            .count();
-        let is_candidate =
-            law.when.is_some() && ((lists == 1 || lists == 2) || (lists == 0 && seen_law));
+        let is_candidate = candidate_law(law, seen_law);
         seen_law = true;
         is_candidate
     });
-    if !has_candidate {
+    // A DEPENDENCY module's `when`-law can be a speculative candidate too — the
+    // rounded-step reciprocal bound (`projects/k5_fdiv`) CITES the dependency
+    // rounding bounds (`awayFracErrorBound` / `truncFracErrorBound`), which are
+    // single-`when` laws the keystone closes universally only through the probe.
+    // When the entry file has no candidate of its own the probe would never run,
+    // leaving those dep laws stated bounded and the citation unresolved. Trigger
+    // on a dep candidate as well; the probe still short-circuits (no build) when
+    // the probe emit traces nothing (`probed_ids` empty), so a file with no
+    // admitted speculative dep law pays only one extra emit and is byte-identical.
+    let dep_candidate = ctx.modules.iter().any(|m| {
+        let mut seen = false;
+        m.verify_laws.iter().any(|vb| {
+            let VerifyKind::Law(law) = &vb.kind else {
+                return false;
+            };
+            let is_candidate = candidate_law(law, seen);
+            seen = true;
+            is_candidate
+        })
+    });
+    if !entry_candidate && !dep_candidate {
         return;
     }
 

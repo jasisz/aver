@@ -628,6 +628,24 @@ pub(crate) fn admitted_dep_law_theorems(
             consider(Some(module.prefix.as_str()), vb, law, &mut admitted);
         }
     }
+
+    // Triangle-sum consumers: the rung CITES two rounding bound universals
+    // (`awayFracErrorBound` / `truncFracErrorBound`) whose statements mention
+    // dep fns OUTSIDE the consumer law's cone (the consumer never calls the
+    // bound predicate itself), so the structural `dep_law_admissible` gate above
+    // does not reach them. The rung knows exactly which bound laws it cites, so
+    // admit those directly — keyed on the SAME recognizer the emit uses, so the
+    // cited theorem is emitted iff the proof that cites it is.
+    for item in &ctx.items {
+        let TopLevel::Verify(vb) = item else { continue };
+        let VerifyKind::Law(law) = &vb.kind else {
+            continue;
+        };
+        for dep in super::triangle_sum_cited_deps(vb, law, ctx) {
+            admitted.insert(dep);
+        }
+    }
+
     admitted
 }
 

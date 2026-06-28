@@ -11,6 +11,7 @@ mod sampled;
 mod shared;
 mod spec;
 mod suffix_roundtrip;
+mod triangle_sum;
 
 use super::VerifyEmitMode;
 use super::expr::aver_name_to_lean;
@@ -50,6 +51,17 @@ pub(in crate::codegen::lean) use induction::recognize_multicite_composition;
 /// Feeds the `omit_domain` statement driver so the universal statement and
 /// the helper-kit-plus-assembly proof stay in lockstep.
 pub(in crate::codegen::lean) use interval_mono::recognize_interval_monotonicity;
+
+/// Triangle-sum rung — the strict bound on an `absFraction`-of-a-three-term-
+/// sum over the exact-rational order (the rounded Newton-Raphson reciprocal
+/// step family). Feeds the `omit_domain` statement driver so the universal
+/// statement and the cited-bounds-plus-`tri_sum3` proof stay in lockstep.
+pub(in crate::codegen::lean) use triangle_sum::recognize_triangle_sum;
+
+/// The `(module_prefix, theorem_base)` rounding bound laws a triangle-sum law
+/// cites — unioned into the cross-file admission set so those dep theorems are
+/// emitted into the build.
+pub(in crate::codegen::lean) use triangle_sum::triangle_sum_cited_deps;
 
 // (Defined in this module.) The finite bounded-Int-domain recognizer — see
 // `recognize_finite_int_domain` — feeds the `omit_domain` statement driver so
@@ -587,6 +599,22 @@ fn emit_verify_law_forall_auto_proof_inner(
     }
 
     if let Some(proof) = induction::emit_pool_composition_generic_law(vb, law, ctx, &intro_names) {
+        return Some(proof);
+    }
+
+    // Triangle-sum — a strict magnitude bound `|E| < B` where the error `E`
+    // is `sameValue` a three-term sum `X + Y + Z` (ring identity by `grind`),
+    // `X` a squared prior error (`tri_sq_strict`) and `Y`/`Z` each a CITED
+    // rounding bound times a monotone factor (`tri_abs_times_le`), composed by
+    // the generic `tri_sum3`. Tried after the keystone/multicite arms (so a law
+    // that is also a pool composition keeps that path) and before the
+    // interval-monotonicity arm: this shape carries an `absFraction`-of-a-sum
+    // claim the other rational rungs do not admit. Emits its OWN TRUE-universal
+    // theorem (`replaces_theorem`) under a `first | (…) | sorry` floor, so
+    // credit stays fail-closed behind the `#print axioms` whitelist.
+    if law.when.is_some()
+        && let Some(proof) = triangle_sum::emit_triangle_sum_law(vb, law, ctx, theorem_base)
+    {
         return Some(proof);
     }
 

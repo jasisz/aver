@@ -14,6 +14,7 @@ pub use type_def::{
 };
 pub(crate) use verify::law_as_lemma_statement;
 pub(super) use verify::law_given_domain_values;
+pub(crate) use verify::law_theorem_base;
 pub use verify::{emit_decision, emit_verify_block};
 
 // Aliases into the parent `lean` module so the submodules' `super::<item>`
