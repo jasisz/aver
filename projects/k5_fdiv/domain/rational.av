@@ -148,6 +148,11 @@ verify isNonNeg
     isNonNeg(Fraction(top = -3, bottom = 4)) => false
     isNonNeg(Fraction(top = -3, bottom = -4)) => true
 
+verify isNonNeg law nonNegOfPositive
+    given x: Fraction = [Fraction(top = 3, bottom = 4), Fraction(top = -3, bottom = -4), Fraction(top = -3, bottom = 4), Fraction(top = 1, bottom = 2)]
+    when lessThan(zeroFraction(), x)
+    isNonNeg(x) holds
+
 verify isNonPos
     isNonPos(Fraction(top = -3, bottom = 4)) => true
     isNonPos(Fraction(top = 0, bottom = 1)) => true

@@ -20,10 +20,9 @@
 //!   3. `apply` the one earlier universal whose conclusion definitionally
 //!      ALIASES this law's goal (the "applier"), and discharge each of its
 //!      premises uniformly: directly (`assumption`, from a `when` hypothesis or
-//!      a supplier conjunct), through the generic rational nonneg-of-positive
-//!      bridge, or after a definitional `simp` that unfolds both the applier's
-//!      predicate and the cone so an aliased premise matches a supplier
-//!      conjunct.
+//!      a supplier conjunct), through the rational nonneg-of-positive pool law,
+//!      or after a definitional `simp` that unfolds both the applier's predicate
+//!      and the cone so an aliased premise matches a supplier conjunct.
 //!
 //! Everything is keyed on SHAPE — "an earlier universal whose conclusion
 //! matches my goal modulo unfolding" and "an earlier universal whose premises
@@ -58,8 +57,6 @@ struct MultiCite {
     /// applier's predicate def, so an applied premise unfolds to a supplier
     /// conjunct's normal form.
     alias_defs: Vec<String>,
-    /// The per-law generic nonneg-of-positive bridge lemma name.
-    bridge_name: String,
 }
 
 /// One earlier universal whose premises are discharged by this law's `when`.
@@ -523,18 +520,11 @@ fn plan(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option<Multi
     alias_defs.sort();
     alias_defs.dedup();
 
-    let bridge_name = format!(
-        "{}_law_{}__mc_nonneg_of_pos",
-        aver_name_to_lean(&vb.fn_name),
-        law.name
-    );
-
     Some(MultiCite {
         when_obtain,
         suppliers,
         applier_thm,
         alias_defs,
-        bridge_name,
     })
 }
 
@@ -553,8 +543,7 @@ pub(in crate::codegen::lean) fn recognize_multicite_composition(
 }
 
 /// Emit the multi-citation orchestration. Keeps the auto-generated universal
-/// statement (`replaces_theorem = false`) and supplies the proof body; the
-/// generic nonneg-of-positive bridge rides along in `support_lines`.
+/// statement (`replaces_theorem = false`) and supplies the proof body.
 pub(in crate::codegen::lean) fn emit_multicite_composition_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -569,22 +558,7 @@ pub(in crate::codegen::lean) fn emit_multicite_composition_law(
         suppliers,
         applier_thm,
         alias_defs,
-        bridge_name,
     } = plan(vb, law, ctx)?;
-
-    // The generic rational nonneg-of-positive bridge: `0 < x ⇒ 0 ≤ x`, proven
-    // once per law (name-blind, prefixed). Reusable for ANY composition; the
-    // discharge tries it only when an applied `isNonNeg` premise is fed by a
-    // supplier's strict-positivity conjunct.
-    let support_lines: Vec<String> = vec![
-        "set_option maxHeartbeats 1000000 in".to_string(),
-        format!("theorem {bridge_name} (x : Fraction)"),
-        "    (h : Domain.Rational.lessThan Domain.Rational.zeroFraction x = true) :".to_string(),
-        "    Domain.Rational.isNonNeg x = true := by".to_string(),
-        "  simp only [Domain.Rational.lessThan, Domain.Rational.zeroFraction,".to_string(),
-        "    Domain.Rational.isNonNeg, decide_eq_true_eq] at h ⊢".to_string(),
-        "  omega".to_string(),
-    ];
 
     let alias_csv = alias_defs.join(", ");
 
@@ -611,7 +585,10 @@ pub(in crate::codegen::lean) fn emit_multicite_composition_law(
     arm.push(format!("     apply {applier_thm} <;>"));
     arm.push("       first".to_string());
     arm.push("       | assumption".to_string());
-    arm.push(format!("       | (apply {bridge_name} <;> assumption)"));
+    arm.push(
+        "       | (apply Domain.Rational.isNonNeg_law_nonNegOfPositive <;> assumption)"
+            .to_string(),
+    );
     arm.push(format!(
         "       | (simp only [{alias_csv}] at * <;> assumption))"
     ));
@@ -631,7 +608,7 @@ pub(in crate::codegen::lean) fn emit_multicite_composition_law(
     lines.push(floor);
 
     Some(AutoProof {
-        support_lines,
+        support_lines: Vec::new(),
         body: Tactic::raw(lines),
         replaces_theorem: false,
     })
