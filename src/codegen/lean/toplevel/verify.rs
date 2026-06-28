@@ -634,6 +634,14 @@ fn emit_verify_law_block(
             // argument. The emit replaces the theorem with the `Prop`-hypothesis
             // universal form, so dropping the sampled domain keeps them aligned.
             || super::law_auto::recognize_interval_monotonicity(vb, &law_for_auto_proof, ctx)
+            // Signed-power-of-two monotonicity law (the K5 all-exponent order
+            // fact `2^E_lo <= 2^E_hi` for `E_lo <= E_hi`): the subject body is
+            // `isNonNeg (minus (pow2Signed E_hi) (pow2Signed E_lo))`, proven
+            // universally by the generic power-of-two helper kit (`pow.induct`
+            // positivity + monotonicity) and the four-way sign scaffold. The
+            // emit replaces the theorem with the universal form, so dropping the
+            // sampled domain keeps statement and proof aligned.
+            || super::law_auto::recognize_pow2_signed_monotone(vb, &law_for_auto_proof, ctx)
             // Triangle-sum law (the rounded Newton-Raphson reciprocal step): a
             // strict `absFraction`-of-a-three-term-sum bound over the exact-
             // rational order, proven universally by the generic triangle kit

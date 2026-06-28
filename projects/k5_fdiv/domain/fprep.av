@@ -18,7 +18,7 @@ module Fprep
         "nothing about powers of two, it CITES the proven homomorphism pow2(m+n) =="
         "pow2(m)*pow2(n) and the compiler composes it via one generic strategy."
     depends [Domain.Rational]
-    exposes [pow2, Fp, isFp, fpValue, fpValueGeneral, fpScale, fpMul, pow2Fraction, pow2Signed, pow2SignedHomomorphism, fpValueEqualsGeneralWhenNonnegExp, fpScaleKeepsSignificand, fpScaleShiftsExponent, fpScalePreservesValue, productExp, productExpInRange, fpMulValue]
+    exposes [pow2, Fp, isFp, fpValue, fpValueGeneral, fpScale, fpMul, pow2Fraction, pow2Signed, pow2SignedHomomorphism, pow2SignedMonotone, fpValueEqualsGeneralWhenNonnegExp, fpScaleKeepsSignificand, fpScaleShiftsExponent, fpScalePreservesValue, productExp, productExpInRange, fpMulValue]
     effects []
 
 fn pow2(n: Int) -> Int
@@ -274,3 +274,29 @@ verify fpMulValue law denotesProduct
     when a.width >= 1
     when b.width >= 1
     fpMulValue(a, b) holds
+
+fn pow2SignedMonotone(m: Int, n: Int) -> Bool
+    ? "Monotonicity of the signed power of two over the rationals: m <= n implies 2^m <= 2^n for ANY integers m, n (Section 5.1, p.13). In the project's exact-rational order, 2^m <= 2^n is isNonNeg(2^n - 2^m). The integer pow2 is monotone only on the nonnegative half (it clamps to 1 below zero); pow2Signed denotes 2^k faithfully for every integer k, so its monotonicity is unconditional once m <= n -- the order fact the rounding-error bounds (each 2^(e - i + 1) with the exponent often negative) and the reciprocal-estimate refinement chain in sections 8 and 9 compose through."
+    Domain.Rational.isNonNeg(Domain.Rational.minus(pow2Signed(n), pow2Signed(m)))
+
+verify pow2SignedMonotone
+    pow2SignedMonotone(0, 0) => true
+    pow2SignedMonotone(1, 3) => true
+    pow2SignedMonotone(-3, -1) => true
+    pow2SignedMonotone(-2, 2) => true
+
+// Monotonicity of the signed power of two 2^m <= 2^n for ANY integers m <= n
+// (Section 5.1, p.13). The plain pow2 is monotone only for nonnegative exponents
+// (it clamps to 1 below zero); pow2Signed is the faithful 2^k for every integer k,
+// so its monotonicity drops to the single premise m <= n -- the order fact the
+// fractional-float kernel (exp < 0) needs. The proof case-splits the two sign
+// branches of pow2Signed and reduces each arm to the integer monotonicity and
+// positivity of pow2 on nonnegative arguments: the generic signed-power-of-two
+// monotonicity strategy supplies the power algebra (pow2.induct positivity and
+// monotonicity) and the four-way sign scaffold, keyed on the term shape
+// isNonNeg(minus(pow2Signed(_), pow2Signed(_))), never a per-figure template.
+verify pow2SignedMonotone law allExponents
+    given m: Int = [-3, -1, 0, 2, 5]
+    given n: Int = [-2, 0, 3]
+    when m <= n
+    pow2SignedMonotone(m, n) holds

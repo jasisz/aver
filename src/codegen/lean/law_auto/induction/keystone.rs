@@ -74,6 +74,17 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     if super::super::recognize_interval_monotonicity(vb, law, ctx) {
         return false;
     }
+    // Decline the signed-power-of-two monotonicity shape: its dedicated rung is
+    // a DETERMINISTIC `replaces_theorem` closer (the power-of-two helper kit +
+    // four-way sign scaffold), dispatched before the keystone. The keystone's
+    // bare `grind` over the pool can never close it (it needs `pow.induct`), so
+    // under the probe it would only fall to its sorry floor; declining here keeps
+    // the law deterministic in BOTH passes and lets the dedicated rung own its
+    // (separate-arrow) universal statement, exactly as the interval-monotonicity
+    // guard above does.
+    if super::super::recognize_pow2_signed_monotone(vb, law, ctx) {
+        return false;
+    }
     // The claim goes through the subject fn (`holds`, or an equational `=> rhs`).
     if !matches!(&law.lhs.node, crate::ast::Expr::FnCall(..)) {
         return false;

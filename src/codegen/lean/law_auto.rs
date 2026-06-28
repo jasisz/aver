@@ -7,6 +7,7 @@ mod floor_window;
 mod induction;
 mod inequality;
 mod interval_mono;
+mod pow2_monotone;
 mod sampled;
 mod shared;
 mod spec;
@@ -51,6 +52,14 @@ pub(in crate::codegen::lean) use induction::recognize_multicite_composition;
 /// Feeds the `omit_domain` statement driver so the universal statement and
 /// the helper-kit-plus-assembly proof stay in lockstep.
 pub(in crate::codegen::lean) use interval_mono::recognize_interval_monotonicity;
+
+/// Signed-power-of-two monotonicity rung — the order-monotonicity sibling of
+/// the rational strict-order bound: a conditional `holds` law whose subject
+/// body is `isNonNeg (minus (pow2Signed E_hi) (pow2Signed E_lo))` under a
+/// premise `E_lo <= E_hi`. Feeds the `omit_domain` statement driver so the
+/// universal statement and the helper-kit-plus-sign-scaffold proof stay in
+/// lockstep.
+pub(in crate::codegen::lean) use pow2_monotone::recognize_pow2_signed_monotone;
 
 /// Triangle-sum rung — the strict bound on an `absFraction`-of-a-three-term-
 /// sum over the exact-rational order (the rounded Newton-Raphson reciprocal
@@ -559,6 +568,29 @@ fn emit_verify_law_forall_auto_proof_inner(
     if law.when.is_some()
         && let Some(proof) =
             induction::emit_conditional_inductive_generic_law(vb, law, ctx, &intro_names)
+    {
+        return Some(proof);
+    }
+
+    // Signed-power-of-two monotonicity — a conditional `holds` law whose subject
+    // body is `isNonNeg (minus (pow2Signed E_hi) (pow2Signed E_lo))` under a
+    // premise `E_lo <= E_hi`, i.e. `2^E_lo <= 2^E_hi` over the exact-rational
+    // order for ANY integer exponents. Closed UNIVERSALLY by the generic
+    // power-of-two helper kit (`pow.induct` positivity + monotonicity) and the
+    // four-way sign scaffold. Emits its OWN TRUE-universal theorem
+    // (`replaces_theorem`) under a `first | (…) | sorry` floor, so credit stays
+    // fail-closed behind the `#print axioms` whitelist. Tried BEFORE the
+    // keystone/multicite arms (the keystone declines this shape explicitly) so
+    // this deterministic closer wins over the speculative pool composition,
+    // which a bare `grind` could never close on the recursive `pow2`.
+    if law.when.is_some()
+        && let Some(proof) = pow2_monotone::emit_pow2_signed_monotone_law(
+            vb,
+            law,
+            ctx,
+            theorem_base,
+            quant_params,
+        )
     {
         return Some(proof);
     }
