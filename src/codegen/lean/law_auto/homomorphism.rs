@@ -126,10 +126,7 @@ fn same_atom(a: &Spanned<Expr>, b: &Spanned<Expr>, ctx: &CodegenContext) -> bool
 }
 
 /// `subject(arg)` for a single-arg call to `subject_src` — returns the argument.
-fn subject_call_arg<'a>(
-    e: &'a Spanned<Expr>,
-    subject_src: &str,
-) -> Option<&'a Spanned<Expr>> {
+fn subject_call_arg<'a>(e: &'a Spanned<Expr>, subject_src: &str) -> Option<&'a Spanned<Expr>> {
     let Expr::FnCall(callee, args) = &e.node else {
         return None;
     };
@@ -204,11 +201,74 @@ fn collect_subject_call<'a>(
     }
 }
 
+fn expr_mentions_param(expr: &Spanned<Expr>, param_name: &str, param_slot: Option<u16>) -> bool {
+    match &expr.node {
+        Expr::Ident(name) => name == param_name,
+        Expr::Resolved { slot, name, .. } => param_slot
+            .map(|param_slot| *slot == param_slot)
+            .unwrap_or(name == param_name),
+        Expr::Attr(inner, _) | Expr::ErrorProp(inner) | Expr::Neg(inner) => {
+            expr_mentions_param(inner, param_name, param_slot)
+        }
+        Expr::FnCall(callee, args) => {
+            expr_mentions_param(callee, param_name, param_slot)
+                || args
+                    .iter()
+                    .any(|arg| expr_mentions_param(arg, param_name, param_slot))
+        }
+        Expr::BinOp(_, l, r) => {
+            expr_mentions_param(l, param_name, param_slot)
+                || expr_mentions_param(r, param_name, param_slot)
+        }
+        Expr::Match { subject, arms } => {
+            expr_mentions_param(subject, param_name, param_slot)
+                || arms
+                    .iter()
+                    .any(|arm| expr_mentions_param(&arm.body, param_name, param_slot))
+        }
+        Expr::Constructor(_, Some(arg)) => expr_mentions_param(arg, param_name, param_slot),
+        Expr::InterpolatedStr(parts) => parts.iter().any(|part| match part {
+            crate::ast::StrPart::Literal(_) => false,
+            crate::ast::StrPart::Parsed(inner) => {
+                expr_mentions_param(inner, param_name, param_slot)
+            }
+        }),
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => items
+            .iter()
+            .any(|item| expr_mentions_param(item, param_name, param_slot)),
+        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
+            expr_mentions_param(k, param_name, param_slot)
+                || expr_mentions_param(v, param_name, param_slot)
+        }),
+        Expr::RecordCreate { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| expr_mentions_param(value, param_name, param_slot)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_mentions_param(base, param_name, param_slot)
+                || updates
+                    .iter()
+                    .any(|(_, value)| expr_mentions_param(value, param_name, param_slot))
+        }
+        Expr::TailCall(call) => call
+            .args
+            .iter()
+            .any(|arg| expr_mentions_param(arg, param_name, param_slot)),
+        Expr::Literal(_) | Expr::Constructor(_, None) => false,
+    }
+}
+
 /// Whether `step_body` is `HEAD <op2> subject(REC)` (or `subject(REC) <op2> HEAD`)
-/// — the load-bearing content-blind gate that the subject's recurrence combines
-/// its sub-result with the SAME operator the law claims for `OP2`. Without it the
-/// induction step's associativity finisher would not apply.
-fn step_head_is_op2(step_body: &Spanned<Expr>, op2: Op2, subject_src: &str) -> bool {
+/// where `HEAD` is constant with respect to the subject's recursion parameter.
+/// This is the load-bearing content-blind gate that the subject's recurrence
+/// combines its sub-result with the SAME operator the law claims for `OP2`.
+/// Without it the induction step's associativity finisher would not apply.
+fn step_head_is_op2(
+    step_body: &Spanned<Expr>,
+    op2: Op2,
+    subject_src: &str,
+    param_name: &str,
+    param_slot: Option<u16>,
+) -> bool {
     let Expr::BinOp(op, l, r) = &step_body.node else {
         return false;
     };
@@ -216,7 +276,11 @@ fn step_head_is_op2(step_body: &Spanned<Expr>, op2: Op2, subject_src: &str) -> b
         return false;
     }
     let is_rec = |e: &Spanned<Expr>| subject_call_arg(e, subject_src).is_some();
-    is_rec(l) || is_rec(r)
+    match (is_rec(l), is_rec(r)) {
+        (true, false) => !expr_mentions_param(r, param_name, param_slot),
+        (false, true) => !expr_mentions_param(l, param_name, param_slot),
+        _ => false,
+    }
 }
 
 /// Whether `e` is the integer literal `v`.
@@ -282,6 +346,12 @@ fn recognize(_vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option
     if !subj_fd.effects.is_empty() {
         return None;
     }
+    let (param_name, _) = subj_fd.params.first()?;
+    let param_slot = subj_fd
+        .resolution
+        .as_ref()
+        .and_then(|resolution| resolution.local_slots.get(param_name).copied())
+        .or(Some(0));
 
     // Classify the subject's two arms; gate base = OP2.identity and step's head
     // operator = OP2 (the homomorphism algebra).
@@ -289,7 +359,7 @@ fn recognize(_vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option
     if !is_int_lit(base_body, op2.identity_int()) {
         return None;
     }
-    if !step_head_is_op2(step_body, op2, &subject_src) {
+    if !step_head_is_op2(step_body, op2, &subject_src, param_name, param_slot) {
         return None;
     }
 
