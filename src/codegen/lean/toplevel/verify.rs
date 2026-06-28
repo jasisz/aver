@@ -654,6 +654,15 @@ fn emit_verify_law_block(
             // universal form, so dropping the sampled domain keeps statement and
             // proof aligned.
             || super::law_auto::recognize_recursive_monotone(vb, &law_for_auto_proof, ctx)
+            // Content-blind homomorphism law (`subject(OP1(a, b)) = OP2(subject(a),
+            // subject(b))` for a recursive subject, OP1/OP2 captured from the AST):
+            // the guarded power-of-two case carries a `when m >= 0; n >= 0` premise
+            // and is proven universally by the de-risked `subject.induct` skeleton.
+            // The emit replaces the theorem with the universal form, so dropping the
+            // sampled domain keeps statement and proof aligned. (The unconditional
+            // structural case — a list-length homomorphism — has no sampled domain to
+            // drop and is classed universal by the default unconditional path.)
+            || super::law_auto::recognize_homomorphism(vb, &law_for_auto_proof, ctx)
             // Rational-order chaining law (the reciprocal-magnitude composition,
             // Lemma 8.2.4): the conclusion is the Fraction order fact `isNonNeg
             // (minus (pow2Signed BIG) A)`, proven universally by chaining the

@@ -6,6 +6,7 @@ mod decimal;
 mod floor_window;
 mod frac_monotone_compose;
 mod frac_order_chain;
+mod homomorphism;
 mod induction;
 mod inequality;
 mod interval_mono;
@@ -73,6 +74,12 @@ pub(in crate::codegen::lean) use frac_monotone_compose::{
 /// Drives the `omit_domain` statement so the universal statement and the shared
 /// kit proof stay in lockstep.
 pub(in crate::codegen::lean) use recursive_mono::recognize_recursive_monotone;
+
+/// Content-blind homomorphism rung — the name-blind, shape-only recognizer for
+/// `subject(OP1(a, b)) = OP2(subject(a), subject(b))` (subject recursive, OP1 /
+/// OP2 captured from the AST). Feeds the `omit_domain` statement driver so the
+/// universal statement and the de-risked induction proof stay in lockstep.
+pub(in crate::codegen::lean) use homomorphism::recognize_homomorphism;
 
 /// Rational-order chaining rung — the broad, reusable Fraction `<=`
 /// (`isNonNeg (minus C A)`) rung and its first consumer, the reciprocal-
@@ -691,6 +698,24 @@ fn emit_verify_law_forall_auto_proof_inner(
     if law.when.is_some()
         && let Some(proof) =
             frac_order_chain::emit_frac_order_chain_law(vb, law, ctx, theorem_base, quant_params)
+    {
+        return Some(proof);
+    }
+
+    // Content-blind homomorphism — a law `subject(OP1(a, b)) = OP2(subject(a),
+    // subject(b))` (subject recursive, `OP1` the arg-combine, `OP2` the
+    // result-combine, all captured from the AST). Closed UNIVERSALLY by the
+    // de-risked skeleton (`induction <OP1-first-arg> using <subject>.induct` with
+    // the base = `OP2` left-identity and the step = `OP2` associativity), with a
+    // 2-way unfold dispatch on the subject's recurrence shape (guarded countdown
+    // vs structural ADT). ONE rung closes both the integer power-of-two
+    // homomorphism (`OP2 = *`, guarded) and a list-length homomorphism (`OP2 =
+    // +`, structural). Tried BEFORE the keystone / pinned strategies so it claims
+    // the homomorphism shape from the content-aware floor-window template it
+    // subsumes. Emits its OWN TRUE-universal theorem (`replaces_theorem`) under a
+    // `first | (…) | sorry` floor.
+    if let Some(proof) =
+        homomorphism::emit_homomorphism_law(vb, law, ctx, theorem_base, quant_params)
     {
         return Some(proof);
     }

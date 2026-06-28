@@ -2172,21 +2172,22 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         }
     }
 
-    // Demand-driven well-founded graduation for the GENERAL recursive-
-    // monotonicity family (of which the signed-power-of-two order fact is one
-    // instance): a universal monotonicity proof `m <= n -> f m <= f n` rests on
-    // the recursive fn's `.eq_def` defining equations and `.induct` functional-
-    // induction principle, which the fuel encoding destroys exactly as it does
-    // for the window family above. Graduate every recursive countdown fn an
-    // order-comparison `when`-law reasons about — the plain `f(LO) <= f(HI)`, or
-    // the Fraction order `isNonNeg(minus(g(HI), g(LO)))` whose `g` sign-splits
-    // over one such fn — from `Fuel { NatAbsPlusOne }` to the native
-    // `WellFoundedToNat` form. Keyed on the order SHAPE and the fn's existing
+    // Demand-driven well-founded graduation for the inductive `when`-law
+    // families that rest on a recursive countdown fn's `.eq_def` defining
+    // equations and `.induct` functional-induction principle, which the fuel
+    // encoding destroys exactly as it does for the window family above. Two
+    // shapes demand it: the GENERAL recursive-monotonicity family (a universal
+    // `m <= n -> f m <= f n`, or its Fraction-order `isNonNeg(minus(g(HI),
+    // g(LO)))` sibling) and the content-blind HOMOMORPHISM family (a universal
+    // `subject(a + b) = subject(a) OP2 subject(b)` over a guarded countdown
+    // subject — the power-of-two / power-of-three sum split). Graduate every such
+    // recursive countdown fn from `Fuel { NatAbsPlusOne }` to the native
+    // `WellFoundedToNat` form. Keyed on the law SHAPE and the fn's existing
     // countdown contract (which already certifies the `p <= 0` guard the bare
-    // `decreasing_by omega` needs), never on a fn name — the same conservatism
-    // as the window pass: a countdown fn no monotonicity law mentions keeps its
-    // established fuel emission.
-    let mono_fns = monotone_demanded_countdown_fns(inputs);
+    // `decreasing_by omega` needs), never on a fn name — the same conservatism as
+    // the window pass: a countdown fn no such law mentions keeps its established
+    // fuel emission.
+    let mono_fns = induction_demanded_countdown_fns(inputs);
     for (scope, name) in mono_fns {
         let key = match &scope {
             Some(prefix) => crate::ir::FnKey::in_module(prefix.clone(), &name),
@@ -2214,13 +2215,15 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 }
 
 /// `(owning_scope, fn_source_name)` for every recursive countdown fn an
-/// order-comparison `when`-law reasons about — the demand the general
-/// recursive-monotonicity rung (and the signed-power-of-two adapter) place on
-/// the well-founded `.induct` / `.eq_def`. Detected purely from the order SHAPE
-/// of each law's subject body: the plain `f(LO) <= f(HI)`, or the Fraction order
-/// `isNonNeg(minus(g(HI), g(LO)))` whose `g` calls a single recursive countdown
-/// fn. Name-blind.
-fn monotone_demanded_countdown_fns(
+/// inductive `when`-law reasons about — the demand the general
+/// recursive-monotonicity rung, the signed-power-of-two adapter, AND the
+/// content-blind homomorphism rung place on the well-founded `.induct` /
+/// `.eq_def`. Detected purely from the SHAPE of each law's subject body / claim:
+/// the plain order `f(LO) <= f(HI)`, the Fraction order `isNonNeg(minus(g(HI),
+/// g(LO)))` whose `g` calls a single recursive countdown fn, or the homomorphism
+/// `subject(a + b) = subject(a) OP2 subject(b)` over a guarded countdown subject.
+/// Name-blind.
+fn induction_demanded_countdown_fns(
     inputs: &ProofLowerInputs,
 ) -> Vec<(Option<String>, String)> {
     use crate::ast::{TopLevel, VerifyKind};
@@ -2368,6 +2371,29 @@ fn monotone_demanded_countdown_fns(
             consider(b);
         }
         consider(&law.lhs);
+
+        // Homomorphism `subject(a + b) = subject(a) OP2 subject(b)` — the
+        // arithmetic (guarded countdown) carrier the content-blind homomorphism
+        // rung inducts over. Demand the recursive countdown `subject`. (A
+        // structural-ADT homomorphism, e.g. list length over concatenation, is
+        // already native — Lean infers its structural termination — so it places
+        // no fuel-graduation demand and is not detected here.)
+        if let Expr::BinOp(op2, ra, rb) = &law.rhs.node
+            && matches!(op2, crate::ast::BinOp::Add | crate::ast::BinOp::Mul)
+            && let (Some(subj), Some(subj_rb)) =
+                (unary_callee_short(ra), unary_callee_short(rb))
+            && subj == subj_rb
+            && let Expr::FnCall(lc, la) = &law.lhs.node
+            && la.len() == 1
+            && dotted(lc).as_deref().map(short) == Some(subj.as_str())
+            && matches!(&la[0].node, Expr::BinOp(crate::ast::BinOp::Add, _, _))
+            && recursive.contains(&subj)
+            && inputs
+                .find_fn_def_by_call_name(&subj)
+                .is_some_and(is_le0_guarded_countdown)
+        {
+            demanded.push((scope.clone(), subj));
+        }
     }
     demanded
 }

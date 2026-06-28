@@ -1,0 +1,100 @@
+module LengthHomomorphism
+    intent =
+        "Content-blindness witness for the generic homomorphism rung. The AMD K5"
+        "divider proves the power-of-two homomorphism pow2(m+n) = pow2(m)*pow2(n)"
+        "by ONE shape-only rung: it recognizes the statement shape subject(a OP1 b)"
+        "= OP2(subject(a), subject(b)) -- capturing the subject and both combine"
+        "operators from the syntax -- and closes it by induction on subject.induct"
+        "with the base discharged by OP2's identity and the step by OP2's"
+        "associativity. Nothing in the rung mentions powers of two, lists, *, or +."
+        "Here three structurally different homomorphisms close GENUINELY UNIVERSAL"
+        "through the SAME rung: a power of two (OP2 = *, guarded arithmetic"
+        "recurrence), a power of three (the rung is base-blind), and -- in an"
+        "entirely different carrier -- a list length (OP2 = +, structural"
+        "recurrence over a cons list). The list case is the proof it is shape-only,"
+        "not power-of-two in disguise."
+    exposes [pow2, pow3, len, cat, lenCatHom]
+
+fn pow2(n: Int) -> Int
+    ? "Two to the n for n >= 0 (and 1 for n <= 0). A guarded arithmetic countdown."
+    match n <= 0
+        true -> 1
+        false -> 2 * pow2(n - 1)
+
+verify pow2
+    pow2(0) => 1
+    pow2(3) => 8
+    pow2(7) => 128
+
+// OP1 = +, OP2 = *. Guarded recurrence: the rung unfolds each step with a single
+// controlled rewrite (a blind simp would loop on the guarded equation) and
+// normalizes the index peel with omega.
+verify pow2 law homomorphism
+    given m: Int = [0, 1, 4]
+    given n: Int = [0, 2, 3]
+    when m >= 0
+    when n >= 0
+    pow2(m + n) => pow2(m) * pow2(n)
+
+fn pow3(n: Int) -> Int
+    ? "Three to the n for n >= 0 (and 1 for n <= 0). Same shape as pow2 with a different base -- the rung reads the recurrence, not the constant 2."
+    match n <= 0
+        true -> 1
+        false -> 3 * pow3(n - 1)
+
+verify pow3
+    pow3(0) => 1
+    pow3(2) => 9
+    pow3(4) => 81
+
+// The same OP1 = +, OP2 = * shape, base 3. The rung is base-blind: it closes this
+// through the identical skeleton, citing no power-of-two fact.
+verify pow3 law homomorphism
+    given m: Int = [0, 1, 3]
+    given n: Int = [0, 2, 3]
+    when m >= 0
+    when n >= 0
+    pow3(m + n) => pow3(m) * pow3(n)
+
+type IntList
+    Nil
+    Cons(Int, IntList)
+
+fn len(xs: IntList) -> Int
+    ? "List length -- a structural recurrence over the cons list."
+    match xs
+        IntList.Nil -> 0
+        IntList.Cons(h, t) -> 1 + len(t)
+
+verify len
+    len(IntList.Nil) => 0
+    len(IntList.Cons(7, IntList.Nil)) => 1
+    len(IntList.Cons(4, IntList.Cons(5, IntList.Nil))) => 2
+
+fn cat(xs: IntList, ys: IntList) -> IntList
+    ? "List concatenation -- the structural argument-combine OP1."
+    match xs
+        IntList.Nil -> ys
+        IntList.Cons(h, t) -> IntList.Cons(h, cat(t, ys))
+
+verify cat
+    cat(IntList.Nil, IntList.Cons(1, IntList.Nil)) => IntList.Cons(1, IntList.Nil)
+    cat(IntList.Cons(1, IntList.Nil), IntList.Nil) => IntList.Cons(1, IntList.Nil)
+
+fn lenCatHom(xs: IntList, ys: IntList) -> Bool
+    ? "len is a monoid homomorphism from concatenation to addition."
+    len(cat(xs, ys)) == len(xs) + len(ys)
+
+verify lenCatHom
+    lenCatHom(IntList.Nil, IntList.Nil) => true
+    lenCatHom(IntList.Cons(1, IntList.Nil), IntList.Cons(2, IntList.Nil)) => true
+
+// A DIFFERENT carrier: OP1 = cat (structural), OP2 = + (additive monoid). The
+// SAME rung that closes the power-of-two homomorphism closes this one -- by
+// induction on len.induct, the base by + identity, the step by + associativity.
+// The structural recurrence terminates under a single simp_all unfold (no guard,
+// no omega index peel). This is the cross-domain proof the rung is shape-only.
+verify len law homomorphism
+    given xs: IntList = [IntList.Nil, IntList.Cons(1, IntList.Nil)]
+    given ys: IntList = [IntList.Nil, IntList.Cons(2, IntList.Cons(3, IntList.Nil))]
+    len(cat(xs, ys)) => len(xs) + len(ys)

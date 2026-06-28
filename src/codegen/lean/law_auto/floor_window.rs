@@ -51,6 +51,27 @@ pub(super) fn emit_floor_window_law(
     let render = |e: &crate::ast::Spanned<crate::ast::Expr>| {
         super::super::expr::emit_expr_legacy(e, ctx, None)
     };
+    // The recursive power-of-two sum homomorphism (`pow(m + n) = pow(m) *
+    // pow(n)`) is SUBSUMED by the content-blind homomorphism rung
+    // (`homomorphism::emit_homomorphism_law`), which captures the subject and
+    // both combine operators from the AST and closes ANY such law (the integer
+    // power-of-two AND a cross-domain list-length homomorphism) through ONE
+    // induction skeleton. That rung is tried earlier in the dispatch, so this arm
+    // is normally unreached; delegate here too so the Lean proof of this figure
+    // always comes from the single content-blind rung. The `PowSumSplit` figure
+    // itself is retained only as the IR pin the Dafny backend (which independently
+    // needs the inductive `main_thm(g0 - 1, g1)` lemma hint) and the well-founded
+    // graduation pass read.
+    if matches!(figure, FloorWindowFigure::PowSumSplit { .. }) {
+        return super::homomorphism::emit_homomorphism_law(
+            vb,
+            law,
+            ctx,
+            theorem_base,
+            quant_params,
+        );
+    }
+
     let lhs = render(&law.lhs);
     let rhs = render(&law.rhs);
     let when = law.when.as_ref().map(render);
@@ -69,15 +90,11 @@ pub(super) fn emit_floor_window_law(
             &givens,
             &aver_name_to_lean(pow_fn),
         ),
-        FloorWindowFigure::PowSumSplit { pow_fn } => render_pow_sum_split(
-            theorem_base,
-            quant_params,
-            when.as_deref()?,
-            &lhs,
-            &rhs,
-            &givens,
-            &aver_name_to_lean(pow_fn),
-        ),
+        FloorWindowFigure::PowSumSplit { .. } => {
+            // Subsumed by the content-blind homomorphism rung and handled by the
+            // early `return` above — unreachable here.
+            unreachable!("PowSumSplit is delegated to the homomorphism rung")
+        }
         FloorWindowFigure::SigWindow {
             pow_fn,
             halve_fn,
@@ -472,28 +489,6 @@ theorem {base} : ∀ {quant_params}, {lhs} = {rhs} := by
   have hpos := {base}__pow_pos {g0}
   simp only [eq_self_iff_true, eq_iff_iff, iff_true]
   omega"#
-    )
-}
-
-fn render_pow_sum_split(
-    base: &str,
-    quant_params: &str,
-    when: &str,
-    lhs: &str,
-    rhs: &str,
-    givens: &[String],
-    pow: &str,
-) -> String {
-    let (g0, g1) = (&givens[0], &givens[1]);
-    let equations = pow_equation_lemmas(base, pow);
-    let add = pow_add_lemma(base, pow);
-    format!(
-        r#"{equations}
-{add}
-theorem {base} : ∀ {quant_params}, {when} = true -> {lhs} = {rhs} := by
-  intro {g0} {g1} h_when
-  simp only [Bool.and_eq_true, decide_eq_true_eq, ge_iff_le] at h_when
-  exact {base}__pow_add {g0} {g1} h_when.2 h_when.1"#
     )
 }
 
