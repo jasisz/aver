@@ -76,7 +76,8 @@ pub(in crate::codegen::lean) use frac_monotone_compose::{
 /// also emitted here as a citable pool law derived from the broader positivity
 /// law.
 pub(in crate::codegen::lean) use monotone_reflect::{
-    monotone_reflect_cited_deps, recognize_denom_positive, recognize_monotone_reflect,
+    monotone_reflect_cited_deps, recognize_denom_positive, recognize_magnitude_bracket_reflect,
+    recognize_monotone_reflect,
 };
 
 /// General recursive positivity / monotonicity rung — the name-blind,
@@ -686,6 +687,23 @@ fn emit_verify_law_forall_auto_proof_inner(
     if law.when.is_some()
         && let Some(proof) =
             monotone_reflect::emit_monotone_reflect_law(vb, law, ctx, theorem_base, quant_params)
+    {
+        return Some(proof);
+    }
+
+    // Magnitude bracket to exponent counting for the same unary `Fraction` cone
+    // family: `0 < x.bottom && isNonNeg(minus(x, F(e))) && lessThan(x, F(m))`
+    // proves `e <= m - 1`. Closed by a generic integer cross-order transitivity
+    // kit, then the earlier strict-order reflection pool law for the captured
+    // `F`, plus denominator-positivity on both endpoints.
+    if law.when.is_some()
+        && let Some(proof) = monotone_reflect::emit_magnitude_bracket_reflect_law(
+            vb,
+            law,
+            ctx,
+            theorem_base,
+            quant_params,
+        )
     {
         return Some(proof);
     }

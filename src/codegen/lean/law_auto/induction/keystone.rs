@@ -118,6 +118,7 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
         || super::super::recognize_frac_monotone_compose(vb, law, ctx)
         || super::super::recognize_denom_positive(vb, law, ctx)
         || super::super::recognize_monotone_reflect(vb, law, ctx)
+        || super::super::recognize_magnitude_bracket_reflect(vb, law, ctx)
     {
         return false;
     }
