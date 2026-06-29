@@ -32,7 +32,7 @@ module Kernel
         "bounds for Theorem 2; plus general-exp fpValue (the kernel lives in fractional"
         "floats, exp < 0, where the current fpValue clamps to 1)."
     depends [Domain.Rational, Domain.Fprep, Domain.Round]
-    exposes [RoundingMode, fracSign, fracExpo, truncFrac, awayFrac, stickyFrac, nearestFrac, posinfFrac, neginfFrac, round, compFrac, reciprocalEstimate, lookup, quotient, divideBang, divide, divideBangCorrect, divideMatchesBang, divideCorrect, finalRoundCommutes_7_3_1, stickyPlus_7_3_2, stickyPerturbStable_7_3_3]
+    exposes [RoundingMode, fracSign, fracExpo, truncFrac, awayFrac, stickyFrac, nearestFrac, posinfFrac, neginfFrac, round, compFrac, reciprocalEstimate, lookup, quotient, divideBang, divide, divideBangCorrect, divideMatchesBang, divideCorrect, finalRoundCommutes_7_3_1, stickyPlus_7_3_2, stickyPerturbStable_7_3_3, truncSticky_rtl, stickySticky_rtl, stickyPlusExact_rtl]
     effects []
 
 // ---------------------------------------------------------------------------
@@ -405,3 +405,39 @@ fn stickyPerturbStable_7_3_3(x: Fraction, e1: Fraction, e2: Fraction, n: Int) ->
 verify stickyPerturbStable_7_3_3
     stickyPerturbStable_7_3_3(Domain.Rational.Fraction(top = 6, bottom = 4), Domain.Rational.Fraction(top = 1, bottom = 8), Domain.Rational.Fraction(top = 3, bottom = 16), 3) => true
     stickyPerturbStable_7_3_3(Domain.Rational.Fraction(top = 6, bottom = 4), Domain.Rational.Fraction(top = -1, bottom = 8), Domain.Rational.Fraction(top = -3, bottom = 16), 3) => true
+
+// ---------------------------------------------------------------------------
+// The ACL2 RTL decomposition ladder for Sticky Plus (rel1 lib1/round.lisp,
+// Russinoff AMD). The paper omits the 7.3.2 proof; the RTL lineage proves it
+// through named support lemmas, each a checkable Aver obligation. The universal
+// proof of Sticky Plus climbs this ladder: trunc-sticky + expo-sticky (= 7.2.8
+// stickyKeepsExponent, in round.av) + sticky-exactp give sticky-plus / sticky-minus
+// (the positive-sum and difference cases), and the paper's 7.3.2 follows by applying
+// sticky to both sides. Stated EXACTLY as the RTL theorems and SAMPLE-VERIFIED;
+// these are the next universal holes.
+// ---------------------------------------------------------------------------
+
+fn truncSticky_rtl(x: Fraction, m: Int, n: Int) -> Bool
+    ? "RTL `trunc-sticky` (rel1 round.lisp) -- the FOUNDATIONAL support for Sticky Plus: for n > m > 0, trunc(sticky(x,n), m) = trunc(x,m). Sticky rounding to n bits preserves the truncation to any coarser m bits -- this is the heart of why Sticky Plus holds (sticky(y,k) keeps y's high bits down to the summation boundary). SAMPLE-VERIFIED; universal pending."
+    Domain.Rational.sameValue(truncFrac(stickyFrac(x, n), m), truncFrac(x, m))
+
+verify truncSticky_rtl
+    truncSticky_rtl(Domain.Rational.Fraction(top = 59, bottom = 32), 3, 5) => true
+    truncSticky_rtl(Domain.Rational.Fraction(top = -59, bottom = 32), 3, 5) => true
+    truncSticky_rtl(Domain.Rational.Fraction(top = 13, bottom = 8), 2, 4) => true
+
+fn stickySticky_rtl(x: Fraction, m: Int, n: Int) -> Bool
+    ? "RTL `sticky-sticky` (rel1 round.lisp): for n >= m > 1, sticky(sticky(x,n), m) = sticky(x,m) -- round-to-odd composition collapses to the coarser precision. A support lemma of the Sticky Plus ladder. SAMPLE-VERIFIED; universal pending."
+    Domain.Rational.sameValue(stickyFrac(stickyFrac(x, n), m), stickyFrac(x, m))
+
+verify stickySticky_rtl
+    stickySticky_rtl(Domain.Rational.Fraction(top = 59, bottom = 32), 3, 5) => true
+    stickySticky_rtl(Domain.Rational.Fraction(top = -59, bottom = 32), 3, 5) => true
+
+fn stickyPlusExact_rtl(x: Fraction, y: Fraction, k: Int) -> Bool
+    ? "RTL `sticky-plus` (rel1 round.lisp) -- the SHARP form of Sticky Plus the universal proof targets: for x,y > 0, k > 1, with k1 = k + e(x) - e(y) and k2 = k + e(x+y) - e(y) both > 1 and x exact in k1-1 bits, x + sticky(y,k) = sticky(x+y, k2) EXACTLY (no outer round). The paper's Lemma 7.3.2 follows by applying sticky(.,n) to both sides; the difference case is the sibling sticky-minus. SAMPLE-VERIFIED; the universal proof (the named-lemma ladder above) is the next hole."
+    Domain.Rational.sameValue(Domain.Rational.plus(x, stickyFrac(y, k)), stickyFrac(Domain.Rational.plus(x, y), k + fracExpo(Domain.Rational.plus(x, y)) - fracExpo(y)))
+
+verify stickyPlusExact_rtl
+    stickyPlusExact_rtl(Domain.Rational.Fraction(top = 6, bottom = 4), Domain.Rational.Fraction(top = 1, bottom = 8), 4) => true
+    stickyPlusExact_rtl(Domain.Rational.Fraction(top = 7, bottom = 4), Domain.Rational.Fraction(top = 1, bottom = 16), 3) => true
