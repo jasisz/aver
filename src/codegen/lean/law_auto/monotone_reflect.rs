@@ -5,7 +5,8 @@
 //!   * premise: `lessThan(F(a), F(b))`
 //!   * claim: a Boolean subject whose body is `a < b`
 //!   * premise: `0 < x.bottom && isNonNeg(minus(x, F(e))) && lessThan(x, F(m))`
-//!   * claim: a Boolean subject whose body is `e <= m - 1`
+//!   * claim: a Boolean subject whose body is either `e <= m - 1`, or any
+//!     linear integer comparison implied by that bridge fact.
 //!
 //! The carrier `F` is captured from the premise AST. The proof never unfolds
 //! `F`; it cites earlier sibling pool laws for monotonicity and denominator
@@ -89,6 +90,44 @@ fn same_short(dotted: &str, short: &str) -> bool {
 fn same_expr(a: &Spanned<Expr>, b: &Spanned<Expr>, ctx: &CodegenContext) -> bool {
     super::super::expr::emit_expr_legacy(a, ctx, None)
         == super::super::expr::emit_expr_legacy(b, ctx, None)
+}
+
+fn is_int_literal(expr: &Spanned<Expr>) -> bool {
+    matches!(
+        &expr.node,
+        Expr::Literal(Literal::Int(_)) | Expr::Literal(Literal::BigInt(_))
+    )
+}
+
+fn is_linear_int_expr(expr: &Spanned<Expr>, allowed: &std::collections::BTreeSet<String>) -> bool {
+    match &expr.node {
+        Expr::Literal(Literal::Int(_)) | Expr::Literal(Literal::BigInt(_)) => true,
+        Expr::Ident(name) => allowed.contains(name),
+        Expr::Resolved { name, .. } => allowed.contains(name),
+        Expr::Neg(inner) => is_linear_int_expr(inner, allowed),
+        Expr::BinOp(BinOp::Add | BinOp::Sub, l, r) => {
+            is_linear_int_expr(l, allowed) && is_linear_int_expr(r, allowed)
+        }
+        Expr::BinOp(BinOp::Mul, l, r) => {
+            (is_int_literal(l) && is_linear_int_expr(r, allowed))
+                || (is_int_literal(r) && is_linear_int_expr(l, allowed))
+        }
+        _ => false,
+    }
+}
+
+fn is_linear_int_comparison(
+    expr: &Spanned<Expr>,
+    allowed: &std::collections::BTreeSet<String>,
+) -> bool {
+    matches!(
+        &expr.node,
+        Expr::BinOp(
+            BinOp::Eq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte,
+            l,
+            r
+        ) if is_linear_int_expr(l, allowed) && is_linear_int_expr(r, allowed)
+    )
 }
 
 fn flatten_bool_and<'a>(expr: &'a Spanned<Expr>, out: &mut Vec<&'a Spanned<Expr>>) {
@@ -440,6 +479,17 @@ struct Reflect {
     denom: PoolCite,
 }
 
+struct BridgeCite {
+    thm: String,
+    subject: String,
+    dep_key: (String, String),
+}
+
+enum MagnitudeBracketSource {
+    Bridge(BridgeCite),
+    Reflect { reflect: PoolCite, denom: PoolCite },
+}
+
 struct MagnitudeBracket {
     f: String,
     x: Spanned<Expr>,
@@ -451,8 +501,7 @@ struct MagnitudeBracket {
     upper_idx: usize,
     subject: String,
     ops: RatOps,
-    reflect: PoolCite,
-    denom: PoolCite,
+    source: MagnitudeBracketSource,
 }
 
 struct LowerBoundExpr {
@@ -608,6 +657,121 @@ fn find_reflect_law(
     None
 }
 
+fn magnitude_bridge_law_shape(
+    prev: &VerifyBlock,
+    prev_law: &VerifyLaw,
+    body: &Spanned<Expr>,
+    ctx: &CodegenContext,
+    f_short: &str,
+) -> Option<PoolCite> {
+    let when = prev_law.when.as_ref()?;
+    if !matches!(&prev_law.rhs.node, Expr::Literal(Literal::Bool(true))) {
+        return None;
+    }
+    let Expr::BinOp(BinOp::Lte, body_left, body_right) = &body.node else {
+        return None;
+    };
+    let Expr::BinOp(BinOp::Sub, body_m, one_body) = &body_right.node else {
+        return None;
+    };
+    if !matches!(&one_body.node, Expr::Literal(Literal::Int(1))) {
+        return None;
+    }
+    let Expr::FnCall(callee, call_args) = &prev_law.lhs.node else {
+        return None;
+    };
+    let subject_src = expr_dotted_name(callee)?;
+    let subject_fd = find_fn_def_by_call_name(ctx, &subject_src)?;
+    if subject_fd.return_type.trim() != "Bool"
+        || subject_fd.params.len() != call_args.len()
+        || !subject_fd.effects.is_empty()
+    {
+        return None;
+    }
+    let mut map = std::collections::HashMap::new();
+    for ((pname, _), arg) in subject_fd.params.iter().zip(call_args.iter()) {
+        map.insert(pname.as_str(), arg);
+    }
+    let e = substitute_expr(body_left, &map);
+    let m = substitute_expr(body_m, &map);
+
+    let mut conjs = Vec::new();
+    flatten_bool_and(when, &mut conjs);
+    let mut x_pos: Option<Spanned<Expr>> = None;
+    let mut lower: Option<LowerBoundExpr> = None;
+    let mut upper: Option<UpperBoundExpr> = None;
+    for conj in conjs {
+        if x_pos.is_none() {
+            x_pos = positive_bottom_expr(conj);
+        }
+        if lower.is_none() {
+            lower = minus_lower_bound_expr(conj);
+        }
+        if upper.is_none() {
+            upper = strict_upper_bound_expr(conj);
+        }
+    }
+    let x_pos = x_pos?;
+    let lower = lower?;
+    let upper = upper?;
+    if !same_short(&lower.f, f_short) || !same_short(&upper.f, f_short) || lower.f != upper.f {
+        return None;
+    }
+    if !same_expr(&x_pos, &lower.x, ctx) || !same_expr(&x_pos, &upper.x, ctx) {
+        return None;
+    }
+    if !same_expr(&lower.arg, &e, ctx) || !same_expr(&upper.arg, &m, ctx) {
+        return None;
+    }
+    Some(PoolCite {
+        thm: law_theorem(prev, prev_law, ctx)?,
+        subject: aver_name_to_lean(&prev.fn_name),
+    })
+}
+
+fn dep_module_for_dotted_fn<'a>(
+    f_dotted: &str,
+    ctx: &'a CodegenContext,
+) -> Option<(&'a crate::codegen::ModuleInfo, String)> {
+    let (prefix, short) = f_dotted.rsplit_once('.')?;
+    ctx.modules
+        .iter()
+        .find(|module| module.prefix == prefix)
+        .map(|module| (module, short.to_string()))
+}
+
+fn find_dep_magnitude_bridge_law(
+    vb: &VerifyBlock,
+    ctx: &CodegenContext,
+    f_dotted: &str,
+) -> Option<BridgeCite> {
+    let (module, f_short) = dep_module_for_dotted_fn(f_dotted, ctx)?;
+    ctx.with_module_scope(Some(module.prefix.as_str()), || {
+        for prev in &module.verify_laws {
+            if prev.line == vb.line && prev.fn_name == vb.fn_name {
+                continue;
+            }
+            let VerifyKind::Law(prev_law) = &prev.kind else {
+                continue;
+            };
+            let Some(body) = subject_body(&prev.fn_name, ctx) else {
+                continue;
+            };
+            let Some(cite) = magnitude_bridge_law_shape(prev, prev_law, body, ctx, &f_short) else {
+                continue;
+            };
+            let base = cite.thm;
+            let thm = format!("{}.{}", module.prefix, base);
+            return Some(BridgeCite {
+                thm,
+                subject: format!("{}.{}", module.prefix, cite.subject),
+                dep_key: (module.prefix.clone(), base),
+            });
+        }
+        None
+    })
+}
+
 fn recognize_reflect_shape(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -695,22 +859,21 @@ fn recognize_magnitude_bracket_shape(
     {
         return None;
     }
-    let subject_body = subject_body(&subject_src, ctx)?;
-    let Expr::BinOp(BinOp::Lte, body_left, body_right) = &subject_body.node else {
-        return None;
-    };
-    let Expr::BinOp(BinOp::Sub, m_body, one_body) = &body_right.node else {
-        return None;
-    };
-    if !matches!(&one_body.node, Expr::Literal(Literal::Int(1))) {
-        return None;
-    }
     let mut map = std::collections::HashMap::new();
     for ((pname, _), arg) in subject_fd.params.iter().zip(subject_args.iter()) {
         map.insert(pname.as_str(), arg);
     }
-    let e = substitute_expr(body_left, &map);
-    let m = substitute_expr(m_body, &map);
+    let subject_body = subject_body(&subject_src, ctx)?;
+    let claim_body = substitute_expr(subject_body, &map);
+    let allowed_ints: std::collections::BTreeSet<String> = law
+        .givens
+        .iter()
+        .filter(|g| g.type_name.trim().rsplit('.').next() == Some("Int"))
+        .map(|g| g.name.clone())
+        .collect();
+    if !is_linear_int_comparison(&claim_body, &allowed_ints) {
+        return None;
+    }
 
     let mut conjs = Vec::new();
     flatten_bool_and(when, &mut conjs);
@@ -744,12 +907,16 @@ fn recognize_magnitude_bracket_shape(
     if !same_expr(&x_pos, &lower.x, ctx) || !same_expr(&x_pos, &upper.x, ctx) {
         return None;
     }
-    if !same_expr(&lower.arg, &e, ctx) || !same_expr(&upper.arg, &m, ctx) {
-        return None;
-    }
     let f_short = lower.f.rsplit('.').next().unwrap_or(&lower.f).to_string();
-    let denom = find_denom_law(vb, ctx, &f_short)?;
-    let reflect = find_reflect_law(vb, ctx, &f_short, &upper.less_than)?;
+    let e = lower.arg.clone();
+    let m = upper.arg.clone();
+    let source = if let Some(bridge) = find_dep_magnitude_bridge_law(vb, ctx, &lower.f) {
+        MagnitudeBracketSource::Bridge(bridge)
+    } else {
+        let denom = find_denom_law(vb, ctx, &f_short)?;
+        let reflect = find_reflect_law(vb, ctx, &f_short, &upper.less_than)?;
+        MagnitudeBracketSource::Reflect { reflect, denom }
+    };
     Some(MagnitudeBracket {
         f: aver_name_to_lean(&lower.f),
         x: x_pos,
@@ -765,8 +932,7 @@ fn recognize_magnitude_bracket_shape(
             isnonneg: aver_name_to_lean(&lower.isnonneg),
             minus: aver_name_to_lean(&lower.minus),
         },
-        reflect,
-        denom,
+        source,
     })
 }
 
@@ -973,10 +1139,29 @@ pub(super) fn emit_magnitude_bracket_reflect_law(
         isnonneg,
         minus,
     } = &shape.ops;
-    let p = format!("{theorem_base}__");
-    let kit = render_magnitude_kit(theorem_base);
-    let assembly = format!(
-        r#"theorem {base} : ∀ {quant}, {when} = true -> {lhs} = {rhs} := by
+    let text = match &shape.source {
+        MagnitudeBracketSource::Bridge(bridge) => format!(
+            r#"theorem {base} : ∀ {quant}, {when} = true -> {lhs} = {rhs} := by
+  intro {intros} h_when
+  first
+  | (have hbridge := {bridge_thm} ({x}) ({e}) ({m}) h_when
+     have hbound : ({e}) <= ({m}) - 1 := by
+       simpa only [{bridge_subject}, decide_eq_true_eq] using hbridge
+     simp only [{subject}, decide_eq_true_eq, ge_iff_le]
+     omega)
+  | sorry"#,
+            base = theorem_base,
+            quant = quant_params,
+            intros = intros.join(" "),
+            bridge_thm = bridge.thm,
+            bridge_subject = bridge.subject,
+            subject = shape.subject,
+        ),
+        MagnitudeBracketSource::Reflect { reflect, denom } => {
+            let p = format!("{theorem_base}__");
+            let kit = render_magnitude_kit(theorem_base);
+            let assembly = format!(
+                r#"theorem {base} : ∀ {quant}, {when} = true -> {lhs} = {rhs} := by
   intro {intros} h_when
   first
   | (simp only [Bool.and_eq_true] at h_when
@@ -995,20 +1180,23 @@ pub(super) fn emit_magnitude_bracket_reflect_law(
        exact hcross
      have hreflect := {reflect_thm} ({e}) ({m}) hlt
      simp only [{reflect_subject}, decide_eq_true_eq] at hreflect
-     simp only [{subject}, decide_eq_true_eq]
+     have hbound : ({e}) <= ({m}) - 1 := by omega
+     simp only [{subject}, decide_eq_true_eq, ge_iff_le]
      omega)
   | sorry"#,
-        base = theorem_base,
-        quant = quant_params,
-        intros = intros.join(" "),
-        subject = shape.subject,
-        denom_thm = shape.denom.thm,
-        denom_subject = shape.denom.subject,
-        reflect_thm = shape.reflect.thm,
-        reflect_subject = shape.reflect.subject,
-        f = shape.f,
-    );
-    let text = format!("{kit}\n{assembly}");
+                base = theorem_base,
+                quant = quant_params,
+                intros = intros.join(" "),
+                subject = shape.subject,
+                denom_thm = denom.thm,
+                denom_subject = denom.subject,
+                reflect_thm = reflect.thm,
+                reflect_subject = reflect.subject,
+                f = shape.f,
+            );
+            format!("{kit}\n{assembly}")
+        }
+    };
     Some(AutoProof {
         support_lines: text.lines().map(|l| l.to_string()).collect(),
         body: crate::codegen::lean::tactic_ir::Tactic::raw(Vec::new()),
@@ -1032,20 +1220,29 @@ pub(in crate::codegen::lean) fn monotone_reflect_cited_deps(
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> Vec<(String, String)> {
-    let Some(prefix) = module_prefix_of(vb, ctx) else {
-        return Vec::new();
-    };
+    let prefix = module_prefix_of(vb, ctx);
     let mut out = Vec::new();
-    if let Some(shape) = recognize_denom_positive_shape(vb, law, ctx) {
+    if let Some(shape) = recognize_denom_positive_shape(vb, law, ctx)
+        && let Some(prefix) = &prefix
+    {
         out.push((prefix.clone(), shape.pos.thm));
     }
-    if let Some(shape) = recognize_reflect_shape(vb, law, ctx) {
+    if let Some(shape) = recognize_reflect_shape(vb, law, ctx)
+        && let Some(prefix) = &prefix
+    {
         out.push((prefix.clone(), shape.mono.thm));
         out.push((prefix.clone(), shape.denom.thm));
     }
     if let Some(shape) = recognize_magnitude_bracket_shape(vb, law, ctx) {
-        out.push((prefix.clone(), shape.reflect.thm));
-        out.push((prefix, shape.denom.thm));
+        match shape.source {
+            MagnitudeBracketSource::Bridge(bridge) => out.push(bridge.dep_key),
+            MagnitudeBracketSource::Reflect { reflect, denom } => {
+                if let Some(prefix) = &prefix {
+                    out.push((prefix.clone(), reflect.thm));
+                    out.push((prefix.clone(), denom.thm));
+                }
+            }
+        }
     }
     out
 }

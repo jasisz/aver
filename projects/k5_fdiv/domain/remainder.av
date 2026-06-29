@@ -65,7 +65,7 @@ module Remainder
         "real trunc/away of kernel.av, sample-verified) demonstrates the model mirrors"
         "Figure 1; the Lean side is bounded (credit is Dafny), not kernel-universal."
     depends [Domain.Rational, Domain.Fprep, Domain.Kernel, Domain.FracRound, Domain.Recip]
-    exposes [firstTruncRem, firstQuotientDigit, exactFirstDigit, firstRemainderError, remainderRhs, firstRemainderHolds, alphaFactor, betaFactor, signsSeparated, reciprocalMagnitudeRhs, reciprocalMagnitudeHolds, maxInt, productMagnitudeBound, remainderBound_8_2_3, awayDigitOvershoot, oppositeSignSumBounded, signsDifferent_8_2_2, reciprocalMagnitudeBound_8_2_4]
+    exposes [firstTruncRem, firstQuotientDigit, exactFirstDigit, firstRemainderError, remainderRhs, firstRemainderHolds, alphaFactor, betaFactor, signsSeparated, reciprocalMagnitudeRhs, reciprocalMagnitudeHolds, maxInt, productMagnitudeBound, remainderBound_8_2_3, awayDigitOvershoot, oppositeSignSumBounded, signsDifferent_8_2_2, reciprocalMagnitudeBound_8_2_4, digitSeparation_8_2_1]
     effects []
 
 // ---------------------------------------------------------------------------
@@ -316,3 +316,27 @@ verify signsDifferent_8_2_2 law branchNonpositive
     when Domain.Rational.absInt(y) <= Domain.Rational.absInt(x)
     when Domain.Rational.absInt(y) <= Domain.Rational.absInt(z)
     signsDifferent_8_2_2(x, y, z) holds
+
+// ---------------------------------------------------------------------------
+// Lemma 8.2.1 (Digit Separation, p.28), first implication.
+// This is the (10)->(7) reduction over the Section 8.2-certified magnitude
+// bracket for the non-zero second quotient digit q1:
+//   2^e(q1) <= |q1| < 2^(e(q0)-22)
+// The already-universal Domain.Fprep.fracExpoFromMagnitude bridge turns that
+// bracket into e(q1) <= (e(q0)-22)-1, and linear arithmetic gives the faithful
+// paper conclusion e(q1) <= e(q0)-23. The `eQ0 - 22` premise and
+// `eQ0 - 23 - eQ1 >= 0` conclusion are intentionally not weakened.
+// ---------------------------------------------------------------------------
+
+fn digitSeparation_8_2_1(eQ1: Int, eQ0: Int) -> Bool
+    ? "Lemma 8.2.1 (Digit Separation, p.28), first implication: e(q1) <= e(q0) - 23 for a non-zero second quotient digit q1."
+    eQ0 - 23 - eQ1 >= 0
+
+verify digitSeparation_8_2_1 law firstImplication
+    given q1Mag: Fraction = [Domain.Rational.Fraction(top = 5, bottom = 1), Domain.Rational.Fraction(top = 3, bottom = 1), Domain.Rational.Fraction(top = 3, bottom = 2)]
+    given eQ1: Int = [2, 1, 0]
+    given eQ0: Int = [25, 24, 23]
+    when 0 < q1Mag.bottom
+    when Domain.Rational.isNonNeg(Domain.Rational.minus(q1Mag, Domain.Fprep.pow2Signed(eQ1)))
+    when Domain.Rational.lessThan(q1Mag, Domain.Fprep.pow2Signed(eQ0 - 22))
+    digitSeparation_8_2_1(eQ1, eQ0) holds

@@ -686,7 +686,18 @@ pub(crate) fn admitted_dep_law_theorems(
     // denominator-positivity sibling laws that are not necessarily in the
     // consumer's call cone. Denominator-positivity itself cites the broader
     // positivity law. Admit exactly those discovered dependencies under the dep
-    // module's scope, keyed on the same recognizers as the emitter.
+    // module's scope, keyed on the same recognizers as the emitter. Entry laws
+    // can also cite an exposed dependency bridge theorem directly (for example a
+    // magnitude-bracket law over a dep's unary Fraction cone), so scan them too.
+    for item in &ctx.items {
+        let TopLevel::Verify(vb) = item else { continue };
+        let VerifyKind::Law(law) = &vb.kind else {
+            continue;
+        };
+        for dep in super::monotone_reflect_cited_deps(vb, law, ctx) {
+            admitted.insert(dep);
+        }
+    }
     for module in &ctx.modules {
         ctx.with_module_scope(Some(module.prefix.as_str()), || {
             for vb in &module.verify_laws {
