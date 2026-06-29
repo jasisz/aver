@@ -32,7 +32,7 @@ module Kernel
         "bounds for Theorem 2; plus general-exp fpValue (the kernel lives in fractional"
         "floats, exp < 0, where the current fpValue clamps to 1)."
     depends [Domain.Rational, Domain.Fprep, Domain.Round]
-    exposes [RoundingMode, fracSign, fracExpo, truncFrac, awayFrac, stickyFrac, nearestFrac, posinfFrac, neginfFrac, round, compFrac, reciprocalEstimate, lookup, quotient, divideBang, divide, divideBangCorrect, divideMatchesBang, divideCorrect, finalRoundCommutes_7_3_1, stickyPlus_7_3_2, stickyPerturbStable_7_3_3, truncSticky_rtl, stickySticky_rtl, stickyPlusExact_rtl]
+    exposes [RoundingMode, fracSign, halve, expoAtLeastOne, twoPow, binadeSig, binadeWindow, fracExpo, truncFrac, awayFrac, stickyFrac, nearestFrac, posinfFrac, neginfFrac, round, compFrac, reciprocalEstimate, lookup, quotient, divideBang, divide, divideBangCorrect, divideMatchesBang, divideCorrect, finalRoundCommutes_7_3_1, stickyPlus_7_3_2, stickyPerturbStable_7_3_3, truncSticky_rtl, stickySticky_rtl, stickyPlusExact_rtl]
     effects []
 
 // ---------------------------------------------------------------------------
@@ -50,12 +50,21 @@ verify fracSign
     fracSign(Domain.Rational.Fraction(top = -3, bottom = 4)) => 0 - 1
     fracSign(Domain.Rational.Fraction(top = 3, bottom = -4)) => 0 - 1
 
-fn expoAtLeastOne(p: Int, q: Int) -> Int
-    ? "floor(log2(p/q)) for p/q >= 1 (p, q > 0): repeatedly halve the value (double q) until it drops below 2."
-    twoQ = 2 * q
-    match p < twoQ
+fn halve(p: Int) -> Int
+    ? "Floor half of p; total because the divisor is the literal 2 (Result.withDefault recovers the always-Ok Int.div)."
+    Result.withDefault(Int.div(p, 2), 0)
+
+verify halve
+    halve(9) => 4
+    halve(8) => 4
+
+fn expoAtLeastOne(a: Int, b: Int) -> Int
+    ? "floor(log2(a/b)) for a/b >= 1 (a, b > 0): the binary exponent e with 2^e * b <= a < 2^(e+1) * b. Found by repeatedly HALVING a (well-founded floor recursion: each step floor-halves a and counts one binade) until a drops below 2*b. The dead b < 1 -> 0 guard makes the recursion total at every b. Replaces the earlier double-b recursion -- same value on the a/b >= 1 domain, but well-founded, so the binary exponent is no longer opaque and its magnitude-bracket binding law (significandWindow) is provable."
+    match b < 1
         true -> 0
-        false -> 1 + expoAtLeastOne(p, twoQ)
+        false -> match a < 2 * b
+            true -> 0
+            false -> 1 + expoAtLeastOne(halve(a), b)
 
 verify expoAtLeastOne
     expoAtLeastOne(1, 1) => 0
@@ -86,6 +95,67 @@ verify fracExpo
     fracExpo(Domain.Rational.Fraction(top = 1, bottom = 1)) => 0
     fracExpo(Domain.Rational.Fraction(top = 1, bottom = 8)) => 0 - 3
     fracExpo(Domain.Rational.Fraction(top = 1, bottom = 3)) => 0 - 2
+
+// ---------------------------------------------------------------------------
+// The magnitude bracket that BINDS the binary exponent (Section 5.1, p.10).
+// The exponent e = expoAtLeastOne(p, q) is DEFINED by 2^e * q <= p < 2^(e+1) * q;
+// equivalently, the n-bit scaled significand of p/q lands in its normalized
+// window [2^(n-1), 2^n). binadeSig is that significand, binadeWindow the window
+// predicate, and the law significandWindow PROVES the bracket holds for every
+// p >= q >= 1 and width n >= 1 -- now that expoAtLeastOne is a well-founded
+// (floor-halving) recursion, this law is provable universally (it was an
+// unbound premise while the doubling expo was kernel-opaque).
+// ---------------------------------------------------------------------------
+
+fn twoPow(n: Int) -> Int
+    ? "Two to the n for n >= 0 (and 1 for n <= 0): the integer power-of-two scale of the binade window. A LOCAL countdown copy of the power-of-two -- the floor-window figure that proves significandWindow matches the scale fn by its in-module recursive shape, so the window uses this local twoPow rather than the cross-module Domain.Fprep.pow2 (same values)."
+    match n <= 0
+        true -> 1
+        false -> 2 * twoPow(n - 1)
+
+verify twoPow
+    twoPow(0) => 1
+    twoPow(3) => 8
+
+fn binadeSig(p: Int, q: Int, n: Int) -> Int
+    ? "The n-bit scaled significand of the ratio p/q for p >= q >= 1 (Section 5.1, p.10): floor((p/q) * 2^(n-1-e)) with e = expoAtLeastOne(p, q) the binary exponent. Scaling p/q (which lies in [2^e, 2^(e+1)) * q / q = [2^e, 2^(e+1))) down by 2^e and up by 2^(n-1) lands it in [2^(n-1), 2^n) -- the integer significand of the paper's normalized representation."
+    e = expoAtLeastOne(p, q)
+    s = n - 1 - e
+    match s >= 0
+        true -> Result.withDefault(Int.div(p * twoPow(s), q), 0)
+        false -> Result.withDefault(Int.div(p, q * twoPow(0 - s)), 0)
+
+verify binadeSig
+    binadeSig(5, 2, 2) => 2
+    binadeSig(7, 2, 2) => 3
+    binadeSig(1, 1, 1) => 1
+
+fn binadeWindow(p: Int, q: Int, n: Int) -> Bool
+    ? "The width-n significand of p/q lies in its power-of-two window: 2^(n-1) <= binadeSig(p, q, n) < 2^n -- the normalization condition that the binary exponent expoAtLeastOne(p, q) is exactly the one that satisfies (Section 5.1, p.10)."
+    j = binadeSig(p, q, n)
+    Bool.and(twoPow(n - 1) <= j, j < twoPow(n))
+
+verify binadeWindow
+    binadeWindow(5, 2, 2) => true
+    binadeWindow(15, 4, 4) => true
+
+// The magnitude bracket binding the binary exponent (Section 5.1, p.10): for a
+// ratio p/q with p >= q >= 1 and any width n >= 1, the scaled significand sits in
+// its normalized window [2^(n-1), 2^n) -- i.e. 2^e * q <= p < 2^(e+1) * q with
+// e = expoAtLeastOne(p, q). This is the fact that BINDS the abstract exponent to
+// the real magnitude; the K5 exponent lemmas state it as a premise over abstract
+// Int exponents, and this law discharges it once and for all. Closed universal by
+// the floor-division window figure already in the engine (the well-founded
+// floor-halving exponent + the Euclidean div window over the power-of-two scale),
+// no hand tactic and no per-figure proof.
+verify binadeSig law significandWindow
+    given p: Int = [1, 2, 5, 7]
+    given q: Int = [1, 2, 4]
+    given n: Int = [1, 2, 3]
+    when q >= 1
+    when p >= q
+    when n >= 1
+    binadeWindow(p, q, n) => true
 
 // ---------------------------------------------------------------------------
 // The rounding procedures on rationals (Section 5.2, p.13).
