@@ -85,32 +85,6 @@ verify floorDiv law dividesPow2Multiple
     when a <= b
     floorDiv(s * Domain.Fprep.pow2(b), Domain.Fprep.pow2(a)) * Domain.Fprep.pow2(a) => s * Domain.Fprep.pow2(b)
 
-// The round-to-odd low-bit floor coarsening, over a POSITIVE divisor w (not
-// necessarily a power of two): re-flooring the doubled inner quotient with its
-// forced low bit b in {0,1} by the coarser power-of-two boundary 2^(n-1)
-// recovers the m-bit floor directly --
-// floor((2*floor(s*2^(n-2) / w) + b) * 2^(m-1) / 2^(n-1)) = floor(s*2^(m-1) / w)
-// for 0 < w and 1 <= m < n. The doubled inner quotient sits inside the cell, and
-// the single forced low bit b is below the m-bit window, so the even outer
-// divisor 2^(n-1) = 2^(m-1) * (2 * 2^(n-1-m)) absorbs both: the 2^(m-1) factor
-// cancels and the +b is swallowed by the even 2*2^(n-1-m). This is the integer
-// engine the RTL trunc-sticky composition reduces to after its round-to-odd
-// branch is case-split -- the sticky analog of the dividesPow2Multiple
-// exact-cancel. Generic over the significand s, the positive divisor w, and the
-// three bit positions; the divisor's positivity is all the floor algebra needs.
-verify floorDiv law roundToOddCoarsens
-    given s: Int = [13, 11]
-    given w: Int = [8, 5]
-    given n: Int = [2, 3]
-    given m: Int = [1, 2]
-    given b: Int = [0, 1]
-    when 0 < w
-    when 1 <= m
-    when m < n
-    when 0 <= b
-    when b <= 1
-    floorDiv((2 * floorDiv(s * Domain.Fprep.pow2(n - 2), w) + b) * Domain.Fprep.pow2(m - 1), Domain.Fprep.pow2(n - 1)) => floorDiv(s * Domain.Fprep.pow2(m - 1), w)
-
 fn floorDivWindow(a: Int, k: Int) -> Bool
     ? "The Euclidean floor window of a / 2^k: the quotient q = floor(a / 2^k) satisfies 2^k * q <= a < 2^k * (q + 1). This is the recursive-exponent-FREE floor characterization -- the divisor is the power of two 2^k directly, not a binary-exponent recursion -- and it holds unconditionally because 2^k > 0 for every k. The workhorse the rounding error bounds reduce to after cross-multiplication."
     Bool.and(Domain.Fprep.pow2(k) * floorDiv(a, Domain.Fprep.pow2(k)) <= a, a < Domain.Fprep.pow2(k) * (floorDiv(a, Domain.Fprep.pow2(k)) + 1))
@@ -511,11 +485,24 @@ verify truncStickyComposes
 // trunc(sticky(x,n),m) = trunc(x,m)." The heart of the Sticky-Plus decomposition
 // (Lemma 7.3.2): sticky's round-to-odd forces the n-th bit to 1, but that bit
 // sits below the coarser m-bit truncation window (m < n), so re-truncating to m
-// bits discards it and recovers trunc(x,m). After unfolding, both significands
-// reduce to a nested Euclidean floor that coarsens away the doubled low bit:
-// floor((2*floor(s*2^(n-2) / 2^(width-1)) + b) * 2^(m-1) / 2^(n-1)) = floor(s*2^(m-1) / 2^(width-1)),
-// b in {0,1} the round-to-odd bit, absorbed by the even outer divisor. The
-// paper's m, n are positive integers (1 <= m < n).
+// bits discards it and recovers trunc(x,m). The paper's m, n are positive
+// integers (1 <= m < n).
+//
+// SAMPLE-VERIFIED, universal proof OPEN (an honest executor wall). After
+// unfolding, both significands reduce to a nested Euclidean floor that coarsens
+// away the doubled round-to-odd low bit:
+//   floor((2*floor(s*2^(n-2) / 2^(width-1)) + b) * 2^(m-1) / 2^(n-1)) = floor(s*2^(m-1) / 2^(width-1)),  b in {0,1}.
+// This identity is nonlinear power-of-two floor (bit) algebra. It does NOT close
+// on either backend: the Lean auto-prover has no GENERIC (claim-shape) strategy
+// for it -- a "power-of-two floor" rung would be domain-specific bit algebra, i.e.
+// a bespoke per-figure template, which the laws-as-lemmas discipline declines --
+// and Z3/Dafny does not discharge it push-button without the same bespoke
+// power-of-two hints. The auxiliary decomposition was conjectured as Aver laws
+// (The Method) and is correct on samples, but the existing engine proves none of
+// the leaves; this is a genuine executor gap, not a missing lemma. Kept as the
+// faithful, sample-verified Fp-level rung (RTL-correct incl. the hard branches),
+// like truncErrorBound. The Section 7.3 RTL ladder also stands sample-verified in
+// kernel.av.
 verify truncStickyComposes law composesThroughSticky
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
     given n: Int = [2, 3]
