@@ -29,7 +29,7 @@ module Exponent
         "discipline as remainder.av's reciprocalMagnitudeBound_8_2_4 and"
         "digitSeparation_8_2_1."
     depends [Domain.Rational, Domain.Fprep]
-    exposes [divideExponentNoOverflow, divideExponentNoUnderflow, maxInt, minInt, sumExponentLower_9_3_1, sumExponentUpper_9_3_2]
+    exposes [divideExponentNoOverflow, divideExponentNoUnderflow, maxInt, minInt, sumExponentLower_9_3_1, sumExponentUpper_9_3_2, exponentDh, exponentP0, exponentPh0, exponentQ0, exponentQdh0, exponentQdl0, exponentPt1, exponentP1, exponentPh1, exponentQ1, exponentQdh1, exponentQdl1, exponentPt2, exponentP2, exponentPh2, exponentQ2, exponentQdh2, exponentQdl2, exponentPt3, exponentP3, exponentPh3, exponentQ3, exponentQq2, exponentQq1, exponentDivide]
     effects []
 
 fn divideExponentNoOverflow(ep: Int, ed: Int, eDivide: Int) -> Bool
@@ -167,3 +167,561 @@ verify sumExponentUpper_9_3_2 law section_9_3_2
     when Domain.Rational.isNonNeg(Domain.Rational.minus(sumMag, Domain.Fprep.pow2Signed(eSum)))
     when Domain.Rational.lessThan(sumMag, Domain.Fprep.pow2Signed(maxInt(ex, ey) + 2))
     sumExponentUpper_9_3_2(eSum, ex, ey) holds
+
+// ===========================================================================
+// Section 9.3, Table 3 (p.32): the per-variable exponent brackets for the
+// divider's straight-line steps (lines 7-32 of Figure 4, p.17). Each row is a
+// variable's binary-exponent bracket in terms of ep = e(p) and ed = e(d),
+// DEDUCED (paper p.32) by chaining the elementary per-operation exponent rules
+// through the sum-exponent Lemmas 9.3.1/9.3.2 above and the product-exponent
+// range Lemma 7.1.7 (Domain.Fprep.productExpInRange). Each law states the row's
+// bracket VERBATIM as its conclusion and takes the input variables' brackets
+// plus the operation's exponent rule as premises; it closes by linear-integer
+// composition (omega, case-splitting min/max) -- the linear analog of the
+// estimate.av order rung, not a per-figure tactic.
+//
+// The operation rules (the "elementary lemmas" the paper composes):
+//   * product  x*y  : 7.1.7   ex + ey <= e(x*y) <= ex + ey + 1
+//   * sum/diff x+-y : 9.3.1/9.3.2 with both operands of precision P:
+//                     min(ex,ey) - (P-1) <= e(x+-y) <= max(ex,ey) + 1
+//                     (P = max(n,m); P = 64 for the 64-bit remainders/products,
+//                      P = 24 for the two 24-bit quotient digits q2 + q3, row 30)
+//   * trunc to n    : 7.2.6   e(trunc(x,n)) = ex            (exponent preserved)
+//   * round/away n  : e(round(x,n)) in [ex, ex+1]           (rounding may carry +1)
+//   * sticky to 64  : e(sticky(x,64)) = ex on the digit sums (which fit in 64
+//                     bits, so sticky is exact and preserves the exponent --
+//                     matching Table 3, where the two sticky steps add no +1)
+//
+// The chain consumes elementary base brackets that are NOT 9.3.x chains
+// (established by the paper's elementary trunc / low-part lemmas and the §8.1
+// reciprocal estimate, p.31, "the first six lines are straightforward"):
+//   * e(dh) = ed                   (row 7,  dh = trunc(d,32), 7.2.6) -- modelled below
+//   * ed - 63 <= e(dl) <= ed - 31  (row 8,  dl = d - dh, the low 32 bits of d;
+//        the cancellation makes this far tighter than the generic 9.3.2 bound
+//        ed + 1, so it is the paper's elementary low-part lemma -- consumed as a
+//        premise in rows 13/19/25, NOT derivable from the 9.3.x sum rule, so it
+//        is not stated as a standalone law here)
+//   * e(p0) = ep                   (row 9,  p0 = p)                  -- modelled below
+//   * e(ph0) = ep                  (row 10, ph0 = trunc(p0,32), 7.2.6) -- modelled below
+//   * -ed - 2 <= e(sd2) <= -ed + 1 (the §8.1 reciprocal estimate, p.31; the base
+//        for the four quotient digits q0/q1/q2/q3)
+// ===========================================================================
+
+fn exponentDh(ed: Int, eDh: Int) -> Bool
+    ? "Table 3 row 7 (p.32): e(dh) = ed. dh = trunc(d,32) is the high 32 bits of d; truncation preserves the binary exponent (Lemma 7.2.6)."
+    Bool.and(ed <= eDh, eDh <= ed)
+
+verify exponentDh
+    exponentDh(0, 0) => true
+    exponentDh(16384, 16384) => true
+
+verify exponentDh law table3_row7
+    given ed: Int = [0]
+    given eDh: Int = [0]
+    when eDh == ed
+    exponentDh(ed, eDh) holds
+
+fn exponentP0(ep: Int, eP0: Int) -> Bool
+    ? "Table 3 row 9 (p.32): e(p0) = ep. p0 = p, so its exponent is ep identically."
+    Bool.and(ep <= eP0, eP0 <= ep)
+
+verify exponentP0
+    exponentP0(0, 0) => true
+    exponentP0(16384, 16384) => true
+
+verify exponentP0 law table3_row9
+    given ep: Int = [0]
+    given eP0: Int = [0]
+    when eP0 == ep
+    exponentP0(ep, eP0) holds
+
+fn exponentPh0(ep: Int, ePh0: Int) -> Bool
+    ? "Table 3 row 10 (p.32): e(ph0) = ep. ph0 = trunc(p0,32); truncation preserves the binary exponent (Lemma 7.2.6)."
+    Bool.and(ep <= ePh0, ePh0 <= ep)
+
+verify exponentPh0
+    exponentPh0(0, 0) => true
+    exponentPh0(16384, 16384) => true
+
+verify exponentPh0 law table3_row10
+    given ep: Int = [0]
+    given ePh0: Int = [0]
+    when ePh0 == ep
+    exponentPh0(ep, ePh0) holds
+
+fn exponentQ0(ep: Int, ed: Int, eQ0: Int) -> Bool
+    ? "Table 3 row 11 (p.32): p != 0 implies ep - ed - 2 <= e(q0) <= ep - ed + 3. q0 = away(sd2*ph0, 24): the §8.1 reciprocal estimate e(sd2) in [-ed-2, -ed+1] times e(ph0) = ep (7.1.7 product), then rounded to 24 bits (round adds 0 or 1)."
+    Bool.and(ep - ed - 2 <= eQ0, eQ0 <= ep - ed + 3)
+
+verify exponentQ0
+    exponentQ0(0, 0, 0) => true
+    exponentQ0(0, 0, 3) => true
+
+verify exponentQ0 law table3_row11
+    given ep: Int = [0]
+    given ed: Int = [0]
+    given eSd2: Int = [0]
+    given ePh0: Int = [0]
+    given eProd0: Int = [0]
+    given eQ0: Int = [0]
+    when 0 - ed - 2 <= eSd2
+    when eSd2 <= 0 - ed + 1
+    when ePh0 == ep
+    when eSd2 + ePh0 <= eProd0
+    when eProd0 <= eSd2 + ePh0 + 1
+    when eProd0 <= eQ0
+    when eQ0 <= eProd0 + 1
+    exponentQ0(ep, ed, eQ0) holds
+
+fn exponentQdh0(ep: Int, eQdh0: Int) -> Bool
+    ? "Table 3 row 12 (p.32): qdh0 != 0 implies ep - 2 <= e(qdh0) <= ep + 4. qdh0 = q0*dh: the 7.1.7 product of e(q0) in [ep-ed-2, ep-ed+3] (row 11) and e(dh) = ed (row 7)."
+    Bool.and(ep - 2 <= eQdh0, eQdh0 <= ep + 4)
+
+verify exponentQdh0
+    exponentQdh0(0, 0) => true
+    exponentQdh0(0, 4) => true
+
+verify exponentQdh0 law table3_row12
+    given ep: Int = [0]
+    given ed: Int = [0]
+    given eQ0: Int = [0]
+    given eDh: Int = [0]
+    given eQdh0: Int = [0]
+    when ep - ed - 2 <= eQ0
+    when eQ0 <= ep - ed + 3
+    when eDh == ed
+    when eQ0 + eDh <= eQdh0
+    when eQdh0 <= eQ0 + eDh + 1
+    exponentQdh0(ep, eQdh0) holds
+
+fn exponentQdl0(ep: Int, eQdl0: Int) -> Bool
+    ? "Table 3 row 13 (p.32): qdl0 != 0 implies ep - 65 <= e(qdl0) <= ep - 27. qdl0 = q0*dl: the 7.1.7 product of e(q0) in [ep-ed-2, ep-ed+3] (row 11) and e(dl) in [ed-63, ed-31] (row 8, the low-part lemma)."
+    Bool.and(ep - 65 <= eQdl0, eQdl0 <= ep - 27)
+
+verify exponentQdl0
+    exponentQdl0(0, -31) => true
+    exponentQdl0(0, -65) => true
+
+verify exponentQdl0 law table3_row13
+    given ep: Int = [0]
+    given ed: Int = [0]
+    given eQ0: Int = [0]
+    given eDl: Int = [-31]
+    given eQdl0: Int = [-31]
+    when ep - ed - 2 <= eQ0
+    when eQ0 <= ep - ed + 3
+    when ed - 63 <= eDl
+    when eDl <= ed - 31
+    when eQ0 + eDl <= eQdl0
+    when eQdl0 <= eQ0 + eDl + 1
+    exponentQdl0(ep, eQdl0) holds
+
+fn exponentPt1(ep: Int, ePt1: Int) -> Bool
+    ? "Table 3 row 14 (p.32): pt1 != 0 implies ep - 65 <= e(pt1) <= ep + 5. pt1 = p0 - qdh0: the 9.3.1/9.3.2 sum of two 64-bit values (P=64), e(p0) = ep (row 9) and e(qdh0) in [ep-2, ep+4] (row 12)."
+    Bool.and(ep - 65 <= ePt1, ePt1 <= ep + 5)
+
+verify exponentPt1
+    exponentPt1(0, 0) => true
+    exponentPt1(0, 5) => true
+
+verify exponentPt1 law table3_row14
+    given ep: Int = [0]
+    given eP0: Int = [0]
+    given eQdh0: Int = [0]
+    given ePt1: Int = [0]
+    when eP0 == ep
+    when ep - 2 <= eQdh0
+    when eQdh0 <= ep + 4
+    when 1 - maxInt(64, 64) + minInt(eP0, eQdh0) <= ePt1
+    when ePt1 <= 1 + maxInt(eP0, eQdh0)
+    exponentPt1(ep, ePt1) holds
+
+fn exponentP1(ep: Int, eP1: Int) -> Bool
+    ? "Table 3 row 15 (p.32): p1 != 0 implies ep - 128 <= e(p1) <= ep + 6. p1 = pt1 - qdl0: the 9.3.1/9.3.2 sum of two 64-bit values (P=64), e(pt1) in [ep-65, ep+5] (row 14) and e(qdl0) in [ep-65, ep-27] (row 13)."
+    Bool.and(ep - 128 <= eP1, eP1 <= ep + 6)
+
+verify exponentP1
+    exponentP1(0, 0) => true
+    exponentP1(0, 6) => true
+
+verify exponentP1 law table3_row15
+    given ep: Int = [0]
+    given ePt1: Int = [0]
+    given eQdl0: Int = [0]
+    given eP1: Int = [0]
+    when ep - 65 <= ePt1
+    when ePt1 <= ep + 5
+    when ep - 65 <= eQdl0
+    when eQdl0 <= ep - 27
+    when 1 - maxInt(64, 64) + minInt(ePt1, eQdl0) <= eP1
+    when eP1 <= 1 + maxInt(ePt1, eQdl0)
+    exponentP1(ep, eP1) holds
+
+fn exponentPh1(ep: Int, ePh1: Int) -> Bool
+    ? "Table 3 row 16 (p.32): p1 != 0 implies ep - 128 <= e(ph1) <= ep + 6. ph1 = trunc(p1,32); truncation preserves the exponent (Lemma 7.2.6), so the row-15 bracket of p1 carries over."
+    Bool.and(ep - 128 <= ePh1, ePh1 <= ep + 6)
+
+verify exponentPh1
+    exponentPh1(0, 0) => true
+    exponentPh1(0, 6) => true
+
+verify exponentPh1 law table3_row16
+    given ep: Int = [0]
+    given eP1: Int = [0]
+    given ePh1: Int = [0]
+    when ep - 128 <= eP1
+    when eP1 <= ep + 6
+    when ePh1 == eP1
+    exponentPh1(ep, ePh1) holds
+
+fn exponentQ1(ep: Int, ed: Int, eQ1: Int) -> Bool
+    ? "Table 3 row 17 (p.32): q1 != 0 implies ep - ed - 130 <= e(q1) <= ep - ed + 9. q1 = away(sd2*ph1, 24): the §8.1 estimate e(sd2) in [-ed-2, -ed+1] times e(ph1) in [ep-128, ep+6] (row 16) by 7.1.7, then rounded to 24 bits (round adds 0 or 1)."
+    Bool.and(ep - ed - 130 <= eQ1, eQ1 <= ep - ed + 9)
+
+verify exponentQ1
+    exponentQ1(0, 0, 0) => true
+    exponentQ1(0, 0, 9) => true
+
+verify exponentQ1 law table3_row17
+    given ep: Int = [0]
+    given ed: Int = [0]
+    given eSd2: Int = [0]
+    given ePh1: Int = [0]
+    given eProd1: Int = [0]
+    given eQ1: Int = [0]
+    when 0 - ed - 2 <= eSd2
+    when eSd2 <= 0 - ed + 1
+    when ep - 128 <= ePh1
+    when ePh1 <= ep + 6
+    when eSd2 + ePh1 <= eProd1
+    when eProd1 <= eSd2 + ePh1 + 1
+    when eProd1 <= eQ1
+    when eQ1 <= eProd1 + 1
+    exponentQ1(ep, ed, eQ1) holds
+
+fn exponentQdh1(ep: Int, eQdh1: Int) -> Bool
+    ? "Table 3 row 18 (p.32): qdh1 != 0 implies ep - 130 <= e(qdh1) <= ep + 10. qdh1 = q1*dh: the 7.1.7 product of e(q1) in [ep-ed-130, ep-ed+9] (row 17) and e(dh) = ed (row 7)."
+    Bool.and(ep - 130 <= eQdh1, eQdh1 <= ep + 10)
+
+verify exponentQdh1
+    exponentQdh1(0, 0) => true
+    exponentQdh1(0, 10) => true
+
+verify exponentQdh1 law table3_row18
+    given ep: Int = [0]
+    given ed: Int = [0]
+    given eQ1: Int = [0]
+    given eDh: Int = [0]
+    given eQdh1: Int = [0]
+    when ep - ed - 130 <= eQ1
+    when eQ1 <= ep - ed + 9
+    when eDh == ed
+    when eQ1 + eDh <= eQdh1
+    when eQdh1 <= eQ1 + eDh + 1
+    exponentQdh1(ep, eQdh1) holds
+
+fn exponentQdl1(ep: Int, eQdl1: Int) -> Bool
+    ? "Table 3 row 19 (p.32): qdl1 != 0 implies ep - 193 <= e(qdl1) <= ep - 21. qdl1 = q1*dl: the 7.1.7 product of e(q1) in [ep-ed-130, ep-ed+9] (row 17) and e(dl) in [ed-63, ed-31] (row 8)."
+    Bool.and(ep - 193 <= eQdl1, eQdl1 <= ep - 21)
+
+verify exponentQdl1
+    exponentQdl1(0, -100) => true
+    exponentQdl1(0, -193) => true
+
+verify exponentQdl1 law table3_row19
+    given ep: Int = [0]
+    given ed: Int = [0]
+    given eQ1: Int = [0]
+    given eDl: Int = [-31]
+    given eQdl1: Int = [-31]
+    when ep - ed - 130 <= eQ1
+    when eQ1 <= ep - ed + 9
+    when ed - 63 <= eDl
+    when eDl <= ed - 31
+    when eQ1 + eDl <= eQdl1
+    when eQdl1 <= eQ1 + eDl + 1
+    exponentQdl1(ep, eQdl1) holds
+
+fn exponentPt2(ep: Int, ePt2: Int) -> Bool
+    ? "Table 3 row 20 (p.32): pt2 != 0 implies ep - 193 <= e(pt2) <= ep + 11. pt2 = p1 - qdh1: the 9.3.1/9.3.2 sum of two 64-bit values (P=64), e(p1) in [ep-128, ep+6] (row 15) and e(qdh1) in [ep-130, ep+10] (row 18)."
+    Bool.and(ep - 193 <= ePt2, ePt2 <= ep + 11)
+
+verify exponentPt2
+    exponentPt2(0, 0) => true
+    exponentPt2(0, 11) => true
+
+verify exponentPt2 law table3_row20
+    given ep: Int = [0]
+    given eP1: Int = [0]
+    given eQdh1: Int = [0]
+    given ePt2: Int = [0]
+    when ep - 128 <= eP1
+    when eP1 <= ep + 6
+    when ep - 130 <= eQdh1
+    when eQdh1 <= ep + 10
+    when 1 - maxInt(64, 64) + minInt(eP1, eQdh1) <= ePt2
+    when ePt2 <= 1 + maxInt(eP1, eQdh1)
+    exponentPt2(ep, ePt2) holds
+
+fn exponentP2(ep: Int, eP2: Int) -> Bool
+    ? "Table 3 row 21 (p.32): p2 != 0 implies ep - 256 <= e(p2) <= ep + 12. p2 = pt2 - qdl1: the 9.3.1/9.3.2 sum of two 64-bit values (P=64), e(pt2) in [ep-193, ep+11] (row 20) and e(qdl1) in [ep-193, ep-21] (row 19)."
+    Bool.and(ep - 256 <= eP2, eP2 <= ep + 12)
+
+verify exponentP2
+    exponentP2(0, 0) => true
+    exponentP2(0, 12) => true
+
+verify exponentP2 law table3_row21
+    given ep: Int = [0]
+    given ePt2: Int = [0]
+    given eQdl1: Int = [0]
+    given eP2: Int = [0]
+    when ep - 193 <= ePt2
+    when ePt2 <= ep + 11
+    when ep - 193 <= eQdl1
+    when eQdl1 <= ep - 21
+    when 1 - maxInt(64, 64) + minInt(ePt2, eQdl1) <= eP2
+    when eP2 <= 1 + maxInt(ePt2, eQdl1)
+    exponentP2(ep, eP2) holds
+
+fn exponentPh2(ep: Int, ePh2: Int) -> Bool
+    ? "Table 3 row 22 (p.32): p2 != 0 implies ep - 256 <= e(ph2) <= ep + 12. ph2 = trunc(p2,32); truncation preserves the exponent (Lemma 7.2.6), so the row-21 bracket of p2 carries over."
+    Bool.and(ep - 256 <= ePh2, ePh2 <= ep + 12)
+
+verify exponentPh2
+    exponentPh2(0, 0) => true
+    exponentPh2(0, 12) => true
+
+verify exponentPh2 law table3_row22
+    given ep: Int = [0]
+    given eP2: Int = [0]
+    given ePh2: Int = [0]
+    when ep - 256 <= eP2
+    when eP2 <= ep + 12
+    when ePh2 == eP2
+    exponentPh2(ep, ePh2) holds
+
+fn exponentQ2(ep: Int, ed: Int, eQ2: Int) -> Bool
+    ? "Table 3 row 23 (p.32): q2 != 0 implies ep - ed - 258 <= e(q2) <= ep - ed + 15. q2 = away(sd2*ph2, 24): the §8.1 estimate e(sd2) in [-ed-2, -ed+1] times e(ph2) in [ep-256, ep+12] (row 22) by 7.1.7, then rounded to 24 bits (round adds 0 or 1)."
+    Bool.and(ep - ed - 258 <= eQ2, eQ2 <= ep - ed + 15)
+
+verify exponentQ2
+    exponentQ2(0, 0, 0) => true
+    exponentQ2(0, 0, 15) => true
+
+verify exponentQ2 law table3_row23
+    given ep: Int = [0]
+    given ed: Int = [0]
+    given eSd2: Int = [0]
+    given ePh2: Int = [0]
+    given eProd2: Int = [0]
+    given eQ2: Int = [0]
+    when 0 - ed - 2 <= eSd2
+    when eSd2 <= 0 - ed + 1
+    when ep - 256 <= ePh2
+    when ePh2 <= ep + 12
+    when eSd2 + ePh2 <= eProd2
+    when eProd2 <= eSd2 + ePh2 + 1
+    when eProd2 <= eQ2
+    when eQ2 <= eProd2 + 1
+    exponentQ2(ep, ed, eQ2) holds
+
+fn exponentQdh2(ep: Int, eQdh2: Int) -> Bool
+    ? "Table 3 row 24 (p.32): qdh2 != 0 implies ep - 258 <= e(qdh2) <= ep + 16. qdh2 = q2*dh: the 7.1.7 product of e(q2) in [ep-ed-258, ep-ed+15] (row 23) and e(dh) = ed (row 7)."
+    Bool.and(ep - 258 <= eQdh2, eQdh2 <= ep + 16)
+
+verify exponentQdh2
+    exponentQdh2(0, 0) => true
+    exponentQdh2(0, 16) => true
+
+verify exponentQdh2 law table3_row24
+    given ep: Int = [0]
+    given ed: Int = [0]
+    given eQ2: Int = [0]
+    given eDh: Int = [0]
+    given eQdh2: Int = [0]
+    when ep - ed - 258 <= eQ2
+    when eQ2 <= ep - ed + 15
+    when eDh == ed
+    when eQ2 + eDh <= eQdh2
+    when eQdh2 <= eQ2 + eDh + 1
+    exponentQdh2(ep, eQdh2) holds
+
+fn exponentQdl2(ep: Int, eQdl2: Int) -> Bool
+    ? "Table 3 row 25 (p.32): qdl2 != 0 implies ep - 321 <= e(qdl2) <= ep - 15. qdl2 = q2*dl: the 7.1.7 product of e(q2) in [ep-ed-258, ep-ed+15] (row 23) and e(dl) in [ed-63, ed-31] (row 8)."
+    Bool.and(ep - 321 <= eQdl2, eQdl2 <= ep - 15)
+
+verify exponentQdl2
+    exponentQdl2(0, -100) => true
+    exponentQdl2(0, -321) => true
+
+verify exponentQdl2 law table3_row25
+    given ep: Int = [0]
+    given ed: Int = [0]
+    given eQ2: Int = [0]
+    given eDl: Int = [-31]
+    given eQdl2: Int = [-31]
+    when ep - ed - 258 <= eQ2
+    when eQ2 <= ep - ed + 15
+    when ed - 63 <= eDl
+    when eDl <= ed - 31
+    when eQ2 + eDl <= eQdl2
+    when eQdl2 <= eQ2 + eDl + 1
+    exponentQdl2(ep, eQdl2) holds
+
+fn exponentPt3(ep: Int, ePt3: Int) -> Bool
+    ? "Table 3 row 26 (p.32): pt3 != 0 implies ep - 321 <= e(pt3) <= ep + 17. pt3 = p2 - qdh2: the 9.3.1/9.3.2 sum of two 64-bit values (P=64), e(p2) in [ep-256, ep+12] (row 21) and e(qdh2) in [ep-258, ep+16] (row 24)."
+    Bool.and(ep - 321 <= ePt3, ePt3 <= ep + 17)
+
+verify exponentPt3
+    exponentPt3(0, 0) => true
+    exponentPt3(0, 17) => true
+
+verify exponentPt3 law table3_row26
+    given ep: Int = [0]
+    given eP2: Int = [0]
+    given eQdh2: Int = [0]
+    given ePt3: Int = [0]
+    when ep - 256 <= eP2
+    when eP2 <= ep + 12
+    when ep - 258 <= eQdh2
+    when eQdh2 <= ep + 16
+    when 1 - maxInt(64, 64) + minInt(eP2, eQdh2) <= ePt3
+    when ePt3 <= 1 + maxInt(eP2, eQdh2)
+    exponentPt3(ep, ePt3) holds
+
+fn exponentP3(ep: Int, eP3: Int) -> Bool
+    ? "Table 3 row 27 (p.32): p3 != 0 implies ep - 384 <= e(p3) <= ep + 18. p3 = pt3 - qdl2: the 9.3.1/9.3.2 sum of two 64-bit values (P=64), e(pt3) in [ep-321, ep+17] (row 26) and e(qdl2) in [ep-321, ep-15] (row 25)."
+    Bool.and(ep - 384 <= eP3, eP3 <= ep + 18)
+
+verify exponentP3
+    exponentP3(0, 0) => true
+    exponentP3(0, 18) => true
+
+verify exponentP3 law table3_row27
+    given ep: Int = [0]
+    given ePt3: Int = [0]
+    given eQdl2: Int = [0]
+    given eP3: Int = [0]
+    when ep - 321 <= ePt3
+    when ePt3 <= ep + 17
+    when ep - 321 <= eQdl2
+    when eQdl2 <= ep - 15
+    when 1 - maxInt(64, 64) + minInt(ePt3, eQdl2) <= eP3
+    when eP3 <= 1 + maxInt(ePt3, eQdl2)
+    exponentP3(ep, eP3) holds
+
+fn exponentPh3(ep: Int, ePh3: Int) -> Bool
+    ? "Table 3 row 28 (p.32): p3 != 0 implies ep - 384 <= e(ph3) <= ep + 18. ph3 = trunc(p3,32); truncation preserves the exponent (Lemma 7.2.6), so the row-27 bracket of p3 carries over."
+    Bool.and(ep - 384 <= ePh3, ePh3 <= ep + 18)
+
+verify exponentPh3
+    exponentPh3(0, 0) => true
+    exponentPh3(0, 18) => true
+
+verify exponentPh3 law table3_row28
+    given ep: Int = [0]
+    given eP3: Int = [0]
+    given ePh3: Int = [0]
+    when ep - 384 <= eP3
+    when eP3 <= ep + 18
+    when ePh3 == eP3
+    exponentPh3(ep, ePh3) holds
+
+fn exponentQ3(ep: Int, ed: Int, eQ3: Int) -> Bool
+    ? "Table 3 row 29 (p.32): q3 != 0 implies ep - ed - 386 <= e(q3) <= ep - ed + 21. q3 = trunc(sd2*ph3, 24): the §8.1 estimate e(sd2) in [-ed-2, -ed+1] times e(ph3) in [ep-384, ep+18] (row 28) by 7.1.7, then rounded to 24 bits. The paper's Table 3 bounds the rounding to 24 bits uniformly by e in [ex, ex+1] (the same bound as the away digits q0/q1/q2); trunc's exact e = ex is a sub-interval, so the +1 upper holds."
+    Bool.and(ep - ed - 386 <= eQ3, eQ3 <= ep - ed + 21)
+
+verify exponentQ3
+    exponentQ3(0, 0, 0) => true
+    exponentQ3(0, 0, 21) => true
+
+verify exponentQ3 law table3_row29
+    given ep: Int = [0]
+    given ed: Int = [0]
+    given eSd2: Int = [0]
+    given ePh3: Int = [0]
+    given eProd3: Int = [0]
+    given eQ3: Int = [0]
+    when 0 - ed - 2 <= eSd2
+    when eSd2 <= 0 - ed + 1
+    when ep - 384 <= ePh3
+    when ePh3 <= ep + 18
+    when eSd2 + ePh3 <= eProd3
+    when eProd3 <= eSd2 + ePh3 + 1
+    when eProd3 <= eQ3
+    when eQ3 <= eProd3 + 1
+    exponentQ3(ep, ed, eQ3) holds
+
+fn exponentQq2(ep: Int, ed: Int, eQq2: Int) -> Bool
+    ? "Table 3 row 30 (p.32): p2 != 0 implies ep - ed - 409 <= e(qq2) <= ep - ed + 22. qq2 = sticky(q2 + q3, 64): the 9.3.1/9.3.2 sum of two 24-bit quotient digits (P=24), e(q2) in [ep-ed-258, ep-ed+15] (row 23) and e(q3) in [ep-ed-386, ep-ed+21] (row 29); the digit sum fits in 64 bits, so sticky to 64 is exact and preserves the exponent."
+    Bool.and(ep - ed - 409 <= eQq2, eQq2 <= ep - ed + 22)
+
+verify exponentQq2
+    exponentQq2(0, 0, 0) => true
+    exponentQq2(0, 0, 22) => true
+
+verify exponentQq2 law table3_row30
+    given ep: Int = [0]
+    given ed: Int = [0]
+    given eQ2: Int = [0]
+    given eQ3: Int = [0]
+    given eSum2: Int = [0]
+    given eQq2: Int = [0]
+    when ep - ed - 258 <= eQ2
+    when eQ2 <= ep - ed + 15
+    when ep - ed - 386 <= eQ3
+    when eQ3 <= ep - ed + 21
+    when 1 - maxInt(24, 24) + minInt(eQ2, eQ3) <= eSum2
+    when eSum2 <= 1 + maxInt(eQ2, eQ3)
+    when eQq2 == eSum2
+    exponentQq2(ep, ed, eQq2) holds
+
+fn exponentQq1(ep: Int, ed: Int, eQq1: Int) -> Bool
+    ? "Table 3 row 31 (p.32): p1 != 0 implies ep - ed - 472 <= e(qq1) <= ep - ed + 23. qq1 = sticky(qq2 + q1, 64): the 9.3.1/9.3.2 sum (P = max(64,24) = 64) of e(qq2) in [ep-ed-409, ep-ed+22] (row 30) and e(q1) in [ep-ed-130, ep-ed+9] (row 17); the sum fits in 64 bits, so sticky to 64 is exact and preserves the exponent."
+    Bool.and(ep - ed - 472 <= eQq1, eQq1 <= ep - ed + 23)
+
+verify exponentQq1
+    exponentQq1(0, 0, 0) => true
+    exponentQq1(0, 0, 23) => true
+
+verify exponentQq1 law table3_row31
+    given ep: Int = [0]
+    given ed: Int = [0]
+    given eQq2: Int = [0]
+    given eQ1: Int = [0]
+    given eSum1: Int = [0]
+    given eQq1: Int = [0]
+    when ep - ed - 409 <= eQq2
+    when eQq2 <= ep - ed + 22
+    when ep - ed - 130 <= eQ1
+    when eQ1 <= ep - ed + 9
+    when 1 - maxInt(64, 24) + minInt(eQq2, eQ1) <= eSum1
+    when eSum1 <= 1 + maxInt(eQq2, eQ1)
+    when eQq1 == eSum1
+    exponentQq1(ep, ed, eQq1) holds
+
+fn exponentDivide(ep: Int, ed: Int, eDivide: Int) -> Bool
+    ? "Table 3 row 32 (p.32): p != 0 implies ep - ed - 535 <= e(divide!) <= ep - ed + 25. divide! = round(qq1 + q0, mode): the 9.3.1/9.3.2 sum (P = max(64,24) = 64) of e(qq1) in [ep-ed-472, ep-ed+23] (row 31) and e(q0) in [ep-ed-2, ep-ed+3] (row 11), then the final round to the requested mode (round adds 0 or 1 -- the +1 carry that lifts the sum's +24 to +25). These are exactly the brackets the landed divideExponentNoOverflow / divideExponentNoUnderflow consume."
+    Bool.and(ep - ed - 535 <= eDivide, eDivide <= ep - ed + 25)
+
+verify exponentDivide
+    exponentDivide(0, 0, 0) => true
+    exponentDivide(0, 0, 25) => true
+
+verify exponentDivide law table3_row32
+    given ep: Int = [0]
+    given ed: Int = [0]
+    given eQq1: Int = [0]
+    given eQ0: Int = [0]
+    given eSumD: Int = [0]
+    given eDivide: Int = [0]
+    when ep - ed - 472 <= eQq1
+    when eQq1 <= ep - ed + 23
+    when ep - ed - 2 <= eQ0
+    when eQ0 <= ep - ed + 3
+    when 1 - maxInt(64, 24) + minInt(eQq1, eQ0) <= eSumD
+    when eSumD <= 1 + maxInt(eQq1, eQ0)
+    when eSumD <= eDivide
+    when eDivide <= eSumD + 1
+    exponentDivide(ep, ed, eDivide) holds
