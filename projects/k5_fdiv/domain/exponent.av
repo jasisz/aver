@@ -1,0 +1,56 @@
+module Exponent
+    intent =
+        "Stage 3 of the K5 division proof: the Section 9 exponent-unreachability"
+        "bounds, as pure linear integer laws. The paper (Section 9.3, p.31-32)"
+        "argues that with the input operands' exponents in the extended-format"
+        "range and the reciprocal/digit estimate adding at most a fixed constant,"
+        "the divide! result exponent can never reach the overflow threshold 2^16"
+        "or fall below the underflow threshold 1 - 2^16 -- so the wide intermediate"
+        "exponent path of the divider is never exercised."
+        "These are ordinary linear integer inequalities: the result exponent is"
+        "bracketed by the input-exponent range plus a constant offset, and the"
+        "bracket lands strictly inside the representable window. They prove"
+        "universally on Z3/Dafny push-button and on the Lean kernel by one generic"
+        "decision step (the linear-Int analog of the nonlinear estimate.av rung):"
+        "bridge the Bool comparisons to Prop and discharge the linear arithmetic"
+        "with omega -- not a per-figure tactic."
+    exposes [divideExponentNoOverflow, divideExponentNoUnderflow]
+    effects []
+
+fn divideExponentNoOverflow(ep: Int, ed: Int, eDivide: Int) -> Bool
+    ? "Section 9.3 (p.31-32): the divide! result exponent stays at or below 2^16 (no-overflow half of the unreachability bound)."
+    eDivide <= 65536
+
+verify divideExponentNoOverflow
+    divideExponentNoOverflow(0, 0, 25) => true
+    divideExponentNoOverflow(16384, -16446, 32855) => true
+
+verify divideExponentNoOverflow law section_9_3_no_overflow
+    given ep: Int = [-16446, 0, 16384]
+    given ed: Int = [-16446, 0, 16384]
+    given eDivide: Int = [0, 25, 32855]
+    when -16446 <= ep
+    when ep <= 16384
+    when -16446 <= ed
+    when ed <= 16384
+    when eDivide <= ep - ed + 25
+    divideExponentNoOverflow(ep, ed, eDivide) holds
+
+fn divideExponentNoUnderflow(ep: Int, ed: Int, eDivide: Int) -> Bool
+    ? "Section 9.3 (p.31-32): the divide! result exponent stays at or above 1 - 2^16 (no-underflow half of the unreachability bound)."
+    eDivide >= 1 - 65536
+
+verify divideExponentNoUnderflow
+    divideExponentNoUnderflow(0, 0, 25) => true
+    divideExponentNoUnderflow(-16446, 16384, -33365) => true
+
+verify divideExponentNoUnderflow law section_9_3_no_underflow
+    given ep: Int = [-16446, 0, 16384]
+    given ed: Int = [-16446, 0, 16384]
+    given eDivide: Int = [-33365, 0, 25]
+    when -16446 <= ep
+    when ep <= 16384
+    when -16446 <= ed
+    when ed <= 16384
+    when ep - ed - 535 <= eDivide
+    divideExponentNoUnderflow(ep, ed, eDivide) holds
