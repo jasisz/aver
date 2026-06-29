@@ -298,6 +298,120 @@ fn keystone_pool_subject_fns(
     out
 }
 
+/// Earlier-sibling FINITE bounded-Int-domain laws (`∀ idx, LO ≤ idx → idx < HI
+/// → P idx = true`, proven by the kernel `decide` over a bounded-`Nat` forall)
+/// RELEVANT to this consumer — its cone overlaps the consumer's. Used to GATE
+/// [`keystone_dep_bridge_cites`]: a relevant finite-domain supplier is the
+/// signature of the K5 reciprocal-bucket composition, whose endpoint interval
+/// law carries the nonneg premise the dependency bridge discharges. The table
+/// predicate (`entryEpsilonOk`) is NOT in the consumer's cone, so subject-in-
+/// cone misses it — cone OVERLAP (they share the lookup/key/error fns the bucket
+/// bound reasons over) is the minimal relevance that finds it. Name-blind via
+/// `recognize_finite_int_domain`; returns the cited theorem names (non-empty ⇒
+/// this is a finite-domain composition).
+fn keystone_finite_domain_pool(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Vec<String> {
+    use crate::ast::VerifyKind;
+    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let cone_fns: std::collections::HashSet<String> =
+        crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs)
+            .pure_fns()
+            .iter()
+            .map(|fd| fd.name.clone())
+            .collect();
+    let mut out = Vec::new();
+    for prev in enclosing_verify_blocks(vb, ctx) {
+        if prev.line == vb.line && prev.fn_name == vb.fn_name {
+            break;
+        }
+        let VerifyKind::Law(prev_law) = &prev.kind else {
+            continue;
+        };
+        if !super::super::recognize_finite_int_domain(prev, prev_law, ctx) {
+            continue;
+        }
+        let pc: std::collections::HashSet<String> =
+            crate::codegen::proof_lower::LawProofCone::compute(prev_law, &prev.fn_name, &inputs)
+                .pure_fns()
+                .iter()
+                .map(|fd| fd.name.clone())
+                .collect();
+        if pc.is_disjoint(&cone_fns) {
+            continue;
+        }
+        if let Some((name, _stmt)) =
+            crate::codegen::lean::toplevel::law_as_lemma_statement(prev, prev_law, ctx)
+        {
+            out.push(name);
+        }
+    }
+    out
+}
+
+/// Dependency CONDITIONAL-BRIDGE laws the keystone's finite-domain composition
+/// cites — the premise-discharging bridges (e.g. `nonNegOfPositive`:
+/// `lessThan(zeroFraction, x) = true -> isNonNeg x = true`) whose conclusion
+/// supplies the nonnegativity premise of a cited interval/order pool law from
+/// the supplier's positivity conjunct. The bridge's own hypothesis fn
+/// (`zeroFraction`) is reachable only THROUGH a cited supplier, never in the
+/// consumer's static cone, so the structural cross-file admission gate
+/// (`dep_law_admissible`) misses it — this names it directly. Returns
+/// `(module_prefix, theorem_base)` so the EMIT (grind hint, qualified name) and
+/// the cross-file re-emit (`admitted_dep_law_theorems`) key on the SAME
+/// identity. Scoped to the finite-domain composition path: empty unless a
+/// finite-Int-domain pool member is cited, so it never widens another law's
+/// pool. Name-blind — any EXPOSED dependency conditional comparison bridge
+/// ABOUT a fn in the consumer's call cone.
+pub(in crate::codegen::lean) fn keystone_dep_bridge_cites(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Vec<(String, String)> {
+    use crate::ast::{Expr, Literal, VerifyKind};
+    if keystone_finite_domain_pool(vb, law, ctx).is_empty() {
+        return Vec::new();
+    }
+    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
+    let cone_fns: std::collections::HashSet<String> =
+        cone.pure_fns().iter().map(|fd| fd.name.clone()).collect();
+    let mut out: Vec<(String, String)> = Vec::new();
+    for module in &ctx.modules {
+        ctx.with_module_scope(Some(module.prefix.as_str()), || {
+            for dep in &module.verify_laws {
+                let VerifyKind::Law(dep_law) = &dep.kind else {
+                    continue;
+                };
+                // A premise-discharging BRIDGE: a `when`-law ABOUT a cone fn whose
+                // conclusion is `subject(arg) holds` (`= true`), e.g.
+                // `nonNegOfPositive` turning the supplier's strict-positivity
+                // conjunct (`0 < lookup i`) into the interval law's `isNonNeg`
+                // premise. Its own hypothesis fn (`zeroFraction`) is reachable only
+                // THROUGH a cited supplier, so the structural cross-file gate
+                // misses it — shape-keyed and name-blind.
+                if dep_law.when.is_none() || !cone_fns.contains(&dep.fn_name) {
+                    continue;
+                }
+                if !matches!(dep_law.rhs.node, Expr::Literal(Literal::Bool(true)))
+                    || !matches!(dep_law.lhs.node, Expr::FnCall(..))
+                {
+                    continue;
+                }
+                out.push((
+                    module.prefix.clone(),
+                    crate::codegen::lean::toplevel::law_theorem_base(dep, dep_law, ctx),
+                ));
+            }
+        });
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// The cited pool laws (by Lean theorem name) that REGISTER THEMSELVES as
 /// `@[grind]` via a `grind_pattern` — the `FloorPow2Cancel` exact-division
 /// cancel, keyed on its floor term. They are already in `grind`'s lemma set
@@ -1234,7 +1348,7 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
         .filter(|n| !self_registering.contains(n))
         .collect();
     let order_citations = keystone_order_bridge_citations(vb, law, ctx);
-    let mut hints: Vec<String> = pool_names;
+    let mut hints: Vec<String> = pool_names.clone();
     hints.extend(order_citations.iter().map(|c| c.name.clone()));
     let mut support_lines: Vec<String> = Vec::new();
     for citation in &order_citations {

@@ -281,6 +281,11 @@ verify bucketErrorOk
     bucketErrorOk(keyHi(64), 64) => true
     bucketErrorOk(Domain.Rational.Fraction(top = 3, bottom = 2), 64) => true
 
+verify bucketErrorOk law bucketErrorIsSeed
+    given d: Fraction = [Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 191, bottom = 128)]
+    given i: Int = [64, 63]
+    bucketErrorOk(d, i) => seedBelow(d, lookup(i), epsilon())
+
 verify bucketErrorOk law bucketMonotonicity
     given d: Fraction = [Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 191, bottom = 128)]
     given i: Int = [64, 63]

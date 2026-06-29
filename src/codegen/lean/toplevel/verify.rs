@@ -1176,6 +1176,17 @@ pub(crate) fn law_as_lemma_statement(
             || super::law_auto::recognize_frac_monotone_compose(vb, law, ctx)
             || super::law_auto::recognize_monotone_reflect(vb, law, ctx)
             || super::law_auto::recognize_magnitude_bracket_reflect(vb, law, ctx)
+            // The finite bounded-Int-domain law (`∀ i, LO ≤ i → i < HI → P i`,
+            // proven by pure-kernel `decide` enumeration) and the interval-
+            // monotonicity law (`subject(d, v, e)` over an interval, proven by the
+            // rational interval argument) both have a clean `∀ givens, <when> =
+            // true -> claim` universal theorem named `<fn>_law_<name>`, so they are
+            // sound conditional rewrites a later law can cite. The keystone's
+            // laws-as-lemmas composition (the K5 reciprocal bucket bound) cites
+            // exactly this pair: the table seed bound and the endpoint
+            // interval-magnitude bound.
+            || super::law_auto::recognize_finite_int_domain(vb, law, ctx)
+            || super::law_auto::recognize_interval_monotonicity(vb, law, ctx)
             || pinned_when_universal)
     {
         return None;

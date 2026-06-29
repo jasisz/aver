@@ -711,6 +711,35 @@ pub(crate) fn admitted_dep_law_theorems(
         });
     }
 
+    // Keystone finite-domain composition consumers: the keystone's `grind`
+    // cites a dependency conditional-bridge law (`nonNegOfPositive`) to discharge
+    // a cited interval law's nonneg premise from the supplier's positivity
+    // conjunct. The bridge's hypothesis fn is reachable only through a cited
+    // supplier, so the structural gate above does not reach it; the keystone
+    // names it directly, keyed on the SAME recognizer the emit cites, so the dep
+    // theorem is emitted iff the proof that cites it is.
+    for item in &ctx.items {
+        let TopLevel::Verify(vb) = item else { continue };
+        let VerifyKind::Law(law) = &vb.kind else {
+            continue;
+        };
+        for dep in keystone::keystone_dep_bridge_cites(vb, law, ctx) {
+            admitted.insert(dep);
+        }
+    }
+    for module in &ctx.modules {
+        ctx.with_module_scope(Some(module.prefix.as_str()), || {
+            for vb in &module.verify_laws {
+                let VerifyKind::Law(law) = &vb.kind else {
+                    continue;
+                };
+                for dep in keystone::keystone_dep_bridge_cites(vb, law, ctx) {
+                    admitted.insert(dep);
+                }
+            }
+        });
+    }
+
     admitted
 }
 
