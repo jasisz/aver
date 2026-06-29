@@ -32,7 +32,7 @@ module Kernel
         "bounds for Theorem 2; plus general-exp fpValue (the kernel lives in fractional"
         "floats, exp < 0, where the current fpValue clamps to 1)."
     depends [Domain.Rational, Domain.Fprep, Domain.Round]
-    exposes [RoundingMode, fracSign, fracExpo, truncFrac, awayFrac, stickyFrac, nearestFrac, posinfFrac, neginfFrac, round, compFrac, reciprocalEstimate, lookup, quotient, divideBang, divide, divideBangCorrect, divideMatchesBang, divideCorrect]
+    exposes [RoundingMode, fracSign, fracExpo, truncFrac, awayFrac, stickyFrac, nearestFrac, posinfFrac, neginfFrac, round, compFrac, reciprocalEstimate, lookup, quotient, divideBang, divide, divideBangCorrect, divideMatchesBang, divideCorrect, finalRoundCommutes_7_3_1, stickyPlus_7_3_2, stickyPerturbStable_7_3_3]
     effects []
 
 // ---------------------------------------------------------------------------
@@ -370,3 +370,38 @@ fn divideCorrect(p: Fp, d: Fp, mode: RoundingMode) -> Bool
 verify divideCorrect
     divideCorrect(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 8, exp = 0, width = 4), RoundingMode.Trunc(24)) => true
     divideCorrect(Domain.Fprep.Fp(sign = -1, sigBits = 10, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), RoundingMode.Nearest(16)) => true
+
+// ---------------------------------------------------------------------------
+// SECTION 7.3 (p.21): special properties of sticky rounding -- the interactions
+// used to sum the quotient digits. Stated EXACTLY as the paper and SAMPLE-VERIFIED
+// on the corrected round-to-odd (RTL/rto) sticky. These validate the sticky model
+// on its hardest obligations (the draft paper's printed stickyn typo FALSIFIES
+// 7.3.2 on ~17% of cases); the UNIVERSAL proofs -- especially 7.3.2, which the
+// paper itself calls "singularly difficult to prove" -- are the next holes.
+// ---------------------------------------------------------------------------
+
+fn finalRoundCommutes_7_3_1(x: Fraction, i: Int, mode: RoundingMode) -> Bool
+    ? "Lemma 7.3.1 (p.21): for a rounding mode [name n] with n <= i, round(sticky(x, i+2), mode) = round(x, mode) -- sticky-rounding to two extra bits is transparent to a final round at precision <= i. SAMPLE-VERIFIED with the mode precision n <= i by construction."
+    Domain.Rational.sameValue(round(stickyFrac(x, i + 2), mode), round(x, mode))
+
+verify finalRoundCommutes_7_3_1
+    finalRoundCommutes_7_3_1(Domain.Rational.Fraction(top = 59, bottom = 32), 3, RoundingMode.Trunc(3)) => true
+    finalRoundCommutes_7_3_1(Domain.Rational.Fraction(top = 59, bottom = 32), 3, RoundingMode.Sticky(2)) => true
+    finalRoundCommutes_7_3_1(Domain.Rational.Fraction(top = -59, bottom = 32), 3, RoundingMode.Away(3)) => true
+
+fn stickyPlus_7_3_2(x: Fraction, y: Fraction, n: Int, k: Int) -> Bool
+    ? "Lemma 7.3.2 (Sticky Plus, p.21), THE crucial sticky interaction used to sum the quotient digits: for x fitting in n bits (trunc(x,n)=x), y with exponent at least two below x (1+e_y < e_x), and a positive integer k with n+e_y-e_x < k, sticky(x+y,n) = sticky(x + sticky(y,k), n) -- one may pre-round the infinitely-precise y to k bits, do a finite sum, and sticky-round without endangering the round. The paper calls this 'singularly difficult to prove' (its proof case-splits the signs and relative magnitudes of x and y). SAMPLE-VERIFIED on the corrected round-to-odd sticky -- the draft paper's printed stickyn typo falsifies it; the universal proof is the next hole."
+    Domain.Rational.sameValue(stickyFrac(Domain.Rational.plus(x, y), n), stickyFrac(Domain.Rational.plus(x, stickyFrac(y, k)), n))
+
+verify stickyPlus_7_3_2
+    stickyPlus_7_3_2(Domain.Rational.Fraction(top = 6, bottom = 4), Domain.Rational.Fraction(top = 1, bottom = 8), 3, 4) => true
+    stickyPlus_7_3_2(Domain.Rational.Fraction(top = 6, bottom = 4), Domain.Rational.Fraction(top = -1, bottom = 8), 3, 4) => true
+    stickyPlus_7_3_2(Domain.Rational.Fraction(top = 7, bottom = 4), Domain.Rational.Fraction(top = 1, bottom = 16), 3, 3) => true
+
+fn stickyPerturbStable_7_3_3(x: Fraction, e1: Fraction, e2: Fraction, n: Int) -> Bool
+    ? "Lemma 7.3.3 (p.21): for x with trunc(x,n)=x (n>1) and non-zero e1, e2 with |e1|,|e2| < 2^(e_x+1-n) of the same sign, sticky(x+e1,n) = sticky(x+e2,n) -- sticky rounding is stable under a same-sign sub-ulp perturbation. SAMPLE-VERIFIED with the magnitude and sign conditions met by construction."
+    Domain.Rational.sameValue(stickyFrac(Domain.Rational.plus(x, e1), n), stickyFrac(Domain.Rational.plus(x, e2), n))
+
+verify stickyPerturbStable_7_3_3
+    stickyPerturbStable_7_3_3(Domain.Rational.Fraction(top = 6, bottom = 4), Domain.Rational.Fraction(top = 1, bottom = 8), Domain.Rational.Fraction(top = 3, bottom = 16), 3) => true
+    stickyPerturbStable_7_3_3(Domain.Rational.Fraction(top = 6, bottom = 4), Domain.Rational.Fraction(top = -1, bottom = 8), Domain.Rational.Fraction(top = -3, bottom = 16), 3) => true
