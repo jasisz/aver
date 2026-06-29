@@ -14,7 +14,22 @@ module Exponent
         "decision step (the linear-Int analog of the nonlinear estimate.av rung):"
         "bridge the Bool comparisons to Prop and discharge the linear arithmetic"
         "with omega -- not a per-figure tactic."
-    exposes [divideExponentNoOverflow, divideExponentNoUnderflow]
+        "The two unreachability brackets above are DEDUCED (paper p.32) from the"
+        "Table-3 chaining, whose building blocks are the elementary sum-exponent"
+        "lemmas of the same Section 9.3: Lemma 9.3.1 (p.31-32), the LOWER bound"
+        "1 - max(n, m) + min(ex, ey) <= e(x + y) for x, y of precisions n, m, and"
+        "Lemma 9.3.2 (p.32), the UPPER bound e(x + y) <= 1 + max(ex, ey). Both are"
+        "the magnitude-bracket / exponent-placement class (like Lemma 8.2.1 digit"
+        "separation): the paper's magnitude floor / ceiling on |x + y| is the"
+        "premise, and the already-universal fundamental-exponent bridge"
+        "Domain.Fprep.fracExpoFromMagnitude (2^e <= |v| < 2^k ==> e <= k - 1) turns"
+        "it into the exponent inequality, with linear arithmetic landing the exact"
+        "paper offset. Stated over abstract exponents (eSum = e(x + y), ex, ey, n, m"
+        "as Int givens), never by computing the opaque fracExpo -- the same"
+        "discipline as remainder.av's reciprocalMagnitudeBound_8_2_4 and"
+        "digitSeparation_8_2_1."
+    depends [Domain.Rational, Domain.Fprep]
+    exposes [divideExponentNoOverflow, divideExponentNoUnderflow, maxInt, minInt, sumExponentLower_9_3_1, sumExponentUpper_9_3_2]
     effects []
 
 fn divideExponentNoOverflow(ep: Int, ed: Int, eDivide: Int) -> Bool
@@ -54,3 +69,101 @@ verify divideExponentNoUnderflow law section_9_3_no_underflow
     when ed <= 16384
     when ep - ed - 535 <= eDivide
     divideExponentNoUnderflow(ep, ed, eDivide) holds
+
+// ---------------------------------------------------------------------------
+// The elementary sum-exponent lemmas of Section 9.3 (p.31-32), the building
+// blocks the Table-3 chaining (and so the unreachability brackets above)
+// rest on. min/max of integers -- the paper's min(ex, ey) and max(n, m).
+// ---------------------------------------------------------------------------
+
+fn maxInt(a: Int, b: Int) -> Int
+    ? "The larger of two integers -- the max(n, m) of Lemma 9.3.1 and the max(ex, ey) of Lemma 9.3.2 (Section 9.3, p.31-32)."
+    match a >= b
+        true -> a
+        false -> b
+
+verify maxInt
+    maxInt(2, 3) => 3
+    maxInt(5, 1) => 5
+    maxInt(-2, -2) => -2
+
+fn minInt(a: Int, b: Int) -> Int
+    ? "The smaller of two integers -- the min(ex, ey) of Lemma 9.3.1 (Section 9.3, p.31-32)."
+    match a <= b
+        true -> a
+        false -> b
+
+verify minInt
+    minInt(2, 3) => 2
+    minInt(5, 1) => 1
+    minInt(-2, -2) => -2
+
+// ---------------------------------------------------------------------------
+// Lemma 9.3.1 (Section 9.3, p.31-32), the sum-exponent LOWER bound.
+// "If x and y are rationals such that x + y != 0, n and m are positive
+//  integers, trunc(x; n) = x and trunc(y; m) = y, then
+//  1 - max(n, m) + min(ex, ey) <= e(x + y)."
+// Proof (paper): trunc(x; n) = x makes x an integer multiple of its ulp
+// 2^(ex - n + 1), and y a multiple of 2^(ey - m + 1), so x + y is a multiple
+// of 2^(min(ex - n + 1, ey - m + 1)); being non-0 it has magnitude at least
+// that power, and min(ex - n + 1, ey - m + 1) >= 1 - max(n, m) + min(ex, ey).
+// Hence the magnitude FLOOR 2^(1 - max(n, m) + min(ex, ey)) <= |x + y| -- the
+// premise here, exactly the bound feeding the conclusion (the n, m > 0 / trunc
+// hypotheses are what the paper uses to derive this floor, folded into it, as
+// remainder.av's 8.2.4 folds p0 != 0). With the binary-exponent ceiling
+// |x + y| < 2^(e(x+y)+1), the fundamental-exponent bridge fracExpoFromMagnitude
+// turns 2^(1 - max + min) <= |x + y| < 2^(eSum + 1) into
+// 1 - max(n, m) + min(ex, ey) <= (eSum + 1) - 1 = eSum -- the exact paper
+// offset, by the same magnitude-bracket rung as digitSeparation_8_2_1.
+// ---------------------------------------------------------------------------
+
+fn sumExponentLower_9_3_1(eSum: Int, n: Int, m: Int, ex: Int, ey: Int) -> Bool
+    ? "Lemma 9.3.1 (Section 9.3, p.31-32): for rationals x, y with x + y != 0 and positive precisions n, m such that trunc(x, n) = x and trunc(y, m) = y, the exponent of the sum satisfies 1 - max(n, m) + min(ex, ey) <= e(x + y). eSum = e(x + y), ex/ey the binary exponents of x/y, n/m their precisions -- abstract Int givens, never the opaque fracExpo."
+    1 - maxInt(n, m) + minInt(ex, ey) <= eSum
+
+verify sumExponentLower_9_3_1
+    sumExponentLower_9_3_1(4, 2, 2, 5, 5) => true
+    sumExponentLower_9_3_1(3, 1, 1, 3, 3) => true
+
+verify sumExponentLower_9_3_1 law section_9_3_1
+    given sumMag: Fraction = [Domain.Rational.Fraction(top = 20, bottom = 1), Domain.Rational.Fraction(top = 10, bottom = 1), Domain.Rational.Fraction(top = 8, bottom = 1)]
+    given eSum: Int = [4, 3, 3]
+    given n: Int = [2, 3, 1]
+    given m: Int = [2, 1, 1]
+    given ex: Int = [5, 4, 3]
+    given ey: Int = [5, 6, 3]
+    when 0 < sumMag.bottom
+    when Domain.Rational.isNonNeg(Domain.Rational.minus(sumMag, Domain.Fprep.pow2Signed(1 - maxInt(n, m) + minInt(ex, ey))))
+    when Domain.Rational.lessThan(sumMag, Domain.Fprep.pow2Signed(eSum + 1))
+    sumExponentLower_9_3_1(eSum, n, m, ex, ey) holds
+
+// ---------------------------------------------------------------------------
+// Lemma 9.3.2 (Section 9.3, p.32), the sum-exponent UPPER bound.
+// "If x and y are non-0 rationals whose sum is non-0, then
+//  e(x + y) <= 1 + max(ex, ey)."
+// Proof (paper, the sloppy-but-sufficient bound):
+//  |x + y| <= |x| + |y| < 2^(ex + 1) + 2^(ey + 1) <= 2^(max(ex, ey) + 2).
+// So the magnitude CEILING 2^(max(ex, ey) + 2) on |x + y| is the premise; with
+// the binary-exponent floor 2^eSum <= |x + y|, the fundamental-exponent bridge
+// fracExpoFromMagnitude turns 2^eSum <= |x + y| < 2^(max(ex, ey) + 2) into
+// eSum <= (max(ex, ey) + 2) - 1 = 1 + max(ex, ey) -- the exact paper offset,
+// by the same magnitude-bracket rung as digitSeparation_8_2_1.
+// ---------------------------------------------------------------------------
+
+fn sumExponentUpper_9_3_2(eSum: Int, ex: Int, ey: Int) -> Bool
+    ? "Lemma 9.3.2 (Section 9.3, p.32): for non-0 rationals x, y whose sum is non-0, the exponent of the sum satisfies e(x + y) <= 1 + max(ex, ey). eSum = e(x + y), ex/ey the binary exponents of x/y -- abstract Int givens, never the opaque fracExpo."
+    eSum <= 1 + maxInt(ex, ey)
+
+verify sumExponentUpper_9_3_2
+    sumExponentUpper_9_3_2(3, 2, 3) => true
+    sumExponentUpper_9_3_2(1, 0, 0) => true
+
+verify sumExponentUpper_9_3_2 law section_9_3_2
+    given sumMag: Fraction = [Domain.Rational.Fraction(top = 12, bottom = 1), Domain.Rational.Fraction(top = 3, bottom = 1), Domain.Rational.Fraction(top = 3, bottom = 2)]
+    given eSum: Int = [3, 1, 0]
+    given ex: Int = [2, 0, -1]
+    given ey: Int = [3, 0, -2]
+    when 0 < sumMag.bottom
+    when Domain.Rational.isNonNeg(Domain.Rational.minus(sumMag, Domain.Fprep.pow2Signed(eSum)))
+    when Domain.Rational.lessThan(sumMag, Domain.Fprep.pow2Signed(maxInt(ex, ey) + 2))
+    sumExponentUpper_9_3_2(eSum, ex, ey) holds

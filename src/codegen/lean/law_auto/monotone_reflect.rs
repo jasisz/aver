@@ -112,6 +112,15 @@ fn is_linear_int_expr(expr: &Spanned<Expr>, allowed: &std::collections::BTreeSet
             (is_int_literal(l) && is_linear_int_expr(r, allowed))
                 || (is_int_literal(r) && is_linear_int_expr(l, allowed))
         }
+        // An Int-returning function application (e.g. the maxInt / minInt of the
+        // Section 9.3 sum-exponent bounds, max(n,m) / min(ex,ey)) is opaque to
+        // linear arithmetic: omega atomizes the whole application. Accept it as a
+        // linear atom when its arguments are themselves linear over the allowed
+        // givens, so a claim like `e <= 1 + maxInt(a, b)` is recognized as the
+        // magnitude-bracket class; the emitted bridge proof then discharges it by
+        // omega with the call standing as a single atom -- the same atomization
+        // omega performs, just admitted one step earlier by the recognizer.
+        Expr::FnCall(_, args) => args.iter().all(|a| is_linear_int_expr(a, allowed)),
         _ => false,
     }
 }
