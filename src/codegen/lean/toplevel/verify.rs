@@ -566,8 +566,15 @@ fn emit_verify_law_block(
         Some(crate::ir::ProofStrategy::FiniteDomainCases { .. })
             | Some(crate::ir::ProofStrategy::TailRecFixedBaseFold { .. })
     );
-    let skip_universal = singleton_const_rhs
-        || ((calls_fuel_bounded || calls_foreign_acc_fold) && !pinned_self_universal);
+    // A hand-proof sidecar FORCES the universal statement: the spliced body
+    // proves `∀ givens, <when> = true -> <claim>`, so the law must be emitted
+    // in universal (not skipped / sample-only) form regardless of the auto
+    // gates above. (`recognize_hand_sidecar` keys on the loaded sidecar map; no
+    // sidecar => false => byte-identical to before.)
+    let has_hand_sidecar = super::law_auto::recognize_hand_sidecar(ctx, vb, law);
+    let skip_universal = !has_hand_sidecar
+        && (singleton_const_rhs
+            || ((calls_fuel_bounded || calls_foreign_acc_fold) && !pinned_self_universal));
     // Oracle v1: the auto-proof matchers compare law.lhs / law.rhs ASTs. For
     // effectful laws the theorem statement has been rewritten to target the
     // lifted fn (BranchPath.root() + oracle args injected); the matchers need to
@@ -590,7 +597,12 @@ fn emit_verify_law_block(
     // the same recognizer.
     let conditional_universal = law.when.is_some()
         && lifted_vars.is_empty()
-        && (super::law_auto::recognize_conditional_comparison_bridge(&law_for_auto_proof, ctx)
+        && (
+            // A hand-proof sidecar proves the true-universal `∀ givens, <when> =
+            // true -> claim`, so drop the sampled domain and class it universal
+            // (statement and spliced proof stay in lockstep).
+            has_hand_sidecar
+            || super::law_auto::recognize_conditional_comparison_bridge(&law_for_auto_proof, ctx)
             || super::law_auto::recognize_conditional_inductive_generic(
                 vb,
                 &law_for_auto_proof,
@@ -669,6 +681,12 @@ fn emit_verify_law_block(
             // structural case — a list-length homomorphism — has no sampled domain to
             // drop and is classed universal by the default unconditional path.)
             || super::law_auto::recognize_homomorphism(vb, &law_for_auto_proof, ctx)
+            // Nested-Euclidean-floor collapse (`floor (floor a d) e = floor a
+            // (d * e)`, positive divisors): proven universally in pure core by
+            // `Int.ediv_ediv_of_nonneg`. The emit replaces the theorem with the
+            // universal form, so dropping the sampled domain keeps statement and
+            // proof aligned.
+            || super::law_auto::recognize_nested_floor(&law_for_auto_proof, ctx)
             // Rational-order chaining law (the reciprocal-magnitude composition,
             // Lemma 8.2.4): the conclusion is the Fraction order fact `isNonNeg
             // (minus (pow2Signed BIG) A)`, proven universally by chaining the

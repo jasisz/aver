@@ -3473,6 +3473,24 @@ pub fn emit_verify_law(
     }
     lines.push("{".to_string());
 
+    // Hand-proof SIDECAR (Dafny): if a source-controlled
+    // `proofs/dafny/<fn>__<law>.dfy` body was loaded for this law, splice it as
+    // the lemma body and let `dafny verify` re-check it — a WRONG body fails
+    // verification loudly and the law is denied universal credit (kernel-checked,
+    // never trusted). Reuses the signature (params / `requires` / `ensures` /
+    // fuel) the default path just built, so the hand body proves exactly the
+    // law's claim. Absent a sidecar this is a no-op (the auto body follows).
+    if let Some(body) = ctx
+        .hand_proofs
+        .get(&(vb.fn_name.clone(), law.name.clone()))
+    {
+        for l in body.lines() {
+            lines.push(format!("  {l}"));
+        }
+        lines.push("}\n".to_string());
+        return lines.join("\n");
+    }
+
     // Earlier sibling laws eligible to be cited into this proof — shared by the
     // `forall` hoist (here) and the explicit-instantiation engine (list-induction
     // step, below).

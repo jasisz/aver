@@ -1,0 +1,93 @@
+module StickyInt
+    intent =
+        "The hand-proof-tier demo of the K5 prover. truncSig(A, drop) is the"
+        "integer significand truncation floor(A / 2^drop); stickySig(A, dn) is"
+        "round-to-odd: shift right by dn, keep one sticky low bit (the OR of the"
+        "dropped bits). The law truncStickyInt is the integer-model trunc-sticky"
+        "COMPOSITION -- truncating a sticky-rounded value by jt equals truncating"
+        "the original by dn + jt - 1. It is the shape of the §7.3 sticky-rounding"
+        "composition the generic engine cannot find a proof for, so it carries a"
+        "LABELED, kernel-checked HAND proof in proofs/lean/truncSig__truncStickyInt.lean."
+        "The pow2 homomorphism (pow2(m+n) = pow2(m)*pow2(n)) and positivity"
+        "(pow2(k) >= 1) laws below auto-prove generically; the hand proof CITES"
+        "their generated theorems (composition by citation), proving the genuinely"
+        "hard ediv case-split itself. sigDouble's doubleIsTwice carries a small"
+        "Dafny hand sidecar -- the symmetric splice demo on the other backend."
+    exposes [pow2, floorDiv, truncSig, stickySig, sigDouble]
+    effects []
+
+fn pow2(n: Int) -> Int
+    ? "Two to the n for n >= 0 (and 1 at or below zero): the scale factor 2^n of an exponent."
+    match n <= 0
+        true -> 1
+        false -> 2 * pow2(n - 1)
+
+verify pow2
+    pow2(0) => 1
+    pow2(1) => 2
+    pow2(3) => 8
+
+// The power-of-two homomorphism: adding exponents multiplies scales. Auto-proven
+// generically (content-blind homomorphism rung); the hand proof of truncStickyInt
+// CITES this law's generated theorem to collapse pow2(dn + jt - 1) and pow2(jt).
+verify pow2 law homomorphism
+    given m: Int = [0, 1, 4]
+    given n: Int = [0, 2, 3]
+    when m >= 0
+    when n >= 0
+    pow2(m + n) => pow2(m) * pow2(n)
+
+// The power of two is always at least one. Auto-proven generically (recursive
+// positivity); the hand proof CITES it to discharge the floorDiv non-zero-divisor
+// guards (pow2 d != 0).
+verify pow2 law positive
+    given k: Int = [0, 1, 4]
+    pow2(k) >= 1 holds
+
+fn floorDiv(a: Int, d: Int) -> Int
+    ? "Total Euclidean floor division a / d (0 when d == 0): the digit-dropping shift."
+    Result.withDefault(Int.div(a, d), 0)
+
+verify floorDiv
+    floorDiv(7, 2) => 3
+    floorDiv(8, 4) => 2
+
+fn truncSig(A: Int, drop: Int) -> Int
+    ? "Truncated significand: floor(A / 2^drop), the kept high bits after dropping `drop` low bits."
+    floorDiv(A, pow2(drop))
+
+verify truncSig
+    truncSig(13, 2) => 3
+    truncSig(8, 1) => 4
+
+fn stickySig(A: Int, dn: Int) -> Int
+    ? "Round-to-odd at position dn: shift right by dn, append one sticky bit (1 iff any dropped bit set). Value is 2*floor(A/2^dn) + (A mod 2^dn != 0)."
+    match A - pow2(dn) * floorDiv(A, pow2(dn)) == 0
+        true -> 2 * floorDiv(A, pow2(dn))
+        false -> 2 * floorDiv(A, pow2(dn)) + 1
+
+verify stickySig
+    stickySig(13, 2) => 7
+    stickySig(8, 2) => 4
+
+// THE hand-proof demo law (§7.3 trunc-sticky composition, integer model). The
+// generic engine cannot find a proof; proofs/lean/truncSig__truncStickyInt.lean
+// supplies a labeled, kernel-checked hand proof that closes it UNIVERSALLY.
+verify truncSig law truncStickyInt
+    given A: Int = [8, 13]
+    given dn: Int = [1, 2]
+    given jt: Int = [1, 2]
+    when dn >= 0
+    when jt >= 1
+    truncSig(stickySig(A, dn), jt) => truncSig(A, dn + jt - 1)
+
+fn sigDouble(x: Int) -> Int
+    ? "Doubling: x + x. A trivial pure fn carrying the Dafny hand-sidecar demo."
+    x + x
+
+// The symmetric DAFNY hand-sidecar demo (proofs/dafny/sigDouble__doubleIsTwice.dfy).
+// Z3 closes this from nothing, so the spliced hand body is what verifies it -- a
+// minimal proof that the Dafny splice + per-backend `hand` credit works.
+verify sigDouble law doubleIsTwice
+    given x: Int = [0, 3, -4]
+    sigDouble(x) => 2 * x

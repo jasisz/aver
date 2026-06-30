@@ -373,6 +373,18 @@ pub struct CodegenContext {
     /// per-law `mathlib` credit. Axiom whitelist is UNCHANGED — Mathlib lemmas
     /// are kernel-clean `{propext, Classical.choice, Quot.sound}`.
     pub allow_mathlib: bool,
+    /// Hand-proof sidecars, keyed by `(fn_name, law_name)` → the proof BODY
+    /// (the tactic text after Lean's `:= by`, or the Dafny lemma body between
+    /// `{` and `}`). Loaded by the CLI from a project's source-controlled
+    /// `proofs/<lean|dafny>/<fn>__<law>.{lean,dfy}` sidecar dir for the active
+    /// backend; empty everywhere else. When an entry exists for a law, the
+    /// codegen splices the body into that law's emitted theorem/lemma and lets
+    /// the kernel (lake / dafny verify) re-check it — a WRONG body fails the
+    /// build loudly and the law is denied universal credit. A law with NO
+    /// sidecar is byte-identical to before. The genuinely-hard lemmas the
+    /// generic engine cannot find (trunc-sticky composition, sticky-plus) live
+    /// here as LABELED, kernel-checked hand proofs (manifest credit `hand`).
+    pub hand_proofs: std::collections::HashMap<(String, String), String>,
 }
 
 /// Output files from a codegen backend.
@@ -679,6 +691,7 @@ pub fn build_context(
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
         allow_mathlib: false,
+        hand_proofs: std::collections::HashMap::new(),
     };
     // ProofIR no longer populated here. Pipeline owns the lowerings
     // (`PipelineStage::RefinementLower`, `PipelineStage::ContractLower`);

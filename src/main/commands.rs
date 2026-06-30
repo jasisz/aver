@@ -4977,6 +4977,55 @@ pub(super) struct CompileOptions<'a> {
     pub(super) optimize: Option<super::cli::WasmOptMode>,
 }
 
+/// Load hand-proof SIDECARS for `file`'s project and `backend` into the
+/// `(fn, law) -> body` map the codegen splices. The sidecar dir is found by
+/// ascending from the `.av` file's directory to the FIRST ancestor that has a
+/// `proofs/<lean|dafny>/` subdir (so it works whether the entry is a project's
+/// `main.av` or a `domain/<mod>.av`); the ascent is bounded so it never wanders
+/// past the project. Each `<fn>__<law>.{lean,dfy}` file's contents become the
+/// proof body for `(fn, law)`. No dir / no match => empty map => the auto path,
+/// byte-identical to before. Keeping the `.av` sources pure spec, the persistent
+/// hand proofs live ONLY here and are re-spliced + kernel-re-checked every run.
+fn load_hand_proofs(
+    file: &str,
+    backend: &super::cli::ProofBackend,
+) -> std::collections::HashMap<(String, String), String> {
+    use std::path::Path;
+    let (subdir, ext) = match backend {
+        super::cli::ProofBackend::Lean => ("lean", ".lean"),
+        super::cli::ProofBackend::Dafny => ("dafny", ".dfy"),
+    };
+    let mut out = std::collections::HashMap::new();
+    let mut cur = Path::new(file).parent();
+    let mut hops = 0;
+    while let Some(dir) = cur {
+        let proofs = dir.join("proofs").join(subdir);
+        if proofs.is_dir() {
+            if let Ok(rd) = std::fs::read_dir(&proofs) {
+                for entry in rd.flatten() {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    let Some(stem) = name.strip_suffix(ext) else {
+                        continue;
+                    };
+                    let Some((fn_name, law_name)) = stem.split_once("__") else {
+                        continue;
+                    };
+                    if let Ok(body) = std::fs::read_to_string(entry.path()) {
+                        out.insert((fn_name.to_string(), law_name.to_string()), body);
+                    }
+                }
+            }
+            break; // first proofs/ dir up the chain wins
+        }
+        cur = dir.parent();
+        hops += 1;
+        if hops > 8 {
+            break;
+        }
+    }
+    out
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn cmd_proof(
     file: &str,
@@ -5026,6 +5075,14 @@ pub(super) fn cmd_proof(
     }
     let allow_mathlib = allow_mathlib && matches!(backend, super::cli::ProofBackend::Lean);
     ctx.allow_mathlib = allow_mathlib;
+
+    // Hand-proof SIDECAR tier (both backends): load any source-controlled
+    // `proofs/<lean|dafny>/<fn>__<law>.{lean,dfy}` proof bodies for this file's
+    // project + backend into the codegen's splice map. When a law has a sidecar
+    // the codegen emits its theorem/lemma with that body and the kernel
+    // (lake / dafny verify) re-checks it; absent a sidecar the auto path is
+    // byte-identical. The `.av` source stays pure spec — proofs live only here.
+    ctx.hand_proofs = load_hand_proofs(file, backend);
 
     // Oracle v1: aver proof only models `?!` in complete mode. If the
     // project's aver.toml selects cancel or sequential, fail loudly —
@@ -5227,6 +5284,15 @@ pub(super) fn cmd_proof(
         // CLOSED rather than collapse two distinct law blocks into one manifest
         // entry — see `duplicate_law_identities`.
         let duplicate_laws = duplicate_law_identities(&ctx.items);
+        // `fn.law` identities that had a hand-proof sidecar spliced for this
+        // backend — the credit channel (a spliced law that reaches Universal
+        // tier is credited `hand`, else `open`; fail-closed). Derived from the
+        // loaded sidecar map keys, so empty when no sidecar exists.
+        let hand_laws: std::collections::HashSet<String> = ctx
+            .hand_proofs
+            .keys()
+            .map(|(f, l)| format!("{f}.{l}"))
+            .collect();
         run_proof_check(
             output_dir,
             backend,
@@ -5239,6 +5305,7 @@ pub(super) fn cmd_proof(
             gate,
             write_baseline,
             &duplicate_laws,
+            &hand_laws,
         );
     }
 }
@@ -5447,6 +5514,12 @@ fn run_proof_check(
     // (exit 2) on any duplicate before it can collapse two distinct law blocks
     // into one manifest entry.
     duplicate_laws: &[String],
+    // `fn.law` identities that had a hand-proof sidecar spliced for this
+    // backend. After the manifest is built, each such law is tagged `credit:
+    // hand` if it reached Universal tier (the spliced proof kernel-verified) or
+    // `credit: open` if not (a wrong/stale sidecar failed the build — fail-
+    // closed, never `hand`). Empty => no `credit` key written => byte-identical.
+    hand_laws: &std::collections::HashSet<String>,
 ) {
     use std::process::Command;
 
@@ -5736,6 +5809,30 @@ fn run_proof_check(
                 "core"
             };
             l.credit = Some(credit.to_string());
+        }
+    }
+    // Hand-proof SIDECAR per-law credit (BOTH backends): a law whose `fn.law`
+    // identity had a sidecar spliced for this backend is credited `hand` IFF it
+    // reached Universal tier (the spliced proof kernel/Z3-verified, axiom-clean
+    // on Lean), else `open` — a wrong/stale sidecar that failed the build never
+    // earns `hand`. Set ONLY for laws WITH a sidecar (orthogonal to `tier`, like
+    // `--allow-mathlib`'s credit), so a law with no sidecar keeps `credit: None`
+    // and the serialized manifest stays byte-identical. Runs last, so a hand
+    // sidecar overrides any Mathlib classification for the same law.
+    if !hand_laws.is_empty()
+        && let Some(m) = manifest.as_mut()
+    {
+        for l in m.laws.iter_mut() {
+            if hand_laws.contains(l.law.as_str()) {
+                l.credit = Some(
+                    if matches!(l.tier, LawTier::Universal) {
+                        "hand"
+                    } else {
+                        "open"
+                    }
+                    .to_string(),
+                );
+            }
         }
     }
     // Write the manifest AFTER residuals are merged so the sidecar carries them.
@@ -7119,79 +7216,81 @@ fn manifest_keep_stronger(
 /// and `Lean.ofReduceBool` (`native_decide`) are rejected explicitly on top of
 /// the whitelist. Anything else — error output, missing line, unknown constant
 /// — earns no credit. Pure parser, unit-tested directly.
+/// Read the complete `[...]` axiom list following `depends on axioms:` in
+/// `tail` (the substring starting just after the colon), JOINING wrapped
+/// continuation lines. `#print axioms` wraps long lists across physical lines;
+/// a per-line parse would miss e.g. a `sorryAx` pushed onto a continuation
+/// line — a soundness hole. Reads from the first `[` to its matching `]`
+/// (across newlines) and returns the trimmed, non-empty axiom names.
+fn parse_axiom_bracket(tail: &str) -> Vec<String> {
+    let Some(open) = tail.find('[') else {
+        return Vec::new();
+    };
+    let after = &tail[open + 1..];
+    let close = after.find(']').unwrap_or(after.len());
+    after[..close]
+        .split(',')
+        .map(|a| a.trim().to_string())
+        .filter(|a| !a.is_empty())
+        .collect()
+}
+
 fn theorem_credit_from_axioms(output: &str, theorem: &str) -> bool {
-    let needle = format!("'{theorem}'");
-    for line in output.lines() {
-        if !line.contains(&needle) {
-            continue;
-        }
-        if line.contains("does not depend on any axioms") {
-            return true;
-        }
-        if line.contains("depends on axioms:") {
-            return lean_axiom_lines_whitelisted(line)
-                && !line.contains("Lean.ofReduceBool")
-                && !line.contains("sorryAx");
-        }
+    const ALLOWED: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"];
+    match axioms_for_theorem(output, theorem) {
+        Some(axioms) => axioms.iter().all(|a| ALLOWED.contains(&a.as_str())),
+        None => false,
     }
-    false
 }
 
 /// Parse the SORTED, DEDUPED axiom set a theorem depends on out of a
 /// `#print axioms` probe output. `Some(vec![])` = the declaration is present
 /// and `does not depend on any axioms`; `Some([a, b, …])` = it depends on the
 /// listed axioms; `None` = no result line for the theorem (missing / error).
-/// The manifest records this set per law so the gate can flag axiom-set GROWTH
-/// (a proof that newly leans on `Lean.ofReduceBool` / `sorryAx` / any axiom
-/// outside the recorded baseline set).
+/// The full `[...]` is read across WRAPPED continuation lines, so a long axiom
+/// list cannot hide an axiom (e.g. `sorryAx` / `Lean.ofReduceBool`) on a second
+/// physical line. The manifest records this set per law so the gate can flag
+/// axiom-set GROWTH outside the recorded baseline set.
 fn axioms_for_theorem(output: &str, theorem: &str) -> Option<Vec<String>> {
     let needle = format!("'{theorem}'");
-    for line in output.lines() {
-        if !line.contains(&needle) {
-            continue;
-        }
-        if line.contains("does not depend on any axioms") {
-            return Some(Vec::new());
-        }
-        if let Some(idx) = line.find("depends on axioms:") {
-            let list = line[idx + "depends on axioms:".len()..]
-                .trim()
-                .trim_start_matches('[')
-                .trim_end_matches(']');
-            let mut axioms: Vec<String> = list
-                .split(',')
-                .map(str::trim)
-                .filter(|a| !a.is_empty())
-                .map(str::to_string)
-                .collect();
+    let pos = output.find(&needle)?;
+    let rest = &output[pos + needle.len()..];
+    let no_dep = rest.find("does not depend on any axioms");
+    let dep = rest.find("depends on axioms:");
+    match (no_dep, dep) {
+        // The phrase that comes FIRST after the theorem name is this theorem's.
+        (Some(n), d) if d.map_or(true, |d| n < d) => Some(Vec::new()),
+        (_, Some(d)) => {
+            let tail = &rest[d + "depends on axioms:".len()..];
+            let mut axioms = parse_axiom_bracket(tail);
             axioms.sort();
             axioms.dedup();
-            return Some(axioms);
+            Some(axioms)
         }
+        _ => None,
     }
-    None
 }
 
-/// `true` iff every `#print axioms` result line in `output` reports only the
-/// core logical axioms (`propext`, `Classical.choice`, `Quot.sound`). Lines
-/// not matching the `depends on axioms: […]` shape are ignored — the caller's
-/// blacklist probes remain the floor for those.
+/// `true` iff EVERY `depends on axioms: […]` record in `output` reports only the
+/// core logical axioms (`propext`, `Classical.choice`, `Quot.sound`). Each
+/// bracket is read in full across wrapped continuation lines, so an axiom on a
+/// second physical line cannot slip past the whitelist. Text not matching the
+/// `depends on axioms: […]` shape is ignored — the caller's blacklist probes
+/// remain the floor for those.
 fn lean_axiom_lines_whitelisted(output: &str) -> bool {
     const ALLOWED: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"];
-    for line in output.lines() {
-        let Some(idx) = line.find("depends on axioms:") else {
-            continue;
-        };
-        let list = line[idx + "depends on axioms:".len()..]
-            .trim()
-            .trim_start_matches('[')
-            .trim_end_matches(']');
-        for axiom in list.split(',') {
-            let axiom = axiom.trim();
-            if !axiom.is_empty() && !ALLOWED.contains(&axiom) {
-                return false;
-            }
+    const MARK: &str = "depends on axioms:";
+    let mut search = output;
+    while let Some(idx) = search.find(MARK) {
+        let tail = &search[idx + MARK.len()..];
+        if parse_axiom_bracket(tail)
+            .iter()
+            .any(|a| !ALLOWED.contains(&a.as_str()))
+        {
+            return false;
         }
+        let advance = tail.find(']').map_or(tail.len(), |c| c + 1);
+        search = &tail[advance..];
     }
     true
 }
@@ -8097,6 +8196,28 @@ mod tests {
         assert!(!super::lean_axiom_lines_whitelisted(native));
     }
 
+    #[test]
+    fn lean_axiom_whitelist_reads_wrapped_lists() {
+        // `#print axioms` wraps long lists across physical lines. A `sorryAx`
+        // (or any foreign axiom) pushed onto a CONTINUATION line must still be
+        // caught — a per-line parse would only see the first physical line and
+        // award universal credit to a sorry-bearing proof.
+        let wrapped_sorry =
+            "'f_law_x' depends on axioms: [propext, Classical.choice,\n  Quot.sound, sorryAx]";
+        let wrapped_clean =
+            "'f_law_x' depends on axioms: [propext,\n  Classical.choice, Quot.sound]";
+        // The whitelist reader reads the full bracket across the wrap:
+        assert!(!super::lean_axiom_lines_whitelisted(wrapped_sorry));
+        assert!(super::lean_axiom_lines_whitelisted(wrapped_clean));
+        // The credit reader (awards hand/core/universal) likewise rejects it:
+        assert!(!super::theorem_credit_from_axioms(wrapped_sorry, "f_law_x"));
+        assert!(super::theorem_credit_from_axioms(wrapped_clean, "f_law_x"));
+        // And the per-law axiom set captures the wrapped tail in full:
+        let set = super::axioms_for_theorem(wrapped_sorry, "f_law_x").unwrap();
+        assert!(set.contains(&"sorryAx".to_string()));
+        assert_eq!(set.len(), 4);
+    }
+
     // ---- THE RATCHET: pure comparator + parser, fixture-driven (no lake) ----
 
     fn law(name: &str, tier: super::LawTier, axioms: &[&str]) -> super::ManifestLaw {
@@ -8698,6 +8819,7 @@ mod tests {
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
             allow_mathlib: false,
+            hand_proofs: Default::default(),
         }
     }
 
