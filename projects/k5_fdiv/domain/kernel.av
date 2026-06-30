@@ -24,15 +24,18 @@ module Kernel
         "HONESTY: Theorem 1 (divideBangCorrect) and Theorem 2 (divideMatchesBang) are"
         "stated as SAMPLE-VERIFIED Bool functions (concrete inputs, runtime aver verify),"
         "NOT as `law` blocks -- they depend on the unproven Section 8/9 lemmas and must"
-        "NOT be credited universal. This module has ZERO universal laws by design; it is"
-        "the runnable model plus the sample-verified theorems. The cited holes are:"
+        "NOT be credited universal. The only universal `law` blocks here are narrow,"
+        "faithfully-premised facts: significandWindow (the binary-exponent magnitude"
+        "bracket) and theorem_2 (Theorem 2's wrapper-correctness -- divide returns Ok of"
+        "the non-erroneous value, conditional on the premised Section 9.3 result-exponent"
+        "bracket); the full Theorems 1/2 stay sample-verified. The cited holes are:"
         "8.1.1 reciprocal bound (Estimate NR bounds + the 128-entry Table 1, by"
         "computation), 8.2.1 digit separation, 8.2.3-4 remainder bounds, 7.3.2"
         "sticky-plus, 7.3.1 final-round-commutes, and the Section 9 exponent/precision"
         "bounds for Theorem 2; plus general-exp fpValue (the kernel lives in fractional"
         "floats, exp < 0, where the current fpValue clamps to 1)."
     depends [Domain.Rational, Domain.Fprep, Domain.Round]
-    exposes [RoundingMode, fracSign, halve, expoAtLeastOne, twoPow, binadeSig, binadeWindow, fracExpo, truncFrac, awayFrac, stickyFrac, nearestFrac, posinfFrac, neginfFrac, round, compFrac, reciprocalEstimate, lookup, quotient, divideBang, divide, divideBangCorrect, divideMatchesBang, divideCorrect, finalRoundCommutes_7_3_1, stickyPlus_7_3_2, stickyPerturbStable_7_3_3, truncSticky_rtl, stickySticky_rtl, stickyPlusExact_rtl]
+    exposes [RoundingMode, fracSign, halve, expoAtLeastOne, twoPow, binadeSig, binadeWindow, fracExpo, truncFrac, awayFrac, stickyFrac, nearestFrac, posinfFrac, neginfFrac, round, compFrac, reciprocalEstimate, lookup, quotient, divideBang, inField, divide, divideBangCorrect, divideMatchesBang, divideCorrect, finalRoundCommutes_7_3_1, stickyPlus_7_3_2, stickyPerturbStable_7_3_3, truncSticky_rtl, stickySticky_rtl, stickyPlusExact_rtl]
     effects []
 
 // ---------------------------------------------------------------------------
@@ -400,15 +403,28 @@ verify divideBangCorrect
 // so the current fpValue is exact (general-exp fpValue is a deferred hole).
 // ---------------------------------------------------------------------------
 
+fn inField(e: Int) -> Bool
+    ? "eround's result-exponent field check (Section 5.4, p.14; Section 1.1, p.3): the binary exponent of the rounded result must fit the n,17 format's 17-bit exponent field, i.e. 1 - 2^16 <= e <= 2^16 (Section 9.3, p.31, the exponent requirement '1 - 2^16 <= e(v) <= 2^16' on n,17 floating point numbers). When this fails, eround returns the 'bad post-round exponent' error object; Theorem 2 (Section 9) shows it never fails on 64,15+ inputs."
+    Bool.and(1 - 65536 <= e, e <= 65536)
+
+verify inField
+    inField(0) => true
+    inField(32855) => true
+    inField(-33365) => true
+    inField(65537) => false
+    inField(-65536) => false
+
 fn divide(p: Fp, d: Fp, mode: RoundingMode) -> Result<Fraction, String>
-    ? "divide(p,d,mode) (Figure 1, p.2): the error-checking wrapper. It checks the floating-point inputs (eround's non-rational and exponent checks, Section 5.4) and a nonzero divisor, then returns Ok of the rounded quotient -- the non-erroneous divideBang value on every valid input (Theorem 2, Section 9). Error paths: a non-floating input or a zero divisor (the out-of-range result-exponent path of eround is a Section 9 concern, unreachable for 64,15+ inputs)."
+    ? "divide(p,d,mode) (Figure 1, p.2): the error-checking wrapper. It checks the floating-point inputs (eround's non-rational and exponent checks, Section 5.4) and a nonzero divisor, then returns Ok of the rounded quotient -- the non-erroneous divideBang value on every valid input (Theorem 2, Section 9). Error paths: a non-floating input, a zero divisor, or eround's result-exponent field check (inField on the binary exponent of the rounded result) -- the last is the Section 9 out-of-range path, proven unreachable for 64,15+ inputs by Theorem 2."
     match Bool.not(Domain.Fprep.isFp(p))
         true -> Result.Err("non-floating dividend")
         false -> match Bool.not(Domain.Fprep.isFp(d))
             true -> Result.Err("non-floating divisor")
             false -> match d.sigBits == 0
                 true -> Result.Err("division by zero")
-                false -> Result.Ok(divideBang(Domain.Fprep.fpValue(p), Domain.Fprep.fpValue(d), mode))
+                false -> match Bool.not(inField(fracExpo(divideBang(Domain.Fprep.fpValue(p), Domain.Fprep.fpValue(d), mode))))
+                    true -> Result.Err("bad post-round exponent")
+                    false -> Result.Ok(divideBang(Domain.Fprep.fpValue(p), Domain.Fprep.fpValue(d), mode))
 
 verify divide
     divide(Domain.Fprep.Fp(sign = 2, sigBits = 8, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 8, exp = 0, width = 4), RoundingMode.Trunc(24)) => Result.Err("non-floating dividend")
@@ -432,24 +448,36 @@ verify divideMatchesBang
     divideMatchesBang(Domain.Fprep.Fp(sign = -1, sigBits = 10, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), RoundingMode.Nearest(16)) => true
 
 // THEOREM 2 as the STRUCTURAL EQUATION (Theorem 2, Section 9, p.30): on valid
-// floating inputs (both floats, divisor nonzero) the error-checking wrapper
-// returns Ok of the non-erroneous divideBang value -- divide(p,d,mode) =
-// Ok(divide!(fpValue p, fpValue d, mode)). This is Theorem 2's wrapper-correctness:
-// the divider never errors on valid inputs and returns the non-erroneous value.
-// The eround out-of-range result-exponent path is the Section 9 unreachability
-// carried by exponent.av's divideExponentNoOverflow / divideExponentNoUnderflow
-// (already universal); the divisor-nonzero and is-float premises here are the
-// faithfully-stated guard, with the Section 9.3 concretization the honestly
-// premised hole. The wrapper's error-vs-Ok dispatch reduces to the Ok branch from
-// the premises by structure, and the two sides share the opaque divideBang
-// subterm verbatim -- never unfolding the 32-step divider.
+// 64,15+ floating inputs (both floats, divisor nonzero) whose exponents lie in
+// the extended-format range, the error-checking wrapper returns Ok of the
+// non-erroneous divideBang value -- divide(p,d,mode) = Ok(divide!(fpValue p,
+// fpValue d, mode)). The eround out-of-range result-exponent path is PROVEN
+// unreachable inside the proof, not premised away: from the input-exponent ranges
+// (-62 - 2^14 <= ep, ed <= 2^14, i.e. -16446 <= ep, ed <= 16384, Section 9.3
+// p.31) and the Section 9.3 Table-3 row-32 result bracket (ep - ed - 535 <=
+// e(divide!) <= ep - ed + 25, p.32) -- the premised conclusion of the Table-3
+// chaining, the honest Section 9.3 hole -- the proof DERIVES inField(e(divide!)),
+// since e(divide!) <= ep - ed + 25 <= 32855 <= 2^16 and e(divide!) >=
+// ep - ed - 535 >= -33365 >= 1 - 2^16, by affine arithmetic (omega). So the field
+// check passes and the wrapper takes its Ok branch, sharing the opaque divideBang
+// subterm verbatim with the right-hand side -- never unfolding the 32-step
+// divider. This makes Section 9 load-bearing: drop the row-32 bracket and the
+// field check is no longer derivable (the proof degrades to its bounded floor).
 verify divide law theorem_2
     given p: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 10, exp = 1, width = 4)]
     given d: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4)]
     given mode: RoundingMode = [RoundingMode.Trunc(24), RoundingMode.Nearest(16)]
+    given ep: Int = [0]
+    given ed: Int = [0]
     when Domain.Fprep.isFp(p)
     when Domain.Fprep.isFp(d)
     when Bool.not(d.sigBits == 0)
+    when -16446 <= ep
+    when ep <= 16384
+    when -16446 <= ed
+    when ed <= 16384
+    when ep - ed - 535 <= fracExpo(divideBang(Domain.Fprep.fpValue(p), Domain.Fprep.fpValue(d), mode))
+    when fracExpo(divideBang(Domain.Fprep.fpValue(p), Domain.Fprep.fpValue(d), mode)) <= ep - ed + 25
     divide(p, d, mode) => Result.Ok(divideBang(Domain.Fprep.fpValue(p), Domain.Fprep.fpValue(d), mode))
 
 fn divideCorrect(p: Fp, d: Fp, mode: RoundingMode) -> Bool

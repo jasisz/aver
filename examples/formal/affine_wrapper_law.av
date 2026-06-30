@@ -1,0 +1,58 @@
+module AffineWrapper
+    intent =
+        "Genericity guard for the validated-wrapper arm's AFFINE-guard closer: a"
+        "synthetic, non-K5 error-checking wrapper whose dispatch branches not on a"
+        "premise-pinned Bool but on an ARITHMETIC field-bounds check. Its correctness"
+        "law closes UNIVERSALLY by the same structural arm that proves the K5 divider's"
+        "Theorem 2 -- unfold the wrapper and the DERIVED guard predicate, let `omega`"
+        "discharge the field check from the premised value bracket, and reflexivity on"
+        "the shared opaque core. If this law ever stops proving universal, the arm's"
+        "omega closer (or its domain-blindness) has regressed."
+    effects []
+
+fn scaleCore(a: Int) -> Int
+    ? "The opaque core: triple the input. The wrapper-correctness proof never unfolds this -- it is the shared core subterm, the analogue of the 32-step divideBang."
+    3 * a
+
+verify scaleCore
+    scaleCore(4) => 12
+    scaleCore(-7) => 0 - 21
+
+fn inWindow(e: Int) -> Bool
+    ? "A generic field-bounds predicate (the inField analogue): the value must fit a fixed window, here -100 <= e <= 100. The DERIVED guard the proof unfolds and discharges by affine arithmetic, never premised verbatim."
+    Bool.and(0 - 100 <= e, e <= 100)
+
+verify inWindow
+    inWindow(0) => true
+    inWindow(100) => true
+    inWindow(200) => false
+    inWindow(-101) => false
+
+fn boundedScale(a: Int, lo: Int, hi: Int) -> Result<Int, String>
+    ? "Affine-guard wrapper: reject when the core result leaves the window, else Ok of the core value. The Theorem-2 shape with an ARITHMETIC dispatch guard (not just a Bool premise) -- exercises the validated-wrapper arm's omega closer on plain Int."
+    match Bool.not(inWindow(scaleCore(a)))
+        true -> Result.Err("out of window")
+        false -> Result.Ok(scaleCore(a))
+
+verify boundedScale
+    boundedScale(4, 0, 50) => Result.Ok(12)
+    boundedScale(40, 0, 200) => Result.Err("out of window")
+
+// The wrapper returns Ok of the core value whenever the core value is bracketed
+// inside the window -- the synthetic analogue of K5 Theorem 2's exponent
+// unreachability. Closes universally by the validated-wrapper arm: unfold
+// `boundedScale` and the derived guard `inWindow`, derive the field check by
+// `omega` from the value bracket (lo <= scaleCore(a) <= hi with -100 <= lo and
+// hi <= 100, so -100 <= scaleCore(a) <= 100), and `rfl` on the shared
+// `scaleCore a` -- never unfolding `scaleCore`. The bracket is LOAD-BEARING:
+// drop the `lo <= scaleCore(a)` / `scaleCore(a) <= hi` premises and the field
+// check is no longer derivable, degrading the proof to its bounded floor.
+verify boundedScale law returnsCore
+    given a: Int = [4, 10]
+    given lo: Int = [0, -30]
+    given hi: Int = [50, 90]
+    when lo <= scaleCore(a)
+    when scaleCore(a) <= hi
+    when 0 - 100 <= lo
+    when hi <= 100
+    boundedScale(a, lo, hi) => Result.Ok(scaleCore(a))

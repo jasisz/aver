@@ -100,6 +100,26 @@ fn proof_export_builds_validated_wrapper_when_lake_is_available() {
 }
 
 #[test]
+fn proof_export_builds_affine_wrapper_when_lake_is_available() {
+    // Genericity guard for the validated-wrapper arm's AFFINE closer: a
+    // synthetic, non-K5 wrapper (`boundedScale(a, lo, hi) =>
+    // Result.Ok(scaleCore(a))`) whose dispatch branches on an ARITHMETIC
+    // field-bounds check `inWindow(scaleCore(a))`, not a premise-pinned Bool.
+    // It closes UNIVERSALLY by the same structural arm that proves K5 Theorem 2
+    // — unfold the wrapper and the DERIVED guard `inWindow`, derive the field
+    // check by `omega` from the premised value bracket, and `rfl` on the shared
+    // `scaleCore a` (never unfolding it). Sorry budget 0 — revert the
+    // `emit_validated_wrapper_law` arm's `omega` closer and this regresses to a
+    // caught sorry. Proves the affine extension is domain-blind: `omega` only
+    // ever closes affine guards, on K5 and non-K5 wrappers alike.
+    assert_proof_builds_with_sorry_budget(
+        "examples/formal/affine_wrapper_law.av",
+        "aver-proof-affine-wrapper",
+        0,
+    );
+}
+
+#[test]
 fn proof_export_builds_map_set_nonempty_when_lake_is_available() {
     // `Map.len(Map.set(m, k, v)) >= 1` — set yields a non-empty map. Needs
     // induction (the hand-proved prelude lemma `AverMap.len_set_ge_one`); the

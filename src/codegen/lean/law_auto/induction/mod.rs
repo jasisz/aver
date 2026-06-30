@@ -1804,6 +1804,61 @@ pub(in crate::codegen::lean) fn recognize_validated_wrapper(
     )
 }
 
+/// Collect the Bool guard predicates an error-checking wrapper dispatches on:
+/// the callee directly under a `Bool.not(…)` match scrutinee (e.g. `inField` in
+/// `match Bool.not(inField(e)) { … }`). Recurses through the nested-match chain
+/// of validity checks. Only the IMMEDIATE callee under `Bool.not` is collected —
+/// the guard's own arguments (the opaque core call and its result exponent) are
+/// not — so unfolding the collected names never touches the deep callee.
+fn collect_wrapper_guard_predicates(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    out: &mut BTreeSet<String>,
+) {
+    if let crate::ast::Expr::Match { subject, arms } = &expr.node {
+        if let crate::ast::Expr::FnCall(callee, args) = &subject.node
+            && super::shared::expr_dotted_name(callee).as_deref() == Some("Bool.not")
+            && let Some(inner) = args.first()
+            && let crate::ast::Expr::FnCall(gcallee, _) = &inner.node
+            && let Some(g) = super::shared::expr_dotted_name(gcallee)
+        {
+            out.insert(g);
+        }
+        for arm in arms {
+            collect_wrapper_guard_predicates(&arm.body, out);
+        }
+    }
+}
+
+/// Collect the dotted names of every fn called anywhere in `expr` (KEEPING
+/// qualified `Module.fn` names, unlike `proof_recognize::collect_called_fns`,
+/// which drops them). Used to tell a premise-PINNED wrapper guard (`isFp p`,
+/// decided by a `when isFp(p)` premise, so its scrutinee is rewritten without
+/// unfolding) from a DERIVED guard (`inField(E)`, absent from the premises, so
+/// it must be unfolded for `omega` to discharge it).
+fn collect_called_dotted(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    out: &mut BTreeSet<String>,
+) {
+    match &expr.node {
+        crate::ast::Expr::FnCall(f, args) => {
+            if let Some(name) = super::shared::expr_dotted_name(f) {
+                out.insert(name);
+            }
+            collect_called_dotted(f, out);
+            for a in args {
+                collect_called_dotted(a, out);
+            }
+        }
+        crate::ast::Expr::BinOp(_, l, r) => {
+            collect_called_dotted(l, out);
+            collect_called_dotted(r, out);
+        }
+        crate::ast::Expr::Attr(obj, _) => collect_called_dotted(obj, out),
+        crate::ast::Expr::Neg(inner) => collect_called_dotted(inner, out),
+        _ => {}
+    }
+}
+
 pub(in crate::codegen::lean) fn emit_validated_wrapper_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -1813,15 +1868,42 @@ pub(in crate::codegen::lean) fn emit_validated_wrapper_law(
     if !recognize_validated_wrapper(vb, law, ctx) {
         return None;
     }
+    let subject_fd =
+        ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())?;
     let subject = aver_name_to_lean(&vb.fn_name);
     let intro = format!("  intro {} h_when", intro_names.join(" "));
-    // Subject-ONLY unfold; the premises (decomposed by `Bool.and_eq_true` /
-    // `Bool.not_eq_true'`) decide every branch condition, collapsing the wrapper
-    // to its `Result.Ok(core …)` branch, then `simp_all` closes by reflexivity
-    // on the shared opaque `core …` subterm. `core` is NEVER in the simp set,
-    // so the deep callee is never unfolded.
+    // The wrapper's error branches each dispatch on `Bool.not(g(…))` for some
+    // Bool guard predicate `g`. A guard a premise already pins (`isFp p`, decided
+    // by `when isFp(p)`) needs no unfolding — `simp_all` rewrites the scrutinee by
+    // the premise. A DERIVED guard (the field-bounds `inField(E)`, whose truth
+    // follows from a premised arithmetic bracket, not a premise verbatim) must be
+    // unfolded so the trailing `omega` can discharge it. Collect the guard
+    // predicates by STRUCTURE (callee directly under `Bool.not` in a scrutinee),
+    // drop the premise-pinned ones, and unfold only the rest. Domain-blind: the
+    // deep `core …` and the guard's own arguments are never collected, so the
+    // expensive callee stays folded.
+    let mut guards: BTreeSet<String> = BTreeSet::new();
+    if let Some(tail) = subject_fd.body.tail_expr() {
+        collect_wrapper_guard_predicates(tail, &mut guards);
+    }
+    let mut premise_fns: BTreeSet<String> = BTreeSet::new();
+    if let Some(when) = &law.when {
+        collect_called_dotted(when, &mut premise_fns);
+    }
+    guards.retain(|g| !premise_fns.contains(g));
+    let mut unfold = vec![format!("_root_.{subject}")];
+    unfold.extend(guards.iter().map(|g| format!("_root_.{}", aver_name_to_lean(g))));
+    let unfold_set = unfold.join(", ");
+    // Subject (+ derived guard predicate) unfold; the premises (decomposed by
+    // `Bool.and_eq_true` / `Bool.not_eq_true'`, `<=`-comparisons bridged to Prop
+    // by `decide_eq_true_eq`) decide every branch condition, collapsing the
+    // wrapper to its `Result.Ok(core …)` branch. The trailing
+    // `<;> (first | rfl | omega)` closes each residual goal: `rfl` on the shared
+    // opaque `core …`, or `omega` on a derived guard's affine obligation. `omega`
+    // is ADDITIVE — a non-affine guard simply fails it and the whole arm falls
+    // through to the `sorry` floor. `core` is NEVER in the simp set.
     let arm = format!(
-        "  | (simp only [_root_.{subject}]; simp_all [Bool.and_eq_true, Bool.not_eq_true'])"
+        "  | (simp only [{unfold_set}]; simp_all [Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] <;> (first | rfl | omega))"
     );
     let floor = if super::super::tactic_ir::speculative::probing() {
         let id = format!("{}.{}", vb.fn_name, law.name);
