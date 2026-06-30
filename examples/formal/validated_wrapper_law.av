@@ -1,0 +1,37 @@
+module ValidatedWrapper
+    intent =
+        "Genericity guard for the validated-wrapper proof arm: a synthetic, non-K5"
+        "error-checking wrapper whose correctness law closes UNIVERSALLY by unfolding"
+        "only the wrapper and reflexivity on the shared core call -- the same structural"
+        "arm that proves the K5 divider's Theorem 2, here on plain Int division. If this"
+        "law ever stops proving universal, the arm's domain-blindness has regressed."
+    effects []
+
+fn coreDiv(a: Int, b: Int) -> Int
+    ? "The expensive core: integer quotient a/b (Euclidean Int.div, default 0). The wrapper-correctness proof never unfolds this -- it is the opaque shared subterm."
+    Result.withDefault(Int.div(a, b), 0)
+
+verify coreDiv
+    coreDiv(7, 2) => 3
+    coreDiv(9, 3) => 3
+
+fn checkedDiv(a: Int, b: Int) -> Result<Int, String>
+    ? "Error-checking division wrapper: reject a zero divisor, otherwise return Ok of the core quotient. The Theorem-2 shape on plain Int."
+    match b == 0
+        true -> Result.Err("division by zero")
+        false -> Result.Ok(coreDiv(a, b))
+
+verify checkedDiv
+    checkedDiv(7, 2) => Result.Ok(3)
+    checkedDiv(5, 0) => Result.Err("division by zero")
+
+// The wrapper returns Ok of the core value on every valid (nonzero-divisor)
+// input -- the synthetic analogue of K5 Theorem 2. Closes universally by the
+// generic validated-wrapper arm: unfold only `checkedDiv`, let the premise pick
+// the Ok branch, and close by reflexivity on the shared `coreDiv a b` -- never
+// unfolding `coreDiv`.
+verify checkedDiv law returnsCore
+    given a: Int = [7, 22, -9]
+    given b: Int = [2, 3, 7]
+    when Bool.not(b == 0)
+    checkedDiv(a, b) => Result.Ok(coreDiv(a, b))

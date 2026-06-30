@@ -45,6 +45,13 @@ pub(in crate::codegen::lean) use induction::recognize_conditional_comparison_bri
 pub(in crate::codegen::lean) use induction::recognize_conditional_inductive_generic;
 pub(in crate::codegen::lean) use induction::recognize_pool_composition_generic;
 
+/// Validated-wrapper shape (the Theorem-2 wrapper-correctness law: a thin
+/// error-checking wrapper returning `Result.Ok(core(…))` on valid input). Feeds
+/// the `omit_domain` statement driver, kept in lockstep with
+/// `emit_validated_wrapper_law` so the unbounded `∀` statement and the
+/// subject-only-unfold proof body stay aligned.
+pub(in crate::codegen::lean) use induction::recognize_validated_wrapper;
+
 /// Multi-citation composition — the generic "premises from one earlier
 /// universal's conclusion, goal from another earlier universal's conclusion"
 /// orchestration. Feeds the `omit_domain` statement driver, kept in lockstep
@@ -615,6 +622,21 @@ fn emit_verify_law_forall_auto_proof_inner(
     if law.when.is_some()
         && let Some(proof) =
             induction::emit_conditional_inductive_generic_law(vb, law, ctx, &intro_names)
+    {
+        return Some(proof);
+    }
+
+    // GENERIC validated-wrapper closer (the Theorem-2 shape): a thin error-
+    // checking wrapper `f(args) => Result.Ok(core(…))` whose `when` premises
+    // select the non-error branch, closed by unfolding ONLY the subject `f` and
+    // reflexivity on the shared opaque `core(…)` — the deep callee is never
+    // unfolded. Domain-blind (keyed on the wrapper body + `Result.Ok` RHS), so
+    // it fires for the K5 `divide` Theorem 2 and any synthetic `checkedDiv`-
+    // style wrapper. Tried BEFORE the rounding-specific rational rungs so the
+    // wrapper shape closes structurally instead of unfolding its whole call
+    // cone into an intractable `grind`.
+    if law.when.is_some()
+        && let Some(proof) = induction::emit_validated_wrapper_law(vb, law, ctx, &intro_names)
     {
         return Some(proof);
     }

@@ -1740,6 +1740,103 @@ pub(in crate::codegen::lean) fn emit_conditional_comparison_bridge_law(
     })
 }
 
+/// GENERIC validated-wrapper closer (the Theorem-2 shape). A conditional law
+/// whose subject `f` is a thin error-checking WRAPPER — a `match`/`if` dispatch
+/// over error-vs-Ok branches — and whose claim is `f(args) => Result.Ok(core
+/// (…))`. On valid input the `when` premises pick the non-error branch and the
+/// two sides share the OPAQUE `core(…)` subterm verbatim, so the goal closes by
+/// reflexivity after unfolding ONLY the subject `f` — the deep callee `core` is
+/// never in the simp set, so it is never unfolded (the wrapper-correctness goal
+/// does not need it). Keyed purely on STRUCTURE (subject-wrapper body, a
+/// `Result.Ok` RHS, a branch-selecting premise), domain-blind: it fires for the
+/// K5 `divide` Theorem 2 and for any synthetic `checkedDiv`-style wrapper alike,
+/// unfolding whatever the law's subject is. Strictly ADDITIVE: declines
+/// (`None`) unless the shape matches, and floors on `sorry`, so a wrapper whose
+/// premises do NOT actually force the Ok branch simply falls through to the
+/// heavier rungs.
+/// Predicate half of [`emit_validated_wrapper_law`]: whether `law` has the
+/// validated-wrapper shape (premise + subject-call LHS + `Result.Ok` RHS +
+/// `match`-dispatch subject body). `emit_verify_law_block` consults this to lift
+/// the law's statement off its sampled domain to the true `∀ givens, <when> =
+/// true -> claim` universal (`omit_domain`), matching the unbounded statement
+/// the proof body discharges.
+pub(in crate::codegen::lean) fn recognize_validated_wrapper(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> bool {
+    // A branch-selecting premise is required — the wrapper only reduces to its
+    // Ok branch under the `when` facts.
+    if law.when.is_none() {
+        return false;
+    }
+    // LHS is a call to the law's own subject fn.
+    let crate::ast::Expr::FnCall(callee, _) = &law.lhs.node else {
+        return false;
+    };
+    if super::shared::expr_dotted_name(callee).as_deref() != Some(vb.fn_name.as_str()) {
+        return false;
+    }
+    // RHS wraps the core value in `Result.Ok(…)` — the wrapper's non-error
+    // branch. (A `Result.Err` or bare-value RHS is a different shape.) In source
+    // position `Result.Ok(x)` parses as a `FnCall` on the dotted ctor path; the
+    // `Constructor` form is accepted too for synthesised laws.
+    let rhs_is_result_ok = match &law.rhs.node {
+        crate::ast::Expr::FnCall(callee, args) => {
+            !args.is_empty()
+                && super::shared::expr_dotted_name(callee).as_deref() == Some("Result.Ok")
+        }
+        crate::ast::Expr::Constructor(ctor, Some(_)) => ctor == "Result.Ok",
+        _ => false,
+    };
+    if !rhs_is_result_ok {
+        return false;
+    }
+    // The subject's body must be a dispatcher. Aver has no `if`, so an
+    // error-checking wrapper dispatches through a `match` tail expression.
+    let Some(subject_fd) = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())
+    else {
+        return false;
+    };
+    matches!(
+        subject_fd.body.tail_expr().map(|e| &e.node),
+        Some(crate::ast::Expr::Match { .. })
+    )
+}
+
+pub(in crate::codegen::lean) fn emit_validated_wrapper_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<AutoProof> {
+    if !recognize_validated_wrapper(vb, law, ctx) {
+        return None;
+    }
+    let subject = aver_name_to_lean(&vb.fn_name);
+    let intro = format!("  intro {} h_when", intro_names.join(" "));
+    // Subject-ONLY unfold; the premises (decomposed by `Bool.and_eq_true` /
+    // `Bool.not_eq_true'`) decide every branch condition, collapsing the wrapper
+    // to its `Result.Ok(core …)` branch, then `simp_all` closes by reflexivity
+    // on the shared opaque `core …` subterm. `core` is NEVER in the simp set,
+    // so the deep callee is never unfolded.
+    let arm = format!(
+        "  | (simp only [_root_.{subject}]; simp_all [Bool.and_eq_true, Bool.not_eq_true'])"
+    );
+    let floor = if super::super::tactic_ir::speculative::probing() {
+        let id = format!("{}.{}", vb.fn_name, law.name);
+        super::super::tactic_ir::speculative::record_probed(&id);
+        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
+    } else {
+        "  | sorry".to_string()
+    };
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        body: Tactic::raw(vec![intro, "  first".to_string(), arm, floor]),
+        replaces_theorem: false,
+    })
+}
+
 /// Whether [`emit_conditional_inductive_generic_law`] will attempt this law as a
 /// universal — the `omit_domain` driver reads this. A conditional law that
 /// recurses on a list given, with an equational conclusion, that the bespoke

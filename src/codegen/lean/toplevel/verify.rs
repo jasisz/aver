@@ -684,7 +684,13 @@ fn emit_verify_law_block(
             // (`tri_sum3`) citing the two rounding bound universals. The emit
             // replaces the theorem with the universal form, so dropping the
             // sampled domain keeps statement and proof aligned.
-            || super::law_auto::recognize_triangle_sum(vb, &law_for_auto_proof, ctx));
+            || super::law_auto::recognize_triangle_sum(vb, &law_for_auto_proof, ctx)
+            // Validated-wrapper correctness (the Theorem-2 shape): an error-
+            // checking wrapper that returns `Result.Ok(core(…))` on valid input.
+            // The proof body unfolds only the wrapper and closes by reflexivity
+            // on the shared opaque core, so the statement drops its sampled
+            // domain to the true `∀ givens, <when> = true -> claim` universal.
+            || super::law_auto::recognize_validated_wrapper(vb, &law_for_auto_proof, ctx));
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(
             vb,
@@ -1187,6 +1193,7 @@ pub(crate) fn law_as_lemma_statement(
             // interval-magnitude bound.
             || super::law_auto::recognize_finite_int_domain(vb, law, ctx)
             || super::law_auto::recognize_interval_monotonicity(vb, law, ctx)
+            || super::law_auto::recognize_validated_wrapper(vb, law, ctx)
             || pinned_when_universal)
     {
         return None;

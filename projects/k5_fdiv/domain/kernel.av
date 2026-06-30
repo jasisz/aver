@@ -431,6 +431,27 @@ verify divideMatchesBang
     divideMatchesBang(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 8, exp = 0, width = 4), RoundingMode.Trunc(24)) => true
     divideMatchesBang(Domain.Fprep.Fp(sign = -1, sigBits = 10, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), RoundingMode.Nearest(16)) => true
 
+// THEOREM 2 as the STRUCTURAL EQUATION (Theorem 2, Section 9, p.30): on valid
+// floating inputs (both floats, divisor nonzero) the error-checking wrapper
+// returns Ok of the non-erroneous divideBang value -- divide(p,d,mode) =
+// Ok(divide!(fpValue p, fpValue d, mode)). This is Theorem 2's wrapper-correctness:
+// the divider never errors on valid inputs and returns the non-erroneous value.
+// The eround out-of-range result-exponent path is the Section 9 unreachability
+// carried by exponent.av's divideExponentNoOverflow / divideExponentNoUnderflow
+// (already universal); the divisor-nonzero and is-float premises here are the
+// faithfully-stated guard, with the Section 9.3 concretization the honestly
+// premised hole. The wrapper's error-vs-Ok dispatch reduces to the Ok branch from
+// the premises by structure, and the two sides share the opaque divideBang
+// subterm verbatim -- never unfolding the 32-step divider.
+verify divide law theorem_2
+    given p: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 10, exp = 1, width = 4)]
+    given d: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4)]
+    given mode: RoundingMode = [RoundingMode.Trunc(24), RoundingMode.Nearest(16)]
+    when Domain.Fprep.isFp(p)
+    when Domain.Fprep.isFp(d)
+    when Bool.not(d.sigBits == 0)
+    divide(p, d, mode) => Result.Ok(divideBang(Domain.Fprep.fpValue(p), Domain.Fprep.fpValue(d), mode))
+
 fn divideCorrect(p: Fp, d: Fp, mode: RoundingMode) -> Bool
     ? "The Main Theorem end-to-end (Theorem 1 + Theorem 2, Section 5.5): for valid floating inputs the error-checking divider returns Ok of the correctly-rounded quotient -- divide(p,d,mode) = Ok(round(p/d, mode)). SAMPLE-VERIFIED demo that the modelled K5 divider runs and computes correctly-rounded quotients on real numbers."
     match divide(p, d, mode)
