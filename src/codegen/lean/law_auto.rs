@@ -1507,6 +1507,33 @@ fn emit_verify_law_forall_auto_proof_inner(
             None
         })
         .or_else(|| {
+            // Mathlib BREAK-GLASS (`aver proof --allow-mathlib` only): a walling
+            // `when`-law that NO core strategy above claimed, closed in true-
+            // universal form by the generic domain-blind Mathlib tactic portfolio
+            // `aver_mathlib` (`Int.ediv_ediv_of_nonneg` / `pow_add` / `pow_succ'` /
+            // `positivity` / `nlinarith` / `norm_num` / `omega`) under a
+            // `first | (trace "AVER_MATHLIB:fn.law"; …) | sorry` floor. Placed
+            // RIGHT BEFORE the bounded guarded-domain fallback: every core strategy
+            // above has declined (so the law genuinely walls in core), and firing
+            // here — instead of falling to the sampled `native_decide` proof —
+            // keeps the universal statement (`recognize_mathlib_break_glass` set
+            // `omit_domain`) in lockstep with a universal proof. Gated on the
+            // opt-in flag + entry-module scope, so the DEFAULT path is byte-
+            // identical (a dep module never imports Mathlib, keeping its core
+            // `simp`/`grind` simp set fast) and a core-claimed law keeps its core
+            // proof. The trace marker drives the per-law `mathlib` credit; the
+            // `sorry` floor + the unchanged `#print axioms` whitelist keep credit
+            // fail-closed (a goal outside the portfolio degrades to an honest
+            // sorry, never a false universal).
+            if ctx.allow_mathlib
+                && ctx.active_module_scope().is_none()
+                && let Some(proof) = emit_mathlib_break_glass_law(vb, law, ctx, &intro_names)
+            {
+                return Some(proof);
+            }
+            None
+        })
+        .or_else(|| {
             emit_guarded_domain_law(law).map(|proof_lines| AutoProof {
                 support_lines: Vec::new(),
                 body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
@@ -1609,6 +1636,77 @@ fn emit_verify_law_forall_auto_proof_inner(
                 replaces_theorem: false,
             })
         })
+}
+
+/// Predicate half of [`emit_mathlib_break_glass_law`]: with `--allow-mathlib`
+/// set, ANY entry-module `when`-law is a break-glass candidate (the actual
+/// close is decided by the portfolio + `#print axioms`, not the shape). The
+/// statement builder reads this to drop the sampled-domain disjunctions
+/// (`omit_domain`) and class the law `universal`, keeping the universal
+/// statement and the break-glass proof body in lockstep. Returns `false` when
+/// the flag is off, so the default path never reaches the universal statement.
+pub(in crate::codegen::lean) fn recognize_mathlib_break_glass(
+    ctx: &CodegenContext,
+    law: &VerifyLaw,
+) -> bool {
+    ctx.allow_mathlib && law.when.is_some() && ctx.active_module_scope().is_none()
+}
+
+/// Mathlib break-glass proof body (only the body — `emit_verify_law_block`
+/// emits the true-universal `∀ givens, <when> = true -> claim` statement once
+/// `recognize_mathlib_break_glass` drops the sampled domain). Unfolds the law's
+/// own def cone plus the total-`floorDiv` wrapper (`Except.withDefault`,
+/// `beq_iff_eq`), and — for a `holds` law whose conclusion is a `Bool`
+/// comparison (`subject(args) = true` over a body like `a*a <= a*a + b*b`) —
+/// bridges that Bool goal down to its underlying `Prop` (`decide_eq_true_eq`
+/// strips the `decide … = true` wrapper, `ge_iff_le` / `gt_iff_lt` normalize the
+/// relation) so the portfolio's `nlinarith` / `positivity` / `omega` arms see a
+/// real inequality rather than an opaque `Bool` equation. The same bridge is the
+/// `NonlinearNonneg` rung's Bool→Prop step; on an equational law (Int `=` goal)
+/// these lemmas simply do not fire, so the rewrite is a no-op there. Then it
+/// splits the division-by-zero guards (`split_ifs` — the false guards are killed
+/// by the positive-divisor premises via `omega` / `nlinarith`), and hands the
+/// residual to the domain-blind `aver_mathlib` portfolio. The leading
+/// `trace "AVER_MATHLIB:fn.law"` is the credit channel `run_proof_check` reads
+/// from the build log; the whole arm sits under a `first | … | sorry` floor so a
+/// non-portfolio goal degrades to a caught sorry.
+fn emit_mathlib_break_glass_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<AutoProof> {
+    law.when.as_ref()?;
+    let mut defs: Vec<String> = shared::law_simp_defs(ctx, vb, law).into_iter().collect();
+    // Reduce the total-division wrapper (`floorDiv a d = withDefault (if d == 0
+    // …) 0`) so `split_ifs` sees the guard and the goal becomes bare `Int`
+    // ediv; `beq_iff_eq` rewrites the `==` guard to a `=` the splitter handles.
+    defs.push("Except.withDefault".to_string());
+    defs.push("beq_iff_eq".to_string());
+    // Bool→Prop bridges for a `holds` law whose conclusion is a `Bool`
+    // comparison: after unfolding the subject the goal is `(a*a <= …) = true`,
+    // which `nlinarith`/`omega` cannot read; these strip it to the underlying
+    // `Prop` inequality. No-ops on an equational (Int `=`) goal, so the
+    // equation break-glass path is unchanged.
+    defs.push("decide_eq_true_eq".to_string());
+    defs.push("ge_iff_le".to_string());
+    defs.push("gt_iff_lt".to_string());
+    let unfolds = defs.join(", ");
+    let label = format!("{}.{}", vb.fn_name, law.name);
+    let intro = format!("  intro {} h_when", intro_names.join(" "));
+    let close = format!(
+        "  first | (trace \"AVER_MATHLIB:{label}\"; \
+         simp only [Bool.and_eq_true, decide_eq_true_eq, ge_iff_le] at h_when; \
+         (try obtain ⟨hl, hr⟩ := h_when); \
+         simp only [{unfolds}]; \
+         (try split_ifs) <;> \
+         first | (exfalso; omega) | (exfalso; nlinarith) | aver_mathlib) | sorry"
+    );
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(vec![intro, close]),
+        replaces_theorem: false,
+    })
 }
 
 /// Fixed core AC-ring lemma package for the `RingIdentity` rung —

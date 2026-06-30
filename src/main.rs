@@ -386,6 +386,7 @@ fn main() {
             check_json,
             explain,
             minimize,
+            allow_mathlib,
             gate,
             write_baseline,
         } => {
@@ -402,6 +403,7 @@ fn main() {
                 *check_json,
                 *explain,
                 *minimize,
+                *allow_mathlib,
                 gate.as_deref(),
                 write_baseline.as_deref(),
             );

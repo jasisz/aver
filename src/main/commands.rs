@@ -4994,6 +4994,10 @@ pub(super) fn cmd_proof(
     // … | sorry` portfolio to its winning branch on the Tactic IR). Plumbed
     // through now; consumed once the IR migration lands.
     minimize: bool,
+    // `--allow-mathlib` (Lean-only, opt-in): permit the generic Mathlib break-
+    // glass arm on walling entry-module `when`-laws and wire the cached Mathlib
+    // into the generated lake project. OFF → byte-identical to today.
+    allow_mathlib: bool,
     gate: Option<&str>,
     write_baseline: Option<&str>,
 ) {
@@ -5010,6 +5014,18 @@ pub(super) fn cmd_proof(
         true,  // run_contract_lower — same
         true,  // run_law_lower — same
     );
+
+    // `--allow-mathlib` is Lean-only. On Dafny it is a no-op (Z3 already carries
+    // the nonlinear-floor lemmas natively, so there is no break-glass tier) —
+    // warn and proceed with the unchanged Dafny path.
+    if allow_mathlib && matches!(backend, super::cli::ProofBackend::Dafny) {
+        eprintln!(
+            "{}",
+            "--allow-mathlib applies to the Lean backend only; ignored for Dafny".yellow()
+        );
+    }
+    let allow_mathlib = allow_mathlib && matches!(backend, super::cli::ProofBackend::Lean);
+    ctx.allow_mathlib = allow_mathlib;
 
     // Oracle v1: aver proof only models `?!` in complete mode. If the
     // project's aver.toml selects cancel or sequential, fail loudly —
@@ -5149,18 +5165,36 @@ pub(super) fn cmd_proof(
             // evaluation path to go vacuous through).
             ctx.sample_expected = collect_verify_ground_truth(file, &module_root);
             cmd_proof_lean(file, output_dir, &mut ctx, verify_mode);
-            // Speculative-universal: a SINGLE-LIST conditional law cannot be
-            // statically classified as universal-closeable, so try each
-            // universally in one probe build and re-emit with the ones that
-            // CLOSED stated universally and the rest on their bounded fallback
-            // (try-universal, fall-back-to-sampled — analog of `--minimize` for
-            // the statement form). No-op when the file has no such candidate.
-            run_lean_speculative(file, output_dir, &mut ctx, verify_mode);
-            // `--minimize`: learn each portfolio's winning branch from one
-            // instrumented build, then re-emit collapsed (fail-safe — restores
-            // the normal proof if the collapsed project does not build).
-            if minimize {
-                run_lean_minimize(file, output_dir, &mut ctx, verify_mode);
+            // Under `--allow-mathlib` the speculative/minimize re-emit passes are
+            // SKIPPED: they run their own `lake build` probes that would choke on
+            // the not-yet-wired `aver_mathlib` macro (the Mathlib import + macro
+            // are injected by `setup_mathlib_for_project` AFTER the final emit, and
+            // a re-emit would clobber them). The break-glass arm already promotes a
+            // walling `when`-law to its true-universal form directly, so neither
+            // pass is needed on the opt-in tier.
+            if !allow_mathlib {
+                // Speculative-universal: a SINGLE-LIST conditional law cannot be
+                // statically classified as universal-closeable, so try each
+                // universally in one probe build and re-emit with the ones that
+                // CLOSED stated universally and the rest on their bounded fallback
+                // (try-universal, fall-back-to-sampled — analog of `--minimize` for
+                // the statement form). No-op when the file has no such candidate.
+                run_lean_speculative(file, output_dir, &mut ctx, verify_mode);
+                // `--minimize`: learn each portfolio's winning branch from one
+                // instrumented build, then re-emit collapsed (fail-safe — restores
+                // the normal proof if the collapsed project does not build).
+                if minimize {
+                    run_lean_minimize(file, output_dir, &mut ctx, verify_mode);
+                }
+            }
+            // `--allow-mathlib`: wire the prebuilt Mathlib cache into the generated
+            // lake project — add `require mathlib` + reuse the cached packages, and
+            // inject `import Mathlib` + the `aver_mathlib` macro into the entry
+            // file(s) that actually use the break-glass arm. Must run AFTER the
+            // final emit (no re-emit follows). Exits non-zero on a misconfigured
+            // cache so the opt-in failure is loud, never a silent core fallback.
+            if allow_mathlib {
+                setup_mathlib_for_project(output_dir);
             }
         }
         super::cli::ProofBackend::Dafny => {
@@ -5200,6 +5234,7 @@ pub(super) fn cmd_proof(
             sorry_budget,
             check_json,
             explain,
+            allow_mathlib,
             dafny_entry,
             gate,
             write_baseline,
@@ -5389,6 +5424,11 @@ fn run_proof_check(
     // `--check-json`, surface them inline as a top-level `open_goals` object).
     // Off by default; never touches `passed` / exit code / the counted build.
     explain: bool,
+    // `--allow-mathlib` (Lean-only): after the manifest is built, tag each law's
+    // `credit` field (`core` / `mathlib` / `open`) from the build-log
+    // `AVER_MATHLIB:fn.law` trace markers + the law's tier. Off → no `credit`
+    // key is written, so the manifest stays byte-identical.
+    allow_mathlib: bool,
     dafny_entry: Option<String>,
     // The ratchet. `gate`: compare the freshly recomputed manifest against
     // this committed baseline and FAIL on any regression (a baseline law that
@@ -5665,6 +5705,37 @@ fn run_proof_check(
             if let Some(goal) = open_goals.get(&l.law) {
                 l.open_goal = Some(goal.clone());
             }
+        }
+    }
+    // `--allow-mathlib` per-law credit (Lean only): tag each law `core` /
+    // `mathlib` / `open`, ORTHOGONAL to its axiom-clean `tier`. The break-glass
+    // arm emits a `trace "AVER_MATHLIB:fn.law"` as its first step, so a law whose
+    // marker surfaces in the build log was emitted with the Mathlib arm (the
+    // break-glass theorem's ONLY real closer — there are no core arms in it). A
+    // Universal-tier law with the marker therefore closed via Mathlib (`mathlib`);
+    // a Universal law without a marker closed in core (`core`); anything not
+    // Universal is `open`. Set ONLY under the flag, so the default manifest is
+    // byte-identical.
+    if allow_mathlib
+        && matches!(backend, super::cli::ProofBackend::Lean)
+        && let Some(m) = manifest.as_mut()
+    {
+        let combined_build = format!("{stdout}{stderr}");
+        let break_glass: std::collections::HashSet<&str> = combined_build
+            .lines()
+            .filter_map(|l| l.split("AVER_MATHLIB:").nth(1))
+            .map(|rest| rest.split_whitespace().next().unwrap_or("").trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        for l in m.laws.iter_mut() {
+            let credit = if !matches!(l.tier, LawTier::Universal) {
+                "open"
+            } else if break_glass.contains(l.law.as_str()) {
+                "mathlib"
+            } else {
+                "core"
+            };
+            l.credit = Some(credit.to_string());
         }
     }
     // Write the manifest AFTER residuals are merged so the sidecar carries them.
@@ -5959,6 +6030,11 @@ fn proof_manifest_to_json(manifest: &ProofManifest) -> String {
             if let Some(g) = &l.open_goal {
                 obj.insert("open_goal".into(), g.clone().into());
             }
+            // `--allow-mathlib` per-law credit: inserted ONLY when present, so a
+            // manifest written without the flag stays byte-for-byte identical.
+            if let Some(c) = &l.credit {
+                obj.insert("credit".into(), c.clone().into());
+            }
             serde_json::Value::Object(obj)
         })
         .collect();
@@ -6018,6 +6094,9 @@ fn parse_proof_manifest(raw: &str) -> Result<ProofManifest, String> {
             // `theorem`): absent on a manifest written without `--explain` /
             // for a closed law, so it stays `None` and never gates the ratchet.
             open_goal: item["open_goal"].as_str().map(str::to_string),
+            // `--allow-mathlib` per-law credit, tolerantly read (informational):
+            // absent on a manifest written without the flag, so it stays `None`.
+            credit: item["credit"].as_str().map(str::to_string),
         });
     }
     Ok(ProofManifest {
@@ -6311,6 +6390,14 @@ struct ManifestLaw {
     /// serialized manifest stays byte-identical to before when absent. Purely
     /// informational, like `theorem` — NEVER gates the ratchet.
     open_goal: Option<String>,
+    /// `aver proof --allow-mathlib` ONLY: which tier closed the law, ORTHOGONAL
+    /// to `tier`/axioms — `core` (a core arm closed it, no Mathlib import
+    /// needed), `mathlib` (only the generic Mathlib break-glass arm closed it,
+    /// determined from the build-log `AVER_MATHLIB:fn.law` trace marker), or
+    /// `open` (the law did not close universally). `None` unless `--allow-mathlib`
+    /// set it, so the serialized manifest is byte-identical to before when absent.
+    /// Informational like `theorem` — NEVER gates the ratchet.
+    credit: Option<String>,
 }
 
 /// Result of the Lean law-theorem audit (`lean_universal_audit`): the
@@ -6539,6 +6626,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
                     axioms: Vec::new(),
                     theorem: thm.clone(),
                     open_goal: None,
+                    credit: None,
                 });
         }
         by_label.into_values().collect()
@@ -6668,6 +6756,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
                     axioms,
                     theorem: thm.clone(),
                     open_goal: None,
+                    credit: None,
                 };
                 manifest_keep_stronger(&mut universal_records, record);
             }
@@ -7509,6 +7598,187 @@ fn run_lean_minimize(
     }
 }
 
+/// The generic domain-blind Mathlib break-glass closer, injected into the entry
+/// file(s) that use it. A CURATED tactic PORTFOLIO (not a per-figure template):
+/// the nested-floor collapse `Int.ediv_ediv_of_nonneg`, the exponent-addition
+/// `pow_add` / `pow_succ'`, and `positivity` / `nlinarith` / `norm_num` / `omega`.
+/// Every arm is a guaranteed CLOSER (the `; done` floors the simp-style arms) so
+/// `first` never commits to a non-closing branch and silently leave the goal open.
+const LEAN_AVER_MATHLIB_MACRO: &str = r#"set_option linter.unreachableTactic false
+set_option linter.unusedTactic false
+
+/-- Generic Mathlib break-glass closer for the nonlinear-floor / power-of-two
+fragment the core `omega` cannot see: a domain-blind tactic portfolio, NOT a
+per-figure template. Every arm closes its goal or fails (the `; done` floors the
+simp-style arms), so `first` commits only to a genuine closer. -/
+syntax "aver_mathlib" : tactic
+macro_rules
+  | `(tactic| aver_mathlib) => `(tactic|
+      first
+        | omega
+        | (rw [Int.ediv_ediv_of_nonneg (by omega)])
+        | (rw [Int.ediv_ediv_of_nonneg (by positivity)])
+        | (rw [Int.ediv_ediv_of_nonneg (by omega), ← pow_add])
+        | (rw [Int.ediv_ediv_of_nonneg (by positivity), ← pow_add])
+        | (rw [pow_succ'])
+        | (rw [← pow_add])
+        | nlinarith
+        | (norm_num; done)
+        | (positivity; done))"#;
+
+/// `--allow-mathlib` post-emit wiring. Reuses a PREBUILT Mathlib cache (a lake
+/// project with Mathlib already built, pointed to by the `AVER_MATHLIB_CACHE`
+/// env var) so the per-check cost is just loading the cached oleans — no git
+/// re-fetch. Three edits to the freshly-emitted project, all skipped when no
+/// emitted file actually uses the break-glass arm (no `aver_mathlib` text):
+/// (1) inject `import Mathlib` + the `aver_mathlib` macro into each entry file
+/// that uses it (Mathlib stays out of every other file, so the dep modules' core
+/// `simp`/`grind` keep their fast core simp set); (2) rewrite `lakefile.lean` to
+/// `require mathlib` from the cached package; (3) reuse the cache's resolved
+/// `.lake/packages` + `lake-manifest.json` so `lake build` (in `run_proof_check`)
+/// resolves Mathlib from prebuilt oleans.
+///
+/// Fails LOUD (exit 2) on a misconfigured cache: the opt-in tier must never
+/// silently degrade to a core build that then mis-credits a walling law.
+fn setup_mathlib_for_project(output_dir: &str) {
+    use std::path::Path;
+
+    // Which emitted files actually invoke the break-glass arm? Only those need
+    // (and may safely carry) the Mathlib import — importing Mathlib into a file
+    // with a bare core `simp_all` blows the simp set up to a heartbeat timeout.
+    let dir = Path::new(output_dir);
+    let mut files_using: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".lean") || name == "lakefile.lean" {
+                continue;
+            }
+            if let Ok(content) = std::fs::read_to_string(entry.path())
+                && content.contains("aver_mathlib")
+            {
+                files_using.push(entry.path());
+            }
+        }
+    }
+    if files_using.is_empty() {
+        // No law walled into the break-glass arm — leave the project pure-core
+        // (no Mathlib import anywhere), so the build is the unchanged core build.
+        return;
+    }
+
+    let cache = match std::env::var("AVER_MATHLIB_CACHE") {
+        Ok(p) if !p.trim().is_empty() => p,
+        _ => {
+            eprintln!(
+                "{}",
+                "--allow-mathlib: set AVER_MATHLIB_CACHE to a lake project that has Mathlib \
+                 built (a dir with .lake/packages/mathlib and lake-manifest.json, toolchain \
+                 leanprover/lean4:v4.31.0) — the break-glass tier reuses its prebuilt oleans \
+                 instead of re-fetching Mathlib per check."
+                    .red()
+            );
+            std::process::exit(2);
+        }
+    };
+    let cache = Path::new(&cache);
+    let cache_packages = cache.join(".lake/packages");
+    let cache_manifest = cache.join("lake-manifest.json");
+    let cache_mathlib = cache_packages.join("mathlib");
+    if !cache_mathlib.is_dir() || !cache_manifest.is_file() {
+        eprintln!(
+            "{}",
+            format!(
+                "--allow-mathlib: AVER_MATHLIB_CACHE={} is not a built Mathlib lake project \
+                 (expected {}/ and {})",
+                cache.display(),
+                cache_mathlib.display(),
+                cache_manifest.display()
+            )
+            .red()
+        );
+        std::process::exit(2);
+    }
+
+    // 1) Inject `import Mathlib` + the macro into each using file. `import`s must
+    // precede every command, so splice `import Mathlib` at the end of the leading
+    // import block and the macro right after it.
+    for path in &files_using {
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        if content.contains("import Mathlib") {
+            continue;
+        }
+        let mut out: Vec<String> = Vec::new();
+        let mut macro_emitted = false;
+        let mut in_import_block = true;
+        for line in content.lines() {
+            let is_import = line.trim_start().starts_with("import ");
+            if in_import_block && !is_import && !line.trim().is_empty() && !macro_emitted {
+                // First non-import, non-blank line: close the import block.
+                out.push("import Mathlib".to_string());
+                out.push(String::new());
+                out.push(LEAN_AVER_MATHLIB_MACRO.to_string());
+                out.push(String::new());
+                macro_emitted = true;
+                in_import_block = false;
+            }
+            out.push(line.to_string());
+        }
+        if !macro_emitted {
+            // File was nothing but imports (degenerate) — append at the end.
+            out.push("import Mathlib".to_string());
+            out.push(String::new());
+            out.push(LEAN_AVER_MATHLIB_MACRO.to_string());
+        }
+        let _ = std::fs::write(path, out.join("\n") + "\n");
+    }
+
+    // 2) Rewrite the lakefile to require the cached Mathlib (local-path require —
+    // reuses the cache's already-built package, no fetch).
+    let lakefile = dir.join("lakefile.lean");
+    if let Ok(content) = std::fs::read_to_string(&lakefile)
+        && !content.contains("require mathlib")
+    {
+        let require_line = format!(
+            "require mathlib from \"{}\"",
+            cache_mathlib.display()
+        );
+        // Insert the require after the `open Lake DSL` opener so the DSL is in scope.
+        let patched = if let Some(idx) = content.find("open Lake DSL") {
+            let cut = idx + "open Lake DSL".len();
+            let (head, tail) = content.split_at(cut);
+            format!("{head}\n\n{require_line}{tail}")
+        } else {
+            format!("{require_line}\n{content}")
+        };
+        let _ = std::fs::write(&lakefile, patched);
+    }
+
+    // 3) Reuse the cache's resolved packages + manifest so `lake build` finds
+    // Mathlib (and its transitive deps) as prebuilt oleans without re-resolving.
+    let _ = std::fs::copy(&cache_manifest, dir.join("lake-manifest.json"));
+    let dot_lake = dir.join(".lake");
+    let _ = std::fs::create_dir_all(&dot_lake);
+    let pkg_link = dot_lake.join("packages");
+    // Replace any stale link/dir from a prior run, then point at the cache.
+    let _ = std::fs::remove_file(&pkg_link);
+    let _ = std::fs::remove_dir_all(&pkg_link);
+    #[cfg(unix)]
+    let _ = std::os::unix::fs::symlink(&cache_packages, &pkg_link);
+
+    println!(
+        "{}",
+        format!(
+            "--allow-mathlib: wired cached Mathlib ({}) into {} break-glass file(s)",
+            cache.display(),
+            files_using.len()
+        )
+        .blue()
+    );
+}
+
 fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) {
     use aver::codegen::dafny as dafny_codegen;
 
@@ -7837,6 +8107,7 @@ mod tests {
             axioms: axioms.iter().map(|a| a.to_string()).collect(),
             theorem: format!("{}_thm", name.replace('.', "_")),
             open_goal: None,
+            credit: None,
         }
     }
 
@@ -8426,6 +8697,7 @@ mod tests {
             bare_i64: Default::default(),
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
+            allow_mathlib: false,
         }
     }
 

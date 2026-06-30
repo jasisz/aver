@@ -249,6 +249,7 @@ mod tests {
             bare_i64: Default::default(),
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
+            allow_mathlib: false,
         }
     }
 

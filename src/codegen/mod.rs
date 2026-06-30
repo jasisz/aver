@@ -360,6 +360,19 @@ pub struct CodegenContext {
     /// kernel-certify a false equation. Entries exist only for cases that
     /// PASSED `aver verify`; failing/skipped cases keep the source RHS.
     pub sample_expected: std::collections::HashMap<(String, usize), String>,
+    /// `aver proof --allow-mathlib` (Lean only, opt-in): permit a generic
+    /// Mathlib break-glass closing arm on laws the core strategies cannot
+    /// claim. When `false` (the default) the Lean backend is BYTE-IDENTICAL to
+    /// before — no Mathlib import, no break-glass arm, same tiers. When `true`
+    /// a walling `when`-law is emitted in true-universal form with a domain-
+    /// blind Mathlib tactic portfolio (`aver_mathlib`, keyed on
+    /// `Int.ediv_ediv_of_nonneg` / `pow_add` / `positivity` / `nlinarith` / …)
+    /// under a `first | (trace "AVER_MATHLIB:fn.law"; …) | sorry` floor. The
+    /// post-emit step (`setup_mathlib_for_project`) wires the cached Mathlib
+    /// into the generated lake project; the build-log trace marker drives the
+    /// per-law `mathlib` credit. Axiom whitelist is UNCHANGED — Mathlib lemmas
+    /// are kernel-clean `{propext, Classical.choice, Quot.sound}`.
+    pub allow_mathlib: bool,
 }
 
 /// Output files from a codegen backend.
@@ -665,6 +678,7 @@ pub fn build_context(
         mir_program,
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
+        allow_mathlib: false,
     };
     // ProofIR no longer populated here. Pipeline owns the lowerings
     // (`PipelineStage::RefinementLower`, `PipelineStage::ContractLower`);
