@@ -1835,10 +1835,7 @@ fn collect_wrapper_guard_predicates(
 /// decided by a `when isFp(p)` premise, so its scrutinee is rewritten without
 /// unfolding) from a DERIVED guard (`inField(E)`, absent from the premises, so
 /// it must be unfolded for `omega` to discharge it).
-fn collect_called_dotted(
-    expr: &crate::ast::Spanned<crate::ast::Expr>,
-    out: &mut BTreeSet<String>,
-) {
+fn collect_called_dotted(expr: &crate::ast::Spanned<crate::ast::Expr>, out: &mut BTreeSet<String>) {
     match &expr.node {
         crate::ast::Expr::FnCall(f, args) => {
             if let Some(name) = super::shared::expr_dotted_name(f) {
@@ -1868,8 +1865,7 @@ pub(in crate::codegen::lean) fn emit_validated_wrapper_law(
     if !recognize_validated_wrapper(vb, law, ctx) {
         return None;
     }
-    let subject_fd =
-        ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())?;
+    let subject_fd = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())?;
     let subject = aver_name_to_lean(&vb.fn_name);
     let intro = format!("  intro {} h_when", intro_names.join(" "));
     // The wrapper's error branches each dispatch on `Bool.not(g(…))` for some
@@ -1892,7 +1888,11 @@ pub(in crate::codegen::lean) fn emit_validated_wrapper_law(
     }
     guards.retain(|g| !premise_fns.contains(g));
     let mut unfold = vec![format!("_root_.{subject}")];
-    unfold.extend(guards.iter().map(|g| format!("_root_.{}", aver_name_to_lean(g))));
+    unfold.extend(
+        guards
+            .iter()
+            .map(|g| format!("_root_.{}", aver_name_to_lean(g))),
+    );
     let unfold_set = unfold.join(", ");
     // Subject (+ derived guard predicate) unfold; the premises (decomposed by
     // `Bool.and_eq_true` / `Bool.not_eq_true'`, `<=`-comparisons bridged to Prop

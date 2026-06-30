@@ -716,7 +716,8 @@ fn emit_verify_law_block(
             // byte-identical and a core-claimed law keeps its core (non-Mathlib)
             // proof. Kept in lockstep with the `emit_mathlib_break_glass_law` arm
             // (also last in the proof cascade).
-            || super::law_auto::recognize_mathlib_break_glass(ctx, &law_for_auto_proof));
+            || super::law_auto::recognize_mathlib_break_glass(ctx, &law_for_auto_proof)
+        );
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(
             vb,

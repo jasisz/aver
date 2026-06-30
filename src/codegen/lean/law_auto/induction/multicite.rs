@@ -586,8 +586,7 @@ pub(in crate::codegen::lean) fn emit_multicite_composition_law(
     arm.push("       first".to_string());
     arm.push("       | assumption".to_string());
     arm.push(
-        "       | (apply Domain.Rational.isNonNeg_law_nonNegOfPositive <;> assumption)"
-            .to_string(),
+        "       | (apply Domain.Rational.isNonNeg_law_nonNegOfPositive <;> assumption)".to_string(),
     );
     arm.push(format!(
         "       | (simp only [{alias_csv}] at * <;> assumption))"

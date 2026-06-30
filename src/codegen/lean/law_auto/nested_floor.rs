@@ -182,7 +182,10 @@ fn recognize(law: &VerifyLaw, ctx: &CodegenContext) -> Option<NestedFloorShape> 
 /// Statement-builder hook: whether the nested-floor emit will close this law
 /// universally (so the caller drops the sampled domain and classes it
 /// `universal`, keeping statement and proof in lockstep).
-pub(in crate::codegen::lean) fn recognize_nested_floor(law: &VerifyLaw, ctx: &CodegenContext) -> bool {
+pub(in crate::codegen::lean) fn recognize_nested_floor(
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> bool {
     recognize(law, ctx).is_some()
 }
 

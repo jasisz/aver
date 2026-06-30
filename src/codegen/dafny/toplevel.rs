@@ -3480,10 +3480,7 @@ pub fn emit_verify_law(
     // never trusted). Reuses the signature (params / `requires` / `ensures` /
     // fuel) the default path just built, so the hand body proves exactly the
     // law's claim. Absent a sidecar this is a no-op (the auto body follows).
-    if let Some(body) = ctx
-        .hand_proofs
-        .get(&(vb.fn_name.clone(), law.name.clone()))
-    {
+    if let Some(body) = ctx.hand_proofs.get(&(vb.fn_name.clone(), law.name.clone())) {
         for l in body.lines() {
             lines.push(format!("  {l}"));
         }

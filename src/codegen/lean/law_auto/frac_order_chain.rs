@@ -178,9 +178,11 @@ fn substitute(
             }
             e.node.clone()
         }
-        Expr::BinOp(op, a, b) => {
-            Expr::BinOp(*op, Box::new(substitute(a, map)), Box::new(substitute(b, map)))
-        }
+        Expr::BinOp(op, a, b) => Expr::BinOp(
+            *op,
+            Box::new(substitute(a, map)),
+            Box::new(substitute(b, map)),
+        ),
         Expr::Neg(a) => Expr::Neg(Box::new(substitute(a, map))),
         Expr::Attr(b, f) => Expr::Attr(Box::new(substitute(b, map)), f.clone()),
         Expr::FnCall(c, args) => Expr::FnCall(
@@ -359,7 +361,8 @@ pub(super) fn recognize_frac_order_chain_shape(
     let pow = signed_pow2_pow(sgn_fd, ctx)?;
 
     // Express BIG and A in the law's givens by substituting subject params.
-    let mut map: std::collections::HashMap<String, Spanned<Expr>> = std::collections::HashMap::new();
+    let mut map: std::collections::HashMap<String, Spanned<Expr>> =
+        std::collections::HashMap::new();
     for ((pname, _), arg) in subj_fd.params.iter().zip(call_args.iter()) {
         map.insert(pname.clone(), arg.clone());
     }

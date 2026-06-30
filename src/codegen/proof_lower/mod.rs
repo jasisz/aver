@@ -2223,9 +2223,7 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 /// g(LO)))` whose `g` calls a single recursive countdown fn, or the homomorphism
 /// `subject(a + b) = subject(a) OP2 subject(b)` over a guarded countdown subject.
 /// Name-blind.
-fn induction_demanded_countdown_fns(
-    inputs: &ProofLowerInputs,
-) -> Vec<(Option<String>, String)> {
+fn induction_demanded_countdown_fns(inputs: &ProofLowerInputs) -> Vec<(Option<String>, String)> {
     use crate::ast::{TopLevel, VerifyKind};
 
     fn dotted(e: &crate::ast::Spanned<Expr>) -> Option<String> {
@@ -2302,10 +2300,11 @@ fn induction_demanded_countdown_fns(
         TopLevel::Verify(vb) => Some((None, vb)),
         _ => None,
     });
-    let dep_verifies = inputs
-        .dep_modules
-        .iter()
-        .flat_map(|m| m.verify_laws.iter().map(move |vb| (Some(m.prefix.clone()), vb)));
+    let dep_verifies = inputs.dep_modules.iter().flat_map(|m| {
+        m.verify_laws
+            .iter()
+            .map(move |vb| (Some(m.prefix.clone()), vb))
+    });
     for (scope, vb) in entry_verifies.chain(dep_verifies) {
         let VerifyKind::Law(law) = &vb.kind else {
             continue;
@@ -2326,8 +2325,7 @@ fn induction_demanded_countdown_fns(
             match &cmp.node {
                 // Plain integer order `f(LO) <= f(HI)` — demand `f` itself.
                 Expr::BinOp(crate::ast::BinOp::Lte, l, r) => {
-                    if let (Some(lf), Some(rf)) =
-                        (unary_callee_short(l), unary_callee_short(r))
+                    if let (Some(lf), Some(rf)) = (unary_callee_short(l), unary_callee_short(r))
                         && lf == rf
                         && recursive.contains(&lf)
                         && inputs
@@ -2380,8 +2378,7 @@ fn induction_demanded_countdown_fns(
         // no fuel-graduation demand and is not detected here.)
         if let Expr::BinOp(op2, ra, rb) = &law.rhs.node
             && matches!(op2, crate::ast::BinOp::Add | crate::ast::BinOp::Mul)
-            && let (Some(subj), Some(subj_rb)) =
-                (unary_callee_short(ra), unary_callee_short(rb))
+            && let (Some(subj), Some(subj_rb)) = (unary_callee_short(ra), unary_callee_short(rb))
             && subj == subj_rb
             && let Expr::FnCall(lc, la) = &law.lhs.node
             && la.len() == 1

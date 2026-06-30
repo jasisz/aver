@@ -200,7 +200,11 @@ pub(in crate::codegen::lean) fn recognize_hand_sidecar(
 /// The body may CITE earlier-emitted sibling law theorems by their stable
 /// `<fn>_law_<law>` names (composition by citation), since they appear before
 /// this theorem in the same module file.
-fn emit_hand_sidecar_law(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option<AutoProof> {
+fn emit_hand_sidecar_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<AutoProof> {
     let body = ctx
         .hand_proofs
         .get(&(vb.fn_name.clone(), law.name.clone()))?;

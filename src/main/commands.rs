@@ -7259,7 +7259,7 @@ fn axioms_for_theorem(output: &str, theorem: &str) -> Option<Vec<String>> {
     let dep = rest.find("depends on axioms:");
     match (no_dep, dep) {
         // The phrase that comes FIRST after the theorem name is this theorem's.
-        (Some(n), d) if d.map_or(true, |d| n < d) => Some(Vec::new()),
+        (Some(n), d) if d.is_none_or(|d| n < d) => Some(Vec::new()),
         (_, Some(d)) => {
             let tail = &rest[d + "depends on axioms:".len()..];
             let mut axioms = parse_axiom_bracket(tail);
@@ -7840,10 +7840,7 @@ fn setup_mathlib_for_project(output_dir: &str) {
     if let Ok(content) = std::fs::read_to_string(&lakefile)
         && !content.contains("require mathlib")
     {
-        let require_line = format!(
-            "require mathlib from \"{}\"",
-            cache_mathlib.display()
-        );
+        let require_line = format!("require mathlib from \"{}\"", cache_mathlib.display());
         // Insert the require after the `open Lake DSL` opener so the DSL is in scope.
         let patched = if let Some(idx) = content.find("open Lake DSL") {
             let cut = idx + "open Lake DSL".len();

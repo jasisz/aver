@@ -78,9 +78,11 @@ fn substitute(
             }
             e.node.clone()
         }
-        Expr::BinOp(op, a, b) => {
-            Expr::BinOp(*op, Box::new(substitute(a, map)), Box::new(substitute(b, map)))
-        }
+        Expr::BinOp(op, a, b) => Expr::BinOp(
+            *op,
+            Box::new(substitute(a, map)),
+            Box::new(substitute(b, map)),
+        ),
         Expr::Neg(a) => Expr::Neg(Box::new(substitute(a, map))),
         Expr::Attr(b, f) => Expr::Attr(Box::new(substitute(b, map)), f.clone()),
         Expr::FnCall(c, args) => Expr::FnCall(
@@ -170,11 +172,7 @@ struct PoolCite {
 /// Iterate the EARLIER sibling laws (source order is emit order) whose subject
 /// fn is a single-tail fn, calling `pred` on `(prev, prev_law, subject_body)`;
 /// the first `Some` wins. `pred` returns the law theorem name's subject match.
-fn find_earlier_law<F>(
-    vb: &VerifyBlock,
-    ctx: &CodegenContext,
-    mut pred: F,
-) -> Option<PoolCite>
+fn find_earlier_law<F>(vb: &VerifyBlock, ctx: &CodegenContext, mut pred: F) -> Option<PoolCite>
 where
     F: FnMut(&VerifyBlock, &VerifyLaw, &Spanned<Expr>) -> bool,
 {
@@ -363,7 +361,11 @@ pub(super) fn emit_frac_positivity_law(
         };
         (**callee).clone()
     })?);
-    let intros: Vec<String> = law.givens.iter().map(|g| aver_name_to_lean(&g.name)).collect();
+    let intros: Vec<String> = law
+        .givens
+        .iter()
+        .map(|g| aver_name_to_lean(&g.name))
+        .collect();
     let FracPositivity { sgn, g, recpos } = &shape;
     let text = format!(
         r#"theorem {base} : ∀ {quant}, {lhs} = {rhs} := by
@@ -481,7 +483,11 @@ pub(super) fn emit_frac_geone_law(
         };
         (**callee).clone()
     })?);
-    let intros: Vec<String> = law.givens.iter().map(|g| aver_name_to_lean(&g.name)).collect();
+    let intros: Vec<String> = law
+        .givens
+        .iter()
+        .map(|g| aver_name_to_lean(&g.name))
+        .collect();
     let FracGeOne {
         sgn,
         ops,
@@ -624,10 +630,15 @@ fn recognize_frac_monotone_shape(
     if !is_unary_fraction_fn(sgn_fd) {
         return None;
     }
-    let sgn_short = sgn_dotted.rsplit('.').next().unwrap_or(&sgn_dotted).to_string();
+    let sgn_short = sgn_dotted
+        .rsplit('.')
+        .next()
+        .unwrap_or(&sgn_dotted)
+        .to_string();
 
     // Express the two exponents in the law's givens.
-    let mut map: std::collections::HashMap<String, Spanned<Expr>> = std::collections::HashMap::new();
+    let mut map: std::collections::HashMap<String, Spanned<Expr>> =
+        std::collections::HashMap::new();
     for ((pname, _), arg) in subj_fd.params.iter().zip(call_args.iter()) {
         map.insert(pname.clone(), arg.clone());
     }
@@ -798,7 +809,11 @@ pub(super) fn emit_frac_monotone_compose_law(
         };
         (**callee).clone()
     })?);
-    let intros: Vec<String> = law.givens.iter().map(|g| aver_name_to_lean(&g.name)).collect();
+    let intros: Vec<String> = law
+        .givens
+        .iter()
+        .map(|g| aver_name_to_lean(&g.name))
+        .collect();
     let FracMonotone {
         sgn,
         ops,
