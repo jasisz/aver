@@ -16,6 +16,38 @@ unbounded source of new lemmas; the judge keeps it sound.
 - A goal that needs an auxiliary lemma the auto-prover can't find on its own (a missing
   homomorphism / associativity / distributivity / an equation relating subterms of the goal).
 
+## Pre-check — run BEFORE spending tokens (the frontier is predictable)
+
+The Method closes CONTENT gaps: a missing TRUE STATEMENT expressible in the law surface. It is
+measurably the wrong hammer for FORM gaps (engine/executor procedures) — a past probe burned
+~1.3M tokens on goals that were never content-shaped. Classify first:
+
+0. **Samples first.** If the target (or a proposed helper) is false-on-samples, the STATEMENT is
+   wrong — fix the claim or the decomposition; there is nothing to prove yet.
+1. **The truth-value test.** Isolate the missing piece and ask: *does it have a truth value?*
+   - YES, and statable as an Aver law (bare givens + `when`-guards + program fns) → The Method.
+   - NO — it is a "how" (normalize, pick an induction scheme, split a match, chain citations) →
+     FORM gap: stop; file an engine gap instead of probing.
+   - YES but not statable (meta: Bool↔Prop bridging, translation artifacts) → executor bridge,
+     engine work.
+   - CAN'T TELL → you have not isolated the missing piece; decompose/minimize further before
+     probing. Composite identities often decompose into statable leaves — try the decomposition
+     BEFORE classifying the whole goal as unreachable (the trunc-sticky wall fell exactly this way).
+2. **Driver check (syntactic, zero tokens).** A composite scrutinee (`match f(x)`),
+   Nat-predecessor arithmetic, or higher-order (map/filter) in the goal's cone is a known
+   executor-gap class; The Method will not fix it.
+3. **Closing-algebra check (per backend).** Int `+` closes on both backends; nonlinear Int `·`:
+   Lean has the order primitive, Z3 is native; user-ADT multiplication/distributivity on Dafny is
+   turbo-hard — do not grind it (route Lean-only with per-backend credit).
+
+## Stop-losses (how to read repeated verdicts)
+
+- Helpers repeatedly **false-on-samples** → the target likely needs an INVENTED intermediate
+  quantity (a generalization) — escalate to design; more rounds will not help.
+- Helpers **true-on-samples but 0 closures for 2 consecutive rounds** → it was a FORM gap after
+  all: STOP the loop and record the residual as an engine gap. Do not raise `attempts` past this
+  signal.
+
 ## Usage
 ```
 /the-method <task.av> [<task2.av> ...]
