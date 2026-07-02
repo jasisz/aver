@@ -949,10 +949,20 @@ that is NOT derivable when the law carries no `0 ≤ a` guard. Trying
 contraction's `s²` bound) its shared-right-factor unification fails fast (the
 two right factors differ), so `mul_le_mul` still takes them — and any genuine
 `0 ≤ b` leaf there is closed by the early `omega` rung from that family's
-`0 ≤ e ≤ b` guards. The `mul_le_mul` arm is locally heartbeat-capped because
-bad metavariable product searches can otherwise escape the outer proof floor as
-a deterministic `whnf` timeout; a timeout in that arm should be just another
-failed `first` alternative.
+`0 ≤ e ≤ b` guards. The `mul_le_mul` arm is NOT heartbeat-capped: a
+deterministic `whnf` timeout is a HARD, uncatchable failure of a `first`
+portfolio at the tactic level — it aborts `lake build` rather than falling
+through to the next `first` alternative. `set_option maxHeartbeats … in` only
+takes effect at the COMMAND level, never inside a `first | …` tactic
+alternative (measured 2026-07-02 across three controlled builds under Lean
+4.31: the inline wrapper changed nothing). So this timeout class is not
+containable here. What actually keeps this arm from diverging in practice is
+the narrower conjunction split below (keyed to the named `h_when` guard rather
+than an anonymous `_ ∧ _` match, so it no longer feeds spurious metavariable
+products into the product rungs), not any cap. When a timeout does occur its
+class is surfaced truthfully by the `--check-json` `build_errors` field; the
+named follow-up is driver-level re-emission of the offending law WITHOUT this
+arm (a tactic-level cap cannot do it).
 
 The MULTIPLY-BY-POSITIVE rungs (`mul_lt_mul_of_pos_left` / `_right` for a strict
 product order `m*a < m*b` / `a*m < b*m`, and `mul_le_mul_of_nonneg_left` for the
@@ -967,7 +977,17 @@ composition step. Placed last so their strict (`<`) conclusion never shadows a
 `<=`/`0 <=`/`0 <` goal the earlier rungs own (a strict-conclusion lemma cannot
 unify with a non-strict goal, but keeping them last also keeps the common
 nonneg/positivity search shallow and the output byte-identical for corpora that
-never hit a multiplied-form goal). -/
+never hit a multiplied-form goal).
+
+The final arm splits a named guard conjunction and recurses. It reads the
+hypothesis LITERALLY named `h_when` — the order-law emitters
+(`law_auto/inequality.rs`, `law_auto/induction/floor_bound.rs`) intro the guard
+under exactly that name and `simp … at h_when ⊢` — takes `And.left`/`And.right`,
+and recurses. This is a NAMING CONTRACT: any new order-law emitter that renames
+the guard makes this arm silently no-op (no `h_when` in context), and the goal
+falls to `sorry`. It also peels ONE level only (measured): a right-nested guard
+of three-plus conjuncts (`A ∧ (B ∧ C)`) yields `h_when_left := A` /
+`h_when_right := B ∧ C`, leaving the inner conjunction bundled. -/
 syntax "aver_int_order" : tactic
 macro_rules
   | `(tactic| aver_int_order) => `(tactic|
@@ -978,8 +998,7 @@ macro_rules
         | (apply Int.mul_nonneg <;> aver_int_order)
         | (apply Int.mul_pos <;> aver_int_order)
         | (apply Int.mul_le_mul_of_nonneg_right <;> aver_int_order)
-        | (set_option maxHeartbeats 50000 in
-           apply Int.mul_le_mul <;> aver_int_order)
+        | (apply Int.mul_le_mul <;> aver_int_order)
         | (apply Int.mul_lt_mul_of_pos_left <;> aver_int_order)
         | (apply Int.mul_lt_mul_of_pos_right <;> aver_int_order)
         | (apply Int.mul_le_mul_of_nonneg_left <;> aver_int_order)
