@@ -91,6 +91,85 @@ fn proof_export_floor_window_lean_structure() {
     let _ = std::fs::remove_dir_all(&output_dir);
 }
 
+/// Second, cross-domain WITNESS for the Euclidean-floor arithmetic rungs
+/// (`tests/fixtures/floor_arith_witness.av`). The cancel / absorb rungs are
+/// keyed only on the CLAIM SHAPE (`floor (a * c) (d * c) = floor a d`;
+/// `floor (d * q + r) d = q`), never on the K5 `floorDiv` name. This fixture
+/// states the SAME two shapes over a differently-named floor-division fn
+/// (`quotFloor`, over `num`/`den`) in a different module with different given
+/// names — if the rungs were name-blind, both laws close `universal` here too.
+/// Export-structure pin (no toolchain needed): asserts the `universal`
+/// law-class markers and no REACHED sorry.
+#[test]
+fn proof_export_floor_arith_second_witness_universal() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output_dir = temp_output_dir("aver-proof-floor-arith-witness");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/floor_arith_witness.av")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("aver proof should run");
+    assert!(run.status.success(), "{}", format_output(&run));
+    let lean = std::fs::read_to_string(output_dir.join("FloorArithWitness.lean"))
+        .expect("FloorArithWitness.lean must be emitted");
+
+    // Every cross-domain law theorem replaces its bounded statement with the
+    // TRUE universal form and is classed `universal` — the rungs fired on a
+    // fn with no `floorDiv` / K5 name. The `Commuted` witnesses additionally
+    // pin the ORIENTATION-TOLERANT path: shared factor / divisor multiplicand
+    // written on the opposite side, an alternative positivity spelling
+    // (`k > 0`, `den > 0`) and reordered when-clauses.
+    for base in [
+        "quotFloor_law_shrinkFactor",
+        "quotFloor_law_soakRemainder",
+        "quotFloor_law_shrinkFactorCommuted",
+        "quotFloor_law_shrinkFactorDivisorLeft",
+        "quotFloor_law_soakRemainderCommuted",
+    ] {
+        assert!(
+            lean.contains(&format!("-- aver:law-class {base} universal")),
+            "{base} must be classed universal (rung is name- and orientation-blind); got:\n{lean}"
+        );
+    }
+    // The core lemmas the rungs cite are present, not a sampled `native_decide`
+    // fallback or a bounded statement.
+    assert!(lean.contains("Int.mul_ediv_mul_of_pos_left"));
+    assert!(lean.contains("Int.add_mul_ediv_left"));
+    // The commuted witnesses drive the `Int.mul_comm` normalization step that
+    // rewrites the written product into the core lemma's canonical operand order.
+    assert!(
+        lean.contains("rw [Int.mul_comm k num]"),
+        "commuted cancel witness must normalize the shared factor with Int.mul_comm"
+    );
+    assert!(
+        lean.contains("rw [Int.mul_comm whole den]"),
+        "commuted absorb witness must normalize the divisor multiplicand with Int.mul_comm"
+    );
+    // The fourth cancel corner puts the shared factor on the LEFT of the DIVISOR
+    // product; its normalization commutes the divisor multiplicand (not the
+    // dividend), a path no other witness exercises.
+    assert!(
+        lean.contains("rw [Int.mul_comm scale base]"),
+        "divisor-left cancel witness must normalize the divisor factor with Int.mul_comm"
+    );
+    // No law theorem REACHES sorry (only `first | proof | sorry` fail-safe
+    // floors are permitted, and these rungs emit none).
+    let reached_sorry: Vec<&str> = lean
+        .lines()
+        .filter(|l| l.contains("sorry") && !l.contains("| sorry"))
+        .collect();
+    assert!(
+        reached_sorry.is_empty(),
+        "the second-witness fixture must not REACH sorry; offending lines:\n{}",
+        reached_sorry.join("\n")
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
 /// Export-structure pin, Dafny side (no toolchain needed). Before the
 /// class existed the binary-exponent fn declined to an opaque
 /// `{:axiom}` and the significand law was omitted; the other three
@@ -248,6 +327,59 @@ fn proof_floor_window_lean_closes_kernel_genuine() {
         (Some(4), Some(0)),
         "explicit law counts: exactly the four universal-classed law \
          theorems certified, none degraded to bounded-domain.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// Live Lean gate for the second, cross-domain witness
+/// (`tests/fixtures/floor_arith_witness.av`). The export-structure pin
+/// (`proof_export_floor_arith_second_witness_universal`) only asserts the
+/// `universal` law-class MARKERS, which the Rust classifier stamps when the
+/// rung FIRES — not when the Lean kernel accepts the proof. This gate builds
+/// the whole fixture with the toolchain and asserts all five witness laws
+/// close sorry-free AND earn kernel-genuine `universal` credit (`#print
+/// axioms` inside the whitelist, encoded by the `universal` summary flag —
+/// same contract as `proof_floor_window_lean_closes_kernel_genuine`). Covers
+/// every orientation corner of the cancel / absorb rungs, including the
+/// shared factor on the LEFT of the divisor product.
+#[test]
+fn proof_floor_arith_witness_lean_closes_kernel_genuine() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping floor-arith-witness proof test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-floor-arith-witness-lake");
+    let (summary, run) =
+        run_lean_check_json("tests/fixtures/floor_arith_witness.av", &output_dir, 0, &[]);
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "floor-arith witness laws must close sorry-free.\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "all five witness law theorems are stated universally and must be \
+         kernel-genuine (axioms within the whitelist).\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        (
+            summary["universal_laws"].as_u64(),
+            summary["bounded_laws"].as_u64(),
+        ),
+        (Some(5), Some(0)),
+        "explicit law counts: exactly the five universal-classed witness \
+         theorems certified (every cancel / absorb orientation corner), none \
+         degraded to bounded-domain.\n{}",
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&output_dir);

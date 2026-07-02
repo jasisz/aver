@@ -3,6 +3,7 @@
 /// This module is intentionally isolated from `toplevel.rs` so all heuristic
 /// matching and proof-shape logic lives in one place.
 mod decimal;
+mod floor_arith;
 mod floor_window;
 mod frac_monotone_compose;
 mod frac_order_chain;
@@ -103,6 +104,14 @@ pub(in crate::codegen::lean) use recursive_mono::{
 /// `Int.ediv_ediv_of_nonneg`. Feeds the `omit_domain` statement driver, kept in
 /// lockstep with `emit_nested_floor_law`.
 pub(in crate::codegen::lean) use nested_floor::recognize_nested_floor;
+
+/// Content-blind Euclidean-floor arithmetic rungs — `floor (a * c) (d * c) =
+/// floor a d` (shared positive factor cancel) and `floor (d * q + r) d = q`
+/// (bounded-remainder absorption), closed in pure core. Both feed the
+/// `omit_domain` statement driver, kept in lockstep with their emits.
+pub(in crate::codegen::lean) use floor_arith::{
+    recognize_absorb_remainder, recognize_cancel_common_factor,
+};
 
 /// Content-blind homomorphism rung — the name-blind, shape-only recognizer for
 /// `subject(OP1(a, b)) = OP2(subject(a), subject(b))` (subject recursive, OP1 /
@@ -865,6 +874,23 @@ fn emit_verify_law_forall_auto_proof_inner(
     // rather than falling through to a `grind` that explodes on the divisor.
     if let Some(proof) =
         nested_floor::emit_nested_floor_law(vb, law, ctx, theorem_base, quant_params)
+    {
+        return Some(proof);
+    }
+
+    // Euclidean-floor arithmetic (`floor (a * c) (d * c) = floor a d` under
+    // positive divisor + factor; `floor (d * q + r) d = q` under `0 <= r < d`):
+    // closed in pure core by the shared-factor cancel / bounded-remainder absorb
+    // lemmas. Both are very specific product/linear-dividend shapes, so they
+    // never collide with the homomorphism / keystone arms below; tried first so
+    // each closes by its deterministic core skeleton rather than a `grind`.
+    if let Some(proof) =
+        floor_arith::emit_cancel_common_factor_law(vb, law, ctx, theorem_base, quant_params)
+    {
+        return Some(proof);
+    }
+    if let Some(proof) =
+        floor_arith::emit_absorb_remainder_law(vb, law, ctx, theorem_base, quant_params)
     {
         return Some(proof);
     }

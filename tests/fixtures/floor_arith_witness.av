@@ -1,0 +1,82 @@
+module FloorArithWitness
+    intent =
+        "Second, cross-domain witness for the Euclidean-floor arithmetic rungs:"
+        "a DIFFERENTLY-NAMED floor-division fn (quotFloor, over num/den) in a"
+        "different module, carrying the SAME two claim shapes as the K5 leaf"
+        "probe. If the cancel / absorb rungs are truly content-blind (keyed on"
+        "shape, not on floorDiv / K5 names), both laws close universal here too."
+    exposes [quotFloor]
+    effects []
+
+fn quotFloor(num: Int, den: Int) -> Int
+    ? "Euclidean floor division num / den; guarded to 0 at den = 0."
+    Result.withDefault(Int.div(num, den), 0)
+
+verify quotFloor
+    quotFloor(9, 4) => 2
+    quotFloor(0 - 9, 4) => 0 - 3
+    quotFloor(100, 7) => 14
+
+// Shared positive factor cancels — same shape as cancelCommonFactor, distinct
+// fn and variable names.
+
+verify quotFloor law shrinkFactor
+    given num: Int = [11, 0 - 4, 30, 0]
+    given den: Int = [2, 3, 4]
+    given k: Int = [1, 5, 6]
+    when 0 < den
+    when 0 < k
+    quotFloor(num * k, den * k) => quotFloor(num, den)
+
+// Bounded remainder is absorbed — same shape as absorbRemainder, distinct fn
+// and variable names.
+
+verify quotFloor law soakRemainder
+    given whole: Int = [4, 0 - 3, 0, 9]
+    given den: Int = [1, 2, 4, 6]
+    given rest: Int = [0, 1, 3]
+    when 0 < den
+    when 0 <= rest
+    when rest < den
+    quotFloor(den * whole + rest, den) => whole
+
+// Same cancel shape, but COMMUTED: the shared factor k sits on the LEFT of the
+// dividend and the RIGHT of the divisor (independent orientations), the
+// positivity is spelled `k > 0` instead of `0 < k`, and the when-clauses are
+// reordered. Content-blind rungs must still close it universal.
+
+verify quotFloor law shrinkFactorCommuted
+    given num: Int = [11, 0 - 4, 30, 0]
+    given den: Int = [2, 3, 4]
+    given k: Int = [1, 5, 6]
+    when k > 0
+    when 0 < den
+    quotFloor(k * num, den * k) => quotFloor(num, den)
+
+// Fourth cancel corner: the shared factor sits on the LEFT of the DIVISOR
+// product (`scale * base`), with the dividend in the plain right orientation
+// (`top * scale`). No prior witness spelled the divisor factor-first, so this
+// exercises the divisor-side `Int.mul_comm` normalization in isolation; the
+// content-blind cancel rung must still close it universal. Fresh variable
+// names keep the witness name-blind.
+
+verify quotFloor law shrinkFactorDivisorLeft
+    given top: Int = [11, 0 - 4, 30, 0]
+    given base: Int = [2, 3, 4]
+    given scale: Int = [1, 5, 6]
+    when 0 < base
+    when 0 < scale
+    quotFloor(top * scale, scale * base) => quotFloor(top, base)
+
+// Same absorb shape, but COMMUTED: the divisor is the RIGHT factor of the
+// product (`whole * den`, i.e. q * d order) and the remainder is written FIRST
+// in the sum; positivity spelled `den > 0` with reordered when-clauses.
+
+verify quotFloor law soakRemainderCommuted
+    given whole: Int = [4, 0 - 3, 0, 9]
+    given den: Int = [1, 2, 4, 6]
+    given rest: Int = [0, 1, 3]
+    when den > 0
+    when rest < den
+    when 0 <= rest
+    quotFloor(rest + whole * den, den) => whole

@@ -1,9 +1,141 @@
 use std::collections::BTreeSet;
 
 use super::super::expr::aver_name_to_lean;
-use crate::ast::{Expr, FnBody, FnDef, Spanned, Stmt, VerifyBlock, VerifyLaw};
+use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyLaw};
 use crate::ast_rewrite::rewrite_idents_scoped;
 use crate::codegen::CodegenContext;
+
+/// Render an Aver expression to its Lean surface form (the same emitter the
+/// theorem statements use), so recognizers can compare atoms structurally.
+pub(super) fn render(e: &Spanned<Expr>, ctx: &CodegenContext) -> String {
+    super::super::expr::emit_expr_legacy(e, ctx, None)
+}
+
+/// Whether two Aver expressions render to the same Lean surface form.
+pub(super) fn same_atom(a: &Spanned<Expr>, b: &Spanned<Expr>, ctx: &CodegenContext) -> bool {
+    render(a, ctx) == render(b, ctx)
+}
+
+/// `floor(x, y)` — a 2-arg call to `floor_src`; returns `(x, y)`.
+pub(super) fn floor_call<'a>(
+    e: &'a Spanned<Expr>,
+    floor_src: &str,
+) -> Option<(&'a Spanned<Expr>, &'a Spanned<Expr>)> {
+    let Expr::FnCall(callee, args) = &e.node else {
+        return None;
+    };
+    if expr_dotted_name(callee).as_deref() != Some(floor_src) || args.len() != 2 {
+        return None;
+    }
+    Some((&args[0], &args[1]))
+}
+
+/// Whether `fd_src` names a Euclidean floor-division fn: its body is
+/// `Result.withDefault(Int.div(a, d), 0)` over the two parameters. This is the
+/// definition-shape gate that makes the floor identities TRUE — keyed on the
+/// body, never on the fn's name. Shared by every floor-division rung.
+pub(super) fn is_euclidean_floor_fn(floor_src: &str, ctx: &CodegenContext) -> bool {
+    let Some(fd) = find_fn_def_by_call_name(ctx, floor_src) else {
+        return false;
+    };
+    if !fd.effects.is_empty() || fd.params.len() != 2 {
+        return false;
+    }
+    let [Stmt::Expr(body)] = fd.body.stmts() else {
+        return false;
+    };
+    // withDefault(Int.div(_, _), 0)
+    let Expr::FnCall(callee, args) = &body.node else {
+        return false;
+    };
+    if expr_dotted_name(callee).as_deref() != Some("Result.withDefault") || args.len() != 2 {
+        return false;
+    }
+    if !matches!(&args[1].node, Expr::Literal(Literal::Int(0))) {
+        return false;
+    }
+    let Expr::FnCall(div_callee, div_args) = &args[0].node else {
+        return false;
+    };
+    expr_dotted_name(div_callee).as_deref() == Some("Int.div") && div_args.len() == 2
+}
+
+/// Flatten a `Bool.and` / `&&` conjunction of `when` clauses.
+pub(super) fn flatten_and<'a>(e: &'a Spanned<Expr>, out: &mut Vec<&'a Spanned<Expr>>) {
+    match &e.node {
+        Expr::FnCall(callee, args)
+            if expr_dotted_name(callee).as_deref() == Some("Bool.and") && args.len() == 2 =>
+        {
+            flatten_and(&args[0], out);
+            flatten_and(&args[1], out);
+        }
+        _ => out.push(e),
+    }
+}
+
+/// Whether `clause` guarantees `0 < x` for the atom rendered as `x_render`:
+/// `0 < x`, `x > 0`, `1 <= x`, `x >= 1` (any nonneg/≥1 literal bound).
+pub(super) fn clause_gives_pos(
+    clause: &Spanned<Expr>,
+    x_render: &str,
+    ctx: &CodegenContext,
+) -> bool {
+    let Expr::BinOp(op, l, r) = &clause.node else {
+        return false;
+    };
+    let int_lit = |e: &Spanned<Expr>| match &e.node {
+        Expr::Literal(Literal::Int(n)) => Some(*n),
+        _ => None,
+    };
+    match op {
+        // c < x  (c >= 0)  ⟹  0 < x ;  x > c  (c >= 0)
+        BinOp::Lt => int_lit(l).is_some_and(|c| c >= 0) && render(r, ctx) == x_render,
+        BinOp::Gt => render(l, ctx) == x_render && int_lit(r).is_some_and(|c| c >= 0),
+        // c <= x  (c >= 1)  ;  x >= c  (c >= 1)
+        BinOp::Lte => int_lit(l).is_some_and(|c| c >= 1) && render(r, ctx) == x_render,
+        BinOp::Gte => render(l, ctx) == x_render && int_lit(r).is_some_and(|c| c >= 1),
+        _ => false,
+    }
+}
+
+/// Whether `clause` guarantees `0 <= x` for the atom rendered as `x_render`:
+/// `0 <= x`, `x >= 0`, and any strictly-positive bound (which implies `>= 0`).
+pub(super) fn clause_gives_nonneg(
+    clause: &Spanned<Expr>,
+    x_render: &str,
+    ctx: &CodegenContext,
+) -> bool {
+    if clause_gives_pos(clause, x_render, ctx) {
+        return true;
+    }
+    let Expr::BinOp(op, l, r) = &clause.node else {
+        return false;
+    };
+    let int_lit = |e: &Spanned<Expr>| match &e.node {
+        Expr::Literal(Literal::Int(n)) => Some(*n),
+        _ => None,
+    };
+    match op {
+        // c <= x  (c >= 0)  ;  x >= c  (c >= 0)
+        BinOp::Lte => int_lit(l).is_some_and(|c| c >= 0) && render(r, ctx) == x_render,
+        BinOp::Gte => render(l, ctx) == x_render && int_lit(r).is_some_and(|c| c >= 0),
+        _ => false,
+    }
+}
+
+/// Whether `clause` is the strict upper bound `x < y` for atoms rendered as
+/// `x_render` / `y_render`.
+pub(super) fn clause_is_lt(
+    clause: &Spanned<Expr>,
+    x_render: &str,
+    y_render: &str,
+    ctx: &CodegenContext,
+) -> bool {
+    let Expr::BinOp(BinOp::Lt, l, r) = &clause.node else {
+        return false;
+    };
+    render(l, ctx) == x_render && render(r, ctx) == y_render
+}
 
 pub(super) fn body_terminal_expr(body: &FnBody) -> Option<&Spanned<Expr>> {
     match body.stmts() {

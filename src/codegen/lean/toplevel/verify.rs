@@ -687,6 +687,13 @@ fn emit_verify_law_block(
             // universal form, so dropping the sampled domain keeps statement and
             // proof aligned.
             || super::law_auto::recognize_nested_floor(&law_for_auto_proof, ctx)
+            // Euclidean-floor arithmetic: shared positive-factor cancellation
+            // (`floor (a * c) (d * c) = floor a d`) and bounded-remainder
+            // absorption (`floor (d * q + r) d = q`), proven universally in pure
+            // core. Each emit replaces the theorem with the universal form, so
+            // dropping the sampled domain keeps statement and proof aligned.
+            || super::law_auto::recognize_cancel_common_factor(&law_for_auto_proof, ctx)
+            || super::law_auto::recognize_absorb_remainder(&law_for_auto_proof, ctx)
             // Rational-order chaining law (the reciprocal-magnitude composition,
             // Lemma 8.2.4): the conclusion is the Fraction order fact `isNonNeg
             // (minus (pow2Signed BIG) A)`, proven universally by chaining the
