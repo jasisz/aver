@@ -82,6 +82,31 @@ fn proof_export_builds_int_abs_laws_when_lake_is_available() {
 }
 
 #[test]
+fn proof_export_failsoft_sos_probe_a_degrades_to_sorry_when_lake_is_available() {
+    // Regression for the fail-soft floor: the guarded nonlinear nonnegativity
+    // certificate can leave the fragment, but it must degrade to a counted
+    // `sorry`, never a hard Lean build error from inside the tactic portfolio.
+    assert_proof_builds_with_sorry_budget(
+        "tests/fixtures/failsoft_sos_probe_a.av",
+        "aver-proof-failsoft-sos-a",
+        2,
+    );
+}
+
+#[test]
+fn proof_export_failsoft_sos_probe_b2_degrades_to_sorry_when_lake_is_available() {
+    // Regression for the fail-soft floor: this non-strict product certificate
+    // used to hit a deterministic whnf heartbeat timeout in `aver_int_order`.
+    // The risky arm must be locally bounded and fall through to a counted
+    // `sorry`, not abort `lake build`.
+    assert_proof_builds_with_sorry_budget(
+        "tests/fixtures/failsoft_sos_probe_b2.av",
+        "aver-proof-failsoft-sos-b2",
+        1,
+    );
+}
+
+#[test]
 fn proof_export_builds_validated_wrapper_when_lake_is_available() {
     // Genericity guard for the validated-wrapper arm: a synthetic, non-K5
     // error-checking division wrapper whose correctness law

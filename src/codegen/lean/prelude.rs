@@ -943,14 +943,16 @@ conclusions `0 < _` / `0 ≤ _` never unify, so neither shadows the other). The
 `mul_le_mul_of_nonneg_right` rung sits BEFORE
 `mul_le_mul`, and that order is load-bearing for performance: `mul_le_mul`
 would also unify with `a*c ≤ b*c` (taking `d := c`) but spawns a `0 ≤ b` leaf
-that is NOT derivable when the law carries no `0 ≤ a` guard, and the three
-product rungs then thrash on that atomic leaf with metavariable products until
-the heartbeat limit. Trying `mul_le_mul_of_nonneg_right` first closes such a
-goal directly from `a ≤ b` / `0 ≤ c` and never spawns `0 ≤ b`; on the squared
-shapes (`e*e ≤ b*b`, the contraction's `s²` bound) its shared-right-factor
-unification fails fast (the two right factors differ), so `mul_le_mul` still
-takes them — and any genuine `0 ≤ b` leaf there is closed by the early `omega`
-rung from that family's `0 ≤ e ≤ b` guards.
+that is NOT derivable when the law carries no `0 ≤ a` guard. Trying
+`mul_le_mul_of_nonneg_right` first closes such a goal directly from `a ≤ b` /
+`0 ≤ c` and never spawns `0 ≤ b`; on the squared shapes (`e*e ≤ b*b`, the
+contraction's `s²` bound) its shared-right-factor unification fails fast (the
+two right factors differ), so `mul_le_mul` still takes them — and any genuine
+`0 ≤ b` leaf there is closed by the early `omega` rung from that family's
+`0 ≤ e ≤ b` guards. The `mul_le_mul` arm is locally heartbeat-capped because
+bad metavariable product searches can otherwise escape the outer proof floor as
+a deterministic `whnf` timeout; a timeout in that arm should be just another
+failed `first` alternative.
 
 The MULTIPLY-BY-POSITIVE rungs (`mul_lt_mul_of_pos_left` / `_right` for a strict
 product order `m*a < m*b` / `a*m < b*m`, and `mul_le_mul_of_nonneg_left` for the
@@ -976,11 +978,15 @@ macro_rules
         | (apply Int.mul_nonneg <;> aver_int_order)
         | (apply Int.mul_pos <;> aver_int_order)
         | (apply Int.mul_le_mul_of_nonneg_right <;> aver_int_order)
-        | (apply Int.mul_le_mul <;> aver_int_order)
+        | (set_option maxHeartbeats 50000 in
+           apply Int.mul_le_mul <;> aver_int_order)
         | (apply Int.mul_lt_mul_of_pos_left <;> aver_int_order)
         | (apply Int.mul_lt_mul_of_pos_right <;> aver_int_order)
         | (apply Int.mul_le_mul_of_nonneg_left <;> aver_int_order)
-        | (obtain ⟨hl, hr⟩ := ‹_ ∧ _›; aver_int_order))"#;
+        | (have h_when_left := And.left h_when
+           have h_when_right := And.right h_when
+           clear h_when
+           aver_int_order))"#;
 
 #[cfg(test)]
 pub(super) fn generate_prelude() -> String {
