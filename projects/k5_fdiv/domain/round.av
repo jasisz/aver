@@ -102,6 +102,38 @@ verify floorDiv law nestedFloorCollapse
     when 0 < e
     floorDiv(floorDiv(a, d), e) => floorDiv(a, d * e)
 
+// A shared positive factor cancels out of a Euclidean floor: dividing a * c by
+// d * c is dividing a by d, valid when both the divisor d and the factor c are
+// positive. The content-blind cancel-common-factor floor strategy closes it in
+// pure core over Int.mul_ediv_mul_of_pos_left -- no power-of-two or K5 literal
+// in the recognizer, so the same rung fires on any Euclidean-floor fn. One of
+// the two citable links the trunc-sticky coarsening chain rewrites through
+// (the sidecar re-derived this inline as its `cancel` have).
+
+verify floorDiv law cancelCommonFactor
+    given a: Int = [13, 3, 1]
+    given d: Int = [2, 3, 4]
+    given c: Int = [2, 5]
+    when 0 < d
+    when 0 < c
+    floorDiv(a * c, d * c) => floorDiv(a, d)
+
+// A remainder strictly below the divisor is absorbed: flooring d * q + r by d
+// recovers the quotient q exactly when 0 <= r < d (and 0 < d). The content-blind
+// absorb-remainder floor strategy closes it in pure core over
+// Int.add_mul_ediv_left + Int.ediv_eq_zero_of_lt. The second citable link: the
+// doubled round-to-odd low bit b in {0, 1} is the remainder absorbed under the
+// divisor 2 (the sidecar re-derived this inline as its `absorb2` have).
+
+verify floorDiv law absorbRemainder
+    given d: Int = [2, 3, 5]
+    given q: Int = [4, 6, 0]
+    given r: Int = [0, 1, 2]
+    when 0 < d
+    when 0 <= r
+    when r < d
+    floorDiv(d * q + r, d) => q
+
 fn floorDivWindow(a: Int, k: Int) -> Bool
     ? "The Euclidean floor window of a / 2^k: the quotient q = floor(a / 2^k) satisfies 2^k * q <= a < 2^k * (q + 1). This is the recursive-exponent-FREE floor characterization -- the divisor is the power of two 2^k directly, not a binary-exponent recursion -- and it holds unconditionally because 2^k > 0 for every k. The workhorse the rounding error bounds reduce to after cross-multiplication."
     Bool.and(Domain.Fprep.pow2(k) * floorDiv(a, Domain.Fprep.pow2(k)) <= a, a < Domain.Fprep.pow2(k) * (floorDiv(a, Domain.Fprep.pow2(k)) + 1))
