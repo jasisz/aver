@@ -18,8 +18,8 @@ mod sampled;
 mod shared;
 mod spec;
 mod suffix_roundtrip;
-mod triangle_sum;
 mod transparent_chain;
+mod triangle_sum;
 
 use super::VerifyEmitMode;
 use super::expr::aver_name_to_lean;
@@ -938,6 +938,33 @@ fn emit_verify_law_forall_auto_proof_inner(
     // trigger — this arm emits that obtain-conjuncts-then-apply skeleton from the
     // shape (name-blind). Probe-gated like the keystone, so a plan whose
     // orchestration does not close falls back to its bounded sampled statement.
+    // Transparent arithmetic premise chain: every `when` conjunct is a call to
+    // an already-citable law predicate whose transitively-unfolded body lies in
+    // the linear-Int fragment {comparisons, +, -, literal·term, if/max}, and the
+    // goal (after unfolding the subject fn) is a single comparison in the same
+    // fragment. Closed in true-universal form by unfolding those bodies and
+    // `split at h_when <;> omega`.
+    //
+    // Placed BEFORE the two probe-gated generic drivers (multicite / keystone),
+    // by NECESSITY: the keystone's `simp only [...] <;> grind` over the pool
+    // CLAIMS this shape too but its `grind` cannot do the max/min split plus the
+    // linear chain, so it records the law's `AVERSPEC_SORRY` floor as a FAILURE —
+    // shadowing this arm and reverting the flip to bounded. This arm's recognizer
+    // is strictly narrower than the keystone's (a PURE-non-recursive subject and
+    // premise fns, all Int givens, the transparent-arithmetic fragment, exactly
+    // one premise-side split), and `omega` is complete on that fragment, so it can
+    // only claim shapes it provably closes — it never steals or regresses a
+    // keystone / multicite shape (those cite opaque `Fraction` / recursive cone
+    // fns this recognizer rejects) and cannot shadow the recursive Induction /
+    // FloorDivWindow rungs below. Probe-gated (`speculative::admits`) exactly like
+    // the keystone: a chain the probe cannot certify reverts to bounded.
+    if law.when.is_some()
+        && let Some(proof) =
+            transparent_chain::emit_transparent_chain_law(vb, law, ctx, &intro_names)
+    {
+        return Some(proof);
+    }
+
     if let Some(proof) = induction::emit_multicite_composition_law(vb, law, ctx, &intro_names) {
         return Some(proof);
     }
@@ -977,18 +1004,6 @@ fn emit_verify_law_forall_auto_proof_inner(
     if law.when.is_some()
         && let Some(proof) =
             interval_mono::emit_interval_monotonicity_law(vb, law, ctx, theorem_base)
-    {
-        return Some(proof);
-    }
-
-    // Transparent arithmetic premise chain: every `when` conjunct is a call to
-    // an already-citable law predicate whose body unfolds to linear Int
-    // arithmetic plus one premise-side max/min-style split. Deterministic and
-    // placed after existing deterministic composition rungs but before any
-    // bounded guarded-domain fallback.
-    if law.when.is_some()
-        && let Some(proof) =
-            transparent_chain::emit_transparent_chain_law(vb, law, ctx, &intro_names)
     {
         return Some(proof);
     }

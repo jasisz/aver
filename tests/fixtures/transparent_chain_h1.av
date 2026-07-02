@@ -1,0 +1,52 @@
+module TransparentChainH1
+    intent =
+        "Self-contained CI adaptation of the g1c-h1 probe: the sticky-plus"
+        "exponent-separation hypothesis 1 + e(q2+q3) < e(q1), discharged by"
+        "chaining two digit-separation citations and the sum-exponent window."
+        "The K5 dependency cone (Fraction magnitudes, pow2Signed) is replaced by"
+        "same-module pool laws so the whole chain lives in one entry module; the"
+        "transparent-arithmetic premise-chain arm must flip innerHypothesis from"
+        "bounded to universal."
+    effects []
+
+fn digitSeparation_8_2_1(eQ1: Int, eQ0: Int) -> Bool
+    ? "Lemma 8.2.1 (Digit Separation): e(q1) <= e(q0) - 23."
+    eQ0 - 23 - eQ1 >= 0
+
+verify digitSeparation_8_2_1 law firstImplication
+    given eQ0: Int = [25, 24, 23]
+    digitSeparation_8_2_1(eQ0 - 23, eQ0) holds
+
+fn maxInt(a: Int, b: Int) -> Int
+    ? "The larger of two integers -- the max(ex, ey) of Lemma 9.3.2."
+    match a >= b
+        true -> a
+        false -> b
+
+verify maxInt
+    maxInt(2, 3) => 3
+    maxInt(5, 1) => 5
+    maxInt(-2, -2) => -2
+
+fn sumExponentUpper_9_3_2(eSum: Int, ex: Int, ey: Int) -> Bool
+    ? "Lemma 9.3.2 (sum-exponent upper bound): e(x + y) <= 1 + max(ex, ey)."
+    eSum <= 1 + maxInt(ex, ey)
+
+verify sumExponentUpper_9_3_2 law section_9_3_2
+    given ex: Int = [2, 0, -1]
+    given ey: Int = [3, 0, -2]
+    sumExponentUpper_9_3_2(1 + ex, ex, ey) holds
+
+fn expSeparationInner(eQ1: Int, eQ2: Int, eQ3: Int, eSum: Int) -> Bool
+    ? "H1 inner hypothesis: 1 + e(q2+q3) < e(q1)."
+    1 + eSum < eQ1
+
+verify expSeparationInner law innerHypothesis
+    given eQ1: Int = [30, 25, 24]
+    given eQ2: Int = [5, 1, 0]
+    given eQ3: Int = [0 - 20, 0 - 23, 0 - 25]
+    given eSum: Int = [6, 2, 1]
+    when digitSeparation_8_2_1(eQ2, eQ1)
+    when digitSeparation_8_2_1(eQ3, eQ2)
+    when sumExponentUpper_9_3_2(eSum, eQ2, eQ3)
+    expSeparationInner(eQ1, eQ2, eQ3, eSum) holds

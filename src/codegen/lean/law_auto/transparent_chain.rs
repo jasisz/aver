@@ -4,13 +4,33 @@
 //! whose premises are calls to already-citable law predicates, then unfolds only
 //! those predicate bodies plus their transparent non-recursive helpers. The
 //! body gate is shape-keyed, not name-keyed.
+//!
+//! Probe-gated exactly like the keystone (`induction::keystone`): both the
+//! statement recognizer ([`recognize_transparent_chain`], which feeds the
+//! `omit_domain` universal-statement driver) and the proof emit
+//! ([`emit_transparent_chain_law`]) key on
+//! [`tactic_ir::speculative::admits`], so a chain whose `omega` close the probe
+//! cannot certify REVERTS to the sound bounded sampled-domain statement instead
+//! of forcing a passing project red. Outside any probe (`admits` default
+//! `false`) the law stays bounded — byte-identical to before this arm.
+//!
+//! Named boundary: the citable-pool check resolves premises against EARLIER
+//! sibling laws in the entry module (`enclosing_verify_blocks`) or a dependency
+//! module's own law list. Under entry-only speculative probing a dependency
+//! module's `when`-law that is itself only probe-committable is not yet a stable
+//! citation, so the intended fixtures keep the cited pool laws in the SAME module
+//! as the chain law. Widening to freely cross-module pool citations is a
+//! separate change and deliberately out of scope here.
 
 use std::collections::BTreeSet;
 
 use super::super::expr::aver_name_to_lean;
-use super::{shared, AutoProof};
-use crate::ast::{BinOp, Expr, FnDef, Literal, Pattern, Spanned, VerifyBlock, VerifyKind, VerifyLaw};
+use super::{AutoProof, shared};
+use crate::ast::{
+    BinOp, Expr, FnDef, Literal, Pattern, Spanned, VerifyBlock, VerifyKind, VerifyLaw,
+};
 use crate::codegen::CodegenContext;
+use crate::codegen::lean::tactic_ir::speculative;
 
 struct TransparentChain {
     subject_lean: String,
@@ -39,7 +59,13 @@ pub(in crate::codegen::lean) fn recognize_transparent_chain(
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> bool {
-    recognize_transparent_chain_shape(vb, law, ctx).is_some()
+    if recognize_transparent_chain_shape(vb, law, ctx).is_none() {
+        return false;
+    }
+    // Probe-gated: the universal statement form (`omit_domain`) and the proof
+    // emit stay in lockstep because both consult `admits`. Default `false` keeps
+    // a non-probe transpile on the bounded fallback (keystone precedent).
+    speculative::admits(&law_id(vb, law), false)
 }
 
 pub(in crate::codegen::lean) fn emit_transparent_chain_law(
@@ -52,19 +78,41 @@ pub(in crate::codegen::lean) fn emit_transparent_chain_law(
         subject_lean,
         premise_unfolds,
     } = recognize_transparent_chain_shape(vb, law, ctx)?;
+    // Same gate as the statement recognizer: a chain the probe did not commit
+    // (or a plain transpile with no probe) declines here, so the caller falls
+    // through to the bounded guarded-domain fallback and the statement stays
+    // bounded.
+    let id = law_id(vb, law);
+    if !speculative::admits(&id, false) {
+        return None;
+    }
     let mut intros = intro_names.to_vec();
     intros.push("h_when".to_string());
     let premise_defs = premise_unfolds.join(" ");
+    // Fail-closed floor. Under the probe it carries the `AVERSPEC_SORRY:<id>`
+    // trace so a non-closing chain surfaces in the build log (and `record_probed`
+    // registers the id as one that emitted a floor); the committed re-emit then
+    // states only the closers universally. Off-probe it is a bare `sorry`.
+    let floor = if speculative::probing() {
+        speculative::record_probed(&id);
+        format!("(trace \"AVERSPEC_SORRY:{id}\"; sorry)")
+    } else {
+        "sorry".to_string()
+    };
     Some(AutoProof {
         support_lines: Vec::new(),
         body: crate::codegen::lean::tactic_ir::Tactic::raw(super::intro_then(
             &intros,
             vec![format!(
-                "first | (unfold {subject_lean}; unfold {premise_defs} at h_when; simp only [Bool.and_eq_true, decide_eq_true_eq, ge_iff_le] at h_when ⊢; split at h_when <;> omega) | sorry"
+                "first | (unfold {subject_lean}; unfold {premise_defs} at h_when; simp only [Bool.and_eq_true, decide_eq_true_eq, ge_iff_le] at h_when ⊢; split at h_when <;> omega) | {floor}"
             )],
         )),
         replaces_theorem: false,
     })
+}
+
+fn law_id(vb: &VerifyBlock, law: &VerifyLaw) -> String {
+    format!("{}.{}", vb.fn_name, law.name)
 }
 
 fn recognize_transparent_chain_shape(
@@ -99,10 +147,7 @@ fn recognize_transparent_chain_shape(
     if bare_basename(&subject_call) != vb.fn_name {
         return None;
     }
-    if subject_args
-        .iter()
-        .any(|arg| !plain_term(arg))
-    {
+    if subject_args.iter().any(|arg| !plain_term(arg)) {
         return None;
     }
     let subject = resolve_fn_for_call(ctx, &subject_call, ctx.active_module_scope().as_deref())?;
@@ -135,10 +180,7 @@ fn recognize_transparent_chain_shape(
         if cited.fd.return_type.trim() != "Bool" || !fn_is_pure_nonrecursive(ctx, &cited) {
             return None;
         }
-        if args
-            .iter()
-            .any(|arg| !plain_term(arg))
-        {
+        if args.iter().any(|arg| !plain_term(arg)) {
             return None;
         }
         let mut state = CollectState {
@@ -186,9 +228,7 @@ fn collect_transparent_premise_fn(
 fn plain_bool(expr: &Spanned<Expr>) -> bool {
     match &expr.node {
         Expr::Literal(Literal::Bool(_)) => true,
-        Expr::BinOp(op, l, r) if comparison_op(*op) => {
-            plain_term(l) && plain_term(r)
-        }
+        Expr::BinOp(op, l, r) if comparison_op(*op) => plain_term(l) && plain_term(r),
         _ => false,
     }
 }
@@ -330,7 +370,10 @@ fn premise_term(
 }
 
 fn comparison_op(op: BinOp) -> bool {
-    matches!(op, BinOp::Eq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte)
+    matches!(
+        op,
+        BinOp::Eq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte
+    )
 }
 
 fn int_literal(expr: &Spanned<Expr>) -> bool {
@@ -358,16 +401,14 @@ fn resolve_fn_for_call<'a>(
     owner_scope: Option<&str>,
 ) -> Option<ResolvedFn<'a>> {
     if let Some((prefix, short)) = split_module_call(ctx, call_name) {
-        let fd = ctx
-            .fn_def_by_name(short, Some(prefix))
-            .or_else(|| {
-                ctx.modules
-                    .iter()
-                    .find(|m| m.prefix == prefix)?
-                    .fn_defs
-                    .iter()
-                    .find(|fd| fd.name == short)
-            })?;
+        let fd = ctx.fn_def_by_name(short, Some(prefix)).or_else(|| {
+            ctx.modules
+                .iter()
+                .find(|m| m.prefix == prefix)?
+                .fn_defs
+                .iter()
+                .find(|fd| fd.name == short)
+        })?;
         return Some(ResolvedFn {
             fd,
             scope: Some(prefix.to_string()),
@@ -398,7 +439,10 @@ fn resolve_fn_for_call<'a>(
     })
 }
 
-fn split_module_call<'a>(ctx: &'a CodegenContext, call_name: &'a str) -> Option<(&'a str, &'a str)> {
+fn split_module_call<'a>(
+    ctx: &'a CodegenContext,
+    call_name: &'a str,
+) -> Option<(&'a str, &'a str)> {
     ctx.modules
         .iter()
         .filter_map(|module| {
@@ -409,6 +453,16 @@ fn split_module_call<'a>(ctx: &'a CodegenContext, call_name: &'a str) -> Option<
         .max_by_key(|(prefix, _)| prefix.len())
 }
 
+/// Whether an EARLIER law block establishes the premise predicate `call_name` as
+/// a pool member — a `verify <fn> law <name>` whose `law_as_lemma_statement` is
+/// well-formed. This is a RECOGNITION gate (the arm only fires on premises that
+/// name a law-backed predicate), NOT a soundness dependency: the emitted proof
+/// never cites the pool law theorem — it `unfold`s the predicate fn's own body
+/// (definitional) and discharges the goal from the introduced premises `h_when`
+/// with `omega`, then the `#print axioms` whitelist + kernel recheck certify it.
+/// So a pool law that is itself only bounded (or, in principle, unproven) cannot
+/// lend false credit here; checking mere statement shape rather than
+/// proven-universal tier is therefore truthful for this arm.
 fn has_citable_pool_law_for_call(vb: &VerifyBlock, call_name: &str, ctx: &CodegenContext) -> bool {
     use crate::codegen::lean::toplevel::law_as_lemma_statement;
     if let Some((prefix, short)) = split_module_call(ctx, call_name)

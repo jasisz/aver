@@ -1,0 +1,55 @@
+module TransparentChainNotImplied
+    intent =
+        "Regression for the probe-gating safety rail. `tightRoom` has the EXACT"
+        "shape the transparent-chain arm recognizes (a citable-predicate premise"
+        "chain with one peak split, all-Int givens), so the recognizer admits it"
+        "and the speculative probe attempts it universally -- but the chain does"
+        "NOT imply the conclusion (`5 + load < cap` needs load <= cap - 6, while"
+        "the premises only force load <= cap - 4), so `omega` cannot close it."
+        "The probe must observe the AVERSPEC_SORRY floor and REVERT this law to"
+        "its sound bounded sampled statement: the whole project stays passed,"
+        "never flipped red. The sibling universal laws confirm the arm still"
+        "fires where the chain IS implied."
+    effects []
+
+fn separated(a: Int, b: Int) -> Bool
+    ? "b sits at least the fixed threshold above a."
+    b - 5 - a >= 0
+
+verify separated law atThreshold
+    given b: Int = [30, 25, 24]
+    separated(b - 5, b) holds
+
+fn peakOf(x: Int, y: Int) -> Int
+    ? "The larger of two loads."
+    match x >= y
+        true -> x
+        false -> y
+
+verify peakOf
+    peakOf(2, 3) => 3
+    peakOf(5, 1) => 5
+    peakOf(-2, -2) => -2
+
+fn withinPeak(load: Int, x: Int, y: Int) -> Bool
+    ? "A combined load never exceeds one plus the larger contributing load."
+    load <= 1 + peakOf(x, y)
+
+verify withinPeak law peakBound
+    given x: Int = [5, 1, 0]
+    given y: Int = [3, 0, -2]
+    withinPeak(1 + x, x, y) holds
+
+fn tightRoom(cap: Int, mid: Int, low: Int, load: Int) -> Bool
+    ? "An OVER-STRONG headroom claim the premise chain does not force."
+    5 + load < cap
+
+verify tightRoom law capacityChain
+    given cap: Int = [30, 25, 24]
+    given mid: Int = [5, 1, 0]
+    given low: Int = [0 - 20, 0 - 23, 0 - 25]
+    given load: Int = [6, 2, 1]
+    when separated(mid, cap)
+    when separated(low, mid)
+    when withinPeak(load, mid, low)
+    tightRoom(cap, mid, low, load) holds

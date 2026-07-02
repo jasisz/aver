@@ -785,3 +785,149 @@ fn proof_bounded_laws_counts_distinct_part_named_laws_separately() {
     );
     let _ = std::fs::remove_dir_all(&output_dir);
 }
+
+/// Read the per-law `tier` for `law_id` (`fn.law`) from the emitted
+/// `proof_manifest.json`. `None` if the manifest or record is absent.
+fn manifest_law_tier(output_dir: &std::path::Path, law_id: &str) -> Option<String> {
+    let raw = std::fs::read_to_string(output_dir.join("proof_manifest.json")).ok()?;
+    let manifest: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    manifest["laws"].as_array()?.iter().find_map(|l| {
+        if l["law"].as_str()? == law_id {
+            Some(l["tier"].as_str()?.to_string())
+        } else {
+            None
+        }
+    })
+}
+
+#[test]
+fn proof_export_flips_transparent_chain_h1_to_universal_when_lake_is_available() {
+    // Acceptance (a) for the transparent-arithmetic premise-chain arm: the
+    // self-contained adaptation of the g1c-h1 probe (`1 + e(q2+q3) < e(q1)`,
+    // discharged by chaining two digit-separation citations and the sum-exponent
+    // window). The engine emits this `when`-law BOUNDED without the arm; the arm
+    // unfolds the three cited predicate bodies and closes `split at h_when <;>
+    // omega`, so the speculative probe commits it UNIVERSAL. Revert the arm (or
+    // its probe gate) and the chain law falls back to `bounded` — this asserts
+    // the flip AND the axiom whitelist.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping transparent-chain h1 test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-transparent-chain-h1");
+    let (summary, run) = run_lean_check_json(
+        "tests/fixtures/transparent_chain_h1.av",
+        &output_dir,
+        0,
+        &[],
+    );
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        manifest_law_tier(&output_dir, "expSeparationInner.innerHypothesis").as_deref(),
+        Some("universal"),
+        "the h1 premise chain must flip bounded -> universal via the arm.\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "the whole file (pool laws + flipped chain) must be kernel-genuine \
+         universal — no native_decide in a law theorem.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+#[test]
+fn proof_export_closes_transparent_chain_cross_domain_witness_when_lake_is_available() {
+    // D3 litmus: the SAME chain shape as the h1 hypothesis with all-different
+    // names and a non-K5 domain (capacity / load / threshold) closes UNIVERSALLY
+    // through the same arm with ZERO further engine changes — proving the
+    // recognizer keys on claim SHAPE, not on names or domain constants. A
+    // name-keyed regression would leave `roomToSpare.capacityChain` bounded here.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping transparent-chain witness test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-transparent-chain-witness");
+    let (summary, run) = run_lean_check_json(
+        "tests/fixtures/transparent_chain_witness.av",
+        &output_dir,
+        0,
+        &[],
+    );
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        manifest_law_tier(&output_dir, "roomToSpare.capacityChain").as_deref(),
+        Some("universal"),
+        "the cross-domain witness chain must close universal via the same arm.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+#[test]
+fn proof_probe_gating_reverts_not_implied_transparent_chain_to_bounded_when_lake_is_available() {
+    // Probe-gating safety rail (the green -> red repro turned regression):
+    // `tightRoom.capacityChain` has the EXACT shape the arm recognizes, so the
+    // recognizer admits it and the probe attempts it universally — but the
+    // premises do NOT imply the over-strong conclusion, so `omega` cannot close
+    // it. The probe must see the `AVERSPEC_SORRY` floor and REVERT the law to its
+    // sound bounded sampled statement, leaving the whole project `passed`. Remove
+    // the probe gate (force universal-or-sorry) and this law's universal theorem
+    // carries a sorry — `passed` flips false / `sorries` climbs — so this test
+    // fails loudly, exactly the red build the gate prevents.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping transparent-chain not-implied test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-transparent-chain-not-implied");
+    let (summary, run) = run_lean_check_json(
+        "tests/fixtures/transparent_chain_not_implied.av",
+        &output_dir,
+        0,
+        &[],
+    );
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "an in-shape but not-implied chain must revert to bounded and keep the \
+         project passing, never flip it red.\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        manifest_law_tier(&output_dir, "tightRoom.capacityChain").as_deref(),
+        Some("bounded"),
+        "the not-implied chain must land bounded, not universal.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
