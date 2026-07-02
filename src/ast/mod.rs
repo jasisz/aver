@@ -1,4 +1,5 @@
 pub mod types;
+pub mod unparse;
 pub use types::Type;
 
 /// Source line number (1-based). 0 = synthetic/unknown.
