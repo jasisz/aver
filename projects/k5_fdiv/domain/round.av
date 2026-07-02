@@ -39,14 +39,7 @@ module Round
         "floor: floor(s*2^b / 2^a) * 2^a = s*2^b when 0 <= a <= b, valid because"
         "2^a | 2^b (the power-of-two homomorphism). That cancel is itself a generic"
         "Aver law on floorDiv (dividesPow2Multiple, universal); the composition"
-        "lemmas CITE it -- no per-figure proof. The RTL trunc-sticky composition"
-        "(Lemma 7.3.2's foundational rung, trunc(sticky(x,n),m) = trunc(x,m) for"
-        "m < n) also landed universal: its significand identity coarsens away a"
-        "DOUBLED round-to-odd low bit, closed by the generic floor-composition rung"
-        "-- the same shape-only floor arithmetic (cancel-common-factor, absorb-"
-        "remainder, nested-floor-collapse) plus the power-of-two homomorphism, with"
-        "grind composing the exponent regrouping, again no per-figure proof."
-        "Lemma 7.2.3 (p.19) and Lemma 7.2.4"
+        "lemmas CITE it -- no per-figure proof. Lemma 7.2.3 (p.19) and Lemma 7.2.4"
         "(p.19), the RECONSTRUCTION halves -- away(x,i) = x + epsilon and sticky(x,i) ="
         "x + epsilon, with epsilon = round(x,i) - x -- both landed universal (the"
         "additive complement of Lemma 7.2.2's trunc(x,i) = x - epsilon; the exact"
@@ -527,20 +520,25 @@ verify truncStickyComposes
 // bits discards it and recovers trunc(x,m). The paper's m, n are positive
 // integers (1 <= m < n), on a normalized significand (width >= 1).
 //
-// UNIVERSAL on the Lean kernel. After unfolding, both significands reduce to a
-// nested Euclidean floor that coarsens away the doubled round-to-odd low bit:
+// UNIVERSAL on the Lean kernel, via an EXPLICIT HAND-PROOF SIDECAR
+// (proofs/lean/truncStickyComposes__composesThroughSticky.lean), re-checked by
+// the kernel every build; credit `hand`, never auto. After unfolding, both
+// significands reduce to a nested Euclidean floor that coarsens away the doubled
+// round-to-odd low bit:
 //   floor((2*floor(s*2^(n-2) / 2^(width-1)) + b) * 2^(m-1) / 2^(n-1)) = floor(s*2^(m-1) / 2^(width-1)),  b in {0,1}.
-// This is closed by the GENERIC floor-composition rung -- the laws-as-lemmas
-// composition, no per-figure template. The engine supplies the SHAPE-only floor
-// arithmetic (cancel a common power-of-two factor floor(a*c, d*c) = floor(a, d);
-// absorb the doubled low bit floor(2*q + r, 2) = q for 0 <= r < 2; the nested-floor
-// collapse floor(floor(a, d), e) = floor(a, d*e)) together with the power-of-two
-// homomorphism 2^(p+q) = 2^p * 2^q, and `grind` COMPOSES the regrouping chain
-// itself (2^(n-1) = 2^(n-m) * 2^(m-1), 2^(n-m) = 2 * 2^(n-m-1)): the round-to-odd
-// bit is below the coarser window, so it drops. The whole identity depends only on
-// the precision powers being genuine (width >= 1), the sole precondition. The same
-// content-blind rung closes the differently-named cross-domain witness
-// (tests/fixtures/floor_compose_witness.av) with zero code changes.
+// This is nonlinear power-of-two floor (bit) algebra with a doubled round-to-odd
+// low bit -- the one composition the generic exact-cancel does not reach. There
+// is no honest GENERIC (claim-shape) strategy for it yet: a bespoke "power-of-two
+// floor" figure keyed on this exact identity would be a per-figure template
+// disguised as generic, which the laws-as-lemmas discipline declines. So it is
+// discharged where every real prover puts such a lemma -- a labeled hand proof
+// living beside this pure spec. The sidecar CITES the proven pool laws (the pow2
+// homomorphism from fprep, the nested-floor collapse, and positivity) rather than
+// re-proving them, and drives the exponent regrouping (2^(n-1) = 2^(n-m)*2^(m-1),
+// 2^(n-m) = 2*2^(n-m-1)) by hand. A wrong or stale sidecar fails the build loudly
+// and earns no credit. The generic replacement is planned: graduate this to the
+// equality-saturation normalizer platform when it lands (measured feasible -- the
+// same identity connects in an e-graph in ~253us with explanation extraction).
 
 verify truncStickyComposes law composesThroughSticky
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
