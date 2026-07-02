@@ -5700,6 +5700,19 @@ fn run_proof_check(
         }
     };
 
+    // Additive check-json telemetry, per backend — informational only, NEVER
+    // folded into `passed` or the exit code (the floor still degrades to a
+    // caught `sorry` / the budgets still gate). `build_errors` surfaces a hard
+    // Lean error that `sorries` hides; `timeouts` surfaces Dafny timeouts the
+    // `errors` count is blind to.
+    let (lean_build_errors, dafny_timeouts): (Option<usize>, Option<usize>) = match backend {
+        super::cli::ProofBackend::Lean => (
+            Some(count_lean_build_errors(&stderr) + count_lean_build_errors(&stdout)),
+            None,
+        ),
+        super::cli::ProofBackend::Dafny => (None, Some(count_dafny_timeouts(&stdout))),
+    };
+
     if model_panic_hits > 0 {
         eprintln!(
             "{}",
@@ -5873,8 +5886,14 @@ fn run_proof_check(
         if let Some(e) = errors {
             obj.insert("errors".into(), e.into());
         }
+        if let Some(t) = dafny_timeouts {
+            obj.insert("timeouts".into(), t.into());
+        }
         if let Some(s) = sorries {
             obj.insert("sorries".into(), s.into());
+        }
+        if let Some(be) = lean_build_errors {
+            obj.insert("build_errors".into(), be.into());
         }
         if let Some(a) = axioms {
             obj.insert("axioms".into(), a.into());
@@ -6440,6 +6459,42 @@ fn count_dafny_omitted_universals(dir: &str) -> usize {
 fn count_lean_sorries(s: &str) -> usize {
     s.lines()
         .filter(|l| l.contains("declaration uses") && l.contains("sorry"))
+        .count()
+}
+
+/// Count HARD Lean/lake build errors in captured verifier output — the
+/// source-located `error: <file>.lean:L:C: …` diagnostics that abort the
+/// build, DISTINCT from `sorry` (a non-fatal warning counted by
+/// `count_lean_sorries`). A degraded proof arm should always fall to a caught
+/// `sorry`; a hard error here means a tactic escaped the `first | … | sorry`
+/// floor (measured: `assumption` on a metavariable conjunction goal, a
+/// deterministic `whnf` heartbeat timeout), which `sorries` alone hides. Lake's
+/// cascade lines (`error: Lean exited with code 1`, `error: build failed`)
+/// carry no `.lean:` source location and are not counted, so one failing
+/// theorem reads as one hard error, not three. Purely telemetry: never gates
+/// `passed` or the exit code.
+fn count_lean_build_errors(s: &str) -> usize {
+    s.lines()
+        .filter(|l| {
+            let l = l.trim_start();
+            l.starts_with("error:") && l.contains(".lean:")
+        })
+        .count()
+}
+
+/// Count Dafny per-lemma verification timeouts in captured verifier output.
+/// The `errors` count from `parse_dafny_error_count` mirrors only Dafny's
+/// "N errors" total and is BLIND to timeouts (measured on k5_fdiv round.av:
+/// 2 errors reported while 12 additional laws timed out), so a consumer
+/// reading `errors` alone under-counts failing laws. Each timed-out lemma
+/// prints one `Verification of '…' timed out after N seconds` line; the
+/// summary "N time outs" line uses "time outs" (with a space) and is not
+/// matched, so it is not double-counted. Purely telemetry: never gates
+/// `passed` or the exit code.
+fn count_dafny_timeouts(stdout: &str) -> usize {
+    stdout
+        .lines()
+        .filter(|l| l.contains("timed out after"))
         .count()
 }
 
@@ -9296,6 +9351,75 @@ mod tests {
             "both glyphs counted, unrelated lines ignored"
         );
         assert_eq!(super::count_lean_sorries("Build completed successfully"), 0);
+    }
+
+    #[test]
+    fn count_lean_build_errors_counts_hard_errors_not_cascade_or_sorries() {
+        // Verbatim captured pre-fix output of probe_a.av (the DEFECT-1 file):
+        // one source-located hard error escaped the sorry floor while the
+        // check-json line reported only `sorries:1`. The counter must see the
+        // ONE real Lean error, ignore the `sorry` warning, and ignore lake's
+        // cascade lines (`Lean exited with code 1`, `build failed`) that carry
+        // no `.lean:` location — otherwise one failure would read as three.
+        let probe_a = "\
+warning: SosProbeA.lean:65:49: This simp argument is unused:
+error: SosProbeA.lean:100:113: Tactic `assumption` failed
+warning: SosProbeA.lean:175:8: declaration uses `sorry`
+error: Lean exited with code 1
+Some required targets logged failures:
+- SosProbeA
+error: build failed";
+        assert_eq!(super::count_lean_build_errors(probe_a), 1);
+        // The genuine sorry warning is NOT a build error.
+        assert_eq!(super::count_lean_sorries(probe_a), 1);
+        // A deterministic whnf timeout (probe_b2's DEFECT-2 shape) is also a
+        // hard, source-located error.
+        let probe_b2 = "error: SosProbeB2.lean:69:0: (deterministic) timeout at 'whnf', maximum number of heartbeats (200000)";
+        assert_eq!(super::count_lean_build_errors(probe_b2), 1);
+        // A clean build has zero.
+        assert_eq!(
+            super::count_lean_build_errors("Build completed successfully"),
+            0
+        );
+    }
+
+    #[test]
+    fn count_dafny_timeouts_counts_timed_out_lemmas_not_summary() {
+        // Verbatim captured lines from the k5_fdiv round.av Dafny run
+        // (prompts/probe-artifacts/dafny-parity/.../run2.log): 12 lemmas timed
+        // out while `errors` reported only 2. Each timeout is one
+        // `timed out after` line; the "N time outs" summary (space) and the two
+        // postcondition errors must NOT be counted as timeouts.
+        let run2 = "\
+Round.dfy(244,26): Error: Verification of 'floorDiv_dividesPow2Multiple' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+Round.dfy(278,26): Error: Verification of 'floorDiv_nestedFloorCollapse' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+Round.dfy(340,26): Error: Verification of 'floorDiv_absorbRemainder' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+Round.dfy(470,74): Error: Verification of 'truncErrorMagnitudeNonneg_nonneg' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+Round.dfy(492,0): Error: a postcondition could not be proved on this return path
+Round.dfy(491,33): Related location: this is the postcondition that could not be proved
+Round.dfy(520,81): Error: Verification of 'truncErrorReconstructs_reconstructsValue' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+Round.dfy(554,0): Error: a postcondition could not be proved on this return path
+Round.dfy(553,32): Related location: this is the postcondition that could not be proved
+Round.dfy(582,58): Error: Verification of 'truncErrorSameSign_signCondition' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+Round.dfy(737,50): Error: Verification of 'truncComposes_composesToInner' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+Round.dfy(768,72): Error: Verification of 'awayTruncComposes_composesToInner' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+Round.dfy(799,76): Error: Verification of 'truncStickyComposes_composesThroughSticky' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+Round.dfy(830,78): Error: Verification of 'awayErrorReconstructs_reconstructsValue' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+Round.dfy(861,53): Error: Verification of 'awayErrorBound_strictBound' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+Round.dfy(923,57): Error: Verification of 'stickyErrorBound_strictBound' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+
+Dafny program verifier finished with 158 verified, 2 errors, 12 time outs";
+        assert_eq!(super::count_dafny_timeouts(run2), 12);
+        // The `errors` parser still reports 2 on the same capture — the two are
+        // orthogonal counts.
+        assert_eq!(super::parse_dafny_error_count(run2), Some(2));
+        // A clean run has zero timeouts.
+        assert_eq!(
+            super::count_dafny_timeouts(
+                "Dafny program verifier finished with 8 verified, 0 errors"
+            ),
+            0
+        );
     }
 
     fn empty_codegen_ctx() -> CodegenContext {

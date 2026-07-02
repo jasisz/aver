@@ -185,6 +185,12 @@ summary line. Fields of the Lean summary:
   verify-on-domain still passes; this is deliberately the lenient gate)
 - `sorries` — residual `sorry` count across the build output
   (`--sorry-budget N` tolerates up to N)
+- `build_errors` — count of HARD lake/lean build errors (source-located
+  `error: file.lean:L:C: …` diagnostics), distinct from `sorries`. A
+  degraded proof arm should always fall to a caught `sorry`; a non-zero
+  `build_errors` means a tactic escaped the `first | … | sorry` floor and
+  `sorries` alone would read as an honest-looking result. Informational
+  only — it does not change `passed` or the exit code
 - `universal` — `true` only when EVERY law theorem in the export is
   kernel-genuine: its `#print axioms` stays inside
   `{propext, Classical.choice, Quot.sound}` (so `native_decide` and
