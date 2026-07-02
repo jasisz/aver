@@ -609,6 +609,7 @@ def render_report(
     hand_sidecars: list[HandSidecar],
     lean_tag_sources: list[str],
     no_current: bool,
+    current_source_count: int,
 ) -> str:
     now = _dt.date.today().isoformat()
     all_tags: dict[str, ClassTag] = {tag.law_key: tag for tag in committed_tags}
@@ -642,7 +643,8 @@ def render_report(
                 ["manifest-history paths", manifest_paths],
                 ["manifest law records", len(manifest_records)],
                 ["manifest records with strategy field", len(attributed_manifest)],
-                ["current source files processed", "skipped" if no_current else len({r.source for r in strategy_rows})],
+                ["current source files requested", "skipped" if no_current else current_source_count],
+                ["current source files with law rows", len({r.source for r in strategy_rows})],
                 ["current distinct law strategy rows", len(strategy_rows)],
                 ["current concrete strategy pins", len(concrete_rows)],
                 ["current BackendDispatch pins", trigger_counter.get("BackendDispatch", 0)],
@@ -876,8 +878,10 @@ def main(argv: list[str]) -> int:
     strategy_rows: list[StrategyRow] = []
     strategy_failures: list[str] = []
     strategy_conflicts: list[str] = []
+    current_source_count = 0
     if not args.no_current:
         sources = expand_sources(repo, args.source)
+        current_source_count = len(sources)
         strategy_rows, strategy_failures, strategy_conflicts = collect_current_strategies(
             repo, aver_bin, sources, args.timeout
         )
@@ -915,6 +919,7 @@ def main(argv: list[str]) -> int:
         hand_sidecars=hand_sidecars,
         lean_tag_sources=lean_tag_sources,
         no_current=args.no_current,
+        current_source_count=current_source_count,
     )
     if args.output:
         out = (repo / args.output).resolve() if not os.path.isabs(args.output) else Path(args.output)
