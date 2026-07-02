@@ -646,6 +646,12 @@ fn emit_verify_law_block(
             // argument. The emit replaces the theorem with the `Prop`-hypothesis
             // universal form, so dropping the sampled domain keeps them aligned.
             || super::law_auto::recognize_interval_monotonicity(vb, &law_for_auto_proof, ctx)
+            // Transparent arithmetic premise chain: the `when` premise cites
+            // citable transparent arithmetic law predicates, and the proof
+            // unfolds those bodies before `split at h_when <;> omega`. The
+            // statement and proof share this recognizer so the sampled domain is
+            // dropped only for shapes the deterministic arm owns.
+            || super::law_auto::recognize_transparent_chain(vb, &law_for_auto_proof, ctx)
             // Exact-rational order facts about an opaque unary `Fraction` cone fn
             // `F` (the K5 signed power of two): its POSITIVITY (`F(k).top > 0 &&
             // F(k).bottom > 0`), its AT-LEAST-ONE (`when k >= 0 -> isNonNeg(minus(
@@ -1227,6 +1233,7 @@ pub(crate) fn law_as_lemma_statement(
             // interval-magnitude bound.
             || super::law_auto::recognize_finite_int_domain(vb, law, ctx)
             || super::law_auto::recognize_interval_monotonicity(vb, law, ctx)
+            || super::law_auto::recognize_transparent_chain(vb, law, ctx)
             || super::law_auto::recognize_validated_wrapper(vb, law, ctx)
             || pinned_when_universal)
     {
