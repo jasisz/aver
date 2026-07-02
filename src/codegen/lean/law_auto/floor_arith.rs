@@ -112,10 +112,8 @@ fn recognize_cancel(law: &VerifyLaw, ctx: &CodegenContext) -> Option<CancelShape
 
     // In the dividend, one side is `a` and the other is the shared factor `c`;
     // in the divisor, one side is `d` and the other must be the SAME `c`.
-    let (c_from_a, a_left) =
-        split_shared(&render(a_l, ctx), &render(c_a, ctx), &a_render)?;
-    let (c_from_d, d_left) =
-        split_shared(&render(d_l, ctx), &render(c_d, ctx), &d_render)?;
+    let (c_from_a, a_left) = split_shared(&render(a_l, ctx), &render(c_a, ctx), &a_render)?;
+    let (c_from_d, d_left) = split_shared(&render(d_l, ctx), &render(c_d, ctx), &d_render)?;
     if c_from_a != c_from_d {
         return None;
     }
@@ -129,8 +127,12 @@ fn recognize_cancel(law: &VerifyLaw, ctx: &CodegenContext) -> Option<CancelShape
     let when = law.when.as_ref()?;
     let mut clauses = Vec::new();
     flatten_and(when, &mut clauses);
-    let pos_d = clauses.iter().any(|cl| clause_gives_pos(cl, &d_render, ctx));
-    let pos_c = clauses.iter().any(|cl| clause_gives_pos(cl, &c_render, ctx));
+    let pos_d = clauses
+        .iter()
+        .any(|cl| clause_gives_pos(cl, &d_render, ctx));
+    let pos_c = clauses
+        .iter()
+        .any(|cl| clause_gives_pos(cl, &c_render, ctx));
     if !pos_d || !pos_c {
         return None;
     }
@@ -279,8 +281,7 @@ fn recognize_absorb(law: &VerifyLaw, ctx: &CodegenContext) -> Option<AbsorbShape
     let d_render = render(d_l, ctx);
     let q_render = render(&law.rhs, ctx);
 
-    let (d_left_in_product, rem, r_first) =
-        split_sum(add_l, add_r, &d_render, &q_render, ctx)?;
+    let (d_left_in_product, rem, r_first) = split_sum(add_l, add_r, &d_render, &q_render, ctx)?;
     let r_render = render(rem, ctx);
 
     if !is_euclidean_floor_fn(&floor_src, ctx) {
@@ -291,7 +292,9 @@ fn recognize_absorb(law: &VerifyLaw, ctx: &CodegenContext) -> Option<AbsorbShape
     let when = law.when.as_ref()?;
     let mut clauses = Vec::new();
     flatten_and(when, &mut clauses);
-    let pos_d = clauses.iter().any(|cl| clause_gives_pos(cl, &d_render, ctx));
+    let pos_d = clauses
+        .iter()
+        .any(|cl| clause_gives_pos(cl, &d_render, ctx));
     let nonneg_r = clauses
         .iter()
         .any(|cl| clause_gives_nonneg(cl, &r_render, ctx));

@@ -19,6 +19,7 @@ verify quotFloor
 
 // Shared positive factor cancels — same shape as cancelCommonFactor, distinct
 // fn and variable names.
+
 verify quotFloor law shrinkFactor
     given num: Int = [11, 0 - 4, 30, 0]
     given den: Int = [2, 3, 4]
@@ -29,6 +30,7 @@ verify quotFloor law shrinkFactor
 
 // Bounded remainder is absorbed — same shape as absorbRemainder, distinct fn
 // and variable names.
+
 verify quotFloor law soakRemainder
     given whole: Int = [4, 0 - 3, 0, 9]
     given den: Int = [1, 2, 4, 6]
@@ -42,6 +44,7 @@ verify quotFloor law soakRemainder
 // dividend and the RIGHT of the divisor (independent orientations), the
 // positivity is spelled `k > 0` instead of `0 < k`, and the when-clauses are
 // reordered. Content-blind rungs must still close it universal.
+
 verify quotFloor law shrinkFactorCommuted
     given num: Int = [11, 0 - 4, 30, 0]
     given den: Int = [2, 3, 4]
@@ -56,6 +59,7 @@ verify quotFloor law shrinkFactorCommuted
 // exercises the divisor-side `Int.mul_comm` normalization in isolation; the
 // content-blind cancel rung must still close it universal. Fresh variable
 // names keep the witness name-blind.
+
 verify quotFloor law shrinkFactorDivisorLeft
     given top: Int = [11, 0 - 4, 30, 0]
     given base: Int = [2, 3, 4]
@@ -67,6 +71,7 @@ verify quotFloor law shrinkFactorDivisorLeft
 // Same absorb shape, but COMMUTED: the divisor is the RIGHT factor of the
 // product (`whole * den`, i.e. q * d order) and the remainder is written FIRST
 // in the sum; positivity spelled `den > 0` with reordered when-clauses.
+
 verify quotFloor law soakRemainderCommuted
     given whole: Int = [4, 0 - 3, 0, 9]
     given den: Int = [1, 2, 4, 6]

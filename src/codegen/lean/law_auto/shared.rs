@@ -75,7 +75,11 @@ pub(super) fn flatten_and<'a>(e: &'a Spanned<Expr>, out: &mut Vec<&'a Spanned<Ex
 
 /// Whether `clause` guarantees `0 < x` for the atom rendered as `x_render`:
 /// `0 < x`, `x > 0`, `1 <= x`, `x >= 1` (any nonneg/≥1 literal bound).
-pub(super) fn clause_gives_pos(clause: &Spanned<Expr>, x_render: &str, ctx: &CodegenContext) -> bool {
+pub(super) fn clause_gives_pos(
+    clause: &Spanned<Expr>,
+    x_render: &str,
+    ctx: &CodegenContext,
+) -> bool {
     let Expr::BinOp(op, l, r) = &clause.node else {
         return false;
     };
