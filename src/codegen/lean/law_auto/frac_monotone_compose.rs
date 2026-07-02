@@ -95,6 +95,9 @@ fn substitute(
 }
 
 /// Whether `fd` is a unary `Int -> Fraction` function (the opaque carrier `F`).
+/// **syntax-discovery-only**: the return annotation is source spelling — bare
+/// `Fraction` inside the defining module, dep-qualified elsewhere. This only
+/// gates whether the strategy attempts; the kernel judges every attempt.
 fn is_unary_fraction_fn(fd: &FnDef) -> bool {
     matches!(fd.params.as_slice(), [(_, ty)] if ty.trim() == "Int")
         && fd.return_type.rsplit('.').next() == Some("Fraction")

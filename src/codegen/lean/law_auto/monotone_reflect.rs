@@ -40,6 +40,10 @@ fn call_named<'a>(
     (short == name && args.len() == n).then_some((dotted, args))
 }
 
+/// **syntax-discovery-only**: the return annotation is source spelling —
+/// bare `Fraction` inside the defining module, dep-qualified
+/// `Domain.Rational.Fraction` elsewhere. This only gates whether the
+/// strategy attempts; the kernel judges every attempt.
 fn is_unary_fraction_fn(fd: &FnDef) -> bool {
     matches!(fd.params.as_slice(), [(_, ty)] if ty.trim() == "Int")
         && fd.return_type.rsplit('.').next() == Some("Fraction")
@@ -877,7 +881,7 @@ fn recognize_magnitude_bracket_shape(
     let allowed_ints: std::collections::BTreeSet<String> = law
         .givens
         .iter()
-        .filter(|g| g.type_name.trim().rsplit('.').next() == Some("Int"))
+        .filter(|g| g.type_name.trim() == "Int")
         .map(|g| g.name.clone())
         .collect();
     if !is_linear_int_comparison(&claim_body, &allowed_ints) {

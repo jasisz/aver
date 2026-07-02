@@ -713,6 +713,9 @@ pub(super) fn recognize_triangle_sum_shape(
         "pow2Signed",
         "fracExpo",
     ] {
+        // syntax-discovery-only: cone entries are source call spellings —
+        // bare in the defining module, dep-qualified elsewhere. Presence
+        // gates the attempt; the kernel judges it.
         if !cone.iter().any(|n| n.rsplit('.').next() == Some(prim)) {
             return None;
         }
