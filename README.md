@@ -10,7 +10,9 @@
 
 Aver is a statically typed language designed for AI to write in and humans to review, with a bytecode VM for runtime execution, a Rust backend for deployment, a WASM backend for browser and embedded targets, Lean proof export for pure logic and classified effectful laws, and Dafny verification for automated law checking via Z3.
 
-It is built around one idea: the risky part of AI-written code is usually not syntax, it is missing intent. Aver makes that intent explicit and machine-readable:
+It is built around one idea: an AI reviewer's opinion of generated code gets cheaper every year; a kernel-checked certificate does not. The same file that runs can carry machine-checkable guarantees — proof obligations a Lean kernel signs off on, not a judgment someone eyeballed once. As the volume of generated code outpaces anyone's capacity to read it, the thing worth keeping is the certificate, not the spot-check.
+
+Readability comes second, and it still counts: the risky part of AI-written code is usually not syntax, it is missing intent. Aver makes that intent explicit and machine-readable:
 
 - effects are part of the function signature
 - decisions live next to the code they explain
