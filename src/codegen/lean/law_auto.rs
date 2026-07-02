@@ -19,6 +19,7 @@ mod shared;
 mod spec;
 mod suffix_roundtrip;
 mod triangle_sum;
+mod transparent_chain;
 
 use super::VerifyEmitMode;
 use super::expr::aver_name_to_lean;
@@ -141,6 +142,11 @@ pub(in crate::codegen::lean) use triangle_sum::recognize_triangle_sum;
 /// cites — unioned into the cross-file admission set so those dep theorems are
 /// emitted into the build.
 pub(in crate::codegen::lean) use triangle_sum::triangle_sum_cited_deps;
+
+/// Transparent arithmetic premise-chain arm: a `when` law whose premises cite
+/// already-citable transparent arithmetic predicates. Feeds the `omit_domain`
+/// statement driver, kept in lockstep with `emit_transparent_chain_law`.
+pub(in crate::codegen::lean) use transparent_chain::recognize_transparent_chain;
 
 // (Defined in this module.) The finite bounded-Int-domain recognizer — see
 // `recognize_finite_int_domain` — feeds the `omit_domain` statement driver so
@@ -971,6 +977,18 @@ fn emit_verify_law_forall_auto_proof_inner(
     if law.when.is_some()
         && let Some(proof) =
             interval_mono::emit_interval_monotonicity_law(vb, law, ctx, theorem_base)
+    {
+        return Some(proof);
+    }
+
+    // Transparent arithmetic premise chain: every `when` conjunct is a call to
+    // an already-citable law predicate whose body unfolds to linear Int
+    // arithmetic plus one premise-side max/min-style split. Deterministic and
+    // placed after existing deterministic composition rungs but before any
+    // bounded guarded-domain fallback.
+    if law.when.is_some()
+        && let Some(proof) =
+            transparent_chain::emit_transparent_chain_law(vb, law, ctx, &intro_names)
     {
         return Some(proof);
     }
