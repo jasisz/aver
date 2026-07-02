@@ -737,6 +737,19 @@ pub fn aver_name_to_lean(name: &str) -> String {
     crate::codegen::common::escape_reserved_word(name, LEAN_RESERVED, "'")
 }
 
+/// Inverse of [`aver_name_to_lean`] for the `--explain` un-translator: strip the
+/// trailing-`'` guard that [`aver_name_to_lean`] appends to a Lean reserved word,
+/// so `repeat'` reads back as `repeat`. A name that does not match the
+/// escape pattern is returned unchanged.
+pub(crate) fn lean_name_to_aver(name: &str) -> String {
+    if let Some(base) = name.strip_suffix('\'')
+        && LEAN_RESERVED.contains(&base)
+    {
+        return base.to_string();
+    }
+    name.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{aver_name_to_lean, escape_lean_string};

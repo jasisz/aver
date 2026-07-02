@@ -4890,6 +4890,20 @@ fn emit_simple_induction(
 /// probes can coexist in one file without clashing. Returns the probe theorem as
 /// a single `\n`-joined block.
 pub fn residual_probe_body(thm_lines: &[&str], probe_name: &str) -> Option<String> {
+    residual_probe_body_dump(thm_lines, probe_name, None)
+}
+
+/// Like [`residual_probe_body`], but when `dump_label` is `Some(fn.law)` each
+/// normalization-only arm is followed by `(try aver_dump_goal "<fn.law>")` — the
+/// second, fail-soft `--explain` stage that serialises the residual goal to JSON
+/// via the info log (see `codegen::lean::untranslate::AVER_DUMP_GOAL_ELAB`). The
+/// `try` keeps a dump/elaboration failure from disturbing the arm, so a broken
+/// dump degrades to "no JSON for this law", never a corrupted probe.
+pub fn residual_probe_body_dump(
+    thm_lines: &[&str],
+    probe_name: &str,
+    dump_label: Option<&str>,
+) -> Option<String> {
     // 1. The statement line: `theorem <name> : <stmt> := by`. Swap only the name
     //    token so the probe is independently nameable; keep the statement verbatim.
     let stmt_line = thm_lines.first()?;
@@ -4944,6 +4958,11 @@ pub fn residual_probe_body(thm_lines: &[&str], probe_name: &str) -> Option<Strin
     //    parse failure, never the `unsolved goals` the caller reads). Flattening
     //    to a 2-space block makes the probe a clean top-level `induction`
     //    regardless of how deep it sat in the source body.
+    // `--explain` stage 2: after the normalization strip, dump the residual goal
+    // as JSON. `try` makes it fail-soft (a dump error leaves the arm untouched).
+    let dump = dump_label
+        .map(|label| format!("; (try aver_dump_goal \"{label}\")"))
+        .unwrap_or_default();
     let mut out = vec![format!("theorem {probe_name}{rest}")];
     if let Some(intro) = intro_line {
         out.push(format!("  {}", intro.trim_start()));
@@ -4954,9 +4973,9 @@ pub fn residual_probe_body(thm_lines: &[&str], probe_name: &str) -> Option<Strin
         let arm = arm.trim();
         if let Some(arrow) = arm.find("=>") {
             let head = arm[..arrow + 2].trim_end();
-            out.push(format!("  {head} {strip}"));
+            out.push(format!("  {head} {strip}{dump}"));
         } else {
-            out.push(format!("  {arm} {strip}"));
+            out.push(format!("  {arm} {strip}{dump}"));
         }
     }
     Some(out.join("\n"))

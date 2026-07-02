@@ -150,7 +150,7 @@ pub(in crate::codegen::lean) use triangle_sum::triangle_sum_cited_deps;
 /// source lines into a normalization-only twin so Lean reports its residual
 /// (`unsolved goals`). Re-exported up to `codegen::lean` for the `--check`
 /// harness in the `aver` binary; see [`induction::residual_probe_body`].
-pub use induction::residual_probe_body;
+pub use induction::{residual_probe_body, residual_probe_body_dump};
 
 pub struct AutoProof {
     pub support_lines: Vec<String>,
