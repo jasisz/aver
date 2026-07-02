@@ -102,9 +102,9 @@ The line is not drawn by taste; it is drawn by a razor. A feature is admitted on
 - **structural termination** — recursion that provably shrinks, so there is no fuel or partiality to reason about
 - **monomorphic proof obligations** — no proof that has to be quantified over unknown type shapes
 
-Run candidate features through that razor and the answers fall out mechanically. Function references as callback parameters (`Fn(A) -> B`) pass all four and exist today. Generics via monomorphization would pass — after monomorphization the obligations look exactly like today's — so they are admissible someday. Captured closures fail purity *and* first-order-ness, so they never enter.
+Run candidate features through that razor and the answers fall out mechanically. Function references as callback parameters (`Fn(A) -> B`) pass all four and exist today. Generics via monomorphization would pass — after monomorphization the obligations look exactly like today's — so the razor leaves that door open, even though the review-cost bias above keeps it shut for now. Captured closures fail purity *and* first-order-ness, so they never enter.
 
-This is not a corner we got stuck in. Verified kernels wrapped in thin, unverified shells is the shape of every serious deployment of formal methods. Aver is built to be the kernel and to make the shell obvious, not to swallow the whole program.
+This is not a corner we got stuck in. Verified kernels wrapped in thin, unverified shells is the common shape of serious formal-methods deployments. Aver is built to be the kernel and to make the shell obvious, not to swallow the whole program.
 
 ---
 
@@ -114,7 +114,7 @@ Lean and Coq are proof assistants. Writing a web server in Lean is technically p
 
 Aver is a *programming* language that generates proof obligations for Lean. You write normal-looking code. Aver extracts the verification parts and sends them to Lean. You don't write tactics. You don't fight the elaborator. The proof assistant does what it's good at — checking proofs — without being your programming environment.
 
-There is a deeper structural difference, and it grows more important as models get better at Lean tactics. With an LLM writing Lean against Mathlib, you prove theorems about a *model* of your program — a hand-maintained Lean transcription of what the code is supposed to do. Keeping that model in step with the code that actually ships is manual work, and the correspondence rots a little with every commit. In Aver there is no separate model: the spec, the proof obligations, and the executable are one artifact. The proof cannot drift from the binary, because the same source is what runs and what gets proven. Better tactic-writing narrows the gap in *proving*; it does nothing for the gap in *correspondence*, and correspondence is the part that quietly breaks.
+There is a deeper structural difference, and it grows more important as models get better at Lean tactics. With an LLM writing Lean against Mathlib, you prove theorems about a *model* of your program — a hand-maintained Lean transcription of what the code is supposed to do. Keeping that model in step with the code that actually ships is manual work, and the correspondence rots a little with every commit. In Aver there is no separately maintained model to rot: the spec, the proof obligations, and the executable come from one artifact, and the obligations are regenerated mechanically from that source on every build. The remaining trusted link is the statement translator — one mechanical component, [documented plainly in docs/lean.md](lean.md), not a transcription someone keeps in step by hand. Better tactic-writing narrows the gap in *proving*; it does little for the gap in *correspondence*, and correspondence is the part that quietly breaks.
 
 ---
 
