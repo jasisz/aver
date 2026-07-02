@@ -1,0 +1,71 @@
+module TranslationProbe
+    intent =
+        "Dual-run probe for the three Aver->Lean translator blind spots the"
+        "coverage audit flagged: (1) Int.div by a NEGATIVE divisor, (2) Int.mod"
+        "of negative operands, (3) Int arithmetic past the i64 range. The corpus"
+        "always guards `0 < d` and stays under ~8.6e9, so a translator that"
+        "mapped Int.div/Int.mod onto truncating or floor semantics, or a VM that"
+        "wrapped at 2^63, would go unnoticed. Expected values are computed from"
+        "the DOCUMENTED semantics: Int.div/Int.mod are Euclidean (remainder in"
+        "[0, |b|)), Int is arbitrary-precision Z. Every example is a discriminating"
+        "point where Euclidean, floor, and truncating semantics (or Z vs i64)"
+        "give DIFFERENT answers, plus a couple of bland sanity anchors."
+    exposes [intDiv, intMod, bigMul, bigAdd]
+    effects []
+
+fn intDiv(a: Int, b: Int) -> Int
+    ? "Euclidean integer quotient a / b; guarded to 0 at b = 0."
+    Result.withDefault(Int.div(a, b), 0)
+
+// Int.div by a negative divisor and of a negative dividend. Euclidean, floor
+// and truncating division agree for (+,+) but split apart on the other three
+// sign patterns: Euclidean keeps the remainder non-negative, so -7/3 = -3,
+// 7/-3 = -2, and -7/-3 = 3 (truncating would give -2, -2, 2; floor -3, -3, 2).
+
+verify intDiv
+    intDiv(6, 3) => 2
+    intDiv(7, 3) => 2
+    intDiv(0 - 7, 3) => 0 - 3
+    intDiv(7, 0 - 3) => 0 - 2
+    intDiv(0 - 7, 0 - 3) => 3
+
+fn intMod(a: Int, b: Int) -> Int
+    ? "Euclidean integer remainder a mod b, always in [0, |b|); 0 at b = 0."
+    Result.withDefault(Int.mod(a, b), 0)
+
+// Int.mod on all four sign patterns. Euclidean remainder is always >= 0, so a
+// negative dividend gives 2 (not -1 as truncating would), and a negative
+// divisor does NOT flip the sign (floor would give -1 for 7 mod -3).
+
+verify intMod
+    intMod(6, 3) => 0
+    intMod(7, 3) => 1
+    intMod(0 - 7, 3) => 2
+    intMod(7, 0 - 3) => 1
+    intMod(0 - 7, 0 - 3) => 2
+
+fn bigMul(a: Int, b: Int) -> Int
+    ? "Plain Int product; Int is Z so no wraparound past i64."
+    a * b
+
+// Products that overrun i64. 4e9 * 4e9 = 1.6e19 > 2^63-1 (9.22e18); the
+// negative mirror lands below -2^63. An i64 VM would wrap; Z does not.
+
+verify bigMul
+    bigMul(3, 4) => 12
+    bigMul(4000000000, 4000000000) => 16000000000000000000
+    bigMul(0 - 4000000000, 4000000000) => 0 - 16000000000000000000
+    bigMul(12345678901, 1000000000) => 12345678901000000000
+
+fn bigAdd(a: Int, b: Int) -> Int
+    ? "Plain Int sum; Int is Z so no wraparound past i64."
+    a + b
+
+// Sums straddling the i64 boundary exactly, plus a 20-digit literal. 2^63-1 + 1
+// = 2^63 (wraps to -2^63 in i64); -2^63 + -1 = -(2^63+1) (wraps to 2^63-1).
+
+verify bigAdd
+    bigAdd(1, 1) => 2
+    bigAdd(9223372036854775807, 1) => 9223372036854775808
+    bigAdd(0 - 9223372036854775808, 0 - 1) => 0 - 9223372036854775809
+    bigAdd(12345678901234567890, 10) => 12345678901234567900
