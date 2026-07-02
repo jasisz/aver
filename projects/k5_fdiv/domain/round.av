@@ -77,6 +77,7 @@ verify floorDiv
 // after cross-multiplication: their outer truncation floor-divides an
 // already-fitting significand by a power of two it is a multiple of, then the
 // other side scales by that same power.
+
 verify floorDiv law dividesPow2Multiple
     given s: Int = [13, 3, 1]
     given a: Int = [0, 1, 2]
@@ -92,6 +93,7 @@ verify floorDiv law dividesPow2Multiple
 // core lemma Int.ediv_ediv_of_nonneg. Generic over the dividend and BOTH
 // divisors (any positive divisors, not just powers of two), the content-blind
 // nested-floor rung: the same rung closes ANY nested Euclidean floor collapse.
+
 verify floorDiv law nestedFloorCollapse
     given a: Int = [52, 96, 7, 0 - 13]
     given d: Int = [2, 3, 8]
@@ -113,6 +115,7 @@ verify floorDivWindow
 // over BARE Int givens. Proven by the core Int.ediv bridge
 // (Int.ediv_add_emod / Int.emod_nonneg / Int.emod_lt_of_pos) generically
 // in the divisor 2^k > 0 -- the recursive-exponent-free floor figure.
+
 verify floorDivWindow law euclideanWindow
     given a: Int = [13, 52, 96, 7]
     given k: Int = [0, 2, 3]
@@ -130,6 +133,7 @@ verify truncFitsWindow
 // and exponent (N = sigBits * 2^(i-1), divisor 2^(width-1)) -- evidence
 // the figure is generic over N/E, not the bare-given shape above. The
 // integer core of the trunc error bound.
+
 verify truncFitsWindow law euclideanWindow
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
     given i: Int = [1, 2, 3]
@@ -160,6 +164,7 @@ verify truncNegateSymmetric
 
 // Lemma 7.2.1 (p.19): "trunc(-x,i) = -trunc(x,i)." Unconditional sign-symmetry
 // of truncation toward zero.
+
 verify truncNegateSymmetric law signSymmetry
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
     given n: Int = [1, 2, 3]
@@ -175,6 +180,7 @@ verify truncKeepsExponent
 
 // Lemma 7.2.6 (p.19): "If x != 0 then e(trunc(x,i)) = e_x." A nonzero normalized
 // float (isFp, nonzero significand) truncated to i >= 1 bits keeps its exponent.
+
 verify truncKeepsExponent law exponentInvariant
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 2, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 8, exp = -3, width = 4)]
     given n: Int = [1, 2, 3]
@@ -206,6 +212,7 @@ verify truncErrorMagnitudeNonneg
 // nonnegative -- its power-of-two factors are positive and the floor remainder
 // is nonnegative by the Euclidean window (truncFitsWindow's lower bound). The
 // nonlinear order primitive cites that window and closes the product.
+
 verify truncErrorMagnitudeNonneg law nonneg
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
     given i: Int = [1, 2, 3]
@@ -227,6 +234,7 @@ verify fpValueMagnitudePos
 // Helper law for Lemma 7.2.2: a normalized float's value magnitude is strictly
 // positive (sigBits >= 2^(width-1) > 0 and 2^(e_x) > 0). The nonlinear order
 // primitive closes it from the isFp normalization bounds.
+
 verify fpValueMagnitudePos law positive
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
     when Domain.Fprep.isFp(f)
@@ -243,6 +251,7 @@ verify truncErrorReconstructs
 // Lemma 7.2.2 (p.19), reconstruction half: "trunc(x,i) = x - epsilon." With
 // epsilon := x - trunc(x,i) this is the exact-rational ring identity
 // x - (x - trunc(x,i)) = trunc(x,i). The paper's i is a positive integer.
+
 verify truncErrorReconstructs law reconstructsValue
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
     given i: Int = [1, 2, 3]
@@ -276,6 +285,7 @@ verify truncErrorBound
 // for negative exponents too), and MULTIPLIES the cited window bound by the positive
 // product factor (the generic multiply-by-positive rung). The algebra lives entirely
 // in the two cited Aver laws -- no per-figure proof.
+
 verify truncErrorBound law strictBound
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = -3, width = 4)]
     given i: Int = [1, 2, 3]
@@ -298,6 +308,7 @@ verify truncErrorSameSign
 // truncation-error magnitude core is nonnegative (truncErrorMagnitudeNonneg)
 // and the normalized value magnitude is strictly positive (fpValueMagnitudePos),
 // so splitting on the sign sigma_x of the float fixes epsilon's sign to match.
+
 verify truncErrorSameSign law signCondition
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
     given i: Int = [1, 2, 3]
@@ -344,6 +355,7 @@ verify awayNegateSymmetric
 // exercises the carry-to-2 branch. The `when 1 <= n` is the paper's global
 // hypothesis (Section 7, p.18: "i is a positive integer"); it routes the proof
 // through the generic case-splitting strategy that resolves away's branch.
+
 verify awayNegateSymmetric law signSymmetry
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4)]
     given n: Int = [1, 2, 3]
@@ -365,6 +377,7 @@ verify awayExpInRange
 // whichever branch fpAway takes -- the same generic match-split that closes the
 // product-exponent range (Lemma 7.1.7). The exact branch point 2 < s_x + 2^(-i+1)
 // (the floor-window equivalence) is the open piece, deferred (kwiatek).
+
 verify awayExpInRange law exponentInRange
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4)]
     given n: Int = [1, 2, 3]
@@ -410,6 +423,7 @@ verify stickyNegateSymmetric
 // case exercises the special RTL branch. The `when 1 <= n` is the paper's global
 // hypothesis (Section 7, p.18: "i is a positive integer"); it routes the proof
 // through the generic case-splitting strategy that resolves sticky's branches.
+
 verify stickyNegateSymmetric law signSymmetry
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4)]
     given n: Int = [1, 2, 3]
@@ -428,6 +442,7 @@ verify stickyKeepsExponent
 // float (isFp, nonzero significand) sticky-rounded to i >= 1 bits keeps its
 // exponent -- round-to-odd never carries (the n-th bit is forced to 1, keeping
 // the significand below 2), so every branch leaves the stored exponent untouched.
+
 verify stickyKeepsExponent law exponentInvariant
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 2, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 8, exp = -3, width = 4)]
     given n: Int = [1, 2, 3]
@@ -453,6 +468,7 @@ verify truncComposes
 // (dividesPow2Multiple) to rewrite that outer floor to its exact quotient and
 // the power-of-two homomorphism to regroup the exponents -- no per-figure
 // proof, just the laws-as-lemmas composition. The paper's i, j are positive.
+
 verify truncComposes law composesToInner
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
     given i: Int = [1, 2, 3]
@@ -479,6 +495,7 @@ verify awayTruncComposes
 // multiple of it, so the keystone CITES the floorDiv exact-cancel and the
 // power-of-two homomorphism. The sigBits=15 case exercises the carry-to-2
 // branch. The paper's i, j are positive integers.
+
 verify awayTruncComposes law composesToInner
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
     given i: Int = [1, 2, 3]
@@ -501,27 +518,33 @@ verify truncStickyComposes
 // (Lemma 7.3.2): sticky's round-to-odd forces the n-th bit to 1, but that bit
 // sits below the coarser m-bit truncation window (m < n), so re-truncating to m
 // bits discards it and recovers trunc(x,m). The paper's m, n are positive
-// integers (1 <= m < n).
+// integers (1 <= m < n), on a normalized significand (width >= 1).
 //
-// SAMPLE-VERIFIED, universal proof OPEN (an honest executor wall). After
-// unfolding, both significands reduce to a nested Euclidean floor that coarsens
-// away the doubled round-to-odd low bit:
+// UNIVERSAL on the Lean kernel, via an EXPLICIT HAND-PROOF SIDECAR
+// (proofs/lean/truncStickyComposes__composesThroughSticky.lean), re-checked by
+// the kernel every build; credit `hand`, never auto. After unfolding, both
+// significands reduce to a nested Euclidean floor that coarsens away the doubled
+// round-to-odd low bit:
 //   floor((2*floor(s*2^(n-2) / 2^(width-1)) + b) * 2^(m-1) / 2^(n-1)) = floor(s*2^(m-1) / 2^(width-1)),  b in {0,1}.
-// This identity is nonlinear power-of-two floor (bit) algebra. It does NOT close
-// on either backend: the Lean auto-prover has no GENERIC (claim-shape) strategy
-// for it -- a "power-of-two floor" rung would be domain-specific bit algebra, i.e.
-// a bespoke per-figure template, which the laws-as-lemmas discipline declines --
-// and Z3/Dafny does not discharge it push-button without the same bespoke
-// power-of-two hints. The auxiliary decomposition was conjectured as Aver laws
-// (The Method) and is correct on samples, but the existing engine proves none of
-// the leaves; this is a genuine executor gap, not a missing lemma. Kept as the
-// faithful, sample-verified Fp-level rung (RTL-correct incl. the hard branches),
-// like truncErrorBound. The Section 7.3 RTL ladder also stands sample-verified in
-// kernel.av.
+// This is nonlinear power-of-two floor (bit) algebra with a doubled round-to-odd
+// low bit -- the one composition the generic exact-cancel does not reach. There
+// is no honest GENERIC (claim-shape) strategy for it yet: a bespoke "power-of-two
+// floor" figure keyed on this exact identity would be a per-figure template
+// disguised as generic, which the laws-as-lemmas discipline declines. So it is
+// discharged where every real prover puts such a lemma -- a labeled hand proof
+// living beside this pure spec. The sidecar CITES the proven pool laws (the pow2
+// homomorphism from fprep, the nested-floor collapse, and positivity) rather than
+// re-proving them, and drives the exponent regrouping (2^(n-1) = 2^(n-m)*2^(m-1),
+// 2^(n-m) = 2*2^(n-m-1)) by hand. A wrong or stale sidecar fails the build loudly
+// and earns no credit. The generic replacement is planned: graduate this to the
+// equality-saturation normalizer platform when it lands (measured feasible -- the
+// same identity connects in an e-graph in ~253us with explanation extraction).
+
 verify truncStickyComposes law composesThroughSticky
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
     given n: Int = [2, 3]
     given m: Int = [1, 2]
+    when 1 <= f.width
     when 1 <= m
     when m < n
     truncStickyComposes(f, n, m) holds
@@ -548,6 +571,7 @@ verify awayErrorReconstructs
 // epsilon := away(x,i) - x this is the exact-rational ring identity
 // x + (away(x,i) - x) = away(x,i). The additive complement of Lemma 7.2.2's
 // reconstruction; the paper's i is a positive integer.
+
 verify awayErrorReconstructs law reconstructsValue
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
     given i: Int = [1, 2, 3]
@@ -580,6 +604,7 @@ verify awayErrorBound
 // integer window inequality the trunc bound closes -- the away error is the
 // complement |W - r| of the truncation remainder r, strictly below W because r > 0
 // whenever away moves x. The sigBits=15 case exercises the carry-to-2 leaf.
+
 verify awayErrorBound law strictBound
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = -3, width = 4)]
     given i: Int = [1, 2, 3]
@@ -624,6 +649,7 @@ verify stickyErrorReconstructs
 // Lemma 7.2.4 (p.19), reconstruction half: "sticky(x,i) = x + epsilon." With
 // epsilon := sticky(x,i) - x this is the exact-rational ring identity
 // x + (sticky(x,i) - x) = sticky(x,i). The paper's i is a positive integer.
+
 verify stickyErrorReconstructs law reconstructsValue
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
     given i: Int = [1, 2, 3]
@@ -656,6 +682,7 @@ verify stickyErrorBound
 // the leaf's own precision and the round-to-odd half-cell is the placement k2*Q = 2*m+1;
 // the n <= 1 leaf reads its window off the isFp normalization (1 <= s_x < 2). Same leaf
 // support lemma as the away bound -- name-blind, no per-figure proof.
+
 verify stickyErrorBound law strictBound
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = -3, width = 4)]
     given i: Int = [1, 2, 3]
