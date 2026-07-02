@@ -117,19 +117,37 @@ fn proof_export_floor_arith_second_witness_universal() {
     let lean = std::fs::read_to_string(output_dir.join("FloorArithWitness.lean"))
         .expect("FloorArithWitness.lean must be emitted");
 
-    // Both cross-domain law theorems replace their bounded statements with the
-    // TRUE universal form and are classed `universal` — the rungs fired on a
-    // fn with no `floorDiv` / K5 name.
-    for base in ["quotFloor_law_shrinkFactor", "quotFloor_law_soakRemainder"] {
+    // Every cross-domain law theorem replaces its bounded statement with the
+    // TRUE universal form and is classed `universal` — the rungs fired on a
+    // fn with no `floorDiv` / K5 name. The `Commuted` witnesses additionally
+    // pin the ORIENTATION-TOLERANT path: shared factor / divisor multiplicand
+    // written on the opposite side, an alternative positivity spelling
+    // (`k > 0`, `den > 0`) and reordered when-clauses.
+    for base in [
+        "quotFloor_law_shrinkFactor",
+        "quotFloor_law_soakRemainder",
+        "quotFloor_law_shrinkFactorCommuted",
+        "quotFloor_law_soakRemainderCommuted",
+    ] {
         assert!(
             lean.contains(&format!("-- aver:law-class {base} universal")),
-            "{base} must be classed universal (rung is name-blind); got:\n{lean}"
+            "{base} must be classed universal (rung is name- and orientation-blind); got:\n{lean}"
         );
     }
     // The core lemmas the rungs cite are present, not a sampled `native_decide`
     // fallback or a bounded statement.
     assert!(lean.contains("Int.mul_ediv_mul_of_pos_left"));
     assert!(lean.contains("Int.add_mul_ediv_left"));
+    // The commuted witnesses drive the `Int.mul_comm` normalization step that
+    // rewrites the written product into the core lemma's canonical operand order.
+    assert!(
+        lean.contains("rw [Int.mul_comm k num]"),
+        "commuted cancel witness must normalize the shared factor with Int.mul_comm"
+    );
+    assert!(
+        lean.contains("rw [Int.mul_comm whole den]"),
+        "commuted absorb witness must normalize the divisor multiplicand with Int.mul_comm"
+    );
     // No law theorem REACHES sorry (only `first | proof | sorry` fail-safe
     // floors are permitted, and these rungs emit none).
     let reached_sorry: Vec<&str> = lean
