@@ -1,0 +1,117 @@
+module FloorComposeWitness
+    intent =
+        "Cross-domain witness for the generic Euclidean-floor + power-of-two"
+        "composition rung. It restates the trunc-through-round-to-odd COMPOSITION"
+        "shape over DIFFERENTLY-NAMED functions and fresh records -- a power of two"
+        "powB, a floor division qfloor, a rational Ratio with a sameRatio equality,"
+        "a significand record Sig, a round-to-odd roundSticky and a truncation"
+        "roundTrunc -- carrying no K5 / floorDiv / pow2 / fpSticky / Fraction name"
+        "anywhere. If the rung is truly content-blind (keyed on the nested-floor-"
+        "composition SHAPE plus the round-to-odd doubling, never on a name),"
+        "coarsenComposes closes universal here with zero code changes: the engine"
+        "emits the same scoped generic floor-compose support (cancel-common-factor,"
+        "absorb-remainder, nested-floor-collapse, power-of-two homomorphism) and"
+        "grind composes the regrouping chain itself."
+    exposes [powB, qfloor, Ratio, sameRatio, Sig, sigValue, roundHalf, roundSticky, roundTrunc, cancelExact, coarsenComposes]
+    effects []
+
+fn powB(n: Int) -> Int
+    ? "Two to the n for n >= 0 (and 1 for n <= 0) -- a power of two under a different name."
+    match n <= 0
+        true -> 1
+        false -> 2 * powB(n - 1)
+
+verify powB
+    powB(0) => 1
+    powB(3) => 8
+    powB(7) => 128
+
+fn qfloor(a: Int, d: Int) -> Int
+    ? "Euclidean floor division a / d; guarded to 0 at d = 0."
+    Result.withDefault(Int.div(a, d), 0)
+
+verify qfloor
+    qfloor(7, 2) => 3
+    qfloor(52, 8) => 6
+
+// The power-of-two exact-division cancel (same shape as the K5 dividesPow2Multiple):
+// pins the FloorDivWindow figure the composition rung reads to discover powB as the
+// power-of-two the regrouping normalizer canonicalizes. Distinct fn / variable names.
+
+verify qfloor law cancelExact
+    given s: Int = [13, 3, 1]
+    given a: Int = [0, 1, 2]
+    given b: Int = [2, 3, 4]
+    when 0 <= a
+    when a <= b
+    qfloor(s * powB(b), powB(a)) * powB(a) => s * powB(b)
+
+record Ratio
+    num: Int
+    den: Int
+
+fn sameRatio(p: Ratio, q: Ratio) -> Bool
+    ? "Cross-multiplied equality of two rationals -- a differently-named sameValue."
+    p.num * q.den == q.num * p.den
+
+verify sameRatio
+    sameRatio(Ratio(num = 1, den = 2), Ratio(num = 2, den = 4)) => true
+    sameRatio(Ratio(num = 1, den = 2), Ratio(num = 1, den = 3)) => false
+
+record Sig
+    bits: Int
+    prec: Int
+
+fn sigValue(x: Sig) -> Ratio
+    ? "The denoted rational value: bits over 2^(prec-1) -- a differently-named fpValue."
+    Ratio(num = x.bits, den = powB(x.prec - 1))
+
+fn roundHalf(x: Sig, k: Int) -> Int
+    ? "Truncate the significand to k-1 bits: floor(bits * 2^(k-2) / 2^(prec-1)). Doubling it and forcing the low bit is the round-to-odd step."
+    qfloor(x.bits * powB(k - 2), powB(x.prec - 1))
+
+verify roundHalf
+    roundHalf(Sig(bits = 13, prec = 4), 3) => 3
+    roundHalf(Sig(bits = 12, prec = 4), 3) => 3
+
+fn roundSticky(x: Sig, k: Int) -> Sig
+    ? "Round to odd at k bits: truncate to k-1 bits (roundHalf) then FORCE the k-th bit to 1 unless the truncation was exact -- 2*roundHalf or 2*roundHalf+1. The doubled floor is the round-to-odd half-cell."
+    match x.bits * powB(k - 2) == powB(x.prec - 1) * roundHalf(x, k)
+        true -> Sig(bits = 2 * roundHalf(x, k), prec = k)
+        false -> Sig(bits = (2 * roundHalf(x, k)) + 1, prec = k)
+
+verify roundSticky
+    roundSticky(Sig(bits = 13, prec = 4), 3) => Sig(bits = 7, prec = 3)
+    roundSticky(Sig(bits = 12, prec = 4), 3) => Sig(bits = 6, prec = 3)
+
+fn roundTrunc(x: Sig, m: Int) -> Sig
+    ? "Truncate the significand to m bits: floor(bits * 2^(m-1) / 2^(prec-1)), precision becomes m."
+    Sig(bits = qfloor(x.bits * powB(m - 1), powB(x.prec - 1)), prec = m)
+
+verify roundTrunc
+    roundTrunc(Sig(bits = 13, prec = 4), 3) => Sig(bits = 6, prec = 3)
+
+fn coarsenComposes(x: Sig, k: Int, m: Int) -> Bool
+    ? "Truncating a round-to-odd result to a coarser precision recovers the plain truncation: trunc(sticky(x,k),m) = trunc(x,m) for m < k. The round-to-odd low bit sits below the coarser m-bit window and is discarded -- the trunc-through-sticky composition, as rational-value equality."
+    sameRatio(sigValue(roundTrunc(roundSticky(x, k), m)), sigValue(roundTrunc(x, m)))
+
+verify coarsenComposes
+    coarsenComposes(Sig(bits = 13, prec = 4), 3, 2) => true
+    coarsenComposes(Sig(bits = 12, prec = 4), 3, 2) => true
+
+// The trunc-through-round-to-odd composition, over the fresh fns and records. The
+// significand identity reduces after cross-multiplication to the SAME floor chain as
+// the K5 truncStickyComposes -- a doubled round-to-odd bit coarsened away by a
+// power-of-two floor -- and the content-blind floor-composition rung closes it
+// universal by composing cancel-common-factor, absorb-remainder, nested-floor-collapse
+// and the power-of-two homomorphism regrouping, no per-figure proof. `1 <= x.prec` is
+// the precision positivity the regrouping needs (a normalized significand has prec >= 1).
+
+verify coarsenComposes law coarsens
+    given x: Sig = [Sig(bits = 13, prec = 4), Sig(bits = 12, prec = 4), Sig(bits = 11, prec = 4)]
+    given k: Int = [2, 3]
+    given m: Int = [1, 2]
+    when 1 <= x.prec
+    when 1 <= m
+    when m < k
+    coarsenComposes(x, k, m) holds

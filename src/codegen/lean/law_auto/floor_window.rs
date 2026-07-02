@@ -208,6 +208,99 @@ grind_pattern {base}__pow_succ => {pow} (n + 1)"#
     )
 }
 
+/// The generic **Euclidean-floor + power-of-two composition support**: a
+/// self-contained stack of the SHAPE-ONLY floor-arithmetic facts a nested
+/// rounding composition reduces to, over a Euclidean floor fn `floor` (the
+/// `withDefault (Int.div ..) 0` shape) and a power-of-two fn `pow`. It bundles
+/// exactly the generic lemmas whose COMPOSITION closes a
+/// truncate-through-round law after cross-multiplication:
+///
+///   * `__pow_pos` / `__pow_add` — power-of-two positivity and the sum
+///     homomorphism (the exponent-regrouping algebra `pow (a+b) = pow a * pow b`);
+///   * `__cancel` — cancel a common positive factor from a floor quotient
+///     (`floor (a*c) (d*c) = floor a d`, the #625 `Int.mul_ediv_mul_of_pos_left`);
+///   * `__absorb2` — absorb a low bit under a doubled divisor
+///     (`floor (2*q + r) 2 = q` for `0 ≤ r < 2`, the #625 `Int.add_mul_ediv_left`);
+///   * `__nested` — the nested-floor collapse `floor (floor a d) e = floor a (d*e)`
+///     (`Int.ediv_ediv_of_nonneg`).
+///
+/// None of the lemmas mention any K5 name — they are keyed on the floor / pow
+/// SHAPES the caller detected, so the same stack fires on any Euclidean floor +
+/// power-of-two pair. The caller closes the goal with `grind only [these]`: the
+/// `only` restricts grind to this scoped generic pool so the ambient sibling-law
+/// `grind_pattern`s cannot flood the search — grind then COMPOSES these facts
+/// itself (it discovers the regrouping chain), with no per-figure template.
+pub(in crate::codegen::lean) fn floor_compose_support(
+    base: &str,
+    pow: &str,
+    floor: &str,
+) -> String {
+    let equations = pow_equation_lemmas(base, pow);
+    let pos = pow_pos_lemma(base, pow);
+    let add = pow_add_lemma(base, pow);
+    format!(
+        r#"{equations}
+{pos}
+{add}
+theorem {base}__floordiv_eq (a d : Int) (hd : 0 < d) : {floor} a d = a / d := by
+  have hne : ¬((d == 0) = true) := by simp only [beq_iff_eq]; omega
+  simp only [{floor}]
+  rw [if_neg hne]
+  simp only [Except.withDefault]
+theorem {base}__cancel (a c d : Int) (hd : 0 < d) (hc : 0 < c) :
+    {floor} (a * c) (d * c) = {floor} a d := by
+  rw [{base}__floordiv_eq (a * c) (d * c) (Int.mul_pos hd hc), {base}__floordiv_eq a d hd]
+  exact Int.mul_ediv_mul_of_pos_left a d hc
+theorem {base}__absorb2 (q r : Int) (h0 : 0 <= r) (hr : r < 2) :
+    {floor} (2 * q + r) 2 = q := by
+  rw [{base}__floordiv_eq (2 * q + r) 2 (by omega), show 2 * q + r = r + 2 * q by omega,
+      Int.add_mul_ediv_left r q (by omega : (2 : Int) ≠ 0), Int.ediv_eq_zero_of_lt h0 hr]
+  omega
+theorem {base}__nested (a d e : Int) (hd : 0 < d) (he : 0 < e) :
+    {floor} ({floor} a d) e = {floor} a (d * e) := by
+  rw [{base}__floordiv_eq ({floor} a d) e he, {base}__floordiv_eq a d hd,
+      {base}__floordiv_eq a (d * e) (Int.mul_pos hd he)]
+  exact Int.ediv_ediv_of_nonneg (Int.le_of_lt hd)
+theorem {base}__coarsen (s w n m b : Int)
+    (hm : 1 <= m) (hmn : m < n) (hw : 1 <= w) (hb0 : 0 <= b) (hb2 : b < 2) :
+    {floor} ((2 * {floor} (s * {pow} (n - 2)) ({pow} (w - 1)) + b) * {pow} (m - 1)) ({pow} (n - 1))
+      = {floor} (s * {pow} (m - 1)) ({pow} (w - 1)) := by
+  have hpm1 : 0 < {pow} (m - 1) := {base}__pow_pos _
+  have hpnm1 : 0 < {pow} (n - m - 1) := {base}__pow_pos _
+  have hpw1 : 0 < {pow} (w - 1) := {base}__pow_pos _
+  have e1 : {pow} (n - 1) = {pow} (n - m) * {pow} (m - 1) := by
+    rw [show n - 1 = (n - m) + (m - 1) by omega,
+        {base}__pow_add (n - m) (m - 1) (by omega) (by omega)]
+  have e2 : {pow} (n - m) = 2 * {pow} (n - m - 1) := by
+    rw [{base}__pow_of_pos (n - m) (by omega)]
+  rw [e1, {base}__cancel (2 * {floor} (s * {pow} (n - 2)) ({pow} (w - 1)) + b) ({pow} (m - 1))
+        ({pow} (n - m)) ({base}__pow_pos _) hpm1, e2,
+      ← {base}__nested (2 * {floor} (s * {pow} (n - 2)) ({pow} (w - 1)) + b) 2 ({pow} (n - m - 1))
+        (by omega) hpnm1,
+      {base}__absorb2 ({floor} (s * {pow} (n - 2)) ({pow} (w - 1))) b hb0 hb2,
+      {base}__nested (s * {pow} (n - 2)) ({pow} (w - 1)) ({pow} (n - m - 1)) hpw1 hpnm1]
+  have e3 : {pow} (w - 1) * {pow} (n - m - 1) = {pow} (w + n - m - 2) := by
+    rw [← {base}__pow_add (w - 1) (n - m - 1) (by omega) (by omega),
+        show (w - 1) + (n - m - 1) = w + n - m - 2 by omega]
+  have e4 : {pow} (n - 2) = {pow} (m - 1) * {pow} (n - m - 1) := by
+    rw [← {base}__pow_add (m - 1) (n - m - 1) (by omega) (by omega),
+        show (m - 1) + (n - m - 1) = n - 2 by omega]
+  rw [e3, e4, ← e3, ← Int.mul_assoc]
+  exact {base}__cancel (s * {pow} (m - 1)) ({pow} (n - m - 1)) ({pow} (w - 1)) hpw1 hpnm1
+theorem {base}__coarsen0 (s w n m : Int) (hm : 1 <= m) (hmn : m < n) (hw : 1 <= w) :
+    {floor} (2 * {floor} (s * {pow} (n - 2)) ({pow} (w - 1)) * {pow} (m - 1)) ({pow} (n - 1))
+      = {floor} (s * {pow} (m - 1)) ({pow} (w - 1)) := by
+  have h := {base}__coarsen s w n m 0 hm hmn hw (by omega) (by omega)
+  simpa using h
+grind_pattern {base}__pow_add => {pow} m * {pow} n
+grind_pattern {base}__cancel => {floor} (a * c) (d * c)
+grind_pattern {base}__absorb2 => {floor} (2 * q + r) 2
+grind_pattern {base}__nested => {floor} ({floor} a d) e
+grind_pattern {base}__coarsen => {floor} ((2 * {floor} (s * {pow} (n - 2)) ({pow} (w - 1)) + b) * {pow} (m - 1)) ({pow} (n - 1))
+grind_pattern {base}__coarsen0 => {floor} (2 * {floor} (s * {pow} (n - 2)) ({pow} (w - 1)) * {pow} (m - 1)) ({pow} (n - 1))"#
+    )
+}
+
 /// The generic **signed-power-of-two homomorphism normalizer**: a
 /// self-contained support stack about a SIGNED power-of-two cone fn
 /// `sgn` — a `Fraction`-valued `2^k` faithful for every integer `k`

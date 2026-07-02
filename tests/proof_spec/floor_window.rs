@@ -430,3 +430,95 @@ fn proof_bigint_floor_div_graduation_dafny() {
         0,
     );
 }
+
+/// Third, cross-domain WITNESS for the generic Euclidean-floor + power-of-two
+/// COMPOSITION rung (`tests/fixtures/floor_compose_witness.av`). The rung that
+/// flips the K5 `truncStickyComposes` (truncating a round-to-odd result to a
+/// coarser precision) is keyed only on the CLAIM SHAPE — a nested rounding
+/// composition whose cone doubles a Euclidean floor (`2 * floor(..)`) — never on
+/// the K5 `fpSticky` / `floorDiv` / `pow2` names. This fixture states the SAME
+/// shape over differently-named fns and records (`powB`, `qfloor`, a `Ratio`
+/// with `sameRatio`, a `Sig` significand, `roundSticky` / `roundTrunc`). If the
+/// rung is name-blind, `coarsenComposes` closes `universal` here with ZERO code
+/// changes. Export-structure pin (no toolchain): the supporting exact-cancel law
+/// is `universal` (the FloorDivWindow figure fired name-blindly on `powB` /
+/// `qfloor`) and the composition law block is emitted.
+#[test]
+fn proof_export_floor_compose_third_witness_structure() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output_dir = temp_output_dir("aver-proof-floor-compose-witness");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/floor_compose_witness.av")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("aver proof should run");
+    assert!(run.status.success(), "{}", format_output(&run));
+    let lean = std::fs::read_to_string(output_dir.join("FloorComposeWitness.lean"))
+        .expect("FloorComposeWitness.lean must be emitted");
+    // The exact-cancel law pins the power-of-two figure name-blindly on `powB`.
+    assert!(
+        lean.contains("-- aver:law-class qfloor_law_cancelExact universal"),
+        "cancelExact must be classed universal (FloorDivWindow figure is name-blind); got:\n{lean}"
+    );
+    // The composition law is emitted (its universal flip is speculative, so it is
+    // classed here in the non-probe export as bounded — the live gate below is
+    // what certifies the flip).
+    assert!(
+        lean.contains("coarsenComposes_law_coarsens"),
+        "the trunc-through-sticky composition law must be emitted"
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// Live Lean gate for the third witness: the whole fixture builds with the
+/// toolchain and `coarsenComposes` earns kernel-genuine `universal` credit
+/// (`#print axioms` inside the whitelist), closed by the SAME generic
+/// floor-composition rung as the K5 `truncStickyComposes` — proving the rung is
+/// name- and domain-blind (it fires on `powB` / `qfloor` / `roundSticky` with no
+/// per-figure change). Sorry-free, both fixture laws universal.
+#[test]
+fn proof_floor_compose_third_witness_lean_closes_kernel_genuine() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping floor-compose-witness proof test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-floor-compose-witness-lake");
+    let (summary, run) = run_lean_check_json(
+        "tests/fixtures/floor_compose_witness.av",
+        &output_dir,
+        0,
+        &[],
+    );
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "witness laws must close sorry-free.\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "the composition law must be kernel-genuine universal (axioms within the whitelist).\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        (
+            summary["universal_laws"].as_u64(),
+            summary["bounded_laws"].as_u64(),
+        ),
+        (Some(2), Some(0)),
+        "both witness laws (exact-cancel + trunc-through-sticky composition) certified universal, none bounded.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}

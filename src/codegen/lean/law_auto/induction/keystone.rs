@@ -510,6 +510,161 @@ pub(super) fn keystone_pow2_fn(
     None
 }
 
+/// The Euclidean floor-division fn (Lean name) in this law's call cone, if any —
+/// a `withDefault (Int.div ..) 0`-shaped two-arg pure fn (recognized by SHAPE via
+/// [`is_euclidean_floor_fn`](super::super::shared::is_euclidean_floor_fn), never
+/// by name). Used to bundle the generic floor-composition support stack
+/// ([`floor_compose_support`](super::super::floor_window::floor_compose_support))
+/// when a nested rounding composition reduces to floor arithmetic over a
+/// power-of-two divisor. `None` when the cone has no such fn — the keystone then
+/// keeps its emission unchanged.
+fn keystone_floor_fn(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option<String> {
+    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
+    for fd in cone.pure_fns() {
+        if super::super::shared::is_euclidean_floor_fn(&fd.name, ctx) {
+            return Some(aver_name_to_lean(&fd.name));
+        }
+    }
+    None
+}
+
+/// Whether some fn (transitively via its tail body) COMPUTES a Euclidean floor —
+/// it is the floor fn itself, or it builds a value out of a call to a
+/// floor-computing fn (a rounding wrapper like `fpTrunc` / `fpSticky` /
+/// `stickyHalf`, whose result carries a `floorDiv`). Depth-limited to avoid
+/// pathological cone cycles.
+fn fn_computes_floor(name: &str, ctx: &CodegenContext, depth: u8) -> bool {
+    use crate::ast::{Expr, Spanned};
+    if super::super::shared::is_euclidean_floor_fn(name, ctx) {
+        return true;
+    }
+    if depth == 0 {
+        return false;
+    }
+    let Some(fd) = super::super::shared::find_fn_def_by_call_name(ctx, name) else {
+        return false;
+    };
+    if !fd.effects.is_empty() {
+        return false;
+    }
+    fn walk(e: &Spanned<Expr>, ctx: &CodegenContext, depth: u8) -> bool {
+        if let Expr::FnCall(callee, args) = &e.node {
+            if let Some(n) = super::super::shared::expr_dotted_name(callee)
+                && fn_computes_floor(&n, ctx, depth - 1)
+            {
+                return true;
+            }
+            return args.iter().any(|a| walk(a, ctx, depth));
+        }
+        match &e.node {
+            Expr::BinOp(_, l, r) => walk(l, ctx, depth) || walk(r, ctx, depth),
+            Expr::Neg(x) | Expr::Attr(x, _) | Expr::ErrorProp(x) => walk(x, ctx, depth),
+            Expr::Match { subject, arms } => {
+                walk(subject, ctx, depth) || arms.iter().any(|a| walk(&a.body, ctx, depth))
+            }
+            Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, v)| walk(v, ctx, depth)),
+            Expr::RecordUpdate { base, updates, .. } => {
+                walk(base, ctx, depth) || updates.iter().any(|(_, v)| walk(v, ctx, depth))
+            }
+            _ => false,
+        }
+    }
+    fd.body
+        .stmts()
+        .iter()
+        .any(|stmt| matches!(stmt, crate::ast::Stmt::Expr(e) if walk(e, ctx, depth)))
+}
+
+/// Whether this law claims a NESTED rounding composition — its subject fn body
+/// applies a floor-computing rounding fn to the RESULT of ANOTHER floor-computing
+/// rounding fn (`g(h(..), ..)`, both `g` and `h` [`fn_computes_floor`]). That is
+/// the exact structural signature of a trunc-through-round law (e.g.
+/// `fpTrunc(fpSticky(f,n), m)`): its significand identity is the ONE floor
+/// composition that needs the absorb-remainder step `floor (2*q + r) 2 = q`,
+/// which a plain `grind` over the ambient pool cannot stage. Name-blind, it
+/// scopes the generic floor-composition support to exactly those laws, so every
+/// other keystone law stays byte-identical and the probe build carries no dead
+/// weight. `fpTrunc(f, m)` alone (single wrapper, no nesting) does NOT match.
+fn law_is_nested_floor_composition(law: &VerifyLaw, ctx: &CodegenContext) -> bool {
+    use crate::ast::{Expr, Spanned};
+    fn is_floor_wrapper_call(e: &Spanned<Expr>, ctx: &CodegenContext) -> bool {
+        matches!(&e.node, Expr::FnCall(callee, _)
+            if super::super::shared::expr_dotted_name(callee)
+                .is_some_and(|n| fn_computes_floor(&n, ctx, 4)))
+    }
+    fn walk(e: &Spanned<Expr>, ctx: &CodegenContext) -> bool {
+        if let Expr::FnCall(callee, args) = &e.node {
+            if super::super::shared::expr_dotted_name(callee)
+                .is_some_and(|n| fn_computes_floor(&n, ctx, 4))
+                && args.iter().any(|a| is_floor_wrapper_call(a, ctx))
+            {
+                return true;
+            }
+            return walk(callee, ctx) || args.iter().any(|a| walk(a, ctx));
+        }
+        match &e.node {
+            Expr::BinOp(_, l, r) => walk(l, ctx) || walk(r, ctx),
+            Expr::Neg(x) | Expr::Attr(x, _) | Expr::ErrorProp(x) => walk(x, ctx),
+            Expr::Match { subject, arms } => {
+                walk(subject, ctx) || arms.iter().any(|a| walk(&a.body, ctx))
+            }
+            _ => false,
+        }
+    }
+    // Inline the law's subject fn to see the composition it claims.
+    inline_fn_call(&law.lhs, ctx).is_some_and(|body| walk(&body, ctx))
+}
+
+/// Whether some fn in this law's cone DOUBLES a floor-computing quotient — a
+/// subexpression `2 * X` (or `X * 2`) where `X` is a call to a
+/// [`fn_computes_floor`] fn. That is the round-to-odd half-cell (`2*stickyHalf`),
+/// the structural feature whose floor reduction needs the absorb-remainder step
+/// `floor (2*q + r) 2 = q`. Combined with the nested-composition gate it isolates
+/// the trunc-through-STICKY law (a coarsening of a doubled round bit) from the
+/// plain trunc-through-trunc / trunc-through-away compositions, which the plain
+/// exact-cancel already closes — so the generic floor-composition support is
+/// emitted for exactly that one law, keeping the probe build lean.
+fn cone_has_round_to_odd_doubling(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> bool {
+    use crate::ast::{BinOp, Expr, Literal, Spanned};
+    fn is_two(e: &Spanned<Expr>) -> bool {
+        matches!(&e.node, Expr::Literal(Literal::Int(2)))
+    }
+    fn is_floor_call(e: &Spanned<Expr>, ctx: &CodegenContext) -> bool {
+        matches!(&e.node, Expr::FnCall(callee, _)
+            if super::super::shared::expr_dotted_name(callee)
+                .is_some_and(|n| fn_computes_floor(&n, ctx, 4)))
+    }
+    fn walk(e: &Spanned<Expr>, ctx: &CodegenContext) -> bool {
+        if let Expr::BinOp(BinOp::Mul, l, r) = &e.node
+            && ((is_two(l) && is_floor_call(r, ctx)) || (is_two(r) && is_floor_call(l, ctx)))
+        {
+            return true;
+        }
+        match &e.node {
+            Expr::BinOp(_, l, r) => walk(l, ctx) || walk(r, ctx),
+            Expr::Neg(x) | Expr::Attr(x, _) | Expr::ErrorProp(x) => walk(x, ctx),
+            Expr::FnCall(c, args) => walk(c, ctx) || args.iter().any(|a| walk(a, ctx)),
+            Expr::Match { subject, arms } => {
+                walk(subject, ctx) || arms.iter().any(|a| walk(&a.body, ctx))
+            }
+            Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, v)| walk(v, ctx)),
+            Expr::RecordUpdate { base, updates, .. } => {
+                walk(base, ctx) || updates.iter().any(|(_, v)| walk(v, ctx))
+            }
+            _ => false,
+        }
+    }
+    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
+    cone.pure_fns().iter().any(|fd| {
+        fd.body
+            .stmts()
+            .iter()
+            .any(|stmt| matches!(stmt, crate::ast::Stmt::Expr(e) if walk(e, ctx)))
+    })
+}
+
 /// A SIGNED-power-of-two homomorphism citation for the keystone: when an
 /// earlier sibling law proves the homomorphism of a `Fraction`-valued
 /// signed power-of-two cone fn (`2^k` faithful for every integer `k`),
@@ -1405,6 +1560,59 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
         hints.push(format!("{sgnbase}__sgn_add"));
         hints.push(format!("{sgnbase}__sgn_add_succ"));
     }
+    // GENERIC Euclidean-floor + power-of-two composition support. When the cone
+    // has a Euclidean floor fn AND a power-of-two normalizer fired, a NESTED
+    // rounding composition (e.g. truncating a round-to-odd result to a coarser
+    // precision) reduces after cross-multiplication to floor arithmetic over
+    // power-of-two divisors: a chain of the generic cancel-common-factor,
+    // absorb-remainder and nested-floor-collapse facts glued by the power-of-two
+    // homomorphism regrouping. Emit the scoped generic floor-compose stack and add
+    // a DEDICATED portfolio branch that closes with `grind only [these]`: the
+    // `only` restricts grind to this scoped generic pool so the ambient sibling
+    // `grind_pattern`s (a dozen `pow_add`/cancel patterns registered file-globally)
+    // cannot flood and stall the deeper search — grind then COMPOSES the generic
+    // facts itself, discovering the regrouping chain with no per-figure template.
+    // The branch is tried AFTER the plain-`grind` branch, so every law that
+    // already closes keeps its proof byte-identical; only a law the plain branch
+    // cannot close (the trunc-through-round composition) reaches it.
+    let floor_compose_hints: Option<String> = match (
+        pow2_normalizer.as_ref().filter(|_| {
+            law_is_nested_floor_composition(law, ctx)
+                && cone_has_round_to_odd_doubling(vb, law, ctx)
+        }),
+        keystone_floor_fn(vb, law, ctx),
+        keystone_pow2_fn(vb, law, ctx),
+    ) {
+        (Some(_), Some(floor), Some(pow)) => {
+            let fcbase = format!(
+                "{}_law_{}__fcompose",
+                aver_name_to_lean(&vb.fn_name),
+                law.name
+            );
+            let support = super::super::floor_window::floor_compose_support(&fcbase, &pow, &floor);
+            support_lines.extend(support.lines().map(|l| l.to_string()));
+            // The trunc-through-sticky `grind only` search over the deeply-nested
+            // record/match goal runs long — and in the single generated module the
+            // ambient sibling `grind_pattern`s add e-matching overhead that pushes
+            // it past the default 200 000-heartbeat `whnf` wall, a HARD
+            // `(deterministic) timeout` that `first` cannot recover (it would sink
+            // the whole speculative probe build). Raise the budget for THIS proof
+            // only, via a `set_option … in` on the last support line (immediately
+            // before the theorem). Scoped to the one law; every other proof keeps
+            // the default budget.
+            support_lines.push("set_option maxHeartbeats 1000000 in".to_string());
+            Some(
+                [
+                    "coarsen", "coarsen0", "cancel", "absorb2", "nested", "pow_add", "pow_pos",
+                ]
+                .iter()
+                .map(|s| format!("{fcbase}__{s}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            )
+        }
+        _ => None,
+    };
     let grind_hints = hints.join(", ");
     // With no citable pool and no normalizer the hint list is empty; emit a bare
     // `grind` (not `grind []`) for the flat definitional close.
@@ -1463,6 +1671,29 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
             "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq{bridge_extra}] {simp_at} <;> {grind_call})"
         )
     };
+    // The dedicated `grind only` floor-composition branch (see the
+    // `floor_compose_hints` block above). It unfolds the cone (`beq_iff_eq` turns
+    // the `sameValue` `==` into a Prop `=` grind's ring solver consumes), splits
+    // the rounding-match branches, and closes each by composing the scoped generic
+    // floor + power-of-two facts under `grind only` — isolated from the ambient
+    // sibling `grind_pattern`s. Placed BEFORE the plain-`grind` `close`: on a
+    // trunc-through-sticky goal the plain `grind` over the ambient pool EXPLODES
+    // and can hit a hard `(deterministic) timeout` heartbeat wall — which `first`
+    // does NOT recover from — so running the reliable `grind only` branch first
+    // closes the law before the exploding branch is ever reached. Every other
+    // keystone law fails this gate and keeps `close` as its only branch, unchanged.
+    // After `repeat' split` peels the rounding-match `if`s, the record-field
+    // projections it exposes (`{ bits := .. }.bits`) must be REDUCED before `grind
+    // only` — grind's restricted mode does not push a projection through a struct
+    // literal, so an un-reduced `(cond-record).bits` leaves the floor term grind
+    // cannot match. A `try simp only []` does exactly that structural reduction
+    // (beta / projection), guarded by `try` so a branch with nothing to reduce
+    // does not fail the `<;>` chain.
+    let floor_compose_branch = floor_compose_hints.map(|fc| {
+        format!(
+            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] {simp_at} <;> (first | ((repeat' split) <;> (try simp only []) <;> grind only [{fc}]) | ((try simp only []) <;> grind only [{fc}])))"
+        )
+    });
     let floor = if super::super::super::tactic_ir::speculative::probing() {
         let id = format!("{}.{}", vb.fn_name, law.name);
         super::super::super::tactic_ir::speculative::record_probed(&id);
@@ -1470,9 +1701,20 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
     } else {
         "  | sorry".to_string()
     };
+    // For a floor-composition law the plain `close` EXPLODES (and can hard-timeout,
+    // which `first` cannot recover — sinking the whole probe build); the reliable
+    // `grind only` branch REPLACES it, falling through only to the safe `sorry`
+    // floor (a graceful bounded fallback, never a catastrophic timeout). Every
+    // other law keeps `close` as its sole branch, byte-identical to before.
+    let mut branches = vec![intro, "  first".to_string()];
+    match floor_compose_branch {
+        Some(fc_branch) => branches.push(fc_branch),
+        None => branches.push(close),
+    }
+    branches.push(floor);
     Some(AutoProof {
         support_lines,
-        body: Tactic::raw(vec![intro, "  first".to_string(), close, floor]),
+        body: Tactic::raw(branches),
         replaces_theorem: false,
     })
 }
