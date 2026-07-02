@@ -172,6 +172,7 @@ fn untranslate_bool(v: &Value) -> Result<Spanned<Expr>, EngineGap> {
     if let Some(app) = v.get("app")
         && let Some(op) = comparison_binop(head_const(app))
     {
+        require_int_carrier(app)?;
         let args = app_operands(app, 2)?;
         return Ok(sp(Expr::BinOp(
             op,
@@ -250,13 +251,23 @@ fn untranslate_app(app: &Value) -> Result<Spanned<Expr>, EngineGap> {
         }
         return Err(EngineGap::new("OfNat literal without a nat operand"));
     }
-    // Negation: `@Neg.neg _ _ a`.
+    // Negation: `@Neg.neg _ _ a` (Int only — Nat has no negation).
     if head == Some("Neg.neg") {
+        require_int_carrier(app)?;
         let args = app_operands(app, 1)?;
         return Ok(sp(Expr::Neg(Box::new(untranslate_expr(&args[0])?))));
     }
+    // Numeric coercions have no Aver surface: Aver `Int` is ℤ and there is no
+    // `Nat`, so a `Nat`-carried value must never be laundered into an Aver
+    // `Int` — that is exactly what would produce a lying sample verdict.
+    if is_numeric_coercion(head) {
+        return Err(EngineGap::new("numeric coercion outside the grammar"));
+    }
     // Heterogeneous / homogeneous arithmetic — operands are the last two args.
+    // Type-aware: only the `Int` carrier maps to an Aver operator (Nat
+    // truncated subtraction differs from Aver's Int=ℤ).
     if let Some(op) = arith_binop(head) {
+        require_int_carrier(app)?;
         let args = app_operands(app, 2)?;
         return Ok(sp(Expr::BinOp(
             op,
@@ -265,6 +276,7 @@ fn untranslate_app(app: &Value) -> Result<Spanned<Expr>, EngineGap> {
         )));
     }
     if let Some(op) = comparison_binop(head) {
+        require_int_carrier(app)?;
         let args = app_operands(app, 2)?;
         return Ok(sp(Expr::BinOp(
             op,
@@ -356,6 +368,47 @@ fn comparison_binop(head: Option<&str>) -> Option<BinOp> {
         "GE.ge" => Some(BinOp::Gte),
         "Ne" => Some(BinOp::Neq),
         _ => None,
+    }
+}
+
+/// Numeric coercion heads (`↑`, `Int.ofNat`, …). These bridge Lean's `Nat`/`Int`
+/// hierarchy, which Aver does not have — there is no faithful Aver surface, so
+/// the un-translator declines rather than dropping the coercion silently.
+fn is_numeric_coercion(head: Option<&str>) -> bool {
+    matches!(
+        head,
+        Some(
+            "Nat.cast"
+                | "NatCast.natCast"
+                | "IntCast.intCast"
+                | "Int.ofNat"
+                | "Int.cast"
+                | "Int.toNat"
+        )
+    )
+}
+
+/// Gate an arithmetic / comparison / negation application to the `Int` carrier
+/// our operators are sound for. Lean elaborates these with the carrier type as
+/// the FIRST argument (`@HAdd.hAdd α β γ …`, `@LT.lt α …`, `@Neg.neg α …`).
+/// Aver has no `Nat` and Aver `Int` is ℤ, so mapping Nat arithmetic to an Aver
+/// operator would misread Nat truncated subtraction as real subtraction and
+/// invent a counterexample for a goal that is TRUE in Lean — decline instead.
+fn require_int_carrier(app: &Value) -> Result<(), EngineGap> {
+    match app
+        .get("args")
+        .and_then(Value::as_array)
+        .and_then(|a| a.first())
+        .and_then(|t| t.get("const"))
+        .and_then(Value::as_str)
+    {
+        Some("Int") => Ok(()),
+        Some("Nat") => Err(EngineGap::new(
+            "natural-number arithmetic (truncated subtraction differs from Aver's Int)",
+        )),
+        _ => Err(EngineGap::new(
+            "arithmetic over a non-Int carrier type outside the grammar",
+        )),
     }
 }
 
@@ -516,10 +569,13 @@ mod tests {
     }
 
     #[test]
-    fn real_prop07_residual_maps_list_builtins() {
-        // The prop_07 (`length (qrev …)`) cons-arm residual shape: List.cons /
-        // List.nil / ++ must spell back through Aver `List.concat` + literals,
-        // and the induction hypothesis binder becomes a `when`.
+    fn residual_maps_list_builtins_and_ih_premise() {
+        // The prop_07 (`length (qrev …)`) cons-arm residual shape, with the
+        // trailing arithmetic Int-carried so the grammar renders end-to-end
+        // (the real Nat-carried prop_07 declines — see
+        // `declines_nat_subtraction`): List.cons / List.nil / ++ must spell
+        // back through Aver `List.concat` + literals, and the induction
+        // hypothesis binder becomes a `when`.
         let list_int = r#"{"app":{"fn":{"const":"List"},"args":[{"const":"Int"}]}}"#;
         let inst = r#"{"opaque":"inst"}"#;
         let length = |a: &str| format!(r#"{{"app":{{"fn":{{"const":"length"}},"args":[{a}]}}}}"#);
@@ -544,15 +600,15 @@ mod tests {
             r#"{{"app":{{"fn":{{"const":"OfNat.ofNat"}},"args":[{{"const":"Nat"}},{{"nat":"1"}},{inst}]}}}}"#
         );
         let rhs = format!(
-            r#"{{"app":{{"fn":{{"const":"HAdd.hAdd"}},"args":[{{"const":"Nat"}},{{"const":"Nat"}},{{"const":"Nat"}},{inst},{},{one}]}}}}"#,
+            r#"{{"app":{{"fn":{{"const":"HAdd.hAdd"}},"args":[{{"const":"Int"}},{{"const":"Int"}},{{"const":"Int"}},{inst},{},{one}]}}}}"#,
             plus(&length(&var("tail")), &length(&var("y")))
         );
         let claim = format!(
-            r#"{{"app":{{"fn":{{"const":"Eq"}},"args":[{{"const":"Nat"}},{},{rhs}]}}}}"#,
+            r#"{{"app":{{"fn":{{"const":"Eq"}},"args":[{{"const":"Int"}},{},{rhs}]}}}}"#,
             length(&qrev(&var("tail"), &cons))
         );
         let ih_ty = format!(
-            r#"{{"app":{{"fn":{{"const":"Eq"}},"args":[{{"const":"Nat"}},{},{}]}}}}"#,
+            r#"{{"app":{{"fn":{{"const":"Eq"}},"args":[{{"const":"Int"}},{},{}]}}}}"#,
             length(&qrev(&var("tail"), &var("y"))),
             plus(&length(&var("tail")), &length(&var("y")))
         );
@@ -605,5 +661,33 @@ mod tests {
         let json = forall("a", r#"{"const":"Int"}"#, &claim);
         let err = untranslate_goal(&json).expect_err("not an equality");
         assert!(err.reason.contains("equality"), "{}", err.reason);
+    }
+
+    #[test]
+    fn declines_nat_subtraction() {
+        // ∀ (a b : Nat), (a - b) + b = a. In Nat this is FALSE→saturating-true
+        // territory (2 - 5 = 0), but mapping `HSub.hSub Nat` to Aver's `-`
+        // (Int=ℤ) would invent a counterexample for a goal true in Lean, so the
+        // Nat carrier must decline rather than untranslate the subtraction.
+        let hsub = format!(
+            r#"{{"app":{{"fn":{{"const":"HSub.hSub"}},"args":[{{"const":"Nat"}},{{"const":"Nat"}},{{"const":"Nat"}},{{"opaque":"inst"}},{},{}]}}}}"#,
+            var("a"),
+            var("b")
+        );
+        let lhs = format!(
+            r#"{{"app":{{"fn":{{"const":"HAdd.hAdd"}},"args":[{{"const":"Nat"}},{{"const":"Nat"}},{{"const":"Nat"}},{{"opaque":"inst"}},{hsub},{}]}}}}"#,
+            var("b")
+        );
+        let claim = format!(
+            r#"{{"app":{{"fn":{{"const":"Eq"}},"args":[{{"const":"Nat"}},{lhs},{}]}}}}"#,
+            var("a")
+        );
+        let json = forall(
+            "a",
+            r#"{"const":"Nat"}"#,
+            &forall("b", r#"{"const":"Nat"}"#, &claim),
+        );
+        let err = untranslate_goal(&json).expect_err("Nat arithmetic must decline");
+        assert!(err.reason.contains("natural-number"), "{}", err.reason);
     }
 }
