@@ -91,6 +91,59 @@ fn proof_export_floor_window_lean_structure() {
     let _ = std::fs::remove_dir_all(&output_dir);
 }
 
+/// Second, cross-domain WITNESS for the Euclidean-floor arithmetic rungs
+/// (`tests/fixtures/floor_arith_witness.av`). The cancel / absorb rungs are
+/// keyed only on the CLAIM SHAPE (`floor (a * c) (d * c) = floor a d`;
+/// `floor (d * q + r) d = q`), never on the K5 `floorDiv` name. This fixture
+/// states the SAME two shapes over a differently-named floor-division fn
+/// (`quotFloor`, over `num`/`den`) in a different module with different given
+/// names — if the rungs were name-blind, both laws close `universal` here too.
+/// Export-structure pin (no toolchain needed): asserts the `universal`
+/// law-class markers and no REACHED sorry.
+#[test]
+fn proof_export_floor_arith_second_witness_universal() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output_dir = temp_output_dir("aver-proof-floor-arith-witness");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/floor_arith_witness.av")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("aver proof should run");
+    assert!(run.status.success(), "{}", format_output(&run));
+    let lean = std::fs::read_to_string(output_dir.join("FloorArithWitness.lean"))
+        .expect("FloorArithWitness.lean must be emitted");
+
+    // Both cross-domain law theorems replace their bounded statements with the
+    // TRUE universal form and are classed `universal` — the rungs fired on a
+    // fn with no `floorDiv` / K5 name.
+    for base in ["quotFloor_law_shrinkFactor", "quotFloor_law_soakRemainder"] {
+        assert!(
+            lean.contains(&format!("-- aver:law-class {base} universal")),
+            "{base} must be classed universal (rung is name-blind); got:\n{lean}"
+        );
+    }
+    // The core lemmas the rungs cite are present, not a sampled `native_decide`
+    // fallback or a bounded statement.
+    assert!(lean.contains("Int.mul_ediv_mul_of_pos_left"));
+    assert!(lean.contains("Int.add_mul_ediv_left"));
+    // No law theorem REACHES sorry (only `first | proof | sorry` fail-safe
+    // floors are permitted, and these rungs emit none).
+    let reached_sorry: Vec<&str> = lean
+        .lines()
+        .filter(|l| l.contains("sorry") && !l.contains("| sorry"))
+        .collect();
+    assert!(
+        reached_sorry.is_empty(),
+        "the second-witness fixture must not REACH sorry; offending lines:\n{}",
+        reached_sorry.join("\n")
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
 /// Export-structure pin, Dafny side (no toolchain needed). Before the
 /// class existed the binary-exponent fn declined to an opaque
 /// `{:axiom}` and the significand law was omitted; the other three

@@ -23,8 +23,11 @@
 
 use super::AutoProof;
 use super::aver_name_to_lean;
-use super::shared::{expr_dotted_name, find_fn_def_by_call_name};
-use crate::ast::{BinOp, Expr, Literal, Spanned, Stmt, VerifyBlock, VerifyLaw};
+use super::shared::{
+    clause_gives_pos, expr_dotted_name, flatten_and, floor_call, is_euclidean_floor_fn, render,
+    same_atom,
+};
+use crate::ast::{BinOp, Expr, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 
 struct NestedFloorShape {
@@ -34,92 +37,6 @@ struct NestedFloorShape {
     a: String,
     d: String,
     e: String,
-}
-
-fn render(e: &Spanned<Expr>, ctx: &CodegenContext) -> String {
-    super::super::expr::emit_expr_legacy(e, ctx, None)
-}
-
-fn same_atom(a: &Spanned<Expr>, b: &Spanned<Expr>, ctx: &CodegenContext) -> bool {
-    render(a, ctx) == render(b, ctx)
-}
-
-/// `floor(x, y)` — a 2-arg call to `floor_src`; returns `(x, y)`.
-fn floor_call<'a>(
-    e: &'a Spanned<Expr>,
-    floor_src: &str,
-) -> Option<(&'a Spanned<Expr>, &'a Spanned<Expr>)> {
-    let Expr::FnCall(callee, args) = &e.node else {
-        return None;
-    };
-    if expr_dotted_name(callee).as_deref() != Some(floor_src) || args.len() != 2 {
-        return None;
-    }
-    Some((&args[0], &args[1]))
-}
-
-/// Whether `fd_src` names a Euclidean floor-division fn: its body is
-/// `Result.withDefault(Int.div(a, d), 0)` over the two parameters. This is the
-/// definition-shape gate that makes the nested-floor identity TRUE — keyed on
-/// the body, never on the fn's name.
-fn is_euclidean_floor_fn(floor_src: &str, ctx: &CodegenContext) -> bool {
-    let Some(fd) = find_fn_def_by_call_name(ctx, floor_src) else {
-        return false;
-    };
-    if !fd.effects.is_empty() || fd.params.len() != 2 {
-        return false;
-    }
-    let [Stmt::Expr(body)] = fd.body.stmts() else {
-        return false;
-    };
-    // withDefault(Int.div(_, _), 0)
-    let Expr::FnCall(callee, args) = &body.node else {
-        return false;
-    };
-    if expr_dotted_name(callee).as_deref() != Some("Result.withDefault") || args.len() != 2 {
-        return false;
-    }
-    if !matches!(&args[1].node, Expr::Literal(Literal::Int(0))) {
-        return false;
-    }
-    let Expr::FnCall(div_callee, div_args) = &args[0].node else {
-        return false;
-    };
-    expr_dotted_name(div_callee).as_deref() == Some("Int.div") && div_args.len() == 2
-}
-
-/// Flatten a `Bool.and` / `&&` conjunction of `when` clauses.
-fn flatten_and<'a>(e: &'a Spanned<Expr>, out: &mut Vec<&'a Spanned<Expr>>) {
-    match &e.node {
-        Expr::FnCall(callee, args)
-            if expr_dotted_name(callee).as_deref() == Some("Bool.and") && args.len() == 2 =>
-        {
-            flatten_and(&args[0], out);
-            flatten_and(&args[1], out);
-        }
-        _ => out.push(e),
-    }
-}
-
-/// Whether `clause` guarantees `0 < x` for the atom rendered as `x_render`:
-/// `0 < x`, `x > 0`, `1 <= x`, `x >= 1` (any nonneg/≥1 literal bound).
-fn clause_gives_pos(clause: &Spanned<Expr>, x_render: &str, ctx: &CodegenContext) -> bool {
-    let Expr::BinOp(op, l, r) = &clause.node else {
-        return false;
-    };
-    let int_lit = |e: &Spanned<Expr>| match &e.node {
-        Expr::Literal(Literal::Int(n)) => Some(*n),
-        _ => None,
-    };
-    match op {
-        // c < x  (c >= 0)  ⟹  0 < x ;  x > c  (c >= 0)
-        BinOp::Lt => int_lit(l).is_some_and(|c| c >= 0) && render(r, ctx) == x_render,
-        BinOp::Gt => render(l, ctx) == x_render && int_lit(r).is_some_and(|c| c >= 0),
-        // c <= x  (c >= 1)  ;  x >= c  (c >= 1)
-        BinOp::Lte => int_lit(l).is_some_and(|c| c >= 1) && render(r, ctx) == x_render,
-        BinOp::Gte => render(l, ctx) == x_render && int_lit(r).is_some_and(|c| c >= 1),
-        _ => false,
-    }
 }
 
 /// Recognize the nested-floor collapse shape, capturing `floor` / `a` / `d` /

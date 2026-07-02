@@ -1,0 +1,50 @@
+module LeafProbe
+    intent =
+        "Empirical probe for the two leaf laws of the sticky-plus decomposition"
+        "(trunc-sticky, Lemma 7.3.2 core): the common-positive-factor cancel and the"
+        "Euclidean remainder absorption on floorDiv. Both are content-blind claim"
+        "shapes over bare Int givens -- no power of two appears in either claim; the"
+        "pow2-ness of the K5 chain enters only through citations of the proven"
+        "homomorphism. This probe measures whether the CURRENT engine closes them"
+        "push-button (universal) or exactly which gap remains."
+    exposes [floorDiv]
+    effects []
+
+fn floorDiv(a: Int, d: Int) -> Int
+    ? "Euclidean floor division a / d (the floor of the exact quotient for d > 0); guarded to 0 at d = 0. Mirror of Domain.Round.floorDiv."
+    Result.withDefault(Int.div(a, d), 0)
+
+verify floorDiv
+    floorDiv(7, 2) => 3
+    floorDiv(0 - 7, 2) => 0 - 4
+    floorDiv(52, 8) => 6
+
+// Leaf K1/K5 of the sticky-plus chain: cancelling a common POSITIVE factor c
+// from dividend and divisor leaves the Euclidean floor unchanged:
+// floor(a*c / (d*c)) = floor(a / d) for 0 < c, 0 < d. Generic over the
+// dividend a and BOTH factors -- no power of two in the claim; in the K5
+// chain c and d are instantiated at powers of two via the proven pow2
+// homomorphism, but the law itself is content-blind.
+
+verify floorDiv law cancelCommonFactor
+    given a: Int = [13, 0 - 7, 52, 0]
+    given d: Int = [2, 3, 5]
+    given c: Int = [1, 2, 7]
+    when 0 < d
+    when 0 < c
+    floorDiv(a * c, d * c) => floorDiv(a, d)
+
+// Leaf K3 of the sticky-plus chain: the Euclidean floor absorbs a
+// sub-divisor remainder: floor((d*q + r) / d) = q for 0 <= r < d. This is
+// quotient uniqueness of Euclidean division, stated generically over the
+// quotient q (any sign), the divisor d and the remainder r. In the K5 chain
+// it fires at d = 2, r = the round-to-odd bit b in {0,1}.
+
+verify floorDiv law absorbRemainder
+    given q: Int = [3, 0 - 2, 0, 13]
+    given d: Int = [1, 2, 3, 5]
+    given r: Int = [0, 1, 2]
+    when 0 < d
+    when 0 <= r
+    when r < d
+    floorDiv(d * q + r, d) => q
