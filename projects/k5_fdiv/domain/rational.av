@@ -1,0 +1,159 @@
+module Rational
+    intent =
+        "Stage 0 of the K5 division proof: exact rational numbers as plain data --"
+        "an Int numerator over an Int denominator, with no normalization anywhere"
+        "(no gcd, no sign fixing, no recursion). Two fractions denote the same value"
+        "exactly when they cross-multiply to the same product, so every algebra law"
+        "below is an unconditional ring identity: it holds for every numerator and"
+        "denominator, zero and negatives included, with no `when` premise."
+        "The AMD K5 paper models floating-point values as exact rationals, so this is"
+        "the algebra every later stage is built on."
+    exposes [Fraction, zeroFraction, oneFraction, plus, times, negate, minus, sameValue, absInt, absFraction, lessThan, isNonNeg, isNonPos]
+    effects []
+
+record Fraction
+    top: Int
+    bottom: Int
+
+fn zeroFraction() -> Fraction
+    ? "The fraction zero, written 0/1."
+    Fraction(top = 0, bottom = 1)
+
+fn oneFraction() -> Fraction
+    ? "The fraction one, written 1/1."
+    Fraction(top = 1, bottom = 1)
+
+fn plus(a: Fraction, b: Fraction) -> Fraction
+    ? "Fraction addition without normalization: a/b + c/d = (ad + cb)/(bd)."
+    Fraction(top = a.top * b.bottom + b.top * a.bottom, bottom = a.bottom * b.bottom)
+
+verify plus
+    plus(Fraction(top = 1, bottom = 2), Fraction(top = 1, bottom = 3)) => Fraction(top = 5, bottom = 6)
+    plus(Fraction(top = -1, bottom = 2), Fraction(top = 1, bottom = 2)) => Fraction(top = 0, bottom = 4)
+
+verify plus law commutative
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
+    given b: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
+    sameValue(plus(a, b), plus(b, a)) holds
+
+verify plus law associative
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 5, bottom = -3)]
+    given b: Fraction = [Fraction(top = 0, bottom = 1), Fraction(top = 2, bottom = 5), Fraction(top = -1, bottom = 2)]
+    given c: Fraction = [Fraction(top = 1, bottom = 1), Fraction(top = -2, bottom = -7), Fraction(top = 3, bottom = 8)]
+    sameValue(plus(plus(a, b), c), plus(a, plus(b, c))) holds
+
+verify plus law zeroIsNeutral
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
+    sameValue(plus(a, zeroFraction()), a) holds
+
+fn times(a: Fraction, b: Fraction) -> Fraction
+    ? "Fraction multiplication without normalization: (ac)/(bd)."
+    Fraction(top = a.top * b.top, bottom = a.bottom * b.bottom)
+
+verify times
+    times(Fraction(top = 1, bottom = 2), Fraction(top = 2, bottom = 3)) => Fraction(top = 2, bottom = 6)
+    times(Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1)) => Fraction(top = 0, bottom = 4)
+
+verify times law commutative
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
+    given b: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
+    sameValue(times(a, b), times(b, a)) holds
+
+verify times law associative
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 5, bottom = -3)]
+    given b: Fraction = [Fraction(top = 0, bottom = 1), Fraction(top = 2, bottom = 5), Fraction(top = -1, bottom = 2)]
+    given c: Fraction = [Fraction(top = 1, bottom = 1), Fraction(top = -2, bottom = -7), Fraction(top = 3, bottom = 8)]
+    sameValue(times(times(a, b), c), times(a, times(b, c))) holds
+
+verify times law distributesOverPlus
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 5, bottom = -3)]
+    given b: Fraction = [Fraction(top = 0, bottom = 1), Fraction(top = 2, bottom = 5), Fraction(top = -1, bottom = 2)]
+    given c: Fraction = [Fraction(top = 1, bottom = 1), Fraction(top = -2, bottom = -7), Fraction(top = 3, bottom = 8)]
+    sameValue(times(a, plus(b, c)), plus(times(a, b), times(a, c))) holds
+
+verify times law oneIsNeutral
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
+    sameValue(times(a, oneFraction()), a) holds
+
+verify times law zeroAbsorbs
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
+    sameValue(times(a, zeroFraction()), zeroFraction()) holds
+
+fn negate(a: Fraction) -> Fraction
+    ? "Fraction negation: flips the numerator sign, keeps the denominator."
+    Fraction(top = 0 - a.top, bottom = a.bottom)
+
+verify negate law involutive
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
+    sameValue(negate(negate(a)), a) holds
+
+fn minus(a: Fraction, b: Fraction) -> Fraction
+    ? "Fraction subtraction without normalization: a/b - c/d = (ad - cb)/(bd)."
+    Fraction(top = a.top * b.bottom - b.top * a.bottom, bottom = a.bottom * b.bottom)
+
+verify minus law equalsPlusNegate
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 5, bottom = -3)]
+    given b: Fraction = [Fraction(top = 0, bottom = 1), Fraction(top = 2, bottom = 5), Fraction(top = -1, bottom = 2)]
+    sameValue(minus(a, b), plus(a, negate(b))) holds
+
+fn sameValue(a: Fraction, b: Fraction) -> Bool
+    ? "Cross-multiplication equality: a/b equals c/d exactly when ad == cb."
+    a.top * b.bottom == b.top * a.bottom
+
+verify sameValue
+    sameValue(Fraction(top = 1, bottom = 2), Fraction(top = 2, bottom = 4)) => true
+    sameValue(Fraction(top = 1, bottom = 2), Fraction(top = 2, bottom = 3)) => false
+    sameValue(Fraction(top = -1, bottom = 2), Fraction(top = 1, bottom = -2)) => true
+
+fn absInt(n: Int) -> Int
+    ? "Integer absolute value."
+    match n < 0
+        true -> 0 - n
+        false -> n
+
+verify absInt
+    absInt(-5) => 5
+    absInt(7) => 7
+    absInt(0) => 0
+
+fn absFraction(a: Fraction) -> Fraction
+    ? "Absolute value of a fraction: |a/b| = |a| / |b|, with a nonnegative numerator and a positive denominator (the canonical form for the rational order)."
+    Fraction(top = absInt(a.top), bottom = absInt(a.bottom))
+
+verify absFraction
+    absFraction(Fraction(top = -3, bottom = 4)) => Fraction(top = 3, bottom = 4)
+    absFraction(Fraction(top = 2, bottom = -5)) => Fraction(top = 2, bottom = 5)
+
+fn lessThan(a: Fraction, b: Fraction) -> Bool
+    ? "Ordinary rational strict order a/b < c/d. Robust for denominators of either sign: multiply both sides by the positive square b^2 d^2, giving a*b*d^2 < c*d*b^2 -- the genuine order of the rationals, not merely a positive-denominator cross-multiplication."
+    a.top * a.bottom * (b.bottom * b.bottom) < b.top * b.bottom * (a.bottom * a.bottom)
+
+verify lessThan
+    lessThan(Fraction(top = 1, bottom = 2), Fraction(top = 2, bottom = 3)) => true
+    lessThan(Fraction(top = 2, bottom = 3), Fraction(top = 1, bottom = 2)) => false
+    lessThan(Fraction(top = -1, bottom = 2), Fraction(top = 0, bottom = 1)) => true
+    lessThan(Fraction(top = 1, bottom = -2), Fraction(top = 0, bottom = 1)) => true
+    lessThan(Fraction(top = -1, bottom = 2), Fraction(top = 1, bottom = -2)) => false
+
+fn isNonNeg(a: Fraction) -> Bool
+    ? "Nonnegativity of a fraction: 0 <= a/b, robust for either denominator sign (a/b has the sign of a*b, since b^2 > 0)."
+    a.top * a.bottom >= 0
+
+fn isNonPos(a: Fraction) -> Bool
+    ? "Nonpositivity of a fraction: a/b <= 0 (the sign of a*b is nonpositive)."
+    a.top * a.bottom <= 0
+
+verify isNonNeg
+    isNonNeg(Fraction(top = 3, bottom = 4)) => true
+    isNonNeg(Fraction(top = -3, bottom = 4)) => false
+    isNonNeg(Fraction(top = -3, bottom = -4)) => true
+
+verify isNonNeg law nonNegOfPositive
+    given x: Fraction = [Fraction(top = 3, bottom = 4), Fraction(top = -3, bottom = -4), Fraction(top = -3, bottom = 4), Fraction(top = 1, bottom = 2)]
+    when lessThan(zeroFraction(), x)
+    isNonNeg(x) holds
+
+verify isNonPos
+    isNonPos(Fraction(top = -3, bottom = 4)) => true
+    isNonPos(Fraction(top = 0, bottom = 1)) => true
+    isNonPos(Fraction(top = 3, bottom = 4)) => false

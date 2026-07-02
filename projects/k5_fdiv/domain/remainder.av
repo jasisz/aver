@@ -1,0 +1,342 @@
+module Remainder
+    intent =
+        "Stage 3, Section 8.2 of the K5 division proof: the FIRST quotient digit's"
+        "remainder bound (Lemma 8.2.3, p.29), the reciprocal-magnitude bound"
+        "(Lemma 8.2.4, p.30), the NAMED sign arithmetic lemma (Lemma 8.2.2, p.29,"
+        "signsDifferent_8_2_2), and the unnamed sum-bound step it feeds. The kernel"
+        "divider (domain/kernel.av divideBang,"
+        "Figure 1, p.2) forms the first quotient digit and its remainder in three"
+        "straight-line steps the runnable layer here mirrors one-for-one:"
+        "  ph0 = trunc(p0, 32)                 (kernel.av line 277, the 32-bit remainder)"
+        "  q0  = away(sd2 * ph0, 24)           (kernel.av line 278, the 24-bit digit)"
+        "  p1  = p0 - q0*d  (= p0 - q0*dh - q0*dl)   (kernel.av lines 281-282)"
+        "with sd2 the reciprocal estimate of Section 8.1 (|d*sd2 - 1| < 2^-28,"
+        "reciprocalBound of domain/recip.av), p0 the initial remainder, d the divisor."
+        "LEMMA 8.2.3 (p.29): |p0 - sd2*d*ph0| < 2^(e(p0) - 26), where e(p0) = fracExpo(p0)."
+        "Its proof decomposes the remainder error along the two roundings it folds in:"
+        "  p0 - sd2*d*ph0 = (p0 - ph0) + ph0*(1 - sd2*d)"
+        "so by the triangle inequality and the cited building blocks"
+        "  |p0 - sd2*d*ph0| <= |p0 - ph0| + |ph0|*|1 - sd2*d|"
+        "                    < 2^(e(p0)-31)          (truncFracErrorBound on p0 at 32)"
+        "                    + 2^(e(p0)+1) * 2^-28    (|ph0| <= |p0| < 2^(e(p0)+1);"
+        "                                              |1 - sd2*d| < 2^-28 by reciprocalBound)"
+        "                    = 17 * 2^(e(p0)-31)  <  32 * 2^(e(p0)-31)  =  2^(e(p0)-26)."
+        "The k = e(p0) factor cancels; the numeric core is 1 + 2^4 < 2^5, i.e. 17 < 32."
+        "LEMMA 8.2.2 (p.29), the NAMED arithmetic lemma (signsDifferent_8_2_2): if x, y, z"
+        "are rationals then (x - y) and (y - z) have DIFFERENT signs -- i.e. their product"
+        "(x-y)*(y-z) <= 0 -- whenever (i) |y| <= |x| and (ii) |y| <= |z| and either"
+        "(iii) 0 < x and 0 <= y and 0 <= z, or (iv) x <= 0 and y <= 0 and z <= 0. Aver"
+        "`when` lines are ANDed, so the (iii)-OR-(iv) disjunction is stated as TWO law"
+        "blocks (branchPositive / branchNonpositive). The 8.2.1 proof instantiates"
+        "x = p0, y = sd2*d*ph0, z = d*q0; condition (ii) is exactly the away overshoot"
+        "|sd2*ph0| <= |q0| (awayDigitOvershoot below, the magnitude half of"
+        "awayFracErrorBound)."
+        "UNNAMED STEP (10) of the 8.2.1 proof (p.28), oppositeSignSumBounded: the two"
+        "error factors alpha = sd2*(p0 - sd2*d*ph0) and beta = sd2*d*(sd2*ph0 - q0) (whose"
+        "sum alpha + beta = sd2*(p0 - q0*d) = sd2*p1 is the scaled next remainder) have"
+        "opposite signs, so |alpha + beta| <= max(|alpha|, |beta|) -- the digits do not"
+        "reinforce, which bounds the next remainder for digit separation 8.2.1. This is"
+        "NOT paper Lemma 8.2.2; it is the |a+b| <= max(|a|,|b|) consequence used at line"
+        "(10) of the 8.2.1 proof, once alpha and beta are known to have different signs."
+        "LEMMA 8.2.4 (p.30): if p0 != 0 then |1/d| <= 2^(e(q0) - e(p0) + 2) (equivalently"
+        "|1/d|*2^(e(p0)) <= 2^(e(q0)+2)). Multiplied by Lemma 8.2.3 it gives eq (12),"
+        "|1/d|*|p0 - sd2*d*ph0| < 2^(e(q0)-24), the bound (8) needs. Its proof (hint p.30)"
+        "uses Lemma 8.1.1 to relate sd2 to 1/d, the away exponent of q0 = away(sd2*ph0,24)"
+        "(Lemma 7.2.7, away does not lower the exponent), e(ph0) = e(p0) (Lemma 7.2.6,"
+        "trunc preserves the exponent) and e(sd2*ph0) >= e(sd2)+e(ph0) (Lemma 7.1.7), so"
+        "e(q0) >= e(sd2) + e(p0); with |1/d| <= 2|sd2| (reciprocalBound) and the envelope"
+        "|sd2| < 2^(e(sd2)+1) this composes to |1/d| < 2^(e(sd2)+2) <= 2^(e(q0)-e(p0)+2)."
+        "8.2.4 STATUS: the runnable Fraction model (reciprocalMagnitudeHolds) is sample-"
+        "verified here; the UNIVERSAL law is pending the pow2-monotone exponent-placement"
+        "link e(sd2)+e(p0) <= e(q0) ==> 2^(e(sd2)+2) <= 2^(e(q0)-e(p0)+2) -- a generic"
+        "pow2Monotone law (derivable from the proven pow2 homomorphism), shared with 8.2.1."
+        "Stated bare-numerically a first cut left those exponent premises dead, so the"
+        "universal law is deferred until the placement is genuinely load-bearing."
+        "BACKEND / HONESTY: the nonlinear remainder algebra is certified on the Z3/Dafny"
+        "backend (SMT trust), the same backend and discipline domain/recip.av's"
+        "reciprocalBound and domain/estimate.av's Newton bounds use. The laws are stated"
+        "on the paper's cross-multiplied INTEGER model (the scaled rationals, as in"
+        "estimate.av): the remainder error decomposition remNum = truncNum + phNum*recipNum"
+        "over a common positive scale, the building-block bounds as integer magnitude"
+        "premises (truncNum from truncFracErrorBound, recipNum from reciprocalBound, phNum"
+        "the digit/remainder magnitude), and the numeric closure truncBound +"
+        "phBound*recipBound <= finalBound (the 17 < 32 core). The Z3 nonlinear products"
+        "are carried directly. The runnable Fraction layer (firstRemainderError on the"
+        "real trunc/away of kernel.av, sample-verified) demonstrates the model mirrors"
+        "Figure 1; the Lean side is bounded (credit is Dafny), not kernel-universal."
+    depends [Domain.Rational, Domain.Fprep, Domain.Kernel, Domain.FracRound, Domain.Recip]
+    exposes [firstTruncRem, firstQuotientDigit, exactFirstDigit, firstRemainderError, remainderRhs, firstRemainderHolds, alphaFactor, betaFactor, signsSeparated, reciprocalMagnitudeRhs, reciprocalMagnitudeHolds, maxInt, productMagnitudeBound, remainderBound_8_2_3, awayDigitOvershoot, oppositeSignSumBounded, signsDifferent_8_2_2, reciprocalMagnitudeBound_8_2_4, digitSeparation_8_2_1]
+    effects []
+
+// ---------------------------------------------------------------------------
+// The runnable first-digit / first-remainder layer (kernel.av lines 277-282).
+// These compute the genuine kernel quantities on exact Fractions, so the
+// Section 8.2 statements can be sample-verified at runtime against the model.
+// ---------------------------------------------------------------------------
+
+fn firstTruncRem(p0: Fraction) -> Fraction
+    ? "ph0 = trunc(p0, 32), the 32-bit truncated initial remainder (kernel.av line 277, Figure 1 p.2)."
+    Domain.Kernel.truncFrac(p0, 32)
+
+verify firstTruncRem
+    Domain.Rational.sameValue(firstTruncRem(Domain.Rational.Fraction(top = 7, bottom = 4)), Domain.Rational.Fraction(top = 7, bottom = 4)) => true
+
+fn exactFirstDigit(p0: Fraction, sd2: Fraction) -> Fraction
+    ? "g = sd2 * ph0, the exact (unrounded) first quotient digit value -- what q0 rounds away to 24 bits (kernel.av line 278, the argument of awayFrac)."
+    Domain.Rational.times(sd2, firstTruncRem(p0))
+
+fn firstQuotientDigit(p0: Fraction, sd2: Fraction) -> Fraction
+    ? "q0 = away(sd2 * ph0, 24), the first 24-bit round-away quotient digit (kernel.av line 278, Figure 1 p.2)."
+    Domain.Kernel.awayFrac(exactFirstDigit(p0, sd2), 24)
+
+verify firstQuotientDigit
+    Domain.Rational.sameValue(firstQuotientDigit(Domain.Rational.Fraction(top = 7, bottom = 4), Domain.Rational.Fraction(top = 1, bottom = 1)), Domain.Rational.Fraction(top = 7, bottom = 4)) => true
+
+fn firstRemainderError(p0: Fraction, d: Fraction, sd2: Fraction) -> Fraction
+    ? "The first remainder error p0 - sd2*d*ph0 of Lemma 8.2.3 (p.29): how far the scaled first digit sd2*d*ph0 sits from the initial remainder p0. Equals (p0 - ph0) + ph0*(1 - sd2*d), the truncation slack plus the reciprocal slack scaled by ph0."
+    Domain.Rational.minus(p0, Domain.Rational.times(Domain.Rational.times(sd2, d), firstTruncRem(p0)))
+
+verify firstRemainderError
+    Domain.Rational.sameValue(firstRemainderError(Domain.Rational.Fraction(top = 7, bottom = 4), Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 2, bottom = 3)), Domain.Rational.zeroFraction()) => true
+
+fn remainderRhs(p0: Fraction) -> Fraction
+    ? "The Lemma 8.2.3 bound 2^(e(p0) - 26) = 2^(fracExpo(p0) - 26), the strict bound on the first remainder error. fracExpo(p0) is the runnable binary exponent e(p0) (Section 5.1, p.13)."
+    Domain.Fprep.pow2Signed(Domain.Kernel.fracExpo(p0) - 26)
+
+fn firstRemainderHolds(p0: Fraction, d: Fraction, sd2: Fraction) -> Bool
+    ? "Lemma 8.2.3 (p.29) as a runnable check on the kernel model: |p0 - sd2*d*ph0| < 2^(e(p0)-26). Sample-verified against the genuine trunc/expo of kernel.av; the universal certificate is remainderBound_8_2_3 (Z3/Dafny, cross-multiplied integer form)."
+    Domain.Rational.lessThan(Domain.Rational.absFraction(firstRemainderError(p0, d, sd2)), remainderRhs(p0))
+
+verify firstRemainderHolds
+    firstRemainderHolds(Domain.Rational.Fraction(top = 7, bottom = 4), Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 2, bottom = 3)) => true
+    firstRemainderHolds(Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1)) => true
+    firstRemainderHolds(Domain.Rational.Fraction(top = 8589934593, bottom = 8589934592), Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1)) => true
+    firstRemainderHolds(Domain.Rational.Fraction(top = 5, bottom = 4), Domain.Rational.Fraction(top = 4, bottom = 5), Domain.Rational.Fraction(top = 5, bottom = 4)) => true
+
+// ---------------------------------------------------------------------------
+// The two sign-separation error factors (Lemma 8.2.2, p.28) on the model.
+// ---------------------------------------------------------------------------
+
+fn alphaFactor(p0: Fraction, d: Fraction, sd2: Fraction) -> Fraction
+    ? "alpha = sd2*(p0 - sd2*d*ph0), the reciprocal/truncation error factor of Lemma 8.2.2 (p.28)."
+    Domain.Rational.times(sd2, firstRemainderError(p0, d, sd2))
+
+fn betaFactor(p0: Fraction, d: Fraction, sd2: Fraction) -> Fraction
+    ? "beta = sd2*d*(sd2*ph0 - q0), the digit-rounding error factor of Lemma 8.2.2 (p.28). sd2*ph0 - q0 is the away-rounding slack of the first digit."
+    Domain.Rational.times(Domain.Rational.times(sd2, d), Domain.Rational.minus(exactFirstDigit(p0, sd2), firstQuotientDigit(p0, sd2)))
+
+fn signsSeparated(p0: Fraction, d: Fraction, sd2: Fraction) -> Bool
+    ? "The step-(10) opposition of the Lemma 8.2.1 proof (p.28) as a runnable check: alpha and beta have opposite signs (alpha*beta <= 0). NOT paper Lemma 8.2.2 (that named lemma is signsDifferent_8_2_2). Sample-verified against the kernel model; the universal consequence is oppositeSignSumBounded (Z3/Dafny)."
+    Domain.Rational.isNonPos(Domain.Rational.times(alphaFactor(p0, d, sd2), betaFactor(p0, d, sd2)))
+
+verify signsSeparated
+    signsSeparated(Domain.Rational.Fraction(top = 8589934593, bottom = 8589934592), Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1)) => true
+    signsSeparated(Domain.Rational.Fraction(top = 5, bottom = 4), Domain.Rational.Fraction(top = 4, bottom = 5), Domain.Rational.Fraction(top = 5, bottom = 4)) => true
+
+// ---------------------------------------------------------------------------
+// The reciprocal-magnitude bound (Lemma 8.2.4, p.30) on the model.
+// ---------------------------------------------------------------------------
+
+fn reciprocalMagnitudeRhs(p0: Fraction, sd2: Fraction) -> Fraction
+    ? "The Lemma 8.2.4 (p.30) bound 2^(e(q0) - e(p0) + 2): e(q0) = fracExpo(firstQuotientDigit(p0, sd2)) is the binary exponent of the first 24-bit digit q0 = away(sd2*ph0, 24), e(p0) = fracExpo(p0). The exponent placement e(q0) - e(p0) + 2 is exactly the away/product/trunc exponent chain of the proof (Lemmas 7.2.7, 7.1.7, 7.2.6) plus the two-doubling slack the reciprocal-magnitude envelope contributes."
+    Domain.Fprep.pow2Signed(Domain.Kernel.fracExpo(firstQuotientDigit(p0, sd2)) - Domain.Kernel.fracExpo(p0) + 2)
+
+fn reciprocalMagnitudeHolds(p0: Fraction, d: Fraction, sd2: Fraction) -> Bool
+    ? "Lemma 8.2.4 (p.30) as a runnable check on the kernel model: |1/d| <= 2^(e(q0)-e(p0)+2). 1/d is the exact reciprocal fraction d.bottom/d.top; the bound is reciprocalMagnitudeRhs on the genuine kernel q0. Stated as reciprocalMagnitudeRhs - |1/d| >= 0 (the non-strict <= of the lemma). Sample-verified against the genuine away/expo of kernel.av; the universal certificate is pending the pow2-monotone exponent-placement link (only this runnable model is verified so far)."
+    Domain.Rational.isNonNeg(Domain.Rational.minus(reciprocalMagnitudeRhs(p0, sd2), Domain.Rational.absFraction(Domain.Rational.Fraction(top = d.bottom, bottom = d.top))))
+
+verify reciprocalMagnitudeHolds
+    reciprocalMagnitudeHolds(Domain.Rational.Fraction(top = 7, bottom = 4), Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 2, bottom = 3)) => true
+    reciprocalMagnitudeHolds(Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1)) => true
+    reciprocalMagnitudeHolds(Domain.Rational.Fraction(top = 5, bottom = 4), Domain.Rational.Fraction(top = 4, bottom = 5), Domain.Rational.Fraction(top = 5, bottom = 4)) => true
+
+// ---------------------------------------------------------------------------
+// The reciprocal-magnitude bound (Lemma 8.2.4, p.30) as a UNIVERSAL order fact
+// on the exact-rational model -- the abstract composition the runnable
+// reciprocalMagnitudeHolds above instantiates. |1/d| <= 2^(e(q0)-e(p0)+2)
+// follows by chaining the reciprocal envelope and the away/product exponent
+// placement through the generic rational-order rung, citing pow2SignedMonotone.
+// ---------------------------------------------------------------------------
+
+fn reciprocalMagnitudeBound_8_2_4(recipMag: Fraction, eP0: Int, eQ0: Int) -> Bool
+    ? "Lemma 8.2.4 (p.30) as a universal exact-rational order fact: the reciprocal magnitude recipMag = |1/d| is at most 2^(e(q0) - e(p0) + 2), stated recipMagBound - recipMag >= 0 (the non-strict <= of the lemma). recipMag is the abstract magnitude the runnable reciprocalMagnitudeHolds reads off the genuine kernel reciprocal; eP0 = e(p0) and eQ0 = e(q0) are the binary exponents of the initial remainder and the first digit."
+    Domain.Rational.isNonNeg(Domain.Rational.minus(Domain.Fprep.pow2Signed(eQ0 - eP0 + 2), recipMag))
+
+verify reciprocalMagnitudeBound_8_2_4
+    reciprocalMagnitudeBound_8_2_4(Domain.Rational.Fraction(top = 1, bottom = 1), 0, 3) => true
+    reciprocalMagnitudeBound_8_2_4(Domain.Rational.Fraction(top = 1, bottom = 2), -1, 2) => true
+
+// Lemma 8.2.4 (p.30): if p0 != 0 then |1/d| <= 2^(e(q0) - e(p0) + 2). The proof
+// (hint p.30) composes the reciprocal estimate envelope with the away/product/
+// trunc exponent placement of Lemmas 7.2.7, 7.1.7, 7.2.6:
+//   |1/d| <= 2*|sd2|            (reciprocalBound, the two-doubling reciprocal slack)
+//          <  2 * 2^(e(sd2)+1)  (the magnitude envelope |sd2| < 2^(e(sd2)+1))
+//          =  2^(e(sd2)+2)      (doubling: 2 * 2^k = 2^(k+1), pow2SignedHomomorphism)
+//          <= 2^(e(q0)-e(p0)+2) (pow2SignedMonotone, via e(sd2)+e(p0) <= e(q0)).
+// The exponent placement e(sd2) + e(p0) <= e(q0) is LOAD-BEARING: it is exactly
+// what the cited monotonicity needs to land the doubled envelope under the digit
+// exponent. The paper's p0 != 0 hypothesis guards e(p0); it is not needed for
+// this magnitude composition (the chain holds for any well-formed sd2Mag), so it
+// is omitted. The composition is a generic rational-order chain (frac_le_trans
+// over the cited <=-shaped envelope, lt->le, scale-by-two and the doubling
+// sameValue), citing pow2SignedMonotone for the final step -- the same
+// laws-as-lemmas discipline as the rest of the project.
+verify reciprocalMagnitudeBound_8_2_4 law reciprocalMagnitudeComposition
+    given recipMag: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 1)]
+    given sd2Mag: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 1)]
+    given eSd2: Int = [0, 2]
+    given eP0: Int = [0, -1]
+    given eQ0: Int = [3]
+    when Domain.Rational.isNonNeg(Domain.Rational.minus(Domain.Rational.times(Domain.Rational.Fraction(top = 2, bottom = 1), sd2Mag), recipMag))
+    when Domain.Rational.lessThan(sd2Mag, Domain.Fprep.pow2Signed(eSd2 + 1))
+    when sd2Mag.bottom != 0
+    when eSd2 + eP0 <= eQ0
+    reciprocalMagnitudeBound_8_2_4(recipMag, eP0, eQ0) holds
+
+// ---------------------------------------------------------------------------
+// The cross-multiplied INTEGER certificates (Z3/Dafny backend, SMT trust).
+// The paper's scaled-rational model: each quantity is an integer numerator over
+// a common positive scale; the building-block bounds are integer magnitude
+// premises. Same discipline as domain/estimate.av.
+// ---------------------------------------------------------------------------
+
+fn maxInt(a: Int, b: Int) -> Int
+    ? "The larger of two integers."
+    match a >= b
+        true -> a
+        false -> b
+
+verify maxInt
+    maxInt(3, 7) => 7
+    maxInt(5, 2) => 5
+
+fn productMagnitudeBound(x: Int, y: Int, bx: Int, by: Int) -> Bool
+    ? "Product magnitude monotonicity: |x*y| <= bx*by when |x| <= bx, |y| <= by and the bounds are nonnegative. The deg-2 step of Lemma 8.2.3 -- the reciprocal slack scaled by the remainder magnitude, |ph0*(1 - sd2*d)| <= |ph0| * |1 - sd2*d|, cross-multiplied to integer numerators. Carried natively by Z3."
+    Domain.Rational.absInt(x * y) <= bx * by
+
+verify productMagnitudeBound
+    productMagnitudeBound(3, -4, 3, 5) => true
+    productMagnitudeBound(0, 7, 2, 9) => true
+
+verify productMagnitudeBound law guarded
+    given x: Int = [-3, 0, 2]
+    given y: Int = [-5, 0, 4]
+    given bx: Int = [3, 6]
+    given by: Int = [5, 9]
+    when Domain.Rational.absInt(x) <= bx
+    when Domain.Rational.absInt(y) <= by
+    when 0 <= bx
+    when 0 <= by
+    productMagnitudeBound(x, y, bx, by) holds
+
+fn remainderBound_8_2_3(remNum: Int, finalBound: Int) -> Bool
+    ? "Lemma 8.2.3 (p.29), the first remainder bound, on the cross-multiplied integer model: |p0 - sd2*d*ph0| < 2^(e(p0)-26). remNum is the remainder-error numerator over the common scale, finalBound the bound numerator 2^(e(p0)-26). The premises CITE the building blocks: the exact decomposition remNum = truncNum + phNum*recipNum (p0 - sd2*d*ph0 = (p0-ph0) + ph0*(1 - sd2*d)); |truncNum| < truncBound (truncFracErrorBound on p0 at 32, 2^(e(p0)-31)); |phNum| <= phBound (|ph0| <= |p0| < 2^(e(p0)+1)); |recipNum| < recipBound (reciprocalBound, |1 - sd2*d| < 2^-28); the product magnitude |phNum*recipNum| <= phBound*recipBound (productMagnitudeBound); and the numeric closure truncBound + phBound*recipBound <= finalBound (the 17 < 32 core). Certified on Z3/Dafny."
+    Domain.Rational.absInt(remNum) < finalBound
+
+verify remainderBound_8_2_3
+    remainderBound_8_2_3(17, 32) => true
+    remainderBound_8_2_3(-30, 32) => true
+
+verify remainderBound_8_2_3 law lemma_8_2_3
+    given remNum: Int = [17, -17, 15, -15]
+    given truncNum: Int = [1, -1]
+    given phNum: Int = [16, -16]
+    given recipNum: Int = [1, -1]
+    given truncBound: Int = [2]
+    given phBound: Int = [16]
+    given recipBound: Int = [2]
+    given finalBound: Int = [34]
+    when remNum == truncNum + phNum * recipNum
+    when Domain.Rational.absInt(truncNum) < truncBound
+    when Domain.Rational.absInt(phNum) <= phBound
+    when Domain.Rational.absInt(recipNum) < recipBound
+    when 0 <= phBound
+    when 0 <= recipBound
+    when Domain.Rational.absInt(phNum * recipNum) <= phBound * recipBound
+    when truncBound + phBound * recipBound <= finalBound
+    remainderBound_8_2_3(remNum, finalBound) holds
+
+fn awayDigitOvershoot(g: Int, q: Int) -> Bool
+    ? "The away-rounding overshoot sign fact that supplies condition (ii) of Lemma 8.2.2 (p.29, signsDifferent_8_2_2): the away-rounded digit q = away(g, .) overshoots the exact digit g (rounds AWAY from zero, so |q| >= |g| with the same sign, the direction half of awayFracErrorBound) -- this is |sd2*ph0| <= |q0|, i.e. condition (ii) |y| <= |z| under x=p0, y=sd2*d*ph0, z=d*q0. Hence g and the rounding remainder g - q have opposite signs: g*(g - q) <= 0. Premise g*q >= g*g is the cross-multiplied 'same sign and |q| >= |g|'. Carried by Z3."
+    g * (g - q) <= 0
+
+verify awayDigitOvershoot
+    awayDigitOvershoot(3, 5) => true
+    awayDigitOvershoot(-3, -5) => true
+    awayDigitOvershoot(0, 0) => true
+
+verify awayDigitOvershoot law guarded
+    given g: Int = [-3, 0, 3]
+    given q: Int = [-5, 0, 5]
+    when g * q >= g * g
+    awayDigitOvershoot(g, q) holds
+
+fn oppositeSignSumBounded(alpha: Int, beta: Int) -> Bool
+    ? "The unnamed |a+b| <= max(|a|,|b|) consequence used in the Lemma 8.2.1 proof (step (10)), NOT paper Lemma 8.2.2. When the two error factors alpha = sd2*(p0 - sd2*d*ph0) and beta = sd2*d*(sd2*ph0 - q0) have opposite signs (alpha*beta <= 0, the opposition supplied by the NAMED Lemma 8.2.2 signsDifferent_8_2_2 through awayDigitOvershoot), their sum does not reinforce -- |alpha + beta| <= max(|alpha|, |beta|). Since alpha + beta = sd2*p1, this bounds the next remainder for the digit separation of Lemma 8.2.1; it is the move at line (10) of that proof. Cross-multiplied integer form; carried by Z3."
+    Domain.Rational.absInt(alpha + beta) <= maxInt(Domain.Rational.absInt(alpha), Domain.Rational.absInt(beta))
+
+verify oppositeSignSumBounded
+    oppositeSignSumBounded(5, -2) => true
+    oppositeSignSumBounded(-5, 2) => true
+    oppositeSignSumBounded(0, 7) => true
+
+verify oppositeSignSumBounded law guarded
+    given alpha: Int = [-5, 0, 5]
+    given beta: Int = [-2, 0, 2]
+    when alpha * beta <= 0
+    oppositeSignSumBounded(alpha, beta) holds
+
+fn signsDifferent_8_2_2(x: Int, y: Int, z: Int) -> Bool
+    ? "Lemma 8.2.2 (p.29), the NAMED arithmetic lemma: (x - y) and (y - z) have DIFFERENT signs, encoded as the cross-multiplied product-nonpositive (x - y)*(y - z) <= 0. The 8.2.1 proof reduces sign separation to this lemma under x = p0, y = sd2*d*ph0, z = d*q0. The hypotheses are (i) |y| <= |x|, (ii) |y| <= |z| (the away overshoot awayDigitOvershoot), and either (iii) 0 < x and 0 <= y and 0 <= z or (iv) x <= 0 and y <= 0 and z <= 0. Aver `when` lines are ANDed, so the (iii)-OR-(iv) disjunction is split into two law blocks. Carried by Z3."
+    (x - y) * (y - z) <= 0
+
+verify signsDifferent_8_2_2
+    signsDifferent_8_2_2(3, 1, 2) => true
+    signsDifferent_8_2_2(-1, -1, -3) => true
+    signsDifferent_8_2_2(2, 2, 2) => true
+
+verify signsDifferent_8_2_2 law branchPositive
+    given x: Int = [1, 3]
+    given y: Int = [0, 1]
+    given z: Int = [1, 2]
+    when 0 < x
+    when 0 <= y
+    when 0 <= z
+    when Domain.Rational.absInt(y) <= Domain.Rational.absInt(x)
+    when Domain.Rational.absInt(y) <= Domain.Rational.absInt(z)
+    signsDifferent_8_2_2(x, y, z) holds
+
+verify signsDifferent_8_2_2 law branchNonpositive
+    given x: Int = [-3, -1, 0]
+    given y: Int = [-1, 0]
+    given z: Int = [-2, -1]
+    when x <= 0
+    when y <= 0
+    when z <= 0
+    when Domain.Rational.absInt(y) <= Domain.Rational.absInt(x)
+    when Domain.Rational.absInt(y) <= Domain.Rational.absInt(z)
+    signsDifferent_8_2_2(x, y, z) holds
+
+// ---------------------------------------------------------------------------
+// Lemma 8.2.1 (Digit Separation, p.28), first implication.
+// This is the (10)->(7) reduction over the Section 8.2-certified magnitude
+// bracket for the non-zero second quotient digit q1:
+//   2^e(q1) <= |q1| < 2^(e(q0)-22)
+// The already-universal Domain.Fprep.fracExpoFromMagnitude bridge turns that
+// bracket into e(q1) <= (e(q0)-22)-1, and linear arithmetic gives the faithful
+// paper conclusion e(q1) <= e(q0)-23. The `eQ0 - 22` premise and
+// `eQ0 - 23 - eQ1 >= 0` conclusion are intentionally not weakened.
+// ---------------------------------------------------------------------------
+
+fn digitSeparation_8_2_1(eQ1: Int, eQ0: Int) -> Bool
+    ? "Lemma 8.2.1 (Digit Separation, p.28), first implication: e(q1) <= e(q0) - 23 for a non-zero second quotient digit q1."
+    eQ0 - 23 - eQ1 >= 0
+
+verify digitSeparation_8_2_1 law firstImplication
+    given q1Mag: Fraction = [Domain.Rational.Fraction(top = 5, bottom = 1), Domain.Rational.Fraction(top = 3, bottom = 1), Domain.Rational.Fraction(top = 3, bottom = 2)]
+    given eQ1: Int = [2, 1, 0]
+    given eQ0: Int = [25, 24, 23]
+    when 0 < q1Mag.bottom
+    when Domain.Rational.isNonNeg(Domain.Rational.minus(q1Mag, Domain.Fprep.pow2Signed(eQ1)))
+    when Domain.Rational.lessThan(q1Mag, Domain.Fprep.pow2Signed(eQ0 - 22))
+    digitSeparation_8_2_1(eQ1, eQ0) holds

@@ -89,12 +89,29 @@ pub fn type_to_lean(ty: &Type) -> String {
                 // just one literally called `Nat` — gets the builtin-`Nat`
                 // proof machinery (`omega`, `Nat.*`).
                 "Nat".to_string()
-            } else if name.contains('.') {
-                name.replace('.', "_")
             } else {
-                name.clone()
+                lean_named_type_name(name)
             }
         }
+    }
+}
+
+/// Lean structure name for an Aver named record/type.
+///
+/// A builtin HOST carrier record (`Tcp.Connection`, `HttpResponse`,
+/// `Terminal.Size`, …) is emitted into `AverCommon` under a dot →
+/// underscore mangled name (see [`crate::codegen::builtin_records`],
+/// the single source of truth for these), so every reference to one
+/// must mangle the same way. A USER record is emitted inside its
+/// owning module's `namespace M`, so its Lean name is the dotted
+/// namespaced path (`Domain.Rational.Fraction`) — the dots must be
+/// preserved or the type ascription fails to resolve. Bare names (no
+/// dot) are unaffected either way.
+pub(crate) fn lean_named_type_name(name: &str) -> String {
+    if crate::codegen::builtin_records::find(name).is_some() {
+        name.replace('.', "_")
+    } else {
+        name.to_string()
     }
 }
 

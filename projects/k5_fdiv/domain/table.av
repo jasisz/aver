@@ -1,0 +1,331 @@
+module Table
+    intent =
+        "Stage 1 seed of the K5 division proof: the reciprocal lookup table of"
+        "Section 8.1 (Table 1, page 4) and its seed error bound, the table part of"
+        "Lemma 8.1.1 (page 26). The Newton-Raphson refinement of estimate.av starts"
+        "from sd0 = lookup(d), an 8-bit approximation of 1/d read from a 128-entry"
+        "table indexed by the leading 8 bits of the significand of d. The paper bounds"
+        "this seed: writing k for the 8-bit truncation of d (truncn(d, 8)) and v for"
+        "the looked-up value, the entry is epsilon-ok -- 0 < v and the relative error"
+        "is bounded at both endpoints of the bucket interval [k, k + 2^-7) -- and from"
+        "monotonicity it follows that |d*v - 1| < 3/512 = 2^-8 + 2^-9 for every d in"
+        "that bucket (page 26). The paper PROVES the table property by execution: it"
+        "defines the epsilon-ok predicate and runs it over Table 1, confirming all 128"
+        "entries (page 26: 'the system executes the predicate on Table 1 to confirm"
+        "that it has the required property ... about 0.033 seconds'). This module"
+        "reproduces that finite execution proof with aver verify over the full"
+        "128-bucket domain. The entries are transcribed literally from Table 1 (the"
+        "paper defers their construction to reference [8]); each value v = entry / 256,"
+        "each key k = (128 + i) / 128 for bucket i = 0..127, covering every 8-bit"
+        "truncation of 1 <= d < 2. The whole-table runtime checks (tableEntryOk,"
+        "tableIsEpsilonOk, bucketsEpsilonOk) reproduce the paper's execution-based"
+        "confirmation. The seed bound is ALSO a kernel-genuine universal law: the"
+        "tableSeedBound law proves entryEpsilonOk over the full [0, 128) index domain"
+        "by finite enumeration on the Lean kernel (the guards 0 <= i and i < 128 are"
+        "the finite domain; each of the 128 buckets reduces to a ground cross-"
+        "multiplied integer inequality the kernel decides), so it adds universal"
+        "credit -- the Lean analog of the paper's 0.033-second execution proof."
+    exposes [epsilon, key, keyHi, lookupNum, lookup, relError, tableEntryOk, entryEpsilonOk, tableIsEpsilonOk, bucketsEpsilonOk]
+    depends [Domain.Rational]
+    effects []
+
+fn tableNums() -> List<Int>
+    ? "The 128 'approx inverse' entries of Table 1 (page 4), in bucket order i = 0..127."
+      "Each is an 8-bit numerator over 256; the looked-up value is v = entry / 256."
+      "Transcribed verbatim from the paper's binary table: bucket 0 = 0.11111111_2 ="
+      "255, bucket 6 = 0.11110100_2 = 244, bucket 64 = 0.10101010_2 = 170, bucket 127"
+      "= 0.10000000_2 = 128. The paper defers the construction to reference [8], so"
+      "these are literal entries, not a derived formula."
+    [255, 253, 251, 249, 247, 245, 244, 242, 240, 238, 237, 235, 233, 232, 230, 228, 227, 225, 224, 222, 221, 219, 218, 216, 215, 213, 212, 211, 209, 208, 207, 205, 204, 203, 202, 200, 199, 198, 197, 196, 194, 193, 192, 191, 190, 189, 188, 187, 186, 185, 184, 183, 182, 181, 180, 179, 178, 177, 176, 175, 174, 173, 172, 171, 170, 169, 168, 168, 167, 166, 165, 164, 163, 163, 162, 161, 160, 159, 159, 158, 157, 156, 156, 155, 154, 153, 153, 152, 151, 151, 150, 149, 149, 148, 147, 147, 146, 145, 145, 144, 143, 143, 142, 142, 141, 140, 140, 139, 139, 138, 137, 137, 136, 136, 135, 135, 134, 133, 133, 132, 132, 131, 131, 130, 130, 129, 129, 128]
+
+fn lookupNum(i: Int) -> Int
+    ? "The 8-bit reciprocal numerator stored in table bucket i (the i-th entry of Table 1)."
+    match Vector.get(Vector.fromList(tableNums()), i)
+        Option.Some(m) -> m
+        Option.None -> 0
+
+verify lookupNum
+    lookupNum(0) => 255
+    lookupNum(6) => 244
+    lookupNum(64) => 170
+    lookupNum(96) => 146
+    lookupNum(127) => 128
+
+fn lookup(i: Int) -> Fraction
+    ? "The reciprocal estimate v for bucket i: the table entry as a fraction over 256."
+    Domain.Rational.Fraction(top = lookupNum(i), bottom = 256)
+
+verify lookup
+    Domain.Rational.sameValue(lookup(64), Domain.Rational.Fraction(top = 170, bottom = 256)) => true
+
+fn key(i: Int) -> Fraction
+    ? "The key k of bucket i: the 8-bit truncation 1.<7 bits> = (128 + i) / 128, the"
+      "left endpoint of the divisor interval [k, k + 2^-7) this entry covers."
+    Domain.Rational.Fraction(top = 128 + i, bottom = 128)
+
+verify key
+    Domain.Rational.sameValue(key(0), Domain.Rational.Fraction(top = 1, bottom = 1)) => true
+    Domain.Rational.sameValue(key(64), Domain.Rational.Fraction(top = 3, bottom = 2)) => true
+
+fn keyHi(i: Int) -> Fraction
+    ? "The right endpoint k + 2^-7 = (129 + i) / 128 of bucket i's divisor interval."
+    Domain.Rational.Fraction(top = 129 + i, bottom = 128)
+
+verify keyHi
+    Domain.Rational.sameValue(keyHi(127), Domain.Rational.Fraction(top = 2, bottom = 1)) => true
+
+fn epsilon() -> Fraction
+    ? "The Lemma 8.1.1 seed error bound epsilon = 3/512 = 2^-8 + 2^-9 (page 26)."
+    Domain.Rational.Fraction(top = 3, bottom = 512)
+
+verify epsilon
+    Domain.Rational.sameValue(epsilon(), Domain.Rational.Fraction(top = 3, bottom = 512)) => true
+
+fn relError(d: Fraction, i: Int) -> Fraction
+    ? "The seed error magnitude |d * v - 1|, with v = lookup(i) the value of bucket i"
+      "and d a divisor value in that bucket."
+    Domain.Rational.absFraction(Domain.Rational.minus(Domain.Rational.times(d, lookup(i)), Domain.Rational.oneFraction()))
+
+verify relError
+    Domain.Rational.sameValue(relError(key(64), 64), Domain.Rational.Fraction(top = 1, bottom = 256)) => true
+
+fn seedBelow(d: Fraction, v: Fraction, e: Fraction) -> Bool
+    ? "The seed error bound predicate of Lemma 8.1.1 (page 26): the relative error"
+      "|d * v - 1| of using reciprocal estimate v for divisor d is strictly below e."
+      "Written with d, v, e free so the bucket-monotonicity argument can quantify the"
+      "magnitude bound over a whole divisor interval [lo, hi] from its two endpoints."
+    Domain.Rational.lessThan(Domain.Rational.absFraction(Domain.Rational.minus(Domain.Rational.times(d, v), Domain.Rational.oneFraction())), e)
+
+verify seedBelow
+    seedBelow(Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 1, bottom = 2), Domain.Rational.Fraction(top = 1, bottom = 1)) => true
+
+verify seedBelow law intervalErrorBound
+    given d: Fraction = [Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 5, bottom = 3)]
+    given lo: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 1)]
+    given hi: Fraction = [Domain.Rational.Fraction(top = 2, bottom = 1)]
+    given v: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 2)]
+    given e: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 1)]
+    when Domain.Rational.isNonNeg(Domain.Rational.minus(d, lo))
+    when Domain.Rational.isNonNeg(Domain.Rational.minus(hi, d))
+    when Domain.Rational.isNonNeg(v)
+    when d.bottom != 0
+    when seedBelow(lo, v, e)
+    when seedBelow(hi, v, e)
+    seedBelow(d, v, e) holds
+
+fn tableEntryOk(i: Int) -> Bool
+    ? "The Lemma 8.1.1 seed bound at bucket i, evaluated at the bucket key: with k ="
+      "key(i) and v = lookup(i), the relative error |k * v - 1| is below epsilon ="
+      "3/512. This is |d * lookup(d) - 1| < 3/512 of page 26 at d = k."
+    Domain.Rational.lessThan(relError(key(i), i), epsilon())
+
+verify tableEntryOk
+    tableEntryOk(0) => true
+    tableEntryOk(1) => true
+    tableEntryOk(2) => true
+    tableEntryOk(3) => true
+    tableEntryOk(4) => true
+    tableEntryOk(5) => true
+    tableEntryOk(6) => true
+    tableEntryOk(7) => true
+    tableEntryOk(8) => true
+    tableEntryOk(9) => true
+    tableEntryOk(10) => true
+    tableEntryOk(11) => true
+    tableEntryOk(12) => true
+    tableEntryOk(13) => true
+    tableEntryOk(14) => true
+    tableEntryOk(15) => true
+    tableEntryOk(16) => true
+    tableEntryOk(17) => true
+    tableEntryOk(18) => true
+    tableEntryOk(19) => true
+    tableEntryOk(20) => true
+    tableEntryOk(21) => true
+    tableEntryOk(22) => true
+    tableEntryOk(23) => true
+    tableEntryOk(24) => true
+    tableEntryOk(25) => true
+    tableEntryOk(26) => true
+    tableEntryOk(27) => true
+    tableEntryOk(28) => true
+    tableEntryOk(29) => true
+    tableEntryOk(30) => true
+    tableEntryOk(31) => true
+    tableEntryOk(32) => true
+    tableEntryOk(33) => true
+    tableEntryOk(34) => true
+    tableEntryOk(35) => true
+    tableEntryOk(36) => true
+    tableEntryOk(37) => true
+    tableEntryOk(38) => true
+    tableEntryOk(39) => true
+    tableEntryOk(40) => true
+    tableEntryOk(41) => true
+    tableEntryOk(42) => true
+    tableEntryOk(43) => true
+    tableEntryOk(44) => true
+    tableEntryOk(45) => true
+    tableEntryOk(46) => true
+    tableEntryOk(47) => true
+    tableEntryOk(48) => true
+    tableEntryOk(49) => true
+    tableEntryOk(50) => true
+    tableEntryOk(51) => true
+    tableEntryOk(52) => true
+    tableEntryOk(53) => true
+    tableEntryOk(54) => true
+    tableEntryOk(55) => true
+    tableEntryOk(56) => true
+    tableEntryOk(57) => true
+    tableEntryOk(58) => true
+    tableEntryOk(59) => true
+    tableEntryOk(60) => true
+    tableEntryOk(61) => true
+    tableEntryOk(62) => true
+    tableEntryOk(63) => true
+    tableEntryOk(64) => true
+    tableEntryOk(65) => true
+    tableEntryOk(66) => true
+    tableEntryOk(67) => true
+    tableEntryOk(68) => true
+    tableEntryOk(69) => true
+    tableEntryOk(70) => true
+    tableEntryOk(71) => true
+    tableEntryOk(72) => true
+    tableEntryOk(73) => true
+    tableEntryOk(74) => true
+    tableEntryOk(75) => true
+    tableEntryOk(76) => true
+    tableEntryOk(77) => true
+    tableEntryOk(78) => true
+    tableEntryOk(79) => true
+    tableEntryOk(80) => true
+    tableEntryOk(81) => true
+    tableEntryOk(82) => true
+    tableEntryOk(83) => true
+    tableEntryOk(84) => true
+    tableEntryOk(85) => true
+    tableEntryOk(86) => true
+    tableEntryOk(87) => true
+    tableEntryOk(88) => true
+    tableEntryOk(89) => true
+    tableEntryOk(90) => true
+    tableEntryOk(91) => true
+    tableEntryOk(92) => true
+    tableEntryOk(93) => true
+    tableEntryOk(94) => true
+    tableEntryOk(95) => true
+    tableEntryOk(96) => true
+    tableEntryOk(97) => true
+    tableEntryOk(98) => true
+    tableEntryOk(99) => true
+    tableEntryOk(100) => true
+    tableEntryOk(101) => true
+    tableEntryOk(102) => true
+    tableEntryOk(103) => true
+    tableEntryOk(104) => true
+    tableEntryOk(105) => true
+    tableEntryOk(106) => true
+    tableEntryOk(107) => true
+    tableEntryOk(108) => true
+    tableEntryOk(109) => true
+    tableEntryOk(110) => true
+    tableEntryOk(111) => true
+    tableEntryOk(112) => true
+    tableEntryOk(113) => true
+    tableEntryOk(114) => true
+    tableEntryOk(115) => true
+    tableEntryOk(116) => true
+    tableEntryOk(117) => true
+    tableEntryOk(118) => true
+    tableEntryOk(119) => true
+    tableEntryOk(120) => true
+    tableEntryOk(121) => true
+    tableEntryOk(122) => true
+    tableEntryOk(123) => true
+    tableEntryOk(124) => true
+    tableEntryOk(125) => true
+    tableEntryOk(126) => true
+    tableEntryOk(127) => true
+
+fn entryEpsilonOk(i: Int) -> Bool
+    ? "The paper's epsilon-ok property for bucket i (page 26): the entry <k, v> has"
+      "0 < v, |k * v - 1| < 3/512, and |(k + 2^-7) * v - 1| < 3/512 -- the relative"
+      "error is bounded at BOTH endpoints of [k, k + 2^-7). This is exactly the"
+      "predicate the paper executes over Table 1 to confirm the seed bound."
+    Bool.and(Bool.and(Domain.Rational.lessThan(Domain.Rational.zeroFraction(), lookup(i)), Domain.Rational.lessThan(relError(key(i), i), epsilon())), Domain.Rational.lessThan(relError(keyHi(i), i), epsilon()))
+
+verify entryEpsilonOk
+    entryEpsilonOk(0) => true
+    entryEpsilonOk(6) => true
+    entryEpsilonOk(64) => true
+    entryEpsilonOk(96) => true
+    entryEpsilonOk(127) => true
+
+verify entryEpsilonOk law tableSeedBound
+    given i: Int = [0, 64, 127]
+    when 0 <= i
+    when i < 128
+    entryEpsilonOk(i) holds
+
+fn bucketErrorOk(d: Fraction, i: Int) -> Bool
+    ? "The Lemma 8.1.1 seed bound (page 26) at an arbitrary divisor d in bucket i:"
+      "the relative error |d * lookup(i) - 1| of the reciprocal estimate is below"
+      "epsilon = 3/512. At d = key(i) this is tableEntryOk(i); bucketMonotonicity"
+      "lifts it to every d in the bucket interval [key(i), keyHi(i)]."
+    Domain.Rational.lessThan(relError(d, i), epsilon())
+
+verify bucketErrorOk
+    bucketErrorOk(key(64), 64) => true
+    bucketErrorOk(keyHi(64), 64) => true
+    bucketErrorOk(Domain.Rational.Fraction(top = 3, bottom = 2), 64) => true
+
+verify bucketErrorOk law bucketErrorIsSeed
+    given d: Fraction = [Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 191, bottom = 128)]
+    given i: Int = [64, 63]
+    bucketErrorOk(d, i) => seedBelow(d, lookup(i), epsilon())
+
+verify bucketErrorOk law bucketMonotonicity
+    given d: Fraction = [Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 191, bottom = 128)]
+    given i: Int = [64, 63]
+    when 0 <= i
+    when i < 128
+    when Domain.Rational.isNonNeg(Domain.Rational.minus(d, key(i)))
+    when Domain.Rational.isNonNeg(Domain.Rational.minus(keyHi(i), d))
+    when d.bottom != 0
+    bucketErrorOk(d, i) holds
+
+fn allEpsilonOkFrom(i: Int) -> Bool
+    ? "Conjunction of entryEpsilonOk over buckets i, i + 1, ..., 127."
+    match i >= 128
+        true -> true
+        false -> Bool.and(entryEpsilonOk(i), allEpsilonOkFrom(i + 1))
+
+fn tableIsEpsilonOk() -> Bool
+    ? "Table 1 is epsilon-ok: every one of the 128 buckets satisfies entryEpsilonOk."
+      "This is the whole-table property the paper confirms by execution (page 26)."
+    allEpsilonOkFrom(0)
+
+verify tableIsEpsilonOk
+    tableIsEpsilonOk() => true
+
+fn boolToInt(b: Bool) -> Int
+    ? "1 for true, 0 for false; used to count passing buckets."
+    match b
+        true -> 1
+        false -> 0
+
+fn countEpsilonOkFrom(i: Int) -> Int
+    ? "Number of epsilon-ok buckets among i, i + 1, ..., 127."
+    match i >= 128
+        true -> 0
+        false -> boolToInt(entryEpsilonOk(i)) + countEpsilonOkFrom(i + 1)
+
+fn bucketsEpsilonOk() -> Int
+    ? "How many of the 128 table buckets are epsilon-ok; equals 128 exactly when the"
+      "whole table satisfies the Lemma 8.1.1 seed bound across its full domain."
+    countEpsilonOkFrom(0)
+
+verify bucketsEpsilonOk
+    bucketsEpsilonOk() => 128

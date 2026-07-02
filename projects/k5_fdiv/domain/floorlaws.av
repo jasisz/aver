@@ -1,0 +1,47 @@
+module FloorLaws
+    intent =
+        "The genuine Mathlib-tier demo of the K5 proof's two-tier prover: one"
+        "integer inequality that WALLS in the core tier (omega plus the K5"
+        "aver_int_order primitive) yet closes UNIVERSALLY through the opt-in"
+        "Mathlib break-glass tier."
+        "The claim is the true nonlinear fact a*a <= a*a + b*b -- a square never"
+        "exceeds itself plus another square, because b*b is nonnegative. Faithful"
+        "math (a real inequality), not dressing."
+        "Why it walls in core: aver_int_order decides the products-and-squares"
+        "fragment by recursion through mul_nonneg / mul_le_mul, bottoming out on"
+        "0 <= x*x for a SINGLE atom x. It has no addition-nonnegativity step, and"
+        "this goal is neither 0 <= (one square) nor a product-vs-product order, so"
+        "no core rung proves it universally -- the core tier reports it as bounded"
+        "(sample-checked only)."
+        "Why Mathlib closes it: the generic break-glass portfolio (nlinarith /"
+        "positivity / norm_num / omega / the ediv and pow lemmas) hands the goal to"
+        "plain nlinarith, which automatically adds the square of each atom"
+        "(0 <= b*b) and finishes by linear arithmetic. No per-law hint -- the same"
+        "domain-blind portfolio that any break-glass law uses."
+        "Self-contained: no dependency cone, so the per-law audit reads only this"
+        "module's clean Mathlib-credited law."
+    exposes [squareLeSumOfSquares]
+    effects []
+
+fn squareLeSumOfSquares(a: Int, b: Int) -> Bool
+    ? "The true nonlinear inequality a*a <= a*a + b*b: a square never exceeds itself plus another square (b*b >= 0). Core's aver_int_order cannot prove it (no addition-nonnegativity step, and it is neither 0 <= one-square nor product-vs-product); Mathlib's nlinarith closes it generically by adding the atom square 0 <= b*b."
+    a * a <= a * a + b * b
+
+verify squareLeSumOfSquares
+    squareLeSumOfSquares(3, 4) => true
+    squareLeSumOfSquares(-2, 0) => true
+
+// The genuine Mathlib break-glass demo. The `when 0 <= a * a` guard is itself a
+// true fact (a square is nonnegative), always holds, and never narrows the
+// claim -- it is the trivial-but-real guard the break-glass recognizer keys on,
+// not `=> true` dressing. It is deliberately NOT the fact the goal needs: the
+// goal `a*a <= a*a + b*b` rests on `0 <= b*b`, which the guard never supplies,
+// so the nonlinear work is genuinely the portfolio's (plain `nlinarith` adds the
+// atom square `0 <= b*b`), not handed over by the premise. With `--allow-mathlib`
+// this closes universally; without the flag it walls in core and the tier is
+// reported `bounded` (sample-checked only).
+verify squareLeSumOfSquares law amgmSquareBound
+    given a: Int = [-7, 0, 3, 5]
+    given b: Int = [-2, 0, 4]
+    when 0 <= a * a
+    squareLeSumOfSquares(a, b) holds

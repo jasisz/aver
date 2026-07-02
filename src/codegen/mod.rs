@@ -360,6 +360,31 @@ pub struct CodegenContext {
     /// kernel-certify a false equation. Entries exist only for cases that
     /// PASSED `aver verify`; failing/skipped cases keep the source RHS.
     pub sample_expected: std::collections::HashMap<(String, usize), String>,
+    /// `aver proof --allow-mathlib` (Lean only, opt-in): permit a generic
+    /// Mathlib break-glass closing arm on laws the core strategies cannot
+    /// claim. When `false` (the default) the Lean backend is BYTE-IDENTICAL to
+    /// before — no Mathlib import, no break-glass arm, same tiers. When `true`
+    /// a walling `when`-law is emitted in true-universal form with a domain-
+    /// blind Mathlib tactic portfolio (`aver_mathlib`, keyed on
+    /// `Int.ediv_ediv_of_nonneg` / `pow_add` / `positivity` / `nlinarith` / …)
+    /// under a `first | (trace "AVER_MATHLIB:fn.law"; …) | sorry` floor. The
+    /// post-emit step (`setup_mathlib_for_project`) wires the cached Mathlib
+    /// into the generated lake project; the build-log trace marker drives the
+    /// per-law `mathlib` credit. Axiom whitelist is UNCHANGED — Mathlib lemmas
+    /// are kernel-clean `{propext, Classical.choice, Quot.sound}`.
+    pub allow_mathlib: bool,
+    /// Hand-proof sidecars, keyed by `(fn_name, law_name)` → the proof BODY
+    /// (the tactic text after Lean's `:= by`, or the Dafny lemma body between
+    /// `{` and `}`). Loaded by the CLI from a project's source-controlled
+    /// `proofs/<lean|dafny>/<fn>__<law>.{lean,dfy}` sidecar dir for the active
+    /// backend; empty everywhere else. When an entry exists for a law, the
+    /// codegen splices the body into that law's emitted theorem/lemma and lets
+    /// the kernel (lake / dafny verify) re-check it — a WRONG body fails the
+    /// build loudly and the law is denied universal credit. A law with NO
+    /// sidecar is byte-identical to before. The genuinely-hard lemmas the
+    /// generic engine cannot find (trunc-sticky composition, sticky-plus) live
+    /// here as LABELED, kernel-checked hand proofs (manifest credit `hand`).
+    pub hand_proofs: std::collections::HashMap<(String, String), String>,
 }
 
 /// Output files from a codegen backend.
@@ -665,6 +690,8 @@ pub fn build_context(
         mir_program,
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
+        allow_mathlib: false,
+        hand_proofs: std::collections::HashMap::new(),
     };
     // ProofIR no longer populated here. Pipeline owns the lowerings
     // (`PipelineStage::RefinementLower`, `PipelineStage::ContractLower`);

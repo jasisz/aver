@@ -897,6 +897,91 @@ def fromHex (s : String) : Except String Int :=
   | _ => .error ("Byte.fromHex: expected exactly 2 hex chars, got '" ++ s ++ "'")
 end AverByte"#;
 
+/// The nonlinear nonneg/order closing kit for the `NonlinearNonneg`
+/// strategy (the Newton-Raphson error bounds of `projects/k5_fdiv`).
+/// Core `Int` only — no Mathlib, no `nlinarith`/`positivity`. Shipped
+/// demand-driven (only when a proof actually invokes `aver_int_order`),
+/// so corpora that never need it get byte-identical output.
+///
+/// `aver_int_order` is the nonlinear analog of `omega` for the
+/// products-and-squares fragment: ONE generic decision step, not a
+/// per-figure template. On a nonnegativity goal `0 ≤ a * b` it recurses
+/// with `Int.mul_nonneg`; on an order goal where the two products share their
+/// right factor (`a*c ≤ b*c` from `a ≤ b`, `0 ≤ c`, with no `0 ≤ b` in hand)
+/// it uses `Int.mul_le_mul_of_nonneg_right`, and on a general two-product
+/// order `a*c ≤ b*d` it recurses with `Int.mul_le_mul`; a square `0 ≤ t * t`
+/// (or its bound)
+/// bottoms out on `aver_sq_nonneg` (the sign-split base case —
+/// `Int.mul_self_nonneg` does not exist in core); a conjunctive premise is
+/// split; and the remaining LINEAR leaves are closed by `omega` (placed
+/// second so it disposes of them before the product rungs can backtrack on
+/// a linear goal — the ordering that keeps the search shallow and fast).
+/// The emitter wraps every use in `first | (…; aver_int_order) | sorry`,
+/// so a goal outside the fragment (e.g. a `prod ≤ var` transitivity, which
+/// needs a witness this step does not synthesize) falls to an honest caught
+/// `sorry` — never a build error — and credit stays fail-closed behind the
+/// `#print axioms` whitelist.
+const LEAN_PRELUDE_NONLINEAR_NONNEG: &str = r#"/-- A square is never negative — the sign-split base case the product
+closer bottoms out on (`Int.mul_self_nonneg` is absent from core Int). -/
+theorem aver_sq_nonneg (t : Int) : 0 ≤ t * t := by
+  rcases Int.le_total 0 t with h | h
+  · exact Int.mul_nonneg h h
+  · have h2 : 0 ≤ -t := by omega
+    have := Int.mul_nonneg h2 h2
+    rwa [Int.neg_mul_neg] at this
+
+/-- Generic nonneg/order decision step for nonlinear Int products: the
+`omega`-analog for the products-and-squares fragment. Recurse on a product
+with `Int.mul_nonneg` (nonneg goal `0 ≤ a*b`), `Int.mul_pos` (strict goal
+`0 < a*b`, the value-magnitude positivity the rounding sign condition needs),
+or `Int.mul_le_mul` (product ≤ product),
+close a product order whose two sides share their right factor (`a*c ≤ b*c`
+from `a ≤ b`, `0 ≤ c`) with `Int.mul_le_mul_of_nonneg_right`, bottom squares
+out on `aver_sq_nonneg`, split a conjunctive premise, and discharge the linear
+leaves with `omega`. The `mul_pos` rung sits right after `mul_nonneg` (their
+conclusions `0 < _` / `0 ≤ _` never unify, so neither shadows the other). The
+`mul_le_mul_of_nonneg_right` rung sits BEFORE
+`mul_le_mul`, and that order is load-bearing for performance: `mul_le_mul`
+would also unify with `a*c ≤ b*c` (taking `d := c`) but spawns a `0 ≤ b` leaf
+that is NOT derivable when the law carries no `0 ≤ a` guard, and the three
+product rungs then thrash on that atomic leaf with metavariable products until
+the heartbeat limit. Trying `mul_le_mul_of_nonneg_right` first closes such a
+goal directly from `a ≤ b` / `0 ≤ c` and never spawns `0 ≤ b`; on the squared
+shapes (`e*e ≤ b*b`, the contraction's `s²` bound) its shared-right-factor
+unification fails fast (the two right factors differ), so `mul_le_mul` still
+takes them — and any genuine `0 ≤ b` leaf there is closed by the early `omega`
+rung from that family's `0 ≤ e ≤ b` guards.
+
+The MULTIPLY-BY-POSITIVE rungs (`mul_lt_mul_of_pos_left` / `_right` for a strict
+product order `m*a < m*b` / `a*m < b*m`, and `mul_le_mul_of_nonneg_left` for the
+nonstrict `m*a ≤ m*b`) sit LAST, after the `<=`-conclusion rungs. They are the
+generic non-recursive composition step `omega`/`grind` cannot do — multiplying an
+inequality `a < b` by a positive factor `m` — and close any goal already in the
+multiplied form `m*a < m*b` from `a < b` (`assumption`) and `0 < m` (the
+`mul_pos` recursion on the positive factor). The rational-floor truncation-error
+bound (Lemma 7.2.2) ring-bridges its goal into exactly that shape and hands it to
+this rung; the same rung is the general non-recursive `mulLeTrans`/`fpMulValue`
+composition step. Placed last so their strict (`<`) conclusion never shadows a
+`<=`/`0 <=`/`0 <` goal the earlier rungs own (a strict-conclusion lemma cannot
+unify with a non-strict goal, but keeping them last also keeps the common
+nonneg/positivity search shallow and the output byte-identical for corpora that
+never hit a multiplied-form goal). -/
+syntax "aver_int_order" : tactic
+macro_rules
+  | `(tactic| aver_int_order) => `(tactic|
+      first
+        | assumption
+        | omega
+        | exact aver_sq_nonneg _
+        | (apply Int.mul_nonneg <;> aver_int_order)
+        | (apply Int.mul_pos <;> aver_int_order)
+        | (apply Int.mul_le_mul_of_nonneg_right <;> aver_int_order)
+        | (apply Int.mul_le_mul <;> aver_int_order)
+        | (apply Int.mul_lt_mul_of_pos_left <;> aver_int_order)
+        | (apply Int.mul_lt_mul_of_pos_right <;> aver_int_order)
+        | (apply Int.mul_le_mul_of_nonneg_left <;> aver_int_order)
+        | (obtain ⟨hl, hr⟩ := ‹_ ∧ _›; aver_int_order))"#;
+
 #[cfg(test)]
 pub(super) fn generate_prelude() -> String {
     generate_prelude_for_body("", true)
@@ -965,6 +1050,10 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
                 other
             ),
         }
+    }
+
+    if include_all_helpers || body.contains("aver_int_order") {
+        parts.push(LEAN_PRELUDE_NONLINEAR_NONNEG.to_string());
     }
 
     parts.join("\n\n")
@@ -1141,6 +1230,14 @@ pub(super) fn build_common_lean(union_body: &str) -> String {
                 other
             ),
         }
+    }
+    // Nonlinear-nonnegativity closing kit — demand-driven on the tactic
+    // name the `NonlinearNonneg` emit invokes, so files that never need it
+    // stay byte-identical. Not a `BUILTIN_HELPERS` key: it is Lean-only
+    // proof infrastructure (Z3 carries these natively, so Dafny ships
+    // nothing), keyed on emitted tactic text rather than a builtin call.
+    if union_body.contains("aver_int_order") {
+        parts.push(LEAN_PRELUDE_NONLINEAR_NONNEG.to_string());
     }
     parts.join("\n\n")
 }

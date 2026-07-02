@@ -4,11 +4,20 @@
 /// matching and proof-shape logic lives in one place.
 mod decimal;
 mod floor_window;
+mod frac_monotone_compose;
+mod frac_order_chain;
+mod homomorphism;
 mod induction;
+mod inequality;
+mod interval_mono;
+mod monotone_reflect;
+mod nested_floor;
+mod recursive_mono;
 mod sampled;
 mod shared;
 mod spec;
 mod suffix_roundtrip;
+mod triangle_sum;
 
 use super::VerifyEmitMode;
 use super::expr::aver_name_to_lean;
@@ -35,6 +44,98 @@ pub(in crate::codegen::lean) use induction::recognize_conditional_comparison_bri
 /// lemmas pool). Also feeds the `omit_domain` statement driver, kept in
 /// lockstep with the emit.
 pub(in crate::codegen::lean) use induction::recognize_conditional_inductive_generic;
+pub(in crate::codegen::lean) use induction::recognize_pool_composition_generic;
+
+/// Validated-wrapper shape (the Theorem-2 wrapper-correctness law: a thin
+/// error-checking wrapper returning `Result.Ok(core(…))` on valid input). Feeds
+/// the `omit_domain` statement driver, kept in lockstep with
+/// `emit_validated_wrapper_law` so the unbounded `∀` statement and the
+/// subject-only-unfold proof body stay aligned.
+pub(in crate::codegen::lean) use induction::recognize_validated_wrapper;
+
+/// Multi-citation composition — the generic "premises from one earlier
+/// universal's conclusion, goal from another earlier universal's conclusion"
+/// orchestration. Feeds the `omit_domain` statement driver, kept in lockstep
+/// with the emit (both probe-gated).
+pub(in crate::codegen::lean) use induction::recognize_multicite_composition;
+
+/// Interval-monotonicity rung — the affine-in-interval-var magnitude bound
+/// over the exact-rational order (the K5 reciprocal table bucket family).
+/// Feeds the `omit_domain` statement driver so the universal statement and
+/// the helper-kit-plus-assembly proof stay in lockstep.
+pub(in crate::codegen::lean) use interval_mono::recognize_interval_monotonicity;
+
+/// Exact-rational order facts about an OPAQUE unary `Fraction`-valued cone fn
+/// `F` — its positivity, its `>= 1` (at-least-one) fact, and the headline
+/// MONOTONICITY composition (`isNonNeg (minus (F HI) (F LO))` under `LO <= HI`,
+/// closed by citing `F`'s homomorphism + positivity + `>= 1` pool laws and
+/// chaining through the generic Fraction order kit — `F` is never unfolded).
+/// Each feeds the `omit_domain` statement driver so the universal statement and
+/// the laws-as-lemmas proof stay in lockstep.
+pub(in crate::codegen::lean) use frac_monotone_compose::{
+    frac_monotone_compose_cited_deps, recognize_frac_geone, recognize_frac_monotone_compose,
+    recognize_frac_positivity,
+};
+
+/// Strict-order reflection for opaque unary `Fraction` cone functions:
+/// `lessThan(F(a), F(b)) -> a < b`, closed by citing earlier monotonicity and
+/// denominator-positivity pool laws for the same captured `F` plus a generic
+/// integer cross-order contradiction kit. The denominator-positivity subshape is
+/// also emitted here as a citable pool law derived from the broader positivity
+/// law.
+pub(in crate::codegen::lean) use monotone_reflect::{
+    monotone_reflect_cited_deps, recognize_denom_positive, recognize_magnitude_bracket_reflect,
+    recognize_monotone_reflect,
+};
+
+/// General recursive positivity / monotonicity rung — the name-blind,
+/// structurally-keyed core (`BASE <= f(ARG)` and `f(LO) <= f(HI)` for ANY pure
+/// recursive `Int -> Int` `f` with a `p <= 0` single-step recursion) that the
+/// pow2Signed Fraction-order wrapper also feeds. Drives the `omit_domain`
+/// statement so the universal statement and the shared kit proof stay in
+/// lockstep.
+pub(in crate::codegen::lean) use recursive_mono::{
+    recognize_recursive_monotone, recognize_recursive_positive,
+};
+
+/// Content-blind nested-Euclidean-floor collapse rung — `floor (floor a d) e =
+/// floor a (d * e)` for positive divisors, closed in pure core by
+/// `Int.ediv_ediv_of_nonneg`. Feeds the `omit_domain` statement driver, kept in
+/// lockstep with `emit_nested_floor_law`.
+pub(in crate::codegen::lean) use nested_floor::recognize_nested_floor;
+
+/// Content-blind homomorphism rung — the name-blind, shape-only recognizer for
+/// `subject(OP1(a, b)) = OP2(subject(a), subject(b))` (subject recursive, OP1 /
+/// OP2 captured from the AST). Feeds the `omit_domain` statement driver so the
+/// universal statement and the de-risked induction proof stay in lockstep.
+pub(in crate::codegen::lean) use homomorphism::recognize_homomorphism;
+
+/// Rational-order chaining rung — the broad, reusable Fraction `<=`
+/// (`isNonNeg (minus C A)`) rung and its first consumer, the reciprocal-
+/// magnitude composition (Lemma 8.2.4). Feeds the `omit_domain` statement
+/// driver so the universal statement and the helper-kit-plus-chain proof stay
+/// in lockstep.
+pub(in crate::codegen::lean) use frac_order_chain::recognize_frac_order_chain;
+
+/// The `(module_prefix, theorem_base)` pool laws a chaining law cites
+/// (signed power-of-two monotonicity + homomorphism) — unioned into the
+/// cross-file admission set so those dep theorems are emitted into the build.
+pub(in crate::codegen::lean) use frac_order_chain::frac_order_chain_cited_deps;
+
+/// Triangle-sum rung — the strict bound on an `absFraction`-of-a-three-term-
+/// sum over the exact-rational order (the rounded Newton-Raphson reciprocal
+/// step family). Feeds the `omit_domain` statement driver so the universal
+/// statement and the cited-bounds-plus-`tri_sum3` proof stay in lockstep.
+pub(in crate::codegen::lean) use triangle_sum::recognize_triangle_sum;
+
+/// The `(module_prefix, theorem_base)` rounding bound laws a triangle-sum law
+/// cites — unioned into the cross-file admission set so those dep theorems are
+/// emitted into the build.
+pub(in crate::codegen::lean) use triangle_sum::triangle_sum_cited_deps;
+
+// (Defined in this module.) The finite bounded-Int-domain recognizer — see
+// `recognize_finite_int_domain` — feeds the `omit_domain` statement driver so
+// the universal statement and the enumerate-then-`decide` proof stay in lockstep.
 
 /// `aver proof --explain` residual probe: turn an emitted main law theorem's
 /// source lines into a normalization-only twin so Lean reports its residual
@@ -71,6 +172,49 @@ fn law_strategy_for(
         .iter()
         .find(|t| t.fn_id == fn_id && t.law_name == law_name)
         .map(|t| t.strategy.clone())
+}
+
+/// Whether a hand-proof SIDECAR exists for this law in the active backend's
+/// loaded map (`CodegenContext::hand_proofs`, keyed on the source `(fn, law)`
+/// identity). Read by `emit_verify_law_block` to FORCE the true-universal
+/// statement (drop the sampled domain, keep the `when` premise) so the spliced
+/// hand body proves the universal claim, and by the proof cascade to splice
+/// that body. A law with no sidecar returns `false` — byte-identical to before.
+pub(in crate::codegen::lean) fn recognize_hand_sidecar(
+    ctx: &CodegenContext,
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+) -> bool {
+    ctx.hand_proofs
+        .contains_key(&(vb.fn_name.clone(), law.name.clone()))
+}
+
+/// Splice a hand-proof sidecar as the law's proof body. HIGHEST precedence in
+/// the cascade: a sidecar is a deliberate, source-controlled hand proof for a
+/// genuinely-hard law the generic engine cannot close, so it overrides every
+/// auto recognizer below. The body is emitted VERBATIM after the standard
+/// `theorem <base> : ∀ givens, <when> = true -> <claim> := by` header
+/// (`replaces_theorem = false`) and re-checked by `lake build` — a WRONG or
+/// STALE body is a loud build error, and the `#print axioms` whitelist still
+/// gates universal credit, so the sidecar is kernel-CHECKED, never trusted.
+/// The body may CITE earlier-emitted sibling law theorems by their stable
+/// `<fn>_law_<law>` names (composition by citation), since they appear before
+/// this theorem in the same module file.
+fn emit_hand_sidecar_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<AutoProof> {
+    let body = ctx
+        .hand_proofs
+        .get(&(vb.fn_name.clone(), law.name.clone()))?;
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(
+            body.lines().map(str::to_string).collect(),
+        ),
+        replaces_theorem: false,
+    })
 }
 
 pub fn emit_verify_law_forall_auto_proof(
@@ -162,6 +306,12 @@ fn maybe_wrap_with_grind_rung(
     if proof.replaces_theorem {
         return proof;
     }
+    // A hand-proof sidecar is a deliberate, complete proof — never prepend an
+    // auto `grind` arm to it (it owns its own tactic body and may end in a
+    // genuine closer the rung would needlessly race).
+    if recognize_hand_sidecar(ctx, vb, law) {
+        return proof;
+    }
     // A `when`-premised law introduces extra hypotheses (`h_when`, …)
     // whose Subtype/`by_cases` handling the existing rungs are written
     // around; a bare `grind` over the premise shape risks an
@@ -176,6 +326,14 @@ fn maybe_wrap_with_grind_rung(
     // arm — pure waste (a second grind saturation on the same goal). Skip.
     let lines = proof.body.render();
     if lines.iter().any(|l| l.contains("grind")) {
+        return proof;
+    }
+    // A `NonlinearNonneg` proof closes via `aver_int_order`, the generic
+    // nonlinear-nonnegativity primitive — a goal `grind` has already been
+    // measured to NOT decide (`0 <= x*x` and friends). Prepending the rung
+    // would only spend a guaranteed-failing grind saturation before falling
+    // to the primitive, so skip it the same way an own-grind body does.
+    if lines.iter().any(|l| l.contains("aver_int_order")) {
         return proof;
     }
     // SHAPE GATE: only wrap a grind-amenable (flat algebraic/ring/order)
@@ -269,6 +427,199 @@ fn maybe_wrap_with_grind_rung(
     }
 }
 
+/// A finite bounded-Int-domain law: a SINGLE `Int` given quantified by a
+/// `when LO <= var` + `when var < HI` guard pair (constant literal bounds,
+/// `LO < HI`) whose conclusion is an atomic `holds` claim `subject(var) =>
+/// true` for a pure NON-RECURSIVE `Bool` fn. The closed integer interval
+/// `[LO, HI)` IS the finite domain — the guards are load-bearing, not
+/// decoration: drop them and the claim quantifies over all of `ℤ`, where a
+/// table `lookup` outside its range returns the out-of-domain default and the
+/// bound is false. Name-blind: the recognizer keys on the guard/claim SHAPE,
+/// never on a table-specific fn name.
+struct FiniteIntDomain {
+    /// The single given variable (source name).
+    var: String,
+    /// Inclusive lower bound from `when LO <= var` / `when var >= LO`.
+    lo: i64,
+    /// Exclusive upper bound from `when var < HI` / `when HI > var`.
+    hi: i64,
+    /// The `holds` subject fn, already mapped to its Lean name.
+    subject_lean: String,
+}
+
+/// Read an integer literal `Expr`, accepting a unary-negated literal (`-7`).
+fn finite_domain_int_literal(expr: &crate::ast::Spanned<crate::ast::Expr>) -> Option<i64> {
+    use crate::ast::{Expr, Literal};
+    match &expr.node {
+        Expr::Literal(Literal::Int(n)) => Some(*n),
+        Expr::Neg(inner) => match &inner.node {
+            Expr::Literal(Literal::Int(n)) => Some(-*n),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Classify one conjunct of the `when` guard as a lower or upper bound on
+/// `var`, returning `(is_upper, bound)`. Lower: `LO <= var` / `var >= LO`.
+/// Upper: `var < HI` / `HI > var`.
+fn finite_domain_bound(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    var: &str,
+) -> Option<(bool, i64)> {
+    use crate::ast::{BinOp, Expr};
+    let Expr::BinOp(op, l, r) = &expr.node else {
+        return None;
+    };
+    let l_is_var = shared::expr_dotted_name(l).as_deref() == Some(var);
+    let r_is_var = shared::expr_dotted_name(r).as_deref() == Some(var);
+    match op {
+        // LO <= var
+        BinOp::Lte if r_is_var => finite_domain_int_literal(l).map(|n| (false, n)),
+        // var >= LO
+        BinOp::Gte if l_is_var => finite_domain_int_literal(r).map(|n| (false, n)),
+        // var < HI
+        BinOp::Lt if l_is_var => finite_domain_int_literal(r).map(|n| (true, n)),
+        // HI > var
+        BinOp::Gt if r_is_var => finite_domain_int_literal(l).map(|n| (true, n)),
+        _ => None,
+    }
+}
+
+/// Recognize the finite bounded-Int-domain shape. Pure / name-blind — see
+/// [`FiniteIntDomain`]. Declines (so the law keeps its bounded sampled-domain
+/// fallback) unless EVERY structural gate holds: one `Int` given, a
+/// `Bool.and(lower, upper)` guard with constant literal bounds `LO < HI`, a
+/// `subject(var) => true` conclusion over a non-recursive cone, and a domain
+/// size within the kernel `decide` budget.
+fn recognize_finite_int_domain_shape(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<FiniteIntDomain> {
+    use crate::ast::{Expr, Literal};
+    // Exactly one given, of carrier type `Int`.
+    if law.givens.len() != 1 {
+        return None;
+    }
+    let given = &law.givens[0];
+    if given.type_name.trim() != "Int" {
+        return None;
+    }
+    let var = given.name.clone();
+    // Conclusion: `subject(var) => true` (the `holds` surface lowers `holds`
+    // to `lhs = true`). The subject takes the given as its only argument.
+    if !matches!(&law.rhs.node, Expr::Literal(Literal::Bool(true))) {
+        return None;
+    }
+    let Expr::FnCall(callee, args) = &law.lhs.node else {
+        return None;
+    };
+    if args.len() != 1 || shared::expr_dotted_name(&args[0]).as_deref() != Some(var.as_str()) {
+        return None;
+    }
+    let subject_src = shared::expr_dotted_name(callee)?;
+    // Guard: `Bool.and(<bound>, <bound>)` — one lower, one upper, both on `var`.
+    let when = law.when.as_ref()?;
+    let Expr::FnCall(wcallee, wargs) = &when.node else {
+        return None;
+    };
+    if shared::expr_dotted_name(wcallee).as_deref() != Some("Bool.and") || wargs.len() != 2 {
+        return None;
+    }
+    let mut lo: Option<i64> = None;
+    let mut hi: Option<i64> = None;
+    for conjunct in wargs {
+        match finite_domain_bound(conjunct, &var)? {
+            (false, n) => lo = Some(n),
+            (true, n) => hi = Some(n),
+        }
+    }
+    let (lo, hi) = (lo?, hi?);
+    if hi <= lo {
+        return None;
+    }
+    // Domain-size budget: the kernel `decide` enumerates `HI - LO` ground
+    // cases. 128 (the K5 reciprocal table) is comfortable; cap generously so a
+    // pathological range can never wedge the build (it keeps its fallback).
+    if hi - lo > 4096 {
+        return None;
+    }
+    // Reduction gate: the subject's whole unfold cone must be NON-RECURSIVE, so
+    // each ground case computes out under kernel `decide` (a recursive fn would
+    // stay stuck on an opaque fuel/`partial` term). Same cone ∩ recursion test
+    // the grind rung uses.
+    let cone = shared::law_simp_source_names(ctx, vb, law);
+    let recursive = recursive_pure_fn_names(ctx);
+    if cone.iter().any(|name| recursive.contains(name)) {
+        return None;
+    }
+    Some(FiniteIntDomain {
+        var,
+        lo,
+        hi,
+        subject_lean: aver_name_to_lean(&subject_src),
+    })
+}
+
+/// Whether the finite bounded-Int-domain emit will close this law UNIVERSALLY.
+/// The statement builder reads this (alongside the other conditional
+/// recognizers) to drop the sampled-domain disjunctions (`omit_domain`) and
+/// class the law `universal`, keeping statement and proof in lockstep.
+pub(in crate::codegen::lean) fn recognize_finite_int_domain(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> bool {
+    recognize_finite_int_domain_shape(vb, law, ctx).is_some()
+}
+
+/// Close a finite bounded-Int-domain law by pure-kernel enumeration: lower the
+/// `Int` given into the closed interval `[LO, HI)` as `LO + ↑n` for a `Nat`
+/// `n < HI - LO`, then discharge the `HI - LO` ground cases with a single
+/// `decide` over the core-Lean bounded-`Nat` forall (`Nat.decidableBallLT`).
+/// This is the GENERIC finite-domain strategy — `interval_cases` is Mathlib
+/// (unavailable here), so the Int→Nat lowering + bounded-`Nat` `decide` is the
+/// core-only analog. Each ground case is a concrete cross-multiplied `Int`
+/// inequality the kernel reduces (`decide` produces `of_decide_eq_true rfl`,
+/// rechecked by the kernel — NO `native_decide`, so NO `Lean.ofReduceBool`).
+///
+/// Emits its OWN universal theorem (`replaces_theorem`) with `Prop`
+/// hypotheses, wrapped `first | (…) | sorry`: a domain outside the kernel's
+/// budget (or a subject that fails to reduce) degrades to a caught honest
+/// `sorry`, never a build error and never a false universal — the `#print
+/// axioms` whitelist keeps credit fail-closed.
+fn emit_finite_int_domain_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    theorem_base: &str,
+) -> Option<AutoProof> {
+    let FiniteIntDomain {
+        var,
+        lo,
+        hi,
+        subject_lean,
+    } = recognize_finite_int_domain_shape(vb, law, ctx)?;
+    let v = aver_name_to_lean(&var);
+    let count = hi - lo;
+    let text = format!(
+        "theorem {base} : ∀ ({v} : Int), {lo} ≤ {v} → {v} < {hi} → {subj} {v} = true := by\n  \
+         intro {v} h_lo h_hi\n  \
+         first\n  \
+         | (obtain ⟨n, rfl⟩ : ∃ n : Nat, {v} = {lo} + (n : Int) := ⟨({v} - {lo}).toNat, by omega⟩\n     \
+         exact (by decide : ∀ m : Nat, m < {count} → {subj} ({lo} + (m : Int)) = true) n (by omega))\n  \
+         | sorry",
+        base = theorem_base,
+        subj = subject_lean,
+    );
+    Some(AutoProof {
+        support_lines: text.lines().map(|l| l.to_string()).collect(),
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(Vec::new()),
+        replaces_theorem: true,
+    })
+}
+
 fn emit_verify_law_forall_auto_proof_inner(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -282,12 +633,32 @@ fn emit_verify_law_forall_auto_proof_inner(
         return None;
     }
 
+    // HAND-PROOF SIDECAR — highest precedence. A persistent, source-controlled
+    // tactic body for this law overrides every auto recognizer below. Spliced
+    // VERBATIM and re-checked by lake; the `#print axioms` whitelist still gates
+    // universal credit, so a wrong/stale sidecar fails the build loudly and is
+    // denied credit (kernel-CHECKED, never trusted).
+    if let Some(proof) = emit_hand_sidecar_law(vb, law, ctx) {
+        return Some(proof);
+    }
+
     let intro_names: Vec<String> = law
         .givens
         .iter()
         .map(|g| aver_name_to_lean(&g.name))
         .collect();
     let proof_intro_names = extend_intro_names_with_premises(law, &intro_names);
+
+    // Finite bounded-Int-domain laws (the K5 reciprocal seed table): a single
+    // `Int` given guarded into a closed interval `[LO, HI)`, closed by pure-
+    // kernel enumeration (`decide` over a bounded-`Nat` forall). Tried first
+    // among the `when`-arms — its guard shape (`LO <= var && var < HI`) is
+    // disjoint from the Peano comparison-bridge / inductive shapes below.
+    if law.when.is_some()
+        && let Some(proof) = emit_finite_int_domain_law(vb, law, ctx, theorem_base)
+    {
+        return Some(proof);
+    }
 
     // Conditional comparison-bridge laws (the `prop_70 leSucc` family):
     // `when <R1(..)> -> <R2(..)> = true` over canonical Peano relations
@@ -316,6 +687,264 @@ fn emit_verify_law_forall_auto_proof_inner(
     if law.when.is_some()
         && let Some(proof) =
             induction::emit_conditional_inductive_generic_law(vb, law, ctx, &intro_names)
+    {
+        return Some(proof);
+    }
+
+    // GENERIC validated-wrapper closer (the Theorem-2 shape): a thin error-
+    // checking wrapper `f(args) => Result.Ok(core(…))` whose `when` premises
+    // select the non-error branch, closed by unfolding ONLY the subject `f` and
+    // reflexivity on the shared opaque `core(…)` — the deep callee is never
+    // unfolded. Domain-blind (keyed on the wrapper body + `Result.Ok` RHS), so
+    // it fires for the K5 `divide` Theorem 2 and any synthetic `checkedDiv`-
+    // style wrapper. Tried BEFORE the rounding-specific rational rungs so the
+    // wrapper shape closes structurally instead of unfolding its whole call
+    // cone into an intractable `grind`.
+    if law.when.is_some()
+        && let Some(proof) = induction::emit_validated_wrapper_law(vb, law, ctx, &intro_names)
+    {
+        return Some(proof);
+    }
+
+    // Exact-rational POSITIVITY of an opaque unary `Fraction` cone fn `F` — a
+    // `holds` law whose subject body is `Bool.and(F(k).top > 0, F(k).bottom > 0)`.
+    // Closed UNIVERSALLY by unfolding the (non-recursive) `F` and CITING the
+    // recursive-positivity pool law of the recursive integer fn in `F`'s cone.
+    // Emits its OWN TRUE-universal theorem (`replaces_theorem`) under a
+    // `first | (…) | sorry` floor.
+    if let Some(proof) =
+        frac_monotone_compose::emit_frac_positivity_law(vb, law, ctx, theorem_base, quant_params)
+    {
+        return Some(proof);
+    }
+
+    // Denominator positivity for the same opaque unary `Fraction` cone family:
+    // a citable pool law `F(k).bottom > 0`, closed by citing the earlier broader
+    // positivity law `F(k).top > 0 && F(k).bottom > 0`. This gives downstream
+    // rational-order reflection proofs a precise denominator fact without
+    // unfolding `F`.
+    if let Some(proof) =
+        monotone_reflect::emit_denom_positive_law(vb, law, ctx, theorem_base, quant_params)
+    {
+        return Some(proof);
+    }
+
+    // Exact-rational AT-LEAST-ONE of `F` — a conditional `holds` law `when k >= 0
+    // -> isNonNeg(minus(F(k), oneFraction))`, i.e. `F(k) >= 1` for a nonnegative
+    // exponent. The premise kills the negative arm; closed by citing the same
+    // recursive-positivity pool law.
+    if law.when.is_some()
+        && let Some(proof) =
+            frac_monotone_compose::emit_frac_geone_law(vb, law, ctx, theorem_base, quant_params)
+    {
+        return Some(proof);
+    }
+
+    // Exact-rational MONOTONICITY by laws-as-lemmas composition — a conditional
+    // `holds` law whose subject body is `isNonNeg (minus (F E_hi) (F E_lo))` under
+    // a premise `E_lo <= E_hi`, i.e. `F(E_lo) <= F(E_hi)` over the sign-robust
+    // rational order for an OPAQUE unary `Fraction` cone fn `F`. Closed
+    // UNIVERSALLY by CITING three earlier sibling pool laws about the SAME `F` —
+    // its homomorphism `sameValue(F(a+b), times(F(a), F(b)))`, its positivity, and
+    // its `>= 1` fact — and chaining them through the generic Fraction order kit
+    // (`frac_le_mul_pos` + `frac_le_samevalue_right`). `F` is never unfolded: no
+    // sign-split, no recursion, the recursion is fully abstracted behind the cited
+    // laws. Emits its OWN TRUE-universal theorem (`replaces_theorem`) under a
+    // `first | (…) | sorry` floor. Tried BEFORE the keystone/multicite arms (the
+    // keystone declines this shape explicitly) so this deterministic composition
+    // wins over the speculative pool grind, which could never assemble the chain.
+    if law.when.is_some()
+        && let Some(proof) = frac_monotone_compose::emit_frac_monotone_compose_law(
+            vb,
+            law,
+            ctx,
+            theorem_base,
+            quant_params,
+        )
+    {
+        return Some(proof);
+    }
+
+    // Strict-order reflection for the same opaque unary `Fraction` cone family:
+    // `when lessThan(F(a), F(b)) -> a < b`. Closed by contradiction, citing the
+    // earlier monotonicity pool law with the reversed non-strict order and the
+    // earlier denominator-positivity pool law on both sides, then applying a
+    // generic integer cross-order contradiction kit. `F` is captured from the
+    // premise AST and never unfolded.
+    if law.when.is_some()
+        && let Some(proof) =
+            monotone_reflect::emit_monotone_reflect_law(vb, law, ctx, theorem_base, quant_params)
+    {
+        return Some(proof);
+    }
+
+    // Magnitude bracket to exponent counting for the same unary `Fraction` cone
+    // family: `0 < x.bottom && isNonNeg(minus(x, F(e))) && lessThan(x, F(m))`
+    // proves `e <= m - 1`. Closed by a generic integer cross-order transitivity
+    // kit, then the earlier strict-order reflection pool law for the captured
+    // `F`, plus denominator-positivity on both endpoints.
+    if law.when.is_some()
+        && let Some(proof) = monotone_reflect::emit_magnitude_bracket_reflect_law(
+            vb,
+            law,
+            ctx,
+            theorem_base,
+            quant_params,
+        )
+    {
+        return Some(proof);
+    }
+
+    // General recursive positivity — a `holds` law whose conclusion is the
+    // plain integer lower bound `BASE <= f(ARG)` (also accepted as
+    // `f(ARG) >= BASE`), for ANY pure recursive `Int -> Int` `f` with a `p <= 0`
+    // single-step recursion whose base arm is exactly the literal `BASE`.
+    // Closed UNIVERSALLY by the shared recursive-mono kit and a citation of the
+    // subject-prefixed `__rec_pos` lemma. This subsumes the old
+    // power-of-two-specific `PowPositive` Lean template; the proof-lower figure
+    // remains for backends that still need it.
+    if let Some(proof) =
+        recursive_mono::emit_recursive_positive_law(vb, law, ctx, theorem_base, quant_params)
+    {
+        return Some(proof);
+    }
+
+    // General recursive-monotonicity — a conditional `holds` law whose
+    // conclusion is the plain integer order `f(LO) <= f(HI)` (the subject body,
+    // or the claim directly) under a premise `LO <= HI`, for ANY pure recursive
+    // `Int -> Int` `f` with a `p <= 0` single-step recursion. Closed UNIVERSALLY
+    // by the shared recursive-mono kit (`f.induct` positivity + monotonicity,
+    // additive/doubling/multiplicative portfolio closer) and a one-line citation
+    // of its monotonicity. Emits its OWN TRUE-universal theorem
+    // (`replaces_theorem`) under a `first | (…) | sorry` floor. Keyed only on `f`
+    // being recursive (so `f.induct` exists) and the order shape — name-blind, no
+    // pow2 literal; the pow2Signed Fraction-order law reuses the SAME kit through
+    // its thin sign-split adapter above.
+    if law.when.is_some()
+        && let Some(proof) =
+            recursive_mono::emit_recursive_monotone_law(vb, law, ctx, theorem_base, quant_params)
+    {
+        return Some(proof);
+    }
+
+    // Rational-order chaining — a conditional `holds` law whose conclusion is
+    // the Fraction order fact `isNonNeg (minus (pow2Signed BIG) A)` (i.e.
+    // `A <= 2^BIG`), closed by chaining the scaled-bound / envelope / placement
+    // premises through the generic `frac_le_trans` kit and CITING the signed
+    // power-of-two monotonicity + homomorphism pool laws (the reciprocal-
+    // magnitude composition, Lemma 8.2.4). Emits its OWN TRUE-universal theorem
+    // (`replaces_theorem`) under a `first | (…) | sorry` floor, so credit stays
+    // fail-closed behind the `#print axioms` whitelist. Tried BEFORE the
+    // keystone/multicite arms (the keystone declines this shape explicitly) so
+    // this deterministic closer wins over the speculative pool composition (a
+    // bare `grind` could never synthesize the chain's intermediate magnitudes).
+    if law.when.is_some()
+        && let Some(proof) =
+            frac_order_chain::emit_frac_order_chain_law(vb, law, ctx, theorem_base, quant_params)
+    {
+        return Some(proof);
+    }
+
+    // Content-blind homomorphism — a law `subject(OP1(a, b)) = OP2(subject(a),
+    // subject(b))` (subject recursive, `OP1` the arg-combine, `OP2` the
+    // result-combine, all captured from the AST). Closed UNIVERSALLY by the
+    // de-risked skeleton (`induction <OP1-first-arg> using <subject>.induct` with
+    // the base = `OP2` left-identity and the step = `OP2` associativity), with a
+    // 2-way unfold dispatch on the subject's recurrence shape (guarded countdown
+    // vs structural ADT). ONE rung closes both the integer power-of-two
+    // homomorphism (`OP2 = *`, guarded) and a list-length homomorphism (`OP2 =
+    // +`, structural). Tried BEFORE the keystone / pinned strategies so it claims
+    // the homomorphism shape from the content-aware floor-window template it
+    // subsumes. Emits its OWN TRUE-universal theorem (`replaces_theorem`) under a
+    // `first | (…) | sorry` floor.
+    // Nested-Euclidean-floor collapse (`floor (floor a d) e = floor a (d * e)`,
+    // positive divisors): closed in pure core by `Int.ediv_ediv_of_nonneg`.
+    // A very specific shape (same Euclidean-floor fn nested, product divisor on
+    // the rhs), so it never collides with the homomorphism / keystone arms below;
+    // tried first so the collapse is closed by the deterministic core skeleton
+    // rather than falling through to a `grind` that explodes on the divisor.
+    if let Some(proof) =
+        nested_floor::emit_nested_floor_law(vb, law, ctx, theorem_base, quant_params)
+    {
+        return Some(proof);
+    }
+
+    if let Some(proof) =
+        homomorphism::emit_homomorphism_law(vb, law, ctx, theorem_base, quant_params)
+    {
+        return Some(proof);
+    }
+
+    // Keystone — the non-recursive laws-as-lemmas composition: a claim with no
+    // list to induct on, closed by `grind` over the earlier sibling laws (the
+    // pool). The algebraic content lives as Aver helper laws; the engine supplies
+    // only the citation skeleton (`grind [<cone>, <pool>]`). Tried after the
+    // inductive arm, which owns the list-recursion shapes, and BEFORE the pinned
+    // strategies below: a law that is both keystone-eligible AND carries a pinned
+    // strategy (e.g. a `FloorDivWindow` law that ALSO has an earlier pool law in
+    // its cone) is closed by the generic citation skeleton in preference to the
+    // strategy-specific template. There is no conflict for the pinned laws that
+    // have NO pool — the empty-pool gate in the recognizer declines them, so they
+    // fall through to their own strategy unchanged (this is why the `pow2`
+    // homomorphism itself, a `FloorDivWindow` law with no earlier cone law, is NOT
+    // stolen by the keystone).
+    //
+    // NOT gated to `when`-laws: the recognizer admits a NON-conditional law only
+    // for the equational power-of-two homomorphism composition (an earlier-sibling
+    // homomorphism law about a power-of-two cone fn, cited through the pow2
+    // normalizer — e.g. the SIGNED pow2 homomorphism `2^(m+n) = 2^m·2^n` for any
+    // integers, whose sign branches each reduce to a product of `pow2` of nonneg
+    // atoms). That is the same generic mechanism that closes the conditional
+    // `fpMulValue`; lifting the conditional-only restriction is shape-keyed and
+    // name-blind. Every other unconditional shape keeps its own strategy.
+    // Multi-citation composition — the generic orchestration that discharges a
+    // law's premises from an EARLIER universal's conclusion and then APPLIES a
+    // second earlier universal whose conclusion aliases this law's goal. Tried
+    // BEFORE the keystone: the keystone's single `grind` over a pool cannot
+    // instantiate a supplying universal whose conclusion head is absent from the
+    // goal, nor fold the goal's definitional alias onto an applied universal's
+    // trigger — this arm emits that obtain-conjuncts-then-apply skeleton from the
+    // shape (name-blind). Probe-gated like the keystone, so a plan whose
+    // orchestration does not close falls back to its bounded sampled statement.
+    if let Some(proof) = induction::emit_multicite_composition_law(vb, law, ctx, &intro_names) {
+        return Some(proof);
+    }
+
+    if let Some(proof) = induction::emit_pool_composition_generic_law(vb, law, ctx, &intro_names) {
+        return Some(proof);
+    }
+
+    // Triangle-sum — a strict magnitude bound `|E| < B` where the error `E`
+    // is `sameValue` a three-term sum `X + Y + Z` (ring identity by `grind`),
+    // `X` a squared prior error (`tri_sq_strict`) and `Y`/`Z` each a CITED
+    // rounding bound times a monotone factor (`tri_abs_times_le`), composed by
+    // the generic `tri_sum3`. Tried after the keystone/multicite arms (so a law
+    // that is also a pool composition keeps that path) and before the
+    // interval-monotonicity arm: this shape carries an `absFraction`-of-a-sum
+    // claim the other rational rungs do not admit. Emits its OWN TRUE-universal
+    // theorem (`replaces_theorem`) under a `first | (…) | sorry` floor, so
+    // credit stays fail-closed behind the `#print axioms` whitelist.
+    if law.when.is_some()
+        && let Some(proof) = triangle_sum::emit_triangle_sum_law(vb, law, ctx, theorem_base)
+    {
+        return Some(proof);
+    }
+
+    // Interval-monotonicity — a magnitude bound `|d·v − 1| < e` that is
+    // affine in an interval variable `d ∈ [lo, hi]` over the exact-rational
+    // order, closed from the two endpoint bounds by the rational
+    // interval-monotonicity argument (a generic helper-lemma kit — `lessThan`
+    // transitivity, the abs sign-split, the scaled-difference monotonicities
+    // — plus a fixed assembly). Tried AFTER the keystone (so a law that is
+    // also a pool composition keeps that path) and BEFORE the
+    // `NonlinearNonneg` arm: this shape carries a `lessThan`/`absFraction`
+    // claim the nonlinear product rung does not admit. Emits its OWN
+    // TRUE-universal theorem (`replaces_theorem`) under a `first | (…) |
+    // sorry` floor, so credit stays fail-closed behind the `#print axioms`
+    // whitelist.
+    if law.when.is_some()
+        && let Some(proof) =
+            interval_mono::emit_interval_monotonicity_law(vb, law, ctx, theorem_base)
     {
         return Some(proof);
     }
@@ -368,6 +997,17 @@ fn emit_verify_law_forall_auto_proof_inner(
     if let Some(proof) =
         floor_window::emit_floor_window_law(vb, law, ctx, theorem_base, quant_params)
     {
+        return Some(proof);
+    }
+    // IR-pinned `NonlinearNonneg` — nonnegativity over a nonlinear Int
+    // product (`E >= 0`). Unlike `FloorDivWindow` it does NOT replace the
+    // theorem statement: the caller already builds the TRUE-universal
+    // `∀ givens, <when> = true -> claim` form (for a `when`-law, via the
+    // `conditional_universal` driver that drops the sampled domain; a
+    // no-`when` `holds` law is universal as stated). This emits only the
+    // proof body — one generic decision step (`aver_int_order`) under a
+    // `first | (…) | sorry` floor.
+    if let Some(proof) = inequality::emit_nonlinear_nonneg_law(vb, law, ctx) {
         return Some(proof);
     }
     // IR-pinned `TailRecFixedBaseFold` (TIP prop_35, `exp x y = qexp x y one`).
@@ -944,6 +1584,33 @@ fn emit_verify_law_forall_auto_proof_inner(
             None
         })
         .or_else(|| {
+            // Mathlib BREAK-GLASS (`aver proof --allow-mathlib` only): a walling
+            // `when`-law that NO core strategy above claimed, closed in true-
+            // universal form by the generic domain-blind Mathlib tactic portfolio
+            // `aver_mathlib` (`Int.ediv_ediv_of_nonneg` / `pow_add` / `pow_succ'` /
+            // `positivity` / `nlinarith` / `norm_num` / `omega`) under a
+            // `first | (trace "AVER_MATHLIB:fn.law"; …) | sorry` floor. Placed
+            // RIGHT BEFORE the bounded guarded-domain fallback: every core strategy
+            // above has declined (so the law genuinely walls in core), and firing
+            // here — instead of falling to the sampled `native_decide` proof —
+            // keeps the universal statement (`recognize_mathlib_break_glass` set
+            // `omit_domain`) in lockstep with a universal proof. Gated on the
+            // opt-in flag + entry-module scope, so the DEFAULT path is byte-
+            // identical (a dep module never imports Mathlib, keeping its core
+            // `simp`/`grind` simp set fast) and a core-claimed law keeps its core
+            // proof. The trace marker drives the per-law `mathlib` credit; the
+            // `sorry` floor + the unchanged `#print axioms` whitelist keep credit
+            // fail-closed (a goal outside the portfolio degrades to an honest
+            // sorry, never a false universal).
+            if ctx.allow_mathlib
+                && ctx.active_module_scope().is_none()
+                && let Some(proof) = emit_mathlib_break_glass_law(vb, law, ctx, &intro_names)
+            {
+                return Some(proof);
+            }
+            None
+        })
+        .or_else(|| {
             emit_guarded_domain_law(law).map(|proof_lines| AutoProof {
                 support_lines: Vec::new(),
                 body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
@@ -1046,6 +1713,77 @@ fn emit_verify_law_forall_auto_proof_inner(
                 replaces_theorem: false,
             })
         })
+}
+
+/// Predicate half of [`emit_mathlib_break_glass_law`]: with `--allow-mathlib`
+/// set, ANY entry-module `when`-law is a break-glass candidate (the actual
+/// close is decided by the portfolio + `#print axioms`, not the shape). The
+/// statement builder reads this to drop the sampled-domain disjunctions
+/// (`omit_domain`) and class the law `universal`, keeping the universal
+/// statement and the break-glass proof body in lockstep. Returns `false` when
+/// the flag is off, so the default path never reaches the universal statement.
+pub(in crate::codegen::lean) fn recognize_mathlib_break_glass(
+    ctx: &CodegenContext,
+    law: &VerifyLaw,
+) -> bool {
+    ctx.allow_mathlib && law.when.is_some() && ctx.active_module_scope().is_none()
+}
+
+/// Mathlib break-glass proof body (only the body — `emit_verify_law_block`
+/// emits the true-universal `∀ givens, <when> = true -> claim` statement once
+/// `recognize_mathlib_break_glass` drops the sampled domain). Unfolds the law's
+/// own def cone plus the total-`floorDiv` wrapper (`Except.withDefault`,
+/// `beq_iff_eq`), and — for a `holds` law whose conclusion is a `Bool`
+/// comparison (`subject(args) = true` over a body like `a*a <= a*a + b*b`) —
+/// bridges that Bool goal down to its underlying `Prop` (`decide_eq_true_eq`
+/// strips the `decide … = true` wrapper, `ge_iff_le` / `gt_iff_lt` normalize the
+/// relation) so the portfolio's `nlinarith` / `positivity` / `omega` arms see a
+/// real inequality rather than an opaque `Bool` equation. The same bridge is the
+/// `NonlinearNonneg` rung's Bool→Prop step; on an equational law (Int `=` goal)
+/// these lemmas simply do not fire, so the rewrite is a no-op there. Then it
+/// splits the division-by-zero guards (`split_ifs` — the false guards are killed
+/// by the positive-divisor premises via `omega` / `nlinarith`), and hands the
+/// residual to the domain-blind `aver_mathlib` portfolio. The leading
+/// `trace "AVER_MATHLIB:fn.law"` is the credit channel `run_proof_check` reads
+/// from the build log; the whole arm sits under a `first | … | sorry` floor so a
+/// non-portfolio goal degrades to a caught sorry.
+fn emit_mathlib_break_glass_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<AutoProof> {
+    law.when.as_ref()?;
+    let mut defs: Vec<String> = shared::law_simp_defs(ctx, vb, law).into_iter().collect();
+    // Reduce the total-division wrapper (`floorDiv a d = withDefault (if d == 0
+    // …) 0`) so `split_ifs` sees the guard and the goal becomes bare `Int`
+    // ediv; `beq_iff_eq` rewrites the `==` guard to a `=` the splitter handles.
+    defs.push("Except.withDefault".to_string());
+    defs.push("beq_iff_eq".to_string());
+    // Bool→Prop bridges for a `holds` law whose conclusion is a `Bool`
+    // comparison: after unfolding the subject the goal is `(a*a <= …) = true`,
+    // which `nlinarith`/`omega` cannot read; these strip it to the underlying
+    // `Prop` inequality. No-ops on an equational (Int `=`) goal, so the
+    // equation break-glass path is unchanged.
+    defs.push("decide_eq_true_eq".to_string());
+    defs.push("ge_iff_le".to_string());
+    defs.push("gt_iff_lt".to_string());
+    let unfolds = defs.join(", ");
+    let label = format!("{}.{}", vb.fn_name, law.name);
+    let intro = format!("  intro {} h_when", intro_names.join(" "));
+    let close = format!(
+        "  first | (trace \"AVER_MATHLIB:{label}\"; \
+         simp only [Bool.and_eq_true, decide_eq_true_eq, ge_iff_le] at h_when; \
+         (try obtain ⟨hl, hr⟩ := h_when); \
+         simp only [{unfolds}]; \
+         (try split_ifs) <;> \
+         first | (exfalso; omega) | (exfalso; nlinarith) | aver_mathlib) | sorry"
+    );
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(vec![intro, close]),
+        replaces_theorem: false,
+    })
 }
 
 /// Fixed core AC-ring lemma package for the `RingIdentity` rung —

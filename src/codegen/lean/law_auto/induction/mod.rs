@@ -18,6 +18,17 @@ use super::shared::law_simp_defs;
 use crate::ast::{TypeDef, TypeVariant, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 
+mod floor_bound;
+mod keystone;
+mod multicite;
+
+pub(in crate::codegen::lean) use keystone::{
+    emit_pool_composition_generic_law, recognize_pool_composition_generic,
+};
+pub(in crate::codegen::lean) use multicite::{
+    emit_multicite_composition_law, recognize_multicite_composition,
+};
+
 /// `first | (<simp>; done) | (<simp>; omega) | sorry` — the per-arm portfolio
 /// shared by the Peano bridge theorems (`<simp>` is e.g. `simp [f]` /
 /// `simp [f, ih]`). A structured `First` so `--minimize` collapses the arm to
@@ -617,6 +628,118 @@ pub(crate) fn admitted_dep_law_theorems(
             consider(Some(module.prefix.as_str()), vb, law, &mut admitted);
         }
     }
+
+    // Triangle-sum consumers: the rung CITES two rounding bound universals
+    // (`awayFracErrorBound` / `truncFracErrorBound`) whose statements mention
+    // dep fns OUTSIDE the consumer law's cone (the consumer never calls the
+    // bound predicate itself), so the structural `dep_law_admissible` gate above
+    // does not reach them. The rung knows exactly which bound laws it cites, so
+    // admit those directly — keyed on the SAME recognizer the emit uses, so the
+    // cited theorem is emitted iff the proof that cites it is.
+    for item in &ctx.items {
+        let TopLevel::Verify(vb) = item else { continue };
+        let VerifyKind::Law(law) = &vb.kind else {
+            continue;
+        };
+        for dep in super::triangle_sum_cited_deps(vb, law, ctx) {
+            admitted.insert(dep);
+        }
+    }
+
+    // Rational-order chaining consumers: the rung CITES the signed power-of-two
+    // monotonicity + homomorphism pool laws (whose subject fns are NOT in the
+    // consumer law's call cone — the consumer only calls `pow2Signed`, never the
+    // monotonicity/homomorphism predicate), so the structural gate above does
+    // not reach them. The rung knows exactly which laws it cites, so admit them
+    // directly — keyed on the SAME recognizer the emit uses, so the cited
+    // theorem is emitted iff the proof that cites it is.
+    for item in &ctx.items {
+        let TopLevel::Verify(vb) = item else { continue };
+        let VerifyKind::Law(law) = &vb.kind else {
+            continue;
+        };
+        for dep in super::frac_order_chain_cited_deps(vb, law, ctx) {
+            admitted.insert(dep);
+        }
+    }
+
+    // Exact-rational monotonicity / at-least-one / positivity laws: each CITES
+    // its module's homomorphism / positivity / `>= 1` / recursive-positivity
+    // sibling laws (whose subject fns are NOT in its call cone), so the structural
+    // gate does not reach them. A dependency export must carry the whole citation
+    // chain for the monotonicity theorem to close, so admit them directly — run
+    // under the dep module's scope so the recognizers resolve its fns and laws.
+    for module in &ctx.modules {
+        ctx.with_module_scope(Some(module.prefix.as_str()), || {
+            for vb in &module.verify_laws {
+                let VerifyKind::Law(law) = &vb.kind else {
+                    continue;
+                };
+                for dep in super::frac_monotone_compose_cited_deps(vb, law, ctx) {
+                    admitted.insert(dep);
+                }
+            }
+        });
+    }
+
+    // Strict-order reflection consumers: the rung CITES monotonicity and
+    // denominator-positivity sibling laws that are not necessarily in the
+    // consumer's call cone. Denominator-positivity itself cites the broader
+    // positivity law. Admit exactly those discovered dependencies under the dep
+    // module's scope, keyed on the same recognizers as the emitter. Entry laws
+    // can also cite an exposed dependency bridge theorem directly (for example a
+    // magnitude-bracket law over a dep's unary Fraction cone), so scan them too.
+    for item in &ctx.items {
+        let TopLevel::Verify(vb) = item else { continue };
+        let VerifyKind::Law(law) = &vb.kind else {
+            continue;
+        };
+        for dep in super::monotone_reflect_cited_deps(vb, law, ctx) {
+            admitted.insert(dep);
+        }
+    }
+    for module in &ctx.modules {
+        ctx.with_module_scope(Some(module.prefix.as_str()), || {
+            for vb in &module.verify_laws {
+                let VerifyKind::Law(law) = &vb.kind else {
+                    continue;
+                };
+                for dep in super::monotone_reflect_cited_deps(vb, law, ctx) {
+                    admitted.insert(dep);
+                }
+            }
+        });
+    }
+
+    // Keystone finite-domain composition consumers: the keystone's `grind`
+    // cites a dependency conditional-bridge law (`nonNegOfPositive`) to discharge
+    // a cited interval law's nonneg premise from the supplier's positivity
+    // conjunct. The bridge's hypothesis fn is reachable only through a cited
+    // supplier, so the structural gate above does not reach it; the keystone
+    // names it directly, keyed on the SAME recognizer the emit cites, so the dep
+    // theorem is emitted iff the proof that cites it is.
+    for item in &ctx.items {
+        let TopLevel::Verify(vb) = item else { continue };
+        let VerifyKind::Law(law) = &vb.kind else {
+            continue;
+        };
+        for dep in keystone::keystone_dep_bridge_cites(vb, law, ctx) {
+            admitted.insert(dep);
+        }
+    }
+    for module in &ctx.modules {
+        ctx.with_module_scope(Some(module.prefix.as_str()), || {
+            for vb in &module.verify_laws {
+                let VerifyKind::Law(law) = &vb.kind else {
+                    continue;
+                };
+                for dep in keystone::keystone_dep_bridge_cites(vb, law, ctx) {
+                    admitted.insert(dep);
+                }
+            }
+        });
+    }
+
     admitted
 }
 
@@ -1613,6 +1736,185 @@ pub(in crate::codegen::lean) fn emit_conditional_comparison_bridge_law(
     Some(AutoProof {
         support_lines: support,
         body: Tactic::raw(vec![intro, close]),
+        replaces_theorem: false,
+    })
+}
+
+/// GENERIC validated-wrapper closer (the Theorem-2 shape). A conditional law
+/// whose subject `f` is a thin error-checking WRAPPER — a `match`/`if` dispatch
+/// over error-vs-Ok branches — and whose claim is `f(args) => Result.Ok(core
+/// (…))`. On valid input the `when` premises pick the non-error branch and the
+/// two sides share the OPAQUE `core(…)` subterm verbatim, so the goal closes by
+/// reflexivity after unfolding ONLY the subject `f` — the deep callee `core` is
+/// never in the simp set, so it is never unfolded (the wrapper-correctness goal
+/// does not need it). Keyed purely on STRUCTURE (subject-wrapper body, a
+/// `Result.Ok` RHS, a branch-selecting premise), domain-blind: it fires for the
+/// K5 `divide` Theorem 2 and for any synthetic `checkedDiv`-style wrapper alike,
+/// unfolding whatever the law's subject is. Strictly ADDITIVE: declines
+/// (`None`) unless the shape matches, and floors on `sorry`, so a wrapper whose
+/// premises do NOT actually force the Ok branch simply falls through to the
+/// heavier rungs.
+/// Predicate half of [`emit_validated_wrapper_law`]: whether `law` has the
+/// validated-wrapper shape (premise + subject-call LHS + `Result.Ok` RHS +
+/// `match`-dispatch subject body). `emit_verify_law_block` consults this to lift
+/// the law's statement off its sampled domain to the true `∀ givens, <when> =
+/// true -> claim` universal (`omit_domain`), matching the unbounded statement
+/// the proof body discharges.
+pub(in crate::codegen::lean) fn recognize_validated_wrapper(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> bool {
+    // A branch-selecting premise is required — the wrapper only reduces to its
+    // Ok branch under the `when` facts.
+    if law.when.is_none() {
+        return false;
+    }
+    // LHS is a call to the law's own subject fn.
+    let crate::ast::Expr::FnCall(callee, _) = &law.lhs.node else {
+        return false;
+    };
+    if super::shared::expr_dotted_name(callee).as_deref() != Some(vb.fn_name.as_str()) {
+        return false;
+    }
+    // RHS wraps the core value in `Result.Ok(…)` — the wrapper's non-error
+    // branch. (A `Result.Err` or bare-value RHS is a different shape.) In source
+    // position `Result.Ok(x)` parses as a `FnCall` on the dotted ctor path; the
+    // `Constructor` form is accepted too for synthesised laws.
+    let rhs_is_result_ok = match &law.rhs.node {
+        crate::ast::Expr::FnCall(callee, args) => {
+            !args.is_empty()
+                && super::shared::expr_dotted_name(callee).as_deref() == Some("Result.Ok")
+        }
+        crate::ast::Expr::Constructor(ctor, Some(_)) => ctor == "Result.Ok",
+        _ => false,
+    };
+    if !rhs_is_result_ok {
+        return false;
+    }
+    // The subject's body must be a dispatcher. Aver has no `if`, so an
+    // error-checking wrapper dispatches through a `match` tail expression.
+    let Some(subject_fd) = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())
+    else {
+        return false;
+    };
+    matches!(
+        subject_fd.body.tail_expr().map(|e| &e.node),
+        Some(crate::ast::Expr::Match { .. })
+    )
+}
+
+/// Collect the Bool guard predicates an error-checking wrapper dispatches on:
+/// the callee directly under a `Bool.not(…)` match scrutinee (e.g. `inField` in
+/// `match Bool.not(inField(e)) { … }`). Recurses through the nested-match chain
+/// of validity checks. Only the IMMEDIATE callee under `Bool.not` is collected —
+/// the guard's own arguments (the opaque core call and its result exponent) are
+/// not — so unfolding the collected names never touches the deep callee.
+fn collect_wrapper_guard_predicates(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    out: &mut BTreeSet<String>,
+) {
+    if let crate::ast::Expr::Match { subject, arms } = &expr.node {
+        if let crate::ast::Expr::FnCall(callee, args) = &subject.node
+            && super::shared::expr_dotted_name(callee).as_deref() == Some("Bool.not")
+            && let Some(inner) = args.first()
+            && let crate::ast::Expr::FnCall(gcallee, _) = &inner.node
+            && let Some(g) = super::shared::expr_dotted_name(gcallee)
+        {
+            out.insert(g);
+        }
+        for arm in arms {
+            collect_wrapper_guard_predicates(&arm.body, out);
+        }
+    }
+}
+
+/// Collect the dotted names of every fn called anywhere in `expr` (KEEPING
+/// qualified `Module.fn` names, unlike `proof_recognize::collect_called_fns`,
+/// which drops them). Used to tell a premise-PINNED wrapper guard (`isFp p`,
+/// decided by a `when isFp(p)` premise, so its scrutinee is rewritten without
+/// unfolding) from a DERIVED guard (`inField(E)`, absent from the premises, so
+/// it must be unfolded for `omega` to discharge it).
+fn collect_called_dotted(expr: &crate::ast::Spanned<crate::ast::Expr>, out: &mut BTreeSet<String>) {
+    match &expr.node {
+        crate::ast::Expr::FnCall(f, args) => {
+            if let Some(name) = super::shared::expr_dotted_name(f) {
+                out.insert(name);
+            }
+            collect_called_dotted(f, out);
+            for a in args {
+                collect_called_dotted(a, out);
+            }
+        }
+        crate::ast::Expr::BinOp(_, l, r) => {
+            collect_called_dotted(l, out);
+            collect_called_dotted(r, out);
+        }
+        crate::ast::Expr::Attr(obj, _) => collect_called_dotted(obj, out),
+        crate::ast::Expr::Neg(inner) => collect_called_dotted(inner, out),
+        _ => {}
+    }
+}
+
+pub(in crate::codegen::lean) fn emit_validated_wrapper_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<AutoProof> {
+    if !recognize_validated_wrapper(vb, law, ctx) {
+        return None;
+    }
+    let subject_fd = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())?;
+    let subject = aver_name_to_lean(&vb.fn_name);
+    let intro = format!("  intro {} h_when", intro_names.join(" "));
+    // The wrapper's error branches each dispatch on `Bool.not(g(…))` for some
+    // Bool guard predicate `g`. A guard a premise already pins (`isFp p`, decided
+    // by `when isFp(p)`) needs no unfolding — `simp_all` rewrites the scrutinee by
+    // the premise. A DERIVED guard (the field-bounds `inField(E)`, whose truth
+    // follows from a premised arithmetic bracket, not a premise verbatim) must be
+    // unfolded so the trailing `omega` can discharge it. Collect the guard
+    // predicates by STRUCTURE (callee directly under `Bool.not` in a scrutinee),
+    // drop the premise-pinned ones, and unfold only the rest. Domain-blind: the
+    // deep `core …` and the guard's own arguments are never collected, so the
+    // expensive callee stays folded.
+    let mut guards: BTreeSet<String> = BTreeSet::new();
+    if let Some(tail) = subject_fd.body.tail_expr() {
+        collect_wrapper_guard_predicates(tail, &mut guards);
+    }
+    let mut premise_fns: BTreeSet<String> = BTreeSet::new();
+    if let Some(when) = &law.when {
+        collect_called_dotted(when, &mut premise_fns);
+    }
+    guards.retain(|g| !premise_fns.contains(g));
+    let mut unfold = vec![format!("_root_.{subject}")];
+    unfold.extend(
+        guards
+            .iter()
+            .map(|g| format!("_root_.{}", aver_name_to_lean(g))),
+    );
+    let unfold_set = unfold.join(", ");
+    // Subject (+ derived guard predicate) unfold; the premises (decomposed by
+    // `Bool.and_eq_true` / `Bool.not_eq_true'`, `<=`-comparisons bridged to Prop
+    // by `decide_eq_true_eq`) decide every branch condition, collapsing the
+    // wrapper to its `Result.Ok(core …)` branch. The trailing
+    // `<;> (first | rfl | omega)` closes each residual goal: `rfl` on the shared
+    // opaque `core …`, or `omega` on a derived guard's affine obligation. `omega`
+    // is ADDITIVE — a non-affine guard simply fails it and the whole arm falls
+    // through to the `sorry` floor. `core` is NEVER in the simp set.
+    let arm = format!(
+        "  | (simp only [{unfold_set}]; simp_all [Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] <;> (first | rfl | omega))"
+    );
+    let floor = if super::super::tactic_ir::speculative::probing() {
+        let id = format!("{}.{}", vb.fn_name, law.name);
+        super::super::tactic_ir::speculative::record_probed(&id);
+        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
+    } else {
+        "  | sorry".to_string()
+    };
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        body: Tactic::raw(vec![intro, "  first".to_string(), arm, floor]),
         replaces_theorem: false,
     })
 }

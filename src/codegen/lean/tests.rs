@@ -65,6 +65,8 @@ fn empty_ctx() -> CodegenContext {
         bare_i64: Default::default(),
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
+        allow_mathlib: false,
+        hand_proofs: Default::default(),
     }
 }
 
@@ -3542,23 +3544,33 @@ fn notepad_store_example_stays_inside_proof_subset() {
 /// without induction. Codegen-only (no lake): asserts the emitted tactic.
 #[test]
 fn grind_rung_admitted_on_flat_nonrecursive_law() {
+    // A flat, sorry-floored, non-recursive POLYNOMIAL IDENTITY (a Yields
+    // equality `grind`'s ring subsolver closes but no pinned strategy
+    // claims) must gain the cone-aware grind rung. The nonnegativity /
+    // order shapes that used to exercise this now route to the dedicated
+    // `NonlinearNonneg` closer (`aver_int_order`), so this uses a ring
+    // identity — `x² + 2x + 1 = (x + 1)²` — instead.
     let src = "\
 module FlatGrind
     effects []
 
-fn sq_nonneg(x: Int) -> Bool
-    ? \"x squared is never negative.\"
-    x * x >= 0
+fn lhsPoly(x: Int) -> Int
+    ? \"x squared plus twice x plus one.\"
+    x * x + 2 * x + 1
 
-verify sq_nonneg law universal
+fn rhsPoly(x: Int) -> Int
+    ? \"x plus one, squared.\"
+    (x + 1) * (x + 1)
+
+verify lhsPoly law squareExpansion
     given x: Int = [-7, -1, 0, 1, 9]
-    sq_nonneg(x) => true
+    lhsPoly(x) => rhsPoly(x)
 ";
     let mut ctx = ctx_from_source(src, "FlatGrind");
     let out = transpile(&mut ctx);
     let lean = generated_lean_file(&out);
     assert!(
-        lean.contains("grind [_root_.sq_nonneg]"),
+        lean.contains("grind ["),
         "a flat, sorry-floored, non-recursive law must gain the cone-aware \
          grind rung:\n{lean}"
     );

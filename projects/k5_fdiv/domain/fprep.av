@@ -1,0 +1,377 @@
+module Fprep
+    intent =
+        "Stage 1 of the K5 division proof: the paper's FAITHFUL floating-point model"
+        "(Section 5.1, p.10). Every non-zero rational is sigma * s * 2^e with the sign"
+        "sigma either +1 or -1, a NORMALIZED rational significand s in [1, 2), and an"
+        "integer exponent e (p.10). We represent s as an n-bit integer `sigBits` in"
+        "[2^(n-1), 2^n) -- so the rational significand is sigBits / 2^(n-1) in [1, 2) --"
+        "carrying the width n as a field, and the denoted value sigma * (sigBits/2^(n-1))"
+        "* 2^e as the Stage-0 exact rational (domain/rational.av Fraction)."
+        "The landed laws are Lemma 7.1.2 (p.18): scaling by a power of two leaves the"
+        "significand unchanged and shifts the exponent -- s(x*2^j) = s_x, e(x*2^j) = e_x"
+        "+ j -- which hold DEFINITIONALLY here because fpScale renormalizes nothing; and"
+        "Lemma 7.1.7 (p.18): e_x + e_y <= e(x*y) <= e_x + e_y + 1, the product-exponent"
+        "range, proven by splitting fpMul's normalization match (grind case-splits the"
+        "branch) and bounding each arm. The scaling value-preservation fact (scaling"
+        "denotes the scaled rational) is floating-point folklore, NOT a numbered paper"
+        "lemma; it is the project's laws-as-lemmas composition in action -- it re-proves"
+        "nothing about powers of two, it CITES the proven homomorphism pow2(m+n) =="
+        "pow2(m)*pow2(n) and the compiler composes it via one generic strategy."
+    depends [Domain.Rational]
+    exposes [pow2, Fp, isFp, fpValue, fpValueGeneral, fpScale, fpMul, pow2Fraction, pow2Signed, pow2SignedHomomorphism, pow2SignedPositive, pow2SignedDenomPositive, pow2SignedAtLeastOne, pow2SignedMonotone, pow2SignedLtReflect, fracExpoFromMagnitude, fpValueEqualsGeneralWhenNonnegExp, fpScaleKeepsSignificand, fpScaleShiftsExponent, fpScalePreservesValue, productExp, productExpInRange, fpMulValue]
+    effects []
+
+fn pow2(n: Int) -> Int
+    ? "Two to the n for n >= 0 (and 1 for n <= 0): the scale factor 2^n of an exponent."
+    match n <= 0
+        true -> 1
+        false -> 2 * pow2(n - 1)
+
+verify pow2
+    pow2(0) => 1
+    pow2(3) => 8
+    pow2(7) => 128
+
+// The power-of-two homomorphism: adding exponents multiplies scales. This is the
+// pool law the value-preservation proofs below CITE; it proves on its own first.
+verify pow2 law homomorphism
+    given m: Int = [0, 1, 4]
+    given n: Int = [0, 2, 3]
+    when m >= 0
+    when n >= 0
+    pow2(m + n) => pow2(m) * pow2(n)
+
+// The power of two is always at least one (it clamps to 1 at and below zero, and
+// doubles a value already >= 1 above it). This recursive positivity is the fact the
+// signed power-of-two positivity and >= 1 laws below bottom out in.
+verify pow2 law positive
+    given k: Int = [0, 1, 4]
+    pow2(k) >= 1 holds
+
+// A float in the paper's representation (Section 5.1, p.10): a sign in {+1,-1}, a
+// normalized n-bit significand integer, an integer exponent, and the width n. The
+// rational significand is sigBits / 2^(width-1), normalized into [1, 2).
+record Fp
+    sign: Int
+    sigBits: Int
+    exp: Int
+    width: Int
+
+fn isFp(f: Fp) -> Bool
+    ? "The format/normalization predicate (p.10-11): sign +1 or -1 and the significand integer normalized into [2^(width-1), 2^width), i.e. the rational significand in [1, 2)."
+    Bool.and(Bool.or(f.sign == 1, f.sign == -1), Bool.and(pow2(f.width - 1) <= f.sigBits, f.sigBits < pow2(f.width)))
+
+verify isFp
+    isFp(Fp(sign = 1, sigBits = 8, exp = 0, width = 4)) => true
+    isFp(Fp(sign = -1, sigBits = 15, exp = 3, width = 4)) => true
+    isFp(Fp(sign = 1, sigBits = 16, exp = 0, width = 4)) => false
+    isFp(Fp(sign = 1, sigBits = 7, exp = 0, width = 4)) => false
+    isFp(Fp(sign = 2, sigBits = 8, exp = 0, width = 4)) => false
+
+fn fpValue(f: Fp) -> Fraction
+    ? "The denoted value as an exact rational (for exp >= 0): sign * sigBits * 2^exp over 2^(width-1) = sign * (sigBits/2^(width-1)) * 2^exp."
+    Domain.Rational.Fraction(top = f.sign * f.sigBits * pow2(f.exp), bottom = pow2(f.width - 1))
+
+verify fpValue
+    fpValue(Fp(sign = 1, sigBits = 8, exp = 0, width = 4)) => Domain.Rational.Fraction(top = 8, bottom = 8)
+    fpValue(Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => Domain.Rational.Fraction(top = 24, bottom = 8)
+    fpValue(Fp(sign = -1, sigBits = 10, exp = 2, width = 4)) => Domain.Rational.Fraction(top = -40, bottom = 8)
+
+fn pow2Fraction(j: Int) -> Fraction
+    ? "The rational 2^j (for j >= 0) as the fraction 2^j / 1 -- the scale factor of Lemma 7.1.2."
+    Domain.Rational.Fraction(top = pow2(j), bottom = 1)
+
+fn pow2Signed(k: Int) -> Fraction
+    ? "The exact rational 2^k for ANY integer k (Section 5.1, p.13: ulp(x,n) = 2^(e_x - n + 1) is a true fraction when e_x - n + 1 < 0). For k >= 0 it is 2^k / 1; for k < 0 it is 1 / 2^(-k). Faithful denotation of 2^k over the rationals -- the form the rounding error bound 2^(e_x - i + 1) of Lemma 7.2.2 needs, since that exponent is negative whenever i > e_x + 1."
+    match k < 0
+        true -> Domain.Rational.Fraction(top = 1, bottom = pow2(0 - k))
+        false -> Domain.Rational.Fraction(top = pow2(k), bottom = 1)
+
+verify pow2Signed
+    pow2Signed(0) => Domain.Rational.Fraction(top = 1, bottom = 1)
+    pow2Signed(3) => Domain.Rational.Fraction(top = 8, bottom = 1)
+    pow2Signed(-2) => Domain.Rational.Fraction(top = 1, bottom = 4)
+
+// For a nonnegative exponent the signed power of two is the ordinary
+// 2^k / 1 -- pow2Signed extends pow2Fraction to negative exponents and
+// agrees with it on the nonnegative half.
+verify pow2Signed law agreesWithPow2Fraction
+    given k: Int = [0, 1, 4]
+    when k >= 0
+    Domain.Rational.sameValue(pow2Signed(k), pow2Fraction(k)) holds
+
+fn pow2SignedHomomorphism(m: Int, n: Int) -> Bool
+    ? "The signed power-of-two homomorphism over the rationals: 2^(m+n) = 2^m * 2^n for ANY integers m, n (Section 5.1, p.10 -- the value model 2^e is an exact rational for every integer e). The integer law pow2(m+n) = pow2(m)*pow2(n) holds only for nonnegative m, n (pow2 clamps to 1 below zero); pow2Signed denotes 2^e faithfully for negative e, so its homomorphism is unconditional. The kernel divider lives in fractional floats (exp < 0), so this is the law the general-exponent value fpValueGeneral and the all-exponent rounding bounds compose through."
+    Domain.Rational.sameValue(pow2Signed(m + n), Domain.Rational.times(pow2Signed(m), pow2Signed(n)))
+
+verify pow2SignedHomomorphism
+    pow2SignedHomomorphism(0, 0) => true
+    pow2SignedHomomorphism(2, 3) => true
+    pow2SignedHomomorphism(-2, 3) => true
+    pow2SignedHomomorphism(-2, -3) => true
+    pow2SignedHomomorphism(3, -5) => true
+    pow2SignedHomomorphism(1, -2) => true
+
+// The signed power-of-two homomorphism 2^(m+n) = 2^m * 2^n for ANY integers m, n
+// (Section 5.1, p.10). The plain pow2 homomorphism above holds only for nonnegative
+// exponents (pow2 clamps to 1 below zero); pow2Signed is the faithful 2^e for every
+// integer e, so its homomorphism drops the nonnegativity premise -- the law the
+// fractional-float kernel (exp < 0) needs. pow2Signed only ever calls pow2 on a
+// NONNEGATIVE argument (it negates the exponent in the k < 0 branch), so after the
+// sign branches are case-split every arm reduces to a product of pow2 of nonnegative
+// atoms: the existing pow2-of-nonneg-linear-form normalizer (the homomorphism keyed
+// on its PRODUCT side, plus the successor step) canonicalizes each, CITING the proven
+// pow2 homomorphism -- the same generic mechanism that closes fpMulValue, no
+// per-figure proof.
+verify pow2SignedHomomorphism law signedHomomorphism
+    given m: Int = [-3, -1, 0, 2, 5]
+    given n: Int = [-2, 0, 3]
+    pow2SignedHomomorphism(m, n) holds
+
+fn fpValueGeneral(f: Fp) -> Fraction
+    ? "The denoted value as an exact rational for ANY exponent (Section 5.1, p.10): sign * (sigBits/2^(width-1)) * 2^exp, with 2^exp the signed power of two pow2Signed(exp). Faithful for negative exponents too -- where fpValue's pow2(exp) clamps to 1 -- and equal to fpValue for exp >= 0. The kernel divider's reciprocal estimate and quotient digits all have exp < 0, so this is the value the §8/§9 lemmas read."
+    Domain.Rational.times(pow2Signed(f.exp), Domain.Rational.Fraction(top = f.sign * f.sigBits, bottom = pow2(f.width - 1)))
+
+verify fpValueGeneral
+    fpValueGeneral(Fp(sign = 1, sigBits = 8, exp = 0, width = 4)) => Domain.Rational.Fraction(top = 8, bottom = 8)
+    fpValueGeneral(Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => Domain.Rational.Fraction(top = 24, bottom = 8)
+    fpValueGeneral(Fp(sign = 1, sigBits = 8, exp = -3, width = 4)) => Domain.Rational.Fraction(top = 8, bottom = 64)
+    fpValueGeneral(Fp(sign = -1, sigBits = 10, exp = -2, width = 4)) => Domain.Rational.Fraction(top = -10, bottom = 32)
+
+fn fpValueEqualsGeneralWhenNonnegExp(f: Fp) -> Bool
+    ? "For a nonnegative exponent the general-exponent value agrees with fpValue: pow2Signed(exp) = pow2(exp)/1 when exp >= 0, so the two denotations cross-multiply equal. fpValueGeneral extends fpValue to negative exponents and reproduces it on the nonnegative half."
+    Domain.Rational.sameValue(fpValue(f), fpValueGeneral(f))
+
+verify fpValueEqualsGeneralWhenNonnegExp
+    fpValueEqualsGeneralWhenNonnegExp(Fp(sign = 1, sigBits = 8, exp = 0, width = 4)) => true
+    fpValueEqualsGeneralWhenNonnegExp(Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => true
+    fpValueEqualsGeneralWhenNonnegExp(Fp(sign = -1, sigBits = 10, exp = 2, width = 4)) => true
+
+// The general-exponent value agrees with fpValue on nonnegative exponents:
+// pow2Signed(exp) reduces to pow2(exp)/1 when exp >= 0 (its k < 0 branch is dead),
+// so fpValueGeneral cross-multiplies equal to fpValue -- a commutative-ring identity
+// closed by the equational keystone after the `when 0 <= f.exp` premise reduces the
+// pow2Signed match. No power-of-two rearrangement: the single pow2(exp) factor stands
+// identically on both sides.
+verify fpValueEqualsGeneralWhenNonnegExp law agreesOnNonnegExp
+    given f: Fp = [Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = -1, sigBits = 12, exp = 2, width = 4), Fp(sign = 1, sigBits = 10, exp = 1, width = 4)]
+    when 0 <= f.exp
+    fpValueEqualsGeneralWhenNonnegExp(f) holds
+
+fn fpScale(f: Fp, j: Int) -> Fp
+    ? "Scale by 2^j (Lemma 7.1.2, p.18): shift the exponent by j, renormalizing NOTHING -- sign, significand and width are untouched."
+    Fp(sign = f.sign, sigBits = f.sigBits, exp = f.exp + j, width = f.width)
+
+verify fpScale
+    fpScale(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), 3) => Fp(sign = 1, sigBits = 8, exp = 3, width = 4)
+    fpScale(Fp(sign = -1, sigBits = 10, exp = 2, width = 4), -5) => Fp(sign = -1, sigBits = 10, exp = -3, width = 4)
+
+fn fpScaleKeepsSignificand(f: Fp, j: Int) -> Bool
+    ? "Lemma 7.1.2 (p.18), significand half: s(x*2^j) = s_x."
+    fpScale(f, j).sigBits == f.sigBits
+
+verify fpScaleKeepsSignificand
+    fpScaleKeepsSignificand(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), 3) => true
+
+// Lemma 7.1.2 (p.18): "If j is an integer, s(x*2^j) = s_x." The significand is
+// invariant under scaling -- here definitional, because fpScale touches only exp.
+verify fpScaleKeepsSignificand law significandInvariant
+    given f: Fp = [Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = -1, sigBits = 12, exp = 2, width = 4)]
+    given j: Int = [-5, 0, 3]
+    fpScaleKeepsSignificand(f, j) holds
+
+fn fpScaleShiftsExponent(f: Fp, j: Int) -> Bool
+    ? "Lemma 7.1.2 (p.18), exponent half: e(x*2^j) = e_x + j."
+    fpScale(f, j).exp == f.exp + j
+
+verify fpScaleShiftsExponent
+    fpScaleShiftsExponent(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), 3) => true
+
+// Lemma 7.1.2 (p.18): "If j is an integer, e(x*2^j) = e_x + j." The exponent shifts
+// by exactly j under scaling -- here definitional.
+verify fpScaleShiftsExponent law exponentShift
+    given f: Fp = [Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = -1, sigBits = 12, exp = 2, width = 4)]
+    given j: Int = [-5, 0, 3]
+    fpScaleShiftsExponent(f, j) holds
+
+fn fpScalePreservesValue(f: Fp, j: Int) -> Bool
+    ? "Folklore corollary of Lemma 7.1.2: scaling multiplies the denoted value by 2^j."
+    Domain.Rational.sameValue(fpValue(fpScale(f, j)), Domain.Rational.times(fpValue(f), pow2Fraction(j)))
+
+verify fpScalePreservesValue
+    fpScalePreservesValue(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), 3) => true
+
+// Floating-point folklore (the value form of Lemma 7.1.2, p.18): scaling by 2^j
+// multiplies the denoted rational by 2^j. NOT a numbered paper lemma -- it is the
+// laws-as-lemmas composition: cross-multiplied it asks pow2(exp+j) = pow2(exp)*
+// pow2(j), so it CITES the pow2 homomorphism above; the engine adds only the
+// citation skeleton, the algebra lives entirely as the cited Aver law.
+verify fpScalePreservesValue law scalesByPowerOfTwo
+    given f: Fp = [Fp(sign = 1, sigBits = 8, exp = 1, width = 4), Fp(sign = -1, sigBits = 12, exp = 0, width = 4)]
+    given j: Int = [0, 2, 3]
+    when f.exp >= 0
+    when j >= 0
+    fpScalePreservesValue(f, j) holds
+
+fn fpMul(a: Fp, b: Fp) -> Fp
+    ? "Multiply floats (p.18 structure): multiply significands, add exponents, then NORMALIZE the rational significand s_a*s_b in [1,4) back into [1,2) by shifting the exponent 0 or 1 (Lemma 7.1.7) -- value-preserving, never rounding, so the product is exact in width_a+width_b bits (Lemma 7.2.12)."
+    match a.sigBits * b.sigBits < pow2(a.width + b.width - 1)
+        true -> Fp(sign = a.sign * b.sign, sigBits = a.sigBits * b.sigBits, exp = a.exp + b.exp, width = a.width + b.width - 1)
+        false -> Fp(sign = a.sign * b.sign, sigBits = a.sigBits * b.sigBits, exp = a.exp + b.exp + 1, width = a.width + b.width)
+
+verify fpMul
+    fpMul(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => Fp(sign = 1, sigBits = 96, exp = 1, width = 7)
+    fpMul(Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 0, width = 4)) => Fp(sign = 1, sigBits = 144, exp = 1, width = 8)
+
+fn productExp(a: Fp, b: Fp) -> Int
+    ? "The exponent of the product float e(x*y) -- either e_a+e_b or e_a+e_b+1 depending on whether the significand product overflows [1,2)."
+    fpMul(a, b).exp
+
+fn productExpInRange(a: Fp, b: Fp) -> Bool
+    ? "Lemma 7.1.7 (p.18): the product exponent lies in [e_a + e_b, e_a + e_b + 1]."
+    Bool.and(a.exp + b.exp <= productExp(a, b), productExp(a, b) <= a.exp + b.exp + 1)
+
+verify productExpInRange
+    productExpInRange(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => true
+    productExpInRange(Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 0, width = 4)) => true
+
+// Lemma 7.1.7 (p.18): "If x != 0 and y != 0 then e_x + e_y <= e(x*y) <= e_x +
+// e_y + 1." The product exponent is e_a + e_b plus the normalization shift of 0
+// or 1, so it lands in that closed range whichever branch fpMul takes. A
+// nonzero float here is one with a nonzero significand (a zero significand is
+// the only way the denoted rational vanishes), matching the paper's x != 0.
+verify productExpInRange law productExponentBounds
+    given a: Fp = [Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = -1, sigBits = 12, exp = 2, width = 4)]
+    given b: Fp = [Fp(sign = 1, sigBits = 12, exp = 1, width = 4), Fp(sign = 1, sigBits = 11, exp = 0, width = 4)]
+    when a.sigBits != 0
+    when b.sigBits != 0
+    productExpInRange(a, b) holds
+
+fn fpMulValue(a: Fp, b: Fp) -> Bool
+    ? "Multiplication denotes the product of the denoted values (folklore)."
+    Domain.Rational.sameValue(fpValueGeneral(fpMul(a, b)), Domain.Rational.times(fpValueGeneral(a), fpValueGeneral(b)))
+
+verify fpMulValue
+    fpMulValue(Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 1, width = 4)) => true
+    fpMulValue(Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Fp(sign = 1, sigBits = 12, exp = 0, width = 4)) => true
+    fpMulValue(Fp(sign = -1, sigBits = 10, exp = 2, width = 4), Fp(sign = 1, sigBits = 11, exp = 1, width = 4)) => true
+    fpMulValue(Fp(sign = 1, sigBits = 8, exp = -3, width = 4), Fp(sign = -1, sigBits = 12, exp = -2, width = 4)) => true
+
+// Floating-point folklore (the denotation of multiplication): the product float
+// denotes the product of the values. NOT a numbered paper lemma -- labelled folklore,
+// the denotation of multiplication. Universal on the Lean kernel at EVERY exponent --
+// it reads the general-exponent value fpValueGeneral, so it holds for the fractional
+// floats (exp < 0) the kernel divider lives in, not just exp >= 0. It is the project's
+// laws-as-lemmas composition at its sharpest: it re-proves nothing about powers of two,
+// it CITES two proven homomorphisms. The WIDTH denominator pow2(width_a + width_b - 2)
+// is pow2(width_a - 1) * pow2(width_b - 1) -- the integer homomorphism pow2(m+n) ==
+// pow2(m)*pow2(n) at a rearranged/shifted exponent, canonicalized by the
+// pow2-of-nonneg-linear-form normalizer (product-side + successor patterns). The
+// EXPONENT factor pow2Signed(a.exp + b.exp [+1]) is times(pow2Signed a.exp,
+// pow2Signed b.exp) [* 2] -- the SIGNED homomorphism pow2SignedHomomorphism above,
+// which (unlike the integer one) holds for negative exponents too. Because the signed
+// power of two is only sameValue-equal (not structurally equal) across mixed signs, the
+// engine cites it in cross-multiplied form through a second GENERIC normalizer keyed on
+// the SUM side pow2Signed(m+n) / pow2Signed(m+n+1) (shape-keyed on the signed
+// power-of-two cone fn, never a per-figure template). Whichever branch fpMul takes, the
+// two sides cross-multiply equal.
+verify fpMulValue law denotesProduct
+    given a: Fp = [Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Fp(sign = -1, sigBits = 10, exp = 2, width = 4), Fp(sign = 1, sigBits = 8, exp = -3, width = 4)]
+    given b: Fp = [Fp(sign = 1, sigBits = 12, exp = 1, width = 4), Fp(sign = 1, sigBits = 11, exp = 0, width = 4), Fp(sign = -1, sigBits = 12, exp = -2, width = 4)]
+    when a.width >= 1
+    when b.width >= 1
+    fpMulValue(a, b) holds
+
+fn pow2SignedPositive(k: Int) -> Bool
+    ? "Positivity of the signed power of two over the rationals: both the numerator and the denominator of 2^k are strictly positive, for ANY integer k (Section 5.1, p.13). Each sign branch of pow2Signed is a power of two over 1 or 1 over a power of two, and the power of two is always positive."
+    Bool.and(pow2Signed(k).top > 0, pow2Signed(k).bottom > 0)
+
+verify pow2SignedPositive
+    pow2SignedPositive(0) => true
+    pow2SignedPositive(3) => true
+    pow2SignedPositive(-2) => true
+
+// Positivity of the signed power of two: numerator and denominator are both strictly
+// positive for ANY integer k. Each arm of pow2Signed reduces to the recursive
+// positivity pow2(_) >= 1, cited from the pool law above.
+verify pow2SignedPositive law positive
+    given k: Int = [-3, -1, 0, 2, 5]
+    pow2SignedPositive(k) holds
+
+fn pow2SignedDenomPositive(k: Int) -> Bool
+    ? "The signed power of two always has a strictly positive denominator. This factors out the denominator half of pow2SignedPositive as a citable pool law for rational-order reflection proofs."
+    pow2Signed(k).bottom > 0
+
+verify pow2SignedDenomPositive
+    pow2SignedDenomPositive(0) => true
+    pow2SignedDenomPositive(3) => true
+    pow2SignedDenomPositive(-2) => true
+
+verify pow2SignedDenomPositive law positive
+    given k: Int = [-3, -1, 0, 2, 5]
+    pow2SignedDenomPositive(k) holds
+
+fn pow2SignedAtLeastOne(k: Int) -> Bool
+    ? "The signed power of two is at least one for a nonnegative exponent: 2^k >= 1 when k >= 0 (Section 5.1, p.13). In the exact-rational order this is isNonNeg(2^k - 1)."
+    Domain.Rational.isNonNeg(Domain.Rational.minus(pow2Signed(k), Domain.Rational.oneFraction()))
+
+verify pow2SignedAtLeastOne
+    pow2SignedAtLeastOne(0) => true
+    pow2SignedAtLeastOne(3) => true
+
+// The signed power of two is at least one for a nonnegative exponent: 2^k >= 1 when
+// k >= 0. The premise kills the negative arm of pow2Signed, reducing the claim to the
+// recursive positivity pow2(k) >= 1 cited from the pool law above.
+verify pow2SignedAtLeastOne law geOne
+    given k: Int = [0, 1, 4]
+    when k >= 0
+    pow2SignedAtLeastOne(k) holds
+
+fn pow2SignedMonotone(m: Int, n: Int) -> Bool
+    ? "Monotonicity of the signed power of two over the rationals: m <= n implies 2^m <= 2^n for ANY integers m, n (Section 5.1, p.13). In the project's exact-rational order, 2^m <= 2^n is isNonNeg(2^n - 2^m). The integer pow2 is monotone only on the nonnegative half (it clamps to 1 below zero); pow2Signed denotes 2^k faithfully for every integer k, so its monotonicity is unconditional once m <= n -- the order fact the rounding-error bounds (each 2^(e - i + 1) with the exponent often negative) and the reciprocal-estimate refinement chain in sections 8 and 9 compose through."
+    Domain.Rational.isNonNeg(Domain.Rational.minus(pow2Signed(n), pow2Signed(m)))
+
+verify pow2SignedMonotone
+    pow2SignedMonotone(0, 0) => true
+    pow2SignedMonotone(1, 3) => true
+    pow2SignedMonotone(-3, -1) => true
+    pow2SignedMonotone(-2, 2) => true
+
+// Monotonicity of the signed power of two 2^m <= 2^n for ANY integers m <= n
+// (Section 5.1, p.13). The plain pow2 is monotone only for nonnegative exponents
+// (it clamps to 1 below zero); pow2Signed is the faithful 2^k for every integer k,
+// so its monotonicity drops to the single premise m <= n -- the order fact the
+// fractional-float kernel (exp < 0) needs. The proof case-splits the two sign
+// branches of pow2Signed and reduces each arm to the integer monotonicity and
+// positivity of pow2 on nonnegative arguments: the generic signed-power-of-two
+// monotonicity strategy supplies the power algebra (pow2.induct positivity and
+// monotonicity) and the four-way sign scaffold, keyed on the term shape
+// isNonNeg(minus(pow2Signed(_), pow2Signed(_))), never a per-figure template.
+verify pow2SignedMonotone law allExponents
+    given m: Int = [-3, -1, 0, 2, 5]
+    given n: Int = [-2, 0, 3]
+    when m <= n
+    pow2SignedMonotone(m, n) holds
+
+fn pow2SignedLtReflect(a: Int, b: Int) -> Bool
+    ? "The order-inverse of pow2SignedMonotone: the signed power of two reflects strict order, 2^a < 2^b implies a < b for ANY integers a, b (Section 5.1, p.13). This is the magnitude-to-exponent direction the digit-separation Lemma 8.2.1 needs: a strict magnitude bound 2^a < 2^b forces the exponent inequality a < b."
+    a < b
+
+verify pow2SignedLtReflect law fromStrictOrder
+    given a: Int = [-3, -1, 0, 2, 5]
+    given b: Int = [-2, 0, 3, 6]
+    when Domain.Rational.lessThan(pow2Signed(a), pow2Signed(b))
+    pow2SignedLtReflect(a, b) holds
+
+fn fracExpoFromMagnitude(absX: Fraction, e: Int, m: Int) -> Bool
+    ? "Fundamental theorem about the binary exponent (B2 of the digit-separation proof, Lemma 8.2.1): if 2^e <= |x| and |x| < 2^m then e <= m - 1. The magnitude-to-exponent counting step 8.2.1 invokes, on the genuine rational order and signed power of two. Composed from the rational le-then-lt order chain (2^e <= |x| < 2^m gives 2^e < 2^m) closed by the order-reflecting inverse pow2SignedLtReflect."
+    e <= m - 1
+
+verify fracExpoFromMagnitude law fundamentalExponent
+    given absX: Fraction = [Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 5, bottom = 1), Domain.Rational.Fraction(top = 3, bottom = 4)]
+    given e: Int = [0, 2, -1]
+    given m: Int = [1, 3, 0]
+    when 0 < absX.bottom
+    when Domain.Rational.isNonNeg(Domain.Rational.minus(absX, pow2Signed(e)))
+    when Domain.Rational.lessThan(absX, pow2Signed(m))
+    fracExpoFromMagnitude(absX, e, m) holds

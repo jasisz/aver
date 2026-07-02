@@ -1,0 +1,562 @@
+module Kernel
+    intent =
+        "Stage 3 of the K5 division proof: the kernel divider itself. This is the"
+        "headline -- the 32 straight-line steps of the AMD5K86 floating-point division"
+        "algorithm (Figure 1, p.2) modelled as ordinary Aver code, and the two"
+        "correctness theorems (Theorem 1 Section 8 p.22, Theorem 2 Section 9 p.30)"
+        "stated and SAMPLE-VERIFIED at runtime."
+        "FAITHFULNESS: this models the paper's NON-ERRONEOUS semantic functions"
+        "(Figure 4, p.17), which operate on exact RATIONALS (the Stage-0 Fraction). The"
+        "32 steps are reproduced one-for-one: lookup (step 1), two Newton-Raphson"
+        "reciprocal refinements (steps 2-6) giving sd2 ~ 1/d, the high/low split of d"
+        "(steps 7-8), four quotient digits q0..q3 with EXACT partial remainders p1..p3"
+        "(steps 9-29), the round-to-odd sticky sum of the digits (steps 30-31), and the"
+        "final round to the requested mode (step 32). The rounding procedures trunc,"
+        "away and sticky (Section 5.2, p.13) and the six-way rounding-mode dispatch"
+        "round (Section 5.3, p.14) are reproduced on the rationals; comp is the Newton"
+        "ones-complement 2 - x (Section 1.1, p.3). The rational trunc/away/sticky here"
+        "AGREE on values with the proven significand-level fpTrunc/fpAway/fpSticky of"
+        "domain/round.av (checked: trunc/away/sticky of 13/8 to 3 bits give 6/4, 7/4,"
+        "7/4, matching fpValue of the Fp versions) -- Theorem 1's eventual proof bridges"
+        "the two. The runnable expo (fracExpo) is the binary-exponent function the"
+        "Stage-1/2 proofs avoid by storing the exponent on the normalized Fp model; it"
+        "is fine here because Stage 3 is the runnable model, not yet a kernel proof."
+        "HONESTY: Theorem 1 (divideBangCorrect) and Theorem 2 (divideMatchesBang) are"
+        "stated as SAMPLE-VERIFIED Bool functions (concrete inputs, runtime aver verify),"
+        "NOT as `law` blocks -- they depend on the unproven Section 8/9 lemmas and must"
+        "NOT be credited universal. The only universal `law` blocks here are narrow,"
+        "faithfully-premised facts: significandWindow (the binary-exponent magnitude"
+        "bracket) and theorem_2 (Theorem 2's wrapper-correctness -- divide returns Ok of"
+        "the non-erroneous value, conditional on the premised Section 9.3 result-exponent"
+        "bracket); the full Theorems 1/2 stay sample-verified. The cited holes are:"
+        "8.1.1 reciprocal bound (Estimate NR bounds + the 128-entry Table 1, by"
+        "computation), 8.2.1 digit separation, 8.2.3-4 remainder bounds, 7.3.2"
+        "sticky-plus, 7.3.1 final-round-commutes, and the Section 9 exponent/precision"
+        "bounds for Theorem 2; plus general-exp fpValue (the kernel lives in fractional"
+        "floats, exp < 0, where the current fpValue clamps to 1)."
+    depends [Domain.Rational, Domain.Fprep, Domain.Round]
+    exposes [RoundingMode, fracSign, halve, expoAtLeastOne, twoPow, binadeSig, binadeWindow, fracExpo, truncFrac, awayFrac, stickyFrac, nearestFrac, posinfFrac, neginfFrac, round, compFrac, reciprocalEstimate, lookup, quotient, divideBang, inField, divide, divideBangCorrect, divideMatchesBang, divideCorrect, finalRoundCommutes_7_3_1, stickyPlus_7_3_2, stickyPerturbStable_7_3_3, truncSticky_rtl, stickySticky_rtl, stickyPlusExact_rtl]
+    effects []
+
+// ---------------------------------------------------------------------------
+// Sign, magnitude and the runnable binary exponent (expo).
+// ---------------------------------------------------------------------------
+
+fn fracSign(x: Fraction) -> Int
+    ? "The sign of a fraction's value: +1 if nonnegative (top*bottom >= 0), -1 if negative. Zero takes +1, which is harmless because a zero significand denotes the zero value with either sign."
+    match x.top * x.bottom >= 0
+        true -> 1
+        false -> 0 - 1
+
+verify fracSign
+    fracSign(Domain.Rational.Fraction(top = 3, bottom = 4)) => 1
+    fracSign(Domain.Rational.Fraction(top = -3, bottom = 4)) => 0 - 1
+    fracSign(Domain.Rational.Fraction(top = 3, bottom = -4)) => 0 - 1
+
+fn halve(p: Int) -> Int
+    ? "Floor half of p; total because the divisor is the literal 2 (Result.withDefault recovers the always-Ok Int.div)."
+    Result.withDefault(Int.div(p, 2), 0)
+
+verify halve
+    halve(9) => 4
+    halve(8) => 4
+
+fn expoAtLeastOne(a: Int, b: Int) -> Int
+    ? "floor(log2(a/b)) for a/b >= 1 (a, b > 0): the binary exponent e with 2^e * b <= a < 2^(e+1) * b. Found by repeatedly HALVING a (well-founded floor recursion: each step floor-halves a and counts one binade) until a drops below 2*b. The dead b < 1 -> 0 guard makes the recursion total at every b. Replaces the earlier double-b recursion -- same value on the a/b >= 1 domain, but well-founded, so the binary exponent is no longer opaque and its magnitude-bracket binding law (significandWindow) is provable."
+    match b < 1
+        true -> 0
+        false -> match a < 2 * b
+            true -> 0
+            false -> 1 + expoAtLeastOne(halve(a), b)
+
+verify expoAtLeastOne
+    expoAtLeastOne(1, 1) => 0
+    expoAtLeastOne(3, 1) => 1
+    expoAtLeastOne(8, 1) => 3
+
+fn expoBelowOne(p: Int, q: Int) -> Int
+    ? "floor(log2(p/q)) for 0 < p/q < 1 (p, q > 0): repeatedly double the value until it reaches 1/2, counting negative steps."
+    twoP = 2 * p
+    match twoP >= q
+        true -> 0 - 1
+        false -> (0 - 1) + expoBelowOne(twoP, q)
+
+verify expoBelowOne
+    expoBelowOne(1, 2) => 0 - 1
+    expoBelowOne(1, 3) => 0 - 2
+    expoBelowOne(1, 8) => 0 - 3
+
+fn fracExpo(x: Fraction) -> Int
+    ? "The binary exponent e_x of a NONZERO rational (Section 5.1, p.10): the integer e with 2^e <= |x| < 2^(e+1). The runnable form of the paper's expo, by repeated halving/doubling of the magnitude; the Stage-1/2 proofs sidestep it by storing the exponent on the normalized Fp model."
+    match Domain.Rational.absInt(x.top) >= Domain.Rational.absInt(x.bottom)
+        true -> expoAtLeastOne(Domain.Rational.absInt(x.top), Domain.Rational.absInt(x.bottom))
+        false -> expoBelowOne(Domain.Rational.absInt(x.top), Domain.Rational.absInt(x.bottom))
+
+verify fracExpo
+    fracExpo(Domain.Rational.Fraction(top = 8, bottom = 1)) => 3
+    fracExpo(Domain.Rational.Fraction(top = 3, bottom = 1)) => 1
+    fracExpo(Domain.Rational.Fraction(top = 1, bottom = 1)) => 0
+    fracExpo(Domain.Rational.Fraction(top = 1, bottom = 8)) => 0 - 3
+    fracExpo(Domain.Rational.Fraction(top = 1, bottom = 3)) => 0 - 2
+
+// ---------------------------------------------------------------------------
+// The magnitude bracket that BINDS the binary exponent (Section 5.1, p.10).
+// The exponent e = expoAtLeastOne(p, q) is DEFINED by 2^e * q <= p < 2^(e+1) * q;
+// equivalently, the n-bit scaled significand of p/q lands in its normalized
+// window [2^(n-1), 2^n). binadeSig is that significand, binadeWindow the window
+// predicate, and the law significandWindow PROVES the bracket holds for every
+// p >= q >= 1 and width n >= 1 -- now that expoAtLeastOne is a well-founded
+// (floor-halving) recursion, this law is provable universally (it was an
+// unbound premise while the doubling expo was kernel-opaque).
+// ---------------------------------------------------------------------------
+
+fn twoPow(n: Int) -> Int
+    ? "Two to the n for n >= 0 (and 1 for n <= 0): the integer power-of-two scale of the binade window. A LOCAL countdown copy of the power-of-two -- the floor-window figure that proves significandWindow matches the scale fn by its in-module recursive shape, so the window uses this local twoPow rather than the cross-module Domain.Fprep.pow2 (same values)."
+    match n <= 0
+        true -> 1
+        false -> 2 * twoPow(n - 1)
+
+verify twoPow
+    twoPow(0) => 1
+    twoPow(3) => 8
+
+fn binadeSig(p: Int, q: Int, n: Int) -> Int
+    ? "The n-bit scaled significand of the ratio p/q for p >= q >= 1 (Section 5.1, p.10): floor((p/q) * 2^(n-1-e)) with e = expoAtLeastOne(p, q) the binary exponent. Scaling p/q (which lies in [2^e, 2^(e+1)) * q / q = [2^e, 2^(e+1))) down by 2^e and up by 2^(n-1) lands it in [2^(n-1), 2^n) -- the integer significand of the paper's normalized representation."
+    e = expoAtLeastOne(p, q)
+    s = n - 1 - e
+    match s >= 0
+        true -> Result.withDefault(Int.div(p * twoPow(s), q), 0)
+        false -> Result.withDefault(Int.div(p, q * twoPow(0 - s)), 0)
+
+verify binadeSig
+    binadeSig(5, 2, 2) => 2
+    binadeSig(7, 2, 2) => 3
+    binadeSig(1, 1, 1) => 1
+
+fn binadeWindow(p: Int, q: Int, n: Int) -> Bool
+    ? "The width-n significand of p/q lies in its power-of-two window: 2^(n-1) <= binadeSig(p, q, n) < 2^n -- the normalization condition that the binary exponent expoAtLeastOne(p, q) is exactly the one that satisfies (Section 5.1, p.10)."
+    j = binadeSig(p, q, n)
+    Bool.and(twoPow(n - 1) <= j, j < twoPow(n))
+
+verify binadeWindow
+    binadeWindow(5, 2, 2) => true
+    binadeWindow(15, 4, 4) => true
+
+// The magnitude bracket binding the binary exponent (Section 5.1, p.10): for a
+// ratio p/q with p >= q >= 1 and any width n >= 1, the scaled significand sits in
+// its normalized window [2^(n-1), 2^n) -- i.e. 2^e * q <= p < 2^(e+1) * q with
+// e = expoAtLeastOne(p, q). This is the fact that BINDS the abstract exponent to
+// the real magnitude; the K5 exponent lemmas state it as a premise over abstract
+// Int exponents, and this law discharges it once and for all. Closed universal by
+// the floor-division window figure already in the engine (the well-founded
+// floor-halving exponent + the Euclidean div window over the power-of-two scale),
+// no hand tactic and no per-figure proof.
+verify binadeSig law significandWindow
+    given p: Int = [1, 2, 5, 7]
+    given q: Int = [1, 2, 4]
+    given n: Int = [1, 2, 3]
+    when q >= 1
+    when p >= q
+    when n >= 1
+    binadeWindow(p, q, n) => true
+
+// ---------------------------------------------------------------------------
+// The rounding procedures on rationals (Section 5.2, p.13).
+// Each rounds the rational x to n significant bits: e = fracExpo(x), the ulp is
+// 2^(e-n+1), and the result is sign_x * (integer multiple) * ulp.
+// These AGREE on values with domain/round.av's significand-level fpTrunc /
+// fpAway / fpSticky (which act on the already-normalized Fp model).
+// ---------------------------------------------------------------------------
+
+fn ceilDiv(a: Int, b: Int) -> Int
+    ? "Ceiling of a / b for a >= 0, b > 0 -- the magnitude rounded up, used by away (round away from zero)."
+    Domain.Round.floorDiv(a + b - 1, b)
+
+verify ceilDiv
+    ceilDiv(52, 8) => 7
+    ceilDiv(48, 8) => 6
+    ceilDiv(59, 8) => 8
+
+fn truncFrac(x: Fraction, n: Int) -> Fraction
+    ? "trunc(x,n) (Section 5.2, p.13): round x TOWARD ZERO to n significant bits. The ulp is 2^(e_x - n + 1); the result is sign_x * floor(|x| / ulp) * ulp. Agrees with fpValue(fpTrunc(.)) on the normalized model."
+    match x.top == 0
+        true -> Domain.Rational.zeroFraction()
+        false -> Domain.Rational.Fraction(top = fracSign(x) * Domain.Round.floorDiv(Domain.Rational.absInt(x.top) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).bottom, Domain.Rational.absInt(x.bottom) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).top) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).top, bottom = Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).bottom)
+
+verify truncFrac
+    Domain.Rational.sameValue(truncFrac(Domain.Rational.Fraction(top = 13, bottom = 8), 3), Domain.Rational.Fraction(top = 6, bottom = 4)) => true
+    Domain.Rational.sameValue(truncFrac(Domain.Rational.Fraction(top = 7, bottom = 2), 24), Domain.Rational.Fraction(top = 7, bottom = 2)) => true
+    Domain.Rational.sameValue(truncFrac(Domain.Rational.Fraction(top = -13, bottom = 8), 3), Domain.Rational.Fraction(top = -6, bottom = 4)) => true
+
+fn awayFrac(x: Fraction, n: Int) -> Fraction
+    ? "away(x,n) (Section 5.2, p.13): round x AWAY FROM ZERO to n significant bits -- the magnitude rounded up (ceiling). The ulp is 2^(e_x - n + 1); the result is sign_x * ceil(|x| / ulp) * ulp. Agrees with fpValue(fpAway(.)) on the normalized model."
+    match x.top == 0
+        true -> Domain.Rational.zeroFraction()
+        false -> Domain.Rational.Fraction(top = fracSign(x) * ceilDiv(Domain.Rational.absInt(x.top) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).bottom, Domain.Rational.absInt(x.bottom) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).top) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).top, bottom = Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).bottom)
+
+verify awayFrac
+    Domain.Rational.sameValue(awayFrac(Domain.Rational.Fraction(top = 13, bottom = 8), 3), Domain.Rational.Fraction(top = 7, bottom = 4)) => true
+    Domain.Rational.sameValue(awayFrac(Domain.Rational.Fraction(top = 12, bottom = 8), 3), Domain.Rational.Fraction(top = 6, bottom = 4)) => true
+    Domain.Rational.sameValue(awayFrac(Domain.Rational.Fraction(top = -13, bottom = 8), 3), Domain.Rational.Fraction(top = -7, bottom = 4)) => true
+
+fn stickyFrac(x: Fraction, n: Int) -> Fraction
+    ? "sticky(x,n) in the faithful round-to-odd (RTL/rto) form (domain/round.av, ACL2 RTL lineage): truncate to n-1 bits, then force the n-th bit to 1 unless x already fits in n-1 bits. With h = floor(|x| / 2^(e_x-n+2)) the n-bit multiple is 2*h if x fits exactly in n-1 bits, else 2*h+1. (NOT the draft paper's printed stickyn branch, a known typo.) Agrees with fpValue(fpSticky(.)) on the normalized model."
+    match x.top == 0
+        true -> Domain.Rational.zeroFraction()
+        false -> stickyFromHalf(x, n, Domain.Round.floorDiv(Domain.Rational.absInt(x.top) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 2).bottom, Domain.Rational.absInt(x.bottom) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 2).top))
+
+fn stickyFromHalf(x: Fraction, n: Int, h: Int) -> Fraction
+    ? "Assemble the round-to-odd sticky result from the (n-1)-bit floor multiple h: the n-bit multiple is 2*h if x is already exactly h * 2^(e_x-n+2) (fits in n-1 bits), else 2*h+1 (the n-th bit forced to 1). Scaled back by the n-bit ulp 2^(e_x-n+1)."
+    dbl = 2 * h
+    match Domain.Rational.absInt(x.top) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 2).bottom == Domain.Rational.absInt(x.bottom) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 2).top * h
+        true -> Domain.Rational.Fraction(top = fracSign(x) * dbl * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).top, bottom = Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).bottom)
+        false -> Domain.Rational.Fraction(top = fracSign(x) * (dbl + 1) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).top, bottom = Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).bottom)
+
+verify stickyFromHalf
+    Domain.Rational.sameValue(stickyFromHalf(Domain.Rational.Fraction(top = 13, bottom = 8), 3, 3), Domain.Rational.Fraction(top = 7, bottom = 4)) => true
+    Domain.Rational.sameValue(stickyFromHalf(Domain.Rational.Fraction(top = 12, bottom = 8), 3, 3), Domain.Rational.Fraction(top = 6, bottom = 4)) => true
+
+verify stickyFrac
+    Domain.Rational.sameValue(stickyFrac(Domain.Rational.Fraction(top = 13, bottom = 8), 3), Domain.Rational.Fraction(top = 7, bottom = 4)) => true
+    Domain.Rational.sameValue(stickyFrac(Domain.Rational.Fraction(top = 12, bottom = 8), 3), Domain.Rational.Fraction(top = 6, bottom = 4)) => true
+    Domain.Rational.sameValue(stickyFrac(Domain.Rational.Fraction(top = 6, bottom = 4), 3), Domain.Rational.Fraction(top = 6, bottom = 4)) => true
+
+fn nearestPick(lo: Int, rem: Int, b: Int) -> Int
+    ? "Round-half-to-even pick between the floor multiple lo and lo+1, given remainder rem with 0 <= rem < b: choose lo if 2*rem < b, lo+1 if 2*rem > b, and on a tie (2*rem == b) the even one."
+    match 2 * rem < b
+        true -> lo
+        false -> match 2 * rem > b
+            true -> lo + 1
+            false -> match lo - 2 * Domain.Round.floorDiv(lo, 2) == 0
+                true -> lo
+                false -> lo + 1
+
+verify nearestPick
+    nearestPick(3, 1, 4) => 3
+    nearestPick(3, 3, 4) => 4
+    nearestPick(2, 2, 4) => 2
+    nearestPick(3, 2, 4) => 4
+
+fn nearestFrac(x: Fraction, n: Int) -> Fraction
+    ? "nearest(x,n) (Section 5.3, p.14, definition omitted in the paper): round to the nearest n-bit value, ties to even (the RTL rne form). Distances to the two candidate multiples are compared by their numerators over the common ulp."
+    match x.top == 0
+        true -> Domain.Rational.zeroFraction()
+        false -> Domain.Rational.Fraction(top = fracSign(x) * nearestPick(Domain.Round.floorDiv(Domain.Rational.absInt(x.top) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).bottom, Domain.Rational.absInt(x.bottom) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).top), Domain.Rational.absInt(x.top) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).bottom - Domain.Round.floorDiv(Domain.Rational.absInt(x.top) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).bottom, Domain.Rational.absInt(x.bottom) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).top) * (Domain.Rational.absInt(x.bottom) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).top), Domain.Rational.absInt(x.bottom) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).top) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).top, bottom = Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).bottom)
+
+verify nearestFrac
+    Domain.Rational.sameValue(nearestFrac(Domain.Rational.Fraction(top = 7, bottom = 2), 24), Domain.Rational.Fraction(top = 7, bottom = 2)) => true
+    Domain.Rational.sameValue(nearestFrac(Domain.Rational.Fraction(top = 13, bottom = 8), 2), Domain.Rational.Fraction(top = 3, bottom = 2)) => true
+
+fn posinfFrac(x: Fraction, n: Int) -> Fraction
+    ? "posinf(x,n) (Section 5.3, p.14): round toward +infinity -- away for nonnegative x (ceiling magnitude), trunc for negative x (toward zero, which is toward +infinity)."
+    match Domain.Rational.isNonNeg(x)
+        true -> awayFrac(x, n)
+        false -> truncFrac(x, n)
+
+verify posinfFrac
+    Domain.Rational.sameValue(posinfFrac(Domain.Rational.Fraction(top = 13, bottom = 8), 3), Domain.Rational.Fraction(top = 7, bottom = 4)) => true
+    Domain.Rational.sameValue(posinfFrac(Domain.Rational.Fraction(top = -13, bottom = 8), 3), Domain.Rational.Fraction(top = -6, bottom = 4)) => true
+
+fn neginfFrac(x: Fraction, n: Int) -> Fraction
+    ? "neginf(x,n) (Section 5.3, p.14): round toward -infinity -- trunc for nonnegative x, away for negative x."
+    match Domain.Rational.isNonNeg(x)
+        true -> truncFrac(x, n)
+        false -> awayFrac(x, n)
+
+verify neginfFrac
+    Domain.Rational.sameValue(neginfFrac(Domain.Rational.Fraction(top = 13, bottom = 8), 3), Domain.Rational.Fraction(top = 6, bottom = 4)) => true
+    Domain.Rational.sameValue(neginfFrac(Domain.Rational.Fraction(top = -13, bottom = 8), 3), Domain.Rational.Fraction(top = -7, bottom = 4)) => true
+
+// A rounding mode (Section 5.3, p.14): a name from {trunc, away, sticky, nearest,
+// posinf, neginf} paired with a precision n. Modelled as one constructor per
+// name carrying the precision -- exactly the paper's [name n].
+type RoundingMode
+    Trunc(Int)
+    Away(Int)
+    Sticky(Int)
+    Nearest(Int)
+    Posinf(Int)
+    Neginf(Int)
+
+fn round(x: Fraction, mode: RoundingMode) -> Fraction
+    ? "round(x, [name n]) (Section 5.3, p.14): the six-way rounding-mode dispatch -- away / sticky / nearest / posinf / neginf by name, trunc otherwise."
+    match mode
+        RoundingMode.Away(n) -> awayFrac(x, n)
+        RoundingMode.Sticky(n) -> stickyFrac(x, n)
+        RoundingMode.Nearest(n) -> nearestFrac(x, n)
+        RoundingMode.Posinf(n) -> posinfFrac(x, n)
+        RoundingMode.Neginf(n) -> neginfFrac(x, n)
+        RoundingMode.Trunc(n) -> truncFrac(x, n)
+
+verify round
+    Domain.Rational.sameValue(round(Domain.Rational.Fraction(top = 13, bottom = 8), RoundingMode.Trunc(3)), Domain.Rational.Fraction(top = 6, bottom = 4)) => true
+    Domain.Rational.sameValue(round(Domain.Rational.Fraction(top = 13, bottom = 8), RoundingMode.Away(3)), Domain.Rational.Fraction(top = 7, bottom = 4)) => true
+    Domain.Rational.sameValue(round(Domain.Rational.Fraction(top = 13, bottom = 8), RoundingMode.Sticky(3)), Domain.Rational.Fraction(top = 7, bottom = 4)) => true
+    Domain.Rational.sameValue(round(Domain.Rational.Fraction(top = 13, bottom = 8), RoundingMode.Nearest(2)), Domain.Rational.Fraction(top = 3, bottom = 2)) => true
+    Domain.Rational.sameValue(round(Domain.Rational.Fraction(top = -13, bottom = 8), RoundingMode.Posinf(3)), Domain.Rational.Fraction(top = -6, bottom = 4)) => true
+    Domain.Rational.sameValue(round(Domain.Rational.Fraction(top = -13, bottom = 8), RoundingMode.Neginf(3)), Domain.Rational.Fraction(top = -7, bottom = 4)) => true
+
+// ---------------------------------------------------------------------------
+// The Newton ones-complement and the reciprocal lookup table.
+// ---------------------------------------------------------------------------
+
+fn compFrac(x: Fraction, n: Int) -> Fraction
+    ? "comp(x,n), the ones complement to n bits (Section 1.1, p.3): the Newton-Raphson correction factor 2 - x. For the sdd ~ 1 operands of the reciprocal refinement, 2 - x is ~ 1; modelled here as the exact 2 - x (faithful Newton complement)."
+    Domain.Rational.minus(Domain.Rational.Fraction(top = 2, bottom = 1), x)
+
+verify compFrac
+    compFrac(Domain.Rational.Fraction(top = 1, bottom = 1), 32) => Domain.Rational.Fraction(top = 1, bottom = 1)
+    Domain.Rational.sameValue(compFrac(Domain.Rational.Fraction(top = 3, bottom = 4), 32), Domain.Rational.Fraction(top = 5, bottom = 4)) => true
+
+fn reciprocalEstimate(d: Fraction) -> Fraction
+    ? "The exact reciprocal 1/d as a fraction (d != 0): swap numerator and denominator."
+    Domain.Rational.Fraction(top = d.bottom, bottom = d.top)
+
+verify reciprocalEstimate
+    reciprocalEstimate(Domain.Rational.Fraction(top = 2, bottom = 3)) => Domain.Rational.Fraction(top = 3, bottom = 2)
+
+fn lookup(d: Fraction) -> Fraction
+    ? "Step 1: sd0 = lookup(d), the 8-bit reciprocal estimate read from the 128-entry ROM (Section 8.1, p.26). We MODEL the table by an 8-bit truncation of 1/d -- which is what each ROM entry holds for its d-interval, and which satisfies the table's defining bound |d*lookup(d) - 1| < 3/512 (8 bits of accuracy beats the required ~7). The literal 128-entry ROM and the COMPUTATIONAL proof of that bound over all entries (Lemma 8.1.1) are a HOLE; this faithful estimate lets the divider RUN and reproduce the correctly-rounded quotient."
+    truncFrac(reciprocalEstimate(d), 8)
+
+verify lookup
+    Domain.Rational.sameValue(lookup(Domain.Rational.Fraction(top = 2, bottom = 1)), Domain.Rational.Fraction(top = 1, bottom = 2)) => true
+    Domain.Rational.sameValue(lookup(Domain.Rational.Fraction(top = 1, bottom = 1)), Domain.Rational.Fraction(top = 1, bottom = 1)) => true
+
+fn quotient(p: Fraction, d: Fraction) -> Fraction
+    ? "The exact rational quotient p/d (d != 0): p * (1/d)."
+    Domain.Rational.times(p, reciprocalEstimate(d))
+
+verify quotient
+    Domain.Rational.sameValue(quotient(Domain.Rational.Fraction(top = 7, bottom = 1), Domain.Rational.Fraction(top = 2, bottom = 1)), Domain.Rational.Fraction(top = 7, bottom = 2)) => true
+
+// ---------------------------------------------------------------------------
+// divideBang -- the 32 straight-line steps (Figure 1, p.2 / Figure 4, p.17).
+// Each let binding is one step; the comment gives the step number, the paper's
+// expression, and its [rounding mode / exactness] tag.
+// ---------------------------------------------------------------------------
+
+fn divideBang(p: Fraction, d: Fraction, mode: RoundingMode) -> Fraction
+    ? "divide!(p,d,mode), the non-erroneous divider (Figure 4, p.17): the 32 straight-line steps on exact rationals. Two Newton-Raphson reciprocal refinements give sd2 ~ 1/d (~32 bits); four quotient digits q0..q3 with exact partial remainders; a round-to-odd sticky sum; a final round to mode. Theorem 1 (Section 8) says this equals round(p/d, mode)."
+    sd0 = lookup(d)
+    dr = awayFrac(d, 32)
+    sdd0 = awayFrac(Domain.Rational.times(sd0, dr), 32)
+    sd1 = truncFrac(Domain.Rational.times(sd0, compFrac(sdd0, 32)), 32)
+    sdd1 = awayFrac(Domain.Rational.times(sd1, dr), 32)
+    sd2 = truncFrac(Domain.Rational.times(sd1, compFrac(sdd1, 32)), 32)
+    dh = truncFrac(d, 32)
+    dl = Domain.Rational.minus(d, dh)
+    p0 = p
+    ph0 = truncFrac(p0, 32)
+    q0 = awayFrac(Domain.Rational.times(sd2, ph0), 24)
+    qdh0 = Domain.Rational.times(q0, dh)
+    qdl0 = Domain.Rational.times(q0, dl)
+    pt1 = Domain.Rational.minus(p0, qdh0)
+    p1 = Domain.Rational.minus(pt1, qdl0)
+    ph1 = truncFrac(p1, 32)
+    q1 = awayFrac(Domain.Rational.times(sd2, ph1), 24)
+    qdh1 = Domain.Rational.times(q1, dh)
+    qdl1 = Domain.Rational.times(q1, dl)
+    pt2 = Domain.Rational.minus(p1, qdh1)
+    p2 = Domain.Rational.minus(pt2, qdl1)
+    ph2 = truncFrac(p2, 32)
+    q2 = awayFrac(Domain.Rational.times(sd2, ph2), 24)
+    qdh2 = Domain.Rational.times(q2, dh)
+    qdl2 = Domain.Rational.times(q2, dl)
+    pt3 = Domain.Rational.minus(p2, qdh2)
+    p3 = Domain.Rational.minus(pt3, qdl2)
+    ph3 = truncFrac(p3, 32)
+    q3 = truncFrac(Domain.Rational.times(sd2, ph3), 24)
+    qq2 = stickyFrac(Domain.Rational.plus(q2, q3), 64)
+    qq1 = stickyFrac(Domain.Rational.plus(qq2, q1), 64)
+    round(Domain.Rational.plus(qq1, q0), mode)
+
+verify divideBang
+    Domain.Rational.sameValue(divideBang(Domain.Rational.Fraction(top = 7, bottom = 1), Domain.Rational.Fraction(top = 2, bottom = 1), RoundingMode.Trunc(24)), Domain.Rational.Fraction(top = 7, bottom = 2)) => true
+    Domain.Rational.sameValue(divideBang(Domain.Rational.Fraction(top = 3, bottom = 1), Domain.Rational.Fraction(top = 4, bottom = 1), RoundingMode.Nearest(24)), Domain.Rational.Fraction(top = 3, bottom = 4)) => true
+    Domain.Rational.sameValue(divideBang(Domain.Rational.Fraction(top = -7, bottom = 1), Domain.Rational.Fraction(top = 2, bottom = 1), RoundingMode.Away(24)), Domain.Rational.Fraction(top = -7, bottom = 2)) => true
+
+// ---------------------------------------------------------------------------
+// THEOREM 1 (Section 8, p.22): divide!(p,d,mode) = round(p/d, mode).
+// Stated as a SAMPLE-VERIFIED Bool (concrete inputs, runtime), NOT a `law`:
+// it depends on the unproven Section 8 lemmas (8.1.1 reciprocal bound,
+// 8.2.1 digit separation, 8.2.3-4 remainder bounds, 7.3.2 sticky-plus,
+// 7.3.1 final-round-commutes) -- it must NOT be credited universal.
+// ---------------------------------------------------------------------------
+
+fn divideBangCorrect(p: Fraction, d: Fraction, mode: RoundingMode) -> Bool
+    ? "Theorem 1 (Section 8, p.22): the non-erroneous divider returns the correctly-rounded quotient -- divide!(p,d,mode) = round(p/d, mode). SAMPLE-VERIFIED, not yet universal (the holes 8.1.1 / 8.2.1 / 8.2.3-4 / 7.3.2 / 7.3.1 are pending)."
+    Domain.Rational.sameValue(divideBang(p, d, mode), round(quotient(p, d), mode))
+
+verify divideBangCorrect
+    divideBangCorrect(Domain.Rational.Fraction(top = 7, bottom = 1), Domain.Rational.Fraction(top = 2, bottom = 1), RoundingMode.Trunc(24)) => true
+    divideBangCorrect(Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 3, bottom = 1), RoundingMode.Trunc(8)) => true
+    divideBangCorrect(Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 3, bottom = 1), RoundingMode.Nearest(8)) => true
+    divideBangCorrect(Domain.Rational.Fraction(top = 22, bottom = 1), Domain.Rational.Fraction(top = 7, bottom = 1), RoundingMode.Away(16)) => true
+    divideBangCorrect(Domain.Rational.Fraction(top = -22, bottom = 1), Domain.Rational.Fraction(top = 7, bottom = 1), RoundingMode.Nearest(16)) => true
+    divideBangCorrect(Domain.Rational.Fraction(top = 5, bottom = 3), Domain.Rational.Fraction(top = 11, bottom = 4), RoundingMode.Sticky(20)) => true
+
+// ---------------------------------------------------------------------------
+// divide -- the error-checking wrapper (Figure 1, p.2; Section 1.1).
+// Takes actual floating-point inputs (Fp), error-checks them, and returns
+// Ok of the rounded quotient (the non-erroneous value). Inputs use exp >= 0
+// so the current fpValue is exact (general-exp fpValue is a deferred hole).
+// ---------------------------------------------------------------------------
+
+fn inField(e: Int) -> Bool
+    ? "eround's result-exponent field check (Section 5.4, p.14; Section 1.1, p.3): the binary exponent of the rounded result must fit the n,17 format's 17-bit exponent field, i.e. 1 - 2^16 <= e <= 2^16 (Section 9.3, p.31, the exponent requirement '1 - 2^16 <= e(v) <= 2^16' on n,17 floating point numbers). When this fails, eround returns the 'bad post-round exponent' error object; Theorem 2 (Section 9) shows it never fails on 64,15+ inputs."
+    Bool.and(1 - 65536 <= e, e <= 65536)
+
+verify inField
+    inField(0) => true
+    inField(32855) => true
+    inField(-33365) => true
+    inField(65537) => false
+    inField(-65536) => false
+
+fn divide(p: Fp, d: Fp, mode: RoundingMode) -> Result<Fraction, String>
+    ? "divide(p,d,mode) (Figure 1, p.2): the error-checking wrapper. It checks the floating-point inputs (eround's non-rational and exponent checks, Section 5.4) and a nonzero divisor, then returns Ok of the rounded quotient -- the non-erroneous divideBang value on every valid input (Theorem 2, Section 9). Error paths: a non-floating input, a zero divisor, or eround's result-exponent field check (inField on the binary exponent of the rounded result) -- the last is the Section 9 out-of-range path, proven unreachable for 64,15+ inputs by Theorem 2."
+    match Bool.not(Domain.Fprep.isFp(p))
+        true -> Result.Err("non-floating dividend")
+        false -> match Bool.not(Domain.Fprep.isFp(d))
+            true -> Result.Err("non-floating divisor")
+            false -> match d.sigBits == 0
+                true -> Result.Err("division by zero")
+                false -> match Bool.not(inField(fracExpo(divideBang(Domain.Fprep.fpValue(p), Domain.Fprep.fpValue(d), mode))))
+                    true -> Result.Err("bad post-round exponent")
+                    false -> Result.Ok(divideBang(Domain.Fprep.fpValue(p), Domain.Fprep.fpValue(d), mode))
+
+verify divide
+    divide(Domain.Fprep.Fp(sign = 2, sigBits = 8, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 8, exp = 0, width = 4), RoundingMode.Trunc(24)) => Result.Err("non-floating dividend")
+    divide(Domain.Fprep.Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 7, exp = 0, width = 4), RoundingMode.Trunc(24)) => Result.Err("non-floating divisor")
+
+// ---------------------------------------------------------------------------
+// THEOREM 2 (Section 9, p.30): divide(p,d,mode) = Ok(divide!(...)) on valid
+// inputs. SAMPLE-VERIFIED, not a `law`: it needs the Section 9 exponent bounds
+// (9.3.1-2) and precision bound (9.2.1) showing the error paths are unreachable
+// for 64,15+ floating inputs.
+// ---------------------------------------------------------------------------
+
+fn divideMatchesBang(p: Fp, d: Fp, mode: RoundingMode) -> Bool
+    ? "Theorem 2 (Section 9, p.30): for valid 64,15+ floating inputs with d != 0, divide(p,d,mode) = Ok(divide!(p,d,mode)) -- the wrapper never errors on valid inputs and returns the non-erroneous value. SAMPLE-VERIFIED, not universal (the Section 9 unreachability lemmas are pending)."
+    match divide(p, d, mode)
+        Result.Ok(v) -> Domain.Rational.sameValue(v, divideBang(Domain.Fprep.fpValue(p), Domain.Fprep.fpValue(d), mode))
+        Result.Err(e) -> false
+
+verify divideMatchesBang
+    divideMatchesBang(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 8, exp = 0, width = 4), RoundingMode.Trunc(24)) => true
+    divideMatchesBang(Domain.Fprep.Fp(sign = -1, sigBits = 10, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), RoundingMode.Nearest(16)) => true
+
+// THEOREM 2 as the STRUCTURAL EQUATION (Theorem 2, Section 9, p.30): on valid
+// 64,15+ floating inputs (both floats, divisor nonzero) whose exponents lie in
+// the extended-format range, the error-checking wrapper returns Ok of the
+// non-erroneous divideBang value -- divide(p,d,mode) = Ok(divide!(fpValue p,
+// fpValue d, mode)). The eround out-of-range result-exponent path is PROVEN
+// unreachable inside the proof, not premised away: from the input-exponent ranges
+// (-62 - 2^14 <= ep, ed <= 2^14, i.e. -16446 <= ep, ed <= 16384, Section 9.3
+// p.31) and the Section 9.3 Table-3 row-32 result bracket (ep - ed - 535 <=
+// e(divide!) <= ep - ed + 25, p.32) -- the premised conclusion of the Table-3
+// chaining, the honest Section 9.3 hole -- the proof DERIVES inField(e(divide!)),
+// since e(divide!) <= ep - ed + 25 <= 32855 <= 2^16 and e(divide!) >=
+// ep - ed - 535 >= -33365 >= 1 - 2^16, by affine arithmetic (omega). So the field
+// check passes and the wrapper takes its Ok branch, sharing the opaque divideBang
+// subterm verbatim with the right-hand side -- never unfolding the 32-step
+// divider. This makes Section 9 load-bearing: drop the row-32 bracket and the
+// field check is no longer derivable (the proof degrades to its bounded floor).
+verify divide law theorem_2
+    given p: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 10, exp = 1, width = 4)]
+    given d: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 8, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4)]
+    given mode: RoundingMode = [RoundingMode.Trunc(24), RoundingMode.Nearest(16)]
+    given ep: Int = [0]
+    given ed: Int = [0]
+    when Domain.Fprep.isFp(p)
+    when Domain.Fprep.isFp(d)
+    when Bool.not(d.sigBits == 0)
+    when -16446 <= ep
+    when ep <= 16384
+    when -16446 <= ed
+    when ed <= 16384
+    when ep - ed - 535 <= fracExpo(divideBang(Domain.Fprep.fpValue(p), Domain.Fprep.fpValue(d), mode))
+    when fracExpo(divideBang(Domain.Fprep.fpValue(p), Domain.Fprep.fpValue(d), mode)) <= ep - ed + 25
+    divide(p, d, mode) => Result.Ok(divideBang(Domain.Fprep.fpValue(p), Domain.Fprep.fpValue(d), mode))
+
+fn divideCorrect(p: Fp, d: Fp, mode: RoundingMode) -> Bool
+    ? "The Main Theorem end-to-end (Theorem 1 + Theorem 2, Section 5.5): for valid floating inputs the error-checking divider returns Ok of the correctly-rounded quotient -- divide(p,d,mode) = Ok(round(p/d, mode)). SAMPLE-VERIFIED demo that the modelled K5 divider runs and computes correctly-rounded quotients on real numbers."
+    match divide(p, d, mode)
+        Result.Ok(v) -> Domain.Rational.sameValue(v, round(quotient(Domain.Fprep.fpValue(p), Domain.Fprep.fpValue(d)), mode))
+        Result.Err(e) -> false
+
+verify divideCorrect
+    divideCorrect(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 8, exp = 0, width = 4), RoundingMode.Trunc(24)) => true
+    divideCorrect(Domain.Fprep.Fp(sign = -1, sigBits = 10, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), RoundingMode.Nearest(16)) => true
+
+// ---------------------------------------------------------------------------
+// SECTION 7.3 (p.21): special properties of sticky rounding -- the interactions
+// used to sum the quotient digits. Stated EXACTLY as the paper and SAMPLE-VERIFIED
+// on the corrected round-to-odd (RTL/rto) sticky. These validate the sticky model
+// on its hardest obligations (the draft paper's printed stickyn typo FALSIFIES
+// 7.3.2 on ~17% of cases); the UNIVERSAL proofs -- especially 7.3.2, which the
+// paper itself calls "singularly difficult to prove" -- are the next holes.
+// ---------------------------------------------------------------------------
+
+fn finalRoundCommutes_7_3_1(x: Fraction, i: Int, mode: RoundingMode) -> Bool
+    ? "Lemma 7.3.1 (p.21): for a rounding mode [name n] with n <= i, round(sticky(x, i+2), mode) = round(x, mode) -- sticky-rounding to two extra bits is transparent to a final round at precision <= i. SAMPLE-VERIFIED with the mode precision n <= i by construction."
+    Domain.Rational.sameValue(round(stickyFrac(x, i + 2), mode), round(x, mode))
+
+verify finalRoundCommutes_7_3_1
+    finalRoundCommutes_7_3_1(Domain.Rational.Fraction(top = 59, bottom = 32), 3, RoundingMode.Trunc(3)) => true
+    finalRoundCommutes_7_3_1(Domain.Rational.Fraction(top = 59, bottom = 32), 3, RoundingMode.Sticky(2)) => true
+    finalRoundCommutes_7_3_1(Domain.Rational.Fraction(top = -59, bottom = 32), 3, RoundingMode.Away(3)) => true
+
+fn stickyPlus_7_3_2(x: Fraction, y: Fraction, n: Int, k: Int) -> Bool
+    ? "Lemma 7.3.2 (Sticky Plus, p.21), THE crucial sticky interaction used to sum the quotient digits: for x fitting in n bits (trunc(x,n)=x), y with exponent at least two below x (1+e_y < e_x), and a positive integer k with n+e_y-e_x < k, sticky(x+y,n) = sticky(x + sticky(y,k), n) -- one may pre-round the infinitely-precise y to k bits, do a finite sum, and sticky-round without endangering the round. The paper calls this 'singularly difficult to prove' (its proof case-splits the signs and relative magnitudes of x and y). SAMPLE-VERIFIED on the corrected round-to-odd sticky -- the draft paper's printed stickyn typo falsifies it; the universal proof is the next hole."
+    Domain.Rational.sameValue(stickyFrac(Domain.Rational.plus(x, y), n), stickyFrac(Domain.Rational.plus(x, stickyFrac(y, k)), n))
+
+verify stickyPlus_7_3_2
+    stickyPlus_7_3_2(Domain.Rational.Fraction(top = 6, bottom = 4), Domain.Rational.Fraction(top = 1, bottom = 8), 3, 4) => true
+    stickyPlus_7_3_2(Domain.Rational.Fraction(top = 6, bottom = 4), Domain.Rational.Fraction(top = -1, bottom = 8), 3, 4) => true
+    stickyPlus_7_3_2(Domain.Rational.Fraction(top = 7, bottom = 4), Domain.Rational.Fraction(top = 1, bottom = 16), 3, 3) => true
+
+fn stickyPerturbStable_7_3_3(x: Fraction, e1: Fraction, e2: Fraction, n: Int) -> Bool
+    ? "Lemma 7.3.3 (p.21): for x with trunc(x,n)=x (n>1) and non-zero e1, e2 with |e1|,|e2| < 2^(e_x+1-n) of the same sign, sticky(x+e1,n) = sticky(x+e2,n) -- sticky rounding is stable under a same-sign sub-ulp perturbation. SAMPLE-VERIFIED with the magnitude and sign conditions met by construction."
+    Domain.Rational.sameValue(stickyFrac(Domain.Rational.plus(x, e1), n), stickyFrac(Domain.Rational.plus(x, e2), n))
+
+verify stickyPerturbStable_7_3_3
+    stickyPerturbStable_7_3_3(Domain.Rational.Fraction(top = 6, bottom = 4), Domain.Rational.Fraction(top = 1, bottom = 8), Domain.Rational.Fraction(top = 3, bottom = 16), 3) => true
+    stickyPerturbStable_7_3_3(Domain.Rational.Fraction(top = 6, bottom = 4), Domain.Rational.Fraction(top = -1, bottom = 8), Domain.Rational.Fraction(top = -3, bottom = 16), 3) => true
+
+// ---------------------------------------------------------------------------
+// The ACL2 RTL decomposition ladder for Sticky Plus (rel1 lib1/round.lisp,
+// Russinoff AMD). The paper omits the 7.3.2 proof; the RTL lineage proves it
+// through named support lemmas, each a checkable Aver obligation. The universal
+// proof of Sticky Plus climbs this ladder: trunc-sticky + expo-sticky (= 7.2.8
+// stickyKeepsExponent, in round.av) + sticky-exactp give sticky-plus / sticky-minus
+// (the positive-sum and difference cases), and the paper's 7.3.2 follows by applying
+// sticky to both sides. Stated EXACTLY as the RTL theorems and SAMPLE-VERIFIED;
+// these are the next universal holes.
+// ---------------------------------------------------------------------------
+
+fn truncSticky_rtl(x: Fraction, m: Int, n: Int) -> Bool
+    ? "RTL `trunc-sticky` (rel1 round.lisp) -- the FOUNDATIONAL support for Sticky Plus: for n > m > 0, trunc(sticky(x,n), m) = trunc(x,m). Sticky rounding to n bits preserves the truncation to any coarser m bits -- this is the heart of why Sticky Plus holds (sticky(y,k) keeps y's high bits down to the summation boundary). SAMPLE-VERIFIED; universal pending."
+    Domain.Rational.sameValue(truncFrac(stickyFrac(x, n), m), truncFrac(x, m))
+
+verify truncSticky_rtl
+    truncSticky_rtl(Domain.Rational.Fraction(top = 59, bottom = 32), 3, 5) => true
+    truncSticky_rtl(Domain.Rational.Fraction(top = -59, bottom = 32), 3, 5) => true
+    truncSticky_rtl(Domain.Rational.Fraction(top = 13, bottom = 8), 2, 4) => true
+
+fn stickySticky_rtl(x: Fraction, m: Int, n: Int) -> Bool
+    ? "RTL `sticky-sticky` (rel1 round.lisp): for n >= m > 1, sticky(sticky(x,n), m) = sticky(x,m) -- round-to-odd composition collapses to the coarser precision. A support lemma of the Sticky Plus ladder. SAMPLE-VERIFIED; universal pending."
+    Domain.Rational.sameValue(stickyFrac(stickyFrac(x, n), m), stickyFrac(x, m))
+
+verify stickySticky_rtl
+    stickySticky_rtl(Domain.Rational.Fraction(top = 59, bottom = 32), 3, 5) => true
+    stickySticky_rtl(Domain.Rational.Fraction(top = -59, bottom = 32), 3, 5) => true
+
+fn stickyPlusExact_rtl(x: Fraction, y: Fraction, k: Int) -> Bool
+    ? "RTL `sticky-plus` (rel1 round.lisp) -- the SHARP form of Sticky Plus the universal proof targets: for x,y > 0, k > 1, with k1 = k + e(x) - e(y) and k2 = k + e(x+y) - e(y) both > 1 and x exact in k1-1 bits, x + sticky(y,k) = sticky(x+y, k2) EXACTLY (no outer round). The paper's Lemma 7.3.2 follows by applying sticky(.,n) to both sides; the difference case is the sibling sticky-minus. SAMPLE-VERIFIED; the universal proof (the named-lemma ladder above) is the next hole."
+    Domain.Rational.sameValue(Domain.Rational.plus(x, stickyFrac(y, k)), stickyFrac(Domain.Rational.plus(x, y), k + fracExpo(Domain.Rational.plus(x, y)) - fracExpo(y)))
+
+verify stickyPlusExact_rtl
+    stickyPlusExact_rtl(Domain.Rational.Fraction(top = 6, bottom = 4), Domain.Rational.Fraction(top = 1, bottom = 8), 4) => true
+    stickyPlusExact_rtl(Domain.Rational.Fraction(top = 7, bottom = 4), Domain.Rational.Fraction(top = 1, bottom = 16), 3) => true

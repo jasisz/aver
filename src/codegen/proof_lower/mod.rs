@@ -2119,21 +2119,84 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     // measure bare). Scoped on purpose: a pow-shaped fn in a file
     // with no recognized window law keeps its established fuel
     // emission, so nothing outside the family moves.
-    let window_pow_fns: HashSet<String> = ir
+    // Scope-aware resolution: a floor-window law that lives in a DEP
+    // module cites its power-of-two fn in THAT module's scope, so the
+    // graduation must resolve the pow fn relative to the law's own
+    // owning scope (derived from the law subject's `FnId`), not entry
+    // only. Without this, a dep module keeps its pow fn on the fuel
+    // encoding while the dep's own window support theorems demand the
+    // well-founded `.induct` / `.eq_def`, breaking the dep build (the
+    // emitted dep module references `<pow>.induct`, which a fuel def
+    // doesn't have).
+    let window_pow_ids: HashSet<crate::ir::FnId> = ir
         .law_theorems
         .iter()
-        .filter_map(|t| match &t.strategy {
-            crate::ir::ProofStrategy::FloorDivWindow { figure } => Some(match figure {
-                crate::ir::FloorWindowFigure::PowPositive { pow_fn } => pow_fn.clone(),
-                crate::ir::FloorWindowFigure::PowSumSplit { pow_fn } => pow_fn.clone(),
-                crate::ir::FloorWindowFigure::SigWindow { pow_fn, .. } => pow_fn.clone(),
-                crate::ir::FloorWindowFigure::ProductWindow { pow_fn, .. } => pow_fn.clone(),
-            }),
-            _ => None,
+        .filter_map(|t| {
+            let pow_fn = match &t.strategy {
+                crate::ir::ProofStrategy::FloorDivWindow { figure } => match figure {
+                    crate::ir::FloorWindowFigure::PowPositive { pow_fn } => pow_fn,
+                    crate::ir::FloorWindowFigure::PowSumSplit { pow_fn } => pow_fn,
+                    crate::ir::FloorWindowFigure::SigWindow { pow_fn, .. } => pow_fn,
+                    crate::ir::FloorWindowFigure::ProductWindow { pow_fn, .. } => pow_fn,
+                    crate::ir::FloorWindowFigure::FloorPow2Window { pow_fn, .. } => pow_fn,
+                    crate::ir::FloorWindowFigure::FloorPow2Cancel { pow_fn, .. } => pow_fn,
+                },
+                _ => return None,
+            };
+            let scope = symbols
+                .fn_entry(t.fn_id)
+                .key
+                .scope_str()
+                .map(|s| s.to_string());
+            let key = match &scope {
+                Some(prefix) => crate::ir::FnKey::in_module(prefix.clone(), pow_fn),
+                None => crate::ir::FnKey::entry(pow_fn),
+            };
+            symbols
+                .fn_id_of(&key)
+                .or_else(|| symbols.fn_id_of(&crate::ir::FnKey::entry(pow_fn)))
         })
         .collect();
-    for pow_fn in window_pow_fns {
-        let Some(fn_id) = symbols.fn_id_of(&crate::ir::FnKey::entry(&pow_fn)) else {
+    for fn_id in window_pow_ids {
+        let Some(contract) = ir.fn_contracts.get_mut(&fn_id) else {
+            continue;
+        };
+        if let Some(crate::ir::RecursionContract::Fuel {
+            fuel_metric: crate::ir::FuelMetric::NatAbsPlusOne { param },
+        }) = &contract.recursion
+        {
+            contract.recursion = Some(crate::ir::RecursionContract::WellFoundedToNat {
+                param: param.clone(),
+                floor_div: None,
+            });
+        }
+    }
+
+    // Demand-driven well-founded graduation for the inductive `when`-law
+    // families that rest on a recursive countdown fn's `.eq_def` defining
+    // equations and `.induct` functional-induction principle, which the fuel
+    // encoding destroys exactly as it does for the window family above. Two
+    // shapes demand it: the GENERAL recursive-monotonicity family (a universal
+    // `m <= n -> f m <= f n`, or its Fraction-order `isNonNeg(minus(g(HI),
+    // g(LO)))` sibling) and the content-blind HOMOMORPHISM family (a universal
+    // `subject(a + b) = subject(a) OP2 subject(b)` over a guarded countdown
+    // subject — the power-of-two / power-of-three sum split). Graduate every such
+    // recursive countdown fn from `Fuel { NatAbsPlusOne }` to the native
+    // `WellFoundedToNat` form. Keyed on the law SHAPE and the fn's existing
+    // countdown contract (which already certifies the `p <= 0` guard the bare
+    // `decreasing_by omega` needs), never on a fn name — the same conservatism as
+    // the window pass: a countdown fn no such law mentions keeps its established
+    // fuel emission.
+    let mono_fns = induction_demanded_countdown_fns(inputs);
+    for (scope, name) in mono_fns {
+        let key = match &scope {
+            Some(prefix) => crate::ir::FnKey::in_module(prefix.clone(), &name),
+            None => crate::ir::FnKey::entry(&name),
+        };
+        let Some(fn_id) = symbols
+            .fn_id_of(&key)
+            .or_else(|| symbols.fn_id_of(&crate::ir::FnKey::entry(&name)))
+        else {
             continue;
         };
         let Some(contract) = ir.fn_contracts.get_mut(&fn_id) else {
@@ -2149,6 +2212,187 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             });
         }
     }
+}
+
+/// `(owning_scope, fn_source_name)` for every recursive countdown fn an
+/// inductive `when`-law reasons about — the demand the general
+/// recursive-monotonicity rung, the signed-power-of-two adapter, AND the
+/// content-blind homomorphism rung place on the well-founded `.induct` /
+/// `.eq_def`. Detected purely from the SHAPE of each law's subject body / claim:
+/// the plain order `f(LO) <= f(HI)`, the Fraction order `isNonNeg(minus(g(HI),
+/// g(LO)))` whose `g` calls a single recursive countdown fn, or the homomorphism
+/// `subject(a + b) = subject(a) OP2 subject(b)` over a guarded countdown subject.
+/// Name-blind.
+fn induction_demanded_countdown_fns(inputs: &ProofLowerInputs) -> Vec<(Option<String>, String)> {
+    use crate::ast::{TopLevel, VerifyKind};
+
+    fn dotted(e: &crate::ast::Spanned<Expr>) -> Option<String> {
+        match &e.node {
+            Expr::Ident(n) | Expr::Resolved { name: n, .. } => Some(n.clone()),
+            Expr::Attr(b, f) => dotted(b).map(|p| format!("{p}.{f}")),
+            _ => None,
+        }
+    }
+    fn short(name: &str) -> &str {
+        name.rsplit('.').next().unwrap_or(name)
+    }
+    // `f` when `e` is `f(arg)` (single-argument call), as a short name.
+    fn unary_callee_short(e: &crate::ast::Spanned<Expr>) -> Option<String> {
+        match &e.node {
+            Expr::FnCall(c, a) if a.len() == 1 => Some(short(&dotted(c)?).to_string()),
+            _ => None,
+        }
+    }
+    // Whether `fd` is a `p <= 0`-guarded single-step countdown — the shape whose
+    // `n <= 0` base guard puts `n >= 1` in the well-founded measure's decreasing
+    // goal, so the graduated form's bare `decreasing_by omega` closes. Only such
+    // fns are safe to lift off fuel (an unguarded countdown, e.g. a tail-recursive
+    // helper that relies on its caller, would leave `omega` unable to prove the
+    // measure decrease). Mirrors the Lean rung's own firing gate.
+    fn is_le0_guarded_countdown(fd: &FnDef) -> bool {
+        let Some((p, ty)) = fd.params.first() else {
+            return false;
+        };
+        if fd.params.len() != 1 || ty.trim() != "Int" {
+            return false;
+        }
+        let [crate::ast::Stmt::Expr(body)] = fd.body.stmts() else {
+            return false;
+        };
+        let Expr::Match { subject, arms } = &body.node else {
+            return false;
+        };
+        let Expr::BinOp(crate::ast::BinOp::Lte, sl, sr) = &subject.node else {
+            return false;
+        };
+        dotted(sl).as_deref() == Some(p.as_str())
+            && matches!(&sr.node, Expr::Literal(crate::ast::Literal::Int(0)))
+            && arms.len() == 2
+    }
+    // Collect every fn-call short name reachable in `e`.
+    fn collect_calls(e: &crate::ast::Spanned<Expr>, out: &mut Vec<String>) {
+        match &e.node {
+            Expr::FnCall(c, args) => {
+                if let Some(n) = dotted(c) {
+                    out.push(short(&n).to_string());
+                }
+                for a in args {
+                    collect_calls(a, out);
+                }
+            }
+            Expr::BinOp(_, l, r) => {
+                collect_calls(l, out);
+                collect_calls(r, out);
+            }
+            Expr::Neg(b) | Expr::Attr(b, _) | Expr::ErrorProp(b) => collect_calls(b, out),
+            Expr::Match { subject, arms } => {
+                collect_calls(subject, out);
+                for arm in arms {
+                    collect_calls(&arm.body, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut demanded: Vec<(Option<String>, String)> = Vec::new();
+    let entry_verifies = inputs.entry_items.iter().filter_map(|item| match item {
+        TopLevel::Verify(vb) => Some((None, vb)),
+        _ => None,
+    });
+    let dep_verifies = inputs.dep_modules.iter().flat_map(|m| {
+        m.verify_laws
+            .iter()
+            .map(move |vb| (Some(m.prefix.clone()), vb))
+    });
+    for (scope, vb) in entry_verifies.chain(dep_verifies) {
+        let VerifyKind::Law(law) = &vb.kind else {
+            continue;
+        };
+        if law.when.is_none() {
+            continue;
+        }
+        let recursive = inputs.recursive_pure_fn_names_in_scope(scope.as_deref());
+        // The order comparison is the subject fn's body (the `…Monotone(args)
+        // holds` form), or the law claim itself.
+        let body: Option<&crate::ast::Spanned<Expr>> = inputs
+            .find_fn_def_by_call_name(&vb.fn_name)
+            .and_then(|fd| match fd.body.stmts() {
+                [crate::ast::Stmt::Expr(e)] => Some(e),
+                _ => None,
+            });
+        let mut consider = |cmp: &crate::ast::Spanned<Expr>| {
+            match &cmp.node {
+                // Plain integer order `f(LO) <= f(HI)` — demand `f` itself.
+                Expr::BinOp(crate::ast::BinOp::Lte, l, r) => {
+                    if let (Some(lf), Some(rf)) = (unary_callee_short(l), unary_callee_short(r))
+                        && lf == rf
+                        && recursive.contains(&lf)
+                        && inputs
+                            .find_fn_def_by_call_name(&lf)
+                            .is_some_and(is_le0_guarded_countdown)
+                    {
+                        demanded.push((scope.clone(), lf));
+                    }
+                }
+                // Fraction order `isNonNeg(minus(g(HI), g(LO)))` — demand the
+                // recursive countdown fn `g` sign-splits over.
+                Expr::FnCall(c, a)
+                    if a.len() == 1 && dotted(c).as_deref().map(short) == Some("isNonNeg") =>
+                {
+                    if let Expr::FnCall(mc, ma) = &a[0].node
+                        && dotted(mc).as_deref().map(short) == Some("minus")
+                        && ma.len() == 2
+                        && let (Some(g_hi), Some(g_lo)) =
+                            (unary_callee_short(&ma[0]), unary_callee_short(&ma[1]))
+                        && g_hi == g_lo
+                        && let Some(g_fd) = inputs.find_fn_def_by_call_name(&g_hi)
+                        && let [crate::ast::Stmt::Expr(g_body)] = g_fd.body.stmts()
+                    {
+                        let mut calls = Vec::new();
+                        collect_calls(g_body, &mut calls);
+                        for n in calls {
+                            if recursive.contains(&n)
+                                && inputs
+                                    .find_fn_def_by_call_name(&n)
+                                    .is_some_and(is_le0_guarded_countdown)
+                            {
+                                demanded.push((scope.clone(), n));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        };
+        if let Some(b) = body {
+            consider(b);
+        }
+        consider(&law.lhs);
+
+        // Homomorphism `subject(a + b) = subject(a) OP2 subject(b)` — the
+        // arithmetic (guarded countdown) carrier the content-blind homomorphism
+        // rung inducts over. Demand the recursive countdown `subject`. (A
+        // structural-ADT homomorphism, e.g. list length over concatenation, is
+        // already native — Lean infers its structural termination — so it places
+        // no fuel-graduation demand and is not detected here.)
+        if let Expr::BinOp(op2, ra, rb) = &law.rhs.node
+            && matches!(op2, crate::ast::BinOp::Add | crate::ast::BinOp::Mul)
+            && let (Some(subj), Some(subj_rb)) = (unary_callee_short(ra), unary_callee_short(rb))
+            && subj == subj_rb
+            && let Expr::FnCall(lc, la) = &law.lhs.node
+            && la.len() == 1
+            && dotted(lc).as_deref().map(short) == Some(subj.as_str())
+            && matches!(&la[0].node, Expr::BinOp(crate::ast::BinOp::Add, _, _))
+            && recursive.contains(&subj)
+            && inputs
+                .find_fn_def_by_call_name(&subj)
+                .is_some_and(is_le0_guarded_countdown)
+        {
+            demanded.push((scope.clone(), subj));
+        }
+    }
+    demanded
 }
 
 /// Pick the strategy `LawLower` should pin on a `(fn, law)` pair.
@@ -2361,6 +2605,19 @@ fn classify_law_strategy(
             helper_fn,
         };
     }
+    // Nonnegativity / order over a NONLINEAR Int product (`E >= 0` or
+    // `prod <= prod`) — the inequality sibling of `RingIdentity`. Placed
+    // BEFORE the `LinearArithmetic` catch-all because that rung claims any
+    // all-Int law (these nonlinear `when`-guarded ones included) and, unable
+    // to close `0 <= a*b` / `e*e <= b*b` with `omega`, renders them on the
+    // bounded sampled fallback. The detector requires a genuine
+    // variable×variable product, so it claims ONLY goals `omega` provably
+    // cannot decide — every linear law still flows to `LinearArithmetic`.
+    // NOT `when`-gated: the Newton-Raphson factor-sign guards ride in as a
+    // `when` premise threaded into the universal statement.
+    if let Some(unfold_fns) = detect_nonlinear_nonneg(law, fn_name, inputs) {
+        return ProofStrategy::NonlinearNonneg { unfold_fns };
+    }
     // Linear arithmetic over an unfold chain — generic catch-all.
     // Named for the semantic, not the backend tactic.
     if let Some(plan) = detect_simp_omega_unfold(law, fn_name, inputs, refined_types) {
@@ -2475,6 +2732,7 @@ fn classify_law_strategy(
 mod finite_domain;
 mod floor_window;
 mod induction;
+mod inequality;
 mod int_decimal_roundtrip;
 mod map_laws;
 mod refinement;
@@ -2489,6 +2747,7 @@ pub(crate) use induction::LawProofCone;
 use finite_domain::*;
 use floor_window::*;
 use induction::*;
+use inequality::*;
 use int_decimal_roundtrip::*;
 use map_laws::*;
 use refinement::*;

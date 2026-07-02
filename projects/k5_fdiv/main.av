@@ -1,0 +1,27 @@
+module Main
+    intent =
+        "Entry demo for the K5 division proof project. Computes with exact fractions"
+        "so the rationals read as ordinary, runnable code -- whose algebra is"
+        "machine-proven in domain/rational.av (10 ring laws, kernel-genuine on Lean"
+        "and Z3). The proof lives next to the code that runs; this entry just shows"
+        "the code runs."
+    depends [Domain.Rational]
+    effects [Console]
+
+fn main() -> Unit
+    ? "Runs the proven rational algebra on concrete fractions; each line is a law instance."
+    ! [Console.print]
+    half = Domain.Rational.Fraction(top = 1, bottom = 2)
+    third = Domain.Rational.Fraction(top = 1, bottom = 3)
+    total = Domain.Rational.plus(half, third)
+    diff = Domain.Rational.minus(half, third)
+    product = Domain.Rational.times(half, third)
+    Console.print("1/2 + 1/3 = {total.top}/{total.bottom}")
+    Console.print("1/2 - 1/3 = {diff.top}/{diff.bottom}")
+    Console.print("1/2 * 1/3 = {product.top}/{product.bottom}")
+    negateInvolutive = Domain.Rational.sameValue(Domain.Rational.negate(Domain.Rational.negate(half)), half)
+    oneIsNeutral = Domain.Rational.sameValue(Domain.Rational.times(half, Domain.Rational.oneFraction()), half)
+    cancelsToZero = Domain.Rational.sameValue(Domain.Rational.plus(half, Domain.Rational.negate(half)), Domain.Rational.zeroFraction())
+    Console.print("--(1/2) == 1/2          : {negateInvolutive}")
+    Console.print("1/2 * 1            == 1/2: {oneIsNeutral}")
+    Console.print("1/2 + (-(1/2))     == 0 : {cancelsToZero}")

@@ -265,10 +265,31 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
                     format!("{} := {}", aver_name_to_dafny(name), emit_expr(expr, ctx))
                 })
                 .collect();
-            // Dotted names (`Terminal.Size`, `Tcp.Connection`) are
-            // rendered as underscored datatype names in Dafny — same
-            // mapping `toplevel::render_type` applies for `Type::Named`.
-            let dafny_type_name = type_name.replace('.', "_");
+            // Datatype-constructor reference. Built-in records with
+            // dotted names (`Terminal.Size`, `Tcp.Connection`) flatten
+            // to underscore form because the prelude declares them as
+            // `Terminal_Size` / `Tcp_Connection`. A user type from a
+            // DIFFERENT module is qualified `Aver_<module>.<Ctor>` so
+            // the qualifier matches the renamed Dafny module; a type in
+            // the module currently being emitted stays BARE (the
+            // resolver already hands back a bare name there, and a
+            // module name is not in scope for self-qualification). This
+            // mirrors `toplevel::type_to_dafny`'s `Type::Named` arm so
+            // constructor references agree with type references.
+            let active = ctx.active_module_scope();
+            let dafny_type_name = if crate::codegen::builtin_records::find(type_name).is_some() {
+                type_name.replace('.', "_")
+            } else if let Some(dot) = type_name.rfind('.') {
+                let module_part = &type_name[..dot];
+                let local = &type_name[dot + 1..];
+                if active.as_deref() == Some(module_part) {
+                    local.to_string()
+                } else {
+                    format!("Aver_{}.{}", module_part.replace('.', "_"), local)
+                }
+            } else {
+                type_name.to_string()
+            };
             format!("{}({})", dafny_type_name, field_strs.join(", "))
         }
         ResolvedExpr::RecordUpdate { base, updates, .. } => {
@@ -377,8 +398,16 @@ fn emit_fn_call(
             let bare = entry.key.name.as_str();
             let module_prefix = entry.key.scope_str();
             let arg_strs: Vec<String> = args.iter().map(|a| emit_expr(a, ctx)).collect();
+            // A call to a fn in a DIFFERENT module is qualified with the
+            // Dafny module name (`Aver_Domain_Rational.f`). A same-module
+            // self-reference must stay BARE: inside a Dafny
+            // `module M { ... }` the name `M` is not in scope for
+            // self-qualification, so `M.f(...)` is an unresolved
+            // identifier. Compare the callee's owning scope against the
+            // module currently being emitted.
+            let active = ctx.active_module_scope();
             let func = match module_prefix {
-                Some(prefix) if !ctx.modules.is_empty() => {
+                Some(prefix) if !ctx.modules.is_empty() && active.as_deref() != Some(prefix) => {
                     format!(
                         "{}.{}",
                         super::dafny_module_name(prefix),

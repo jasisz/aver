@@ -1375,6 +1375,7 @@ fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenC
                 | crate::ir::ProofStrategy::FiniteDomainCases { .. }
                 | crate::ir::ProofStrategy::SimpOverPreludeLemmas { .. }
                 | crate::ir::ProofStrategy::RingIdentity { .. }
+                | crate::ir::ProofStrategy::NonlinearNonneg { .. }
                 | crate::ir::ProofStrategy::IntDecimalRoundtrip { .. }
                 | crate::ir::ProofStrategy::StringEscapeRoundtrip(_)
         )
@@ -2430,13 +2431,47 @@ fn emit_floor_window_support_stack(
     law_name: &str,
 ) -> String {
     use crate::ir::FloorWindowFigure;
-    let d = aver_name_to_dafny;
+    // Cross-module fn citations in the support lemmas (`pow_fn`,
+    // `halve_fn`, ...) carry the canonical dotted Aver name
+    // (`Domain.Fprep.pow2`); render them with the Dafny module
+    // qualifier (`Aver_Domain_Fprep.pow2`) unless the owning module is
+    // the one being emitted, in which case the name stays bare (a Dafny
+    // module name is not in scope for self-qualification). Bare names —
+    // param givens and same-module fns — have no `.` segment and pass
+    // through `aver_name_to_dafny` unchanged.
+    let active = ctx.active_module_scope();
+    let d = |name: &str| -> String {
+        if let Some(dot) = name.rfind('.') {
+            let module_part = &name[..dot];
+            let local = &name[dot + 1..];
+            if active.as_deref() == Some(module_part) {
+                aver_name_to_dafny(local)
+            } else {
+                format!(
+                    "Aver_{}.{}",
+                    module_part.replace('.', "_"),
+                    aver_name_to_dafny(local)
+                )
+            }
+        } else {
+            aver_name_to_dafny(name)
+        }
+    };
     let render = |e: &Spanned<Expr>| emit_expr_legacy(e, ctx, None);
     let lhs = render(&law.lhs);
     let rhs = render(&law.rhs);
     let when = law.when.as_ref().map(render).unwrap_or_default();
     let givens: Vec<String> = law.givens.iter().map(|g| d(&g.name)).collect();
-    let params: Vec<String> = givens.iter().map(|g| format!("{}: int", g)).collect();
+    // Carry each given's DECLARED type, not a blanket `int`: a law over a
+    // record driver (e.g. `truncFitsWindow given f: Fp`) needs `f: Fp` so
+    // the main-thm body can project its fields (`f.width`) and the sample
+    // call sites can pass the constructed record.
+    let params: Vec<String> = law
+        .givens
+        .iter()
+        .zip(givens.iter())
+        .map(|(g, name)| format!("{}: {}", name, emit_type(&g.type_name)))
+        .collect();
     let params = params.join(", ");
 
     // Fuel attrs over the law's (transitive) fn cone — same shape as
@@ -2565,7 +2600,60 @@ fn emit_floor_window_support_stack(
             ));
             s
         }
+        FloorWindowFigure::FloorPow2Window { pow_fn, .. } => {
+            // The Euclidean floor window over a power-of-two divisor. Z3
+            // carries integer division push-button once it knows the divisor
+            // is positive; the only hint needed is `pow(E) >= 1` at the
+            // exponent the predicate divides by. `pow_pos` is auto-inducted
+            // (empty body); the exponent expression is read off the window
+            // predicate body so the hint instantiates the right divisor.
+            let pow = d(pow_fn);
+            let e_hint = floor_pow2_window_exponent_dafny(fn_name, ctx)
+                .map(|e| format!("\n  {u}pow_pos({e});"))
+                .unwrap_or_default();
+            format!(
+                "// Law: {fn_name}.{law_name} — recursive-expo-free floor window over a power-of-two divisor\nlemma {u}pow_pos(n: int)\n  ensures {pow}(n) >= 1\n{{ }}\nlemma {fuel_attrs} {main_thm}({params})\n  ensures {lhs} == {rhs}\n{{{e_hint}\n}}\n",
+            )
+        }
+        FloorWindowFigure::FloorPow2Cancel { pow_fn, .. } => {
+            // The exact-division cancel `floor(s·pow(b), pow(a)) = s·pow(b−a)`
+            // for `0 <= a <= b`. Z3 carries the division once it knows the
+            // dividend is the divisor times the quotient: the homomorphism
+            // `pow(b) = pow(a)·pow(b−a)` (auto-inducted `pow_add`) makes
+            // `s·pow(b) = pow(a)·(s·pow(b−a))`, and `pow_pos` gives the divisor
+            // positive, so the floor returns the exact quotient.
+            let pow = d(pow_fn);
+            let (_s, a, b) = (&givens[0], &givens[1], &givens[2]);
+            format!(
+                "// Law: {fn_name}.{law_name} — exact-division cancel over a power-of-two divisor\nlemma {u}pow_pos(n: int)\n  ensures {pow}(n) >= 1\n{{ }}\nlemma {{:vcs_split_on_every_assert}} {u}pow_add(m: int, n: int)\n  requires m >= 0 && n >= 0\n  ensures {pow}(m + n) == {pow}(m) * {pow}(n)\n{{\n  if m > 0 {{\n    {u}pow_add(m - 1, n);\n  }}\n}}\nlemma {fuel_attrs} {main_thm}({params})\n  requires {when}\n  ensures {lhs} == {rhs}\n{{\n  {u}pow_pos({a});\n  {u}pow_add({a}, {b} - {a});\n  assert {pow}({b}) == {pow}({a}) * {pow}({b} - {a});\n}}\n",
+            )
+        }
     }
+}
+
+/// Read the exponent expression `E` the floor window's divisor `pow(E)`
+/// uses, off the window predicate body, rendered to Dafny — so the
+/// generated lemma can instantiate `pow_pos(E)` at the right divisor.
+/// Returns `None` (no hint) if the body does not match the expected shape.
+fn floor_pow2_window_exponent_dafny(window_fn: &str, ctx: &CodegenContext) -> Option<String> {
+    let fd = ctx.fn_def_by_name(window_fn, ctx.active_module_scope().as_deref())?;
+    let body = fd.body.tail_expr()?;
+    // body = Bool.and(pow(E) * floor(...) <= N, ...)
+    let Expr::FnCall(_, args) = &body.node else {
+        return None;
+    };
+    let lo = args.first()?;
+    let Expr::BinOp(BinOp::Lte, lo_l, _) = &lo.node else {
+        return None;
+    };
+    let Expr::BinOp(BinOp::Mul, pow_call, _) = &lo_l.node else {
+        return None;
+    };
+    let Expr::FnCall(_, pow_args) = &pow_call.node else {
+        return None;
+    };
+    let e = pow_args.first()?;
+    Some(emit_expr_legacy(e, ctx, None))
 }
 
 /// Render a computed instantiation argument (from `cite_instantiate`) to Dafny:
@@ -2882,6 +2970,12 @@ pub fn emit_verify_law(
                     // Dafny treats the pin as `BackendDispatch` and
                     // its exports stay byte-identical.
                     | crate::ir::ProofStrategy::RingIdentity { .. }
+                    // Same guard for the nonlinear-nonnegativity strategy:
+                    // its closer is the Lean prelude tactic `aver_int_order`;
+                    // Z3 carries these `E >= 0` bounds push-button on the
+                    // default universal lemma, so Dafny treats the pin as
+                    // `BackendDispatch` and its exports stay byte-identical.
+                    | crate::ir::ProofStrategy::NonlinearNonneg { .. }
                     // Same guard for the decimal-Int roundtrip strategy:
                     // Lean-only (its skeleton cites the synthesized
                     // `__fuel_scan` lemma and Lean prelude names), so
@@ -3378,6 +3472,21 @@ pub fn emit_verify_law(
         lines.push(format!("  decreases {}", aver_name_to_dafny(&driver)));
     }
     lines.push("{".to_string());
+
+    // Hand-proof SIDECAR (Dafny): if a source-controlled
+    // `proofs/dafny/<fn>__<law>.dfy` body was loaded for this law, splice it as
+    // the lemma body and let `dafny verify` re-check it — a WRONG body fails
+    // verification loudly and the law is denied universal credit (kernel-checked,
+    // never trusted). Reuses the signature (params / `requires` / `ensures` /
+    // fuel) the default path just built, so the hand body proves exactly the
+    // law's claim. Absent a sidecar this is a no-op (the auto body follows).
+    if let Some(body) = ctx.hand_proofs.get(&(vb.fn_name.clone(), law.name.clone())) {
+        for l in body.lines() {
+            lines.push(format!("  {l}"));
+        }
+        lines.push("}\n".to_string());
+        return lines.join("\n");
+    }
 
     // Earlier sibling laws eligible to be cited into this proof — shared by the
     // `forall` hoist (here) and the explicit-instantiation engine (list-induction

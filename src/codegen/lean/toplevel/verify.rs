@@ -502,6 +502,12 @@ fn emit_verify_law_block(
                 // promise to close, so a singleton-given +
                 // constant-RHS law keeps today's skip.
                 | crate::ir::ProofStrategy::RingIdentity { .. }
+                // NonlinearNonneg (the inequality sibling) has the same
+                // honest-sorry floor (`first | (…) | sorry`), and its
+                // detector requires a given-dependent `E >= 0` claim, so
+                // the singleton-const-rhs skip can't apply anyway —
+                // listed for the same conservatism as RingIdentity.
+                | crate::ir::ProofStrategy::NonlinearNonneg { .. }
                 // IntDecimalRoundtrip shares the same honest-sorry
                 // floor (`first | (…; done) | sorry`); its detector
                 // also requires a given-dependent rhs, so the
@@ -560,8 +566,15 @@ fn emit_verify_law_block(
         Some(crate::ir::ProofStrategy::FiniteDomainCases { .. })
             | Some(crate::ir::ProofStrategy::TailRecFixedBaseFold { .. })
     );
-    let skip_universal = singleton_const_rhs
-        || ((calls_fuel_bounded || calls_foreign_acc_fold) && !pinned_self_universal);
+    // A hand-proof sidecar FORCES the universal statement: the spliced body
+    // proves `∀ givens, <when> = true -> <claim>`, so the law must be emitted
+    // in universal (not skipped / sample-only) form regardless of the auto
+    // gates above. (`recognize_hand_sidecar` keys on the loaded sidecar map; no
+    // sidecar => false => byte-identical to before.)
+    let has_hand_sidecar = super::law_auto::recognize_hand_sidecar(ctx, vb, law);
+    let skip_universal = !has_hand_sidecar
+        && (singleton_const_rhs
+            || ((calls_fuel_bounded || calls_foreign_acc_fold) && !pinned_self_universal));
     // Oracle v1: the auto-proof matchers compare law.lhs / law.rhs ASTs. For
     // effectful laws the theorem statement has been rewritten to target the
     // lifted fn (BranchPath.root() + oracle args injected); the matchers need to
@@ -584,12 +597,127 @@ fn emit_verify_law_block(
     // the same recognizer.
     let conditional_universal = law.when.is_some()
         && lifted_vars.is_empty()
-        && (super::law_auto::recognize_conditional_comparison_bridge(&law_for_auto_proof, ctx)
+        && (
+            // A hand-proof sidecar proves the true-universal `∀ givens, <when> =
+            // true -> claim`, so drop the sampled domain and class it universal
+            // (statement and spliced proof stay in lockstep).
+            has_hand_sidecar
+            || super::law_auto::recognize_conditional_comparison_bridge(&law_for_auto_proof, ctx)
             || super::law_auto::recognize_conditional_inductive_generic(
                 vb,
                 &law_for_auto_proof,
                 ctx,
-            ));
+            )
+            // A `when`-premised `NonlinearNonneg` law (the Newton-Raphson
+            // factor-sign guards) is proved UNIVERSALLY by the generic
+            // `aver_int_order` step, so its statement drops the sampled
+            // domain (`omit_domain`) to `∀ givens, <when> = true -> claim`
+            // and is classed `universal`. The proof emit keys on the same
+            // pin, so statement and proof agree. Credit stays fail-closed:
+            // the `#print axioms` whitelist still decides, and the
+            // `first | (…) | sorry` floor can never be credited.
+            || matches!(
+                pinned_law_strategy,
+                Some(crate::ir::ProofStrategy::NonlinearNonneg { .. })
+            )
+            // Keystone — the non-recursive laws-as-lemmas composition (`grind`
+            // over the earlier-sibling pool). Drops the sampled domain to the
+            // true `∀ givens, <when> = true -> claim`; the proof emit keys on the
+            // same recognizer, and the speculative probe commits the universal
+            // only when `grind`+pool actually closes (else bounded fallback).
+            || super::law_auto::recognize_pool_composition_generic(vb, &law_for_auto_proof, ctx)
+            // Multi-citation composition (the K5 reciprocal bucket bound): the
+            // goal is supplied by APPLYING an earlier universal whose premises
+            // are themselves discharged from an earlier universal's conclusion.
+            // Drops the sampled domain to the true `∀ givens, <when> = true ->
+            // claim`; the proof emit keys on the same recognizer, and the
+            // speculative probe commits the universal only when the orchestration
+            // actually closes (else bounded fallback).
+            || super::law_auto::recognize_multicite_composition(vb, &law_for_auto_proof, ctx)
+            // Finite bounded-Int-domain law (the K5 reciprocal seed table): a
+            // single `Int` given guarded into `[LO, HI)`, proven universally by
+            // pure-kernel enumeration (`decide` over a bounded-`Nat` forall).
+            // The emit replaces the theorem with the `Prop`-hypothesis universal
+            // form, so dropping the sampled domain here keeps them in lockstep.
+            || super::law_auto::recognize_finite_int_domain(vb, &law_for_auto_proof, ctx)
+            // Interval-monotonicity law (the K5 reciprocal table bucket bound):
+            // an affine-in-interval-var magnitude bound over the exact-rational
+            // order, proven universally by the rational interval-monotonicity
+            // argument. The emit replaces the theorem with the `Prop`-hypothesis
+            // universal form, so dropping the sampled domain keeps them aligned.
+            || super::law_auto::recognize_interval_monotonicity(vb, &law_for_auto_proof, ctx)
+            // Exact-rational order facts about an opaque unary `Fraction` cone fn
+            // `F` (the K5 signed power of two): its POSITIVITY (`F(k).top > 0 &&
+            // F(k).bottom > 0`), its AT-LEAST-ONE (`when k >= 0 -> isNonNeg(minus(
+            // F(k), oneFraction))`), and the all-exponent MONOTONICITY (`isNonNeg
+            // (minus (F E_hi) (F E_lo))` under `E_lo <= E_hi`). The first two cite
+            // the recursive-positivity pool law; the monotonicity is laws-as-lemmas
+            // composition citing `F`'s homomorphism + positivity + `>= 1` laws,
+            // chained through the generic Fraction order kit (`F` opaque). Each
+            // emit replaces the theorem with the universal form, so dropping the
+            // sampled domain keeps statement and proof aligned.
+            || super::law_auto::recognize_frac_positivity(vb, &law_for_auto_proof, ctx)
+            || super::law_auto::recognize_frac_geone(vb, &law_for_auto_proof, ctx)
+            || super::law_auto::recognize_frac_monotone_compose(vb, &law_for_auto_proof, ctx)
+            || super::law_auto::recognize_monotone_reflect(vb, &law_for_auto_proof, ctx)
+            || super::law_auto::recognize_magnitude_bracket_reflect(
+                vb,
+                &law_for_auto_proof,
+                ctx,
+            )
+            // General recursive-monotonicity law (`f(LO) <= f(HI)` for any pure
+            // recursive `Int -> Int` `f` under `LO <= HI`): proven universally by
+            // the shared recursive-mono kit (`f.induct` positivity + monotonicity)
+            // and a one-line citation. The emit replaces the theorem with the
+            // universal form, so dropping the sampled domain keeps statement and
+            // proof aligned.
+            || super::law_auto::recognize_recursive_monotone(vb, &law_for_auto_proof, ctx)
+            // Content-blind homomorphism law (`subject(OP1(a, b)) = OP2(subject(a),
+            // subject(b))` for a recursive subject, OP1/OP2 captured from the AST):
+            // the guarded power-of-two case carries a `when m >= 0; n >= 0` premise
+            // and is proven universally by the de-risked `subject.induct` skeleton.
+            // The emit replaces the theorem with the universal form, so dropping the
+            // sampled domain keeps statement and proof aligned. (The unconditional
+            // structural case — a list-length homomorphism — has no sampled domain to
+            // drop and is classed universal by the default unconditional path.)
+            || super::law_auto::recognize_homomorphism(vb, &law_for_auto_proof, ctx)
+            // Nested-Euclidean-floor collapse (`floor (floor a d) e = floor a
+            // (d * e)`, positive divisors): proven universally in pure core by
+            // `Int.ediv_ediv_of_nonneg`. The emit replaces the theorem with the
+            // universal form, so dropping the sampled domain keeps statement and
+            // proof aligned.
+            || super::law_auto::recognize_nested_floor(&law_for_auto_proof, ctx)
+            // Rational-order chaining law (the reciprocal-magnitude composition,
+            // Lemma 8.2.4): the conclusion is the Fraction order fact `isNonNeg
+            // (minus (pow2Signed BIG) A)`, proven universally by chaining the
+            // scaled-bound / envelope / placement premises through the generic
+            // `frac_le_trans` kit and citing the signed power-of-two
+            // monotonicity + homomorphism pool laws. The emit replaces the
+            // theorem with the universal form, so dropping the sampled domain
+            // keeps statement and proof aligned.
+            || super::law_auto::recognize_frac_order_chain(vb, &law_for_auto_proof, ctx)
+            // Triangle-sum law (the rounded Newton-Raphson reciprocal step): a
+            // strict `absFraction`-of-a-three-term-sum bound over the exact-
+            // rational order, proven universally by the generic triangle kit
+            // (`tri_sum3`) citing the two rounding bound universals. The emit
+            // replaces the theorem with the universal form, so dropping the
+            // sampled domain keeps statement and proof aligned.
+            || super::law_auto::recognize_triangle_sum(vb, &law_for_auto_proof, ctx)
+            // Validated-wrapper correctness (the Theorem-2 shape): an error-
+            // checking wrapper that returns `Result.Ok(core(…))` on valid input.
+            // The proof body unfolds only the wrapper and closes by reflexivity
+            // on the shared opaque core, so the statement drops its sampled
+            // domain to the true `∀ givens, <when> = true -> claim` universal.
+            || super::law_auto::recognize_validated_wrapper(vb, &law_for_auto_proof, ctx)
+            // Mathlib BREAK-GLASS (`--allow-mathlib` only, entry-module only): a
+            // walling `when`-law no core recognizer above claimed is emitted in
+            // true-universal form and closed by the generic Mathlib portfolio.
+            // LAST in the OR and gated on the opt-in flag, so the default path is
+            // byte-identical and a core-claimed law keeps its core (non-Mathlib)
+            // proof. Kept in lockstep with the `emit_mathlib_break_glass_law` arm
+            // (also last in the proof cascade).
+            || super::law_auto::recognize_mathlib_break_glass(ctx, &law_for_auto_proof)
+        );
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(
             vb,
@@ -718,12 +846,27 @@ fn emit_verify_law_block(
                         // inside its support lines; it is not shared across parts
                         // and must stay in this part's body.
                         body.extend(auto_proof.support_lines);
-                    } else {
+                    } else if partitioned {
+                        // Multiple parts share `{theorem_base}`-keyed support
+                        // theorems; collect them once and dedup the IDENTICAL
+                        // declarations each part re-emits. (Only safe across parts:
+                        // a single part's support stack may legitimately repeat a
+                        // tactic line — `unfold F`, `rw [F.eq_def, …]` — inside
+                        // distinct theorems, which a line-level dedup would wrongly
+                        // strip, so the unpartitioned arm below keeps them verbatim.)
                         for line in auto_proof.support_lines {
                             if !support_lines.contains(&line) {
                                 support_lines.push(line);
                             }
                         }
+                        body.push(format!(
+                            "{}theorem {} : ∀ {}, {} := by",
+                            header_prefix, part.name, quant_params, part.prop
+                        ));
+                    } else {
+                        // Single part: emit the support stack verbatim before the
+                        // theorem (no cross-part sharing, so no dedup — see above).
+                        body.extend(auto_proof.support_lines);
                         body.push(format!(
                             "{}theorem {} : ∀ {}, {} := by",
                             header_prefix, part.name, quant_params, part.prop
@@ -993,6 +1136,24 @@ fn emit_verify_law_block(
 /// subtype — not a useful rewrite over the carrier). The name is the SAME
 /// `<fn>_eq_<spec>` / `<fn>_law_<name>` the block emits, so a later law's
 /// `simp [<name>]` resolves against the earlier theorem already in scope.
+/// The Lean theorem name `emit_verify_law_block` gives this law's universal
+/// theorem — `<fn>_eq_<spec>` for an equational spec law, else `<fn>_law_<name>`.
+/// Mirrors the `theorem_base` computation in `emit_verify_law_block` exactly, so
+/// a caller can key the cross-file admission set on the same name the block
+/// emits even for a law `law_as_lemma_statement` declines to state as a plain
+/// rewrite (a `when`-premised universal the keystone closes, cited by name).
+pub(crate) fn law_theorem_base(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> String {
+    let fn_name = aver_name_to_lean(&vb.fn_name);
+    match canonical_spec_ref(&vb.fn_name, law, ctx) {
+        Some(spec_ref) => format!(
+            "{}_eq_{}",
+            fn_name,
+            aver_name_to_lean(&spec_ref.spec_fn_name)
+        ),
+        None => format!("{}_law_{}", fn_name, aver_name_to_lean(&law.name)),
+    }
+}
+
 pub(crate) fn law_as_lemma_statement(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -1004,9 +1165,63 @@ pub(crate) fn law_as_lemma_statement(
     // universal, so the pool declined them wholesale; now a proven conditional
     // law is a sound conditional simp lemma. Decline a `when`-law the auto-
     // prover only bounds (it has no universal theorem to cite).
+    // A `when`-law is also a sound conditional rewrite when an IR-pinned
+    // strategy proves it universally as a clean `∀ givens, <when> = true ->
+    // claim` theorem named `<fn>_law_<name>` — the power-of-two homomorphism
+    // (`FloorDivWindow`), the Newton-Raphson nonneg/order laws
+    // (`NonlinearNonneg`), and the `qexp` fold (`TailRecFixedBaseFold`). Citing
+    // those is exactly what the keystone laws-as-lemmas composition needs.
+    // (`recognize_pool_composition_generic` is deliberately NOT consulted here —
+    // it calls back into this fn, which would recurse.)
+    //
+    // SOUNDNESS: this gate is permissive at the STATEMENT level and fail-closed at
+    // the CREDIT level. It keys on the IR strategy TYPE, not on whether that law's
+    // emit actually closed without `sorry` — a pinned law whose `first | (…) |
+    // sorry` portfolio fell to its floor still has a (sorry-carrying) theorem to
+    // cite. That cannot launder credit: `sorry` propagates transitively, so any
+    // proof that cites a sorry-floored law inherits `sorryAx`, and the final
+    // `--check` axiom whitelist (blacklist `{ofReduceBool, sorryAx}`) refuses it
+    // universal. The worst case is a previously-universal citing law LOSING credit
+    // (a regression caught by the proof corpus), never a false universal.
+    let pinned_when_universal = matches!(
+        ctx.law_target_fn_id(&vb.fn_name)
+            .and_then(|fn_id| ctx
+                .proof_ir
+                .law_theorems
+                .iter()
+                .find(|t| t.fn_id == fn_id && t.law_name == law.name))
+            .map(|t| &t.strategy),
+        Some(
+            crate::ir::ProofStrategy::FloorDivWindow { .. }
+                | crate::ir::ProofStrategy::NonlinearNonneg { .. }
+                | crate::ir::ProofStrategy::TailRecFixedBaseFold { .. }
+        )
+    );
     if law.when.is_some()
         && !(super::law_auto::recognize_conditional_comparison_bridge(law, ctx)
-            || super::law_auto::recognize_conditional_inductive_generic(vb, law, ctx))
+            || super::law_auto::recognize_conditional_inductive_generic(vb, law, ctx)
+            // The exact-rational at-least-one (`F(k) >= 1` for `k >= 0`) and
+            // monotonicity (`F(LO) <= F(HI)` for `LO <= HI`) conditional laws are
+            // proven universally by their dedicated composition rungs, so they are
+            // sound conditional rewrites a later law (the monotonicity citing the
+            // at-least-one) can cite.
+            || super::law_auto::recognize_frac_geone(vb, law, ctx)
+            || super::law_auto::recognize_frac_monotone_compose(vb, law, ctx)
+            || super::law_auto::recognize_monotone_reflect(vb, law, ctx)
+            || super::law_auto::recognize_magnitude_bracket_reflect(vb, law, ctx)
+            // The finite bounded-Int-domain law (`∀ i, LO ≤ i → i < HI → P i`,
+            // proven by pure-kernel `decide` enumeration) and the interval-
+            // monotonicity law (`subject(d, v, e)` over an interval, proven by the
+            // rational interval argument) both have a clean `∀ givens, <when> =
+            // true -> claim` universal theorem named `<fn>_law_<name>`, so they are
+            // sound conditional rewrites a later law can cite. The keystone's
+            // laws-as-lemmas composition (the K5 reciprocal bucket bound) cites
+            // exactly this pair: the table seed bound and the endpoint
+            // interval-magnitude bound.
+            || super::law_auto::recognize_finite_int_domain(vb, law, ctx)
+            || super::law_auto::recognize_interval_monotonicity(vb, law, ctx)
+            || super::law_auto::recognize_validated_wrapper(vb, law, ctx)
+            || pinned_when_universal)
     {
         return None;
     }

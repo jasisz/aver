@@ -1078,6 +1078,30 @@ pub enum ProofStrategy {
         /// backends translate to their lemma vocabulary.
         unfold_fns: Vec<String>,
     },
+    /// Nonnegativity / order over a nonlinear Int product (`E >= 0`, or
+    /// `prod <= prod`) — the inequality sibling of [`RingIdentity`], and
+    /// the Newton-Raphson error-bound family of the K5 division proof. The
+    /// claim is `subject(args) = true` for a pure non-recursive `Bool` fn
+    /// whose body is a nonnegativity `E >= 0` or a product-order comparison
+    /// `L <= R` (both sides products) over a pure-Int product cone; the law
+    /// MAY carry a `when` premise constraining the factor signs (it is
+    /// threaded into the universal statement as a hypothesis). The Lean
+    /// backend renders it as one generic decision step — the shipped
+    /// prelude tactic `aver_int_order`, the nonlinear analog of `omega`
+    /// for the products-and-squares fragment (recurse with `Int.mul_nonneg`
+    /// / `Int.mul_le_mul`, bottom squares out on `aver_sq_nonneg`, discharge
+    /// the premise leaves with `omega`) — NOT a per-figure template; an
+    /// honest `sorry` floor keeps credit fail-closed. A `prod <= var`
+    /// transitivity figure is NOT admitted (it needs a `≤`-chain witness
+    /// this step does not synthesize) and keeps its bounded fallback. Dafny
+    /// needs no special handling (Z3 carries nonlinear arithmetic
+    /// push-button) and treats the pin like `BackendDispatch`. Demonstrated
+    /// by `projects/k5_fdiv/domain/estimate.av`.
+    NonlinearNonneg {
+        /// Ordered fn unfold list — subject fn first, then the
+        /// transitively-reached pure-Int callees (sorted). Source names.
+        unfold_fns: Vec<String>,
+    },
     /// Floor-division window family — laws over a power-of-two fn
     /// (`match n <= 0 { true -> 1; false -> 2 * pow(n - 1) }`), a
     /// floor-halving binary-exponent fn (the
@@ -1137,6 +1161,49 @@ pub enum FloorWindowFigure {
         pow_fn: String,
         fits_fn: String,
         claim_fn: String,
+    },
+    /// The recursive-expo-FREE Euclidean floor window over a
+    /// power-of-two divisor: `window(args) == true` (no premise) where
+    /// `window`'s body is
+    /// `pow(E) * floor(N, pow(E)) <= N  &&  N < pow(E) * (floor(N, pow(E)) + 1)`
+    /// for ARBITRARY numerator expression `N` and exponent expression
+    /// `E` over the law's givens, `floor` the `Result.withDefault(
+    /// Int.div(a, d), 0)` Euclidean-floor wrapper, and `pow` any
+    /// [`is_pow2_shape`] fn. Unlike [`SigWindow`] there is NO binary-
+    /// exponent recursion — the divisor is `pow(E)` directly — so the
+    /// figure is generic over `N`/`E` (a bare-given `floorDivWindow(a,
+    /// k)` and a compound `truncFitsWindow(f, i)` both match). Closed by
+    /// the core `Int.ediv_add_emod` / `Int.emod_nonneg` /
+    /// `Int.emod_lt_of_pos` bridge plus power-of-two positivity, generic
+    /// over the inferred `N`/`pow(E)`. `pow_fn`/`floor_fn` are the
+    /// (possibly module-qualified) dotted call names; `window_fn` is the
+    /// law's subject predicate.
+    FloorPow2Window {
+        pow_fn: String,
+        floor_fn: String,
+        window_fn: String,
+    },
+    /// The exact-division cancel sibling of [`FloorPow2Window`]: the
+    /// EQUATIONAL fact that flooring a manifest multiple of a power of two
+    /// by that power is exact. The law claim is
+    /// `floor(s * pow(b), pow(a)) == s * pow(b - a)` with premise
+    /// `0 <= a && a <= b` — the divisor `pow(a)` divides the dividend
+    /// `s * pow(b)` because `pow(a) | pow(b)` when `a <= b` (the power-of-two
+    /// homomorphism `pow(b) = pow(a) * pow(b - a)`), so the Euclidean floor
+    /// returns the exact quotient `s * pow(b - a)`. Generic over the integer
+    /// `s` and the two exponents `a`/`b` — "the exact cancel works for any
+    /// provably-dividing floorDiv". Closed by the homomorphism split plus
+    /// `Int.mul_ediv_cancel_left` (core, no Mathlib), the same power algebra
+    /// every floor-window figure proves. `pow_fn`/`floor_fn` are the
+    /// (possibly module-qualified) dotted call names; `cancel_fn` is the
+    /// law's subject (the floor wrapper itself), so the lemma sits in the
+    /// call cone of any rounding-composition law and the keystone cites it
+    /// by name. Demonstrated by Lemmas 7.2.10 / 7.2.11 of the K5 division
+    /// proof (`projects/k5_fdiv/domain/round.av`).
+    FloorPow2Cancel {
+        pow_fn: String,
+        floor_fn: String,
+        cancel_fn: String,
     },
 }
 

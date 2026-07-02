@@ -165,7 +165,10 @@ pub fn emit_builtin_call(
 
         // ---- Vector (Lean Array) ----
         VectorNew => format!("Array.mkArray {} {}", p(&a[0]), p(&a[1])),
-        VectorGet => format!("{}.get? (Int.toNat {})", p(&a[0]), p(&a[1])),
+        // `Array.get?` was removed in Lean 4.31 in favour of the `GetElem?`
+        // bracket notation `arr[i]?`, which reduces under kernel `decide`
+        // (so a finite-domain table law over a `Vector` enumerates cleanly).
+        VectorGet => format!("{}[Int.toNat {}]?", p(&a[0]), p(&a[1])),
         VectorSet => format!(
             "if {} < {}.size then some ({}.set! (Int.toNat {}) {}) else none",
             p(&a[1]),
@@ -246,6 +249,8 @@ mod tests {
             bare_i64: Default::default(),
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
+            allow_mathlib: false,
+            hand_proofs: Default::default(),
         }
     }
 

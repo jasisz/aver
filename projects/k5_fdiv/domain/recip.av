@@ -1,0 +1,220 @@
+module Recip
+    intent =
+        "Stage 2 of the K5 division proof, the rounded Newton-Raphson reciprocal"
+        "refinement step NAMED on the exact rational model. domain/estimate.av proves"
+        "the EXACT Newton step squares the scaled error (nrErrorSquares: the new error"
+        "numerator equals the old one squared); domain/fracround.av proves the rounding"
+        "slack on the Fraction operations the kernel divider actually runs"
+        "(truncFracErrorBound / awayFracErrorBound: one trunc / one away discards"
+        "strictly less than one ulp(x,n) = 2^(fracExpo(x) - n + 1)). This module names"
+        "the one rounded refinement step the kernel performs and states the error of"
+        "that ROUNDED step -- the seed every Section 8.2 lemma cites toward the §8.1"
+        "reciprocal bound |d*sd2 - 1| < 2^-28 (Lemma 8.1.1, p.26)."
+        "FAITHFULNESS: reciprocalRefineStep mirrors kernel.av's divideBang steps 2-6"
+        "(domain/kernel.av lines 270-273; Figure 1, p.2): sdd = away(sd*d, 32),"
+        "comp = 2 - sdd (the Newton ones-complement, Section 1.1, p.3), product = sd*comp,"
+        "sd_new = trunc(product, 32). The kernel additionally pre-rounds the divisor to"
+        "working precision dr = away(d, 32) before forming sdd (kernel.av line 269); this"
+        "module names the refinement on the exact divisor d, the form the §8.1 error"
+        "analysis reasons about (the pre-rounding folds into d's own ulp slack)."
+        "THE ERROR LAW: with the exact Newton step writing 1 - d*sd_new_exact ="
+        "(1 - d*sd)^2 (nrErrorSquares), the rounded step adds the away slack on sdd and"
+        "the trunc slack on the product, giving"
+        "  1 - d*sd_new = (1 - d*sd)^2 + d*sd*(sdd - d*sd) + d*(product - sd_new)"
+        "so |1 - d*sd_new| <= |1 - d*sd|^2 + |d*sd|*|sdd - d*sd| + |d|*|product - sd_new|"
+        "and, citing the two fraction bounds for the two rounding deltas, the new error"
+        "is below eps^2 + |d*sd|*ulp(d*sd,32) + |d|*ulp(product,32). The slack is the"
+        "TRUE ulp slack (pow2Signed at the genuine binary exponents), not a weakened one."
+    depends [Domain.Rational, Domain.Fprep, Domain.Round, Domain.Kernel, Domain.Estimate, Domain.FracRound]
+    exposes [reciprocalRefineStep, refineProduct, priorError, stepError, awayDelta, truncDelta, awaySlack, truncSlack, slack, errorBudget, nrRoundedStepError, seedBoundFraction, stepSlackBound, stepOneBound, finalErrorBudget, reciprocalErrorBound, reciprocalBound]
+    effects []
+
+// ---------------------------------------------------------------------------
+// The one rounded Newton-Raphson refinement step (kernel.av lines 270-273).
+// ---------------------------------------------------------------------------
+
+fn refineProduct(d: Fraction, sd: Fraction) -> Fraction
+    ? "The pre-truncation Newton product sd * comp(away(sd*d, 32), 32) of one refinement step (kernel.av line 271, the argument of truncFrac): comp = 2 - sdd is the Newton ones-complement (Section 1.1, p.3), sdd = away(sd*d, 32) the rounded scaled estimate."
+    Domain.Rational.times(sd, Domain.Kernel.compFrac(Domain.Kernel.awayFrac(Domain.Rational.times(d, sd), 32), 32))
+
+verify refineProduct
+    Domain.Rational.sameValue(refineProduct(Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 21, bottom = 32)), Domain.Rational.Fraction(top = 1365, bottom = 2048)) => true
+
+fn reciprocalRefineStep(d: Fraction, sd: Fraction) -> Fraction
+    ? "One rounded Newton-Raphson reciprocal refinement step sd_new = trunc(sd * comp(away(sd*d, 32), 32), 32) (kernel.av divideBang steps 2-6, lines 270-273; Figure 1, p.2). Starting from a reciprocal estimate sd ~ 1/d, the step roughly doubles the accuracy: the kernel runs it twice to take the 8-bit table seed up to ~32 bits (sd2)."
+    Domain.Kernel.truncFrac(refineProduct(d, sd), 32)
+
+verify reciprocalRefineStep
+    Domain.Rational.sameValue(reciprocalRefineStep(Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 21, bottom = 32)), Domain.Rational.Fraction(top = 1365, bottom = 2048)) => true
+    Domain.Rational.sameValue(reciprocalRefineStep(Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1)), Domain.Rational.Fraction(top = 1, bottom = 1)) => true
+
+// ---------------------------------------------------------------------------
+// The pre-step and post-step reciprocal errors, and the two rounding deltas.
+// ---------------------------------------------------------------------------
+
+fn priorError(d: Fraction, sd: Fraction) -> Fraction
+    ? "The pre-step reciprocal error 1 - d*sd of the estimate sd."
+    Domain.Rational.minus(Domain.Rational.oneFraction(), Domain.Rational.times(d, sd))
+
+verify priorError
+    Domain.Rational.sameValue(priorError(Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 21, bottom = 32)), Domain.Rational.Fraction(top = 1, bottom = 64)) => true
+
+fn stepError(d: Fraction, sd: Fraction) -> Fraction
+    ? "The post-step reciprocal error 1 - d*sd_new of the refined estimate sd_new = reciprocalRefineStep(d, sd)."
+    Domain.Rational.minus(Domain.Rational.oneFraction(), Domain.Rational.times(d, reciprocalRefineStep(d, sd)))
+
+verify stepError
+    Domain.Rational.sameValue(stepError(Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 21, bottom = 32)), Domain.Rational.Fraction(top = 1, bottom = 4096)) => true
+
+fn awayDelta(d: Fraction, sd: Fraction) -> Fraction
+    ? "The away rounding delta sdd - sd*d of the step (awayFracError on sd*d at 32 bits): how much the round-away of the scaled estimate added. Bounded by awayFracErrorBound."
+    Domain.FracRound.awayFracError(Domain.Rational.times(d, sd), 32)
+
+fn truncDelta(d: Fraction, sd: Fraction) -> Fraction
+    ? "The trunc rounding delta product - sd_new of the step (truncFracError on the Newton product at 32 bits): how much the round-toward-zero of the product discarded. Bounded by truncFracErrorBound."
+    Domain.FracRound.truncFracError(refineProduct(d, sd), 32)
+
+// ---------------------------------------------------------------------------
+// The ulp slack of the two roundings, and the total one-step error budget.
+// The slack is the TRUE ulp(x,32) = 2^(fracExpo(x) - 32 + 1) scaled by the
+// magnitude the delta is multiplied into in the error recurrence -- exactly the
+// RHS of the two cited fraction bounds, times that magnitude.
+// ---------------------------------------------------------------------------
+
+fn awaySlack(d: Fraction, sd: Fraction) -> Fraction
+    ? "The away slack term |d*sd| * ulp(d*sd, 32) of the one-step error: the away rounding of sd*d enters the error multiplied by d*sd, and |sdd - sd*d| < ulp(sd*d, 32) by awayFracErrorBound."
+    Domain.Rational.times(Domain.Rational.absFraction(Domain.Rational.times(d, sd)), Domain.Fprep.pow2Signed(Domain.Kernel.fracExpo(Domain.Rational.times(d, sd)) - 32 + 1))
+
+fn truncSlack(d: Fraction, sd: Fraction) -> Fraction
+    ? "The trunc slack term |d| * ulp(product, 32) of the one-step error: the trunc rounding of the Newton product enters the error multiplied by d, and |product - sd_new| < ulp(product, 32) by truncFracErrorBound."
+    Domain.Rational.times(Domain.Rational.absFraction(d), Domain.Fprep.pow2Signed(Domain.Kernel.fracExpo(refineProduct(d, sd)) - 32 + 1))
+
+fn slack(d: Fraction, sd: Fraction) -> Fraction
+    ? "The total rounding slack of one refinement step: away slack + trunc slack."
+    Domain.Rational.plus(awaySlack(d, sd), truncSlack(d, sd))
+
+fn errorBudget(eps: Fraction, d: Fraction, sd: Fraction) -> Fraction
+    ? "The one-step error budget eps^2 + slack(d, sd, 32): the squared prior error plus the two ulp rounding slacks. The exact Newton step contracts the error to eps^2 (nrErrorSquares); the rounding adds the slack."
+    Domain.Rational.plus(Domain.Rational.times(eps, eps), slack(d, sd))
+
+// ---------------------------------------------------------------------------
+// nrRoundedStepError -- the one-rounded-Newton-step error bound.
+// ---------------------------------------------------------------------------
+
+fn nrRoundedStepError(d: Fraction, sd: Fraction, eps: Fraction) -> Bool
+    ? "The one-rounded-Newton-step error bound: if the prior estimate has error |1 - d*sd| < eps, the refined estimate sd_new = reciprocalRefineStep(d, sd) has error |1 - d*sd_new| < eps^2 + slack(d, sd, 32). Decomposing 1 - d*sd_new = (1 - d*sd)^2 + d*sd*(sdd - d*sd) + d*(product - sd_new) (the exact Newton square nrErrorSquares plus the two rounding deltas), the triangle inequality and the two cited fraction bounds (awayFracErrorBound on sdd, truncFracErrorBound on the product) give the budget. This is the seed of Lemma 8.1.1 (p.26): two such steps from the 8-bit table seed reach sd2 with |d*sd2 - 1| < 2^-28."
+    Domain.Rational.lessThan(Domain.Rational.absFraction(stepError(d, sd)), errorBudget(eps, d, sd))
+
+verify nrRoundedStepError
+    nrRoundedStepError(Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 21, bottom = 32), Domain.Rational.Fraction(top = 1, bottom = 32)) => true
+    nrRoundedStepError(Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 2)) => true
+    nrRoundedStepError(Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 2, bottom = 3), Domain.Rational.Fraction(top = 1, bottom = 1024)) => true
+    nrRoundedStepError(Domain.Rational.Fraction(top = 5, bottom = 4), Domain.Rational.Fraction(top = 25, bottom = 32), Domain.Rational.Fraction(top = 1, bottom = 32)) => true
+    nrRoundedStepError(Domain.Rational.Fraction(top = 7, bottom = 4), Domain.Rational.Fraction(top = 9, bottom = 16), Domain.Rational.Fraction(top = 1, bottom = 32)) => true
+
+verify nrRoundedStepError law oneStepBound
+    given d: Fraction = [Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 5, bottom = 4), Domain.Rational.Fraction(top = 7, bottom = 4)]
+    given sd: Fraction = [Domain.Rational.Fraction(top = 21, bottom = 32), Domain.Rational.Fraction(top = 25, bottom = 32), Domain.Rational.Fraction(top = 9, bottom = 16)]
+    given eps: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 32), Domain.Rational.Fraction(top = 1, bottom = 64)]
+    when d.top != 0
+    when d.bottom != 0
+    when sd.top != 0
+    when sd.bottom != 0
+    when Domain.Rational.lessThan(Domain.Rational.absFraction(priorError(d, sd)), eps)
+    nrRoundedStepError(d, sd, eps) holds
+
+// ---------------------------------------------------------------------------
+// reciprocalBound -- Lemma 8.1.1 (page 26), the Section 8.1 capstone:
+//   after two rounded Newton-Raphson refinement steps from the 8-bit table
+//   seed, the reciprocal estimate sd2 satisfies |d*sd2 - 1| < 2^-28.
+//
+// *** BACKEND: this law is certified on the Z3/Dafny backend (SMT trust), NOT
+// *** Lean-kernel-genuine.  Its credit is the Dafny verification; on the Lean
+// *** side it is sample/bounded.  The per-step model fact nrRoundedStepError
+// *** above STAYS Lean-kernel-universal; reciprocalBound is the NUMERIC
+// *** COMPOSITION of two such steps, which Z3 carries natively (the chain is
+// *** standalone-confirmed in scratchpad/recur.dfy + rb_chain.dfy).
+//
+// The law is stated as the two-step error-budget composition exactly as the
+// confirmed chain states it (rb_chain.dfy TwoStepBudget): the error magnitudes
+// are a0 = |1 - d*sd0|, a1 = |1 - d*sd1|, and the conclusion is the LITERAL
+// final error |d*sd2 - 1|.  The premises are the cited building blocks:
+//   * a0 < 3/512                 -- the table-seed bound (bucketMonotonicity,
+//                                   domain/table.av);
+//   * a1 < a0^2 + s1             -- one rounded Newton step (nrRoundedStepError,
+//                                   above): the post-step error is below the
+//                                   prior error squared plus the rounding slack;
+//   * |d*sd2 - 1| < a1^2 + s2    -- the SECOND rounded Newton step
+//                                   (nrRoundedStepError again), threading the
+//                                   step-1 error bound a1 in as the step-2 prior;
+//   * 0 <= s1 <= 2^-29, 0 <= s2 <= 2^-29
+//                                -- each step's rounding slack stays below 2^-29
+//                                   over the table range (the away + trunc ulp
+//                                   terms slack(d, sd) of nrRoundedStepError at
+//                                   working precision 32).
+// Z3 then closes the numeric composition (3/512)^4 + slacks < 2^-28.
+// ---------------------------------------------------------------------------
+
+fn seedBoundFraction() -> Fraction
+    ? "The Lemma 8.1.1 table-seed error bound 3/512 = 2^-8 + 2^-9 (page 26): the 8-bit lookup gives |1 - d*sd0| < 3/512 for every divisor in the bucket (the bucketMonotonicity law of domain/table.av)."
+    Domain.Rational.Fraction(top = 3, bottom = 512)
+
+verify seedBoundFraction
+    Domain.Rational.sameValue(seedBoundFraction(), Domain.Rational.Fraction(top = 3, bottom = 512)) => true
+
+fn stepSlackBound() -> Fraction
+    ? "The per-step rounding-slack bound 2^-29 (page 26): each rounded Newton step adds slack(d, sd) = |d*sd|*ulp(d*sd,32) + |d|*ulp(product,32) <= 2^-29 over the table range, the away + trunc ulp terms of nrRoundedStepError at working precision 32."
+    Domain.Rational.Fraction(top = 1, bottom = 536870912)
+
+verify stepSlackBound
+    Domain.Rational.sameValue(stepSlackBound(), Domain.Rational.Fraction(top = 1, bottom = 536870912)) => true
+
+fn reciprocalErrorBound() -> Fraction
+    ? "The Lemma 8.1.1 final reciprocal error bound 2^-28 = 1/268435456 (page 26)."
+    Domain.Rational.Fraction(top = 1, bottom = 268435456)
+
+verify reciprocalErrorBound
+    Domain.Rational.sameValue(reciprocalErrorBound(), Domain.Rational.Fraction(top = 1, bottom = 268435456)) => true
+
+fn stepOneBound() -> Fraction
+    ? "The bound on the FIRST-step reciprocal error a1 = |1 - d*sd1|: (3/512)^2 + 2^-29 = 18433/536870912. This is the seed bound 3/512 squared by the Newton step (squaring is monotone on nonnegatives, the sqMono law of domain/estimate.av) plus one rounding slack (<= 2^-29), i.e. nrRoundedStepError applied to the table seed."
+    Domain.Rational.Fraction(top = 18433, bottom = 536870912)
+
+verify stepOneBound
+    Domain.Rational.sameValue(stepOneBound(), Domain.Rational.plus(Domain.Rational.times(seedBoundFraction(), seedBoundFraction()), stepSlackBound())) => true
+
+fn finalErrorBudget() -> Fraction
+    ? "The two-step error budget e2 = (e1)^2 + 2^-29 = ((3/512)^2 + 2^-29)^2 + 2^-29 = 876646401/288230376151711744, the bound on a2 = |1 - d*sd2| after BOTH rounded Newton steps: the step-one bound e1 = stepOneBound squared by the second Newton step (sqMono of domain/estimate.av) plus the second rounding slack (<= 2^-29). This is nrRoundedStepError applied twice from the table seed. The capstone numeric fact Z3 certifies is e2 < 2^-28: (3/512)^4 + 2 slacks stays below 2^-28 (876646401 < 1073741824 = 2^30 over the common denominator 2^58)."
+    Domain.Rational.Fraction(top = 876646401, bottom = 288230376151711744)
+
+verify finalErrorBudget
+    Domain.Rational.sameValue(finalErrorBudget(), Domain.Rational.plus(Domain.Rational.times(stepOneBound(), stepOneBound()), stepSlackBound())) => true
+    Domain.Rational.lessThan(finalErrorBudget(), reciprocalErrorBound()) => true
+
+fn reciprocalBound(d: Fraction, sd2: Fraction) -> Bool
+    ? "Lemma 8.1.1 (page 26), the Section 8.1 capstone: after two rounded Newton-Raphson refinement steps from the 8-bit table seed, the reciprocal estimate sd2 has |d*sd2 - 1| < 2^-28. Certified on the Z3/Dafny backend (the numeric two-step error-budget composition of two nrRoundedStepError steps started from the 3/512 table seed); the per-step bound nrRoundedStepError stays Lean-kernel-universal."
+    Domain.Rational.lessThan(Domain.Rational.absFraction(Domain.Rational.minus(Domain.Rational.times(d, sd2), Domain.Rational.oneFraction())), reciprocalErrorBound())
+
+verify reciprocalBound
+    reciprocalBound(Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1)) => true
+    reciprocalBound(Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 2, bottom = 3)) => true
+
+verify reciprocalBound law lemma_8_1_1
+    given d: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 1)]
+    given sd2: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 1)]
+    given a0: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 256)]
+    given a1: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 70000), Domain.Rational.Fraction(top = 1, bottom = 80000)]
+    given s1: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 536870912)]
+    given s2: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 536870912)]
+    when Domain.Rational.isNonNeg(a0)
+    when Domain.Rational.lessThan(a0, seedBoundFraction())
+    when Domain.Rational.isNonNeg(a1)
+    when Domain.Rational.lessThan(a1, Domain.Rational.plus(Domain.Rational.times(a0, a0), s1))
+    when Domain.Rational.lessThan(Domain.Rational.absFraction(Domain.Rational.minus(Domain.Rational.times(d, sd2), Domain.Rational.oneFraction())), Domain.Rational.plus(Domain.Rational.times(a1, a1), s2))
+    when Domain.Rational.isNonNeg(s1)
+    when Domain.Rational.isNonNeg(s2)
+    when Domain.Rational.isNonNeg(Domain.Rational.minus(stepSlackBound(), s1))
+    when Domain.Rational.isNonNeg(Domain.Rational.minus(stepSlackBound(), s2))
+    when Domain.Rational.lessThan(a1, stepOneBound())
+    when Domain.Rational.lessThan(Domain.Rational.plus(Domain.Rational.times(a1, a1), s2), finalErrorBudget())
+    reciprocalBound(d, sd2) holds

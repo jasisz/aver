@@ -644,6 +644,25 @@ pub(super) enum Commands {
         /// that closes for real loses its alternation and floor.
         #[arg(long, requires = "check")]
         minimize: bool,
+        /// Mathlib break-glass tier (Lean-only, opt-in). DEFAULT OFF: the
+        /// generated proof is byte-identical to today — pure core, NO Mathlib
+        /// import in any file, same tiers. When set, a `when`-law that WALLS in
+        /// core (no core strategy closes it universally) gets an additional
+        /// GENERIC Mathlib tactic arm (`Int.ediv_ediv_of_nonneg`, `pow_add`,
+        /// `positivity`, `nlinarith`, `norm_num`, `omega` — a domain-blind
+        /// portfolio, not a per-figure template) and is emitted in true-
+        /// universal form. The generated lake project reuses a PREBUILT Mathlib
+        /// cache (a lake project with Mathlib already built, located via the
+        /// `AVER_MATHLIB_CACHE` env var) so no per-check re-fetch happens —
+        /// per-check cost is just loading the oleans (~30-45s). The axiom
+        /// whitelist is UNCHANGED (Mathlib lemmas are kernel-clean
+        /// `{propext, Classical.choice, Quot.sound}`); the new per-law manifest
+        /// `credit` field (`core` / `mathlib` / `open`) records, orthogonally to
+        /// axiom-cleanliness, whether the law needed the Mathlib import — `core`
+        /// when a core arm closed it, `mathlib` only when the break-glass arm did
+        /// (read from the build-log trace marker the break-glass arm emits).
+        #[arg(long, requires = "check")]
+        allow_mathlib: bool,
         /// THE RATCHET. Compare the freshly recomputed per-law proof
         /// manifest against this committed baseline and exit non-zero on
         /// any regression: a previously-proven law that is removed, demoted
