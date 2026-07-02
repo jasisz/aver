@@ -5798,7 +5798,13 @@ fn run_proof_check(
         // Skipped under `--check-json` so the JSON bytes are unaffected.
         if !check_json {
             let goal_json = lean_goal_json(output_dir, &open);
-            render_explain_candidates(&goal_json, source_items, source_file, source_module_root);
+            render_explain_candidates(
+                &open,
+                &goal_json,
+                source_items,
+                source_file,
+                source_module_root,
+            );
         }
     }
     // `--allow-mathlib` per-law credit (Lean only): tag each law `core` /
@@ -7175,13 +7181,22 @@ fn lean_residual_goals(
 /// independent of [`lean_residual_goals`] (which still owns the pretty-text
 /// `open_goal`): a total failure here just yields an empty map, so the pretty
 /// path and `open_goal` are never disturbed.
+/// One open law's dumped residual goal (our JSON), plus whether MORE THAN ONE
+/// proof arm produced a dump for that law. When multiple arms are open, the
+/// cons-arm candidate we render may not close the law on its own — the renderer
+/// flags it.
+struct GoalDump {
+    json: String,
+    multi_arm: bool,
+}
+
 fn lean_goal_json(
     dir: &str,
     open_laws: &[(String, String)],
-) -> std::collections::BTreeMap<String, String> {
+) -> std::collections::BTreeMap<String, GoalDump> {
     use aver::codegen::lean::untranslate::{AVER_DUMP_GOAL_ELAB, GOAL_JSON_MARKER};
     use std::process::Command;
-    let mut out: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let mut out: std::collections::BTreeMap<String, GoalDump> = std::collections::BTreeMap::new();
     if open_laws.is_empty() {
         return out;
     }
@@ -7293,18 +7308,32 @@ fn lean_goal_json(
         String::from_utf8_lossy(&o.stderr)
     );
     // Each `AVER_GOAL_JSON:<fn.law>:<json>` info line carries one law's residual.
+    // Locate the marker with `find` (not `strip_prefix`) so a position-prefixed
+    // channel (`<file>:<line>:<col>: info: AVER_GOAL_JSON:…`) still matches — the
+    // same defensive slice the AVERMIN trace parser uses.
     for line in combined.lines() {
-        let Some(rest) = line.strip_prefix(GOAL_JSON_MARKER) else {
+        let Some(pos) = line.find(GOAL_JSON_MARKER) else {
             continue;
         };
+        let rest = &line[pos + GOAL_JSON_MARKER.len()..];
         let Some((label, json)) = rest.split_once(':') else {
             continue;
         };
         let json = json.trim();
-        if !json.is_empty() {
-            // Cons arm (carrying the IH) is dumped last; prefer it.
-            out.insert(label.to_string(), json.to_string());
+        if json.is_empty() {
+            continue;
         }
+        // Cons arm (carrying the IH) is dumped last; prefer it, but remember
+        // that an earlier arm was also open so the renderer can flag it.
+        out.entry(label.to_string())
+            .and_modify(|d| {
+                d.json = json.to_string();
+                d.multi_arm = true;
+            })
+            .or_insert_with(|| GoalDump {
+                json: json.to_string(),
+                multi_arm: false,
+            });
     }
     out
 }
@@ -7329,25 +7358,36 @@ enum SampleVerdict {
 /// internal `open_goal` channel. Pure console output: never affects tiers /
 /// credit / `passed` / the exit code.
 fn render_explain_candidates(
-    goal_json: &std::collections::BTreeMap<String, String>,
+    open_laws: &[(String, String)],
+    goal_json: &std::collections::BTreeMap<String, GoalDump>,
     items: &[aver::ast::TopLevel],
     file: &str,
     module_root: &str,
 ) {
     use aver::codegen::lean::untranslate::untranslate_goal;
     use colored::Colorize;
-    if goal_json.is_empty() {
+    if open_laws.is_empty() {
         return;
     }
     println!();
     println!("{}", "--explain: candidate Aver laws for open goals".bold());
-    for (label, json) in goal_json {
+    // Every OPEN law gets exactly one verdict line — a law whose residual could
+    // not be extracted (no arm dumped a goal) is reported as an engine-form gap,
+    // never silently skipped.
+    for (label, _thm) in open_laws {
+        let Some(dump) = goal_json.get(label) else {
+            println!(
+                "  {label}: {}",
+                "residual not extractable (engine-form gap)".yellow()
+            );
+            continue;
+        };
         // `fn.law`: the law name is the final segment, the fn everything before.
         let (fn_name, law_name) = match label.rsplit_once('.') {
             Some((f, l)) => (f, l),
             None => ("", label.as_str()),
         };
-        let goal = match untranslate_goal(json) {
+        let goal = match untranslate_goal(&dump.json) {
             Ok(g) => g,
             Err(gap) => {
                 println!(
@@ -7368,7 +7408,7 @@ fn render_explain_candidates(
             }
         };
         let cand_law_name = format!("{law_name}_residual");
-        match sample_check_candidate(&src, &cand_law_name, file, module_root) {
+        match sample_check_candidate(&src, fn_name, &cand_law_name, file, module_root) {
             SampleVerdict::Pass => {
                 println!(
                     "  {label}: {}",
@@ -7394,6 +7434,13 @@ fn render_explain_candidates(
                     format!("engine-form gap — {reason}").yellow()
                 );
             }
+        }
+        if dump.multi_arm {
+            println!(
+                "      {}",
+                "(another proof arm is also open — this candidate may not close the law alone)"
+                    .yellow()
+            );
         }
     }
 }
@@ -7502,6 +7549,7 @@ fn synth_domain(ty: &str) -> Option<aver::ast::VerifyGivenDomain> {
 /// counterexample.
 fn sample_check_candidate(
     candidate_src: &str,
+    fn_name: &str,
     candidate_law_name: &str,
     file: &str,
     module_root: &str,
@@ -7512,10 +7560,11 @@ fn sample_check_candidate(
     };
     let combined = format!("{orig}\n{candidate_src}\n");
     let items = match aver::source::parse_source(&combined) {
+        // A candidate that does not even parse is syntactically outside the
+        // Aver surface — report the kind, never the raw error (it can quote
+        // Lean-only idents that leaked through as text).
+        Err(_) => return SampleVerdict::Gap("candidate not machine-checkable".to_string()),
         Ok(i) => i,
-        Err(e) => {
-            return SampleVerdict::Gap(format!("candidate did not parse: {}", first_line(&e)));
-        }
     };
     let base_dir = if module_root.is_empty() {
         None
@@ -7525,42 +7574,55 @@ fn sample_check_candidate(
     let results =
         match aver::diagnostics::vm_verify::run_verify_for_items_vm(items, None, base_dir, file) {
             Ok(r) => r,
-            Err(e) => {
-                return SampleVerdict::Gap(format!(
-                    "candidate did not type-check: {}",
-                    first_line(&e)
-                ));
+            // A type-check failure means the candidate references something the
+            // translator never emits (an out-of-image ident). Sanitize: name the
+            // construct kind, never echo the type error (it quotes the offending
+            // Lean-only ident verbatim).
+            Err(_) => {
+                return SampleVerdict::Gap("construct outside the translator image".to_string());
             }
         };
+    // Key the verdict on the EXACT synthesized block — `<fn> law <law>_residual`
+    // — not a substring: a pre-existing law whose name merely CONTAINS
+    // `<law>_residual` must not steal the verdict. The candidate is appended
+    // last, so scan from the end to prefer our block over any pre-existing
+    // same-named law.
+    let want_label = format!("{fn_name} law {candidate_law_name}");
     let Some(res) = results
         .iter()
-        .find(|r| r.is_law && r.block_label.contains(candidate_law_name))
+        .rev()
+        .find(|r| r.is_law && r.block_label == want_label)
     else {
         return SampleVerdict::Gap("candidate law produced no verify result".to_string());
     };
+    // Only a genuine value Mismatch means the law is false as stated. A
+    // RuntimeError / unexpected error is the candidate failing to RUN — an
+    // engine-form gap, not a counterexample — so it must not be rendered as
+    // "false".
+    let mismatch = res.case_results.iter().find_map(|c| match &c.outcome {
+        VerifyCaseOutcome::Mismatch { expected, actual } => {
+            let binds = c
+                .law_context
+                .as_ref()
+                .map(|lc| {
+                    lc.givens
+                        .iter()
+                        .map(|(n, v)| format!("{n} = {v}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            Some(format!("{binds} :: expected {expected}, got {actual}"))
+        }
+        _ => None,
+    });
+    if let Some(counterexample) = mismatch {
+        return SampleVerdict::Fail { counterexample };
+    }
     if res.failed > 0 {
-        let cx = res
-            .case_results
-            .iter()
-            .find_map(|c| match &c.outcome {
-                VerifyCaseOutcome::Mismatch { expected, actual } => {
-                    let binds = c
-                        .law_context
-                        .as_ref()
-                        .map(|lc| {
-                            lc.givens
-                                .iter()
-                                .map(|(n, v)| format!("{n} = {v}"))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        })
-                        .unwrap_or_default();
-                    Some(format!("{binds} :: expected {expected}, got {actual}"))
-                }
-                _ => None,
-            })
-            .unwrap_or_else(|| "a sampled case failed".to_string());
-        return SampleVerdict::Fail { counterexample: cx };
+        return SampleVerdict::Gap(
+            "candidate not machine-checkable (a sampled case errored)".to_string(),
+        );
     }
     if res.passed == 0 {
         return SampleVerdict::Gap(
@@ -7568,10 +7630,6 @@ fn sample_check_candidate(
         );
     }
     SampleVerdict::Pass
-}
-
-fn first_line(s: &str) -> String {
-    s.lines().next().unwrap_or(s).trim().to_string()
 }
 
 fn clone_given(g: &aver::ast::VerifyGiven) -> aver::ast::VerifyGiven {
