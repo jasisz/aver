@@ -603,10 +603,13 @@ pub(super) enum Commands {
         #[arg(long, requires = "check")]
         sorry_budget: Option<usize>,
         /// `--check` only: emit a structured JSON summary
-        /// (`{backend, errors, sorries, budget, passed}`) to stdout
-        /// instead of streaming the verifier's raw output. Exit
-        /// codes unchanged: 0 within budget, 1 over, 2 on harness
-        /// failure.
+        /// (`{backend, errors, sorries, budget, passed, ...}`) to stdout
+        /// instead of streaming the verifier's raw output. Additive
+        /// telemetry fields: Lean carries `build_errors` (hard lake/lean
+        /// errors distinct from sorries), Dafny carries `timeouts`
+        /// (per-lemma timeouts the `errors` count is blind to); both are
+        /// informational and never change exit codes. Exit codes
+        /// unchanged: 0 within budget, 1 over, 2 on harness failure.
         #[arg(long, requires = "check")]
         check_json: bool,
         /// `--check` only (Lean-only): for each law that does NOT close

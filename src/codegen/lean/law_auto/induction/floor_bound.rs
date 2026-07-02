@@ -2496,6 +2496,9 @@ pub(super) fn emit_rational_floor_family(
                     }
                 }
             }
+            // Same `h_when` naming contract as inequality.rs: the guard is in
+            // scope under the name `h_when` so the prelude conjunction-split arm
+            // in `aver_int_order` can read it by name (one-level split only).
             let close = format!(
                 "simp only [{defs}, Bool.and_eq_true, Bool.or_eq_true, ge_iff_le, gt_iff_lt, decide_eq_true_eq, beq_iff_eq] at h_when ⊢ <;> aver_int_order"
             );

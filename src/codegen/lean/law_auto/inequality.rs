@@ -65,6 +65,10 @@ pub(super) fn emit_nonlinear_nonneg_law(
     // closes the goal from leaving `aver_int_order` running on no goals.
     let (intro_names, branch) = if law.when.is_some() {
         let mut names = givens;
+        // Naming contract: the guard MUST be introduced as `h_when`. The
+        // prelude's conjunction-split arm in `aver_int_order` reads it by that
+        // exact name (`And.left h_when` / `And.right h_when`) and peels one
+        // level only; rename it and that arm silently no-ops (see prelude.rs).
         names.push("h_when".to_string());
         (
             names,

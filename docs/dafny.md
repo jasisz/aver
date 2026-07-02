@@ -188,7 +188,7 @@ lemma fib_fibSpec(n: int)
 
 ## Limitations
 
-- **No verify cases**: Z3 times out on deep computations like `fib(12) == 144`
+- **No verify cases**: Z3 times out on deep computations like `fib(12) == 144`. Dafny's own `errors` total is blind to per-lemma timeouts, so `--check-json` carries a separate additive `timeouts` field (count of `… timed out after N seconds` lines) alongside `errors`; a consumer accounting for failing laws must read both. `timeouts` is informational — it does not change `passed` or the exit code (the timed-out run still fails via Dafny's exit status)
 - **Constructor collisions**: if a user type defines variants named `Ok`/`Err`, Dafny may report ambiguity errors
 - **Opaque builtins**: `IntToString`, `FloatFromString`, `CharToCode` etc. are declared without bodies — Z3 knows their signatures but can't reason about their implementation
 - **Complex laws**: laws involving indirect recursion, accumulator patterns, or multi-function chains may not be provable by Z3 alone

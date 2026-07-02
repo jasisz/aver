@@ -943,14 +943,26 @@ conclusions `0 < _` / `0 ≤ _` never unify, so neither shadows the other). The
 `mul_le_mul_of_nonneg_right` rung sits BEFORE
 `mul_le_mul`, and that order is load-bearing for performance: `mul_le_mul`
 would also unify with `a*c ≤ b*c` (taking `d := c`) but spawns a `0 ≤ b` leaf
-that is NOT derivable when the law carries no `0 ≤ a` guard, and the three
-product rungs then thrash on that atomic leaf with metavariable products until
-the heartbeat limit. Trying `mul_le_mul_of_nonneg_right` first closes such a
-goal directly from `a ≤ b` / `0 ≤ c` and never spawns `0 ≤ b`; on the squared
-shapes (`e*e ≤ b*b`, the contraction's `s²` bound) its shared-right-factor
-unification fails fast (the two right factors differ), so `mul_le_mul` still
-takes them — and any genuine `0 ≤ b` leaf there is closed by the early `omega`
-rung from that family's `0 ≤ e ≤ b` guards.
+that is NOT derivable when the law carries no `0 ≤ a` guard. Trying
+`mul_le_mul_of_nonneg_right` first closes such a goal directly from `a ≤ b` /
+`0 ≤ c` and never spawns `0 ≤ b`; on the squared shapes (`e*e ≤ b*b`, the
+contraction's `s²` bound) its shared-right-factor unification fails fast (the
+two right factors differ), so `mul_le_mul` still takes them — and any genuine
+`0 ≤ b` leaf there is closed by the early `omega` rung from that family's
+`0 ≤ e ≤ b` guards. The `mul_le_mul` arm is NOT heartbeat-capped: a
+deterministic `whnf` timeout is a HARD, uncatchable failure of a `first`
+portfolio at the tactic level — it aborts `lake build` rather than falling
+through to the next `first` alternative. `set_option maxHeartbeats … in` only
+takes effect at the COMMAND level, never inside a `first | …` tactic
+alternative (measured 2026-07-02 across three controlled builds under Lean
+4.31: the inline wrapper changed nothing). So this timeout class is not
+containable here. What actually keeps this arm from diverging in practice is
+the narrower conjunction split below (keyed to the named `h_when` guard rather
+than an anonymous `_ ∧ _` match, so it no longer feeds spurious metavariable
+products into the product rungs), not any cap. When a timeout does occur its
+class is surfaced truthfully by the `--check-json` `build_errors` field; the
+named follow-up is driver-level re-emission of the offending law WITHOUT this
+arm (a tactic-level cap cannot do it).
 
 The MULTIPLY-BY-POSITIVE rungs (`mul_lt_mul_of_pos_left` / `_right` for a strict
 product order `m*a < m*b` / `a*m < b*m`, and `mul_le_mul_of_nonneg_left` for the
@@ -965,7 +977,17 @@ composition step. Placed last so their strict (`<`) conclusion never shadows a
 `<=`/`0 <=`/`0 <` goal the earlier rungs own (a strict-conclusion lemma cannot
 unify with a non-strict goal, but keeping them last also keeps the common
 nonneg/positivity search shallow and the output byte-identical for corpora that
-never hit a multiplied-form goal). -/
+never hit a multiplied-form goal).
+
+The final arm splits a named guard conjunction and recurses. It reads the
+hypothesis LITERALLY named `h_when` — the order-law emitters
+(`law_auto/inequality.rs`, `law_auto/induction/floor_bound.rs`) intro the guard
+under exactly that name and `simp … at h_when ⊢` — takes `And.left`/`And.right`,
+and recurses. This is a NAMING CONTRACT: any new order-law emitter that renames
+the guard makes this arm silently no-op (no `h_when` in context), and the goal
+falls to `sorry`. It also peels ONE level only (measured): a right-nested guard
+of three-plus conjuncts (`A ∧ (B ∧ C)`) yields `h_when_left := A` /
+`h_when_right := B ∧ C`, leaving the inner conjunction bundled. -/
 syntax "aver_int_order" : tactic
 macro_rules
   | `(tactic| aver_int_order) => `(tactic|
@@ -980,7 +1002,10 @@ macro_rules
         | (apply Int.mul_lt_mul_of_pos_left <;> aver_int_order)
         | (apply Int.mul_lt_mul_of_pos_right <;> aver_int_order)
         | (apply Int.mul_le_mul_of_nonneg_left <;> aver_int_order)
-        | (obtain ⟨hl, hr⟩ := ‹_ ∧ _›; aver_int_order))"#;
+        | (have h_when_left := And.left h_when
+           have h_when_right := And.right h_when
+           clear h_when
+           aver_int_order))"#;
 
 #[cfg(test)]
 pub(super) fn generate_prelude() -> String {

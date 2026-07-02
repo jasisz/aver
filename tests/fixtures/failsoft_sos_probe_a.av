@@ -1,0 +1,65 @@
+module SosProbeA
+    intent =
+        "SOS-certificate probe A. A hand-supplied sum-of-squares certificate for"
+        "the AM-GM style inequality a*a + b*b >= 2*a*b, split into the two NSPI"
+        "obligations: the ring identity f - g == sigma (amgmId) and the certificate"
+        "nonnegativity 0 <= sigma (amgmCertNonneg, sosGuardedComb). The target law"
+        "amgm is stated WITHOUT the certificate in its body: it closes only if the"
+        "checkers compose the pool lemmas. amgm as-written is also the negative"
+        "control: its witness square (a-b)^2 is not syntactically present."
+    exposes [amgmId, amgmCertNonneg, sosGuardedComb, amgm]
+    effects []
+
+fn amgmId(a: Int, b: Int) -> Bool
+    ? "Certificate identity: f - g equals the hand-chosen square (a-b)^2."
+    a * a + b * b - 2 * a * b == (a - b) * (a - b)
+
+verify amgmId
+    amgmId(1, 2) => true
+    amgmId(-3, 5) => true
+
+verify amgmId law universal
+    given a: Int = [-7, -1, 0, 1, 9]
+    given b: Int = [-4, 0, 2, 8]
+    amgmId(a, b) holds
+
+fn amgmCertNonneg(a: Int, b: Int) -> Bool
+    ? "Certificate nonnegativity: the hand-chosen square is nonnegative."
+    (a - b) * (a - b) >= 0
+
+verify amgmCertNonneg
+    amgmCertNonneg(1, 2) => true
+    amgmCertNonneg(-3, 5) => true
+
+verify amgmCertNonneg law universal
+    given a: Int = [-7, -1, 0, 1, 9]
+    given b: Int = [-4, 0, 2, 8]
+    amgmCertNonneg(a, b) holds
+
+fn sosGuardedComb(a: Int, b: Int, g: Int) -> Bool
+    ? "sigma_0 + sigma_1 * g_1 with hand-chosen squares and premise g >= 0."
+    (a - b) * (a - b) + g * ((a + b) * (a + b)) >= 0
+
+verify sosGuardedComb
+    sosGuardedComb(1, 2, 3) => true
+    sosGuardedComb(-3, 5, 0) => true
+
+verify sosGuardedComb law guarded
+    given a: Int = [-7, -1, 0, 1, 9]
+    given b: Int = [-4, 0, 2, 8]
+    given g: Int = [0, 1, 5]
+    when g >= 0
+    sosGuardedComb(a, b, g) holds
+
+fn amgm(a: Int, b: Int) -> Bool
+    ? "Target inequality; the witness square is NOT syntactically present."
+    a * a + b * b >= 2 * a * b
+
+verify amgm
+    amgm(1, 2) => true
+    amgm(-3, 5) => true
+
+verify amgm law universal
+    given a: Int = [-7, -1, 0, 1, 9]
+    given b: Int = [-4, 0, 2, 8]
+    amgm(a, b) holds
