@@ -89,11 +89,32 @@ Aver is intentionally biased toward explicit code over compressed code.
 
 ---
 
+## What Aver is not, and never will be
+
+Aver will never be a general-purpose language. That is a strategy, not an apology.
+
+Capture and closures, mutation, and exceptions are out — not "not yet," but permanently. Each one breaks a property the proof engine relies on, so no version of Aver adds them back.
+
+The line is not drawn by taste; it is drawn by a razor. A feature is admitted only if its elaboration preserves all four of:
+
+- **purity** — no hidden state, so equational reasoning stays valid
+- **first-order-ness after elaboration** — no captured environments surviving into the runtime, so signatures stay first-order and enumerable
+- **structural termination** — recursion that provably shrinks, so there is no fuel or partiality to reason about
+- **monomorphic proof obligations** — no proof that has to be quantified over unknown type shapes
+
+Run candidate features through that razor and the answers fall out mechanically. Function references as callback parameters (`Fn(A) -> B`) pass all four and exist today. Generics via monomorphization would pass — after monomorphization the obligations look exactly like today's — so they are admissible someday. Captured closures fail purity *and* first-order-ness, so they never enter.
+
+This is not a corner we got stuck in. Verified kernels wrapped in thin, unverified shells is the shape of every serious deployment of formal methods. Aver is built to be the kernel and to make the shell obvious, not to swallow the whole program.
+
+---
+
 ## Why not just use Lean or Coq directly?
 
 Lean and Coq are proof assistants. Writing a web server in Lean is technically possible but practically miserable.
 
 Aver is a *programming* language that generates proof obligations for Lean. You write normal-looking code. Aver extracts the verification parts and sends them to Lean. You don't write tactics. You don't fight the elaborator. The proof assistant does what it's good at — checking proofs — without being your programming environment.
+
+There is a deeper structural difference, and it grows more important as models get better at Lean tactics. With an LLM writing Lean against Mathlib, you prove theorems about a *model* of your program — a hand-maintained Lean transcription of what the code is supposed to do. Keeping that model in step with the code that actually ships is manual work, and the correspondence rots a little with every commit. In Aver there is no separate model: the spec, the proof obligations, and the executable are one artifact. The proof cannot drift from the binary, because the same source is what runs and what gets proven. Better tactic-writing narrows the gap in *proving*; it does nothing for the gap in *correspondence*, and correspondence is the part that quietly breaks.
 
 ---
 
