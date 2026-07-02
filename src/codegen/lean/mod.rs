@@ -17,6 +17,7 @@ mod tests;
 mod toplevel;
 mod transpile;
 mod types;
+pub mod untranslate;
 
 // Crate-wide re-export: committed-lemma handling (`codegen::lemma_discovery`)
 // and the law-auto rungs map Aver fn names to their Lean spelling through the
