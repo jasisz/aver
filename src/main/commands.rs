@@ -5306,6 +5306,9 @@ pub(super) fn cmd_proof(
             write_baseline,
             &duplicate_laws,
             &hand_laws,
+            &ctx.items,
+            file,
+            &module_root,
         );
     }
 }
@@ -5520,6 +5523,14 @@ fn run_proof_check(
     // `credit: open` if not (a wrong/stale sidecar failed the build — fail-
     // closed, never `hand`). Empty => no `credit` key written => byte-identical.
     hand_laws: &std::collections::HashSet<String>,
+    // `--explain` candidate-law renderer inputs (Lean-only, console): the parsed
+    // source items + file + module root, used to un-translate each open law's
+    // residual back into an Aver candidate and gate it through the VM sample-
+    // check. Read ONLY on the `explain && !check_json` console path; never
+    // touches manifest/json bytes, tiers, `passed`, or the exit code.
+    source_items: &[aver::ast::TopLevel],
+    source_file: &str,
+    source_module_root: &str,
 ) {
     use std::process::Command;
 
@@ -5778,6 +5789,16 @@ fn run_proof_check(
             if let Some(goal) = open_goals.get(&l.law) {
                 l.open_goal = Some(goal.clone());
             }
+        }
+        // `--explain` stage 2 + Aver-space rendering (console only). The raw Lean
+        // residual above stays internal (manifest `open_goal` / json
+        // `open_goals`); here the driver re-runs the probe with `aver_dump_goal`
+        // to read a STRUCTURED goal, un-translates it to Aver, and prints either
+        // a sample-checked candidate law or an honest engine-form-gap verdict.
+        // Skipped under `--check-json` so the JSON bytes are unaffected.
+        if !check_json {
+            let goal_json = lean_goal_json(output_dir, &open);
+            render_explain_candidates(&goal_json, source_items, source_file, source_module_root);
         }
     }
     // `--allow-mathlib` per-law credit (Lean only): tag each law `core` /
@@ -7144,6 +7165,440 @@ fn lean_residual_goals(
         }
     }
     out
+}
+
+/// `aver proof --explain` SECOND stage (Lean only, fail-soft): re-run the
+/// residual probe with the `aver_dump_goal` meta-tactic appended so each open
+/// law's residual goal is serialised to OUR JSON via the info log. Returns
+/// `fn.law -> goal JSON` for the laws whose residual dump succeeded — the input
+/// the candidate-law renderer un-translates back into Aver-space. Structurally
+/// independent of [`lean_residual_goals`] (which still owns the pretty-text
+/// `open_goal`): a total failure here just yields an empty map, so the pretty
+/// path and `open_goal` are never disturbed.
+fn lean_goal_json(
+    dir: &str,
+    open_laws: &[(String, String)],
+) -> std::collections::BTreeMap<String, String> {
+    use aver::codegen::lean::untranslate::{AVER_DUMP_GOAL_ELAB, GOAL_JSON_MARKER};
+    use std::process::Command;
+    let mut out: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    if open_laws.is_empty() {
+        return out;
+    }
+    let roots = lean_lakefile_roots(dir);
+    if roots.is_empty() {
+        return out;
+    }
+    let want: std::collections::HashSet<&str> =
+        open_laws.iter().map(|(_, thm)| thm.as_str()).collect();
+
+    // Scan the emitted `.lean` sources for each wanted theorem's source block
+    // (same shape as `lean_residual_goals`: `theorem <name>` through the line
+    // before the next top-level theorem / marker / EOF).
+    let mut blocks: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".lean") || name == "lakefile.lean" {
+                continue;
+            }
+            let Ok(contents) = std::fs::read_to_string(entry.path()) else {
+                continue;
+            };
+            if name == "DiscoveredLemmas.lean" && contents.contains("-- cone-hash:") {
+                continue;
+            }
+            let lines: Vec<&str> = contents.lines().collect();
+            let mut i = 0;
+            while i < lines.len() {
+                let t = lines[i].trim_start();
+                if let Some(rest) = t.strip_prefix("theorem ") {
+                    let thm = rest
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("")
+                        .trim_end_matches(':');
+                    if want.contains(thm) {
+                        let mut block = vec![lines[i].to_string()];
+                        let mut j = i + 1;
+                        while j < lines.len() {
+                            let tj = lines[j].trim_start();
+                            if tj.starts_with("theorem ")
+                                || tj.starts_with(lean_codegen::LAW_CLASS_MARKER_PREFIX.trim())
+                                || tj.starts_with("-- verify law ")
+                            {
+                                break;
+                            }
+                            block.push(lines[j].to_string());
+                            j += 1;
+                        }
+                        blocks.insert(thm.to_string(), block);
+                        i = j;
+                        continue;
+                    }
+                }
+                i += 1;
+            }
+        }
+    }
+
+    // Build the probe file: the meta-tactic (carries its own `import Lean`),
+    // preceded by the lakefile-root imports, then one dump probe per open law.
+    let mut import_src = String::new();
+    for r in &roots {
+        import_src.push_str("import ");
+        import_src.push_str(r);
+        import_src.push('\n');
+    }
+    let mut body_src = String::new();
+    let mut n = 0usize;
+    for (label, thm) in open_laws {
+        let Some(block) = blocks.get(thm) else {
+            continue;
+        };
+        let block_refs: Vec<&str> = block.iter().map(String::as_str).collect();
+        let probe_name = format!("_aver_goal_json_{n}");
+        let Some(body) = aver::codegen::lean::residual_probe_body_dump(
+            &block_refs,
+            &probe_name,
+            Some(label.as_str()),
+        ) else {
+            continue;
+        };
+        body_src.push_str(&body);
+        body_src.push('\n');
+        n += 1;
+    }
+    if n == 0 {
+        return out;
+    }
+    // All imports (roots + the meta-tactic's `import Lean`) must precede any
+    // declaration, so the root imports lead, then the elaborator, then probes.
+    let src = format!("{import_src}{AVER_DUMP_GOAL_ELAB}\n{body_src}");
+
+    let probe_file = std::path::Path::new(dir).join("_aver_goal_json_probe.lean");
+    if std::fs::write(&probe_file, &src).is_err() {
+        return out;
+    }
+    let res = Command::new("lake")
+        .args(["env", "lean", "_aver_goal_json_probe.lean"])
+        .current_dir(dir)
+        .output();
+    let _ = std::fs::remove_file(&probe_file);
+    let Ok(o) = res else { return out };
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    // Each `AVER_GOAL_JSON:<fn.law>:<json>` info line carries one law's residual.
+    for line in combined.lines() {
+        let Some(rest) = line.strip_prefix(GOAL_JSON_MARKER) else {
+            continue;
+        };
+        let Some((label, json)) = rest.split_once(':') else {
+            continue;
+        };
+        let json = json.trim();
+        if !json.is_empty() {
+            // Cons arm (carrying the IH) is dumped last; prefer it.
+            out.insert(label.to_string(), json.to_string());
+        }
+    }
+    out
+}
+
+/// The VM sample-check verdict for a candidate `--explain` law.
+enum SampleVerdict {
+    /// Every sampled case held → a real candidate to add and cite.
+    Pass,
+    /// A sampled case broke the claim → the law is false as stated.
+    Fail { counterexample: String },
+    /// The candidate could not be machine-checked (did not parse / type-check as
+    /// Aver, or the premise never held on the sample domain) — an engine-form
+    /// gap, honestly declined rather than shown as a candidate.
+    Gap(String),
+}
+
+/// `aver proof --explain` Aver-space renderer (Lean-only, console). For each
+/// open law with a dumped residual goal: un-translate it back to Aver, and print
+/// EITHER a candidate `law` skeleton gated through the VM sample-check (passed →
+/// add-and-cite; failed → counterexample) OR an honest engine-form-gap verdict.
+/// The agent/user surface is AVER-ONLY here — the raw Lean residual stays in the
+/// internal `open_goal` channel. Pure console output: never affects tiers /
+/// credit / `passed` / the exit code.
+fn render_explain_candidates(
+    goal_json: &std::collections::BTreeMap<String, String>,
+    items: &[aver::ast::TopLevel],
+    file: &str,
+    module_root: &str,
+) {
+    use aver::codegen::lean::untranslate::untranslate_goal;
+    use colored::Colorize;
+    if goal_json.is_empty() {
+        return;
+    }
+    println!();
+    println!("{}", "--explain: candidate Aver laws for open goals".bold());
+    for (label, json) in goal_json {
+        // `fn.law`: the law name is the final segment, the fn everything before.
+        let (fn_name, law_name) = match label.rsplit_once('.') {
+            Some((f, l)) => (f, l),
+            None => ("", label.as_str()),
+        };
+        let goal = match untranslate_goal(json) {
+            Ok(g) => g,
+            Err(gap) => {
+                println!(
+                    "  {label}: {}",
+                    format!("engine-form gap — {}", gap.reason).yellow()
+                );
+                continue;
+            }
+        };
+        let src = match build_candidate_law(fn_name, law_name, goal, items) {
+            Ok(s) => s,
+            Err(reason) => {
+                println!(
+                    "  {label}: {}",
+                    format!("engine-form gap — {reason}").yellow()
+                );
+                continue;
+            }
+        };
+        let cand_law_name = format!("{law_name}_residual");
+        match sample_check_candidate(&src, &cand_law_name, file, module_root) {
+            SampleVerdict::Pass => {
+                println!(
+                    "  {label}: {}",
+                    "candidate law — sample-check passed, add it and cite:".green()
+                );
+                for line in src.lines() {
+                    println!("      {line}");
+                }
+            }
+            SampleVerdict::Fail { counterexample } => {
+                println!(
+                    "  {label}: {}",
+                    "law false as stated — sample-check counterexample:".red()
+                );
+                println!("      {counterexample}");
+                for line in src.lines() {
+                    println!("      {line}");
+                }
+            }
+            SampleVerdict::Gap(reason) => {
+                println!(
+                    "  {label}: {}",
+                    format!("engine-form gap — {reason}").yellow()
+                );
+            }
+        }
+    }
+}
+
+/// Build a candidate Aver `law` source from an un-translated residual goal:
+/// givens from the data binders (domains reused from the original law where a
+/// binder name matches, else synthesized per type), `when` from a surviving
+/// premise, claim from the goal equality. Declines (engine-form gap) on a binder
+/// whose type cannot be sampled or when more than one premise survives (Aver
+/// `when` is a single Bool expression).
+fn build_candidate_law(
+    fn_name: &str,
+    law_name: &str,
+    goal: aver::codegen::lean::untranslate::UntranslatedGoal,
+    items: &[aver::ast::TopLevel],
+) -> Result<String, String> {
+    use aver::ast::{TopLevel, VerifyBlock, VerifyGiven, VerifyKind, VerifyLaw};
+    // Original givens (by name) so a residual binder that IS the law's own
+    // universally-quantified variable samples over the same domain the author
+    // chose, not a synthesized guess.
+    let mut orig: std::collections::HashMap<String, VerifyGiven> = std::collections::HashMap::new();
+    for item in items {
+        if let TopLevel::Verify(vb) = item
+            && vb.fn_name == fn_name
+            && let VerifyKind::Law(law) = &vb.kind
+            && law.name == law_name
+        {
+            for g in &law.givens {
+                orig.insert(g.name.clone(), clone_given(g));
+            }
+        }
+    }
+    let mut givens: Vec<VerifyGiven> = Vec::new();
+    for (name, ty) in &goal.givens {
+        if let Some(g) = orig.get(name) {
+            givens.push(clone_given(g));
+        } else {
+            let domain =
+                synth_domain(ty).ok_or_else(|| format!("cannot sample binder `{name}: {ty}`"))?;
+            givens.push(VerifyGiven {
+                name: name.clone(),
+                type_name: ty.clone(),
+                domain,
+            });
+        }
+    }
+    let when = match goal.premises.len() {
+        0 => None,
+        1 => Some(clone_expr(&goal.premises[0])),
+        n => {
+            return Err(format!(
+                "{n} surviving premises (Aver `when` is one Bool expression)"
+            ));
+        }
+    };
+    let law = VerifyLaw {
+        name: format!("{law_name}_residual"),
+        givens,
+        when,
+        lhs: clone_expr(&goal.claim.0),
+        rhs: clone_expr(&goal.claim.1),
+        sample_guards: vec![],
+    };
+    let block = VerifyBlock {
+        fn_name: fn_name.to_string(),
+        line: 0,
+        cases: vec![],
+        case_spans: vec![],
+        case_givens: vec![],
+        case_hostile_origins: vec![],
+        case_hostile_profiles: vec![],
+        case_reverse_order: vec![],
+        kind: VerifyKind::Law(Box::new(law)),
+        trace: false,
+        cases_givens: vec![],
+    };
+    aver::ast::unparse::unparse(&[TopLevel::Verify(block)])
+        .map_err(|e| format!("could not render candidate: {e}"))
+        .map(|s| s.trim_end().to_string())
+}
+
+/// Synthesize a small sample domain for a residual binder whose name is not one
+/// of the original law's givens. Only the types `--explain` can sample directly.
+fn synth_domain(ty: &str) -> Option<aver::ast::VerifyGivenDomain> {
+    use aver::ast::{Expr, Literal, Spanned, VerifyGivenDomain};
+    let int = |n: i64| Spanned::new(Expr::Literal(Literal::Int(n)), 0);
+    match ty {
+        "Int" => Some(VerifyGivenDomain::IntRange { start: -3, end: 5 }),
+        "Bool" => Some(VerifyGivenDomain::Explicit(vec![
+            Spanned::new(Expr::Literal(Literal::Bool(true)), 0),
+            Spanned::new(Expr::Literal(Literal::Bool(false)), 0),
+        ])),
+        "List<Int>" => Some(VerifyGivenDomain::Explicit(vec![
+            Spanned::new(Expr::List(vec![]), 0),
+            Spanned::new(Expr::List(vec![int(1)]), 0),
+            Spanned::new(Expr::List(vec![int(3), int(1), int(2)]), 0),
+        ])),
+        _ => None,
+    }
+}
+
+/// Gate a candidate law source through the VM sample-check: append it to the
+/// original source, re-parse, run the Declared-mode VM verify, and classify the
+/// candidate block's result. Any parse / type-check failure (a residual that is
+/// not a well-typed Aver law) is an honest engine-form gap, not a false
+/// counterexample.
+fn sample_check_candidate(
+    candidate_src: &str,
+    candidate_law_name: &str,
+    file: &str,
+    module_root: &str,
+) -> SampleVerdict {
+    use aver::checker::VerifyCaseOutcome;
+    let Ok(orig) = std::fs::read_to_string(file) else {
+        return SampleVerdict::Gap(format!("cannot read source `{file}`"));
+    };
+    let combined = format!("{orig}\n{candidate_src}\n");
+    let items = match aver::source::parse_source(&combined) {
+        Ok(i) => i,
+        Err(e) => {
+            return SampleVerdict::Gap(format!("candidate did not parse: {}", first_line(&e)));
+        }
+    };
+    let base_dir = if module_root.is_empty() {
+        None
+    } else {
+        Some(module_root)
+    };
+    let results =
+        match aver::diagnostics::vm_verify::run_verify_for_items_vm(items, None, base_dir, file) {
+            Ok(r) => r,
+            Err(e) => {
+                return SampleVerdict::Gap(format!(
+                    "candidate did not type-check: {}",
+                    first_line(&e)
+                ));
+            }
+        };
+    let Some(res) = results
+        .iter()
+        .find(|r| r.is_law && r.block_label.contains(candidate_law_name))
+    else {
+        return SampleVerdict::Gap("candidate law produced no verify result".to_string());
+    };
+    if res.failed > 0 {
+        let cx = res
+            .case_results
+            .iter()
+            .find_map(|c| match &c.outcome {
+                VerifyCaseOutcome::Mismatch { expected, actual } => {
+                    let binds = c
+                        .law_context
+                        .as_ref()
+                        .map(|lc| {
+                            lc.givens
+                                .iter()
+                                .map(|(n, v)| format!("{n} = {v}"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default();
+                    Some(format!("{binds} :: expected {expected}, got {actual}"))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| "a sampled case failed".to_string());
+        return SampleVerdict::Fail { counterexample: cx };
+    }
+    if res.passed == 0 {
+        return SampleVerdict::Gap(
+            "sample-check vacuous — the premise never held on the sample domain".to_string(),
+        );
+    }
+    SampleVerdict::Pass
+}
+
+fn first_line(s: &str) -> String {
+    s.lines().next().unwrap_or(s).trim().to_string()
+}
+
+fn clone_given(g: &aver::ast::VerifyGiven) -> aver::ast::VerifyGiven {
+    aver::ast::VerifyGiven {
+        name: g.name.clone(),
+        type_name: g.type_name.clone(),
+        domain: clone_domain(&g.domain),
+    }
+}
+
+fn clone_domain(d: &aver::ast::VerifyGivenDomain) -> aver::ast::VerifyGivenDomain {
+    use aver::ast::VerifyGivenDomain;
+    match d {
+        VerifyGivenDomain::IntRange { start, end } => VerifyGivenDomain::IntRange {
+            start: *start,
+            end: *end,
+        },
+        VerifyGivenDomain::Explicit(vs) => {
+            VerifyGivenDomain::Explicit(vs.iter().map(clone_expr).collect())
+        }
+    }
+}
+
+fn clone_expr(e: &aver::ast::Spanned<aver::ast::Expr>) -> aver::ast::Spanned<aver::ast::Expr> {
+    // `Spanned<Expr>` is `Clone`; the OnceLock type slot is not re-derived, which
+    // is fine — the candidate is re-parsed and re-checked from source anyway.
+    e.clone()
 }
 
 /// Parse one `lake env lean` diagnostic header line —
