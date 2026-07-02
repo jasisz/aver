@@ -32,7 +32,7 @@ pub(crate) use prelude::prelude_spec_lemmas_for_builtins;
 /// `aver proof --explain` residual probe — turns an emitted main law theorem's
 /// source lines into a normalization-only twin so Lean reports its residual
 /// (`unsolved goals`). Used by the `--check` harness in the `aver` binary.
-pub use law_auto::residual_probe_body;
+pub use law_auto::{residual_probe_body, residual_probe_body_dump};
 #[cfg(test)]
 use prelude::generate_prelude;
 use transpile::{LeanEmitMode, transpile_unified};

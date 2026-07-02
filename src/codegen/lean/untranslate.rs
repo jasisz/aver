@@ -32,7 +32,7 @@ pub const AVER_DUMP_GOAL_ELAB: &str = r#"import Lean
 open Lean Elab Tactic Meta in
 private def averJsonEsc (s : String) : String := Id.run do
   let mut out := ""
-  for c in s.data do
+  for c in s.toList do
     out := out ++ (match c with
       | '"' => "\\\""
       | '\\' => "\\\\"
@@ -50,7 +50,7 @@ private partial def averExprJson (names : List String) (e : Expr) : String :=
         ++ ",\"body\":" ++ averExprJson (nm :: names) b ++ "}}"
   | .const n _ => "{\"const\":\"" ++ averJsonEsc (toString n) ++ "\"}"
   | .bvar i =>
-      match names.get? i with
+      match names[i]? with
       | some nm => "{\"var\":\"" ++ averJsonEsc nm ++ "\"}"
       | none => "{\"opaque\":\"bvar\"}"
   | .lit (.natVal v) => "{\"nat\":\"" ++ toString v ++ "\"}"
@@ -122,15 +122,14 @@ fn sp(e: Expr) -> Spanned<Expr> {
 /// [`UntranslatedGoal`], or decline with an [`EngineGap`] if any node is outside
 /// the closed grammar.
 pub fn untranslate_goal(json: &str) -> Result<UntranslatedGoal, EngineGap> {
-    let v: Value =
-        serde_json::from_str(json).map_err(|e| EngineGap::new(format!("malformed goal JSON: {e}")))?;
+    let v: Value = serde_json::from_str(json)
+        .map_err(|e| EngineGap::new(format!("malformed goal JSON: {e}")))?;
     let mut givens: Vec<(String, String)> = Vec::new();
     let mut premises: Vec<Spanned<Expr>> = Vec::new();
     let mut cur = &v;
     // Peel the `∀`-prefix: each binder is either a data given (nameable Aver
     // type) or a Prop premise (Eq / comparison).
-    loop {
-        let Some(fa) = cur.get("forall") else { break };
+    while let Some(fa) = cur.get("forall") {
         let name = fa
             .get("name")
             .and_then(Value::as_str)
@@ -170,15 +169,15 @@ fn untranslate_bool(v: &Value) -> Result<Spanned<Expr>, EngineGap> {
     if let Some((l, r)) = untranslate_eq(v) {
         return Ok(sp(Expr::BinOp(BinOp::Eq, Box::new(l?), Box::new(r?))));
     }
-    if let Some(app) = v.get("app") {
-        if let Some(op) = comparison_binop(head_const(app)) {
-            let args = app_operands(app, 2)?;
-            return Ok(sp(Expr::BinOp(
-                op,
-                Box::new(untranslate_expr(&args[0])?),
-                Box::new(untranslate_expr(&args[1])?),
-            )));
-        }
+    if let Some(app) = v.get("app")
+        && let Some(op) = comparison_binop(head_const(app))
+    {
+        let args = app_operands(app, 2)?;
+        return Ok(sp(Expr::BinOp(
+            op,
+            Box::new(untranslate_expr(&args[0])?),
+            Box::new(untranslate_expr(&args[1])?),
+        )));
     }
     Err(EngineGap::new(
         "premise hypothesis is not an equality/comparison our grammar renders",
@@ -189,7 +188,10 @@ fn untranslate_bool(v: &Value) -> Result<Spanned<Expr>, EngineGap> {
 #[allow(clippy::type_complexity)]
 fn untranslate_eq(
     v: &Value,
-) -> Option<(Result<Spanned<Expr>, EngineGap>, Result<Spanned<Expr>, EngineGap>)> {
+) -> Option<(
+    Result<Spanned<Expr>, EngineGap>,
+    Result<Spanned<Expr>, EngineGap>,
+)> {
     let app = v.get("app")?;
     if head_const(app) != Some("Eq") {
         return None;
@@ -199,7 +201,10 @@ fn untranslate_eq(
     if n < 2 {
         return None;
     }
-    Some((untranslate_expr(&args[n - 2]), untranslate_expr(&args[n - 1])))
+    Some((
+        untranslate_expr(&args[n - 2]),
+        untranslate_expr(&args[n - 1]),
+    ))
 }
 
 /// Recursive descent JSON node → `ast::Expr`, declining on any out-of-grammar
@@ -270,6 +275,32 @@ fn untranslate_app(app: &Value) -> Result<Spanned<Expr>, EngineGap> {
     if head == Some("Eq") {
         return Err(EngineGap::new("equality nested inside the claim"));
     }
+    // List builtins in our translator's image: `[x]` / `x :: xs` / `a ++ b`
+    // spell back as Aver list literals and `List.concat`.
+    if head == Some("List.nil") {
+        return Ok(sp(Expr::List(vec![])));
+    }
+    if head == Some("List.cons") {
+        // `@List.cons _ a b` → `List.concat([a], b)`.
+        let ops = app_operands(app, 2)?;
+        let a = untranslate_expr(&ops[0])?;
+        let b = untranslate_expr(&ops[1])?;
+        return Ok(sp(Expr::FnCall(
+            Box::new(sp(Expr::Ident("List.concat".to_string()))),
+            vec![sp(Expr::List(vec![a])), b],
+        )));
+    }
+    if matches!(
+        head,
+        Some("HAppend.hAppend") | Some("Append.append") | Some("List.append")
+    ) {
+        // `a ++ b` → `List.concat(a, b)`.
+        let ops = app_operands(app, 2)?;
+        return Ok(sp(Expr::FnCall(
+            Box::new(sp(Expr::Ident("List.concat".to_string()))),
+            vec![untranslate_expr(&ops[0])?, untranslate_expr(&ops[1])?],
+        )));
+    }
     // Otherwise: a user / module function applied to arguments. The head must be
     // a plain const (a higher-order applied variable is out of grammar).
     let Some(name) = head else {
@@ -285,10 +316,7 @@ fn untranslate_app(app: &Value) -> Result<Spanned<Expr>, EngineGap> {
     for a in all {
         args.push(untranslate_expr(a)?);
     }
-    Ok(sp(Expr::FnCall(
-        Box::new(sp(const_to_expr(name))),
-        args,
-    )))
+    Ok(sp(Expr::FnCall(Box::new(sp(const_to_expr(name))), args)))
 }
 
 /// The head constant name of an `app` JSON node, if the head is a `const`.
@@ -303,7 +331,9 @@ fn app_operands(app: &Value, n: usize) -> Result<Vec<Value>, EngineGap> {
         .and_then(Value::as_array)
         .ok_or_else(|| EngineGap::new("application without args"))?;
     if args.len() < n {
-        return Err(EngineGap::new("application has fewer operands than expected"));
+        return Err(EngineGap::new(
+            "application has fewer operands than expected",
+        ));
     }
     Ok(args[args.len() - n..].to_vec())
 }
@@ -337,6 +367,7 @@ fn const_to_expr(name: &str) -> Expr {
     match name {
         "Bool.true" | "True" => return Expr::Literal(Literal::Bool(true)),
         "Bool.false" | "False" => return Expr::Literal(Literal::Bool(false)),
+        "List.nil" => return Expr::List(vec![]),
         _ => {}
     }
     Expr::Ident(lean_dotted_to_aver(name))
@@ -436,12 +467,19 @@ mod tests {
     fn round_trips_int_commutativity() {
         // ∀ (a : Int) (b : Int), a + b = b + a
         let claim = eq_json(&hadd(&var("a"), &var("b")), &hadd(&var("b"), &var("a")));
-        let json = forall("a", r#"{"const":"Int"}"#, &forall("b", r#"{"const":"Int"}"#, &claim));
+        let json = forall(
+            "a",
+            r#"{"const":"Int"}"#,
+            &forall("b", r#"{"const":"Int"}"#, &claim),
+        );
         let g = untranslate_goal(&json).expect("in grammar");
-        assert_eq!(g.givens, vec![
-            ("a".to_string(), "Int".to_string()),
-            ("b".to_string(), "Int".to_string()),
-        ]);
+        assert_eq!(
+            g.givens,
+            vec![
+                ("a".to_string(), "Int".to_string()),
+                ("b".to_string(), "Int".to_string()),
+            ]
+        );
         assert!(g.premises.is_empty());
         assert_eq!(render(&g), "given a: Int; given b: Int; (a + b) => (b + a)");
     }
@@ -455,11 +493,7 @@ mod tests {
             var("a")
         );
         let claim = eq_json(&hadd(&var("a"), r#"{"nat":"0"}"#), &var("a"));
-        let json = forall(
-            "a",
-            r#"{"const":"Int"}"#,
-            &forall("h", &le, &claim),
-        );
+        let json = forall("a", r#"{"const":"Int"}"#, &forall("h", &le, &claim));
         let g = untranslate_goal(&json).expect("in grammar");
         assert_eq!(g.givens, vec![("a".to_string(), "Int".to_string())]);
         assert_eq!(render(&g), "given a: Int; when (0 <= a); (a + 0) => a");
@@ -468,9 +502,7 @@ mod tests {
     #[test]
     fn user_fn_call_round_trips() {
         // ∀ (x : List<Int>), length(x) = length(x)  (const `length` applied)
-        let call = |arg: &str| {
-            format!(r#"{{"app":{{"fn":{{"const":"length"}},"args":[{arg}]}}}}"#)
-        };
+        let call = |arg: &str| format!(r#"{{"app":{{"fn":{{"const":"length"}},"args":[{arg}]}}}}"#);
         let list_ty = r#"{"app":{"fn":{"const":"List"},"args":[{"const":"Int"}]}}"#;
         let claim = format!(
             r#"{{"app":{{"fn":{{"const":"Eq"}},"args":[{{"const":"Nat"}},{},{}]}}}}"#,
@@ -481,6 +513,76 @@ mod tests {
         let g = untranslate_goal(&json).expect("in grammar");
         assert_eq!(g.givens, vec![("x".to_string(), "List<Int>".to_string())]);
         assert_eq!(render(&g), "given x: List<Int>; length(x) => length(x)");
+    }
+
+    #[test]
+    fn real_prop07_residual_maps_list_builtins() {
+        // The prop_07 (`length (qrev …)`) cons-arm residual shape: List.cons /
+        // List.nil / ++ must spell back through Aver `List.concat` + literals,
+        // and the induction hypothesis binder becomes a `when`.
+        let list_int = r#"{"app":{"fn":{"const":"List"},"args":[{"const":"Int"}]}}"#;
+        let inst = r#"{"opaque":"inst"}"#;
+        let length = |a: &str| format!(r#"{{"app":{{"fn":{{"const":"length"}},"args":[{a}]}}}}"#);
+        let qrev =
+            |a: &str, b: &str| format!(r#"{{"app":{{"fn":{{"const":"qrev"}},"args":[{a},{b}]}}}}"#);
+        let plus =
+            |a: &str, b: &str| format!(r#"{{"app":{{"fn":{{"const":"plus"}},"args":[{a},{b}]}}}}"#);
+        let nil =
+            format!(r#"{{"app":{{"fn":{{"const":"List.nil"}},"args":[{{"const":"Int"}}]}}}}"#);
+        // `[] ++ y`
+        let append = format!(
+            r#"{{"app":{{"fn":{{"const":"HAppend.hAppend"}},"args":[{list_int},{list_int},{list_int},{inst},{nil},{}]}}}}"#,
+            var("y")
+        );
+        // `head :: ([] ++ y)`
+        let cons = format!(
+            r#"{{"app":{{"fn":{{"const":"List.cons"}},"args":[{{"const":"Int"}},{},{append}]}}}}"#,
+            var("head")
+        );
+        // `plus (length tail) (length y) + 1`
+        let one = format!(
+            r#"{{"app":{{"fn":{{"const":"OfNat.ofNat"}},"args":[{{"const":"Nat"}},{{"nat":"1"}},{inst}]}}}}"#
+        );
+        let rhs = format!(
+            r#"{{"app":{{"fn":{{"const":"HAdd.hAdd"}},"args":[{{"const":"Nat"}},{{"const":"Nat"}},{{"const":"Nat"}},{inst},{},{one}]}}}}"#,
+            plus(&length(&var("tail")), &length(&var("y")))
+        );
+        let claim = format!(
+            r#"{{"app":{{"fn":{{"const":"Eq"}},"args":[{{"const":"Nat"}},{},{rhs}]}}}}"#,
+            length(&qrev(&var("tail"), &cons))
+        );
+        let ih_ty = format!(
+            r#"{{"app":{{"fn":{{"const":"Eq"}},"args":[{{"const":"Nat"}},{},{}]}}}}"#,
+            length(&qrev(&var("tail"), &var("y"))),
+            plus(&length(&var("tail")), &length(&var("y")))
+        );
+        let json = forall(
+            "y",
+            list_int,
+            &forall(
+                "head",
+                r#"{"const":"Int"}"#,
+                &forall("tail", list_int, &forall("ih", &ih_ty, &claim)),
+            ),
+        );
+        let g = untranslate_goal(&json).expect("in grammar");
+        assert_eq!(
+            g.givens,
+            vec![
+                ("y".to_string(), "List<Int>".to_string()),
+                ("head".to_string(), "Int".to_string()),
+                ("tail".to_string(), "List<Int>".to_string()),
+            ]
+        );
+        assert_eq!(g.premises.len(), 1);
+        let r = render(&g);
+        assert!(
+            r.contains("when (length(qrev(tail, y)) == plus(length(tail), length(y)))"),
+            "{r}"
+        );
+        assert!(r.contains("List.concat([head], List.concat([], y))"), "{r}");
+        assert!(r.ends_with("=> (plus(length(tail), length(y)) + 1)"), "{r}");
+        assert!(!r.contains("List.cons") && !r.contains("hAppend"), "{r}");
     }
 
     #[test]
