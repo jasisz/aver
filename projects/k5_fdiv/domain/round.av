@@ -102,6 +102,38 @@ verify floorDiv law nestedFloorCollapse
     when 0 < e
     floorDiv(floorDiv(a, d), e) => floorDiv(a, d * e)
 
+// A shared positive factor cancels out of a Euclidean floor: dividing a * c by
+// d * c is dividing a by d, valid when both the divisor d and the factor c are
+// positive. The content-blind cancel-common-factor floor strategy closes it in
+// pure core over Int.mul_ediv_mul_of_pos_left -- no power-of-two or K5 literal
+// in the recognizer, so the same rung fires on any Euclidean-floor fn. One of
+// the two citable links the trunc-sticky coarsening chain rewrites through
+// (the sidecar re-derived this inline as its `cancel` have).
+
+verify floorDiv law cancelCommonFactor
+    given a: Int = [13, 3, 1]
+    given d: Int = [2, 3, 4]
+    given c: Int = [2, 5]
+    when 0 < d
+    when 0 < c
+    floorDiv(a * c, d * c) => floorDiv(a, d)
+
+// A remainder strictly below the divisor is absorbed: flooring d * q + r by d
+// recovers the quotient q exactly when 0 <= r < d (and 0 < d). The content-blind
+// absorb-remainder floor strategy closes it in pure core over
+// Int.add_mul_ediv_left + Int.ediv_eq_zero_of_lt. The second citable link: the
+// doubled round-to-odd low bit b in {0, 1} is the remainder absorbed under the
+// divisor 2 (the sidecar re-derived this inline as its `absorb2` have).
+
+verify floorDiv law absorbRemainder
+    given d: Int = [2, 3, 5]
+    given q: Int = [4, 6, 0]
+    given r: Int = [0, 1, 2]
+    when 0 < d
+    when 0 <= r
+    when r < d
+    floorDiv(d * q + r, d) => q
+
 fn floorDivWindow(a: Int, k: Int) -> Bool
     ? "The Euclidean floor window of a / 2^k: the quotient q = floor(a / 2^k) satisfies 2^k * q <= a < 2^k * (q + 1). This is the recursive-exponent-FREE floor characterization -- the divisor is the power of two 2^k directly, not a binary-exponent recursion -- and it holds unconditionally because 2^k > 0 for every k. The workhorse the rounding error bounds reduce to after cross-multiplication."
     Bool.and(Domain.Fprep.pow2(k) * floorDiv(a, Domain.Fprep.pow2(k)) <= a, a < Domain.Fprep.pow2(k) * (floorDiv(a, Domain.Fprep.pow2(k)) + 1))
@@ -535,10 +567,22 @@ verify truncStickyComposes
 // living beside this pure spec. The sidecar CITES the proven pool laws (the pow2
 // homomorphism from fprep, the nested-floor collapse, and positivity) rather than
 // re-proving them, and drives the exponent regrouping (2^(n-1) = 2^(n-m)*2^(m-1),
-// 2^(n-m) = 2*2^(n-m-1)) by hand. A wrong or stale sidecar fails the build loudly
-// and earns no credit. The generic replacement is planned: graduate this to the
-// equality-saturation normalizer platform when it lands (measured feasible -- the
-// same identity connects in an e-graph in ~253us with explanation extraction).
+// 2^(n-m) = 2*2^(n-m-1)) by hand. The two shape-only floor facts it re-derives
+// inline (its `cancel` / `absorb2` haves) are now also citable pool laws in this
+// module -- cancelCommonFactor and absorbRemainder above. A wrong or stale sidecar
+// fails the build loudly and earns no credit.
+//
+// GRADUATION MEASURED NOT VIABLE (2026-07-02): the equality-saturation proposer
+// platform landed, and its floorDiv pool laws + the pow2 homomorphism ARE legal
+// e-graph rules, but running `connect` on the two coarsening endpoints DECLINES
+// (measured under a generous budget; in-crate test coarsening_chain_is_a_saturation_
+// boundary). The spike's ~253us figure was the pow2 REGROUPING sub-identity with
+// both split sides seeded, NOT this full directed chain: bottom-up saturation only
+// rewrites existing subterms, so it cannot INVENT the m-boundary split exponents
+// (n-m, n-m-1) the chain pivots on, nor apply the pow2 definitional unfold
+// pow2(k)=2*pow2(k-1) its e2 step needs. The generic replacement therefore awaits a
+// proposer that INTRODUCES those splits (a goal-analysis feeder), not saturation
+// over the endpoints; until then the sidecar remains the mechanism.
 
 verify truncStickyComposes law composesThroughSticky
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
