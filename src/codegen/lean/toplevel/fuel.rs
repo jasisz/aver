@@ -333,6 +333,9 @@ pub(super) fn emit_fuelized_string_pos_fn(fd: &FnDef, ctx: &CodegenContext) -> S
         emit_string_pos_scan_lemma(fd, &helper_name, ctx)
             .map(|lemma| vec![String::new(), lemma])
             .unwrap_or_default(),
+        emit_simple_string_pos_stability_lemma(fd, &helper_name, 1, &body)
+            .map(|lemma| vec![String::new(), lemma])
+            .unwrap_or_default(),
     ]
     .into_iter()
     .flatten()
@@ -481,6 +484,261 @@ theorem {lemma_name} :
       simp only [{helper_name}, hch]
       rw [hpos]"#
     ))
+}
+
+/// Companion stability lemma for a simple string-position fuel SKIPPER —
+/// `<fn>__fuel fuel s pos = <fn> s pos` whenever `fuel` meets the wrapper's
+/// initial `averStringPosFuel s pos rank` budget. Gated to the skip shape
+/// (`match charAt with none => pos | some c => match c with <lit> => self(s,
+/// pos+1) … | _ => pos`) by [`detect_simple_string_pos_skip_literal`]; the
+/// literal itself is only the shape witness — the proof is literal-COUNT
+/// agnostic (handles single- and multi-literal skippers like json's four-way
+/// `skipWs` uniformly), so the detected literal value is discarded.
+///
+/// The recursive branch never case-splits on the character: once
+/// `charAt = some c` is fixed, both `<fn>__fuel (fuel+1)` and the wrapper's
+/// `<fn>__fuel (measure'+1)` unfold to the SAME inner `match Char.toString c`
+/// whose only difference is the recursive fuel argument (`fuel` vs `measure'`),
+/// and one `simp only [<fn>__fuel, hchar, hleft]` closes it by rewriting that
+/// argument — independent of how many literal arms recurse.
+///
+/// FAIL-SOFT: the whole proof is wrapped in `first | (<skeleton>) | sorry`
+/// (mirroring the off-probe floor of
+/// [`crate::codegen::lean::law_auto::transparent_chain`]). A gated shape the
+/// skeleton cannot close degrades to a non-fatal `declaration uses 'sorry'`
+/// warning instead of a hard `unsolved goals` build error. The lemma is not
+/// cited by any law, so its own `sorry` never enters another law's
+/// `#print axioms` set — universal credit for laws that do not reference it is
+/// untouched. A bare `sorry` (not the `AVERSPEC_SORRY:<id>` trace) is used
+/// deliberately: the trace exists so `speculative::parse_failures` can demote a
+/// non-closing conditional LAW to bounded, and this support lemma has no law
+/// tier to demote and no `speculative::admits` consumer.
+fn emit_simple_string_pos_stability_lemma(
+    fd: &FnDef,
+    helper_name: &str,
+    rank_budget: usize,
+    emitted_body: &str,
+) -> Option<String> {
+    // Gate only: the detected literal is the shape witness; the robust proof
+    // below is literal-agnostic, so the value is discarded.
+    detect_simple_string_pos_skip_literal(fd).or_else(|| {
+        detect_simple_string_pos_skip_literal_from_body(fd, helper_name, emitted_body)
+    })?;
+    let fn_name = aver_name_to_lean(&fd.name);
+    let s = aver_name_to_lean(&fd.params.first()?.0);
+    let pos = aver_name_to_lean(&fd.params.get(1)?.0);
+    let params = emit_fn_params(&fd.params);
+    let args = emit_fn_param_names(&fd.params);
+    let binders = if params.is_empty() {
+        String::new()
+    } else {
+        format!(" {params}")
+    };
+    let lemma_name = format!("{helper_name}_stable");
+
+    Some(format!(
+        r#"theorem {lemma_name} :
+    ∀ (fuel : Nat){binders},
+      averStringPosFuel {s} {pos} {rank_budget} ≤ fuel →
+      {helper_name} fuel {args} = {fn_name} {args} := by
+  first
+  | (intro fuel
+     induction fuel with
+     | zero =>
+         intro {args} h
+         unfold averStringPosFuel at h
+         omega
+     | succ fuel ih =>
+         intro {args} h
+         unfold {fn_name}
+         have hmeasure_pos : 0 < averStringPosFuel {s} {pos} {rank_budget} := by
+           unfold averStringPosFuel
+           omega
+         cases hmeasure : averStringPosFuel {s} {pos} {rank_budget} with
+         | zero =>
+             omega
+         | succ measure' =>
+             by_cases hneg : {pos} < 0
+             · have hchar : String.charAtAv {s} {pos} = none := by
+                 unfold String.charAtAv
+                 simp [hneg]
+               simp [{helper_name}, hchar]
+             · have h0 : 0 ≤ {pos} := by omega
+               by_cases hlt : {pos}.toNat < {s}.toList.length
+               · have hchar := String.charAt_eq_of_lt {s} {pos} h0 hlt
+                 have hnext_measure : averStringPosFuel {s} ({pos} + 1) {rank_budget} = measure' := by
+                   unfold averStringPosFuel at h hmeasure ⊢
+                   omega
+                 have hleft : {helper_name} fuel {s} ({pos} + 1) = {helper_name} measure' {s} ({pos} + 1) := by
+                   have hstep : {helper_name} fuel {s} ({pos} + 1) = {fn_name} {s} ({pos} + 1) := by
+                     apply ih
+                     rw [hnext_measure]
+                     unfold averStringPosFuel at h hmeasure
+                     omega
+                   rw [hstep]
+                   unfold {fn_name}
+                   rw [hnext_measure]
+                 simp only [{helper_name}, hchar, hleft]
+               · have hchar := String.charAt_none_of_ge {s} {pos} h0 (by omega)
+                 simp [{helper_name}, hchar])
+  | sorry"#
+    ))
+}
+
+fn detect_simple_string_pos_skip_literal(fd: &FnDef) -> Option<String> {
+    if fd.params.len() != 2 {
+        return None;
+    }
+    let s_name = &fd.params[0].0;
+    let pos_name = &fd.params[1].0;
+    let [Stmt::Expr(expr)] = fd.body.stmts() else {
+        return None;
+    };
+    let Expr::Match { subject, arms } = &expr.node else {
+        return None;
+    };
+    if !is_string_char_at(subject.as_ref(), s_name, pos_name) {
+        return None;
+    }
+
+    let mut saw_none_exit = false;
+    let mut recursive_literal = None;
+    let mut saw_fallback_exit = false;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::Constructor(name, fields) if name == "Option.None" && fields.is_empty() => {
+                saw_none_exit = expr_is_ident(&arm.body, pos_name);
+            }
+            Pattern::Constructor(name, fields) if name == "Option.Some" && fields.len() == 1 => {
+                let lit = detect_inner_char_match_literal(
+                    &arm.body, &fields[0], &fd.name, s_name, pos_name,
+                )?;
+                recursive_literal = Some(lit.0);
+                saw_fallback_exit = lit.1;
+            }
+            Pattern::Wildcard => {
+                if let Some((lit, fallback)) =
+                    detect_inner_char_match_literal(&arm.body, "", &fd.name, s_name, pos_name)
+                {
+                    recursive_literal = Some(lit);
+                    saw_fallback_exit = fallback;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    match (saw_none_exit, saw_fallback_exit, recursive_literal) {
+        (true, true, Some(lit)) => Some(lit),
+        _ => None,
+    }
+}
+
+fn detect_simple_string_pos_skip_literal_from_body(
+    fd: &FnDef,
+    helper_name: &str,
+    body: &str,
+) -> Option<String> {
+    let s_name = aver_name_to_lean(&fd.params.first()?.0);
+    let pos_name = aver_name_to_lean(&fd.params.get(1)?.0);
+    let recursive_suffix =
+        format!("=> {helper_name} {STRING_POS_FUEL_VAR} {s_name} ({pos_name} + 1)");
+    let none_exit = format!("| .none => {pos_name}");
+    let fallback_exit = format!("| _ => {pos_name}");
+    if !body.lines().any(|line| line.trim() == none_exit)
+        || !body.lines().any(|line| line.trim() == fallback_exit)
+    {
+        return None;
+    }
+    body.lines().find_map(|line| {
+        let trimmed = line.trim();
+        if !trimmed.ends_with(&recursive_suffix) {
+            return None;
+        }
+        let rest = trimmed.strip_prefix("| \"")?;
+        let end = rest.find("\" =>")?;
+        Some(rest[..end].to_string())
+    })
+}
+
+fn detect_inner_char_match_literal(
+    expr: &Spanned<Expr>,
+    binding: &str,
+    fn_name: &str,
+    s_name: &str,
+    pos_name: &str,
+) -> Option<(String, bool)> {
+    let Expr::Match { subject, arms } = &expr.node else {
+        return None;
+    };
+    if !binding.is_empty() && !expr_is_ident(subject, binding) {
+        return None;
+    }
+    let mut recursive_literal = None;
+    let mut fallback_exit = false;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::Literal(Literal::Str(lit))
+                if expr_is_self_pos_plus_one_tailcall(&arm.body, fn_name, s_name, pos_name) =>
+            {
+                recursive_literal = Some(lit.clone());
+            }
+            Pattern::Wildcard if expr_is_ident(&arm.body, pos_name) => {
+                fallback_exit = true;
+            }
+            _ => {}
+        }
+    }
+    recursive_literal.map(|lit| (lit, fallback_exit))
+}
+
+fn is_string_char_at(expr: &Spanned<Expr>, s_name: &str, pos_name: &str) -> bool {
+    let Expr::FnCall(callee, args) = &expr.node else {
+        return false;
+    };
+    if args.len() != 2 || !expr_is_ident(&args[0], s_name) || !expr_is_ident(&args[1], pos_name) {
+        return false;
+    }
+    let Expr::Attr(base, method) = &callee.node else {
+        return false;
+    };
+    method == "charAt" && expr_is_ident(base, "String")
+}
+
+fn expr_is_ident(expr: &Spanned<Expr>, name: &str) -> bool {
+    matches!(&expr.node, Expr::Ident(n) if n == name)
+}
+
+fn expr_is_self_pos_plus_one_tailcall(
+    expr: &Spanned<Expr>,
+    fn_name: &str,
+    s_name: &str,
+    pos_name: &str,
+) -> bool {
+    let (target, args) = match &expr.node {
+        Expr::TailCall(data) => (&data.target, &data.args),
+        Expr::FnCall(callee, args) => match &callee.node {
+            Expr::Ident(name) => (name, args),
+            _ => return false,
+        },
+        _ => return false,
+    };
+    target == fn_name
+        && args.len() == 2
+        && expr_is_ident(&args[0], s_name)
+        && expr_is_pos_plus_one(&args[1], pos_name)
+}
+
+fn expr_is_pos_plus_one(expr: &Spanned<Expr>, pos_name: &str) -> bool {
+    matches!(
+        &expr.node,
+        Expr::BinOp(
+            BinOp::Add,
+            left,
+            right
+        ) if expr_is_ident(left, pos_name)
+            && matches!(&right.node, Expr::Literal(Literal::Int(1)))
+    )
 }
 
 fn strip_match_eq_binders(body: String) -> String {
