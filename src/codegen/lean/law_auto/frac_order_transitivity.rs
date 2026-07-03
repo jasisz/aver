@@ -291,10 +291,11 @@ pub(super) fn recognize_frac_order_transitivity_shape(
     let lessthan = aver_name_to_lean(&expr_dotted_name(lt_callee)?);
     // The rational module prefix (e.g. `Domain.Rational`), read off `lessThan`,
     // so `isNonNeg` / `minus` are the SAME module's primitives — derived, not
-    // hardcoded.
-    let rat_prefix = lessthan.rsplit_once('.').map(|(p, _)| p.to_string())?;
-    let isnonneg = format!("{rat_prefix}.isNonNeg");
-    let minus = format!("{rat_prefix}.minus");
+    // hardcoded. A single-module domain renders these top-level (no prefix).
+    let (isnonneg, minus) = match lessthan.rsplit_once('.') {
+        Some((prefix, _)) => (format!("{prefix}.isNonNeg"), format!("{prefix}.minus")),
+        None => ("isNonNeg".to_string(), "minus".to_string()),
+    };
 
     // Substitute subject params → the law call's argument terms so the
     // conclusion endpoints are expressed in the law's given namespace.
@@ -314,6 +315,7 @@ pub(super) fn recognize_frac_order_transitivity_shape(
     }
     let given_names: Vec<String> = law.givens.iter().map(|g| g.name.clone()).collect();
     let hi_closed = !mentions_var(&hi_e, &given_names);
+    let lo_closed = !mentions_var(&lo_e, &given_names);
 
     // Collect order edges from the flattened premises.
     let when = law.when.as_ref()?;
@@ -349,7 +351,9 @@ pub(super) fn recognize_frac_order_transitivity_shape(
 
     let mut used = vec![false; edges.len()];
     let mut links: Vec<Link> = Vec::new();
-    if !find_chain(&lo, true, &hi, hi_closed, &edges, &mut used, 0, &mut links) {
+    if !find_chain(
+        &lo, lo_closed, &hi, hi_closed, &edges, &mut used, 0, &mut links,
+    ) {
         return None;
     }
 
@@ -433,7 +437,14 @@ pub(super) fn emit_frac_order_transitivity_law(
         .iter()
         .map(|g| aver_name_to_lean(&g.name))
         .collect();
-    let text = render_chain(theorem_base, quant_params, &intros.join(" "), &when, &lhs, &c);
+    let text = render_chain(
+        theorem_base,
+        quant_params,
+        &intros.join(" "),
+        &when,
+        &lhs,
+        &c,
+    );
     Some(AutoProof {
         support_lines: text.lines().map(|l| l.to_string()).collect(),
         body: crate::codegen::lean::tactic_ir::Tactic::raw(Vec::new()),
