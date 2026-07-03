@@ -35,6 +35,14 @@ Read the [Aver Manifesto](https://jasisz.github.io/aver-language/) for the longe
 
 ## Quickstart
 
+### Docker
+
+```bash
+docker build -t aver-one-command . && docker run --rm aver-one-command
+```
+
+This builds `aver`, runs `examples/core/hello.av`, and checks one Lean law from `examples/formal`. See [docs/quickstart.md](docs/quickstart.md).
+
 ### Install from crates.io
 
 ```bash
