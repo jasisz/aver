@@ -80,6 +80,156 @@ pub(super) fn flatten_and(e: &Spanned<Expr>, out: &mut Vec<Spanned<Expr>>) {
     }
 }
 
+pub(super) fn collect_when_clauses(e: &Spanned<Expr>) -> Vec<Spanned<Expr>> {
+    let mut out = Vec::new();
+    flatten_and(e, &mut out);
+    out
+}
+
+/// Callee source-name and args of a call, seeing through the TCO rewrite: a
+/// tail-position self/peer call is an `Expr::TailCall` after the proof pipeline
+/// runs, not an `Expr::FnCall`.
+pub(super) fn call_name_args(e: &Spanned<Expr>) -> Option<(String, &[Spanned<Expr>])> {
+    match &e.node {
+        Expr::FnCall(callee, args) => Some((expr_dotted_name(callee)?, args.as_slice())),
+        Expr::TailCall(tc) => Some((tc.target.clone(), tc.args.as_slice())),
+        _ => None,
+    }
+}
+
+pub(super) fn short_call_name_args(e: &Spanned<Expr>) -> Option<(String, &[Spanned<Expr>])> {
+    let (dotted, args) = call_name_args(e)?;
+    let short = dotted.rsplit('.').next().unwrap_or(&dotted).to_string();
+    Some((short, args))
+}
+
+pub(super) fn call_named<'a>(
+    expr: &'a Spanned<Expr>,
+    name: &str,
+    n: usize,
+) -> Option<&'a [Spanned<Expr>]> {
+    let (short, args) = short_call_name_args(expr)?;
+    (short == name && args.len() == n).then_some(args)
+}
+
+pub(super) fn call_named_with_dotted<'a>(
+    expr: &'a Spanned<Expr>,
+    name: &str,
+    n: usize,
+) -> Option<(String, &'a [Spanned<Expr>])> {
+    let (dotted, args) = call_name_args(expr)?;
+    let short = dotted.rsplit('.').next().unwrap_or(&dotted);
+    (short == name && args.len() == n).then_some((dotted, args))
+}
+
+pub(super) fn call_qualified<'a>(
+    expr: &'a Spanned<Expr>,
+    qual: &str,
+    n: usize,
+) -> Option<&'a [Spanned<Expr>]> {
+    let (dotted, args) = call_name_args(expr)?;
+    (dotted == qual && args.len() == n).then_some(args)
+}
+
+pub(super) fn ident_name(expr: &Spanned<Expr>) -> Option<&str> {
+    match &expr.node {
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => Some(n.as_str()),
+        _ => None,
+    }
+}
+
+pub(super) fn is_ident(expr: &Spanned<Expr>, name: &str) -> bool {
+    ident_name(expr) == Some(name)
+}
+
+/// Immediate sub-expressions used by law-auto source-AST scans. This mirrors
+/// the pre-existing pure recognizer walkers while making tail-call args visible.
+pub(super) fn child_exprs(e: &Spanned<Expr>) -> Vec<&Spanned<Expr>> {
+    match &e.node {
+        Expr::FnCall(callee, args) => {
+            let mut v = vec![callee.as_ref()];
+            v.extend(args.iter());
+            v
+        }
+        Expr::BinOp(_, l, r) => vec![l.as_ref(), r.as_ref()],
+        Expr::Neg(inner) | Expr::ErrorProp(inner) => vec![inner.as_ref()],
+        Expr::Attr(base, _) => vec![base.as_ref()],
+        Expr::Constructor(_, Some(inner)) => vec![inner.as_ref()],
+        Expr::Match { subject, arms } => {
+            let mut v = vec![subject.as_ref()];
+            v.extend(arms.iter().map(|a| a.body.as_ref()));
+            v
+        }
+        Expr::List(items) | Expr::Tuple(items) => items.iter().collect(),
+        Expr::TailCall(tc) => tc.args.iter().collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Deepest user-fn call `h(<field>)` (single arg the given binder) anywhere in
+/// `expr`; wrappers around the call are traversed through [`child_exprs`].
+pub(super) fn call_on_binder(
+    expr: &Spanned<Expr>,
+    field: &str,
+    ctx: &CodegenContext,
+) -> Option<String> {
+    let mut found: Option<String> = None;
+    fn walk(e: &Spanned<Expr>, field: &str, ctx: &CodegenContext, found: &mut Option<String>) {
+        if let Some((name, args)) = call_name_args(e)
+            && args.len() == 1
+            && is_ident(&args[0], field)
+            && find_fn_def(ctx, &name).is_some()
+        {
+            *found = Some(name);
+        }
+        for child in child_exprs(e) {
+            walk(child, field, ctx, found);
+        }
+    }
+    walk(expr, field, ctx, &mut found);
+    found
+}
+
+/// Whether `expr` contains a call `fn_src(<ident>)` (single arg, the given
+/// binder), seeing through post-TCO `TailCall` nodes.
+pub(super) fn calls_fn_on_ident(expr: &Spanned<Expr>, fn_src: &str, ident: &str) -> bool {
+    if let Some((name, args)) = call_name_args(expr)
+        && args.len() == 1
+        && is_ident(&args[0], ident)
+        && name == fn_src
+    {
+        return true;
+    }
+    child_exprs(expr)
+        .into_iter()
+        .any(|c| calls_fn_on_ident(c, fn_src, ident))
+}
+
+/// Direct callees of `src` that are user fn defs (by source name), treating
+/// `TailCall` as a call site so mutual SCC recognition sees post-TCO bodies.
+pub(super) fn direct_user_calls(src: &str, ctx: &CodegenContext) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let Some(fd) = find_fn_def(ctx, src) else {
+        return out;
+    };
+    fn walk(e: &Spanned<Expr>, ctx: &CodegenContext, out: &mut BTreeSet<String>) {
+        if let Some((name, _)) = call_name_args(e)
+            && let Some(fd) = find_fn_def(ctx, &name)
+        {
+            out.insert(fd.name.clone());
+        }
+        for c in child_exprs(e) {
+            walk(c, ctx, out);
+        }
+    }
+    for stmt in fd.body.stmts() {
+        match stmt {
+            Stmt::Expr(e) | Stmt::Binding(_, _, e) => walk(e, ctx, &mut out),
+        }
+    }
+    out
+}
+
 /// Whether `clause` guarantees `0 < x` for the atom rendered as `x_render`:
 /// `0 < x`, `x > 0`, `1 <= x`, `x >= 1` (any nonneg/≥1 literal bound).
 /// Clauses arrive canonicalized by [`flatten_and`], so `x > 0` / `x >= 1`
