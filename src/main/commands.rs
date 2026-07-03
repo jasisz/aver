@@ -7241,7 +7241,10 @@ fn lean_residual_goals(
 /// cons-arm candidate we render may not close the law on its own — the renderer
 /// flags it.
 struct GoalDump {
-    json: String,
+    /// Every residual goal dumped for this law, in info-log order. The dump probe
+    /// splits a blocked conditional and dumps ALL branch goals, so one law yields
+    /// several residuals (deduped); the calculator lifts each and dedups again.
+    jsons: Vec<String>,
     multi_arm: bool,
 }
 
@@ -7378,15 +7381,18 @@ fn lean_goal_json(
         if json.is_empty() {
             continue;
         }
-        // Cons arm (carrying the IH) is dumped last; prefer it, but remember
-        // that an earlier arm was also open so the renderer can flag it.
+        // Collect every distinct residual (one arm's split yields several); the
+        // `multi_arm` flag records that more than one residual is open, so the
+        // renderer can note the candidates may not each close the law alone.
         out.entry(label.to_string())
             .and_modify(|d| {
-                d.json = json.to_string();
-                d.multi_arm = true;
+                if !d.jsons.iter().any(|j| j == json) {
+                    d.jsons.push(json.to_string());
+                    d.multi_arm = true;
+                }
             })
             .or_insert_with(|| GoalDump {
-                json: json.to_string(),
+                jsons: vec![json.to_string()],
                 multi_arm: false,
             });
     }
@@ -7426,9 +7432,12 @@ fn render_explain_candidates(
     }
     println!();
     println!("{}", "--explain: candidate Aver laws for open goals".bold());
-    // Every OPEN law gets exactly one verdict line — a law whose residual could
-    // not be extracted (no arm dumped a goal) is reported as an engine-form gap,
-    // never silently skipped.
+    // Every OPEN law gets at least one verdict — a law whose residual could not be
+    // extracted (no arm dumped a goal) is reported as an engine-form gap, never
+    // silently skipped. A law's split residual yields several branch goals: each
+    // becomes a candidate, deduped by source; a branch outside the grammar records
+    // its decline reason so a law with no in-grammar branch still gets one honest
+    // gap verdict.
     for (label, _thm) in open_laws {
         let Some(dump) = goal_json.get(label) else {
             println!(
@@ -7446,29 +7455,48 @@ fn render_explain_candidates(
         // transpiler's `Nat`-lift (`Succ x → x + 1`) back to the ADT's
         // constructors; a non-Peano law gets the default (pre-V2) behavior.
         let ctx = peano_ctx_for_law(items, fn_name, law_name);
-        let goal = match untranslate_goal_ctx(&dump.json, &ctx) {
-            Ok(g) => g,
-            Err(gap) => {
-                println!(
-                    "  {label}: {}",
-                    format!("engine-form gap — {}", gap.reason).yellow()
-                );
-                continue;
-            }
-        };
-        let src = match build_candidate_law(fn_name, law_name, goal, items) {
-            Ok(s) => s,
-            Err(reason) => {
-                println!(
-                    "  {label}: {}",
-                    format!("engine-form gap — {reason}").yellow()
-                );
-                continue;
-            }
-        };
         let cand_law_name = format!("{law_name}_residual");
-        match sample_check_candidate(&src, fn_name, &cand_law_name, file, module_root) {
-            SampleVerdict::Pass => {
+        // A split residual yields several branch goals. Each becomes a candidate,
+        // deduped by source; the sample-check partitions them. We surface every
+        // branch that PASSES (a forced lemma — prop_73 legitimately yields one per
+        // branch), and fall back to a single honest negative (counterexample, then
+        // gap) only when no branch passes. A branch outside the grammar records its
+        // decline reason so a law with no in-grammar branch still gets a verdict.
+        let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut passed: Vec<String> = Vec::new();
+        let mut first_fail: Option<(String, String)> = None;
+        let mut first_gap: Option<String> = None;
+        for json in &dump.jsons {
+            let goal = match untranslate_goal_ctx(json, &ctx) {
+                Ok(g) => g,
+                Err(gap) => {
+                    first_gap.get_or_insert(gap.reason);
+                    continue;
+                }
+            };
+            let src = match build_candidate_law(fn_name, law_name, goal, items, ctx.peano.as_ref())
+            {
+                Ok(s) => s,
+                Err(reason) => {
+                    first_gap.get_or_insert(reason);
+                    continue;
+                }
+            };
+            if !seen.insert(src.clone()) {
+                continue; // alpha-equivalent branch already accounted for
+            }
+            match sample_check_candidate(&src, fn_name, &cand_law_name, file, module_root) {
+                SampleVerdict::Pass => passed.push(src),
+                SampleVerdict::Fail { counterexample } => {
+                    first_fail.get_or_insert((counterexample, src));
+                }
+                SampleVerdict::Gap(reason) => {
+                    first_gap.get_or_insert(reason);
+                }
+            }
+        }
+        if !passed.is_empty() {
+            for src in &passed {
                 println!(
                     "  {label}: {}",
                     "candidate law — sample-check passed, add it and cite:".green()
@@ -7477,28 +7505,27 @@ fn render_explain_candidates(
                     println!("      {line}");
                 }
             }
-            SampleVerdict::Fail { counterexample } => {
+            if dump.multi_arm {
                 println!(
-                    "  {label}: {}",
-                    "law false as stated — sample-check counterexample:".red()
-                );
-                println!("      {counterexample}");
-                for line in src.lines() {
-                    println!("      {line}");
-                }
-            }
-            SampleVerdict::Gap(reason) => {
-                println!(
-                    "  {label}: {}",
-                    format!("engine-form gap — {reason}").yellow()
+                    "      {}",
+                    "(the law has more than one open branch — a candidate may not close it alone)"
+                        .yellow()
                 );
             }
-        }
-        if dump.multi_arm {
+        } else if let Some((counterexample, src)) = first_fail {
             println!(
-                "      {}",
-                "(another proof arm is also open — this candidate may not close the law alone)"
-                    .yellow()
+                "  {label}: {}",
+                "law false as stated — sample-check counterexample:".red()
+            );
+            println!("      {counterexample}");
+            for line in src.lines() {
+                println!("      {line}");
+            }
+        } else {
+            let reason = first_gap.unwrap_or_else(|| "no residual branch in grammar".to_string());
+            println!(
+                "  {label}: {}",
+                format!("engine-form gap — {reason}").yellow()
             );
         }
     }
@@ -7515,6 +7542,7 @@ fn build_candidate_law(
     law_name: &str,
     goal: aver::codegen::lean::untranslate::UntranslatedGoal,
     items: &[aver::ast::TopLevel],
+    peano: Option<&aver::codegen::lean::untranslate::PeanoCtx>,
 ) -> Result<String, String> {
     use aver::ast::{TopLevel, VerifyBlock, VerifyGiven, VerifyKind, VerifyLaw};
     // Original givens (by name) so a residual binder that IS the law's own
@@ -7537,8 +7565,8 @@ fn build_candidate_law(
         if let Some(g) = orig.get(name) {
             givens.push(clone_given(g));
         } else {
-            let domain =
-                synth_domain(ty).ok_or_else(|| format!("cannot sample binder `{name}: {ty}`"))?;
+            let domain = synth_domain(ty, peano)
+                .ok_or_else(|| format!("cannot sample binder `{name}: {ty}`"))?;
             givens.push(VerifyGiven {
                 name: name.clone(),
                 type_name: ty.clone(),
@@ -7583,22 +7611,65 @@ fn build_candidate_law(
 
 /// Synthesize a small sample domain for a residual binder whose name is not one
 /// of the original law's givens. Only the types `--explain` can sample directly.
-fn synth_domain(ty: &str) -> Option<aver::ast::VerifyGivenDomain> {
+/// A canonical-Peano ADT `T` (and `List<T>`) is sampled with constructor terms
+/// `Zero, Succ(Zero), Succ(Succ(Zero))` — depth 2, and both the base and a
+/// successor so a predicate like `isZ` is exercised on each branch (`peano`
+/// carries the ADT's actual constructor names, threaded from the render site).
+fn synth_domain(
+    ty: &str,
+    peano: Option<&aver::codegen::lean::untranslate::PeanoCtx>,
+) -> Option<aver::ast::VerifyGivenDomain> {
     use aver::ast::{Expr, Literal, Spanned, VerifyGivenDomain};
     let int = |n: i64| Spanned::new(Expr::Literal(Literal::Int(n)), 0);
     match ty {
-        "Int" => Some(VerifyGivenDomain::IntRange { start: -3, end: 5 }),
-        "Bool" => Some(VerifyGivenDomain::Explicit(vec![
-            Spanned::new(Expr::Literal(Literal::Bool(true)), 0),
-            Spanned::new(Expr::Literal(Literal::Bool(false)), 0),
-        ])),
-        "List<Int>" => Some(VerifyGivenDomain::Explicit(vec![
-            Spanned::new(Expr::List(vec![]), 0),
-            Spanned::new(Expr::List(vec![int(1)]), 0),
-            Spanned::new(Expr::List(vec![int(3), int(1), int(2)]), 0),
-        ])),
-        _ => None,
+        "Int" => return Some(VerifyGivenDomain::IntRange { start: -3, end: 5 }),
+        "Bool" => {
+            return Some(VerifyGivenDomain::Explicit(vec![
+                Spanned::new(Expr::Literal(Literal::Bool(true)), 0),
+                Spanned::new(Expr::Literal(Literal::Bool(false)), 0),
+            ]));
+        }
+        "List<Int>" => {
+            return Some(VerifyGivenDomain::Explicit(vec![
+                Spanned::new(Expr::List(vec![]), 0),
+                Spanned::new(Expr::List(vec![int(1)]), 0),
+                Spanned::new(Expr::List(vec![int(3), int(1), int(2)]), 0),
+            ]));
+        }
+        _ => {}
     }
+    let p = peano?;
+    let zero = || Spanned::new(Expr::Ident(format!("{}.{}", p.type_name, p.zero_ctor)), 0);
+    let succ = |x: Spanned<Expr>| {
+        Spanned::new(
+            Expr::FnCall(
+                Box::new(Spanned::new(
+                    Expr::Ident(format!("{}.{}", p.type_name, p.succ_ctor)),
+                    0,
+                )),
+                vec![x],
+            ),
+            0,
+        )
+    };
+    if ty == p.type_name {
+        return Some(VerifyGivenDomain::Explicit(vec![
+            zero(),
+            succ(zero()),
+            succ(succ(zero())),
+        ]));
+    }
+    if ty == format!("List<{}>", p.type_name) {
+        return Some(VerifyGivenDomain::Explicit(vec![
+            Spanned::new(Expr::List(vec![]), 0),
+            Spanned::new(Expr::List(vec![zero()]), 0),
+            Spanned::new(
+                Expr::List(vec![succ(zero()), zero(), succ(succ(zero()))]),
+                0,
+            ),
+        ]));
+    }
+    None
 }
 
 /// Gate a candidate law source through the VM sample-check: append it to the
@@ -9159,6 +9230,46 @@ mod tests {
         // `omega`/`split` would throw `No usable constraints` instead of leaving a
         // clean residual).
         for banned in ["done", "omega", "split", "simp_all", "sorry"] {
+            assert!(
+                !body.contains(banned),
+                "probe must not contain `{banned}`:\n{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn residual_probe_dump_splits_and_drops_nat_bridge_lemma() {
+        // The dump arm (Some label) splits a blocked conditional (bounded two
+        // levels) + re-strips every goal + dumps all, and drops the Nat-comparison
+        // bridge lemma (`*_isNatLe`) from the strip (it would rewrite the
+        // `le … = true` claim into a builtin `≤` the un-translator declines).
+        let thm = [
+            "theorem f_law_x : ∀ (xs : List Nat), le (g xs) (h xs) = true := by",
+            "  intro xs",
+            "  induction xs with",
+            "  | nil => first | (simp only [g, h, le, f_x_le_isNatLe]; done) | sorry",
+            "  | cons head tail ih => first | (simp_all [g, h, le, f_x_le_isNatLe]; done) | sorry",
+        ];
+        let body = aver::codegen::lean::residual_probe_body_dump(&thm, "_probe0", Some("f.x"))
+            .expect("a clean top-level induction shape is probeable");
+        assert!(
+            body.contains("<;> (try split) <;> (try split) <;>"),
+            "dump arm must split blocked matches:\n{body}"
+        );
+        assert!(
+            body.contains("all_goals (try aver_dump_goal \"f.x\")"),
+            "dump arm must dump all resulting goals:\n{body}"
+        );
+        // Def unfolds + list peel survive (sorted `BTreeSet`); bridge lemma gone.
+        assert!(
+            body.contains("(try simp only [List.cons_append, g, h, le])"),
+            "dump strip missing the def set:\n{body}"
+        );
+        assert!(
+            !body.contains("f_x_le_isNatLe"),
+            "nat-bridge lemma must be excluded from the dump strip:\n{body}"
+        );
+        for banned in ["done", "omega", "simp_all", "sorry"] {
             assert!(
                 !body.contains(banned),
                 "probe must not contain `{banned}`:\n{body}"

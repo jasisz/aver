@@ -257,6 +257,14 @@ fn untranslate_bool(v: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, En
     if let Some((l, r)) = untranslate_eq(v, ctx) {
         return Ok(sp(Expr::BinOp(BinOp::Eq, Box::new(l?), Box::new(r?))));
     }
+    // A split else-branch hypothesis `¬(<boolExpr> = b)` (non-constant, so not
+    // dropped as vacuous) → the `when`-conjunct `<boolExpr> != b`. The Bool↔Prop
+    // bridge for the false side of an `if <boolFn> …` split.
+    if let Some(inner) = negated_eq_inner(v)
+        && let Some((l, r)) = untranslate_eq(inner, ctx)
+    {
+        return Ok(sp(Expr::BinOp(BinOp::Neq, Box::new(l?), Box::new(r?))));
+    }
     if let Some(app) = v.get("app")
         && let Some(op) = comparison_binop(head_const(app))
     {
@@ -586,14 +594,28 @@ fn aver_type_name(v: &Value, ctx: &UntranslateCtx) -> Option<String> {
     None
 }
 
-/// True iff the binder type is a Prop we treat as a `when` premise (equality or
-/// comparison), rather than a data given.
+/// True iff the binder type is a Prop we treat as a `when` premise: an equality,
+/// a comparison, or a negated equality (`¬(a = b)`, a split else-branch).
 fn is_prop_type(v: &Value) -> bool {
     let Some(app) = v.get("app") else {
         return false;
     };
     let head = head_const(app);
-    head == Some("Eq") || comparison_binop(head).is_some()
+    head == Some("Eq") || comparison_binop(head).is_some() || negated_eq_inner(v).is_some()
+}
+
+/// If `v` is `Not <inner>` with `<inner>` an `@Eq …`, return the inner Eq node.
+fn negated_eq_inner(v: &Value) -> Option<&Value> {
+    let app = v.get("app")?;
+    if head_const(app) != Some("Not") {
+        return None;
+    }
+    let inner = app.get("args")?.as_array()?.last()?;
+    if inner.get("app").map(head_const)? == Some("Eq") {
+        Some(inner)
+    } else {
+        None
+    }
 }
 
 fn int_literal(nat: &str) -> Expr {
@@ -1038,6 +1060,30 @@ mod tests {
         format!(
             r#"{{"app":{{"fn":{{"const":"OfNat.ofNat"}},"args":[{{"const":"Nat"}},{{"nat":"{n}"}},{{"opaque":"inst"}}]}}}}"#
         )
+    }
+
+    #[test]
+    fn negated_bool_equality_becomes_neq_when() {
+        // A non-constant split else-branch `¬(f x = true)` → `when (f(x) != true)`
+        // (the false side of an `if f x …` split); vacuous `¬(true = true)` still
+        // drops via `is_vacuous_prop`, so only genuine hypotheses reach here.
+        let f = |a: &str| format!(r#"{{"app":{{"fn":{{"const":"f"}},"args":[{a}]}}}}"#);
+        let not_eq = format!(
+            r#"{{"app":{{"fn":{{"const":"Not"}},"args":[{{"app":{{"fn":{{"const":"Eq"}},"args":[{{"const":"Bool"}},{},{{"const":"Bool.true"}}]}}}}]}}}}"#,
+            f(&var("x"))
+        );
+        let claim = format!(
+            r#"{{"app":{{"fn":{{"const":"Eq"}},"args":[{{"const":"Bool"}},{},{{"const":"Bool.true"}}]}}}}"#,
+            f(&var("x"))
+        );
+        let json = forall("x", r#"{"const":"Int"}"#, &forall("h", &not_eq, &claim));
+        let g = untranslate_goal(&json).expect("in grammar");
+        assert_eq!(g.givens, vec![("x".to_string(), "Int".to_string())]);
+        assert_eq!(g.premises.len(), 1);
+        assert_eq!(
+            render(&g),
+            "given x: Int; when (f(x) != true); f(x) => true"
+        );
     }
 
     #[test]

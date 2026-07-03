@@ -4943,7 +4943,7 @@ pub fn residual_probe_body_dump(
         return None;
     }
     simp_defs.insert("List.cons_append".to_string());
-    let simp_set = simp_defs.into_iter().collect::<Vec<_>>().join(", ");
+    let simp_set = simp_defs.iter().cloned().collect::<Vec<_>>().join(", ");
     let strip = format!("(try simp only [{simp_set}])");
 
     // 3. Reassemble: statement (renamed) + intro + induction + each arm's pattern
@@ -4959,10 +4959,33 @@ pub fn residual_probe_body_dump(
     //    to a 2-space block makes the probe a clean top-level `induction`
     //    regardless of how deep it sat in the source body.
     // `--explain` stage 2: after the normalization strip, dump the residual goal
-    // as JSON. `try` makes it fail-soft (a dump error leaves the arm untouched).
-    let dump = dump_label
-        .map(|label| format!("; (try aver_dump_goal \"{label}\")"))
-        .unwrap_or_default();
+    // as JSON. The dump arm additionally splits a blocked `if <fn> …` / `match`
+    // (its scrutinee cased, exposing each branch of a forced conditional lemma),
+    // then re-normalizes EVERY resulting goal — the bare `strip` only touches the
+    // first — and dumps them all. A bounded two-level split matches the depth the
+    // p66/p73 witnesses need (a deeper `repeat' split` over-peels into the nested
+    // `le`/`rev` matches and re-exposes blocked residuals). The re-strip drops the
+    // Nat-comparison bridge lemmas (`*_isNatLe`/`_isNatLt`/`_isNatEq`): those
+    // rewrite a user `le … = true` claim into a builtin `≤` the un-translator
+    // declines, so they must not run before the residual is captured. `try`
+    // keeps every added step fail-soft; the None (open_goal) path is byte-for-
+    // byte unchanged.
+    let arm_tail = match dump_label {
+        Some(label) => {
+            let dump_set = simp_defs
+                .iter()
+                .filter(|n| !is_nat_bridge_lemma(n))
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            let s = format!("(try simp only [{dump_set}])");
+            format!(
+                " {s} <;> (try split) <;> (try split) <;> {s}; \
+                 all_goals (try aver_dump_goal \"{label}\")"
+            )
+        }
+        None => format!(" {strip}"),
+    };
     let mut out = vec![format!("theorem {probe_name}{rest}")];
     if let Some(intro) = intro_line {
         out.push(format!("  {}", intro.trim_start()));
@@ -4973,12 +4996,22 @@ pub fn residual_probe_body_dump(
         let arm = arm.trim();
         if let Some(arrow) = arm.find("=>") {
             let head = arm[..arrow + 2].trim_end();
-            out.push(format!("  {head} {strip}{dump}"));
+            out.push(format!("  {head}{arm_tail}"));
         } else {
-            out.push(format!("  {arm} {strip}{dump}"));
+            out.push(format!("  {arm}{arm_tail}"));
         }
     }
     Some(out.join("\n"))
+}
+
+/// A Nat-comparison bridge lemma (`<law>_<cmp>_isNatLe` / `_isNatLt` / `_isNatEq`)
+/// emitted by the nat-lift support: it rewrites a user comparison `le a b = true`
+/// into the builtin `a ≤ b`. Harmless (helpful, even) inside the proof cascade,
+/// but poison for the `--explain` dump strip — it would launder the user-`le`
+/// claim into a `Nat`-carried `≤` the un-translator declines. Same predicate the
+/// bridge-rung emitter uses to select these names.
+fn is_nat_bridge_lemma(name: &str) -> bool {
+    name.ends_with("_isNatLe") || name.ends_with("_isNatLt") || name.ends_with("_isNatEq")
 }
 
 /// Collect the def/lemma identifiers inside every `simp[_all|_only] [ … ]` bracket
