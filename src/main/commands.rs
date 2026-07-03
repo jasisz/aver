@@ -7425,11 +7425,15 @@ fn render_explain_candidates(
     file: &str,
     module_root: &str,
 ) {
+    use aver::codegen::lean::lemma_calc::{self, CalcVerdict};
     use aver::codegen::lean::untranslate::{peano_ctx_for_law, untranslate_goal_ctx};
     use colored::Colorize;
     if open_laws.is_empty() {
         return;
     }
+    // The lemma calculator reads program facts (constructor names, fn return
+    // types) as data; build it once for the whole render.
+    let calc_env = lemma_calc::CalcEnv::from_items(items);
     println!();
     println!("{}", "--explain: candidate Aver laws for open goals".bold());
     // Every OPEN law gets at least one verdict — a law whose residual could not be
@@ -7474,18 +7478,46 @@ fn render_explain_candidates(
                     continue;
                 }
             };
-            let src = match build_candidate_law(fn_name, law_name, goal, items, ctx.peano.as_ref())
+            // Prefer the calculator's forced lemma when it sample-checks; else
+            // fall back to the raw residual candidate. The calculator only ever
+            // ADDS a stronger lemma — it never downgrades a raw candidate that
+            // would have passed, so a Lemma that fails the VM defers to the raw.
+            let mut chosen: Option<(String, SampleVerdict)> = None;
+            if let CalcVerdict::Lemma(g) = lemma_calc::calculate(&goal, &calc_env)
+                && let Ok(src) =
+                    build_candidate_law(fn_name, law_name, *g, items, ctx.peano.as_ref())
             {
-                Ok(s) => s,
-                Err(reason) => {
-                    first_gap.get_or_insert(reason);
-                    continue;
+                let verdict =
+                    sample_check_candidate(&src, fn_name, &cand_law_name, file, module_root);
+                if matches!(verdict, SampleVerdict::Pass) {
+                    chosen = Some((src, verdict));
+                }
+            }
+            let (src, verdict) = match chosen {
+                Some(c) => c,
+                None => {
+                    let src = match build_candidate_law(
+                        fn_name,
+                        law_name,
+                        goal,
+                        items,
+                        ctx.peano.as_ref(),
+                    ) {
+                        Ok(s) => s,
+                        Err(reason) => {
+                            first_gap.get_or_insert(reason);
+                            continue;
+                        }
+                    };
+                    let verdict =
+                        sample_check_candidate(&src, fn_name, &cand_law_name, file, module_root);
+                    (src, verdict)
                 }
             };
             if !seen.insert(src.clone()) {
                 continue; // alpha-equivalent branch already accounted for
             }
-            match sample_check_candidate(&src, fn_name, &cand_law_name, file, module_root) {
+            match verdict {
                 SampleVerdict::Pass => passed.push(src),
                 SampleVerdict::Fail { counterexample } => {
                     first_fail.get_or_insert((counterexample, src));

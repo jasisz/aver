@@ -6,6 +6,7 @@
 mod builtins;
 mod expr;
 mod law_auto;
+pub mod lemma_calc;
 mod pattern;
 mod prelude;
 pub(crate) mod recurrence;
