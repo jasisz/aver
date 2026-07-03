@@ -48,6 +48,7 @@ VERIFY_LAW_RE = re.compile(
     r"verify\s+([A-Za-z0-9_]+)\s+law\s+([A-Za-z0-9_]+)",
     re.IGNORECASE,
 )
+PROOF_STRATEGY_ENUM_RE = re.compile(r"\bpub\s+enum\s+ProofStrategy\b")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -619,6 +620,69 @@ def collect_hand_sidecars(repo: Path) -> list[HandSidecar]:
     return list(sidecars.values())
 
 
+def extract_braced_body(text: str, open_at: int) -> str:
+    depth = 0
+    start = -1
+    for idx in range(open_at, len(text)):
+        ch = text[idx]
+        if ch == "{":
+            depth += 1
+            if depth == 1:
+                start = idx + 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start >= 0:
+                return text[start:idx]
+    raise ValueError("unterminated ProofStrategy enum body")
+
+
+def split_top_level_variants(body: str) -> list[str]:
+    variants: list[str] = []
+    current: list[str] = []
+    depth = 0
+    pairs = {"(": ")", "{": "}", "[": "]", "<": ">"}
+    closing = set(pairs.values())
+    for ch in body:
+        if ch in pairs:
+            depth += 1
+        elif ch in closing and depth > 0:
+            depth -= 1
+        if ch == "," and depth == 0:
+            variant = "".join(current).strip()
+            if variant:
+                variants.append(variant)
+            current = []
+            continue
+        current.append(ch)
+    variant = "".join(current).strip()
+    if variant:
+        variants.append(variant)
+    return variants
+
+
+def collect_proof_strategy_variants(repo: Path) -> list[str]:
+    rel_path = "src/ir/proof_ir.rs"
+    if rel_path not in set(git_ls_files(repo, [rel_path])):
+        raise RuntimeError(f"{rel_path} is not tracked by git")
+    text = (repo / rel_path).read_text(encoding="utf-8")
+    enum_match = PROOF_STRATEGY_ENUM_RE.search(text)
+    if enum_match is None:
+        raise RuntimeError("ProofStrategy enum not found in src/ir/proof_ir.rs")
+    body = extract_braced_body(text, enum_match.end())
+    code_lines = []
+    for line in body.splitlines():
+        code_lines.append(line.split("//", 1)[0])
+    code = "\n".join(code_lines)
+    variants: list[str] = []
+    for chunk in split_top_level_variants(code):
+        match = STRATEGY_RE.match(chunk.strip())
+        if match:
+            variants.append(match.group(1))
+    if not variants:
+        raise RuntimeError("ProofStrategy enum inventory is empty")
+    return variants
+
+
 def class_to_tier(class_name: str) -> str:
     if class_name == "bounded-domain":
         return "bounded"
@@ -708,6 +772,7 @@ def render_report(
     transpile_failures: list[str],
     transpile_elapsed: float,
     hand_sidecars: list[HandSidecar],
+    proof_strategy_variants: list[str],
     lean_tag_sources: list[str],
     no_current: bool,
     current_source_count: int,
@@ -720,6 +785,12 @@ def render_report(
     attributed_manifest = [r for r in manifest_records if r.strategy]
     concrete_rows = [r for r in strategy_rows if r.strategy not in {"BackendDispatch", "Sorry"}]
     trigger_counter, trigger_grouped = trigger_counts(strategy_rows)
+    fired_strategy_variants = [
+        variant for variant in proof_strategy_variants if trigger_counter.get(variant, 0) > 0
+    ]
+    zero_strategy_variants = [
+        variant for variant in proof_strategy_variants if trigger_counter.get(variant, 0) == 0
+    ]
     mech_counter = mechanism_counts(strategy_rows)
     class_counts = current_class_counts(tags)
     manifest_tiers = tier_counts_by_module(manifest_records)
@@ -770,8 +841,11 @@ def render_report(
                 ["current distinct law strategy rows", len(strategy_rows)],
                 ["current concrete strategy pins", len(concrete_rows)],
                 ["current BackendDispatch pins", trigger_counter.get("BackendDispatch", 0)],
+                ["ProofStrategy variants total", len(proof_strategy_variants)],
+                ["ProofStrategy variants fired", len(fired_strategy_variants)],
+                ["ProofStrategy variants never fired", len(zero_strategy_variants)],
                 ["current Lean class tags collected", len(tags)],
-                ["hand/manual Lean sidecars", len(hand_sidecars)],
+                ["hand/manual proof sidecars", len(hand_sidecars)],
             ],
         )
     )
@@ -833,6 +907,16 @@ def render_report(
         examples = ", ".join(r.display_law for r in sorted(trigger_grouped[strategy], key=lambda r: r.law_key)[:3])
         trigger_rows.append([strategy, count, examples])
     lines.extend(md_table(["strategy", "distinct laws", "examples"], trigger_rows))
+    lines.append("")
+    lines.append("## Zero-Trigger Strategies")
+    lines.append(
+        "ProofStrategy inventory from `src/ir/proof_ir.rs`: "
+        f"{len(proof_strategy_variants)} strategies total, "
+        f"{len(fired_strategy_variants)} fired, "
+        f"{len(zero_strategy_variants)} never fired on this corpus."
+    )
+    zero_rows = [[variant, 0] for variant in zero_strategy_variants]
+    lines.extend(md_table(["strategy", "distinct laws"], zero_rows))
     lines.append("")
     lines.append("## Trigger Count 1 Rows")
     one_rows = []
@@ -933,6 +1017,12 @@ def render_report(
         deviations.append("No deviations in the recoverable data paths.")
     for item in deviations:
         lines.append(f"- {item}")
+    lines.append(
+        "- Manifest strategy field: persist per-law `ProofStrategy` in `proof_manifest.json` so historical reuse curves are first-class."
+    )
+    lines.append(
+        "- Manifest history absence: commit proof manifests when proof credit matters; without them, history tables honestly stay empty."
+    )
     if manifest_errors or strategy_failures or strategy_conflicts or transpile_failures:
         lines.append("")
         lines.append("## Diagnostics")
@@ -997,6 +1087,7 @@ def main(argv: list[str]) -> int:
     commit = short_commit(repo)
     head_manifest_count = collect_head_manifest_count(repo)
     manifest_records, manifest_commits, manifest_paths, manifest_errors = collect_manifest_history(repo)
+    proof_strategy_variants = collect_proof_strategy_variants(repo)
 
     strategy_rows: list[StrategyRow] = []
     strategy_failures: list[str] = []
@@ -1040,6 +1131,7 @@ def main(argv: list[str]) -> int:
         transpile_failures=transpile_failures,
         transpile_elapsed=transpile_elapsed,
         hand_sidecars=hand_sidecars,
+        proof_strategy_variants=proof_strategy_variants,
         lean_tag_sources=lean_tag_sources,
         no_current=args.no_current,
         current_source_count=current_source_count,
