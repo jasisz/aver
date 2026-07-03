@@ -55,56 +55,13 @@
 
 use super::AutoProof;
 use super::aver_name_to_lean;
-use super::shared::{expr_dotted_name, find_fn_def_by_call_name};
+use super::shared::{self, expr_dotted_name, find_fn_def_by_call_name};
 use crate::ast::{BinOp, Expr, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 
-/// `(short_callee_name, args)` when `expr` is a function call. The short name is
-/// the last dotted component, so a qualified `Domain.Rational.lessThan` call
-/// matches the primitive `lessThan` — keyed on the rational ALGEBRA primitive.
-fn as_call(expr: &Spanned<Expr>) -> Option<(String, &[Spanned<Expr>])> {
-    let Expr::FnCall(callee, args) = &expr.node else {
-        return None;
-    };
-    let dotted = expr_dotted_name(callee)?;
-    let short = dotted.rsplit('.').next().unwrap_or(&dotted).to_string();
-    Some((short, args.as_slice()))
-}
-
-/// A call to the named primitive (matched on its SHORT name) with exactly `n`
-/// args, returning the args.
-fn call_named<'a>(expr: &'a Spanned<Expr>, name: &str, n: usize) -> Option<&'a [Spanned<Expr>]> {
-    let (short, args) = as_call(expr)?;
-    (short == name && args.len() == n).then_some(args)
-}
-
-/// A call whose callee's dotted SOURCE name is EXACTLY `qual` (module-qualified,
-/// not short-name) with `n` args. Matching premises against the subject's own
-/// qualified primitives stops a same-short-named primitive from another module
-/// being conflated into the chain.
-fn call_qualified<'a>(
-    expr: &'a Spanned<Expr>,
-    qual: &str,
-    n: usize,
-) -> Option<&'a [Spanned<Expr>]> {
-    let Expr::FnCall(callee, args) = &expr.node else {
-        return None;
-    };
-    (expr_dotted_name(callee).as_deref() == Some(qual) && args.len() == n)
-        .then_some(args.as_slice())
-}
-
-/// The name of a bare identifier / resolved-slot reference.
-fn ident_name(e: &Spanned<Expr>) -> Option<&str> {
-    match &e.node {
-        Expr::Ident(n) | Expr::Resolved { name: n, .. } => Some(n.as_str()),
-        _ => None,
-    }
-}
-
 /// `param.field` record projection.
 fn is_field(e: &Spanned<Expr>, param: &str, field: &str) -> bool {
-    matches!(&e.node, Expr::Attr(base, f) if f == field && ident_name(base) == Some(param))
+    matches!(&e.node, Expr::Attr(base, f) if f == field && shared::ident_name(base) == Some(param))
 }
 
 /// `l * r`.
@@ -214,16 +171,6 @@ fn validate_order_primitives(
         return None;
     }
     Some(())
-}
-
-/// Flatten a left-nested `Bool.and(Bool.and(…), w)` `when` tree into conjuncts.
-fn flatten_and<'a>(expr: &'a Spanned<Expr>, out: &mut Vec<&'a Spanned<Expr>>) {
-    if let Some(args) = call_named(expr, "and", 2) {
-        flatten_and(&args[0], out);
-        flatten_and(&args[1], out);
-    } else {
-        out.push(expr);
-    }
 }
 
 /// Deep-clone `e`, replacing any free `Ident`/`Resolved` named in `map` by the
@@ -422,7 +369,7 @@ pub(super) fn recognize_frac_order_transitivity_shape(
     let [Stmt::Expr(body)] = subj_fd.body.stmts() else {
         return None;
     };
-    let lt = call_named(body, "lessThan", 2)?;
+    let lt = shared::call_named(body, "lessThan", 2)?;
     let Expr::FnCall(lt_callee, _) = &body.node else {
         return None;
     };
@@ -466,12 +413,11 @@ pub(super) fn recognize_frac_order_transitivity_shape(
 
     // Collect order edges from the flattened premises.
     let when = law.when.as_ref()?;
-    let mut conj: Vec<&Spanned<Expr>> = Vec::new();
-    flatten_and(when, &mut conj);
+    let conj = shared::collect_when_clauses(when);
     let n_conj = conj.len();
     let mut edges: Vec<Edge> = Vec::new();
     for (i, c) in conj.iter().enumerate() {
-        if let Some(a) = call_qualified(c, &lessthan_src, 2) {
+        if let Some(a) = shared::call_qualified(c, &lessthan_src, 2) {
             edges.push(Edge {
                 left: render(&a[0]),
                 right: render(&a[1]),
@@ -479,8 +425,8 @@ pub(super) fn recognize_frac_order_transitivity_shape(
                 strict: true,
                 conj_idx: i,
             });
-        } else if let Some(nn) = call_qualified(c, &isnonneg_src, 1)
-            && let Some(m) = call_qualified(&nn[0], &minus_src, 2)
+        } else if let Some(nn) = shared::call_qualified(c, &isnonneg_src, 1)
+            && let Some(m) = shared::call_qualified(&nn[0], &minus_src, 2)
         {
             // `isNonNeg (minus Y X)` means `X <= Y`: non-strict edge `X → Y`.
             edges.push(Edge {
