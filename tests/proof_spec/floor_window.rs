@@ -232,6 +232,18 @@ fn proof_export_floor_window_dafny_structure() {
     let _ = std::fs::remove_dir_all(&output_dir);
 }
 
+/// Live Dafny gate for the same cross-domain floor-arithmetic witness as the
+/// Lean structure test above. This pins the Dafny templates as shape-keyed:
+/// a differently named floor wrapper plus commuted factor/remainder layouts
+/// must verify without an axiom escape or sampled-domain fallback.
+#[test]
+fn proof_floor_arith_witness_dafny_verifies() {
+    assert_dafny_verifies(
+        "tests/fixtures/floor_arith_witness.av",
+        "aver-dafny-floor-arith-witness",
+    );
+}
+
 /// The soundness boundary of the recursion class: a floor-division
 /// self-call whose guard chain does NOT imply the shrinking param is
 /// positive must DECLINE (the measure would be wrong at p = 0 —
