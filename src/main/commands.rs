@@ -7419,7 +7419,7 @@ fn render_explain_candidates(
     file: &str,
     module_root: &str,
 ) {
-    use aver::codegen::lean::untranslate::untranslate_goal;
+    use aver::codegen::lean::untranslate::{peano_ctx_for_law, untranslate_goal_ctx};
     use colored::Colorize;
     if open_laws.is_empty() {
         return;
@@ -7442,7 +7442,11 @@ fn render_explain_candidates(
             Some((f, l)) => (f, l),
             None => ("", label.as_str()),
         };
-        let goal = match untranslate_goal(&dump.json) {
+        // Thread a Peano context so a law over a canonical-Peano ADT inverts the
+        // transpiler's `Nat`-lift (`Succ x → x + 1`) back to the ADT's
+        // constructors; a non-Peano law gets the default (pre-V2) behavior.
+        let ctx = peano_ctx_for_law(items, fn_name, law_name);
+        let goal = match untranslate_goal_ctx(&dump.json, &ctx) {
             Ok(g) => g,
             Err(gap) => {
                 println!(

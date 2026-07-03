@@ -20,7 +20,7 @@
 
 use serde_json::Value;
 
-use crate::ast::{BinOp, Expr, Literal, Spanned};
+use crate::ast::{BinOp, Expr, Literal, Spanned, TopLevel, VerifyKind};
 
 /// The Lean 4 meta-tactic emitted into the `--explain` residual probe file. It
 /// serialises the current goal (abstracted over its local context into a closed
@@ -118,17 +118,100 @@ fn sp(e: Expr) -> Spanned<Expr> {
     Spanned::new(e, 0)
 }
 
+/// Context threaded from the `--explain` render site. `peano` is set when the
+/// law being un-translated has a given whose type is a canonical-Peano ADT
+/// (`T { Zero; Succ(T) }`, shape-detected — any name, not just literal `Nat`).
+/// The transpiler lifts such a type's VALUES to Lean `Nat` (`Zero→0`,
+/// `Succ x→x + 1`), so the dumped goal speaks `Nat`. Inverting that
+/// deterministic lift here — `0→T.Zero`, `x + 1 / Nat.succ x→T.Succ x`, literal
+/// `n≤8→Succ^n(Zero)` — stays inside the translator image (it undoes OUR OWN
+/// lift, not a guess). Nat truncated subtraction / mul / div and any non-`+1`
+/// Nat arithmetic stay OUT of grammar, so the #630 boundary against foreign Nat
+/// semantics is untouched. `None` (no Peano given) = exactly the pre-V2 behavior.
+#[derive(Debug, Clone, Default)]
+pub struct UntranslateCtx {
+    pub peano: Option<PeanoCtx>,
+}
+
+/// The canonical-Peano ADT (surface type + constructor names) whose Lean-`Nat`
+/// lift the un-translator inverts. Constructor names are DATA carried from the
+/// law's declaration; the machinery keys on the Peano SHAPE, never on the names.
+#[derive(Debug, Clone)]
+pub struct PeanoCtx {
+    pub type_name: String,
+    pub zero_ctor: String,
+    pub succ_ctor: String,
+}
+
+/// Build the [`UntranslateCtx`] for a `<fn>.<law>` under `--explain`: if the
+/// law's givens include a canonical-Peano ADT (shape-detected via
+/// [`detect_canonical_peano`](crate::codegen::proof_recognize::detect_canonical_peano)),
+/// thread its constructor names so the un-translator can invert the `Nat` lift.
+/// Name-blind: keys on the Peano SHAPE, never on the type being called `Nat`.
+pub fn peano_ctx_for_law(items: &[TopLevel], fn_name: &str, law_name: &str) -> UntranslateCtx {
+    let peanos: Vec<_> = items
+        .iter()
+        .filter_map(|it| match it {
+            TopLevel::TypeDef(td) => crate::codegen::proof_recognize::detect_canonical_peano(td),
+            _ => None,
+        })
+        .collect();
+    if peanos.is_empty() {
+        return UntranslateCtx::default();
+    }
+    for it in items {
+        if let TopLevel::Verify(vb) = it
+            && vb.fn_name == fn_name
+            && let VerifyKind::Law(law) = &vb.kind
+            && law.name == law_name
+        {
+            for g in &law.givens {
+                for tok in type_name_tokens(&g.type_name) {
+                    if let Some(p) = peanos.iter().find(|p| p.type_name == tok) {
+                        return UntranslateCtx {
+                            peano: Some(PeanoCtx {
+                                type_name: p.type_name.clone(),
+                                zero_ctor: p.base_ctor.clone(),
+                                succ_ctor: p.succ_ctor.clone(),
+                            }),
+                        };
+                    }
+                }
+            }
+        }
+    }
+    UntranslateCtx::default()
+}
+
+/// The identifier tokens of a surface type string (`List<Nat>` → [`List`,
+/// `Nat`]), so a Peano element type is found regardless of container nesting.
+fn type_name_tokens(ty: &str) -> Vec<String> {
+    ty.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '.')
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 /// Parse the goal JSON emitted by [`AVER_DUMP_GOAL_ELAB`] into an
 /// [`UntranslatedGoal`], or decline with an [`EngineGap`] if any node is outside
 /// the closed grammar.
 pub fn untranslate_goal(json: &str) -> Result<UntranslatedGoal, EngineGap> {
+    untranslate_goal_ctx(json, &UntranslateCtx::default())
+}
+
+/// As [`untranslate_goal`], threading an [`UntranslateCtx`] so a canonical-Peano
+/// law's `Nat`-lift is inverted (see [`UntranslateCtx`]).
+pub fn untranslate_goal_ctx(
+    json: &str,
+    ctx: &UntranslateCtx,
+) -> Result<UntranslatedGoal, EngineGap> {
     let v: Value = serde_json::from_str(json)
         .map_err(|e| EngineGap::new(format!("malformed goal JSON: {e}")))?;
     let mut givens: Vec<(String, String)> = Vec::new();
     let mut premises: Vec<Spanned<Expr>> = Vec::new();
     let mut cur = &v;
-    // Peel the `∀`-prefix: each binder is either a data given (nameable Aver
-    // type) or a Prop premise (Eq / comparison).
+    // Peel the `∀`-prefix: each binder is a vacuous split hypothesis (dropped), a
+    // Prop premise (Eq / comparison → `when`), or a data given (nameable type).
     while let Some(fa) = cur.get("forall") {
         let name = fa
             .get("name")
@@ -140,11 +223,16 @@ pub fn untranslate_goal(json: &str) -> Result<UntranslatedGoal, EngineGap> {
         let body = fa
             .get("body")
             .ok_or_else(|| EngineGap::new("forall binder without a body"))?;
-        if is_prop_type(ty) {
+        if is_vacuous_prop(ty) {
+            // A trivially true (`True`, `x = x`) or contradictory (`¬(true =
+            // true)`) split-branch hypothesis — drop it. A tautology premise is
+            // redundant; a contradictory branch is vacuous, so dropping only
+            // strengthens the residual, which the VM sample-check then judges.
+        } else if is_prop_type(ty) {
             // A surviving hypothesis — render it as an Aver Bool expr for `when`.
-            premises.push(untranslate_bool(ty)?);
+            premises.push(untranslate_bool(ty, ctx)?);
         } else {
-            let tn = aver_type_name(ty).ok_or_else(|| {
+            let tn = aver_type_name(ty, ctx).ok_or_else(|| {
                 EngineGap::new(format!(
                     "binder `{name}` has a type outside the grammar (cannot name it in Aver)"
                 ))
@@ -154,7 +242,7 @@ pub fn untranslate_goal(json: &str) -> Result<UntranslatedGoal, EngineGap> {
         cur = body;
     }
     // The residual claim must be an equality (the law's `lhs => rhs`).
-    let (lhs, rhs) = untranslate_eq(cur)
+    let (lhs, rhs) = untranslate_eq(cur, ctx)
         .ok_or_else(|| EngineGap::new("goal claim is not an equality our grammar renders"))?;
     Ok(UntranslatedGoal {
         givens,
@@ -165,8 +253,8 @@ pub fn untranslate_goal(json: &str) -> Result<UntranslatedGoal, EngineGap> {
 
 /// The Aver `Bool` expression for a Prop-typed binder (`when` premise): an
 /// equality becomes `a == b`, a comparison becomes `a < b` etc.
-fn untranslate_bool(v: &Value) -> Result<Spanned<Expr>, EngineGap> {
-    if let Some((l, r)) = untranslate_eq(v) {
+fn untranslate_bool(v: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, EngineGap> {
+    if let Some((l, r)) = untranslate_eq(v, ctx) {
         return Ok(sp(Expr::BinOp(BinOp::Eq, Box::new(l?), Box::new(r?))));
     }
     if let Some(app) = v.get("app")
@@ -176,8 +264,8 @@ fn untranslate_bool(v: &Value) -> Result<Spanned<Expr>, EngineGap> {
         let args = app_operands(app, 2)?;
         return Ok(sp(Expr::BinOp(
             op,
-            Box::new(untranslate_expr(&args[0])?),
-            Box::new(untranslate_expr(&args[1])?),
+            Box::new(untranslate_expr(&args[0], ctx)?),
+            Box::new(untranslate_expr(&args[1], ctx)?),
         )));
     }
     Err(EngineGap::new(
@@ -189,6 +277,7 @@ fn untranslate_bool(v: &Value) -> Result<Spanned<Expr>, EngineGap> {
 #[allow(clippy::type_complexity)]
 fn untranslate_eq(
     v: &Value,
+    ctx: &UntranslateCtx,
 ) -> Option<(
     Result<Spanned<Expr>, EngineGap>,
     Result<Spanned<Expr>, EngineGap>,
@@ -203,15 +292,18 @@ fn untranslate_eq(
         return None;
     }
     Some((
-        untranslate_expr(&args[n - 2]),
-        untranslate_expr(&args[n - 1]),
+        untranslate_expr(&args[n - 2], ctx),
+        untranslate_expr(&args[n - 1], ctx),
     ))
 }
 
 /// Recursive descent JSON node → `ast::Expr`, declining on any out-of-grammar
 /// shape.
-fn untranslate_expr(v: &Value) -> Result<Spanned<Expr>, EngineGap> {
+fn untranslate_expr(v: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, EngineGap> {
     if let Some(nat) = v.get("nat").and_then(Value::as_str) {
+        if let Some(p) = &ctx.peano {
+            return peano_numeral_from_str(p, nat).map(sp);
+        }
         return Ok(sp(int_literal(nat)));
     }
     if let Some(s) = v.get("str").and_then(Value::as_str) {
@@ -224,7 +316,7 @@ fn untranslate_expr(v: &Value) -> Result<Spanned<Expr>, EngineGap> {
         return Ok(sp(const_to_expr(name)));
     }
     if let Some(app) = v.get("app") {
-        return untranslate_app(app);
+        return untranslate_app(app, ctx);
     }
     if let Some(o) = v.get("opaque").and_then(Value::as_str) {
         return Err(EngineGap::new(format!("goal contains a `{o}` node")));
@@ -238,24 +330,39 @@ fn untranslate_expr(v: &Value) -> Result<Spanned<Expr>, EngineGap> {
     Err(EngineGap::new("unrecognised goal node"))
 }
 
-fn untranslate_app(app: &Value) -> Result<Spanned<Expr>, EngineGap> {
+fn untranslate_app(app: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, EngineGap> {
     let head = head_const(app);
     // Numeric literal: `@OfNat.ofNat _ n _` — the middle arg carries the nat.
     if head == Some("OfNat.ofNat") {
-        if let Some(args) = app.get("args").and_then(Value::as_array) {
-            for a in args {
-                if let Some(nat) = a.get("nat").and_then(Value::as_str) {
-                    return Ok(sp(int_literal(nat)));
-                }
-            }
+        let nat = app
+            .get("args")
+            .and_then(Value::as_array)
+            .and_then(|args| {
+                args.iter()
+                    .find_map(|a| a.get("nat").and_then(Value::as_str))
+            })
+            .ok_or_else(|| EngineGap::new("OfNat literal without a nat operand"))?;
+        // Under a canonical-Peano law, a `Nat`-carried literal is a lifted Peano
+        // numeral — invert to `Succ^n(Zero)`; an `Int` literal stays as-is.
+        if let Some(p) = &ctx.peano
+            && carrier_const(app) == Some("Nat")
+        {
+            return peano_numeral_from_str(p, nat).map(sp);
         }
-        return Err(EngineGap::new("OfNat literal without a nat operand"));
+        return Ok(sp(int_literal(nat)));
+    }
+    // Canonical-Peano successor constructor `Nat.succ x` → `T.Succ(x)`.
+    if head == Some("Nat.succ")
+        && let Some(p) = &ctx.peano
+    {
+        let ops = app_operands(app, 1)?;
+        return Ok(sp(peano_succ(p, untranslate_expr(&ops[0], ctx)?)));
     }
     // Negation: `@Neg.neg _ _ a` (Int only — Nat has no negation).
     if head == Some("Neg.neg") {
         require_int_carrier(app)?;
         let args = app_operands(app, 1)?;
-        return Ok(sp(Expr::Neg(Box::new(untranslate_expr(&args[0])?))));
+        return Ok(sp(Expr::Neg(Box::new(untranslate_expr(&args[0], ctx)?))));
     }
     // Numeric coercions have no Aver surface: Aver `Int` is ℤ and there is no
     // `Nat`, so a `Nat`-carried value must never be laundered into an Aver
@@ -267,12 +374,25 @@ fn untranslate_app(app: &Value) -> Result<Spanned<Expr>, EngineGap> {
     // Type-aware: only the `Int` carrier maps to an Aver operator (Nat
     // truncated subtraction differs from Aver's Int=ℤ).
     if let Some(op) = arith_binop(head) {
+        // Canonical-Peano successor: `Nat`-carried `x + 1` inverts our
+        // `Succ x → x + 1` value lift. Other `Nat` arithmetic (non-`+1`,
+        // sub/mul/div) still declines via `require_int_carrier` below — the #630
+        // boundary against foreign Nat semantics is preserved.
+        if let Some(p) = &ctx.peano
+            && matches!(head, Some("HAdd.hAdd") | Some("Add.add"))
+            && carrier_const(app) == Some("Nat")
+        {
+            let ops = app_operands(app, 2)?;
+            if nat_lit_value(&ops[1]) == Some(1) {
+                return Ok(sp(peano_succ(p, untranslate_expr(&ops[0], ctx)?)));
+            }
+        }
         require_int_carrier(app)?;
         let args = app_operands(app, 2)?;
         return Ok(sp(Expr::BinOp(
             op,
-            Box::new(untranslate_expr(&args[0])?),
-            Box::new(untranslate_expr(&args[1])?),
+            Box::new(untranslate_expr(&args[0], ctx)?),
+            Box::new(untranslate_expr(&args[1], ctx)?),
         )));
     }
     if let Some(op) = comparison_binop(head) {
@@ -280,8 +400,8 @@ fn untranslate_app(app: &Value) -> Result<Spanned<Expr>, EngineGap> {
         let args = app_operands(app, 2)?;
         return Ok(sp(Expr::BinOp(
             op,
-            Box::new(untranslate_expr(&args[0])?),
-            Box::new(untranslate_expr(&args[1])?),
+            Box::new(untranslate_expr(&args[0], ctx)?),
+            Box::new(untranslate_expr(&args[1], ctx)?),
         )));
     }
     if head == Some("Eq") {
@@ -295,8 +415,8 @@ fn untranslate_app(app: &Value) -> Result<Spanned<Expr>, EngineGap> {
     if head == Some("List.cons") {
         // `@List.cons _ a b` → `List.concat([a], b)`.
         let ops = app_operands(app, 2)?;
-        let a = untranslate_expr(&ops[0])?;
-        let b = untranslate_expr(&ops[1])?;
+        let a = untranslate_expr(&ops[0], ctx)?;
+        let b = untranslate_expr(&ops[1], ctx)?;
         return Ok(sp(Expr::FnCall(
             Box::new(sp(Expr::Ident("List.concat".to_string()))),
             vec![sp(Expr::List(vec![a])), b],
@@ -310,7 +430,10 @@ fn untranslate_app(app: &Value) -> Result<Spanned<Expr>, EngineGap> {
         let ops = app_operands(app, 2)?;
         return Ok(sp(Expr::FnCall(
             Box::new(sp(Expr::Ident("List.concat".to_string()))),
-            vec![untranslate_expr(&ops[0])?, untranslate_expr(&ops[1])?],
+            vec![
+                untranslate_expr(&ops[0], ctx)?,
+                untranslate_expr(&ops[1], ctx)?,
+            ],
         )));
     }
     // Otherwise: a user / module function applied to arguments. The head must be
@@ -326,7 +449,7 @@ fn untranslate_app(app: &Value) -> Result<Spanned<Expr>, EngineGap> {
         .ok_or_else(|| EngineGap::new("application without args"))?;
     let mut args = Vec::with_capacity(all.len());
     for a in all {
-        args.push(untranslate_expr(a)?);
+        args.push(untranslate_expr(a, ctx)?);
     }
     Ok(sp(Expr::FnCall(Box::new(sp(const_to_expr(name))), args)))
 }
@@ -436,13 +559,19 @@ fn lean_dotted_to_aver(name: &str) -> String {
 }
 
 /// The Aver type name for a data `∀`-binder type node (`const Int`,
-/// `List X`, a user record const, …), or `None` if it cannot be named.
-fn aver_type_name(v: &Value) -> Option<String> {
+/// `List X`, a user record const, …), or `None` if it cannot be named. Under a
+/// canonical-Peano law the lifted `Nat` maps back to the ADT's surface name `T`
+/// (identity when the ADT is literally called `Nat`, as in the witnesses).
+fn aver_type_name(v: &Value, ctx: &UntranslateCtx) -> Option<String> {
     if let Some(name) = v.get("const").and_then(Value::as_str) {
         return Some(match name {
             "Int" => "Int".to_string(),
             "Bool" => "Bool".to_string(),
             "String" => "Str".to_string(),
+            "Nat" => match &ctx.peano {
+                Some(p) => p.type_name.clone(),
+                None => lean_dotted_to_aver("Nat"),
+            },
             other => lean_dotted_to_aver(other),
         });
     }
@@ -450,7 +579,7 @@ fn aver_type_name(v: &Value) -> Option<String> {
         // `List X` → `List<X>`.
         if head_const(app) == Some("List") {
             let args = app.get("args")?.as_array()?;
-            let inner = aver_type_name(args.last()?)?;
+            let inner = aver_type_name(args.last()?, ctx)?;
             return Some(format!("List<{inner}>"));
         }
     }
@@ -473,6 +602,94 @@ fn int_literal(nat: &str) -> Expr {
         // Past-i64 magnitude — keep the decimal digits (Aver `Int` is ℤ).
         Err(_) => Expr::Literal(Literal::BigInt(nat.to_string())),
     }
+}
+
+/// A `∀`-binder whose Prop is trivially true (`True`, `x = x`) or the negation
+/// of one (`¬(x = x)` — a contradictory split branch). Dropped rather than kept
+/// as a `when`: a tautology premise is redundant, a contradictory branch is
+/// vacuous, so either way the residual is at worst strengthened and the VM
+/// sample-check judges it. Not gated on the Peano ctx — it is a general cleanup.
+fn is_vacuous_prop(v: &Value) -> bool {
+    if v.get("const").and_then(Value::as_str) == Some("True") {
+        return true;
+    }
+    let Some(app) = v.get("app") else {
+        return false;
+    };
+    match head_const(app) {
+        Some("Eq") => eq_operands_identical(app),
+        Some("Not") => app
+            .get("args")
+            .and_then(Value::as_array)
+            .and_then(|a| a.last())
+            .is_some_and(is_vacuous_prop),
+        _ => false,
+    }
+}
+
+/// `@Eq _ a b` whose two operands are structurally identical JSON (`a = a`).
+fn eq_operands_identical(app: &Value) -> bool {
+    match app.get("args").and_then(Value::as_array) {
+        Some(args) if args.len() >= 2 => args[args.len() - 2] == args[args.len() - 1],
+        _ => false,
+    }
+}
+
+/// The literal `Nat` value of a node that is a bare `{"nat":n}` or an
+/// `@OfNat.ofNat _ n _` (used to recognise the `+1` successor), else `None`.
+fn nat_lit_value(v: &Value) -> Option<u64> {
+    if let Some(n) = v.get("nat").and_then(Value::as_str) {
+        return n.parse().ok();
+    }
+    let app = v.get("app")?;
+    if head_const(app) != Some("OfNat.ofNat") {
+        return None;
+    }
+    app.get("args")?
+        .as_array()?
+        .iter()
+        .find_map(|a| a.get("nat").and_then(Value::as_str))
+        .and_then(|n| n.parse().ok())
+}
+
+/// The carrier type const of an `@Op α …` application (its first argument).
+fn carrier_const(app: &Value) -> Option<&str> {
+    app.get("args")?.as_array()?.first()?.get("const")?.as_str()
+}
+
+/// The Peano base value `T.Zero`.
+fn peano_zero(p: &PeanoCtx) -> Expr {
+    Expr::Ident(format!("{}.{}", p.type_name, p.zero_ctor))
+}
+
+/// The Peano successor `T.Succ(x)`.
+fn peano_succ(p: &PeanoCtx, x: Spanned<Expr>) -> Expr {
+    Expr::FnCall(
+        Box::new(sp(Expr::Ident(format!("{}.{}", p.type_name, p.succ_ctor)))),
+        vec![x],
+    )
+}
+
+/// The Peano numeral `Succ^n(Zero)`; declines past 8 (nobody wants `Succ^300`).
+fn peano_numeral(p: &PeanoCtx, n: u64) -> Result<Expr, EngineGap> {
+    if n > 8 {
+        return Err(EngineGap::new(
+            "Peano numeral larger than 8 — declines rather than nesting Succ",
+        ));
+    }
+    let mut e = peano_zero(p);
+    for _ in 0..n {
+        e = peano_succ(p, sp(e));
+    }
+    Ok(e)
+}
+
+/// Parse a decimal string as a Peano numeral (see [`peano_numeral`]).
+fn peano_numeral_from_str(p: &PeanoCtx, nat: &str) -> Result<Expr, EngineGap> {
+    let n: u64 = nat
+        .parse()
+        .map_err(|_| EngineGap::new("Peano numeral is not a natural number"))?;
+    peano_numeral(p, n)
 }
 
 #[cfg(test)]
@@ -689,5 +906,169 @@ mod tests {
         );
         let err = untranslate_goal(&json).expect_err("Nat arithmetic must decline");
         assert!(err.reason.contains("natural-number"), "{}", err.reason);
+    }
+
+    // ---- V2: Peano-inverse grammar (Wall A) + vacuous split-binder drop ----
+    //
+    // These feed the SALVAGED krok-0 dumps (`testdata/lemma_calc_krok0/*.json`,
+    // copied verbatim from the probe run) through the extended grammar. The hard
+    // gate is `peano_66_1_*`: p66_1 must reconstruct the FORCED lemma
+    // `when le(a,b); le(a, Nat.S(b)) => true` (modulo naming). Under the
+    // witnesses the Peano ADT is `type Nat { Z; S(Nat) }`.
+
+    const DUMP_P66_0: &str = include_str!("testdata/lemma_calc_krok0/p66_0.json");
+    const DUMP_P66_1: &str = include_str!("testdata/lemma_calc_krok0/p66_1.json");
+    const DUMP_P66_2: &str = include_str!("testdata/lemma_calc_krok0/p66_2.json");
+    const DUMP_P73_0: &str = include_str!("testdata/lemma_calc_krok0/p73_0.json");
+    const DUMP_P73_1: &str = include_str!("testdata/lemma_calc_krok0/p73_1.json");
+
+    /// The `type Nat { Z; S(Nat) }` Peano context the p66/p73 witnesses declare.
+    fn peano_nat() -> UntranslateCtx {
+        UntranslateCtx {
+            peano: Some(PeanoCtx {
+                type_name: "Nat".to_string(),
+                zero_ctor: "Z".to_string(),
+                succ_ctor: "S".to_string(),
+            }),
+        }
+    }
+
+    #[test]
+    fn peano_66_1_forces_successor_lemma() {
+        // THE STEP-0 GATE. p66_1 (the `isZ`-false branch, `len + 1`) must come
+        // back as the forced conditional lemma with `len xs + 1` inverted to
+        // `Nat.S(len xs)` and the contradictory `¬(true = true)` split binder
+        // dropped — leaving exactly the IH as the single `when`.
+        let g = untranslate_goal_ctx(DUMP_P66_1, &peano_nat()).expect("in grammar under Peano");
+        assert_eq!(
+            g.givens,
+            vec![("tail".to_string(), "List<Nat>".to_string())]
+        );
+        assert_eq!(g.premises.len(), 1, "only the IH survives as `when`");
+        assert_eq!(
+            render(&g),
+            "given tail: List<Nat>; \
+             when (le(len(filterZ(tail)), len(tail)) == true); \
+             le(len(filterZ(tail)), Nat.S(len(tail))) => true"
+        );
+    }
+
+    #[test]
+    fn peano_66_1_without_ctx_still_declines_nat_arithmetic() {
+        // Wall A is real: WITHOUT the Peano ctx, the same dump declines on the
+        // `Nat`-carried `+ 1` (the #630 boundary). The ctx is what unlocks it.
+        let err = untranslate_goal(DUMP_P66_1).expect_err("Nat `+1` declines without ctx");
+        assert!(err.reason.contains("natural-number"), "{}", err.reason);
+    }
+
+    #[test]
+    fn peano_66_0_drops_vacuous_binder_and_stays_in_grammar() {
+        // p66_0 (the `isZ`-true branch) carries a trivially-true `true = true`
+        // split binder — dropped — and no `+1`; it stays fully in grammar.
+        let g = untranslate_goal_ctx(DUMP_P66_0, &peano_nat()).expect("in grammar under Peano");
+        assert_eq!(
+            g.givens,
+            vec![("tail".to_string(), "List<Nat>".to_string())]
+        );
+        assert_eq!(g.premises.len(), 1, "IH survives, vacuous binder dropped");
+        let r = render(&g);
+        assert!(
+            r.ends_with("le(len(List.concat([], filterZ(tail))), len(tail)) => true"),
+            "{r}"
+        );
+        assert!(!r.contains("hAppend") && !r.contains("List.cons"), "{r}");
+    }
+
+    #[test]
+    fn peano_66_2_declines_on_blocked_match() {
+        // p66_2 still has the unreduced blocked `if isZ … then … else …`: its
+        // `ite` decidability condition (`false = true`) is a nested equality and
+        // its `isZ.match_1` args are opaque (Wall B, cleaned in step 1's Lean-side
+        // re-strip). Descent hits the nested-`Eq` condition first — honest decline.
+        let err = untranslate_goal_ctx(DUMP_P66_2, &peano_nat()).expect_err("blocked match");
+        assert!(err.reason.contains("equality nested"), "{}", err.reason);
+    }
+
+    #[test]
+    fn peano_73_1_declines_on_blocked_match() {
+        // p73_1 likewise carries the unreduced `ite`/`isZ.match_1` residual.
+        let err = untranslate_goal_ctx(DUMP_P73_1, &peano_nat()).expect_err("blocked match");
+        assert!(err.reason.contains("equality nested"), "{}", err.reason);
+    }
+
+    #[test]
+    fn peano_73_0_in_grammar_but_still_carries_uncleaned_ite() {
+        // p73_0's split condition already collapsed to `True`, so there is no
+        // opaque node — but the `ite` shell survives (Wall B), so the residual
+        // is a still-uncleaned candidate. Step 1's reduceIte re-strip removes it;
+        // documented here as the honest step-0 measurement, not a gate.
+        let g = untranslate_goal_ctx(DUMP_P73_0, &peano_nat()).expect("in grammar (messy)");
+        let r = render(&g);
+        assert!(r.contains("ite("), "expected uncleaned ite shell: {r}");
+        // The `[Z]` singleton (`OfNat 0`) inverted to the Peano base `Nat.Z`.
+        assert!(r.contains("Nat.Z"), "{r}");
+    }
+
+    #[test]
+    fn peano_numeral_nests_succ() {
+        // A bare `Nat`-carried literal `2` inverts to `Nat.S(Nat.S(Nat.Z))`.
+        let claim = format!(
+            r#"{{"app":{{"fn":{{"const":"Eq"}},"args":[{{"const":"Nat"}},{},{}]}}}}"#,
+            var("x"),
+            ofnat_nat("2"),
+        );
+        let json = forall("x", r#"{"const":"Nat"}"#, &claim);
+        let g = untranslate_goal_ctx(&json, &peano_nat()).expect("in grammar");
+        assert_eq!(render(&g), "given x: Nat; x => Nat.S(Nat.S(Nat.Z))");
+    }
+
+    #[test]
+    fn peano_numeral_over_eight_declines() {
+        let claim = format!(
+            r#"{{"app":{{"fn":{{"const":"Eq"}},"args":[{{"const":"Nat"}},{},{}]}}}}"#,
+            var("x"),
+            ofnat_nat("9"),
+        );
+        let json = forall("x", r#"{"const":"Nat"}"#, &claim);
+        let err = untranslate_goal_ctx(&json, &peano_nat()).expect_err("too large");
+        assert!(err.reason.contains("larger than 8"), "{}", err.reason);
+    }
+
+    fn ofnat_nat(n: &str) -> String {
+        format!(
+            r#"{{"app":{{"fn":{{"const":"OfNat.ofNat"}},"args":[{{"const":"Nat"}},{{"nat":"{n}"}},{{"opaque":"inst"}}]}}}}"#
+        )
+    }
+
+    #[test]
+    fn type_name_tokens_splits_containers() {
+        assert_eq!(type_name_tokens("List<Nat>"), vec!["List", "Nat"]);
+        assert_eq!(type_name_tokens("Nat"), vec!["Nat"]);
+        assert_eq!(type_name_tokens("Map<Str, Int>"), vec!["Map", "Str", "Int"]);
+    }
+
+    #[test]
+    fn peano_ctx_detected_from_real_prop_66_source() {
+        // End-to-end for the ctx constructor: parse the real witness and confirm
+        // the `filterLenLe` law's `List<Nat>` given resolves to the shape-detected
+        // Peano ADT with its actual `Z`/`S` constructor names (name-blind: the
+        // detector keyed on shape, the names are carried as data).
+        let src = include_str!("../../../proof-corpus/tip/isaplanner-mono/prop_66.av");
+        let items = crate::source::parse_source(src).expect("prop_66 parses");
+        let ctx = peano_ctx_for_law(&items, "filterZ", "filterLenLe");
+        let p = ctx.peano.expect("filterLenLe has a List<Nat> given");
+        assert_eq!(p.type_name, "Nat");
+        assert_eq!(p.zero_ctor, "Z");
+        assert_eq!(p.succ_ctor, "S");
+    }
+
+    #[test]
+    fn peano_ctx_absent_when_no_peano_given() {
+        // A law over Int only → no Peano ctx (pre-V2 behavior preserved).
+        let src = "fn f(x: Int) -> Int\n    x\n\n\
+                   verify f law idem\n        given x: Int = 1..3\n        f(x) => f(x)\n";
+        let items = crate::source::parse_source(src).expect("parses");
+        let ctx = peano_ctx_for_law(&items, "f", "idem");
+        assert!(ctx.peano.is_none());
     }
 }
