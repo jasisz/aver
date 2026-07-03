@@ -162,6 +162,17 @@ def module_from_source(path: Path) -> str:
     return path.stem[:1].upper() + path.stem[1:]
 
 
+def source_module(repo: Path, path: Path) -> str:
+    module = module_from_source(path)
+    try:
+        rel_path = path.relative_to(repo).as_posix()
+    except ValueError:
+        return module
+    if rel_path.startswith("projects/k5_fdiv/domain/") and not module.startswith("Domain."):
+        return f"Domain.{module}"
+    return module
+
+
 def module_from_lean_path(path: Path, root: Path | None = None) -> str:
     rel = path
     if root is not None:
@@ -194,7 +205,7 @@ def default_sources(repo: Path) -> list[SourceFile]:
         if path in seen:
             continue
         seen.add(path)
-        out.append(SourceFile(path=path, module=module_from_source(path)))
+        out.append(SourceFile(path=path, module=source_module(repo, path)))
     return out
 
 
@@ -230,7 +241,7 @@ def expand_sources(repo: Path, values: list[str]) -> list[SourceFile]:
         if full in seen:
             continue
         seen.add(full)
-        out.append(SourceFile(path=full, module=module_from_source(full)))
+        out.append(SourceFile(path=full, module=source_module(repo, full)))
     return out
 
 
@@ -270,8 +281,11 @@ def mechanism_name(raw: str) -> str:
 def module_source_index(repo: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     for rel_path in sorted(git_ls_files(repo, ["*.av"])):
-        module = module_from_source(repo / rel_path)
+        path = repo / rel_path
+        module = source_module(repo, path)
         out.setdefault(module, rel_path)
+        declared = module_from_source(path)
+        out.setdefault(declared, rel_path)
     return out
 
 
