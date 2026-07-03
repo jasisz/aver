@@ -492,8 +492,9 @@ fn emit_simple_string_pos_stability_lemma(
     rank_budget: usize,
     emitted_body: &str,
 ) -> Option<String> {
-    let literal = detect_simple_string_pos_skip_literal(fd)
-        .or_else(|| detect_simple_string_pos_skip_literal_from_body(fd, helper_name, emitted_body))?;
+    let literal = detect_simple_string_pos_skip_literal(fd).or_else(|| {
+        detect_simple_string_pos_skip_literal_from_body(fd, helper_name, emitted_body)
+    })?;
     let fn_name = aver_name_to_lean(&fd.name);
     let s = aver_name_to_lean(&fd.params.first()?.0);
     let pos = aver_name_to_lean(&fd.params.get(1)?.0);
@@ -587,11 +588,7 @@ fn detect_simple_string_pos_skip_literal(fd: &FnDef) -> Option<String> {
             }
             Pattern::Constructor(name, fields) if name == "Option.Some" && fields.len() == 1 => {
                 let lit = detect_inner_char_match_literal(
-                    &arm.body,
-                    &fields[0],
-                    &fd.name,
-                    s_name,
-                    pos_name,
+                    &arm.body, &fields[0], &fd.name, s_name, pos_name,
                 )?;
                 recursive_literal = Some(lit.0);
                 saw_fallback_exit = lit.1;
@@ -621,7 +618,8 @@ fn detect_simple_string_pos_skip_literal_from_body(
 ) -> Option<String> {
     let s_name = aver_name_to_lean(&fd.params.first()?.0);
     let pos_name = aver_name_to_lean(&fd.params.get(1)?.0);
-    let recursive_suffix = format!("=> {helper_name} {STRING_POS_FUEL_VAR} {s_name} ({pos_name} + 1)");
+    let recursive_suffix =
+        format!("=> {helper_name} {STRING_POS_FUEL_VAR} {s_name} ({pos_name} + 1)");
     let none_exit = format!("| .none => {pos_name}");
     let fallback_exit = format!("| _ => {pos_name}");
     if !body.lines().any(|line| line.trim() == none_exit)
