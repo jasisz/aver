@@ -71,42 +71,135 @@ verify headcount law atLeastOne
     headcount(e) >= 1 => true
 "#;
 
-// The EQUATIONAL family in a foreign domain: a `reorg` transform that reverses
-// each report list preserves the headcount. This is the second (cross-domain)
-// witness for the container-lemma path — it proves the `walker_reverse` lemma is
-// DERIVED (a `headcountList_reverse` over `List Employee`, name-blind), not a
-// size/`sizeList`-specific template.
-const ORG_EQ_SRC: &str = r#"module OrgFlip
-    intent = "Cross-domain equational container witness: reversing report order preserves headcount."
+// The EQUATIONAL family in a foreign domain, structurally varied from the `mirror`
+// witness (not an alpha-rename): the walker has NON-UNIT constants (a `Blob`
+// base of 4 and a `Dir` increment of 2, vs `size`'s `1`/`1 +`), so the closer
+// must carry those literals through the node case's `simp`/`omega` — it exercises
+// the lift's numeric parameters, not just names. `sortEntries` reverses each
+// directory listing and preserves total usage; the second (cross-domain) witness
+// that the `walker_reverse` container lemma is DERIVED (a `usageList_reverse` over
+// `List Entry`, name-blind), not a size/`sizeList`-specific template.
+const DISK_EQ_SRC: &str = r#"module DiskUsage
+    intent = "Cross-domain equational container witness with non-unit walker constants: reordering a directory preserves total usage."
     effects []
 
-type Employee
-    Ic
-    Manager(List<Employee>)
+type Entry
+    Blob
+    Dir(List<Entry>)
 
-fn headcount(e: Employee) -> Int
+fn usage(e: Entry) -> Int
     match e
-        Employee.Ic -> 1
-        Employee.Manager(reports) -> 1 + headcountList(reports)
+        Entry.Blob -> 4
+        Entry.Dir(items) -> 2 + usageList(items)
 
-fn headcountList(es: List<Employee>) -> Int
+fn usageList(es: List<Entry>) -> Int
     match es
         [] -> 0
-        [x, ..rest] -> headcount(x) + headcountList(rest)
+        [x, ..rest] -> usage(x) + usageList(rest)
 
-fn reorg(e: Employee) -> Employee
+fn sortEntries(e: Entry) -> Entry
     match e
-        Employee.Ic -> Employee.Ic
-        Employee.Manager(reports) -> Employee.Manager(List.reverse(reorgList(reports)))
+        Entry.Blob -> Entry.Blob
+        Entry.Dir(items) -> Entry.Dir(List.reverse(sortList(items)))
 
-fn reorgList(es: List<Employee>) -> List<Employee>
+fn sortList(es: List<Entry>) -> List<Entry>
     match es
         [] -> []
-        [x, ..rest] -> List.prepend(reorg(x), reorgList(rest))
+        [x, ..rest] -> List.prepend(sortEntries(x), sortList(rest))
 
-verify headcount law reorgPreservesCount
-    given e: Employee = [Employee.Ic, Employee.Manager([]), Employee.Manager([Employee.Ic, Employee.Ic])]
-    headcount(reorg(e)) => headcount(e)
+verify usage law reorderPreservesUsage
+    given e: Entry = [Entry.Blob, Entry.Dir([]), Entry.Dir([Entry.Blob, Entry.Blob])]
+    usage(sortEntries(e)) => usage(e)
+"#;
+
+// TailCall blindness — a GENUINE forced pair whose walker node-arm call sits in
+// TAIL position (`Tree.Node(kids) -> sizeList(kids)`, no `1 +`). The TCO pass
+// rewrites that call to `Expr::TailCall` before law_auto runs; before the walker
+// fix the recognizer's `call_on_binder` saw only `Expr::FnCall` and so silently
+// declined this shape to bounded. It must now be recognized and FLIP universal.
+const TAIL_SRC: &str = r#"module TreeTail
+    intent = "Genuine forced pair whose node-arm call is in tail position."
+    effects []
+
+type Tree
+    Leaf
+    Node(List<Tree>)
+
+fn size(t: Tree) -> Int
+    match t
+        Tree.Leaf -> 1
+        Tree.Node(kids) -> sizeList(kids)
+
+fn sizeList(ts: List<Tree>) -> Int
+    match ts
+        [] -> 0
+        [x, ..rest] -> size(x) + sizeList(rest)
+
+verify size law nonNeg
+    given t: Tree = [Tree.Leaf, Tree.Node([]), Tree.Node([Tree.Leaf, Tree.Leaf])]
+    size(t) >= 0 => true
+"#;
+
+// TailCall blindness, the other direction — a >2-fn SCC one of whose back-edges
+// is a tail call (`size`'s leaf arm `sizeTail(t)`). Before the fix the SCC walker
+// missed that edge, under-computed the mutual SCC to exactly `{size, sizeList}`,
+// and WRONGLY ADMITTED the shape (emitting `size.induct`, then sorry-flooring — a
+// contract violation, not a red build). The recognizer must now see the tail
+// edge, compute the true 3-fn SCC, and DECLINE (no `motive2` emitted).
+const SCC3_SRC: &str = r#"module TreeScc3
+    intent = "Three-fn SCC where the extra back-edge is a tail call."
+    effects []
+
+type Tree
+    Leaf
+    Node(List<Tree>)
+
+fn size(t: Tree) -> Int
+    match t
+        Tree.Leaf -> sizeTail(t)
+        Tree.Node(kids) -> 1 + sizeList(kids)
+
+fn sizeList(ts: List<Tree>) -> Int
+    match ts
+        [] -> 0
+        [x, ..rest] -> size(x) + sizeList(rest)
+
+fn sizeTail(t: Tree) -> Int
+    match t
+        Tree.Leaf -> 1
+        Tree.Node(kids) -> 1 + sizeList(kids)
+
+verify size law atLeastOne
+    given t: Tree = [Tree.Leaf, Tree.Node([]), Tree.Node([Tree.Leaf, Tree.Leaf])]
+    size(t) >= 1 => true
+"#;
+
+// Non-canonical constructor order — the walker matches the `Node` arm FIRST. The
+// joint `f.induct` numbers its cases in source-arm order, so a node-first source
+// shifts `case1..case4` and the positional closers sorry-floor. The recognizer
+// declines this fail-closed (leaf-first / nil-first is required), so no `motive2`
+// is emitted and the law falls back to its bounded sorry — never a red build.
+const SWAP_SRC: &str = r#"module TreeSwap
+    intent = "Node-arm-first source: non-canonical constructor order."
+    effects []
+
+type Tree
+    Leaf
+    Node(List<Tree>)
+
+fn size(t: Tree) -> Int
+    match t
+        Tree.Node(kids) -> 1 + sizeList(kids)
+        Tree.Leaf -> 1
+
+fn sizeList(ts: List<Tree>) -> Int
+    match ts
+        [] -> 0
+        [x, ..rest] -> size(x) + sizeList(rest)
+
+verify size law atLeastOne
+    given t: Tree = [Tree.Leaf, Tree.Node([]), Tree.Node([Tree.Leaf, Tree.Leaf])]
+    size(t) >= 1 => true
 "#;
 
 const ACC_SRC: &str = r#"module TreeAcc
@@ -247,9 +340,12 @@ fn proof_lean_container_induction_cross_domain_name_blind() {
 #[test]
 fn proof_lean_container_induction_equational_container_lemma_name_blind() {
     // The container lemma (`walker_reverse`) is DERIVED, not a size-specific
-    // sidecar: the same equational shape in a foreign domain emits and cites a
-    // `headcountList_reverse` over `List Employee` and closes universally.
-    let Some((summary, lean)) = check_container(ORG_EQ_SRC, "OrgFlip.lean", "aver-container-orgeq")
+    // sidecar: the same equational shape in a foreign domain — with NON-UNIT
+    // walker constants (`Blob` base 4, `Dir` increment 2), so the close is not a
+    // constants-of-`1` coincidence — emits and cites a `usageList_reverse` over
+    // `List Entry` and closes universally.
+    let Some((summary, lean)) =
+        check_container(DISK_EQ_SRC, "DiskUsage.lean", "aver-container-disk")
     else {
         return;
     };
@@ -264,11 +360,92 @@ fn proof_lean_container_induction_equational_container_lemma_name_blind() {
         "the cross-domain equational witness must kernel-prove universally:\n{lean}"
     );
     assert!(
-        lean.contains("headcount.induct")
-            && lean.contains("headcountList_reverse")
+        lean.contains("usage.induct")
+            && lean.contains("usageList_reverse")
             && !lean.contains("sizeList_reverse"),
-        "expected a DERIVED `headcountList_reverse` container lemma (name-blind, \
+        "expected a DERIVED `usageList_reverse` container lemma (name-blind, \
          not a `sizeList` template):\n{lean}"
+    );
+}
+
+#[test]
+fn proof_lean_container_induction_tail_position_node_arm_flips_universal() {
+    // TailCall blindness (SHOULD-FIX): a genuine forced pair whose walker node-arm
+    // call is in TAIL position (`Tree.Node(kids) -> sizeList(kids)`) is rewritten
+    // to `Expr::TailCall` by the TCO pass before law_auto. Before the walker fix
+    // the recognizer saw only `Expr::FnCall` and declined this to bounded; it must
+    // now be recognized and FLIP to a GENUINE universal.
+    let Some((summary, lean)) = check_container(TAIL_SRC, "TreeTail.lean", "aver-container-tail")
+    else {
+        return;
+    };
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+            summary["universal_laws"].as_u64(),
+        ),
+        (Some(true), Some(0), Some(true), Some(1)),
+        "the tail-position forced pair must kernel-prove as a GENUINE universal:\n{lean}"
+    );
+    assert!(
+        lean.contains("size.induct") && lean.contains("motive2 :="),
+        "expected `size.induct (motive2 := ..)` in the emitted proof:\n{lean}"
+    );
+}
+
+#[test]
+fn proof_lean_container_induction_three_fn_scc_via_tail_call_declines() {
+    // TailCall blindness (the ADMISSION direction): a >2-fn SCC one of whose
+    // back-edges is a tail call (`size`'s leaf arm `sizeTail(t)`). Before the fix
+    // the SCC walker missed that edge, under-computed the SCC to `{size, sizeList}`
+    // and WRONGLY ADMITTED the shape (emitting `size.induct`, then sorry-flooring).
+    // The recognizer must now see the tail edge and DECLINE at recognition — no
+    // `motive2` emitted, no red build.
+    let Some((summary, lean)) = check_container(SCC3_SRC, "TreeScc3.lean", "aver-container-scc3")
+    else {
+        return;
+    };
+    assert_eq!(
+        (
+            summary["universal"].as_bool(),
+            summary["build_errors"].as_u64(),
+        ),
+        (Some(false), Some(0)),
+        "the 3-fn SCC law must decline (universal:false) without going red \
+         (build_errors:0):\n{lean}"
+    );
+    assert!(
+        !lean.contains("size.induct") && !lean.contains("motive2 :="),
+        "the 3-fn SCC law must DECLINE at recognition (no container-induction \
+         proof emitted):\n{lean}"
+    );
+}
+
+#[test]
+fn proof_lean_container_induction_non_canonical_arm_order_declines() {
+    // Constructor order (NOTE, fail-closed): a walker whose `match` puts the `Node`
+    // arm FIRST shifts the joint `f.induct` case numbering, so the positional
+    // closers would sorry-floor. The recognizer requires canonical leaf-first /
+    // nil-first order and declines anything else at recognition — no `motive2`
+    // emitted, bounded fallback, never a red build.
+    let Some((summary, lean)) = check_container(SWAP_SRC, "TreeSwap.lean", "aver-container-swap")
+    else {
+        return;
+    };
+    assert_eq!(
+        (
+            summary["universal"].as_bool(),
+            summary["build_errors"].as_u64(),
+        ),
+        (Some(false), Some(0)),
+        "the node-arm-first law must decline (universal:false) without going red \
+         (build_errors:0):\n{lean}"
+    );
+    assert!(
+        !lean.contains("size.induct") && !lean.contains("motive2 :="),
+        "the non-canonical-order law must DECLINE at recognition:\n{lean}"
     );
 }
 

@@ -298,6 +298,16 @@ fn recognize_pair(f_src: &str, ctx: &CodegenContext) -> Option<Pair> {
     if arms.len() != 2 {
         return None;
     }
+    // Canonical arm order — leaf (fieldless) first, `Node(List<T>)` second. The
+    // joint `f.induct` numbers its cases in source-arm order (the `case1..case4`
+    // layout the closers assume takes leaf/nil first); a node-first source shifts
+    // the numbering and sorry-floors, so decline fail-closed rather than emit a
+    // mismatched proof.
+    let leaf_first = matches!(&arms[0].pattern, Pattern::Constructor(_, b) if b.is_empty());
+    let node_second = matches!(&arms[1].pattern, Pattern::Constructor(_, b) if b.len() == 1);
+    if !leaf_first || !node_second {
+        return None;
+    }
     // Find the node arm (constructor pattern binding one field) and the fn it
     // calls on that field.
     let flist_src = node_arm_sibling(arms, ctx)?;
@@ -355,10 +365,9 @@ fn node_arm_sibling(arms: &[crate::ast::MatchArm], ctx: &CodegenContext) -> Opti
 fn call_on_binder(expr: &Spanned<Expr>, field: &str, ctx: &CodegenContext) -> Option<String> {
     let mut found: Option<String> = None;
     fn walk(e: &Spanned<Expr>, field: &str, ctx: &CodegenContext, found: &mut Option<String>) {
-        if let Expr::FnCall(callee, args) = &e.node
+        if let Some((name, args)) = as_call(&e.node)
             && args.len() == 1
             && is_ident(&args[0], field)
-            && let Some(name) = shared::expr_dotted_name(callee)
             && shared::find_fn_def(ctx, &name).is_some()
         {
             *found = Some(name);
@@ -412,6 +421,13 @@ fn is_list_walker(fd: &FnDef, adt: &str, f_src: &str) -> bool {
         return false;
     };
     if !is_ident(subject, param) || arms.len() != 2 {
+        return false;
+    }
+    // Canonical order: `[]` first, `[x, ..rest]` second (matches the `case3/case4`
+    // layout the closers assume; see recognize_pair's arm-order guard).
+    if !matches!(arms[0].pattern, Pattern::EmptyList)
+        || !matches!(arms[1].pattern, Pattern::Cons(..))
+    {
         return false;
     }
     let mut saw_nil = false;
@@ -490,8 +506,7 @@ fn direct_user_calls(src: &str, ctx: &CodegenContext) -> BTreeSet<String> {
         return out;
     };
     fn walk(e: &Spanned<Expr>, ctx: &CodegenContext, out: &mut BTreeSet<String>) {
-        if let Expr::FnCall(callee, _) = &e.node
-            && let Some(name) = shared::expr_dotted_name(callee)
+        if let Some((name, _)) = as_call(&e.node)
             && let Some(fd) = shared::find_fn_def(ctx, &name)
         {
             out.insert(fd.name.clone());
@@ -563,6 +578,20 @@ fn is_call_on(expr: &Spanned<Expr>, fn_src: &str, ident: &str) -> bool {
         && shared::expr_dotted_name(callee).as_deref() == Some(fn_src)
 }
 
+/// Callee source-name and args of a call, seeing through the TCO rewrite: a
+/// tail-position self/peer call is an `Expr::TailCall` (the TCO pass runs before
+/// law_auto), not an `Expr::FnCall`. Every walker that detects a call must treat
+/// it as one, or the recognizer under-computes the mutual SCC (silently admitting
+/// a >2-fn SCC) and misses a pair whose node-arm call sits in tail position. Same
+/// precedent as `induction/mod.rs` and `proof_recognize.rs`.
+fn as_call(e: &Expr) -> Option<(String, &[Spanned<Expr>])> {
+    match e {
+        Expr::FnCall(callee, args) => Some((shared::expr_dotted_name(callee)?, args.as_slice())),
+        Expr::TailCall(tc) => Some((tc.target.clone(), tc.args.as_slice())),
+        _ => None,
+    }
+}
+
 /// Immediate sub-expressions to recurse through when scanning a fn body — enough
 /// for the pure walker shapes this arm recognizes.
 fn child_exprs(e: &Spanned<Expr>) -> Vec<&Spanned<Expr>> {
@@ -582,6 +611,8 @@ fn child_exprs(e: &Spanned<Expr>) -> Vec<&Spanned<Expr>> {
             v
         }
         Expr::List(items) | Expr::Tuple(items) => items.iter().collect(),
+        // Post-TCO: a tail-position call's args are the sub-exprs to keep scanning.
+        Expr::TailCall(tc) => tc.args.iter().collect(),
         _ => Vec::new(),
     }
 }
