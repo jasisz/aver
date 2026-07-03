@@ -7,6 +7,7 @@ mod floor_arith;
 mod floor_window;
 mod frac_monotone_compose;
 mod frac_order_chain;
+mod frac_order_transitivity;
 mod homomorphism;
 mod induction;
 mod inequality;
@@ -126,6 +127,13 @@ pub(in crate::codegen::lean) use homomorphism::recognize_homomorphism;
 /// driver so the universal statement and the helper-kit-plus-chain proof stay
 /// in lockstep.
 pub(in crate::codegen::lean) use frac_order_chain::recognize_frac_order_chain;
+
+/// Generic rational-order transitivity-chain rung — a STRICT `lessThan L R`
+/// conclusion whose premises spell out a 1..3-link comparison chain linking the
+/// endpoints (Lemma 8.1.1, the two-step reciprocal-error bound). Feeds the
+/// `omit_domain` statement driver so the universal statement and the
+/// self-contained kit-plus-assembler proof stay in lockstep.
+pub(in crate::codegen::lean) use frac_order_transitivity::recognize_frac_order_transitivity;
 
 /// The `(module_prefix, theorem_base)` pool laws a chaining law cites
 /// (signed power-of-two monotonicity + homomorphism) — unioned into the
@@ -856,6 +864,29 @@ fn emit_verify_law_forall_auto_proof_inner(
     if law.when.is_some()
         && let Some(proof) =
             frac_order_chain::emit_frac_order_chain_law(vb, law, ctx, theorem_base, quant_params)
+    {
+        return Some(proof);
+    }
+
+    // Generic rational-order transitivity chain — a conditional `holds` law
+    // whose conclusion is a STRICT Fraction comparison `lessThan L R` and whose
+    // premises spell out a 1..3-link comparison chain `L < n1 (<|<=) … R`
+    // linking the two endpoints (the reciprocal-error two-step bound, Lemma
+    // 8.1.1). Closed by a self-contained generic order kit (`frac_lt_imp_le`,
+    // `frac_le_trans`, `frac_lt_le_trans`) and a fixed have-sequence assembler,
+    // a missing top link between two ground literals supplied as a `decide`
+    // link. Emits its OWN TRUE-universal theorem (`replaces_theorem`) under a
+    // `first | (…) | sorry` floor. Tried after `frac_order_chain`: their
+    // conclusion heads are disjoint (`lessThan` here vs `isNonNeg` there), so
+    // neither steals the other's shape.
+    if law.when.is_some()
+        && let Some(proof) = frac_order_transitivity::emit_frac_order_transitivity_law(
+            vb,
+            law,
+            ctx,
+            theorem_base,
+            quant_params,
+        )
     {
         return Some(proof);
     }

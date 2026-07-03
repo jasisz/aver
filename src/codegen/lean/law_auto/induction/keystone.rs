@@ -146,6 +146,17 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     if super::super::recognize_frac_order_chain(vb, law, ctx) {
         return false;
     }
+    // Decline the generic rational-order transitivity-chain shape (Lemma 8.1.1)
+    // for the same reason: its dedicated rung is a DETERMINISTIC
+    // `replaces_theorem` closer (the self-contained order kit + have-sequence
+    // assembler), dispatched before the keystone. The keystone's bare `grind`
+    // over the pool can never assemble the chain's intermediate magnitudes, so
+    // under the probe it would only fall to its sorry floor; declining here
+    // keeps the law deterministic in BOTH passes and lets the dedicated rung own
+    // its (single-arrow) universal statement.
+    if super::super::recognize_frac_order_transitivity(vb, law, ctx) {
+        return false;
+    }
     // The claim goes through the subject fn (`holds`, or an equational `=> rhs`).
     if !matches!(&law.lhs.node, crate::ast::Expr::FnCall(..)) {
         return false;

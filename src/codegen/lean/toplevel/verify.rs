@@ -709,6 +709,15 @@ fn emit_verify_law_block(
             // theorem with the universal form, so dropping the sampled domain
             // keeps statement and proof aligned.
             || super::law_auto::recognize_frac_order_chain(vb, &law_for_auto_proof, ctx)
+            // Generic rational-order transitivity-chain law (Lemma 8.1.1, the
+            // two-step reciprocal-error bound): the conclusion is a STRICT
+            // Fraction comparison `lessThan L R` whose premises spell out a
+            // 1..3-link comparison chain linking the endpoints, closed
+            // universally by the self-contained order kit plus a fixed
+            // have-sequence assembler. The emit replaces the theorem with the
+            // universal form, so dropping the sampled domain keeps statement
+            // and proof aligned.
+            || super::law_auto::recognize_frac_order_transitivity(vb, &law_for_auto_proof, ctx)
             // Triangle-sum law (the rounded Newton-Raphson reciprocal step): a
             // strict `absFraction`-of-a-three-term-sum bound over the exact-
             // rational order, proven universally by the generic triangle kit
