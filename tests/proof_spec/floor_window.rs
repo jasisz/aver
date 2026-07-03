@@ -129,6 +129,12 @@ fn proof_export_floor_arith_second_witness_universal() {
         "quotFloor_law_shrinkFactorCommuted",
         "quotFloor_law_shrinkFactorDivisorLeft",
         "quotFloor_law_soakRemainderCommuted",
+        // Comparator-canonicalization witnesses: the strict remainder bound
+        // written divisor-first (`den > rest`) and the positivity/nonneg
+        // bounds spelled with `>=` must both close universal — the rung
+        // canonicalizes the operand order before recognition.
+        "quotFloor_law_soakRemainderUpperFlip",
+        "quotFloor_law_soakRemainderGeTwin",
     ] {
         assert!(
             lean.contains(&format!("-- aver:law-class {base} universal")),
@@ -349,7 +355,7 @@ fn proof_floor_window_lean_closes_kernel_genuine() {
 /// (`proof_export_floor_arith_second_witness_universal`) only asserts the
 /// `universal` law-class MARKERS, which the Rust classifier stamps when the
 /// rung FIRES — not when the Lean kernel accepts the proof. This gate builds
-/// the whole fixture with the toolchain and asserts all five witness laws
+/// the whole fixture with the toolchain and asserts all seven witness laws
 /// close sorry-free AND earn kernel-genuine `universal` credit (`#print
 /// axioms` inside the whitelist, encoded by the `universal` summary flag —
 /// same contract as `proof_floor_window_lean_closes_kernel_genuine`). Covers
@@ -379,7 +385,7 @@ fn proof_floor_arith_witness_lean_closes_kernel_genuine() {
     assert_eq!(
         summary["universal"].as_bool(),
         Some(true),
-        "all five witness law theorems are stated universally and must be \
+        "all seven witness law theorems are stated universally and must be \
          kernel-genuine (axioms within the whitelist).\n{}",
         format_output(&run)
     );
@@ -388,10 +394,11 @@ fn proof_floor_arith_witness_lean_closes_kernel_genuine() {
             summary["universal_laws"].as_u64(),
             summary["bounded_laws"].as_u64(),
         ),
-        (Some(5), Some(0)),
-        "explicit law counts: exactly the five universal-classed witness \
-         theorems certified (every cancel / absorb orientation corner), none \
-         degraded to bounded-domain.\n{}",
+        (Some(7), Some(0)),
+        "explicit law counts: exactly the seven universal-classed witness \
+         theorems certified (every cancel / absorb orientation corner plus \
+         the two comparator-canonicalization spellings), none degraded to \
+         bounded-domain.\n{}",
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&output_dir);

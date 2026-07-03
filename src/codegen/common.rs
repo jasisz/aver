@@ -651,6 +651,27 @@ pub fn swap_comparison_operands_op(op: &crate::ast::BinOp) -> Option<crate::ast:
     }
 }
 
+/// Canonicalize a `when`-clause comparison to a single normal direction:
+/// rewrite `a > b` to `b < a` and `a >= b` to `b <= a` by swapping the
+/// operands. This is a pure operand swap, NEVER a negation — a strict
+/// bound stays strict (`Gt -> Lt`) and a nonstrict bound stays nonstrict
+/// (`Gte -> Lte`), so it can never turn a semantically-load-bearing `r < d`
+/// into `r <= d`. Any expression that is not a `>`/`>=` comparison
+/// (already-canonical `<`/`<=`, `==`/`!=`, or a non-comparison predicate)
+/// is returned unchanged, so canonical-direction clauses round-trip
+/// byte-identically. This is a lowering-privilege normalization internal to
+/// proof RECOGNITION only: the emitted theorem/lemma still renders the
+/// user's original `when` surface form, so nothing user-visible is flipped.
+pub fn canonicalize_comparison(e: &Spanned<Expr>) -> Spanned<Expr> {
+    if let Expr::BinOp(op, l, r) = &e.node
+        && matches!(op, crate::ast::BinOp::Gt | crate::ast::BinOp::Gte)
+        && let Some(swapped) = swap_comparison_operands_op(op)
+    {
+        return Spanned::new(Expr::BinOp(swapped, r.clone(), l.clone()), e.line);
+    }
+    e.clone()
+}
+
 /// Structural equality on Aver predicate expressions with commutator
 /// relaxation: at every `BinOp` comparator node, allow the operands +
 /// operator to be swapped. Both `a >= 0` and `0 <= a` compare equal,
@@ -2991,6 +3012,36 @@ mod tests {
             rhs,
             sample_guards: Vec::new(),
         }
+    }
+
+    #[test]
+    fn canonicalize_comparison_swaps_operands_never_negates() {
+        use crate::ast::BinOp;
+        let a = || bsb(Expr::Ident("a".to_string()));
+        let b = || bsb(Expr::Ident("b".to_string()));
+        let binop = |op, l: Box<Spanned<Expr>>, r: Box<Spanned<Expr>>| sb(Expr::BinOp(op, l, r));
+
+        // `a > b` canonicalizes to `b < a` — operands swapped, STILL strict.
+        let canon_gt = canonicalize_comparison(&binop(BinOp::Gt, a(), b()));
+        assert_eq!(canon_gt.node, binop(BinOp::Lt, b(), a()).node);
+        // `a >= b` canonicalizes to `b <= a` — operands swapped, STILL nonstrict.
+        let canon_gte = canonicalize_comparison(&binop(BinOp::Gte, a(), b()));
+        assert_eq!(canon_gte.node, binop(BinOp::Lte, b(), a()).node);
+
+        // Strictness is NEVER crossed: a strict `>` never becomes a nonstrict
+        // `<=`, and a nonstrict `>=` never becomes a strict `<`. (A `r < d`
+        // upper bound whose strictness is load-bearing stays strict.)
+        assert!(!matches!(&canon_gt.node, Expr::BinOp(BinOp::Lte, ..)));
+        assert!(!matches!(&canon_gte.node, Expr::BinOp(BinOp::Lt, ..)));
+
+        // Already-canonical / symmetric / non-comparison clauses pass through
+        // BYTE-identically (no swap), so canonical-direction laws are untouched.
+        for op in [BinOp::Lt, BinOp::Lte, BinOp::Eq, BinOp::Neq] {
+            let clause = binop(op, a(), b());
+            assert_eq!(canonicalize_comparison(&clause).node, clause.node);
+        }
+        let call = sb(Expr::FnCall(a(), vec![sb(Expr::Ident("x".to_string()))]));
+        assert_eq!(canonicalize_comparison(&call).node, call.node);
     }
 
     #[test]

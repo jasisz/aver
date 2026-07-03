@@ -407,7 +407,12 @@ fn floor_call<'a>(
     Some((&args[0], &args[1]))
 }
 
-fn flatten_and<'a>(e: &'a Spanned<Expr>, out: &mut Vec<&'a Spanned<Expr>>) {
+/// Flatten a `Bool.and` conjunction of `when` clauses, canonicalizing every
+/// leaf comparison (`a > b` -> `b < a`, `a >= b` -> `b <= a`) so the Dafny
+/// recognizers below only match `Lt`/`Lte` — the direction-blind counterpart
+/// of the Lean `law_auto::shared::flatten_and` choke point. Recognition-only:
+/// the emitted `requires` still renders `law.when` verbatim.
+fn flatten_and(e: &Spanned<Expr>, out: &mut Vec<Spanned<Expr>>) {
     match &e.node {
         Expr::FnCall(callee, args)
             if expr_dotted_name(callee).as_deref() == Some("Bool.and") && args.len() == 2 =>
@@ -415,7 +420,7 @@ fn flatten_and<'a>(e: &'a Spanned<Expr>, out: &mut Vec<&'a Spanned<Expr>>) {
             flatten_and(&args[0], out);
             flatten_and(&args[1], out);
         }
-        _ => out.push(e),
+        _ => out.push(crate::codegen::common::canonicalize_comparison(e)),
     }
 }
 
@@ -427,11 +432,10 @@ fn clause_gives_pos(clause: &Spanned<Expr>, x_render: &str, ctx: &CodegenContext
         Expr::Literal(Literal::Int(n)) => Some(*n),
         _ => None,
     };
+    // `flatten_and` canonicalizes `x > c` / `x >= c` to `c < x` / `c <= x`.
     match op {
         BinOp::Lt => int_lit(l).is_some_and(|c| c >= 0) && render(r, ctx) == x_render,
-        BinOp::Gt => render(l, ctx) == x_render && int_lit(r).is_some_and(|c| c >= 0),
         BinOp::Lte => int_lit(l).is_some_and(|c| c >= 1) && render(r, ctx) == x_render,
-        BinOp::Gte => render(l, ctx) == x_render && int_lit(r).is_some_and(|c| c >= 1),
         _ => false,
     }
 }
@@ -447,9 +451,9 @@ fn clause_gives_nonneg(clause: &Spanned<Expr>, x_render: &str, ctx: &CodegenCont
         Expr::Literal(Literal::Int(n)) => Some(*n),
         _ => None,
     };
+    // `flatten_and` canonicalizes `x >= c` to `c <= x`.
     match op {
         BinOp::Lte => int_lit(l).is_some_and(|c| c >= 0) && render(r, ctx) == x_render,
-        BinOp::Gte => render(l, ctx) == x_render && int_lit(r).is_some_and(|c| c >= 0),
         _ => false,
     }
 }

@@ -60,8 +60,15 @@ pub(super) fn is_euclidean_floor_fn(floor_src: &str, ctx: &CodegenContext) -> bo
     expr_dotted_name(div_callee).as_deref() == Some("Int.div") && div_args.len() == 2
 }
 
-/// Flatten a `Bool.and` / `&&` conjunction of `when` clauses.
-pub(super) fn flatten_and<'a>(e: &'a Spanned<Expr>, out: &mut Vec<&'a Spanned<Expr>>) {
+/// Flatten a `Bool.and` / `&&` conjunction of `when` clauses, canonicalizing
+/// every leaf comparison to one normal direction (`a > b` -> `b < a`,
+/// `a >= b` -> `b <= a`; see [`crate::codegen::common::canonicalize_comparison`]).
+/// This is the ONE choke point before the recognition arms below see the
+/// clauses: because the operands are pre-swapped here, the arms only ever
+/// match `Lt`/`Lte`, so they no longer hand-enumerate the `Gt`/`Gte`
+/// direction. Recognition-only — the emitters render `law.when` verbatim, so
+/// the user's original surface direction is preserved in the emitted proof.
+pub(super) fn flatten_and(e: &Spanned<Expr>, out: &mut Vec<Spanned<Expr>>) {
     match &e.node {
         Expr::FnCall(callee, args)
             if expr_dotted_name(callee).as_deref() == Some("Bool.and") && args.len() == 2 =>
@@ -69,12 +76,15 @@ pub(super) fn flatten_and<'a>(e: &'a Spanned<Expr>, out: &mut Vec<&'a Spanned<Ex
             flatten_and(&args[0], out);
             flatten_and(&args[1], out);
         }
-        _ => out.push(e),
+        _ => out.push(crate::codegen::common::canonicalize_comparison(e)),
     }
 }
 
 /// Whether `clause` guarantees `0 < x` for the atom rendered as `x_render`:
 /// `0 < x`, `x > 0`, `1 <= x`, `x >= 1` (any nonneg/≥1 literal bound).
+/// Clauses arrive canonicalized by [`flatten_and`], so `x > 0` / `x >= 1`
+/// have already been swapped to `0 < x` / `1 <= x` — only the `Lt`/`Lte`
+/// forms need matching.
 pub(super) fn clause_gives_pos(
     clause: &Spanned<Expr>,
     x_render: &str,
@@ -88,12 +98,10 @@ pub(super) fn clause_gives_pos(
         _ => None,
     };
     match op {
-        // c < x  (c >= 0)  ⟹  0 < x ;  x > c  (c >= 0)
+        // c < x  (c >= 0)  ⟹  0 < x   (also matches canonicalized `x > c`)
         BinOp::Lt => int_lit(l).is_some_and(|c| c >= 0) && render(r, ctx) == x_render,
-        BinOp::Gt => render(l, ctx) == x_render && int_lit(r).is_some_and(|c| c >= 0),
-        // c <= x  (c >= 1)  ;  x >= c  (c >= 1)
+        // c <= x  (c >= 1)          (also matches canonicalized `x >= c`)
         BinOp::Lte => int_lit(l).is_some_and(|c| c >= 1) && render(r, ctx) == x_render,
-        BinOp::Gte => render(l, ctx) == x_render && int_lit(r).is_some_and(|c| c >= 1),
         _ => false,
     }
 }
@@ -116,15 +124,15 @@ pub(super) fn clause_gives_nonneg(
         _ => None,
     };
     match op {
-        // c <= x  (c >= 0)  ;  x >= c  (c >= 0)
+        // c <= x  (c >= 0)          (also matches canonicalized `x >= c`)
         BinOp::Lte => int_lit(l).is_some_and(|c| c >= 0) && render(r, ctx) == x_render,
-        BinOp::Gte => render(l, ctx) == x_render && int_lit(r).is_some_and(|c| c >= 0),
         _ => false,
     }
 }
 
 /// Whether `clause` is the strict upper bound `x < y` for atoms rendered as
-/// `x_render` / `y_render`.
+/// `x_render` / `y_render`. Clauses are canonicalized by [`flatten_and`], so a
+/// user-written `y > x` arrives here already swapped to `x < y` and matches.
 pub(super) fn clause_is_lt(
     clause: &Spanned<Expr>,
     x_render: &str,
