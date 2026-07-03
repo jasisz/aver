@@ -87,7 +87,16 @@ impl CalcEnv {
 
 /// Calculate the forced lemma for `goal`, or decline. Mutates a clone; the input
 /// is untouched (the caller keeps the raw residual for the decline fallback).
-pub fn calculate(goal: &UntranslatedGoal, env: &CalcEnv) -> CalcVerdict {
+/// `reserved` names are kept off the fresh-variable stream in addition to the
+/// goal's own binders: the candidate builder resolves givens by name against the
+/// PARENT law, so a lifted variable that collides with a parent given would clone
+/// the wrong sample domain (name capture). The caller passes the parent law's
+/// given names.
+pub fn calculate(
+    goal: &UntranslatedGoal,
+    env: &CalcEnv,
+    reserved: &HashSet<String>,
+) -> CalcVerdict {
     // Aver `when` is a single Bool expression; a residual with several surviving
     // premises is not a single forced lemma (the candidate builder declines it
     // too, but naming it here keeps the verdict on the calculator's surface).
@@ -104,14 +113,14 @@ pub fn calculate(goal: &UntranslatedGoal, env: &CalcEnv) -> CalcVerdict {
 
     // 2a. lift (a): anti-unify the claim against a surviving IH premise.
     if let Some(prem) = g.premises.first().cloned() {
-        match lift_antiunify(&mut g, &prem, env) {
+        match lift_antiunify(&mut g, &prem, env, reserved) {
             Ok(()) => {}
             Err(reason) => return CalcVerdict::Decline(reason),
         }
     }
 
     // 2b. lift (b): generalize maximal both-sides user-function subterms.
-    let lifted_b = lift_opaque_subterms(&mut g, env);
+    let lifted_b = lift_opaque_subterms(&mut g, env, reserved);
 
     rebuild_givens(&mut g, goal);
 
@@ -159,12 +168,14 @@ fn lift_antiunify(
     g: &mut UntranslatedGoal,
     prem: &Spanned<Expr>,
     env: &CalcEnv,
+    reserved: &HashSet<String>,
 ) -> Result<(), String> {
     // The premise is `<pl> = <pr>` (an IH equality untranslated to `pl == pr`).
     let Expr::BinOp(BinOp::Eq, pl, pr) = &prem.node else {
         return Ok(()); // not an equality premise — nothing to anti-unify
     };
-    let existing: HashSet<String> = g.givens.iter().map(|(n, _)| n.clone()).collect();
+    let mut existing: HashSet<String> = g.givens.iter().map(|(n, _)| n.clone()).collect();
+    existing.extend(reserved.iter().cloned());
     let mut fresh = FreshVars::new(existing);
     let mut subst: Vec<(Expr, String)> = Vec::new();
 
@@ -256,7 +267,11 @@ fn antiunify(
 /// Lift each maximal user-function-application subterm that occurs on BOTH sides
 /// of the claim to a fresh variable (correspondence-preserving generalization).
 /// A subterm on only one side is left literal. Returns whether anything lifted.
-fn lift_opaque_subterms(g: &mut UntranslatedGoal, env: &CalcEnv) -> bool {
+fn lift_opaque_subterms(
+    g: &mut UntranslatedGoal,
+    env: &CalcEnv,
+    reserved: &HashSet<String>,
+) -> bool {
     // Candidate fn-app subterms on each side (excluding the whole side itself:
     // lifting `f(x) = y` to `v = y` is not a decomposition).
     let mut lhs: Vec<Expr> = Vec::new();
@@ -282,7 +297,8 @@ fn lift_opaque_subterms(g: &mut UntranslatedGoal, env: &CalcEnv) -> bool {
         .cloned()
         .collect();
 
-    let existing: HashSet<String> = g.givens.iter().map(|(n, _)| n.clone()).collect();
+    let mut existing: HashSet<String> = g.givens.iter().map(|(n, _)| n.clone()).collect();
+    existing.extend(reserved.iter().cloned());
     let mut fresh = FreshVars::new(existing);
     let mut lifted = false;
     for sub in maximal {
@@ -548,12 +564,30 @@ mod tests {
         // of the claim's `le`), so anti-unification lifts `len(filterZ tail) -> a`,
         // `len tail -> b`, allowing the claim's extra `S`.
         let goal = untranslate_goal_ctx(DUMP_P66_1, &peano_nat()).expect("in grammar");
-        let CalcVerdict::Lemma(l) = calculate(&goal, &nat_env()) else {
+        let CalcVerdict::Lemma(l) = calculate(&goal, &nat_env(), &HashSet::new()) else {
             panic!("expected a forced lemma");
         };
         assert_eq!(
             render(&l),
             "given a: Nat; given b: Nat; when (le(a, b) == true); le(a, Nat.S(b)) => true"
+        );
+    }
+
+    #[test]
+    fn fresh_vars_skip_parent_law_given_names() {
+        // NAME-CAPTURE guard: the fresh lifted variables must dedup against the
+        // PARENT law's given names, not only the residual's own binders. The
+        // candidate builder resolves givens by name against the parent law, so a
+        // lifted `a` colliding with a parent given `a` would clone the wrong
+        // sample domain. Reserving `a` forces the lifted variables to `b`, `c`.
+        let goal = untranslate_goal_ctx(DUMP_P66_1, &peano_nat()).expect("in grammar");
+        let reserved: HashSet<String> = ["a".to_string()].into_iter().collect();
+        let CalcVerdict::Lemma(l) = calculate(&goal, &nat_env(), &reserved) else {
+            panic!("expected a forced lemma");
+        };
+        assert_eq!(
+            render(&l),
+            "given b: Nat; given c: Nat; when (le(b, c) == true); le(b, Nat.S(c)) => true"
         );
     }
 
@@ -585,7 +619,7 @@ mod tests {
             r#"{{"forall":{{"name":"tail","ty":{list_nat},"body":{{"forall":{{"name":"ih","ty":{ih},"body":{claim}}}}}}}}}"#
         );
         let goal = untranslate_goal_ctx(&json, &peano_nat()).expect("in grammar");
-        let CalcVerdict::Lemma(l) = calculate(&goal, &nat_env()) else {
+        let CalcVerdict::Lemma(l) = calculate(&goal, &nat_env(), &HashSet::new()) else {
             panic!("expected a forced lemma");
         };
         // IH consumed (no `when`), `rev tail` generalized to `a`.
@@ -618,7 +652,7 @@ mod tests {
         );
         let _ = list_nat;
         let goal = untranslate_goal_ctx(&json, &peano_nat()).expect("in grammar");
-        match calculate(&goal, &nat_env()) {
+        match calculate(&goal, &nat_env(), &HashSet::new()) {
             CalcVerdict::Decline(reason) => {
                 assert!(
                     reason.contains("outside") || reason.contains("term"),

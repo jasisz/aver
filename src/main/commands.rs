@@ -7459,7 +7459,26 @@ fn render_explain_candidates(
         // transpiler's `Nat`-lift (`Succ x → x + 1`) back to the ADT's
         // constructors; a non-Peano law gets the default (pre-V2) behavior.
         let ctx = peano_ctx_for_law(items, fn_name, law_name);
-        let cand_law_name = format!("{law_name}_residual");
+        // A calculated lemma is named `_calc` and rendered "calculated law"; a raw
+        // #630 residual fallback keeps `_residual` and "candidate law". The names
+        // must agree with the block the sample-check keys its verdict on.
+        let calc_law_name = format!("{law_name}_calc");
+        let residual_law_name = format!("{law_name}_residual");
+        // The parent law's given names: the fresh lifted variables must dedup
+        // against them (the candidate builder resolves givens by name against the
+        // parent, so a colliding lift clones the wrong domain — name capture).
+        let mut parent_givens: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for it in items {
+            if let aver::ast::TopLevel::Verify(vb) = it
+                && vb.fn_name == fn_name
+                && let aver::ast::VerifyKind::Law(l) = &vb.kind
+                && l.name == law_name
+            {
+                for g in &l.givens {
+                    parent_givens.insert(g.name.clone());
+                }
+            }
+        }
         // A split residual yields several branch goals. Each becomes a candidate,
         // deduped by source; the sample-check partitions them. We surface every
         // branch that PASSES (a forced lemma — prop_73 legitimately yields one per
@@ -7467,9 +7486,10 @@ fn render_explain_candidates(
         // gap) only when no branch passes. A branch outside the grammar records its
         // decline reason so a law with no in-grammar branch still gets a verdict.
         let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        let mut passed: Vec<String> = Vec::new();
+        let mut passed: Vec<(String, bool)> = Vec::new();
         let mut first_fail: Option<(String, String)> = None;
         let mut first_gap: Option<String> = None;
+        let mut decline: Option<String> = None;
         for json in &dump.jsons {
             let goal = match untranslate_goal_ctx(json, &ctx) {
                 Ok(g) => g,
@@ -7482,23 +7502,42 @@ fn render_explain_candidates(
             // fall back to the raw residual candidate. The calculator only ever
             // ADDS a stronger lemma — it never downgrades a raw candidate that
             // would have passed, so a Lemma that fails the VM defers to the raw.
-            let mut chosen: Option<(String, SampleVerdict)> = None;
-            if let CalcVerdict::Lemma(g) = lemma_calc::calculate(&goal, &calc_env)
-                && let Ok(src) =
-                    build_candidate_law(fn_name, law_name, *g, items, ctx.peano.as_ref())
-            {
-                let verdict =
-                    sample_check_candidate(&src, fn_name, &cand_law_name, file, module_root);
-                if matches!(verdict, SampleVerdict::Pass) {
-                    chosen = Some((src, verdict));
+            // A `Decline` is an honest verdict of its own: record its reason so it
+            // is surfaced before the fallback, never silently dropped.
+            let mut chosen: Option<(String, SampleVerdict, bool)> = None;
+            match lemma_calc::calculate(&goal, &calc_env, &parent_givens) {
+                CalcVerdict::Lemma(g) => {
+                    if let Ok(src) = build_candidate_law(
+                        fn_name,
+                        law_name,
+                        &calc_law_name,
+                        *g,
+                        items,
+                        ctx.peano.as_ref(),
+                    ) {
+                        let verdict = sample_check_candidate(
+                            &src,
+                            fn_name,
+                            &calc_law_name,
+                            file,
+                            module_root,
+                        );
+                        if matches!(verdict, SampleVerdict::Pass) {
+                            chosen = Some((src, verdict, true));
+                        }
+                    }
+                }
+                CalcVerdict::Decline(reason) => {
+                    decline.get_or_insert(reason);
                 }
             }
-            let (src, verdict) = match chosen {
+            let (src, verdict, calculated) = match chosen {
                 Some(c) => c,
                 None => {
                     let src = match build_candidate_law(
                         fn_name,
                         law_name,
+                        &residual_law_name,
                         goal,
                         items,
                         ctx.peano.as_ref(),
@@ -7509,16 +7548,21 @@ fn render_explain_candidates(
                             continue;
                         }
                     };
-                    let verdict =
-                        sample_check_candidate(&src, fn_name, &cand_law_name, file, module_root);
-                    (src, verdict)
+                    let verdict = sample_check_candidate(
+                        &src,
+                        fn_name,
+                        &residual_law_name,
+                        file,
+                        module_root,
+                    );
+                    (src, verdict, false)
                 }
             };
             if !seen.insert(src.clone()) {
                 continue; // alpha-equivalent branch already accounted for
             }
             match verdict {
-                SampleVerdict::Pass => passed.push(src),
+                SampleVerdict::Pass => passed.push((src, calculated)),
                 SampleVerdict::Fail { counterexample } => {
                     first_fail.get_or_insert((counterexample, src));
                 }
@@ -7527,22 +7571,26 @@ fn render_explain_candidates(
                 }
             }
         }
+        // The fourth verdict form: an honest calculator decline. Surface its reason
+        // BEFORE the raw fallback candidate it deferred to, so the reason the lemma
+        // was not forced is never silently discarded.
+        if let Some(reason) = &decline {
+            println!(
+                "  {label}: {}",
+                format!("not a forced lemma — {reason}").yellow()
+            );
+        }
         if !passed.is_empty() {
-            for src in &passed {
-                println!(
-                    "  {label}: {}",
-                    "candidate law — sample-check passed, add it and cite:".green()
-                );
+            for (src, calculated) in &passed {
+                let head = if *calculated {
+                    "calculated law — sample-check passed, add it and cite:"
+                } else {
+                    "candidate law — sample-check passed, add it and cite:"
+                };
+                println!("  {label}: {}", head.green());
                 for line in src.lines() {
                     println!("      {line}");
                 }
-            }
-            if dump.multi_arm {
-                println!(
-                    "      {}",
-                    "(the law has more than one open branch — a candidate may not close it alone)"
-                        .yellow()
-                );
             }
         } else if let Some((counterexample, src)) = first_fail {
             println!(
@@ -7560,6 +7608,15 @@ fn render_explain_candidates(
                 format!("engine-form gap — {reason}").yellow()
             );
         }
+        // The multi-arm caveat applies to any verdict — a single-branch candidate
+        // may not close a many-branch law whether it passed, failed, or gapped.
+        if dump.multi_arm {
+            println!(
+                "      {}",
+                "(the law has more than one open branch — a candidate may not close it alone)"
+                    .yellow()
+            );
+        }
     }
 }
 
@@ -7568,10 +7625,13 @@ fn render_explain_candidates(
 /// binder name matches, else synthesized per type), `when` from a surviving
 /// premise, claim from the goal equality. Declines (engine-form gap) on a binder
 /// whose type cannot be sampled or when more than one premise survives (Aver
-/// `when` is a single Bool expression).
+/// `when` is a single Bool expression). `cand_name` is the emitted law's name
+/// (`<law>_calc` for a calculated lemma, `<law>_residual` for a raw candidate);
+/// `law_name` still keys the parent-law given lookup.
 fn build_candidate_law(
     fn_name: &str,
     law_name: &str,
+    cand_name: &str,
     goal: aver::codegen::lean::untranslate::UntranslatedGoal,
     items: &[aver::ast::TopLevel],
     peano: Option<&aver::codegen::lean::untranslate::PeanoCtx>,
@@ -7616,7 +7676,7 @@ fn build_candidate_law(
         }
     };
     let law = VerifyLaw {
-        name: format!("{law_name}_residual"),
+        name: cand_name.to_string(),
         givens,
         when,
         lhs: clone_expr(&goal.claim.0),
@@ -7744,11 +7804,11 @@ fn sample_check_candidate(
                 return SampleVerdict::Gap("construct outside the translator image".to_string());
             }
         };
-    // Key the verdict on the EXACT synthesized block — `<fn> law <law>_residual`
-    // — not a substring: a pre-existing law whose name merely CONTAINS
-    // `<law>_residual` must not steal the verdict. The candidate is appended
-    // last, so scan from the end to prefer our block over any pre-existing
-    // same-named law.
+    // Key the verdict on the EXACT synthesized block — `<fn> law <cand_name>`
+    // (`<law>_calc` or `<law>_residual`) — not a substring: a pre-existing law
+    // whose name merely CONTAINS the candidate name must not steal the verdict.
+    // The candidate is appended last, so scan from the end to prefer our block
+    // over any pre-existing same-named law.
     let want_label = format!("{fn_name} law {candidate_law_name}");
     let Some(res) = results
         .iter()
