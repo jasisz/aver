@@ -2,6 +2,7 @@
 ///
 /// This module is intentionally isolated from `toplevel.rs` so all heuristic
 /// matching and proof-shape logic lives in one place.
+mod container_induction;
 mod decimal;
 mod floor_arith;
 mod floor_window;
@@ -1035,6 +1036,21 @@ fn emit_verify_law_forall_auto_proof_inner(
     if law.when.is_some()
         && let Some(proof) =
             interval_mono::emit_interval_monotonicity_law(vb, law, ctx, theorem_base)
+    {
+        return Some(proof);
+    }
+
+    // Container (motive2-lift) induction — an unconditional law about a
+    // rose-tree ADT walker whose recursion runs through a `List<Self>` field
+    // (a forced mutual pair `f`/`fList`). The legacy structural arm declines
+    // this exact shape (indirect variants give plain `Tree.rec` no child-list
+    // hypothesis); this closes it on `f.induct` with the sibling motive
+    // computed from the claim AST. Shape-keyed and name-blind; floored so a
+    // mis-recognition degrades to the same bounded sorry the default body
+    // produced. Placed before the structural-induction pin so the container
+    // idiom is closed rather than falling through to the `simp <;> done` floor.
+    if let Some(proof) =
+        container_induction::emit_container_induction_law(vb, law, ctx, &intro_names)
     {
         return Some(proof);
     }
