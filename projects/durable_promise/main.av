@@ -1,0 +1,44 @@
+module Main
+    intent =
+        "Runnable demo for the durable-promise state machine core. Prints a handful"
+        "of transitions so a reader can watch the projection principle and the"
+        "absorbing/no-resurrection behaviour that the laws in domain/promise.av prove"
+        "universal on the Lean kernel."
+    depends [Domain.Promise]
+    effects [Console]
+
+fn describe(p: Promise) -> String
+    ? "One-line rendering of a promise for the demo output."
+    match p.state
+        PromiseState.Pending -> "Pending(deadline={p.timeoutAt})"
+        PromiseState.Resolved(v) -> "Resolved({v})"
+        PromiseState.Rejected(e) -> "Rejected({e})"
+        PromiseState.TimedOut -> "TimedOut(deadline={p.timeoutAt})"
+
+verify describe
+    describe(Domain.Promise.pending(10)) => "Pending(deadline=10)"
+    describe(Promise(state = PromiseState.Resolved(42), timeoutAt = 10)) => "Resolved(42)"
+    describe(Promise(state = PromiseState.TimedOut, timeoutAt = 10)) => "TimedOut(deadline=10)"
+
+fn main() -> Unit
+    ? "Walks a promise through resolve, timeout projection, and no-resurrection."
+    ! [Console.print]
+    p0 = Domain.Promise.pending(10)
+    Console.print("start          : {describe(p0)}")
+
+    // Resolve before the deadline: writes the value.
+    p1 = Domain.Promise.resolve(p0, 5, 42)
+    Console.print("resolve @5     : {describe(p1)}")
+
+    // Second settle is absorbed; the first value survives (no double-settle).
+    p2 = Domain.Promise.resolve(p1, 6, 99)
+    Console.print("resolve @6     : {describe(p2)}  (first value kept)")
+
+    // A different promise that is never settled and then observed past its deadline.
+    q0 = Domain.Promise.pending(10)
+    q1 = Domain.Promise.observe(q0, 12)
+    Console.print("observe @12    : {describe(q1)}  (timeout projected)")
+
+    // Trying to resolve the expired promise does NOT un-expire it.
+    q2 = Domain.Promise.resolve(q1, 12, 7)
+    Console.print("resolve @12    : {describe(q2)}  (no resurrection)")

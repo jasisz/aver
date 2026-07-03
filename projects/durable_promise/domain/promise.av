@@ -1,0 +1,166 @@
+module Promise
+    intent =
+        "The CORE of a durable-promise state machine, modeled in pure Aver and stated"
+        "so its safety laws can be machine-checked. A durable promise is a cell that"
+        "starts Pending and moves EXACTLY ONCE to a settled state: Resolved(value),"
+        "Rejected(error), or TimedOut. Time enters only as a `now: Int` argument, never"
+        "as an ambient clock. observe(p, now) is the timeout PROJECTION: a Pending"
+        "promise whose deadline has passed is VIEWED as TimedOut before any writer acts"
+        "on it, so observation happens before persistence. resolve and reject project"
+        "the timeout first and only then settle, which is what makes a settled promise"
+        "absorbing and an expired promise impossible to resurrect."
+    exposes [PromiseState, Promise, pending, observe, resolve, reject, isPending, isSettled, isTimedOut]
+    effects []
+
+type PromiseState
+    Pending
+    Resolved(Int)
+    Rejected(Int)
+    TimedOut
+
+record Promise
+    state: PromiseState
+    timeoutAt: Int
+
+fn pending(deadline: Int) -> Promise
+    ? "A fresh Pending promise that will expire once now reaches `deadline`."
+    Promise(state = PromiseState.Pending, timeoutAt = deadline)
+
+fn isPending(p: Promise) -> Bool
+    ? "True while the promise is still awaiting a settle or a timeout."
+    match p.state
+        PromiseState.Pending -> true
+        _ -> false
+
+verify isPending
+    isPending(pending(10)) => true
+    isPending(Promise(state = PromiseState.Resolved(7), timeoutAt = 10)) => false
+    isPending(Promise(state = PromiseState.TimedOut, timeoutAt = 10)) => false
+
+fn isSettled(p: Promise) -> Bool
+    ? "True once the promise has left Pending: Resolved, Rejected, or TimedOut."
+    match p.state
+        PromiseState.Pending -> false
+        _ -> true
+
+verify isSettled
+    isSettled(pending(10)) => false
+    isSettled(Promise(state = PromiseState.Rejected(1), timeoutAt = 10)) => true
+    isSettled(Promise(state = PromiseState.TimedOut, timeoutAt = 10)) => true
+
+fn isTimedOut(p: Promise) -> Bool
+    ? "True exactly when the promise has been projected to TimedOut."
+    match p.state
+        PromiseState.TimedOut -> true
+        _ -> false
+
+verify isTimedOut
+    isTimedOut(Promise(state = PromiseState.TimedOut, timeoutAt = 10)) => true
+    isTimedOut(pending(10)) => false
+
+fn observe(p: Promise, now: Int) -> Promise
+    ? "Timeout projection: a Pending promise whose deadline has passed (now >= timeoutAt) is viewed as TimedOut. Every other promise is returned unchanged. This is the read-time view applied before any settle is persisted."
+    match p.state
+        PromiseState.Pending -> match now >= p.timeoutAt
+            true -> Promise(state = PromiseState.TimedOut, timeoutAt = p.timeoutAt)
+            false -> p
+        _ -> p
+
+verify observe
+    observe(pending(10), 5) => pending(10)
+    observe(pending(10), 10) => Promise(state = PromiseState.TimedOut, timeoutAt = 10)
+    observe(pending(10), 15) => Promise(state = PromiseState.TimedOut, timeoutAt = 10)
+    observe(Promise(state = PromiseState.Resolved(3), timeoutAt = 10), 99) => Promise(state = PromiseState.Resolved(3), timeoutAt = 10)
+
+fn resolve(p: Promise, now: Int, value: Int) -> Promise
+    ? "Settle a promise successfully with `value`. The timeout is projected first, so resolve only writes when the promise is genuinely still Pending at `now`; on any already-settled or expired promise it is the identity."
+    match observe(p, now).state
+        PromiseState.Pending -> Promise(state = PromiseState.Resolved(value), timeoutAt = p.timeoutAt)
+        _ -> observe(p, now)
+
+verify resolve
+    resolve(pending(10), 5, 42) => Promise(state = PromiseState.Resolved(42), timeoutAt = 10)
+    resolve(pending(10), 15, 42) => Promise(state = PromiseState.TimedOut, timeoutAt = 10)
+    resolve(Promise(state = PromiseState.Resolved(1), timeoutAt = 10), 5, 42) => Promise(state = PromiseState.Resolved(1), timeoutAt = 10)
+
+fn reject(p: Promise, now: Int, error: Int) -> Promise
+    ? "Settle a promise with a failure `error`. Mirror of resolve: projects the timeout first, writes only on a still-Pending promise, otherwise identity."
+    match observe(p, now).state
+        PromiseState.Pending -> Promise(state = PromiseState.Rejected(error), timeoutAt = p.timeoutAt)
+        _ -> observe(p, now)
+
+verify reject
+    reject(pending(10), 5, 9) => Promise(state = PromiseState.Rejected(9), timeoutAt = 10)
+    reject(pending(10), 15, 9) => Promise(state = PromiseState.TimedOut, timeoutAt = 10)
+    reject(Promise(state = PromiseState.TimedOut, timeoutAt = 10), 5, 9) => Promise(state = PromiseState.TimedOut, timeoutAt = 10)
+
+// --- Safety laws (stated for machine-checking) ---
+
+// THEME 1 - Settled is absorbing: once a promise is not Pending, observing or
+// settling it again is the identity. Stated once per settling operation.
+
+verify observe law settledIsIdentity
+    given p: Promise = [Promise(state = PromiseState.Resolved(7), timeoutAt = 10), Promise(state = PromiseState.Rejected(2), timeoutAt = 3), Promise(state = PromiseState.TimedOut, timeoutAt = 4)]
+    given now: Int = [0, 4, 11]
+    when isSettled(p)
+    observe(p, now) => p
+
+verify resolve law settledIsIdentity
+    given p: Promise = [Promise(state = PromiseState.Resolved(7), timeoutAt = 10), Promise(state = PromiseState.Rejected(2), timeoutAt = 3), Promise(state = PromiseState.TimedOut, timeoutAt = 4)]
+    given now: Int = [0, 4, 11]
+    given value: Int = [1, 5]
+    when isSettled(p)
+    resolve(p, now, value) => p
+
+verify reject law settledIsIdentity
+    given p: Promise = [Promise(state = PromiseState.Resolved(7), timeoutAt = 10), Promise(state = PromiseState.Rejected(2), timeoutAt = 3), Promise(state = PromiseState.TimedOut, timeoutAt = 4)]
+    given now: Int = [0, 4, 11]
+    given error: Int = [1, 5]
+    when isSettled(p)
+    reject(p, now, error) => p
+
+// THEME 2 - No double-settle. A settle always leaves the promise in a settled
+// state (helper), so a second settle is absorbed and the FIRST outcome (its whole
+// state, value included) is preserved.
+
+verify resolve law alwaysSettles
+    given p: Promise = [Promise(state = PromiseState.Pending, timeoutAt = 10), Promise(state = PromiseState.Resolved(7), timeoutAt = 10), Promise(state = PromiseState.Rejected(2), timeoutAt = 3), Promise(state = PromiseState.TimedOut, timeoutAt = 4)]
+    given now: Int = [0, 4, 11]
+    given value: Int = [1, 5]
+    isPending(resolve(p, now, value)) => false
+
+verify resolve law noDoubleSettle
+    given p: Promise = [Promise(state = PromiseState.Pending, timeoutAt = 10), Promise(state = PromiseState.Resolved(7), timeoutAt = 10), Promise(state = PromiseState.TimedOut, timeoutAt = 4)]
+    given now1: Int = [0, 11]
+    given now2: Int = [0, 11]
+    given v1: Int = [1, 5]
+    given v2: Int = [2, 9]
+    resolve(resolve(p, now1, v1), now2, v2) => resolve(p, now1, v1)
+
+// THEME 3 - Timeout projection is idempotent.
+
+verify observe law idempotent
+    given p: Promise = [Promise(state = PromiseState.Pending, timeoutAt = 10), Promise(state = PromiseState.Resolved(7), timeoutAt = 10), Promise(state = PromiseState.TimedOut, timeoutAt = 4)]
+    given now: Int = [0, 4, 11]
+    observe(observe(p, now), now) => observe(p, now)
+
+// THEME 4 - Timeout is monotone: an expired view under now1 stays expired under
+// any later now2 >= now1.
+
+verify observe law timeoutMonotone
+    given p: Promise = [Promise(state = PromiseState.Pending, timeoutAt = 10), Promise(state = PromiseState.TimedOut, timeoutAt = 4)]
+    given now1: Int = [0, 10, 11]
+    given now2: Int = [0, 10, 11]
+    when isTimedOut(observe(p, now1))
+    when now2 >= now1
+    isTimedOut(observe(p, now2)) => true
+
+// THEME 5 - No resurrection: settling an already-expired promise does not
+// un-expire it.
+
+verify resolve law noResurrection
+    given p: Promise = [Promise(state = PromiseState.Pending, timeoutAt = 10), Promise(state = PromiseState.TimedOut, timeoutAt = 4)]
+    given now: Int = [0, 10, 11]
+    given value: Int = [1, 5]
+    when isTimedOut(observe(p, now))
+    resolve(observe(p, now), now, value) => observe(p, now)
