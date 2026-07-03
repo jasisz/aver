@@ -36,6 +36,7 @@ COPY aver-memory ./aver-memory
 COPY aver-rt ./aver-rt
 COPY aver-lsp ./aver-lsp
 COPY src ./src
+COPY benches ./benches
 
 RUN cargo build --bin aver
 
