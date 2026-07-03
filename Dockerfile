@@ -56,7 +56,7 @@ COPY --from=builder /opt/dafny-install /opt/dafny-install
 COPY --from=builder /opt/dafny /opt/dafny
 COPY --from=builder /work/target/debug/aver /usr/local/bin/aver
 COPY examples/core/hello.av ./examples/core/hello.av
-COPY examples/formal/string_concat_monoid.av ./examples/formal/string_concat_monoid.av
+COPY examples/formal/validated_wrapper_law.av ./examples/formal/validated_wrapper_law.av
 
 RUN set -eux; \
     lean --version; \
@@ -64,6 +64,6 @@ RUN set -eux; \
     dafny --version; \
     aver run examples/core/hello.av; \
     rm -rf /tmp/aver-proof-smoke-build; \
-    aver proof examples/formal/string_concat_monoid.av --backend lean --check -o /tmp/aver-proof-smoke-build
+    aver proof examples/formal/validated_wrapper_law.av --backend lean --check -o /tmp/aver-proof-smoke-build
 
-CMD ["sh", "-lc", "aver run examples/core/hello.av && rm -rf /tmp/aver-proof-smoke-run && aver proof examples/formal/string_concat_monoid.av --backend lean --check -o /tmp/aver-proof-smoke-run"]
+CMD ["sh", "-lc", "aver run examples/core/hello.av && rm -rf /tmp/aver-proof-smoke-run && aver proof examples/formal/validated_wrapper_law.av --backend lean --check -o /tmp/aver-proof-smoke-run"]
