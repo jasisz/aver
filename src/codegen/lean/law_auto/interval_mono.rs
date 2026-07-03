@@ -37,7 +37,7 @@
 
 use super::AutoProof;
 use super::aver_name_to_lean;
-use super::shared::{expr_dotted_name, find_fn_def_by_call_name};
+use super::shared::{self, expr_dotted_name, find_fn_def_by_call_name};
 use crate::ast::{Expr, Spanned, Stmt, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 
@@ -59,56 +59,17 @@ pub(super) struct IntervalMono {
     subject: String,
 }
 
-/// `(short_callee_name, args)` when `expr` is a function call, else `None`.
-/// The short name is the last dotted component, so a qualified
-/// `Domain.Rational.minus` call matches the primitive `minus` — the rung
-/// keys on the rational ALGEBRA primitive, never on the law/figure name.
-fn as_call(expr: &Spanned<Expr>) -> Option<(String, &[Spanned<Expr>])> {
-    let Expr::FnCall(callee, args) = &expr.node else {
-        return None;
-    };
-    let dotted = expr_dotted_name(callee)?;
-    let short = dotted.rsplit('.').next().unwrap_or(&dotted).to_string();
-    Some((short, args.as_slice()))
-}
-
-/// A call to the named primitive with exactly `n` args.
-fn call_named<'a>(expr: &'a Spanned<Expr>, name: &str, n: usize) -> Option<&'a [Spanned<Expr>]> {
-    let (short, args) = as_call(expr)?;
-    (short == name && args.len() == n).then_some(args)
-}
-
-/// The bare identifier this expr names (an ident / resolved binding), else
-/// `None`. Used to pin a sub-expression to a given variable.
-fn ident_of(expr: &Spanned<Expr>) -> Option<String> {
-    match &expr.node {
-        Expr::Ident(n) | Expr::Resolved { name: n, .. } => Some(n.clone()),
-        _ => None,
-    }
-}
-
 /// `absFraction (minus (times <X> <Y>) (oneFraction))` ⇒ `(X_ident, Y_ident)`.
 /// The shared magnitude shape of the claim and both endpoint premises.
 fn match_abs_magnitude(expr: &Spanned<Expr>) -> Option<(String, String)> {
-    let abs_args = call_named(expr, "absFraction", 1)?;
-    let minus_args = call_named(&abs_args[0], "minus", 2)?;
-    let times_args = call_named(&minus_args[0], "times", 2)?;
+    let abs_args = shared::call_named(expr, "absFraction", 1)?;
+    let minus_args = shared::call_named(&abs_args[0], "minus", 2)?;
+    let times_args = shared::call_named(&minus_args[0], "times", 2)?;
     // second minus operand must be `oneFraction()` (0-arg call)
-    call_named(&minus_args[1], "oneFraction", 0)?;
-    let x = ident_of(&times_args[0])?;
-    let y = ident_of(&times_args[1])?;
+    shared::call_named(&minus_args[1], "oneFraction", 0)?;
+    let x = shared::ident_name(&times_args[0])?.to_string();
+    let y = shared::ident_name(&times_args[1])?.to_string();
     Some((x, y))
-}
-
-/// Flatten a left-nested `Bool.and(Bool.and(…), w)` `when` tree into its
-/// atomic conjuncts.
-fn flatten_and<'a>(expr: &'a Spanned<Expr>, out: &mut Vec<&'a Spanned<Expr>>) {
-    if let Some(args) = call_named(expr, "and", 2) {
-        flatten_and(&args[0], out);
-        flatten_and(&args[1], out);
-    } else {
-        out.push(expr);
-    }
 }
 
 /// Recognize the interval-monotonicity shape. Pure / name-blind on the law
@@ -145,9 +106,9 @@ pub(super) fn recognize_interval_monotonicity_shape(
         .next()
         .unwrap_or(&subject_src)
         .to_string();
-    let d = ident_of(&claim_args[0])?;
-    let v = ident_of(&claim_args[1])?;
-    let e = ident_of(&claim_args[2])?;
+    let d = shared::ident_name(&claim_args[0])?.to_string();
+    let v = shared::ident_name(&claim_args[1])?.to_string();
+    let e = shared::ident_name(&claim_args[2])?.to_string();
 
     // Subject body must be the magnitude bound `lessThan (absFraction
     // (minus (times p0 p1) oneFraction)) p2` over its three params — this
@@ -160,35 +121,34 @@ pub(super) fn recognize_interval_monotonicity_shape(
     let [Stmt::Expr(body)] = subj_fd.body.stmts() else {
         return None;
     };
-    let lt_args = call_named(body, "lessThan", 2)?;
+    let lt_args = shared::call_named(body, "lessThan", 2)?;
     let (mx, my) = match_abs_magnitude(&lt_args[0])?;
     let p0 = &subj_fd.params[0].0;
     let p1 = &subj_fd.params[1].0;
     let p2 = &subj_fd.params[2].0;
-    if &mx != p0 || &my != p1 || ident_of(&lt_args[1]).as_deref() != Some(p2.as_str()) {
+    if &mx != p0 || &my != p1 || shared::ident_name(&lt_args[1]) != Some(p2.as_str()) {
         return None;
     }
 
     // Six `when` conjuncts, matched to the six expected shapes.
     let when = law.when.as_ref()?;
-    let mut conj: Vec<&Spanned<Expr>> = Vec::new();
-    flatten_and(when, &mut conj);
+    let conj = shared::collect_when_clauses(when);
     if conj.len() != 6 {
         return None;
     }
 
     // A `subject(arg0, v, e)` endpoint premise ⇒ arg0 ident.
     let subject_endpoint = |c: &Spanned<Expr>| -> Option<String> {
-        let (short, args) = as_call(c)?;
+        let (short, args) = shared::short_call_name_args(c)?;
         if short != subject_short || args.len() != 3 {
             return None;
         }
-        if ident_of(&args[1]).as_deref() != Some(v.as_str())
-            || ident_of(&args[2]).as_deref() != Some(e.as_str())
+        if shared::ident_name(&args[1]) != Some(v.as_str())
+            || shared::ident_name(&args[2]) != Some(e.as_str())
         {
             return None;
         }
-        ident_of(&args[0])
+        shared::ident_name(&args[0]).map(str::to_string)
     };
 
     // Pass 1: bind lo/hi from the `isNonNeg(minus …)` pins and check the
@@ -199,20 +159,20 @@ pub(super) fn recognize_interval_monotonicity_shape(
     let mut saw_v_nonneg = false;
     let mut saw_guard = false;
     for c in &conj {
-        if let Some(args) = call_named(c, "isNonNeg", 1) {
-            if let Some(margs) = call_named(&args[0], "minus", 2) {
-                let a0 = ident_of(&margs[0]);
-                let a1 = ident_of(&margs[1]);
-                if a0.as_deref() == Some(d.as_str()) {
-                    lo = a1.or(lo); // minus(d, lo) ⇒ lo ≤ d
-                } else if a1.as_deref() == Some(d.as_str()) {
-                    hi = a0.or(hi); // minus(hi, d) ⇒ d ≤ hi
+        if let Some(args) = shared::call_named(c, "isNonNeg", 1) {
+            if let Some(margs) = shared::call_named(&args[0], "minus", 2) {
+                let a0 = shared::ident_name(&margs[0]);
+                let a1 = shared::ident_name(&margs[1]);
+                if a0 == Some(d.as_str()) {
+                    lo = a1.map(str::to_string).or(lo); // minus(d, lo) ⇒ lo ≤ d
+                } else if a1 == Some(d.as_str()) {
+                    hi = a0.map(str::to_string).or(hi); // minus(hi, d) ⇒ d ≤ hi
                 } else {
                     return None;
                 }
                 continue;
             }
-            if ident_of(&args[0]).as_deref() == Some(v.as_str()) {
+            if shared::ident_name(&args[0]) == Some(v.as_str()) {
                 saw_v_nonneg = true;
                 continue;
             }
