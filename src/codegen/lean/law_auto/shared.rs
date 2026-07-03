@@ -166,6 +166,45 @@ pub(super) fn child_exprs(e: &Spanned<Expr>) -> Vec<&Spanned<Expr>> {
     }
 }
 
+/// Collect dotted/source names of call sites using the legacy law-auto call-scan
+/// shape, with `TailCall` treated as a call site after TCO.
+pub(super) fn collect_fncall_names(e: &Expr, out: &mut Vec<String>) {
+    match e {
+        Expr::FnCall(callee, args) => {
+            if let Some(n) = expr_dotted_name(callee) {
+                out.push(n);
+            }
+            for a in args {
+                collect_fncall_names(&a.node, out);
+            }
+        }
+        Expr::TailCall(tc) => {
+            out.push(tc.target.clone());
+            for a in &tc.args {
+                collect_fncall_names(&a.node, out);
+            }
+        }
+        Expr::BinOp(_, a, b) => {
+            collect_fncall_names(&a.node, out);
+            collect_fncall_names(&b.node, out);
+        }
+        Expr::Neg(a) => collect_fncall_names(&a.node, out),
+        Expr::Attr(b, _) => collect_fncall_names(&b.node, out),
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                collect_fncall_names(&v.node, out);
+            }
+        }
+        Expr::Match { subject, arms } => {
+            collect_fncall_names(&subject.node, out);
+            for arm in arms {
+                collect_fncall_names(&arm.body.node, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Deepest user-fn call `h(<field>)` (single arg the given binder) anywhere in
 /// `expr`; wrappers around the call are traversed through [`child_exprs`].
 pub(super) fn call_on_binder(
