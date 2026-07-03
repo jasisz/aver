@@ -61,6 +61,9 @@ class StrategyRow:
     law_key: str
     display_law: str
     module: str
+    source_file: str
+    fn: str
+    law: str
     strategy: str
     mechanism: str
     raw_strategy: str
@@ -127,6 +130,14 @@ def git(repo: Path, args: list[str], timeout: int = 60) -> str:
     return run(["git", *args], repo, timeout=timeout, check=True).stdout
 
 
+def git_ls_files(repo: Path, pathspecs: list[str] | None = None) -> list[str]:
+    args = ["ls-files"]
+    if pathspecs:
+        args.append("--")
+        args.extend(pathspecs)
+    return [line for line in git(repo, args).splitlines() if line]
+
+
 def short_commit(repo: Path) -> str:
     return git(repo, ["rev-parse", "--short=12", "HEAD"]).strip()
 
@@ -166,13 +177,16 @@ def module_from_lean_path(path: Path, root: Path | None = None) -> str:
 
 
 def default_sources(repo: Path) -> list[SourceFile]:
-    paths: list[Path] = []
-    paths.extend(sorted((repo / "examples/formal").glob("*.av")))
-    paths.extend(sorted((repo / "projects/k5_fdiv/domain").glob("*.av")))
-    for extra in ["projects/k5_fdiv/main.av", "projects/k5_fdiv/leafprobe.av"]:
-        p = repo / extra
-        if p.exists():
-            paths.append(p)
+    rels = git_ls_files(
+        repo,
+        [
+            "examples/formal/*.av",
+            "projects/k5_fdiv/domain/*.av",
+            "projects/k5_fdiv/main.av",
+            "projects/k5_fdiv/leafprobe.av",
+        ],
+    )
+    paths = [repo / p for p in sorted(rels)]
     seen: set[Path] = set()
     out: list[SourceFile] = []
     for path in paths:
@@ -186,22 +200,33 @@ def default_sources(repo: Path) -> list[SourceFile]:
 def expand_sources(repo: Path, values: list[str]) -> list[SourceFile]:
     if not values:
         return default_sources(repo)
-    paths: list[Path] = []
+    tracked = set(git_ls_files(repo))
+    rels: list[str] = []
     for value in values:
-        p = (repo / value).resolve() if not os.path.isabs(value) else Path(value)
-        if p.is_dir():
-            paths.extend(sorted(p.glob("*.av")))
+        p = Path(value)
+        if p.is_absolute():
+            try:
+                value_rel = p.resolve().relative_to(repo).as_posix()
+            except ValueError:
+                continue
         else:
-            paths.append(p)
+            value_rel = p.as_posix().strip("/")
+        if value_rel in tracked and value_rel.endswith(".av"):
+            rels.append(value_rel)
+            continue
+        prefix = value_rel.rstrip("/") + "/"
+        rels.extend(
+            path
+            for path in tracked
+            if path.startswith(prefix)
+            and path.endswith(".av")
+            and "/" not in path[len(prefix) :]
+        )
     out = []
     seen: set[Path] = set()
-    for path in paths:
-        try:
-            rel = path.relative_to(repo)
-        except ValueError:
-            rel = path
-        full = repo / rel if not rel.is_absolute() else rel
-        if full in seen or not full.exists():
+    for rel_path in sorted(rels):
+        full = repo / rel_path
+        if full in seen:
             continue
         seen.add(full)
         out.append(SourceFile(path=full, module=module_from_source(full)))
@@ -241,12 +266,78 @@ def mechanism_name(raw: str) -> str:
     return base
 
 
-def qualify_law(source_module: str, fn_label: str, law_name: str) -> tuple[str, str]:
-    display = f"{fn_label}.{law_name}"
-    if "." in fn_label:
-        module = fn_label.rsplit(".", 1)[0]
-        return display, module
-    return f"{source_module}.{display}", source_module
+def module_source_index(repo: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for rel_path in sorted(git_ls_files(repo, ["*.av"])):
+        module = module_from_source(repo / rel_path)
+        out.setdefault(module, rel_path)
+    return out
+
+
+def normalize_fn_label(
+    source_module: str,
+    fn_label: str,
+    known_modules: set[str],
+) -> tuple[str, str]:
+    if "." not in fn_label:
+        return f"{source_module}.{fn_label}", source_module
+
+    prefix, leaf = fn_label.rsplit(".", 1)
+    if prefix in known_modules:
+        return fn_label, prefix
+
+    longest_known = sorted(
+        (module for module in known_modules if fn_label.startswith(f"{module}.")),
+        key=len,
+        reverse=True,
+    )
+    if longest_known:
+        return fn_label, longest_known[0]
+
+    if source_module == prefix or source_module.endswith(f".{prefix}"):
+        return f"{source_module}.{leaf}", source_module
+
+    suffix_matches = [
+        module
+        for module in known_modules
+        if module == prefix or module.endswith(f".{prefix}")
+    ]
+    if len(suffix_matches) == 1:
+        module = suffix_matches[0]
+        return f"{module}.{leaf}", module
+
+    module = prefix
+    return fn_label, module
+
+
+def qualify_law(
+    source_module: str,
+    fn_label: str,
+    law_name: str,
+    known_modules: set[str],
+) -> tuple[str, str, str]:
+    fn_key, module = normalize_fn_label(source_module, fn_label, known_modules)
+    return f"{fn_key}.{law_name}", module, fn_key
+
+
+def assert_unique_strategy_keys(rows: Iterable[StrategyRow]) -> None:
+    seen: dict[tuple[str, str, str], StrategyRow] = {}
+    duplicates: list[str] = []
+    for row in rows:
+        key = (row.source_file, row.fn, row.law)
+        prior = seen.get(key)
+        if prior is not None:
+            duplicates.append(
+                f"{key}: {prior.raw_strategy} from {prior.source} vs "
+                f"{row.raw_strategy} from {row.source}"
+            )
+        else:
+            seen[key] = row
+    if duplicates:
+        raise AssertionError(
+            "duplicate proof telemetry rows for (source_file, fn, law):\n"
+            + "\n".join(duplicates[:20])
+        )
 
 
 def collect_current_strategies(
@@ -255,7 +346,9 @@ def collect_current_strategies(
     sources: list[SourceFile],
     timeout: int,
 ) -> tuple[list[StrategyRow], list[str], list[str]]:
-    rows_by_law: dict[str, StrategyRow] = {}
+    module_sources = module_source_index(repo)
+    known_modules = set(module_sources)
+    rows_by_identity: dict[tuple[str, str, str], StrategyRow] = {}
     conflicts: list[str] = []
     failures: list[str] = []
     for source in sources:
@@ -276,12 +369,19 @@ def collect_current_strategies(
             match = LAW_IR_RE.match(line.strip())
             if not match:
                 continue
-            law_key, module = qualify_law(source.module, match.group("fn"), match.group("law"))
+            law_name = match.group("law")
+            law_key, module, fn_key = qualify_law(
+                source.module, match.group("fn"), law_name, known_modules
+            )
+            source_file = module_sources.get(module, source_rel)
             raw = match.group("strategy").strip()
             row = StrategyRow(
                 law_key=law_key,
                 display_law=law_key,
                 module=module,
+                source_file=source_file,
+                fn=fn_key,
+                law=law_name,
                 strategy=base_strategy(raw),
                 mechanism=mechanism_name(raw),
                 raw_strategy=raw,
@@ -289,15 +389,18 @@ def collect_current_strategies(
                 quantifiers=int(match.group("quantifiers")),
                 premises=int(match.group("premises")),
             )
-            prior = rows_by_law.get(law_key)
+            identity = (row.source_file, row.fn, row.law)
+            prior = rows_by_identity.get(identity)
             if prior is not None and prior.raw_strategy != row.raw_strategy:
                 conflicts.append(
                     f"{law_key}: {prior.raw_strategy} from {prior.source} vs "
                     f"{row.raw_strategy} from {row.source}"
                 )
                 continue
-            rows_by_law.setdefault(law_key, row)
-    return sorted(rows_by_law.values(), key=lambda r: r.law_key), failures, conflicts
+            rows_by_identity.setdefault(identity, row)
+    rows = sorted(rows_by_identity.values(), key=lambda r: (r.source_file, r.fn, r.law))
+    assert_unique_strategy_keys(rows)
+    return rows, failures, conflicts
 
 
 def parse_class_tags_in_dir(root: Path, source_label: str) -> list[ClassTag]:
@@ -329,9 +432,8 @@ def parse_class_tags_in_dir(root: Path, source_label: str) -> list[ClassTag]:
 
 def collect_committed_lean_tags(repo: Path) -> list[ClassTag]:
     root_tags: dict[str, ClassTag] = {}
-    for path in sorted(repo.rglob("*.lean")):
-        if ".git" in path.parts or "target" in path.parts:
-            continue
+    for rel_path in sorted(git_ls_files(repo, ["*.lean"])):
+        path = repo / rel_path
         for tag in parse_class_tags_in_file(repo, path):
             root_tags.setdefault(tag.law_key, tag)
     return sorted(root_tags.values(), key=lambda t: t.law_key)
@@ -494,9 +596,8 @@ def collect_head_manifest_count(repo: Path) -> int:
 
 def collect_hand_sidecars(repo: Path) -> list[HandSidecar]:
     sidecars: dict[str, HandSidecar] = {}
-    for path in sorted(repo.rglob("*.lean")):
-        if ".git" in path.parts or "target" in path.parts:
-            continue
+    for rel_path in sorted(git_ls_files(repo, ["*.lean", "*.dfy"])):
+        path = repo / rel_path
         try:
             head = "\n".join(path.read_text(encoding="utf-8").splitlines()[:40])
         except OSError:
