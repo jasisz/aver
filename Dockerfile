@@ -4,7 +4,7 @@ ARG LEAN_TOOLCHAIN=leanprover/lean4:v4.31.0
 ARG DAFNY_VERSION=4.11.0
 
 ENV ELAN_HOME=/opt/elan
-ENV PATH=/opt/elan/bin:/opt/dafny:$PATH
+ENV PATH=/opt/elan/bin:/opt/dafny:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN set -eux; \
     apt-get update; \
@@ -43,7 +43,7 @@ RUN cargo build --bin aver
 FROM --platform=linux/amd64 debian:bookworm-slim AS runtime
 
 ENV ELAN_HOME=/opt/elan
-ENV PATH=/opt/elan/bin:/opt/dafny:/usr/local/bin:$PATH
+ENV PATH=/opt/elan/bin:/opt/dafny:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN set -eux; \
     apt-get update; \
@@ -67,4 +67,4 @@ RUN set -eux; \
     rm -rf /tmp/aver-proof-smoke-build; \
     aver proof examples/formal/validated_wrapper_law.av --backend lean --check -o /tmp/aver-proof-smoke-build
 
-CMD ["sh", "-lc", "aver run examples/core/hello.av && rm -rf /tmp/aver-proof-smoke-run && aver proof examples/formal/validated_wrapper_law.av --backend lean --check -o /tmp/aver-proof-smoke-run"]
+CMD ["sh", "-c", "aver run examples/core/hello.av && rm -rf /tmp/aver-proof-smoke-run && aver proof examples/formal/validated_wrapper_law.av --backend lean --check -o /tmp/aver-proof-smoke-run"]
