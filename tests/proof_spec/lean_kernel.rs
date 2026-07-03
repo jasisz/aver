@@ -1514,3 +1514,77 @@ verify ledgerWithinCeiling law nonstrictChainWitness
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+#[test]
+fn proof_lean_multi_literal_string_pos_skipper_stability_lemma_kernel_clean() {
+    // Regression net for the fuel-stability lemma on a MULTI-literal string-position
+    // skipper — the json `skipWs` shape (four whitespace chars all recursing to
+    // `self(s, pos+1)`, rankBudget 1). The first synthesized skeleton only handled a
+    // single skip literal and hard-failed this shape with `unsolved goals` (`case neg`
+    // could not close the residual `match … skipWs__fuel fuel …  = match … skipWs__fuel
+    // measure' …`). The robust skeleton is literal-COUNT agnostic, so the lemma must
+    // kernel-prove with NO sorry, and the whole project must build clean.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping multi-literal skipper stability test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-skipws-stable-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module SkipWsFuel\n    effects []\n\n\
+         fn skipWs(s: String, pos: Int) -> Int\n    match String.charAt(s, pos)\n        Option.None -> pos\n        Option.Some(c) -> match c\n            \" \" -> skipWs(s, pos + 1)\n            \"\\t\" -> skipWs(s, pos + 1)\n            \"\\n\" -> skipWs(s, pos + 1)\n            \"\\r\" -> skipWs(s, pos + 1)\n            _ -> pos\n\n\
+         verify skipWs\n    skipWs(\"\", 0) => 0\n    skipWs(\"  abc\", 0) => 2\n    skipWs(\"\\tabc\", 0) => 1\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-skipws-stable-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .arg("--sorry-budget")
+        .arg("0")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean = std::fs::read_to_string(out.join("SkipWsFuel.lean")).expect("read SkipWsFuel.lean");
+    // The stability lemma must be emitted (the multi-literal skip shape is gated in)
+    // and floored fail-soft (`first | (…) | sorry`).
+    assert!(
+        lean.contains("theorem skipWs__fuel_stable :"),
+        "the multi-literal string-position skipper must get a stability lemma:\n{lean}"
+    );
+    assert!(
+        lean.contains("  first\n") && lean.contains("\n  | sorry"),
+        "the stability lemma must be floored `first | (…) | sorry`:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    // passed + zero sorries together certify: the lemma did NOT fall to its sorry
+    // floor (`sorries == 0`) and `lake build` genuinely closed it (`passed`), i.e.
+    // the robust skeleton kernel-proves the multi-literal case — no `unsolved goals`.
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["build_errors"].as_u64(),
+        ),
+        (Some(true), Some(0), Some(0)),
+        "the multi-literal skipper stability lemma must kernel-prove with no sorry and \
+         no hard build error.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}

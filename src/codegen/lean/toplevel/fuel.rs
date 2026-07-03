@@ -486,13 +486,42 @@ theorem {lemma_name} :
     ))
 }
 
+/// Companion stability lemma for a simple string-position fuel SKIPPER —
+/// `<fn>__fuel fuel s pos = <fn> s pos` whenever `fuel` meets the wrapper's
+/// initial `averStringPosFuel s pos rank` budget. Gated to the skip shape
+/// (`match charAt with none => pos | some c => match c with <lit> => self(s,
+/// pos+1) … | _ => pos`) by [`detect_simple_string_pos_skip_literal`]; the
+/// literal itself is only the shape witness — the proof is literal-COUNT
+/// agnostic (handles single- and multi-literal skippers like json's four-way
+/// `skipWs` uniformly), so the detected literal value is discarded.
+///
+/// The recursive branch never case-splits on the character: once
+/// `charAt = some c` is fixed, both `<fn>__fuel (fuel+1)` and the wrapper's
+/// `<fn>__fuel (measure'+1)` unfold to the SAME inner `match Char.toString c`
+/// whose only difference is the recursive fuel argument (`fuel` vs `measure'`),
+/// and one `simp only [<fn>__fuel, hchar, hleft]` closes it by rewriting that
+/// argument — independent of how many literal arms recurse.
+///
+/// FAIL-SOFT: the whole proof is wrapped in `first | (<skeleton>) | sorry`
+/// (mirroring the off-probe floor of
+/// [`crate::codegen::lean::law_auto::transparent_chain`]). A gated shape the
+/// skeleton cannot close degrades to a non-fatal `declaration uses 'sorry'`
+/// warning instead of a hard `unsolved goals` build error. The lemma is not
+/// cited by any law, so its own `sorry` never enters another law's
+/// `#print axioms` set — universal credit for laws that do not reference it is
+/// untouched. A bare `sorry` (not the `AVERSPEC_SORRY:<id>` trace) is used
+/// deliberately: the trace exists so `speculative::parse_failures` can demote a
+/// non-closing conditional LAW to bounded, and this support lemma has no law
+/// tier to demote and no `speculative::admits` consumer.
 fn emit_simple_string_pos_stability_lemma(
     fd: &FnDef,
     helper_name: &str,
     rank_budget: usize,
     emitted_body: &str,
 ) -> Option<String> {
-    let literal = detect_simple_string_pos_skip_literal(fd).or_else(|| {
+    // Gate only: the detected literal is the shape witness; the robust proof
+    // below is literal-agnostic, so the value is discarded.
+    detect_simple_string_pos_skip_literal(fd).or_else(|| {
         detect_simple_string_pos_skip_literal_from_body(fd, helper_name, emitted_body)
     })?;
     let fn_name = aver_name_to_lean(&fd.name);
@@ -505,10 +534,6 @@ fn emit_simple_string_pos_stability_lemma(
     } else {
         format!(" {params}")
     };
-    let lit = format!(
-        "\"{}\"",
-        crate::codegen::common::escape_string_literal(&literal)
-    );
     let lemma_name = format!("{helper_name}_stable");
 
     Some(format!(
@@ -516,49 +541,47 @@ fn emit_simple_string_pos_stability_lemma(
     ∀ (fuel : Nat){binders},
       averStringPosFuel {s} {pos} {rank_budget} ≤ fuel →
       {helper_name} fuel {args} = {fn_name} {args} := by
-  intro fuel
-  induction fuel with
-  | zero =>
-      intro {args} h
-      unfold averStringPosFuel at h
-      omega
-  | succ fuel ih =>
-      intro {args} h
-      unfold {fn_name}
-      have hmeasure_pos : 0 < averStringPosFuel {s} {pos} {rank_budget} := by
-        unfold averStringPosFuel
-        omega
-      cases hmeasure : averStringPosFuel {s} {pos} {rank_budget} with
-      | zero =>
-          omega
-      | succ measure' =>
-          by_cases hneg : {pos} < 0
-          · have hchar : String.charAtAv {s} {pos} = none := by
-              unfold String.charAtAv
-              simp [hneg]
-            simp [{helper_name}, hchar]
-          · have h0 : 0 ≤ {pos} := by omega
-            by_cases hlt : {pos}.toNat < {s}.toList.length
-            · have hchar := String.charAt_eq_of_lt {s} {pos} h0 hlt
-              by_cases hmatch : Char.toString ({s}.toList[{pos}.toNat]) = {lit}
-              · simp only [{helper_name}, hchar]
-                rw [hmatch]
-                have hnext_measure : averStringPosFuel {s} ({pos} + 1) {rank_budget} = measure' := by
-                  unfold averStringPosFuel at h hmeasure ⊢
-                  omega
-                have hleft : {helper_name} fuel {s} ({pos} + 1) = {fn_name} {s} ({pos} + 1) := by
-                  apply ih
-                  rw [hnext_measure]
-                  unfold averStringPosFuel at h hmeasure
-                  omega
-                unfold {fn_name} at hleft
-                rw [hnext_measure] at hleft
-                simpa using hleft
-              · have hmatch2 : ¬ String.singleton {s}.toList[{pos}.toNat] = {lit} := by
-                  simpa [Char.toString] using hmatch
-                simp [{helper_name}, hchar, hmatch2]
-            · have hchar := String.charAt_none_of_ge {s} {pos} h0 (by omega)
-              simp [{helper_name}, hchar]"#
+  first
+  | (intro fuel
+     induction fuel with
+     | zero =>
+         intro {args} h
+         unfold averStringPosFuel at h
+         omega
+     | succ fuel ih =>
+         intro {args} h
+         unfold {fn_name}
+         have hmeasure_pos : 0 < averStringPosFuel {s} {pos} {rank_budget} := by
+           unfold averStringPosFuel
+           omega
+         cases hmeasure : averStringPosFuel {s} {pos} {rank_budget} with
+         | zero =>
+             omega
+         | succ measure' =>
+             by_cases hneg : {pos} < 0
+             · have hchar : String.charAtAv {s} {pos} = none := by
+                 unfold String.charAtAv
+                 simp [hneg]
+               simp [{helper_name}, hchar]
+             · have h0 : 0 ≤ {pos} := by omega
+               by_cases hlt : {pos}.toNat < {s}.toList.length
+               · have hchar := String.charAt_eq_of_lt {s} {pos} h0 hlt
+                 have hnext_measure : averStringPosFuel {s} ({pos} + 1) {rank_budget} = measure' := by
+                   unfold averStringPosFuel at h hmeasure ⊢
+                   omega
+                 have hleft : {helper_name} fuel {s} ({pos} + 1) = {helper_name} measure' {s} ({pos} + 1) := by
+                   have hstep : {helper_name} fuel {s} ({pos} + 1) = {fn_name} {s} ({pos} + 1) := by
+                     apply ih
+                     rw [hnext_measure]
+                     unfold averStringPosFuel at h hmeasure
+                     omega
+                   rw [hstep]
+                   unfold {fn_name}
+                   rw [hnext_measure]
+                 simp only [{helper_name}, hchar, hleft]
+               · have hchar := String.charAt_none_of_ge {s} {pos} h0 (by omega)
+                 simp [{helper_name}, hchar])
+  | sorry"#
     ))
 }
 
@@ -655,10 +678,10 @@ fn detect_inner_char_match_literal(
     let mut fallback_exit = false;
     for arm in arms {
         match &arm.pattern {
-            Pattern::Literal(Literal::Str(lit)) => {
-                if expr_is_self_pos_plus_one_tailcall(&arm.body, fn_name, s_name, pos_name) {
-                    recursive_literal = Some(lit.clone());
-                }
+            Pattern::Literal(Literal::Str(lit))
+                if expr_is_self_pos_plus_one_tailcall(&arm.body, fn_name, s_name, pos_name) =>
+            {
+                recursive_literal = Some(lit.clone());
             }
             Pattern::Wildcard if expr_is_ident(&arm.body, pos_name) => {
                 fallback_exit = true;
