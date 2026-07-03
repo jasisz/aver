@@ -71,6 +71,44 @@ verify headcount law atLeastOne
     headcount(e) >= 1 => true
 "#;
 
+// The EQUATIONAL family in a foreign domain: a `reorg` transform that reverses
+// each report list preserves the headcount. This is the second (cross-domain)
+// witness for the container-lemma path — it proves the `walker_reverse` lemma is
+// DERIVED (a `headcountList_reverse` over `List Employee`, name-blind), not a
+// size/`sizeList`-specific template.
+const ORG_EQ_SRC: &str = r#"module OrgFlip
+    intent = "Cross-domain equational container witness: reversing report order preserves headcount."
+    effects []
+
+type Employee
+    Ic
+    Manager(List<Employee>)
+
+fn headcount(e: Employee) -> Int
+    match e
+        Employee.Ic -> 1
+        Employee.Manager(reports) -> 1 + headcountList(reports)
+
+fn headcountList(es: List<Employee>) -> Int
+    match es
+        [] -> 0
+        [x, ..rest] -> headcount(x) + headcountList(rest)
+
+fn reorg(e: Employee) -> Employee
+    match e
+        Employee.Ic -> Employee.Ic
+        Employee.Manager(reports) -> Employee.Manager(List.reverse(reorgList(reports)))
+
+fn reorgList(es: List<Employee>) -> List<Employee>
+    match es
+        [] -> []
+        [x, ..rest] -> List.prepend(reorg(x), reorgList(rest))
+
+verify headcount law reorgPreservesCount
+    given e: Employee = [Employee.Ic, Employee.Manager([]), Employee.Manager([Employee.Ic, Employee.Ic])]
+    headcount(reorg(e)) => headcount(e)
+"#;
+
 const ACC_SRC: &str = r#"module TreeAcc
     intent = "Accumulator-through-container negative control."
     effects []
@@ -203,6 +241,34 @@ fn proof_lean_container_induction_cross_domain_name_blind() {
     assert!(
         lean.contains("headcount.induct") && lean.contains("motive2 :="),
         "expected `headcount.induct (motive2 := ..)` in the emitted proof:\n{lean}"
+    );
+}
+
+#[test]
+fn proof_lean_container_induction_equational_container_lemma_name_blind() {
+    // The container lemma (`walker_reverse`) is DERIVED, not a size-specific
+    // sidecar: the same equational shape in a foreign domain emits and cites a
+    // `headcountList_reverse` over `List Employee` and closes universally.
+    let Some((summary, lean)) = check_container(ORG_EQ_SRC, "OrgFlip.lean", "aver-container-orgeq")
+    else {
+        return;
+    };
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+            summary["universal_laws"].as_u64(),
+        ),
+        (Some(true), Some(0), Some(true), Some(1)),
+        "the cross-domain equational witness must kernel-prove universally:\n{lean}"
+    );
+    assert!(
+        lean.contains("headcount.induct")
+            && lean.contains("headcountList_reverse")
+            && !lean.contains("sizeList_reverse"),
+        "expected a DERIVED `headcountList_reverse` container lemma (name-blind, \
+         not a `sizeList` template):\n{lean}"
     );
 }
 
