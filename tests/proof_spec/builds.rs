@@ -163,6 +163,76 @@ fn proof_export_builds_map_set_nonempty_when_lake_is_available() {
 }
 
 #[test]
+fn proof_export_builds_frac_monotone_geone_flip_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping frac-monotone ge-one flip proof test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let output_dir = temp_output_dir("aver-proof-frac-geone-flip");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/frac_monotone_geone_flip/domain/fprep.av")
+        .arg("--module-root")
+        .arg("tests/fixtures/frac_monotone_geone_flip")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&output_dir)
+        .arg("--check")
+        .arg("--check-json")
+        .arg("--sorry-budget")
+        .arg("0")
+        .output()
+        .expect("expected frac-monotone ge-one flip proof to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        (
+            summary["universal"].as_bool(),
+            summary["universal_laws"].as_u64(),
+            summary["bounded_laws"].as_u64(),
+        ),
+        (Some(true), Some(2), Some(0)),
+        "recursive positivity plus flipped ge-one should both be universal.\n{}",
+        format_output(&run)
+    );
+
+    let lean = std::fs::read_to_string(output_dir.join("Fprep.lean"))
+        .expect("expected generated Fprep.lean");
+    assert!(
+        lean.contains("-- aver:law-class pow2SignedAtLeastOne_law_geOneFlip universal"),
+        "geOneFlip must be classified universal after canonicalizing `when 0 <= k`.\n{lean}"
+    );
+    assert!(
+        lean.contains("-- when (0 <= k)"),
+        "fixture must preserve the flipped source spelling in emitted comments.\n{lean}"
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+#[test]
 fn proof_dafny_verifies_fibonacci_when_dafny_is_available() {
     // `goldenApprox(n)` divides `Float.fromInt(fib(n + 1))` by
     // `Float.fromInt(fib(n))`. Float `/` lowers via the `FloatDiv`
