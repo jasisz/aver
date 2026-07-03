@@ -630,8 +630,29 @@ def render_report(
     lines.append(f"Date: {now}")
     lines.append(f"Repo: `{repo}`")
     lines.append(f"Branch: `{branch}`")
-    lines.append(f"Commit: `{commit}`")
+    lines.append(f"Input commit: `{commit}`")
     lines.append(f"Tool runtime: {elapsed:.2f}s")
+    lines.append("")
+    lines.append("## How To Run")
+    lines.append("Run from the repository root after building the local `aver` binary:")
+    lines.append("")
+    lines.append("```bash")
+    lines.append("RUSTC_WRAPPER= cargo build --bin aver")
+    lines.append("python3 tools/proof_telemetry.py --aver-bin target/debug/aver --output /tmp/proof-telemetry.md")
+    lines.append("```")
+    lines.append("")
+    lines.append(
+        "Add `--lean-tags-for <path>` to collect optional no-lake Lean class tags. "
+        "The committed report uses `examples/formal` and `projects/k5_fdiv/domain/round.av`; "
+        "full K5 Lean tag export is intentionally not part of the default fast path."
+    )
+    lines.append("")
+    lines.append("Fast smoke check:")
+    lines.append("")
+    lines.append("```bash")
+    lines.append("python3 tools/proof_telemetry.py --no-current >/tmp/proof-telemetry-smoke.md")
+    lines.append("python3 -m py_compile tools/proof_telemetry.py")
+    lines.append("```")
     lines.append("")
     lines.append("## Summary")
     lines.extend(
@@ -780,6 +801,7 @@ def render_report(
     lines.append("")
     lines.append("```bash")
     lines.append("RUSTC_WRAPPER= cargo build --bin aver")
+    lines.append("python3 tools/proof_telemetry.py --no-current >/tmp/proof-telemetry-smoke.md")
     cmd = ["python3", "tools/proof_telemetry.py", "--aver-bin", "target/debug/aver"]
     for src in lean_tag_sources:
         cmd.extend(["--lean-tags-for", src])
