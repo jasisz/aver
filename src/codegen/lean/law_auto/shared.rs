@@ -205,6 +205,43 @@ pub(super) fn collect_fncall_names(e: &Expr, out: &mut Vec<String>) {
     }
 }
 
+fn short_call_tree_children(e: &Spanned<Expr>) -> Vec<&Spanned<Expr>> {
+    match &e.node {
+        Expr::FnCall(_, args) => args.iter().collect(),
+        Expr::TailCall(tc) => tc.args.iter().collect(),
+        Expr::Attr(b, _) | Expr::Neg(b) => vec![b.as_ref()],
+        Expr::BinOp(_, l, r) => vec![l.as_ref(), r.as_ref()],
+        Expr::Constructor(_, Some(inner)) => vec![inner.as_ref()],
+        _ => Vec::new(),
+    }
+}
+
+/// Collect short callee names through the legacy triangle-style call tree,
+/// treating post-TCO `TailCall` nodes as call sites.
+pub(super) fn collect_short_callees(expr: &Spanned<Expr>, out: &mut BTreeSet<String>) {
+    if let Some((short, _)) = short_call_name_args(expr) {
+        out.insert(short);
+    }
+    for child in short_call_tree_children(expr) {
+        collect_short_callees(child, out);
+    }
+}
+
+/// Search the legacy triangle-style call tree, invoking `f` at each call site.
+pub(super) fn find_map_short_call_tree<T, F>(expr: &Spanned<Expr>, f: &mut F) -> Option<T>
+where
+    F: FnMut(&str, &[Spanned<Expr>]) -> Option<T>,
+{
+    if let Some((short, args)) = short_call_name_args(expr)
+        && let Some(found) = f(&short, args)
+    {
+        return Some(found);
+    }
+    short_call_tree_children(expr)
+        .into_iter()
+        .find_map(|child| find_map_short_call_tree(child, f))
+}
+
 /// Deepest user-fn call `h(<field>)` (single arg the given binder) anywhere in
 /// `expr`; wrappers around the call are traversed through [`child_exprs`].
 pub(super) fn call_on_binder(

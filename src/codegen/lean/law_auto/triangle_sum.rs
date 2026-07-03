@@ -40,7 +40,7 @@
 use super::AutoProof;
 use super::aver_name_to_lean;
 use super::shared::{
-    expr_dotted_name, find_fn_def, find_fn_def_by_call_name, law_simp_source_names,
+    self, expr_dotted_name, find_fn_def, find_fn_def_by_call_name, law_simp_source_names,
 };
 use crate::ast::{Expr, Spanned, Stmt, VerifyBlock, VerifyKind, VerifyLaw};
 use crate::codegen::CodegenContext;
@@ -412,42 +412,6 @@ pub(super) struct TriangleSum {
     cited_deps: Vec<(String, String)>,
 }
 
-/// `(short_callee_name, args)` when `expr` is a function call, else `None`.
-fn as_call(expr: &Spanned<Expr>) -> Option<(String, &[Spanned<Expr>])> {
-    let Expr::FnCall(callee, args) = &expr.node else {
-        return None;
-    };
-    let dotted = expr_dotted_name(callee)?;
-    let short = dotted.rsplit('.').next().unwrap_or(&dotted).to_string();
-    Some((short, args.as_slice()))
-}
-
-/// A call to the named primitive (short name) with exactly `n` args.
-fn call_named<'a>(expr: &'a Spanned<Expr>, name: &str, n: usize) -> Option<&'a [Spanned<Expr>]> {
-    let (short, args) = as_call(expr)?;
-    (short == name && args.len() == n).then_some(args)
-}
-
-/// The bare identifier this expr names (an ident / resolved binding), else
-/// `None`.
-fn ident_of(expr: &Spanned<Expr>) -> Option<String> {
-    match &expr.node {
-        Expr::Ident(n) | Expr::Resolved { name: n, .. } => Some(n.clone()),
-        _ => None,
-    }
-}
-
-/// Flatten a left-nested `Bool.and(Bool.and(…), w)` `when` tree into its
-/// atomic conjuncts.
-fn flatten_and<'a>(expr: &'a Spanned<Expr>, out: &mut Vec<&'a Spanned<Expr>>) {
-    if let Some(args) = call_named(expr, "and", 2) {
-        flatten_and(&args[0], out);
-        flatten_and(&args[1], out);
-    } else {
-        out.push(expr);
-    }
-}
-
 /// `<var>.<field> != 0` ⇒ `(var, field)`.
 fn nonzero_guard(expr: &Spanned<Expr>) -> Option<(String, String)> {
     let Expr::BinOp(crate::ast::BinOp::Neq, l, r) = &expr.node else {
@@ -459,29 +423,7 @@ fn nonzero_guard(expr: &Spanned<Expr>) -> Option<(String, String)> {
     let Expr::Attr(base, field) = &l.node else {
         return None;
     };
-    Some((ident_of(base)?, field.clone()))
-}
-
-/// The transitive set of short callee names reached from a fn body (one fn
-/// level; recurses through the cone via `seen`).
-fn collect_short_callees(expr: &Spanned<Expr>, out: &mut std::collections::BTreeSet<String>) {
-    match &expr.node {
-        Expr::FnCall(callee, args) => {
-            if let Some(d) = expr_dotted_name(callee) {
-                out.insert(d.rsplit('.').next().unwrap_or(&d).to_string());
-            }
-            for a in args {
-                collect_short_callees(a, out);
-            }
-        }
-        Expr::Attr(b, _) | Expr::Neg(b) => collect_short_callees(b, out),
-        Expr::BinOp(_, l, r) => {
-            collect_short_callees(l, out);
-            collect_short_callees(r, out);
-        }
-        Expr::Constructor(_, Some(inner)) => collect_short_callees(inner, out),
-        _ => {}
-    }
+    Some((shared::ident_name(base)?.to_string(), field.clone()))
 }
 
 /// Whether `fn_name`'s def is a rounding-error bound law subject: a `Bool`
@@ -498,17 +440,17 @@ fn bound_law_kind(ctx: &CodegenContext, fn_name: &str) -> Option<(bool, String)>
     let [Stmt::Expr(body)] = fd.body.stmts() else {
         return None;
     };
-    let lt = call_named(body, "lessThan", 2)?;
-    let abs = call_named(&lt[0], "absFraction", 1)?;
+    let lt = shared::call_named(body, "lessThan", 2)?;
+    let abs = shared::call_named(&lt[0], "absFraction", 1)?;
     // RHS must be a pow2Signed ulp.
-    call_named(&lt[1], "pow2Signed", 1)?;
-    let (efn_short, _) = as_call(&abs[0])?;
+    shared::call_named(&lt[1], "pow2Signed", 1)?;
+    let (efn_short, _) = shared::short_call_name_args(&abs[0])?;
     let efd = find_fn_def_by_call_name(ctx, &efn_short)?;
     let [Stmt::Expr(ebody)] = efd.body.stmts() else {
         return None;
     };
     let mut callees = std::collections::BTreeSet::new();
-    collect_short_callees(ebody, &mut callees);
+    shared::collect_short_callees(ebody, &mut callees);
     if callees.contains("awayFrac") {
         Some((true, efn_short))
     } else if callees.contains("truncFrac") {
@@ -569,24 +511,16 @@ fn extract_precision(
     cone: &std::collections::BTreeSet<String>,
 ) -> Option<i64> {
     fn walk(expr: &Spanned<Expr>) -> Option<i64> {
-        if let Expr::FnCall(callee, args) = &expr.node
-            && let Some(d) = expr_dotted_name(callee)
-        {
-            let short = d.rsplit('.').next().unwrap_or(&d);
+        shared::find_map_short_call_tree(expr, &mut |short, args| {
             if matches!(short, "awayFrac" | "truncFrac" | "compFrac")
                 && args.len() == 2
                 && let Expr::Literal(crate::ast::Literal::Int(k)) = &args[1].node
             {
-                return Some(*k);
+                Some(*k)
+            } else {
+                None
             }
-        }
-        match &expr.node {
-            Expr::FnCall(_, args) => args.iter().find_map(walk),
-            Expr::Attr(b, _) | Expr::Neg(b) => walk(b),
-            Expr::BinOp(_, l, r) => walk(l).or_else(|| walk(r)),
-            Expr::Constructor(_, Some(inner)) => walk(inner),
-            _ => None,
-        }
+        })
     }
     for name in cone {
         if let Some(fd) = find_fn_def(ctx, name) {
@@ -629,9 +563,9 @@ pub(super) fn recognize_triangle_sum_shape(
     // error bound). The `when` analysis below confirms the prior-error premise
     // bounds `absFraction (prior d sd)` by `eps`, pinning these roles to the
     // law structure rather than to the names a figure happens to choose.
-    let d = ident_of(&claim_args[0])?;
-    let sd = ident_of(&claim_args[1])?;
-    let eps = ident_of(&claim_args[2])?;
+    let d = shared::ident_name(&claim_args[0])?.to_string();
+    let sd = shared::ident_name(&claim_args[1])?.to_string();
+    let eps = shared::ident_name(&claim_args[2])?.to_string();
     // The three roles must be three DISTINCT givens (so the discharged
     // statement quantifies over exactly the law's givens, name-blind).
     let roles: std::collections::BTreeSet<&str> = [d.as_str(), sd.as_str(), eps.as_str()]
@@ -652,13 +586,12 @@ pub(super) fn recognize_triangle_sum_shape(
     let [Stmt::Expr(sbody)] = subj_fd.body.stmts() else {
         return None;
     };
-    let lt = call_named(sbody, "lessThan", 2)?;
-    call_named(&lt[0], "absFraction", 1)?;
+    let lt = shared::call_named(sbody, "lessThan", 2)?;
+    shared::call_named(&lt[0], "absFraction", 1)?;
 
     // `when`: four `<d|sd>.<top|bottom> != 0` guards + one prior-error bound.
     let when = law.when.as_ref()?;
-    let mut conj: Vec<&Spanned<Expr>> = Vec::new();
-    flatten_and(when, &mut conj);
+    let conj = shared::collect_when_clauses(when);
     if conj.len() != 5 {
         return None;
     }
@@ -674,13 +607,13 @@ pub(super) fn recognize_triangle_sum_shape(
         // The prior call's two arguments must be the `d`/`sd` roles in order
         // and its bound the `eps` role — this is what pins the discovered
         // roles to the law structure (name-blind).
-        if let Some(pa) = call_named(c, "lessThan", 2)
-            && let Some(abs) = call_named(&pa[0], "absFraction", 1)
-            && let Some((pfn, pargs)) = as_call(&abs[0])
+        if let Some(pa) = shared::call_named(c, "lessThan", 2)
+            && let Some(abs) = shared::call_named(&pa[0], "absFraction", 1)
+            && let Some((pfn, pargs)) = shared::short_call_name_args(&abs[0])
             && pargs.len() == 2
-            && ident_of(&pargs[0]).as_deref() == Some(d.as_str())
-            && ident_of(&pargs[1]).as_deref() == Some(sd.as_str())
-            && ident_of(&pa[1]).as_deref() == Some(eps.as_str())
+            && shared::ident_name(&pargs[0]) == Some(d.as_str())
+            && shared::ident_name(&pargs[1]) == Some(sd.as_str())
+            && shared::ident_name(&pa[1]) == Some(eps.as_str())
         {
             prior = Some(pfn);
             continue;
