@@ -1342,3 +1342,175 @@ fn proof_lean_lifts_aliased_peano_type_to_nat_and_proves_universal() {
     );
     let _ = std::fs::remove_dir_all(&out);
 }
+
+#[test]
+fn proof_lean_frac_order_transitivity_chain_foreign_witness_kernel_clean() {
+    // NON-K5 witness for the generic rational-order transitivity-chain rung: a
+    // foreign spend-ratio domain (`LedgerBounds`, foreign subject/law/constant/
+    // given names) whose strict comparison `ledgerWithinCeiling` is proven as a
+    // GENUINE universal by chaining the two premise links plus a ground link
+    // (`phaseBudget < absoluteCeiling`, closed by `decide`) through the emitted
+    // order kit. Nothing keys on a K5 name — the rung recognizes the order
+    // ALGEBRA shape alone, so this different domain still closes. A second law
+    // `gapWitness` has the SAME conclusion but a DISCONNECTED premise chain (the
+    // top premise's lower endpoint does not match the first premise's upper
+    // endpoint), so the recognizer must DECLINE it and it reverts cleanly to the
+    // bounded sampled proof — proving the rung never flips a shape it cannot
+    // close. Two more universal laws pin the shape classes CI would otherwise
+    // miss: `singleLinkWitness` has EXACTLY ONE `when` conjunct plus a ground top
+    // link (the regression that turned red when the emit always split on `&&`),
+    // and `nonstrictChainWitness` is the 8.1.1-class 3-link chain (two premise
+    // links — one strict, one non-strict `isNonNeg (minus …)` — plus a closed
+    // ground top link). `universal:true` means `#print axioms` is
+    // `ofReduceBool`-free.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping frac-order-transitivity witness test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-frac-order-trans-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("ledger.av"),
+        r#"module LedgerBounds
+    intent = "Foreign witness: a spend-ratio bound closed by rational-order transitivity."
+    effects []
+
+record Fraction
+    top: Int
+    bottom: Int
+
+fn oneRatio() -> Fraction
+    Fraction(top = 1, bottom = 1)
+
+fn phaseBudget() -> Fraction
+    Fraction(top = 3, bottom = 4)
+
+fn absoluteCeiling() -> Fraction
+    Fraction(top = 9, bottom = 8)
+
+fn plus(a: Fraction, b: Fraction) -> Fraction
+    Fraction(top = a.top * b.bottom + b.top * a.bottom, bottom = a.bottom * b.bottom)
+
+fn times(a: Fraction, b: Fraction) -> Fraction
+    Fraction(top = a.top * b.top, bottom = a.bottom * b.bottom)
+
+fn minus(a: Fraction, b: Fraction) -> Fraction
+    Fraction(top = a.top * b.bottom - b.top * a.bottom, bottom = a.bottom * b.bottom)
+
+fn lessThan(a: Fraction, b: Fraction) -> Bool
+    a.top * a.bottom * (b.bottom * b.bottom) < b.top * b.bottom * (a.bottom * a.bottom)
+
+fn isNonNeg(a: Fraction) -> Bool
+    a.top * a.bottom >= 0
+
+fn ledgerWithinCeiling(usage: Fraction, quota: Fraction) -> Bool
+    ? "The spend spread stays under the absolute ceiling."
+    lessThan(minus(times(usage, quota), oneRatio()), absoluteCeiling())
+
+verify ledgerWithinCeiling law chainWitness
+    given usage: Fraction = [Fraction(top = 1, bottom = 2)]
+    given quota: Fraction = [Fraction(top = 1, bottom = 2)]
+    given rate: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = 1, bottom = 3)]
+    given buffer: Fraction = [Fraction(top = 1, bottom = 4)]
+    when lessThan(minus(times(usage, quota), oneRatio()), plus(times(rate, rate), buffer))
+    when lessThan(plus(times(rate, rate), buffer), phaseBudget())
+    ledgerWithinCeiling(usage, quota) holds
+
+verify ledgerWithinCeiling law gapWitness
+    given usage: Fraction = [Fraction(top = 1, bottom = 2)]
+    given quota: Fraction = [Fraction(top = 1, bottom = 2)]
+    given rate: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = 1, bottom = 3)]
+    given buffer: Fraction = [Fraction(top = 1, bottom = 4)]
+    when lessThan(minus(times(usage, quota), oneRatio()), plus(times(rate, rate), buffer))
+    when lessThan(plus(times(buffer, buffer), rate), phaseBudget())
+    ledgerWithinCeiling(usage, quota) holds
+
+verify ledgerWithinCeiling law singleLinkWitness
+    given usage: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = 1, bottom = 3)]
+    given quota: Fraction = [Fraction(top = 1, bottom = 2)]
+    when lessThan(minus(times(usage, quota), oneRatio()), phaseBudget())
+    ledgerWithinCeiling(usage, quota) holds
+
+verify ledgerWithinCeiling law nonstrictChainWitness
+    given usage: Fraction = [Fraction(top = 1, bottom = 2)]
+    given quota: Fraction = [Fraction(top = 1, bottom = 2)]
+    given rate: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = 1, bottom = 3)]
+    given buffer: Fraction = [Fraction(top = 1, bottom = 4)]
+    when lessThan(minus(times(usage, quota), oneRatio()), plus(times(rate, rate), buffer))
+    when isNonNeg(minus(phaseBudget(), plus(times(rate, rate), buffer)))
+    ledgerWithinCeiling(usage, quota) holds
+"#,
+    )
+    .expect("write ledger.av");
+    let out = temp_output_dir("aver-frac-order-trans-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("ledger.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean =
+        std::fs::read_to_string(out.join("LedgerBounds.lean")).expect("read LedgerBounds.lean");
+    // The rung flipped the connected chain to universal and left the
+    // disconnected near-miss bounded — pinned on the law-class markers so both
+    // the fire (foreign names) and the clean revert are asserted structurally.
+    assert!(
+        lean.contains(
+            "-- aver:law-class ledgerWithinCeiling_law_chainWitness universal ledgerWithinCeiling.chainWitness"
+        ),
+        "the connected foreign chain law must be classed universal by the \
+         transitivity-chain rung:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "-- aver:law-class ledgerWithinCeiling_law_gapWitness bounded-domain ledgerWithinCeiling.gapWitness"
+        ),
+        "the disconnected near-miss law must REVERT to bounded-domain (the rung \
+         declines a chain it cannot connect):\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "-- aver:law-class ledgerWithinCeiling_law_singleLinkWitness universal ledgerWithinCeiling.singleLinkWitness"
+        ),
+        "the single-conjunct (one strict premise + ground top link) law must be \
+         classed universal — the emit must not split a non-existent `&&`:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "-- aver:law-class ledgerWithinCeiling_law_nonstrictChainWitness universal ledgerWithinCeiling.nonstrictChainWitness"
+        ),
+        "the 8.1.1-class 3-link chain (strict + non-strict premise links + closed \
+         ground top link) must be classed universal:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+            summary["universal_laws"].as_u64(),
+            summary["bounded_laws"].as_u64(),
+        ),
+        (Some(true), Some(0), Some(true), Some(3), Some(1)),
+        "the foreign transitivity-chain witness must kernel-prove the three \
+         connected shapes as GENUINE universals (`ofReduceBool`-free) and keep \
+         the disconnected near-miss bounded — three universal, one bounded, zero \
+         sorries.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
