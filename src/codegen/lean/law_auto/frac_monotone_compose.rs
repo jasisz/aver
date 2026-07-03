@@ -36,35 +36,9 @@
 
 use super::AutoProof;
 use super::aver_name_to_lean;
-use super::shared::{expr_dotted_name, find_fn_def_by_call_name};
+use super::shared::{self, expr_dotted_name, find_fn_def_by_call_name};
 use crate::ast::{BinOp, Expr, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyKind, VerifyLaw};
 use crate::codegen::CodegenContext;
-
-/// `(short_callee_name, args)` when `expr` is a function call, matched on the
-/// last dotted component so a qualified `Domain.Rational.minus` matches `minus`.
-fn as_call(expr: &Spanned<Expr>) -> Option<(String, &[Spanned<Expr>])> {
-    let Expr::FnCall(callee, args) = &expr.node else {
-        return None;
-    };
-    let dotted = expr_dotted_name(callee)?;
-    let short = dotted.rsplit('.').next().unwrap_or(&dotted).to_string();
-    Some((short, args.as_slice()))
-}
-
-/// A call to the named primitive (by SHORT name) with exactly `n` args,
-/// returning `(dotted_name, args)`.
-fn call_named<'a>(
-    expr: &'a Spanned<Expr>,
-    name: &str,
-    n: usize,
-) -> Option<(String, &'a [Spanned<Expr>])> {
-    let (short, args) = as_call(expr)?;
-    let Expr::FnCall(callee, _) = &expr.node else {
-        return None;
-    };
-    let dotted = expr_dotted_name(callee)?;
-    (short == name && args.len() == n).then_some((dotted, args))
-}
 
 /// Deep-clone `e`, replacing any free `Ident`/`Resolved` named in `map`.
 fn substitute(
@@ -153,8 +127,8 @@ struct RatOps {
 /// Read the rational-op Lean names from the `isNonNeg`/`minus` heads of a
 /// conclusion body `isNonNeg (minus …)`.
 fn rat_ops_from_body(body: &Spanned<Expr>) -> Option<RatOps> {
-    let (isnonneg, nn_args) = call_named(body, "isNonNeg", 1)?;
-    let (minus, _) = call_named(&nn_args[0], "minus", 2)?;
+    let (isnonneg, nn_args) = shared::call_named_with_dotted(body, "isNonNeg", 1)?;
+    let (minus, _) = shared::call_named_with_dotted(&nn_args[0], "minus", 2)?;
     let prefix = minus.rsplit_once('.').map(|(p, _)| p.to_string())?;
     Some(RatOps {
         isnonneg: aver_name_to_lean(&isnonneg),
@@ -239,7 +213,7 @@ fn find_recursive_positivity(
         if !matches!(&r.node, Expr::Literal(Literal::Int(_))) {
             continue;
         }
-        let Some((callee, _)) = as_call(l) else {
+        let Some((callee, _)) = shared::short_call_name_args(l) else {
             continue;
         };
         if callee != short {
@@ -321,7 +295,7 @@ fn recognize_frac_positivity_shape(
     let body = subject_body(&subject_src, ctx)?;
     // Body `Bool.and(C1, C2)` with each a strict positivity of the SAME `F`'s
     // numerator / denominator.
-    let (_, and_args) = call_named(body, "and", 2)?;
+    let (_, and_args) = shared::call_named_with_dotted(body, "and", 2)?;
     let f1 = pos_comparison_fn(&and_args[0])?;
     let f2 = pos_comparison_fn(&and_args[1])?;
     if f1 != f2 {
@@ -427,10 +401,10 @@ fn recognize_frac_geone_shape(
     let body = subject_body(&subject_src, ctx)?;
     // Body `isNonNeg(minus(F(k), oneFraction()))`.
     let ops = rat_ops_from_body(body)?;
-    let (_, nn_args) = call_named(body, "isNonNeg", 1)?;
-    let (_, m_args) = call_named(&nn_args[0], "minus", 2)?;
-    let (sgn_short, f_args) = as_call(&m_args[0])?;
-    if f_args.len() != 1 || call_named(&m_args[1], "oneFraction", 0).is_none() {
+    let (_, nn_args) = shared::call_named_with_dotted(body, "isNonNeg", 1)?;
+    let (_, m_args) = shared::call_named_with_dotted(&nn_args[0], "minus", 2)?;
+    let (sgn_short, f_args) = shared::short_call_name_args(&m_args[0])?;
+    if f_args.len() != 1 || shared::call_named_with_dotted(&m_args[1], "oneFraction", 0).is_none() {
         return None;
     }
     let Expr::FnCall(sgn_callee, _) = &m_args[0].node else {
@@ -442,13 +416,16 @@ fn recognize_frac_geone_shape(
         return None;
     }
     let _ = sgn_short;
-    // Premise must be `arg >= 0` (the nonnegative-exponent guard that kills the
-    // negative arm). Compare to the subject's call argument.
-    let when = law.when.as_ref()?;
-    let Expr::BinOp(BinOp::Gte, _, r) = &when.node else {
+    // Premise must be a single nonnegative-exponent guard. Shared collection
+    // canonicalizes `arg >= 0` and `0 <= arg` to the same `0 <= arg` shape.
+    let clauses = shared::collect_when_clauses(law.when.as_ref()?);
+    let [when] = clauses.as_slice() else {
         return None;
     };
-    if !matches!(&r.node, Expr::Literal(Literal::Int(0))) {
+    let Expr::BinOp(BinOp::Lte, l, _) = &when.node else {
+        return None;
+    };
+    if !matches!(&l.node, Expr::Literal(Literal::Int(0))) {
         return None;
     }
     let (g, recpos) = find_recursive_positivity(vb, law, ctx)?;
@@ -544,10 +521,10 @@ struct FracMonotone {
 /// Match a homomorphism body `sameValue(F(a + b), times(F(a), F(b)))` over the
 /// SAME fn `F` (basename `sgn_short`).
 fn is_homomorphism_body(body: &Spanned<Expr>, sgn_short: &str) -> bool {
-    let Some((_, sv_args)) = call_named(body, "sameValue", 2) else {
+    let Some((_, sv_args)) = shared::call_named_with_dotted(body, "sameValue", 2) else {
         return false;
     };
-    let Some((f0, f0_args)) = as_call(&sv_args[0]) else {
+    let Some((f0, f0_args)) = shared::short_call_name_args(&sv_args[0]) else {
         return false;
     };
     if f0 != sgn_short || f0_args.len() != 1 {
@@ -556,16 +533,16 @@ fn is_homomorphism_body(body: &Spanned<Expr>, sgn_short: &str) -> bool {
     if !matches!(&f0_args[0].node, Expr::BinOp(BinOp::Add, _, _)) {
         return false;
     }
-    let Some((_, t_args)) = call_named(&sv_args[1], "times", 2) else {
+    let Some((_, t_args)) = shared::call_named_with_dotted(&sv_args[1], "times", 2) else {
         return false;
     };
-    matches!(as_call(&t_args[0]), Some((s, a)) if s == sgn_short && a.len() == 1)
-        && matches!(as_call(&t_args[1]), Some((s, a)) if s == sgn_short && a.len() == 1)
+    matches!(shared::short_call_name_args(&t_args[0]), Some((s, a)) if s == sgn_short && a.len() == 1)
+        && matches!(shared::short_call_name_args(&t_args[1]), Some((s, a)) if s == sgn_short && a.len() == 1)
 }
 
 /// Match a positivity body `Bool.and(F(_).x > 0, F(_).y > 0)` over `sgn_short`.
 fn is_positivity_body(body: &Spanned<Expr>, sgn_short: &str) -> bool {
-    let Some((_, and_args)) = call_named(body, "and", 2) else {
+    let Some((_, and_args)) = shared::call_named_with_dotted(body, "and", 2) else {
         return false;
     };
     let same = |c: &Spanned<Expr>| {
@@ -579,14 +556,14 @@ fn is_positivity_body(body: &Spanned<Expr>, sgn_short: &str) -> bool {
 
 /// Match a `>= 1` body `isNonNeg(minus(F(_), oneFraction()))` over `sgn_short`.
 fn is_geone_body(body: &Spanned<Expr>, sgn_short: &str) -> bool {
-    let Some((_, nn_args)) = call_named(body, "isNonNeg", 1) else {
+    let Some((_, nn_args)) = shared::call_named_with_dotted(body, "isNonNeg", 1) else {
         return false;
     };
-    let Some((_, m_args)) = call_named(&nn_args[0], "minus", 2) else {
+    let Some((_, m_args)) = shared::call_named_with_dotted(&nn_args[0], "minus", 2) else {
         return false;
     };
-    matches!(as_call(&m_args[0]), Some((s, a)) if s == sgn_short && a.len() == 1)
-        && call_named(&m_args[1], "oneFraction", 0).is_some()
+    matches!(shared::short_call_name_args(&m_args[0]), Some((s, a)) if s == sgn_short && a.len() == 1)
+        && shared::call_named_with_dotted(&m_args[1], "oneFraction", 0).is_some()
 }
 
 fn recognize_frac_monotone_shape(
@@ -612,10 +589,10 @@ fn recognize_frac_monotone_shape(
     let body = subject_body(&subject_src, ctx)?;
     // Body `isNonNeg(minus(F(HI), F(LO)))` over a single `Fraction`-valued `F`.
     let ops = rat_ops_from_body(body)?;
-    let (_, nn_args) = call_named(body, "isNonNeg", 1)?;
-    let (_, m_args) = call_named(&nn_args[0], "minus", 2)?;
-    let (sgn_hi, hi_args) = as_call(&m_args[0])?;
-    let (sgn_lo, lo_args) = as_call(&m_args[1])?;
+    let (_, nn_args) = shared::call_named_with_dotted(body, "isNonNeg", 1)?;
+    let (_, m_args) = shared::call_named_with_dotted(&nn_args[0], "minus", 2)?;
+    let (sgn_hi, hi_args) = shared::short_call_name_args(&m_args[0])?;
+    let (sgn_lo, lo_args) = shared::short_call_name_args(&m_args[1])?;
     if hi_args.len() != 1 || lo_args.len() != 1 || sgn_hi != sgn_lo {
         return None;
     }
@@ -649,12 +626,14 @@ fn recognize_frac_monotone_shape(
     let lo = substitute(&lo_args[0], &map);
 
     // Premise must establish `LO <= HI` (small side `LO`, big side `HI`).
-    let when = law.when.as_ref()?;
+    let clauses = shared::collect_when_clauses(law.when.as_ref()?);
+    let [when] = clauses.as_slice() else {
+        return None;
+    };
     let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
     let (lo_lean, hi_lean) = (render(&lo), render(&hi));
     let premise_ok = match &when.node {
         Expr::BinOp(BinOp::Lte, l, r) => render(l) == lo_lean && render(r) == hi_lean,
-        Expr::BinOp(BinOp::Gte, l, r) => render(l) == hi_lean && render(r) == lo_lean,
         _ => false,
     };
     if !premise_ok {

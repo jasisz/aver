@@ -159,8 +159,7 @@ fn recognize_transparent_chain_shape(
         return None;
     }
 
-    let mut conjuncts = Vec::new();
-    shared::flatten_and(law.when.as_ref()?, &mut conjuncts);
+    let conjuncts = shared::collect_when_clauses(law.when.as_ref()?);
     if conjuncts.is_empty() {
         return None;
     }
@@ -168,11 +167,8 @@ fn recognize_transparent_chain_shape(
     let mut unfolds = Vec::new();
     let mut visited = BTreeSet::new();
     let mut stats = FragmentStats::default();
-    for conjunct in conjuncts {
-        let Expr::FnCall(callee, args) = &conjunct.node else {
-            return None;
-        };
-        let call_name = shared::expr_dotted_name(callee)?;
+    for conjunct in &conjuncts {
+        let (call_name, args) = shared::call_name_args(conjunct)?;
         if !has_citable_pool_law_for_call(vb, &call_name, ctx) {
             return None;
         }
@@ -252,34 +248,28 @@ fn premise_bool(
     owner_scope: Option<&str>,
     state: &mut CollectState<'_>,
 ) -> bool {
+    if let Some(args) = shared::call_qualified(expr, "Bool.and", 2) {
+        return premise_bool(&args[0], ctx, owner_scope, state)
+            && premise_bool(&args[1], ctx, owner_scope, state);
+    }
+    if let Some((name, args)) = shared::call_name_args(expr) {
+        for arg in args {
+            if !premise_term(arg, ctx, owner_scope, state) {
+                return false;
+            }
+        }
+        let Some(resolved) = resolve_fn_for_call(ctx, &name, owner_scope) else {
+            return false;
+        };
+        if resolved.fd.return_type.trim() != "Bool" {
+            return false;
+        }
+        return collect_transparent_premise_fn(ctx, resolved, state).is_some();
+    }
     match &expr.node {
         Expr::Literal(Literal::Bool(_)) => true,
         Expr::BinOp(op, l, r) if comparison_op(*op) => {
             premise_term(l, ctx, owner_scope, state) && premise_term(r, ctx, owner_scope, state)
-        }
-        Expr::FnCall(callee, args)
-            if shared::expr_dotted_name(callee).as_deref() == Some("Bool.and")
-                && args.len() == 2 =>
-        {
-            premise_bool(&args[0], ctx, owner_scope, state)
-                && premise_bool(&args[1], ctx, owner_scope, state)
-        }
-        Expr::FnCall(callee, args) => {
-            let Some(name) = shared::expr_dotted_name(callee) else {
-                return false;
-            };
-            for arg in args {
-                if !premise_term(arg, ctx, owner_scope, state) {
-                    return false;
-                }
-            }
-            let Some(resolved) = resolve_fn_for_call(ctx, &name, owner_scope) else {
-                return false;
-            };
-            if resolved.fd.return_type.trim() != "Bool" {
-                return false;
-            }
-            collect_transparent_premise_fn(ctx, resolved, state).is_some()
         }
         Expr::Match { subject, arms } => {
             if !premise_bool(subject, ctx, owner_scope, state) {
@@ -314,6 +304,20 @@ fn premise_term(
     owner_scope: Option<&str>,
     state: &mut CollectState<'_>,
 ) -> bool {
+    if let Some((name, args)) = shared::call_name_args(expr) {
+        for arg in args {
+            if !premise_term(arg, ctx, owner_scope, state) {
+                return false;
+            }
+        }
+        let Some(resolved) = resolve_fn_for_call(ctx, &name, owner_scope) else {
+            return false;
+        };
+        if resolved.fd.return_type.trim() != "Int" {
+            return false;
+        }
+        return collect_transparent_premise_fn(ctx, resolved, state).is_some();
+    }
     match &expr.node {
         Expr::Literal(Literal::Int(_)) => true,
         Expr::Ident(_) | Expr::Resolved { .. } => true,
@@ -324,23 +328,6 @@ fn premise_term(
         Expr::BinOp(BinOp::Mul, l, r) => {
             (int_literal(l) && premise_term(r, ctx, owner_scope, state))
                 || (int_literal(r) && premise_term(l, ctx, owner_scope, state))
-        }
-        Expr::FnCall(callee, args) => {
-            let Some(name) = shared::expr_dotted_name(callee) else {
-                return false;
-            };
-            for arg in args {
-                if !premise_term(arg, ctx, owner_scope, state) {
-                    return false;
-                }
-            }
-            let Some(resolved) = resolve_fn_for_call(ctx, &name, owner_scope) else {
-                return false;
-            };
-            if resolved.fd.return_type.trim() != "Int" {
-                return false;
-            }
-            collect_transparent_premise_fn(ctx, resolved, state).is_some()
         }
         Expr::Match { subject, arms } => {
             if !premise_bool(subject, ctx, owner_scope, state) {

@@ -66,7 +66,7 @@
 
 use super::AutoProof;
 use super::aver_name_to_lean;
-use super::shared::{expr_dotted_name, find_fn_def_by_call_name};
+use super::shared::{self, expr_dotted_name, find_fn_def_by_call_name};
 use crate::ast::{Expr, FnDef, Spanned, Stmt, VerifyBlock, VerifyKind, VerifyLaw};
 use crate::codegen::CodegenContext;
 
@@ -111,57 +111,6 @@ pub(super) struct FracOrderChain {
     /// The cited monotonicity pool law as `(module_prefix, theorem_base)` — the
     /// cross-file admission keys on it so the dep theorem is emitted.
     cited_deps: Vec<(String, String)>,
-}
-
-/// `(short_callee_name, args)` when `expr` is a function call. The short name
-/// is the last dotted component, so a qualified `Domain.Rational.minus` call
-/// matches the primitive `minus` — keyed on the rational ALGEBRA primitive.
-fn as_call(expr: &Spanned<Expr>) -> Option<(String, &[Spanned<Expr>])> {
-    let Expr::FnCall(callee, args) = &expr.node else {
-        return None;
-    };
-    let dotted = expr_dotted_name(callee)?;
-    let short = dotted.rsplit('.').next().unwrap_or(&dotted).to_string();
-    Some((short, args.as_slice()))
-}
-
-/// A call to the named primitive (matched on its SHORT name) with exactly `n`
-/// args, returning the args.
-fn call_named<'a>(expr: &'a Spanned<Expr>, name: &str, n: usize) -> Option<&'a [Spanned<Expr>]> {
-    let (short, args) = as_call(expr)?;
-    (short == name && args.len() == n).then_some(args)
-}
-
-/// Collect the dotted names of every `FnCall` reachable in `e`.
-fn collect_fncall_names(e: &Expr, out: &mut Vec<String>) {
-    match e {
-        Expr::FnCall(callee, args) => {
-            if let Some(n) = expr_dotted_name(callee) {
-                out.push(n);
-            }
-            for a in args {
-                collect_fncall_names(&a.node, out);
-            }
-        }
-        Expr::BinOp(_, a, b) => {
-            collect_fncall_names(&a.node, out);
-            collect_fncall_names(&b.node, out);
-        }
-        Expr::Neg(a) => collect_fncall_names(&a.node, out),
-        Expr::Attr(b, _) => collect_fncall_names(&b.node, out),
-        Expr::RecordCreate { fields, .. } => {
-            for (_, v) in fields {
-                collect_fncall_names(&v.node, out);
-            }
-        }
-        Expr::Match { subject, arms } => {
-            collect_fncall_names(&subject.node, out);
-            for arm in arms {
-                collect_fncall_names(&arm.body.node, out);
-            }
-        }
-        _ => {}
-    }
 }
 
 /// Deep-clone `e`, replacing any free `Ident`/`Resolved` named in `map` by the
@@ -223,7 +172,7 @@ fn signed_pow2_pow(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     let recursive = crate::codegen::lean::recursive_pure_fn_names(ctx);
     let mut called: Vec<String> = Vec::new();
     for arm in arms {
-        collect_fncall_names(&arm.body.node, &mut called);
+        shared::collect_fncall_names(&arm.body.node, &mut called);
     }
     let mut pows: Vec<String> = called
         .into_iter()
@@ -261,12 +210,12 @@ fn body_matches_monotone(ctx: &CodegenContext, subj_src: &str, sgn_short: &str) 
         return false;
     };
     let is_sgn = |e: &Spanned<Expr>| -> bool {
-        matches!(as_call(e), Some((s, a)) if s == sgn_short && a.len() == 1)
+        matches!(shared::short_call_name_args(e), Some((s, a)) if s == sgn_short && a.len() == 1)
     };
-    let Some(nn) = call_named(body, "isNonNeg", 1) else {
+    let Some(nn) = shared::call_named(body, "isNonNeg", 1) else {
         return false;
     };
-    let Some(m) = call_named(&nn[0], "minus", 2) else {
+    let Some(m) = shared::call_named(&nn[0], "minus", 2) else {
         return false;
     };
     is_sgn(&m[0]) && is_sgn(&m[1])
@@ -330,14 +279,14 @@ pub(super) fn recognize_frac_order_chain_shape(
     let [Stmt::Expr(body)] = subj_fd.body.stmts() else {
         return None;
     };
-    let nn = call_named(body, "isNonNeg", 1)?;
+    let nn = shared::call_named(body, "isNonNeg", 1)?;
     // `isNonNeg` / `minus` Lean names (qualified), derived from the conclusion
     // heads — name-blind on the rational order primitives.
     let Expr::FnCall(isnonneg_callee, _) = &body.node else {
         return None;
     };
     let isnonneg = aver_name_to_lean(&expr_dotted_name(isnonneg_callee)?);
-    let m = call_named(&nn[0], "minus", 2)?;
+    let m = shared::call_named(&nn[0], "minus", 2)?;
     let Expr::FnCall(minus_callee, _) = &nn[0].node else {
         return None;
     };
@@ -348,7 +297,7 @@ pub(super) fn recognize_frac_order_chain_shape(
     let rat_prefix = minus.rsplit_once('.').map(|(p, _)| p.to_string())?;
     let times = format!("{rat_prefix}.times");
     let samevalue = format!("{rat_prefix}.sameValue");
-    let (sgn_short, hi_args) = as_call(&m[0])?;
+    let (sgn_short, hi_args) = shared::short_call_name_args(&m[0])?;
     if hi_args.len() != 1 {
         return None;
     }
@@ -376,8 +325,7 @@ pub(super) fn recognize_frac_order_chain_shape(
 
     // Premises: flatten the left-nested `Bool.and` tree.
     let when = law.when.as_ref()?;
-    let mut conj: Vec<&Spanned<Expr>> = Vec::new();
-    flatten_and(when, &mut conj);
+    let conj = shared::collect_when_clauses(when);
     // h1 (scale-by-2 bound), h2 (envelope lessThan), hsd2 (M.bottom != 0),
     // placement (<=/>=). Exactly four conjuncts.
     if conj.len() != 4 {
@@ -395,9 +343,9 @@ pub(super) fn recognize_frac_order_chain_shape(
 
     for c in &conj {
         // h1: isNonNeg (minus (times K M) A).
-        if let Some(nn1) = call_named(c, "isNonNeg", 1)
-            && let Some(m1) = call_named(&nn1[0], "minus", 2)
-            && let Some(t1) = call_named(&m1[0], "times", 2)
+        if let Some(nn1) = shared::call_named(c, "isNonNeg", 1)
+            && let Some(m1) = shared::call_named(&nn1[0], "minus", 2)
+            && let Some(t1) = shared::call_named(&m1[0], "times", 2)
             && render(&m1[1]) == a_lean
         {
             let k_str = render(&t1[0]);
@@ -411,8 +359,8 @@ pub(super) fn recognize_frac_order_chain_shape(
             continue;
         }
         // h2: lessThan (M, sgn SMALL).
-        if let Some(lt) = call_named(c, "lessThan", 2)
-            && let Some((s, sa)) = as_call(&lt[1])
+        if let Some(lt) = shared::call_named(c, "lessThan", 2)
+            && let Some((s, sa)) = shared::short_call_name_args(&lt[1])
             && s == sgn_short
             && sa.len() == 1
         {
@@ -470,16 +418,6 @@ pub(super) fn recognize_frac_order_chain_shape(
         mono_thm: mono.theorem_lean,
         cited_deps: vec![(mono.prefix, mono.theorem_base)],
     })
-}
-
-/// Flatten a left-nested `Bool.and(Bool.and(…), w)` `when` tree into conjuncts.
-fn flatten_and<'a>(expr: &'a Spanned<Expr>, out: &mut Vec<&'a Spanned<Expr>>) {
-    if let Some(args) = call_named(expr, "and", 2) {
-        flatten_and(&args[0], out);
-        flatten_and(&args[1], out);
-    } else {
-        out.push(expr);
-    }
 }
 
 /// Statement-builder hook: whether the chaining emit will close this law

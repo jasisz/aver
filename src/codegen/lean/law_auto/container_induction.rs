@@ -221,12 +221,12 @@ fn recognize(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option<
     if let (Expr::FnCall(rc, ra), Expr::FnCall(lc, la)) = (&law.rhs.node, &law.lhs.node)
         && shared::expr_dotted_name(rc).as_deref() == Some(pair.f_src.as_str())
         && ra.len() == 1
-        && is_ident(&ra[0], t_name)
+        && shared::is_ident(&ra[0], t_name)
         && shared::expr_dotted_name(lc).as_deref() == Some(pair.f_src.as_str())
         && la.len() == 1
         && let Expr::FnCall(gc, ga) = &la[0].node
         && ga.len() == 1
-        && is_ident(&ga[0], t_name)
+        && shared::is_ident(&ga[0], t_name)
         && let Some(g_src) = shared::expr_dotted_name(gc)
         && g_src != pair.f_src
     {
@@ -292,7 +292,7 @@ fn recognize_pair(f_src: &str, ctx: &CodegenContext) -> Option<Pair> {
     let Expr::Match { subject, arms } = &f_body.node else {
         return None;
     };
-    if !is_ident(subject, t_param) {
+    if !shared::is_ident(subject, t_param) {
         return None;
     }
     if arms.len() != 2 {
@@ -352,32 +352,11 @@ fn node_arm_sibling(arms: &[crate::ast::MatchArm], ctx: &CodegenContext) -> Opti
             continue;
         }
         let field = &binders[0];
-        if let Some(name) = call_on_binder(&arm.body, field, ctx) {
+        if let Some(name) = shared::call_on_binder(&arm.body, field, ctx) {
             return Some(name);
         }
     }
     None
-}
-
-/// Deepest user-fn call `h(<field>)` (single arg the given binder) anywhere in
-/// `expr` — the walker `f`'s node arm applies its sibling to the child list,
-/// possibly under a constructor / list-op wrapper (`Node(reverse(fList kids))`).
-fn call_on_binder(expr: &Spanned<Expr>, field: &str, ctx: &CodegenContext) -> Option<String> {
-    let mut found: Option<String> = None;
-    fn walk(e: &Spanned<Expr>, field: &str, ctx: &CodegenContext, found: &mut Option<String>) {
-        if let Some((name, args)) = as_call(&e.node)
-            && args.len() == 1
-            && is_ident(&args[0], field)
-            && shared::find_fn_def(ctx, &name).is_some()
-        {
-            *found = Some(name);
-        }
-        for child in child_exprs(e) {
-            walk(child, field, ctx, found);
-        }
-    }
-    walk(expr, field, ctx, &mut found);
-    found
 }
 
 /// Whether `g`'s node arm applies `List.reverse` to a call to `glist` — the
@@ -398,7 +377,7 @@ fn node_arm_injects_reverse(g_fd: &FnDef, glist_src: &str, ctx: &CodegenContext)
         {
             return true;
         }
-        child_exprs(e)
+        shared::child_exprs(e)
             .into_iter()
             .any(|c| find_reverse_of(c, glist))
     }
@@ -420,7 +399,7 @@ fn is_list_walker(fd: &FnDef, adt: &str, f_src: &str) -> bool {
     let Expr::Match { subject, arms } = &body.node else {
         return false;
     };
-    if !is_ident(subject, param) || arms.len() != 2 {
+    if !shared::is_ident(subject, param) || arms.len() != 2 {
         return false;
     }
     // Canonical order: `[]` first, `[x, ..rest]` second (matches the `case3/case4`
@@ -437,26 +416,12 @@ fn is_list_walker(fd: &FnDef, adt: &str, f_src: &str) -> bool {
             Pattern::EmptyList => saw_nil = true,
             Pattern::Cons(head, _tail) => {
                 // The cons arm applies `f` to the head element.
-                cons_calls_f = calls_fn_on_ident(&arm.body, f_src, head);
+                cons_calls_f = shared::calls_fn_on_ident(&arm.body, f_src, head);
             }
             _ => return false,
         }
     }
     saw_nil && cons_calls_f
-}
-
-/// Whether `expr` contains a call `f(<ident>)` (single-arg, the given binder).
-fn calls_fn_on_ident(expr: &Spanned<Expr>, f_src: &str, ident: &str) -> bool {
-    if let Expr::FnCall(callee, args) = &expr.node
-        && args.len() == 1
-        && is_ident(&args[0], ident)
-        && shared::expr_dotted_name(callee).as_deref() == Some(f_src)
-    {
-        return true;
-    }
-    child_exprs(expr)
-        .into_iter()
-        .any(|c| calls_fn_on_ident(c, f_src, ident))
 }
 
 /// The `Int` literal of a numeric list-walker's `[]` base arm.
@@ -482,7 +447,7 @@ fn mutual_scc(f_src: &str, ctx: &CodegenContext) -> BTreeSet<String> {
         let mut seen = BTreeSet::new();
         let mut stack = vec![start.to_string()];
         while let Some(cur) = stack.pop() {
-            for callee in direct_user_calls(&cur, ctx) {
+            for callee in shared::direct_user_calls(&cur, ctx) {
                 if seen.insert(callee.clone()) {
                     stack.push(callee);
                 }
@@ -497,32 +462,6 @@ fn mutual_scc(f_src: &str, ctx: &CodegenContext) -> BTreeSet<String> {
         .cloned()
         .chain(std::iter::once(f_src.to_string()))
         .collect()
-}
-
-/// Direct callees of `src` that are user fn defs (by source name).
-fn direct_user_calls(src: &str, ctx: &CodegenContext) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    let Some(fd) = shared::find_fn_def(ctx, src) else {
-        return out;
-    };
-    fn walk(e: &Spanned<Expr>, ctx: &CodegenContext, out: &mut BTreeSet<String>) {
-        if let Some((name, _)) = as_call(&e.node)
-            && let Some(fd) = shared::find_fn_def(ctx, &name)
-        {
-            out.insert(fd.name.clone());
-        }
-        for c in child_exprs(e) {
-            walk(c, ctx, out);
-        }
-    }
-    for stmt in fd.body.stmts() {
-        match stmt {
-            crate::ast::Stmt::Expr(e) | crate::ast::Stmt::Binding(_, _, e) => {
-                walk(e, ctx, &mut out)
-            }
-        }
-    }
-    out
 }
 
 fn find_sum_variants<'a>(ctx: &'a CodegenContext, name: &str) -> Option<&'a Vec<TypeVariant>> {
@@ -564,55 +503,12 @@ fn is_dep_module_fn(ctx: &CodegenContext, source_name: &str) -> bool {
         .any(|m| m.fn_defs.iter().any(|fd| fd.name == source_name))
 }
 
-fn is_ident(expr: &Spanned<Expr>, name: &str) -> bool {
-    matches!(&expr.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == name)
-}
-
 /// `expr` is a single-arg call `callee(<ident>)` with `callee` = `fn_src`.
 fn is_call_on(expr: &Spanned<Expr>, fn_src: &str, ident: &str) -> bool {
     let Expr::FnCall(callee, args) = &expr.node else {
         return false;
     };
     args.len() == 1
-        && is_ident(&args[0], ident)
+        && shared::is_ident(&args[0], ident)
         && shared::expr_dotted_name(callee).as_deref() == Some(fn_src)
-}
-
-/// Callee source-name and args of a call, seeing through the TCO rewrite: a
-/// tail-position self/peer call is an `Expr::TailCall` (the TCO pass runs before
-/// law_auto), not an `Expr::FnCall`. Every walker that detects a call must treat
-/// it as one, or the recognizer under-computes the mutual SCC (silently admitting
-/// a >2-fn SCC) and misses a pair whose node-arm call sits in tail position. Same
-/// precedent as `induction/mod.rs` and `proof_recognize.rs`.
-fn as_call(e: &Expr) -> Option<(String, &[Spanned<Expr>])> {
-    match e {
-        Expr::FnCall(callee, args) => Some((shared::expr_dotted_name(callee)?, args.as_slice())),
-        Expr::TailCall(tc) => Some((tc.target.clone(), tc.args.as_slice())),
-        _ => None,
-    }
-}
-
-/// Immediate sub-expressions to recurse through when scanning a fn body — enough
-/// for the pure walker shapes this arm recognizes.
-fn child_exprs(e: &Spanned<Expr>) -> Vec<&Spanned<Expr>> {
-    match &e.node {
-        Expr::FnCall(callee, args) => {
-            let mut v = vec![callee.as_ref()];
-            v.extend(args.iter());
-            v
-        }
-        Expr::BinOp(_, l, r) => vec![l.as_ref(), r.as_ref()],
-        Expr::Neg(inner) | Expr::ErrorProp(inner) => vec![inner.as_ref()],
-        Expr::Attr(base, _) => vec![base.as_ref()],
-        Expr::Constructor(_, Some(inner)) => vec![inner.as_ref()],
-        Expr::Match { subject, arms } => {
-            let mut v = vec![subject.as_ref()];
-            v.extend(arms.iter().map(|a| a.body.as_ref()));
-            v
-        }
-        Expr::List(items) | Expr::Tuple(items) => items.iter().collect(),
-        // Post-TCO: a tail-position call's args are the sub-exprs to keep scanning.
-        Expr::TailCall(tc) => tc.args.iter().collect(),
-        _ => Vec::new(),
-    }
 }

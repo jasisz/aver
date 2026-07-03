@@ -18,6 +18,10 @@ use super::{AutoProof, aver_name_to_lean};
 use crate::ast::{BinOp, Expr, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyKind, VerifyLaw};
 use crate::codegen::CodegenContext;
 
+// Private copy kept off the shared substrate on purpose: this rung predates
+// the shared walkers and its recognition is TailCall-blind by construction
+// (measured inert on the corpus). Migrating it is banked for the next
+// substrate wave; do not extend this copy — extend shared.rs instead.
 fn as_call(expr: &Spanned<Expr>) -> Option<(String, &[Spanned<Expr>])> {
     let Expr::FnCall(callee, args) = &expr.node else {
         return None;
