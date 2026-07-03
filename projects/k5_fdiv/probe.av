@@ -1,0 +1,29 @@
+module Probe
+    intent = "compute"
+    depends [Domain.Rational, Domain.Kernel, Domain.Remainder]
+    effects [Console]
+
+fn p1of(p0: Fraction, d: Fraction, sd2: Fraction) -> Fraction
+    ? "p1"
+    Domain.Rational.minus(p0, Domain.Rational.times(Domain.Remainder.firstQuotientDigit(p0, sd2), d))
+fn ph1of(p0: Fraction, d: Fraction, sd2: Fraction) -> Fraction
+    ? "ph1"
+    Domain.Kernel.truncFrac(p1of(p0, d, sd2), 32)
+fn q1of(p0: Fraction, d: Fraction, sd2: Fraction) -> Fraction
+    ? "q1"
+    Domain.Kernel.awayFrac(Domain.Rational.times(sd2, ph1of(p0, d, sd2)), 24)
+fn sep(p0: Fraction, d: Fraction, sd2: Fraction) -> Bool
+    ? "check"
+    Domain.Kernel.fracExpo(q1of(p0,d,sd2)) <= Domain.Kernel.fracExpo(Domain.Remainder.firstQuotientDigit(p0, sd2)) - 23
+fn show(tag: String, p0: Fraction, d: Fraction, sd2: Fraction) -> Unit
+    ? "p"
+    ! [Console.print]
+    q1 = q1of(p0, d, sd2)
+    Console.print("{tag}: eq0={Domain.Kernel.fracExpo(Domain.Remainder.firstQuotientDigit(p0, sd2))} q1top={q1.top} eq1={Domain.Kernel.fracExpo(q1)} sep={sep(p0,d,sd2)}")
+fn main() -> Unit
+    ? "run"
+    ! [Console.print]
+    show("A", Domain.Rational.Fraction(top = 5, bottom = 4), Domain.Rational.Fraction(top = 4, bottom = 5), Domain.Rational.Fraction(top = 5, bottom = 4))
+    show("B", Domain.Rational.Fraction(top = 7, bottom = 3), Domain.Rational.Fraction(top = 5, bottom = 2), Domain.Rational.Fraction(top = 2, bottom = 5))
+    show("C", Domain.Rational.Fraction(top = 9, bottom = 7), Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 2, bottom = 3))
+    show("D", Domain.Rational.Fraction(top = 11, bottom = 8), Domain.Rational.Fraction(top = 13, bottom = 7), Domain.Rational.Fraction(top = 7, bottom = 13))

@@ -1,3 +1,13 @@
+//! Shared recognition helpers for the law_auto proof arms.
+//!
+//! These live in the Lean codegen layer (not `analysis::shape`) because they
+//! render through `emit_expr_legacy`/`aver_name_to_lean` and take a
+//! `CodegenContext` — they are recognition-plus-rendering, not pre-codegen
+//! analysis. Contract: every walker here is TailCall-aware (the TCO pass
+//! rewrites peer calls before law_auto runs), so arms built on this module
+//! see post-TCO bodies uniformly; a walker that ignored `Expr::TailCall`
+//! reintroduces the recognition blindness fixed for the container arm.
+
 use std::collections::BTreeSet;
 
 use super::super::expr::aver_name_to_lean;

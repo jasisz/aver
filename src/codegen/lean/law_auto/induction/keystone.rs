@@ -714,6 +714,9 @@ pub(super) fn signed_pow2_shape(fd: &crate::ast::FnDef, int_pow: &str) -> bool {
 }
 
 /// Collect the dotted names of every `FnCall` in `e` (recursively).
+// Private duplicate of shared::collect_fncall_names, kept during the substrate
+// wave because keystone's citation collection is byte-golden-pinned; migrating
+// it is banked for the next wave — extend shared.rs, not this copy.
 fn collect_fncall_names(e: &crate::ast::Expr, out: &mut Vec<String>) {
     use crate::ast::Expr;
     match e {
