@@ -1,10 +1,10 @@
 # Proof Telemetry Report
 
 Date: 2026-07-03
-Repo: `/private/tmp/lumen-rs-proof-telemetry`
+Repo: `/private/tmp/lumen-rs-proof-telemetry-work`
 Branch: `proof-telemetry-report`
-Input commit: `84ecb98e9985`
-Tool runtime: 30.69s
+Input commit: `466da4c3f0f6`
+Tool runtime: 30.84s
 
 ## How To Run
 Run from the repository root after building the local `aver` binary:
@@ -32,12 +32,15 @@ python3 -m py_compile tools/proof_telemetry.py
 | manifest law records | 0 |
 | manifest records with strategy field | 0 |
 | current source files requested | 35 |
-| current source files with law rows | 30 |
-| current distinct law strategy rows | 223 |
-| current concrete strategy pins | 124 |
-| current BackendDispatch pins | 99 |
+| current source files with law rows | 26 |
+| current distinct law strategy rows | 158 |
+| current concrete strategy pins | 94 |
+| current BackendDispatch pins | 64 |
+| ProofStrategy variants total | 31 |
+| ProofStrategy variants fired | 15 |
+| ProofStrategy variants never fired | 16 |
 | current Lean class tags collected | 80 |
-| hand/manual Lean sidecars | 3 |
+| hand/manual proof sidecars | 4 |
 
 ## Data Recoverability
 No committed `proof_manifest.json` files were found in `git log --all` for this clone.
@@ -45,7 +48,7 @@ The current manifest schema observable in the repo records `law`, `backend`, `ti
 Today's strategy attribution is recoverable without lake through `aver compile <file> --emit-ir-after=law_lower`.
 Today's Lean class tags were collected by transpiling only, via `aver proof <file> -o <tmp>` without `--check`; no `lake` command was run.
 Lean tag requested roots: `examples/formal`, `projects/k5_fdiv/domain/round.av`
-Lean tag transpile runtime: 28.12s
+Lean tag transpile runtime: 27.94s
 
 ## Reuse Curve From Manifest History
 No strategy-attributed reuse curve is recoverable from committed manifest history.
@@ -57,12 +60,12 @@ No strategy-attributed reuse curve is recoverable from committed manifest histor
 This is a no-lake classifier ranking: it counts distinct laws pinned to each `ProofStrategy` today. It is not a kernel-credit table.
 | strategy | distinct laws | examples |
 | --- | --- | --- |
-| BackendDispatch | 99 | Domain.Fprep.fpMulValue.denotesProduct, Domain.Fprep.fpScalePreservesValue.scalesByPowerOfTwo, Domain.Fprep.fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp |
-| LinearArithmetic | 46 | AffineWrapper.boundedScale.returnsCore, Domain.Estimate.mulLeTrans.guarded, Domain.Fprep.pow2SignedLtReflect.fromStrictOrder |
-| RingIdentity | 24 | Domain.Fprep.fpScaleKeepsSignificand.significandInvariant, Domain.Fprep.fpScaleShiftsExponent.exponentShift, Domain.Rational.minus.equalsPlusNegate |
-| FloorDivWindow | 13 | Domain.Fprep.pow2.homomorphism, Domain.Fprep.pow2.positive, Domain.Round.floorDiv.dividesPow2Multiple |
-| NonlinearNonneg | 12 | Domain.Estimate.mulLeMonoRight.guarded, Domain.Estimate.mulNonneg.guarded, Domain.Estimate.nrContraction.guarded |
-| SimpOverPreludeLemmas | 11 | Domain.Estimate.nrNewErrNum.nrErrorSquares, Domain.Fprep.pow2SignedDenomPositive.positive, Domain.Fprep.pow2SignedHomomorphism.signedHomomorphism |
+| BackendDispatch | 64 | Domain.Exponent.sumExponentLower_9_3_1.section_9_3_1, Domain.Exponent.sumExponentUpper_9_3_2.section_9_3_2, Domain.Fprep.fpMulValue.denotesProduct |
+| LinearArithmetic | 44 | AffineWrapper.boundedScale.returnsCore, Domain.Estimate.mulLeTrans.guarded, Domain.Exponent.divideExponentNoOverflow.section_9_3_no_overflow |
+| RingIdentity | 12 | Domain.Fprep.fpScaleKeepsSignificand.significandInvariant, Domain.Fprep.fpScaleShiftsExponent.exponentShift, Domain.Rational.minus.equalsPlusNegate |
+| FloorDivWindow | 8 | Domain.Fprep.pow2.homomorphism, Domain.Fprep.pow2.positive, Domain.Round.floorDiv.dividesPow2Multiple |
+| NonlinearNonneg | 6 | Domain.Estimate.mulLeMonoRight.guarded, Domain.Estimate.mulNonneg.guarded, Domain.Estimate.nrContraction.guarded |
+| SimpOverPreludeLemmas | 6 | Domain.Estimate.nrNewErrNum.nrErrorSquares, Domain.Fprep.pow2SignedDenomPositive.positive, Domain.Fprep.pow2SignedHomomorphism.signedHomomorphism |
 | IdentityElement | 5 | LawAuto.add.identityZero, LawAuto.add.identityZeroLeft, LawAuto.mul.identityOne |
 | Commutative | 3 | LawAuto.add.commutative, LawAuto.add.commutativeSwapSides, LawAuto.mul.commutative |
 | Associative | 2 | LawAuto.add.associative, LawAuto.mul.associative |
@@ -72,6 +75,27 @@ This is a no-lake classifier ranking: it counts distinct laws pinned to each `Pr
 | Induction | 1 | LengthHomomorphism.len.homomorphism |
 | Reflexive | 1 | LawAuto.id.reflexive |
 | UnaryEqualsBinary | 1 | LawAuto.addOne.identityViaAdd |
+
+## Zero-Trigger Strategies
+ProofStrategy inventory from `src/ir/proof_ir.rs`: 31 strategies total, 15 fired, 16 never fired on this corpus.
+| strategy | distinct laws |
+| --- | --- |
+| SimpOverLemmas | 0 |
+| AntiCommutative | 0 |
+| LibraryAxiom | 0 |
+| MapKeyTrackedIncrement | 0 |
+| SpecEquivalenceSimpNormalized | 0 |
+| LinearIntSpecEquivalence | 0 |
+| LinearRecurrence2SpecEquivalence | 0 |
+| BoundedUniversal | 0 |
+| ResultPipelineChain | 0 |
+| WrapperOverRecursion | 0 |
+| TailRecFixedBaseFold | 0 |
+| EnumConstantFold | 0 |
+| FiniteDomainCases | 0 |
+| IntDecimalRoundtrip | 0 |
+| StringEscapeRoundtrip | 0 |
+| Sorry | 0 |
 
 ## Trigger Count 1 Rows
 | strategy | law | source |
@@ -84,16 +108,15 @@ This is a no-lake classifier ranking: it counts distinct laws pinned to each `Pr
 ## Mechanism Detail
 | mechanism | distinct laws |
 | --- | --- |
-| BackendDispatch | 99 |
-| LinearArithmetic | 46 |
-| RingIdentity | 24 |
-| NonlinearNonneg | 12 |
-| SimpOverPreludeLemmas | 11 |
-| FloorDivWindow.FloorPow2Window | 4 |
-| FloorDivWindow.PowSumSplit | 4 |
-| FloorDivWindow.PowPositive | 3 |
+| BackendDispatch | 64 |
+| LinearArithmetic | 44 |
+| RingIdentity | 12 |
+| NonlinearNonneg | 6 |
+| SimpOverPreludeLemmas | 6 |
+| FloorDivWindow.PowSumSplit | 3 |
 | Commutative.Add | 2 |
-| FloorDivWindow.FloorPow2Cancel | 2 |
+| FloorDivWindow.FloorPow2Window | 2 |
+| FloorDivWindow.PowPositive | 2 |
 | IdentityElement.Add | 2 |
 | IdentityElement.Mul | 2 |
 | MapUpdatePostcondition | 2 |
@@ -102,6 +125,7 @@ This is a no-lake classifier ranking: it counts distinct laws pinned to each `Pr
 | Associative.Mul | 1 |
 | Commutative.Mul | 1 |
 | EffectfulSpecEquivalence | 1 |
+| FloorDivWindow.FloorPow2Cancel | 1 |
 | IdentityElement.Sub | 1 |
 | Induction | 1 |
 | Reflexive | 1 |
@@ -141,6 +165,7 @@ No per-module tier evolution is recoverable because no committed manifest histor
 | law | kind | path |
 | --- | --- | --- |
 | safeSum.commutative | manual sidecar | examples/refinement/natural/proof/SafeSumCommutative.lean |
+| sigDouble.doubleIsTwice | hand-credit | projects/k5_fdiv/proofs/dafny/sigDouble__doubleIsTwice.dfy |
 | truncSig.truncStickyInt | hand-credit | projects/k5_fdiv/proofs/lean/truncSig__truncStickyInt.lean |
 | truncStickyComposes.composesThroughSticky | hand-credit | projects/k5_fdiv/proofs/lean/truncStickyComposes__composesThroughSticky.lean |
 
@@ -167,13 +192,9 @@ No per-module tier evolution is recoverable because no committed manifest histor
 | projects/k5_fdiv/domain/estimate.av | 8 |
 | projects/k5_fdiv/domain/exponent.av | 56 |
 | projects/k5_fdiv/domain/floorlaws.av | 1 |
-| projects/k5_fdiv/domain/fprep.av | 16 |
 | projects/k5_fdiv/domain/fracround.av | 28 |
-| projects/k5_fdiv/domain/kernel.av | 2 |
-| projects/k5_fdiv/domain/rational.av | 11 |
-| projects/k5_fdiv/domain/recip.av | 12 |
-| projects/k5_fdiv/domain/remainder.av | 10 |
-| projects/k5_fdiv/domain/round.av | 24 |
+| projects/k5_fdiv/domain/recip.av | 2 |
+| projects/k5_fdiv/domain/remainder.av | 8 |
 | projects/k5_fdiv/domain/sticky_int.av | 4 |
 | projects/k5_fdiv/domain/table.av | 4 |
 | projects/k5_fdiv/leafprobe.av | 2 |
@@ -192,3 +213,5 @@ The tool never invokes `lake`; local Lean export is transpile-only.
 
 ## Deviations And Gaps
 - The brief expected committed `proof_manifest.json` history. This clone has 0 such files across `git log --all`, so historical reuse and tier-evolution tables cannot be populated honestly.
+- Manifest strategy field: persist per-law `ProofStrategy` in `proof_manifest.json` so historical reuse curves are first-class.
+- Manifest history absence: commit proof manifests when proof credit matters; without them, history tables honestly stay empty.
