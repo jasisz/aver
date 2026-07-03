@@ -56,7 +56,7 @@
 use super::AutoProof;
 use super::aver_name_to_lean;
 use super::shared::{expr_dotted_name, find_fn_def_by_call_name};
-use crate::ast::{Expr, Spanned, Stmt, VerifyBlock, VerifyLaw};
+use crate::ast::{BinOp, Expr, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 
 /// `(short_callee_name, args)` when `expr` is a function call. The short name is
@@ -76,6 +76,144 @@ fn as_call(expr: &Spanned<Expr>) -> Option<(String, &[Spanned<Expr>])> {
 fn call_named<'a>(expr: &'a Spanned<Expr>, name: &str, n: usize) -> Option<&'a [Spanned<Expr>]> {
     let (short, args) = as_call(expr)?;
     (short == name && args.len() == n).then_some(args)
+}
+
+/// A call whose callee's dotted SOURCE name is EXACTLY `qual` (module-qualified,
+/// not short-name) with `n` args. Matching premises against the subject's own
+/// qualified primitives stops a same-short-named primitive from another module
+/// being conflated into the chain.
+fn call_qualified<'a>(
+    expr: &'a Spanned<Expr>,
+    qual: &str,
+    n: usize,
+) -> Option<&'a [Spanned<Expr>]> {
+    let Expr::FnCall(callee, args) = &expr.node else {
+        return None;
+    };
+    (expr_dotted_name(callee).as_deref() == Some(qual) && args.len() == n)
+        .then_some(args.as_slice())
+}
+
+/// The name of a bare identifier / resolved-slot reference.
+fn ident_name(e: &Spanned<Expr>) -> Option<&str> {
+    match &e.node {
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => Some(n.as_str()),
+        _ => None,
+    }
+}
+
+/// `param.field` record projection.
+fn is_field(e: &Spanned<Expr>, param: &str, field: &str) -> bool {
+    matches!(&e.node, Expr::Attr(base, f) if f == field && ident_name(base) == Some(param))
+}
+
+/// `l * r`.
+fn as_mul(e: &Spanned<Expr>) -> Option<(&Spanned<Expr>, &Spanned<Expr>)> {
+    match &e.node {
+        Expr::BinOp(BinOp::Mul, l, r) => Some((l, r)),
+        _ => None,
+    }
+}
+
+/// `p.top * p.bottom` — the sign-carrying product of a fraction.
+fn is_sign_product(e: &Spanned<Expr>, p: &str) -> bool {
+    matches!(as_mul(e), Some((l, r)) if is_field(l, p, "top") && is_field(r, p, "bottom"))
+}
+
+/// `p.bottom * q.bottom`.
+fn is_bottom_product(e: &Spanned<Expr>, p: &str, q: &str) -> bool {
+    matches!(as_mul(e), Some((l, r)) if is_field(l, p, "bottom") && is_field(r, q, "bottom"))
+}
+
+/// The single terminal expression of a function body, or `None` for a
+/// multi-statement / non-expression body.
+fn fn_terminal_expr(fd: &FnDef) -> Option<&Spanned<Expr>> {
+    match fd.body.stmts() {
+        [Stmt::Expr(e)] => Some(e),
+        _ => None,
+    }
+}
+
+/// Resolve a (qualified) fn name to a pure `FnDef` of the given arity.
+fn resolve_pure_fn<'a>(ctx: &'a CodegenContext, name: &str, arity: usize) -> Option<&'a FnDef> {
+    let fd = find_fn_def_by_call_name(ctx, name)?;
+    (fd.effects.is_empty() && fd.params.len() == arity).then_some(fd)
+}
+
+/// Whether the three order primitives resolve to the canonical exact-rational
+/// order over a two-field `{top, bottom}` record — the EXACT arithmetic the
+/// emitted kit is hard-wired to. The kit's ring-identity helpers sit OUTSIDE the
+/// `first | … | sorry` floor, so a foreign fn that merely shares a short name
+/// but carries a different body must be declined here (fail-closed) rather than
+/// admitted and emitted into a hard build error.
+///
+/// ```text
+///   lessThan(a, b) = a.top*a.bottom*(b.bottom*b.bottom) < b.top*b.bottom*(a.bottom*a.bottom)
+///   isNonNeg(a)    = a.top*a.bottom >= 0
+///   minus(a, b)    = { top = a.top*b.bottom - b.top*a.bottom, bottom = a.bottom*b.bottom }
+/// ```
+fn validate_order_primitives(
+    ctx: &CodegenContext,
+    lessthan_src: &str,
+    isnonneg_src: &str,
+    minus_src: &str,
+) -> Option<()> {
+    // lessThan: strict cross-multiplied order.
+    let lt = resolve_pure_fn(ctx, lessthan_src, 2)?;
+    if lt.return_type.trim() != "Bool" {
+        return None;
+    }
+    let (a, b) = (lt.params[0].0.as_str(), lt.params[1].0.as_str());
+    let Expr::BinOp(BinOp::Lt, ll, lr) = &fn_terminal_expr(lt)?.node else {
+        return None;
+    };
+    let (Some((la, lb)), Some((ra, rb))) = (as_mul(ll), as_mul(lr)) else {
+        return None;
+    };
+    if !(is_sign_product(la, a)
+        && is_bottom_product(lb, b, b)
+        && is_sign_product(ra, b)
+        && is_bottom_product(rb, a, a))
+    {
+        return None;
+    }
+    // isNonNeg: sign product nonnegative.
+    let nn = resolve_pure_fn(ctx, isnonneg_src, 1)?;
+    if nn.return_type.trim() != "Bool" {
+        return None;
+    }
+    let na = nn.params[0].0.as_str();
+    let Expr::BinOp(BinOp::Gte, gl, gr) = &fn_terminal_expr(nn)?.node else {
+        return None;
+    };
+    if !(is_sign_product(gl, na) && matches!(&gr.node, Expr::Literal(Literal::Int(0)))) {
+        return None;
+    }
+    // minus: cross-multiplied subtraction over a two-field record.
+    let mi = resolve_pure_fn(ctx, minus_src, 2)?;
+    let (ma, mb) = (mi.params[0].0.as_str(), mi.params[1].0.as_str());
+    let Expr::RecordCreate { fields, .. } = &fn_terminal_expr(mi)?.node else {
+        return None;
+    };
+    let field = |name: &str| fields.iter().find(|(f, _)| f == name).map(|(_, v)| v);
+    let (Some(top), Some(bottom)) = (field("top"), field("bottom")) else {
+        return None;
+    };
+    let Expr::BinOp(BinOp::Sub, ts, td) = &top.node else {
+        return None;
+    };
+    let (Some((tsl, tsr)), Some((tdl, tdr))) = (as_mul(ts), as_mul(td)) else {
+        return None;
+    };
+    if !(is_field(tsl, ma, "top")
+        && is_field(tsr, mb, "bottom")
+        && is_field(tdl, mb, "top")
+        && is_field(tdr, ma, "bottom")
+        && is_bottom_product(bottom, ma, mb))
+    {
+        return None;
+    }
+    Some(())
 }
 
 /// Flatten a left-nested `Bool.and(Bool.and(…), w)` `when` tree into conjuncts.
@@ -288,14 +426,23 @@ pub(super) fn recognize_frac_order_transitivity_shape(
     let Expr::FnCall(lt_callee, _) = &body.node else {
         return None;
     };
-    let lessthan = aver_name_to_lean(&expr_dotted_name(lt_callee)?);
+    let lessthan_src = expr_dotted_name(lt_callee)?;
     // The rational module prefix (e.g. `Domain.Rational`), read off `lessThan`,
     // so `isNonNeg` / `minus` are the SAME module's primitives — derived, not
     // hardcoded. A single-module domain renders these top-level (no prefix).
-    let (isnonneg, minus) = match lessthan.rsplit_once('.') {
+    let (isnonneg_src, minus_src) = match lessthan_src.rsplit_once('.') {
         Some((prefix, _)) => (format!("{prefix}.isNonNeg"), format!("{prefix}.minus")),
         None => ("isNonNeg".to_string(), "minus".to_string()),
     };
+    // The emitted kit unfolds these three primitives into a fixed cross-
+    // multiplied arithmetic and proves ring identities over it OUTSIDE the sorry
+    // floor. Validate the resolved bodies are exactly that canonical exact-
+    // rational order before admitting — a foreign fn that merely shares a short
+    // name declines here (fail-closed) instead of emitting a hard build error.
+    validate_order_primitives(ctx, &lessthan_src, &isnonneg_src, &minus_src)?;
+    let lessthan = aver_name_to_lean(&lessthan_src);
+    let isnonneg = aver_name_to_lean(&isnonneg_src);
+    let minus = aver_name_to_lean(&minus_src);
 
     // Substitute subject params → the law call's argument terms so the
     // conclusion endpoints are expressed in the law's given namespace.
@@ -324,7 +471,7 @@ pub(super) fn recognize_frac_order_transitivity_shape(
     let n_conj = conj.len();
     let mut edges: Vec<Edge> = Vec::new();
     for (i, c) in conj.iter().enumerate() {
-        if let Some(a) = call_named(c, "lessThan", 2) {
+        if let Some(a) = call_qualified(c, &lessthan_src, 2) {
             edges.push(Edge {
                 left: render(&a[0]),
                 right: render(&a[1]),
@@ -332,8 +479,8 @@ pub(super) fn recognize_frac_order_transitivity_shape(
                 strict: true,
                 conj_idx: i,
             });
-        } else if let Some(nn) = call_named(c, "isNonNeg", 1)
-            && let Some(m) = call_named(&nn[0], "minus", 2)
+        } else if let Some(nn) = call_qualified(c, &isnonneg_src, 1)
+            && let Some(m) = call_qualified(&nn[0], &minus_src, 2)
         {
             // `isNonNeg (minus Y X)` means `X <= Y`: non-strict edge `X → Y`.
             edges.push(Edge {
@@ -618,8 +765,18 @@ theorem {p}frac_lt_le_trans (a b cc : Fraction) (hc : cc.bottom ≠ 0)
     }
 
     let mut block: Vec<String> = Vec::new();
-    block.push("     simp only [Bool.and_eq_true] at h_when".to_string());
-    block.push(format!("     obtain {obtain} := h_when"));
+    if *n_conj > 1 {
+        // ≥2 conjuncts: split the `&&` chain into `= true` facts, then
+        // destructure the resulting tuple.
+        block.push("     simp only [Bool.and_eq_true] at h_when".to_string());
+        block.push(format!("     obtain {obtain} := h_when"));
+    } else {
+        // A single conjunct has no `&&`, so `Bool.and_eq_true` would rewrite
+        // nothing (a hard `simp only` "made no progress" error outside the sorry
+        // floor) and there is no tuple to destructure — a single-identifier
+        // `obtain` pattern does not bind in core Lean, so name it with `have`.
+        block.push(format!("     have {obtain} := h_when"));
+    }
     block.push(format!("     simp only [_root_.{subject}]"));
     for s in &steps {
         block.push(format!("     {s}"));

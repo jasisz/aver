@@ -1356,7 +1356,13 @@ fn proof_lean_frac_order_transitivity_chain_foreign_witness_kernel_clean() {
     // top premise's lower endpoint does not match the first premise's upper
     // endpoint), so the recognizer must DECLINE it and it reverts cleanly to the
     // bounded sampled proof — proving the rung never flips a shape it cannot
-    // close. `universal:true` means `#print axioms` is `ofReduceBool`-free.
+    // close. Two more universal laws pin the shape classes CI would otherwise
+    // miss: `singleLinkWitness` has EXACTLY ONE `when` conjunct plus a ground top
+    // link (the regression that turned red when the emit always split on `&&`),
+    // and `nonstrictChainWitness` is the 8.1.1-class 3-link chain (two premise
+    // links — one strict, one non-strict `isNonNeg (minus …)` — plus a closed
+    // ground top link). `universal:true` means `#print axioms` is
+    // `ofReduceBool`-free.
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping frac-order-transitivity witness test: `lake` not available");
         return;
@@ -1419,6 +1425,21 @@ verify ledgerWithinCeiling law gapWitness
     when lessThan(minus(times(usage, quota), oneRatio()), plus(times(rate, rate), buffer))
     when lessThan(plus(times(buffer, buffer), rate), phaseBudget())
     ledgerWithinCeiling(usage, quota) holds
+
+verify ledgerWithinCeiling law singleLinkWitness
+    given usage: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = 1, bottom = 3)]
+    given quota: Fraction = [Fraction(top = 1, bottom = 2)]
+    when lessThan(minus(times(usage, quota), oneRatio()), phaseBudget())
+    ledgerWithinCeiling(usage, quota) holds
+
+verify ledgerWithinCeiling law nonstrictChainWitness
+    given usage: Fraction = [Fraction(top = 1, bottom = 2)]
+    given quota: Fraction = [Fraction(top = 1, bottom = 2)]
+    given rate: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = 1, bottom = 3)]
+    given buffer: Fraction = [Fraction(top = 1, bottom = 4)]
+    when lessThan(minus(times(usage, quota), oneRatio()), plus(times(rate, rate), buffer))
+    when isNonNeg(minus(phaseBudget(), plus(times(rate, rate), buffer)))
+    ledgerWithinCeiling(usage, quota) holds
 "#,
     )
     .expect("write ledger.av");
@@ -1453,6 +1474,20 @@ verify ledgerWithinCeiling law gapWitness
         "the disconnected near-miss law must REVERT to bounded-domain (the rung \
          declines a chain it cannot connect):\n{lean}"
     );
+    assert!(
+        lean.contains(
+            "-- aver:law-class ledgerWithinCeiling_law_singleLinkWitness universal ledgerWithinCeiling.singleLinkWitness"
+        ),
+        "the single-conjunct (one strict premise + ground top link) law must be \
+         classed universal — the emit must not split a non-existent `&&`:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "-- aver:law-class ledgerWithinCeiling_law_nonstrictChainWitness universal ledgerWithinCeiling.nonstrictChainWitness"
+        ),
+        "the 8.1.1-class 3-link chain (strict + non-strict premise links + closed \
+         ground top link) must be classed universal:\n{lean}"
+    );
     let json_line = run
         .stdout
         .split(|&b| b == b'\n')
@@ -1469,10 +1504,11 @@ verify ledgerWithinCeiling law gapWitness
             summary["universal_laws"].as_u64(),
             summary["bounded_laws"].as_u64(),
         ),
-        (Some(true), Some(0), Some(true), Some(1), Some(1)),
-        "the foreign transitivity-chain witness must kernel-prove one law as a \
-         GENUINE universal (`ofReduceBool`-free) and keep the disconnected \
-         near-miss bounded — exactly one universal, one bounded, zero sorries.\n{}",
+        (Some(true), Some(0), Some(true), Some(3), Some(1)),
+        "the foreign transitivity-chain witness must kernel-prove the three \
+         connected shapes as GENUINE universals (`ofReduceBool`-free) and keep \
+         the disconnected near-miss bounded — three universal, one bounded, zero \
+         sorries.\n{}",
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&src);
