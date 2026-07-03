@@ -2664,6 +2664,54 @@ fn proof_mode_accepts_single_string_pos_advance_recursion() {
 }
 
 #[test]
+fn proof_mode_emits_stability_lemma_for_simple_string_pos_skipper() {
+    let source = r#"module FuelStable
+    intent = "simple string-position fuel stability"
+    effects []
+
+fn skipSpaces(s: String, pos: Int) -> Int
+    match String.charAt(s, pos)
+        Option.None -> pos
+        Option.Some(c) -> match c
+            " " -> skipSpaces(s, pos + 1)
+            _ -> pos
+"#;
+    let mut ctx = ctx_from_source(source, "fuel_stable");
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+
+    assert!(lean.contains("def skipSpaces__fuel"));
+    assert!(
+        lean.contains("theorem skipSpaces__fuel_stable :"),
+        "expected simple string-position skipper to get a stability lemma:\n{lean}"
+    );
+    assert!(lean.contains("averStringPosFuel s pos 1 ≤ fuel"));
+    assert!(lean.contains("skipSpaces__fuel fuel s pos = skipSpaces s pos"));
+}
+
+#[test]
+fn proof_mode_declines_stability_lemma_for_non_skip_string_pos_shape() {
+    let source = r#"module FuelStableDecline
+    intent = "string-position recursion outside the stability shape"
+    effects []
+
+fn walk(s: String, pos: Int) -> Int
+    match String.charAt(s, pos)
+        Option.None -> pos
+        Option.Some(_) -> walk(s, pos + 1)
+"#;
+    let mut ctx = ctx_from_source(source, "fuel_stable_decline");
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+
+    assert!(lean.contains("def walk__fuel"));
+    assert!(
+        !lean.contains("walk__fuel_stable"),
+        "out-of-shape string-position recursion must not get an unprobed stability lemma:\n{lean}"
+    );
+}
+
+#[test]
 fn proof_mode_accepts_mutual_int_countdown_recursion() {
     let mut ctx = empty_ctx();
     let even = FnDef {
