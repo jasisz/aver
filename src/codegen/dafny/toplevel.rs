@@ -3082,6 +3082,9 @@ pub fn emit_verify_law(
     if let Some(figure) = pinned_floor_window_figure {
         return emit_floor_window_support_stack(&figure, law, ctx, &fn_name, &law_name);
     }
+    if let Some(body) = super::lemmas::floor_arith_law(law, ctx, &fn_name, &law_name) {
+        return body;
+    }
     // The omission applies only where the default path would state an
     // OPEN universal with an empty body. The bounded-∀ form (mutual /
     // opaque cone over all-literal-Int given domains — the same
