@@ -3,8 +3,25 @@
 Date: 2026-07-03
 Repo: `/private/tmp/lumen-rs-proof-telemetry`
 Branch: `proof-telemetry-report`
-Commit: `d977b1c48705`
-Tool runtime: 30.49s
+Input commit: `84ecb98e9985`
+Tool runtime: 30.69s
+
+## How To Run
+Run from the repository root after building the local `aver` binary:
+
+```bash
+RUSTC_WRAPPER= cargo build --bin aver
+python3 tools/proof_telemetry.py --aver-bin target/debug/aver --output /tmp/proof-telemetry.md
+```
+
+Add `--lean-tags-for <path>` to collect optional no-lake Lean class tags. The committed report uses `examples/formal` and `projects/k5_fdiv/domain/round.av`; full K5 Lean tag export is intentionally not part of the default fast path.
+
+Fast smoke check:
+
+```bash
+python3 tools/proof_telemetry.py --no-current >/tmp/proof-telemetry-smoke.md
+python3 -m py_compile tools/proof_telemetry.py
+```
 
 ## Summary
 | metric | value |
@@ -28,7 +45,7 @@ The current manifest schema observable in the repo records `law`, `backend`, `ti
 Today's strategy attribution is recoverable without lake through `aver compile <file> --emit-ir-after=law_lower`.
 Today's Lean class tags were collected by transpiling only, via `aver proof <file> -o <tmp>` without `--check`; no `lake` command was run.
 Lean tag requested roots: `examples/formal`, `projects/k5_fdiv/domain/round.av`
-Lean tag transpile runtime: 27.94s
+Lean tag transpile runtime: 28.12s
 
 ## Reuse Curve From Manifest History
 No strategy-attributed reuse curve is recoverable from committed manifest history.
@@ -166,6 +183,7 @@ Commands used for this report:
 
 ```bash
 RUSTC_WRAPPER= cargo build --bin aver
+python3 tools/proof_telemetry.py --no-current >/tmp/proof-telemetry-smoke.md
 python3 tools/proof_telemetry.py --aver-bin target/debug/aver --lean-tags-for examples/formal --lean-tags-for projects/k5_fdiv/domain/round.av --output docs/proof-telemetry.md
 python3 -m py_compile tools/proof_telemetry.py
 ```
