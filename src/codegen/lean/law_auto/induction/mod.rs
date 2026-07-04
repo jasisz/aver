@@ -623,9 +623,7 @@ fn cited_closure_dep_laws(
     let mut admit =
         |scope: Option<&str>, vb: &VerifyBlock, law: &VerifyLaw, consumer_key: (usize, usize)| {
             for dep in ctx.with_module_scope(scope, || cited(vb, law, ctx)) {
-                // Fail-closed on a provably-later dep-module theorem; trust the
-                // recognizer for anything not tracked in `order`.
-                if order.get(&dep).is_none_or(|k| *k < consumer_key) {
+                if topology_admits(order.get(&dep), consumer_key) {
                     admitted.insert(dep);
                 }
             }
@@ -646,6 +644,19 @@ fn cited_closure_dep_laws(
             admit(Some(module.prefix.as_str()), vb, law, (mi, vb.line));
         }
     }
+}
+
+/// Emission-topology guard for a cited dep-module theorem. Emit order is dep
+/// modules in `ctx.modules` order, laws within a module in source order, and
+/// entry laws after every module — so an `(module_index, source_line)` key
+/// totally orders every law theorem. A citation is admissible only when the
+/// cited theorem is emitted strictly BEFORE the citing law: an earlier module,
+/// or the same module at an earlier source line. FAIL-CLOSED on a provably-
+/// later citation (a forward reference the kernel would reject). A dep the
+/// recognizer resolved that is not a tracked dep-module theorem (`None`) is
+/// trusted as reported.
+fn topology_admits(dep_order: Option<&(usize, usize)>, consumer_order: (usize, usize)) -> bool {
+    dep_order.is_none_or(|dep| *dep < consumer_order)
 }
 
 /// Program-wide set of `(module_prefix, theorem_base)` dep-law theorems
@@ -5043,5 +5054,38 @@ fn collect_simp_idents(line: &str, set: &mut BTreeSet<String>) {
             }
         }
         rest = &after[close + 1..];
+    }
+}
+
+#[cfg(test)]
+mod topology_tests {
+    use super::topology_admits;
+
+    // The emission-topology guard the citation-closure applies to every cited
+    // dep-module theorem. Order key is `(module_index, source_line)`; entry laws
+    // rank after every module (`usize::MAX`).
+    #[test]
+    fn cited_dep_admissible_only_when_emitted_before_consumer() {
+        const ENTRY: usize = usize::MAX;
+
+        // POSITIVE — the frac_monotone_compose.rs:716 class the old cone missed:
+        // an entry law citing a dep-module pool law (earlier module) is admitted.
+        assert!(topology_admits(Some(&(0, 40)), (ENTRY, 10)));
+        // Same module, cited sibling theorem at an EARLIER source line -> admitted
+        // (the in-module monotonicity/positivity sibling chain).
+        assert!(topology_admits(Some(&(2, 15)), (2, 80)));
+        // Strictly earlier module dominates the line -> admitted.
+        assert!(topology_admits(Some(&(1, 9999)), (3, 5)));
+        // A dep the recognizer resolved but that is not tracked -> trusted.
+        assert!(topology_admits(None, (2, 30)));
+
+        // NEGATIVE (fail-closed) — a citation to a theorem emitted AFTER the
+        // consumer is refused, so the forward reference never reaches the kernel:
+        // same module, cited law LATER in source than the consumer.
+        assert!(!topology_admits(Some(&(2, 90)), (2, 30)));
+        // A strictly LATER module.
+        assert!(!topology_admits(Some(&(4, 1)), (3, 500)));
+        // Self (same module and line): a law cannot cite itself as an earlier lemma.
+        assert!(!topology_admits(Some(&(2, 30)), (2, 30)));
     }
 }
