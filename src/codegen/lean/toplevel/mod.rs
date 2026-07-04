@@ -1,6 +1,6 @@
 /// Top-level Aver items → Lean 4 items (defs, inductives, structures, examples).
 mod fn_def;
-mod fuel;
+pub(in crate::codegen::lean) mod fuel;
 mod lex_list;
 mod render;
 mod type_def;

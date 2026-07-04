@@ -1807,14 +1807,49 @@ fn emit_verify_law_forall_auto_proof_inner(
             if defs.is_empty() {
                 return None;
             }
+            // A GRADUATED string-position scanner (native `def` with a
+            // `termination_by`) in the def cone makes a blind `simp [<fn>]`
+            // heartbeat-abort on the well-founded equation lemmas — a HARD
+            // `isDefEq` timeout that `first | … | sorry` does NOT catch. Drive
+            // the scanner's own `.induct` instead (`fun_induction` closes the
+            // progress-shaped universals graduation unlocks) and DROP the
+            // blind-simp fallback for this case, so a non-closing split
+            // degrades to the honest `sorry` floor rather than aborting the
+            // build. A non-scanner cone keeps the byte-identical simp floor.
+            let scope = ctx.active_module_scope();
+            let cone_has_scanner = shared::law_simp_source_names(ctx, vb, law)
+                .iter()
+                .filter_map(|n| {
+                    ctx.fn_def_by_name(n, scope.as_deref())
+                        .or_else(|| ctx.fn_def_by_name(n, None))
+                })
+                .any(|fd| {
+                    crate::codegen::lean::toplevel::fuel::detect_simple_string_pos_skip_literal(fd)
+                        .is_some()
+                });
+            let tactic_line = if cone_has_scanner {
+                let targets =
+                    induction::find_fun_induction_targets(vb, law, ctx, &proof_intro_names);
+                let mut arms: Vec<String> = targets
+                    .iter()
+                    .map(|t| {
+                        format!(
+                            "(fun_induction {} {} <;> simp_all <;> omega)",
+                            t.fn_lean,
+                            t.args.join(" ")
+                        )
+                    })
+                    .collect();
+                arms.push("sorry".to_string());
+                format!("first | {}", arms.join(" | "))
+            } else {
+                format!("first | (simp [{}] <;> done) | sorry", defs.join(", "))
+            };
             Some(AutoProof {
                 support_lines: Vec::new(),
                 body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                     &proof_intro_names,
-                    vec![format!(
-                        "first | (simp [{}] <;> done) | sorry",
-                        defs.join(", ")
-                    )],
+                    vec![tactic_line],
                 )),
                 replaces_theorem: false,
             })

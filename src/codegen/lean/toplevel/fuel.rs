@@ -585,7 +585,9 @@ fn emit_simple_string_pos_stability_lemma(
     ))
 }
 
-fn detect_simple_string_pos_skip_literal(fd: &FnDef) -> Option<String> {
+pub(in crate::codegen::lean) fn detect_simple_string_pos_skip_literal(
+    fd: &FnDef,
+) -> Option<String> {
     if fd.params.len() != 2 {
         return None;
     }
@@ -706,7 +708,18 @@ fn is_string_char_at(expr: &Spanned<Expr>, s_name: &str, pos_name: &str) -> bool
 }
 
 fn expr_is_ident(expr: &Spanned<Expr>, name: &str) -> bool {
-    matches!(&expr.node, Expr::Ident(n) if n == name)
+    // Accept both raw `Ident` (pre-resolution, e.g. the recursion
+    // classifier) and the resolver's `Resolved { name, .. }` slot form
+    // (fn bodies at proof-emit time are resolved in place). Without the
+    // `Resolved` arm this shape detection silently declines on every
+    // emit-time body — the reason the graduation gate and the #643
+    // stability gate previously depended on the string `_from_body`
+    // fallback.
+    match &expr.node {
+        Expr::Ident(n) => n == name,
+        Expr::Resolved { name: n, .. } => n == name,
+        _ => false,
+    }
 }
 
 fn expr_is_self_pos_plus_one_tailcall(
@@ -719,6 +732,7 @@ fn expr_is_self_pos_plus_one_tailcall(
         Expr::TailCall(data) => (&data.target, &data.args),
         Expr::FnCall(callee, args) => match &callee.node {
             Expr::Ident(name) => (name, args),
+            Expr::Resolved { name, .. } => (name, args),
             _ => return false,
         },
         _ => return false,

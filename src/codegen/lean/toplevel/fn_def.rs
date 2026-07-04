@@ -2,7 +2,8 @@ use std::collections::HashSet;
 
 use super::expr::aver_name_to_lean;
 use super::fuel::{
-    contract_lex_params_rank, emit_fuelized_int_ascending_fn, emit_fuelized_int_countdown_fn,
+    contract_lex_params_rank, detect_simple_string_pos_skip_literal,
+    emit_fuelized_int_ascending_fn, emit_fuelized_int_countdown_fn,
     emit_fuelized_mutual_int_countdown_group, emit_fuelized_mutual_sizeof_group,
     emit_fuelized_mutual_string_pos_group, emit_fuelized_string_pos_fn,
     emit_nat_linear_recurrence_fn, emit_native_guarded_int_countdown_fn,
@@ -234,6 +235,18 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     // StringPosAdvance — `Fuel { StringLenMinusPos { string, pos } }`.
     // Lean's emit reads the params from fd.params directly so the
     // contract just acts as the dispatch signal.
+    //
+    // GRADUATION: the simple SKIP shape (`match charAtAv s pos { none =>
+    // pos; some c => match c { <lit> => self(s, pos+1) …; _ => pos } }`,
+    // recognized by `detect_simple_string_pos_skip_literal`) emits a
+    // native fuel-free `def` with `termination_by (s.length - pos)` so
+    // Lean derives a real `<fn>.induct` for the `fun_induction` law rung.
+    // The tight recognizer IS the fail-closed floor: it fires only where
+    // every self-call sits under the outer `charAtAv s pos = some`
+    // guard, which forces `pos.toNat < s.length` — the exact fact the
+    // `decreasing_by` needs. Any other string-position shape (unbounded
+    // advance, carried-param scanner, mutual clique) keeps the fuel
+    // wrapper, since a native `def` cannot sorry-floor its termination.
     if let Some(contract) = crate::codegen::common::find_fn_contract_for_fn(ctx, fd)
         && matches!(
             contract.recursion,
@@ -242,6 +255,9 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
             })
         )
     {
+        if detect_simple_string_pos_skip_literal(fd).is_some() {
+            return Some(emit_native_string_pos_skip_fn(fd, ctx));
+        }
         return Some(emit_fuelized_string_pos_fn(fd, ctx));
     }
 
@@ -297,6 +313,74 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     }
 
     Some(lines.join("\n"))
+}
+
+/// Native (fuel-free) emission for a graduated single-fn string-position
+/// SKIP scanner (the skipWs shape). Gated upstream by
+/// [`detect_simple_string_pos_skip_literal`], so the whole body is
+/// `match charAtAv s pos { none => pos; some c => match c { <lit> =>
+/// self(s, pos+1) …; _ => pos } }` and every recursive call sits under
+/// the outer `charAtAv s pos = some c` guard on the SAME `(s, pos)`.
+///
+/// Two moves make Lean accept the native def:
+///  1. The outer `charAtAv` match is named (`match hc_scan : …`). Lean
+///     drops the discriminant equation under a plain `match`, so
+///     `decreasing_by` would otherwise not see `charAtAv s pos = some c`.
+///     The general match emitter only names Ident/Attr subjects (not the
+///     `charAtAv` FnCall), so we inject the binder on the sole outer
+///     `match String.charAtAv` line here.
+///  2. `decreasing_by` cites the prelude's `String.charAt_some_bounds`
+///     to turn that equation into `pos.toNat < s.toList.length`, then
+///     `omega` closes the strict decrease of `s.toList.length - pos.toNat`.
+///
+/// Result: a real `<fn>.induct`, which the `fun_induction` law rung
+/// (unavailable to the fuel wrapper's non-recursive `.induct`) uses to
+/// close universal progress laws.
+fn emit_native_string_pos_skip_fn(fd: &FnDef, ctx: &CodegenContext) -> String {
+    let fn_name = aver_name_to_lean(&fd.name);
+    let params = emit_fn_params(&fd.params);
+    let ret_type = if fd.return_type.is_empty() {
+        "Unit".to_string()
+    } else {
+        type_annotation_to_lean(&fd.return_type)
+    };
+    let s = aver_name_to_lean(&fd.params[0].0);
+    let pos = aver_name_to_lean(&fd.params[1].0);
+
+    let lowered = lower_pure_question_bang_for_emit(fd);
+    let body = lowered
+        .as_ref()
+        .map(|lowered_fd| lowered_fd.body.as_ref())
+        .unwrap_or(fd.body.as_ref());
+    // Native self-calls (no fuel rewrite); Lean's wf compiler handles the
+    // recursion once `termination_by`/`decreasing_by` are supplied.
+    let body_str = emit_fn_body_for(fd, body, ctx);
+    // Name the sole outer `charAtAv` discriminant so its `= some c`
+    // equation reaches `decreasing_by`.
+    let body_named = body_str.replacen(
+        "match String.charAtAv",
+        "match hc_scan : String.charAtAv",
+        1,
+    );
+
+    let mut lines = Vec::new();
+    if let Some(desc) = &fd.desc {
+        lines.push(format!("/-- {} -/", sanitize_doc(desc)));
+    }
+    lines.push(format!("def {} {} : {} :=", fn_name, params, ret_type));
+    lines.push(body_named);
+    lines.push(format!(
+        "termination_by ({}.toList.length - {}.toNat)",
+        s, pos
+    ));
+    lines.push("decreasing_by".to_string());
+    lines.push("  all_goals (".to_string());
+    lines.push(format!(
+        "    obtain ⟨h0, hlt⟩ := String.charAt_some_bounds {} {} _ hc_scan",
+        s, pos
+    ));
+    lines.push("    omega)".to_string());
+    lines.join("\n")
 }
 
 pub(super) fn lower_pure_question_bang_for_emit(fd: &FnDef) -> Option<FnDef> {

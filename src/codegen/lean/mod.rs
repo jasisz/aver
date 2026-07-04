@@ -15,7 +15,7 @@ mod shared;
 pub mod tactic_ir;
 #[cfg(test)]
 mod tests;
-mod toplevel;
+pub(in crate::codegen::lean) mod toplevel;
 mod transpile;
 mod types;
 pub mod untranslate;
