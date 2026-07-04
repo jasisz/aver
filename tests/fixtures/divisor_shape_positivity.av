@@ -61,3 +61,15 @@ verify floorDiv law absorbProduct
     when 0 <= r
     when r < 8 * pow2(k)
     floorDiv(8 * pow2(k) * q + r, 8 * pow2(k)) => q
+
+// CANCEL arm with a POOL-FN shared factor, NO positivity guard. The shared
+// factor `pow2(k)` cancels; its `0 < pow2(k)` is derived ONLY by CITING the
+// pool law (the `when 0 < k` guard bounds the exponent, not the divisor, so
+// omega has no other route to positivity here). This is the arm that actually
+// exercises the citation: unlike the absorb laws, no remainder bound implies
+// `0 < pow2(k)` for free, so a broken citation surfaces as a lake failure.
+verify floorDiv law cancelPow2
+    given a: Int = [8, 17, 0 - 5]
+    given k: Int = [1, 2, 3]
+    when 0 < k
+    floorDiv(a * pow2(k), 8 * pow2(k)) => floorDiv(a, 8)

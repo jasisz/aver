@@ -453,9 +453,11 @@ fn proof_bigint_floor_div_graduation_dafny() {
 /// Divisor-shape positivity (`tests/fixtures/divisor_shape_positivity.av`): the
 /// Euclidean-floor arithmetic rungs derive `0 < d` from the DIVISOR'S AST SHAPE
 /// instead of a ritual `when 0 < d` guard. Export-structure pin (no toolchain):
-/// three floor laws with NO positivity guard close `universal`, each via its own
+/// four floor laws with NO positivity guard close `universal`, each via its own
 /// derivation route — a positive literal by `decide`, a pool-fn call by CITING
-/// the proven `pow2 law positive`, and a product by `Int.mul_pos` over the two.
+/// the proven `pow2 law positive`, a product by `Int.mul_pos` over the two, and
+/// a CANCEL law whose sole positivity source is that same citation (no remainder
+/// bound implies it for free, unlike the absorb arms).
 #[test]
 fn proof_export_divisor_shape_positivity_universal() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -479,26 +481,44 @@ fn proof_export_divisor_shape_positivity_universal() {
         "floorDiv_law_absorbLiteral",
         "floorDiv_law_absorbPow2",
         "floorDiv_law_absorbProduct",
+        "floorDiv_law_cancelPow2",
     ] {
         assert!(
             lean.contains(&format!("-- aver:law-class {base} universal")),
             "{base} must close universal via shape-derived positivity; got:\n{lean}"
         );
     }
-    // The three derivation routes each leave their fingerprint in the emitted
-    // `0 < d` proof: `decide` for the literal, a citation of the pool positivity
-    // theorem for the pow2 fn, and `Int.mul_pos` over both for the product.
+    // The derivation routes each leave their fingerprint in the emitted `0 < d`
+    // proof: `decide` for the literal, a citation of the pool positivity theorem
+    // (normalized off its Prop `= true` form so `omega` reads it) for the pow2
+    // fn, and `Int.mul_pos` over both for the product.
     assert!(
         lean.contains("have hd : 0 < (8 : Int) := by decide"),
         "literal divisor positivity must close by `decide`:\n{lean}"
     );
     assert!(
-        lean.contains("have hpos := pow2_law_positive (k); omega"),
-        "pow2 divisor positivity must CITE the pool positivity law:\n{lean}"
+        lean.contains(
+            "have hpos := pow2_law_positive (k); \
+             simp only [ge_iff_le, eq_iff_iff, iff_true] at hpos; omega"
+        ),
+        "pow2 divisor positivity must CITE the pool positivity law and normalize it:\n{lean}"
     );
     assert!(
-        lean.contains("Int.mul_pos (by decide) (by have hpos := pow2_law_positive (k); omega)"),
+        lean.contains(
+            "Int.mul_pos (by decide) (by have hpos := pow2_law_positive (k); \
+             simp only [ge_iff_le, eq_iff_iff, iff_true] at hpos; omega)"
+        ),
         "product divisor positivity must be `Int.mul_pos` over the literal and cited factors:\n{lean}"
+    );
+    // The CANCEL arm's `0 < pow2 k` has NO route but the citation — no remainder
+    // bound implies it for free — so this fingerprint is what actually detects a
+    // broken citation (the absorb arms would still close from their `when`).
+    assert!(
+        lean.contains(
+            "have hc : 0 < pow2 k := by have hpos := pow2_law_positive (k); \
+             simp only [ge_iff_le, eq_iff_iff, iff_true] at hpos; omega"
+        ),
+        "cancel divisor positivity must be discharged solely by the cited pool law:\n{lean}"
     );
     // No law theorem REACHES sorry (only `first | proof | sorry` fail-safe floors).
     let reached_sorry: Vec<&str> = lean
@@ -514,10 +534,13 @@ fn proof_export_divisor_shape_positivity_universal() {
 }
 
 /// Live Lean gate for the divisor-shape positivity fixture: the pool positivity
-/// law plus the three guard-free floor laws (literal / pool-fn / product
+/// law plus the four guard-free floor laws (literal / pool-fn / product / cancel
 /// divisors) all close sorry-free and earn kernel-genuine `universal` credit
-/// (`#print axioms` inside the whitelist). Deleting the pool law drops the pow2
-/// and product laws back to bounded (verified separately); here it is present.
+/// (`#print axioms` inside the whitelist). The cancel law is the load-bearing
+/// one: its `0 < pow2 k` comes ONLY from the cited pool law (no remainder bound
+/// masks a broken citation), so a regression in the citation surfaces here as a
+/// lake failure. Deleting the pool law drops the citing laws back to bounded
+/// (`proof_divisor_shape_pool_law_is_load_bearing`); here it is present.
 #[test]
 fn proof_divisor_shape_positivity_lean_closes_kernel_genuine() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -555,8 +578,8 @@ fn proof_divisor_shape_positivity_lean_closes_kernel_genuine() {
             summary["universal_laws"].as_u64(),
             summary["bounded_laws"].as_u64(),
         ),
-        (Some(4), Some(0)),
-        "exactly the four universal-classed law theorems certified, none bounded.\n{}",
+        (Some(5), Some(0)),
+        "exactly the five universal-classed law theorems certified, none bounded.\n{}",
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&output_dir);
@@ -594,7 +617,10 @@ fn proof_export_divisor_shape_positivity_witness_universal() {
     // The cited theorem is the FOREIGN pool law (`blk_law_atLeastOne`), proving
     // the citation is discovered from the claim shape, not a hardcoded `pow2`.
     assert!(
-        lean.contains("have hpos := blk_law_atLeastOne (k); omega"),
+        lean.contains(
+            "have hpos := blk_law_atLeastOne (k); \
+             simp only [ge_iff_le, eq_iff_iff, iff_true] at hpos; omega"
+        ),
         "the foreign pool positivity law must be the cited one:\n{lean}"
     );
     let reached_sorry: Vec<&str> = lean
@@ -713,4 +739,97 @@ verify floorDiv law absorbBare
         "must NOT claim universal for an underivable divisor:\n{lean}"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The cited pool positivity law is LOAD-BEARING for the cancel arm, proven by a
+/// two-source revert. Both sources carry the identical guard-free cancel law
+/// `floorDiv(a*pow2(k), 8*pow2(k)) = floorDiv(a, 8)`, whose only positivity
+/// source is `0 < pow2 k`. WITH `pow2 law positive` in scope the divisor-shape
+/// rung derives that by CITING it and the law classes `universal`; DELETE just
+/// that one pool law (the fn and the cancel law untouched) and the same law
+/// declines to the sound `bounded-domain` sampled fallback. This is the
+/// mechanized form of the "delete the pool law" revert — the classification flip
+/// is what proves the citation, not a coincidence, carries the universality.
+/// Export-structure pin (no toolchain): the class is fixed at emit time.
+#[test]
+fn proof_divisor_shape_pool_law_is_load_bearing() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    // Shared tail: the pow2 fn, a floor fn, and the guard-free cancel law whose
+    // shared factor is `pow2(k)`. The `when 0 < k` guard bounds the exponent,
+    // NOT the divisor, so `0 < pow2 k` has no route but a citation.
+    let tail = r#"
+fn pow2(n: Int) -> Int
+    match n <= 0
+        true -> 1
+        false -> 2 * pow2(n - 1)
+
+verify pow2
+    pow2(0) => 1
+    pow2(3) => 8
+POOL_LAW
+fn floorDiv(a: Int, d: Int) -> Int
+    ? "Euclidean floor division a / d, guarded to 0 at d = 0."
+    Result.withDefault(Int.div(a, d), 0)
+
+verify floorDiv
+    floorDiv(52, 8) => 6
+
+verify floorDiv law cancelPow2
+    given a: Int = [8, 17, 0 - 5]
+    given k: Int = [1, 2, 3]
+    when 0 < k
+    floorDiv(a * pow2(k), 8 * pow2(k)) => floorDiv(a, 8)
+"#;
+    let header = "module CancelRevert\n    intent = \"cancel revert\"\n    exposes [pow2, floorDiv]\n    effects []\n";
+    let pool_law =
+        "\nverify pow2 law positive\n    given k: Int = [0, 1, 3]\n    pow2(k) >= 1 holds\n";
+
+    let emit_class = |with_pool: bool| -> String {
+        let body = tail.replace("POOL_LAW", if with_pool { pool_law } else { "" });
+        let src = format!("{header}{body}");
+        let dir = temp_output_dir(if with_pool {
+            "aver-proof-cancel-revert-with"
+        } else {
+            "aver-proof-cancel-revert-without"
+        });
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let av = dir.join("cancel_revert.av");
+        std::fs::write(&av, &src).expect("write fixture");
+        let out_lean = dir.join("lean");
+        let run = Command::new(aver_bin)
+            .current_dir(&repo_root)
+            .arg("proof")
+            .arg(&av)
+            .arg("-o")
+            .arg(&out_lean)
+            .output()
+            .expect("aver proof should run");
+        assert!(run.status.success(), "{}", format_output(&run));
+        let lean = std::fs::read_to_string(out_lean.join("CancelRevert.lean")).expect("lean out");
+        let _ = std::fs::remove_dir_all(&dir);
+        lean.lines()
+            .find(|l| l.contains("-- aver:law-class floorDiv_law_cancelPow2 "))
+            .unwrap_or_else(|| panic!("no cancel law-class line:\n{lean}"))
+            .to_string()
+    };
+
+    // WITH the pool law: the citation discharges `0 < pow2 k` → universal.
+    let with_pool = emit_class(true);
+    assert!(
+        with_pool.contains("floorDiv_law_cancelPow2 universal"),
+        "with the pool law present the cancel law must class universal; got: {with_pool}"
+    );
+    // WITHOUT the pool law: nothing derives `0 < pow2 k` → the rung declines to
+    // the sound bounded sampled fallback (NOT a false universal).
+    let without_pool = emit_class(false);
+    assert!(
+        without_pool.contains("floorDiv_law_cancelPow2 bounded-domain"),
+        "deleting the pool law must drop the cancel law to bounded-domain; got: {without_pool}"
+    );
+    assert!(
+        !without_pool.contains("floorDiv_law_cancelPow2 universal"),
+        "deleting the pool law must NOT leave a false universal; got: {without_pool}"
+    );
 }

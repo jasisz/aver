@@ -420,7 +420,20 @@ impl PositivityFact {
             PositivityFact::Decide => "by decide".to_string(),
             PositivityFact::WhenGuard => "by omega".to_string(),
             PositivityFact::CitedLaw { citation } => {
-                format!("by have hpos := {citation}; omega")
+                // `citation : (f arg >= B) = true` is a `Prop` equality
+                // (`(B <= f arg) = True` after `ge_iff_le`) that `omega` will not
+                // read. Normalize it to the bare `B <= f arg` fact first — the
+                // exact `[ge_iff_le, eq_iff_iff, iff_true]` chain
+                // `emit_recursive_positive_law` uses to discharge the same
+                // statement — THEN `omega` derives `0 < f arg`. Without the
+                // normalization `omega` silently ignores the hypothesis and only
+                // closes when other premises already imply positivity (the absorb
+                // arms), so the cancel arm — whose sole positivity source is this
+                // citation — would fail.
+                format!(
+                    "by have hpos := {citation}; \
+                     simp only [ge_iff_le, eq_iff_iff, iff_true] at hpos; omega"
+                )
             }
             PositivityFact::MulPos(l, r) => {
                 format!("Int.mul_pos ({}) ({})", l.lean_term(), r.lean_term())
@@ -523,12 +536,32 @@ fn citable_pool_blocks(ctx: &CodegenContext, before_line: usize) -> Vec<&VerifyB
     out
 }
 
-/// Whether `law` claims `f(binder) >= B` / `B <= f(binder)` with `B >= 1` (i.e.
-/// `0 < f`), for the fn whose short name is `f_short`. The `holds` law's rhs is
-/// `true`. Shape-keyed on the comparison form; the fn is discovered from the
-/// caller's atom, never hardcoded. `B >= 1` (not `>= 0`) is load-bearing: a
-/// `f >= 0` law gives only `0 <= f`, not the strict `0 < f` the divisor needs.
+/// Whether `law`'s EMITTED theorem is EXACTLY `∀ (v : T), (f v >= B) = true`
+/// (or the `B <= f v` twin) with `B >= 1` — the plain single-binder positivity
+/// form the citation term `f_law_name (arg)` consumes. STATEMENT-level, not
+/// merely recognizer-level: the citation applies exactly ONE argument to the
+/// theorem and hands the result straight to `omega`, so the theorem must carry
+/// no extra premise or binder. The fn is discovered from the caller's atom,
+/// never hardcoded. Fail-closed on anything else. Rejects, in particular:
+///   * a `when`-guarded law — its theorem gains a `<guard> = true ->` premise,
+///     so `f_law_name (arg)` is an implication `omega` cannot read;
+///   * a law with more than one given — `f_law_name (arg)` is then a partial
+///     application, still a `∀`, not the bare comparison;
+///   * a law whose fn argument is not the plain bound binder (`f(v + 1) >= B`) —
+///     citing at the caller's atom would yield a fact about the WRONG term.
+///
+/// `B >= 1` (not `>= 0`) is load-bearing: a `f >= 0` law gives only `0 <= f`,
+/// not the strict `0 < f` the divisor needs.
 fn law_claims_positive_over(law: &VerifyLaw, f_short: &str) -> bool {
+    // A `when` guard becomes a `... = true ->` premise on the emitted theorem.
+    if law.when.is_some() {
+        return false;
+    }
+    // The citation applies exactly ONE argument, so the theorem must bind
+    // exactly one `∀` variable for it to fully instantiate.
+    let [binder] = law.givens.as_slice() else {
+        return false;
+    };
     if !matches!(law.rhs.node, Expr::Literal(Literal::Bool(true))) {
         return false;
     }
@@ -536,15 +569,19 @@ fn law_claims_positive_over(law: &VerifyLaw, f_short: &str) -> bool {
         Expr::Literal(Literal::Int(n)) => Some(*n),
         _ => None,
     };
-    let is_f_call = |e: &Spanned<Expr>| -> bool {
+    // `f(v)` where `v` is EXACTLY the single bound binder, so substituting the
+    // caller's atom argument yields `(f arg >= B) = true` about THAT atom.
+    let is_f_of_binder = |e: &Spanned<Expr>| -> bool {
         matches!(call_name_args(e), Some((n, a))
-            if n.rsplit('.').next().unwrap_or(&n) == f_short && a.len() == 1)
+            if n.rsplit('.').next().unwrap_or(&n) == f_short
+                && a.len() == 1
+                && ident_name(&a[0]) == Some(binder.name.as_str()))
     };
     match &law.lhs.node {
         // f(binder) >= B
-        Expr::BinOp(BinOp::Gte, l, r) => is_f_call(l) && int_lit(r).is_some_and(|b| b >= 1),
+        Expr::BinOp(BinOp::Gte, l, r) => is_f_of_binder(l) && int_lit(r).is_some_and(|b| b >= 1),
         // B <= f(binder)
-        Expr::BinOp(BinOp::Lte, l, r) => int_lit(l).is_some_and(|b| b >= 1) && is_f_call(r),
+        Expr::BinOp(BinOp::Lte, l, r) => int_lit(l).is_some_and(|b| b >= 1) && is_f_of_binder(r),
         _ => false,
     }
 }
