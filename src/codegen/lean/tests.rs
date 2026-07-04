@@ -2664,9 +2664,16 @@ fn proof_mode_accepts_single_string_pos_advance_recursion() {
 }
 
 #[test]
-fn proof_mode_emits_stability_lemma_for_simple_string_pos_skipper() {
+fn proof_mode_graduates_simple_string_pos_skipper_to_native() {
+    // The simple string-position SKIP shape (skipWs family) graduates to a
+    // native fuel-free `def` with a `termination_by` measure, so Lean derives
+    // a real `.induct`. This SUBSUMES the #643 single-fn fuel-stability lemma:
+    // the graduated shape has no `__fuel` wrapper and no `_stable` lemma
+    // (native `.induct` is strictly stronger). The stability-lemma emission
+    // path is now unreachable for single fns — see the `walk`-shape decline
+    // test below, which pins that a NON-skip string-position fn stays fueled.
     let source = r#"module FuelStable
-    intent = "simple string-position fuel stability"
+    intent = "simple string-position graduation"
     effects []
 
 fn skipSpaces(s: String, pos: Int) -> Int
@@ -2680,13 +2687,26 @@ fn skipSpaces(s: String, pos: Int) -> Int
     let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
     let lean = generated_lean_file(&out);
 
-    assert!(lean.contains("def skipSpaces__fuel"));
     assert!(
-        lean.contains("theorem skipSpaces__fuel_stable :"),
-        "expected simple string-position skipper to get a stability lemma:\n{lean}"
+        lean.contains("def skipSpaces (s : String) (pos : Int) : Int :="),
+        "expected native fuel-free skipSpaces def:\n{lean}"
     );
-    assert!(lean.contains("averStringPosFuel s pos 1 ≤ fuel"));
-    assert!(lean.contains("skipSpaces__fuel fuel s pos = skipSpaces s pos"));
+    assert!(
+        lean.contains("termination_by (s.toList.length - pos.toNat)"),
+        "expected the StringLenMinusPos measure as termination_by:\n{lean}"
+    );
+    assert!(
+        lean.contains("String.charAt_some_bounds"),
+        "decreasing_by must cite the prelude bounds lemma:\n{lean}"
+    );
+    assert!(
+        !lean.contains("def skipSpaces__fuel"),
+        "graduated skipper must NOT emit a fuel wrapper:\n{lean}"
+    );
+    assert!(
+        !lean.contains("skipSpaces__fuel_stable"),
+        "graduated skipper must NOT emit the fuel-stability lemma (subsumed by native):\n{lean}"
+    );
 }
 
 #[test]
@@ -3067,7 +3087,12 @@ fn json_example_uses_total_defs_and_domain_guarded_laws_in_proof_mode() {
     let lean = generated_lean_file(&out);
 
     assert!(!lean.contains("partial def"));
-    assert!(lean.contains("def skipWs__fuel"));
+    // skipWs is a single simple-skip scanner: it graduates to a native
+    // fuel-free `def` with a `termination_by` measure (real `.induct`).
+    assert!(lean.contains("def skipWs (s : String) (pos : Int) : Int :="));
+    assert!(lean.contains("termination_by (s.toList.length - pos.toNat)"));
+    assert!(!lean.contains("def skipWs__fuel"));
+    // parseValue sits in a mutual parser clique — mutual groups stay fueled.
     assert!(lean.contains("def parseValue__fuel"));
     assert!(lean.contains("def toString' (j : Json) : String :="));
     assert!(
