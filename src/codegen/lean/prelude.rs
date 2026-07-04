@@ -176,6 +176,29 @@ theorem String.charAt_none_of_ge (s : String) (pos : Int) (h0 : 0 ≤ pos) (h : 
   have hn : ¬ pos < 0 := by omega
   simp [String.charAtAv, hn, List.getElem?_eq_none, h]"#;
 
+/// `String.charAtAv s pos = some c` forces `pos` into `[0, s.length)`.
+/// The termination witness for the graduated native string-position
+/// SKIP scanner: `decreasing_by` reads the outer match's `charAtAv …
+/// = some c` equation and this lemma turns it into `pos.toNat <
+/// s.toList.length`, which `omega` uses to discharge the strict
+/// decrease of the `s.toList.length - pos.toNat` measure. Sibling of
+/// `charAt_eq_of_lt` / `charAt_none_of_ge`; core-only (no `by_contra`
+/// / `push_neg`, neither of which is in the emitted prelude).
+const LEAN_PRELUDE_STRING_CHARAT_SOME_BOUNDS: &str = r#"/-- `String.charAtAv` returning `some` pins the position in bounds. -/
+theorem String.charAt_some_bounds (s : String) (pos : Int) (c : String)
+    (h : String.charAtAv s pos = some c) :
+    0 ≤ pos ∧ pos.toNat < s.toList.length := by
+  unfold String.charAtAv at h
+  by_cases hneg : pos < 0
+  · simp [hneg] at h
+  · simp only [hneg, if_false] at h
+    refine ⟨by omega, ?_⟩
+    rcases Nat.lt_or_ge pos.toNat s.toList.length with hlt | hge
+    · exact hlt
+    · exfalso
+      rw [List.getElem?_eq_none hge] at h
+      simp at h"#;
+
 /// Decimal-digit facts over the `NumericParse` prelude — reopened
 /// `AverDigits` namespace, demand-driven like the String spec lemmas.
 /// `natDigits_head_ne_zero` (a canonical decimal render never starts
@@ -1116,6 +1139,9 @@ fn generate_string_helpers_prelude(body: &str, include_all_helpers: bool) -> Str
     }
     if include_all_helpers || body.contains("String.charAt_none_of_ge") {
         parts.push(LEAN_PRELUDE_STRING_CHARAT_NONE_OF_GE.to_string());
+    }
+    if include_all_helpers || body.contains("String.charAt_some_bounds") {
+        parts.push(LEAN_PRELUDE_STRING_CHARAT_SOME_BOUNDS.to_string());
     }
     parts.join("\n\n")
 }

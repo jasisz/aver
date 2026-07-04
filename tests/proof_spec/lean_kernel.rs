@@ -1516,29 +1516,35 @@ verify ledgerWithinCeiling law nonstrictChainWitness
 }
 
 #[test]
-fn proof_lean_multi_literal_string_pos_skipper_stability_lemma_kernel_clean() {
-    // Regression net for the fuel-stability lemma on a MULTI-literal string-position
-    // skipper — the json `skipWs` shape (four whitespace chars all recursing to
-    // `self(s, pos+1)`, rankBudget 1). The first synthesized skeleton only handled a
-    // single skip literal and hard-failed this shape with `unsolved goals` (`case neg`
-    // could not close the residual `match … skipWs__fuel fuel …  = match … skipWs__fuel
-    // measure' …`). The robust skeleton is literal-COUNT agnostic, so the lemma must
-    // kernel-prove with NO sorry, and the whole project must build clean.
+fn proof_lean_multi_literal_string_pos_skipper_graduates_native_kernel_clean() {
+    // Graduation kernel net for the MULTI-literal string-position skipper — the
+    // json `skipWs` shape (four whitespace chars all recursing to `self(s,
+    // pos+1)`, rankBudget 1). It now emits as a native fuel-free `def` with a
+    // `termination_by (s.length - pos)` measure whose `decreasing_by` cites the
+    // prelude `String.charAt_some_bounds`. Because Lean derives a real
+    // `skipWs.induct`, a genuine UNIVERSAL progress law `∀ s pos, skipWs s pos
+    // >= pos` closes through the `fun_induction` rung. All of it must kernel-
+    // prove with NO sorry and NO hard build error (the well-founded `def` cannot
+    // sorry-floor its termination, so a failed `decreasing_by` would be a hard
+    // error here — this test is the floor). Replaces the pre-graduation
+    // fuel-stability-lemma net: the `__fuel` wrapper and its `_stable` lemma are
+    // gone (native `.induct` is strictly stronger).
     if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping multi-literal skipper stability test: `lake` not available");
+        eprintln!("skipping multi-literal skipper graduation test: `lake` not available");
         return;
     }
     let aver_bin = env!("CARGO_BIN_EXE_aver");
-    let src = temp_output_dir("aver-skipws-stable-src");
+    let src = temp_output_dir("aver-skipws-native-src");
     std::fs::create_dir_all(&src).expect("create src dir");
     std::fs::write(
         src.join("m.av"),
-        "module SkipWsFuel\n    effects []\n\n\
+        "module SkipWsNative\n    effects []\n\n\
          fn skipWs(s: String, pos: Int) -> Int\n    match String.charAt(s, pos)\n        Option.None -> pos\n        Option.Some(c) -> match c\n            \" \" -> skipWs(s, pos + 1)\n            \"\\t\" -> skipWs(s, pos + 1)\n            \"\\n\" -> skipWs(s, pos + 1)\n            \"\\r\" -> skipWs(s, pos + 1)\n            _ -> pos\n\n\
-         verify skipWs\n    skipWs(\"\", 0) => 0\n    skipWs(\"  abc\", 0) => 2\n    skipWs(\"\\tabc\", 0) => 1\n",
+         verify skipWs\n    skipWs(\"\", 0) => 0\n    skipWs(\"  abc\", 0) => 2\n    skipWs(\"\\tabc\", 0) => 1\n\n\
+         verify skipWs law progress\n    given s: String = [\"\", \"  x\"]\n    given pos: Int = [0, 1]\n    skipWs(s, pos) >= pos holds\n",
     )
     .expect("write m.av");
-    let out = temp_output_dir("aver-skipws-stable-out");
+    let out = temp_output_dir("aver-skipws-native-out");
     let run = Command::new(aver_bin)
         .arg("proof")
         .arg(src.join("m.av"))
@@ -1552,16 +1558,23 @@ fn proof_lean_multi_literal_string_pos_skipper_stability_lemma_kernel_clean() {
         .arg("0")
         .output()
         .expect("expected `aver proof --check --check-json` to run");
-    let lean = std::fs::read_to_string(out.join("SkipWsFuel.lean")).expect("read SkipWsFuel.lean");
-    // The stability lemma must be emitted (the multi-literal skip shape is gated in)
-    // and floored fail-soft (`first | (…) | sorry`).
+    let lean =
+        std::fs::read_to_string(out.join("SkipWsNative.lean")).expect("read SkipWsNative.lean");
+    // Native fuel-free graduation: a real `def` + `termination_by`, NO fuel
+    // wrapper, NO stability lemma.
     assert!(
-        lean.contains("theorem skipWs__fuel_stable :"),
-        "the multi-literal string-position skipper must get a stability lemma:\n{lean}"
+        lean.contains("def skipWs (s : String) (pos : Int) : Int :=")
+            && lean.contains("termination_by (s.toList.length - pos.toNat)"),
+        "the multi-literal skipper must graduate to a native def:\n{lean}"
     );
     assert!(
-        lean.contains("  first\n") && lean.contains("\n  | sorry"),
-        "the stability lemma must be floored `first | (…) | sorry`:\n{lean}"
+        !lean.contains("def skipWs__fuel") && !lean.contains("skipWs__fuel_stable"),
+        "graduated skipper must NOT emit a fuel wrapper or stability lemma:\n{lean}"
+    );
+    // The universal progress law closes on the derived `.induct`.
+    assert!(
+        lean.contains("skipWs_law_progress universal") && lean.contains("fun_induction skipWs"),
+        "the universal progress law must close via the fun_induction rung:\n{lean}"
     );
     let json_line = run
         .stdout
@@ -1571,18 +1584,100 @@ fn proof_lean_multi_literal_string_pos_skipper_stability_lemma_kernel_clean() {
         .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
     let summary: serde_json::Value =
         serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
-    // passed + zero sorries together certify: the lemma did NOT fall to its sorry
-    // floor (`sorries == 0`) and `lake build` genuinely closed it (`passed`), i.e.
-    // the robust skeleton kernel-proves the multi-literal case — no `unsolved goals`.
+    // passed + zero sorries + zero build errors + universal:true certify the
+    // native `def` termination discharged, the universal law closed on
+    // `.induct`, and nothing fell to a sorry floor or aborted the build.
     assert_eq!(
         (
             summary["passed"].as_bool(),
             summary["sorries"].as_u64(),
             summary["build_errors"].as_u64(),
+            summary["universal"].as_bool(),
         ),
-        (Some(true), Some(0), Some(0)),
-        "the multi-literal skipper stability lemma must kernel-prove with no sorry and \
-         no hard build error.\n{}",
+        (Some(true), Some(0), Some(0), Some(true)),
+        "the graduated skipper + universal progress law must kernel-prove clean.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_lean_mixed_advance_skipper_stays_fueled_stability_lemma_kernel_clean() {
+    // Divergence pin: after the graduation gate was tightened to a fail-closed
+    // recognizer, a skip scanner mixing the exact `self(s, pos + 1)` advance
+    // with a NON-unit `self(s, pos + 2)` arm no longer graduates — a native
+    // `def` cannot sorry-floor its `decreasing_by`, so an unclassifiable step
+    // shape must never reach native emission — and stays FUELED. The #643
+    // fuel-stability gate is deliberately looser than graduation (it
+    // re-recognizes the fueled body from its emitted text), so a `__fuel`
+    // wrapper AND its `_stable` lemma are still emitted here even though
+    // graduation declined. The build MUST stay kernel-clean: it succeeds with
+    // NO hard error and NO false theorem (`model_panicked: false`). The
+    // `_stable` skeleton is pos+1-uniform, so on the mixed step it degrades to
+    // its designed fail-soft `sorry` floor (uncited by any law, so no universal
+    // credit is tainted); under `--sorry-budget 1` the check passes.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping mixed-advance fueled-stability test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-mixed-advance-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module MixedAdvance\n    effects []\n\n\
+         fn skipMixed(s: String, pos: Int) -> Int\n    match String.charAt(s, pos)\n        Option.None -> pos\n        Option.Some(c) -> match c\n            \" \" -> skipMixed(s, pos + 1)\n            \"x\" -> skipMixed(s, pos + 2)\n            _ -> pos\n\n\
+         verify skipMixed\n    skipMixed(\"\", 0) => 0\n    skipMixed(\"  a\", 0) => 2\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-mixed-advance-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .arg("--sorry-budget")
+        .arg("1")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean =
+        std::fs::read_to_string(out.join("MixedAdvance.lean")).expect("read MixedAdvance.lean");
+    // Fueled, NOT graduated: a `__fuel` wrapper + `_stable` lemma, and no native
+    // `def` termination_by / bounds-lemma citation.
+    assert!(
+        lean.contains("def skipMixed__fuel") && lean.contains("theorem skipMixed__fuel_stable"),
+        "the mixed-advance skipper must stay fueled with a stability lemma:\n{lean}"
+    );
+    assert!(
+        !lean.contains("String.charAt_some_bounds")
+            && !lean.contains("termination_by (s.toList.length - pos.toNat)"),
+        "the mixed-advance skipper must NOT graduate to a native def:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    // Kernel-clean in the soundness sense: build succeeds (no hard error), no
+    // model panic (no vacuous/false certification). The single `sorry` is the
+    // uncited `_stable` fail-soft floor, absorbed by the budget.
+    assert_eq!(
+        (
+            summary["build_errors"].as_u64(),
+            summary["model_panicked"].as_bool(),
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+        ),
+        (Some(0), Some(false), Some(true), Some(1)),
+        "the fueled mixed-advance skipper must build clean with only the fail-soft _stable sorry.\n{}",
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&src);

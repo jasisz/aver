@@ -2755,10 +2755,10 @@ fn emit_map_fold_homomorphism(
 /// IH — no arg choice, no `generalizing`, no tail `cases`. It CLOSES only when
 /// the recursion key is a FREE VARIABLE; on a composite scrutinee it abstracts
 /// the term and loses the IH, so we require every argument to be a bare given.
-struct FunInductionTarget {
-    fn_lean: String,
+pub(super) struct FunInductionTarget {
+    pub(super) fn_lean: String,
     /// Goal-argument Lean names (the intro names), in call order.
-    args: Vec<String>,
+    pub(super) args: Vec<String>,
 }
 
 /// Whether a fn's body case-splits with a `match` — the condition under which
@@ -2806,7 +2806,7 @@ fn fn_body_has_match(fd: &crate::ast::FnDef) -> bool {
 /// <existing ladder>` arms. Each `fun_induction` either CLOSES the goal or
 /// FAILS (no theorem / goal mismatch / non-closing closer), falling to the next
 /// arm and ultimately to today's ladder — it can only ADD closures.
-fn find_fun_induction_targets(
+pub(super) fn find_fun_induction_targets(
     vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
