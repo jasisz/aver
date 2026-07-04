@@ -1601,3 +1601,85 @@ fn proof_lean_multi_literal_string_pos_skipper_graduates_native_kernel_clean() {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+#[test]
+fn proof_lean_mixed_advance_skipper_stays_fueled_stability_lemma_kernel_clean() {
+    // Divergence pin: after the graduation gate was tightened to a fail-closed
+    // recognizer, a skip scanner mixing the exact `self(s, pos + 1)` advance
+    // with a NON-unit `self(s, pos + 2)` arm no longer graduates — a native
+    // `def` cannot sorry-floor its `decreasing_by`, so an unclassifiable step
+    // shape must never reach native emission — and stays FUELED. The #643
+    // fuel-stability gate is deliberately looser than graduation (it
+    // re-recognizes the fueled body from its emitted text), so a `__fuel`
+    // wrapper AND its `_stable` lemma are still emitted here even though
+    // graduation declined. The build MUST stay kernel-clean: it succeeds with
+    // NO hard error and NO false theorem (`model_panicked: false`). The
+    // `_stable` skeleton is pos+1-uniform, so on the mixed step it degrades to
+    // its designed fail-soft `sorry` floor (uncited by any law, so no universal
+    // credit is tainted); under `--sorry-budget 1` the check passes.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping mixed-advance fueled-stability test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-mixed-advance-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module MixedAdvance\n    effects []\n\n\
+         fn skipMixed(s: String, pos: Int) -> Int\n    match String.charAt(s, pos)\n        Option.None -> pos\n        Option.Some(c) -> match c\n            \" \" -> skipMixed(s, pos + 1)\n            \"x\" -> skipMixed(s, pos + 2)\n            _ -> pos\n\n\
+         verify skipMixed\n    skipMixed(\"\", 0) => 0\n    skipMixed(\"  a\", 0) => 2\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-mixed-advance-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .arg("--sorry-budget")
+        .arg("1")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean =
+        std::fs::read_to_string(out.join("MixedAdvance.lean")).expect("read MixedAdvance.lean");
+    // Fueled, NOT graduated: a `__fuel` wrapper + `_stable` lemma, and no native
+    // `def` termination_by / bounds-lemma citation.
+    assert!(
+        lean.contains("def skipMixed__fuel") && lean.contains("theorem skipMixed__fuel_stable"),
+        "the mixed-advance skipper must stay fueled with a stability lemma:\n{lean}"
+    );
+    assert!(
+        !lean.contains("String.charAt_some_bounds")
+            && !lean.contains("termination_by (s.toList.length - pos.toNat)"),
+        "the mixed-advance skipper must NOT graduate to a native def:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    // Kernel-clean in the soundness sense: build succeeds (no hard error), no
+    // model panic (no vacuous/false certification). The single `sorry` is the
+    // uncited `_stable` fail-soft floor, absorbed by the budget.
+    assert_eq!(
+        (
+            summary["build_errors"].as_u64(),
+            summary["model_panicked"].as_bool(),
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+        ),
+        (Some(0), Some(false), Some(true), Some(1)),
+        "the fueled mixed-advance skipper must build clean with only the fail-soft _stable sorry.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}

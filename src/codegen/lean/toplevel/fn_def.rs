@@ -255,8 +255,10 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
             })
         )
     {
-        if detect_simple_string_pos_skip_literal(fd).is_some() {
-            return Some(emit_native_string_pos_skip_fn(fd, ctx));
+        if detect_simple_string_pos_skip_literal(fd).is_some()
+            && let Some(native) = emit_native_string_pos_skip_fn(fd, ctx)
+        {
+            return Some(native);
         }
         return Some(emit_fuelized_string_pos_fn(fd, ctx));
     }
@@ -336,7 +338,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
 /// Result: a real `<fn>.induct`, which the `fun_induction` law rung
 /// (unavailable to the fuel wrapper's non-recursive `.induct`) uses to
 /// close universal progress laws.
-fn emit_native_string_pos_skip_fn(fd: &FnDef, ctx: &CodegenContext) -> String {
+fn emit_native_string_pos_skip_fn(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     let fn_name = aver_name_to_lean(&fd.name);
     let params = emit_fn_params(&fd.params);
     let ret_type = if fd.return_type.is_empty() {
@@ -355,6 +357,17 @@ fn emit_native_string_pos_skip_fn(fd: &FnDef, ctx: &CodegenContext) -> String {
     // Native self-calls (no fuel rewrite); Lean's wf compiler handles the
     // recursion once `termination_by`/`decreasing_by` are supplied.
     let body_str = emit_fn_body_for(fd, body, ctx);
+    // FAIL-CLOSED: the `decreasing_by` reads `charAtAv s pos = some c` off a
+    // named discriminant, so the sole outer `match String.charAtAv` must be
+    // renamed to `match hc_scan : String.charAtAv`. Verify the substitution
+    // target occurs EXACTLY once before injecting: zero occurrences (no-op
+    // rename) or several (only the first renamed) both yield a native def
+    // whose `decreasing_by` cannot see the bound and hard-errors. On any
+    // other count, decline graduation and let the caller stay fueled — a
+    // fuel wrapper always builds, a mis-injected native def does not.
+    if body_str.matches("match String.charAtAv").count() != 1 {
+        return None;
+    }
     // Name the sole outer `charAtAv` discriminant so its `= some c`
     // equation reaches `decreasing_by`.
     let body_named = body_str.replacen(
@@ -380,7 +393,7 @@ fn emit_native_string_pos_skip_fn(fd: &FnDef, ctx: &CodegenContext) -> String {
         s, pos
     ));
     lines.push("    omega)".to_string());
-    lines.join("\n")
+    Some(lines.join("\n"))
 }
 
 pub(super) fn lower_pure_question_bang_for_emit(fd: &FnDef) -> Option<FnDef> {

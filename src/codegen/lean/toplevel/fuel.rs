@@ -603,30 +603,37 @@ pub(in crate::codegen::lean) fn detect_simple_string_pos_skip_literal(
         return None;
     }
 
+    // FAIL-CLOSED: the outer match must be EXACTLY the `charAtAv s pos`
+    // none/some pair — `Option.None -> pos` (terminal exit) and
+    // `Option.Some(c) -> <inner char match>` (the recursion). Every other
+    // outer arm declines graduation so the fn stays fueled:
+    //   * a catch-all `_` (BLOCKER 2): the native emitter names the sole
+    //     outer discriminant (`match hc_scan : charAtAv …`) so
+    //     `decreasing_by` can read `charAtAv s pos = some c`. A wildcard
+    //     arm produces no `= some c` equation, so the graduated def
+    //     hard-errors on its termination proof — a native def cannot
+    //     sorry-floor termination, so this must never be emitted.
+    //   * a `None` arm returning anything but `pos`, or an unexpected extra
+    //     constructor — not the graduating skip shape.
     let mut saw_none_exit = false;
     let mut recursive_literal = None;
     let mut saw_fallback_exit = false;
     for arm in arms {
         match &arm.pattern {
             Pattern::Constructor(name, fields) if name == "Option.None" && fields.is_empty() => {
-                saw_none_exit = expr_is_ident(&arm.body, pos_name);
+                if !expr_is_ident(&arm.body, pos_name) {
+                    return None;
+                }
+                saw_none_exit = true;
             }
             Pattern::Constructor(name, fields) if name == "Option.Some" && fields.len() == 1 => {
-                let lit = detect_inner_char_match_literal(
+                let (lit, fallback) = detect_inner_char_match_literal(
                     &arm.body, &fields[0], &fd.name, s_name, pos_name,
                 )?;
-                recursive_literal = Some(lit.0);
-                saw_fallback_exit = lit.1;
+                recursive_literal = Some(lit);
+                saw_fallback_exit = fallback;
             }
-            Pattern::Wildcard => {
-                if let Some((lit, fallback)) =
-                    detect_inner_char_match_literal(&arm.body, "", &fd.name, s_name, pos_name)
-                {
-                    recursive_literal = Some(lit);
-                    saw_fallback_exit = fallback;
-                }
-            }
-            _ => {}
+            _ => return None,
         }
     }
 
@@ -680,15 +687,32 @@ fn detect_inner_char_match_literal(
     let mut fallback_exit = false;
     for arm in arms {
         match &arm.pattern {
+            // An advancing arm: EXACTLY `self(s, pos + 1)` under the
+            // `charAtAv s pos = some c` guard — the only recursive step
+            // whose strict decrease of `s.length - pos` the native
+            // `decreasing_by` can close.
             Pattern::Literal(Literal::Str(lit))
                 if expr_is_self_pos_plus_one_tailcall(&arm.body, fn_name, s_name, pos_name) =>
             {
                 recursive_literal = Some(lit.clone());
             }
+            // The catch-all terminal exit `_ -> pos`.
             Pattern::Wildcard if expr_is_ident(&arm.body, pos_name) => {
                 fallback_exit = true;
             }
-            _ => {}
+            // FAIL-CLOSED: every remaining arm must be a TERMINAL,
+            // non-recursive arm (no self-call anywhere in its body). An arm
+            // carrying a self-call that is NOT the exact `self(s, pos + 1)`
+            // advance — a non-advancing `self(s, pos)`, a non-unit
+            // `self(s, pos + 2)`, or an advance routed through a helper
+            // `self(s, f(pos))` — graduates a native def whose
+            // `decreasing_by` cannot close (or silently changes the proven
+            // step shape), so it is unclassifiable: decline and stay fueled.
+            _ => {
+                if expr_contains_self_call(&arm.body, fn_name) {
+                    return None;
+                }
+            }
         }
     }
     recursive_literal.map(|lit| (lit, fallback_exit))
@@ -753,6 +777,66 @@ fn expr_is_pos_plus_one(expr: &Spanned<Expr>, pos_name: &str) -> bool {
         ) if expr_is_ident(left, pos_name)
             && matches!(&right.node, Expr::Literal(Literal::Int(1)))
     )
+}
+
+/// True iff `expr` (recursively) contains a call whose target is the
+/// recursive fn itself (`fn_name`). Covers post-TCO `TailCall`s — whose
+/// target the generic `recursion::expr_references_ident` walker skips,
+/// checking only its args — and both `Ident` and resolver-`Resolved`
+/// `FnCall` callees. Used by [`detect_inner_char_match_literal`] to
+/// reject an inner-match arm carrying a self-call that is NOT the exact
+/// `self(s, pos + 1)` advance: such an arm graduates a native def whose
+/// `decreasing_by` cannot close, so the fn must stay fueled. No existing
+/// helper reports TailCall targets, so this focused walker is the
+/// smallest fail-closed check.
+fn expr_contains_self_call(expr: &Spanned<Expr>, fn_name: &str) -> bool {
+    match &expr.node {
+        Expr::TailCall(data) => {
+            data.target == fn_name
+                || data
+                    .args
+                    .iter()
+                    .any(|a| expr_contains_self_call(a, fn_name))
+        }
+        Expr::FnCall(callee, args) => {
+            matches!(&callee.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == fn_name)
+                || expr_contains_self_call(callee, fn_name)
+                || args.iter().any(|a| expr_contains_self_call(a, fn_name))
+        }
+        Expr::Attr(obj, _) => expr_contains_self_call(obj, fn_name),
+        Expr::BinOp(_, l, r) => {
+            expr_contains_self_call(l, fn_name) || expr_contains_self_call(r, fn_name)
+        }
+        Expr::Neg(inner) | Expr::ErrorProp(inner) => expr_contains_self_call(inner, fn_name),
+        Expr::Match { subject, arms } => {
+            expr_contains_self_call(subject, fn_name)
+                || arms
+                    .iter()
+                    .any(|a| expr_contains_self_call(&a.body, fn_name))
+        }
+        Expr::Constructor(_, inner) => inner
+            .as_deref()
+            .is_some_and(|e| expr_contains_self_call(e, fn_name)),
+        Expr::InterpolatedStr(parts) => parts
+            .iter()
+            .any(|p| matches!(p, StrPart::Parsed(e) if expr_contains_self_call(e, fn_name))),
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            items.iter().any(|i| expr_contains_self_call(i, fn_name))
+        }
+        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
+            expr_contains_self_call(k, fn_name) || expr_contains_self_call(v, fn_name)
+        }),
+        Expr::RecordCreate { fields, .. } => fields
+            .iter()
+            .any(|(_, v)| expr_contains_self_call(v, fn_name)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_contains_self_call(base, fn_name)
+                || updates
+                    .iter()
+                    .any(|(_, v)| expr_contains_self_call(v, fn_name))
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => false,
+    }
 }
 
 fn strip_match_eq_binders(body: String) -> String {

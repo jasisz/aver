@@ -2732,6 +2732,113 @@ fn walk(s: String, pos: Int) -> Int
 }
 
 #[test]
+fn proof_mode_declines_graduation_for_non_unit_advance_arm() {
+    // FAIL-CLOSED graduation: a skip scanner whose inner char-match mixes the
+    // exact `self(s, pos + 1)` advance with a NON-unit `self(s, pos + 2)` arm
+    // must stay FUELED, not graduate — a native `def` cannot sorry-floor a
+    // `decreasing_by`, so a step shape the recognizer cannot affirmatively
+    // classify must never reach native emission. The upstream StringPosAdvance
+    // classifier admits `pos + k` for any k >= 1, so this shape reaches the
+    // gate; before the fix the `pos + 2` arm fell through the detector's
+    // `_ => {}` and the sibling `pos + 1` arm graduated the whole fn. A fuel
+    // wrapper always builds.
+    let source = r#"module NonUnitAdvance
+    intent = "mixed advance skip scanner"
+    effects []
+
+fn skipMixed(s: String, pos: Int) -> Int
+    match String.charAt(s, pos)
+        Option.None -> pos
+        Option.Some(c) -> match c
+            " " -> skipMixed(s, pos + 1)
+            "x" -> skipMixed(s, pos + 2)
+            _ -> pos
+"#;
+    let mut ctx = ctx_from_source(source, "non_unit_advance");
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+
+    assert!(
+        lean.contains("def skipMixed__fuel"),
+        "the mixed-advance scanner must stay fueled:\n{lean}"
+    );
+    assert!(
+        !lean.contains("String.charAt_some_bounds")
+            && !lean.contains("termination_by (s.toList.length - pos.toNat)"),
+        "the mixed-advance scanner must NOT graduate to a native def:\n{lean}"
+    );
+}
+
+#[test]
+fn graduation_gate_declines_unclassifiable_arms() {
+    // Direct fail-closed net on the graduation recognizer. The upstream
+    // classifier rejects some of these shapes to `partial def`, so the gate
+    // is exercised in isolation: a self-call arm that is NOT the exact
+    // `self(s, pos + 1)` advance, or an outer arm that is not the exact
+    // charAt none/some pair, must make `detect_simple_string_pos_skip_literal`
+    // decline — anything it accepts is emitted as a native `def` whose
+    // `decreasing_by` cannot be sorry-floored.
+    use crate::codegen::lean::toplevel::fuel::detect_simple_string_pos_skip_literal;
+    fn fd_named<'a>(ctx: &'a CodegenContext, name: &str) -> &'a FnDef {
+        ctx.fn_defs
+            .iter()
+            .find(|fd| fd.name == name)
+            .unwrap_or_else(|| panic!("fn {name} not found"))
+    }
+
+    // Positive control: the canonical uniform `pos + 1` skip shape graduates.
+    let good = ctx_from_source(
+        "module GateGood\n    effects []\n\n\
+         fn skipWs(s: String, pos: Int) -> Int\n    match String.charAt(s, pos)\n        Option.None -> pos\n        Option.Some(c) -> match c\n            \" \" -> skipWs(s, pos + 1)\n            _ -> pos\n",
+        "gate_good",
+    );
+    assert!(
+        detect_simple_string_pos_skip_literal(fd_named(&good, "skipWs")).is_some(),
+        "the canonical uniform pos+1 skipper must still be recognized"
+    );
+
+    // BLOCKER 1 (:691): a non-advancing `self(s, pos)` arm alongside a real
+    // `self(s, pos + 1)` arm — `decreasing_by` would fail on the non-advancing
+    // call, so decline.
+    let non_adv = ctx_from_source(
+        "module GateNonAdv\n    effects []\n\n\
+         fn skipMixed(s: String, pos: Int) -> Int\n    match String.charAt(s, pos)\n        Option.None -> pos\n        Option.Some(c) -> match c\n            \" \" -> skipMixed(s, pos + 1)\n            \"x\" -> skipMixed(s, pos)\n            _ -> pos\n",
+        "gate_non_adv",
+    );
+    assert!(
+        detect_simple_string_pos_skip_literal(fd_named(&non_adv, "skipMixed")).is_none(),
+        "a non-advancing self-call arm must decline graduation"
+    );
+
+    // BLOCKER 1 (:691): the advance routed through a helper `self(s, bump(pos))`
+    // — an opaque step `decreasing_by` cannot discharge, so decline.
+    let helper = ctx_from_source(
+        "module GateHelper\n    effects []\n\n\
+         fn bump(pos: Int) -> Int\n    pos + 1\n\n\
+         fn skipMixed(s: String, pos: Int) -> Int\n    match String.charAt(s, pos)\n        Option.None -> pos\n        Option.Some(c) -> match c\n            \" \" -> skipMixed(s, pos + 1)\n            \"x\" -> skipMixed(s, bump(pos))\n            _ -> pos\n",
+        "gate_helper",
+    );
+    assert!(
+        detect_simple_string_pos_skip_literal(fd_named(&helper, "skipMixed")).is_none(),
+        "a helper-routed advance arm must decline graduation"
+    );
+
+    // BLOCKER 2 (:621): an outer catch-all `_` on the charAt Option. The native
+    // emitter cannot name a `= some c` discriminant off a wildcard, so a
+    // graduated def would hard-error — the outer match must be exactly the
+    // none/some pair.
+    let outer_wild = ctx_from_source(
+        "module GateOuterWild\n    effects []\n\n\
+         fn skipR(s: String, pos: Int) -> Int\n    match String.charAt(s, pos)\n        Option.None -> pos\n        Option.Some(c) -> match c\n            \" \" -> skipR(s, pos + 1)\n            _ -> pos\n        _ -> pos\n",
+        "gate_outer_wild",
+    );
+    assert!(
+        detect_simple_string_pos_skip_literal(fd_named(&outer_wild, "skipR")).is_none(),
+        "an outer wildcard on the charAt Option must decline graduation"
+    );
+}
+
+#[test]
 fn proof_mode_accepts_mutual_int_countdown_recursion() {
     let mut ctx = empty_ctx();
     let even = FnDef {
