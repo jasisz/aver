@@ -544,6 +544,106 @@ fn dep_law_admissible(
     }
 }
 
+/// Name-blind citation-closure over the acyclic module DAG. Admits every
+/// dep-module law theorem some consumer law's proof CITES whose subject fn sits
+/// OUTSIDE that consumer's call cone — the citations the structural
+/// `dep_law_admissible` cone gate above cannot reach. The citation edges of each
+/// rung are read from its shape-keyed `cited_deps` recognizer (`cited` below),
+/// unioned in one dispatcher; scanning EVERY entry and dep-module law as a
+/// consumer closes over multi-hop chains (a dep law cited by another dep law is
+/// itself scanned), so this subsumes the per-family manual injection loops that
+/// used to hand-list one rung's citations each.
+///
+/// Subject to the emission-topology guard: a dep-module theorem is admissible
+/// only when it is emitted strictly BEFORE the citing law — an earlier module,
+/// or the same module at an earlier source line (`order`, keyed on the same
+/// `(module_index, source_line)` the emit iterates in). FAIL-CLOSED: a citation
+/// to a later-emitted theorem is dropped, so the citing proof then fails to
+/// compile and earns no universal credit, exactly as an unmet forward
+/// dependency should. A cited pair the recognizer resolved that is not a tracked
+/// dep-module law theorem (absent from `order`) is trusted as the recognizer
+/// reported it.
+///
+/// Empty when there are no dep modules (single-file path) → byte-identical to
+/// the pre-feature output.
+fn cited_closure_dep_laws(
+    ctx: &CodegenContext,
+    admitted: &mut std::collections::HashSet<(String, String)>,
+) {
+    use crate::ast::{TopLevel, VerifyKind};
+    use crate::codegen::lean::toplevel::{law_as_lemma_statement, law_theorem_base};
+    use std::collections::HashMap;
+    // Emit order ranks dep modules by their index in `ctx.modules` and laws
+    // within a module by source line; entry laws are emitted AFTER every module,
+    // so they rank last (ENTRY_RANK) and may cite any dep.
+    const ENTRY_RANK: usize = usize::MAX;
+
+    // Every dep-module law theorem → its `(module_index, source_line)` emit-order
+    // key, under both spellings of its base a consumer might key on (the
+    // canonical `<fn>_law_<name>` and the law-as-lemma rewrite base the emit
+    // admission uses). The topology guard compares against this.
+    let mut order: HashMap<(String, String), (usize, usize)> = HashMap::new();
+    for (mi, module) in ctx.modules.iter().enumerate() {
+        ctx.with_module_scope(Some(module.prefix.as_str()), || {
+            for vb in &module.verify_laws {
+                let VerifyKind::Law(law) = &vb.kind else {
+                    continue;
+                };
+                let key = (mi, vb.line);
+                let canonical = law_theorem_base(vb, law, ctx);
+                order
+                    .entry((module.prefix.clone(), canonical))
+                    .or_insert(key);
+                if let Some((rewrite, _)) = law_as_lemma_statement(vb, law, ctx) {
+                    order.entry((module.prefix.clone(), rewrite)).or_insert(key);
+                }
+            }
+        });
+    }
+    if order.is_empty() {
+        return;
+    }
+
+    // The citation edges of one consumer law: the union of every rung's shape-
+    // keyed `cited_deps` recognizer. Each names the dep-module theorems that
+    // rung's proof cites whose subject fn is outside the consumer's call cone.
+    // Adding a rung — or folding a per-family injection loop into the closure —
+    // means adding it here: one dispatcher, not a new injection loop. Pure: the
+    // recognizers key on the claim's AST shape, never emit.
+    fn cited(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        out.extend(super::triangle_sum_cited_deps(vb, law, ctx));
+        out
+    }
+
+    let mut admit =
+        |scope: Option<&str>, vb: &VerifyBlock, law: &VerifyLaw, consumer_key: (usize, usize)| {
+            for dep in ctx.with_module_scope(scope, || cited(vb, law, ctx)) {
+                // Fail-closed on a provably-later dep-module theorem; trust the
+                // recognizer for anything not tracked in `order`.
+                if order.get(&dep).is_none_or(|k| *k < consumer_key) {
+                    admitted.insert(dep);
+                }
+            }
+        };
+
+    for item in &ctx.items {
+        let TopLevel::Verify(vb) = item else { continue };
+        let VerifyKind::Law(law) = &vb.kind else {
+            continue;
+        };
+        admit(None, vb, law, (ENTRY_RANK, vb.line));
+    }
+    for (mi, module) in ctx.modules.iter().enumerate() {
+        for vb in &module.verify_laws {
+            let VerifyKind::Law(law) = &vb.kind else {
+                continue;
+            };
+            admit(Some(module.prefix.as_str()), vb, law, (mi, vb.line));
+        }
+    }
+}
+
 /// Program-wide set of `(module_prefix, theorem_base)` dep-law theorems
 /// that SOME consumer law admits into its pool — the EMIT-side gate. A
 /// dep law is emitted into the build ONLY if it is in this set; an
@@ -629,22 +729,15 @@ pub(crate) fn admitted_dep_law_theorems(
         }
     }
 
-    // Triangle-sum consumers: the rung CITES two rounding bound universals
-    // (`awayFracErrorBound` / `truncFracErrorBound`) whose statements mention
-    // dep fns OUTSIDE the consumer law's cone (the consumer never calls the
-    // bound predicate itself), so the structural `dep_law_admissible` gate above
-    // does not reach them. The rung knows exactly which bound laws it cites, so
-    // admit those directly — keyed on the SAME recognizer the emit uses, so the
-    // cited theorem is emitted iff the proof that cites it is.
-    for item in &ctx.items {
-        let TopLevel::Verify(vb) = item else { continue };
-        let VerifyKind::Law(law) = &vb.kind else {
-            continue;
-        };
-        for dep in super::triangle_sum_cited_deps(vb, law, ctx) {
-            admitted.insert(dep);
-        }
-    }
+    // Generic citation-closure: admit every dep-module law theorem a consumer
+    // law's rung CITES whose subject fn is outside the consumer's cone —
+    // topology-guarded, over every entry and dep-module law. Replaces the
+    // per-family manual dep injections; the triangle-sum rounding bounds
+    // (`awayFracErrorBound` / `truncFracErrorBound`) used to be hand-listed here
+    // because their subject fns sit OUTSIDE the consumer law's cone, so the
+    // structural `dep_law_admissible` gate above never reaches them. See
+    // `cited_closure_dep_laws`.
+    cited_closure_dep_laws(ctx, &mut admitted);
 
     // Rational-order chaining consumers: the rung CITES the signed power-of-two
     // monotonicity + homomorphism pool laws (whose subject fns are NOT in the
