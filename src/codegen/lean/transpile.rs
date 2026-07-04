@@ -395,6 +395,11 @@ pub(super) fn transpile_unified(
     } else {
         std::collections::HashSet::new()
     };
+    // Subset-invariant tripwire (see `topology_admits`): every dep-module law's
+    // emit key must be a key the citation-closure's topology order tracks — the
+    // premise that keeps its `None`-is-trusted branch fail-closed. Debug-only.
+    #[cfg(debug_assertions)]
+    let dep_theorem_order_keys = super::law_auto::dep_theorem_order_keys(ctx);
 
     for module in &ctx.modules {
         let mut body_sections: Vec<String> = Vec::new();
@@ -465,6 +470,18 @@ pub(super) fn transpile_unified(
                     let base = toplevel::law_as_lemma_statement(vb, law_ref, ctx)
                         .map(|(base, _)| base)
                         .unwrap_or_else(|| toplevel::law_theorem_base(vb, law_ref, ctx));
+                    // This emit key is computed from the SAME two fns under the
+                    // SAME scope as the topology order map — so it must be one of
+                    // that map's keys. If it is not, the emit-key and order-key
+                    // computations have drifted and `topology_admits`' `None`
+                    // branch could silently fail open.
+                    debug_assert!(
+                        dep_theorem_order_keys.contains(&(module.prefix.clone(), base.clone())),
+                        "dep-law emit key {:?} is absent from the citation-closure topology \
+                         order map; the fail-closed forward-reference guard would degrade to \
+                         fail-open",
+                        (module.prefix.clone(), base.clone())
+                    );
                     if !admitted_dep_laws.contains(&(module.prefix.clone(), base)) {
                         continue;
                     }

@@ -629,3 +629,124 @@ fn cross_file_uncited_unproven_dep_law_no_sorry_inflation() {
         format_output(&run)
     );
 }
+
+// ---------------------------------------------------------------------------
+// EMISSION-TOPOLOGY GUARD (end-to-end). The citation-closure admits a cited
+// dep-module theorem only when it is emitted strictly BEFORE the citing law
+// (`topology_admits`). The pure comparator has a unit test in
+// `induction::topology_tests`; this drives the guarantee through the WHOLE
+// pipeline so a regression that keeps the comparator correct but breaks the
+// wiring (or the recognizer's own forward-sibling decline) is still caught.
+//
+// Two dep-module fixtures are byte-identical except for the source order of a
+// geone law and the recursive-positivity sibling it cites:
+//   * `inorder` — the sibling is emitted first: the citation is backward, so
+//     the geone law proves universally and genuinely cites `pow2_law_positive`.
+//   * `forward` — the sibling is emitted LATER: the citation would be a forward
+//     reference the kernel rejects, so it is refused. The geone law degrades to
+//     its pre-closure tier (no universal theorem, no citation), no forward
+//     reference reaches the `.lean`, and the build stays green.
+// The JSON summary is identical for both; the guarantee lives in the emitted
+// dep `.lean`, so the assertions read it back.
+// ---------------------------------------------------------------------------
+
+/// Run a `citation_closure_forward_ref` variant end-to-end and return the JSON
+/// summary, the raw `Output`, and the generated `Domain/Frac.lean`.
+fn run_forward_ref_variant(variant: &str) -> (serde_json::Value, std::process::Output, String) {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = format!("tests/fixtures/citation_closure_forward_ref/{variant}");
+    let output_dir = temp_output_dir(&format!("aver-citation-closure-{variant}"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg(format!("{root}/main.av"))
+        .arg("--module-root")
+        .arg(&root)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&output_dir)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected citation-closure topology fixture to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with('{')))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)))
+        .to_string();
+    let summary: serde_json::Value =
+        serde_json::from_str(&json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    let frac = std::fs::read_to_string(output_dir.join("Domain/Frac.lean"))
+        .expect("expected generated Domain/Frac.lean");
+    let _ = std::fs::remove_dir_all(&output_dir);
+    (summary, run, frac)
+}
+
+#[test]
+fn cross_file_forward_citation_is_refused_end_to_end() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping citation-closure topology end-to-end test: `lake` not available");
+        return;
+    }
+
+    // BASELINE (`inorder`): the cited sibling is emitted first, so the geone
+    // law proves universally and genuinely cites `pow2_law_positive` — AFTER
+    // that theorem's own definition (a backward reference). This is what makes
+    // the forward case's refusal non-vacuous: the citation edge really exists.
+    let (base_summary, base_run, base_frac) = run_forward_ref_variant("inorder");
+    assert_eq!(
+        (
+            base_summary["passed"].as_bool(),
+            base_summary["build_errors"].as_u64(),
+        ),
+        (Some(true), Some(0)),
+        "the in-order baseline must build green\n{}",
+        format_output(&base_run)
+    );
+    assert!(
+        base_frac.contains("-- aver:law-class pow2SignedAtLeastOne_law_geOneFlip universal"),
+        "baseline: the geone law must prove universally when its cited sibling \
+         is emitted first\nDomain/Frac.lean:\n{base_frac}"
+    );
+    let base_def = base_frac
+        .find("theorem pow2_law_positive ")
+        .expect("baseline: the positivity sibling theorem must be emitted");
+    let base_cite = base_frac
+        .find("have h := pow2_law_positive")
+        .expect("baseline: the geone proof must cite the positivity sibling");
+    assert!(
+        base_def < base_cite,
+        "baseline: the citation must be a BACKWARD reference — the sibling is \
+         defined before it is cited\nDomain/Frac.lean:\n{base_frac}"
+    );
+
+    // GUARANTEE (`forward`): the identical program with the cited sibling
+    // emitted LATER. The forward citation is refused — the geone law degrades
+    // to its pre-closure tier (no universal theorem, no citation), NO forward
+    // reference reaches `Frac.lean`, and the build stays green (never red).
+    let (fwd_summary, fwd_run, fwd_frac) = run_forward_ref_variant("forward");
+    assert_eq!(
+        (
+            fwd_summary["passed"].as_bool(),
+            fwd_summary["build_errors"].as_u64(),
+        ),
+        (Some(true), Some(0)),
+        "the forward-citation fixture must NOT produce a red build\n{}",
+        format_output(&fwd_run)
+    );
+    assert!(
+        !fwd_frac.contains("-- aver:law-class pow2SignedAtLeastOne_law_geOneFlip universal"),
+        "forward: the geone law must degrade to its pre-closure tier (lose its \
+         universal theorem) when its citation would be a forward reference\n\
+         Domain/Frac.lean:\n{fwd_frac}"
+    );
+    assert!(
+        !fwd_frac.contains("have h := pow2_law_positive"),
+        "forward: NO forward reference to the later-emitted sibling may appear \
+         in the emitted proof\nDomain/Frac.lean:\n{fwd_frac}"
+    );
+}

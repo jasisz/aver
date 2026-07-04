@@ -1,0 +1,29 @@
+module Rational
+    intent =
+        "Minimal exact-rational surface for the citation-closure topology fixture."
+    exposes [Fraction, oneFraction, times, minus, sameValue, isNonNeg]
+    effects []
+
+record Fraction
+    top: Int
+    bottom: Int
+
+fn oneFraction() -> Fraction
+    ? "The exact rational one."
+    Fraction(top = 1, bottom = 1)
+
+fn times(a: Fraction, b: Fraction) -> Fraction
+    ? "Non-normalizing rational multiplication."
+    Fraction(top = a.top * b.top, bottom = a.bottom * b.bottom)
+
+fn minus(a: Fraction, b: Fraction) -> Fraction
+    ? "Non-normalizing rational subtraction."
+    Fraction(top = a.top * b.bottom - b.top * a.bottom, bottom = a.bottom * b.bottom)
+
+fn sameValue(a: Fraction, b: Fraction) -> Bool
+    ? "Cross-multiplication equality."
+    a.top * b.bottom == b.top * a.bottom
+
+fn isNonNeg(a: Fraction) -> Bool
+    ? "Sign-robust nonnegative rational order."
+    a.top * a.bottom >= 0
