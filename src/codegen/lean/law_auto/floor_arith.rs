@@ -26,8 +26,8 @@
 use super::AutoProof;
 use super::aver_name_to_lean;
 use super::shared::{
-    clause_gives_nonneg, clause_gives_pos, clause_is_lt, expr_dotted_name, flatten_and, floor_call,
-    is_euclidean_floor_fn, render,
+    PositivityFact, clause_gives_nonneg, clause_is_lt, divisor_positivity, expr_dotted_name,
+    flatten_and, floor_call, is_euclidean_floor_fn, render,
 };
 use crate::ast::{BinOp, Expr, Spanned, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
@@ -52,6 +52,34 @@ fn intro_names(law: &VerifyLaw) -> String {
         .join(" ")
 }
 
+/// Parenthesize an atom render iff it is compound (contains whitespace), so it
+/// stays a single unit when spliced as a POSITIONAL lemma argument
+/// (`lemma (pow2 k) …`, not `lemma pow2 k …`). A no-op on every single-token
+/// atom the pre-L5 corpus emits (bare givens / literals), so the guarded K5 pins
+/// stay byte-identical; only the shape-derived multi-token divisors (`pow2 k`)
+/// gain the wrap they need to parse.
+fn atom_arg(render: &str) -> String {
+    if render.contains(char::is_whitespace) {
+        format!("({render})")
+    } else {
+        render.to_string()
+    }
+}
+
+/// The `(hypothesis-type-atom, proof-term)` for `0 < atom` from its shape fact.
+/// Ascribes `(atom : Int)` only when the atom is purely literal (else the
+/// numerals default to `Nat`); a guarded / pool-fn / mixed-product atom is
+/// already `Int`-anchored and stays bare, byte-identical to the pre-L5 `0 <
+/// {atom} := by omega`.
+fn pos_have(atom: &str, fact: &PositivityFact) -> (String, String) {
+    let ty = if fact.needs_int_ascription() {
+        format!("({atom} : Int)")
+    } else {
+        atom.to_string()
+    };
+    (ty, fact.lean_term())
+}
+
 /// In a two-operand product whose children render to `l_r` / `r_r`, find the one
 /// that equals `target`; return the OTHER child's render and whether `target`
 /// sat on the LEFT. Content-blind: keyed only on structural equality of renders.
@@ -74,6 +102,11 @@ struct CancelShape {
     a: String,
     d: String,
     c: String,
+    /// How `0 < d` / `0 < c` are discharged, derived from each atom's SHAPE
+    /// (`WhenGuard` -> `by omega` when the author's guard supplies it —
+    /// byte-identical to the pre-L5 emission).
+    d_fact: PositivityFact,
+    c_fact: PositivityFact,
     /// The dividend / divisor products as WRITTEN (either operand order).
     dividend: String,
     divisor: String,
@@ -89,7 +122,11 @@ struct CancelShape {
 /// the shared factor may sit on either side of each product independently; `a`
 /// and `d` are pinned by the reduced rhs. A genuine non-match (no shared factor)
 /// declines.
-fn recognize_cancel(law: &VerifyLaw, ctx: &CodegenContext) -> Option<CancelShape> {
+fn recognize_cancel(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<CancelShape> {
     // rhs = floor(a, d)
     let Expr::FnCall(callee, args) = &law.rhs.node else {
         return None;
@@ -118,30 +155,31 @@ fn recognize_cancel(law: &VerifyLaw, ctx: &CodegenContext) -> Option<CancelShape
         return None;
     }
     let c_render = c_from_a;
+    // The divisor atom exprs (for shape-derived positivity): `d` is whichever
+    // side of the divisor product matched the reduced-rhs divisor, `c` the other.
+    let (d_expr, c_expr): (&Spanned<Expr>, &Spanned<Expr>) =
+        if d_left { (d_l, c_d) } else { (c_d, d_l) };
 
     if !is_euclidean_floor_fn(&floor_src, ctx) {
         return None;
     }
 
-    // `when` must guarantee both the divisor and the shared factor positive.
+    // Both the divisor `d` and the shared factor `c` must be provably positive —
+    // from the author's `when` guard OR from each atom's AST shape. A guarded
+    // atom yields `by omega` (byte-identical to the pre-L5 emission).
     let when = law.when.as_ref()?;
     let mut clauses = Vec::new();
     flatten_and(when, &mut clauses);
-    let pos_d = clauses
-        .iter()
-        .any(|cl| clause_gives_pos(cl, &d_render, ctx));
-    let pos_c = clauses
-        .iter()
-        .any(|cl| clause_gives_pos(cl, &c_render, ctx));
-    if !pos_d || !pos_c {
-        return None;
-    }
+    let d_fact = divisor_positivity(d_expr, &clauses, ctx, vb.line)?;
+    let c_fact = divisor_positivity(c_expr, &clauses, ctx, vb.line)?;
 
     Some(CancelShape {
         floor_lean: aver_name_to_lean(&floor_src),
         a: a_render,
         d: d_render,
         c: c_render,
+        d_fact,
+        c_fact,
         dividend: render(prod_a, ctx),
         divisor: render(prod_d, ctx),
         // shared factor is on the left iff `a` (resp. `d`) is on the right.
@@ -151,14 +189,15 @@ fn recognize_cancel(law: &VerifyLaw, ctx: &CodegenContext) -> Option<CancelShape
 }
 
 pub(in crate::codegen::lean) fn recognize_cancel_common_factor(
+    vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> bool {
-    recognize_cancel(law, ctx).is_some()
+    recognize_cancel(vb, law, ctx).is_some()
 }
 
 pub(super) fn emit_cancel_common_factor_law(
-    _vb: &VerifyBlock,
+    vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
     theorem_base: &str,
@@ -169,14 +208,18 @@ pub(super) fn emit_cancel_common_factor_law(
         a,
         d,
         c,
+        d_fact,
+        c_fact,
         dividend,
         divisor,
         c_left_in_dividend,
         c_left_in_divisor,
-    } = recognize_cancel(law, ctx)?;
+    } = recognize_cancel(vb, law, ctx)?;
     let when = render(law.when.as_ref()?, ctx);
     let lhs = render(&law.lhs, ctx);
     let rhs = render(&law.rhs, ctx);
+    let (d_ty, d_pos) = pos_have(&d, &d_fact);
+    let (c_ty, c_pos) = pos_have(&c, &c_fact);
 
     // `0 < divisor` proof follows the WRITTEN factor order of the divisor.
     let hdc = if c_left_in_divisor {
@@ -184,13 +227,23 @@ pub(super) fn emit_cancel_common_factor_law(
     } else {
         "Int.mul_pos hd hc" // 0 < d * c
     };
+    // The `Int.mul_pos hd hc` term is `Int` (its factor hyps are), so the `hdc`
+    // TYPE must match: ascribe the product when BOTH factors are purely literal
+    // (a degenerate cancel, but the numerals would otherwise default to `Nat`).
+    let divisor_ty = if d_fact.needs_int_ascription() && c_fact.needs_int_ascription() {
+        format!("({divisor} : Int)")
+    } else {
+        divisor.clone()
+    };
+    // Atoms spliced as POSITIONAL lemma args get the compound-only paren wrap.
+    let (aw, dw, cw) = (atom_arg(&a), atom_arg(&d), atom_arg(&c));
     // Commute the shared factor to the RIGHT (core lemma's canonical form).
     let mut normalize = String::new();
     if c_left_in_dividend {
-        normalize.push_str(&format!("\n  rw [Int.mul_comm {c} {a}]"));
+        normalize.push_str(&format!("\n  rw [Int.mul_comm {cw} {aw}]"));
     }
     if c_left_in_divisor {
-        normalize.push_str(&format!("\n  rw [Int.mul_comm {c} {d}]"));
+        normalize.push_str(&format!("\n  rw [Int.mul_comm {cw} {dw}]"));
     }
 
     let text = format!(
@@ -198,11 +251,11 @@ pub(super) fn emit_cancel_common_factor_law(
 theorem {base} : ∀ {quant}, {when} = true -> {lhs} = {rhs} := by
   intro {intro} h_when
   simp only [Bool.and_eq_true, decide_eq_true_eq, ge_iff_le, gt_iff_lt] at h_when
-  have hd : 0 < {d} := by omega
-  have hc : 0 < {c} := by omega
-  have hdc : 0 < {divisor} := {hdc}
-  rw [{base}__floordiv_eq ({dividend}) ({divisor}) hdc, {base}__floordiv_eq {a} {d} hd]{normalize}
-  exact Int.mul_ediv_mul_of_pos_left {a} {d} hc"#,
+  have hd : 0 < {d_ty} := {d_pos}
+  have hc : 0 < {c_ty} := {c_pos}
+  have hdc : 0 < {divisor_ty} := {hdc}
+  rw [{base}__floordiv_eq ({dividend}) ({divisor}) hdc, {base}__floordiv_eq {aw} {dw} hd]{normalize}
+  exact Int.mul_ediv_mul_of_pos_left {aw} {dw} hc"#,
         peel = floordiv_eq_lemma(theorem_base, &floor),
         base = theorem_base,
         quant = quant_params,
@@ -225,6 +278,10 @@ struct AbsorbShape {
     d: String,
     q: String,
     r: String,
+    /// How `0 < d` is discharged, derived from the divisor's SHAPE (`WhenGuard`
+    /// -> `by omega` when the author's guard supplies it — byte-identical to the
+    /// pre-L5 emission).
+    d_fact: PositivityFact,
     /// The dividend sum as WRITTEN.
     dividend: String,
     /// `true` when the divisor sits on the LEFT of the product (`d * q`); the
@@ -266,7 +323,11 @@ fn split_sum<'a>(
 /// the quotient `q` and the remainder `r` structurally. ORIENTATION-TOLERANT:
 /// the divisor may sit on either side of the product (`d * q` or `q * d`) and the
 /// remainder on either side of the sum. A genuine non-match declines.
-fn recognize_absorb(law: &VerifyLaw, ctx: &CodegenContext) -> Option<AbsorbShape> {
+fn recognize_absorb(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<AbsorbShape> {
     // lhs = floor(<sum>, d)
     let floor_src = {
         let Expr::FnCall(callee, _) = &law.lhs.node else {
@@ -288,20 +349,21 @@ fn recognize_absorb(law: &VerifyLaw, ctx: &CodegenContext) -> Option<AbsorbShape
         return None;
     }
 
-    // `when` must guarantee 0 < d, 0 <= r, and r < d.
+    // The remainder bounds `0 <= r` / `r < d` are genuinely author-supplied (no
+    // shape derives them), but the divisor positivity `0 < d` comes from the
+    // author's guard OR the divisor's AST shape — a guarded divisor yields
+    // `by omega`, byte-identical to the pre-L5 emission.
     let when = law.when.as_ref()?;
     let mut clauses = Vec::new();
     flatten_and(when, &mut clauses);
-    let pos_d = clauses
-        .iter()
-        .any(|cl| clause_gives_pos(cl, &d_render, ctx));
+    let d_fact = divisor_positivity(d_l, &clauses, ctx, vb.line)?;
     let nonneg_r = clauses
         .iter()
         .any(|cl| clause_gives_nonneg(cl, &r_render, ctx));
     let r_lt_d = clauses
         .iter()
         .any(|cl| clause_is_lt(cl, &r_render, &d_render, ctx));
-    if !pos_d || !nonneg_r || !r_lt_d {
+    if !nonneg_r || !r_lt_d {
         return None;
     }
 
@@ -310,6 +372,7 @@ fn recognize_absorb(law: &VerifyLaw, ctx: &CodegenContext) -> Option<AbsorbShape
         d: d_render,
         q: q_render,
         r: r_render,
+        d_fact,
         dividend: render(dividend, ctx),
         d_left_in_product,
         r_first,
@@ -317,14 +380,15 @@ fn recognize_absorb(law: &VerifyLaw, ctx: &CodegenContext) -> Option<AbsorbShape
 }
 
 pub(in crate::codegen::lean) fn recognize_absorb_remainder(
+    vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> bool {
-    recognize_absorb(law, ctx).is_some()
+    recognize_absorb(vb, law, ctx).is_some()
 }
 
 pub(super) fn emit_absorb_remainder_law(
-    _vb: &VerifyBlock,
+    vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
     theorem_base: &str,
@@ -335,19 +399,23 @@ pub(super) fn emit_absorb_remainder_law(
         d,
         q,
         r,
+        d_fact,
         dividend,
         d_left_in_product,
         r_first,
-    } = recognize_absorb(law, ctx)?;
+    } = recognize_absorb(vb, law, ctx)?;
     let when = render(law.when.as_ref()?, ctx);
     let lhs = render(&law.lhs, ctx);
     let rhs = render(&law.rhs, ctx);
+    let (d_ty, d_pos) = pos_have(&d, &d_fact);
 
+    // Atoms spliced as POSITIONAL lemma args get the compound-only paren wrap.
+    let (dw, qw, ra) = (atom_arg(&d), atom_arg(&q), atom_arg(&r));
     // Normalize to the core lemma's canonical dividend `r + d * q`.
     let mut normalize = String::new();
     if !d_left_in_product {
         // commute `q * d` -> `d * q`
-        normalize.push_str(&format!("\n  rw [Int.mul_comm {q} {d}]"));
+        normalize.push_str(&format!("\n  rw [Int.mul_comm {qw} {dw}]"));
     }
     if !r_first {
         // reorder `d * q + r` -> `r + d * q` (omega abstracts the product atom)
@@ -361,11 +429,11 @@ pub(super) fn emit_absorb_remainder_law(
 theorem {base} : ∀ {quant}, {when} = true -> {lhs} = {rhs} := by
   intro {intro} h_when
   simp only [Bool.and_eq_true, decide_eq_true_eq, ge_iff_le, gt_iff_lt] at h_when
-  have hd : 0 < {d} := by omega
+  have hd : 0 < {d_ty} := {d_pos}
   have h0 : 0 <= {r} := by omega
   have hr : {r} < {d} := by omega
-  rw [{base}__floordiv_eq ({dividend}) {d} hd]{normalize}
-  rw [Int.add_mul_ediv_left {r} {q} (by omega : {d} ≠ 0)]
+  rw [{base}__floordiv_eq ({dividend}) {dw} hd]{normalize}
+  rw [Int.add_mul_ediv_left {ra} {qw} (by omega : {d_ty} ≠ 0)]
   rw [Int.ediv_eq_zero_of_lt h0 hr]
   omega"#,
         peel = floordiv_eq_lemma(theorem_base, &floor),
