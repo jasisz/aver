@@ -11,7 +11,10 @@
 use std::collections::BTreeSet;
 
 use super::super::expr::aver_name_to_lean;
-use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyLaw};
+use crate::ast::{
+    BinOp, Expr, FnBody, FnDef, Literal, Spanned, Stmt, TopLevel, VerifyBlock, VerifyKind,
+    VerifyLaw,
+};
 use crate::ast_rewrite::rewrite_idents_scoped;
 use crate::codegen::CodegenContext;
 
@@ -362,6 +365,186 @@ pub(super) fn clause_gives_nonneg(
     match op {
         // c <= x  (c >= 0)          (also matches canonicalized `x >= c`)
         BinOp::Lte => int_lit(l).is_some_and(|c| c >= 0) && render(r, ctx) == x_render,
+        _ => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Divisor-shape positivity (`0 < d`) discharge.
+//
+// The floor-family arms need `0 < d` for every divisor / factor atom. Rather
+// than force the author to spell a `when 0 < d` guard, derive the fact from the
+// atom's AST SHAPE: a positive `Int` literal (`decide`), a product of positives
+// (`Int.mul_pos` over recursively-derived factors), or a fn call `f(a)` with a
+// proven pool positivity law `f(_) >= 1` (CITE it — laws-as-lemmas, keyed on the
+// claim FORM not the fn's name). The author's guard stays the fallback and is
+// checked FIRST, so every pre-L5 guarded law emits byte-identically (`by omega`).
+// An atom no route covers yields `None`, and the arm declines exactly as before
+// (fail-closed).
+// ---------------------------------------------------------------------------
+
+/// How `0 < <atom>` is discharged for a divisor / factor atom, keyed on the
+/// atom's AST shape.
+pub(super) enum PositivityFact {
+    /// A positive `Int` literal: `by decide`.
+    Decide,
+    /// A product `x * y`: `Int.mul_pos` over the two factors' facts.
+    MulPos(Box<PositivityFact>, Box<PositivityFact>),
+    /// A fn call `f(a)` with a proven pool positivity law: cite it at `a`, then
+    /// `omega`. `citation` is the applied theorem term `<fn>_law_<name> (arg)`.
+    CitedLaw { citation: String },
+    /// The author's `when` guard already gives `0 < atom`: read it off `h_when`
+    /// with `omega` (byte-identical to the pre-L5 emission).
+    WhenGuard,
+}
+
+impl PositivityFact {
+    /// Whether the atom is built PURELY from literals (so `0 < atom` would
+    /// default its numerals to `Nat`), meaning the `have` needs an explicit
+    /// `(atom : Int)` ascription. A fact carrying any fn call / bound variable
+    /// (`CitedLaw`, `WhenGuard`, or a `MulPos` containing one) is already
+    /// `Int`-anchored, so it stays un-ascribed and byte-identical to pre-L5.
+    pub(super) fn needs_int_ascription(&self) -> bool {
+        match self {
+            PositivityFact::Decide => true,
+            PositivityFact::MulPos(l, r) => l.needs_int_ascription() && r.needs_int_ascription(),
+            PositivityFact::CitedLaw { .. } | PositivityFact::WhenGuard => false,
+        }
+    }
+
+    /// The Lean proof TERM of type `0 < <atom>`. Valid both as the RHS of a
+    /// `have h : 0 < atom := <term>` and as a bare argument to `Int.mul_pos`
+    /// (whose expected factor types fix any inner `by` goal).
+    pub(super) fn lean_term(&self) -> String {
+        match self {
+            PositivityFact::Decide => "by decide".to_string(),
+            PositivityFact::WhenGuard => "by omega".to_string(),
+            PositivityFact::CitedLaw { citation } => {
+                format!("by have hpos := {citation}; omega")
+            }
+            PositivityFact::MulPos(l, r) => {
+                format!("Int.mul_pos ({}) ({})", l.lean_term(), r.lean_term())
+            }
+        }
+    }
+}
+
+/// Derive `0 < atom` from the atom's AST shape, or `None` when no route covers
+/// it (the arm then declines, fail-closed). `clauses` are the law's
+/// canonicalized `when` conjuncts; `before_line` is the citing law's source
+/// line so a cited pool law is only accepted when it is emitted EARLIER (Lean
+/// forbids forward references).
+pub(super) fn divisor_positivity(
+    atom: &Spanned<Expr>,
+    clauses: &[Spanned<Expr>],
+    ctx: &CodegenContext,
+    before_line: usize,
+) -> Option<PositivityFact> {
+    // 1. Author guard FIRST — every pre-L5 guarded law keeps its exact emission.
+    let atom_render = render(atom, ctx);
+    if clauses
+        .iter()
+        .any(|cl| clause_gives_pos(cl, &atom_render, ctx))
+    {
+        return Some(PositivityFact::WhenGuard);
+    }
+    // 2. Positive Int literal.
+    if let Expr::Literal(Literal::Int(n)) = &atom.node {
+        return (*n > 0).then_some(PositivityFact::Decide);
+    }
+    // 3. Product of positives.
+    if let Expr::BinOp(BinOp::Mul, x, y) = &atom.node {
+        let fx = divisor_positivity(x, clauses, ctx, before_line)?;
+        let fy = divisor_positivity(y, clauses, ctx, before_line)?;
+        return Some(PositivityFact::MulPos(Box::new(fx), Box::new(fy)));
+    }
+    // 4. Fn call with a proven pool positivity law.
+    cited_positivity_law(atom, ctx, before_line)
+        .map(|citation| PositivityFact::CitedLaw { citation })
+}
+
+/// Find a pool positivity law about the SAME fn the atom calls, emitted earlier
+/// than `before_line` and proven universal; return the applied citation term
+/// `<fn>_law_<name> (arg)`. Shape-keyed on the claim form `f(binder) >= B`
+/// (`B >= 1`), never on the fn's name — the fn is discovered from the atom.
+fn cited_positivity_law(
+    atom: &Spanned<Expr>,
+    ctx: &CodegenContext,
+    before_line: usize,
+) -> Option<String> {
+    let (f_src, args) = call_name_args(atom)?;
+    if args.len() != 1 {
+        // The recursive-positivity pool law is unary (`f : Int -> Int`).
+        return None;
+    }
+    let f_short = f_src.rsplit('.').next().unwrap_or(&f_src);
+    for vb in citable_pool_blocks(ctx, before_line) {
+        let VerifyKind::Law(law) = &vb.kind else {
+            continue;
+        };
+        if vb.fn_name.rsplit('.').next().unwrap_or(&vb.fn_name) != f_short {
+            continue;
+        }
+        if !law_claims_positive_over(law, f_short) {
+            continue;
+        }
+        // Universality gate: the recursive-positivity arm closes this as the
+        // universal `∀ binder, (f binder >= B) = true`, so a citation at any
+        // argument typechecks and `omega` derives `0 < f arg` from it.
+        if !super::recursive_mono::recognize_recursive_positive(vb, law, ctx) {
+            continue;
+        }
+        let base = format!(
+            "{}_law_{}",
+            aver_name_to_lean(&vb.fn_name),
+            aver_name_to_lean(&law.name)
+        );
+        return Some(format!("{base} ({})", render(&args[0], ctx)));
+    }
+    None
+}
+
+/// Sibling verify-law blocks a law at `before_line` may cite: dependency-module
+/// laws (always emitted before the entry module) and EARLIER entry-module laws
+/// (source line strictly before the citing law). Ordering is enforced because
+/// Lean forbids forward references to the cited theorem.
+fn citable_pool_blocks(ctx: &CodegenContext, before_line: usize) -> Vec<&VerifyBlock> {
+    let mut out: Vec<&VerifyBlock> = Vec::new();
+    for module in &ctx.modules {
+        out.extend(module.verify_laws.iter());
+    }
+    for item in &ctx.items {
+        if let TopLevel::Verify(b) = item
+            && b.line < before_line
+        {
+            out.push(b);
+        }
+    }
+    out
+}
+
+/// Whether `law` claims `f(binder) >= B` / `B <= f(binder)` with `B >= 1` (i.e.
+/// `0 < f`), for the fn whose short name is `f_short`. The `holds` law's rhs is
+/// `true`. Shape-keyed on the comparison form; the fn is discovered from the
+/// caller's atom, never hardcoded. `B >= 1` (not `>= 0`) is load-bearing: a
+/// `f >= 0` law gives only `0 <= f`, not the strict `0 < f` the divisor needs.
+fn law_claims_positive_over(law: &VerifyLaw, f_short: &str) -> bool {
+    if !matches!(law.rhs.node, Expr::Literal(Literal::Bool(true))) {
+        return false;
+    }
+    let int_lit = |e: &Spanned<Expr>| match &e.node {
+        Expr::Literal(Literal::Int(n)) => Some(*n),
+        _ => None,
+    };
+    let is_f_call = |e: &Spanned<Expr>| -> bool {
+        matches!(call_name_args(e), Some((n, a))
+            if n.rsplit('.').next().unwrap_or(&n) == f_short && a.len() == 1)
+    };
+    match &law.lhs.node {
+        // f(binder) >= B
+        Expr::BinOp(BinOp::Gte, l, r) => is_f_call(l) && int_lit(r).is_some_and(|b| b >= 1),
+        // B <= f(binder)
+        Expr::BinOp(BinOp::Lte, l, r) => int_lit(l).is_some_and(|b| b >= 1) && is_f_call(r),
         _ => false,
     }
 }

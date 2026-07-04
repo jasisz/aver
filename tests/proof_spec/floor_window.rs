@@ -449,3 +449,268 @@ fn proof_bigint_floor_div_graduation_dafny() {
         0,
     );
 }
+
+/// Divisor-shape positivity (`tests/fixtures/divisor_shape_positivity.av`): the
+/// Euclidean-floor arithmetic rungs derive `0 < d` from the DIVISOR'S AST SHAPE
+/// instead of a ritual `when 0 < d` guard. Export-structure pin (no toolchain):
+/// three floor laws with NO positivity guard close `universal`, each via its own
+/// derivation route — a positive literal by `decide`, a pool-fn call by CITING
+/// the proven `pow2 law positive`, and a product by `Int.mul_pos` over the two.
+#[test]
+fn proof_export_divisor_shape_positivity_universal() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output_dir = temp_output_dir("aver-proof-divisor-shape");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/divisor_shape_positivity.av")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("aver proof should run");
+    assert!(run.status.success(), "{}", format_output(&run));
+    let lean = std::fs::read_to_string(output_dir.join("DivisorShapePositivity.lean"))
+        .expect("DivisorShapePositivity.lean must be emitted");
+
+    // Every guard-free floor law closes universal — the positivity was derived
+    // from the divisor's shape, not read off a `when` clause.
+    for base in [
+        "floorDiv_law_absorbLiteral",
+        "floorDiv_law_absorbPow2",
+        "floorDiv_law_absorbProduct",
+    ] {
+        assert!(
+            lean.contains(&format!("-- aver:law-class {base} universal")),
+            "{base} must close universal via shape-derived positivity; got:\n{lean}"
+        );
+    }
+    // The three derivation routes each leave their fingerprint in the emitted
+    // `0 < d` proof: `decide` for the literal, a citation of the pool positivity
+    // theorem for the pow2 fn, and `Int.mul_pos` over both for the product.
+    assert!(
+        lean.contains("have hd : 0 < (8 : Int) := by decide"),
+        "literal divisor positivity must close by `decide`:\n{lean}"
+    );
+    assert!(
+        lean.contains("have hpos := pow2_law_positive (k); omega"),
+        "pow2 divisor positivity must CITE the pool positivity law:\n{lean}"
+    );
+    assert!(
+        lean.contains("Int.mul_pos (by decide) (by have hpos := pow2_law_positive (k); omega)"),
+        "product divisor positivity must be `Int.mul_pos` over the literal and cited factors:\n{lean}"
+    );
+    // No law theorem REACHES sorry (only `first | proof | sorry` fail-safe floors).
+    let reached_sorry: Vec<&str> = lean
+        .lines()
+        .filter(|l| l.contains("sorry") && !l.contains("| sorry"))
+        .collect();
+    assert!(
+        reached_sorry.is_empty(),
+        "divisor-shape fixture must not REACH sorry; offending lines:\n{}",
+        reached_sorry.join("\n")
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// Live Lean gate for the divisor-shape positivity fixture: the pool positivity
+/// law plus the three guard-free floor laws (literal / pool-fn / product
+/// divisors) all close sorry-free and earn kernel-genuine `universal` credit
+/// (`#print axioms` inside the whitelist). Deleting the pool law drops the pow2
+/// and product laws back to bounded (verified separately); here it is present.
+#[test]
+fn proof_divisor_shape_positivity_lean_closes_kernel_genuine() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping divisor-shape proof test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-divisor-shape-lake");
+    let (summary, run) = run_lean_check_json(
+        "tests/fixtures/divisor_shape_positivity.av",
+        &output_dir,
+        0,
+        &[],
+    );
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "divisor-shape laws must close sorry-free.\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "the pool law and all three shape-derived floor laws must be kernel-genuine \
+         universal (axioms within the whitelist).\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        (
+            summary["universal_laws"].as_u64(),
+            summary["bounded_laws"].as_u64(),
+        ),
+        (Some(4), Some(0)),
+        "exactly the four universal-classed law theorems certified, none bounded.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// Cross-domain, NAME- and DOMAIN-blind witness
+/// (`tests/fixtures/divisor_shape_positivity_witness.av`): a powers-of-THREE
+/// recursive fn `blk` and a differently-named floor fn `quot`, with the pool law
+/// spelled `1 <= blk(n)`. If the derivation keys on the claim SHAPE and not on
+/// `pow2` / `floorDiv` names or the power-of-two domain, the literal and cited
+/// floor laws close universal here too. Export-structure pin.
+#[test]
+fn proof_export_divisor_shape_positivity_witness_universal() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output_dir = temp_output_dir("aver-proof-divisor-shape-witness");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/divisor_shape_positivity_witness.av")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("aver proof should run");
+    assert!(run.status.success(), "{}", format_output(&run));
+    let lean = std::fs::read_to_string(output_dir.join("DivisorShapePositivityWitness.lean"))
+        .expect("DivisorShapePositivityWitness.lean must be emitted");
+
+    for base in ["quot_law_soakLiteral", "quot_law_soakBlock"] {
+        assert!(
+            lean.contains(&format!("-- aver:law-class {base} universal")),
+            "{base} must close universal (name- and domain-blind); got:\n{lean}"
+        );
+    }
+    // The cited theorem is the FOREIGN pool law (`blk_law_atLeastOne`), proving
+    // the citation is discovered from the claim shape, not a hardcoded `pow2`.
+    assert!(
+        lean.contains("have hpos := blk_law_atLeastOne (k); omega"),
+        "the foreign pool positivity law must be the cited one:\n{lean}"
+    );
+    let reached_sorry: Vec<&str> = lean
+        .lines()
+        .filter(|l| l.contains("sorry") && !l.contains("| sorry"))
+        .collect();
+    assert!(
+        reached_sorry.is_empty(),
+        "divisor-shape witness must not REACH sorry; offending lines:\n{}",
+        reached_sorry.join("\n")
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// Live Lean gate for the cross-domain witness: the foreign `blk` positivity
+/// pool law and the two guard-free `quot` floor laws close sorry-free and
+/// kernel-genuine universal — a differently named fn, so any `pow2` / `floorDiv`
+/// name leak in the derivation would break here.
+#[test]
+fn proof_divisor_shape_positivity_witness_lean_closes_kernel_genuine() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping divisor-shape witness proof test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-divisor-shape-witness-lake");
+    let (summary, run) = run_lean_check_json(
+        "tests/fixtures/divisor_shape_positivity_witness.av",
+        &output_dir,
+        0,
+        &[],
+    );
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "witness laws must close sorry-free.\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "the foreign pool law and both shape-derived floor laws must be \
+         kernel-genuine universal.\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        (
+            summary["universal_laws"].as_u64(),
+            summary["bounded_laws"].as_u64(),
+        ),
+        (Some(3), Some(0)),
+        "exactly three universal-classed witness law theorems, none bounded.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// The fail-closed boundary of divisor-shape positivity: an absorb law whose
+/// divisor is a BARE given with no `when 0 < d` guard and no derivable shape
+/// (not a literal, product, or pool-fn call) must DECLINE — the rung keeps its
+/// sound sampled fallback (`bounded-domain`), not a false universal. The law is
+/// genuinely false for `m <= 0`, so bounded is correct. Export pin, no toolchain.
+#[test]
+fn proof_divisor_shape_underivable_divisor_declines() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = r#"module UnderivableDivisor
+    intent =
+        "An absorb-remainder floor law whose divisor is an unguarded bare"
+        "variable: no shape derives its positivity, so the rung must decline."
+    exposes [floorDiv]
+    effects []
+
+fn floorDiv(a: Int, d: Int) -> Int
+    ? "Euclidean floor division a / d, guarded to 0 at d = 0."
+    Result.withDefault(Int.div(a, d), 0)
+
+verify floorDiv
+    floorDiv(52, 8) => 6
+
+verify floorDiv law absorbBare
+    given m: Int = [1, 2, 3]
+    given q: Int = [4, 6, 0]
+    given r: Int = [0, 1, 2]
+    when 0 <= r
+    when r < m
+    floorDiv(m * q + r, m) => q
+"#;
+    let dir = temp_output_dir("aver-proof-divisor-shape-underivable");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let av = dir.join("underivable.av");
+    std::fs::write(&av, src).expect("write fixture");
+    let out_lean = dir.join("lean");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg(&av)
+        .arg("-o")
+        .arg(&out_lean)
+        .output()
+        .expect("aver proof should run");
+    assert!(run.status.success(), "{}", format_output(&run));
+    let lean = std::fs::read_to_string(out_lean.join("UnderivableDivisor.lean")).expect("lean out");
+    // Declines to the sound bounded fallback, NOT a false universal.
+    assert!(
+        lean.contains("-- aver:law-class floorDiv_law_absorbBare bounded-domain"),
+        "an unguarded, shape-underivable divisor must decline to bounded-domain:\n{lean}"
+    );
+    assert!(
+        !lean.contains("-- aver:law-class floorDiv_law_absorbBare universal"),
+        "must NOT claim universal for an underivable divisor:\n{lean}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

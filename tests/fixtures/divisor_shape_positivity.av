@@ -1,0 +1,63 @@
+module DivisorShapePositivity
+    intent =
+        "Divisor-shape positivity: the Euclidean-floor arithmetic rungs derive"
+        "0 < d from the DIVISOR'S AST SHAPE instead of a ritual `when 0 < d`"
+        "guard. A positive Int literal closes by `decide`; a product of positives"
+        "by `Int.mul_pos` over each factor; a fn call `f(a)` with a proven pool"
+        "positivity law `f(_) >= 1` by CITING it (laws-as-lemmas, keyed on the"
+        "claim FORM not the name). None of the three floor laws below spells the"
+        "positivity guard, yet all close universal; the pool law is stated FIRST"
+        "so its theorem is emitted before the citations."
+    exposes [pow2, floorDiv]
+    effects []
+
+// The pool positivity law. `pow2(k) >= 1` is proven universally by the recursive
+// positivity rung; the floor laws below CITE it for their pow2-shaped divisors.
+fn pow2(n: Int) -> Int
+    match n <= 0
+        true -> 1
+        false -> 2 * pow2(n - 1)
+
+verify pow2
+    pow2(0) => 1
+    pow2(3) => 8
+
+verify pow2 law positive
+    given k: Int = [0, 1, 3]
+    pow2(k) >= 1 holds
+
+// The Euclidean floor-division fn (recognized by SHAPE, never by name).
+fn floorDiv(a: Int, d: Int) -> Int
+    ? "Euclidean floor division a / d, guarded to 0 at d = 0."
+    Result.withDefault(Int.div(a, d), 0)
+
+verify floorDiv
+    floorDiv(52, 8) => 6
+
+// LITERAL divisor, NO positivity guard: `0 < 8` derived by `decide`.
+verify floorDiv law absorbLiteral
+    given q: Int = [4, 6, 0]
+    given r: Int = [0, 1, 7]
+    when 0 <= r
+    when r < 8
+    floorDiv(8 * q + r, 8) => q
+
+// POOL-FN divisor, NO positivity guard: `0 < pow2(k)` cited from `pow2 law
+// positive`. Deleting that pool law drops this law back to bounded.
+verify floorDiv law absorbPow2
+    given k: Int = [1, 2, 3]
+    given q: Int = [4, 6, 0]
+    given r: Int = [0, 1, 2]
+    when 0 <= r
+    when r < pow2(k)
+    floorDiv(pow2(k) * q + r, pow2(k)) => q
+
+// PRODUCT divisor, NO positivity guard: `0 < 8 * pow2(k)` derived by
+// `Int.mul_pos` over the literal factor (`decide`) and the pool-fn factor (cite).
+verify floorDiv law absorbProduct
+    given k: Int = [1, 2, 3]
+    given q: Int = [4, 6, 0]
+    given r: Int = [0, 1, 2]
+    when 0 <= r
+    when r < 8 * pow2(k)
+    floorDiv(8 * pow2(k) * q + r, 8 * pow2(k)) => q
