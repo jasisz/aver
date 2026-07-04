@@ -613,6 +613,10 @@ fn cited_closure_dep_laws(
     fn cited(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Vec<(String, String)> {
         let mut out = Vec::new();
         out.extend(super::triangle_sum_cited_deps(vb, law, ctx));
+        out.extend(super::frac_order_chain_cited_deps(vb, law, ctx));
+        out.extend(super::frac_monotone_compose_cited_deps(vb, law, ctx));
+        out.extend(super::monotone_reflect_cited_deps(vb, law, ctx));
+        out.extend(keystone::keystone_dep_bridge_cites(vb, law, ctx));
         out
     }
 
@@ -738,100 +742,6 @@ pub(crate) fn admitted_dep_law_theorems(
     // structural `dep_law_admissible` gate above never reaches them. See
     // `cited_closure_dep_laws`.
     cited_closure_dep_laws(ctx, &mut admitted);
-
-    // Rational-order chaining consumers: the rung CITES the signed power-of-two
-    // monotonicity + homomorphism pool laws (whose subject fns are NOT in the
-    // consumer law's call cone — the consumer only calls `pow2Signed`, never the
-    // monotonicity/homomorphism predicate), so the structural gate above does
-    // not reach them. The rung knows exactly which laws it cites, so admit them
-    // directly — keyed on the SAME recognizer the emit uses, so the cited
-    // theorem is emitted iff the proof that cites it is.
-    for item in &ctx.items {
-        let TopLevel::Verify(vb) = item else { continue };
-        let VerifyKind::Law(law) = &vb.kind else {
-            continue;
-        };
-        for dep in super::frac_order_chain_cited_deps(vb, law, ctx) {
-            admitted.insert(dep);
-        }
-    }
-
-    // Exact-rational monotonicity / at-least-one / positivity laws: each CITES
-    // its module's homomorphism / positivity / `>= 1` / recursive-positivity
-    // sibling laws (whose subject fns are NOT in its call cone), so the structural
-    // gate does not reach them. A dependency export must carry the whole citation
-    // chain for the monotonicity theorem to close, so admit them directly — run
-    // under the dep module's scope so the recognizers resolve its fns and laws.
-    for module in &ctx.modules {
-        ctx.with_module_scope(Some(module.prefix.as_str()), || {
-            for vb in &module.verify_laws {
-                let VerifyKind::Law(law) = &vb.kind else {
-                    continue;
-                };
-                for dep in super::frac_monotone_compose_cited_deps(vb, law, ctx) {
-                    admitted.insert(dep);
-                }
-            }
-        });
-    }
-
-    // Strict-order reflection consumers: the rung CITES monotonicity and
-    // denominator-positivity sibling laws that are not necessarily in the
-    // consumer's call cone. Denominator-positivity itself cites the broader
-    // positivity law. Admit exactly those discovered dependencies under the dep
-    // module's scope, keyed on the same recognizers as the emitter. Entry laws
-    // can also cite an exposed dependency bridge theorem directly (for example a
-    // magnitude-bracket law over a dep's unary Fraction cone), so scan them too.
-    for item in &ctx.items {
-        let TopLevel::Verify(vb) = item else { continue };
-        let VerifyKind::Law(law) = &vb.kind else {
-            continue;
-        };
-        for dep in super::monotone_reflect_cited_deps(vb, law, ctx) {
-            admitted.insert(dep);
-        }
-    }
-    for module in &ctx.modules {
-        ctx.with_module_scope(Some(module.prefix.as_str()), || {
-            for vb in &module.verify_laws {
-                let VerifyKind::Law(law) = &vb.kind else {
-                    continue;
-                };
-                for dep in super::monotone_reflect_cited_deps(vb, law, ctx) {
-                    admitted.insert(dep);
-                }
-            }
-        });
-    }
-
-    // Keystone finite-domain composition consumers: the keystone's `grind`
-    // cites a dependency conditional-bridge law (`nonNegOfPositive`) to discharge
-    // a cited interval law's nonneg premise from the supplier's positivity
-    // conjunct. The bridge's hypothesis fn is reachable only through a cited
-    // supplier, so the structural gate above does not reach it; the keystone
-    // names it directly, keyed on the SAME recognizer the emit cites, so the dep
-    // theorem is emitted iff the proof that cites it is.
-    for item in &ctx.items {
-        let TopLevel::Verify(vb) = item else { continue };
-        let VerifyKind::Law(law) = &vb.kind else {
-            continue;
-        };
-        for dep in keystone::keystone_dep_bridge_cites(vb, law, ctx) {
-            admitted.insert(dep);
-        }
-    }
-    for module in &ctx.modules {
-        ctx.with_module_scope(Some(module.prefix.as_str()), || {
-            for vb in &module.verify_laws {
-                let VerifyKind::Law(law) = &vb.kind else {
-                    continue;
-                };
-                for dep in keystone::keystone_dep_bridge_cites(vb, law, ctx) {
-                    admitted.insert(dep);
-                }
-            }
-        });
-    }
 
     admitted
 }
