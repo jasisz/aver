@@ -1,0 +1,31 @@
+module Frac
+    intent =
+        "Dep module: the geone law's cited positivity sibling sits LATER in source, so the citation would be a forward reference the emission-topology guard must refuse."
+    depends [Domain.Rational]
+    exposes [pow2, pow2Signed, pow2SignedAtLeastOne]
+    effects []
+
+fn pow2(n: Int) -> Int
+    ? "Two to the n for n >= 0, clamped to one for nonpositive n."
+    match n <= 0
+        true -> 1
+        false -> 2 * pow2(n - 1)
+
+fn pow2Signed(k: Int) -> Fraction
+    ? "The exact rational 2^k for any integer k."
+    match k < 0
+        true -> Domain.Rational.Fraction(top = 1, bottom = pow2(0 - k))
+        false -> Domain.Rational.Fraction(top = pow2(k), bottom = 1)
+
+fn pow2SignedAtLeastOne(k: Int) -> Bool
+    ? "The signed power of two is at least one for nonnegative exponents."
+    Domain.Rational.isNonNeg(Domain.Rational.minus(pow2Signed(k), Domain.Rational.oneFraction()))
+
+verify pow2SignedAtLeastOne law geOneFlip
+    given k: Int = [0, 1, 4]
+    when 0 <= k
+    pow2SignedAtLeastOne(k) holds
+
+verify pow2 law positive
+    given k: Int = [0, 1, 4]
+    pow2(k) >= 1 holds

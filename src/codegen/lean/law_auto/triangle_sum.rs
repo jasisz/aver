@@ -487,11 +487,16 @@ fn find_rounding_bound_law(ctx: &CodegenContext, want_away: bool) -> Option<Roun
             if kind != want_away {
                 continue;
             }
-            let base = format!(
-                "{}_law_{}",
-                aver_name_to_lean(&vb.fn_name),
-                aver_name_to_lean(&law.name)
-            );
+            // The dependency theorem's base name, via the SAME canonical fn the
+            // emit gate and citation-closure `order` map key on (under the
+            // candidate module's own scope, exactly as `order` is built). Using
+            // `law_theorem_base` picks up its `canonical_spec_ref` arm, so a
+            // bound law stated as an equational spec keys as `<fn>_eq_<spec>`
+            // rather than the raw `<fn>_law_<name>`; the four other cited-dep
+            // families already route through the canonical fns.
+            let base = ctx.with_module_scope(Some(module.prefix.as_str()), || {
+                crate::codegen::lean::toplevel::law_theorem_base(vb, law, ctx)
+            });
             return Some(RoundingBoundLaw {
                 prefix: module.prefix.clone(),
                 theorem_base: base.clone(),

@@ -35,6 +35,8 @@ use sampled::emit_guarded_domain_law;
 /// the `(module_prefix, theorem_base)` dep-law theorems some consumer law
 /// admits, so the emitter writes ONLY those into the build.
 pub(crate) use induction::admitted_dep_law_theorems;
+#[cfg(debug_assertions)]
+pub(crate) use induction::dep_theorem_order_keys;
 
 /// `emit_verify_law_block` reads this to decide whether a `when`-law's theorem
 /// statement should drop its sampled-domain disjunctions (`omit_domain`) and be

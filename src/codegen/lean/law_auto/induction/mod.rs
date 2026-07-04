@@ -564,6 +564,28 @@ fn dep_law_admissible(
 /// dep-module law theorem (absent from `order`) is trusted as the recognizer
 /// reported it.
 ///
+/// SCANNING ALL CONSUMERS IS SAFE (panel NOTE, chose: document over gating).
+/// The consumer loop scans EVERY entry and dep-module law, including a dep-module
+/// law that no other law admits and that is therefore itself never emitted. It
+/// deliberately does NOT gate the consumer on membership in `admitted`, for two
+/// reasons:
+///   1. Multi-hop closure in a single pass. A dep `D` cited by dep `C` cited by
+///      the entry must be admitted even though, at the moment `C` is scanned, `C`
+///      may not yet be in `admitted` (scan order is source order, not dependency
+///      order). Gating on `admitted` would drop such chains unless the whole scan
+///      were re-run to a fixpoint — real added complexity to remove a bounded,
+///      already-safe over-approximation.
+///   2. Over-admission is fail-closed and sound. The set only ever GROWS, so no
+///      genuinely-needed citation is lost. An extra admitted dep theorem is
+///      emitted under the same `first | <tactic> | sorry` floor as any law: if it
+///      proves it contributes zero sorries; if it does not, its caught `sorry`
+///      counts against the PROGRAM-WIDE sorry budget and trips `passed:false`. So
+///      the worst case of scanning a never-emitted consumer is a spurious build
+///      FAILURE, never false universal credit — credit still rides only on each
+///      cited theorem's own kernel certificate. (In the K5 corpus the admitted
+///      set is byte-identical to the pre-closure per-family injections, so this
+///      over-approximation is empty in practice.)
+///
 /// Empty when there are no dep modules (single-file path) → byte-identical to
 /// the pre-feature output.
 fn cited_closure_dep_laws(
@@ -571,35 +593,15 @@ fn cited_closure_dep_laws(
     admitted: &mut std::collections::HashSet<(String, String)>,
 ) {
     use crate::ast::{TopLevel, VerifyKind};
-    use crate::codegen::lean::toplevel::{law_as_lemma_statement, law_theorem_base};
-    use std::collections::HashMap;
     // Emit order ranks dep modules by their index in `ctx.modules` and laws
     // within a module by source line; entry laws are emitted AFTER every module,
     // so they rank last (ENTRY_RANK) and may cite any dep.
     const ENTRY_RANK: usize = usize::MAX;
 
-    // Every dep-module law theorem → its `(module_index, source_line)` emit-order
-    // key, under both spellings of its base a consumer might key on (the
-    // canonical `<fn>_law_<name>` and the law-as-lemma rewrite base the emit
-    // admission uses). The topology guard compares against this.
-    let mut order: HashMap<(String, String), (usize, usize)> = HashMap::new();
-    for (mi, module) in ctx.modules.iter().enumerate() {
-        ctx.with_module_scope(Some(module.prefix.as_str()), || {
-            for vb in &module.verify_laws {
-                let VerifyKind::Law(law) = &vb.kind else {
-                    continue;
-                };
-                let key = (mi, vb.line);
-                let canonical = law_theorem_base(vb, law, ctx);
-                order
-                    .entry((module.prefix.clone(), canonical))
-                    .or_insert(key);
-                if let Some((rewrite, _)) = law_as_lemma_statement(vb, law, ctx) {
-                    order.entry((module.prefix.clone(), rewrite)).or_insert(key);
-                }
-            }
-        });
-    }
+    // The `(module_prefix, theorem_base)` → `(module_index, source_line)` emit
+    // order map every cited dep is looked up against by the topology guard.
+    // Shared with the emit gate's `debug_assert` via `dep_theorem_order_keys`.
+    let order = dep_theorem_emit_order(ctx);
     if order.is_empty() {
         return;
     }
@@ -652,11 +654,71 @@ fn cited_closure_dep_laws(
 /// totally orders every law theorem. A citation is admissible only when the
 /// cited theorem is emitted strictly BEFORE the citing law: an earlier module,
 /// or the same module at an earlier source line. FAIL-CLOSED on a provably-
-/// later citation (a forward reference the kernel would reject). A dep the
-/// recognizer resolved that is not a tracked dep-module theorem (`None`) is
-/// trusted as reported.
+/// later citation (a forward reference the kernel would reject).
+///
+/// The `None` branch (a cited dep absent from the order map) is trusted as
+/// reported. This is sound ONLY under the subset invariant `dep_theorem_emit_order`
+/// documents: every REAL dep-module law theorem is a key of the order map, so a
+/// `None` lookup can only mean the recognizer resolved a citation to something
+/// that is NOT a tracked dep-module theorem (an `AverCommon`/import name the emit
+/// gate never emits and never topology-orders). Were that invariant to break, a
+/// genuinely later-emitted dep theorem could read as `None` and be trusted —
+/// fail-OPEN. The emit gate's `debug_assert` (see `dep_theorem_order_keys`) is
+/// the tripwire for exactly that drift.
 fn topology_admits(dep_order: Option<&(usize, usize)>, consumer_order: (usize, usize)) -> bool {
     dep_order.is_none_or(|dep| *dep < consumer_order)
+}
+
+/// Every dep-module law theorem → its `(module_index, source_line)` emit-order
+/// key, under BOTH base spellings a consumer might key on: the canonical
+/// `law_theorem_base` (`<fn>_law_<name>` or `<fn>_eq_<spec>`) and, when the law
+/// states as a plain rewrite, the `law_as_lemma_statement` base. Built per module
+/// under that module's own scope over `module.verify_laws` — the SAME two fns,
+/// scope, and law set the `transpile` dep-law emit gate computes each law's emit
+/// key from.
+///
+/// SUBSET INVARIANT: because both are computed the same way, every key the emit
+/// gate can produce for a dep-module law is a key of this map. `topology_admits`'
+/// `None` branch relies on it (a real dep theorem is never absent here), and the
+/// emit gate's `debug_assert` checks it.
+fn dep_theorem_emit_order(
+    ctx: &CodegenContext,
+) -> std::collections::HashMap<(String, String), (usize, usize)> {
+    use crate::ast::VerifyKind;
+    use crate::codegen::lean::toplevel::{law_as_lemma_statement, law_theorem_base};
+    let mut order: std::collections::HashMap<(String, String), (usize, usize)> =
+        std::collections::HashMap::new();
+    for (mi, module) in ctx.modules.iter().enumerate() {
+        ctx.with_module_scope(Some(module.prefix.as_str()), || {
+            for vb in &module.verify_laws {
+                let VerifyKind::Law(law) = &vb.kind else {
+                    continue;
+                };
+                let key = (mi, vb.line);
+                let canonical = law_theorem_base(vb, law, ctx);
+                order
+                    .entry((module.prefix.clone(), canonical))
+                    .or_insert(key);
+                if let Some((rewrite, _)) = law_as_lemma_statement(vb, law, ctx) {
+                    order.entry((module.prefix.clone(), rewrite)).or_insert(key);
+                }
+            }
+        });
+    }
+    order
+}
+
+/// The keyset of `dep_theorem_emit_order`: the `(module_prefix, theorem_base)`
+/// keys the emission-topology guard tracks. Exposed so the `transpile` dep-law
+/// emit gate can `debug_assert` the subset invariant — that every dep-module law
+/// it is about to consider is one the topology guard could see — which is what
+/// keeps `topology_admits`' `None`-is-trusted branch fail-CLOSED rather than
+/// fail-open. Debug-only consumer; computed once per emit pass.
+#[cfg(debug_assertions)]
+pub(crate) fn dep_theorem_order_keys(
+    ctx: &CodegenContext,
+) -> std::collections::HashSet<(String, String)> {
+    dep_theorem_emit_order(ctx).into_keys().collect()
 }
 
 /// Program-wide set of `(module_prefix, theorem_base)` dep-law theorems

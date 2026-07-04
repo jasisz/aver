@@ -1,0 +1,14 @@
+module Main
+    intent =
+        "Entry that leans on the dep module's at-least-one fact."
+    depends [Domain.Frac, Domain.Rational]
+    effects []
+
+fn atLeastOne(k: Int) -> Bool
+    ? "Wrapper over the dep at-least-one fact."
+    Domain.Frac.pow2SignedAtLeastOne(k)
+
+verify atLeastOne law wrap
+    given k: Int = [0, 1, 4]
+    when 0 <= k
+    atLeastOne(k) holds
