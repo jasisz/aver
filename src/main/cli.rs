@@ -595,22 +595,25 @@ pub(super) enum Commands {
         /// regressions on pinned `ProofStrategy` choices.
         #[arg(long)]
         check: bool,
-        /// `--check` only: tolerate up to N Dafny verification
+        /// Check mode (`--check`/`--check-json`) only: tolerate up to N Dafny
+        /// verification
         /// errors. Gates regressions upward for examples whose laws
         /// don't yet have a closing strategy. N is a WHOLE-FILE total,
         /// not per-law: `--error-budget 2` passes a file with two
         /// independently-failing laws. Defaults to 0 (strict).
         #[arg(long, requires = "check_mode")]
         error_budget: Option<usize>,
-        /// `--check` only: tolerate up to N residual Lean `sorry`s (and,
+        /// Check mode (`--check`/`--check-json`) only: tolerate up to N
+        /// residual Lean `sorry`s (and,
         /// on Dafny, `assume {:axiom}` trust-escapes). Symmetric to
         /// `--error-budget`. Like it, N is a WHOLE-FILE total, not
         /// per-law. Defaults to 0 (strict).
         #[arg(long, requires = "check_mode")]
         sorry_budget: Option<usize>,
-        /// `--check` only: emit a structured JSON summary
+        /// Emit a structured JSON summary
         /// (`{backend, errors, sorries, budget, passed, ...}`) to stdout
-        /// instead of streaming the verifier's raw output. Additive
+        /// instead of streaming the verifier's raw output. Implies check
+        /// mode, so it works without `--check`. Additive
         /// telemetry fields: Lean carries `build_errors` (hard lake/lean
         /// errors distinct from sorries), Dafny carries `timeouts`
         /// (per-lemma timeouts the `errors` count is blind to); both are
@@ -618,7 +621,8 @@ pub(super) enum Commands {
         /// unchanged: 0 within budget, 1 over, 2 on harness failure.
         #[arg(long)]
         check_json: bool,
-        /// `--check` only (Lean-only): for each law that does NOT close
+        /// Check mode (`--check`/`--check-json`) only, Lean-only: for each
+        /// law that does NOT close
         /// universally (a residual `sorry` / failed inductive arm), emit
         /// the law's UNSOLVED GOAL ("residual") text per law — into the
         /// per-law `proof_manifest.json` records (`open_goal`) and, with
@@ -633,7 +637,8 @@ pub(super) enum Commands {
         /// byte-identical to before (no new key, `open_goal` absent).
         #[arg(long, requires = "check_mode")]
         explain: bool,
-        /// `--check` only (Lean-only): MINIMIZE each auto-proof. The emitter
+        /// Check mode (`--check`/`--check-json`) only, Lean-only: MINIMIZE
+        /// each auto-proof. The emitter
         /// pins a deterministic `first | (tactic₁) | … | sorry` PORTFOLIO at
         /// every law (it cannot know statically which alternative will close);
         /// this rewrites each one to the single branch that actually closed,

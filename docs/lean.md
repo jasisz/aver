@@ -229,12 +229,15 @@ bool keys on. A robust CI budget pins all four together:
 When a check reports `sorries: N > 0`, the first question is *which* law — and
 the answer is already in the summary. Read `sorry_laws`: it names the failing
 `fn.law` identities directly, no manual `lake build` + grep. Add `--explain` to
-get each failing law's residual open goal inline under `open_goals` (keyed by
-the same identity). The residual probe is deliberately coarse, so on a file with
-both a proven and a failing law it can also surface a goal from the *proven*
-law; that borrowed goal is reported separately under `probe_of` and never in
-`open_goals`, so a healthy, already-proven law is never mistaken for the
-failure. Only after `sorry_laws` names the culprit should you reach for the
+also get goal text where there is any to show: a failing law whose proof left a
+partial goal gets it inline under `open_goals` (keyed by the same identity),
+while a law that fails outright — its theorem is just a `sorry` — has no
+residual goal to print and is named in `sorry_laws` only. The residual probe is
+deliberately coarse, so on a file with both a proven and a failing law it can
+also surface a goal from the *proven* law; that borrowed goal is reported
+separately under `probe_of` and never in `open_goals`, so a healthy,
+already-proven law is never mistaken for the failure. Only after `sorry_laws`
+names the culprit should you reach for the
 `--emit-ir-after=law_lower` workflow (linked above) to understand *why* that
 specific law did not auto-prove.
 

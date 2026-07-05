@@ -55,7 +55,7 @@ Add one `verify ... law ...` block to the demo, then ask the proof checker to sh
 aver proof main.av --backend lean --check-json --explain -o /tmp/aver-durable-proof
 ```
 
-If the law does not close universally, the check-json summary names it: `sorry_laws` lists the `fn.law` identities whose theorem carries the residual `sorry`, and `--explain` adds an `open_goals` object with each failing law's residual open goal (keyed by the same identity). The per-law `proof_manifest.json` also carries the residual on a law's `open_goal` field — but only for a law that earns a manifest entry; a law that fails outright (its theorem is just a `sorry`) is named in `sorry_laws`/`open_goals` instead, so read those for the "which law failed" answer.
+If the law does not close universally, the check-json summary names it: `sorry_laws` lists the `fn.law` identities whose theorem carries the residual `sorry` — that field is the authoritative "which law failed" answer. `--explain` additionally surfaces goal text where there is any to show: a failing law whose proof left a partial goal gets it under `open_goals` (keyed by the same identity); a law that fails outright (its theorem is just a `sorry`) has no residual goal to print, so it appears in `sorry_laws` only. Goals the coarse probe borrows from *proven* laws land under `probe_of`, never `open_goals`.
 
 ## CI
 
