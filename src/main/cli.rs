@@ -447,6 +447,17 @@ pub(super) enum Commands {
         /// for runtime tuning (`-O3`).
         #[arg(long, value_enum)]
         optimize: Option<WasmOptMode>,
+        /// Emit an artifact certificate next to `<name>.wasm`: a
+        /// self-contained Lean `cert/` project that `lake build`s green
+        /// with kernel-clean partial-correctness theorems for the user
+        /// functions in the two measured classes (straight-line
+        /// add-constant; single-argument self-recursion). Functions
+        /// outside those classes are listed in `cert/cert-manifest.json`
+        /// as `source-level-only` with a reason — never a weaker theorem.
+        /// Requires `--target wasm-gc`; incompatible with `--optimize`
+        /// (the certificate binds the emitter's own module bytes).
+        #[arg(long, default_value_t = false, conflicts_with = "optimize")]
+        certify: bool,
         /// Print the IR after the named pipeline stage and exit before codegen.
         /// One of: `tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`,
         /// `last_use`, `analyze`, `escape`, `build_symbols`, `name_resolve`,
