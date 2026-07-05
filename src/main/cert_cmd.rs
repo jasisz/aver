@@ -1,11 +1,13 @@
 //! `aver cert verify|explain|inspect` — the consumer side of
 //! `aver compile --certify`.
 //!
-//! `verify` is a fail-closed checker: it confirms the artifact bytes hash to
-//! the pinned value, that the audited schema and semantics prelude on disk are
-//! the ones this binary embeds, that the cert `lake build`s, and that the ONE
-//! final theorem is present with its approved statement and stays kernel-clean.
-//! `explain`/`inspect` render the manifest as a human report without building.
+//! `verify` is a fail-closed checker: it confirms the audited schema and
+//! semantics prelude on disk are the ones this binary embeds, that the cert
+//! `lake build`s, and then — via a Lean witness the checker authors itself —
+//! that the hash it computed from the artifact bytes is the one the theorems
+//! are about and that the final theorem really has type `Holds manifest`,
+//! kernel-clean. `explain` renders the manifest as a human report without
+//! building.
 
 use std::path::Path;
 use std::process::Command;
