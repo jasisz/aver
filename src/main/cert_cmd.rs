@@ -1,18 +1,43 @@
 //! `aver cert verify|explain` — the consumer side of `aver compile --certify`.
 //!
-//! `verify` is a fail-closed checker. It does NOT trust the certificate's build
-//! configuration or its report: it assembles its OWN build in a fresh,
-//! checker-owned temp directory from the audited `Schema.lean` / `CertPrelude.lean`
-//! this binary embeds plus the cert's DATA-only Lean files, authors its own
-//! `lakefile.lean`, and builds with a clean cache. It then — via a Lean witness
-//! the checker authors itself — binds the hash it computed from the artifact
-//! bytes to the theorems, forces the final theorem's type to `Holds manifest`,
-//! and confirms kernel-cleanliness. The certified-export report (count, names,
-//! policies, contracts) is read back from the SAME `AverCert.manifest` literal
-//! the witness proved `Holds` about, so the report can never name an export the
-//! kernel did not see. `explain` renders that same trusted report (it therefore
-//! builds too); the untrusted JSON is consulted only for the DECLINED list,
-//! which carries no behavioral claim.
+//! `verify` is a fail-closed checker whose ONLY trust channel is the exit code
+//! of the Lean toolchain over files the checker itself authored. It assembles
+//! its OWN build in a fresh, checker-owned temp directory from the audited
+//! `Schema.lean` / `CertPrelude.lean` this binary embeds plus the cert's
+//! DATA-only Lean files, authors its own `lakefile.lean`, and builds with a
+//! clean cache. It then writes a `CheckerWitness.lean` — which the checker, not
+//! the cert, authors — that:
+//!   * binds the sha256 the checker computed from the artifact bytes to the
+//!     hashes the kernel-checked theorems talk about (`rfl`);
+//!   * binds the certified-export names, contracts, profile and ABI the
+//!     UNTRUSTED `cert-manifest.json` claims to the `AverCert.manifest` literal
+//!     the final theorem is about (`rfl`) — a lying JSON makes a `rfl` fail;
+//!   * forces the final theorem's TYPE to `Holds manifest` by ascription;
+//!   * runs the kernel's own axiom collector (`Lean.collectAxioms`) on that
+//!     ascribed constant and throws unless every axiom is on the whitelist
+//!     (full `Name` equality, not text) — a smuggled `axiom`, `sorryAx` or
+//!     `ofReduceBool` makes the file fail to check.
+//!
+//! NO byte of lake/lean stdout/stderr is ever parsed into a verdict or into a
+//! CERTIFIED report line: the verdict is the witness process exit code, and the
+//! report is built in Rust from the JSON candidates the kernel just confirmed.
+//! (stdout is shown to a human inside error messages only — a display channel,
+//! never a trust channel.) `explain` renders that same trusted report.
+//!
+//! Two input gates run before anything is elaborated:
+//!   * A cert data file whose name is not a plain `Foo.lean` Lean-module
+//!     identifier is DECLINED — otherwise a name with a comma/space/newline
+//!     could inject tokens into the checker-authored lakefile's `roots` array.
+//!   * Each cert data file's raw text is scanned for a blacklist of tokens that
+//!     make Lean elaboration run arbitrary code (`#eval`, `run_cmd`, `macro`,
+//!     `elab`, `initialize`, `unsafe`, `implemented_by`, `extern`, ...). This
+//!     is a DELIBERATELY BRITTLE wall, not a proof: because `lake build`
+//!     ELABORATES these files, a data file can in principle run code (including
+//!     overwriting an already-built `.olean` the kernel will not re-check).
+//!     Fully closing that class needs a verified checker / a bytes-to-data
+//!     decoder (residual C2); the token scan only raises the bar. An attacker
+//!     who finds a bypass of THIS scan has found a documented residual, not a
+//!     break of the hash / count / axiom bindings above.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -23,11 +48,12 @@ use serde_json::Value;
 
 /// Kernel axioms a certificate is allowed to depend on. Anything else — most
 /// importantly `sorryAx` (an admitted goal) or `ofReduceBool` (native-code
-/// trust) — fails the check.
+/// trust) — fails the check. Spliced into the witness as `Name` literals and
+/// compared by full-name equality by `Lean.collectAxioms`.
 const AXIOM_WHITELIST: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"];
 
-/// The theorem the checker composes in its own witness file: it ascribes
-/// `AverCert.Final.cert` to the type `Holds manifest`, so reading its axioms
+/// The constant the checker composes in its own witness file: it ascribes
+/// `AverCert.Final.cert` to the type `Holds manifest`, so collecting its axioms
 /// transitively covers the final theorem without matching any text.
 const WITNESS_THEOREM: &str = "AverCertChecker.final";
 
@@ -42,6 +68,31 @@ const CHECKER_OWNED: [&str; 4] = [
     "CheckerWitness.lean",
 ];
 
+/// Maximum length (bytes) of a JSON-supplied string spliced into the witness.
+const MAX_CANDIDATE_LEN: usize = 200;
+
+/// Tokens that make Lean ELABORATION execute code. The scan is a substring
+/// match on raw cert data-file text (see the module doc: a deliberately brittle
+/// wall, not a proof). Kept as literals rather than a parser so the wall is
+/// obvious and auditable.
+const CODE_EXEC_TOKENS: [&str; 15] = [
+    "#eval",
+    "run_cmd",
+    "run_elab",
+    "initialize",
+    "builtin_initialize",
+    "macro",
+    "macro_rules",
+    "elab",
+    "elab_rules",
+    "syntax",
+    "notation",
+    "unsafe",
+    "implemented_by",
+    "extern",
+    "open Lean",
+];
+
 /// Outcome of a successful (fail-closed) verify pass.
 enum Verdict {
     /// At least one export carries a behavioral certificate.
@@ -51,8 +102,8 @@ enum Verdict {
     NoExports(String),
 }
 
-/// The certified side of the report, read back from the kernel-checked
-/// `AverCert.manifest` literal (NOT from the attacker-editable JSON).
+/// The certified side of the report, built from the JSON candidates the kernel
+/// witness confirmed equal to the proven `AverCert.manifest` literal.
 struct TrustedReport {
     /// One `(export name, policy)` per proven obligation.
     exports: Vec<(String, String)>,
@@ -60,6 +111,17 @@ struct TrustedReport {
     profile: String,
     abi: String,
     artifact_hash: String,
+}
+
+/// Untrusted strings pulled from `cert-manifest.json`, each already passed
+/// through the charset gate on its serde-DECODED value. They are candidates:
+/// only the kernel witness (via `rfl` against `AverCert.manifest`) makes them
+/// trustworthy.
+struct Candidates {
+    names: Vec<String>,
+    contracts: Vec<String>,
+    profile: String,
+    abi: String,
 }
 
 pub(super) fn cmd_cert_verify(artifact: &str, cert_dir: &str) {
@@ -107,6 +169,79 @@ fn manifest_str<'a>(m: &'a Value, key: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("cert-manifest.json is missing string field `{key}`"))
 }
 
+/// True iff `s`, a serde-DECODED value, is printable ASCII with no `"` or `\`
+/// and at most `MAX_CANDIDATE_LEN` bytes. Splicing only such values into the
+/// Lean witness guarantees the spliced literal cannot break out of its string
+/// or inject a line (newlines and every other control char are rejected).
+fn charset_ok(s: &str) -> bool {
+    s.len() <= MAX_CANDIDATE_LEN
+        && s.bytes()
+            .all(|b| (0x20..=0x7e).contains(&b) && b != b'"' && b != b'\\')
+}
+
+fn gate_candidate(kind: &str, s: &str) -> Result<(), String> {
+    if charset_ok(s) {
+        Ok(())
+    } else {
+        Err(format!(
+            "certificate {kind} contains a value outside the allowed charset \
+             (printable ASCII, no quote or backslash, at most {MAX_CANDIDATE_LEN} bytes): {s:?}"
+        ))
+    }
+}
+
+/// Pull the report candidates from the untrusted JSON and charset-gate each one
+/// on its decoded value. Nothing here is trusted yet — the witness `rfl`s below
+/// are what bind these to the kernel-proven manifest.
+fn read_candidates(m: &Value) -> Result<Candidates, String> {
+    let profile = manifest_str(m, "profile")?.to_string();
+    let abi = manifest_str(m, "abi")?.to_string();
+
+    let names = m
+        .get("certified")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "cert-manifest.json is missing array field `certified`".to_string())?
+        .iter()
+        .map(|c| {
+            c.get("name")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    "cert-manifest.json `certified[]` entry is missing string field `name`"
+                        .to_string()
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let contracts = m
+        .get("runtime_contracts")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "cert-manifest.json is missing array field `runtime_contracts`".to_string())?
+        .iter()
+        .map(|c| {
+            c.as_str().map(str::to_string).ok_or_else(|| {
+                "cert-manifest.json `runtime_contracts[]` entry is not a string".to_string()
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let cands = Candidates {
+        names,
+        contracts,
+        profile,
+        abi,
+    };
+    for n in &cands.names {
+        gate_candidate("certified export name", n)?;
+    }
+    for c in &cands.contracts {
+        gate_candidate("runtime contract", c)?;
+    }
+    gate_candidate("profile", &cands.profile)?;
+    gate_candidate("abi", &cands.abi)?;
+    Ok(cands)
+}
+
 fn verify(artifact: &Path, cert_dir: &Path) -> Result<Verdict, String> {
     let report = trusted_check(artifact, cert_dir)?;
     let n = report.exports.len();
@@ -125,9 +260,9 @@ fn verify(artifact: &Path, cert_dir: &Path) -> Result<Verdict, String> {
 }
 
 /// The trusted core, shared by `verify` and `explain`: bind the artifact bytes
-/// to a checker-owned build of the cert's data, prove the final theorem is
-/// `Holds manifest` kernel-clean, and read the certified report back from that
-/// same manifest literal.
+/// and the JSON report candidates to a checker-owned build of the cert's data,
+/// prove the final theorem is `Holds manifest` and kernel-clean, and — only if
+/// the witness checks — build the report from those now-confirmed candidates.
 fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, String> {
     // 1. Artifact identity (fast pre-check): the bytes must hash to the pinned
     //    value. This is a convenience tripwire on the (attacker-editable) JSON;
@@ -144,15 +279,19 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
         ));
     }
 
-    // 2. Assemble a checker-owned build. The audited schema + prelude come from
+    // 2. Report candidates from the untrusted JSON, each charset-gated on its
+    //    decoded value so it is safe to splice as a Lean literal below.
+    let cands = read_candidates(&manifest)?;
+
+    // 3. Assemble a checker-owned build. The audited schema + prelude come from
     //    THIS binary, never from the cert; the cert supplies only per-artifact
-    //    DATA (Module/Manifest/Certificate/Final + the model modules). The cert's
-    //    own lakefile / srcDir / `.lake` cache are never read, so a build-tree
-    //    subversion (decoy `Holds := True` behind a redirected srcDir or a
-    //    poisoned olean cache) cannot take effect.
+    //    DATA (Module/Manifest/Certificate/Final + the model modules). Each data
+    //    file's name is gated (no lakefile-root injection) and its text scanned
+    //    for code-executing tokens before it is staged. The cert's own lakefile
+    //    / srcDir / `.lake` cache are never read.
     let build = assemble_build(cert_dir)?;
 
-    // 3. The assembled project must build under the pinned toolchain, from a
+    // 4. The assembled project must build under the pinned toolchain, from a
     //    clean cache (the fresh dir has no `.lake`).
     let b = run_lake(&build.path, &["build"])?;
     if !b.status.success() {
@@ -162,39 +301,45 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
         ));
     }
 
-    // 4. Kernel witness authored BY THE CHECKER (never shipped in the cert):
-    //    (a) bind the sha256 the checker just computed from the artifact bytes
-    //        to the hashes the kernel-checked theorems talk about, by splicing
-    //        the computed hash in as a Lean literal and demanding `rfl`;
-    //    (b) force the final theorem's TYPE to `Holds manifest` by ascription,
-    //        so a comment-smuggled `: True := trivial` cannot pass;
-    //    (c) print the certified report from the SAME `manifest` literal, so the
-    //        report cannot name an export the kernel did not vouch for.
-    let witness = checker_witness(&actual);
+    // 5. Kernel witness authored BY THE CHECKER (never shipped in the cert):
+    //    the sha binding, the report-candidate bindings, the final-theorem type
+    //    ascription, and the axiom-whitelist check (see `checker_witness`).
+    let witness = checker_witness(&actual, &cands);
     std::fs::write(build.path.join("CheckerWitness.lean"), &witness)
         .map_err(|e| format!("cannot write checker witness: {e}"))?;
     let w = run_lake(&build.path, &["env", "lean", "CheckerWitness.lean"])?;
     if !w.status.success() {
+        // The verdict is this exit code, not any parsed line. The lake output is
+        // shown to the human to name which face failed (hash, a report binding,
+        // the `Holds manifest` type, or a non-whitelisted axiom).
         return Err(format!(
             "certificate does not bind to this artifact: the checker's kernel witness \
-             (hash binding + final-theorem type `Holds manifest`) did not check:\n{}",
+             (hash binding, certified-export/contract/profile/abi bindings against the \
+             proven manifest, final-theorem type `Holds manifest`, and the axiom \
+             whitelist) did not check:\n{}",
             tail(&w.combined, 30)
         ));
     }
 
-    // 5. The composed witness must be kernel-clean.
-    check_axioms(&w.combined, WITNESS_THEOREM)?;
-
-    // 6. Read the certified report back from the proven manifest.
-    parse_report(&w.combined)
+    // 6. The witness checked, so every candidate is kernel-confirmed equal to
+    //    the proven manifest. Build the report from those candidates; the count
+    //    is exactly the kernel-confirmed obligation count.
+    Ok(TrustedReport {
+        exports: cands
+            .names
+            .iter()
+            .map(|n| (n.clone(), "simulatesModel".to_string()))
+            .collect(),
+        contracts: cands.contracts,
+        profile: cands.profile,
+        abi: cands.abi,
+        artifact_hash: actual,
+    })
 }
 
 /// Populate a fresh, checker-owned build directory: the cert's DATA-only Lean
-/// files, the audited schema/prelude/toolchain from THIS binary, and a
-/// checker-authored lakefile. Extra/unexpected Lean files the cert ships are
-/// copied in as inert extra roots (they cannot weaken the pinned `Holds`, whose
-/// meaning lives in the binary's `Schema.lean`); if they fail to compile the
-/// build fails closed.
+/// files (each name-gated and token-scanned), the audited schema/prelude/
+/// toolchain from THIS binary, and a checker-authored lakefile.
 fn assemble_build(cert_dir: &Path) -> Result<BuildDir, String> {
     let build = BuildDir::new()?;
 
@@ -211,11 +356,16 @@ fn assemble_build(cert_dir: &Path) -> Result<BuildDir, String> {
         if !name.ends_with(".lean") || CHECKER_OWNED.contains(&name.as_str()) {
             continue;
         }
+        // Gate the file NAME: it must be a plain `Foo.lean` module identifier,
+        // so it cannot inject tokens into the checker-authored lakefile roots.
+        let root = lean_module_root(&name)?;
         let content = std::fs::read(entry.path())
             .map_err(|e| format!("cannot read cert file {name}: {e}"))?;
+        // Scan the file TEXT for code-executing tokens before staging it.
+        scan_for_code_exec(&name, &content)?;
         std::fs::write(build.path.join(&name), &content)
             .map_err(|e| format!("cannot stage {name}: {e}"))?;
-        roots.push(name.trim_end_matches(".lean").to_string());
+        roots.push(root);
     }
 
     // Audited trusted computing base from THIS binary (not the cert).
@@ -226,14 +376,50 @@ fn assemble_build(cert_dir: &Path) -> Result<BuildDir, String> {
     roots.push("CertPrelude".to_string());
 
     // Checker-authored lakefile: fixed `srcDir := "."`, roots derived from the
-    // files actually present (content-blind).
+    // (gated) files actually present.
     write(&build.path, "lakefile.lean", &checker_lakefile(&roots))?;
     Ok(build)
 }
 
+/// A cert data file must be named `<Ident>.lean` where `<Ident>` matches
+/// `^[A-Za-z][A-Za-z0-9_]*$`; return that identifier (the lakefile root).
+/// Rejecting anything else keeps the checker-authored lakefile's `roots` array
+/// free of comma/space/newline injection from a hostile filename.
+fn lean_module_root(name: &str) -> Result<String, String> {
+    let stem = name.strip_suffix(".lean").ok_or_else(|| {
+        format!("cert file `{name}` is not a `.lean` file (rejected as a build root)")
+    })?;
+    let mut chars = stem.chars();
+    let ok = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if stem.is_empty() || !ok {
+        return Err(format!(
+            "cert file name `{name}` is not a plain Lean module identifier \
+             (must match ^[A-Za-z][A-Za-z0-9_]*\\.lean$); rejected to keep the \
+             checker's lakefile roots uninjectable"
+        ));
+    }
+    Ok(stem.to_string())
+}
+
+/// Scan a cert data file's raw text for tokens that make Lean elaboration run
+/// arbitrary code. See the module doc: a deliberately brittle wall.
+fn scan_for_code_exec(name: &str, content: &[u8]) -> Result<(), String> {
+    let text = String::from_utf8_lossy(content);
+    for tok in CODE_EXEC_TOKENS {
+        if text.contains(tok) {
+            return Err(format!(
+                "cert data file `{name}` contains the token `{tok}`, which makes Lean \
+                 elaboration execute code; declined (elaboration-executes-code wall)"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The checker's own lakefile. Fixed structure; the root list is whatever Lean
-/// modules ended up in the build dir. `srcDir := "."` so no cert-supplied
-/// srcDir redirection is honored.
+/// modules ended up in the build dir (all name-gated). `srcDir := "."` so no
+/// cert-supplied srcDir redirection is honored.
 fn checker_lakefile(roots: &[String]) -> String {
     let list = roots
         .iter()
@@ -246,101 +432,68 @@ fn checker_lakefile(roots: &[String]) -> String {
     )
 }
 
+/// A Lean list literal of string literals. Every element has passed the charset
+/// gate (no `"` or `\`, no control chars), so raw splicing is safe.
+fn lean_str_list(items: &[String]) -> String {
+    let inner = items
+        .iter()
+        .map(|s| format!("\"{s}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{inner}]")
+}
+
 /// The Lean file the checker authors at verify time. `sha` is what the checker
-/// computed from the artifact bytes — spliced in as a literal, not read from
-/// the (attacker-editable) manifest JSON. The trailing `#eval` prints the
-/// certified report from the SAME `manifest` literal the theorem is about.
-fn checker_witness(sha: &str) -> String {
+/// computed from the artifact bytes; `cands` are the charset-gated JSON report
+/// candidates. Every claim is a `rfl` against `AverCert.manifest` (or the final
+/// theorem's type / the kernel axiom collector), so a lying JSON, a rebound
+/// hash, a weakened theorem, or a smuggled axiom all make this file fail to
+/// check — and THAT (the process exit code) is the only verdict channel.
+fn checker_witness(sha: &str, cands: &Candidates) -> String {
+    let n = cands.names.len();
+    let names = lean_str_list(&cands.names);
+    let contracts = lean_str_list(&cands.contracts);
+    let profile = &cands.profile;
+    let abi = &cands.abi;
+    let whitelist = AXIOM_WHITELIST
+        .iter()
+        .map(|a| format!("`{a}"))
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
         "-- Authored by `aver cert verify`, NOT shipped in the certificate.\n\
+         import Lean\n\
          import Schema\n\
          import Module\n\
          import Manifest\n\
          import Final\n\n\
-         -- Binding: the sha256 the checker computed from the artifact bytes must\n\
-         -- equal the hashes the kernel-checked theorems are about.\n\
+         -- Count (the verdict bit): the kernel confirms EXACTLY this many\n\
+         -- obligations. A JSON claiming more or fewer fails this `rfl`.\n\
+         example : AverCert.manifest.obligations.length = {n} := rfl\n\
+         -- Names: the obligation export list and the subject export list both\n\
+         -- equal the JSON-supplied candidates, or a `rfl` fails.\n\
+         example : AverCert.manifest.obligations.map (fun o => o.export_) = {names} := rfl\n\
+         example : AverCert.manifest.subject.exports = {names} := rfl\n\
+         example : AverCert.manifest.subject.contracts = {contracts} := rfl\n\
+         example : AverCert.manifest.subject.profile = \"{profile}\" := rfl\n\
+         example : AverCert.manifest.subject.abi = \"{abi}\" := rfl\n\n\
+         -- Hash binding: the sha the checker computed from the artifact bytes.\n\
          example : AverCert.manifest.subject.artifactHash = \"{sha}\" := rfl\n\
          example : CertModule.wasmSha256 = \"{sha}\" := rfl\n\n\
          -- Statement: force the final theorem's TYPE by ascription (no text match).\n\
          def {WITNESS_THEOREM} : AverCert.Schema.Holds AverCert.manifest := AverCert.Final.cert\n\n\
-         #print axioms {WITNESS_THEOREM}\n\n\
-         -- Certified report, derived from the SAME manifest literal proven above.\n\
-         #eval (do\n  \
-         for o in AverCert.manifest.obligations do\n    \
-         let pol := match o.policy with | AverCert.Schema.Policy.simulatesModel => \"simulatesModel\"\n    \
-         IO.println (\"AVERCERT-EXPORT\\t\" ++ o.export_ ++ \"\\t\" ++ pol)\n  \
-         for c in AverCert.manifest.subject.contracts do\n    \
-         IO.println (\"AVERCERT-CONTRACT\\t\" ++ c)\n  \
-         IO.println (\"AVERCERT-SUBJECT\\t\" ++ AverCert.manifest.subject.profile ++ \"\\t\" ++ AverCert.manifest.subject.abi)\n  \
-         IO.println (\"AVERCERT-HASH\\t\" ++ AverCert.manifest.subject.artifactHash) : IO Unit)\n"
+         -- Axiom whitelist, enforced by the kernel's own axiom collector over the\n\
+         -- ascribed constant: full `Name` equality, not text. Any non-whitelisted\n\
+         -- axiom (a smuggled `axiom evil`, `sorryAx`, `ofReduceBool`, ...) makes\n\
+         -- this command throw, so the file does not check and verify declines.\n\
+         open Lean in\n\
+         run_cmd do\n  \
+         let allowed : List Name := [{whitelist}]\n  \
+         let axs \u{2190} collectAxioms `{WITNESS_THEOREM}\n  \
+         for a in axs do\n    \
+         unless allowed.contains a do\n      \
+         throwError s!\"non-whitelisted axiom: {{a}}\"\n"
     )
-}
-
-/// Parse the trusted report lines the witness `#eval` emitted.
-fn parse_report(output: &str) -> Result<TrustedReport, String> {
-    let mut exports = Vec::new();
-    let mut contracts = Vec::new();
-    let mut profile = String::new();
-    let mut abi = String::new();
-    let mut artifact_hash = String::new();
-    for line in output.lines() {
-        if let Some(rest) = line.strip_prefix("AVERCERT-EXPORT\t") {
-            let mut parts = rest.splitn(2, '\t');
-            let name = parts.next().unwrap_or("").to_string();
-            let policy = parts.next().unwrap_or("").to_string();
-            exports.push((name, policy));
-        } else if let Some(rest) = line.strip_prefix("AVERCERT-CONTRACT\t") {
-            contracts.push(rest.to_string());
-        } else if let Some(rest) = line.strip_prefix("AVERCERT-SUBJECT\t") {
-            let mut parts = rest.splitn(2, '\t');
-            profile = parts.next().unwrap_or("").to_string();
-            abi = parts.next().unwrap_or("").to_string();
-        } else if let Some(rest) = line.strip_prefix("AVERCERT-HASH\t") {
-            artifact_hash = rest.to_string();
-        }
-    }
-    if artifact_hash.is_empty() {
-        return Err(
-            "checker report missing (witness did not emit the manifest render)".to_string(),
-        );
-    }
-    Ok(TrustedReport {
-        exports,
-        contracts,
-        profile,
-        abi,
-        artifact_hash,
-    })
-}
-
-/// Parse the `#print axioms <theorem>` output and confirm the theorem depends
-/// only on whitelisted kernel axioms.
-fn check_axioms(output: &str, theorem: &str) -> Result<(), String> {
-    let needle = format!("'{theorem}' ");
-    let line = output
-        .lines()
-        .find(|l| l.contains(&needle))
-        .ok_or_else(|| {
-            format!(
-                "could not read the axiom dependencies of {theorem} (no `#print axioms` output)"
-            )
-        })?;
-    if line.contains("does not depend on any axioms") {
-        return Ok(());
-    }
-    let list = line
-        .split_once("depends on axioms:")
-        .map(|(_, rest)| rest.trim())
-        .ok_or_else(|| format!("unrecognized `#print axioms` output: {line}"))?;
-    let list = list.trim_start_matches('[').trim_end_matches(']');
-    for axiom in list.split(',').map(str::trim).filter(|a| !a.is_empty()) {
-        if !AXIOM_WHITELIST.contains(&axiom) {
-            return Err(format!(
-                "final theorem depends on non-whitelisted axiom `{axiom}` (kernel not clean)"
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// A checker-owned temp build directory, removed on drop.
@@ -404,9 +557,18 @@ fn tail(s: &str, lines: usize) -> String {
     all[start..].join("\n")
 }
 
-/// Human-readable report. The CERTIFIED side is the trusted, kernel-derived
+/// Keep only printable ASCII for terminal display of UNTRUSTED strings (the
+/// declined list from the JSON), so a hostile cert cannot inject ANSI escapes
+/// or control characters into the report.
+fn display_safe(s: &str) -> String {
+    s.chars()
+        .map(|c| if (' '..='~').contains(&c) { c } else { '?' })
+        .collect()
+}
+
+/// Human-readable report. The CERTIFIED side is the trusted, kernel-confirmed
 /// report (so it builds); the DECLINED side is read from the untrusted JSON
-/// (declines carry no behavioral claim).
+/// (declines carry no behavioral claim) and sanitized for display.
 fn explain(artifact: &Path, cert_dir: &Path) -> Result<(), String> {
     let report = trusted_check(artifact, cert_dir)?;
 
@@ -434,7 +596,7 @@ fn explain(artifact: &Path, cert_dir: &Path) -> Result<(), String> {
         }
     }
 
-    // DECLINED: untrusted convenience only (no behavioral claim).
+    // DECLINED: untrusted convenience only (no behavioral claim), sanitized.
     let manifest = read_manifest(cert_dir)?;
     let declined = manifest
         .get("source_level_only")
@@ -446,8 +608,8 @@ fn explain(artifact: &Path, cert_dir: &Path) -> Result<(), String> {
         println!("  (none)");
     }
     for d in &declined {
-        let name = d.get("name").and_then(Value::as_str).unwrap_or("?");
-        let reason = d.get("reason").and_then(Value::as_str).unwrap_or("?");
+        let name = display_safe(d.get("name").and_then(Value::as_str).unwrap_or("?"));
+        let reason = display_safe(d.get("reason").and_then(Value::as_str).unwrap_or("?"));
         println!("  {name} — {reason}");
     }
     Ok(())
