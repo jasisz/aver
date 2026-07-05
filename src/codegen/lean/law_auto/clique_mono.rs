@@ -57,44 +57,57 @@ use super::AutoProof;
 enum PosClass {
     /// The callee position is the caller's `pos`, verbatim.
     Same,
-    /// `skipWs s pos` — non-decreasing, treated like same-position for ranking.
-    Weak,
-    /// `pos + 1` or `skipWs s (pos + 1)` — a constant advance guarded by a
-    /// char-bounds fact, so `remaining` strictly drops (rank-free).
-    AdvConst { skipws: bool },
-    /// `p'` or `skipWs s p'`, where `p'` is a position returned by the outer
+    /// `G s pos` for a monotone-cursor helper `G` (whitespace-skip shape) —
+    /// non-decreasing, treated like same-position for ranking. Carries `G`'s
+    /// source name so emission renders and cites the actual helper, never a
+    /// hardcoded name.
+    Weak(String),
+    /// `pos + 1` or `G s (pos + 1)` — a constant advance guarded by a
+    /// char-bounds fact, so `remaining` strictly drops (rank-free). `skipws`
+    /// carries the monotone-cursor helper's source name when present.
+    AdvConst { skipws: Option<String> },
+    /// `p'` or `G s p'`, where `p'` is a position returned by the outer
     /// scrutinee sub-call — bounded via that sub-call's own monotonicity.
-    Semantic { skipws: bool, binder: String },
+    Semantic {
+        skipws: Option<String>,
+        binder: String,
+    },
 }
 
 /// The Lean render of a callee position expression, given the classification
-/// and the caller's `s` name.
+/// and the caller's `s` name. Monotone-cursor helpers render under their own
+/// (name-blind) lean name.
 fn pos_render(class: &PosClass, s: &str, pos: &str) -> String {
+    let g = |g: &str| aver_name_to_lean(g);
     match class {
         PosClass::Same => pos.to_string(),
-        PosClass::Weak => format!("(skipWs {s} {pos})"),
-        PosClass::AdvConst { skipws: false } => format!("({pos} + 1)"),
-        PosClass::AdvConst { skipws: true } => format!("(skipWs {s} ({pos} + 1))"),
+        PosClass::Weak(h) => format!("({} {s} {pos})", g(h)),
+        PosClass::AdvConst { skipws: None } => format!("({pos} + 1)"),
+        PosClass::AdvConst { skipws: Some(h) } => format!("({} {s} ({pos} + 1))", g(h)),
         PosClass::Semantic {
-            skipws: false,
+            skipws: None,
             binder,
         } => binder.clone(),
         PosClass::Semantic {
-            skipws: true,
+            skipws: Some(h),
             binder,
-        } => format!("(skipWs {s} {binder})"),
+        } => format!("({} {s} {binder})", g(h)),
     }
 }
 
 /// Recognize the position expression passed to a callee's cursor slot.
 /// `pos` is the caller's position parameter name; `result_binders` are the
 /// names bound by an enclosing result-scrutinee match (their positions are
-/// "semantic").
+/// "semantic"). `weak_helpers` is the set of source fn names that have a
+/// universal-shape monotone-cursor pool law (`G(s, q) >= q`) — a helper is
+/// "whitespace-skip-like" ONLY because such a citable law exists about it,
+/// never because of its name (litmus: content-blind, shape-keyed).
 fn classify_pos(
     expr: &Spanned<Expr>,
     _s: &str,
     pos: &str,
     result_binders: &HashSet<String>,
+    weak_helpers: &HashSet<String>,
 ) -> Option<PosClass> {
     if let Some(name) = ident_name(expr) {
         if name == pos {
@@ -102,7 +115,7 @@ fn classify_pos(
         }
         if result_binders.contains(name) {
             return Some(PosClass::Semantic {
-                skipws: false,
+                skipws: None,
                 binder: name.to_string(),
             });
         }
@@ -111,17 +124,21 @@ fn classify_pos(
     match &expr.node {
         // pos + 1
         Expr::BinOp(BinOp::Add, l, r) if is_ident(l, pos) && is_int_lit(r, 1) => {
-            Some(PosClass::AdvConst { skipws: false })
+            Some(PosClass::AdvConst { skipws: None })
         }
-        // skipWs(s, X)
-        Expr::FnCall(callee, args) if callee_is(callee, "skipWs") && args.len() == 2 => {
+        // G(s, X) for a monotone-cursor helper G (pool-law-keyed, not name-keyed)
+        Expr::FnCall(callee, args) if args.len() == 2 => {
+            let g = super::shared::expr_dotted_name(callee)?;
+            if !weak_helpers.contains(&g) {
+                return None;
+            }
             if let Some(name) = ident_name(&args[1]) {
                 if name == pos {
-                    return Some(PosClass::Weak);
+                    return Some(PosClass::Weak(g));
                 }
                 if result_binders.contains(name) {
                     return Some(PosClass::Semantic {
-                        skipws: true,
+                        skipws: Some(g),
                         binder: name.to_string(),
                     });
                 }
@@ -129,7 +146,7 @@ fn classify_pos(
             }
             match &args[1].node {
                 Expr::BinOp(BinOp::Add, l, r) if is_ident(l, pos) && is_int_lit(r, 1) => {
-                    Some(PosClass::AdvConst { skipws: true })
+                    Some(PosClass::AdvConst { skipws: Some(g) })
                 }
                 _ => None,
             }
@@ -182,10 +199,6 @@ fn is_ident(e: &Spanned<Expr>, name: &str) -> bool {
 
 fn is_int_lit(e: &Spanned<Expr>, v: i64) -> bool {
     matches!(&e.node, Expr::Literal(Literal::Int(n)) if *n == v)
-}
-
-fn callee_is(callee: &Spanned<Expr>, name: &str) -> bool {
-    super::shared::expr_dotted_name(callee).as_deref() == Some(name)
 }
 
 /// Lower a source constructor name (`Type.Variant`) to its Lean form
@@ -257,6 +270,50 @@ enum CharSome {
     Nested(Vec<Leaf>),
 }
 
+/// A pool-law citation that discharges one of the conjunction's external
+/// hypotheses. `hyp` is the fresh hypothesis name the conjunction theorem binds;
+/// the projection reconstructs the hypothesis by APPLYING `theorem` (the cited
+/// pool law) and bridging its `==` / `>=` Bool surface to the Prop shape. When
+/// the cited law is only bounded, `theorem` carries the sampled-domain premises
+/// in its TYPE, so the reconstruction fails to typecheck and the projection's
+/// `first | … | sorry` floor demotes the law to bounded — fail-closed, no tier
+/// oracle needed.
+#[derive(Clone, Debug)]
+struct Citation {
+    /// Fresh hypothesis name (`hcite0`, …).
+    hyp: String,
+    /// Source name of the external fn this citation is about (emit lookup key).
+    src_fn: String,
+    kind: CiteKind,
+}
+
+#[derive(Clone, Debug)]
+enum CiteKind {
+    /// A sub-parser `F` whose returned position bounds a cursor edge. Hypothesis
+    /// shape `∀ <binders>, F <callargs> = <ok> v p → pos ≤ p`.
+    Parser {
+        /// `∀`-binder list, e.g. `(s : String) (pos : Int) (e : String) …`.
+        binders: String,
+        /// Binder names in law-given order (passed to the cited theorem).
+        arg_names: Vec<String>,
+        /// The `F <callargs>` lean call.
+        call: String,
+        /// Lean value type and ok-ctor for the RHS `ok v p`.
+        v_name: String,
+        p_name: String,
+        pos_name: String,
+        ok_ctor: String,
+        /// Number of extra call arguments after `s`, `pos` (rendered as `_` when
+        /// the hypothesis is applied in a member block).
+        extras_count: usize,
+        /// The cited pool-law theorem base.
+        theorem: String,
+    },
+    /// A monotone-cursor helper `G`. Hypothesis shape `∀ (s:String) (q:Int),
+    /// q ≤ G s q`.
+    Weak { g_lean: String, theorem: String },
+}
+
 struct MemberInfo<'a> {
     fd: &'a FnDef,
     lean: String,
@@ -287,6 +344,24 @@ struct CliqueShape<'a> {
     /// Every constructor of the result type as `(lean_variant, arity)`, so the
     /// projection can enumerate the `cases` arms (success + all failure ones).
     variants: Vec<(String, usize)>,
+    /// Pool-law citations discharging the conjunction's external hypotheses, in
+    /// deterministic order (conjunction binder order).
+    citations: Vec<Citation>,
+    /// External source fn name → hypothesis name, for the member-block emit.
+    hyp_of: HashMap<String, String>,
+}
+
+impl CliqueShape<'_> {
+    /// The `(hypothesis name, extra-arg count)` of the parser citation about
+    /// `fn_name`, if one was resolved.
+    fn parser_cite(&self, fn_name: &str) -> Option<(&str, usize)> {
+        self.citations.iter().find_map(|c| match &c.kind {
+            CiteKind::Parser { extras_count, .. } if c.src_fn == fn_name => {
+                Some((c.hyp.as_str(), *extras_count))
+            }
+            _ => None,
+        })
+    }
 }
 
 fn member_body_match(fd: &FnDef) -> Option<(&Spanned<Expr>, &Vec<crate::ast::MatchArm>)> {
@@ -318,6 +393,7 @@ fn classify_leaf(
     members: &HashSet<String>,
     result_binders: &HashSet<String>,
     ok_ctor: &str,
+    weak_helpers: &HashSet<String>,
 ) -> Option<Leaf> {
     if let Some((name, args)) = ctor_app(body) {
         if name == ok_ctor {
@@ -332,7 +408,7 @@ fn classify_leaf(
         return Some(Leaf::Err);
     }
     let (name, posexpr) = as_call(body)?;
-    let class = classify_pos(posexpr, s, pos, result_binders)?;
+    let class = classify_pos(posexpr, s, pos, result_binders, weak_helpers)?;
     if members.contains(&name) {
         Some(Leaf::Sibling { name, pos: class })
     } else {
@@ -346,7 +422,12 @@ type MemberAnalysis = (Member, Vec<(String, PosClass)>, Option<String>);
 
 /// Analyse one clique member's body into a `Member` shape. Declines (`None`)
 /// on any structure outside the supported vocabulary — fail-closed.
-fn analyse_member(fd: &FnDef, members: &HashSet<String>, ok_ctor: &str) -> Option<MemberAnalysis> {
+fn analyse_member(
+    fd: &FnDef,
+    members: &HashSet<String>,
+    ok_ctor: &str,
+    weak_helpers: &HashSet<String>,
+) -> Option<MemberAnalysis> {
     let s = fd.params.first()?.0.clone();
     let pos = fd.params.get(1)?.0.clone();
     let (subject, arms) = member_body_match(fd)?;
@@ -379,14 +460,16 @@ fn analyse_member(fd: &FnDef, members: &HashSet<String>, ok_ctor: &str) -> Optio
                 // nested `match c`
                 let mut leaves = Vec::new();
                 for a in inner_arms {
-                    let leaf = classify_leaf(&a.body, &s, &pos, members, &empty, ok_ctor)?;
+                    let leaf =
+                        classify_leaf(&a.body, &s, &pos, members, &empty, ok_ctor, weak_helpers)?;
                     record(&leaf, &mut edges);
                     leaves.push(leaf);
                 }
                 CharSome::Nested(leaves)
             }
             _ => {
-                let leaf = classify_leaf(some_arm, &s, &pos, members, &empty, ok_ctor)?;
+                let leaf =
+                    classify_leaf(some_arm, &s, &pos, members, &empty, ok_ctor, weak_helpers)?;
                 record(&leaf, &mut edges);
                 CharSome::Direct(leaf)
             }
@@ -404,7 +487,7 @@ fn analyse_member(fd: &FnDef, members: &HashSet<String>, ok_ctor: &str) -> Optio
         let cname = cname.to_string();
         let mut leaves = Vec::new();
         for a in arms {
-            let leaf = classify_leaf(&a.body, &s, &pos, members, &empty, ok_ctor)?;
+            let leaf = classify_leaf(&a.body, &s, &pos, members, &empty, ok_ctor, weak_helpers)?;
             record(&leaf, &mut edges);
             leaves.push(leaf);
         }
@@ -428,7 +511,7 @@ fn analyse_member(fd: &FnDef, members: &HashSet<String>, ok_ctor: &str) -> Optio
         }
         let mut rb = HashSet::new();
         rb.insert(binders[1].clone());
-        let edge = classify_leaf(&ok_arm.body, &s, &pos, members, &rb, ok_ctor)?;
+        let edge = classify_leaf(&ok_arm.body, &s, &pos, members, &rb, ok_ctor, weak_helpers)?;
         record(&edge, &mut edges);
         let scrut_is_sibling = members.contains(&scrut);
         // The scrutinee sub-call is a same-position sibling edge: its returned
@@ -457,7 +540,15 @@ fn analyse_member(fd: &FnDef, members: &HashSet<String>, ok_ctor: &str) -> Optio
         let ctor_arm = &arms[ctor_idx];
         // The constructor payload binder (e.g. `key`) is not a returned position,
         // so no binder is treated as semantic here.
-        let edge = classify_leaf(&ctor_arm.body, &s, &pos, members, &empty, ok_ctor)?;
+        let edge = classify_leaf(
+            &ctor_arm.body,
+            &s,
+            &pos,
+            members,
+            &empty,
+            ok_ctor,
+            weak_helpers,
+        )?;
         record(&edge, &mut edges);
         return Some((
             Member::AdtMatch {
@@ -542,7 +633,7 @@ fn assign_ranks(members: &[MemberInfo]) -> Option<Vec<usize>> {
         for (callee, class) in &m.edges {
             let must_drop = matches!(
                 class,
-                PosClass::Same | PosClass::Weak | PosClass::Semantic { .. }
+                PosClass::Same | PosClass::Weak(_) | PosClass::Semantic { .. }
             );
             if must_drop && let Some(&j) = idx.get(callee.as_str()) {
                 edges.push((i, j));
@@ -664,10 +755,194 @@ fn owning_scc<'a>(target: &str, ctx: &'a CodegenContext) -> Option<Vec<&'a FnDef
     Some(comp)
 }
 
+/// A monotone-cursor (`G(s,q) >= q`) pool law, usable to discharge a `Weak`
+/// hypothesis. Keyed by `G`'s source name.
+struct WeakRaw {
+    theorem: String,
+    line: usize,
+    /// True iff `G`'s `>= q` law actually closes UNIVERSALLY — `G` is a native
+    /// string-position scanner that graduates (the `fun_induction … simp_all …
+    /// omega` closer). A bounded `>= q` law is NOT citable.
+    universal: bool,
+}
+
+/// A sub-parser advance (`when F(...) == ok(v,p) => p >= pos`) pool law, usable
+/// to discharge a `Parser` hypothesis. Keyed by `F`'s source name. Carries the
+/// law's own `(vb, law)` so its UNIVERSALITY can be re-checked recursively (a
+/// bounded sub-parser law is not citable).
+struct ParserRaw<'a> {
+    theorem: String,
+    binders: String,
+    arg_names: Vec<String>,
+    call: String,
+    v_name: String,
+    p_name: String,
+    pos_name: String,
+    ok_ctor: String,
+    extras_count: usize,
+    line: usize,
+    vb: &'a VerifyBlock,
+    law: &'a VerifyLaw,
+}
+
+/// Recognize a monotone-cursor pool law (`holds`, claim `G(s,q) >= q`). The
+/// helper is identified purely by this SHAPE — a citable `>=` law about it —
+/// never by name (the litmus).
+fn weak_law_raw(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<(String, WeakRaw)> {
+    if law.when.is_some() {
+        return None;
+    }
+    let Expr::BinOp(BinOp::Gte, call, r) = &law.lhs.node else {
+        return None;
+    };
+    let (g, cargs) = call_parts(call)?;
+    if cargs.len() != 2 {
+        return None;
+    }
+    let q = ident_name(&cargs[1])?;
+    if ident_name(r) != Some(q) {
+        return None;
+    }
+    if !matches!(&law.rhs.node, Expr::Literal(Literal::Bool(true))) {
+        return None;
+    }
+    if law.givens.len() != 2 {
+        return None;
+    }
+    let theorem = crate::codegen::lean::toplevel::law_theorem_base(vb, law, ctx);
+    // Universal iff `G` is a graduating string-pos scanner (its `>= q` law then
+    // closes by `fun_induction`; otherwise the law is bounded and not citable).
+    let universal = ctx
+        .fn_defs
+        .iter()
+        .find(|fd| fd.name == g)
+        .is_some_and(|fd| {
+            crate::codegen::lean::toplevel::fuel::detect_simple_string_pos_skip_literal(fd)
+                .is_some()
+        });
+    Some((
+        g,
+        WeakRaw {
+            theorem,
+            line: vb.line,
+            universal,
+        },
+    ))
+}
+
+/// Recognize a sub-parser advance pool law (`when F(...) == ok(v,p) => p >= pos`)
+/// — the SAME claim shape the clique rung propagates, one level down. Keyed on
+/// `F`'s source name.
+fn parser_law_raw<'a>(
+    vb: &'a VerifyBlock,
+    law: &'a VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<(String, ParserRaw<'a>)> {
+    let ls = read_law_shape(law)?;
+    // The `F(callargs)` argument idents (source names).
+    let when = law.when.as_ref()?;
+    let Expr::BinOp(BinOp::Eq, call, _) = &when.node else {
+        return None;
+    };
+    let call_args: Vec<String> = match &call.node {
+        Expr::FnCall(_, args) => args
+            .iter()
+            .filter_map(|a| ident_name(a).map(str::to_string))
+            .collect(),
+        Expr::TailCall(tc) => tc
+            .args
+            .iter()
+            .filter_map(|a| ident_name(a).map(str::to_string))
+            .collect(),
+        _ => return None,
+    };
+    if call_args.len() < 2 {
+        return None;
+    }
+    let call = format!(
+        "{} {}",
+        aver_name_to_lean(&ls.target),
+        call_args
+            .iter()
+            .map(|n| aver_name_to_lean(n))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let mut binders = String::new();
+    let mut arg_names = Vec::new();
+    for g in &law.givens {
+        let name = aver_name_to_lean(&g.name);
+        let ty = type_annotation_to_lean(&g.type_name);
+        binders.push_str(&format!("({name} : {ty}) "));
+        arg_names.push(name);
+    }
+    let theorem = crate::codegen::lean::toplevel::law_theorem_base(vb, law, ctx);
+    Some((
+        ls.target.clone(),
+        ParserRaw {
+            theorem,
+            binders: binders.trim_end().to_string(),
+            arg_names,
+            call,
+            v_name: aver_name_to_lean(&ls.val_name),
+            p_name: aver_name_to_lean(&ls.p_name),
+            pos_name: aver_name_to_lean(&ls.pos_name),
+            ok_ctor: ctor_to_lean(&ls.ok_ctor),
+            extras_count: call_args.len() - 2,
+            line: vb.line,
+            vb,
+            law,
+        },
+    ))
+}
+
+/// Scan the ENTRY-scope law pool for monotone-cursor and sub-parser advance
+/// laws. Single-file pool (the JSON target and the witness both live in one
+/// file); a needed pool law in a dependency module is out of scope here — the
+/// #647 dep-closure owns cross-module citation for its own rungs.
+/// ponytail: entry-scope only; widen to `ctx.modules` if a cross-file clique
+/// citation is ever measured to be needed.
+fn collect_pool_laws<'a>(
+    ctx: &'a CodegenContext,
+) -> (HashMap<String, WeakRaw>, HashMap<String, ParserRaw<'a>>) {
+    use crate::ast::{TopLevel, VerifyKind};
+    let mut weak = HashMap::new();
+    let mut parser = HashMap::new();
+    for item in &ctx.items {
+        let TopLevel::Verify(vb) = item else { continue };
+        let VerifyKind::Law(law) = &vb.kind else {
+            continue;
+        };
+        if let Some((g, raw)) = weak_law_raw(vb, law, ctx) {
+            weak.entry(g).or_insert(raw);
+        }
+        if let Some((f, raw)) = parser_law_raw(vb, law, ctx) {
+            parser.entry(f).or_insert(raw);
+        }
+    }
+    (weak, parser)
+}
+
+/// Recursion budget for the sub-parser universality probe: a cited sub-parser's
+/// advance law is citable only if IT closes universally, which the same
+/// `build_shape` decides one level down. Depth bounds the (topology-acyclic)
+/// nesting; JSON is 2-3 deep. `TOP` marks the outermost call, so the decline
+/// diagnostic fires once, not on every probe.
+const PROBE_DEPTH_TOP: usize = 8;
+
 fn build_shape<'a>(
+    vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &'a CodegenContext,
+    depth: usize,
 ) -> Option<(CliqueShape<'a>, LawShape)> {
+    if depth == 0 {
+        return None;
+    }
     let mut ls = read_law_shape(law)?;
     // value type from the matching given.
     ls.val_type = law
@@ -678,6 +953,10 @@ fn build_shape<'a>(
 
     let comp = owning_scc(&ls.target, ctx)?;
     let member_names: HashSet<String> = comp.iter().map(|fd| fd.name.clone()).collect();
+
+    // Monotone-cursor helpers and sub-parser advance laws available for citation.
+    let (weak_pool, parser_pool) = collect_pool_laws(ctx);
+    let weak_helpers: HashSet<String> = weak_pool.keys().cloned().collect();
 
     let mut members: Vec<MemberInfo> = Vec::new();
     for fd in &comp {
@@ -691,7 +970,8 @@ fn build_shape<'a>(
             .iter()
             .map(|(n, t)| (n.clone(), type_annotation_to_lean(t)))
             .collect();
-        let (shape, edges, dispatch_param) = analyse_member(fd, &member_names, &ls.ok_ctor)?;
+        let (shape, edges, dispatch_param) =
+            analyse_member(fd, &member_names, &ls.ok_ctor, &weak_helpers)?;
         members.push(MemberInfo {
             fd,
             lean: aver_name_to_lean(&fd.name),
@@ -716,31 +996,108 @@ fn build_shape<'a>(
         .map(|(i, m)| (m.fd.name.clone(), i))
         .collect();
 
-    // Collect externals whose returned position feeds a cursor and whether
-    // skipWs monotonicity is needed.
-    let mut externals: Vec<String> = Vec::new();
-    let mut needs_skipws = false;
+    // Collect distinct external cursor dependencies: sub-parser callees whose
+    // returned position feeds a cursor, and monotone-cursor helpers wrapping an
+    // edge position.
+    let mut parser_ext: Vec<String> = Vec::new();
+    let mut weak_ext: Vec<String> = Vec::new();
     for m in &members {
-        for (name, class) in edges_and_externals(m) {
-            match class {
-                EdgeKind::External(fname) => {
-                    if !externals.contains(&fname) {
-                        externals.push(fname);
+        for kind in edges_and_externals(m) {
+            match kind {
+                EdgeKind::External(f) => {
+                    if !parser_ext.contains(&f) {
+                        parser_ext.push(f);
                     }
                 }
-                EdgeKind::UsesSkipWs => needs_skipws = true,
+                EdgeKind::UsesSkipWs(g) => {
+                    if !weak_ext.contains(&g) {
+                        weak_ext.push(g);
+                    }
+                }
                 EdgeKind::Sibling => {}
             }
-            let _ = name;
+        }
+    }
+    parser_ext.sort();
+    weak_ext.sort();
+
+    // Resolve each external to a pool-law citation. The cited law must exist, be
+    // declared earlier in source (topology: the cited theorem is emitted before
+    // this one, mirroring the #647 emission-order guard), AND actually close
+    // UNIVERSALLY — a sub-parser whose own advance law is only bounded, or a
+    // whitespace helper that does not graduate, cannot discharge a universal
+    // hypothesis, so citing it would only floor to `sorry`. A missing,
+    // later-declared, or non-universal law makes the clique DECLINE (fail-closed)
+    // with a diagnostic naming exactly what is needed — the law then keeps its
+    // bounded-domain proof rather than a silently weaker universal.
+    let mut citations: Vec<Citation> = Vec::new();
+    let mut hyp_of: HashMap<String, String> = HashMap::new();
+    let mut missing: Vec<String> = Vec::new();
+    for f in &parser_ext {
+        match parser_pool.get(f) {
+            Some(raw)
+                if raw.line < vb.line && build_shape(raw.vb, raw.law, ctx, depth - 1).is_some() =>
+            {
+                let hyp = format!("hcite{}", citations.len());
+                hyp_of.insert(f.clone(), hyp.clone());
+                citations.push(Citation {
+                    hyp,
+                    src_fn: f.clone(),
+                    kind: CiteKind::Parser {
+                        binders: raw.binders.clone(),
+                        arg_names: raw.arg_names.clone(),
+                        call: raw.call.clone(),
+                        v_name: raw.v_name.clone(),
+                        p_name: raw.p_name.clone(),
+                        pos_name: raw.pos_name.clone(),
+                        ok_ctor: raw.ok_ctor.clone(),
+                        extras_count: raw.extras_count,
+                        theorem: raw.theorem.clone(),
+                    },
+                });
+            }
+            _ => missing.push(f.clone()),
+        }
+    }
+    for g in &weak_ext {
+        match weak_pool.get(g) {
+            Some(raw) if raw.line < vb.line && raw.universal => {
+                let hyp = format!("hcite{}", citations.len());
+                hyp_of.insert(g.clone(), hyp.clone());
+                citations.push(Citation {
+                    hyp,
+                    src_fn: g.clone(),
+                    kind: CiteKind::Weak {
+                        g_lean: aver_name_to_lean(g),
+                        theorem: raw.theorem.clone(),
+                    },
+                });
+            }
+            _ => missing.push(g.clone()),
         }
     }
 
-    // Fail-closed: this leg discharges only self-contained cliques — every
-    // cursor-feeding callee must be a clique sibling. A foreign callee whose
-    // returned position feeds a cursor (e.g. `parseString`, `parseNumber`) or a
-    // `skipWs`-weakened edge needs a universal monotonicity law that this leg
-    // does not supply, so the rung declines and the law keeps its bounded proof.
-    if !externals.is_empty() || needs_skipws {
+    if !missing.is_empty() {
+        // Only the outermost call diagnoses; recursive universality probes stay
+        // silent (a nested decline is expected, not a user-facing gap).
+        if depth == PROBE_DEPTH_TOP {
+            eprintln!(
+                "aver: clique cursor-monotonicity for `{}` declines — no universal \
+                 advance law in the pool (declared before line {}) for: {}. The law \
+                 keeps its bounded-domain proof.",
+                ls.target,
+                vb.line,
+                missing.join(", ")
+            );
+        }
+        return None;
+    }
+
+    // Target-member gate — SHARED by recognizer and emitter (`recognize =
+    // build_shape(..).is_some()`): the law's subject fn must be a clique member
+    // whose conjunct the projection can apply at `s pos v p` (no extra params).
+    let target_idx = *index_of.get(&vb.fn_name)?;
+    if !members[target_idx].extras.is_empty() {
         return None;
     }
 
@@ -758,6 +1115,8 @@ fn build_shape<'a>(
         val_type: ls.val_type.clone(),
         ok_ctor: ctor_to_lean(&ls.ok_ctor),
         variants,
+        citations,
+        hyp_of,
     };
     Some((shape, ls))
 }
@@ -786,26 +1145,29 @@ fn lookup_variants(ctx: &CodegenContext, type_name: &str) -> Option<Vec<(String,
 }
 
 enum EdgeKind {
+    /// A non-clique sub-parser callee whose returned position feeds a cursor.
     External(String),
-    UsesSkipWs,
+    /// A monotone-cursor helper `G` (source name) wrapping an edge position.
+    UsesSkipWs(String),
     Sibling,
 }
 
-/// Walk a member's leaves, reporting external callees and skipWs usage.
-fn edges_and_externals(m: &MemberInfo) -> Vec<(String, EdgeKind)> {
-    fn visit(leaf: &Leaf, out: &mut Vec<(String, EdgeKind)>) {
+/// Walk a member's leaves, reporting external callees and monotone-cursor
+/// helper usage (each by source name).
+fn edges_and_externals(m: &MemberInfo) -> Vec<EdgeKind> {
+    fn visit(leaf: &Leaf, out: &mut Vec<EdgeKind>) {
         match leaf {
             Leaf::External { name, pos } => {
-                out.push((name.clone(), EdgeKind::External(name.clone())));
-                if uses_skipws(pos) {
-                    out.push((name.clone(), EdgeKind::UsesSkipWs));
+                out.push(EdgeKind::External(name.clone()));
+                if let Some(g) = skipws_fn(pos) {
+                    out.push(EdgeKind::UsesSkipWs(g.to_string()));
                 }
             }
             Leaf::Sibling { pos, .. } => {
-                if uses_skipws(pos) {
-                    out.push((String::new(), EdgeKind::UsesSkipWs));
+                if let Some(g) = skipws_fn(pos) {
+                    out.push(EdgeKind::UsesSkipWs(g.to_string()));
                 }
-                out.push((String::new(), EdgeKind::Sibling));
+                out.push(EdgeKind::Sibling);
             }
             _ => {}
         }
@@ -824,7 +1186,7 @@ fn edges_and_externals(m: &MemberInfo) -> Vec<(String, EdgeKind)> {
             ..
         } => {
             if !scrut_is_sibling {
-                out.push((scrut.clone(), EdgeKind::External(scrut.clone())));
+                out.push(EdgeKind::External(scrut.clone()));
             }
             visit(edge, &mut out);
         }
@@ -833,21 +1195,31 @@ fn edges_and_externals(m: &MemberInfo) -> Vec<(String, EdgeKind)> {
     out
 }
 
-fn uses_skipws(pos: &PosClass) -> bool {
-    matches!(
-        pos,
-        PosClass::Weak
-            | PosClass::AdvConst { skipws: true }
-            | PosClass::Semantic { skipws: true, .. }
-    )
+/// The monotone-cursor helper's source name a position class routes through, if
+/// any (`G` in `G s pos` / `G s (pos+1)` / `G s p'`). `None` for a bare
+/// same-position / `pos+1` / result-binder edge.
+fn skipws_fn(pos: &PosClass) -> Option<&str> {
+    match pos {
+        PosClass::Weak(h) => Some(h.as_str()),
+        PosClass::AdvConst { skipws: Some(h) } => Some(h.as_str()),
+        PosClass::Semantic {
+            skipws: Some(h), ..
+        } => Some(h.as_str()),
+        _ => None,
+    }
 }
 
 pub(in crate::codegen::lean) fn recognize_clique_position_monotonicity(
-    _vb: &VerifyBlock,
+    vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> bool {
-    build_shape(law, ctx).is_some()
+    // Recognizer = the emitter's own plan succeeding. `build_shape` runs the
+    // FULL plan (clique analysis, rank assignment, citation resolution, AND the
+    // target-member/no-extras gate the projection needs), so the recognizer can
+    // never class a law universal that the emitter would decline. One shared
+    // function, no drift.
+    build_shape(vb, law, ctx, PROBE_DEPTH_TOP).is_some()
 }
 
 // ===========================================================================
@@ -877,11 +1249,43 @@ fn rebind_semantic(leaf: &Leaf, new_binder: &str) -> Leaf {
         } => Leaf::Sibling {
             name: name.clone(),
             pos: PosClass::Semantic {
-                skipws: *skipws,
+                skipws: skipws.clone(),
                 binder: new_binder.to_string(),
             },
         },
         other => other.clone(),
+    }
+}
+
+/// The pre-`skipws` inner position argument a class wraps (`pos` / `(pos+1)` /
+/// the semantic binder), for the monotone-cursor bound `inner ≤ G s inner`.
+fn skipws_inner(class: &PosClass, pos: &str) -> Option<String> {
+    match class {
+        PosClass::Weak(_) => Some(pos.to_string()),
+        PosClass::AdvConst { skipws: Some(_) } => Some(format!("({pos} + 1)")),
+        PosClass::Semantic {
+            skipws: Some(_),
+            binder,
+        } => Some(binder.clone()),
+        _ => None,
+    }
+}
+
+/// Emit the monotone-cursor bound `inner ≤ G s inner` (via the cited `Weak`
+/// hypothesis) when the class routes an edge position through a helper `G`, so
+/// the closing `omega` can chain across the whitespace skip.
+fn emit_skipws_bound(
+    class: &PosClass,
+    s: &str,
+    pos: &str,
+    shape: &CliqueShape,
+    out: &mut Vec<String>,
+    indent: &str,
+) {
+    if let (Some(g), Some(inner)) = (skipws_fn(class), skipws_inner(class, pos))
+        && let Some(hyp) = shape.hyp_of.get(g)
+    {
+        out.push(format!("{indent}have hws := {hyp} {s} {inner}"));
     }
 }
 
@@ -920,15 +1324,33 @@ fn emit_leaf(
             } else {
                 ""
             };
+            emit_skipws_bound(class, s, pos, shape, out, indent);
             let posr = pos_render(class, s, pos);
             out.push(format!(
                 "{indent}have hcall := ih{idx} {s} {posr}{extras} v p{hc} (by unfold {t} at *; omega) heq",
             ));
             out.push(format!("{indent}omega"));
         }
-        Leaf::External { .. } => {
-            // Self-contained cliques carry no external cursor edges.
-            out.push(format!("{indent}sorry"));
+        Leaf::External { name, pos: class } => {
+            // A non-clique sub-parser terminal edge: cite its advance hypothesis
+            // (`F … = ok v p → pos ≤ p`), discharged in the projection from the
+            // pool law. Its returned position is `p`, so `pos ≤ p` follows and,
+            // for a `pos+1` advance, `omega` bridges the `+1`.
+            let (hyp, extras_count) = shape
+                .parser_cite(name)
+                .expect("external leaf without a resolved parser citation");
+            let extras = underscores(extras_count);
+            let extras = if extras.is_empty() {
+                String::new()
+            } else {
+                format!(" {extras}")
+            };
+            emit_skipws_bound(class, s, pos, shape, out, indent);
+            let posr = pos_render(class, s, pos);
+            out.push(format!(
+                "{indent}have hcall := {hyp} {s} {posr}{extras} v p heq"
+            ));
+            out.push(format!("{indent}omega"));
         }
     }
 }
@@ -1011,17 +1433,38 @@ fn emit_member_block(
         }
         Member::ResultMatch {
             scrut,
+            scrut_is_sibling,
             edge,
             err_first,
-            ..
         } => {
             out.push("      split at heq".to_string());
-            let scrut_idx = shape.index_of[scrut];
-            let scrut_extras = underscores(shape.members[scrut_idx].extras.len());
-            let scrut_extras = if scrut_extras.is_empty() {
-                String::new()
+            // The scrutinee sub-call bounds the semantic edge: `pos ≤ scrutPos`.
+            // A clique sibling supplies it from the IH conjunct; a non-clique
+            // sub-parser from its cited advance hypothesis.
+            let hmono = if *scrut_is_sibling {
+                let scrut_idx = shape.index_of[scrut];
+                let scrut_extras = underscores(shape.members[scrut_idx].extras.len());
+                let scrut_extras = if scrut_extras.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {scrut_extras}")
+                };
+                format!(
+                    "          have hmono := ih{scrut_idx} {s} {pos}{scrut_extras} scrutVal scrutPos (by unfold {t} at *; omega) hv"
+                )
             } else {
-                format!(" {scrut_extras}")
+                let (hyp, extras_count) = shape
+                    .parser_cite(scrut)
+                    .expect("external scrutinee without a resolved parser citation");
+                let scrut_extras = underscores(extras_count);
+                let scrut_extras = if scrut_extras.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {scrut_extras}")
+                };
+                format!(
+                    "          have hmono := {hyp} {s} {pos}{scrut_extras} scrutVal scrutPos hv"
+                )
             };
             // Fresh binder names for the sub-parser's returned (value, position)
             // so they never shadow the conjunct's own `v` / `p`.
@@ -1031,9 +1474,7 @@ fn emit_member_block(
             };
             let emit_ok = |out: &mut Vec<String>| {
                 out.push("      · next scrutVal scrutPos hv =>".to_string());
-                out.push(format!(
-                    "          have hmono := ih{scrut_idx} {s} {pos}{scrut_extras} scrutVal scrutPos (by unfold {t} at *; omega) hv"
-                ));
+                out.push(hmono.clone());
                 emit_leaf(&edge, s, pos, shape, t, out, "          ");
             };
             if *err_first {
@@ -1093,6 +1534,64 @@ fn conjunct_statement(m: &MemberInfo, shape: &CliqueShape, t: &str) -> String {
     )
 }
 
+/// The Prop-shape type of a citation's external hypothesis.
+fn cite_hyp_type(c: &Citation) -> String {
+    match &c.kind {
+        CiteKind::Parser {
+            binders,
+            call,
+            v_name,
+            p_name,
+            pos_name,
+            ok_ctor,
+            ..
+        } => format!("∀ {binders}, {call} = {ok_ctor} {v_name} {p_name} → {pos_name} ≤ {p_name}"),
+        CiteKind::Weak { g_lean, .. } => {
+            format!("∀ (s : String) (q : Int), q ≤ {g_lean} s q")
+        }
+    }
+}
+
+/// The `(hyp : <type>)` binder the conjunction theorem takes for a citation.
+fn cite_hyp_binder(c: &Citation) -> String {
+    format!("({} : {})", c.hyp, cite_hyp_type(c))
+}
+
+/// The projection-side reconstruction of a citation's hypothesis from the pool
+/// law, at `indent`. Kept INSIDE the projection's `first | … | sorry`, so a
+/// bounded (domain-restricted) cited theorem makes this block fail to typecheck
+/// and the law floors to bounded — fail-closed, no tier oracle.
+fn emit_cite_have(c: &Citation, indent: &str, out: &mut Vec<String>) {
+    let ty = cite_hyp_type(c);
+    out.push(format!("{indent}have {} : {ty} := by", c.hyp));
+    match &c.kind {
+        CiteKind::Parser {
+            arg_names,
+            call,
+            v_name,
+            p_name,
+            ok_ctor,
+            theorem,
+            ..
+        } => {
+            let args = arg_names.join(" ");
+            out.push(format!("{indent}  intro {args} heqc"));
+            out.push(format!(
+                "{indent}  have hbc : ({call} == {ok_ctor} {v_name} {p_name}) = true := by"
+            ));
+            out.push(format!(
+                "{indent}    rw [heqc]; show ({v_name} == {v_name} && {p_name} == {p_name}) = true; simp"
+            ));
+            out.push(format!("{indent}  have hgec := {theorem} {args} hbc"));
+            out.push(format!("{indent}  simpa using hgec"));
+        }
+        CiteKind::Weak { theorem, .. } => {
+            out.push(format!("{indent}  intro s q"));
+            out.push(format!("{indent}  simpa using {theorem} s q"));
+        }
+    }
+}
+
 pub(super) fn emit_clique_position_monotonicity_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -1100,7 +1599,7 @@ pub(super) fn emit_clique_position_monotonicity_law(
     theorem_base: &str,
     quant_params: &str,
 ) -> Option<AutoProof> {
-    let (shape, ls) = build_shape(law, ctx)?;
+    let (shape, ls) = build_shape(vb, law, ctx, PROBE_DEPTH_TOP)?;
     let r = shape.r;
     let t = format!("{}_advanceThr", shape.rep);
     let thm = format!("{}_advance_mono", shape.rep);
@@ -1119,7 +1618,18 @@ pub(super) fn emit_clique_position_monotonicity_law(
         .iter()
         .map(|m| conjunct_statement(m, &shape, &t))
         .collect();
-    lines.push(format!("theorem {thm} :"));
+    // External hypotheses (discharged in the projection by pool-law citation).
+    let hyp_binders = shape
+        .citations
+        .iter()
+        .map(cite_hyp_binder)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if hyp_binders.is_empty() {
+        lines.push(format!("theorem {thm} :"));
+    } else {
+        lines.push(format!("theorem {thm} {hyp_binders} :"));
+    }
     lines.push("    ∀ (fuel : Nat),".to_string());
     lines.push(format!("      {} := by", conjuncts.join("\n      ∧ ")));
     lines.push("  intro fuel".to_string());
@@ -1187,10 +1697,37 @@ pub(super) fn emit_clique_position_monotonicity_law(
             .collect::<Vec<_>>()
             .join(" ")
     ));
+    // Hypothesis arguments applied to the conjunction theorem, before `fuel`.
+    let hyp_args = if shape.citations.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "{} ",
+            shape
+                .citations
+                .iter()
+                .map(|c| c.hyp.clone())
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+    };
     lines.push("  first".to_string());
-    lines.push(format!(
-        "  | (cases hF : {target_lean} {s_name} {pos_name} with"
-    ));
+    // Open the closing branch and, when there are citations, reconstruct each
+    // external hypothesis from its pool law BEFORE the case analysis (all inside
+    // the `first | (…) | sorry` floor).
+    if shape.citations.is_empty() {
+        lines.push(format!(
+            "  | (cases hF : {target_lean} {s_name} {pos_name} with"
+        ));
+    } else {
+        lines.push("  | (".to_string());
+        for c in &shape.citations {
+            emit_cite_have(c, "     ", &mut lines);
+        }
+        lines.push(format!(
+            "     cases hF : {target_lean} {s_name} {pos_name} with"
+        ));
+    }
     for (variant, arity) in &shape.variants {
         if variant == ok_variant {
             lines.push(format!("     | {variant} okVal okPos =>"));
@@ -1204,7 +1741,7 @@ pub(super) fn emit_clique_position_monotonicity_law(
             ));
             lines.push("         rw [hpp] at hF".to_string());
             lines.push(format!(
-                "         have key := ({thm} (averStringPosFuel {s_name} {pos_name} {r})){proj_acc} {s_name} {pos_name} okVal {p_name} (by unfold {t} averStringPosFuel; omega) hF"
+                "         have key := ({thm} {hyp_args}(averStringPosFuel {s_name} {pos_name} {r})){proj_acc} {s_name} {pos_name} okVal {p_name} (by unfold {t} averStringPosFuel; omega) hF"
             ));
             lines.push("         simp [key]".to_string());
         } else {
@@ -1266,43 +1803,78 @@ mod tests {
         ))
     }
 
+    fn weak_set(names: &[&str]) -> HashSet<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
     // ---- edge classifier ----------------------------------------------------
 
     #[test]
     fn classify_pos_same_and_advance() {
         let no_binders = HashSet::new();
+        let no_weak = HashSet::new();
         assert_eq!(
-            classify_pos(&ident("pos"), "s", "pos", &no_binders),
+            classify_pos(&ident("pos"), "s", "pos", &no_binders, &no_weak),
             Some(PosClass::Same)
         );
         assert_eq!(
-            classify_pos(&add1(ident("pos")), "s", "pos", &no_binders),
-            Some(PosClass::AdvConst { skipws: false })
+            classify_pos(&add1(ident("pos")), "s", "pos", &no_binders, &no_weak),
+            Some(PosClass::AdvConst { skipws: None })
         );
     }
 
     #[test]
-    fn classify_pos_weak_and_advance_skipws() {
+    fn classify_pos_weak_helper_is_pool_law_keyed_not_name_keyed() {
         let no_binders = HashSet::new();
-        // skipWs(s, pos) — non-decreasing, ranked like same-position.
+        // A helper `trimWs` is monotone-cursor ONLY because a pool law is
+        // registered about it (`weak` set), never because of its name. Any name
+        // works; the literal `skipWs` is not special.
+        let weak = weak_set(&["trimWs"]);
+        assert_eq!(
+            classify_pos(
+                &call("trimWs", vec![ident("s"), ident("pos")]),
+                "s",
+                "pos",
+                &no_binders,
+                &weak
+            ),
+            Some(PosClass::Weak("trimWs".to_string()))
+        );
+        assert_eq!(
+            classify_pos(
+                &call("trimWs", vec![ident("s"), add1(ident("pos"))]),
+                "s",
+                "pos",
+                &no_binders,
+                &weak
+            ),
+            Some(PosClass::AdvConst {
+                skipws: Some("trimWs".to_string())
+            })
+        );
+        // LITMUS: the SAME call with NO pool law about `trimWs` is NOT a cursor
+        // helper — classification declines (no name shortcut).
+        let empty = HashSet::new();
+        assert_eq!(
+            classify_pos(
+                &call("trimWs", vec![ident("s"), ident("pos")]),
+                "s",
+                "pos",
+                &no_binders,
+                &empty
+            ),
+            None
+        );
+        // And `skipWs` gets no special treatment either without a pool law.
         assert_eq!(
             classify_pos(
                 &call("skipWs", vec![ident("s"), ident("pos")]),
                 "s",
                 "pos",
-                &no_binders
+                &no_binders,
+                &empty
             ),
-            Some(PosClass::Weak)
-        );
-        // skipWs(s, pos + 1) — a guarded constant advance.
-        assert_eq!(
-            classify_pos(
-                &call("skipWs", vec![ident("s"), add1(ident("pos"))]),
-                "s",
-                "pos",
-                &no_binders
-            ),
-            Some(PosClass::AdvConst { skipws: true })
+            None
         );
     }
 
@@ -1310,29 +1882,34 @@ mod tests {
     fn classify_pos_semantic_from_result_binder() {
         let mut binders = HashSet::new();
         binders.insert("p2".to_string());
+        let weak = weak_set(&["skipWs"]);
         // p2 (a sub-parser's returned position) → semantic.
         assert_eq!(
-            classify_pos(&ident("p2"), "s", "pos", &binders),
+            classify_pos(&ident("p2"), "s", "pos", &binders, &weak),
             Some(PosClass::Semantic {
-                skipws: false,
+                skipws: None,
                 binder: "p2".to_string()
             })
         );
-        // skipWs(s, p2) → semantic through whitespace.
+        // skipWs(s, p2) → semantic through the (pool-law-keyed) cursor helper.
         assert_eq!(
             classify_pos(
                 &call("skipWs", vec![ident("s"), ident("p2")]),
                 "s",
                 "pos",
-                &binders
+                &binders,
+                &weak
             ),
             Some(PosClass::Semantic {
-                skipws: true,
+                skipws: Some("skipWs".to_string()),
                 binder: "p2".to_string()
             })
         );
         // An unrelated identifier is not a recognized cursor position.
-        assert_eq!(classify_pos(&ident("acc"), "s", "pos", &binders), None);
+        assert_eq!(
+            classify_pos(&ident("acc"), "s", "pos", &binders, &weak),
+            None
+        );
     }
 
     // ---- rank assignment ----------------------------------------------------

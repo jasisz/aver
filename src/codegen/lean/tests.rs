@@ -3794,3 +3794,100 @@ verify len law lenAppend
          goal, so emitting it is pure waste:\n{lean}"
     );
 }
+
+/// Locate a `verify <fn> law <name>` block in a built context.
+fn find_clique_law<'a>(
+    ctx: &'a CodegenContext,
+    fn_name: &str,
+    law_name: &str,
+) -> (&'a VerifyBlock, &'a VerifyLaw) {
+    for item in &ctx.items {
+        if let TopLevel::Verify(vb) = item
+            && vb.fn_name == fn_name
+            && let VerifyKind::Law(law) = &vb.kind
+            && law.name == law_name
+        {
+            return (vb, law);
+        }
+    }
+    panic!("law {fn_name}.{law_name} not found");
+}
+
+#[test]
+fn clique_cursor_monotonicity_recognizes_self_contained_but_declines_on_missing_pool_law() {
+    // A self-contained two-member string-position clique (no external cursor
+    // edges) is recognized: its advance law will be proven universally by the
+    // rung's own conjunction.
+    let self_contained = r#"
+type R
+    Ok(Int, Int)
+    Err(String)
+
+fn a(s: String, pos: Int) -> R
+    ? "a"
+    match String.charAt(s, pos)
+        Option.None -> R.Err("e")
+        Option.Some(c) -> b(s, pos + 1)
+
+fn b(s: String, pos: Int) -> R
+    ? "b"
+    match String.charAt(s, pos)
+        Option.None -> R.Ok(0, pos)
+        Option.Some(c) -> a(s, pos + 1)
+
+verify a law aAdvances
+    given s: String = ["x"]
+    given pos: Int = [0]
+    given v: Int = [0]
+    given p: Int = [0]
+    when a(s, pos) == R.Ok(v, p)
+    p >= pos => true
+"#;
+    let ctx = ctx_from_source(self_contained, "SelfContained");
+    let (vb, law) = find_clique_law(&ctx, "a", "aAdvances");
+    assert!(
+        super::law_auto::recognize_clique_position_monotonicity(vb, law, &ctx),
+        "a self-contained clique must be recognized"
+    );
+
+    // The SAME clique, but `a` now scrutinizes a NON-clique sub-parser `ext`
+    // whose returned position feeds the semantic edge. `ext` has NO universal
+    // advance law in the pool, so the rung DECLINES (fail-closed) — the law
+    // keeps its bounded proof rather than a silently weaker universal. This is
+    // the decline-on-missing-pool-law path.
+    let missing_pool_law = r#"
+type R
+    Ok(Int, Int)
+    Err(String)
+
+fn ext(s: String, pos: Int) -> R
+    ? "ext"
+    R.Ok(0, pos)
+
+fn a(s: String, pos: Int) -> R
+    ? "a"
+    match ext(s, pos)
+        R.Err(m) -> R.Err(m)
+        R.Ok(v, p) -> b(s, p)
+
+fn b(s: String, pos: Int) -> R
+    ? "b"
+    match String.charAt(s, pos)
+        Option.None -> R.Err("e")
+        Option.Some(c) -> a(s, pos + 1)
+
+verify a law aAdvances
+    given s: String = ["x"]
+    given pos: Int = [0]
+    given v: Int = [0]
+    given p: Int = [0]
+    when a(s, pos) == R.Ok(v, p)
+    p >= pos => true
+"#;
+    let ctx2 = ctx_from_source(missing_pool_law, "MissingPoolLaw");
+    let (vb2, law2) = find_clique_law(&ctx2, "a", "aAdvances");
+    assert!(
+        !super::law_auto::recognize_clique_position_monotonicity(vb2, law2, &ctx2),
+        "a clique reaching a sub-parser with no universal advance law must decline"
+    );
+}

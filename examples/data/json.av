@@ -1320,15 +1320,59 @@ fn printResult(root: Json) -> Unit
         Option.Some(t) -> Console.print("Team: " + renderJsonStringList(jsonList(t)))
         Option.None -> Console.print("Team: ?")
 
-// Cursor-monotonicity laws: parsing never rewinds the input position. `skipWs`
-// closes universally on its own; the `parseValue` clique law is recognized by
-// the clique cursor-monotonicity rung but declines to a bounded proof here
-// because its cursor cone reaches non-clique scanners (parseString, parseNumber,
-// parseLiteral, dispatchNumberOrErr) that lack a universal monotonicity law.
+// Cursor-monotonicity laws: parsing never rewinds the input position.
+//
+// `skipWs` closes universally on its own (a graduating string-position scanner).
+// The `parseValue` clique law is recognized by the clique cursor-monotonicity
+// rung, which would discharge its external cursor edges by CITING the pool laws
+// below. But those four sub-parser advance laws are themselves only BOUNDED:
+// `parseString`/`parseNumber` are their own mutually-recursive cliques whose
+// cursor cone reaches further non-clique helpers with no advance law, and
+// `parseLiteral`/`dispatchNumberOrErr` are non-clique single functions no rung
+// proves universally. Since a bounded law cannot discharge a universal
+// hypothesis, the rung DECLINES (fail-closed) and `parseValueAdvances` keeps its
+// bounded-domain proof. The four laws stay here as the explicit external-law
+// bill: the day any of them closes universally, the citation flips automatically
+// (the mechanism is exercised universally by bracket_scan.av's `scanSeq`).
 verify skipWs law skipWsAdvances
     given s: String = ["", "  a", "\tb"]
     given pos: Int = [0, 1]
     skipWs(s, pos) >= pos => true
+
+verify parseString law parseStringAdvances
+    given s: String = ["\"a\"", "\"\""]
+    given pos: Int = [1]
+    given v: Json = [Json.JsonNull]
+    given p: Int = [1]
+    when parseString(s, pos) == ParseResult.Ok(v, p)
+    p >= pos => true
+
+verify parseLiteral law parseLiteralAdvances
+    given s: String = ["true", "false"]
+    given pos: Int = [0]
+    given e: String = ["true", "false"]
+    given val: Json = [Json.JsonBool(true)]
+    given v: Json = [Json.JsonNull]
+    given p: Int = [0]
+    when parseLiteral(s, pos, e, val) == ParseResult.Ok(v, p)
+    p >= pos => true
+
+verify parseNumber law parseNumberAdvances
+    given s: String = ["12", "0"]
+    given pos: Int = [0]
+    given v: Json = [Json.JsonNull]
+    given p: Int = [0]
+    when parseNumber(s, pos) == ParseResult.Ok(v, p)
+    p >= pos => true
+
+verify dispatchNumberOrErr law dispatchNumberOrErrAdvances
+    given s: String = ["7", "x"]
+    given pos: Int = [0]
+    given c: String = ["7", "x"]
+    given v: Json = [Json.JsonNull]
+    given p: Int = [0]
+    when dispatchNumberOrErr(s, pos, c) == ParseResult.Ok(v, p)
+    p >= pos => true
 
 verify parseValue law parseValueAdvances
     given s: String = ["1", "[]"]

@@ -37,3 +37,47 @@ verify scanExpr law scanExprAdvances
     given p: Int = [0]
     when scanExpr(s, pos) == PResult.POk(v, p)
     p >= pos => true
+
+fn skipWs(s: String, pos: Int) -> Int
+    ? "Skip run of spaces (a monotone cursor helper)."
+    match String.charAt(s, pos)
+        Option.None -> pos
+        Option.Some(c) -> match c
+            " " -> skipWs(s, pos + 1)
+            _ -> pos
+
+verify skipWs
+    skipWs("", 0) => 0
+    skipWs("  a", 0) => 2
+    skipWs("a", 0) => 0
+
+verify skipWs law skipWsAdvances
+    given s: String = ["", "  a"]
+    given pos: Int = [0]
+    skipWs(s, pos) >= pos => true
+
+fn scanSeq(s: String, pos: Int) -> PResult
+    ? "Scan a bracket expr then optional `;`-separated continuations."
+    match scanExpr(s, pos)
+        PResult.PErr(m) -> PResult.PErr(m)
+        PResult.POk(v, p) -> scanSeqNext(s, skipWs(s, p))
+
+fn scanSeqNext(s: String, pos: Int) -> PResult
+    ? "Continue a sequence at a separator position."
+    match String.charAt(s, pos)
+        Option.None -> PResult.PErr("end of sequence")
+        Option.Some(c) -> match c
+            ";" -> scanSeq(s, skipWs(s, pos + 1))
+            _ -> PResult.POk(0, pos)
+
+verify scanSeq
+    scanSeq("a", 0) => PResult.POk(0, 0)
+    scanSeq("", 0) => PResult.PErr("unexpected end")
+
+verify scanSeq law scanSeqAdvances
+    given s: String = ["a", "a;b"]
+    given pos: Int = [0]
+    given v: Int = [0]
+    given p: Int = [0]
+    when scanSeq(s, pos) == PResult.POk(v, p)
+    p >= pos => true
