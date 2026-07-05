@@ -30,6 +30,14 @@ verify scanExpr
     scanExpr("a", 0) => PResult.POk(0, 0)
     scanExpr("", 0) => PResult.PErr("unexpected end")
 
+verify scanGroup
+    scanGroup("a)", 0) => PResult.POk(0, 2)
+    scanGroup("", 0) => PResult.PErr("unexpected end")
+
+verify scanTail
+    scanTail(")", 0) => PResult.POk(0, 1)
+    scanTail("", 0) => PResult.PErr("unterminated group")
+
 verify scanExpr law scanExprAdvances
     given s: String = ["a", "()"]
     given pos: Int = [0]
@@ -73,6 +81,10 @@ fn scanSeqNext(s: String, pos: Int) -> PResult
 verify scanSeq
     scanSeq("a", 0) => PResult.POk(0, 0)
     scanSeq("", 0) => PResult.PErr("unexpected end")
+
+verify scanSeqNext
+    scanSeqNext("x", 0) => PResult.POk(0, 0)
+    scanSeqNext("", 0) => PResult.PErr("end of sequence")
 
 verify scanSeq law scanSeqAdvances
     given s: String = ["a", "a;b"]
