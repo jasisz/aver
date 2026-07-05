@@ -565,6 +565,12 @@ pub(super) enum Commands {
         fail_on_regression: bool,
     },
     /// Export pure Aver code to a proof/verification project
+    // `--check-json` is the machine-readable form of `--check` — a strictly
+    // richer form of the same gate — so it IMPLIES `--check`. The modifier
+    // flags below (`--explain`, `--sorry-budget`, …) therefore accept EITHER
+    // spelling: they require this `check_mode` group (satisfied by `--check`
+    // OR `--check-json`), not the bare `--check` flag.
+    #[command(group(clap::ArgGroup::new("check_mode").args(["check", "check_json"]).multiple(true)))]
     Proof {
         file: String,
         /// Output directory for the generated project
@@ -594,13 +600,13 @@ pub(super) enum Commands {
         /// don't yet have a closing strategy. N is a WHOLE-FILE total,
         /// not per-law: `--error-budget 2` passes a file with two
         /// independently-failing laws. Defaults to 0 (strict).
-        #[arg(long, requires = "check")]
+        #[arg(long, requires = "check_mode")]
         error_budget: Option<usize>,
         /// `--check` only: tolerate up to N residual Lean `sorry`s (and,
         /// on Dafny, `assume {:axiom}` trust-escapes). Symmetric to
         /// `--error-budget`. Like it, N is a WHOLE-FILE total, not
         /// per-law. Defaults to 0 (strict).
-        #[arg(long, requires = "check")]
+        #[arg(long, requires = "check_mode")]
         sorry_budget: Option<usize>,
         /// `--check` only: emit a structured JSON summary
         /// (`{backend, errors, sorries, budget, passed, ...}`) to stdout
@@ -610,7 +616,7 @@ pub(super) enum Commands {
         /// (per-lemma timeouts the `errors` count is blind to); both are
         /// informational and never change exit codes. Exit codes
         /// unchanged: 0 within budget, 1 over, 2 on harness failure.
-        #[arg(long, requires = "check")]
+        #[arg(long)]
         check_json: bool,
         /// `--check` only (Lean-only): for each law that does NOT close
         /// universally (a residual `sorry` / failed inductive arm), emit
@@ -625,7 +631,7 @@ pub(super) enum Commands {
         /// fail-soft (a probe failure never affects `passed` / exit code).
         /// With `--explain` absent, the check-json bytes and manifest are
         /// byte-identical to before (no new key, `open_goal` absent).
-        #[arg(long, requires = "check")]
+        #[arg(long, requires = "check_mode")]
         explain: bool,
         /// `--check` only (Lean-only): MINIMIZE each auto-proof. The emitter
         /// pins a deterministic `first | (tactic₁) | … | sorry` PORTFOLIO at
@@ -645,7 +651,7 @@ pub(super) enum Commands {
         /// to, so a law that only closes via its `sorry` floor collapses to a
         /// bare `sorry` (the honest gap is never silently dropped), and a law
         /// that closes for real loses its alternation and floor.
-        #[arg(long, requires = "check")]
+        #[arg(long, requires = "check_mode")]
         minimize: bool,
         /// Mathlib break-glass tier (Lean-only, opt-in). DEFAULT OFF: the
         /// generated proof is byte-identical to today — pure core, NO Mathlib
@@ -664,7 +670,7 @@ pub(super) enum Commands {
         /// axiom-cleanliness, whether the law needed the Mathlib import — `core`
         /// when a core arm closed it, `mathlib` only when the break-glass arm did
         /// (read from the build-log trace marker the break-glass arm emits).
-        #[arg(long, requires = "check")]
+        #[arg(long, requires = "check_mode")]
         allow_mathlib: bool,
         /// THE RATCHET. Compare the freshly recomputed per-law proof
         /// manifest against this committed baseline and exit non-zero on

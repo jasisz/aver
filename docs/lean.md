@@ -185,6 +185,13 @@ summary line. Fields of the Lean summary:
   verify-on-domain still passes; this is deliberately the lenient gate)
 - `sorries` — residual `sorry` count across the build output
   (`--sorry-budget N` tolerates up to N)
+- `sorry_laws` — the `fn.law` identities whose theorem carries a residual
+  `sorry` in the gate build (present only when `sorries > 0`). This is the
+  machine-readable "which law failed?" answer: the emitter maps each Lean
+  `declaration uses 'sorry'` warning back to its law through the
+  `-- aver:law-class` markers, so you no longer `lake build` the generated
+  project by hand and grep the warning's line number against the emitted
+  theorems
 - `build_errors` — count of HARD lake/lean build errors (source-located
   `error: file.lean:L:C: …` diagnostics), distinct from `sorries`. A
   degraded proof arm should always fall to a caught `sorry`; a non-zero
@@ -216,6 +223,20 @@ statement-class markers and the same `#print axioms` audit the `universal`
 bool keys on. A robust CI budget pins all four together:
 `sorries == X`, `universal == true`, `universal_laws == N`,
 `bounded_laws == M`.
+
+### Step zero: which law failed?
+
+When a check reports `sorries: N > 0`, the first question is *which* law — and
+the answer is already in the summary. Read `sorry_laws`: it names the failing
+`fn.law` identities directly, no manual `lake build` + grep. Add `--explain` to
+get each failing law's residual open goal inline under `open_goals` (keyed by
+the same identity). The residual probe is deliberately coarse, so on a file with
+both a proven and a failing law it can also surface a goal from the *proven*
+law; that borrowed goal is reported separately under `probe_of` and never in
+`open_goals`, so a healthy, already-proven law is never mistaken for the
+failure. Only after `sorry_laws` names the culprit should you reach for the
+`--emit-ir-after=law_lower` workflow (linked above) to understand *why* that
+specific law did not auto-prove.
 
 ## Law provenance (`-- aver:provenance`)
 

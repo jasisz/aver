@@ -5265,10 +5265,11 @@ pub(super) fn cmd_proof(
         }
     }
 
-    // `--gate` / `--write-baseline` imply a verifier run (they recompute the
-    // current manifest), so run the check harness when EITHER is set even
-    // without an explicit `--check`.
-    if check || gate.is_some() || write_baseline.is_some() {
+    // `--check-json` is the machine-readable form of `--check` and IMPLIES it;
+    // `--gate` / `--write-baseline` also imply a verifier run (they recompute
+    // the current manifest). So run the check harness when ANY of these is set
+    // even without an explicit `--check`.
+    if check || check_json || gate.is_some() || write_baseline.is_some() {
         // For Dafny, hand the harness the real entry module filename so it
         // verifies the file that carries the verify-law lemmas (not an
         // arbitrary dependency module).
@@ -5753,6 +5754,20 @@ fn run_proof_check(
     };
     let universal: Option<bool> = lean_law_audit.as_ref().map(|a| a.universal);
 
+    // Which law(s) actually FAILED in the gate build (Lean only): map each
+    // `declaration uses 'sorry'` warning back to the `fn.law` identity of the
+    // theorem that carries it, via the emitted `-- aver:law-class` markers. This
+    // is the machine-readable answer to "which law failed?" — previously the user
+    // had to `lake build` the generated project by hand and grep the sorry
+    // warning's line number against the emitted theorems. Empty for a clean build
+    // or on Dafny. Also anchors `--explain`'s residual attribution below.
+    let sorry_laws: Vec<String> = match backend {
+        super::cli::ProofBackend::Lean if sorries.unwrap_or(0) > 0 => {
+            lean_sorry_laws(output_dir, &format!("{stdout}{stderr}"))
+        }
+        _ => Vec::new(),
+    };
+
     // Proof manifest (Lean only): the file-level audit's per-law records as one
     // byte-reproducible per-law table, written to `<out>/proof_manifest.json`.
     // This is the artifact `--gate` diffs against a committed baseline; it
@@ -5771,6 +5786,11 @@ fn run_proof_check(
         .as_ref()
         .map(|audit| build_proof_manifest(&audit.laws));
     let mut open_goals: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    // `--explain` residuals borrowed from HEALTHY (proven) laws — see the
+    // attribution split below. Kept separate from `open_goals` so a proven law's
+    // probe artifact is never mistaken for the failing law.
+    let mut probe_of: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
     if explain
         && matches!(backend, super::cli::ProofBackend::Lean)
@@ -5798,6 +5818,33 @@ fn run_proof_check(
             .filter(|(label, _)| !closed_universal.contains(label.as_str()))
             .collect();
         open_goals = lean_residual_goals(output_dir, &open);
+        // Attribute residuals to the law that ACTUALLY failed. When the gate
+        // build has residual sorries the audit bailed on `sorries > 0`, so
+        // `closed_universal` above is empty and the coarse normalization-only
+        // probe runs over EVERY emitted law — including healthy, kernel-proven
+        // ones (a proven law still yields an "unsolved goals" residual once its
+        // closing tactics are stripped). Keying that borrowed residual as the
+        // failure is what sent the P4 cold-start report to "fix" a law that was
+        // already proven. So split by `sorry_laws` (the laws whose theorem truly
+        // carries the gate-build sorry): sorry-bearers are the genuine
+        // `open_goals`; a residual from a non-sorry law is probe context
+        // (`probe_of`), never presented as the failure. With no sorries the probe
+        // only ran over bounded laws, so keep every residual as `open_goals`
+        // (unchanged behavior — no `probe_of`).
+        if !sorry_laws.is_empty() {
+            let sorry_set: std::collections::HashSet<&str> =
+                sorry_laws.iter().map(String::as_str).collect();
+            let mut genuine: std::collections::BTreeMap<String, String> =
+                std::collections::BTreeMap::new();
+            for (law, goal) in std::mem::take(&mut open_goals) {
+                if sorry_set.contains(law.as_str()) {
+                    genuine.insert(law, goal);
+                } else {
+                    probe_of.insert(law, goal);
+                }
+            }
+            open_goals = genuine;
+        }
         for l in m.laws.iter_mut() {
             if let Some(goal) = open_goals.get(&l.law) {
                 l.open_goal = Some(goal.clone());
@@ -5952,6 +5999,21 @@ fn run_proof_check(
             // existing substring consumers of check-json are untouched.
             obj.insert("manifest".into(), PROOF_MANIFEST_FILE.into());
         }
+        // Which law(s) failed (Lean): the `fn.law` identities whose theorem
+        // carries the gate-build `sorry`. Answers "which law?" without a manual
+        // `lake build` + grep. Emitted only when non-empty (a clean build / Dafny
+        // adds no key), so the check-json bytes are unchanged on a pass.
+        if !sorry_laws.is_empty() {
+            obj.insert(
+                "sorry_laws".into(),
+                serde_json::Value::Array(
+                    sorry_laws
+                        .iter()
+                        .map(|l| serde_json::Value::String(l.clone()))
+                        .collect(),
+                ),
+            );
+        }
         // `--explain` ONLY: surface the per-law residuals inline so an agent
         // consumer reads them WITHOUT opening the sidecar. Keyed by `fn.law`
         // identity. Emitted only when `--explain` produced at least one residual
@@ -5963,6 +6025,17 @@ fn run_proof_check(
                 goals.insert(law.clone(), goal.clone().into());
             }
             obj.insert("open_goals".into(), serde_json::Value::Object(goals));
+        }
+        // `--explain` ONLY: residuals the coarse probe surfaced from HEALTHY
+        // (proven) laws while at least one OTHER law failed — probe context, kept
+        // out of `open_goals` so a proven law is never mistaken for the failure.
+        // Empty (no key) unless the split above moved a borrowed residual here.
+        if !probe_of.is_empty() {
+            let mut probes = serde_json::Map::new();
+            for (law, goal) in &probe_of {
+                probes.insert(law.clone(), goal.clone().into());
+            }
+            obj.insert("probe_of".into(), serde_json::Value::Object(probes));
         }
         obj.insert("budget".into(), budget.into());
         obj.insert("passed".into(), passed.into());
@@ -7068,6 +7141,106 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
             laws: bounded_records,
         },
     }
+}
+
+/// Parse `<path>.lean:<line>` out of a Lean/lake diagnostic line, returning the
+/// file BASENAME and the 1-based line number. Tolerant of a leading `warning:`
+/// and a `././` / directory prefix on the path (`lake build` and `lake env lean`
+/// render the path differently). `None` if the line carries no `.lean:<digits>`.
+fn parse_lean_decl_location(line: &str) -> Option<(String, usize)> {
+    let idx = line.find(".lean:")?;
+    let before = &line[..idx];
+    let start = before
+        .rfind(|c: char| c == '/' || c.is_whitespace())
+        .map(|p| p + 1)
+        .unwrap_or(0);
+    let stem = &before[start..];
+    if stem.is_empty() {
+        return None;
+    }
+    let after = &line[idx + ".lean:".len()..];
+    let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let ln = digits.parse::<usize>().ok()?;
+    Some((format!("{stem}.lean"), ln))
+}
+
+/// Map each `declaration uses 'sorry'` warning in a Lean `lake build` log to the
+/// `fn.law` identity of the enclosing law theorem, via the emitted
+/// `-- aver:law-class` markers. Returns the SORTED, DEDUPED set of law identities
+/// whose theorem carries a residual `sorry` in the GATE build — the answer to
+/// "which law failed?" that otherwise required a manual `lake build` + grep. The
+/// gate build's floor is a bare `sorry` (not the probe's `AVERSPEC_SORRY` trace),
+/// so the warning's `file:line` is the only signal: it points at the theorem's
+/// declaration line, so the enclosing theorem is the nearest one whose line is
+/// `<= the warning line`. Lean-only; empty when the build has no sorries or the
+/// emitted sources are unreadable.
+fn lean_sorry_laws(dir: &str, build_output: &str) -> Vec<String> {
+    let locations: Vec<(String, usize)> = build_output
+        .lines()
+        .filter(|l| l.contains("declaration uses") && l.contains("sorry"))
+        .filter_map(parse_lean_decl_location)
+        .collect();
+    if locations.is_empty() {
+        return Vec::new();
+    }
+    // Per emitted file: its top-level `theorem <name>` declarations as
+    // `(1-based line, name)`, plus the global `theorem -> fn.law` label map read
+    // off the class markers (same shape `emitted_main_law_theorems` reads).
+    let mut labels: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut file_thms: std::collections::HashMap<String, Vec<(usize, String)>> =
+        std::collections::HashMap::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".lean") || name == "lakefile.lean" {
+                continue;
+            }
+            let Ok(contents) = std::fs::read_to_string(entry.path()) else {
+                continue;
+            };
+            let mut thms: Vec<(usize, String)> = Vec::new();
+            for (idx, line) in contents.lines().enumerate() {
+                if let Some(rest) = line.strip_prefix(lean_codegen::LAW_CLASS_MARKER_PREFIX) {
+                    let mut parts = rest.split_whitespace();
+                    if let (Some(thm), Some(_class)) = (parts.next(), parts.next())
+                        && let Some(label) = parts.next()
+                    {
+                        labels.insert(thm.to_string(), label.to_string());
+                    }
+                    continue;
+                }
+                if let Some(rest) = line.strip_prefix("theorem ") {
+                    let thm = rest
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("")
+                        .trim_end_matches(':');
+                    if !thm.is_empty() {
+                        thms.push((idx + 1, thm.to_string())); // Lean lines are 1-based
+                    }
+                }
+            }
+            file_thms.insert(name, thms);
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    for (file, warn_line) in &locations {
+        let Some(thms) = file_thms.get(file) else {
+            continue;
+        };
+        // Enclosing theorem = the nearest declaration at or above the warning
+        // line (the sorry warning is located at the theorem's own declaration).
+        if let Some((_, thm)) = thms
+            .iter()
+            .filter(|(tl, _)| tl <= warn_line)
+            .max_by_key(|(tl, _)| *tl)
+        {
+            out.push(manifest_label_for(thm, &labels));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Scan the emitted `.lean` sources for every MAIN law theorem (the universal
@@ -9737,6 +9910,27 @@ mod tests {
             "both glyphs counted, unrelated lines ignored"
         );
         assert_eq!(super::count_lean_sorries("Build completed successfully"), 0);
+    }
+
+    #[test]
+    fn parse_lean_decl_location_extracts_basename_and_line() {
+        // The gate-build sorry warning `lean_sorry_laws` keys on. Basename + line
+        // must survive a `warning:` prefix, a `././` build path prefix, and the
+        // backtick glyph — the line is mapped to the enclosing theorem by number.
+        assert_eq!(
+            super::parse_lean_decl_location(
+                "warning: Warehouse.lean:105:8: declaration uses `sorry`"
+            ),
+            Some(("Warehouse.lean".to_string(), 105))
+        );
+        assert_eq!(
+            super::parse_lean_decl_location(
+                "warning: ././Warehouse.lean:105:8: declaration uses 'sorry'"
+            ),
+            Some(("Warehouse.lean".to_string(), 105))
+        );
+        // A line with no `.lean:<digits>` is not a location.
+        assert_eq!(super::parse_lean_decl_location("error: build failed"), None);
     }
 
     #[test]
