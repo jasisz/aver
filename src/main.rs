@@ -259,6 +259,7 @@ fn main() {
             handler,
             world,
             optimize,
+            certify,
             emit_ir_after,
             explain_passes,
             explain_mir_coverage,
@@ -286,6 +287,19 @@ fn main() {
                 ),
                 None => (*target, *pack),
             };
+            // `--certify` is a wasm-gc-only artifact certificate. Clap
+            // already blocks `--certify --optimize`; reject any non-wasm-gc
+            // target here so the flag never silently no-ops.
+            if *certify && !matches!(effective_target, cli::CompileTarget::WasmGc) {
+                use colored::Colorize;
+                eprintln!(
+                    "{}",
+                    "--certify requires --target wasm-gc (the artifact certificate is emitted \
+                     for the wasm-gc module)"
+                        .red()
+                );
+                std::process::exit(1);
+            }
             if matches!(preset, Some(cli::DeployPreset::Cloudflare)) && handler.is_none() {
                 use colored::Colorize;
                 eprintln!(
@@ -340,6 +354,7 @@ fn main() {
                 handler: handler.as_deref(),
                 world: *world,
                 optimize: *optimize,
+                certify: *certify,
             });
         }
         Commands::Why {

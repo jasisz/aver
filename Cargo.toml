@@ -44,7 +44,7 @@ runtime-net = ["runtime", "aver-rt/http"]
 terminal = ["aver-rt/terminal"]
 tty-render = ["dep:colored"]
 wasm = ["wasm-compile", "dep:wasmtime"]
-wasm-compile = ["dep:wasm-encoder", "dep:wasmprinter", "dep:wasmparser", "dep:wat"]
+wasm-compile = ["dep:wasm-encoder", "dep:wasmprinter", "dep:wasmparser", "dep:wat", "dep:sha2"]
 # 0.18 "Span" — `--target wasip2` (WASI 0.2 Component Model output).
 # Direct WIT lowering: the wasm-gc backend emits a core module in
 # canonical-ABI-compatible shapes, we embed a `component-type:<world>`
@@ -74,6 +74,7 @@ wasm-bindgen = { version = "0.2", optional = true }
 wasm-encoder = { version = "0.248", optional = true }
 wasmparser = { version = "0.248", optional = true }
 wasmprinter = { version = "0.248", optional = true }
+sha2 = { version = "0.10", optional = true }
 wasmtime = { version = "44", optional = true, default-features = false, features = ["cranelift", "runtime", "gc", "gc-drc", "component-model", "component-model-async"] }
 wasmtime-wasi = { version = "44", optional = true }
 wasmtime-wasi-http = { version = "44", optional = true }

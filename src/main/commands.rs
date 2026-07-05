@@ -4261,6 +4261,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         handler,
         world,
         optimize,
+        certify,
     } = opts;
 
     // `--target wasip2` follows its own pipeline: wasm-gc lowering
@@ -4295,12 +4296,13 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
                 handler,
                 optimize,
                 pack,
+                certify,
             );
             return;
         }
         #[cfg(not(feature = "wasm"))]
         {
-            let _ = (handler, optimize, pack);
+            let _ = (handler, optimize, pack, certify);
             eprintln!(
                 "{}",
                 "WASM target requires --features wasm (rebuild with: \
@@ -4377,6 +4379,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
 /// surfaces an `Unimplemented` error pointing at the relevant phase
 /// in the README.
 #[cfg(feature = "wasm")]
+#[allow(clippy::too_many_arguments)]
 fn cmd_compile_wasm_gc(
     file: &str,
     output_dir: &str,
@@ -4385,6 +4388,7 @@ fn cmd_compile_wasm_gc(
     handler: Option<&str>,
     optimize: Option<super::cli::WasmOptMode>,
     pack: Option<super::cli::DeployPack>,
+    certify: bool,
 ) {
     use aver::codegen::wasm_gc;
 
@@ -4491,6 +4495,21 @@ fn cmd_compile_wasm_gc(
         final_size,
         opt_suffix
     );
+    // `--certify`: emit the artifact-certificate `cert/` project next to
+    // the module. Binds THESE bytes (pre-optimize; `--certify` conflicts
+    // with `--optimize`) via sha256, classifies each user function, and
+    // emits kernel-clean Lean theorems for the certified ones. The model
+    // definitions are the reused `aver proof` Lean emission.
+    if certify {
+        emit_artifact_certificate(
+            file,
+            project_name,
+            module_root_override,
+            out_path,
+            &wasm_name,
+            &bytes,
+        );
+    }
     // Deployment pack — drops platform-specific bootstrap files
     // next to the wasm-gc artifact. Same call site as the legacy
     // backend; the worker.js template is wasm-gc-aware (LM string
@@ -4498,6 +4517,66 @@ fn cmd_compile_wasm_gc(
     if let Some(super::cli::DeployPack::Cloudflare) = pack {
         emit_cloudflare_pack(out_path, &wasm_name, &wasm_file);
     }
+}
+
+/// Emit the Stage-B artifact certificate: classify the emitted module,
+/// reuse the `aver proof` Lean model emission, and write `cert/`.
+#[cfg(feature = "wasm")]
+fn emit_artifact_certificate(
+    file: &str,
+    project_name: Option<&str>,
+    module_root_override: Option<&str>,
+    out_path: &Path,
+    wasm_name: &str,
+    bytes: &[u8],
+) {
+    use aver::codegen::cert;
+
+    let analysis = match cert::analyze(bytes) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("{}", format!("certificate: {e}").red());
+            return;
+        }
+    };
+
+    // Reuse the `aver proof` Lean model emission for the model definitions.
+    let (mut mctx, _mroot) = build_codegen_context(
+        file,
+        project_name,
+        module_root_override,
+        false,
+        &super::cli::CompilePolicyMode::Embed,
+        None,
+        false,
+        false, // apply_traversal_lowering — model wants source-level IR
+        true,  // run_refinement_lower
+        true,  // run_contract_lower
+        true,  // run_law_lower
+    );
+    let model_out = lean_codegen::transpile_for_proof_mode(
+        &mut mctx,
+        lean_codegen::VerifyEmitMode::NativeDecide,
+    );
+
+    if let Err(e) = cert::write_project(out_path, wasm_name, bytes, &analysis, &model_out.files) {
+        eprintln!("{}", format!("certificate: {e}").red());
+        return;
+    }
+
+    let cert_dir = out_path.join("cert");
+    let certified = analysis.certified_names();
+    println!(
+        "{} certificate → {}/ ({} certified, {} source-level-only)",
+        "•".cyan(),
+        cert_dir.display().to_string().cyan(),
+        certified.len(),
+        analysis.declined().len(),
+    );
+    if !certified.is_empty() {
+        println!("    certified: {}", certified.join(", "));
+    }
+    println!("    build: cd {} && lake build", cert_dir.display());
 }
 
 /// `--target wasip2` compile entry — 0.18 "Span".
@@ -4975,6 +5054,7 @@ pub(super) struct CompileOptions<'a> {
     pub(super) handler: Option<&'a str>,
     pub(super) world: super::cli::Wasip2World,
     pub(super) optimize: Option<super::cli::WasmOptMode>,
+    pub(super) certify: bool,
 }
 
 /// Load hand-proof SIDECARS for `file`'s project and `backend` into the

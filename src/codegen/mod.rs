@@ -5,6 +5,8 @@
 pub(crate) mod builtin_helpers;
 pub(crate) mod builtin_records;
 pub(crate) mod builtins;
+#[cfg(feature = "wasm-compile")]
+pub mod cert;
 #[cfg(feature = "runtime")]
 pub(crate) mod cite_instantiate;
 pub mod common;
