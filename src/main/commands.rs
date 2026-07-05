@@ -5875,6 +5875,30 @@ fn run_proof_check(
             }
         }
     }
+    // Law PROVENANCE (Lean only): a self-declared `// aver:provenance <value>
+    // [k=v …]` comment directly above a `verify … law` block travels into the
+    // manifest as maintenance metadata. Recorded ONLY for a law that PROVES
+    // (any real tier — not Failed/Missing) AND only when the marker is present,
+    // so an unmarked law stays provenance-free (authored by default, no noise)
+    // and a manifest with no marked law is byte-identical to before. The marker
+    // is UNVERIFIED (see `PROVENANCE_MARKER_PREFIX`): a hand-written law may
+    // claim `calculated`; it is recorded as claimed — the harmless direction.
+    if let Some(m) = manifest.as_mut() {
+        let src = std::fs::read_to_string(source_file).unwrap_or_default();
+        for l in m.laws.iter_mut() {
+            if matches!(l.tier, LawTier::Failed | LawTier::Missing) {
+                continue; // did not prove — not an established law yet
+            }
+            let Some((fn_name, law_name)) = l.law.rsplit_once('.') else {
+                continue;
+            };
+            if let Some(line) = verify_law_source_line(source_items, fn_name, law_name)
+                && let Some(p) = provenance_marker_above(&src, line)
+            {
+                l.provenance = Some(p);
+            }
+        }
+    }
     // Write the manifest AFTER residuals are merged so the sidecar carries them.
     if let Some(m) = &manifest {
         write_proof_manifest(output_dir, m);
@@ -6097,6 +6121,75 @@ fn run_proof_check(
 /// file at a known path.
 const PROOF_MANIFEST_FILE: &str = "proof_manifest.json";
 
+/// Structured source-comment marker carrying a law's PROVENANCE — the tool (or
+/// hand) that produced the `verify … law` block directly below it:
+///
+/// ```text
+/// // aver:provenance <value> [k=v …]
+/// verify <fn> law <name>
+/// ```
+///
+/// It is an ordinary Aver `//` line comment (so it pastes into `.av` source and
+/// the lexer skips it — the emitter's `-- aver:law-class` markers use Lean's
+/// `--` because they live in generated Lean, not Aver source). `<value>` is an
+/// OPEN-ENDED lowercase token (`calculated`, `conjectured`, …); several
+/// producers mint it (the `--explain` calculator today, The Method conjecturer,
+/// future tools), so it is deliberately NOT a closed enum. Optional `k=v` keys
+/// carry maintenance context (`from=<parent law>`, `tool=explain`). It is
+/// MAINTENANCE METADATA, not a proof input: when a law later breaks it says
+/// whether to recompute, re-conjecture, or ask the author.
+///
+/// SELF-DECLARED, NOT VERIFIED: nothing checks that a law tagged `calculated`
+/// was actually calculated — a hand-written law may claim any value and it is
+/// recorded as claimed (the harmless direction; a wrong claim never grants
+/// proof credit, which still comes only from the kernel/manifest tier).
+const PROVENANCE_MARKER_PREFIX: &str = "// aver:provenance ";
+
+/// Scan raw source `src` for a [`PROVENANCE_MARKER_PREFIX`] marker on the
+/// comment line(s) IMMEDIATELY preceding the `verify` keyword at 1-indexed
+/// `verify_line`. Walks upward over the contiguous run of blank / `--` comment
+/// lines directly above the block; the first line that is neither blank nor a
+/// comment ends the search. Returns the marker payload (value + any `k=v`
+/// metadata) verbatim and trimmed, or `None` when no marker precedes the block
+/// (or the payload is empty). Self-declared — see the const's doc.
+fn provenance_marker_above(src: &str, verify_line: usize) -> Option<String> {
+    let lines: Vec<&str> = src.lines().collect();
+    let mut idx = verify_line.checked_sub(1)?; // 0-indexed `verify` line
+    while idx > 0 {
+        idx -= 1;
+        let t = lines.get(idx)?.trim_start();
+        if let Some(rest) = t.strip_prefix(PROVENANCE_MARKER_PREFIX) {
+            let payload = rest.trim();
+            return (!payload.is_empty()).then(|| payload.to_string());
+        }
+        if t.is_empty() || t.starts_with("//") {
+            continue; // blank or ordinary comment — keep walking up
+        }
+        break; // first real line above the block: no marker
+    }
+    None
+}
+
+/// Source line (1-indexed, at the `verify` keyword) of the `verify <fn> law
+/// <name>` block matching `fn_name` / `law_name`, from the parsed items — the
+/// anchor `provenance_marker_above` scans from. `None` when no such block is in
+/// these items (e.g. the law lives in a different, imported file).
+fn verify_law_source_line(
+    items: &[aver::ast::TopLevel],
+    fn_name: &str,
+    law_name: &str,
+) -> Option<usize> {
+    items.iter().find_map(|it| match it {
+        aver::ast::TopLevel::Verify(vb)
+            if vb.fn_name == fn_name
+                && matches!(&vb.kind, aver::ast::VerifyKind::Law(l) if l.name == law_name) =>
+        {
+            Some(vb.line)
+        }
+        _ => None,
+    })
+}
+
 /// Collect `fn.law` identities that are declared by MORE THAN ONE source
 /// `verify ... law` block. The manifest keys every law on this `fn.law`
 /// identity; two distinct source law blocks sharing one identity would
@@ -6178,6 +6271,11 @@ fn proof_manifest_to_json(manifest: &ProofManifest) -> String {
             if let Some(c) = &l.credit {
                 obj.insert("credit".into(), c.clone().into());
             }
+            // Self-declared law provenance: inserted ONLY when a marker was
+            // present, so an unmarked corpus stays byte-for-byte identical.
+            if let Some(p) = &l.provenance {
+                obj.insert("provenance".into(), p.clone().into());
+            }
             serde_json::Value::Object(obj)
         })
         .collect();
@@ -6240,6 +6338,9 @@ fn parse_proof_manifest(raw: &str) -> Result<ProofManifest, String> {
             // `--allow-mathlib` per-law credit, tolerantly read (informational):
             // absent on a manifest written without the flag, so it stays `None`.
             credit: item["credit"].as_str().map(str::to_string),
+            // Self-declared provenance, tolerantly read (informational): absent
+            // on a manifest whose law carried no marker, so it stays `None`.
+            provenance: item["provenance"].as_str().map(str::to_string),
         });
     }
     Ok(ProofManifest {
@@ -6577,6 +6678,15 @@ struct ManifestLaw {
     /// set it, so the serialized manifest is byte-identical to before when absent.
     /// Informational like `theorem` — NEVER gates the ratchet.
     credit: Option<String>,
+    /// The law's SELF-DECLARED provenance: the payload of a
+    /// `-- aver:provenance <value> [k=v …]` source comment directly above the
+    /// `verify … law` block (value + any `k=v` metadata, verbatim), recorded
+    /// only when the marker is present AND the law proves. `None` for an
+    /// unmarked law, so the serialized manifest is byte-identical to before
+    /// when absent. UNVERIFIED — see `PROVENANCE_MARKER_PREFIX`: a hand-written
+    /// law may claim any value; it is recorded as claimed, never proof credit.
+    /// Informational like `theorem` — NEVER gates the ratchet.
+    provenance: Option<String>,
 }
 
 /// Result of the Lean law-theorem audit (`lean_universal_audit`): the
@@ -6806,6 +6916,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
                     theorem: thm.clone(),
                     open_goal: None,
                     credit: None,
+                    provenance: None,
                 });
         }
         by_label.into_values().collect()
@@ -6936,6 +7047,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
                     theorem: thm.clone(),
                     open_goal: None,
                     credit: None,
+                    provenance: None,
                 };
                 manifest_keep_stronger(&mut universal_records, record);
             }
@@ -7588,6 +7700,16 @@ fn render_explain_candidates(
                     "candidate law — sample-check passed, add it and cite:"
                 };
                 println!("  {label}: {}", head.green());
+                // A calculated block is machine-produced, so stamp its
+                // provenance directly above the pasteable `verify …`: when the
+                // user pastes it and it proves, `--check` records the value in
+                // the new law's manifest entry (see `PROVENANCE_MARKER_PREFIX`).
+                // `from=` points back at the stuck law this was calculated from.
+                if *calculated {
+                    println!(
+                        "      {PROVENANCE_MARKER_PREFIX}calculated from={label} tool=explain"
+                    );
+                }
                 for line in src.lines() {
                     println!("      {line}");
                 }
@@ -8961,6 +9083,7 @@ mod tests {
             theorem: format!("{}_thm", name.replace('.', "_")),
             open_goal: None,
             credit: None,
+            provenance: None,
         }
     }
 
@@ -9285,6 +9408,62 @@ mod tests {
         assert!(
             !json.contains("open_goal"),
             "no law carries a residual → no open_goal key anywhere:\n{json}"
+        );
+    }
+
+    #[test]
+    fn provenance_marker_scan_reads_payload_verbatim() {
+        // Directly above `verify`: the whole payload (value + `k=v`) is captured
+        // verbatim. `verify` is on 1-indexed line 2 here.
+        let src = "// aver:provenance calculated from=f.stuck tool=explain\nverify f law g\n";
+        assert_eq!(
+            super::provenance_marker_above(src, 2).as_deref(),
+            Some("calculated from=f.stuck tool=explain")
+        );
+        // An UNKNOWN token is recorded verbatim too — the taxonomy is an open
+        // enum (multiple producers mint tokens), so the scan never rejects one.
+        let unknown = "// aver:provenance frobnicated\nverify f law g\n";
+        assert_eq!(
+            super::provenance_marker_above(unknown, 2).as_deref(),
+            Some("frobnicated")
+        );
+        // A blank line and an ordinary comment between marker and `verify` are
+        // part of the "immediately preceding" run — still found (`verify` = 4).
+        let spaced = "// aver:provenance calculated\n// a note\n\nverify f law g\n";
+        assert_eq!(
+            super::provenance_marker_above(spaced, 4).as_deref(),
+            Some("calculated")
+        );
+        // No marker → None; a real line above the block ends the search.
+        let none = "fn f(n: Int) -> Int\n    n\nverify f law g\n";
+        assert!(super::provenance_marker_above(none, 3).is_none());
+        // Empty payload (`// aver:provenance ` with nothing after) is not a
+        // valid marker → None.
+        let empty = "// aver:provenance \nverify f law g\n";
+        assert!(super::provenance_marker_above(empty, 2).is_none());
+    }
+
+    #[test]
+    fn manifest_provenance_absent_when_none_present_when_some() {
+        // No-op invariant: an unmarked law (`provenance: None`) serializes with
+        // NO `provenance` key — byte-identical to a pre-provenance manifest — and
+        // a marked law's payload round-trips verbatim through the tolerant parser.
+        let unmarked = law("a.one", super::LawTier::Universal, &["propext"]);
+        let mut marked = law("b.two", super::LawTier::Universal, &["propext"]);
+        marked.provenance = Some("calculated from=c.stuck tool=explain".to_string());
+        let json = super::proof_manifest_to_json(&manifest(vec![unmarked, marked]));
+        assert_eq!(
+            json.matches("\"provenance\"").count(),
+            1,
+            "exactly one law carries a provenance key:\n{json}"
+        );
+        let parsed = super::parse_proof_manifest(&json).expect("parses back");
+        let a = parsed.laws.iter().find(|l| l.law == "a.one").unwrap();
+        let b = parsed.laws.iter().find(|l| l.law == "b.two").unwrap();
+        assert!(a.provenance.is_none(), "unmarked law has no provenance");
+        assert_eq!(
+            b.provenance.as_deref(),
+            Some("calculated from=c.stuck tool=explain")
         );
     }
 
