@@ -16,8 +16,15 @@
 //! matched against the two structural templates, and re-rendered as
 //! `CertPrelude.WInstr` data. A function whose real emitted body does not match
 //! a template is declined — so the `WInstr` data in `Module.lean` is exactly
-//! the shape present in the hashed bytes. Checker-side re-derivation of the
-//! body from the bytes (avercheck) is Stage C and deliberately not built here.
+//! the shape present in the hashed bytes.
+//!
+//! `aver cert verify` re-runs this same audited pipeline on the hash-verified
+//! bytes (`rederive_obligations`) and pins the re-derived `code`/`host`/`self`/
+//! `carrier` values into its checker-authored witness with `rfl` against the
+//! proven `manifest.obligations` — so the `WInstr` data the kernel theorem
+//! actually reasons about is forced to equal what the bytes decode to, not
+//! merely trusted. This is trusted via inspection of the disassembler, not by an
+//! in-kernel wasm decode proof (a full kernel decoder is a deferred residual).
 
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -223,6 +230,51 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
         carrier,
         contracts,
     })
+}
+
+/// A certified obligation re-derived straight from the module bytes: the
+/// `CodeTbl` body value, the fully-expanded host-builder value, the self
+/// function index and the carrier type index — every one a pure function of the
+/// hash-verified bytes, via the SAME audited `disassemble` → `classify` pipeline
+/// the emitter uses. `aver cert verify` splices these into its checker-authored
+/// witness and pins each with `rfl` against the matching `manifest.obligations`
+/// projection, so an obligation whose `code`/`host`/`self`/`carrier` diverge
+/// from the bytes (a fabricated or vacuous body) fails the kernel witness.
+///
+/// Trusted by inspection of the Aver disassembler (the consumer's own binary),
+/// not by an in-kernel wasm decode proof; a full kernel decoder is a deferred
+/// residual.
+pub struct RederivedObligation {
+    pub name: String,
+    /// The `fun fn => ...` `CodeTbl` value (`render_code_value`).
+    pub code: String,
+    /// The fully-expanded host builder value (`render_host_value`).
+    pub host: String,
+    /// `Obligation.self`: the self function index in the module.
+    pub self_idx: u32,
+    /// `Obligation.carrier`: the Int carrier struct type index.
+    pub carrier: u32,
+}
+
+/// Re-derive one [`RederivedObligation`] per user function that classifies into
+/// a certified template, in module (obligation) order. The order and length
+/// match `render_manifest_lean`'s `obligations` list, so the checker's
+/// list-equality `rfl`s bind position for position.
+pub fn rederive_obligations(wasm_bytes: &[u8]) -> Result<Vec<RederivedObligation>, String> {
+    let (user_fns, box_idx, user_idx_set, carrier) = disassemble(wasm_bytes)?;
+    let mut out = Vec::new();
+    for f in &user_fns {
+        if let Ok(c) = classify(f, box_idx, carrier, &user_idx_set) {
+            out.push(RederivedObligation {
+                name: c.name().to_string(),
+                code: render_code_value(&c),
+                host: render_host_value(&c),
+                self_idx: c.self_idx(),
+                carrier: c.carrier(),
+            });
+        }
+    }
+    Ok(out)
 }
 
 // ---- disassembly ---------------------------------------------------------
@@ -732,9 +784,28 @@ fn render_host_def(c: &Cert) -> String {
 }
 
 fn render_code_def(c: &Cert) -> String {
+    let doc = match c {
+        Cert::StraightLine { .. } => "straight-line add-constant",
+        Cert::Recursive { .. } => "self-recursive",
+    };
+    format!(
+        "/-- Verbatim emitted body of `{name}` ({doc}). -/\n\
+         def {name}Code : CodeTbl := {value}\n",
+        name = c.name(),
+        value = render_code_value(c),
+    )
+}
+
+/// The `CodeTbl` VALUE (the `fun fn => ...` lambda, no `def` wrapper) a
+/// certified body decodes to. This is the term the checker splices, verbatim,
+/// into `CheckerWitness.lean` and pins with `rfl` against
+/// `manifest.obligations.map (·.code)`, so a `{name}Code` def in the cert's
+/// `Module.lean` that diverges from the bytes fails the kernel witness. Kept
+/// byte-identical to the RHS `render_code_def` emits so the emitted `Module.lean`
+/// is unchanged.
+fn render_code_value(c: &Cert) -> String {
     match c {
         Cert::StraightLine {
-            name,
             self_idx,
             nlocals,
             k,
@@ -742,22 +813,20 @@ fn render_code_def(c: &Cert) -> String {
             add_idx,
             ..
         } => format!(
-            "/-- Verbatim emitted body of `{name}` (straight-line add-constant). -/\n\
-             def {name}Code : CodeTbl := fun fn =>\n  \
+            "fun fn =>\n  \
              if fn = {self_idx} then some ⟨1, {nlocals}, \
-             [.localGet 0, .i64Const ({k}), .call {box_idx}, .call {add_idx}]⟩ else none\n",
+             [.localGet 0, .i64Const ({k}), .call {box_idx}, .call {add_idx}]⟩ else none",
         ),
         Cert::Recursive {
-            name,
             self_idx,
             nlocals,
             carrier,
             box_idx,
             add_idx,
             sub_idx,
+            ..
         } => format!(
-            "/-- Verbatim emitted body of `{name}` (self-recursive). -/\n\
-             def {name}Code : CodeTbl := fun fn =>\n  \
+            "fun fn =>\n  \
              if fn = {self_idx} then some ⟨1, {nlocals},\n    \
              [ .localGet 0, .localSet 1,\n      \
              .localGet 1, .structGet {carrier} 1, .refIsNull,\n      \
@@ -765,7 +834,41 @@ fn render_code_def(c: &Cert) -> String {
              [.localGet 1, .structGet {carrier} 2, .i32Const 0, .i32LtS],\n      \
              .ifElse [.i64Const 0, .call {box_idx}]\n              \
              [.localGet 0, .localGet 0, .i64Const 1, .call {box_idx}, .call {sub_idx}, \
-             .call {self_idx}, .call {add_idx}] ]⟩\n  else none\n",
+             .call {self_idx}, .call {add_idx}] ]⟩\n  else none",
+        ),
+    }
+}
+
+/// The `Obligation.host` builder VALUE for a certified body, FULLY EXPANDED to
+/// the box/add/sub wiring on the byte-derived indices — deliberately NOT a
+/// reference to `CertModule.{name}Host` (which an attacker edits). The checker
+/// splices this and pins it with `rfl` against `manifest.obligations.map
+/// (·.host)`, so a nerfed host (e.g. `fun _ _ _ => none`, which would make
+/// `holds` vacuous even with an honest `code`) fails the kernel witness.
+/// Definitionally equal to the honest `render_host_def` builder.
+fn render_host_value(c: &Cert) -> String {
+    match c {
+        Cert::StraightLine {
+            carrier,
+            box_idx,
+            add_idx,
+            ..
+        } => format!(
+            "fun add _ => fun fn =>\n    \
+             if fn = {box_idx} then some (1, boxRef {carrier})\n    \
+             else if fn = {add_idx} then some (2, add)\n    else none",
+        ),
+        Cert::Recursive {
+            carrier,
+            box_idx,
+            add_idx,
+            sub_idx,
+            ..
+        } => format!(
+            "fun add sub => fun fn =>\n    \
+             if fn = {box_idx} then some (1, boxRef {carrier})\n    \
+             else if fn = {add_idx} then some (2, add)\n    \
+             else if fn = {sub_idx} then some (2, sub)\n    else none",
         ),
     }
 }

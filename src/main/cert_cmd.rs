@@ -24,6 +24,27 @@
 //! (stdout is shown to a human inside error messages only — a display channel,
 //! never a trust channel.) `explain` renders that same trusted report.
 //!
+//! The bytes-vs-data divergence is closed INSIDE that same kernel witness. A
+//! bare `Holds manifest` proof only says "some Lean-encoded body simulates the
+//! model and the bytes hash to S"; it does NOT say that body DECODES from those
+//! bytes, so a hostile producer could ship `WInstr` data unrelated to the real
+//! bytes with a vacuously-true `holds`. To close that, the checker re-derives
+//! each obligation's `code`, `host`, `self` and `carrier` from the hash-verified
+//! bytes with the audited Aver disassembler (`cert::rederive_obligations`) and
+//! splices those values, fully expanded, into the witness — then pins them with
+//! `rfl` against `manifest.obligations.map (·.code / ·.host / ·.self / ·.carrier)`.
+//! Those are EXACTLY the fields `Obligation.holds` reasons about
+//! (`wFuncN o.code (o.host add sub) fuel o.self`), so a fabricated body, a
+//! decoupled `code`/`self`/`carrier`, or a nerfed `host` (which would make
+//! `holds` vacuous) all diverge from the bytes and fail a `rfl` — the file does
+//! not check and verify declines. The spliced terms are the checker's own
+//! rendering over the bytes, never attacker text, and are fully expanded so they
+//! do not reference the cert's `CertModule.*` defs (which an attacker edits).
+//! `Module.lean` is never read as text for comparison. This is trusted via
+//! inspection of the disassembler, not an in-kernel wasm decode proof; a full
+//! kernel decoder is a deferred residual, and `model` (not byte-re-derivable for
+//! a recursive reference function) remains a read declaration.
+//!
 //! Two input gates run before anything is elaborated:
 //!   * A cert data file whose name is not a plain `Foo.lean` Lean-module
 //!     identifier is DECLINED — otherwise a name with a comma/space/newline
@@ -70,6 +91,14 @@ const CHECKER_OWNED: [&str; 4] = [
 
 /// Maximum length (bytes) of a JSON-supplied string spliced into the witness.
 const MAX_CANDIDATE_LEN: usize = 200;
+
+/// Emitted on a CERTIFIED verdict: every obligation's code/host/self/carrier was
+/// re-derived from the hash-verified module bytes and pinned to the proven
+/// manifest by `rfl` inside the kernel witness (so the certified `holds` is a
+/// statement about what the bytes actually decode to). Trusted via the audited
+/// Aver disassembler, not an in-kernel wasm decode proof; it does not change the
+/// cert level.
+const ARTIFACT_DECODE_LINE: &str = "artifact-decode: each obligation's export name and its code/host/self/carrier are kernel-pinned (rfl) to what the bytes decode to (trusted via the audited disassembler)";
 
 /// Tokens that make Lean ELABORATION execute code. The scan is a substring
 /// match on raw cert data-file text (see the module doc: a deliberately brittle
@@ -123,6 +152,9 @@ struct TrustedReport {
 /// only the kernel witness (via `rfl` against `AverCert.manifest`) makes them
 /// trustworthy.
 struct Candidates {
+    /// Certified export names as CLAIMED by the JSON. Used only for the count
+    /// binding (`obligations.length`, verified by `rfl`); the export NAMES the
+    /// obligations are pinned to come from the bytes, not from here.
     names: Vec<String>,
     contracts: Vec<String>,
     profile: String,
@@ -133,6 +165,7 @@ pub(super) fn cmd_cert_verify(artifact: &str, cert_dir: &str) {
     match verify(Path::new(artifact), Path::new(cert_dir)) {
         Ok(Verdict::Certified(summary)) => {
             println!("{} {}", "CERTIFIED".green().bold(), summary);
+            println!("  {ARTIFACT_DECODE_LINE}");
         }
         Ok(Verdict::NoExports(summary)) => {
             // Fail-closed: a trust tool must not exit green for a cert that
@@ -202,6 +235,11 @@ fn read_candidates(m: &Value) -> Result<Candidates, String> {
     let profile = manifest_str(m, "profile")?.to_string();
     let abi = manifest_str(m, "abi")?.to_string();
 
+    // The JSON export names are read ONLY for the count binding
+    // (`obligations.length`, verified by `rfl`). The export NAMES the
+    // obligations are actually pinned to are re-derived from the module's
+    // export section (see the witness), so a producer cannot relabel a
+    // byte-bound body under a different export name.
     let names = m
         .get("certified")
         .and_then(Value::as_array)
@@ -288,6 +326,22 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     //    decoded value so it is safe to splice as a Lean literal below.
     let cands = read_candidates(&manifest)?;
 
+    // 2b. Re-derive the certified obligations (code/host/self/carrier) straight
+    //     from the hash-verified artifact bytes with the audited disassembler.
+    //     These are spliced into the checker witness below and pinned with `rfl`
+    //     against `manifest.obligations`, so the kernel theorem is forced to
+    //     reason about exactly what the bytes decode to. If disassembly fails
+    //     outright (not a wasm module, no box helper), decline here — before the
+    //     witness — fail-closed.
+    let rederived = cert::rederive_obligations(&bytes)?;
+
+    // The re-derived export names come from the module's export section, which a
+    // hostile producer controls via the bytes; gate them exactly like the JSON
+    // candidates before they are spliced as Lean string literals in the witness.
+    for r in &rederived {
+        gate_candidate("re-derived export name", &r.name)?;
+    }
+
     // 3. Assemble a checker-owned build. The audited schema + prelude come from
     //    THIS binary, never from the cert; the cert supplies only per-artifact
     //    DATA (Module/Manifest/Certificate/Final + the model modules). Each data
@@ -307,33 +361,37 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     }
 
     // 5. Kernel witness authored BY THE CHECKER (never shipped in the cert):
-    //    the sha binding, the report-candidate bindings, the final-theorem type
-    //    ascription, and the axiom-whitelist check (see `checker_witness`).
-    let witness = checker_witness(&actual, &cands);
+    //    the sha binding, the report-candidate bindings, the artifact-decode
+    //    bindings (code/host/self/carrier of every obligation pinned to the
+    //    bytes-derived values with `rfl`), the final-theorem type ascription,
+    //    and the axiom-whitelist check (see `checker_witness`).
+    let witness = checker_witness(&actual, &cands, &rederived);
     std::fs::write(build.path.join("CheckerWitness.lean"), &witness)
         .map_err(|e| format!("cannot write checker witness: {e}"))?;
     let w = run_lake(&build.path, &["env", "lean", "CheckerWitness.lean"])?;
     if !w.status.success() {
         // The verdict is this exit code, not any parsed line. The lake output is
         // shown to the human to name which face failed (hash, a report binding,
-        // the `Holds manifest` type, or a non-whitelisted axiom).
+        // an artifact-decode binding, the `Holds manifest` type, or a
+        // non-whitelisted axiom).
         return Err(format!(
             "certificate does not bind to this artifact: the checker's kernel witness \
              (hash binding, certified-export/contract/profile/abi bindings against the \
-             proven manifest, final-theorem type `Holds manifest`, and the axiom \
-             whitelist) did not check:\n{}",
+             proven manifest, the artifact-decode bindings that pin each obligation's \
+             code/host/self/carrier to what the bytes decode to, the final-theorem type \
+             `Holds manifest`, and the axiom whitelist) did not check:\n{}",
             tail(&w.combined, 30)
         ));
     }
 
-    // 6. The witness checked, so every candidate is kernel-confirmed equal to
-    //    the proven manifest. Build the report from those candidates; the count
-    //    is exactly the kernel-confirmed obligation count.
+    // 6. The witness checked, so every binding is kernel-confirmed against the
+    //    proven manifest. Build the report from the BYTE-DERIVED export names
+    //    (kernel-pinned to `manifest.obligations.map (·.export_)`), not the JSON;
+    //    the count is exactly the kernel-confirmed obligation count.
     Ok(TrustedReport {
-        exports: cands
-            .names
+        exports: rederived
             .iter()
-            .map(|n| (n.clone(), "simulatesModel".to_string()))
+            .map(|r| (r.name.clone(), "simulatesModel".to_string()))
             .collect(),
         contracts: cands.contracts,
         profile: cands.profile,
@@ -448,18 +506,47 @@ fn lean_str_list(items: &[String]) -> String {
     format!("[{inner}]")
 }
 
+/// A Lean list literal of raw (possibly multi-line) expression terms. Each item
+/// is a term the checker itself rendered from the hash-verified bytes (a code or
+/// host value), never attacker text, so splicing it verbatim is safe.
+fn lean_expr_list<'a>(items: impl Iterator<Item = &'a str>) -> String {
+    let inner = items.collect::<Vec<_>>().join(",\n   ");
+    format!("[ {inner} ]")
+}
+
+/// A Lean list literal of `Nat` literals (obligation self / carrier indices).
+fn lean_nat_list(items: impl Iterator<Item = u32>) -> String {
+    let inner = items.map(|n| n.to_string()).collect::<Vec<_>>().join(", ");
+    format!("[{inner}]")
+}
+
 /// The Lean file the checker authors at verify time. `sha` is what the checker
 /// computed from the artifact bytes; `cands` are the charset-gated JSON report
 /// candidates. Every claim is a `rfl` against `AverCert.manifest` (or the final
 /// theorem's type / the kernel axiom collector), so a lying JSON, a rebound
 /// hash, a weakened theorem, or a smuggled axiom all make this file fail to
 /// check — and THAT (the process exit code) is the only verdict channel.
-fn checker_witness(sha: &str, cands: &Candidates) -> String {
+fn checker_witness(
+    sha: &str,
+    cands: &Candidates,
+    rederived: &[cert::RederivedObligation],
+) -> String {
+    // Count is the JSON-claimed number of certified exports, verified by `rfl`
+    // against `obligations.length` (so a JSON claiming more or fewer than the
+    // manifest fails closed, unchanged from before). The export NAMES the
+    // obligations are pinned to come from the BYTES (the re-derived export
+    // section), never the JSON, so a producer cannot relabel a byte-bound body
+    // as a different (uncertified) export.
     let n = cands.names.len();
-    let names = lean_str_list(&cands.names);
+    let rederived_names: Vec<String> = rederived.iter().map(|r| r.name.clone()).collect();
+    let names = lean_str_list(&rederived_names);
     let contracts = lean_str_list(&cands.contracts);
     let profile = &cands.profile;
     let abi = &cands.abi;
+    let codes = lean_expr_list(rederived.iter().map(|r| r.code.as_str()));
+    let hosts = lean_expr_list(rederived.iter().map(|r| r.host.as_str()));
+    let selfs = lean_nat_list(rederived.iter().map(|r| r.self_idx));
+    let carriers = lean_nat_list(rederived.iter().map(|r| r.carrier));
     let whitelist = AXIOM_WHITELIST
         .iter()
         .map(|a| format!("`{a}"))
@@ -471,12 +558,15 @@ fn checker_witness(sha: &str, cands: &Candidates) -> String {
          import Schema\n\
          import Module\n\
          import Manifest\n\
-         import Final\n\n\
+         import Final\n\
+         open CertPrelude\n\n\
          -- Count (the verdict bit): the kernel confirms EXACTLY this many\n\
          -- obligations. A JSON claiming more or fewer fails this `rfl`.\n\
          example : AverCert.manifest.obligations.length = {n} := rfl\n\
          -- Names: the obligation export list and the subject export list both\n\
-         -- equal the JSON-supplied candidates, or a `rfl` fails.\n\
+         -- equal the BYTE-DERIVED export names (from the module's export\n\
+         -- section, re-derived by the disassembler), or a `rfl` fails — so a\n\
+         -- byte-bound body cannot be relabelled under a different export name.\n\
          example : AverCert.manifest.obligations.map (fun o => o.export_) = {names} := rfl\n\
          example : AverCert.manifest.subject.exports = {names} := rfl\n\
          example : AverCert.manifest.subject.contracts = {contracts} := rfl\n\
@@ -485,6 +575,20 @@ fn checker_witness(sha: &str, cands: &Candidates) -> String {
          -- Hash binding: the sha the checker computed from the artifact bytes.\n\
          example : AverCert.manifest.subject.artifactHash = \"{sha}\" := rfl\n\
          example : CertModule.wasmSha256 = \"{sha}\" := rfl\n\n\
+         -- Artifact-decode bindings: the CODE, HOST, SELF and CARRIER of every\n\
+         -- obligation are pinned, position for position, to the values the\n\
+         -- audited disassembler re-derived from the hash-verified bytes. These\n\
+         -- are EXACTLY the fields `Obligation.holds` reasons about\n\
+         -- (`wFuncN o.code (o.host add sub) fuel o.self`), so a fabricated body,\n\
+         -- a decoupled `code`/`self`/`carrier`, or a nerfed `host` that would\n\
+         -- make `holds` vacuous all diverge from the bytes and fail a `rfl`. The\n\
+         -- spliced terms come from the checker's own audited renderer over the\n\
+         -- bytes, never from attacker text, and are fully expanded (they do NOT\n\
+         -- reference the cert's `CertModule.*` defs, which an attacker edits).\n\
+         example : AverCert.manifest.obligations.map (fun o => o.code) =\n  {codes} := rfl\n\
+         example : AverCert.manifest.obligations.map (fun o => o.host) =\n  {hosts} := rfl\n\
+         example : AverCert.manifest.obligations.map (fun o => o.self) = {selfs} := rfl\n\
+         example : AverCert.manifest.obligations.map (fun o => o.carrier) = {carriers} := rfl\n\n\
          -- Statement: force the final theorem's TYPE by ascription (no text match).\n\
          def {WITNESS_THEOREM} : AverCert.Schema.Holds AverCert.manifest := AverCert.Final.cert\n\n\
          -- Axiom whitelist, enforced by the kernel's own axiom collector over the\n\
@@ -595,6 +699,7 @@ fn explain(artifact: &Path, cert_dir: &Path) -> Result<(), String> {
         );
     } else {
         println!("\n{}", "CERTIFIED".green().bold());
+        println!("  {ARTIFACT_DECODE_LINE}");
     }
     for (name, policy) in &report.exports {
         println!("  {}  [{}]", name.cyan().bold(), cert::CERT_LEVEL);
