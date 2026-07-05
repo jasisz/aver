@@ -779,6 +779,20 @@ mod tests {
     }
 
     #[test]
+    fn cert_verify_parses_artifact_and_dir() {
+        let cli = Cli::parse_from(["aver", "cert", "verify", "app.wasm", "out/cert"]);
+        match cli.command {
+            Commands::Cert {
+                cmd: CertCommand::Verify { artifact, cert_dir },
+            } => {
+                assert_eq!(artifact, "app.wasm");
+                assert_eq!(cert_dir, "out/cert");
+            }
+            _ => panic!("expected cert verify command"),
+        }
+    }
+
+    #[test]
     fn verify_accepts_deps_flag() {
         let cli = Cli::parse_from(["aver", "verify", "examples/modules/app.av", "--deps"]);
         match cli.command {
