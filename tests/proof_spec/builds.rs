@@ -492,6 +492,59 @@ fn proof_export_builds_json_when_lake_is_available() {
 }
 
 #[test]
+fn proof_clique_cursor_monotonicity_is_universal_cross_domain() {
+    // Second-witness litmus for the clique cursor-monotonicity rung: a
+    // mutually-recursive bracket scanner in a DIFFERENT domain than JSON (its own
+    // `PResult` result type, `Int` value component, distinct function names, a
+    // result-carried semantic edge). The rung is keyed only on the AST shape, so
+    // `scanExpr.scanExprAdvances` (`when scanExpr(s, pos) == PResult.POk(v, p) ->
+    // p >= pos`) must close UNIVERSALLY through the rank-slotted `induction fuel`
+    // conjunction + fuel-wrapper projection — no name/type is matched.
+    //
+    // The file also witnesses the CITATION half: `scanSeq` is a second clique
+    // whose cursor cone reaches OUTSIDE itself — the inner `scanExpr` clique (a
+    // sub-parser) and a `skipWs` whitespace helper. Its advance law flips
+    // universal ONLY by CITING the pool laws `scanExprAdvances` and
+    // `skipWsAdvances`; the emitter discharges the conjunction's external
+    // hypotheses from those theorems. `skipWs` is recognized as a monotone-cursor
+    // helper because a `>= q` pool law exists about it, not because of its name.
+    // All three close universally, kernel-clean (the #print-axioms audit gates
+    // `universal == true`, so a `native_decide`/`sorry` sneaking in fails here).
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping clique cursor-monotonicity test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-bracket-scan");
+    let (summary, run) = run_lean_check_json("examples/data/bracket_scan.av", &output_dir, 0, &[]);
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "the clique conjunction, its projection, and the cited-hypothesis \
+         reconstruction must all close.\n{}",
+        format_output(&run)
+    );
+    assert_eq!(summary["passed"].as_bool(), Some(true));
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "cursor-monotonicity must be kernel-genuine (no native_decide).\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        (
+            summary["universal_laws"].as_u64(),
+            summary["bounded_laws"].as_u64(),
+        ),
+        (Some(3), Some(0)),
+        "self-contained clique (scanExpr), monotone-cursor scanner (skipWs), and \
+         the CITING clique (scanSeq, which cites both) must all certify \
+         universal via the rung.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+#[test]
 fn proof_dafny_verifies_json_when_dafny_is_available() {
     // Structural shape limits: deeply-nested ADT roundtrip
     // postconditions blow past what Dafny can auto-discharge. The

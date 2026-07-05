@@ -2,6 +2,7 @@
 ///
 /// This module is intentionally isolated from `toplevel.rs` so all heuristic
 /// matching and proof-shape logic lives in one place.
+mod clique_mono;
 mod container_induction;
 mod decimal;
 mod floor_arith;
@@ -70,6 +71,14 @@ pub(in crate::codegen::lean) use induction::recognize_multicite_composition;
 /// Feeds the `omit_domain` statement driver so the universal statement and
 /// the helper-kit-plus-assembly proof stay in lockstep.
 pub(in crate::codegen::lean) use interval_mono::recognize_interval_monotonicity;
+
+/// Clique-propagated position-monotonicity rung — a `when call == ok(v, p)`
+/// law claiming `p >= pos` for a member of a mutually-recursive string-position
+/// parser SCC. Proven universally by one rank-slotted `induction fuel`
+/// conjunction over the whole (self-contained) clique, then projected through
+/// the fuel wrapper. Feeds the `omit_domain` statement driver so the universal
+/// statement and the conjunction-plus-projection proof stay in lockstep.
+pub(in crate::codegen::lean) use clique_mono::recognize_clique_position_monotonicity;
 
 /// Exact-rational order facts about an OPAQUE unary `Fraction`-valued cone fn
 /// `F` — its positivity, its `>= 1` (at-least-one) fact, and the headline
@@ -682,6 +691,24 @@ fn emit_verify_law_forall_auto_proof_inner(
     // disjoint from the Peano comparison-bridge / inductive shapes below.
     if law.when.is_some()
         && let Some(proof) = emit_finite_int_domain_law(vb, law, ctx, theorem_base)
+    {
+        return Some(proof);
+    }
+
+    // Clique-propagated position-monotonicity (`when F(s, pos) == ok(v, p) ->
+    // p >= pos`): a member of a mutually-recursive string-position parser SCC
+    // never rewinds the cursor. Proven universally by one rank-slotted
+    // `induction fuel` conjunction over the whole self-contained clique, then
+    // projected through the fuel wrapper. Tried before the generic conditional
+    // arms; declines (fail-closed) for any clique with a foreign cursor edge.
+    if law.when.is_some()
+        && let Some(proof) = clique_mono::emit_clique_position_monotonicity_law(
+            vb,
+            law,
+            ctx,
+            theorem_base,
+            quant_params,
+        )
     {
         return Some(proof);
     }
