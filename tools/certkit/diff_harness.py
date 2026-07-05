@@ -21,6 +21,7 @@ import os
 import random
 import re
 import struct
+import pathlib
 import subprocess
 import sys
 
@@ -45,6 +46,14 @@ ALL_OPCODES = [
     "local.set", "ref.cast", "ref.is_null", "ref.null", "ref.test", "return",
     "return_call", "struct.get", "struct.new",
 ]
+
+# Opcodes that MUST stay differentially tested across all three engines.
+# Pinned from the 2026-07-05 baseline run (33/39). If a fixture regression
+# drops one of these out of cross-engine coverage, the harness FAILS instead
+# of silently relabeling it as interpreter-guarded.
+EXPECTED_CROSS_ENGINE = sorted(set(ALL_OPCODES) - {
+    "array.new_fixed", "i32.and", "i32.eq", "i64.eqz", "ref.null", "return",
+})
 
 SUPPORTED_IN = {"int", "float", "bool", "list_int", "adt"}
 SUPPORTED_OUT = {"int", "float", "bool", "string"}
@@ -507,14 +516,36 @@ def main():
     print()
     print("Per-opcode coverage (cross-engine = in a differentially-tested function):")
     xeng = covered & set(ALL_OPCODES)
-    guarded = set(ALL_OPCODES) - xeng  # covered by the prelude native_decide guards
-    missing = [op for op in ALL_OPCODES if op not in xeng and op not in guarded]
+    guarded = set(ALL_OPCODES) - xeng
+    # A non-cross-engine opcode only counts as covered when the prelude sanity
+    # file really contains a guard for it: guards are introduced by comment
+    # lines naming the opcode(s), e.g. `-- ref.null (+ ref.is_null)`.
+    sanity_src = (pathlib.Path(__file__).parent / "prelude"
+                  / "CertPreludeSanity.lean").read_text()
+    guard_comment_ops = set()
+    for line in sanity_src.splitlines():
+        line = line.strip()
+        if line.startswith("--"):
+            for op in ALL_OPCODES:
+                if op in line:
+                    guard_comment_ops.add(op)
+    dropped = sorted(set(EXPECTED_CROSS_ENGINE) - xeng)
+    unguarded = sorted(op for op in guarded if op not in guard_comment_ops)
+    missing = set(dropped) | set(unguarded)
     for op in ALL_OPCODES:
         tag = "cross-engine" if op in xeng else "interp-guard"
-        print(f"  {'OK ' if op not in missing else 'MISS'} {op:16} {tag}")
+        print(f"  {'MISS' if op in missing else 'OK '} {op:16} {tag}")
     print(f"\n  cross-engine opcodes : {len(xeng)}/{len(ALL_OPCODES)}")
     print(f"  interp-guard opcodes : {len(guarded)}/{len(ALL_OPCODES)}  "
-          f"(validated by CertPreludeSanity native_decide guards)")
+          f"(each verified to have a CertPreludeSanity guard)")
+    if dropped:
+        print(f"\nRESULT: FAIL — opcodes dropped out of cross-engine coverage: "
+              f"{', '.join(dropped)} (a fixture regression?)")
+        sys.exit(1)
+    if unguarded:
+        print(f"\nRESULT: FAIL — interp-guard opcodes without a sanity guard: "
+              f"{', '.join(unguarded)}")
+        sys.exit(1)
 
     print()
     if divergences:
