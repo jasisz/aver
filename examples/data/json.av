@@ -1319,3 +1319,21 @@ fn printResult(root: Json) -> Unit
     match getField(root, "team")
         Option.Some(t) -> Console.print("Team: " + renderJsonStringList(jsonList(t)))
         Option.None -> Console.print("Team: ?")
+
+// Cursor-monotonicity laws: parsing never rewinds the input position. `skipWs`
+// closes universally on its own; the `parseValue` clique law is recognized by
+// the clique cursor-monotonicity rung but declines to a bounded proof here
+// because its cursor cone reaches non-clique scanners (parseString, parseNumber,
+// parseLiteral, dispatchNumberOrErr) that lack a universal monotonicity law.
+verify skipWs law skipWsAdvances
+    given s: String = ["", "  a", "\tb"]
+    given pos: Int = [0, 1]
+    skipWs(s, pos) >= pos => true
+
+verify parseValue law parseValueAdvances
+    given s: String = ["1", "[]"]
+    given pos: Int = [0]
+    given v: Json = [Json.JsonNull]
+    given p: Int = [0]
+    when parseValue(s, pos) == ParseResult.Ok(v, p)
+    p >= pos => true

@@ -602,6 +602,13 @@ fn emit_verify_law_block(
             // true -> claim`, so drop the sampled domain and class it universal
             // (statement and spliced proof stay in lockstep).
             has_hand_sidecar
+            // Clique-propagated position-monotonicity (`when F(s, pos) ==
+            // ok(v, p) -> p >= pos`) over a self-contained parser SCC: proven
+            // universally by the rank-slotted `induction fuel` conjunction and
+            // projected through the fuel wrapper. The emit replaces the theorem
+            // with the universal form, so dropping the sampled domain keeps
+            // statement and proof aligned.
+            || super::law_auto::recognize_clique_position_monotonicity(vb, &law_for_auto_proof, ctx)
             || super::law_auto::recognize_conditional_comparison_bridge(&law_for_auto_proof, ctx)
             || super::law_auto::recognize_conditional_inductive_generic(
                 vb,

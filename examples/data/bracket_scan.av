@@ -1,0 +1,39 @@
+module BracketScan
+
+type PResult
+    POk(Int, Int)
+    PErr(String)
+
+fn scanExpr(s: String, pos: Int) -> PResult
+    ? "Bracket-expression scanner: an atom or a parenthesised group."
+    match String.charAt(s, pos)
+        Option.None -> PResult.PErr("unexpected end")
+        Option.Some(c) -> match c
+            "(" -> scanGroup(s, pos + 1)
+            _ -> PResult.POk(0, pos)
+
+fn scanGroup(s: String, pos: Int) -> PResult
+    ? "Scan the inner expression of a group, then its closing tail."
+    match scanExpr(s, pos)
+        PResult.PErr(m) -> PResult.PErr(m)
+        PResult.POk(v, p) -> scanTail(s, p)
+
+fn scanTail(s: String, pos: Int) -> PResult
+    ? "Consume the closing bracket of a group."
+    match String.charAt(s, pos)
+        Option.None -> PResult.PErr("unterminated group")
+        Option.Some(c) -> match c
+            ")" -> PResult.POk(0, pos + 1)
+            _ -> scanGroup(s, pos + 1)
+
+verify scanExpr
+    scanExpr("a", 0) => PResult.POk(0, 0)
+    scanExpr("", 0) => PResult.PErr("unexpected end")
+
+verify scanExpr law scanExprAdvances
+    given s: String = ["a", "()"]
+    given pos: Int = [0]
+    given v: Int = [0]
+    given p: Int = [0]
+    when scanExpr(s, pos) == PResult.POk(v, p)
+    p >= pos => true
