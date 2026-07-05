@@ -1088,3 +1088,88 @@ fn verify_law_rejects_incompatible_sides_nat_vs_int() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Two universal-proving laws over the comparison-bridge `le`; the FIRST carries
+/// a `// aver:provenance` marker directly above its block, the second is
+/// unmarked.
+const PROVENANCE_FIXTURE_AV: &str = "module ProvFix\n\
+    \x20   intent =\n\
+    \x20       \"Law-provenance marker fixture.\"\n\
+    \x20   effects []\n\n\
+    type Nat\n\
+    \x20   Z\n\
+    \x20   S(Nat)\n\n\
+    fn le(x: Nat, y: Nat) -> Bool\n\
+    \x20   match x\n\
+    \x20       Nat.Z -> true\n\
+    \x20       Nat.S(z) -> match y\n\
+    \x20           Nat.Z -> false\n\
+    \x20           Nat.S(w) -> le(z, w)\n\n\
+    // aver:provenance calculated from=le.parentStuck tool=explain\n\
+    verify le law leSucc\n\
+    \x20   given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   when le(m, n)\n\
+    \x20   le(m, Nat.S(n)) => true\n\n\
+    verify le law succLe\n\
+    \x20   given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+    \x20   when le(m, n)\n\
+    \x20   le(Nat.S(m), Nat.S(n)) => true\n";
+
+#[test]
+fn manifest_records_declared_provenance_for_marked_proving_law() {
+    // End-to-end: a `-- aver:provenance …` comment above a `verify … law` block
+    // travels into the proof manifest — payload verbatim — for the law that
+    // PROVES, while an unmarked sibling law gets NO `provenance` key. Needs live
+    // `lake` (the tier the recording gates on is the kernel `#print axioms`
+    // verdict).
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping provenance manifest test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let dir = temp_output_dir("aver-prov-src");
+    std::fs::create_dir_all(&dir).expect("create src dir");
+    let av = dir.join("provfix.av");
+    std::fs::write(&av, PROVENANCE_FIXTURE_AV).expect("write provfix.av");
+    let out = temp_output_dir("aver-prov-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(&av)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .output()
+        .expect("expected `aver proof --check` to run");
+    let manifest_raw = std::fs::read_to_string(out.join("proof_manifest.json"))
+        .unwrap_or_else(|e| panic!("manifest must be written: {e}\n{}", format_output(&run)));
+    let manifest: serde_json::Value =
+        serde_json::from_str(&manifest_raw).expect("manifest is valid JSON");
+    let laws = manifest["laws"].as_array().expect("laws array");
+    let find = |id: &str| {
+        laws.iter()
+            .find(|l| l["law"].as_str() == Some(id))
+            .unwrap_or_else(|| panic!("law `{id}` missing from manifest:\n{manifest_raw}"))
+    };
+    let marked = find("le.leSucc");
+    assert_eq!(
+        marked["tier"].as_str(),
+        Some("universal"),
+        "the marked law must prove universal for its provenance to be recorded:\n{manifest_raw}"
+    );
+    assert_eq!(
+        marked["provenance"].as_str(),
+        Some("calculated from=le.parentStuck tool=explain"),
+        "the marked+proving law must carry its declared provenance verbatim:\n{manifest_raw}"
+    );
+    let unmarked = find("le.succLe");
+    assert!(
+        unmarked.get("provenance").is_none(),
+        "the unmarked law must carry NO provenance key:\n{manifest_raw}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out);
+}

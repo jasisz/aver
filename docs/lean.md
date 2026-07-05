@@ -217,6 +217,35 @@ bool keys on. A robust CI budget pins all four together:
 `sorries == X`, `universal == true`, `universal_laws == N`,
 `bounded_laws == M`.
 
+## Law provenance (`-- aver:provenance`)
+
+A law can carry a structured source comment recording who PRODUCED it — a
+maintenance note for when it later breaks (recompute, re-conjecture, or ask the
+author?). It is a comment, not grammar, because several producers exist (the
+`--explain` calculator today, a conjecturer, future tools):
+
+```
+// aver:provenance <value> [k=v …]
+verify <fn> law <name>
+```
+
+It is an ordinary Aver `//` line comment (the emitter's `-- aver:law-class`
+markers use Lean's `--` because they live in generated Lean, not `.av` source).
+`<value>` is an open-ended lowercase token (`calculated`, `conjectured`, …);
+optional keys carry context (`from=<parent law>`, `tool=explain`). The marker
+sits on the line(s) immediately above the `verify … law` block.
+
+When `--check` writes the proof manifest it scans each proving law's source for
+this marker and, if present, records the payload verbatim on that law's manifest
+entry as a `provenance` field. An unmarked law gets no `provenance` key (authored
+by default), so a corpus with no markers produces a byte-identical manifest. The
+marker is SELF-DECLARED and UNVERIFIED — a hand-written law may claim any value
+and it is recorded as claimed; provenance never grants proof credit (that still
+comes only from the kernel and the manifest tier). `--explain`'s calculated-law
+suggestions print this line above their pasteable `verify` block, so pasting a
+calculated law and re-checking records `provenance: "calculated from=… tool=explain"`
+automatically.
+
 ## Minimizing a proof (`--minimize`)
 
 `aver proof file.av --backend lean -o out/ --check --minimize` (Lean-only,
