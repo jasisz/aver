@@ -647,12 +647,44 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         );
     }
 
+    // (u) Export-name relabel: keep the byte-bound honest body/self/carrier, but
+    //     relabel the obligation (and the JSON) to a DIFFERENT export name the
+    //     module also exports (`countDown`). The certified export names are now
+    //     re-derived from the module's export section and pinned by `rfl`, so the
+    //     label no longer matches the export table → DECLINED. Without this bind,
+    //     a producer could advertise a byte-bound body under the name of an
+    //     uncertified export the consumer then calls.
+    {
+        let dir = temp_dir("neg-u");
+        copy_dir(&out_dir, &dir);
+        let man = dir.join("cert").join("Manifest.lean");
+        let mt = std::fs::read_to_string(&man)
+            .unwrap()
+            .replace("export_ := \"sumTo\"", "export_ := \"countDown\"")
+            .replace("exports := [\"sumTo\"]", "exports := [\"countDown\"]");
+        std::fs::write(&man, mt).unwrap();
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        for c in m["certified"].as_array_mut().unwrap() {
+            if c["name"] == serde_json::json!("sumTo") {
+                c["name"] = serde_json::json!("countDown");
+            }
+        }
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "export-name relabel must be DECLINED (u):\n{out}");
+        assert!(out.contains("does not bind"), "wrong reason (u):\n{out}");
+        assert!(!out.contains("CERTIFIED"), "relabel credited (u):\n{out}");
+    }
+
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// The byte-honest `sumToCode` body for certprobe2, used verbatim as a decoy in
 /// the shadow/comment cases (planting the honest TEXT must not change `o.code`).
-const HONEST_SUMTO_CODE: &str = "def sumToCode : CodeTbl := fun fn =>\n  \
+const HONEST_SUMTO_CODE: &str = "/-- Verbatim emitted body of `sumTo` (self-recursive). -/\n\
+    def sumToCode : CodeTbl := fun fn =>\n  \
     if fn = 1 then some ⟨1, 1,\n    \
     [ .localGet 0, .localSet 1,\n      \
     .localGet 1, .structGet 2 1, .refIsNull,\n      \

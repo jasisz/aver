@@ -98,7 +98,7 @@ const MAX_CANDIDATE_LEN: usize = 200;
 /// statement about what the bytes actually decode to). Trusted via the audited
 /// Aver disassembler, not an in-kernel wasm decode proof; it does not change the
 /// cert level.
-const ARTIFACT_DECODE_LINE: &str = "artifact-decode: obligations' code/host/self/carrier are kernel-pinned (rfl) to what the bytes decode to (trusted via the audited disassembler)";
+const ARTIFACT_DECODE_LINE: &str = "artifact-decode: each obligation's export name and its code/host/self/carrier are kernel-pinned (rfl) to what the bytes decode to (trusted via the audited disassembler)";
 
 /// Tokens that make Lean ELABORATION execute code. The scan is a substring
 /// match on raw cert data-file text (see the module doc: a deliberately brittle
@@ -152,6 +152,9 @@ struct TrustedReport {
 /// only the kernel witness (via `rfl` against `AverCert.manifest`) makes them
 /// trustworthy.
 struct Candidates {
+    /// Certified export names as CLAIMED by the JSON. Used only for the count
+    /// binding (`obligations.length`, verified by `rfl`); the export NAMES the
+    /// obligations are pinned to come from the bytes, not from here.
     names: Vec<String>,
     contracts: Vec<String>,
     profile: String,
@@ -232,6 +235,11 @@ fn read_candidates(m: &Value) -> Result<Candidates, String> {
     let profile = manifest_str(m, "profile")?.to_string();
     let abi = manifest_str(m, "abi")?.to_string();
 
+    // The JSON export names are read ONLY for the count binding
+    // (`obligations.length`, verified by `rfl`). The export NAMES the
+    // obligations are actually pinned to are re-derived from the module's
+    // export section (see the witness), so a producer cannot relabel a
+    // byte-bound body under a different export name.
     let names = m
         .get("certified")
         .and_then(Value::as_array)
@@ -327,6 +335,13 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     //     witness — fail-closed.
     let rederived = cert::rederive_obligations(&bytes)?;
 
+    // The re-derived export names come from the module's export section, which a
+    // hostile producer controls via the bytes; gate them exactly like the JSON
+    // candidates before they are spliced as Lean string literals in the witness.
+    for r in &rederived {
+        gate_candidate("re-derived export name", &r.name)?;
+    }
+
     // 3. Assemble a checker-owned build. The audited schema + prelude come from
     //    THIS binary, never from the cert; the cert supplies only per-artifact
     //    DATA (Module/Manifest/Certificate/Final + the model modules). Each data
@@ -369,14 +384,14 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
         ));
     }
 
-    // 6. The witness checked, so every candidate is kernel-confirmed equal to
-    //    the proven manifest. Build the report from those candidates; the count
-    //    is exactly the kernel-confirmed obligation count.
+    // 6. The witness checked, so every binding is kernel-confirmed against the
+    //    proven manifest. Build the report from the BYTE-DERIVED export names
+    //    (kernel-pinned to `manifest.obligations.map (·.export_)`), not the JSON;
+    //    the count is exactly the kernel-confirmed obligation count.
     Ok(TrustedReport {
-        exports: cands
-            .names
+        exports: rederived
             .iter()
-            .map(|n| (n.clone(), "simulatesModel".to_string()))
+            .map(|r| (r.name.clone(), "simulatesModel".to_string()))
             .collect(),
         contracts: cands.contracts,
         profile: cands.profile,
@@ -516,8 +531,15 @@ fn checker_witness(
     cands: &Candidates,
     rederived: &[cert::RederivedObligation],
 ) -> String {
+    // Count is the JSON-claimed number of certified exports, verified by `rfl`
+    // against `obligations.length` (so a JSON claiming more or fewer than the
+    // manifest fails closed, unchanged from before). The export NAMES the
+    // obligations are pinned to come from the BYTES (the re-derived export
+    // section), never the JSON, so a producer cannot relabel a byte-bound body
+    // as a different (uncertified) export.
     let n = cands.names.len();
-    let names = lean_str_list(&cands.names);
+    let rederived_names: Vec<String> = rederived.iter().map(|r| r.name.clone()).collect();
+    let names = lean_str_list(&rederived_names);
     let contracts = lean_str_list(&cands.contracts);
     let profile = &cands.profile;
     let abi = &cands.abi;
@@ -542,7 +564,9 @@ fn checker_witness(
          -- obligations. A JSON claiming more or fewer fails this `rfl`.\n\
          example : AverCert.manifest.obligations.length = {n} := rfl\n\
          -- Names: the obligation export list and the subject export list both\n\
-         -- equal the JSON-supplied candidates, or a `rfl` fails.\n\
+         -- equal the BYTE-DERIVED export names (from the module's export\n\
+         -- section, re-derived by the disassembler), or a `rfl` fails — so a\n\
+         -- byte-bound body cannot be relabelled under a different export name.\n\
          example : AverCert.manifest.obligations.map (fun o => o.export_) = {names} := rfl\n\
          example : AverCert.manifest.subject.exports = {names} := rfl\n\
          example : AverCert.manifest.subject.contracts = {contracts} := rfl\n\
