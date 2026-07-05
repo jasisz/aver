@@ -1,0 +1,12 @@
+module CertEmpty
+    intent =
+        "Probe with no certifiable exports: the only function is outside the"
+        "single-argument certified fragment, so nothing is certified."
+    exposes [addPair]
+
+fn addPair(a: Int, b: Int) -> Int
+    ? "Two-argument add; declined by the Stage-B single-argument templates."
+    a + b
+
+verify addPair
+    addPair(1, 2) => 3

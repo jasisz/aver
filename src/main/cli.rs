@@ -718,6 +718,32 @@ pub(super) enum Commands {
         #[arg(long)]
         write_baseline: Option<String>,
     },
+    /// Inspect and verify an emitted artifact certificate (`cert/`) against its
+    /// wasm-gc module. Consumer side of `aver compile --certify`.
+    Cert {
+        #[command(subcommand)]
+        cmd: CertCommand,
+    },
+}
+
+/// Subcommands of `aver cert`.
+#[derive(Subcommand)]
+pub(super) enum CertCommand {
+    /// Full check: pinned artifact hash, `lake build`, the single final
+    /// theorem's name + kernel-clean axioms, and the audited schema/prelude
+    /// content hashes. Exit 0 on a valid certificate, 1 otherwise.
+    Verify {
+        /// The wasm-gc module the certificate is about.
+        artifact: String,
+        /// The emitted `cert/` directory.
+        cert_dir: String,
+    },
+    /// Human-readable report (no build): CERTIFIED exports with their policies
+    /// and runtime contracts, and DECLINED functions with reasons. Reads the
+    /// manifest only.
+    Explain { artifact: String, cert_dir: String },
+    /// Alias of `explain` (report without the lake build).
+    Inspect { artifact: String, cert_dir: String },
 }
 
 #[cfg(test)]
@@ -749,6 +775,20 @@ mod tests {
         match cli.command {
             Commands::Proof { check, .. } => assert!(!check, "--check defaults to false"),
             _ => panic!("expected proof command"),
+        }
+    }
+
+    #[test]
+    fn cert_verify_parses_artifact_and_dir() {
+        let cli = Cli::parse_from(["aver", "cert", "verify", "app.wasm", "out/cert"]);
+        match cli.command {
+            Commands::Cert {
+                cmd: CertCommand::Verify { artifact, cert_dir },
+            } => {
+                assert_eq!(artifact, "app.wasm");
+                assert_eq!(cert_dir, "out/cert");
+            }
+            _ => panic!("expected cert verify command"),
         }
     }
 

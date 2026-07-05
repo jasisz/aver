@@ -24,8 +24,48 @@ use std::path::Path;
 
 /// The Stage-A semantics prelude, single source of truth, embedded so the
 /// emitter is self-contained.
-const CERT_PRELUDE: &str = include_str!("../../../tools/certkit/prelude/CertPrelude.lean");
-const LEAN_TOOLCHAIN: &str = include_str!("../../../tools/certkit/prelude/lean-toolchain");
+pub const CERT_PRELUDE: &str = include_str!("../../../tools/certkit/prelude/CertPrelude.lean");
+pub const LEAN_TOOLCHAIN: &str = include_str!("../../../tools/certkit/prelude/lean-toolchain");
+
+/// The audited statement schema, single source of truth, embedded so both the
+/// emitter and the `aver cert verify` checker pin the exact same bytes. The
+/// consumer trusts the certificate by checking the final theorem NAME, the
+/// manifest LITERAL, and the hash of THIS file plus the prelude — never Lean
+/// proof syntax. Fixed content (no per-build parts) so its sha256 is known to
+/// the checker at compile time.
+pub const CERT_SCHEMA: &str = include_str!("Schema.lean");
+
+/// Emitted-fragment profile and runtime ABI identifiers recorded in the
+/// manifest. Stable strings the checker echoes; bumped when the certified
+/// fragment or the runtime import surface changes.
+pub const PROFILE_ID: &str = "AverUserProfile/v0";
+pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
+/// Certification level of a v0 artifact certificate: conditional on the named
+/// runtime contracts (see the consult level naming L0/L1/L2/L3).
+pub const CERT_LEVEL: &str = "L1";
+/// The one approved final-theorem statement line. `aver cert verify` confirms
+/// this exact line is present in `Final.lean` (name + `Holds manifest`), which
+/// is what pins the statement without matching arbitrary Lean syntax.
+pub const FINAL_THEOREM: &str = "AverCert.Final.cert";
+pub const FINAL_STATEMENT_LINE: &str =
+    "theorem AverCert.Final.cert : AverCert.Schema.Holds manifest";
+
+/// sha256 of a byte slice, lowercase hex.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let mut h = Sha256::new();
+    h.update(bytes);
+    hex(&h.finalize())
+}
+
+/// The content hashes of the audited schema and semantics prelude as embedded
+/// in THIS binary — the checker's anchor: a cert whose on-disk `Schema.lean` /
+/// `CertPrelude.lean` do not hash to these is not the audited version.
+pub fn audited_schema_sha() -> String {
+    sha256_hex(CERT_SCHEMA.as_bytes())
+}
+pub fn audited_prelude_sha() -> String {
+    sha256_hex(CERT_PRELUDE.as_bytes())
+}
 
 /// A user function recovered from the emitted module.
 struct UserFn {
@@ -86,6 +126,31 @@ impl Cert {
     fn name(&self) -> &str {
         match self {
             Cert::StraightLine { name, .. } | Cert::Recursive { name, .. } => name,
+        }
+    }
+    fn self_idx(&self) -> u32 {
+        match self {
+            Cert::StraightLine { self_idx, .. } | Cert::Recursive { self_idx, .. } => *self_idx,
+        }
+    }
+    fn carrier(&self) -> u32 {
+        match self {
+            Cert::StraightLine { carrier, .. } | Cert::Recursive { carrier, .. } => *carrier,
+        }
+    }
+    /// The Lean expression for the model this export simulates.
+    fn model_expr(&self) -> String {
+        match self {
+            Cert::StraightLine { k, .. } => format!("fun n => n + ({k})"),
+            Cert::Recursive { name, .. } => name.clone(),
+        }
+    }
+    /// The Lean expression for the 2-arg host builder in `Obligation` shape
+    /// (`add → sub → HostTbl`); straight-line ignores `sub`.
+    fn host_expr(&self) -> String {
+        match self {
+            Cert::StraightLine { name, .. } => format!("fun add _ => CertModule.{name}Host add"),
+            Cert::Recursive { name, .. } => format!("CertModule.{name}Host"),
         }
     }
 }
@@ -548,15 +613,30 @@ pub fn write_project(
         "Module.lean",
         &render_module(analysis, wasm_name, &sha),
     )?;
+    // Audited statement schema (fixed) + generated manifest literal + the one
+    // final theorem that composes the per-export obligations.
+    write(&cert_dir, "Schema.lean", CERT_SCHEMA)?;
+    write(
+        &cert_dir,
+        "Manifest.lean",
+        &render_manifest_lean(analysis, &model_roots, &sha),
+    )?;
     write(
         &cert_dir,
         "Certificate.lean",
         &render_certificate(analysis, &model_roots),
     )?;
+    write(&cert_dir, "Final.lean", &render_final(analysis))?;
     write(&cert_dir, "lakefile.lean", &render_lakefile(&model_roots))?;
+
+    // Content hashes the checker re-verifies: the audited schema and the
+    // semantics prelude. Pinning these plus the final theorem name and the
+    // manifest literal is the whole trust story.
+    let schema_sha = sha256_hex(CERT_SCHEMA.as_bytes());
+    let prelude_sha = sha256_hex(CERT_PRELUDE.as_bytes());
     std::fs::write(
         cert_dir.join("cert-manifest.json"),
-        render_manifest(analysis, wasm_name, &sha),
+        render_manifest(analysis, wasm_name, &sha, &schema_sha, &prelude_sha),
     )
     .map_err(|e| format!("write manifest: {e}"))?;
     Ok(())
@@ -610,9 +690,45 @@ fn render_module(analysis: &Analysis, wasm_name: &str, sha: &str) -> String {
     for c in &analysis.certs {
         s.push_str(&render_code_def(c));
         s.push('\n');
+        s.push_str(&render_host_def(c));
+        s.push('\n');
     }
     s.push_str("end CertModule\n");
     s
+}
+
+/// The runtime host-contract wiring for a certified body, as data in
+/// `CertModule` so both the certificate proofs and the manifest reference the
+/// one definition.
+fn render_host_def(c: &Cert) -> String {
+    match c {
+        Cert::StraightLine {
+            name,
+            carrier,
+            box_idx,
+            add_idx,
+            ..
+        } => format!(
+            "/-- Runtime host wiring for `{name}` (box + add contracts). -/\n\
+             def {name}Host (add : List WVal → Option WVal) : HostTbl := fun fn =>\n  \
+             if fn = {box_idx} then some (1, boxRef {carrier})\n  \
+             else if fn = {add_idx} then some (2, add)\n  else none\n",
+        ),
+        Cert::Recursive {
+            name,
+            carrier,
+            box_idx,
+            add_idx,
+            sub_idx,
+            ..
+        } => format!(
+            "/-- Runtime host wiring for `{name}` (box + add + sub contracts). -/\n\
+             def {name}Host (add sub : List WVal → Option WVal) : HostTbl := fun fn =>\n  \
+             if fn = {box_idx} then some (1, boxRef {carrier})\n  \
+             else if fn = {add_idx} then some (2, add)\n  \
+             else if fn = {sub_idx} then some (2, sub)\n  else none\n",
+        ),
+    }
 }
 
 fn render_code_def(c: &Cert) -> String {
@@ -656,7 +772,7 @@ fn render_code_def(c: &Cert) -> String {
 
 fn render_certificate(analysis: &Analysis, model_roots: &[String]) -> String {
     let mut s = String::new();
-    s.push_str("import CertPrelude\nimport Module\n");
+    s.push_str("import CertPrelude\nimport Module\nimport Schema\nimport Manifest\n");
     for r in model_roots {
         s.push_str(&format!("import {r}\n"));
     }
@@ -664,7 +780,7 @@ fn render_certificate(analysis: &Analysis, model_roots: &[String]) -> String {
         "\nset_option linter.unusedSimpArgs false\n\
          set_option linter.unusedVariables false\n\
          set_option maxRecDepth 1000000\n\n\
-         namespace CertProofs\nopen CertPrelude CertModule\n\n",
+         namespace CertProofs\nopen CertPrelude CertModule AverCert\n\n",
     );
     for c in &analysis.certs {
         match c {
@@ -692,13 +808,9 @@ fn render_straightline_cert(c: &Cert) -> String {
     };
     let g1 = k + 3;
     let g2 = k - 5;
+    let _ = (box_idx, add_idx);
     format!(
         r#"/-! ### {name} — straight-line certificate (carrier type {carrier}) -/
-
-def {name}Host (add : List WVal → Option WVal) : HostTbl := fun fn =>
-  if fn = {box_idx} then some (1, boxRef {carrier})
-  else if fn = {add_idx} then some (2, add)
-  else none
 
 /-- The VERBATIM emitted body of `{name}` maps any representation of `n` to a
     representation of `n + {k}`, for ALL `n : ℤ`, under the named runtime
@@ -744,6 +856,20 @@ example :
 example :
     ((wFuncN {name}Code {name}HostRef 4 {self_idx} [carrierSmall {carrier} (-5)]).bind carrierToInt)
       = some ({g2}) := by native_decide
+
+/-- Schema-shaped simulation obligation for `{name}` (composed by the single
+    final theorem). Partial correctness over any fuel and representation. -/
+theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+  intro S add sub hadd hsub fuel n v w hv hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  cases fuel with
+  | zero => simp only [wFuncN, reduceCtorEq] at hrun
+  | succ f =>
+    rcases hc : add [v, carrierSmall {carrier} ({k})] with _ | r
+    · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, popArgs, initLocals, hc] at hrun
+    · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, popArgs, initLocals, hc] at hrun
+      subst hrun
+      exact hadd n ({k}) v (carrierSmall {carrier} ({k})) r hv (S.smallIntro ({k})) hc
 "#
     )
 }
@@ -762,14 +888,9 @@ fn render_recursive_cert(c: &Cert) -> String {
         unreachable!()
     };
     let g3 = eval_sumto(3);
+    let _ = (box_idx, add_idx, sub_idx);
     format!(
         r#"/-! ### {name} — self-recursive certificate (carrier type {carrier}) -/
-
-def {name}Host (add sub : List WVal → Option WVal) : HostTbl := fun fn =>
-  if fn = {box_idx} then some (1, boxRef {carrier})
-  else if fn = {add_idx} then some (2, add)
-  else if fn = {sub_idx} then some (2, sub)
-  else none
 
 -- model-side fuel bridge (the cap-induction pattern at R = 1).
 theorem {name}_fuel_irrel :
@@ -919,8 +1040,122 @@ example :
 example :
     ((wFuncN {name}Code {name}HostRef 20 {self_idx} [carrierSmall {carrier} (-4)]).bind carrierToInt)
       = some 0 := by native_decide
+
+/-- Schema-shaped simulation obligation for `{name}` (composed by the single
+    final theorem): the emitted recursive body simulates the model `{name}`. -/
+theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+  intro S add sub hadd hsub fuel n v w hv hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  exact {name}_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim
+    add sub hadd hsub fuel n v w hv hrun
 "#
     )
+}
+
+/// The generated manifest literal, mirroring `cert-manifest.json`: the subject
+/// metadata plus one `Obligation` per certified export. This is the LITERAL the
+/// consumer pins.
+fn render_manifest_lean(analysis: &Analysis, model_roots: &[String], sha: &str) -> String {
+    let mut s = String::new();
+    s.push_str("import Schema\nimport Module\n");
+    for r in model_roots {
+        s.push_str(&format!("import {r}\n"));
+    }
+    s.push_str(
+        "\nset_option linter.unusedVariables false\n\n\
+         namespace AverCert\nopen AverCert.Schema CertPrelude\n\n",
+    );
+    // One obligation def per certified export.
+    for c in &analysis.certs {
+        let name = c.name();
+        s.push_str(&format!(
+            "abbrev {name}Ob : Schema.Obligation :=\n  \
+             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             code := CertModule.{name}Code, host := {host}, self := {self_idx}, model := {model} }}\n\n",
+            carrier = c.carrier(),
+            host = c.host_expr(),
+            self_idx = c.self_idx(),
+            model = c.model_expr(),
+        ));
+    }
+    // Subject + manifest.
+    let exports = analysis
+        .certs
+        .iter()
+        .map(|c| format!("\"{}\"", c.name()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let contracts = analysis
+        .contracts
+        .iter()
+        .map(|c| lean_str(c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let obligations = analysis
+        .certs
+        .iter()
+        .map(|c| format!("{}Ob", c.name()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    s.push_str(&format!(
+        "def manifest : Schema.Manifest :=\n  \
+         {{ subject :=\n      \
+         {{ artifactHash := \"{sha}\",\n        \
+         profile := \"{PROFILE_ID}\",\n        \
+         abi := \"{RUNTIME_ABI}\",\n        \
+         exports := [{exports}],\n        \
+         contracts := [{contracts}] }},\n    \
+         obligations := [{obligations}] }}\n\n\
+         end AverCert\n",
+    ));
+    s
+}
+
+/// The single final theorem: `AverCert.Final.cert : Holds manifest`, proved by
+/// composing the per-export `_simulates` obligations. No other final theorem is
+/// emitted; the checker pins this exact statement line.
+fn render_final(analysis: &Analysis) -> String {
+    let mut s = String::new();
+    s.push_str(
+        "import Certificate\nimport Manifest\nimport Schema\n\n\
+         set_option maxRecDepth 1000000\n\
+         set_option linter.unusedSimpArgs false\n\n\
+         open AverCert AverCert.Schema\n\n",
+    );
+    s.push_str(
+        "/-- THE single artifact certificate: the pinned module hash is this module's\n\
+        hash, and every certified export simulates its model under the named runtime\n\
+        contracts. Proof composes the per-export obligations; nothing else. -/\n",
+    );
+    s.push_str(&format!("{FINAL_STATEMENT_LINE} := by\n"));
+    if analysis.certs.is_empty() {
+        s.push_str(
+            "  refine ⟨rfl, ?_⟩\n  \
+             intro o ho\n  \
+             simp only [manifest, List.mem_nil_iff, List.not_mem_nil] at ho\n",
+        );
+    } else {
+        s.push_str("  refine ⟨rfl, ?_⟩\n  intro o ho\n");
+        s.push_str(
+            "  simp only [manifest, List.mem_cons, List.mem_singleton, List.mem_nil_iff,\n    \
+             List.not_mem_nil, or_false] at ho\n",
+        );
+        // `rcases` with one `rfl` per obligation, split on the disjunction.
+        let pattern = std::iter::repeat_n("rfl", analysis.certs.len())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        s.push_str(&format!("  rcases ho with {pattern}\n"));
+        // Every resulting goal is closed by exactly one export's obligation.
+        let arms = analysis
+            .certs
+            .iter()
+            .map(|c| format!("exact ⟨rfl, CertProofs.{}_simulates⟩", c.name()))
+            .collect::<Vec<_>>()
+            .join("\n    | ");
+        s.push_str(&format!("  all_goals\n    first\n    | {arms}\n"));
+    }
+    s.push_str(&format!("\n#print axioms {FINAL_THEOREM}\n"));
+    s
 }
 
 fn render_lakefile(model_roots: &[String]) -> String {
@@ -929,7 +1164,10 @@ fn render_lakefile(model_roots: &[String]) -> String {
         roots.push(format!("`{r}"));
     }
     roots.push("`Module".to_string());
+    roots.push("`Schema".to_string());
+    roots.push("`Manifest".to_string());
     roots.push("`Certificate".to_string());
+    roots.push("`Final".to_string());
     format!(
         "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
          @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  roots := #[{}]\n",
@@ -937,12 +1175,24 @@ fn render_lakefile(model_roots: &[String]) -> String {
     )
 }
 
-fn render_manifest(analysis: &Analysis, wasm_name: &str, sha: &str) -> String {
+fn render_manifest(
+    analysis: &Analysis,
+    wasm_name: &str,
+    sha: &str,
+    schema_sha: &str,
+    prelude_sha: &str,
+) -> String {
     let mut s = String::new();
     s.push_str("{\n");
     s.push_str("  \"schema_version\": 1,\n");
     s.push_str(&format!("  \"wasm\": \"{wasm_name}.wasm\",\n"));
     s.push_str(&format!("  \"wasm_sha256\": \"{sha}\",\n"));
+    s.push_str(&format!("  \"level\": \"{CERT_LEVEL}\",\n"));
+    s.push_str(&format!("  \"profile\": \"{PROFILE_ID}\",\n"));
+    s.push_str(&format!("  \"abi\": \"{RUNTIME_ABI}\",\n"));
+    s.push_str(&format!("  \"final_theorem\": \"{FINAL_THEOREM}\",\n"));
+    s.push_str(&format!("  \"schema_sha256\": \"{schema_sha}\",\n"));
+    s.push_str(&format!("  \"prelude_sha256\": \"{prelude_sha}\",\n"));
     if let Some(c) = analysis.carrier {
         s.push_str(&format!("  \"carrier_type_index\": {c},\n"));
     } else {
@@ -969,9 +1219,11 @@ fn render_manifest(analysis: &Analysis, wasm_name: &str, sha: &str) -> String {
             Cert::Recursive { .. } => "self-recursive",
         };
         s.push_str(&format!(
-            "\n    {{\"name\": {}, \"class\": \"{}\", \"theorem\": \"CertProofs.{}_wasm_certified\"}}",
+            "\n    {{\"name\": {}, \"class\": \"{}\", \"policy\": \"simulatesModel\", \
+             \"level\": \"{}\", \"theorem\": \"CertProofs.{}_wasm_certified\"}}",
             json_str(c.name()),
             kind,
+            CERT_LEVEL,
             c.name()
         ));
     }
@@ -995,6 +1247,22 @@ fn render_manifest(analysis: &Analysis, wasm_name: &str, sha: &str) -> String {
     }
     s.push_str("]\n}\n");
     s
+}
+
+/// A Lean string literal (escapes `"` and `\`); contract descriptions never
+/// contain control characters.
+fn lean_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            _ => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn json_str(s: &str) -> String {
