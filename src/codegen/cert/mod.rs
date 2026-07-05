@@ -24,8 +24,8 @@ use std::path::Path;
 
 /// The Stage-A semantics prelude, single source of truth, embedded so the
 /// emitter is self-contained.
-const CERT_PRELUDE: &str = include_str!("../../../tools/certkit/prelude/CertPrelude.lean");
-const LEAN_TOOLCHAIN: &str = include_str!("../../../tools/certkit/prelude/lean-toolchain");
+pub const CERT_PRELUDE: &str = include_str!("../../../tools/certkit/prelude/CertPrelude.lean");
+pub const LEAN_TOOLCHAIN: &str = include_str!("../../../tools/certkit/prelude/lean-toolchain");
 
 /// The audited statement schema, single source of truth, embedded so both the
 /// emitter and the `aver cert verify` checker pin the exact same bytes. The
