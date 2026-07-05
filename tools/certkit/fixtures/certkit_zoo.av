@@ -1,0 +1,75 @@
+module CertkitZoo
+    intent =
+        "Exercises the full measured user-code opcode fragment for certification."
+    exposes [classify, describe, listHead, sumList, faccum, fcmp, boolAnd, addPair, tick]
+
+type Shape
+    Circle(Float)
+    Rect(Float, Float)
+    Point
+
+fn classify(s: Shape) -> Int
+    ? "ADT match -> ref.cast / ref.test / struct.get."
+    match s
+        Shape.Circle(r) -> 1
+        Shape.Rect(w, h) -> 2
+        Shape.Point -> 3
+
+fn describe(s: Shape) -> String
+    ? "String literals -> array.new_data."
+    match s
+        Shape.Circle(r) -> "circle"
+        Shape.Rect(w, h) -> "rect"
+        Shape.Point -> "point"
+
+fn listHead(xs: List<Int>) -> Int
+    ? "List match -> array ops; empty vs cons."
+    match xs
+        [] -> 0
+        [h, ..t] -> h
+
+fn sumList(xs: List<Int>) -> Int
+    ? "Recursive list fold via array.new_fixed literals at call sites."
+    match xs
+        [] -> 0
+        [h, ..t] -> h + sumList(t)
+
+fn faccum(n: Int, acc: Float) -> Float
+    ? "f64 arithmetic: sub/div and multi-arg."
+    match n <= 0
+        true -> acc
+        false -> faccum(n - 1, acc / 2.0 - 1.0)
+
+fn fcmp(a: Float, b: Float) -> Bool
+    ? "f64 comparisons lt/le/eq."
+    match a < b
+        true -> true
+        false -> a == b
+
+fn boolAnd(a: Bool, b: Bool) -> Bool
+    ? "Bool logic -> i32.eq / i32.and."
+    match a
+        true -> b
+        false -> false
+
+fn addPair(a: Int, b: Int) -> Int
+    ? "Multi-arg integer function."
+    a + b
+
+fn tick(n: Int, acc: Int) -> Int
+    ? "Tail recursion -> return_call."
+    match n <= 0
+        true -> acc
+        false -> tick(n - 1, acc + n)
+
+verify classify
+    classify(Shape.Point) => 3
+
+verify describe
+    describe(Shape.Point) => "point"
+
+verify sumList
+    sumList([1, 2, 3]) => 6
+
+verify tick
+    tick(3, 0) => 6
