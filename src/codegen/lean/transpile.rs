@@ -475,13 +475,19 @@ pub(super) fn transpile_unified(
                     // that map's keys. If it is not, the emit-key and order-key
                     // computations have drifted and `topology_admits`' `None`
                     // branch could silently fail open.
-                    debug_assert!(
-                        dep_theorem_order_keys.contains(&(module.prefix.clone(), base.clone())),
-                        "dep-law emit key {:?} is absent from the citation-closure topology \
-                         order map; the fail-closed forward-reference guard would degrade to \
-                         fail-open",
-                        (module.prefix.clone(), base.clone())
-                    );
+                    // A cfg block, not a bare `debug_assert!`: the macro's body is
+                    // type-checked in release builds too, where the cfg-gated
+                    // `dep_theorem_order_keys` binding above does not exist.
+                    #[cfg(debug_assertions)]
+                    {
+                        debug_assert!(
+                            dep_theorem_order_keys.contains(&(module.prefix.clone(), base.clone())),
+                            "dep-law emit key {:?} is absent from the citation-closure \
+                             topology order map; the fail-closed forward-reference guard \
+                             would degrade to fail-open",
+                            (module.prefix.clone(), base.clone())
+                        );
+                    }
                     if !admitted_dep_laws.contains(&(module.prefix.clone(), base)) {
                         continue;
                     }
