@@ -52,10 +52,10 @@ projects/durable_promise/main.av
 Add one `verify ... law ...` block to the demo, then ask the proof checker to show the missing proof obligation:
 
 ```bash
-aver proof main.av --backend lean --check --explain -o /tmp/aver-durable-proof
+aver proof main.av --backend lean --check-json --explain -o /tmp/aver-durable-proof
 ```
 
-If the law does not close universally, `--explain` records the residual open goal in the generated proof manifest.
+If the law does not close universally, the check-json summary names it: `sorry_laws` lists the `fn.law` identities whose theorem carries the residual `sorry` — that field is the authoritative "which law failed" answer. `--explain` additionally surfaces goal text where there is any to show: a failing law whose proof left a partial goal gets it under `open_goals` (keyed by the same identity); a law that fails outright (its theorem is just a `sorry`) has no residual goal to print, so it appears in `sorry_laws` only. Goals the coarse probe borrows from *proven* laws land under `probe_of`, never `open_goals`.
 
 ## CI
 

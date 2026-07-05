@@ -1,0 +1,55 @@
+module Warehouse
+    intent =
+        "Tracks a stock level through explicit inventory moves."
+    effects [Console]
+    exposes [Move, moveDelta, totalDelta, applyAll]
+
+type Move
+    Receive(Int)
+    Ship(Int)
+
+fn moveDelta(m: Move) -> Int
+    ? "Signed stock change of a single move."
+    match m
+        Move.Receive(n) -> n
+        Move.Ship(n) -> 0 - n
+
+verify moveDelta
+    moveDelta(Move.Receive(5)) => 5
+    moveDelta(Move.Ship(3)) => -3
+
+fn totalDelta(moves: List<Move>) -> Int
+    ? "Signed stock change of a whole list of moves."
+    match moves
+        [] -> 0
+        [m, ..rest] -> moveDelta(m) + totalDelta(rest)
+
+verify totalDelta
+    totalDelta([]) => 0
+    totalDelta([Move.Receive(5), Move.Ship(3)]) => 2
+
+fn applyAll(stock: Int, moves: List<Move>) -> Int
+    ? "Applies moves in order to a starting stock level."
+    match moves
+        [] -> stock
+        [m, ..rest] -> applyAll(stock + moveDelta(m), rest)
+
+verify applyAll
+    applyAll(10, []) => 10
+    applyAll(10, [Move.Receive(5), Move.Ship(3)]) => 12
+
+verify applyAll law matchesTotalDelta
+    given stock: Int = -2..2
+    given moves: List<Move> = [[], [Move.Receive(1)], [Move.Ship(2), Move.Receive(3)]]
+    applyAll(stock, moves) => stock + totalDelta(moves)
+
+verify applyAll law appendHomomorphism
+    given stock: Int = -1..1
+    given a: List<Move> = [[], [Move.Receive(1)], [Move.Ship(2), Move.Receive(3)]]
+    given b: List<Move> = [[], [Move.Ship(4)]]
+    applyAll(applyAll(stock, a), b) => stock + totalDelta(List.concat(a, b))
+
+fn main() -> Unit
+    ! [Console.print]
+    stock = applyAll(10, [Move.Receive(5), Move.Ship(3)])
+    Console.print("Final stock: {stock}")

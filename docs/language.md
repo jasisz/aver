@@ -17,6 +17,19 @@ There is no dedicated `Set` type — use `Map<T, Unit>` (see [Sets](#sets) below
 User-defined sum types: `type Shape` → `Shape.Circle(Float)`, `Shape.Rect(Float, Float)`
 User-defined product types: `record User` → `User(name = "Alice", age = 30)`, `u.name`
 
+Declare them with the type name on its own line and the members indented beneath — one variant per line for a sum type, one `field: Type` per line for a record:
+
+```aver
+type Shape           // sum type
+    Circle(Float)
+    Rect(Float, Float)
+    Point            // zero-arg variant — a bare singleton (Shape.Point)
+
+record User          // product type
+    name: String
+    age: Int
+```
+
 `Unit` means "no meaningful value". It is similar to `void`, but still a real type; diagnostics render the value as `()`. Effectful functions such as `Console.print` commonly return `Unit`.
 
 ## Bindings
@@ -36,6 +49,7 @@ Duplicate binding of the same name in the same scope is a type error.
 ## Operators
 
 Arithmetic: `+`, `-`, `*` — operands must match (`Int+Int`, `Float+Float`, `String+String`). No implicit promotion; use `Float.fromInt` / `Int.fromFloat` to convert. The `/` operator is **Float-only**; integer `/` is a type error. For integers use `Int.div(a, b) : Result<Int, String>` (Euclidean; `b == 0` → `Result.Err`) and `Int.mod(a, b) : Result<Int, String>` — there is no integer `%`. `Int` is arbitrary-precision (ℤ): no overflow, no wraparound.
+Unary minus negates a numeric expression: `-n` (equivalent to `0 - n`), and numeric literals may be written negative (`-3`, `-1.5`).
 Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`.
 Error propagation: `expr?` — unwraps `Result.Ok`, propagates `Result.Err` as a `RuntimeError`.
 Independent products: `(a, b)!` — product of independent computations. `(a, b)?!` — same, with Result unwrapping (all must succeed or first error propagates). Elements cannot reference each other; independence is structural. Composes recursively for fan-out parallelism. See [independence.md](independence.md).
@@ -300,9 +314,12 @@ Each module file must start with `module <Name>` and contain exactly one module 
 ```aver
 module Payments
     intent = "Processes transactions."
+    effects [Disk.readText]
     depends [Data.Fibonacci]
     exposes [charge]
 ```
+
+`effects [...]` declares the module's effect boundary — the union of the effects its functions may perform, in the same granular/namespace-shorthand form as function-level `! [...]`. It goes after `intent`. `aver check` warns when a module with functions omits it; a pure module declares `effects []` explicitly.
 
 ### Opaque types
 
