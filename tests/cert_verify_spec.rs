@@ -32,9 +32,23 @@
 //!   (n) A7 filename gate: a cert file whose name is not a Lean module
 //!       identifier → DECLINED (no lakefile-root injection)
 //!   (o) A8 token scan: a data file carrying `#eval` → DECLINED (brittle wall)
-//!   (p) C2 bytes-vs-data: a `Module.lean` body that builds green and passes the
-//!       kernel witness but does NOT decode from the bytes → DECLINED by
-//!       re-derivation from the hash-verified bytes (would be CERTIFIED without)
+//!   (p) bytes-vs-data, body divergence: a `Module.lean` `sumToCode` whose
+//!       locals count is bumped 1→2. It still builds green AND passes the old
+//!       report bindings, but the checker pins `manifest.obligations.map (·.code)`
+//!       to the bytes-derived lambda with `rfl`, so the diverging body fails the
+//!       kernel witness → DECLINED ("does not bind"), never CERTIFIED
+//!   (q) shadow decoy: the active `sumToCode` mutated (locals 1→2) PLUS a full
+//!       honest body re-planted in a `namespace Shadow`. The decoy text does not
+//!       change `o.code`, so the code `rfl` still fails → DECLINED
+//!   (r) comment decoy: the active `sumToCode` mutated PLUS a full honest body in
+//!       a `/- … -/` block comment. Dead text; the code `rfl` fails → DECLINED
+//!   (s) code decouple: `manifest` points `code` at a decoy `wrongCode` that
+//!       always traps (making `holds` vacuous and trivially provable) while the
+//!       honest `sumToCode` is dead. Builds green; the code `rfl` binds `o.code`
+//!       to the bytes, not `wrongCode`, so it fails → DECLINED
+//!   (t) self decouple (vacuity): `manifest` sets `self` to a wrong index, so the
+//!       code-table lookup misses and `wFuncN` traps (vacuous, provable `holds`).
+//!       Builds green; the self `rfl` binds `o.self` to the byte index → DECLINED
 //! plus a separate empty-cert test: zero certified exports must NOT print the
 //! green path and must exit nonzero, and the A5 report-line injection payload
 //! (in the manifest and/or JSON) is rejected by the charset gate.
@@ -151,10 +165,11 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         report.contains("1 certified export"),
         "expected exactly one certified export:\n{report}"
     );
-    // The certified bodies were re-derived from the hash-verified bytes and
-    // matched against Module.lean: the CERTIFIED report names that guarantee.
+    // Each obligation's code/host/self/carrier was pinned to the bytes-derived
+    // values by `rfl` inside the kernel witness: the CERTIFIED report names that
+    // guarantee (artifact-decode).
     assert!(
-        report.contains("artifact-decode: bytes re-derive to the certified bodies"),
+        report.contains("artifact-decode:") && report.contains("kernel-pinned"),
         "missing artifact-decode line on the happy path:\n{report}"
     );
 
@@ -217,14 +232,29 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         );
     }
 
-    // (e) A1 hash rebind: replace the artifact with arbitrary bytes and edit
-    //     ONLY `wasm_sha256` in the JSON to match. The fast JSON pre-check now
-    //     passes; the kernel witness rejects it because the theorems talk about
-    //     the ORIGINAL hash, not the checker-computed one.
+    // (e) A1 hash rebind: replace the artifact with a DIFFERENT but genuine cert
+    //     module (certprobe's wasm) and edit ONLY `wasm_sha256` in the JSON to
+    //     match it. The fast JSON pre-check passes and the swapped module still
+    //     disassembles, so the checker reaches the kernel witness — which rejects
+    //     it because the theorems (and `CertModule.wasmSha256`) talk about the
+    //     ORIGINAL hash, not the checker-computed one.
     {
         let dir = temp_dir("neg-e");
         copy_dir(&out_dir, &dir);
-        let foreign = b"\x00\xde\xad\xbe\xef arbitrary not-a-wasm bytes".to_vec();
+        let foreign_out = temp_dir("neg-e-foreign");
+        let fc = Command::new(aver_bin)
+            .current_dir(&repo_root)
+            .arg("compile")
+            .arg("tools/certkit/fixtures/certprobe.av")
+            .arg("--target")
+            .arg("wasm-gc")
+            .arg("--certify")
+            .arg("-o")
+            .arg(&foreign_out)
+            .output()
+            .expect("aver compile --certify runs");
+        assert!(fc.status.success(), "foreign fixture compile failed");
+        let foreign = std::fs::read(foreign_out.join("certprobe.wasm")).unwrap();
         std::fs::write(dir.join("certprobe2.wasm"), &foreign).unwrap();
         let sha = aver::codegen::cert::sha256_hex(&foreign);
         let mf = dir.join("cert").join("cert-manifest.json");
@@ -233,6 +263,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         m["wasm_sha256"] = serde_json::Value::String(sha);
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let _ = std::fs::remove_dir_all(&foreign_out);
         assert!(!ok, "A1 hash rebind must fail:\n{out}");
         assert!(out.contains("does not bind"), "wrong reason (e):\n{out}");
         // The witness names the exact face the kernel rejected.
@@ -455,16 +486,16 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         );
     }
 
-    // (p) C2 bytes-vs-data divergence: a Module.lean whose `sumToCode` body does
-    //     NOT decode from the real bytes. The locals count in the CodeTbl entry
-    //     is bumped 1 -> 2 (an extra, unused local), which the recursive proof
-    //     tolerates: the cert still `lake build`s AND passes the kernel witness
-    //     (hash, count, names, `Holds manifest`, axioms all check). Only the
-    //     re-derivation from the hash-verified bytes catches that the declared
-    //     body diverges from what the bytes decode to. The wasm bytes are
-    //     untouched, so the hash stays consistent — the mismatch is purely in the
-    //     attacker-editable Lean data. Without re-derivation this cert would be
-    //     CERTIFIED green (the vacuity/divergence residual C2); with it, DECLINED.
+    // (p) bytes-vs-data divergence: a Module.lean whose `sumToCode` body does NOT
+    //     decode from the real bytes. The locals count in the CodeTbl entry is
+    //     bumped 1 -> 2 (an extra, unused local), which the recursive proof
+    //     tolerates: the cert still `lake build`s AND passes the old report
+    //     bindings (hash, count, names). The checker now splices the bytes-derived
+    //     code lambda into the witness and pins `manifest.obligations.map (·.code)`
+    //     to it with `rfl`; the bumped body (locals 2) is not the byte-derived one
+    //     (locals 1), so the kernel witness fails: DECLINED, never CERTIFIED. The
+    //     wasm bytes are untouched, so the hash stays consistent — the mismatch is
+    //     purely in the attacker-editable Lean data.
     {
         let dir = temp_dir("neg-p");
         copy_dir(&out_dir, &dir);
@@ -479,15 +510,12 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
             !ok,
             "a body that does not re-derive must be DECLINED:\n{out}"
         );
+        // Caught by the kernel witness (the code binding), AFTER the cert built
+        // green — not by lake build or a hash binding.
+        assert!(out.contains("does not bind"), "wrong reason (p):\n{out}");
         assert!(
-            out.contains("do not re-derive the certified body of `sumTo`"),
-            "wrong reason (p): expected the re-derivation mismatch:\n{out}"
-        );
-        // The mismatch is caught by re-derivation, AFTER the cert built and the
-        // kernel witness passed — not by lake build or a hash/witness binding.
-        assert!(
-            !out.contains("did not build") && !out.contains("does not bind"),
-            "case (p) must be caught by re-derivation, not the build/witness:\n{out}"
+            !out.contains("did not build"),
+            "case (p) must build green and be caught by the witness:\n{out}"
         );
         assert!(
             !out.contains("CERTIFIED"),
@@ -495,7 +523,171 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         );
     }
 
+    // (q) Shadow decoy (the reproduced bypass): mutate the ACTIVE `sumToCode`
+    //     (locals 1→2) and re-plant a byte-identical honest body in a
+    //     `namespace Shadow`. The old substring check matched the honest text in
+    //     `Shadow` and passed; the code `rfl` pins `o.code` — which is the active,
+    //     mutated `CertModule.sumToCode`, not the shadow — so it fails: DECLINED.
+    {
+        let dir = temp_dir("neg-q");
+        copy_dir(&out_dir, &dir);
+        let m = dir.join("cert").join("Module.lean");
+        let src = std::fs::read_to_string(&m).unwrap();
+        let mutated = src.replacen("some ⟨1, 1,", "some ⟨1, 2,", 1);
+        assert_ne!(src, mutated, "fixture recursive body shape changed");
+        let shadow = format!("namespace Shadow\n{HONEST_SUMTO_CODE}\nend Shadow\n\nend CertModule");
+        let planted = mutated.replacen("end CertModule", &shadow, 1);
+        assert_ne!(mutated, planted, "shadow decoy not planted");
+        std::fs::write(&m, planted).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "shadow decoy must be DECLINED:\n{out}");
+        assert!(out.contains("does not bind"), "wrong reason (q):\n{out}");
+        assert!(
+            !out.contains("CERTIFIED"),
+            "shadow decoy credited (q):\n{out}"
+        );
+    }
+
+    // (r) Comment decoy: mutate the active `sumToCode` and re-plant a byte-honest
+    //     body inside a `/- … -/` block comment. Dead text; `o.code` is still the
+    //     mutated active def, so the code `rfl` fails: DECLINED.
+    {
+        let dir = temp_dir("neg-r");
+        copy_dir(&out_dir, &dir);
+        let m = dir.join("cert").join("Module.lean");
+        let src = std::fs::read_to_string(&m).unwrap();
+        let mutated = src.replacen("some ⟨1, 1,", "some ⟨1, 2,", 1);
+        assert_ne!(src, mutated, "fixture recursive body shape changed");
+        let comment = format!("/- honest decoy:\n{HONEST_SUMTO_CODE}\n-/\n\nend CertModule");
+        let planted = mutated.replacen("end CertModule", &comment, 1);
+        std::fs::write(&m, planted).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "comment decoy must be DECLINED:\n{out}");
+        assert!(out.contains("does not bind"), "wrong reason (r):\n{out}");
+        assert!(
+            !out.contains("CERTIFIED"),
+            "comment decoy credited (r):\n{out}"
+        );
+    }
+
+    // (s) Code decouple: point the obligation's `code` at a decoy `wrongCode` that
+    //     always traps, so `holds` is vacuous and trivially provable, while the
+    //     honest `sumToCode` is left dead. The cert builds green (the vacuous proof
+    //     replaces the honest one). The code `rfl` binds `o.code` to the
+    //     bytes-derived lambda, not `wrongCode`, so the witness fails: DECLINED.
+    {
+        let dir = temp_dir("neg-s");
+        copy_dir(&out_dir, &dir);
+        let cert = dir.join("cert");
+        let m = cert.join("Module.lean");
+        let src = std::fs::read_to_string(&m).unwrap();
+        let with_decoy = src.replacen(
+            "end CertModule",
+            "/-- decoy: always traps, so `holds` is vacuous. -/\n\
+             def wrongCode : CodeTbl := fun _ => none\nend CertModule",
+            1,
+        );
+        std::fs::write(&m, with_decoy).unwrap();
+        let man = cert.join("Manifest.lean");
+        let msrc = std::fs::read_to_string(&man).unwrap();
+        let decoupled = msrc.replacen(
+            "code := CertModule.sumToCode",
+            "code := CertModule.wrongCode",
+            1,
+        );
+        assert_ne!(msrc, decoupled, "manifest code field shape changed");
+        std::fs::write(&man, decoupled).unwrap();
+        let vac = VACUOUS_SIMULATES.replace(
+            "@BODY@",
+            "simp only [sumToOb, CertModule.wrongCode, wFuncN, reduceCtorEq] at hrun",
+        );
+        replace_simulates(&cert, &vac);
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &cert);
+        assert!(!ok, "code decouple must be DECLINED:\n{out}");
+        assert!(out.contains("does not bind"), "wrong reason (s):\n{out}");
+        assert!(
+            !out.contains("did not build"),
+            "case (s) must build green and be caught by the witness:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "code decouple credited (s):\n{out}"
+        );
+    }
+
+    // (t) Self decouple (vacuity): set the obligation's `self` to a wrong index so
+    //     `code self` misses the table and `wFuncN` traps — `holds` is vacuous and
+    //     provable. Builds green; the self `rfl` binds `o.self` to the byte index,
+    //     so the witness fails: DECLINED.
+    {
+        let dir = temp_dir("neg-t");
+        copy_dir(&out_dir, &dir);
+        let cert = dir.join("cert");
+        let man = cert.join("Manifest.lean");
+        let msrc = std::fs::read_to_string(&man).unwrap();
+        let decoupled = msrc.replacen("self := 1,", "self := 999,", 1);
+        assert_ne!(msrc, decoupled, "manifest self field shape changed");
+        std::fs::write(&man, decoupled).unwrap();
+        let vac = VACUOUS_SIMULATES.replace(
+            "@BODY@",
+            "simp only [sumToOb, CertModule.sumToCode, wFuncN,\n      \
+             show (999 = 1) = False by decide, if_false, reduceCtorEq] at hrun",
+        );
+        replace_simulates(&cert, &vac);
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &cert);
+        assert!(!ok, "self decouple must be DECLINED:\n{out}");
+        assert!(out.contains("does not bind"), "wrong reason (t):\n{out}");
+        assert!(
+            !out.contains("did not build"),
+            "case (t) must build green and be caught by the witness:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "self decouple credited (t):\n{out}"
+        );
+    }
+
     let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// The byte-honest `sumToCode` body for certprobe2, used verbatim as a decoy in
+/// the shadow/comment cases (planting the honest TEXT must not change `o.code`).
+const HONEST_SUMTO_CODE: &str = "def sumToCode : CodeTbl := fun fn =>\n  \
+    if fn = 1 then some ⟨1, 1,\n    \
+    [ .localGet 0, .localSet 1,\n      \
+    .localGet 1, .structGet 2 1, .refIsNull,\n      \
+    .ifElse [.localGet 1, .structGet 2 0, .i64Const 0, .i64LeS]\n              \
+    [.localGet 1, .structGet 2 2, .i32Const 0, .i32LtS],\n      \
+    .ifElse [.i64Const 0, .call 7]\n              \
+    [.localGet 0, .localGet 0, .i64Const 1, .call 7, .call 9, .call 1, .call 8] ]⟩\n  \
+    else none";
+
+/// A vacuous replacement proof of `sumTo_simulates` (the emitted honest proof
+/// references the honest `sumToCode`/`self`, so a decoupled obligation needs its
+/// own proof to build green). `@BODY@` is filled with the `simp` that discharges
+/// the trapped `wFuncN`.
+const VACUOUS_SIMULATES: &str = "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
+    intro S add sub hadd hsub fuel n v w hv hrun\n  \
+    exfalso\n  \
+    cases fuel with\n  \
+    | zero => simp only [wFuncN, reduceCtorEq] at hrun\n  \
+    | succ f =>\n      @BODY@";
+
+/// Swap the emitted `sumTo_simulates` proof in `Certificate.lean` for a
+/// (vacuous) replacement, matching the exact emitted block.
+fn replace_simulates(cert_dir: &Path, replacement: &str) {
+    let c = cert_dir.join("Certificate.lean");
+    let src = std::fs::read_to_string(&c).unwrap();
+    let old = "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
+        intro S add sub hadd hsub fuel n v w hv hrun\n  \
+        simp only [sumToOb, AverCert.Schema.Obligation.holds] at hrun ⊢\n  \
+        exact sumTo_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim\n    \
+        add sub hadd hsub fuel n v w hv hrun";
+    assert!(
+        src.contains(old),
+        "emitted sumTo_simulates block shape changed; update the test"
+    );
+    std::fs::write(&c, src.replacen(old, replacement, 1)).unwrap();
 }
 
 /// A cert with zero certified exports is an admission, not a certification: it
