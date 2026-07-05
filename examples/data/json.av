@@ -1342,8 +1342,8 @@ verify skipWs law skipWsAdvances
 verify parseString law parseStringAdvances
     given s: String = ["\"a\"", "\"\""]
     given pos: Int = [1]
-    given v: Json = [Json.JsonNull]
-    given p: Int = [1]
+    given v: Json = [Json.JsonString("a"), Json.JsonString("")]
+    given p: Int = [3, 2]
     when parseString(s, pos) == ParseResult.Ok(v, p)
     p >= pos => true
 
@@ -1351,17 +1351,17 @@ verify parseLiteral law parseLiteralAdvances
     given s: String = ["true", "false"]
     given pos: Int = [0]
     given e: String = ["true", "false"]
-    given val: Json = [Json.JsonBool(true)]
-    given v: Json = [Json.JsonNull]
-    given p: Int = [0]
+    given val: Json = [Json.JsonBool(true), Json.JsonBool(false)]
+    given v: Json = [Json.JsonBool(true), Json.JsonBool(false)]
+    given p: Int = [4, 5]
     when parseLiteral(s, pos, e, val) == ParseResult.Ok(v, p)
     p >= pos => true
 
 verify parseNumber law parseNumberAdvances
     given s: String = ["12", "0"]
     given pos: Int = [0]
-    given v: Json = [Json.JsonNull]
-    given p: Int = [0]
+    given v: Json = [Json.JsonInt(12), Json.JsonInt(0)]
+    given p: Int = [2, 1]
     when parseNumber(s, pos) == ParseResult.Ok(v, p)
     p >= pos => true
 
@@ -1369,15 +1369,15 @@ verify dispatchNumberOrErr law dispatchNumberOrErrAdvances
     given s: String = ["7", "x"]
     given pos: Int = [0]
     given c: String = ["7", "x"]
-    given v: Json = [Json.JsonNull]
-    given p: Int = [0]
+    given v: Json = [Json.JsonInt(7)]
+    given p: Int = [1]
     when dispatchNumberOrErr(s, pos, c) == ParseResult.Ok(v, p)
     p >= pos => true
 
 verify parseValue law parseValueAdvances
     given s: String = ["1", "[]"]
     given pos: Int = [0]
-    given v: Json = [Json.JsonNull]
-    given p: Int = [0]
+    given v: Json = [Json.JsonInt(1), Json.JsonList([])]
+    given p: Int = [1, 2]
     when parseValue(s, pos) == ParseResult.Ok(v, p)
     p >= pos => true
