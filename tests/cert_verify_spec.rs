@@ -32,6 +32,9 @@
 //!   (n) A7 filename gate: a cert file whose name is not a Lean module
 //!       identifier → DECLINED (no lakefile-root injection)
 //!   (o) A8 token scan: a data file carrying `#eval` → DECLINED (brittle wall)
+//!   (p) C2 bytes-vs-data: a `Module.lean` body that builds green and passes the
+//!       kernel witness but does NOT decode from the bytes → DECLINED by
+//!       re-derivation from the hash-verified bytes (would be CERTIFIED without)
 //! plus a separate empty-cert test: zero certified exports must NOT print the
 //! green path and must exit nonzero, and the A5 report-line injection payload
 //! (in the manifest and/or JSON) is rejected by the charset gate.
@@ -147,6 +150,12 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     assert!(
         report.contains("1 certified export"),
         "expected exactly one certified export:\n{report}"
+    );
+    // The certified bodies were re-derived from the hash-verified bytes and
+    // matched against Module.lean: the CERTIFIED report names that guarantee.
+    assert!(
+        report.contains("artifact-decode: bytes re-derive to the certified bodies"),
+        "missing artifact-decode line on the happy path:\n{report}"
     );
 
     // (a) One flipped wasm byte → hash mismatch, before any build.
@@ -443,6 +452,46 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         assert!(
             out.contains("execute code") && out.contains("#eval"),
             "wrong reason (o):\n{out}"
+        );
+    }
+
+    // (p) C2 bytes-vs-data divergence: a Module.lean whose `sumToCode` body does
+    //     NOT decode from the real bytes. The locals count in the CodeTbl entry
+    //     is bumped 1 -> 2 (an extra, unused local), which the recursive proof
+    //     tolerates: the cert still `lake build`s AND passes the kernel witness
+    //     (hash, count, names, `Holds manifest`, axioms all check). Only the
+    //     re-derivation from the hash-verified bytes catches that the declared
+    //     body diverges from what the bytes decode to. The wasm bytes are
+    //     untouched, so the hash stays consistent — the mismatch is purely in the
+    //     attacker-editable Lean data. Without re-derivation this cert would be
+    //     CERTIFIED green (the vacuity/divergence residual C2); with it, DECLINED.
+    {
+        let dir = temp_dir("neg-p");
+        copy_dir(&out_dir, &dir);
+        let m = dir.join("cert").join("Module.lean");
+        let src = std::fs::read_to_string(&m).unwrap();
+        let corrupted = src.replacen("some ⟨1, 1,", "some ⟨1, 2,", 1);
+        assert_ne!(src, corrupted, "fixture recursive body shape changed");
+        std::fs::write(&m, corrupted).unwrap();
+        // wasm bytes are untouched: the hash still matches the pinned value.
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(
+            !ok,
+            "a body that does not re-derive must be DECLINED:\n{out}"
+        );
+        assert!(
+            out.contains("do not re-derive the certified body of `sumTo`"),
+            "wrong reason (p): expected the re-derivation mismatch:\n{out}"
+        );
+        // The mismatch is caught by re-derivation, AFTER the cert built and the
+        // kernel witness passed — not by lake build or a hash/witness binding.
+        assert!(
+            !out.contains("did not build") && !out.contains("does not bind"),
+            "case (p) must be caught by re-derivation, not the build/witness:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "a diverging body must never be credited (p):\n{out}"
         );
     }
 
