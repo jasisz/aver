@@ -75,10 +75,11 @@ const MAX_CANDIDATE_LEN: usize = 200;
 /// match on raw cert data-file text (see the module doc: a deliberately brittle
 /// wall, not a proof). Kept as literals rather than a parser so the wall is
 /// obvious and auditable.
-const CODE_EXEC_TOKENS: [&str; 15] = [
+const CODE_EXEC_TOKENS: [&str; 20] = [
     "#eval",
     "run_cmd",
     "run_elab",
+    "run_tac",
     "initialize",
     "builtin_initialize",
     "macro",
@@ -90,6 +91,10 @@ const CODE_EXEC_TOKENS: [&str; 15] = [
     "unsafe",
     "implemented_by",
     "extern",
+    "deriving",
+    "attribute",
+    "@[",
+    "«",
     "open Lean",
 ];
 
@@ -486,10 +491,12 @@ fn checker_witness(sha: &str, cands: &Candidates) -> String {
          -- ascribed constant: full `Name` equality, not text. Any non-whitelisted\n\
          -- axiom (a smuggled `axiom evil`, `sorryAx`, `ofReduceBool`, ...) makes\n\
          -- this command throw, so the file does not check and verify declines.\n\
+         -- `Lean.collectAxioms` / `Lean.Name` are fully qualified so a cert that\n\
+         -- ships a root-level `def collectAxioms` shadow cannot be resolved here.\n\
          open Lean in\n\
          run_cmd do\n  \
-         let allowed : List Name := [{whitelist}]\n  \
-         let axs \u{2190} collectAxioms `{WITNESS_THEOREM}\n  \
+         let allowed : List Lean.Name := [{whitelist}]\n  \
+         let axs \u{2190} Lean.collectAxioms `{WITNESS_THEOREM}\n  \
          for a in axs do\n    \
          unless allowed.contains a do\n      \
          throwError s!\"non-whitelisted axiom: {{a}}\"\n"
@@ -577,9 +584,17 @@ fn explain(artifact: &Path, cert_dir: &Path) -> Result<(), String> {
     println!("  pinned sha256: {}", report.artifact_hash);
     println!("  profile: {}    abi: {}", report.profile, report.abi);
 
-    println!("\n{}", "CERTIFIED".green().bold());
     if report.exports.is_empty() {
-        println!("  (none)");
+        // Fail-closed parity with `verify`: a trust tool must not show a green
+        // CERTIFIED header for a cert that makes no behavioral claims.
+        println!(
+            "\n{}",
+            "NO CERTIFIED EXPORTS (admission only, no behavioral claims)"
+                .yellow()
+                .bold()
+        );
+    } else {
+        println!("\n{}", "CERTIFIED".green().bold());
     }
     for (name, policy) in &report.exports {
         println!("  {}  [{}]", name.cyan().bold(), cert::CERT_LEVEL);
@@ -611,6 +626,12 @@ fn explain(artifact: &Path, cert_dir: &Path) -> Result<(), String> {
         let name = display_safe(d.get("name").and_then(Value::as_str).unwrap_or("?"));
         let reason = display_safe(d.get("reason").and_then(Value::as_str).unwrap_or("?"));
         println!("  {name} — {reason}");
+    }
+
+    // Same fail-closed exit contract as `verify`: an admission-only cert carries
+    // no behavioral claim, so `explain`/`inspect` must not exit green either.
+    if report.exports.is_empty() {
+        std::process::exit(1);
     }
     Ok(())
 }
