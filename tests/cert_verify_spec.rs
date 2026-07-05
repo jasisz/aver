@@ -19,11 +19,22 @@
 //!   (h) A3 olean cache: a poisoned `.lake` cache shipped in the cert →
 //!       IGNORED: the checker builds in a fresh dir, so the genuine cert still
 //!       verifies (the shipped cache is never consumed)
-//!   (i) A4 report forgery: appending a fabricated certified export to ONLY
-//!       `cert-manifest.json` → the count and names come from the proven Lean
-//!       manifest, so the forged export never appears
+//!   (i) A4 report forgery: appending a fabricated certified export/contract to
+//!       ONLY `cert-manifest.json` → the report names/count/contracts are
+//!       candidates the kernel witness binds to the proven manifest with `rfl`,
+//!       so a lying JSON makes a binding fail and the cert is DECLINED
+//!   (j) drift, JSON claims one export MORE than the manifest → DECLINED
+//!   (k) drift, JSON claims one export FEWER than the manifest → DECLINED
+//!   (l) charset gate: a candidate name carrying a control char → DECLINED
+//!       before any splice into the witness
+//!   (m) evil axiom: `Final.cert` proved from a smuggled `axiom` → the witness
+//!       axiom collector throws on the non-whitelisted axiom
+//!   (n) A7 filename gate: a cert file whose name is not a Lean module
+//!       identifier → DECLINED (no lakefile-root injection)
+//!   (o) A8 token scan: a data file carrying `#eval` → DECLINED (brittle wall)
 //! plus a separate empty-cert test: zero certified exports must NOT print the
-//! green path and must exit nonzero.
+//! green path and must exit nonzero, and the A5 report-line injection payload
+//! (in the manifest and/or JSON) is rejected by the charset gate.
 //!
 //! Gated behind `wasm` (the `--certify` path needs the wasm-gc backend) and
 //! skipped when `lake` is unavailable, mirroring `cert_certify_spec.rs`.
@@ -285,9 +296,11 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         );
     }
 
-    // (i) A4 report forgery: append a fabricated certified export to ONLY the
-    //     JSON. The count and names are read back from the kernel-proven Lean
-    //     manifest, so the forged export never appears in verify or explain.
+    // (i) A4 report forgery: append a fabricated certified export + contract to
+    //     ONLY the JSON. The report names/count/contracts are now candidates the
+    //     kernel witness binds to the proven Lean manifest with `rfl`, so a JSON
+    //     that claims an export or contract the manifest does not have makes a
+    //     binding fail: the cert is DECLINED and the forged names never appear.
     {
         let dir = temp_dir("neg-i");
         copy_dir(&out_dir, &dir);
@@ -311,26 +324,125 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
         // Every .lean and hash is byte-identical; only the JSON changed.
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "padded JSON must be DECLINED, not credited:\n{out}");
+        assert!(out.contains("does not bind"), "wrong reason (i):\n{out}");
+        // The declined diagnostic echoes the rejected candidate; what matters is
+        // that the forged export is never CERTIFIED (credited).
         assert!(
-            ok,
-            "genuine cert with a padded JSON should still verify:\n{out}"
+            !out.contains("CERTIFIED"),
+            "forged export credited (i):\n{out}"
+        );
+    }
+
+    // (j) Drift, JSON claims MORE than the manifest: a second certified entry
+    //     whose name is charset-clean but absent from the obligations. The
+    //     `obligations.length = N` / export-name bindings fail closed.
+    {
+        let dir = temp_dir("neg-j");
+        copy_dir(&out_dir, &dir);
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["certified"].as_array_mut().unwrap().push(serde_json::json!({
+            "name": "phantom", "class": "straight-line", "policy": "simulatesModel", "level": "L1"
+        }));
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "JSON claiming an extra export must fail (j):\n{out}");
+        assert!(out.contains("does not bind"), "wrong reason (j):\n{out}");
+        assert!(
+            !out.contains("CERTIFIED"),
+            "phantom export credited (j):\n{out}"
+        );
+    }
+
+    // (k) Drift, JSON claims FEWER than the manifest: an empty `certified` while
+    //     the manifest still proves one obligation. `length = 0 := rfl` fails.
+    {
+        let dir = temp_dir("neg-k");
+        copy_dir(&out_dir, &dir);
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["certified"] = serde_json::Value::Array(vec![]);
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "JSON dropping a real export must fail (k):\n{out}");
+        assert!(out.contains("does not bind"), "wrong reason (k):\n{out}");
+    }
+
+    // (l) Charset gate: a certified name carrying a control character (decoded
+    //     from the JSON) is rejected before any splice, so it can never reach
+    //     the Lean witness.
+    {
+        let dir = temp_dir("neg-l");
+        copy_dir(&out_dir, &dir);
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["certified"][0]["name"] = serde_json::Value::String("sumTo\nevil := by rfl".into());
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "control char in a candidate must fail (l):\n{out}");
+        assert!(out.contains("charset"), "wrong reason (l):\n{out}");
+    }
+
+    // (m) Evil axiom: prove `Final.cert` from a smuggled `axiom evil`. The build
+    //     succeeds (an axiom is valid Lean), but the witness runs the kernel's
+    //     axiom collector over the ascribed constant and throws on `evil`.
+    {
+        let dir = temp_dir("neg-m");
+        copy_dir(&out_dir, &dir);
+        let f = dir.join("cert").join("Final.lean");
+        let evil = "import Certificate\nimport Manifest\nimport Schema\n\n\
+             open AverCert AverCert.Schema\n\n\
+             axiom evil : AverCert.Schema.Holds AverCert.manifest\n\
+             theorem AverCert.Final.cert : AverCert.Schema.Holds manifest := evil\n";
+        std::fs::write(&f, evil).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "axiom-backed final theorem must fail (m):\n{out}");
+        assert!(
+            out.contains("non-whitelisted axiom"),
+            "witness axiom collector not exercised (m):\n{out}"
+        );
+    }
+
+    // (n) A7 filename gate: a cert data file whose name is not a plain Lean
+    //     module identifier (a space here) is rejected before staging, so it
+    //     cannot inject tokens into the checker-authored lakefile roots.
+    {
+        let dir = temp_dir("neg-n");
+        copy_dir(&out_dir, &dir);
+        std::fs::write(
+            dir.join("cert").join("bad name.lean"),
+            "-- inert\ndef x : Nat := 0\n",
+        )
+        .unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "hostile cert file name must fail (n):\n{out}");
+        assert!(
+            out.contains("module identifier"),
+            "wrong reason (n):\n{out}"
+        );
+    }
+
+    // (o) A8 token scan: a cert data file carrying an elaboration-executes-code
+    //     token is rejected before it is staged (deliberately brittle wall).
+    {
+        let dir = temp_dir("neg-o");
+        copy_dir(&out_dir, &dir);
+        let c = dir.join("cert").join("Contracts.lean");
+        let mut src = std::fs::read_to_string(&c).unwrap();
+        src.push_str("\n#eval IO.println \"pwned\"\n");
+        std::fs::write(&c, src).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(
+            !ok,
+            "code-executing token in a data file must fail (o):\n{out}"
         );
         assert!(
-            out.contains("1 certified export") && !out.contains("2 certified"),
-            "count must come from the Lean manifest, not the JSON:\n{out}"
-        );
-        assert!(
-            !out.contains("withdrawAll"),
-            "forged export leaked (i):\n{out}"
-        );
-        let (_, exp) = aver_cert(
-            &["explain"],
-            &dir.join("certprobe2.wasm"),
-            &dir.join("cert"),
-        );
-        assert!(
-            !exp.contains("withdrawAll") && !exp.contains("FAKE contract"),
-            "explain rendered a forged export/contract (i):\n{exp}"
+            out.contains("execute code") && out.contains("#eval"),
+            "wrong reason (o):\n{out}"
         );
     }
 
@@ -378,8 +490,70 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
         "empty cert must not print the green CERTIFIED path:\n{out}"
     );
 
+    // A5 report-line injection (the BANK verbatim attack), Manifest + JSON:
+    // stash the fabricated `AVERCERT-EXPORT\tstealAllFunds` report line in the
+    // subject `contracts`, in BOTH the Lean manifest and (consistently) the
+    // JSON, over an empty obligations list. There is no report parser anymore,
+    // and the newline/tab in the candidate is rejected by the charset gate
+    // before any splice: DECLINED, and `stealAllFunds` is never credited.
+    {
+        let dir = temp_dir("certempty-a5");
+        copy_dir(&out_dir, &dir);
+        let man = dir.join("cert").join("Manifest.lean");
+        let src = std::fs::read_to_string(&man).unwrap();
+        let payload_lean = "[\"x\\nAVERCERT-EXPORT\\tstealAllFunds\\tsimulatesModel\"]";
+        let poisoned = src.replacen(
+            "contracts := []",
+            &format!("contracts := {payload_lean}"),
+            1,
+        );
+        assert_ne!(src, poisoned, "empty-cert manifest contracts shape changed");
+        std::fs::write(&man, poisoned).unwrap();
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["runtime_contracts"] = serde_json::Value::Array(vec![serde_json::Value::String(
+            "x\nAVERCERT-EXPORT\tstealAllFunds\tsimulatesModel".into(),
+        )]);
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certempty.wasm"), &dir.join("cert"));
+        assert!(!ok, "A5 injection payload must fail:\n{out}");
+        assert!(
+            out.contains("charset"),
+            "wrong reason (A5 manifest):\n{out}"
+        );
+        // The charset diagnostic echoes the rejected value; the property is that
+        // the payload is never CERTIFIED.
+        assert!(
+            !out.contains("CERTIFIED"),
+            "A5 payload credited an export:\n{out}"
+        );
+    }
+
+    // A5 JSON-only variant: the same payload only in the JSON (manifest left
+    // empty). Still DECLINED by the charset gate.
+    {
+        let dir = temp_dir("certempty-a5json");
+        copy_dir(&out_dir, &dir);
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["runtime_contracts"] = serde_json::Value::Array(vec![serde_json::Value::String(
+            "x\nAVERCERT-EXPORT\tstealAllFunds\tsimulatesModel".into(),
+        )]);
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certempty.wasm"), &dir.join("cert"));
+        assert!(!ok, "A5 JSON-only payload must fail:\n{out}");
+        assert!(out.contains("charset"), "wrong reason (A5 json):\n{out}");
+        assert!(
+            !out.contains("CERTIFIED"),
+            "A5 JSON-only payload credited an export:\n{out}"
+        );
+    }
+
     // A4 empty-cert honesty: a JSON padded with a fabricated certified export
-    // cannot inflate the Lean-derived count off zero.
+    // now fails the kernel binding (the count is `obligations.length = N` by
+    // rfl, and the empty manifest proves zero), so it is DECLINED, not credited.
     let mf = out_dir.join("cert").join("cert-manifest.json");
     let json = std::fs::read_to_string(&mf).unwrap();
     let mut m: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -393,8 +567,8 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
     let (ok, out) = aver_verify(&out_dir.join("certempty.wasm"), &out_dir.join("cert"));
     assert!(!ok, "padded empty cert must still exit nonzero:\n{out}");
     assert!(
-        out.contains("NO CERTIFIED EXPORTS") && !out.contains("withdrawAll"),
-        "padded JSON must not inflate the empty-cert count:\n{out}"
+        out.contains("does not bind") && !out.contains("CERTIFIED"),
+        "padded JSON must be DECLINED, not credited:\n{out}"
     );
 
     let _ = std::fs::remove_dir_all(&out_dir);
