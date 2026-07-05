@@ -16,8 +16,13 @@
 //! matched against the two structural templates, and re-rendered as
 //! `CertPrelude.WInstr` data. A function whose real emitted body does not match
 //! a template is declined — so the `WInstr` data in `Module.lean` is exactly
-//! the shape present in the hashed bytes. Checker-side re-derivation of the
-//! body from the bytes (avercheck) is Stage C and deliberately not built here.
+//! the shape present in the hashed bytes.
+//!
+//! `aver cert verify` re-runs this same audited pipeline on the hash-verified
+//! bytes (`rederive_code_defs`) and confirms the cert's `Module.lean` states
+//! exactly those bodies — so the WInstr data is re-derived from the bytes, not
+//! merely trusted. This is trusted via inspection of the disassembler, not by an
+//! in-kernel wasm decode proof (a full kernel decoder is a deferred residual).
 
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -223,6 +228,29 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
         carrier,
         contracts,
     })
+}
+
+/// Re-derive the certified `{name}Code` definitions straight from the module
+/// bytes, using the SAME audited `disassemble` → `classify` → `render_code_def`
+/// pipeline the emitter uses. Returns `(export_name, code_def_text)` for every
+/// user function that classifies into a certified template; the text is
+/// byte-identical to the block `render_module` embeds in the cert's
+/// `Module.lean`. A checker holding the hash-verified bytes can therefore
+/// confirm that each certified body actually decodes from those bytes, rather
+/// than trusting the (attacker-editable) `WInstr` data in `Module.lean`.
+///
+/// This is trusted by inspection of the Aver disassembler (the consumer's own
+/// binary), not by a kernel decode proof; a full in-kernel wasm decoder is a
+/// deferred residual.
+pub fn rederive_code_defs(wasm_bytes: &[u8]) -> Result<Vec<(String, String)>, String> {
+    let (user_fns, box_idx, user_idx_set, carrier) = disassemble(wasm_bytes)?;
+    let mut out = Vec::new();
+    for f in &user_fns {
+        if let Ok(c) = classify(f, box_idx, carrier, &user_idx_set) {
+            out.push((c.name().to_string(), render_code_def(&c)));
+        }
+    }
+    Ok(out)
 }
 
 // ---- disassembly ---------------------------------------------------------

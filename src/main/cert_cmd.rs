@@ -24,6 +24,20 @@
 //! (stdout is shown to a human inside error messages only — a display channel,
 //! never a trust channel.) `explain` renders that same trusted report.
 //!
+//! After the witness checks, the certified bodies are RE-DERIVED from the
+//! hash-verified artifact bytes by the audited Aver disassembler
+//! (`cert::rederive_code_defs`) and compared, byte for byte, against the
+//! `{name}Code` definitions in the cert's `Module.lean` (read here independently
+//! as attacker-editable text). The kernel witness proves "some Lean-encoded body
+//! simulates the model and the bytes hash to S"; it does NOT prove that body
+//! actually DECODES from those bytes. So a hostile producer could ship `WInstr`
+//! data unrelated to the real bytes with a vacuously-true `holds`. Re-deriving
+//! the bodies from the bytes and matching them against `Module.lean` closes that
+//! bytes-vs-data divergence for every certified export (missing / diverging /
+//! disassembler-declined -> DECLINED). This is trusted via inspection of the
+//! disassembler, not an in-kernel wasm decode proof; a full kernel decoder is a
+//! deferred residual.
+//!
 //! Two input gates run before anything is elaborated:
 //!   * A cert data file whose name is not a plain `Foo.lean` Lean-module
 //!     identifier is DECLINED — otherwise a name with a comma/space/newline
@@ -70,6 +84,12 @@ const CHECKER_OWNED: [&str; 4] = [
 
 /// Maximum length (bytes) of a JSON-supplied string spliced into the witness.
 const MAX_CANDIDATE_LEN: usize = 200;
+
+/// Emitted on a CERTIFIED verdict once the certified bodies have been re-derived
+/// from the hash-verified module bytes and matched against the cert's
+/// `Module.lean`. This is an orthogonal guarantee, trusted via the audited Aver
+/// disassembler (not a kernel decode proof); it does not change the cert level.
+const ARTIFACT_DECODE_LINE: &str = "artifact-decode: bytes re-derive to the certified bodies (L1.5, trusted via the audited disassembler)";
 
 /// Tokens that make Lean ELABORATION execute code. The scan is a substring
 /// match on raw cert data-file text (see the module doc: a deliberately brittle
@@ -133,6 +153,7 @@ pub(super) fn cmd_cert_verify(artifact: &str, cert_dir: &str) {
     match verify(Path::new(artifact), Path::new(cert_dir)) {
         Ok(Verdict::Certified(summary)) => {
             println!("{} {}", "CERTIFIED".green().bold(), summary);
+            println!("  {ARTIFACT_DECODE_LINE}");
         }
         Ok(Verdict::NoExports(summary)) => {
             // Fail-closed: a trust tool must not exit green for a cert that
@@ -326,6 +347,16 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
         ));
     }
 
+    // 5b. Re-derive the certified bodies from the hash-verified artifact bytes
+    //     with the audited disassembler and confirm the cert's `Module.lean`
+    //     states exactly those bodies. The kernel witness proves "some Lean body
+    //     simulates the model and the bytes hash to S"; it does NOT prove that
+    //     the Lean `WInstr` data actually DECODES from those bytes. A hostile
+    //     producer could ship `WInstr` data unrelated to the real bytes with a
+    //     vacuously-true `holds`. Re-deriving from the bytes and comparing to the
+    //     (attacker-editable) `Module.lean` text catches that mismatch.
+    rederive_bodies(&bytes, cert_dir, &cands.names)?;
+
     // 6. The witness checked, so every candidate is kernel-confirmed equal to
     //    the proven manifest. Build the report from those candidates; the count
     //    is exactly the kernel-confirmed obligation count.
@@ -340,6 +371,44 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
         abi: cands.abi,
         artifact_hash: actual,
     })
+}
+
+/// Re-derive the certified `{name}Code` bodies from the hash-verified artifact
+/// bytes using the audited disassembler, and require the cert's `Module.lean`
+/// to state each one verbatim. `Module.lean` is read INDEPENDENTLY here as
+/// attacker-editable text (the same file the build consumed) purely to compare
+/// against the re-derivation from the bytes — the point is to catch it lying.
+///
+/// For every kernel-certified export: if the disassembler declines the export
+/// (its real bytes fall outside the certified fragment) or the re-derived
+/// definition is not present verbatim in `Module.lean`, the certificate is
+/// DECLINED. Trusted by inspection of the Aver disassembler (the consumer's own
+/// binary), not by an in-kernel decode proof (a deferred residual).
+fn rederive_bodies(bytes: &[u8], cert_dir: &Path, certified: &[String]) -> Result<(), String> {
+    let derived = cert::rederive_code_defs(bytes)?;
+    let module_path = cert_dir.join("Module.lean");
+    let module_text = std::fs::read_to_string(&module_path)
+        .map_err(|e| format!("cannot read {}: {e}", module_path.display()))?;
+    for name in certified {
+        let def = derived
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, d)| d.as_str())
+            .ok_or_else(|| {
+                format!(
+                    "artifact bytes do not re-derive the certified body of `{name}`: the \
+                     audited disassembler did not classify this export into a certified template"
+                )
+            })?;
+        if !module_text.contains(def) {
+            return Err(format!(
+                "artifact bytes do not re-derive the certified body of `{name}`: the \
+                 `{name}Code` definition in the certificate's Module.lean is not what the \
+                 hash-verified module bytes decode to"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Populate a fresh, checker-owned build directory: the cert's DATA-only Lean
@@ -595,6 +664,7 @@ fn explain(artifact: &Path, cert_dir: &Path) -> Result<(), String> {
         );
     } else {
         println!("\n{}", "CERTIFIED".green().bold());
+        println!("  {ARTIFACT_DECODE_LINE}");
     }
     for (name, policy) in &report.exports {
         println!("  {}  [{}]", name.cyan().bold(), cert::CERT_LEVEL);
