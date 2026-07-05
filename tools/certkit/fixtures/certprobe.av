@@ -1,0 +1,12 @@
+module CertProbe
+    intent =
+        "Minimal probe for artifact-level certification measurements."
+    exposes [addTwo]
+
+fn addTwo(x: Int) -> Int
+    ? "Adds two."
+    x + 2
+
+verify addTwo
+    addTwo(1) => 3
+    addTwo(-5) => -3

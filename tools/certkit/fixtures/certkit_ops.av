@@ -1,0 +1,86 @@
+module CertkitOps
+    intent =
+        "Exercises the integer / float / comparison opcode families with"
+        "scalar outputs the differential harness can compare exactly."
+    exposes [ltz, gez, gtz, iez, feq, fle, fge, fgt, fadd, fmul, roundtrip, cmp3]
+
+type Box
+    Wrap(Float)
+    Empty
+
+fn ltz(n: Int) -> Bool
+    ? "n < 0  -> i64.lt_s on the carrier small field."
+    match n < 0
+        true -> true
+        false -> false
+
+fn gez(n: Int) -> Bool
+    ? "n >= 5 -> i64.ge_s."
+    match n >= 5
+        true -> true
+        false -> false
+
+fn gtz(n: Int) -> Bool
+    ? "n > 3  -> i64.gt_s."
+    match n > 3
+        true -> true
+        false -> false
+
+fn iez(n: Int) -> Bool
+    ? "n == 0 -> i64.eq."
+    match n == 0
+        true -> true
+        false -> false
+
+fn feq(a: Float, b: Float) -> Bool
+    ? "f64.eq."
+    match a == b
+        true -> true
+        false -> false
+
+fn fle(a: Float, b: Float) -> Bool
+    ? "f64.le."
+    match a <= b
+        true -> true
+        false -> false
+
+fn fge(a: Float, b: Float) -> Bool
+    ? "f64.ge."
+    match a >= b
+        true -> true
+        false -> false
+
+fn fgt(a: Float, b: Float) -> Bool
+    ? "f64.gt."
+    match a > b
+        true -> true
+        false -> false
+
+fn fadd(a: Float, b: Float) -> Float
+    ? "f64.add."
+    a + b
+
+fn fmul(a: Float, b: Float) -> Float
+    ? "f64.mul then f64.add."
+    a * b + a
+
+fn roundtrip(r: Float) -> Float
+    ? "struct.new (constructor) then ref.test / ref.cast / struct.get."
+    match Box.Wrap(r)
+        Box.Wrap(x) -> x
+        Box.Empty -> 0.0
+
+fn cmp3(a: Int, b: Int, c: Int) -> Bool
+    ? "chained comparison -> i32.le_s on the intermediate booleans."
+    match a <= b
+        true -> match b <= c
+            true -> true
+            false -> false
+        false -> false
+
+verify ltz
+    ltz(-1) => true
+    ltz(2) => false
+
+verify cmp3
+    cmp3(1, 2, 3) => true

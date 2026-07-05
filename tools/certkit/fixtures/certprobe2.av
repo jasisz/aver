@@ -1,0 +1,23 @@
+module CertProbe2
+    intent =
+        "Loop/recursion probe for artifact-level certification."
+    exposes [sumTo, countDown]
+
+fn sumTo(n: Int) -> Int
+    ? "Sum 1..n, plain recursion."
+    match n <= 0
+        true -> 0
+        false -> n + sumTo(n - 1)
+
+fn countDown(n: Int, acc: Int) -> Int
+    ? "Tail-recursive accumulator."
+    match n <= 0
+        true -> acc
+        false -> countDown(n - 1, acc + n)
+
+verify sumTo
+    sumTo(3) => 6
+    sumTo(0) => 0
+
+verify countDown
+    countDown(3, 0) => 6
