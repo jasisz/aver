@@ -7,4 +7,4 @@ package «certprelude» where
 @[default_target]
 lean_lib «CertPrelude» where
   srcDir := "."
-  roots := #[`CertPrelude, `CertPreludeSanity]
+  roots := #[`CertPrelude, `CertPreludeSanity, `CertDecode]
