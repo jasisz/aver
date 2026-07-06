@@ -385,6 +385,45 @@ fn cert_decode_three_way_differential_and_coverage() {
         }
     }
 
+    // Axiom footprint: the verdict path must stay on `[propext]` — no `sorryAx`,
+    // no `native_decide` / `ofReduceBool` escape hatch (brief constraint). Pin
+    // it as a regression on the richest fixture (certprobe2's nested body).
+    {
+        let bytes = std::fs::read(out.join("certprobe2.wasm")).unwrap();
+        let oracle = oracle_json(&repo, &out.join("certprobe2.wasm"));
+        let sumto = &oracle["funcs"].as_array().unwrap()[1];
+        let mut src = String::new();
+        src.push_str("import CertDecode\nopen CertPrelude\n\n");
+        src.push_str(&format!("def bytesN : Nat := 0x{}\n", hex_le(&bytes)));
+        src.push_str(&format!("def bytesLen : Nat := {}\n\n", bytes.len()));
+        src.push_str(&format!(
+            "theorem tCode : CertDecode.decodeCode bytesN bytesLen {} = some ⟨{}, {}, {}⟩ := rfl\n",
+            sumto["idx"].as_u64().unwrap(),
+            sumto["arity"].as_u64().unwrap(),
+            sumto["nlocals"].as_u64().unwrap(),
+            sumto["body"].as_str().unwrap()
+        ));
+        src.push_str("#print axioms tCode\n");
+        let (ok, report) = run_lean(&prelude, &src);
+        assert!(ok, "axiom-footprint witness failed to build:\n{report}");
+        assert!(
+            report.contains("propext"),
+            "axiom line missing propext:\n{report}"
+        );
+        for forbidden in [
+            "sorryAx",
+            "ofReduceBool",
+            "native",
+            "Classical.choice",
+            "Quot.sound",
+        ] {
+            assert!(
+                !report.contains(forbidden),
+                "verdict path carries a non-[propext] axiom `{forbidden}`:\n{report}"
+            );
+        }
+    }
+
     // Coverage matrix, fail-closed: every one of the 39 must be exercised.
     let missing: Vec<&str> = ALL_OPCODES
         .iter()
