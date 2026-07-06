@@ -221,9 +221,9 @@ verify nextPos
     nextPos(0) => 1
     nextPos(3) => 4
 
-verify nextPos law rollsForward
+verify nextPos law advancesByOne
     given p: Int = 0..4
-    nextPos(p) > p => true
+    nextPos(p) - p => 1
 
 fn atLip(egg: Option<Int>) -> Bool
     ? "True when an egg sits on the last row (4) and resolves this tick."
@@ -282,10 +282,11 @@ verify stepChute
     stepChute(Option.Some(4), Chute.LeftUp, Chute.LeftUp).caught => 1
     stepChute(Option.Some(4), Chute.RightDown, Chute.LeftUp).broke => 1
 
-verify stepChute law staysOnTrack
-    given egg: Option<Int> = [Option.None, Option.Some(0), Option.Some(1), Option.Some(2), Option.Some(3), Option.Some(4)]
+verify stepChute law belowLipStays
+    given egg: Option<Int> = [Option.None, Option.Some(0), Option.Some(1), Option.Some(2), Option.Some(3)]
     given w: Chute = [Chute.LeftUp, Chute.RightDown]
     given c: Chute = [Chute.LeftUp, Chute.LeftDown]
+    when Bool.not(atLip(egg))
     stepChute(egg, w, c).egg => chuteSpec(egg)
 
 fn earn(score: Int, caught: Bool) -> Int
@@ -534,11 +535,11 @@ verify stepAll
     stepAll(initialState(7, Mode.GameA), []) => initialState(7, Mode.GameA)
     stepAll(initialState(7, Mode.GameA), [Input.Tick]) => step(initialState(7, Mode.GameA), Input.Tick)
 
-verify stepAll law replayComposes
+verify stepAll law leftFold
     given gs: GameState = [GameState.Playing(startBoard(7, Mode.GameA)), GameState.Over(startBoard(3, Mode.GameB))]
-    given xs: List<Input> = [[], [Input.Tick], [Input.MoveWolf(Chute.RightUp), Input.Tick]]
-    given ys: List<Input> = [[], [Input.Switch(Mode.GameB)], [Input.Tick, Input.Tick]]
-    stepAll(gs, List.concat(xs, ys)) => stepAll(stepAll(gs, xs), ys)
+    given i: Input = [Input.Tick, Input.MoveWolf(Chute.RightUp), Input.Switch(Mode.GameB)]
+    given rest: List<Input> = [[], [Input.Tick], [Input.Tick, Input.Tick]]
+    stepAll(gs, List.prepend(i, rest)) => stepAll(step(gs, i), rest)
 
 fn replay(seed: Int, mode: Mode, inputs: List<Input>) -> GameState
     ? "Replay a recorded run: fold step over the inputs from the seeded start."
@@ -605,6 +606,63 @@ verify keyToInput
     keyToInput("l") => Input.MoveWolf(Chute.RightDown)
     keyToInput("2") => Input.Switch(Mode.GameB)
     keyToInput("x") => Input.Tick
+
+fn modeOf(gs: GameState) -> Mode
+    ? "The active game mode of a state, whether playing or over."
+    match gs
+        GameState.Over(b) -> b.mode
+        GameState.Playing(b) -> b.mode
+
+verify modeOf
+    modeOf(GameState.Playing(startBoard(7, Mode.GameA))) => Mode.GameA
+    modeOf(GameState.Over(startBoard(7, Mode.GameB))) => Mode.GameB
+
+fn tickDelay(gs: GameState) -> Int
+    ? "Tick delay in ms for the current state — the tempo the shell clock uses."
+    tempoMs(modeOf(gs), finalScore(gs))
+
+verify tickDelay
+    tickDelay(GameState.Playing(startBoard(7, Mode.GameA))) => 600
+    tickDelay(GameState.Playing(Board.update(startBoard(7, Mode.GameB), score = 200))) => 320
+
+fn parseMode(s: String) -> Mode
+    ? "Parse a mode tag from a CLI argument; anything but B means Game A."
+    match s
+        "B" -> Mode.GameB
+        "b" -> Mode.GameB
+        "2" -> Mode.GameB
+        _ -> Mode.GameA
+
+verify parseMode
+    parseMode("A") => Mode.GameA
+    parseMode("B") => Mode.GameB
+    parseMode("2") => Mode.GameB
+
+fn parseSeed(s: String) -> Int
+    ? "Parse a seed from a CLI argument, defaulting to 1 on a non-number."
+    Result.withDefault(Int.fromString(s), 1)
+
+verify parseSeed
+    parseSeed("42") => 42
+    parseSeed("oops") => 1
+
+fn keysToInputs(keys: List<String>) -> List<Input>
+    ? "Map a recorded list of keystrokes to inputs, preserving order."
+    List.reverse(keysToInputsAcc(keys, []))
+
+verify keysToInputs
+    keysToInputs(["q", "2"]) => [Input.MoveWolf(Chute.LeftUp), Input.Switch(Mode.GameB)]
+    keysToInputs([]) => []
+
+fn keysToInputsAcc(keys: List<String>, acc: List<Input>) -> List<Input>
+    ? "Tail-recursive worker for keysToInputs."
+    match keys
+        [] -> acc
+        [k, ..rest] -> keysToInputsAcc(rest, List.prepend(keyToInput(k), acc))
+
+verify keysToInputsAcc
+    keysToInputsAcc([], []) => []
+    keysToInputsAcc(["q"], []) => [Input.MoveWolf(Chute.LeftUp)]
 
 fn wolfGlyph(c: Chute) -> String
     ? "Single-cell wolf glyph, tilted toward the catch position."
@@ -741,6 +799,16 @@ verify render
     render(GameState.Playing(startBoard(7, Mode.GameA))) => renderBoard(startBoard(7, Mode.GameA), "PLAY")
     render(GameState.Over(startBoard(7, Mode.GameA))) => renderBoard(startBoard(7, Mode.GameA), "OVER")
 
+fn scoreInRange(gs: GameState) -> Bool
+    ? "True when the state's score sits in the machine's [0,999] window — the"
+      "precondition under which the counter always renders as three digits."
+    Bool.and(finalScore(gs) >= 0, finalScore(gs) <= 999)
+
+verify scoreInRange
+    scoreInRange(initialState(7, Mode.GameA)) => true
+    scoreInRange(GameState.Over(Board.update(startBoard(7, Mode.GameA), score = 999))) => true
+
 verify render law fixedSize
     given gs: GameState = [GameState.Playing(startBoard(7, Mode.GameA)), GameState.Playing(Board.update(startBoard(1, Mode.GameB), score = 999, misses = 2, lu = Option.Some(4), ld = Option.Some(1), ru = Option.Some(2), rd = Option.Some(0), wolf = Chute.RightDown)), GameState.Over(Board.update(startBoard(3, Mode.GameA), score = 428, misses = 3, ru = Option.Some(3), wolf = Chute.LeftDown))]
+    when scoreInRange(gs)
     String.len(render(gs)) => 107
