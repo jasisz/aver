@@ -2,10 +2,10 @@
 //! (`tools/certkit/prelude/CertDecode.lean`).
 //!
 //! The main test is a three-way decoder differential: for every certkit
-//! fixture it agrees, TERM FOR TERM, across
-//!   * the Lean kernel decoder (`CertDecode.decode…`, checked by `rfl`),
-//!   * the Rust `cert::rederive_obligations` (the certified-obligation oracle),
-//!   * the Python byte-level `tools/certkit/decode_ref.py`.
+//! fixture it agrees, TERM FOR TERM, across the Lean kernel decoder
+//! (`CertDecode.decode…`, checked by `rfl`), the Rust
+//! `cert::rederive_obligations` (the certified-obligation oracle), and the
+//! Python byte-level `tools/certkit/decode_ref.py`.
 //! It compiles each fixture, emits a Lean witness pinning `decodeExports`,
 //! `decodeImports`, `decodeCarrier`, and per-function `decodeCode` to the oracle
 //! values, and lets `lake env lean` be the verdict — a divergence is a kernel
@@ -37,19 +37,56 @@ const FIXTURES: &[&str] = &[
 
 /// The 39 measured user-code opcode mnemonics (mirrors `diff_harness.py`).
 const ALL_OPCODES: &[&str] = &[
-    "array.new_data", "array.new_fixed", "call", "else", "end", "f64.add",
-    "f64.const", "f64.div", "f64.eq", "f64.ge", "f64.gt", "f64.le", "f64.lt",
-    "f64.mul", "f64.sub", "i32.and", "i32.const", "i32.eq", "i32.gt_s",
-    "i32.le_s", "i32.lt_s", "i64.const", "i64.eq", "i64.eqz", "i64.ge_s",
-    "i64.gt_s", "i64.le_s", "i64.lt_s", "if", "local.get", "local.set",
-    "ref.cast", "ref.is_null", "ref.null", "ref.test", "return", "return_call",
-    "struct.get", "struct.new",
+    "array.new_data",
+    "array.new_fixed",
+    "call",
+    "else",
+    "end",
+    "f64.add",
+    "f64.const",
+    "f64.div",
+    "f64.eq",
+    "f64.ge",
+    "f64.gt",
+    "f64.le",
+    "f64.lt",
+    "f64.mul",
+    "f64.sub",
+    "i32.and",
+    "i32.const",
+    "i32.eq",
+    "i32.gt_s",
+    "i32.le_s",
+    "i32.lt_s",
+    "i64.const",
+    "i64.eq",
+    "i64.eqz",
+    "i64.ge_s",
+    "i64.gt_s",
+    "i64.le_s",
+    "i64.lt_s",
+    "if",
+    "local.get",
+    "local.set",
+    "ref.cast",
+    "ref.is_null",
+    "ref.null",
+    "ref.test",
+    "return",
+    "return_call",
+    "struct.get",
+    "struct.new",
 ];
 
 /// The opcodes never surfaced by a certkit user-function body; the decoder's
 /// arm for each is exercised by a synthetic single-body probe instead.
 const SYNTH_OPCODES: &[&str] = &[
-    "i32.and", "i32.eq", "i64.eqz", "return", "ref.null", "array.new_fixed",
+    "i32.and",
+    "i32.eq",
+    "i64.eqz",
+    "return",
+    "ref.null",
+    "array.new_fixed",
 ];
 
 /// Raw bytes of the synthetic probe body and the term it must decode to. Covers
@@ -188,7 +225,13 @@ fn imports_lit(imports: &serde_json::Value) -> String {
         .as_array()
         .unwrap()
         .iter()
-        .map(|e| format!("({}, {})", lean_str(e[0].as_str().unwrap()), lean_str(e[1].as_str().unwrap())))
+        .map(|e| {
+            format!(
+                "({}, {})",
+                lean_str(e[0].as_str().unwrap()),
+                lean_str(e[1].as_str().unwrap())
+            )
+        })
         .collect();
     format!("[{}]", items.join(", "))
 }
@@ -298,11 +341,9 @@ fn cert_decode_three_way_differential_and_coverage() {
                     o.carrier
                 );
             }
-            let mapped = oracle["exports"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|e| e[0].as_str() == Some(o.name.as_str()) && e[1].as_u64() == Some(o.self_idx as u64));
+            let mapped = oracle["exports"].as_array().unwrap().iter().any(|e| {
+                e[0].as_str() == Some(o.name.as_str()) && e[1].as_u64() == Some(o.self_idx as u64)
+            });
             assert!(
                 mapped,
                 "{fixture}: rederive export {}→{} not in the decoded export map",
@@ -353,7 +394,10 @@ fn cert_decode_three_way_differential_and_coverage() {
     assert!(
         missing.is_empty(),
         "opcode coverage FAIL — {} of 39 exercised, missing: {:?}",
-        covered.iter().filter(|c| ALL_OPCODES.contains(&c.as_str())).count(),
+        covered
+            .iter()
+            .filter(|c| ALL_OPCODES.contains(&c.as_str()))
+            .count(),
         missing
     );
 
@@ -460,18 +504,27 @@ fn cert_decode_mutations_fail_closed() {
         j += 1;
         let (_ht, jb) = read_uleb(&bytes, j); // heaptype (small, uleb == sleb)
         let body0 = jb; // first opcode byte of the body (local.get)
-        assert_eq!(bytes[body0], 0x20, "sumTo body does not start with local.get");
+        assert_eq!(
+            bytes[body0], 0x20,
+            "sumTo body does not start with local.get"
+        );
         let example = format!(
             "example : CertDecode.decodeCode bytesN bytesLen {self_idx} = some {orig_wcode} := rfl"
         );
         // positive control: the binding holds on the un-mutated bytes …
         let (ok0, r0) = run_lean(&prelude, &witness(&bytes, &example));
-        assert!(ok0, "M1 positive control: original binding must hold:\n{r0}");
+        assert!(
+            ok0,
+            "M1 positive control: original binding must hold:\n{r0}"
+        );
         let mut m = bytes.clone();
         m[body0 + 1] ^= 0x04; // flip the local index operand
         // … and fails only because of the body-byte flip.
         let (ok, report) = run_lean(&prelude, &witness(&m, &example));
-        assert!(!ok, "M1: a body-byte flip must break the original decode:\n{report}");
+        assert!(
+            !ok,
+            "M1: a body-byte flip must break the original decode:\n{report}"
+        );
     }
 
     // M2: flip a byte in a decoder-skipped section (memory, id 5) → the decoded
@@ -489,7 +542,10 @@ fn cert_decode_mutations_fail_closed() {
             sumto.carrier
         );
         let (ok, report) = run_lean(&prelude, &witness(&m, &example));
-        assert!(ok, "M2: a flip in a skipped section must leave the decode unchanged:\n{report}");
+        assert!(
+            ok,
+            "M2: a flip in a skipped section must leave the decode unchanged:\n{report}"
+        );
     }
 
     // M3: relabel sumTo's export funcidx → the decoded export map changes.
@@ -501,12 +557,18 @@ fn cert_decode_mutations_fail_closed() {
                 .to_string();
         // positive control: sumTo → 1 in the un-mutated export map …
         let (ok0, r0) = run_lean(&prelude, &witness(&bytes, &example));
-        assert!(ok0, "M3 positive control: original export map must hold:\n{r0}");
+        assert!(
+            ok0,
+            "M3 positive control: original export map must hold:\n{r0}"
+        );
         let mut m = bytes.clone();
         m[off] = 5; // relabel to another defined function index
         // … and fails only because the funcidx was relabelled.
         let (ok, report) = run_lean(&prelude, &witness(&m, &example));
-        assert!(!ok, "M3: an export relabel must change the decoded funcidx:\n{report}");
+        assert!(
+            !ok,
+            "M3: an export relabel must change the decoded funcidx:\n{report}"
+        );
     }
 
     // M4: overlong LEB in a section size → the walk decodes to none. Rewrite the
@@ -526,7 +588,10 @@ fn cert_decode_mutations_fail_closed() {
         let example =
             "example : CertDecode.decodeExports bytesN bytesLen = none := rfl".to_string();
         let (ok, report) = run_lean(&prelude, &witness(&m, &example));
-        assert!(ok, "M4: an overlong size LEB must make the section walk fail closed:\n{report}");
+        assert!(
+            ok,
+            "M4: an overlong size LEB must make the section walk fail closed:\n{report}"
+        );
     }
 
     // M5: truncation inside the code section → the body decodes to none, while
@@ -544,7 +609,10 @@ fn cert_decode_mutations_fail_closed() {
              example : (CertDecode.decodeExports bytesN bytesLen).isSome = true := rfl"
         );
         let (ok, report) = run_lean(&prelude, &witness(&m, &example));
-        assert!(ok, "M5: a truncated code section must decode to none, exports intact:\n{report}");
+        assert!(
+            ok,
+            "M5: a truncated code section must decode to none, exports intact:\n{report}"
+        );
     }
 
     // M6: a function index beyond the module's function space decodes to none
@@ -553,7 +621,10 @@ fn cert_decode_mutations_fail_closed() {
         let example =
             "example : CertDecode.decodeCode bytesN bytesLen 100000 = none := rfl".to_string();
         let (ok, report) = run_lean(&prelude, &witness(&bytes, &example));
-        assert!(ok, "M6: an out-of-function-space index must decode to none:\n{report}");
+        assert!(
+            ok,
+            "M6: an out-of-function-space index must decode to none:\n{report}"
+        );
     }
 
     let _ = std::fs::remove_dir_all(&out);
