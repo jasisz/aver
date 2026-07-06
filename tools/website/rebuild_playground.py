@@ -35,9 +35,10 @@ GAMES = [
     Game("rogue", "rogue/main.av", "rogue"),
     Game("doom", "doom/main.av", "doom"),
     Game("wumpus", "wumpus.av"),
+    Game("eggcatch", "eggcatch/main.av", "eggcatch"),
 ]
 
-DIR_MIRRORS = ["checkers", "doom", "rogue", "tetris"]
+DIR_MIRRORS = ["checkers", "doom", "eggcatch", "rogue", "tetris"]
 FILE_MIRRORS = ["life.av", "snake.av", "wumpus.av"]
 
 
@@ -190,7 +191,7 @@ def replace_once(pattern: str, replacement: str, text: str, *, flags: int = 0) -
 
 def update_main_index(text: str, sizes: dict[str, str]) -> str:
     summary = (
-        "Seven games compiled directly from Aver to WebAssembly GC. "
+        "Eight games compiled directly from Aver to WebAssembly GC. "
         "Engine handles GC and tail calls — no NaN-boxing, no custom heap. "
         f"Snake ships at {sizes['snake']}; a full roguelike with "
         f"procedural generation is {sizes['rogue']}. "
