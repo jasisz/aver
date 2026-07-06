@@ -796,17 +796,31 @@ verify missMark
     missMark(2, 1) => "×"
     missMark(2, 2) => "·"
 
+fn beamL(egg: Option<Int>, i: Int) -> String
+    ? "Left ramp beam for row i: the egg ROLLS ON the beam, replacing the"
+      "beam glyph when it sits on this row instead of hanging beside it."
+    match cell(egg, i)
+        "●" -> "●"
+        _ -> "\\"
+
+fn beamR(egg: Option<Int>, i: Int) -> String
+    ? "Right ramp beam for row i, mirrored."
+    match cell(egg, i)
+        "●" -> "●"
+        _ -> "/"
+
 fn upL(egg: Option<Int>, i: Int) -> String
-    ? "Upper-left ramp segment for row i: indent, cell, ramp surface."
-    spaces(3 + 2 * i) + cell(egg, i) + "\\"
+    ? "Upper-left ramp segment for row i: indent, then the beam (or the egg"
+      "rolling on it)."
+    spaces(4 + 2 * i) + beamL(egg, i)
 
 verify upL
-    upL(Option.Some(0), 0) => "   ●\\"
+    upL(Option.Some(0), 0) => "    ●"
     upL(Option.None, 2) => "        \\"
 
 fn upR(egg: Option<Int>, i: Int) -> String
     ? "Upper-right ramp segment for row i, mirrored."
-    "/" + cell(egg, i) + spaces(3 + 2 * i)
+    beamR(egg, i) + spaces(4 + 2 * i)
 
 fn rowHeader(b: Board) -> String
     ? "Header row: title, mode tag, score and miss pips."
@@ -882,8 +896,8 @@ fn renderBoard(b: Board, status: String) -> String
         body(upL(b.ld, 0), foxRow(4, b.fox), upR(b.rd, 0)),
         body(upL(b.ld, 1), foxRow(5, b.fox), upR(b.rd, 1)),
         body(upL(b.ld, 2), foxRow(6, b.fox), upR(b.rd, 2)),
-        body(upL(b.ld, 3) + basketMark(b.fox, Chute.LeftDown), "", basketMark(b.fox, Chute.RightDown) + upR(b.rd, 3)),
-        body(upL(b.ld, 4), "", upR(b.rd, 4)),
+        body(upL(b.ld, 3), "", upR(b.rd, 3)),
+        body(upL(b.ld, 4) + basketMark(b.fox, Chute.LeftDown), "", basketMark(b.fox, Chute.RightDown) + upR(b.rd, 4)),
         rowStatus(status),
         "╚════════════════════════════════════════════╝",
     ], "\n")
