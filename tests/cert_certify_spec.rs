@@ -96,3 +96,83 @@ fn certify_straight_line_fixture_lake_builds_kernel_clean() {
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }
+
+#[test]
+fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping certify ADT test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let cases = [
+        (
+            "tools/certkit/fixtures/opteval.av",
+            "opteval",
+            vec!["mk", "eval"],
+        ),
+        ("examples/core/user_record.av", "user-record", vec!["greet"]),
+    ];
+
+    for (input, prefix, expected) in cases {
+        let out_dir = temp_dir(prefix);
+        let compile = Command::new(aver_bin)
+            .current_dir(&repo_root)
+            .arg("compile")
+            .arg(input)
+            .arg("--target")
+            .arg("wasm-gc")
+            .arg("--certify")
+            .arg("-o")
+            .arg(&out_dir)
+            .output()
+            .expect("expected `aver compile --certify` to run");
+        assert!(
+            compile.status.success(),
+            "compile --certify failed for {input}:\n{}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
+
+        let cert_dir = out_dir.join("cert");
+        let manifest: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+                .expect("cert-manifest.json exists"),
+        )
+        .expect("manifest is valid JSON");
+        let certified: Vec<&str> = manifest["certified"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+        for name in expected {
+            assert!(
+                certified.contains(&name),
+                "expected {name} certified for {input}, got {certified:?}"
+            );
+        }
+
+        let build = Command::new("lake")
+            .current_dir(&cert_dir)
+            .arg("build")
+            .output()
+            .expect("expected `lake build` to run");
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
+        );
+        assert!(
+            build.status.success(),
+            "lake build of emitted ADT cert failed for {input}:\n{combined}"
+        );
+        assert!(
+            !combined.contains("sorryAx"),
+            "ADT certificate leaked sorryAx for {input}:\n{combined}"
+        );
+
+        let _ = std::fs::remove_dir_all(&out_dir);
+    }
+}

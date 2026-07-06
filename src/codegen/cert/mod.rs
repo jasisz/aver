@@ -52,7 +52,7 @@ pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
 /// Certification level of a v0 artifact certificate: conditional on the named
 /// runtime contracts (see the consult level naming L0/L1/L2/L3).
 pub const CERT_LEVEL: &str = "L1";
-pub const CERT_SCHEMA_VERSION: u32 = 2;
+pub const CERT_SCHEMA_VERSION: u32 = 3;
 /// The one approved final-theorem statement line. `aver cert verify` confirms
 /// this exact line is present in `Final.lean` (name + `Holds manifest`), which
 /// is what pins the statement without matching arbitrary Lean syntax.
@@ -97,10 +97,15 @@ enum Op {
     LocalSet(u32),
     I64Const(i64),
     I32Const(i32),
+    RefTest(u32),
+    RefCast(u32),
+    StructNew(u32, u32),
     StructGet(u32, u32),
     RefIsNull,
     I64LeS,
+    I64GeS,
     I32LtS,
+    I32GtS,
     If,
     Else,
     End,
@@ -141,6 +146,39 @@ enum Cert {
         add_idx: u32,
         sub_idx: u32,
     },
+    /// Non-recursive constructor: local arguments wrapped by `struct.new`.
+    AdtConstructor {
+        name: String,
+        self_idx: u32,
+        nlocals: usize,
+        carrier: u32,
+        struct_idx: u32,
+        field_count: u32,
+        ops: Vec<Op>,
+    },
+    /// Non-recursive record/variant field projection.
+    FieldProjection {
+        name: String,
+        self_idx: u32,
+        nlocals: usize,
+        carrier: u32,
+        struct_idx: u32,
+        field_idx: u32,
+        ops: Vec<Op>,
+    },
+    /// Non-recursive three-variant ADT match: Add x -> x; Neg x -> 0 - x; Zero -> 0.
+    AdtMatch {
+        name: String,
+        self_idx: u32,
+        nlocals: usize,
+        carrier: u32,
+        add_variant_idx: u32,
+        neg_variant_idx: u32,
+        zero_variant_idx: u32,
+        box_idx: u32,
+        sub_idx: u32,
+        ops: Vec<Op>,
+    },
 }
 
 impl Cert {
@@ -148,21 +186,38 @@ impl Cert {
         match self {
             Cert::StraightLine { name, .. }
             | Cert::Recursive { name, .. }
-            | Cert::AccumulatorRecursive { name, .. } => name,
+            | Cert::AccumulatorRecursive { name, .. }
+            | Cert::AdtConstructor { name, .. }
+            | Cert::FieldProjection { name, .. }
+            | Cert::AdtMatch { name, .. } => name,
         }
     }
     fn self_idx(&self) -> u32 {
         match self {
             Cert::StraightLine { self_idx, .. }
             | Cert::Recursive { self_idx, .. }
-            | Cert::AccumulatorRecursive { self_idx, .. } => *self_idx,
+            | Cert::AccumulatorRecursive { self_idx, .. }
+            | Cert::AdtConstructor { self_idx, .. }
+            | Cert::FieldProjection { self_idx, .. }
+            | Cert::AdtMatch { self_idx, .. } => *self_idx,
         }
     }
     fn carrier(&self) -> u32 {
         match self {
             Cert::StraightLine { carrier, .. }
             | Cert::Recursive { carrier, .. }
-            | Cert::AccumulatorRecursive { carrier, .. } => *carrier,
+            | Cert::AccumulatorRecursive { carrier, .. }
+            | Cert::AdtConstructor { carrier, .. }
+            | Cert::FieldProjection { carrier, .. }
+            | Cert::AdtMatch { carrier, .. } => *carrier,
+        }
+    }
+    fn arity(&self) -> usize {
+        match self {
+            Cert::StraightLine { .. } | Cert::Recursive { .. } => 1,
+            Cert::AccumulatorRecursive { .. } => 2,
+            Cert::AdtConstructor { field_count, .. } => *field_count as usize,
+            Cert::FieldProjection { .. } | Cert::AdtMatch { .. } => 1,
         }
     }
     /// The Lean expression for the model this export simulates.
@@ -172,6 +227,9 @@ impl Cert {
             Cert::Recursive { name, .. } => format!("fun ns => {name} (ns.headD 0)"),
             Cert::AccumulatorRecursive { name, .. } => {
                 format!("fun ns => {name} (ns.headD 0) ((ns.drop 1).headD 0)")
+            }
+            Cert::AdtConstructor { .. } | Cert::FieldProjection { .. } | Cert::AdtMatch { .. } => {
+                "fun x => x".to_string()
             }
         }
     }
@@ -183,6 +241,10 @@ impl Cert {
             Cert::Recursive { name, .. } | Cert::AccumulatorRecursive { name, .. } => {
                 format!("CertModule.{name}Host")
             }
+            Cert::AdtConstructor { name, .. } | Cert::FieldProjection { name, .. } => {
+                format!("fun _ _ => CertModule.{name}Host")
+            }
+            Cert::AdtMatch { name, .. } => format!("CertModule.{name}Host"),
         }
     }
 }
@@ -236,6 +298,11 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
             Cert::AccumulatorRecursive { .. } => {
                 has_box = true;
                 has_add = true;
+                has_sub = true;
+            }
+            Cert::AdtConstructor { .. } | Cert::FieldProjection { .. } => {}
+            Cert::AdtMatch { .. } => {
+                has_box = true;
                 has_sub = true;
             }
         }
@@ -324,6 +391,9 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
     let mut func_type_idx: Vec<u32> = Vec::new();
     // type index -> arity (param count) for func types
     let mut type_arity: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+    // type index -> struct field count
+    let mut struct_field_counts: std::collections::HashMap<u32, u32> =
+        std::collections::HashMap::new();
     // export name -> func index
     let mut exports: Vec<(String, u32)> = Vec::new();
     // per defined-function code entry: (nlocals, ops, calls, has_loop_or_branch)
@@ -358,6 +428,10 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                                     ) =>
                             {
                                 carrier = Some(idx);
+                                struct_field_counts.insert(idx, st.fields.len() as u32);
+                            }
+                            CompositeInnerType::Struct(st) => {
+                                struct_field_counts.insert(idx, st.fields.len() as u32);
                             }
                             _ => {}
                         }
@@ -411,13 +485,28 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                         Operator::LocalSet { local_index } => Op::LocalSet(local_index),
                         Operator::I64Const { value } => Op::I64Const(value),
                         Operator::I32Const { value } => Op::I32Const(value),
+                        Operator::RefTestNonNull { hty } | Operator::RefTestNullable { hty } => {
+                            heap_type_index(hty).map(Op::RefTest).unwrap_or(Op::Other)
+                        }
+                        Operator::RefCastNonNull { hty } | Operator::RefCastNullable { hty } => {
+                            heap_type_index(hty).map(Op::RefCast).unwrap_or(Op::Other)
+                        }
+                        Operator::StructNew { struct_type_index } => Op::StructNew(
+                            struct_type_index,
+                            struct_field_counts
+                                .get(&struct_type_index)
+                                .copied()
+                                .unwrap_or(0),
+                        ),
                         Operator::StructGet {
                             struct_type_index,
                             field_index,
                         } => Op::StructGet(struct_type_index, field_index),
                         Operator::RefIsNull => Op::RefIsNull,
                         Operator::I64LeS => Op::I64LeS,
+                        Operator::I64GeS => Op::I64GeS,
                         Operator::I32LtS => Op::I32LtS,
+                        Operator::I32GtS => Op::I32GtS,
                         Operator::If { .. } => Op::If,
                         Operator::Else => Op::Else,
                         Operator::End => Op::End,
@@ -501,6 +590,15 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
     Ok((user_fns, box_idx, user_idx_set, carrier))
 }
 
+fn heap_type_index(hty: wasmparser::HeapType) -> Option<u32> {
+    match hty {
+        wasmparser::HeapType::Concrete(idx) | wasmparser::HeapType::Exact(idx) => {
+            idx.as_module_index()
+        }
+        wasmparser::HeapType::Abstract { .. } => None,
+    }
+}
+
 // ---- classification ------------------------------------------------------
 
 fn classify(
@@ -545,6 +643,18 @@ fn classify(
         return Ok(cert);
     }
 
+    if let Some(cert) = match_adt_constructor(f, box_idx, carrier) {
+        return Ok(cert);
+    }
+
+    if let Some(cert) = match_field_projection(f, carrier) {
+        return Ok(cert);
+    }
+
+    if let Some(cert) = match_adt_match(f, box_idx, carrier) {
+        return Ok(cert);
+    }
+
     // ---- decline with an honest reason -----------------------------------
     // Arity 2 is a supported signature (the accumulator-recursion template),
     // so a 2-argument function that did not match falls through to the
@@ -577,7 +687,132 @@ fn classify(
                 .to_string(),
         );
     }
-    Err("body does not match a certified template (straight-line add-constant, single-argument self-recursion, or two-argument accumulator recursion)".to_string())
+    Err("body does not match a certified template (straight-line add-constant, single-argument self-recursion, two-argument accumulator recursion, or non-recursive ADT constructor/projection/match)".to_string())
+}
+
+fn match_adt_constructor(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Option<Cert> {
+    use Op::*;
+    let ops = strip_trailing_end(&f.ops);
+    let (last, prefix) = ops.split_last()?;
+    let StructNew(struct_idx, field_count) = last else {
+        return None;
+    };
+    if *struct_idx == carrier? || *field_count as usize != f.arity || f.arity == 0 {
+        return None;
+    }
+    for (i, op) in prefix.iter().enumerate() {
+        if *op != LocalGet(i as u32) {
+            return None;
+        }
+    }
+    if f.calls.iter().any(|c| *c == f.wasm_idx || *c != box_idx) {
+        return None;
+    }
+    Some(Cert::AdtConstructor {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier: carrier?,
+        struct_idx: *struct_idx,
+        field_count: *field_count,
+        ops: ops.to_vec(),
+    })
+}
+
+fn match_field_projection(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
+    use Op::*;
+    let ops = strip_trailing_end(&f.ops);
+    let [LocalGet(0), StructGet(struct_idx, field_idx)] = ops else {
+        return None;
+    };
+    if f.arity != 1 || *struct_idx == carrier? || !f.calls.is_empty() {
+        return None;
+    }
+    Some(Cert::FieldProjection {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier: carrier?,
+        struct_idx: *struct_idx,
+        field_idx: *field_idx,
+        ops: ops.to_vec(),
+    })
+}
+
+fn match_adt_match(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Option<Cert> {
+    use Op::*;
+    if f.arity != 1 {
+        return None;
+    }
+    let ops = strip_trailing_end(&f.ops);
+    let [
+        LocalGet(0),
+        LocalSet(scrut0),
+        LocalGet(scrut1),
+        RefTest(add_ty),
+        If,
+        LocalGet(scrut2),
+        RefCast(add_cast),
+        StructGet(add_get, 0),
+        LocalSet(add_local),
+        LocalGet(add_local2),
+        Else,
+        LocalGet(scrut3),
+        RefTest(neg_ty),
+        If,
+        LocalGet(scrut4),
+        RefCast(neg_cast),
+        StructGet(neg_get, 0),
+        LocalSet(neg_local),
+        I64Const(0),
+        Call(box_call0),
+        LocalGet(neg_local2),
+        Call(sub_idx),
+        Else,
+        I64Const(0),
+        Call(box_call1),
+        End,
+        End,
+    ] = ops
+    else {
+        return None;
+    };
+    if scrut0 != scrut1
+        || scrut0 != scrut2
+        || scrut0 != scrut3
+        || scrut0 != scrut4
+        || add_ty != add_cast
+        || add_ty != add_get
+        || neg_ty != neg_cast
+        || neg_ty != neg_get
+        || add_local != add_local2
+        || neg_local != neg_local2
+        || *box_call0 != box_idx
+        || *box_call1 != box_idx
+        || *sub_idx == f.wasm_idx
+    {
+        return None;
+    }
+    let zero_variant_idx = neg_ty.checked_add(1)?;
+    Some(Cert::AdtMatch {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier: carrier?,
+        add_variant_idx: *add_ty,
+        neg_variant_idx: *neg_ty,
+        zero_variant_idx,
+        box_idx,
+        sub_idx: *sub_idx,
+        ops: ops.to_vec(),
+    })
+}
+
+fn strip_trailing_end(ops: &[Op]) -> &[Op] {
+    match ops.last() {
+        Some(Op::End) => &ops[..ops.len() - 1],
+        _ => ops,
+    }
 }
 
 /// Match the exact sumTo operator template, extracting `carrier` (from the
@@ -743,6 +978,109 @@ fn eval_countdown(n: i64, acc: i64) -> i64 {
     }
 }
 
+#[derive(Default)]
+struct ModelInfo {
+    fns: std::collections::HashMap<String, FnSig>,
+    inductives: std::collections::HashMap<String, InductiveInfo>,
+}
+
+struct FnSig {
+    params: Vec<String>,
+    ret: String,
+}
+
+struct InductiveInfo {
+    ctors: Vec<CtorInfo>,
+}
+
+struct CtorInfo {
+    name: String,
+    fields: Vec<String>,
+}
+
+impl ModelInfo {
+    fn from_files(model_files: &[(String, String)]) -> Self {
+        let mut info = Self::default();
+        for (path, content) in model_files {
+            if !path.ends_with(".lean") {
+                continue;
+            }
+            info.parse_lean(content);
+        }
+        info
+    }
+
+    fn parse_lean(&mut self, content: &str) {
+        let lines: Vec<&str> = content.lines().collect();
+        let mut i = 0usize;
+        while i < lines.len() {
+            let line = lines[i].trim();
+            if let Some(name) = line
+                .strip_prefix("inductive ")
+                .and_then(|s| s.split_whitespace().next())
+            {
+                i += 1;
+                let mut ctors = Vec::new();
+                while i < lines.len() {
+                    let l = lines[i].trim();
+                    if !l.starts_with('|') {
+                        break;
+                    }
+                    let rest = l.trim_start_matches('|').trim();
+                    let ctor_name = rest.split_whitespace().next().unwrap_or("").to_string();
+                    let mut fields = Vec::new();
+                    let mut tail = rest[ctor_name.len()..].trim();
+                    while let Some(start) = tail.find("(_ : ") {
+                        let after = &tail[start + 5..];
+                        if let Some(end) = after.find(')') {
+                            fields.push(after[..end].trim().to_string());
+                            tail = &after[end + 1..];
+                        } else {
+                            break;
+                        }
+                    }
+                    ctors.push(CtorInfo {
+                        name: ctor_name,
+                        fields,
+                    });
+                    i += 1;
+                }
+                self.inductives
+                    .insert(name.to_string(), InductiveInfo { ctors });
+                continue;
+            }
+            if line.starts_with("def ") && line.contains(" : ") && line.ends_with(":=") {
+                if let Some((name, sig)) = parse_def_sig(line) {
+                    self.fns.insert(name, sig);
+                }
+            }
+            i += 1;
+        }
+    }
+}
+
+fn parse_def_sig(line: &str) -> Option<(String, FnSig)> {
+    let rest = line.strip_prefix("def ")?;
+    let name = rest.split_whitespace().next()?.to_string();
+    let after_name = rest[name.len()..].trim();
+    let before_assign = after_name.strip_suffix(":=")?.trim();
+    let ret_colon = before_assign.rfind(" : ")?;
+    let params_part = before_assign[..ret_colon].trim();
+    let ret = before_assign[ret_colon + 3..].trim().to_string();
+    let mut params = Vec::new();
+    let mut tail = params_part;
+    while let Some(start) = tail.find('(') {
+        let after = &tail[start + 1..];
+        let end = after.find(')')?;
+        let param = &after[..end];
+        if let Some((_, ty)) = param.split_once(" : ") {
+            params.push(ty.trim().to_string());
+        }
+        tail = &after[end + 1..];
+    }
+    Some((name, FnSig { params, ret }))
+}
+
 // ---- rendering -----------------------------------------------------------
 
 /// Write the full `cert/` project. `model_files` are the (path, content) pairs
@@ -767,11 +1105,12 @@ pub fn write_project(
         if path == "lakefile.lean" || path == "lean-toolchain" {
             continue;
         }
-        write(&cert_dir, path, content)?;
+        write(&cert_dir, path, &sanitize_model_for_cert(content))?;
         if let Some(stem) = path.strip_suffix(".lean") {
             model_roots.push(stem.to_string());
         }
     }
+    let model_info = ModelInfo::from_files(model_files);
 
     let sha = {
         let mut h = Sha256::new();
@@ -791,12 +1130,12 @@ pub fn write_project(
     write(
         &cert_dir,
         "Manifest.lean",
-        &render_manifest_lean(analysis, &model_roots, &sha),
+        &render_manifest_lean(analysis, &model_roots, &model_info, &sha),
     )?;
     write(
         &cert_dir,
         "Certificate.lean",
-        &render_certificate(analysis, &model_roots),
+        &render_certificate(analysis, &model_roots, &model_info),
     )?;
     write(&cert_dir, "Final.lean", &render_final(analysis))?;
     write(&cert_dir, "lakefile.lean", &render_lakefile(&model_roots))?;
@@ -816,6 +1155,18 @@ pub fn write_project(
 
 fn write(dir: &Path, name: &str, content: &str) -> Result<(), String> {
     std::fs::write(dir.join(name), content).map_err(|e| format!("write {name}: {e}"))
+}
+
+fn sanitize_model_for_cert(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    for line in content.lines() {
+        if line.trim_start().starts_with("deriving ") {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -914,6 +1265,22 @@ fn render_host_def(c: &Cert) -> String {
              else if fn = {add_idx} then some (2, add)\n  \
              else if fn = {sub_idx} then some (2, sub)\n  else none\n",
         ),
+        Cert::AdtConstructor { name, .. } | Cert::FieldProjection { name, .. } => format!(
+            "/-- Runtime host wiring for `{name}` (no host calls). -/\n\
+             def {name}Host : HostTbl := fun _ => none\n",
+        ),
+        Cert::AdtMatch {
+            name,
+            carrier,
+            box_idx,
+            sub_idx,
+            ..
+        } => format!(
+            "/-- Runtime host wiring for `{name}` (box + sub contracts). -/\n\
+             def {name}Host (_add sub : List WVal → Option WVal) : HostTbl := fun fn =>\n  \
+             if fn = {box_idx} then some (1, boxRef {carrier})\n  \
+             else if fn = {sub_idx} then some (2, sub)\n  else none\n",
+        ),
     }
 }
 
@@ -922,6 +1289,9 @@ fn render_code_def(c: &Cert) -> String {
         Cert::StraightLine { .. } => "straight-line add-constant",
         Cert::Recursive { .. } => "self-recursive",
         Cert::AccumulatorRecursive { .. } => "accumulator self-recursive",
+        Cert::AdtConstructor { .. } => "ADT constructor",
+        Cert::FieldProjection { .. } => "field projection",
+        Cert::AdtMatch { .. } => "ADT variant match",
     };
     format!(
         "/-- Verbatim emitted body of `{name}` ({doc}). -/\n\
@@ -990,6 +1360,29 @@ fn render_code_value(c: &Cert) -> String {
              [.localGet 0, .i64Const 1, .call {box_idx}, .call {sub_idx}, \
              .localGet 1, .localGet 0, .call {add_idx}, .returnCall {self_idx}] ]⟩\n  else none",
         ),
+        Cert::AdtConstructor {
+            self_idx,
+            nlocals,
+            ops,
+            ..
+        }
+        | Cert::FieldProjection {
+            self_idx,
+            nlocals,
+            ops,
+            ..
+        }
+        | Cert::AdtMatch {
+            self_idx,
+            nlocals,
+            ops,
+            ..
+        } => format!(
+            "fun fn =>\n  \
+             if fn = {self_idx} then some ⟨{arity}, {nlocals}, {body}⟩ else none",
+            arity = c.arity(),
+            body = render_ops_value(ops),
+        ),
     }
 }
 
@@ -1036,10 +1429,109 @@ fn render_host_value(c: &Cert) -> String {
              else if fn = {add_idx} then some (2, add)\n    \
              else if fn = {sub_idx} then some (2, sub)\n    else none",
         ),
+        Cert::AdtConstructor { .. } | Cert::FieldProjection { .. } => {
+            "fun _ _ => fun _ => none".to_string()
+        }
+        Cert::AdtMatch {
+            carrier,
+            box_idx,
+            sub_idx,
+            ..
+        } => format!(
+            "fun _ sub => fun fn =>\n    \
+             if fn = {box_idx} then some (1, boxRef {carrier})\n    \
+             else if fn = {sub_idx} then some (2, sub)\n    else none",
+        ),
     }
 }
 
-fn render_certificate(analysis: &Analysis, model_roots: &[String]) -> String {
+#[derive(Clone)]
+enum LeanInstr {
+    Simple(String),
+    IfElse(Vec<LeanInstr>, Vec<LeanInstr>),
+}
+
+fn render_ops_value(ops: &[Op]) -> String {
+    let mut pos = 0usize;
+    let instrs = parse_lean_instrs(ops, &mut pos, false).unwrap_or_default();
+    render_lean_instr_list(&instrs)
+}
+
+fn parse_lean_instrs(ops: &[Op], pos: &mut usize, nested: bool) -> Option<Vec<LeanInstr>> {
+    let mut out = Vec::new();
+    while *pos < ops.len() {
+        match &ops[*pos] {
+            Op::Else | Op::End if nested => break,
+            Op::If => {
+                *pos += 1;
+                let then_b = parse_lean_instrs(ops, pos, true)?;
+                if !matches!(ops.get(*pos), Some(Op::Else)) {
+                    return None;
+                }
+                *pos += 1;
+                let else_b = parse_lean_instrs(ops, pos, true)?;
+                if !matches!(ops.get(*pos), Some(Op::End)) {
+                    return None;
+                }
+                *pos += 1;
+                out.push(LeanInstr::IfElse(then_b, else_b));
+            }
+            Op::Else | Op::End => return None,
+            op => {
+                out.push(LeanInstr::Simple(render_simple_op(op)?));
+                *pos += 1;
+            }
+        }
+    }
+    Some(out)
+}
+
+fn render_simple_op(op: &Op) -> Option<String> {
+    Some(match op {
+        Op::LocalGet(i) => format!(".localGet {i}"),
+        Op::LocalSet(i) => format!(".localSet {i}"),
+        Op::I64Const(n) => format!(".i64Const ({n})"),
+        Op::I32Const(n) => format!(".i32Const ({n})"),
+        Op::RefTest(t) => format!(".refTest {t}"),
+        Op::RefCast(t) => format!(".refCast {t}"),
+        Op::StructNew(t, n) => format!(".structNew {t} {n}"),
+        Op::StructGet(t, f) => format!(".structGet {t} {f}"),
+        Op::RefIsNull => ".refIsNull".to_string(),
+        Op::I64LeS => ".i64LeS".to_string(),
+        Op::I64GeS => ".i64GeS".to_string(),
+        Op::I32LtS => ".i32LtS".to_string(),
+        Op::I32GtS => ".i32GtS".to_string(),
+        Op::Call(f) => format!(".call {f}"),
+        Op::ReturnCall(f) => format!(".returnCall {f}"),
+        Op::If | Op::Else | Op::End | Op::Other => return None,
+    })
+}
+
+fn render_lean_instr_list(instrs: &[LeanInstr]) -> String {
+    let parts = instrs
+        .iter()
+        .map(render_lean_instr)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{parts}]")
+}
+
+fn render_lean_instr(instr: &LeanInstr) -> String {
+    match instr {
+        LeanInstr::Simple(s) => s.clone(),
+        LeanInstr::IfElse(t, e) => format!(
+            ".ifElse {} {}",
+            render_lean_instr_list(t),
+            render_lean_instr_list(e)
+        ),
+    }
+}
+
+fn render_certificate(
+    analysis: &Analysis,
+    model_roots: &[String],
+    model_info: &ModelInfo,
+) -> String {
     let mut s = String::new();
     s.push_str("import CertPrelude\nimport Module\nimport Schema\nimport Manifest\n");
     for r in model_roots {
@@ -1049,13 +1541,16 @@ fn render_certificate(analysis: &Analysis, model_roots: &[String]) -> String {
         "\nset_option linter.unusedSimpArgs false\n\
          set_option linter.unusedVariables false\n\
          set_option maxRecDepth 1000000\n\n\
-         namespace CertProofs\nopen CertPrelude CertModule AverCert\n\n",
+         namespace CertProofs\nopen CertPrelude CertModule AverCert AverCert.Schema\n\n",
     );
     for c in &analysis.certs {
         match c {
             Cert::StraightLine { .. } => s.push_str(&render_straightline_cert(c)),
             Cert::Recursive { .. } => s.push_str(&render_recursive_cert(c)),
             Cert::AccumulatorRecursive { .. } => s.push_str(&render_accumulator_recursive_cert(c)),
+            Cert::AdtConstructor { .. } => s.push_str(&render_adt_constructor_cert(c, model_info)),
+            Cert::FieldProjection { .. } => s.push_str(&render_field_projection_cert(c)),
+            Cert::AdtMatch { .. } => s.push_str(&render_adt_match_cert(c, model_info)),
         }
         s.push('\n');
     }
@@ -1130,16 +1625,16 @@ example :
 /-- Schema-shaped simulation obligation for `{name}` (composed by the single
     final theorem). Partial correctness over any fuel and representation. -/
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub hadd hsub fuel ns vs w hrepr harity hrun
-  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at harity hrun ⊢
+  intro S add sub hadd hsub fuel ns vs w hrepr hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  obtain ⟨hrepr, harity⟩ := hrepr
   cases hrepr with
   | nil =>
-      simp [{name}Code] at harity
+      simp at harity
   | cons hv htail =>
     rename_i n v ns vs
     cases htail with
     | nil =>
-      simp [{name}Code] at harity
       cases fuel with
       | zero => simp only [wFuncN, reduceCtorEq] at hrun
       | succ f =>
@@ -1147,9 +1642,9 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
         · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, popArgs, initLocals, hc] at hrun
         · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, popArgs, initLocals, hc] at hrun
           subst hrun
-          simpa using hadd n ({k}) v (carrierSmall {carrier} ({k})) r hv (S.smallIntro ({k})) hc
+          simpa [AverCert.Schema.intRepr] using hadd n ({k}) v (carrierSmall {carrier} ({k})) r hv (S.smallIntro ({k})) hc
     | cons _ _ =>
-      simp [{name}Code] at harity
+      simp at harity
 "#
     )
 }
@@ -1324,20 +1819,20 @@ example :
 /-- Schema-shaped simulation obligation for `{name}` (composed by the single
     final theorem): the emitted recursive body simulates the model `{name}`. -/
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub hadd hsub fuel ns vs w hrepr harity hrun
-  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at harity hrun ⊢
+  intro S add sub hadd hsub fuel ns vs w hrepr hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  obtain ⟨hrepr, harity⟩ := hrepr
   cases hrepr with
   | nil =>
-      simp [{name}Code] at harity
+      simp at harity
   | cons hv htail =>
       rename_i n v ns vs
       cases htail with
       | nil =>
-          simp [{name}Code] at harity
-          simpa using {name}_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim
+          simpa [AverCert.Schema.intRepr] using {name}_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim
             add sub hadd hsub fuel n v w hv hrun
       | cons _ _ =>
-          simp [{name}Code] at harity
+          simp at harity
 "#
     )
 }
@@ -1513,33 +2008,338 @@ example :
 /-- Schema-shaped simulation obligation for `{name}` (composed by the single
     final theorem): the emitted accumulator-recursive body simulates the model `{name}`. -/
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub hadd hsub fuel ns vs w hrepr harity hrun
-  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at harity hrun ⊢
+  intro S add sub hadd hsub fuel ns vs w hrepr hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  obtain ⟨hrepr, harity⟩ := hrepr
   cases hrepr with
   | nil =>
-      simp [{name}Code] at harity
+      simp at harity
   | cons hvn htail =>
       rename_i n vn ns1 vs1
       cases htail with
       | nil =>
-          simp [{name}Code] at harity
+          simp at harity
       | cons hvacc htail2 =>
           rename_i acc vacc ns2 vs2
           cases htail2 with
           | nil =>
-              simp [{name}Code] at harity
-              simpa using {name}_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim
+              simpa [AverCert.Schema.intRepr] using {name}_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim
                 add sub hadd hsub fuel n acc vn vacc w hvn hvacc hrun
           | cons _ _ =>
-              simp [{name}Code] at harity
+              simp at harity
 "#
     )
+}
+
+fn render_adt_constructor_cert(c: &Cert, model_info: &ModelInfo) -> String {
+    let Cert::AdtConstructor {
+        name,
+        self_idx,
+        carrier,
+        struct_idx,
+        ..
+    } = c
+    else {
+        unreachable!()
+    };
+    let sig = model_info.fns.get(name);
+    let _ = sig
+        .and_then(|s| model_info.inductives.get(&s.ret))
+        .and_then(|i| i.ctors.first());
+    format!(
+        r#"/-! ### {name} — ADT constructor certificate (carrier type {carrier}) -/
+
+theorem {name}_wasm_certified (host : HostTbl) :
+    ∀ (v : WVal), wFuncN {name}Code host 1 {self_idx} [v] = some (.structv {struct_idx} [v]) := by
+  intro v
+  simp [wFuncN, {name}Code, wRunF, popArgs, initLocals]
+
+#print axioms {name}_wasm_certified
+
+example :
+    ((wFuncN {name}Code {name}Host 1 {self_idx} [carrierSmall {carrier} 7]).bind carrierToInt)
+      = none := by native_decide
+
+theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+  intro S add sub hadd hsub fuel n vs w hrepr hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  obtain ⟨v, rfl, hv⟩ := hrepr
+  cases fuel with
+  | zero => simp [wFuncN] at hrun
+  | succ f =>
+      simp [wFuncN, wRunF, {name}Code, popArgs, initLocals] at hrun
+      subst hrun
+      exact ⟨v, rfl, by simpa [AverCert.Schema.intRepr] using hv⟩
+"#
+    )
+}
+
+fn render_field_projection_cert(c: &Cert) -> String {
+    let Cert::FieldProjection {
+        name,
+        self_idx,
+        carrier: _,
+        struct_idx,
+        field_idx,
+        ..
+    } = c
+    else {
+        unreachable!()
+    };
+    let expected = if *field_idx == 0 { "a" } else { "b" };
+    format!(
+        r#"/-! ### {name} — field projection certificate -/
+
+theorem {name}_wasm_certified (host : HostTbl) :
+    ∀ (a b : WVal), wFuncN {name}Code host 1 {self_idx} [.structv {struct_idx} [a, b]] = some {expected} := by
+  intro a b
+  simp [wFuncN, {name}Code, wRunF, popArgs, initLocals]
+
+#print axioms {name}_wasm_certified
+
+theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+  intro S add sub hadd hsub fuel p vs w hrepr hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  rcases p with ⟨a, b⟩
+  subst hrepr
+  cases fuel with
+  | zero => simp [wFuncN] at hrun
+  | succ f =>
+      simp [wFuncN, wRunF, {name}Code, popArgs, initLocals] at hrun
+      subst hrun
+      rfl
+"#
+    )
+}
+
+fn render_adt_match_cert(c: &Cert, model_info: &ModelInfo) -> String {
+    let Cert::AdtMatch {
+        name,
+        self_idx,
+        carrier,
+        box_idx: _,
+        sub_idx: _,
+        ..
+    } = c
+    else {
+        unreachable!()
+    };
+    let ty = model_info
+        .fns
+        .get(name)
+        .and_then(|s| s.params.first())
+        .map(|s| s.as_str())
+        .unwrap_or("Op");
+    let repr = format!("{ty}Repr");
+    let host_ref = format!("{name}HostRef");
+    format!(
+        r#"/-! ### {name} — ADT match certificate (carrier type {carrier}) -/
+
+theorem {name}_wasm_certified
+    (S : CarrierSpec {carrier})
+    (sub : List WVal → Option WVal)
+    (hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w) :
+    ∀ (fuel : Nat) (o : {ty}) (v w : WVal), {repr} S o v →
+      wFuncN {name}Code ({name}Host (fun _ => none) sub) fuel {self_idx} [v] = some w →
+      S.Repr ({name} o) w := by
+  intro fuel
+  cases fuel with
+  | zero => intro o v w hv hrun; simp [wFuncN] at hrun
+  | succ f =>
+      intro o v w hv hrun
+      cases o with
+      | add x =>
+          obtain ⟨cx, rfl, hcx⟩ := hv
+          simp [wFuncN, wRunF, {name}Code, {name}Host, b32, popArgs, initLocals] at hrun
+          subst hrun
+          simpa [{name}] using hcx
+      | neg x =>
+          obtain ⟨cx, rfl, hcx⟩ := hv
+          simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32, popArgs, initLocals] at hrun
+          rcases hs : sub [carrierSmall {carrier} 0, cx] with _ | w' <;> simp [hs] at hrun
+          subst hrun
+          have := hsub 0 x (carrierSmall {carrier} 0) cx w' (S.smallIntro 0) hcx hs
+          simpa [{name}] using this
+      | zero =>
+          subst hv
+          simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32, popArgs, initLocals] at hrun
+          subst hrun
+          simpa [{name}] using S.smallIntro 0
+
+#print axioms {name}_wasm_certified
+
+def {host_ref} : HostTbl := {name}Host (fun _ => none) (subRef {carrier})
+example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv 0 [carrierSmall {carrier} 7]]).bind carrierToInt)
+    = some 7 := by native_decide
+example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv 1 [carrierSmall {carrier} 3]]).bind carrierToInt)
+    = some (-3) := by native_decide
+example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv 2 []]).bind carrierToInt)
+    = some 0 := by native_decide
+
+theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+  intro S add sub hadd hsub fuel o vs w hrepr hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  obtain ⟨v, rfl, hv⟩ := hrepr
+  simpa [AverCert.Schema.intRepr] using {name}_wasm_certified S sub hsub fuel o v w hv hrun
+"#
+    )
+}
+
+fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String {
+    let mut out = String::new();
+    let mut emitted = std::collections::HashSet::new();
+    for c in &analysis.certs {
+        let Some((ty, indices)) = adt_repr_indices(c, model_info) else {
+            continue;
+        };
+        if !emitted.insert(ty.clone()) {
+            continue;
+        }
+        let Some(ind) = model_info.inductives.get(&ty) else {
+            continue;
+        };
+        out.push_str(&format!(
+            "def {ty}Repr (S : CarrierSpec {}) : {ty} → WVal → Prop\n",
+            c.carrier()
+        ));
+        for (i, ctor) in ind.ctors.iter().enumerate() {
+            let idx = indices.get(i).copied().unwrap_or(i as u32);
+            if ctor.fields.is_empty() {
+                out.push_str(&format!("  | .{}, v => v = .structv {idx} []\n", ctor.name));
+            } else if ctor.fields.len() == 1 && ctor.fields[0] == "Int" {
+                out.push_str(&format!(
+                    "  | .{} x, v => ∃ cx, v = .structv {idx} [cx] ∧ S.Repr x cx\n",
+                    ctor.name
+                ));
+            } else {
+                out.push_str(&format!("  | .{}, _ => False\n", ctor.name));
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn adt_repr_indices(c: &Cert, model_info: &ModelInfo) -> Option<(String, Vec<u32>)> {
+    match c {
+        Cert::AdtMatch {
+            name,
+            add_variant_idx,
+            neg_variant_idx,
+            zero_variant_idx,
+            ..
+        } => {
+            let ty = model_info.fns.get(name)?.params.first()?.clone();
+            Some((
+                ty,
+                vec![*add_variant_idx, *neg_variant_idx, *zero_variant_idx],
+            ))
+        }
+        Cert::AdtConstructor {
+            name, struct_idx, ..
+        } => {
+            let ty = model_info.fns.get(name)?.ret.clone();
+            let ind = model_info.inductives.get(&ty)?;
+            let base = *struct_idx;
+            let mut indices = Vec::new();
+            for i in 0..ind.ctors.len() {
+                indices.push(base + i as u32);
+            }
+            Some((ty, indices))
+        }
+        _ => None,
+    }
+}
+
+fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
+    let name = c.name();
+    match c {
+        Cert::AdtConstructor { .. } => {
+            let sig = model_info.fns.get(name);
+            let ret = sig.map(|s| s.ret.as_str()).unwrap_or("Unit");
+            let ctor = sig
+                .and_then(|s| model_info.inductives.get(&s.ret))
+                .and_then(|i| i.ctors.first())
+                .map(|c| c.name.as_str())
+                .unwrap_or("mk");
+            format!(
+                "abbrev {name}Ob : Schema.Obligation :=\n  \
+                 {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+                 code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+                 Dom := Int, Cod := {ret},\n    \
+                 domRepr := fun S n vs => ∃ v, vs = [v] ∧ intRepr S n v,\n    \
+                 codRepr := fun S x w => {ret}Repr S x w,\n    \
+                 model := fun n => {ret}.{ctor} n }}\n\n",
+                carrier = c.carrier(),
+                host = c.host_expr(),
+                self_idx = c.self_idx(),
+            )
+        }
+        Cert::FieldProjection {
+            struct_idx,
+            field_idx,
+            ..
+        } => {
+            let model = if *field_idx == 0 { "p.1" } else { "p.2" };
+            format!(
+                "abbrev {name}Ob : Schema.Obligation :=\n  \
+                 {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+                 code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+                 Dom := WVal × WVal, Cod := WVal,\n    \
+                 domRepr := fun _ p vs => vs = [.structv {struct_idx} [p.1, p.2]],\n    \
+                 codRepr := fun S v w => verbatimRepr S v w,\n    \
+                 model := fun p => {model} }}\n\n",
+                carrier = c.carrier(),
+                host = c.host_expr(),
+                self_idx = c.self_idx(),
+            )
+        }
+        Cert::AdtMatch { .. } => {
+            let ty = model_info
+                .fns
+                .get(name)
+                .and_then(|s| s.params.first())
+                .map(|s| s.as_str())
+                .unwrap_or("Op");
+            format!(
+                "abbrev {name}Ob : Schema.Obligation :=\n  \
+                 {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+                 code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+                 Dom := {ty}, Cod := Int,\n    \
+                 domRepr := fun S o vs => ∃ v, vs = [v] ∧ {ty}Repr S o v,\n    \
+                 codRepr := fun S n w => intRepr S n w,\n    \
+                 model := {name} }}\n\n",
+                carrier = c.carrier(),
+                host = c.host_expr(),
+                self_idx = c.self_idx(),
+            )
+        }
+        _ => format!(
+            "abbrev {name}Ob : Schema.Obligation :=\n  \
+             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+             Dom := List Int, Cod := Int,\n    \
+             domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = {arity},\n    \
+             codRepr := fun S n w => intRepr S n w,\n    \
+             model := {model} }}\n\n",
+            carrier = c.carrier(),
+            host = c.host_expr(),
+            self_idx = c.self_idx(),
+            model = c.model_expr(),
+            arity = c.arity(),
+        ),
+    }
 }
 
 /// The generated manifest literal, mirroring `cert-manifest.json`: the subject
 /// metadata plus one `Obligation` per certified export. This is the LITERAL the
 /// consumer pins.
-fn render_manifest_lean(analysis: &Analysis, model_roots: &[String], sha: &str) -> String {
+fn render_manifest_lean(
+    analysis: &Analysis,
+    model_roots: &[String],
+    model_info: &ModelInfo,
+    sha: &str,
+) -> String {
     let mut s = String::new();
     s.push_str("import Schema\nimport Module\n");
     for r in model_roots {
@@ -1549,18 +2349,10 @@ fn render_manifest_lean(analysis: &Analysis, model_roots: &[String], sha: &str) 
         "\nset_option linter.unusedVariables false\n\n\
          namespace AverCert\nopen AverCert.Schema CertPrelude\n\n",
     );
+    s.push_str(&render_user_repr_defs(analysis, model_info));
     // One obligation def per certified export.
     for c in &analysis.certs {
-        let name = c.name();
-        s.push_str(&format!(
-            "abbrev {name}Ob : Schema.Obligation :=\n  \
-             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
-             code := CertModule.{name}Code, host := {host}, self := {self_idx}, model := {model} }}\n\n",
-            carrier = c.carrier(),
-            host = c.host_expr(),
-            self_idx = c.self_idx(),
-            model = c.model_expr(),
-        ));
+        s.push_str(&render_obligation_def(c, model_info));
     }
     // Subject + manifest.
     let exports = analysis
@@ -1702,6 +2494,9 @@ fn render_manifest(
             Cert::StraightLine { .. } => "straight-line",
             Cert::Recursive { .. } => "self-recursive",
             Cert::AccumulatorRecursive { .. } => "multi-argument self-recursive",
+            Cert::AdtConstructor { .. } => "adt-constructor",
+            Cert::FieldProjection { .. } => "field-projection",
+            Cert::AdtMatch { .. } => "adt-match",
         };
         s.push_str(&format!(
             "\n    {{\"name\": {}, \"class\": \"{}\", \"policy\": \"simulatesModel\", \

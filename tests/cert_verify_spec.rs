@@ -173,8 +173,8 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         "missing artifact-decode line on the happy path:\n{report}"
     );
 
-    // Schema v2 is a breaking cert-data shape. The checker rejects v1 manifests
-    // honestly instead of trying to reinterpret them under the v2 schema.
+    // Schema v3 is a breaking cert-data shape. The checker rejects v1 manifests
+    // honestly instead of trying to reinterpret them under the v3 schema.
     {
         let dir = temp_dir("neg-schema-v1");
         copy_dir(&out_dir, &dir);
@@ -738,7 +738,7 @@ const HONEST_SUMTO_CODE: &str = "/-- Verbatim emitted body of `sumTo` (self-recu
 /// own proof to build green). `@BODY@` is filled with the `simp` that discharges
 /// the trapped `wFuncN`.
 const VACUOUS_SIMULATES: &str = "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-    intro S add sub hadd hsub fuel ns vs w hrepr harity hrun\n  \
+    intro S add sub hadd hsub fuel ns vs w hrepr hrun\n  \
     exfalso\n  \
     cases fuel with\n  \
     | zero => simp only [wFuncN, reduceCtorEq] at hrun\n  \
@@ -750,20 +750,20 @@ fn replace_simulates(cert_dir: &Path, replacement: &str) {
     let c = cert_dir.join("Certificate.lean");
     let src = std::fs::read_to_string(&c).unwrap();
     let old = "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-        intro S add sub hadd hsub fuel ns vs w hrepr harity hrun\n  \
-        simp only [sumToOb, AverCert.Schema.Obligation.holds] at harity hrun ⊢\n  \
+        intro S add sub hadd hsub fuel ns vs w hrepr hrun\n  \
+        simp only [sumToOb, AverCert.Schema.Obligation.holds] at hrun ⊢\n  \
+        obtain ⟨hrepr, harity⟩ := hrepr\n  \
         cases hrepr with\n  \
         | nil =>\n      \
-        simp [sumToCode] at harity\n  \
+        simp at harity\n  \
         | cons hv htail =>\n      \
         rename_i n v ns vs\n      \
         cases htail with\n      \
         | nil =>\n          \
-        simp [sumToCode] at harity\n          \
-        simpa using sumTo_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim\n            \
+        simpa [AverCert.Schema.intRepr] using sumTo_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim\n            \
         add sub hadd hsub fuel n v w hv hrun\n      \
         | cons _ _ =>\n          \
-        simp [sumToCode] at harity";
+        simp at harity";
     assert!(
         src.contains(old),
         "emitted sumTo_simulates block shape changed; update the test"

@@ -30,7 +30,8 @@ structure Subject where
 inductive Policy where
   | simulatesModel
 
-/-- Pointwise lifting of an integer representation relation to argument lists. -/
+/-- Pointwise lifting of an integer representation relation to argument lists.
+    Kept as the standard domain representation for the v2 integer classes. -/
 inductive ReprAll (R : Int → WVal → Prop) : List Int → List WVal → Prop
   | nil : ReprAll R [] []
   | cons {n v ns vs} : R n v → ReprAll R ns vs → ReprAll R (n :: ns) (v :: vs)
@@ -48,10 +49,21 @@ structure CarrierSpec (C : Nat) where
   bigElim : ∀ n s lty les sg,
       Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) → ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0
 
+/-- Standard representation of a single integer result. -/
+def intRepr (S : CarrierSpec C) : Int → WVal → Prop := S.Repr
+
+/-- Standard representation of a boolean result. -/
+def boolRepr (_S : CarrierSpec C) (b : Bool) (w : WVal) : Prop := w = b32 b
+
+/-- Standard representation for byte-level projections: the model value is the
+    exact `WVal` the body returns. This deliberately does not inspect strings. -/
+def verbatimRepr (_S : CarrierSpec C) (v : WVal) (w : WVal) : Prop := w = v
+
 /-- One certified export. `code`/`host`/`self` pin the emitted body and its
-    runtime wiring; `model` is the generated reference function the body is
-    proven to simulate. `aver cert verify` re-derives `code`, `self` and
-    `carrier` from the module bytes, so the obligation is bound to the artifact. -/
+    runtime wiring; `Dom`/`Cod` and their representation relations describe the
+    typed source-model face the body is proven to simulate. `aver cert verify`
+    re-derives `code`, `self` and `carrier` from the module bytes, so the
+    obligation is bound to the artifact. -/
 structure Obligation where
   export_ : String
   policy  : Policy
@@ -59,24 +71,25 @@ structure Obligation where
   code    : CodeTbl
   host    : (List WVal → Option WVal) → (List WVal → Option WVal) → HostTbl
   self    : Nat
-  model   : List Int → Int
+  Dom     : Type
+  Cod     : Type
+  domRepr : CarrierSpec carrier → Dom → List WVal → Prop
+  codRepr : CarrierSpec carrier → Cod → WVal → Prop
+  model   : Dom → Cod
 
 /-- Denotation of `simulatesModel`: under any representation `S` and any host
     add/sub contracts obeying the named integer laws, the emitted body run on a
-    pointwise representation of exactly its decoded entry arity yields a
-    representation of `model ns`. The arity is not a separate trusted field; it
-    is read from the same pinned `code/self` pair as the body. Partial
+    represented domain value yields a represented result of `model x`. Partial
     correctness — vacuous on trap or fuel exhaustion. -/
 def Obligation.holds (o : Obligation) : Prop :=
   ∀ (S : CarrierSpec o.carrier)
     (add sub : List WVal → Option WVal)
     (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
     (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
-    (fuel : Nat) (ns : List Int) (vs : List WVal) (w : WVal),
-    ReprAll S.Repr ns vs →
-    (o.code o.self).map (·.arity) = some ns.length →
+    (fuel : Nat) (x : o.Dom) (vs : List WVal) (w : WVal),
+    o.domRepr S x vs →
     wFuncN o.code (o.host add sub) fuel o.self vs = some w →
-    S.Repr (o.model ns) w
+    o.codRepr S (o.model x) w
 
 structure Manifest where
   subject     : Subject
