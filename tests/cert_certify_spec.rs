@@ -143,6 +143,13 @@ fn certify_composition_fixture_lake_builds_kernel_clean() {
         certified.contains(&"quad"),
         "expected quad certified (composition), got {certified:?}"
     );
+    // A chain calling a chain (hex16 -> quad -> double) must certify through
+    // the same shared table — this is the nested-composition coverage the
+    // review asked to lock in.
+    assert!(
+        certified.contains(&"hex16"),
+        "expected hex16 certified (nested composition), got {certified:?}"
+    );
     let class = manifest["certified"]
         .as_array()
         .unwrap()
