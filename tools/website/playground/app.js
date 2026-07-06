@@ -4121,6 +4121,7 @@ async function loadGameSourcesAsTabs(gameName) {
 // Each game declares its own button groups. "grid:arrows" and "grid:wasd"
 // are special layout types; everything else is a flow layout.
 
+const GAME_TOUCH_SPREAD = new Set(["eggcatch"]);
 const GAME_TOUCH = {
     life: [
         { label: "Cursor", layout: "grid:arrows", keys: [
@@ -4139,17 +4140,19 @@ const GAME_TOUCH = {
         ]},
     ],
     eggcatch: [
-        { label: "Left", keys: [
+        { label: "Left", layout: "col", keys: [
             { key: "q", text: "Q \u2196" }, { key: "a", text: "A \u2199" },
-        ]},
-        { label: "Right", keys: [
-            { key: "p", text: "P \u2197" }, { key: "l", text: "L \u2198" },
         ]},
         { label: "Mode", keys: [
             { key: "1", text: "A" }, { key: "2", text: "B" },
             { key: "esc", text: "Esc" },
         ]},
+        { label: "Right", layout: "col", keys: [
+            { key: "p", text: "P \u2197" }, { key: "l", text: "L \u2198" },
+        ]},
     ],
+    // Container modifier: catch pairs pinned to the screen edges.
+    // (read by buildTouchControls via GAME_TOUCH_SPREAD)
     snake: [
         { label: "Direction", layout: "grid:arrows", keys: [
             { key: "up", text: "↑" }, { key: "left", text: "←" },
@@ -4235,6 +4238,7 @@ function buildTouchControls(gameName) {
         return;
     }
     container.style.display = "flex";
+    container.classList.toggle("spread", GAME_TOUCH_SPREAD.has(gameName));
     for (const group of config) {
         const div = document.createElement("div");
         div.className = "touch-group";
@@ -4249,6 +4253,8 @@ function buildTouchControls(gameName) {
             wrap.className = "touch-grid arrows";
         } else if (group.layout === "grid:wasd") {
             wrap.className = "touch-grid wasd";
+        } else if (group.layout === "col") {
+            wrap.className = "touch-actions col";
         } else {
             wrap.className = "touch-actions";
         }
