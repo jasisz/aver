@@ -1450,7 +1450,17 @@ body {
     .workspace[data-mobile-view="editor"] .editor-pane { max-height: none; flex: 1; }
     .workspace[data-mobile-view="output"] .editor-tabs { display: none; }
     .workspace[data-mobile-view="output"] .editor-wrap { display: none; }
-    .workspace[data-mobile-view="output"] .editor-pane { max-height: none; }
+    /* With its content hidden the pane must stop stretching (base rule is
+       flex: 1) or it leaves a dead hole and crushes the terminal below. */
+    .workspace[data-mobile-view="output"] .editor-pane {
+        flex: 0 0 auto;
+        max-height: none;
+    }
+    .workspace[data-mobile-view="output"] .output-pane { flex: 1 1 auto; }
+    /* Board on top, thumbs at the bottom. */
+    .workspace[data-mobile-view="output"] .terminal-wrap { order: 1; }
+    .workspace[data-mobile-view="output"] .console-wrap { order: 2; }
+    .workspace[data-mobile-view="output"] .output-pane .touch-controls { order: 3; }
     .output-pane {
         min-width: 0;
         min-height: 200px;

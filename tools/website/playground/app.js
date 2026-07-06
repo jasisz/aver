@@ -180,6 +180,9 @@ function setMobileView(view) {
     ws.dataset.mobileView = view;
     const flip = document.querySelector("[data-mobile-flip]");
     if (flip) flip.textContent = view === "editor" ? "\u25a6 Output" : "\u270e Code";
+    // The terminal sizes itself to its box; kick a resize so it reclaims
+    // the space the editor just released (or gave back).
+    window.dispatchEvent(new Event("resize"));
 }
 document.querySelector("[data-mobile-flip]")?.addEventListener("click", () => {
     const ws = document.querySelector(".workspace");
