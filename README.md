@@ -20,7 +20,7 @@ Readability comes second, and it still counts: the risky part of AI-written code
 - selected effectful behavior can be verified with explicit stubs and trace assertions
 - effectful runs can be recorded and replayed deterministically
 
-The toolchain (run / verify / check / audit / why / context / compile / bench / proof / replay) lives in [docs/cli.md](docs/cli.md). Backend-specific deep dives: [docs/bench.md](docs/bench.md), [docs/transpilation.md](docs/transpilation.md), [docs/lean.md](docs/lean.md), [docs/dafny.md](docs/dafny.md), [docs/wasm.md](docs/wasm.md), [docs/rust.md](docs/rust.md).
+The toolchain (run / verify / check / audit / why / context / compile / bench / proof / replay) lives in [docs/cli.md](docs/cli.md). Backend-specific deep dives: [docs/bench.md](docs/bench.md), [docs/transpilation.md](docs/transpilation.md), [docs/lean.md](docs/lean.md), [docs/dafny.md](docs/dafny.md), [docs/wasm.md](docs/wasm.md), [docs/rust.md](docs/rust.md). Compiled wasm-gc modules can carry a machine-checkable certificate of what their exports compute: [docs/certification.md](docs/certification.md).
 
 This is not a language optimized for humans to type by hand all day. It is optimized for AI to generate code that humans can inspect, constrain, test, and ship.
 
