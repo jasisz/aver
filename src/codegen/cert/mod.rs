@@ -142,6 +142,10 @@ struct ClosureEntry {
 
 /// A certified function and the template holes extracted from its body.
 enum Cert {
+    /// Generic non-recursive certificate. The inner shape still carries the
+    /// byte-derived face and proof parameters; the outer class records that the
+    /// non-recursive walker admitted it.
+    NonRecursive { inner: Box<Cert> },
     /// `fn(x: Int) -> Int = x + k`; box=`box_idx`, add=`add_idx`.
     StraightLine {
         name: String,
@@ -268,8 +272,15 @@ enum Cert {
 }
 
 impl Cert {
-    fn name(&self) -> &str {
+    fn inner(&self) -> &Cert {
         match self {
+            Cert::NonRecursive { inner } => inner,
+            _ => self,
+        }
+    }
+
+    fn name(&self) -> &str {
+        match self.inner() {
             Cert::StraightLine { name, .. }
             | Cert::Recursive { name, .. }
             | Cert::AccumulatorRecursive { name, .. }
@@ -280,10 +291,11 @@ impl Cert {
             | Cert::IntRangePredicate { name, .. }
             | Cert::AdtMatch { name, .. }
             | Cert::Composition { name, .. } => name,
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
     fn self_idx(&self) -> u32 {
-        match self {
+        match self.inner() {
             Cert::StraightLine { self_idx, .. }
             | Cert::Recursive { self_idx, .. }
             | Cert::AccumulatorRecursive { self_idx, .. }
@@ -294,10 +306,11 @@ impl Cert {
             | Cert::IntRangePredicate { self_idx, .. }
             | Cert::AdtMatch { self_idx, .. }
             | Cert::Composition { self_idx, .. } => *self_idx,
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
     fn carrier(&self) -> u32 {
-        match self {
+        match self.inner() {
             Cert::StraightLine { carrier, .. }
             | Cert::Recursive { carrier, .. }
             | Cert::AccumulatorRecursive { carrier, .. }
@@ -308,10 +321,11 @@ impl Cert {
             | Cert::IntRangePredicate { carrier, .. }
             | Cert::AdtMatch { carrier, .. }
             | Cert::Composition { carrier, .. } => *carrier,
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
     fn arity(&self) -> usize {
-        match self {
+        match self.inner() {
             Cert::StraightLine { .. } | Cert::Recursive { .. } => 1,
             Cert::AccumulatorRecursive { .. } => 2,
             Cert::AdtConstructor { field_count, .. } => *field_count as usize,
@@ -321,11 +335,12 @@ impl Cert {
             | Cert::IntRangePredicate { .. }
             | Cert::AdtMatch { .. }
             | Cert::Composition { .. } => 1,
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
     /// The Lean expression for the model this export simulates.
     fn model_expr(&self) -> String {
-        match self {
+        match self.inner() {
             Cert::StraightLine { k, .. } => format!("fun ns => ns.headD 0 + ({k})"),
             Cert::Recursive { name, .. } | Cert::Composition { name, .. } => {
                 format!("fun ns => {name} (ns.headD 0)")
@@ -339,12 +354,13 @@ impl Cert {
             | Cert::VerbatimWidenedMatch { .. }
             | Cert::IntRangePredicate { .. }
             | Cert::AdtMatch { .. } => "fun x => x".to_string(),
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
     /// The Lean expression for the 2-arg host builder in `Obligation` shape
     /// (`add → sub → HostTbl`); straight-line ignores `sub`.
     fn host_expr(&self) -> String {
-        match self {
+        match self.inner() {
             Cert::StraightLine { name, .. } => format!("fun add _ => CertModule.{name}Host add"),
             Cert::Recursive { name, .. }
             | Cert::AccumulatorRecursive { name, .. }
@@ -360,6 +376,7 @@ impl Cert {
                 format!("fun _ _ => CertModule.{name}Host")
             }
             Cert::AdtMatch { name, .. } => format!("CertModule.{name}Host"),
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
     /// The source-level `Dom`/`Cod` type names recorded in the manifest JSON so
@@ -368,7 +385,7 @@ impl Cert {
     /// rendered ASCII-safe.
     fn source_dom_cod(&self, model_info: &ModelInfo) -> (String, String) {
         let ascii = |s: &str| ascii_type_name(s);
-        match self {
+        match self.inner() {
             Cert::StraightLine { .. }
             | Cert::Recursive { .. }
             | Cert::AccumulatorRecursive { .. }
@@ -402,6 +419,7 @@ impl Cert {
                     (dom, "WVal".to_string())
                 }
             }
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
 }
@@ -462,7 +480,7 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
     let mut has_add = false;
     let mut has_sub = false;
     for c in &certs {
-        match c {
+        match c.inner() {
             Cert::StraightLine { .. } => {
                 has_box = true;
                 has_add = true;
@@ -498,6 +516,7 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
                 has_sub |= *s;
                 has_box |= *b;
             }
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
     if has_box {
@@ -591,7 +610,7 @@ pub enum ObligationFace {
 
 impl ObligationFace {
     fn of_cert(c: &Cert) -> ObligationFace {
-        match c {
+        match c.inner() {
             Cert::StraightLine { .. }
             | Cert::Recursive { .. }
             | Cert::AccumulatorRecursive { .. }
@@ -603,6 +622,7 @@ impl ObligationFace {
             Cert::VerbatimWidenedMatch { .. } => ObligationFace::VerbatimWidened,
             Cert::AdtMatch { .. } | Cert::WidenedIntMatch { .. } => ObligationFace::AdtMatch,
             Cert::AdtConstructor { .. } => ObligationFace::AdtConstructor,
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
 
@@ -1021,32 +1041,6 @@ fn classify(
     user_idx_set: &std::collections::HashSet<u32>,
     fns: &std::collections::HashMap<u32, &UserFn>,
 ) -> Result<Cert, String> {
-    // Strip a trailing `End` (function end) for the straight-line match.
-    let ops: &[Op] = match f.ops.last() {
-        Some(Op::End) => &f.ops[..f.ops.len() - 1],
-        _ => &f.ops,
-    };
-
-    // Straight-line add-constant: [localGet 0, i64Const k, call box, call add].
-    if let [Op::LocalGet(0), Op::I64Const(k), Op::Call(b), Op::Call(a)] = ops
-        && *b == box_idx
-        && *a != f.wasm_idx
-        && !user_idx_set.contains(a)
-        && f.arity == 1
-    {
-        let carrier =
-            carrier.ok_or_else(|| "carrier struct type not found in module".to_string())?;
-        return Ok(Cert::StraightLine {
-            name: f.name.clone(),
-            self_idx: f.wasm_idx,
-            nlocals: f.nlocals,
-            carrier,
-            k: *k,
-            box_idx,
-            add_idx: *a,
-        });
-    }
-
     // sumTo-shape self-recursion.
     if let Some(cert) = match_recursive(f, box_idx) {
         return Ok(cert);
@@ -1054,6 +1048,18 @@ fn classify(
 
     // countDown-shape accumulator self-recursion.
     if let Some(cert) = match_accumulator_recursive(f, box_idx) {
+        return Ok(cert);
+    }
+
+    if let Some(cert) = match_nonrecursive(f, box_idx, carrier, user_idx_set) {
+        return Ok(Cert::NonRecursive {
+            inner: Box::new(cert),
+        });
+    }
+
+    // Fallback kept through the first generic step, so a mistake in the generic
+    // admission path does not silently shrink the certified set.
+    if let Some(cert) = match_straightline(f, box_idx, carrier, user_idx_set) {
         return Ok(cert);
     }
 
@@ -1122,6 +1128,48 @@ fn classify(
         );
     }
     Err("body does not match a certified template (straight-line add-constant, single-argument self-recursion, two-argument accumulator recursion, or non-recursive ADT constructor/projection/match)".to_string())
+}
+
+fn match_nonrecursive(
+    f: &UserFn,
+    box_idx: u32,
+    carrier: Option<u32>,
+    user_idx_set: &std::collections::HashSet<u32>,
+) -> Option<Cert> {
+    match_straightline(f, box_idx, carrier, user_idx_set)
+        .or_else(|| match_adt_constructor(f, box_idx, carrier))
+        .or_else(|| match_field_projection(f, carrier))
+        .or_else(|| match_widened_int_match(f, box_idx, carrier))
+        .or_else(|| match_verbatim_widened_match(f, carrier))
+        .or_else(|| match_int_range_predicate(f, carrier))
+        .or_else(|| match_adt_match(f, box_idx, carrier))
+}
+
+fn match_straightline(
+    f: &UserFn,
+    box_idx: u32,
+    carrier: Option<u32>,
+    user_idx_set: &std::collections::HashSet<u32>,
+) -> Option<Cert> {
+    use Op::*;
+    let ops = strip_trailing_end(&f.ops);
+    if let [LocalGet(0), I64Const(k), Call(b), Call(a)] = ops
+        && *b == box_idx
+        && *a != f.wasm_idx
+        && !user_idx_set.contains(a)
+        && f.arity == 1
+    {
+        return Some(Cert::StraightLine {
+            name: f.name.clone(),
+            self_idx: f.wasm_idx,
+            nlocals: f.nlocals,
+            carrier: carrier?,
+            k: *k,
+            box_idx,
+            add_idx: *a,
+        });
+    }
+    None
 }
 
 /// Outcome of the cross-function composition pass on a caller.
@@ -2037,7 +2085,7 @@ fn render_module(analysis: &Analysis, wasm_name: &str, sha: &str) -> String {
 /// `CertModule` so both the certificate proofs and the manifest reference the
 /// one definition.
 fn render_host_def(c: &Cert) -> String {
-    match c {
+    match c.inner() {
         Cert::StraightLine {
             name,
             carrier,
@@ -2112,11 +2160,12 @@ fn render_host_def(c: &Cert) -> String {
              def {name}Host (add _sub : List WVal → Option WVal) : HostTbl := fun fn =>\n    {}\n",
             compose_host_arms(closure),
         ),
+        Cert::NonRecursive { .. } => unreachable!(),
     }
 }
 
 fn render_code_def(c: &Cert) -> String {
-    let doc = match c {
+    let doc = match c.inner() {
         Cert::StraightLine { .. } => "straight-line add-constant",
         Cert::Recursive { .. } => "self-recursive",
         Cert::AccumulatorRecursive { .. } => "accumulator self-recursive",
@@ -2127,6 +2176,7 @@ fn render_code_def(c: &Cert) -> String {
         Cert::IntRangePredicate { .. } => "Int range predicate",
         Cert::AdtMatch { .. } => "ADT variant match",
         Cert::Composition { .. } => "cross-function composition, whole call closure",
+        Cert::NonRecursive { .. } => unreachable!(),
     };
     format!(
         "/-- Verbatim emitted body of `{name}` ({doc}). -/\n\
@@ -2144,7 +2194,7 @@ fn render_code_def(c: &Cert) -> String {
 /// byte-identical to the RHS `render_code_def` emits so the emitted `Module.lean`
 /// is unchanged.
 fn render_code_value(c: &Cert) -> String {
-    match c {
+    match c.inner() {
         Cert::StraightLine {
             self_idx,
             nlocals,
@@ -2237,6 +2287,7 @@ fn render_code_value(c: &Cert) -> String {
             body = render_ops_value(ops),
         ),
         Cert::Composition { closure, .. } => render_closure_code_value(closure),
+        Cert::NonRecursive { .. } => unreachable!(),
     }
 }
 
@@ -2267,7 +2318,7 @@ fn render_closure_code_value(closure: &[ClosureEntry]) -> String {
 /// `holds` vacuous even with an honest `code`) fails the kernel witness.
 /// Definitionally equal to the honest `render_host_def` builder.
 fn render_host_value(c: &Cert) -> String {
-    match c {
+    match c.inner() {
         Cert::StraightLine {
             carrier,
             box_idx,
@@ -2328,6 +2379,7 @@ fn render_host_value(c: &Cert) -> String {
                 compose_host_arms(closure)
             )
         }
+        Cert::NonRecursive { .. } => unreachable!(),
     }
 }
 
@@ -2453,7 +2505,7 @@ fn render_certificate(
          namespace CertProofs\nopen CertPrelude CertModule AverCert AverCert.Schema\n\n",
     );
     for c in &analysis.certs {
-        match c {
+        match c.inner() {
             Cert::StraightLine { .. } => s.push_str(&render_straightline_cert(c)),
             Cert::Recursive { .. } => s.push_str(&render_recursive_cert(c)),
             Cert::AccumulatorRecursive { .. } => s.push_str(&render_accumulator_recursive_cert(c)),
@@ -2466,6 +2518,7 @@ fn render_certificate(
             Cert::VerbatimWidenedMatch { .. } => s.push_str(&render_verbatim_widened_cert(c)),
             Cert::AdtMatch { .. } => s.push_str(&render_adt_match_cert(c, model_info)),
             Cert::Composition { .. } => s.push_str(&render_composition_cert(c)),
+            Cert::NonRecursive { .. } => unreachable!(),
         }
         s.push('\n');
     }
@@ -2474,6 +2527,7 @@ fn render_certificate(
 }
 
 fn render_straightline_cert(c: &Cert) -> String {
+    let c = c.inner();
     let Cert::StraightLine {
         name,
         self_idx,
@@ -3154,6 +3208,7 @@ fn render_composition_cert(c: &Cert) -> String {
 }
 
 fn render_adt_constructor_cert(c: &Cert, model_info: &ModelInfo) -> String {
+    let c = c.inner();
     let Cert::AdtConstructor {
         name,
         self_idx,
@@ -3275,6 +3330,7 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
 }
 
 fn render_field_projection_cert(c: &Cert) -> String {
+    let c = c.inner();
     let Cert::FieldProjection {
         name,
         self_idx,
@@ -3323,6 +3379,7 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
 }
 
 fn render_widened_int_match_cert(c: &Cert, model_info: &ModelInfo) -> String {
+    let c = c.inner();
     let Cert::WidenedIntMatch {
         name,
         self_idx,
@@ -3388,6 +3445,7 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
 }
 
 fn render_verbatim_widened_cert(c: &Cert) -> String {
+    let c = c.inner();
     let Cert::VerbatimWidenedMatch {
         name,
         self_idx,
@@ -3457,6 +3515,7 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
 }
 
 fn render_int_range_predicate_cert(c: &Cert) -> String {
+    let c = c.inner();
     let Cert::IntRangePredicate {
         name,
         self_idx,
@@ -3518,6 +3577,7 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
 }
 
 fn render_adt_match_cert(c: &Cert, model_info: &ModelInfo) -> String {
+    let c = c.inner();
     let Cert::AdtMatch {
         name,
         self_idx,
@@ -3631,6 +3691,7 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
     // untrusted; the checker pins only `Cod = Int`, `codRepr = intRepr` and
     // `Nonempty Dom`.
     for c in &analysis.certs {
+        let c = c.inner();
         let Cert::WidenedIntMatch {
             hit_variant_idx, ..
         } = c
@@ -3666,6 +3727,7 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
     // proof, so the two match on the SAME compiled term (an inline match would
     // elaborate to two distinct, non-defeq auxiliaries).
     for c in &analysis.certs {
+        let c = c.inner();
         let Cert::VerbatimWidenedMatch {
             hit_variant_idx, ..
         } = c
@@ -3691,6 +3753,7 @@ fn widened_match_info<'a>(
     c: &Cert,
     model_info: &'a ModelInfo,
 ) -> Option<(String, &'a InductiveInfo, String)> {
+    let c = c.inner();
     let Cert::WidenedIntMatch { name, .. } = c else {
         return None;
     };
@@ -3713,6 +3776,7 @@ fn widened_match_info<'a>(
 /// makes no claim about a recursive representation (deferred, see the model
 /// stop-loss on recursive-type Repr).
 fn adt_constructor_uses_model(c: &Cert, model_info: &ModelInfo) -> bool {
+    let c = c.inner();
     let Cert::AdtConstructor {
         name, field_count, ..
     } = c
@@ -3739,7 +3803,7 @@ fn verbatim_ctor_shape(field_count: u32) -> (&'static str, &'static str, &'stati
 }
 
 fn adt_repr_indices(c: &Cert, model_info: &ModelInfo) -> Option<(String, Vec<u32>)> {
-    match c {
+    match c.inner() {
         Cert::AdtMatch {
             name,
             add_variant_idx,
@@ -3771,7 +3835,7 @@ fn adt_repr_indices(c: &Cert, model_info: &ModelInfo) -> Option<(String, Vec<u32
 
 fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
     let name = c.name();
-    match c {
+    match c.inner() {
         Cert::AdtConstructor {
             struct_idx,
             field_count,
@@ -4081,16 +4145,20 @@ fn render_manifest(
             s.push(',');
         }
         let kind = match c {
-            Cert::StraightLine { .. } => "straight-line",
-            Cert::Recursive { .. } => "self-recursive",
-            Cert::AccumulatorRecursive { .. } => "multi-argument self-recursive",
-            Cert::AdtConstructor { .. } => "adt-constructor",
-            Cert::FieldProjection { .. } => "field-projection",
-            Cert::WidenedIntMatch { .. } => "widened-int-match",
-            Cert::VerbatimWidenedMatch { .. } => "verbatim-widened-match",
-            Cert::IntRangePredicate { .. } => "int-range-predicate",
-            Cert::AdtMatch { .. } => "adt-match",
-            Cert::Composition { .. } => "cross-function-composition",
+            Cert::NonRecursive { .. } => "non-recursive",
+            _ => match c.inner() {
+                Cert::StraightLine { .. } => "straight-line",
+                Cert::Recursive { .. } => "self-recursive",
+                Cert::AccumulatorRecursive { .. } => "multi-argument self-recursive",
+                Cert::AdtConstructor { .. } => "adt-constructor",
+                Cert::FieldProjection { .. } => "field-projection",
+                Cert::WidenedIntMatch { .. } => "widened-int-match",
+                Cert::VerbatimWidenedMatch { .. } => "verbatim-widened-match",
+                Cert::IntRangePredicate { .. } => "int-range-predicate",
+                Cert::AdtMatch { .. } => "adt-match",
+                Cert::Composition { .. } => "cross-function-composition",
+                Cert::NonRecursive { .. } => unreachable!(),
+            },
         };
         let (dom, cod) = c.source_dom_cod(model_info);
         s.push_str(&format!(
