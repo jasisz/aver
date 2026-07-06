@@ -221,6 +221,11 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             "range-pred",
             vec!["inAsciiDigit"],
         ),
+        (
+            "tools/certkit/fixtures/verbatimwiden.av",
+            "verbatim-widen",
+            vec!["wrapItems"],
+        ),
     ];
 
     for (input, prefix, expected) in cases {

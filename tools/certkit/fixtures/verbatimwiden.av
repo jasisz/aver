@@ -1,0 +1,19 @@
+module VerbatimWiden
+    intent =
+        "Verbatim widened match: project one variant's list payload, default to"
+        "the empty list (which lowers to a null reference) for other variants."
+    exposes [Wrap, wrapItems]
+
+type Wrap
+  Items(List<Int>)
+  Nothing
+
+fn wrapItems(w: Wrap) -> List<Int>
+  ? "Project the list payload, defaulting to the empty list."
+  match w
+    Wrap.Items(xs) -> xs
+    _ -> []
+
+verify wrapItems
+    wrapItems(Wrap.Items([1, 2])) => [1, 2]
+    wrapItems(Wrap.Nothing) => []

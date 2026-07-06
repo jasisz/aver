@@ -102,6 +102,7 @@ enum Op {
     RefCast(u32),
     StructNew(u32, u32),
     StructGet(u32, u32),
+    RefNull,
     RefIsNull,
     I64LeS,
     I64GeS,
@@ -205,6 +206,20 @@ enum Cert {
         box_idx: u32,
         ops: Vec<Op>,
     },
+    /// Non-recursive two-branch match projecting one variant's first field
+    /// VERBATIM (as a raw `WVal`), defaulting to the null reference for every
+    /// other variant: `match j { JsonList(items) -> items; _ -> [] }` where the
+    /// empty list lowers to `ref.null`. No claim about the projected value's
+    /// meaning — `Cod := WVal`, `verbatimRepr` — so it needs no carrier/string
+    /// representation.
+    VerbatimWidenedMatch {
+        name: String,
+        self_idx: u32,
+        nlocals: usize,
+        carrier: u32,
+        hit_variant_idx: u32,
+        ops: Vec<Op>,
+    },
     /// Non-recursive Int -> Bool range predicate: two nested carrier comparisons
     /// against constants, `match cp >= k_lo { true -> cp <= k_hi; false -> false }`
     /// (the `isHighSurrogate`/`isLowSurrogate` shape). Certified over the canonical
@@ -261,6 +276,7 @@ impl Cert {
             | Cert::AdtConstructor { name, .. }
             | Cert::FieldProjection { name, .. }
             | Cert::WidenedIntMatch { name, .. }
+            | Cert::VerbatimWidenedMatch { name, .. }
             | Cert::IntRangePredicate { name, .. }
             | Cert::AdtMatch { name, .. }
             | Cert::Composition { name, .. } => name,
@@ -274,6 +290,7 @@ impl Cert {
             | Cert::AdtConstructor { self_idx, .. }
             | Cert::FieldProjection { self_idx, .. }
             | Cert::WidenedIntMatch { self_idx, .. }
+            | Cert::VerbatimWidenedMatch { self_idx, .. }
             | Cert::IntRangePredicate { self_idx, .. }
             | Cert::AdtMatch { self_idx, .. }
             | Cert::Composition { self_idx, .. } => *self_idx,
@@ -287,6 +304,7 @@ impl Cert {
             | Cert::AdtConstructor { carrier, .. }
             | Cert::FieldProjection { carrier, .. }
             | Cert::WidenedIntMatch { carrier, .. }
+            | Cert::VerbatimWidenedMatch { carrier, .. }
             | Cert::IntRangePredicate { carrier, .. }
             | Cert::AdtMatch { carrier, .. }
             | Cert::Composition { carrier, .. } => *carrier,
@@ -299,6 +317,7 @@ impl Cert {
             Cert::AdtConstructor { field_count, .. } => *field_count as usize,
             Cert::FieldProjection { .. }
             | Cert::WidenedIntMatch { .. }
+            | Cert::VerbatimWidenedMatch { .. }
             | Cert::IntRangePredicate { .. }
             | Cert::AdtMatch { .. }
             | Cert::Composition { .. } => 1,
@@ -317,6 +336,7 @@ impl Cert {
             Cert::AdtConstructor { .. }
             | Cert::FieldProjection { .. }
             | Cert::WidenedIntMatch { .. }
+            | Cert::VerbatimWidenedMatch { .. }
             | Cert::IntRangePredicate { .. }
             | Cert::AdtMatch { .. } => "fun x => x".to_string(),
         }
@@ -334,7 +354,9 @@ impl Cert {
             Cert::AdtConstructor { name, .. } | Cert::FieldProjection { name, .. } => {
                 format!("fun _ _ => CertModule.{name}Host")
             }
-            Cert::WidenedIntMatch { name, .. } | Cert::IntRangePredicate { name, .. } => {
+            Cert::WidenedIntMatch { name, .. }
+            | Cert::VerbatimWidenedMatch { name, .. }
+            | Cert::IntRangePredicate { name, .. } => {
                 format!("fun _ _ => CertModule.{name}Host")
             }
             Cert::AdtMatch { name, .. } => format!("CertModule.{name}Host"),
@@ -352,6 +374,7 @@ impl Cert {
             | Cert::AccumulatorRecursive { .. }
             | Cert::Composition { .. } => ("List Int".to_string(), "Int".to_string()),
             Cert::FieldProjection { .. } => ("WVal x WVal".to_string(), "WVal".to_string()),
+            Cert::VerbatimWidenedMatch { .. } => ("WVal".to_string(), "WVal".to_string()),
             Cert::IntRangePredicate { .. } => ("Int".to_string(), "Bool".to_string()),
             Cert::AdtMatch { name, .. } | Cert::WidenedIntMatch { name, .. } => {
                 let dom = model_info
@@ -456,6 +479,7 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
             }
             Cert::AdtConstructor { .. }
             | Cert::FieldProjection { .. }
+            | Cert::VerbatimWidenedMatch { .. }
             | Cert::IntRangePredicate { .. } => {}
             Cert::WidenedIntMatch { .. } => {
                 has_box = true;
@@ -549,6 +573,11 @@ pub enum ObligationFace {
     /// `domRepr := fun _ cp vs => vs = [carrierSmall carrier cp]` (the canonical
     /// small-carrier domain — every constant and code point fits i64).
     IntPredicate,
+    /// Verbatim widened match: `Dom := WVal`, `Cod := WVal`,
+    /// `codRepr := verbatimRepr`, `domRepr := fun _ v vs => vs = [v]`. The model
+    /// (a raw projection with a null default) is a read declaration; behaviour is
+    /// pinned by executable interpreter tripwires.
+    VerbatimWidened,
     /// ADT variant match: `Cod := Int`, `codRepr := intRepr`. `Dom` and
     /// `domRepr` are stated over a user-inductive `Repr` the checker cannot
     /// re-derive from bytes — a read declaration (only `Nonempty Dom` is pinned).
@@ -571,6 +600,7 @@ impl ObligationFace {
                 struct_idx: *struct_idx,
             },
             Cert::IntRangePredicate { .. } => ObligationFace::IntPredicate,
+            Cert::VerbatimWidenedMatch { .. } => ObligationFace::VerbatimWidened,
             Cert::AdtMatch { .. } | Cert::WidenedIntMatch { .. } => ObligationFace::AdtMatch,
             Cert::AdtConstructor { .. } => ObligationFace::AdtConstructor,
         }
@@ -591,6 +621,10 @@ impl ObligationFace {
             }
             ObligationFace::IntPredicate => {
                 "class: Int range predicate  |  Dom: Int (canonical small carrier)  Cod: Bool  codRepr: boolRepr"
+                    .to_string()
+            }
+            ObligationFace::VerbatimWidened => {
+                "class: verbatim widened match  |  Dom: WVal  Cod: WVal  codRepr: verbatimRepr  (model is a read declaration; behaviour pinned by an interpreter tripwire)"
                     .to_string()
             }
             ObligationFace::AdtMatch => {
@@ -689,6 +723,26 @@ impl ObligationFace {
                      HEq o.domRepr (fun (_S : AverCert.Schema.CarrierSpec o.carrier) \
                      (cp : Int) (vs : List CertPrelude.WVal) =>\n      \
                      vs = [CertPrelude.carrierSmall o.carrier cp]) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+            }
+            ObligationFace::VerbatimWidened => {
+                s.push_str(&format!(
+                    "example : ({obl}[{idx}]?).map (fun o => o.Dom) = some CertPrelude.WVal := rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ({obl}[{idx}]?).map (fun o => o.Cod) = some CertPrelude.WVal := rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o → \
+                     HEq o.codRepr (@AverCert.Schema.verbatimRepr o.carrier) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o →\n    \
+                     HEq o.domRepr (fun (_S : AverCert.Schema.CarrierSpec o.carrier) \
+                     (v : CertPrelude.WVal) (vs : List CertPrelude.WVal) =>\n      \
+                     vs = [v]) := by\n  \
                      intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
                 ));
             }
@@ -860,6 +914,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                             struct_type_index,
                             field_index,
                         } => Op::StructGet(struct_type_index, field_index),
+                        Operator::RefNull { .. } => Op::RefNull,
                         Operator::RefIsNull => Op::RefIsNull,
                         Operator::I64LeS => Op::I64LeS,
                         Operator::I64GeS => Op::I64GeS,
@@ -1011,6 +1066,10 @@ fn classify(
     }
 
     if let Some(cert) = match_widened_int_match(f, box_idx, carrier) {
+        return Ok(cert);
+    }
+
+    if let Some(cert) = match_verbatim_widened_match(f, carrier) {
         return Ok(cert);
     }
 
@@ -1357,6 +1416,53 @@ fn match_widened_int_match(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Op
         carrier,
         hit_variant_idx: *ht,
         box_idx,
+        ops: ops.to_vec(),
+    })
+}
+
+/// Two-branch match projecting one variant's first field verbatim (as a raw
+/// `WVal`) with a null-reference default:
+///   `[localGet 0, localSet s, localGet s, refTest ht, if
+///       localGet s, refCast ht, structGet ht 0, localSet r, localGet r
+///     else
+///       refNull, end]`
+/// The projected value is returned as-is (`Cod := WVal`, `verbatimRepr`), so the
+/// class needs no carrier/string representation — the shape of an empty-list or
+/// null-defaulting variant reader such as `jsonList`.
+fn match_verbatim_widened_match(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
+    use Op::*;
+    if f.arity != 1 || !f.calls.is_empty() {
+        return None;
+    }
+    let carrier = carrier?;
+    let ops = strip_trailing_end(&f.ops);
+    let [
+        LocalGet(0),
+        LocalSet(s0),
+        LocalGet(s1),
+        RefTest(ht),
+        If,
+        LocalGet(s2),
+        RefCast(hc),
+        StructGet(hg, 0),
+        LocalSet(r0),
+        LocalGet(r1),
+        Else,
+        RefNull,
+        End,
+    ] = ops
+    else {
+        return None;
+    };
+    if s0 != s1 || s0 != s2 || ht != hc || ht != hg || r0 != r1 || *ht == carrier {
+        return None;
+    }
+    Some(Cert::VerbatimWidenedMatch {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier,
+        hit_variant_idx: *ht,
         ops: ops.to_vec(),
     })
 }
@@ -1974,6 +2080,7 @@ fn render_host_def(c: &Cert) -> String {
         ),
         Cert::AdtConstructor { name, .. }
         | Cert::FieldProjection { name, .. }
+        | Cert::VerbatimWidenedMatch { name, .. }
         | Cert::IntRangePredicate { name, .. } => format!(
             "/-- Runtime host wiring for `{name}` (no host calls). -/\n\
              def {name}Host : HostTbl := fun _ => none\n",
@@ -2016,6 +2123,7 @@ fn render_code_def(c: &Cert) -> String {
         Cert::AdtConstructor { .. } => "ADT constructor",
         Cert::FieldProjection { .. } => "field projection",
         Cert::WidenedIntMatch { .. } => "widened Int variant match",
+        Cert::VerbatimWidenedMatch { .. } => "verbatim widened variant match",
         Cert::IntRangePredicate { .. } => "Int range predicate",
         Cert::AdtMatch { .. } => "ADT variant match",
         Cert::Composition { .. } => "cross-function composition, whole call closure",
@@ -2100,6 +2208,12 @@ fn render_code_value(c: &Cert) -> String {
             ..
         }
         | Cert::WidenedIntMatch {
+            self_idx,
+            nlocals,
+            ops,
+            ..
+        }
+        | Cert::VerbatimWidenedMatch {
             self_idx,
             nlocals,
             ops,
@@ -2190,6 +2304,7 @@ fn render_host_value(c: &Cert) -> String {
         ),
         Cert::AdtConstructor { .. }
         | Cert::FieldProjection { .. }
+        | Cert::VerbatimWidenedMatch { .. }
         | Cert::IntRangePredicate { .. } => "fun _ _ => fun _ => none".to_string(),
         Cert::WidenedIntMatch {
             carrier, box_idx, ..
@@ -2289,6 +2404,7 @@ fn render_simple_op(op: &Op) -> Option<String> {
         Op::RefCast(t) => format!(".refCast {t}"),
         Op::StructNew(t, n) => format!(".structNew {t} {n}"),
         Op::StructGet(t, f) => format!(".structGet {t} {f}"),
+        Op::RefNull => ".refNull".to_string(),
         Op::RefIsNull => ".refIsNull".to_string(),
         Op::I64LeS => ".i64LeS".to_string(),
         Op::I64GeS => ".i64GeS".to_string(),
@@ -2347,6 +2463,7 @@ fn render_certificate(
                 s.push_str(&render_widened_int_match_cert(c, model_info))
             }
             Cert::IntRangePredicate { .. } => s.push_str(&render_int_range_predicate_cert(c)),
+            Cert::VerbatimWidenedMatch { .. } => s.push_str(&render_verbatim_widened_cert(c)),
             Cert::AdtMatch { .. } => s.push_str(&render_adt_match_cert(c, model_info)),
             Cert::Composition { .. } => s.push_str(&render_composition_cert(c)),
         }
@@ -3270,6 +3387,75 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
     )
 }
 
+fn render_verbatim_widened_cert(c: &Cert) -> String {
+    let Cert::VerbatimWidenedMatch {
+        name,
+        self_idx,
+        carrier,
+        hit_variant_idx,
+        ..
+    } = c
+    else {
+        unreachable!()
+    };
+    let hit = hit_variant_idx;
+    let other = if *hit_variant_idx == 0 { 1 } else { 0 };
+    let evalset = format!(
+        "wFuncN, wRunF, {name}Code, {name}Host, {name}Model, b32, popArgs, initLocals, List.set"
+    );
+    format!(
+        r#"/-! ### {name} — verbatim widened match certificate (carrier type {carrier}) -/
+
+/-- The VERBATIM emitted body reads the first field of variant `{hit}` and
+    returns it as-is, or the null reference for any other value, for ALL inputs
+    `v : WVal` (partial correctness — a trap makes no claim). -/
+theorem {name}_wasm_certified :
+    ∀ (fuel : Nat) (v w : WVal),
+      wFuncN {name}Code {name}Host (fuel + 1) {self_idx} [v] = some w →
+      w = {name}Model v := by
+  intro fuel v w hrun
+  cases v with
+  | i32v n => simp [{evalset}] at hrun
+  | i64v n => simp [{evalset}] at hrun
+  | f64v b => simp [{evalset}] at hrun
+  | null => simp_all [{evalset}]
+  | arr t es =>
+      by_cases ht : t = {hit}
+      · subst ht; simp [{evalset}] at hrun
+      · simp_all [{evalset}]
+  | structv t fs =>
+      by_cases ht : t = {hit}
+      · subst ht
+        cases fs with
+        | nil => simp [{evalset}] at hrun
+        | cons x rest => simp_all [{evalset}]
+      · simp_all [{evalset}]
+
+#print axioms {name}_wasm_certified
+
+-- Executable tripwires: the projected variant returns its first field, every
+-- other value returns the null reference.
+def {name}HostRef : HostTbl := {name}Host
+example :
+    (wFuncN {name}Code {name}HostRef 4 {self_idx} [.structv {hit} [.i64v 42]]).bind
+      (fun w => match w with | .i64v n => some n | _ => none) = some 42 := by native_decide
+example :
+    (wFuncN {name}Code {name}HostRef 4 {self_idx} [.structv {other} []]).bind
+      (fun w => match w with | .null => some 0 | _ => none) = some 0 := by native_decide
+
+theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+  intro S add sub hadd hsub fuel v vs w hrepr hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  subst hrepr
+  cases fuel with
+  | zero => simp [wFuncN] at hrun
+  | succ f =>
+      have hc := {name}_wasm_certified f v w hrun
+      simpa [AverCert.Schema.verbatimRepr] using hc
+"#
+    )
+}
+
 fn render_int_range_predicate_cert(c: &Cert) -> String {
     let Cert::IntRangePredicate {
         name,
@@ -3474,6 +3660,24 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
             }
         }
         out.push('\n');
+    }
+    // Shared model definitions for verbatim widened matches: a single named
+    // function referenced by both the obligation `model` and the certificate
+    // proof, so the two match on the SAME compiled term (an inline match would
+    // elaborate to two distinct, non-defeq auxiliaries).
+    for c in &analysis.certs {
+        let Cert::VerbatimWidenedMatch {
+            hit_variant_idx, ..
+        } = c
+        else {
+            continue;
+        };
+        out.push_str(&format!(
+            "def {name}Model : CertPrelude.WVal → CertPrelude.WVal\n  \
+             | .structv {hit_variant_idx} (x :: _) => x\n  \
+             | _ => .null\n\n",
+            name = c.name(),
+        ));
     }
     out
 }
@@ -3687,6 +3891,18 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
             host = c.host_expr(),
             self_idx = c.self_idx(),
         ),
+        Cert::VerbatimWidenedMatch { .. } => format!(
+            "abbrev {name}Ob : Schema.Obligation :=\n  \
+             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+             Dom := WVal, Cod := WVal,\n    \
+             domRepr := fun _S v vs => vs = [v],\n    \
+             codRepr := fun S x w => verbatimRepr S x w,\n    \
+             model := {name}Model }}\n\n",
+            carrier = c.carrier(),
+            host = c.host_expr(),
+            self_idx = c.self_idx(),
+        ),
         _ => format!(
             "abbrev {name}Ob : Schema.Obligation :=\n  \
              {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
@@ -3871,6 +4087,7 @@ fn render_manifest(
             Cert::AdtConstructor { .. } => "adt-constructor",
             Cert::FieldProjection { .. } => "field-projection",
             Cert::WidenedIntMatch { .. } => "widened-int-match",
+            Cert::VerbatimWidenedMatch { .. } => "verbatim-widened-match",
             Cert::IntRangePredicate { .. } => "int-range-predicate",
             Cert::AdtMatch { .. } => "adt-match",
             Cert::Composition { .. } => "cross-function-composition",
