@@ -1175,20 +1175,51 @@ fn match_adt_constructor(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Opti
 
 fn match_field_projection(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
     use Op::*;
-    let ops = strip_trailing_end(&f.ops);
-    let [LocalGet(0), StructGet(struct_idx, field_idx)] = ops else {
-        return None;
-    };
-    if f.arity != 1 || *struct_idx == carrier? || !f.calls.is_empty() {
+    if f.arity != 1 || !f.calls.is_empty() {
         return None;
     }
+    let ops = strip_trailing_end(&f.ops);
+    let carrier = carrier?;
+    // Two lowerings project a single field from a one-struct argument and
+    // return it verbatim. Both are recorded op-for-op in `code`, so the proof
+    // and the checker reason about exactly the emitted bytes.
+    //
+    //  * bare record access `u.field`:
+    //        [localGet 0, structGet t field]
+    //  * tuple / record destructuring `match p { (x, _) -> x }`, which lowers
+    //    with a scrutinee bind-and-cast preamble and a result-bind tail:
+    //        [localGet 0, localSet s, localGet s, refCast t,
+    //         structGet t field, localSet r, localGet r]
+    //
+    // The class models the argument as a two-field struct (`Dom := WVal × WVal`,
+    // `model := p.1 / p.2`), so a projected `field` beyond {0,1} has no faithful
+    // model here and declines. The bare arm is left byte-identical to the prior
+    // matcher so existing certificates are unchanged.
+    let (struct_idx, field_idx) = match ops {
+        [LocalGet(0), StructGet(t, field)] => {
+            if *t == carrier {
+                return None;
+            }
+            (*t, *field)
+        }
+        [
+            LocalGet(0),
+            LocalSet(s0),
+            LocalGet(s1),
+            RefCast(tc),
+            StructGet(tg, field),
+            LocalSet(r0),
+            LocalGet(r1),
+        ] if s0 == s1 && tc == tg && r0 == r1 && *field <= 1 && *tg != carrier => (*tg, *field),
+        _ => return None,
+    };
     Some(Cert::FieldProjection {
         name: f.name.clone(),
         self_idx: f.wasm_idx,
         nlocals: f.nlocals,
-        carrier: carrier?,
-        struct_idx: *struct_idx,
-        field_idx: *field_idx,
+        carrier,
+        struct_idx,
+        field_idx,
         ops: ops.to_vec(),
     })
 }

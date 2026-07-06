@@ -206,6 +206,11 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             vec!["mk", "eval"],
         ),
         ("examples/core/user_record.av", "user-record", vec!["greet"]),
+        (
+            "tools/certkit/fixtures/tupleproj.av",
+            "tuple-proj",
+            vec!["pairFst", "pairSnd"],
+        ),
     ];
 
     for (input, prefix, expected) in cases {

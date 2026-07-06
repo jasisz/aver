@@ -1,0 +1,21 @@
+module TupleProj
+    intent =
+        "Tuple field projection via destructuring match: the two-component"
+        "accessors both lower to a bind-and-cast projection preamble."
+    exposes [pairFst, pairSnd]
+
+fn pairFst(p: Tuple<Int, Int>) -> Int
+  ? "First component of a pair."
+  match p
+    (a, _) -> a
+
+fn pairSnd(p: Tuple<Int, Int>) -> Int
+  ? "Second component of a pair."
+  match p
+    (_, b) -> b
+
+verify pairFst
+    pairFst((7, 9)) => 7
+
+verify pairSnd
+    pairSnd((7, 9)) => 9
