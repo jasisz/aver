@@ -685,26 +685,8 @@ verify keysToInputsAcc
     keysToInputsAcc([], []) => []
     keysToInputsAcc(["q"], []) => [Input.MoveFox(Chute.LeftUp)]
 
-fn foxGlyph(c: Chute) -> String
-    ? "Single-cell fox glyph, tilted toward the catch position."
-    match c
-        Chute.LeftUp -> "⌜"
-        Chute.LeftDown -> "⌞"
-        Chute.RightUp -> "⌝"
-        Chute.RightDown -> "⌟"
-
-verify foxGlyph
-    foxGlyph(Chute.LeftUp) => "⌜"
-    foxGlyph(Chute.LeftDown) => "⌞"
-    foxGlyph(Chute.RightUp) => "⌝"
-    foxGlyph(Chute.RightDown) => "⌟"
-
-verify foxGlyph law unitWidth
-    given c: Chute = [Chute.LeftUp, Chute.LeftDown, Chute.RightUp, Chute.RightDown]
-    String.len(foxGlyph(c)) => 1
-
 fn modeLetter(mode: Mode) -> String
-    ? "One-letter mode tag for the status line."
+    ? "One-letter tag for the active mode."
     match mode
         Mode.ModeA -> "A"
         Mode.ModeB -> "B"
@@ -714,7 +696,7 @@ verify modeLetter
     modeLetter(Mode.ModeB) => "B"
 
 fn cell(egg: Option<Int>, i: Int) -> String
-    ? "One track cell: a full egg glyph when the egg sits on row i, else a dot."
+    ? "One track cell: the egg glyph when the egg sits on row i, else a dot."
     match egg
         Option.None -> "·"
         Option.Some(p) -> match p == i
@@ -725,15 +707,6 @@ verify cell
     cell(Option.None, 0) => "·"
     cell(Option.Some(2), 2) => "●"
     cell(Option.Some(2), 3) => "·"
-
-fn track(egg: Option<Int>) -> String
-    ? "A chute rendered as its five cells, top row first — always five glyphs."
-    cell(egg, 0) + cell(egg, 1) + cell(egg, 2) + cell(egg, 3) + cell(egg, 4)
-
-verify track
-    track(Option.None) => "·····"
-    track(Option.Some(0)) => "●····"
-    track(Option.Some(4)) => "····●"
 
 fn padTo3(s: String) -> String
     ? "Left-pad a numeric string to width three."
@@ -756,58 +729,112 @@ verify pad3
     pad3(42) => "042"
     pad3(999) => "999"
 
-fn foxSlot(fox: Chute, c: Chute) -> String
-    ? "Fox row cell: the fox glyph when it stands at chute c, else a dot."
+fn spaces(n: Int) -> String
+    ? "A run of n spaces (empty for n <= 0) — the frame's padding brick."
+    match n <= 0
+        true -> ""
+        false -> " " + spaces(n - 1)
+
+verify spaces
+    spaces(0) => ""
+    spaces(3) => "   "
+    spaces(-2) => ""
+
+fn body(l: String, mid: String, r: String) -> String
+    ? "One framed row: left segment, centered middle, right segment, padded"
+      "with spaces to the fixed 44-column interior."
+    bodyGap(l, mid, r, 44 - String.len(l) - String.len(mid) - String.len(r))
+
+verify body
+    String.len(body("", "", "")) => 46
+    String.len(body("  (o>", "", "<o)  ")) => 46
+    body("", "hi", "") => "║                     hi                     ║"
+
+fn bodyGap(l: String, mid: String, r: String, gap: Int) -> String
+    ? "Frame row builder once the padding budget is known; splits the gap"
+      "evenly (left half rounded down) around the middle segment."
+    "║" + l + spaces(Result.withDefault(Int.div(gap, 2), 0)) + mid + spaces(gap - Result.withDefault(Int.div(gap, 2), 0)) + r + "║"
+
+fn basketMark(fox: Chute, c: Chute) -> String
+    ? "The basket sits under exactly one chute lip: a cup at the fox's"
+      "position, a space elsewhere. Always one column wide."
     match chuteEq(fox, c)
-        true -> foxGlyph(c)
+        true -> "⊔"
+        false -> " "
+
+verify basketMark
+    basketMark(Chute.LeftUp, Chute.LeftUp) => "⊔"
+    basketMark(Chute.LeftUp, Chute.RightDown) => " "
+
+verify basketMark law unitWidth
+    given f: Chute = [Chute.LeftUp, Chute.LeftDown, Chute.RightUp, Chute.RightDown]
+    given c: Chute = [Chute.LeftUp, Chute.LeftDown, Chute.RightUp, Chute.RightDown]
+    String.len(basketMark(f, c)) => 1
+
+fn missMark(m: Int, i: Int) -> String
+    ? "Miss counter pip i: a cross when already missed, a dot otherwise."
+    match i < m
+        true -> "×"
         false -> "·"
 
-verify foxSlot
-    foxSlot(Chute.LeftUp, Chute.LeftUp) => "⌜"
-    foxSlot(Chute.LeftUp, Chute.RightDown) => "·"
+verify missMark
+    missMark(2, 0) => "×"
+    missMark(2, 1) => "×"
+    missMark(2, 2) => "·"
 
-fn rowTitle(b: Board) -> String
-    ? "Title line with the active mode tag."
-    "EGG CATCH [" + modeLetter(b.mode) + "]"
+fn upL(egg: Option<Int>, i: Int) -> String
+    ? "Upper-left ramp segment for row i: indent, cell, ramp surface."
+    spaces(3 + 2 * i) + cell(egg, i) + "\\"
 
-verify rowTitle
-    rowTitle(startBoard(7, Mode.ModeA)) => "EGG CATCH [A]"
+verify upL
+    upL(Option.Some(0), 0) => "   ●\\"
+    upL(Option.None, 2) => "       ·\\"
 
-fn rowHens() -> String
-    ? "The two hens perched in the top corners."
-    "H  · · · · ·  H"
+fn upR(egg: Option<Int>, i: Int) -> String
+    ? "Upper-right ramp segment for row i, mirrored."
+    "/" + cell(egg, i) + spaces(3 + 2 * i)
 
-verify rowHens
-    rowHens() => "H  · · · · ·  H"
+fn rowHeader(b: Board) -> String
+    ? "Header row: title, mode tag, score and miss pips."
+    body(" EGG CATCH  mode " + modeLetter(b.mode), "", "SCORE " + pad3(b.score) + "  " + missMark(b.misses, 0) + missMark(b.misses, 1) + missMark(b.misses, 2) + " ")
 
-fn rowChute(label: String, slash: String, egg: Option<Int>) -> String
-    ? "One labelled chute row: name, its slash, and the five-cell track."
-    label + " " + slash + " " + track(egg)
+verify rowHeader
+    rowHeader(startBoard(7, Mode.ModeA)) => body(" EGG CATCH  mode A", "", "SCORE 000  ··· ")
 
-verify rowChute
-    rowChute("LU", "\\", Option.Some(0)) => "LU \\ ●····"
+fn rowStatus(status: String) -> String
+    ? "Bottom status row with the PLAY/OVER tag."
+    body("", "«" + status + "»", "")
 
-fn rowFox(b: Board) -> String
-    ? "Fox row: four slots, the occupied one showing the tilted glyph."
-    "FOX " + foxSlot(b.fox, Chute.LeftUp) + foxSlot(b.fox, Chute.LeftDown) + foxSlot(b.fox, Chute.RightUp) + foxSlot(b.fox, Chute.RightDown)
-
-verify rowFox
-    rowFox(startBoard(7, Mode.ModeA)) => "FOX ⌜···"
-
-fn rowScore(b: Board, status: String) -> String
-    ? "Status line: padded score, miss counter, and PLAY/OVER tag."
-    "SCORE " + pad3(b.score) + " MISS " + String.fromInt(b.misses) + " " + status
-
-verify rowScore
-    rowScore(startBoard(7, Mode.ModeA), "PLAY") => "SCORE 000 MISS 0 PLAY"
+verify rowStatus
+    String.len(rowStatus("PLAY")) => 46
+    String.len(rowStatus("OVER")) => 46
 
 fn renderBoard(b: Board, status: String) -> String
-    ? "The eight fixed rows joined by newlines — same shape for every board."
-    String.join([rowTitle(b), rowHens(), rowChute("LU", "\\", b.lu), rowChute("LD", "\\", b.ld), rowChute("RU", "/", b.ru), rowChute("RD", "/", b.rd), rowFox(b), rowScore(b, status)], "\n")
+    ? "Seventeen fixed rows joined by newlines: framed header, hens, four"
+      "diagonal five-cell ramps meeting at the fox, basket at its position."
+    String.join([
+        "╔════════════════════════════════════════════╗",
+        rowHeader(b),
+        body("", "", ""),
+        body("  (o>", "", "<o)  "),
+        body(upL(b.lu, 0), "", upR(b.ru, 0)),
+        body(upL(b.lu, 1), "", upR(b.ru, 1)),
+        body(upL(b.lu, 2), "/\\_/\\", upR(b.ru, 2)),
+        body(upL(b.lu, 3), "( o.o )", upR(b.ru, 3)),
+        body(upL(b.lu, 4) + basketMark(b.fox, Chute.LeftUp), "\\_( ˇ )_/", basketMark(b.fox, Chute.RightUp) + upR(b.ru, 4)),
+        body("  (o>", "|     |", "<o)  "),
+        body(upL(b.ld, 0), "|     |", upR(b.rd, 0)),
+        body(upL(b.ld, 1), "_|     |_", upR(b.rd, 1)),
+        body(upL(b.ld, 2), "", upR(b.rd, 2)),
+        body(upL(b.ld, 3) + basketMark(b.fox, Chute.LeftDown), "", basketMark(b.fox, Chute.RightDown) + upR(b.rd, 3)),
+        body(upL(b.ld, 4), "", upR(b.rd, 4)),
+        rowStatus(status),
+        "╚════════════════════════════════════════════╝",
+    ], "\n")
 
 verify renderBoard
-    String.len(renderBoard(startBoard(7, Mode.ModeA), "PLAY")) => 104
-    String.len(renderBoard(Board.update(startBoard(9, Mode.ModeB), score = 999, misses = 3, lu = Option.Some(4), rd = Option.Some(0), fox = Chute.RightDown), "OVER")) => 104
+    String.len(renderBoard(startBoard(7, Mode.ModeA), "PLAY")) => 798
+    String.len(renderBoard(Board.update(startBoard(9, Mode.ModeB), score = 999, misses = 3, lu = Option.Some(4), rd = Option.Some(0), fox = Chute.RightDown), "OVER")) => 798
 
 fn scoreInRange(gs: GameState) -> Bool
     ? "True when the state's score sits in the machine's [0,999] window — the"
@@ -832,4 +859,4 @@ verify render
 verify render law fixedSize
     given gs: GameState = [GameState.Playing(startBoard(7, Mode.ModeA)), GameState.Playing(Board.update(startBoard(1, Mode.ModeB), score = 999, misses = 2, lu = Option.Some(4), ld = Option.Some(1), ru = Option.Some(2), rd = Option.Some(0), fox = Chute.RightDown)), GameState.Over(Board.update(startBoard(3, Mode.ModeA), score = 428, misses = 3, ru = Option.Some(3), fox = Chute.LeftDown))]
     when scoreInRange(gs)
-    String.len(render(gs)) => 104
+    String.len(render(gs)) => 798
