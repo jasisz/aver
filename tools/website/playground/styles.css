@@ -1421,6 +1421,19 @@ body {
     max-width: 144px;
 }
 
+/* Vertical thumb stack (e.g. the egg-catch catch pairs): up above down,
+   matching the chute geometry under each thumb. */
+.touch-actions.col {
+    flex-direction: column;
+    flex-wrap: nowrap;
+}
+
+/* Spread layout: first group hugs the left edge, last the right — the
+   catch pairs sit exactly under the thumbs of a two-handed grip. */
+.touch-controls.spread {
+    justify-content: space-between;
+}
+
 
 /* ── Responsive ──────────────────────────────────────────────────── */
 
