@@ -628,7 +628,7 @@ verify tickBoard
     tickBoard(Board.update(startBoard(7, Mode.ModeA), ru = Option.Some(4), fox = Chute.RightUp)) => settle(Board.update(startBoard(7, Mode.ModeA), ru = Option.Some(4), fox = Chute.RightUp), stepChute(Option.None, Chute.RightUp, Chute.LeftUp), stepChute(Option.None, Chute.RightUp, Chute.LeftDown), stepChute(Option.Some(4), Chute.RightUp, Chute.RightUp), stepChute(Option.None, Chute.RightUp, Chute.RightDown))
 
 verify tickBoard law conserves
-    given b: Board = [Board.update(startBoard(7, Mode.ModeA), ru = Option.Some(4), fox = Chute.RightUp, spawned = 1), Board.update(startBoard(4, Mode.ModeA), lu = Option.Some(4), fox = Chute.RightDown, spawned = 1, seed = 4), Board.update(startBoard(4, Mode.ModeA), seed = 4), Board.update(startBoard(50, Mode.ModeA), lu = Option.Some(1), ru = Option.Some(2), spawned = 2, seed = 50)]
+    given b: Board = [Board.update(startBoard(7, Mode.ModeA), lu = Option.Some(4), fox = Chute.LeftUp, spawned = 1), Board.update(startBoard(4, Mode.ModeA), lu = Option.Some(4), fox = Chute.RightDown, spawned = 1, seed = 4), Board.update(startBoard(4, Mode.ModeA), seed = 4), Board.update(startBoard(50, Mode.ModeA), lu = Option.Some(1), ru = Option.Some(2), spawned = 2, seed = 50)]
     when conservationDelta(b) == 0
     stateDelta(tickBoard(b)) => 0
 
@@ -676,7 +676,7 @@ verify step
     finalScore(step(playingWith(7, Mode.ModeA, Chute.LeftDown, 4, Chute.RightUp, 5, 0), Input.MoveFox(Chute.LeftDown))) => 6
 
 verify step law preserves
-    given gs: GameState = [GameState.Playing(startBoard(7, Mode.ModeA)), GameState.Playing(Board.update(startBoard(7, Mode.ModeA), ru = Option.Some(4), fox = Chute.RightUp, spawned = 1)), GameState.Playing(Board.update(startBoard(4, Mode.ModeA), lu = Option.Some(4), fox = Chute.RightDown, spawned = 1, seed = 4)), GameState.Playing(Board.update(startBoard(4, Mode.ModeA), seed = 4)), GameState.Over(Board.update(startBoard(3, Mode.ModeB), spawned = 2, caughtTotal = 1, lu = Option.Some(0)))]
+    given gs: GameState = [GameState.Playing(startBoard(7, Mode.ModeA)), GameState.Playing(Board.update(startBoard(7, Mode.ModeA), ru = Option.Some(4), fox = Chute.RightUp, spawned = 1)), GameState.Playing(Board.update(startBoard(4, Mode.ModeA), lu = Option.Some(4), fox = Chute.RightDown, spawned = 1, seed = 4)), GameState.Playing(Board.update(startBoard(4, Mode.ModeA), seed = 4)), GameState.Playing(Board.update(startBoard(50, Mode.ModeA), lu = Option.Some(1), ru = Option.Some(2), spawned = 2, seed = 50)), GameState.Over(Board.update(startBoard(3, Mode.ModeB), spawned = 2, caughtTotal = 1, lu = Option.Some(0)))]
     given i: Input = [Input.Tick, Input.MoveFox(Chute.RightUp), Input.MoveFox(Chute.LeftUp), Input.Switch(Mode.ModeB)]
     when stateDelta(gs) == 0
     stateDelta(step(gs, i)) => 0
