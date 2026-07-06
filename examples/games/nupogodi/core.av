@@ -788,6 +788,15 @@ verify renderBoard
     String.len(renderBoard(startBoard(7, Mode.GameA), "PLAY")) => 107
     String.len(renderBoard(Board.update(startBoard(9, Mode.GameB), score = 999, misses = 3, lu = Option.Some(4), rd = Option.Some(0), wolf = Chute.RightDown), "OVER")) => 107
 
+fn scoreInRange(gs: GameState) -> Bool
+    ? "True when the state's score sits in the machine's [0,999] window — the"
+      "precondition under which the counter always renders as three digits."
+    Bool.and(finalScore(gs) >= 0, finalScore(gs) <= 999)
+
+verify scoreInRange
+    scoreInRange(initialState(7, Mode.GameA)) => true
+    scoreInRange(GameState.Over(Board.update(startBoard(7, Mode.GameA), score = 999))) => true
+
 fn render(gs: GameState) -> String
     ? "Draw one frame. Total render: fixed rows, fixed columns, for every"
       "reachable state — Playing shows PLAY, Over shows OVER."
@@ -798,15 +807,6 @@ fn render(gs: GameState) -> String
 verify render
     render(GameState.Playing(startBoard(7, Mode.GameA))) => renderBoard(startBoard(7, Mode.GameA), "PLAY")
     render(GameState.Over(startBoard(7, Mode.GameA))) => renderBoard(startBoard(7, Mode.GameA), "OVER")
-
-fn scoreInRange(gs: GameState) -> Bool
-    ? "True when the state's score sits in the machine's [0,999] window — the"
-      "precondition under which the counter always renders as three digits."
-    Bool.and(finalScore(gs) >= 0, finalScore(gs) <= 999)
-
-verify scoreInRange
-    scoreInRange(initialState(7, Mode.GameA)) => true
-    scoreInRange(GameState.Over(Board.update(startBoard(7, Mode.GameA), score = 999))) => true
 
 verify render law fixedSize
     given gs: GameState = [GameState.Playing(startBoard(7, Mode.GameA)), GameState.Playing(Board.update(startBoard(1, Mode.GameB), score = 999, misses = 2, lu = Option.Some(4), ld = Option.Some(1), ru = Option.Some(2), rd = Option.Some(0), wolf = Chute.RightDown)), GameState.Over(Board.update(startBoard(3, Mode.GameA), score = 428, misses = 3, ru = Option.Some(3), wolf = Chute.LeftDown))]
