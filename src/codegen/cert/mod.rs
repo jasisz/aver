@@ -78,6 +78,7 @@ pub fn audited_prelude_sha() -> String {
 }
 
 /// A user function recovered from the emitted module.
+#[derive(Clone)]
 struct UserFn {
     name: String,
     wasm_idx: u32,
@@ -112,6 +113,30 @@ enum Op {
     Call(u32),
     ReturnCall(u32),
     Other,
+}
+
+/// The straight-line integer shape of one function inside a composition's call
+/// closure. Every shape is unary (`Int -> Int`), non-recursive, branch-free, and
+/// its simulation lemma is provable over the caller's composed code table by the
+/// probe's straight-line skeleton (rcases the host/callee `Option`, cite, close).
+#[derive(Clone)]
+enum LeafShape {
+    /// `[localGet 0, localGet 0, call add]` — model `x + x`.
+    SelfSum { add_idx: u32 },
+    /// `[localGet 0, call c1, ..., call cm]` (m >= 1), each `ci` a user function
+    /// in the closure — model `cm (... (c1 x))`. The composition point.
+    Chain { calls: Vec<u32> },
+}
+
+/// One function in a composition caller's transitive call closure: its verbatim
+/// body (for the shared `CodeTbl`), its self index, and its recognised shape.
+#[derive(Clone)]
+struct ClosureEntry {
+    name: String,
+    self_idx: u32,
+    nlocals: usize,
+    ops: Vec<Op>,
+    shape: LeafShape,
 }
 
 /// A certified function and the template holes extracted from its body.
@@ -179,6 +204,24 @@ enum Cert {
         sub_idx: u32,
         ops: Vec<Op>,
     },
+    /// Cross-function composition: a non-recursive `Int -> Int` caller whose body
+    /// is a unary chain of calls to other user functions, each of which is itself
+    /// a straight-line integer shape (self-sum or a nested chain). The obligation
+    /// carries the caller's ENTIRE call closure in one `CodeTbl`, and the caller's
+    /// simulation lemma cites each callee's simulation lemma at its call site.
+    Composition {
+        name: String,
+        self_idx: u32,
+        carrier: u32,
+        /// The whole closure (caller + all transitively-reached callees, incl.
+        /// the caller's own chain entry), sorted by `self_idx`. Every entry's
+        /// body goes into the shared `CodeTbl`.
+        closure: Vec<ClosureEntry>,
+        /// Runtime contracts consumed anywhere in the closure.
+        has_add: bool,
+        has_sub: bool,
+        has_box: bool,
+    },
 }
 
 impl Cert {
@@ -189,7 +232,8 @@ impl Cert {
             | Cert::AccumulatorRecursive { name, .. }
             | Cert::AdtConstructor { name, .. }
             | Cert::FieldProjection { name, .. }
-            | Cert::AdtMatch { name, .. } => name,
+            | Cert::AdtMatch { name, .. }
+            | Cert::Composition { name, .. } => name,
         }
     }
     fn self_idx(&self) -> u32 {
@@ -199,7 +243,8 @@ impl Cert {
             | Cert::AccumulatorRecursive { self_idx, .. }
             | Cert::AdtConstructor { self_idx, .. }
             | Cert::FieldProjection { self_idx, .. }
-            | Cert::AdtMatch { self_idx, .. } => *self_idx,
+            | Cert::AdtMatch { self_idx, .. }
+            | Cert::Composition { self_idx, .. } => *self_idx,
         }
     }
     fn carrier(&self) -> u32 {
@@ -209,7 +254,8 @@ impl Cert {
             | Cert::AccumulatorRecursive { carrier, .. }
             | Cert::AdtConstructor { carrier, .. }
             | Cert::FieldProjection { carrier, .. }
-            | Cert::AdtMatch { carrier, .. } => *carrier,
+            | Cert::AdtMatch { carrier, .. }
+            | Cert::Composition { carrier, .. } => *carrier,
         }
     }
     fn arity(&self) -> usize {
@@ -217,14 +263,16 @@ impl Cert {
             Cert::StraightLine { .. } | Cert::Recursive { .. } => 1,
             Cert::AccumulatorRecursive { .. } => 2,
             Cert::AdtConstructor { field_count, .. } => *field_count as usize,
-            Cert::FieldProjection { .. } | Cert::AdtMatch { .. } => 1,
+            Cert::FieldProjection { .. } | Cert::AdtMatch { .. } | Cert::Composition { .. } => 1,
         }
     }
     /// The Lean expression for the model this export simulates.
     fn model_expr(&self) -> String {
         match self {
             Cert::StraightLine { k, .. } => format!("fun ns => ns.headD 0 + ({k})"),
-            Cert::Recursive { name, .. } => format!("fun ns => {name} (ns.headD 0)"),
+            Cert::Recursive { name, .. } | Cert::Composition { name, .. } => {
+                format!("fun ns => {name} (ns.headD 0)")
+            }
             Cert::AccumulatorRecursive { name, .. } => {
                 format!("fun ns => {name} (ns.headD 0) ((ns.drop 1).headD 0)")
             }
@@ -238,7 +286,9 @@ impl Cert {
     fn host_expr(&self) -> String {
         match self {
             Cert::StraightLine { name, .. } => format!("fun add _ => CertModule.{name}Host add"),
-            Cert::Recursive { name, .. } | Cert::AccumulatorRecursive { name, .. } => {
+            Cert::Recursive { name, .. }
+            | Cert::AccumulatorRecursive { name, .. }
+            | Cert::Composition { name, .. } => {
                 format!("CertModule.{name}Host")
             }
             Cert::AdtConstructor { name, .. } | Cert::FieldProjection { name, .. } => {
@@ -256,7 +306,8 @@ impl Cert {
         match self {
             Cert::StraightLine { .. }
             | Cert::Recursive { .. }
-            | Cert::AccumulatorRecursive { .. } => ("List Int".to_string(), "Int".to_string()),
+            | Cert::AccumulatorRecursive { .. }
+            | Cert::Composition { .. } => ("List Int".to_string(), "Int".to_string()),
             Cert::FieldProjection { .. } => ("WVal x WVal".to_string(), "WVal".to_string()),
             Cert::AdtMatch { name, .. } => {
                 let dom = model_info
@@ -325,10 +376,14 @@ impl Analysis {
 pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
     let (user_fns, box_idx, user_idx_set, carrier) = disassemble(wasm_bytes)?;
 
+    // Index the user functions so the composition pass can walk the call graph.
+    let fns: std::collections::HashMap<u32, &UserFn> =
+        user_fns.iter().map(|f| (f.wasm_idx, f)).collect();
+
     let mut certs = Vec::new();
     let mut declined = Vec::new();
     for f in &user_fns {
-        match classify(f, box_idx, carrier, &user_idx_set) {
+        match classify(f, box_idx, carrier, &user_idx_set, &fns) {
             Ok(c) => certs.push(c),
             Err(reason) => declined.push((f.name.clone(), reason)),
         }
@@ -359,6 +414,16 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
             Cert::AdtMatch { .. } => {
                 has_box = true;
                 has_sub = true;
+            }
+            Cert::Composition {
+                has_add: a,
+                has_sub: s,
+                has_box: b,
+                ..
+            } => {
+                has_add |= *a;
+                has_sub |= *s;
+                has_box |= *b;
             }
         }
     }
@@ -446,7 +511,8 @@ impl ObligationFace {
         match c {
             Cert::StraightLine { .. }
             | Cert::Recursive { .. }
-            | Cert::AccumulatorRecursive { .. } => ObligationFace::IntList { arity: c.arity() },
+            | Cert::AccumulatorRecursive { .. }
+            | Cert::Composition { .. } => ObligationFace::IntList { arity: c.arity() },
             Cert::FieldProjection { struct_idx, .. } => ObligationFace::Projection {
                 struct_idx: *struct_idx,
             },
@@ -569,9 +635,11 @@ impl ObligationFace {
 /// list-equality `rfl`s bind position for position.
 pub fn rederive_obligations(wasm_bytes: &[u8]) -> Result<Vec<RederivedObligation>, String> {
     let (user_fns, box_idx, user_idx_set, carrier) = disassemble(wasm_bytes)?;
+    let fns: std::collections::HashMap<u32, &UserFn> =
+        user_fns.iter().map(|f| (f.wasm_idx, f)).collect();
     let mut out = Vec::new();
     for f in &user_fns {
-        if let Ok(c) = classify(f, box_idx, carrier, &user_idx_set) {
+        if let Ok(c) = classify(f, box_idx, carrier, &user_idx_set, &fns) {
             out.push(RederivedObligation {
                 name: c.name().to_string(),
                 code: render_code_value(&c),
@@ -817,6 +885,7 @@ fn classify(
     box_idx: u32,
     carrier: Option<u32>,
     user_idx_set: &std::collections::HashSet<u32>,
+    fns: &std::collections::HashMap<u32, &UserFn>,
 ) -> Result<Cert, String> {
     // Strip a trailing `End` (function end) for the straight-line match.
     let ops: &[Op] = match f.ops.last() {
@@ -882,6 +951,14 @@ fn classify(
                 .to_string(),
         );
     }
+    // Cross-function composition: a unary chain caller whose entire call closure
+    // is itself certified by the straight-line integer shapes. A chain caller
+    // whose closure leaves the classes declines with a specific reason.
+    match try_composition(f, box_idx, carrier, user_idx_set, fns) {
+        CompositionOutcome::Certified(c) => return Ok(*c),
+        CompositionOutcome::Declined(reason) => return Err(reason),
+        CompositionOutcome::NotApplicable => {}
+    }
     let calls_other_user = f
         .calls
         .iter()
@@ -899,6 +976,168 @@ fn classify(
         );
     }
     Err("body does not match a certified template (straight-line add-constant, single-argument self-recursion, two-argument accumulator recursion, or non-recursive ADT constructor/projection/match)".to_string())
+}
+
+/// Outcome of the cross-function composition pass on a caller.
+enum CompositionOutcome {
+    /// The caller and its whole closure classify — a composition certificate.
+    Certified(Box<Cert>),
+    /// The caller IS a unary user-call chain, but its closure leaves the
+    /// certified classes (an out-of-class callee, or a cycle). The specific,
+    /// honest reason the caller declines.
+    Declined(String),
+    /// The caller is not a unary composition chain at all — let the ordinary
+    /// decline reasons apply.
+    NotApplicable,
+}
+
+/// Recognise one function as a straight-line integer shape usable inside a
+/// composition closure: a self-sum (`x + x`) or a unary chain of user calls.
+/// Returns `None` for anything else (a runtime/ADT/branch body, wrong arity).
+fn classify_leaf_shape(
+    f: &UserFn,
+    user_idx_set: &std::collections::HashSet<u32>,
+) -> Option<LeafShape> {
+    use Op::*;
+    if f.arity != 1 {
+        return None;
+    }
+    let ops = strip_trailing_end(&f.ops);
+    // Self-sum: [localGet 0, localGet 0, call add] where `add` is a host helper.
+    if let [LocalGet(0), LocalGet(0), Call(a)] = ops
+        && *a != f.wasm_idx
+        && !user_idx_set.contains(a)
+    {
+        return Some(LeafShape::SelfSum { add_idx: *a });
+    }
+    // Unary chain: [localGet 0, call c1, ..., call cm] (m >= 1), each ci a user
+    // function other than the caller itself. No other opcodes.
+    if let Some((LocalGet(0), rest)) = ops.split_first()
+        && !rest.is_empty()
+        && rest.iter().all(|op| match op {
+            Call(c) => *c != f.wasm_idx && user_idx_set.contains(c),
+            _ => false,
+        })
+    {
+        let calls = rest
+            .iter()
+            .map(|op| match op {
+                Call(c) => *c,
+                _ => unreachable!(),
+            })
+            .collect();
+        return Some(LeafShape::Chain { calls });
+    }
+    None
+}
+
+/// Try to certify `f` as a cross-function composition. `f` qualifies only if its
+/// own body is a unary user-call chain; then its transitive call closure must be
+/// wholly covered by the straight-line integer shapes.
+fn try_composition(
+    f: &UserFn,
+    box_idx: u32,
+    carrier: Option<u32>,
+    user_idx_set: &std::collections::HashSet<u32>,
+    fns: &std::collections::HashMap<u32, &UserFn>,
+) -> CompositionOutcome {
+    // Only a unary CHAIN caller (one that actually calls other user functions)
+    // is a composition; a self-sum / non-chain body is handled elsewhere.
+    match classify_leaf_shape(f, user_idx_set) {
+        Some(LeafShape::Chain { .. }) => {
+            let Some(carrier) = carrier else {
+                return CompositionOutcome::Declined(
+                    "carrier struct type not found in module".to_string(),
+                );
+            };
+            let mut closure: std::collections::HashMap<u32, ClosureEntry> =
+                std::collections::HashMap::new();
+            let mut path: Vec<u32> = Vec::new();
+            if let Err(reason) =
+                collect_closure(f.wasm_idx, fns, user_idx_set, &mut closure, &mut path)
+            {
+                return CompositionOutcome::Declined(reason);
+            }
+            let mut entries: Vec<ClosureEntry> = closure.into_values().collect();
+            entries.sort_by_key(|e| e.self_idx);
+            let (has_add, has_sub, has_box) = closure_contracts(&entries);
+            let _ = box_idx;
+            CompositionOutcome::Certified(Box::new(Cert::Composition {
+                name: f.name.clone(),
+                self_idx: f.wasm_idx,
+                carrier,
+                closure: entries,
+                has_add,
+                has_sub,
+                has_box,
+            }))
+        }
+        _ => CompositionOutcome::NotApplicable,
+    }
+}
+
+/// DFS the call graph from `idx`, classifying every reached function as a
+/// straight-line integer shape. `path` is the active DFS stack (cycle guard);
+/// `closure` collects each entry once. Fails closed on any out-of-class callee
+/// or any cycle.
+fn collect_closure(
+    idx: u32,
+    fns: &std::collections::HashMap<u32, &UserFn>,
+    user_idx_set: &std::collections::HashSet<u32>,
+    closure: &mut std::collections::HashMap<u32, ClosureEntry>,
+    path: &mut Vec<u32>,
+) -> Result<(), String> {
+    if closure.contains_key(&idx) {
+        return Ok(());
+    }
+    if path.contains(&idx) {
+        let name = fns.get(&idx).map(|f| f.name.as_str()).unwrap_or("?");
+        return Err(format!(
+            "cycle in the call graph through user function `{name}`; composition requires an acyclic closure"
+        ));
+    }
+    let Some(uf) = fns.get(&idx) else {
+        return Err(
+            "a callee in the composition closure is not an in-module user function".to_string(),
+        );
+    };
+    let Some(shape) = classify_leaf_shape(uf, user_idx_set) else {
+        return Err(format!(
+            "callee `{}` is outside the certified composition classes (not a unary self-sum or a unary user-call chain)",
+            uf.name
+        ));
+    };
+    path.push(idx);
+    if let LeafShape::Chain { calls } = &shape {
+        for c in calls {
+            collect_closure(*c, fns, user_idx_set, closure, path)?;
+        }
+    }
+    path.pop();
+    closure.insert(
+        idx,
+        ClosureEntry {
+            name: uf.name.clone(),
+            self_idx: idx,
+            nlocals: uf.nlocals,
+            ops: strip_trailing_end(&uf.ops).to_vec(),
+            shape,
+        },
+    );
+    Ok(())
+}
+
+/// `(has_add, has_sub, has_box)` runtime contracts consumed across the closure.
+/// v1 leaves consume only carrier `add`; the flags keep the manifest honest as
+/// the leaf vocabulary grows.
+fn closure_contracts(entries: &[ClosureEntry]) -> (bool, bool, bool) {
+    let mut has_add = false;
+    for e in entries {
+        if let LeafShape::SelfSum { .. } = e.shape {
+            has_add = true;
+        }
+    }
+    (has_add, false, false)
 }
 
 fn match_adt_constructor(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Option<Cert> {
@@ -1505,6 +1744,11 @@ fn render_host_def(c: &Cert) -> String {
              if fn = {box_idx} then some (1, boxRef {carrier})\n  \
              else if fn = {sub_idx} then some (2, sub)\n  else none\n",
         ),
+        Cert::Composition { name, closure, .. } => format!(
+            "/-- Runtime host wiring for `{name}`'s call closure (add contract). -/\n\
+             def {name}Host (add _sub : List WVal → Option WVal) : HostTbl := fun fn =>\n    {}\n",
+            compose_host_arms(closure),
+        ),
     }
 }
 
@@ -1516,6 +1760,7 @@ fn render_code_def(c: &Cert) -> String {
         Cert::AdtConstructor { .. } => "ADT constructor",
         Cert::FieldProjection { .. } => "field projection",
         Cert::AdtMatch { .. } => "ADT variant match",
+        Cert::Composition { .. } => "cross-function composition, whole call closure",
     };
     format!(
         "/-- Verbatim emitted body of `{name}` ({doc}). -/\n\
@@ -1607,7 +1852,27 @@ fn render_code_value(c: &Cert) -> String {
             arity = c.arity(),
             body = render_ops_value(ops),
         ),
+        Cert::Composition { closure, .. } => render_closure_code_value(closure),
     }
+}
+
+/// The multi-entry `CodeTbl` VALUE for a composition: one `if fn = i then …`
+/// arm per function in the caller's whole call closure, in `self_idx` order.
+/// The checker re-derives this from the bytes and pins the WHOLE table with one
+/// `rfl`, so every callee body the caller's proof reduces through is byte-bound.
+fn render_closure_code_value(closure: &[ClosureEntry]) -> String {
+    let mut s = String::from("fun fn =>\n  ");
+    for (i, e) in closure.iter().enumerate() {
+        let kw = if i == 0 { "if" } else { "else if" };
+        s.push_str(&format!(
+            "{kw} fn = {idx} then some ⟨1, {nlocals}, {body}⟩\n  ",
+            idx = e.self_idx,
+            nlocals = e.nlocals,
+            body = render_ops_value(&e.ops),
+        ));
+    }
+    s.push_str("else none");
+    s
 }
 
 /// The `Obligation.host` builder VALUE for a certified body, FULLY EXPANDED to
@@ -1666,7 +1931,35 @@ fn render_host_value(c: &Cert) -> String {
              if fn = {box_idx} then some (1, boxRef {carrier})\n    \
              else if fn = {sub_idx} then some (2, sub)\n    else none",
         ),
+        Cert::Composition { closure, .. } => {
+            format!(
+                "fun add _sub => fun fn =>\n    {}",
+                compose_host_arms(closure)
+            )
+        }
     }
+}
+
+/// The host-table arms for a composition closure: each carrier-`add` helper the
+/// closure calls wired to the `add` contract parameter, terminated by `none`.
+/// v1 leaves consume only `add`; the arms grow with the leaf vocabulary.
+fn compose_host_arms(closure: &[ClosureEntry]) -> String {
+    let mut adds: Vec<u32> = closure
+        .iter()
+        .filter_map(|e| match e.shape {
+            LeafShape::SelfSum { add_idx } => Some(add_idx),
+            LeafShape::Chain { .. } => None,
+        })
+        .collect();
+    adds.sort_unstable();
+    adds.dedup();
+    let mut s = String::new();
+    for (i, a) in adds.iter().enumerate() {
+        let kw = if i == 0 { "if" } else { "else if" };
+        s.push_str(&format!("{kw} fn = {a} then some (2, add)\n    "));
+    }
+    s.push_str("else none");
+    s
 }
 
 #[derive(Clone)]
@@ -1775,6 +2068,7 @@ fn render_certificate(
             Cert::AdtConstructor { .. } => s.push_str(&render_adt_constructor_cert(c, model_info)),
             Cert::FieldProjection { .. } => s.push_str(&render_field_projection_cert(c)),
             Cert::AdtMatch { .. } => s.push_str(&render_adt_match_cert(c, model_info)),
+            Cert::Composition { .. } => s.push_str(&render_composition_cert(c)),
         }
         s.push('\n');
     }
@@ -2253,6 +2547,213 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
               simp at harity
 "#
     )
+}
+
+/// Post-order (callees-before-callers) topological order of a composition
+/// closure, starting the DFS at the caller so the caller comes last. Every
+/// closure is an acyclic user-call DAG (enforced by `collect_closure`).
+fn compose_topo_order(caller_idx: u32, closure: &[ClosureEntry]) -> Vec<u32> {
+    let by_idx: std::collections::HashMap<u32, &ClosureEntry> =
+        closure.iter().map(|e| (e.self_idx, e)).collect();
+    let mut order = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    fn dfs(
+        idx: u32,
+        by_idx: &std::collections::HashMap<u32, &ClosureEntry>,
+        seen: &mut std::collections::HashSet<u32>,
+        order: &mut Vec<u32>,
+    ) {
+        if !seen.insert(idx) {
+            return;
+        }
+        if let Some(e) = by_idx.get(&idx)
+            && let LeafShape::Chain { calls } = &e.shape
+        {
+            for c in calls {
+                dfs(*c, by_idx, seen, order);
+            }
+        }
+        order.push(idx);
+    }
+    dfs(caller_idx, &by_idx, &mut seen, &mut order);
+    order
+}
+
+/// Evaluate a closure entry's integer model on a concrete input (for the
+/// anti-vacuity `native_decide` guard values). Mirrors the leaf models exactly.
+fn compose_eval(idx: u32, x: i64, by_idx: &std::collections::HashMap<u32, &ClosureEntry>) -> i64 {
+    match by_idx.get(&idx).map(|e| &e.shape) {
+        Some(LeafShape::SelfSum { .. }) => x + x,
+        Some(LeafShape::Chain { calls }) => {
+            let mut acc = x;
+            for c in calls {
+                acc = compose_eval(*c, acc, by_idx);
+            }
+            acc
+        }
+        None => x,
+    }
+}
+
+/// Longest chain of code-calls from `idx` down to a leaf (fuel budget for the
+/// `native_decide` guards: each level burns one unit in `wFuncN`).
+fn compose_depth(idx: u32, by_idx: &std::collections::HashMap<u32, &ClosureEntry>) -> usize {
+    match by_idx.get(&idx).map(|e| &e.shape) {
+        Some(LeafShape::Chain { calls }) => {
+            1 + calls
+                .iter()
+                .map(|c| compose_depth(*c, by_idx))
+                .max()
+                .unwrap_or(0)
+        }
+        _ => 1,
+    }
+}
+
+/// The cross-function composition certificate: a simulation lemma per closure
+/// entry over the caller's SHARED code table (callee lemmas first, the caller's
+/// `_wasm_certified` last), the anti-vacuity guards, and the schema obligation.
+/// Content-blind: the only per-function inputs are DATA (the closure entries,
+/// their call indices and model names), never a hand-tuned proof.
+fn render_composition_cert(c: &Cert) -> String {
+    let Cert::Composition {
+        name,
+        self_idx,
+        carrier,
+        closure,
+        ..
+    } = c
+    else {
+        unreachable!()
+    };
+    let by_idx: std::collections::HashMap<u32, &ClosureEntry> =
+        closure.iter().map(|e| (e.self_idx, e)).collect();
+    let lemma_name = |idx: u32| -> String {
+        if idx == *self_idx {
+            format!("{name}_wasm_certified")
+        } else {
+            format!("{name}__sim_{idx}")
+        }
+    };
+    let sig = |concl_model: &str| -> String {
+        format!(
+            "    (S : CarrierSpec {carrier}) (add sub : List WVal → Option WVal)\n\
+             \x20   (hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)\n\
+             \x20   (hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w) :\n\
+             \x20   ∀ (fuel : Nat) (x : Int) (v w : WVal), S.Repr x v →\n\
+             \x20     wFuncN {name}Code ({name}Host add sub) fuel {{IDX}} [v] = some w → S.Repr ({concl_model}) w"
+        )
+    };
+
+    let mut s = format!(
+        "/-! ### {name} — cross-function composition certificate (carrier type {carrier}) -/\n\n"
+    );
+
+    for idx in compose_topo_order(*self_idx, closure) {
+        let e = by_idx[&idx];
+        let head = format!(
+            "theorem {}\n{}",
+            lemma_name(idx),
+            sig(&format!("{} x", e.name))
+        )
+        .replace("{IDX}", &idx.to_string());
+        match &e.shape {
+            LeafShape::SelfSum { .. } => {
+                s.push_str(&format!(
+                    "-- callee `{ename}`: self-sum leaf, over the shared closure table.\n{head} := by\n  \
+                     intro fuel x v w hv hrun\n  \
+                     cases fuel with\n  \
+                     | zero => simp only [wFuncN, reduceCtorEq] at hrun\n  \
+                     | succ f =>\n      \
+                     rcases hc : add [v, v] with _ | r <;>\n        \
+                     simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, popArgs, initLocals, hc] at hrun\n      \
+                     subst hrun\n      \
+                     exact hadd x x v v r hv hv hc\n\n",
+                    ename = e.name,
+                ));
+            }
+            LeafShape::Chain { calls } => {
+                let mut body = String::new();
+                // one `rcases … <;> simp … at hrun` per call site (threading m1, m2, …).
+                for (i, c_idx) in calls.iter().enumerate() {
+                    let arg = if i == 0 {
+                        "[v]".to_string()
+                    } else {
+                        format!("[m{i}]")
+                    };
+                    body.push_str(&format!(
+                        "      rcases h{h} : wFuncN {name}Code ({name}Host add sub) f {c_idx} {arg} with _ | m{h} <;>\n        \
+                         simp [wFuncN, wRunF, {name}Code, {name}Host, popArgs, initLocals, h{h}] at hrun\n",
+                        h = i + 1,
+                    ));
+                }
+                body.push_str("      subst hrun\n");
+                // cite the callee simulation lemma at each site, threading the model.
+                let mut model_arg = "x".to_string();
+                for (i, c_idx) in calls.iter().enumerate() {
+                    let (vin, hrepr) = if i == 0 {
+                        ("v".to_string(), "hv".to_string())
+                    } else {
+                        (format!("m{i}"), format!("r{i}"))
+                    };
+                    body.push_str(&format!(
+                        "      have r{h} := {lem} S add sub hadd hsub f ({model_arg}) {vin} m{h} {hrepr} h{h}\n",
+                        h = i + 1,
+                        lem = lemma_name(*c_idx),
+                    ));
+                    model_arg = format!("{} ({})", by_idx[c_idx].name, model_arg);
+                }
+                body.push_str(&format!("      exact r{}\n\n", calls.len()));
+                s.push_str(&format!(
+                    "-- {label} `{ename}`: unary user-call chain; cites each callee lemma.\n{head} := by\n  \
+                     intro fuel x v w hv hrun\n  \
+                     cases fuel with\n  \
+                     | zero => simp only [wFuncN, reduceCtorEq] at hrun\n  \
+                     | succ f =>\n{body}",
+                    ename = e.name,
+                    label = if idx == *self_idx { "caller" } else { "callee" },
+                ));
+            }
+        }
+    }
+
+    s.push_str(&format!("#print axioms {name}_wasm_certified\n\n"));
+
+    // anti-vacuity guards: run the whole closure on concrete inputs.
+    let g_fuel = compose_depth(*self_idx, &by_idx) + 2;
+    let g3 = compose_eval(*self_idx, 3, &by_idx);
+    let gm5 = compose_eval(*self_idx, -5, &by_idx);
+    s.push_str(&format!(
+        "-- anti-vacuity: the emitted closure actually RUNS on concrete inputs.\n\
+         def {name}HostRef : HostTbl := {name}Host (addRef {carrier}) (subRef {carrier})\n\
+         example :\n    \
+         ((wFuncN {name}Code {name}HostRef {g_fuel} {self_idx} [carrierSmall {carrier} 3]).bind carrierToInt) = some ({g3}) := by\n  \
+         native_decide\n\
+         example :\n    \
+         ((wFuncN {name}Code {name}HostRef {g_fuel} {self_idx} [carrierSmall {carrier} (-5)]).bind carrierToInt) = some ({gm5}) := by\n  \
+         native_decide\n\n"
+    ));
+
+    // the schema obligation: bridge the caller lemma to `Obligation.holds`.
+    s.push_str(&format!(
+        "/-- Schema-shaped simulation obligation for `{name}` (composed by the single\n\
+        \x20   final theorem): the emitted body simulates `{name}` by citing its callees. -/\n\
+         theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by\n  \
+         intro S add sub hadd hsub fuel ns vs w hrepr hrun\n  \
+         simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢\n  \
+         obtain ⟨hrepr, harity⟩ := hrepr\n  \
+         cases hrepr with\n  \
+         | nil => simp at harity\n  \
+         | cons hv htail =>\n    \
+         rename_i n v ns vs\n    \
+         cases htail with\n    \
+         | nil =>\n      \
+         simpa [AverCert.Schema.intRepr] using\n        \
+         {name}_wasm_certified S add sub hadd hsub fuel n v w hv hrun\n    \
+         | cons _ _ => simp at harity\n"
+    ));
+
+    s
 }
 
 fn render_adt_constructor_cert(c: &Cert, model_info: &ModelInfo) -> String {
@@ -2872,6 +3373,7 @@ fn render_manifest(
             Cert::AdtConstructor { .. } => "adt-constructor",
             Cert::FieldProjection { .. } => "field-projection",
             Cert::AdtMatch { .. } => "adt-match",
+            Cert::Composition { .. } => "cross-function-composition",
         };
         let (dom, cod) = c.source_dom_cod(model_info);
         s.push_str(&format!(

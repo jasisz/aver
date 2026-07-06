@@ -1,0 +1,20 @@
+module Compose
+    intent =
+        "Cross-function composition probe: quad calls double twice."
+    exposes [double, quad]
+
+fn double(x: Int) -> Int
+    ? "Doubles the argument (straight-line add)."
+    x + x
+
+fn quad(x: Int) -> Int
+    ? "Quadruples via two nested calls to double."
+    double(double(x))
+
+verify double
+    double(3) => 6
+    double(-5) => -10
+
+verify quad
+    quad(3) => 12
+    quad(-5) => -20
