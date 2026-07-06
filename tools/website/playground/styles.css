@@ -125,6 +125,8 @@ body {
 
 /* ── Editor pane ──────────────────────────────────────────────────── */
 
+.mobile-flip { display: none; }
+
 .editor-pane {
     flex: 1;
     display: flex;
@@ -1439,6 +1441,16 @@ body {
         border-right: none;
         border-bottom: 1px solid var(--border);
     }
+    /* Narrow screens are single-view: either you edit (code fills the
+       screen) or you look at the running program / a panel (output fills
+       it). The toolbar with Run/Stop/Audit/… stays visible in both views;
+       the flip button switches back and forth. */
+    .mobile-flip { display: inline-block; }
+    .workspace[data-mobile-view="editor"] .output-pane { display: none; }
+    .workspace[data-mobile-view="editor"] .editor-pane { max-height: none; flex: 1; }
+    .workspace[data-mobile-view="output"] .editor-tabs { display: none; }
+    .workspace[data-mobile-view="output"] .editor-wrap { display: none; }
+    .workspace[data-mobile-view="output"] .editor-pane { max-height: none; }
     .output-pane {
         min-width: 0;
         min-height: 200px;
