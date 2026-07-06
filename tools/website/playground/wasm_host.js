@@ -299,6 +299,26 @@ export class AverBrowserHost {
         return live;
     }
 
+    /// Any `aver.*` import a module declares but this host does not implement
+    /// (e.g. `Disk.*` — the playground has no filesystem) gets a stub that only
+    /// fails IF THE PROGRAM CALLS IT, instead of failing the whole
+    /// instantiation with a LinkError. Code paths that never touch the effect
+    /// keep working; an unsupported call site surfaces an honest error.
+    withMissingEffectStubs(imports) {
+        imports.aver = new Proxy(imports.aver, {
+            get: (target, prop) => {
+                if (prop in target) return target[prop];
+                if (typeof prop !== "string") return undefined;
+                return () => {
+                    throw new Error(
+                        `effect import \`aver.${prop}\` is not available in the playground`,
+                    );
+                };
+            },
+        });
+        return imports;
+    }
+
     createImports() {
         // Every effect import declares a trailing `caller_fn:
         // any_ref` param now (see `effects.rs::params`). Each
@@ -309,7 +329,7 @@ export class AverBrowserHost {
         // the trailing arg — JS just lets the extra value drop on
         // the floor.
         const dec = (callerIdx) => this.averToJs(callerIdx);
-        return {
+        const imports = {
             aver: {
                 args_len: (callerIdx) =>
                     this.recordOrDispatch(
@@ -631,6 +651,7 @@ export class AverBrowserHost {
                 },
             },
         };
+        return this.withMissingEffectStubs(imports);
     }
 
     /// Decode a `Result<String, String>` marker JSON into the wasm-gc
