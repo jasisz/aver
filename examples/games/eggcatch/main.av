@@ -84,24 +84,58 @@ fn loop(gs: Core.GameState) -> Core.GameState
         false -> advance(gs)
 
 fn advance(gs: Core.GameState) -> Core.GameState
-    ? "Sleep for the state's tempo, poll one key, then step or quit."
+    ? "One world tick, sliced: keys are polled every ~33ms and move the fox"
+      "instantly (with a redraw), while the egg world advances only when the"
+      "state's full tempo has elapsed. Splitting the two clocks is what makes"
+      "the controls feel immediate on a 600ms tick."
     ! [
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey,
         Time.sleep,
     ]
-    Time.sleep(Core.tickDelay(gs))
-    stepOrQuit(gs, keyString(Terminal.readKey()))
+    pollSlices(gs, Result.withDefault(Int.div(Core.tickDelay(gs), 33), 18))
 
-fn stepOrQuit(gs: Core.GameState, key: String) -> Core.GameState
-    ? "Esc quits (returns the current state); any other key becomes an Input"
-      "and advances one pure tick, then loops."
+fn pollSlices(gs: Core.GameState, left: Int) -> Core.GameState
+    ? "Poll-and-apply loop between world ticks: sleep one slice, apply any"
+      "pressed key without ticking, redraw; when the slices run out, advance"
+      "the world one tick and continue. Esc quits."
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey,
+        Time.sleep,
+    ]
+    match left <= 0
+        true -> loop(Core.step(gs, Core.Input.Tick))
+        false -> pollOne(gs, left, keyString(Terminal.readKey()))
+
+fn pollOne(gs: Core.GameState, left: Int, key: String) -> Core.GameState
+    ? "Handle one polled key: esc quits, no key just sleeps the slice, a game"
+      "key moves the fox instantly and redraws before the world catches up."
     ! [
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey,
         Time.sleep,
     ]
     match key
         "esc" -> gs
-        _ -> loop(Core.step(gs, Core.keyToInput(key)))
+        "" -> sleepSlice(gs, left)
+        _ -> applyAndRedraw(Core.applyToState(gs, Core.keyToInput(key)), left)
+
+fn sleepSlice(gs: Core.GameState, left: Int) -> Core.GameState
+    ? "Sleep one 33ms slice and keep polling."
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey,
+        Time.sleep,
+    ]
+    Time.sleep(33)
+    pollSlices(gs, left - 1)
+
+fn applyAndRedraw(gs: Core.GameState, left: Int) -> Core.GameState
+    ? "The fox moved between ticks: show it immediately, then keep polling"
+      "the remaining slices of this world tick."
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey,
+        Time.sleep,
+    ]
+    draw(gs)
+    pollSlices(gs, left - 1)
 
 fn keyString(k: Option<String>) -> String
     ? "The polled key as a string, or empty when no key was pressed this tick."
