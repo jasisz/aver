@@ -738,11 +738,12 @@ pub(super) enum CertCommand {
         /// The emitted `cert/` directory.
         cert_dir: String,
     },
-    /// Human-readable report (no build): CERTIFIED exports with their policies
-    /// and runtime contracts, and DECLINED functions with reasons. Reads the
-    /// manifest only.
+    /// Human-readable report backed by the SAME trusted check as `verify` (it
+    /// builds and kernel-checks the certificate): CERTIFIED exports with their
+    /// certified face, policies and runtime contracts, and DECLINED functions
+    /// with reasons. Exits nonzero on a certificate that does not check.
     Explain { artifact: String, cert_dir: String },
-    /// Alias of `explain` (report without the lake build).
+    /// Alias of `explain` (same trusted build + kernel check).
     Inspect { artifact: String, cert_dir: String },
 }
 

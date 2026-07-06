@@ -129,18 +129,29 @@ const CODE_EXEC_TOKENS: [&str; 20] = [
 
 /// Outcome of a successful (fail-closed) verify pass.
 enum Verdict {
-    /// At least one export carries a behavioral certificate.
-    Certified(String),
+    /// At least one export carries a behavioral certificate. `faces` are the
+    /// one-line per-export claim summaries (class + Dom/Cod + codRepr form).
+    Certified { summary: String, faces: Vec<String> },
     /// The certificate built and stayed kernel-clean, but names zero certified
     /// exports — an admission with no behavioral claims. Not the green path.
     NoExports(String),
 }
 
+/// One proven obligation in the trusted report.
+struct CertifiedExport {
+    name: String,
+    policy: String,
+    /// One-line, human-readable statement of WHAT is certified: the trusted
+    /// (byte-derived) class plus its `Dom`/`Cod` and standard `codRepr` form, so
+    /// a consumer sees the claim without reading Lean.
+    face: String,
+}
+
 /// The certified side of the report, built from the JSON candidates the kernel
 /// witness confirmed equal to the proven `AverCert.manifest` literal.
 struct TrustedReport {
-    /// One `(export name, policy)` per proven obligation.
-    exports: Vec<(String, String)>,
+    /// One entry per proven obligation.
+    exports: Vec<CertifiedExport>,
     contracts: Vec<String>,
     profile: String,
     abi: String,
@@ -163,9 +174,12 @@ struct Candidates {
 
 pub(super) fn cmd_cert_verify(artifact: &str, cert_dir: &str) {
     match verify(Path::new(artifact), Path::new(cert_dir)) {
-        Ok(Verdict::Certified(summary)) => {
+        Ok(Verdict::Certified { summary, faces }) => {
             println!("{} {}", "CERTIFIED".green().bold(), summary);
             println!("  {ARTIFACT_DECODE_LINE}");
+            for f in &faces {
+                println!("  {f}");
+            }
         }
         Ok(Verdict::NoExports(summary)) => {
             // Fail-closed: a trust tool must not exit green for a cert that
@@ -304,7 +318,12 @@ fn verify(artifact: &Path, cert_dir: &Path) -> Result<Verdict, String> {
     if n == 0 {
         Ok(Verdict::NoExports(summary))
     } else {
-        Ok(Verdict::Certified(summary))
+        let faces = report
+            .exports
+            .iter()
+            .map(|e| format!("{}  {}", e.name, e.face))
+            .collect();
+        Ok(Verdict::Certified { summary, faces })
     }
 }
 
@@ -391,7 +410,9 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
             "certificate does not bind to this artifact: the checker's kernel witness \
              (hash binding, certified-export/contract/profile/abi bindings against the \
              proven manifest, the artifact-decode bindings that pin each obligation's \
-             code/host/self/carrier to what the bytes decode to, the final-theorem type \
+             code/host/self/carrier to what the bytes decode to, the semantic-face \
+             bindings that pin each obligation's Dom/Cod/domRepr/codRepr to the standard \
+             form of its class and prove every domain is inhabited, the final-theorem type \
              `Holds manifest`, and the axiom whitelist) did not check:\n{}",
             tail(&w.combined, 30)
         ));
@@ -400,12 +421,32 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     // 6. The witness checked, so every binding is kernel-confirmed against the
     //    proven manifest. Build the report from the BYTE-DERIVED export names
     //    (kernel-pinned to `manifest.obligations.map (·.export_)`), not the JSON;
-    //    the count is exactly the kernel-confirmed obligation count.
+    //    the count is exactly the kernel-confirmed obligation count. The Dom/Cod
+    //    NAMES are display-only source labels read from the JSON, position for
+    //    position with the pinned obligations, and sanitized for terminal output.
+    let certified = manifest.get("certified").and_then(Value::as_array);
+    let exports = rederived
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let entry = certified.and_then(|arr| arr.get(i));
+            let dom = entry
+                .and_then(|e| e.get("dom"))
+                .and_then(Value::as_str)
+                .map(display_safe);
+            let cod = entry
+                .and_then(|e| e.get("cod"))
+                .and_then(Value::as_str)
+                .map(display_safe);
+            CertifiedExport {
+                name: r.name.clone(),
+                policy: "simulatesModel".to_string(),
+                face: r.face.describe(dom.as_deref(), cod.as_deref()),
+            }
+        })
+        .collect();
     Ok(TrustedReport {
-        exports: rederived
-            .iter()
-            .map(|r| (r.name.clone(), "simulatesModel".to_string()))
-            .collect(),
+        exports,
         contracts: cands.contracts,
         profile: cands.profile,
         abi: cands.abi,
@@ -560,6 +601,13 @@ fn checker_witness(
     let hosts = lean_expr_list(rederived.iter().map(|r| r.host.as_str()));
     let selfs = lean_nat_list(rederived.iter().map(|r| r.self_idx));
     let carriers = lean_nat_list(rederived.iter().map(|r| r.carrier));
+    // Semantic-face bindings: pin each obligation's typed `Dom`/`Cod`/`domRepr`/
+    // `codRepr` to the STANDARD form its BYTE-derived class implies, and prove
+    // every domain is inhabited. These are the faces the schema-v3 checker did
+    // not pin, so a manifest weakening them (`Dom := Empty`, `codRepr := True`,
+    // `domRepr := False`, or a nerfed arity) made `holds` vacuously true; each
+    // now fails a kernel `rfl`/`HEq.rfl` and the file does not check.
+    let face_section = face_bindings(rederived);
     let whitelist = AXIOM_WHITELIST
         .iter()
         .map(|a| format!("`{a}"))
@@ -572,7 +620,9 @@ fn checker_witness(
          import Module\n\
          import Manifest\n\
          import Final\n\
-         open CertPrelude\n\n\
+         open CertPrelude\n\
+         set_option linter.unusedSimpArgs false\n\
+         set_option linter.unusedVariables false\n\n\
          -- Count (the verdict bit): the kernel confirms EXACTLY this many\n\
          -- obligations. A JSON claiming more or fewer fails this `rfl`.\n\
          example : AverCert.manifest.obligations.length = {n} := rfl\n\
@@ -602,6 +652,12 @@ fn checker_witness(
          example : AverCert.manifest.obligations.map (fun o => o.host) =\n  {hosts} := rfl\n\
          example : AverCert.manifest.obligations.map (fun o => o.self) = {selfs} := rfl\n\
          example : AverCert.manifest.obligations.map (fun o => o.carrier) = {carriers} := rfl\n\n\
+         -- Semantic-face bindings: the typed `Dom`/`Cod`/`domRepr`/`codRepr` of\n\
+         -- every obligation, pinned to the standard form of its byte-derived\n\
+         -- class, plus a `Nonempty Dom` proof. A manifest that weakens the face\n\
+         -- (`Dom := Empty`, `codRepr := fun _ _ _ => True`, `domRepr := fun _ _ _ => False`,\n\
+         -- a nerfed arity) fails one of these kernel checks.\n\
+         {face_section}\n\
          -- Statement: force the final theorem's TYPE by ascription (no text match).\n\
          def {WITNESS_THEOREM} : AverCert.Schema.Holds AverCert.manifest := AverCert.Final.cert\n\n\
          -- Axiom whitelist, enforced by the kernel's own axiom collector over the\n\
@@ -618,6 +674,31 @@ fn checker_witness(
          unless allowed.contains a do\n      \
          throwError s!\"non-whitelisted axiom: {{a}}\"\n"
     )
+}
+
+/// The semantic-face bindings spliced into the witness: a single `Nonempty Dom`
+/// proof over all obligations, then one block of standard-form `Dom`/`Cod`/
+/// `domRepr`/`codRepr` pins per obligation, keyed on its BYTE-derived class (via
+/// `RederivedObligation::face`). Empty when there are no certified obligations.
+fn face_bindings(rederived: &[cert::RederivedObligation]) -> String {
+    if rederived.is_empty() {
+        return String::new();
+    }
+    let mut s = String::new();
+    // `rcases` splits membership in `[o0, o1, ...]` into one `rfl` per obligation.
+    let pattern = std::iter::repeat_n("rfl", rederived.len())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    s.push_str(&format!(
+        "example : ∀ o ∈ AverCert.manifest.obligations, Nonempty o.Dom := by\n  \
+         intro o ho\n  \
+         simp only [AverCert.manifest, List.mem_cons, List.not_mem_nil, or_false] at ho\n  \
+         rcases ho with {pattern} <;> exact ⟨default⟩\n\n"
+    ));
+    for (i, r) in rederived.iter().enumerate() {
+        s.push_str(&r.face.witness_pins(i));
+    }
+    s
 }
 
 /// A checker-owned temp build directory, removed on drop.
@@ -714,10 +795,12 @@ fn explain(artifact: &Path, cert_dir: &Path) -> Result<(), String> {
         println!("\n{}", "CERTIFIED".green().bold());
         println!("  {ARTIFACT_DECODE_LINE}");
     }
-    for (name, policy) in &report.exports {
-        println!("  {}  [{}]", name.cyan().bold(), cert::CERT_LEVEL);
+    for e in &report.exports {
+        println!("  {}  [{}]", e.name.cyan().bold(), cert::CERT_LEVEL);
+        println!("    {}", e.face);
         println!(
-            "    policy: {policy} (emitted body simulates its model under the named contracts)"
+            "    policy: {} (emitted body simulates its model under the named contracts)",
+            e.policy
         );
         if report.contracts.is_empty() {
             println!("    runtime-contracts: (none)");

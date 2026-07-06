@@ -247,6 +247,61 @@ impl Cert {
             Cert::AdtMatch { name, .. } => format!("CertModule.{name}Host"),
         }
     }
+    /// The source-level `Dom`/`Cod` type names recorded in the manifest JSON so
+    /// `aver cert verify`/`explain` can surface WHAT is certified without reading
+    /// Lean. Display-only (the semantic content is what the witness pins);
+    /// rendered ASCII-safe.
+    fn source_dom_cod(&self, model_info: &ModelInfo) -> (String, String) {
+        let ascii = |s: &str| ascii_type_name(s);
+        match self {
+            Cert::StraightLine { .. }
+            | Cert::Recursive { .. }
+            | Cert::AccumulatorRecursive { .. } => ("List Int".to_string(), "Int".to_string()),
+            Cert::FieldProjection { .. } => ("WVal x WVal".to_string(), "WVal".to_string()),
+            Cert::AdtMatch { name, .. } => {
+                let dom = model_info
+                    .fns
+                    .get(name)
+                    .and_then(|s| s.params.first())
+                    .map(|s| ascii(s))
+                    .unwrap_or_else(|| "Op".to_string());
+                (dom, "Int".to_string())
+            }
+            Cert::AdtConstructor { field_count, .. } => {
+                if adt_constructor_uses_model(self, model_info) {
+                    let cod = model_info
+                        .fns
+                        .get(self.name())
+                        .map(|s| ascii(&s.ret))
+                        .unwrap_or_else(|| "Unit".to_string());
+                    ("Int".to_string(), cod)
+                } else {
+                    let dom = if *field_count == 1 {
+                        "WVal".to_string()
+                    } else {
+                        "WVal x WVal".to_string()
+                    };
+                    (dom, "WVal".to_string())
+                }
+            }
+        }
+    }
+}
+
+/// Render a Lean/source type name as printable ASCII for the manifest JSON: the
+/// common math glyphs `×`/`→` become `x`/`->`, and any other non-ASCII byte is
+/// dropped. Keeps a hostile-free, injection-free label the checker can display.
+fn ascii_type_name(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '×' => out.push('x'),
+            '→' => out.push_str("->"),
+            c if c.is_ascii_graphic() || c == ' ' => out.push(c),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Classification of every user function in the module.
@@ -351,6 +406,153 @@ pub struct RederivedObligation {
     pub self_idx: u32,
     /// `Obligation.carrier`: the Int carrier struct type index.
     pub carrier: u32,
+    /// The BYTE-derived typed face: which standard `Dom`/`Cod`/`domRepr`/`codRepr`
+    /// forms the honest emitter renders for this class. `aver cert verify` pins
+    /// these into its witness, so a manifest weakening the semantic face
+    /// (`Dom := Empty`, `codRepr := fun _ _ _ => True`, `domRepr := fun _ _ _ => False`,
+    /// or a nerfed arity) fails a kernel `rfl`/`HEq.rfl` and is DECLINED.
+    pub face: ObligationFace,
+}
+
+/// The byte-derived semantic face of a certified obligation — enough for the
+/// checker to reconstruct, WITHOUT the source model, the standard typed forms
+/// the honest emitter rendered. Derived from `classify` over the hash-verified
+/// bytes, never from the untrusted JSON/Lean manifest.
+#[derive(Clone)]
+pub enum ObligationFace {
+    /// Integer classes (straight-line / self-recursive / accumulator):
+    /// `Dom := List Int`, `Cod := Int`, `codRepr := intRepr`,
+    /// `domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = arity`.
+    /// `arity` is the byte-bound argument count of the class (restores the
+    /// v2 arity binding the v3 domRepr moved into an attacker-editable literal).
+    IntList { arity: usize },
+    /// Field projection: `Dom := WVal × WVal`, `Cod := WVal`,
+    /// `codRepr := verbatimRepr`,
+    /// `domRepr := fun _ p vs => vs = [.structv struct_idx [p.1, p.2]]`.
+    Projection { struct_idx: u32 },
+    /// ADT variant match: `Cod := Int`, `codRepr := intRepr`. `Dom` and
+    /// `domRepr` are stated over a user-inductive `Repr` the checker cannot
+    /// re-derive from bytes — a read declaration (only `Nonempty Dom` is pinned).
+    AdtMatch,
+    /// ADT constructor (verbatim pack or user-model): the whole typed face is
+    /// over a user `Repr`/model the checker cannot re-derive from bytes — a read
+    /// declaration. Only `Nonempty Dom` is pinned; an executable interpreter
+    /// tripwire in the emitted certificate forces the constructor's behaviour.
+    AdtConstructor,
+}
+
+impl ObligationFace {
+    fn of_cert(c: &Cert) -> ObligationFace {
+        match c {
+            Cert::StraightLine { .. }
+            | Cert::Recursive { .. }
+            | Cert::AccumulatorRecursive { .. } => ObligationFace::IntList { arity: c.arity() },
+            Cert::FieldProjection { struct_idx, .. } => ObligationFace::Projection {
+                struct_idx: *struct_idx,
+            },
+            Cert::AdtMatch { .. } => ObligationFace::AdtMatch,
+            Cert::AdtConstructor { .. } => ObligationFace::AdtConstructor,
+        }
+    }
+
+    /// One-line human description of the certified face for `verify`/`explain`:
+    /// the trusted class plus the standard `Dom`/`Cod`/`codRepr` forms. `dom`
+    /// and `cod` are the (charset-gated, untrusted) source type names, shown for
+    /// the classes whose typed domain/codomain is a user declaration.
+    pub fn describe(&self, dom: Option<&str>, cod: Option<&str>) -> String {
+        match self {
+            ObligationFace::IntList { arity } => format!(
+                "class: integer simulation  |  Dom: List Int (arity {arity})  Cod: Int  codRepr: intRepr"
+            ),
+            ObligationFace::Projection { .. } => {
+                "class: field projection  |  Dom: WVal x WVal  Cod: WVal  codRepr: verbatimRepr"
+                    .to_string()
+            }
+            ObligationFace::AdtMatch => {
+                let d = dom.unwrap_or("<user type>");
+                format!(
+                    "class: ADT variant match  |  Dom: {d} (source-declared Repr, read)  Cod: Int  codRepr: intRepr"
+                )
+            }
+            ObligationFace::AdtConstructor => {
+                let d = dom.unwrap_or("<user type>");
+                let cc = cod.unwrap_or("<user type>");
+                format!(
+                    "class: ADT constructor  |  Dom: {d}  Cod: {cc}  (typed face is a source-declared read declaration; behaviour pinned by an interpreter tripwire)"
+                )
+            }
+        }
+    }
+
+    /// Lean `example` lines pinning the typed face of the obligation at position
+    /// `idx` in `AverCert.manifest.obligations` to the STANDARD forms of this
+    /// byte-derived class. Empty for `AdtConstructor` (read residue). A manifest
+    /// that ships a weaker `Dom`/`Cod`/`domRepr`/`codRepr` fails one of these
+    /// checks, so the witness does not check and `verify` declines.
+    pub fn witness_pins(&self, idx: usize) -> String {
+        // Reduce `obligations[idx]? = some o` to a concrete obligation, then
+        // substitute so the dependent `codRepr`/`domRepr` fields have concrete
+        // types before the `HEq.rfl`.
+        let reduce = "simp only [AverCert.manifest, List.getElem?_cons_zero, \
+                      List.getElem?_cons_succ, Option.some.injEq] at h";
+        let obl = "AverCert.manifest.obligations";
+        let mut s = String::new();
+        match self {
+            ObligationFace::IntList { arity } => {
+                s.push_str(&format!(
+                    "example : ({obl}[{idx}]?).map (fun o => o.Dom) = some (List Int) := rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ({obl}[{idx}]?).map (fun o => o.Cod) = some Int := rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o → \
+                     HEq o.codRepr (@AverCert.Schema.intRepr o.carrier) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o →\n    \
+                     HEq o.domRepr (fun (S : AverCert.Schema.CarrierSpec o.carrier) \
+                     (ns : List Int) (vs : List CertPrelude.WVal) =>\n      \
+                     AverCert.Schema.ReprAll S.Repr ns vs ∧ ns.length = {arity}) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+            }
+            ObligationFace::Projection { struct_idx } => {
+                s.push_str(&format!(
+                    "example : ({obl}[{idx}]?).map (fun o => o.Dom) = \
+                     some (CertPrelude.WVal × CertPrelude.WVal) := rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ({obl}[{idx}]?).map (fun o => o.Cod) = some CertPrelude.WVal := rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o → \
+                     HEq o.codRepr (@AverCert.Schema.verbatimRepr o.carrier) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o →\n    \
+                     HEq o.domRepr (fun (_S : AverCert.Schema.CarrierSpec o.carrier) \
+                     (p : CertPrelude.WVal × CertPrelude.WVal) (vs : List CertPrelude.WVal) =>\n      \
+                     vs = [.structv {struct_idx} [p.1, p.2]]) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+            }
+            ObligationFace::AdtMatch => {
+                s.push_str(&format!(
+                    "example : ({obl}[{idx}]?).map (fun o => o.Cod) = some Int := rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o → \
+                     HEq o.codRepr (@AverCert.Schema.intRepr o.carrier) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+            }
+            ObligationFace::AdtConstructor => {}
+        }
+        s
+    }
 }
 
 /// Re-derive one [`RederivedObligation`] per user function that classifies into
@@ -368,6 +570,7 @@ pub fn rederive_obligations(wasm_bytes: &[u8]) -> Result<Vec<RederivedObligation
                 host: render_host_value(&c),
                 self_idx: c.self_idx(),
                 carrier: c.carrier(),
+                face: ObligationFace::of_cert(&c),
             });
         }
     }
@@ -1053,10 +1256,12 @@ impl ModelInfo {
                     .insert(name.to_string(), InductiveInfo { ctors });
                 continue;
             }
-            if line.starts_with("def ") && line.contains(" : ") && line.ends_with(":=") {
-                if let Some((name, sig)) = parse_def_sig(line) {
-                    self.fns.insert(name, sig);
-                }
+            if line.starts_with("def ")
+                && line.contains(" : ")
+                && line.ends_with(":=")
+                && let Some((name, sig)) = parse_def_sig(line)
+            {
+                self.fns.insert(name, sig);
             }
             i += 1;
         }
@@ -1151,7 +1356,14 @@ pub fn write_project(
     let prelude_sha = sha256_hex(CERT_PRELUDE.as_bytes());
     std::fs::write(
         cert_dir.join("cert-manifest.json"),
-        render_manifest(analysis, wasm_name, &sha, &schema_sha, &prelude_sha),
+        render_manifest(
+            analysis,
+            &model_info,
+            wasm_name,
+            &sha,
+            &schema_sha,
+            &prelude_sha,
+        ),
     )
     .map_err(|e| format!("write manifest: {e}"))?;
     Ok(())
@@ -2048,7 +2260,13 @@ fn render_adt_constructor_cert(c: &Cert, model_info: &ModelInfo) -> String {
         unreachable!()
     };
     if !adt_constructor_uses_model(c, model_info) {
-        return render_verbatim_constructor_cert(name, *self_idx, *struct_idx, *field_count);
+        return render_verbatim_constructor_cert(
+            name,
+            *self_idx,
+            *carrier,
+            *struct_idx,
+            *field_count,
+        );
     }
     let sig = model_info.fns.get(name);
     let _ = sig
@@ -2064,9 +2282,15 @@ theorem {name}_wasm_certified (host : HostTbl) :
 
 #print axioms {name}_wasm_certified
 
+-- Executable tripwire: run the constructor on an Int 7 and decode field 0 of the
+-- built struct back to `some 7`. Unlike a bare `= none` (which a TRAP also
+-- satisfies), this forces the emitted body to genuinely pack its argument.
 example :
-    ((wFuncN {name}Code {name}Host 1 {self_idx} [carrierSmall {carrier} 7]).bind carrierToInt)
-      = none := by native_decide
+    ((wFuncN {name}Code {name}Host 1 {self_idx} [carrierSmall {carrier} 7]).bind
+      (fun r => match r with
+        | .structv _ (f :: _) => carrierToInt f
+        | _ => none))
+      = some 7 := by native_decide
 
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
   intro S add sub hadd hsub fuel n vs w hrepr hrun
@@ -2089,6 +2313,7 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
 fn render_verbatim_constructor_cert(
     name: &str,
     self_idx: u32,
+    carrier: u32,
     struct_idx: u32,
     field_count: u32,
 ) -> String {
@@ -2104,6 +2329,12 @@ fn render_verbatim_constructor_cert(
             "  rcases p with ⟨a, b⟩\n",
         )
     };
+    // Concrete forcing input: pack carrier value(s) and decode field 0 back.
+    let concrete = if field_count == 1 {
+        format!("[carrierSmall {carrier} 7]")
+    } else {
+        format!("[carrierSmall {carrier} 7, carrierSmall {carrier} 9]")
+    };
     format!(
         r#"/-! ### {name} — verbatim constructor certificate -/
 
@@ -2113,6 +2344,15 @@ theorem {name}_wasm_certified (host : HostTbl) :
   simp [wFuncN, {name}Code, wRunF, popArgs, initLocals]
 
 #print axioms {name}_wasm_certified
+
+-- Executable tripwire: pack concrete carriers and decode field 0 back to
+-- `some 7`. A trapping body yields `none`, so this forces a real struct build.
+example :
+    ((wFuncN {name}Code {name}Host 1 {self_idx} {concrete}).bind
+      (fun r => match r with
+        | .structv _ (f :: _) => carrierToInt f
+        | _ => none))
+      = some 7 := by native_decide
 
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
   intro S add sub hadd hsub fuel p vs w hrepr hrun
@@ -2132,7 +2372,7 @@ fn render_field_projection_cert(c: &Cert) -> String {
     let Cert::FieldProjection {
         name,
         self_idx,
-        carrier: _,
+        carrier,
         struct_idx,
         field_idx,
         ..
@@ -2141,6 +2381,9 @@ fn render_field_projection_cert(c: &Cert) -> String {
         unreachable!()
     };
     let expected = if *field_idx == 0 { "a" } else { "b" };
+    // Concrete forcing input: project field `field_idx` from a two-carrier
+    // struct and decode it back. Field 0 carries 7, field 1 carries 9.
+    let forced = if *field_idx == 0 { 7 } else { 9 };
     format!(
         r#"/-! ### {name} — field projection certificate -/
 
@@ -2150,6 +2393,13 @@ theorem {name}_wasm_certified (host : HostTbl) :
   simp [wFuncN, {name}Code, wRunF, popArgs, initLocals]
 
 #print axioms {name}_wasm_certified
+
+-- Executable tripwire: project the field from a concrete two-carrier struct and
+-- decode it back. A trapping body yields `none`, so this forces a real read.
+example :
+    ((wFuncN {name}Code {name}Host 1 {self_idx}
+        [.structv {struct_idx} [carrierSmall {carrier} 7, carrierSmall {carrier} 9]]).bind carrierToInt)
+      = some {forced} := by native_decide
 
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
   intro S add sub hadd hsub fuel p vs w hrepr hrun
@@ -2569,6 +2819,7 @@ fn render_lakefile(model_roots: &[String]) -> String {
 
 fn render_manifest(
     analysis: &Analysis,
+    model_info: &ModelInfo,
     wasm_name: &str,
     sha: &str,
     schema_sha: &str,
@@ -2614,12 +2865,15 @@ fn render_manifest(
             Cert::FieldProjection { .. } => "field-projection",
             Cert::AdtMatch { .. } => "adt-match",
         };
+        let (dom, cod) = c.source_dom_cod(model_info);
         s.push_str(&format!(
             "\n    {{\"name\": {}, \"class\": \"{}\", \"policy\": \"simulatesModel\", \
-             \"level\": \"{}\", \"theorem\": \"CertProofs.{}_wasm_certified\"}}",
+             \"level\": \"{}\", \"dom\": {}, \"cod\": {}, \"theorem\": \"CertProofs.{}_wasm_certified\"}}",
             json_str(c.name()),
             kind,
             CERT_LEVEL,
+            json_str(&dom),
+            json_str(&cod),
             c.name()
         ));
     }
