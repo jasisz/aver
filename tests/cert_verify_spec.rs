@@ -1046,3 +1046,61 @@ fn adt_witness_body_mutation_is_declined() {
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }
+
+#[test]
+fn composition_callee_mutation_is_declined() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping composition-mutation test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-compose-mut");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/compose.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    // Bump the CALLEE (double) entry's local count in the caller's shared
+    // multi-entry table: the extra unused local keeps the cert's own build
+    // green, so only the checker's whole-table code `rfl` — which re-derives
+    // every closure entry from the bytes — can catch the decoupling. This is
+    // the load-bearing tripwire for cross-function composition.
+    let m = out_dir.join("cert").join("Module.lean");
+    let src = std::fs::read_to_string(&m).unwrap();
+    let mutated = src.replacen(
+        "if fn = 1 then some ⟨1, 1,",
+        "if fn = 1 then some ⟨1, 2,",
+        1,
+    );
+    assert_ne!(
+        src, mutated,
+        "emitted shared-table callee header shape changed"
+    );
+    std::fs::write(&m, mutated).unwrap();
+
+    let (ok, out) = aver_verify(&out_dir.join("compose.wasm"), &out_dir.join("cert"));
+    assert!(
+        !ok,
+        "mutated composition callee entry must be DECLINED:\n{out}"
+    );
+    assert!(out.contains("does not bind"), "wrong reason:\n{out}");
+    assert!(
+        !out.contains("CERTIFIED"),
+        "tampered composition cert must not verify:\n{out}"
+    );
+}
