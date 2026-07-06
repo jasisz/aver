@@ -206,6 +206,26 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             vec!["mk", "eval"],
         ),
         ("examples/core/user_record.av", "user-record", vec!["greet"]),
+        (
+            "tools/certkit/fixtures/tupleproj.av",
+            "tuple-proj",
+            vec!["pairFst", "pairSnd"],
+        ),
+        (
+            "tools/certkit/fixtures/widenedmatch.av",
+            "widened-match",
+            vec!["boxInt"],
+        ),
+        (
+            "tools/certkit/fixtures/rangepred.av",
+            "range-pred",
+            vec!["inAsciiDigit"],
+        ),
+        (
+            "tools/certkit/fixtures/verbatimwiden.av",
+            "verbatim-widen",
+            vec!["wrapItems"],
+        ),
     ];
 
     for (input, prefix, expected) in cases {

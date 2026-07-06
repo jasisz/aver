@@ -102,6 +102,7 @@ enum Op {
     RefCast(u32),
     StructNew(u32, u32),
     StructGet(u32, u32),
+    RefNull,
     RefIsNull,
     I64LeS,
     I64GeS,
@@ -191,6 +192,48 @@ enum Cert {
         field_idx: u32,
         ops: Vec<Op>,
     },
+    /// Non-recursive two-branch "widened" match projecting one integer-payload
+    /// variant of a user inductive, with a boxed-`0` default for every other
+    /// variant: `match j { JsonInt(n) -> n; _ -> 0 }`. Generalises the fixed
+    /// three-variant match to any inductive with a single projected Int variant.
+    WidenedIntMatch {
+        name: String,
+        self_idx: u32,
+        nlocals: usize,
+        carrier: u32,
+        /// Struct type index of the projected (integer-payload) variant.
+        hit_variant_idx: u32,
+        box_idx: u32,
+        ops: Vec<Op>,
+    },
+    /// Non-recursive two-branch match projecting one variant's first field
+    /// VERBATIM (as a raw `WVal`), defaulting to the null reference for every
+    /// other variant: `match j { JsonList(items) -> items; _ -> [] }` where the
+    /// empty list lowers to `ref.null`. No claim about the projected value's
+    /// meaning — `Cod := WVal`, `verbatimRepr` — so it needs no carrier/string
+    /// representation.
+    VerbatimWidenedMatch {
+        name: String,
+        self_idx: u32,
+        nlocals: usize,
+        carrier: u32,
+        hit_variant_idx: u32,
+        ops: Vec<Op>,
+    },
+    /// Non-recursive Int -> Bool range predicate: two nested carrier comparisons
+    /// against constants, `match cp >= k_lo { true -> cp <= k_hi; false -> false }`
+    /// (the `isHighSurrogate`/`isLowSurrogate` shape). Certified over the canonical
+    /// small-carrier domain (the constants and every code point fit i64), so the
+    /// bignum comparison arms are dead in the proof.
+    IntRangePredicate {
+        name: String,
+        self_idx: u32,
+        nlocals: usize,
+        carrier: u32,
+        k_lo: i64,
+        k_hi: i64,
+        ops: Vec<Op>,
+    },
     /// Non-recursive three-variant ADT match: Add x -> x; Neg x -> 0 - x; Zero -> 0.
     AdtMatch {
         name: String,
@@ -232,6 +275,9 @@ impl Cert {
             | Cert::AccumulatorRecursive { name, .. }
             | Cert::AdtConstructor { name, .. }
             | Cert::FieldProjection { name, .. }
+            | Cert::WidenedIntMatch { name, .. }
+            | Cert::VerbatimWidenedMatch { name, .. }
+            | Cert::IntRangePredicate { name, .. }
             | Cert::AdtMatch { name, .. }
             | Cert::Composition { name, .. } => name,
         }
@@ -243,6 +289,9 @@ impl Cert {
             | Cert::AccumulatorRecursive { self_idx, .. }
             | Cert::AdtConstructor { self_idx, .. }
             | Cert::FieldProjection { self_idx, .. }
+            | Cert::WidenedIntMatch { self_idx, .. }
+            | Cert::VerbatimWidenedMatch { self_idx, .. }
+            | Cert::IntRangePredicate { self_idx, .. }
             | Cert::AdtMatch { self_idx, .. }
             | Cert::Composition { self_idx, .. } => *self_idx,
         }
@@ -254,6 +303,9 @@ impl Cert {
             | Cert::AccumulatorRecursive { carrier, .. }
             | Cert::AdtConstructor { carrier, .. }
             | Cert::FieldProjection { carrier, .. }
+            | Cert::WidenedIntMatch { carrier, .. }
+            | Cert::VerbatimWidenedMatch { carrier, .. }
+            | Cert::IntRangePredicate { carrier, .. }
             | Cert::AdtMatch { carrier, .. }
             | Cert::Composition { carrier, .. } => *carrier,
         }
@@ -263,7 +315,12 @@ impl Cert {
             Cert::StraightLine { .. } | Cert::Recursive { .. } => 1,
             Cert::AccumulatorRecursive { .. } => 2,
             Cert::AdtConstructor { field_count, .. } => *field_count as usize,
-            Cert::FieldProjection { .. } | Cert::AdtMatch { .. } | Cert::Composition { .. } => 1,
+            Cert::FieldProjection { .. }
+            | Cert::WidenedIntMatch { .. }
+            | Cert::VerbatimWidenedMatch { .. }
+            | Cert::IntRangePredicate { .. }
+            | Cert::AdtMatch { .. }
+            | Cert::Composition { .. } => 1,
         }
     }
     /// The Lean expression for the model this export simulates.
@@ -276,9 +333,12 @@ impl Cert {
             Cert::AccumulatorRecursive { name, .. } => {
                 format!("fun ns => {name} (ns.headD 0) ((ns.drop 1).headD 0)")
             }
-            Cert::AdtConstructor { .. } | Cert::FieldProjection { .. } | Cert::AdtMatch { .. } => {
-                "fun x => x".to_string()
-            }
+            Cert::AdtConstructor { .. }
+            | Cert::FieldProjection { .. }
+            | Cert::WidenedIntMatch { .. }
+            | Cert::VerbatimWidenedMatch { .. }
+            | Cert::IntRangePredicate { .. }
+            | Cert::AdtMatch { .. } => "fun x => x".to_string(),
         }
     }
     /// The Lean expression for the 2-arg host builder in `Obligation` shape
@@ -292,6 +352,11 @@ impl Cert {
                 format!("CertModule.{name}Host")
             }
             Cert::AdtConstructor { name, .. } | Cert::FieldProjection { name, .. } => {
+                format!("fun _ _ => CertModule.{name}Host")
+            }
+            Cert::WidenedIntMatch { name, .. }
+            | Cert::VerbatimWidenedMatch { name, .. }
+            | Cert::IntRangePredicate { name, .. } => {
                 format!("fun _ _ => CertModule.{name}Host")
             }
             Cert::AdtMatch { name, .. } => format!("CertModule.{name}Host"),
@@ -309,7 +374,9 @@ impl Cert {
             | Cert::AccumulatorRecursive { .. }
             | Cert::Composition { .. } => ("List Int".to_string(), "Int".to_string()),
             Cert::FieldProjection { .. } => ("WVal x WVal".to_string(), "WVal".to_string()),
-            Cert::AdtMatch { name, .. } => {
+            Cert::VerbatimWidenedMatch { .. } => ("WVal".to_string(), "WVal".to_string()),
+            Cert::IntRangePredicate { .. } => ("Int".to_string(), "Bool".to_string()),
+            Cert::AdtMatch { name, .. } | Cert::WidenedIntMatch { name, .. } => {
                 let dom = model_info
                     .fns
                     .get(name)
@@ -410,7 +477,13 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
                 has_add = true;
                 has_sub = true;
             }
-            Cert::AdtConstructor { .. } | Cert::FieldProjection { .. } => {}
+            Cert::AdtConstructor { .. }
+            | Cert::FieldProjection { .. }
+            | Cert::VerbatimWidenedMatch { .. }
+            | Cert::IntRangePredicate { .. } => {}
+            Cert::WidenedIntMatch { .. } => {
+                has_box = true;
+            }
             Cert::AdtMatch { .. } => {
                 has_box = true;
                 has_sub = true;
@@ -495,6 +568,16 @@ pub enum ObligationFace {
     /// `codRepr := verbatimRepr`,
     /// `domRepr := fun _ p vs => vs = [.structv struct_idx [p.1, p.2]]`.
     Projection { struct_idx: u32 },
+    /// Int -> Bool range predicate: `Dom := Int`, `Cod := Bool`,
+    /// `codRepr := boolRepr`,
+    /// `domRepr := fun _ cp vs => vs = [carrierSmall carrier cp]` (the canonical
+    /// small-carrier domain — every constant and code point fits i64).
+    IntPredicate,
+    /// Verbatim widened match: `Dom := WVal`, `Cod := WVal`,
+    /// `codRepr := verbatimRepr`, `domRepr := fun _ v vs => vs = [v]`. The model
+    /// (a raw projection with a null default) is a read declaration; behaviour is
+    /// pinned by executable interpreter tripwires.
+    VerbatimWidened,
     /// ADT variant match: `Cod := Int`, `codRepr := intRepr`. `Dom` and
     /// `domRepr` are stated over a user-inductive `Repr` the checker cannot
     /// re-derive from bytes — a read declaration (only `Nonempty Dom` is pinned).
@@ -516,7 +599,9 @@ impl ObligationFace {
             Cert::FieldProjection { struct_idx, .. } => ObligationFace::Projection {
                 struct_idx: *struct_idx,
             },
-            Cert::AdtMatch { .. } => ObligationFace::AdtMatch,
+            Cert::IntRangePredicate { .. } => ObligationFace::IntPredicate,
+            Cert::VerbatimWidenedMatch { .. } => ObligationFace::VerbatimWidened,
+            Cert::AdtMatch { .. } | Cert::WidenedIntMatch { .. } => ObligationFace::AdtMatch,
             Cert::AdtConstructor { .. } => ObligationFace::AdtConstructor,
         }
     }
@@ -532,6 +617,14 @@ impl ObligationFace {
             ),
             ObligationFace::Projection { .. } => {
                 "class: field projection  |  Dom: WVal x WVal  Cod: WVal  codRepr: verbatimRepr"
+                    .to_string()
+            }
+            ObligationFace::IntPredicate => {
+                "class: Int range predicate  |  Dom: Int (canonical small carrier)  Cod: Bool  codRepr: boolRepr"
+                    .to_string()
+            }
+            ObligationFace::VerbatimWidened => {
+                "class: verbatim widened match  |  Dom: WVal  Cod: WVal  codRepr: verbatimRepr  (model is a read declaration; behaviour pinned by an interpreter tripwire)"
                     .to_string()
             }
             ObligationFace::AdtMatch => {
@@ -610,6 +703,46 @@ impl ObligationFace {
                      HEq o.domRepr (fun (_S : AverCert.Schema.CarrierSpec o.carrier) \
                      (p : CertPrelude.WVal × CertPrelude.WVal) (vs : List CertPrelude.WVal) =>\n      \
                      vs = [.structv {struct_idx} [p.1, p.2]]) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+            }
+            ObligationFace::IntPredicate => {
+                s.push_str(&format!(
+                    "example : ({obl}[{idx}]?).map (fun o => o.Dom) = some Int := rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ({obl}[{idx}]?).map (fun o => o.Cod) = some Bool := rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o → \
+                     HEq o.codRepr (@AverCert.Schema.boolRepr o.carrier) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o →\n    \
+                     HEq o.domRepr (fun (_S : AverCert.Schema.CarrierSpec o.carrier) \
+                     (cp : Int) (vs : List CertPrelude.WVal) =>\n      \
+                     vs = [CertPrelude.carrierSmall o.carrier cp]) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+            }
+            ObligationFace::VerbatimWidened => {
+                s.push_str(&format!(
+                    "example : ({obl}[{idx}]?).map (fun o => o.Dom) = some CertPrelude.WVal := rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ({obl}[{idx}]?).map (fun o => o.Cod) = some CertPrelude.WVal := rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o → \
+                     HEq o.codRepr (@AverCert.Schema.verbatimRepr o.carrier) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o →\n    \
+                     HEq o.domRepr (fun (_S : AverCert.Schema.CarrierSpec o.carrier) \
+                     (v : CertPrelude.WVal) (vs : List CertPrelude.WVal) =>\n      \
+                     vs = [v]) := by\n  \
                      intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
                 ));
             }
@@ -781,6 +914,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                             struct_type_index,
                             field_index,
                         } => Op::StructGet(struct_type_index, field_index),
+                        Operator::RefNull { .. } => Op::RefNull,
                         Operator::RefIsNull => Op::RefIsNull,
                         Operator::I64LeS => Op::I64LeS,
                         Operator::I64GeS => Op::I64GeS,
@@ -928,6 +1062,18 @@ fn classify(
     }
 
     if let Some(cert) = match_field_projection(f, carrier) {
+        return Ok(cert);
+    }
+
+    if let Some(cert) = match_widened_int_match(f, box_idx, carrier) {
+        return Ok(cert);
+    }
+
+    if let Some(cert) = match_verbatim_widened_match(f, carrier) {
+        return Ok(cert);
+    }
+
+    if let Some(cert) = match_int_range_predicate(f, carrier) {
         return Ok(cert);
     }
 
@@ -1175,20 +1321,224 @@ fn match_adt_constructor(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Opti
 
 fn match_field_projection(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
     use Op::*;
-    let ops = strip_trailing_end(&f.ops);
-    let [LocalGet(0), StructGet(struct_idx, field_idx)] = ops else {
-        return None;
-    };
-    if f.arity != 1 || *struct_idx == carrier? || !f.calls.is_empty() {
+    if f.arity != 1 || !f.calls.is_empty() {
         return None;
     }
+    let ops = strip_trailing_end(&f.ops);
+    let carrier = carrier?;
+    // Two lowerings project a single field from a one-struct argument and
+    // return it verbatim. Both are recorded op-for-op in `code`, so the proof
+    // and the checker reason about exactly the emitted bytes.
+    //
+    //  * bare record access `u.field`:
+    //        [localGet 0, structGet t field]
+    //  * tuple / record destructuring `match p { (x, _) -> x }`, which lowers
+    //    with a scrutinee bind-and-cast preamble and a result-bind tail:
+    //        [localGet 0, localSet s, localGet s, refCast t,
+    //         structGet t field, localSet r, localGet r]
+    //
+    // The class models the argument as a two-field struct (`Dom := WVal × WVal`,
+    // `model := p.1 / p.2`), so a projected `field` beyond {0,1} has no faithful
+    // model here and declines. The bare arm is left byte-identical to the prior
+    // matcher so existing certificates are unchanged.
+    let (struct_idx, field_idx) = match ops {
+        [LocalGet(0), StructGet(t, field)] => {
+            if *t == carrier {
+                return None;
+            }
+            (*t, *field)
+        }
+        [
+            LocalGet(0),
+            LocalSet(s0),
+            LocalGet(s1),
+            RefCast(tc),
+            StructGet(tg, field),
+            LocalSet(r0),
+            LocalGet(r1),
+        ] if s0 == s1 && tc == tg && r0 == r1 && *field <= 1 && *tg != carrier => (*tg, *field),
+        _ => return None,
+    };
     Some(Cert::FieldProjection {
         name: f.name.clone(),
         self_idx: f.wasm_idx,
         nlocals: f.nlocals,
-        carrier: carrier?,
-        struct_idx: *struct_idx,
-        field_idx: *field_idx,
+        carrier,
+        struct_idx,
+        field_idx,
+        ops: ops.to_vec(),
+    })
+}
+
+/// Two-branch "widened" match projecting one integer-payload variant, boxing `0`
+/// for every other variant:
+///   `[localGet 0, localSet s, localGet s, refTest ht, if
+///       localGet s, refCast ht, structGet ht 0, localSet r, localGet r
+///     else
+///       i64Const 0, call box, end]`
+/// The default arm is a boxed integer `0`, which pins the codomain to `Int`; the
+/// projected field is therefore an integer carrier and the model is the source
+/// function (`jsonInt : Json -> Int`).
+fn match_widened_int_match(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Option<Cert> {
+    use Op::*;
+    if f.arity != 1 {
+        return None;
+    }
+    let carrier = carrier?;
+    let ops = strip_trailing_end(&f.ops);
+    let [
+        LocalGet(0),
+        LocalSet(s0),
+        LocalGet(s1),
+        RefTest(ht),
+        If,
+        LocalGet(s2),
+        RefCast(hc),
+        StructGet(hg, 0),
+        LocalSet(r0),
+        LocalGet(r1),
+        Else,
+        I64Const(0),
+        Call(bx),
+        End,
+    ] = ops
+    else {
+        return None;
+    };
+    if s0 != s1 || s0 != s2 || ht != hc || ht != hg || r0 != r1 || *bx != box_idx || *ht == carrier
+    {
+        return None;
+    }
+    Some(Cert::WidenedIntMatch {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier,
+        hit_variant_idx: *ht,
+        box_idx,
+        ops: ops.to_vec(),
+    })
+}
+
+/// Two-branch match projecting one variant's first field verbatim (as a raw
+/// `WVal`) with a null-reference default:
+///   `[localGet 0, localSet s, localGet s, refTest ht, if
+///       localGet s, refCast ht, structGet ht 0, localSet r, localGet r
+///     else
+///       refNull, end]`
+/// The projected value is returned as-is (`Cod := WVal`, `verbatimRepr`), so the
+/// class needs no carrier/string representation — the shape of an empty-list or
+/// null-defaulting variant reader such as `jsonList`.
+fn match_verbatim_widened_match(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
+    use Op::*;
+    if f.arity != 1 || !f.calls.is_empty() {
+        return None;
+    }
+    let carrier = carrier?;
+    let ops = strip_trailing_end(&f.ops);
+    let [
+        LocalGet(0),
+        LocalSet(s0),
+        LocalGet(s1),
+        RefTest(ht),
+        If,
+        LocalGet(s2),
+        RefCast(hc),
+        StructGet(hg, 0),
+        LocalSet(r0),
+        LocalGet(r1),
+        Else,
+        RefNull,
+        End,
+    ] = ops
+    else {
+        return None;
+    };
+    if s0 != s1 || s0 != s2 || ht != hc || ht != hg || r0 != r1 || *ht == carrier {
+        return None;
+    }
+    Some(Cert::VerbatimWidenedMatch {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier,
+        hit_variant_idx: *ht,
+        ops: ops.to_vec(),
+    })
+}
+
+/// Int -> Bool range predicate: two nested carrier comparisons against
+/// constants, `match cp >= k_lo { true -> cp <= k_hi; false -> false }`. Each
+/// comparison is the compiler's small/bignum dual (fast i64 arm guarded by a
+/// null-limbs check, bignum sign arm otherwise). The whole rigid op sequence is
+/// recorded in `code`; the certificate is stated over the canonical small-carrier
+/// domain, where the bignum arms are dead.
+fn match_int_range_predicate(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
+    use Op::*;
+    if f.arity != 1 || !f.calls.is_empty() {
+        return None;
+    }
+    let carrier = carrier?;
+    let ops = strip_trailing_end(&f.ops);
+    let [
+        LocalGet(0),
+        LocalSet(l0),
+        // cmp1: cp >= k_lo
+        LocalGet(l1),
+        StructGet(c0, 1),
+        RefIsNull,
+        If,
+        LocalGet(l2),
+        StructGet(c1, 0),
+        I64Const(k_lo),
+        I64GeS,
+        Else,
+        LocalGet(l3),
+        StructGet(c2, 2),
+        I32Const(0),
+        I32GtS,
+        End,
+        // outer branch on (cp >= k_lo)
+        If,
+        // then: cp <= k_hi
+        LocalGet(0),
+        LocalSet(l4),
+        LocalGet(l5),
+        StructGet(c3, 1),
+        RefIsNull,
+        If,
+        LocalGet(l6),
+        StructGet(c4, 0),
+        I64Const(k_hi),
+        I64LeS,
+        Else,
+        LocalGet(l7),
+        StructGet(c5, 2),
+        I32Const(0),
+        I32LtS,
+        End,
+        // else: false
+        Else,
+        I32Const(0),
+        End,
+    ] = ops
+    else {
+        return None;
+    };
+    let l = *l0;
+    if [l1, l2, l3, l4, l5, l6, l7].iter().any(|x| **x != l) {
+        return None;
+    }
+    if [c0, c1, c2, c3, c4, c5].iter().any(|c| **c != carrier) {
+        return None;
+    }
+    Some(Cert::IntRangePredicate {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier,
+        k_lo: *k_lo,
+        k_hi: *k_hi,
         ops: ops.to_vec(),
     })
 }
@@ -1728,9 +2078,22 @@ fn render_host_def(c: &Cert) -> String {
              else if fn = {add_idx} then some (2, add)\n  \
              else if fn = {sub_idx} then some (2, sub)\n  else none\n",
         ),
-        Cert::AdtConstructor { name, .. } | Cert::FieldProjection { name, .. } => format!(
+        Cert::AdtConstructor { name, .. }
+        | Cert::FieldProjection { name, .. }
+        | Cert::VerbatimWidenedMatch { name, .. }
+        | Cert::IntRangePredicate { name, .. } => format!(
             "/-- Runtime host wiring for `{name}` (no host calls). -/\n\
              def {name}Host : HostTbl := fun _ => none\n",
+        ),
+        Cert::WidenedIntMatch {
+            name,
+            carrier,
+            box_idx,
+            ..
+        } => format!(
+            "/-- Runtime host wiring for `{name}` (box contract for the default `0`). -/\n\
+             def {name}Host : HostTbl := fun fn =>\n  \
+             if fn = {box_idx} then some (1, boxRef {carrier})\n  else none\n",
         ),
         Cert::AdtMatch {
             name,
@@ -1759,6 +2122,9 @@ fn render_code_def(c: &Cert) -> String {
         Cert::AccumulatorRecursive { .. } => "accumulator self-recursive",
         Cert::AdtConstructor { .. } => "ADT constructor",
         Cert::FieldProjection { .. } => "field projection",
+        Cert::WidenedIntMatch { .. } => "widened Int variant match",
+        Cert::VerbatimWidenedMatch { .. } => "verbatim widened variant match",
+        Cert::IntRangePredicate { .. } => "Int range predicate",
         Cert::AdtMatch { .. } => "ADT variant match",
         Cert::Composition { .. } => "cross-function composition, whole call closure",
     };
@@ -1841,6 +2207,24 @@ fn render_code_value(c: &Cert) -> String {
             ops,
             ..
         }
+        | Cert::WidenedIntMatch {
+            self_idx,
+            nlocals,
+            ops,
+            ..
+        }
+        | Cert::VerbatimWidenedMatch {
+            self_idx,
+            nlocals,
+            ops,
+            ..
+        }
+        | Cert::IntRangePredicate {
+            self_idx,
+            nlocals,
+            ops,
+            ..
+        }
         | Cert::AdtMatch {
             self_idx,
             nlocals,
@@ -1918,9 +2302,16 @@ fn render_host_value(c: &Cert) -> String {
              else if fn = {add_idx} then some (2, add)\n    \
              else if fn = {sub_idx} then some (2, sub)\n    else none",
         ),
-        Cert::AdtConstructor { .. } | Cert::FieldProjection { .. } => {
-            "fun _ _ => fun _ => none".to_string()
-        }
+        Cert::AdtConstructor { .. }
+        | Cert::FieldProjection { .. }
+        | Cert::VerbatimWidenedMatch { .. }
+        | Cert::IntRangePredicate { .. } => "fun _ _ => fun _ => none".to_string(),
+        Cert::WidenedIntMatch {
+            carrier, box_idx, ..
+        } => format!(
+            "fun _ _ => fun fn =>\n    \
+             if fn = {box_idx} then some (1, boxRef {carrier})\n    else none",
+        ),
         Cert::AdtMatch {
             carrier,
             box_idx,
@@ -2013,6 +2404,7 @@ fn render_simple_op(op: &Op) -> Option<String> {
         Op::RefCast(t) => format!(".refCast {t}"),
         Op::StructNew(t, n) => format!(".structNew {t} {n}"),
         Op::StructGet(t, f) => format!(".structGet {t} {f}"),
+        Op::RefNull => ".refNull".to_string(),
         Op::RefIsNull => ".refIsNull".to_string(),
         Op::I64LeS => ".i64LeS".to_string(),
         Op::I64GeS => ".i64GeS".to_string(),
@@ -2067,6 +2459,11 @@ fn render_certificate(
             Cert::AccumulatorRecursive { .. } => s.push_str(&render_accumulator_recursive_cert(c)),
             Cert::AdtConstructor { .. } => s.push_str(&render_adt_constructor_cert(c, model_info)),
             Cert::FieldProjection { .. } => s.push_str(&render_field_projection_cert(c)),
+            Cert::WidenedIntMatch { .. } => {
+                s.push_str(&render_widened_int_match_cert(c, model_info))
+            }
+            Cert::IntRangePredicate { .. } => s.push_str(&render_int_range_predicate_cert(c)),
+            Cert::VerbatimWidenedMatch { .. } => s.push_str(&render_verbatim_widened_cert(c)),
             Cert::AdtMatch { .. } => s.push_str(&render_adt_match_cert(c, model_info)),
             Cert::Composition { .. } => s.push_str(&render_composition_cert(c)),
         }
@@ -2925,6 +3322,201 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
     )
 }
 
+fn render_widened_int_match_cert(c: &Cert, model_info: &ModelInfo) -> String {
+    let Cert::WidenedIntMatch {
+        name,
+        self_idx,
+        carrier,
+        hit_variant_idx,
+        ..
+    } = c
+    else {
+        unreachable!()
+    };
+    let ty = model_info
+        .fns
+        .get(name)
+        .and_then(|s| s.params.first())
+        .map(|s| s.as_str())
+        .unwrap_or("Op");
+    // A struct type distinct from the hit variant, for the default tripwire.
+    let other_idx = if *hit_variant_idx == 0 { 1 } else { 0 };
+    format!(
+        r#"/-! ### {name} — widened Int match certificate (carrier type {carrier}) -/
+
+theorem {name}_wasm_certified (S : CarrierSpec {carrier}) :
+    ∀ (fuel : Nat) (o : {ty}) (v w : WVal), {name}DomRepr S o v →
+      wFuncN {name}Code {name}Host fuel {self_idx} [v] = some w →
+      S.Repr ({name} o) w := by
+  intro fuel
+  cases fuel with
+  | zero => intro o v w hv hrun; simp [wFuncN] at hrun
+  | succ f =>
+      intro o v w hv hrun
+      cases o <;> simp only [{name}DomRepr] at hv <;>
+        first
+        | (obtain ⟨cx, rfl, hcx⟩ := hv
+           simp [wFuncN, wRunF, {name}Code, {name}Host, b32, popArgs, initLocals] at hrun
+           subst hrun
+           simpa [{name}] using hcx)
+        | (obtain ⟨t, fs, rfl, hne⟩ := hv
+           simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32, popArgs, initLocals, hne] at hrun
+           subst hrun
+           simpa [{name}] using S.smallIntro 0)
+
+#print axioms {name}_wasm_certified
+
+-- Executable tripwires: the projected variant reads its carrier, every other
+-- variant boxes the default `0`. A trapping body yields `none`, forcing a run.
+def {name}HostRef : HostTbl := {name}Host
+example :
+    ((wFuncN {name}Code {name}HostRef 4 {self_idx}
+        [.structv {hit_variant_idx} [carrierSmall {carrier} 42]]).bind carrierToInt)
+      = some 42 := by native_decide
+example :
+    ((wFuncN {name}Code {name}HostRef 4 {self_idx}
+        [.structv {other_idx} []]).bind carrierToInt)
+      = some 0 := by native_decide
+
+theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+  intro S add sub hadd hsub fuel o vs w hrepr hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  obtain ⟨v, rfl, hv⟩ := hrepr
+  simpa [AverCert.Schema.intRepr] using {name}_wasm_certified S fuel o v w hv hrun
+"#
+    )
+}
+
+fn render_verbatim_widened_cert(c: &Cert) -> String {
+    let Cert::VerbatimWidenedMatch {
+        name,
+        self_idx,
+        carrier,
+        hit_variant_idx,
+        ..
+    } = c
+    else {
+        unreachable!()
+    };
+    let hit = hit_variant_idx;
+    let other = if *hit_variant_idx == 0 { 1 } else { 0 };
+    let evalset = format!(
+        "wFuncN, wRunF, {name}Code, {name}Host, {name}Model, b32, popArgs, initLocals, List.set"
+    );
+    format!(
+        r#"/-! ### {name} — verbatim widened match certificate (carrier type {carrier}) -/
+
+/-- The VERBATIM emitted body reads the first field of variant `{hit}` and
+    returns it as-is, or the null reference for any other value, for ALL inputs
+    `v : WVal` (partial correctness — a trap makes no claim). -/
+theorem {name}_wasm_certified :
+    ∀ (fuel : Nat) (v w : WVal),
+      wFuncN {name}Code {name}Host (fuel + 1) {self_idx} [v] = some w →
+      w = {name}Model v := by
+  intro fuel v w hrun
+  cases v with
+  | i32v n => simp [{evalset}] at hrun
+  | i64v n => simp [{evalset}] at hrun
+  | f64v b => simp [{evalset}] at hrun
+  | null => simp_all [{evalset}]
+  | arr t es =>
+      by_cases ht : t = {hit}
+      · subst ht; simp [{evalset}] at hrun
+      · simp_all [{evalset}]
+  | structv t fs =>
+      by_cases ht : t = {hit}
+      · subst ht
+        cases fs with
+        | nil => simp [{evalset}] at hrun
+        | cons x rest => simp_all [{evalset}]
+      · simp_all [{evalset}]
+
+#print axioms {name}_wasm_certified
+
+-- Executable tripwires: the projected variant returns its first field, every
+-- other value returns the null reference.
+def {name}HostRef : HostTbl := {name}Host
+example :
+    (wFuncN {name}Code {name}HostRef 4 {self_idx} [.structv {hit} [.i64v 42]]).bind
+      (fun w => match w with | .i64v n => some n | _ => none) = some 42 := by native_decide
+example :
+    (wFuncN {name}Code {name}HostRef 4 {self_idx} [.structv {other} []]).bind
+      (fun w => match w with | .null => some 0 | _ => none) = some 0 := by native_decide
+
+theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+  intro S add sub hadd hsub fuel v vs w hrepr hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  subst hrepr
+  cases fuel with
+  | zero => simp [wFuncN] at hrun
+  | succ f =>
+      have hc := {name}_wasm_certified f v w hrun
+      simpa [AverCert.Schema.verbatimRepr] using hc
+"#
+    )
+}
+
+fn render_int_range_predicate_cert(c: &Cert) -> String {
+    let Cert::IntRangePredicate {
+        name,
+        self_idx,
+        carrier,
+        k_lo,
+        k_hi,
+        ..
+    } = c
+    else {
+        unreachable!()
+    };
+    let inside = k_lo; // in [k_lo, k_hi]
+    let outside = k_lo - 1; // below k_lo
+    let evalset = format!(
+        "wFuncN, wRunF, {name}Code, {name}Host, carrierSmall, b32, popArgs, initLocals, {name}"
+    );
+    format!(
+        r#"/-! ### {name} — Int range predicate certificate (carrier type {carrier}) -/
+
+/-- The VERBATIM emitted body maps the canonical small carrier of `cp` to the
+    boolean `{name} cp = (cp >= {k_lo} && cp <= {k_hi})`, for ALL `cp : ℤ`. The
+    bignum comparison arms are dead over this domain (small carrier ⇒ null limbs). -/
+theorem {name}_wasm_certified (S : CarrierSpec {carrier}) :
+    ∀ (fuel : Nat) (cp : Int),
+      wFuncN {name}Code {name}Host (fuel + 1) {self_idx} [carrierSmall {carrier} cp]
+        = some (b32 ({name} cp)) := by
+  intro fuel cp
+  by_cases h1 : ({k_lo} : Int) ≤ cp
+  · by_cases h2 : cp ≤ ({k_hi} : Int)
+    · simp [{evalset}, ge_iff_le, h1, h2]
+    · simp [{evalset}, ge_iff_le, h1, h2]
+  · simp [{evalset}, ge_iff_le, h1]
+
+#print axioms {name}_wasm_certified
+
+-- Executable tripwires: a value inside the range yields `true` (1), a value
+-- below the low bound yields `false` (0). Decodes the i32 boolean to an Int.
+def {name}HostRef : HostTbl := {name}Host
+example :
+    ((wFuncN {name}Code {name}HostRef 4 {self_idx} [carrierSmall {carrier} ({inside})]).bind
+        (fun w => match w with | .i32v n => some n | _ => none)) = some 1 := by native_decide
+example :
+    ((wFuncN {name}Code {name}HostRef 4 {self_idx} [carrierSmall {carrier} ({outside})]).bind
+        (fun w => match w with | .i32v n => some n | _ => none)) = some 0 := by native_decide
+
+theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+  intro S add sub hadd hsub fuel cp vs w hrepr hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  subst hrepr
+  cases fuel with
+  | zero => simp [wFuncN] at hrun
+  | succ f =>
+      rw [{name}_wasm_certified S f cp] at hrun
+      simp only [Option.some.injEq] at hrun
+      subst hrun
+      simp [AverCert.Schema.boolRepr]
+"#
+    )
+}
+
 fn render_adt_match_cert(c: &Cert, model_info: &ModelInfo) -> String {
     let Cert::AdtMatch {
         name,
@@ -3030,7 +3622,86 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
         }
         out.push('\n');
     }
+    // Per-function domain-representation relations for widened Int matches. Each
+    // is keyed on the projected variant's byte-derived struct index: the hit
+    // constructor is represented as that struct carrying a single Int carrier,
+    // every other constructor as any struct of a DIFFERENT type — enough to make
+    // the projection theorem provable and non-vacuous. This is a read
+    // declaration (the ADT face is not kernel-re-derived), so its exact shape is
+    // untrusted; the checker pins only `Cod = Int`, `codRepr = intRepr` and
+    // `Nonempty Dom`.
+    for c in &analysis.certs {
+        let Cert::WidenedIntMatch {
+            hit_variant_idx, ..
+        } = c
+        else {
+            continue;
+        };
+        let Some((ty, ind, hit_ctor)) = widened_match_info(c, model_info) else {
+            continue;
+        };
+        out.push_str(&format!(
+            "def {name}DomRepr (S : CarrierSpec {carrier}) : {ty} → WVal → Prop\n",
+            name = c.name(),
+            carrier = c.carrier(),
+        ));
+        for ctor in &ind.ctors {
+            let binders = " _".repeat(ctor.fields.len());
+            if ctor.name == hit_ctor {
+                out.push_str(&format!(
+                    "  | .{ctor} x, v => ∃ cx, v = .structv {hit_variant_idx} [cx] ∧ S.Repr x cx\n",
+                    ctor = ctor.name,
+                ));
+            } else {
+                out.push_str(&format!(
+                    "  | .{ctor}{binders}, v => ∃ t fs, v = .structv t fs ∧ t ≠ {hit_variant_idx}\n",
+                    ctor = ctor.name,
+                ));
+            }
+        }
+        out.push('\n');
+    }
+    // Shared model definitions for verbatim widened matches: a single named
+    // function referenced by both the obligation `model` and the certificate
+    // proof, so the two match on the SAME compiled term (an inline match would
+    // elaborate to two distinct, non-defeq auxiliaries).
+    for c in &analysis.certs {
+        let Cert::VerbatimWidenedMatch {
+            hit_variant_idx, ..
+        } = c
+        else {
+            continue;
+        };
+        out.push_str(&format!(
+            "def {name}Model : CertPrelude.WVal → CertPrelude.WVal\n  \
+             | .structv {hit_variant_idx} (x :: _) => x\n  \
+             | _ => .null\n\n",
+            name = c.name(),
+        ));
+    }
     out
+}
+
+/// For a widened Int match: the model inductive name, its constructor list, and
+/// the name of the single integer-payload constructor the body projects (the
+/// unique `fields == ["Int"]` constructor). `None` — so the class declines by a
+/// failed render — if the model type is unknown or the projected constructor is
+/// not unique.
+fn widened_match_info<'a>(
+    c: &Cert,
+    model_info: &'a ModelInfo,
+) -> Option<(String, &'a InductiveInfo, String)> {
+    let Cert::WidenedIntMatch { name, .. } = c else {
+        return None;
+    };
+    let ty = model_info.fns.get(name)?.params.first()?.clone();
+    let ind = model_info.inductives.get(&ty)?;
+    let mut int_ctors = ind.ctors.iter().filter(|ct| ct.fields == ["Int"]);
+    let hit = int_ctors.next()?.name.clone();
+    if int_ctors.next().is_some() {
+        return None;
+    }
+    Some((ty, ind, hit))
 }
 
 /// Whether an ADT constructor certificate can name its real model type: a
@@ -3189,6 +3860,49 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
                 self_idx = c.self_idx(),
             )
         }
+        Cert::WidenedIntMatch { .. } => {
+            let ty = model_info
+                .fns
+                .get(name)
+                .and_then(|s| s.params.first())
+                .map(|s| s.as_str())
+                .unwrap_or("Op");
+            format!(
+                "abbrev {name}Ob : Schema.Obligation :=\n  \
+                 {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+                 code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+                 Dom := {ty}, Cod := Int,\n    \
+                 domRepr := fun S o vs => ∃ v, vs = [v] ∧ {name}DomRepr S o v,\n    \
+                 codRepr := fun S n w => intRepr S n w,\n    \
+                 model := {name} }}\n\n",
+                carrier = c.carrier(),
+                host = c.host_expr(),
+                self_idx = c.self_idx(),
+            )
+        }
+        Cert::IntRangePredicate { carrier, .. } => format!(
+            "abbrev {name}Ob : Schema.Obligation :=\n  \
+             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+             Dom := Int, Cod := Bool,\n    \
+             domRepr := fun _S cp vs => vs = [carrierSmall {carrier} cp],\n    \
+             codRepr := fun S b w => boolRepr S b w,\n    \
+             model := {name} }}\n\n",
+            host = c.host_expr(),
+            self_idx = c.self_idx(),
+        ),
+        Cert::VerbatimWidenedMatch { .. } => format!(
+            "abbrev {name}Ob : Schema.Obligation :=\n  \
+             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+             Dom := WVal, Cod := WVal,\n    \
+             domRepr := fun _S v vs => vs = [v],\n    \
+             codRepr := fun S x w => verbatimRepr S x w,\n    \
+             model := {name}Model }}\n\n",
+            carrier = c.carrier(),
+            host = c.host_expr(),
+            self_idx = c.self_idx(),
+        ),
         _ => format!(
             "abbrev {name}Ob : Schema.Obligation :=\n  \
              {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
@@ -3372,6 +4086,9 @@ fn render_manifest(
             Cert::AccumulatorRecursive { .. } => "multi-argument self-recursive",
             Cert::AdtConstructor { .. } => "adt-constructor",
             Cert::FieldProjection { .. } => "field-projection",
+            Cert::WidenedIntMatch { .. } => "widened-int-match",
+            Cert::VerbatimWidenedMatch { .. } => "verbatim-widened-match",
+            Cert::IntRangePredicate { .. } => "int-range-predicate",
             Cert::AdtMatch { .. } => "adt-match",
             Cert::Composition { .. } => "cross-function-composition",
         };
