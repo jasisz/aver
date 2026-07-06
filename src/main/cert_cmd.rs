@@ -207,6 +207,12 @@ fn manifest_str<'a>(m: &'a Value, key: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("cert-manifest.json is missing string field `{key}`"))
 }
 
+fn manifest_u64(m: &Value, key: &str) -> Result<u64, String> {
+    m.get(key)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("cert-manifest.json is missing integer field `{key}`"))
+}
+
 /// True iff `s`, a serde-DECODED value, is printable ASCII with no `"` or `\`
 /// and at most `MAX_CANDIDATE_LEN` bytes. Splicing only such values into the
 /// Lean witness guarantees the spliced literal cannot break out of its string
@@ -314,6 +320,13 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
         .map_err(|e| format!("cannot read artifact {}: {e}", artifact.display()))?;
     let actual = cert::sha256_hex(&bytes);
     let manifest = read_manifest(cert_dir)?;
+    let schema_version = manifest_u64(&manifest, "schema_version")?;
+    if schema_version != cert::CERT_SCHEMA_VERSION as u64 {
+        return Err(format!(
+            "unsupported certificate schema_version {schema_version}; this checker only accepts schema_version {}",
+            cert::CERT_SCHEMA_VERSION
+        ));
+    }
     let pinned = manifest_str(&manifest, "wasm_sha256")?;
     if actual != pinned {
         return Err(format!(

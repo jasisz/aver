@@ -2,11 +2,13 @@
 //!
 //! Emits, next to `<name>.wasm`, a self-contained Lean `cert/` project that
 //! `lake build`s green with kernel-clean theorems for the user functions that
-//! fall into the two measured classes:
+//! fall into the three measured classes:
 //!
 //! * straight-line `Int -> Int` add-a-constant (the `addTwo` kill-fast shape),
 //! * single-argument self-recursion of the `sumTo` shape
-//!   (`match n <= 0 { true -> 0; false -> n + f(n - 1) }`).
+//!   (`match n <= 0 { true -> 0; false -> n + f(n - 1) }`),
+//! * two-argument accumulator self-recursion of the `countDown` shape
+//!   (`match n <= 0 { true -> acc; false -> f(n - 1, acc + n) }`).
 //!
 //! Everything else is FAIL-CLOSED: listed in `cert-manifest.json` as
 //! `source-level-only` with a reason. No weaker theorem is ever emitted.
@@ -50,6 +52,7 @@ pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
 /// Certification level of a v0 artifact certificate: conditional on the named
 /// runtime contracts (see the consult level naming L0/L1/L2/L3).
 pub const CERT_LEVEL: &str = "L1";
+pub const CERT_SCHEMA_VERSION: u32 = 2;
 /// The one approved final-theorem statement line. `aver cert verify` confirms
 /// this exact line is present in `Final.lean` (name + `Holds manifest`), which
 /// is what pins the statement without matching arbitrary Lean syntax.
@@ -102,6 +105,7 @@ enum Op {
     Else,
     End,
     Call(u32),
+    ReturnCall(u32),
     Other,
 }
 
@@ -127,29 +131,48 @@ enum Cert {
         add_idx: u32,
         sub_idx: u32,
     },
+    /// countDown-shape two-argument accumulator recursion; box/add/sub host helpers.
+    AccumulatorRecursive {
+        name: String,
+        self_idx: u32,
+        nlocals: usize,
+        carrier: u32,
+        box_idx: u32,
+        add_idx: u32,
+        sub_idx: u32,
+    },
 }
 
 impl Cert {
     fn name(&self) -> &str {
         match self {
-            Cert::StraightLine { name, .. } | Cert::Recursive { name, .. } => name,
+            Cert::StraightLine { name, .. }
+            | Cert::Recursive { name, .. }
+            | Cert::AccumulatorRecursive { name, .. } => name,
         }
     }
     fn self_idx(&self) -> u32 {
         match self {
-            Cert::StraightLine { self_idx, .. } | Cert::Recursive { self_idx, .. } => *self_idx,
+            Cert::StraightLine { self_idx, .. }
+            | Cert::Recursive { self_idx, .. }
+            | Cert::AccumulatorRecursive { self_idx, .. } => *self_idx,
         }
     }
     fn carrier(&self) -> u32 {
         match self {
-            Cert::StraightLine { carrier, .. } | Cert::Recursive { carrier, .. } => *carrier,
+            Cert::StraightLine { carrier, .. }
+            | Cert::Recursive { carrier, .. }
+            | Cert::AccumulatorRecursive { carrier, .. } => *carrier,
         }
     }
     /// The Lean expression for the model this export simulates.
     fn model_expr(&self) -> String {
         match self {
-            Cert::StraightLine { k, .. } => format!("fun n => n + ({k})"),
-            Cert::Recursive { name, .. } => name.clone(),
+            Cert::StraightLine { k, .. } => format!("fun ns => ns.headD 0 + ({k})"),
+            Cert::Recursive { name, .. } => format!("fun ns => {name} (ns.headD 0)"),
+            Cert::AccumulatorRecursive { name, .. } => {
+                format!("fun ns => {name} (ns.headD 0) ((ns.drop 1).headD 0)")
+            }
         }
     }
     /// The Lean expression for the 2-arg host builder in `Obligation` shape
@@ -157,7 +180,9 @@ impl Cert {
     fn host_expr(&self) -> String {
         match self {
             Cert::StraightLine { name, .. } => format!("fun add _ => CertModule.{name}Host add"),
-            Cert::Recursive { name, .. } => format!("CertModule.{name}Host"),
+            Cert::Recursive { name, .. } | Cert::AccumulatorRecursive { name, .. } => {
+                format!("CertModule.{name}Host")
+            }
         }
     }
 }
@@ -204,6 +229,11 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
                 has_add = true;
             }
             Cert::Recursive { .. } => {
+                has_box = true;
+                has_add = true;
+                has_sub = true;
+            }
+            Cert::AccumulatorRecursive { .. } => {
                 has_box = true;
                 has_add = true;
                 has_sub = true;
@@ -397,7 +427,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                         }
                         Operator::ReturnCall { function_index } => {
                             calls.push(function_index);
-                            Op::Other
+                            Op::ReturnCall(function_index)
                         }
                         Operator::Loop { .. }
                         | Operator::Block { .. }
@@ -510,10 +540,15 @@ fn classify(
         return Ok(cert);
     }
 
+    // countDown-shape accumulator self-recursion.
+    if let Some(cert) = match_accumulator_recursive(f, box_idx) {
+        return Ok(cert);
+    }
+
     // ---- decline with an honest reason -----------------------------------
     if f.arity != 1 {
         return Err(format!(
-            "unsupported signature ({} params); Stage-B templates cover single-argument Int functions",
+            "unsupported signature ({} params); Stage-B templates cover one-argument Int functions and two-argument accumulator recursion",
             f.arity
         ));
     }
@@ -539,7 +574,7 @@ fn classify(
                 .to_string(),
         );
     }
-    Err("body does not match a certified template (straight-line add-constant or single-argument self-recursion)".to_string())
+    Err("body does not match a certified template (straight-line add-constant, single-argument self-recursion, or two-argument accumulator recursion)".to_string())
 }
 
 /// Match the exact sumTo operator template, extracting `carrier` (from the
@@ -617,10 +652,92 @@ fn match_recursive(f: &UserFn, box_idx: u32) -> Option<Cert> {
     })
 }
 
+/// Match the exact countDown accumulator-recursion operator template,
+/// extracting `carrier` (from the `struct.get` type index), `sub`, `add`, and
+/// confirming `self`/`box`.
+fn match_accumulator_recursive(f: &UserFn, box_idx: u32) -> Option<Cert> {
+    use Op::*;
+    if f.arity != 2 {
+        return None;
+    }
+    let ops = &f.ops;
+    let carrier = match ops.get(3) {
+        Some(StructGet(c, 1)) => *c,
+        _ => return None,
+    };
+    let l = match (ops.first(), ops.get(1)) {
+        (Some(LocalGet(0)), Some(LocalSet(l))) => *l,
+        _ => return None,
+    };
+    let expected_prefix = [
+        LocalGet(0),
+        LocalSet(l),
+        LocalGet(l),
+        StructGet(carrier, 1),
+        RefIsNull,
+        If,
+        LocalGet(l),
+        StructGet(carrier, 0),
+        I64Const(0),
+        I64LeS,
+        Else,
+        LocalGet(l),
+        StructGet(carrier, 2),
+        I32Const(0),
+        I32LtS,
+        End,
+        If,
+        LocalGet(1),
+        Else,
+    ];
+    if ops.len() < expected_prefix.len() {
+        return None;
+    }
+    if ops[..expected_prefix.len()] != expected_prefix[..] {
+        return None;
+    }
+    let tail = &ops[expected_prefix.len()..];
+    let (sub_idx, add_idx, self_call) = match tail {
+        [
+            LocalGet(0),
+            I64Const(1),
+            Call(b),
+            Call(sub),
+            LocalGet(1),
+            LocalGet(0),
+            Call(add),
+            ReturnCall(sc),
+            End,
+            End,
+        ] if *b == box_idx => (*sub, *add, *sc),
+        _ => return None,
+    };
+    if self_call != f.wasm_idx {
+        return None;
+    }
+    Some(Cert::AccumulatorRecursive {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier,
+        box_idx,
+        add_idx,
+        sub_idx,
+    })
+}
+
 // ---- model evaluation (anti-vacuity guard values) ------------------------
 
 fn eval_sumto(n: i64) -> i64 {
     if n <= 0 { 0 } else { n + eval_sumto(n - 1) }
+}
+
+fn eval_countdown(n: i64, acc: i64) -> i64 {
+    if n <= 0 {
+        acc
+    } else {
+        eval_countdown(n - 1, acc + n)
+    }
 }
 
 // ---- rendering -----------------------------------------------------------
@@ -780,6 +897,20 @@ fn render_host_def(c: &Cert) -> String {
              else if fn = {add_idx} then some (2, add)\n  \
              else if fn = {sub_idx} then some (2, sub)\n  else none\n",
         ),
+        Cert::AccumulatorRecursive {
+            name,
+            carrier,
+            box_idx,
+            add_idx,
+            sub_idx,
+            ..
+        } => format!(
+            "/-- Runtime host wiring for `{name}` (box + add + sub contracts). -/\n\
+             def {name}Host (add sub : List WVal → Option WVal) : HostTbl := fun fn =>\n  \
+             if fn = {box_idx} then some (1, boxRef {carrier})\n  \
+             else if fn = {add_idx} then some (2, add)\n  \
+             else if fn = {sub_idx} then some (2, sub)\n  else none\n",
+        ),
     }
 }
 
@@ -787,6 +918,7 @@ fn render_code_def(c: &Cert) -> String {
     let doc = match c {
         Cert::StraightLine { .. } => "straight-line add-constant",
         Cert::Recursive { .. } => "self-recursive",
+        Cert::AccumulatorRecursive { .. } => "accumulator self-recursive",
     };
     format!(
         "/-- Verbatim emitted body of `{name}` ({doc}). -/\n\
@@ -836,6 +968,25 @@ fn render_code_value(c: &Cert) -> String {
              [.localGet 0, .localGet 0, .i64Const 1, .call {box_idx}, .call {sub_idx}, \
              .call {self_idx}, .call {add_idx}] ]⟩\n  else none",
         ),
+        Cert::AccumulatorRecursive {
+            self_idx,
+            nlocals,
+            carrier,
+            box_idx,
+            add_idx,
+            sub_idx,
+            ..
+        } => format!(
+            "fun fn =>\n  \
+             if fn = {self_idx} then some ⟨2, {nlocals},\n    \
+             [ .localGet 0, .localSet 2,\n      \
+             .localGet 2, .structGet {carrier} 1, .refIsNull,\n      \
+             .ifElse [.localGet 2, .structGet {carrier} 0, .i64Const 0, .i64LeS]\n              \
+             [.localGet 2, .structGet {carrier} 2, .i32Const 0, .i32LtS],\n      \
+             .ifElse [.localGet 1]\n              \
+             [.localGet 0, .i64Const 1, .call {box_idx}, .call {sub_idx}, \
+             .localGet 1, .localGet 0, .call {add_idx}, .returnCall {self_idx}] ]⟩\n  else none",
+        ),
     }
 }
 
@@ -870,6 +1021,18 @@ fn render_host_value(c: &Cert) -> String {
              else if fn = {add_idx} then some (2, add)\n    \
              else if fn = {sub_idx} then some (2, sub)\n    else none",
         ),
+        Cert::AccumulatorRecursive {
+            carrier,
+            box_idx,
+            add_idx,
+            sub_idx,
+            ..
+        } => format!(
+            "fun add sub => fun fn =>\n    \
+             if fn = {box_idx} then some (1, boxRef {carrier})\n    \
+             else if fn = {add_idx} then some (2, add)\n    \
+             else if fn = {sub_idx} then some (2, sub)\n    else none",
+        ),
     }
 }
 
@@ -889,6 +1052,7 @@ fn render_certificate(analysis: &Analysis, model_roots: &[String]) -> String {
         match c {
             Cert::StraightLine { .. } => s.push_str(&render_straightline_cert(c)),
             Cert::Recursive { .. } => s.push_str(&render_recursive_cert(c)),
+            Cert::AccumulatorRecursive { .. } => s.push_str(&render_accumulator_recursive_cert(c)),
         }
         s.push('\n');
     }
@@ -963,16 +1127,26 @@ example :
 /-- Schema-shaped simulation obligation for `{name}` (composed by the single
     final theorem). Partial correctness over any fuel and representation. -/
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub hadd hsub fuel n v w hv hrun
-  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
-  cases fuel with
-  | zero => simp only [wFuncN, reduceCtorEq] at hrun
-  | succ f =>
-    rcases hc : add [v, carrierSmall {carrier} ({k})] with _ | r
-    · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, popArgs, initLocals, hc] at hrun
-    · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, popArgs, initLocals, hc] at hrun
-      subst hrun
-      exact hadd n ({k}) v (carrierSmall {carrier} ({k})) r hv (S.smallIntro ({k})) hc
+  intro S add sub hadd hsub fuel ns vs w hrepr harity hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at harity hrun ⊢
+  cases hrepr with
+  | nil =>
+      simp [{name}Code] at harity
+  | cons hv htail =>
+    rename_i n v ns vs
+    cases htail with
+    | nil =>
+      simp [{name}Code] at harity
+      cases fuel with
+      | zero => simp only [wFuncN, reduceCtorEq] at hrun
+      | succ f =>
+        rcases hc : add [v, carrierSmall {carrier} ({k})] with _ | r
+        · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, popArgs, initLocals, hc] at hrun
+        · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, popArgs, initLocals, hc] at hrun
+          subst hrun
+          simpa using hadd n ({k}) v (carrierSmall {carrier} ({k})) r hv (S.smallIntro ({k})) hc
+    | cons _ _ =>
+      simp [{name}Code] at harity
 "#
     )
 }
@@ -1147,10 +1321,193 @@ example :
 /-- Schema-shaped simulation obligation for `{name}` (composed by the single
     final theorem): the emitted recursive body simulates the model `{name}`. -/
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub hadd hsub fuel n v w hv hrun
-  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
-  exact {name}_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim
-    add sub hadd hsub fuel n v w hv hrun
+  intro S add sub hadd hsub fuel ns vs w hrepr harity hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at harity hrun ⊢
+  cases hrepr with
+  | nil =>
+      simp [{name}Code] at harity
+  | cons hv htail =>
+      rename_i n v ns vs
+      cases htail with
+      | nil =>
+          simp [{name}Code] at harity
+          simpa using {name}_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim
+            add sub hadd hsub fuel n v w hv hrun
+      | cons _ _ =>
+          simp [{name}Code] at harity
+"#
+    )
+}
+
+fn render_accumulator_recursive_cert(c: &Cert) -> String {
+    let Cert::AccumulatorRecursive {
+        name,
+        self_idx,
+        carrier,
+        box_idx,
+        add_idx,
+        sub_idx,
+        ..
+    } = c
+    else {
+        unreachable!()
+    };
+    let g3 = eval_countdown(3, 0);
+    let g4 = eval_countdown(3, 4);
+    let _ = (box_idx, add_idx, sub_idx);
+    format!(
+        r#"/-! ### {name} — accumulator self-recursive certificate (carrier type {carrier}) -/
+
+-- model-side fuel bridge (fuel induction; the IH is quantified over both args).
+theorem {name}_fuel_irrel :
+    ∀ (t k1 k2 : Nat) (n acc : Int), n.natAbs < t → n.natAbs < k1 → n.natAbs < k2 →
+      {name}__fuel k1 n acc = {name}__fuel k2 n acc := by
+  intro t
+  induction t with
+  | zero => intro k1 k2 n acc ht _ _; omega
+  | succ t ih =>
+      intro k1 k2 n acc ht h1 h2
+      cases k1 with
+      | zero => omega
+      | succ m1 =>
+      cases k2 with
+      | zero => omega
+      | succ m2 =>
+      by_cases hn : n ≤ 0
+      · simp [{name}__fuel, hn]
+      · have hrec := ih m1 m2 (n - 1) (acc + n) (by omega) (by omega) (by omega)
+        simp only [{name}__fuel]
+        rw [if_neg hn, if_neg hn, hrec]
+
+theorem {name}_fuel_stable (k : Nat) (n acc : Int) (h : n.natAbs < k) :
+    {name}__fuel k n acc = {name} n acc :=
+  {name}_fuel_irrel (n.natAbs + k + 1) k (n.natAbs + 1) n acc (by omega) h (by omega)
+
+theorem {name}_step (n acc : Int) (hn : ¬ n ≤ 0) :
+    {name} n acc = {name} (n - 1) (acc + n) := by
+  have h0 : {name} n acc = {name}__fuel (n.natAbs + 1) n acc := rfl
+  rw [h0]
+  simp only [{name}__fuel]
+  rw [if_neg hn, {name}_fuel_stable n.natAbs (n - 1) (acc + n) (by omega)]
+
+theorem {name}_base (n acc : Int) (hn : n ≤ 0) : {name} n acc = acc := by
+  have h0 : {name} n acc = {name}__fuel (n.natAbs + 1) n acc := rfl
+  rw [h0]; simp [{name}__fuel, hn]
+
+/-- THE CERTIFICATE THEOREM: partial correctness of the VERBATIM emitted
+    accumulator-recursive body against the generated model, for ALL n acc : ℤ. -/
+theorem {name}_wasm_certified
+    (Repr : Int → WVal → Prop)
+    (hcar : ∀ n v, Repr n v →
+      (∃ s sg, v = .structv {carrier} [.i64v s, .null, .i32v sg]) ∨
+      (∃ s lty les sg, v = .structv {carrier} [.i64v s, .arr lty les, .i32v sg]))
+    (hsmall_intro : ∀ k : Int, Repr k (carrierSmall {carrier} k))
+    (hsmall_elim : ∀ n s sg, Repr n (.structv {carrier} [.i64v s, .null, .i32v sg]) → s = n)
+    (hbig : ∀ n s lty les sg,
+      Repr n (.structv {carrier} [.i64v s, .arr lty les, .i32v sg]) → ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)
+    (add sub : List WVal → Option WVal)
+    (hAdd : ∀ a b va vb w, Repr a va → Repr b vb → add [va, vb] = some w → Repr (a + b) w)
+    (hSub : ∀ a b va vb w, Repr a va → Repr b vb → sub [va, vb] = some w → Repr (a - b) w) :
+    ∀ (fuel : Nat) (n acc : Int) (vn vacc w : WVal), Repr n vn → Repr acc vacc →
+      wFuncN {name}Code ({name}Host add sub) fuel {self_idx} [vn, vacc] = some w →
+      Repr ({name} n acc) w := by
+  intro fuel
+  induction fuel with
+  | zero =>
+      intro n acc vn vacc w hvn hvacc hrun
+      simp [wFuncN] at hrun
+  | succ fuel ih =>
+      intro n acc vn vacc w hvn hvacc hrun
+      rcases hcar n vn hvn with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
+      · have hs := hsmall_elim n s sg hvn
+        subst hs
+        by_cases hle : s ≤ (0 : Int)
+        · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32,
+            popArgs, initLocals, hle] at hrun
+          rw [{name}_base s acc hle, ← hrun]
+          exact hvacc
+        · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32,
+            popArgs, initLocals, hle] at hrun
+          rcases hsub : sub [.structv {carrier} [.i64v s, .null, .i32v sg], carrierSmall {carrier} 1] with _ | vd
+          · simp [hsub] at hrun
+          · simp only [hsub] at hrun
+            have hrd : Repr (s - 1) vd :=
+              hSub s 1 _ _ vd hvn (hsmall_intro 1) hsub
+            rcases hadd : add [vacc, .structv {carrier} [.i64v s, .null, .i32v sg]] with _ | va
+            · simp [hadd] at hrun
+            · simp only [hadd] at hrun
+              have hra : Repr (acc + s) va :=
+                hAdd acc s _ _ va hvacc hvn hadd
+              rcases hrec : wFuncN {name}Code ({name}Host add sub) fuel {self_idx} [vd, va] with _ | vr
+              · simp [hrec] at hrun
+              · simp only [hrec, Option.some.injEq] at hrun
+                rw [{name}_step s acc hle, ← hrun]
+                exact ih (s - 1) (acc + s) vd va vr hrd hra hrec
+      · obtain ⟨hsign, hne⟩ := hbig n s lty les sg hvn
+        by_cases hlt : sg < (0 : Int)
+        · have hn0 : n ≤ 0 := by have := hsign.mp hlt; omega
+          simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32,
+            popArgs, initLocals, hlt] at hrun
+          rw [{name}_base n acc hn0, ← hrun]
+          exact hvacc
+        · have hn0 : ¬ n ≤ 0 := by
+            intro hle
+            have : ¬ n < 0 := fun h => hlt (hsign.mpr h)
+            omega
+          simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32,
+            popArgs, initLocals, hlt] at hrun
+          rcases hsub : sub [.structv {carrier} [.i64v s, .arr lty les, .i32v sg], carrierSmall {carrier} 1] with _ | vd
+          · simp [hsub] at hrun
+          · simp only [hsub] at hrun
+            have hrd : Repr (n - 1) vd :=
+              hSub n 1 _ _ vd hvn (hsmall_intro 1) hsub
+            rcases hadd : add [vacc, .structv {carrier} [.i64v s, .arr lty les, .i32v sg]] with _ | va
+            · simp [hadd] at hrun
+            · simp only [hadd] at hrun
+              have hra : Repr (acc + n) va :=
+                hAdd acc n _ _ va hvacc hvn hadd
+              rcases hrec : wFuncN {name}Code ({name}Host add sub) fuel {self_idx} [vd, va] with _ | vr
+              · simp [hrec] at hrun
+              · simp only [hrec, Option.some.injEq] at hrun
+                rw [{name}_step n acc hn0, ← hrun]
+                exact ih (n - 1) (acc + n) vd va vr hrd hra hrec
+
+#print axioms {name}_wasm_certified
+
+-- anti-vacuity: the emitted body actually RUNS on concrete inputs.
+def {name}HostRef : HostTbl := {name}Host (addRef {carrier}) (subRef {carrier})
+example :
+    ((wFuncN {name}Code {name}HostRef 20 {self_idx} [carrierSmall {carrier} 3, carrierSmall {carrier} 0]).bind carrierToInt)
+      = some ({g3}) := by native_decide
+example :
+    ((wFuncN {name}Code {name}HostRef 20 {self_idx} [carrierSmall {carrier} 3, carrierSmall {carrier} 4]).bind carrierToInt)
+      = some ({g4}) := by native_decide
+example :
+    ((wFuncN {name}Code {name}HostRef 20 {self_idx} [carrierSmall {carrier} (-4), carrierSmall {carrier} 9]).bind carrierToInt)
+      = some 9 := by native_decide
+
+/-- Schema-shaped simulation obligation for `{name}` (composed by the single
+    final theorem): the emitted accumulator-recursive body simulates the model `{name}`. -/
+theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+  intro S add sub hadd hsub fuel ns vs w hrepr harity hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at harity hrun ⊢
+  cases hrepr with
+  | nil =>
+      simp [{name}Code] at harity
+  | cons hvn htail =>
+      rename_i n vn ns1 vs1
+      cases htail with
+      | nil =>
+          simp [{name}Code] at harity
+      | cons hvacc htail2 =>
+          rename_i acc vacc ns2 vs2
+          cases htail2 with
+          | nil =>
+              simp [{name}Code] at harity
+              simpa using {name}_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim
+                add sub hadd hsub fuel n acc vn vacc w hvn hvacc hrun
+          | cons _ _ =>
+              simp [{name}Code] at harity
 "#
     )
 }
@@ -1287,7 +1644,7 @@ fn render_manifest(
 ) -> String {
     let mut s = String::new();
     s.push_str("{\n");
-    s.push_str("  \"schema_version\": 1,\n");
+    s.push_str(&format!("  \"schema_version\": {CERT_SCHEMA_VERSION},\n"));
     s.push_str(&format!("  \"wasm\": \"{wasm_name}.wasm\",\n"));
     s.push_str(&format!("  \"wasm_sha256\": \"{sha}\",\n"));
     s.push_str(&format!("  \"level\": \"{CERT_LEVEL}\",\n"));
@@ -1320,6 +1677,7 @@ fn render_manifest(
         let kind = match c {
             Cert::StraightLine { .. } => "straight-line",
             Cert::Recursive { .. } => "self-recursive",
+            Cert::AccumulatorRecursive { .. } => "multi-argument self-recursive",
         };
         s.push_str(&format!(
             "\n    {{\"name\": {}, \"class\": \"{}\", \"policy\": \"simulatesModel\", \

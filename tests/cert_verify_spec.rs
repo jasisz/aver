@@ -162,8 +162,8 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     assert!(ok, "expected clean certificate to verify, got:\n{report}");
     assert!(report.contains("CERTIFIED"), "missing CERTIFIED:\n{report}");
     assert!(
-        report.contains("1 certified export"),
-        "expected exactly one certified export:\n{report}"
+        report.contains("2 certified exports"),
+        "expected exactly two certified exports:\n{report}"
     );
     // Each obligation's code/host/self/carrier was pinned to the bytes-derived
     // values by `rfl` inside the kernel witness: the CERTIFIED report names that
@@ -172,6 +172,24 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         report.contains("artifact-decode:") && report.contains("kernel-pinned"),
         "missing artifact-decode line on the happy path:\n{report}"
     );
+
+    // Schema v2 is a breaking cert-data shape. The checker rejects v1 manifests
+    // honestly instead of trying to reinterpret them under the v2 schema.
+    {
+        let dir = temp_dir("neg-schema-v1");
+        copy_dir(&out_dir, &dir);
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["schema_version"] = serde_json::json!(1);
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "schema v1 cert must be rejected:\n{out}");
+        assert!(
+            out.contains("unsupported certificate schema_version 1"),
+            "wrong reason for schema v1 rejection:\n{out}"
+        );
+    }
 
     // (a) One flipped wasm byte → hash mismatch, before any build.
     {
@@ -185,6 +203,29 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let (ok, out) = aver_verify(&w, &dir.join("cert"));
         assert!(!ok, "flipped wasm byte must fail:\n{out}");
         assert!(out.contains("hash mismatch"), "wrong reason (a):\n{out}");
+    }
+
+    // (a2) A byte flipped inside the newly certified `countDown` body is still a
+    //      hard decline. This is intentionally caught by the artifact hash
+    //      before the checker spends time building Lean.
+    {
+        let dir = temp_dir("neg-a2-countdown-body");
+        copy_dir(&out_dir, &dir);
+        let w = dir.join("certprobe2.wasm");
+        let mut bytes = std::fs::read(&w).unwrap();
+        let count_down_prefix = [0x20, 0x00, 0x21, 0x02];
+        let off = bytes
+            .windows(count_down_prefix.len())
+            .position(|win| win == count_down_prefix)
+            .expect("countDown body prefix should be present in wasm");
+        bytes[off + 1] ^= 0x01;
+        std::fs::write(&w, &bytes).unwrap();
+        let (ok, out) = aver_verify(&w, &dir.join("cert"));
+        assert!(!ok, "countDown body-byte flip must fail:\n{out}");
+        assert!(
+            out.contains("hash mismatch"),
+            "wrong reason for countDown body-byte flip:\n{out}"
+        );
     }
 
     // (b) A corrupted Module.lean instruction → lake build failure.
@@ -268,7 +309,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         assert!(out.contains("does not bind"), "wrong reason (e):\n{out}");
         // The witness names the exact face the kernel rejected.
         assert!(
-            out.contains("artifactHash"),
+            out.contains("CertModule.wasmSha256"),
             "witness not exercised (e):\n{out}"
         );
     }
@@ -648,12 +689,10 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     }
 
     // (u) Export-name relabel: keep the byte-bound honest body/self/carrier, but
-    //     relabel the obligation (and the JSON) to a DIFFERENT export name the
-    //     module also exports (`countDown`). The certified export names are now
-    //     re-derived from the module's export section and pinned by `rfl`, so the
-    //     label no longer matches the export table → DECLINED. Without this bind,
-    //     a producer could advertise a byte-bound body under the name of an
-    //     uncertified export the consumer then calls.
+    //     relabel the first obligation (and the JSON) to a duplicate export name
+    //     (`countDown`). The certified export names are re-derived from the
+    //     module's export section and pinned by `rfl`, so the label list no
+    //     longer matches the export table → DECLINED.
     {
         let dir = temp_dir("neg-u");
         copy_dir(&out_dir, &dir);
@@ -699,7 +738,7 @@ const HONEST_SUMTO_CODE: &str = "/-- Verbatim emitted body of `sumTo` (self-recu
 /// own proof to build green). `@BODY@` is filled with the `simp` that discharges
 /// the trapped `wFuncN`.
 const VACUOUS_SIMULATES: &str = "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-    intro S add sub hadd hsub fuel n v w hv hrun\n  \
+    intro S add sub hadd hsub fuel ns vs w hrepr harity hrun\n  \
     exfalso\n  \
     cases fuel with\n  \
     | zero => simp only [wFuncN, reduceCtorEq] at hrun\n  \
@@ -711,10 +750,20 @@ fn replace_simulates(cert_dir: &Path, replacement: &str) {
     let c = cert_dir.join("Certificate.lean");
     let src = std::fs::read_to_string(&c).unwrap();
     let old = "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-        intro S add sub hadd hsub fuel n v w hv hrun\n  \
-        simp only [sumToOb, AverCert.Schema.Obligation.holds] at hrun ⊢\n  \
-        exact sumTo_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim\n    \
-        add sub hadd hsub fuel n v w hv hrun";
+        intro S add sub hadd hsub fuel ns vs w hrepr harity hrun\n  \
+        simp only [sumToOb, AverCert.Schema.Obligation.holds] at harity hrun ⊢\n  \
+        cases hrepr with\n  \
+        | nil =>\n      \
+        simp [sumToCode] at harity\n  \
+        | cons hv htail =>\n      \
+        rename_i n v ns vs\n      \
+        cases htail with\n      \
+        | nil =>\n          \
+        simp [sumToCode] at harity\n          \
+        simpa using sumTo_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim\n            \
+        add sub hadd hsub fuel n v w hv hrun\n      \
+        | cons _ _ =>\n          \
+        simp [sumToCode] at harity";
     assert!(
         src.contains(old),
         "emitted sumTo_simulates block shape changed; update the test"
