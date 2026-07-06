@@ -697,7 +697,11 @@ fn match_adt_constructor(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Opti
     let StructNew(struct_idx, field_count) = last else {
         return None;
     };
-    if *struct_idx == carrier? || *field_count as usize != f.arity || f.arity == 0 {
+    // The renderer models a 1-field constructor over a user inductive with its
+    // real model type, and a 1- or 2-field constructor over any other codomain
+    // as a verbatim pack (dual of the field projection). A wider struct has no
+    // faithful rendering in this class, so it declines (fail-closed).
+    if *struct_idx == carrier? || *field_count as usize != f.arity || f.arity == 0 || f.arity > 2 {
         return None;
     }
     for (i, op) in prefix.iter().enumerate() {
@@ -2037,11 +2041,15 @@ fn render_adt_constructor_cert(c: &Cert, model_info: &ModelInfo) -> String {
         self_idx,
         carrier,
         struct_idx,
+        field_count,
         ..
     } = c
     else {
         unreachable!()
     };
+    if !adt_constructor_uses_model(c, model_info) {
+        return render_verbatim_constructor_cert(name, *self_idx, *struct_idx, *field_count);
+    }
     let sig = model_info.fns.get(name);
     let _ = sig
         .and_then(|s| model_info.inductives.get(&s.ret))
@@ -2070,6 +2078,52 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
       simp [wFuncN, wRunF, {name}Code, popArgs, initLocals] at hrun
       subst hrun
       exact ⟨v, rfl, by simpa [AverCert.Schema.intRepr] using hv⟩
+"#
+    )
+}
+
+/// Verbatim pack constructor certificate (dual of the field projection): the
+/// body wraps its arguments into variant `struct_idx`. The obligation carries
+/// `Cod := WVal` with `verbatimRepr`, so the proof mirrors the field
+/// projection's — pop the raw arguments, reduce the interpreter, `rfl`.
+fn render_verbatim_constructor_cert(
+    name: &str,
+    self_idx: u32,
+    struct_idx: u32,
+    field_count: u32,
+) -> String {
+    // Binders + input list + built struct for one vs two fields.
+    let (binders, input, built, intro, split) = if field_count == 1 {
+        ("(a : WVal)", "[a]", "[a]", "intro a", "")
+    } else {
+        (
+            "(a b : WVal)",
+            "[a, b]",
+            "[a, b]",
+            "intro a b",
+            "  rcases p with ⟨a, b⟩\n",
+        )
+    };
+    format!(
+        r#"/-! ### {name} — verbatim constructor certificate -/
+
+theorem {name}_wasm_certified (host : HostTbl) :
+    ∀ {binders}, wFuncN {name}Code host 1 {self_idx} {input} = some (.structv {struct_idx} {built}) := by
+  {intro}
+  simp [wFuncN, {name}Code, wRunF, popArgs, initLocals]
+
+#print axioms {name}_wasm_certified
+
+theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+  intro S add sub hadd hsub fuel p vs w hrepr hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+{split}  subst hrepr
+  cases fuel with
+  | zero => simp [wFuncN] at hrun
+  | succ f =>
+      simp [wFuncN, wRunF, {name}Code, popArgs, initLocals] at hrun
+      subst hrun
+      rfl
 "#
     )
 }
@@ -2220,6 +2274,40 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
     out
 }
 
+/// Whether an ADT constructor certificate can name its real model type: a
+/// single-field constructor whose codomain is a user inductive (so
+/// `render_user_repr_defs` emits a `<Ty>Repr` and the model is `<Ty>.<ctor>`).
+/// Anything else — a multi-field constructor, or a constructor over a builtin
+/// compound codomain like `List (String × Json)` that has no user Repr — is
+/// certified as a verbatim pack instead (the dual of a field projection), which
+/// makes no claim about a recursive representation (deferred, see the model
+/// stop-loss on recursive-type Repr).
+fn adt_constructor_uses_model(c: &Cert, model_info: &ModelInfo) -> bool {
+    let Cert::AdtConstructor {
+        name, field_count, ..
+    } = c
+    else {
+        return false;
+    };
+    *field_count == 1
+        && model_info
+            .fns
+            .get(name)
+            .map(|s| model_info.inductives.contains_key(&s.ret))
+            .unwrap_or(false)
+}
+
+/// `(Dom type, `vs`-shape, struct-field list)` for a verbatim pack constructor
+/// of the given field count. The domain is the raw argument `WVal`s (a single
+/// value or a pair), and the model packs them into the variant struct verbatim.
+fn verbatim_ctor_shape(field_count: u32) -> (&'static str, &'static str, &'static str) {
+    if field_count == 1 {
+        ("WVal", "[p]", "[p]")
+    } else {
+        ("WVal × WVal", "[p.1, p.2]", "[p.1, p.2]")
+    }
+}
+
 fn adt_repr_indices(c: &Cert, model_info: &ModelInfo) -> Option<(String, Vec<u32>)> {
     match c {
         Cert::AdtMatch {
@@ -2254,7 +2342,11 @@ fn adt_repr_indices(c: &Cert, model_info: &ModelInfo) -> Option<(String, Vec<u32
 fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
     let name = c.name();
     match c {
-        Cert::AdtConstructor { .. } => {
+        Cert::AdtConstructor {
+            struct_idx,
+            field_count,
+            ..
+        } if adt_constructor_uses_model(c, model_info) => {
             let sig = model_info.fns.get(name);
             let ret = sig.map(|s| s.ret.as_str()).unwrap_or("Unit");
             let ctor = sig
@@ -2262,6 +2354,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
                 .and_then(|i| i.ctors.first())
                 .map(|c| c.name.as_str())
                 .unwrap_or("mk");
+            let _ = (struct_idx, field_count);
             format!(
                 "abbrev {name}Ob : Schema.Obligation :=\n  \
                  {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
@@ -2270,6 +2363,29 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
                  domRepr := fun S n vs => ∃ v, vs = [v] ∧ intRepr S n v,\n    \
                  codRepr := fun S x w => {ret}Repr S x w,\n    \
                  model := fun n => {ret}.{ctor} n }}\n\n",
+                carrier = c.carrier(),
+                host = c.host_expr(),
+                self_idx = c.self_idx(),
+            )
+        }
+        Cert::AdtConstructor {
+            struct_idx,
+            field_count,
+            ..
+        } => {
+            // Verbatim pack certificate (dual of the field projection): the body
+            // wraps its `field_count` arguments into variant `struct_idx`. No
+            // claim about a recursive model representation — `Cod := WVal` and
+            // `verbatimRepr` pin the output to the constructed struct byte-for-byte.
+            let (dom, pat, args) = verbatim_ctor_shape(*field_count);
+            format!(
+                "abbrev {name}Ob : Schema.Obligation :=\n  \
+                 {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+                 code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+                 Dom := {dom}, Cod := WVal,\n    \
+                 domRepr := fun _ p vs => vs = {pat},\n    \
+                 codRepr := fun S v w => verbatimRepr S v w,\n    \
+                 model := fun p => .structv {struct_idx} {args} }}\n\n",
                 carrier = c.carrier(),
                 host = c.host_expr(),
                 self_idx = c.self_idx(),
