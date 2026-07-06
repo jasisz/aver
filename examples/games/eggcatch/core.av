@@ -59,6 +59,9 @@ record Board
     seed: Int
     mode: Mode
     tick: Int
+    spawned: Int
+    caughtTotal: Int
+    brokenTotal: Int
 
 type GameState
     Playing(Board)
@@ -251,6 +254,47 @@ verify chuteSpec
     chuteSpec(Option.Some(2)) => Option.Some(3)
     chuteSpec(Option.Some(4)) => Option.None
 
+fn tallyHit(total: Int, hit: Bool) -> Int
+    ? "Add one to a bookkeeping total when a chute resolved a given way, else"
+      "leave it. The guarded `+1` (never a flat four-way sum) keeps the eggs"
+      "accounted for exactly like score and misses fold their per-chute hits."
+    match hit
+        true -> total + 1
+        false -> total
+
+verify tallyHit
+    tallyHit(3, true) => 4
+    tallyHit(3, false) => 3
+
+verify tallyHit law monotone
+    given total: Int = [0, 1, 5, 42]
+    given hit: Bool = [true, false]
+    tallyHit(total, hit) >= total => true
+
+fn slotCount(egg: Option<Int>) -> Int
+    ? "One when a chute holds an egg, zero when it is empty — the per-chute"
+      "contribution to how many eggs stand on the board."
+    match egg
+        Option.None -> 0
+        Option.Some(_) -> 1
+
+verify slotCount
+    slotCount(Option.None) => 0
+    slotCount(Option.Some(0)) => 1
+    slotCount(Option.Some(4)) => 1
+
+fn chuteResolved(r: ChuteResult) -> Int
+    ? "One egg's worth of accounting after a chute steps: the egg it leaves"
+      "behind plus the ones it caught or broke. Always equals what came in,"
+      "so a chute neither conjures nor loses an egg across one step."
+    slotCount(r.egg) + r.caught + r.broke
+
+verify chuteResolved
+    chuteResolved(ChuteResult(egg = Option.None, caught = 0, broke = 0)) => 0
+    chuteResolved(ChuteResult(egg = Option.Some(2), caught = 0, broke = 0)) => 1
+    chuteResolved(ChuteResult(egg = Option.None, caught = 1, broke = 0)) => 1
+    chuteResolved(ChuteResult(egg = Option.None, caught = 0, broke = 1)) => 1
+
 fn resolveLip(fox: Chute, chute: Chute) -> ChuteResult
     ? "An egg reaches the lip of `chute`: caught iff the fox stands there,"
       "otherwise it breaks. Either way the chute is cleared."
@@ -267,6 +311,11 @@ verify resolveLip
 verify resolveLip law noFalseMiss
     given w: Chute = [Chute.LeftUp, Chute.LeftDown, Chute.RightUp, Chute.RightDown]
     resolveLip(w, w).broke => 0
+
+verify resolveLip law conserves
+    given fox: Chute = [Chute.LeftUp, Chute.LeftDown, Chute.RightUp, Chute.RightDown]
+    given chute: Chute = [Chute.LeftUp, Chute.LeftDown, Chute.RightUp, Chute.RightDown]
+    chuteResolved(resolveLip(fox, chute)) => 1
 
 fn stepChute(egg: Option<Int>, fox: Chute, chute: Chute) -> ChuteResult
     ? "Advance one chute by a tick. An egg at the lip resolves (catch/break);"
@@ -296,6 +345,13 @@ verify stepChute law eggRowStaysInRange
     given c: Chute = [Chute.LeftUp, Chute.LeftDown]
     when rowInRange(egg)
     rowInRange(stepChute(egg, w, c).egg) => true
+
+verify stepChute law conserves
+    given egg: Option<Int> = [Option.None, Option.Some(0), Option.Some(1), Option.Some(3), Option.Some(4)]
+    given fox: Chute = [Chute.LeftUp, Chute.RightDown]
+    given chute: Chute = [Chute.LeftUp, Chute.RightDown]
+    when rowInRange(egg)
+    chuteResolved(stepChute(egg, fox, chute)) => slotCount(egg)
 
 fn rowInRange(egg: Option<Int>) -> Bool
     ? "True when an egg slot is empty or its row sits inside [0,4]."
@@ -388,12 +444,50 @@ verify clearOnBonus
     clearOnBonus(50, 60, 2) => 2
 
 fn startBoard(seed: Int, mode: Mode) -> Board
-    ? "Fresh board: empty chutes, fox top-left, zero score and misses."
-    Board(lu = Option.None, ld = Option.None, ru = Option.None, rd = Option.None, fox = Chute.LeftUp, score = 0, misses = 0, seed = seed, mode = mode, tick = 0)
+    ? "Fresh board: empty chutes, fox top-left, zero score and misses. The"
+      "three bookkeeping totals (spawned/caughtTotal/brokenTotal) start at"
+      "zero and are never capped or wiped — they exist only to state the egg"
+      "conservation invariant and are not read by render or the shell."
+    Board(lu = Option.None, ld = Option.None, ru = Option.None, rd = Option.None, fox = Chute.LeftUp, score = 0, misses = 0, seed = seed, mode = mode, tick = 0, spawned = 0, caughtTotal = 0, brokenTotal = 0)
 
 verify startBoard
     startBoard(7, Mode.ModeA).seed => 7
     startBoard(7, Mode.ModeA).fox => Chute.LeftUp
+
+verify startBoard law conserves
+    given seed: Int = [0, 1, 7, 42, 100]
+    given mode: Mode = [Mode.ModeA, Mode.ModeB]
+    conservationDelta(startBoard(seed, mode)) => 0
+
+fn onBoard(b: Board) -> Int
+    ? "How many of the four chutes currently hold an egg — always in [0,4]."
+    slotCount(b.lu) + slotCount(b.ld) + slotCount(b.ru) + slotCount(b.rd)
+
+verify onBoard
+    onBoard(startBoard(7, Mode.ModeA)) => 0
+    onBoard(Board.update(startBoard(7, Mode.ModeA), lu = Option.Some(0), rd = Option.Some(3))) => 2
+    onBoard(Board.update(startBoard(7, Mode.ModeA), lu = Option.Some(0), ld = Option.Some(1), ru = Option.Some(2), rd = Option.Some(4))) => 4
+
+fn conservationDelta(b: Board) -> Int
+    ? "The bookkeeping residual: eggs spawned minus eggs caught, broken, and"
+      "still on the board. Zero exactly when every egg is accounted for — no"
+      "egg is conjured, dropped, or double-counted."
+    b.spawned - b.caughtTotal - b.brokenTotal - onBoard(b)
+
+verify conservationDelta
+    conservationDelta(startBoard(7, Mode.ModeA)) => 0
+    conservationDelta(Board.update(startBoard(7, Mode.ModeA), spawned = 3, caughtTotal = 1, brokenTotal = 1, lu = Option.Some(2))) => 0
+    conservationDelta(Board.update(startBoard(7, Mode.ModeA), spawned = 5, caughtTotal = 2, brokenTotal = 1)) => 2
+
+fn stateDelta(gs: GameState) -> Int
+    ? "The conservation residual of a state's board, whether playing or over."
+    match gs
+        GameState.Over(b) -> conservationDelta(b)
+        GameState.Playing(b) -> conservationDelta(b)
+
+verify stateDelta
+    stateDelta(initialState(7, Mode.ModeA)) => 0
+    stateDelta(GameState.Over(Board.update(startBoard(7, Mode.ModeA), spawned = 2, caughtTotal = 2))) => 0
 
 fn applyInput(b: Board, i: Input) -> Board
     ? "Apply the player's key for this tick: move the fox, switch the game"
@@ -423,10 +517,13 @@ verify setEgg
     setEgg(startBoard(7, Mode.ModeA), Chute.RightDown, Option.Some(3)).rd => Option.Some(3)
 
 fn putIfEmpty(b: Board, slot: Option<Int>, target: Chute) -> Board
-    ? "Place a row-0 egg on `target` only when its current slot is empty."
+    ? "Place a row-0 egg on `target` only when its current slot is empty. A"
+      "real placement also bumps the `spawned` ledger by one; a refused"
+      "placement (slot already full) leaves the ledger untouched, so the"
+      "counter tracks eggs that actually entered the board, not spawn rolls."
     match slot
         Option.Some(_) -> b
-        Option.None -> setEgg(b, target, Option.Some(0))
+        Option.None -> setEgg(Board.update(b, spawned = b.spawned + 1), target, Option.Some(0))
 
 verify putIfEmpty
     putIfEmpty(startBoard(7, Mode.ModeA), Option.None, Chute.LeftDown).ld => Option.Some(0)
@@ -448,6 +545,12 @@ verify placeEgg
     placeEgg(startBoard(7, Mode.ModeA), Chute.RightDown).rd => Option.Some(0)
     placeEgg(Board.update(startBoard(7, Mode.ModeA), ru = Option.Some(2)), Chute.RightUp).ru => Option.Some(2)
 
+verify placeEgg law conserves
+    given b: Board = [startBoard(7, Mode.ModeA), Board.update(startBoard(3, Mode.ModeB), spawned = 1, lu = Option.Some(0))]
+    given target: Chute = [Chute.LeftUp, Chute.LeftDown, Chute.RightUp, Chute.RightDown]
+    when conservationDelta(b) == 0
+    conservationDelta(placeEgg(b, target)) => 0
+
 fn spawnEggs(b: Board) -> Board
     ? "Maybe lay one new egg this tick, using the board's PRNG seed and mode"
       "to pick both whether to spawn and which chute."
@@ -460,9 +563,16 @@ verify spawnEggs
     spawnEggs(Board.update(startBoard(10, Mode.ModeA), seed = 10)).ru => Option.Some(0)
     spawnEggs(Board.update(startBoard(50, Mode.ModeA), seed = 50)).lu => Option.None
 
+verify spawnEggs law conserves
+    given b: Board = [Board.update(startBoard(4, Mode.ModeA), seed = 4), Board.update(startBoard(50, Mode.ModeA), seed = 50), Board.update(startBoard(3, Mode.ModeB), spawned = 1, lu = Option.Some(0), seed = 5)]
+    when conservationDelta(b) == 0
+    conservationDelta(spawnEggs(b)) => 0
+
 fn rolledBoard(b: Board, rlu: ChuteResult, rld: ChuteResult, rru: ChuteResult, rrd: ChuteResult) -> Board
-    ? "Write the four rolled chute results back onto the board (eggs only)."
-    Board.update(b, lu = rlu.egg, ld = rld.egg, ru = rru.egg, rd = rrd.egg)
+    ? "Write the four rolled chute results back onto the board: the advanced"
+      "eggs, plus the raw caught/broke tallies added to the bookkeeping totals"
+      "(uncapped, unlike score/misses) so every resolved egg is accounted for."
+    Board.update(b, lu = rlu.egg, ld = rld.egg, ru = rru.egg, rd = rrd.egg, caughtTotal = tallyHit(tallyHit(tallyHit(tallyHit(b.caughtTotal, rlu.caught == 1), rld.caught == 1), rru.caught == 1), rrd.caught == 1), brokenTotal = tallyHit(tallyHit(tallyHit(tallyHit(b.brokenTotal, rlu.broke == 1), rld.broke == 1), rru.broke == 1), rrd.broke == 1))
 
 verify rolledBoard
     rolledBoard(startBoard(7, Mode.ModeA), ChuteResult(egg = Option.Some(1), caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0)).lu => Option.Some(1)
@@ -506,7 +616,7 @@ fn settle(b: Board, rlu: ChuteResult, rld: ChuteResult, rru: ChuteResult, rrd: C
     finalize(rolledBoard(b, rlu, rld, rru, rrd), tickScore(b, rlu, rld, rru, rrd), tickMisses(b, rlu, rld, rru, rrd), b.score)
 
 verify settle
-    settle(Board.update(startBoard(7, Mode.ModeA), fox = Chute.RightUp), ChuteResult(egg = Option.None, caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0), resolveLip(Chute.RightUp, Chute.RightUp), ChuteResult(egg = Option.None, caught = 0, broke = 0)) => finalize(Board.update(startBoard(7, Mode.ModeA), fox = Chute.RightUp), 1, 0, 0)
+    settle(Board.update(startBoard(7, Mode.ModeA), fox = Chute.RightUp), ChuteResult(egg = Option.None, caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0), resolveLip(Chute.RightUp, Chute.RightUp), ChuteResult(egg = Option.None, caught = 0, broke = 0)) => finalize(Board.update(startBoard(7, Mode.ModeA), fox = Chute.RightUp, caughtTotal = 1), 1, 0, 0)
 
 fn tickBoard(b: Board) -> GameState
     ? "Advance the whole world one tick: roll every chute, resolve landings"
@@ -516,6 +626,11 @@ fn tickBoard(b: Board) -> GameState
 
 verify tickBoard
     tickBoard(Board.update(startBoard(7, Mode.ModeA), ru = Option.Some(4), fox = Chute.RightUp)) => settle(Board.update(startBoard(7, Mode.ModeA), ru = Option.Some(4), fox = Chute.RightUp), stepChute(Option.None, Chute.RightUp, Chute.LeftUp), stepChute(Option.None, Chute.RightUp, Chute.LeftDown), stepChute(Option.Some(4), Chute.RightUp, Chute.RightUp), stepChute(Option.None, Chute.RightUp, Chute.RightDown))
+
+verify tickBoard law conserves
+    given b: Board = [Board.update(startBoard(7, Mode.ModeA), ru = Option.Some(4), fox = Chute.RightUp, spawned = 1), Board.update(startBoard(4, Mode.ModeA), lu = Option.Some(4), fox = Chute.RightDown, spawned = 1, seed = 4), Board.update(startBoard(4, Mode.ModeA), seed = 4), Board.update(startBoard(50, Mode.ModeA), lu = Option.Some(1), ru = Option.Some(2), spawned = 2, seed = 50)]
+    when conservationDelta(b) == 0
+    stateDelta(tickBoard(b)) => 0
 
 fn initialState(seed: Int, mode: Mode) -> GameState
     ? "Fresh playable game from a seed and mode."
@@ -559,6 +674,12 @@ verify step
     missCount(step(playingWith(7, Mode.ModeA, Chute.RightUp, 4, Chute.RightUp, 199, 2), Input.Tick)) => 0
     finalScore(step(playingWith(7, Mode.ModeA, Chute.RightUp, 4, Chute.RightUp, 999, 0), Input.Tick)) => 999
     finalScore(step(playingWith(7, Mode.ModeA, Chute.LeftDown, 4, Chute.RightUp, 5, 0), Input.MoveFox(Chute.LeftDown))) => 6
+
+verify step law preserves
+    given gs: GameState = [GameState.Playing(startBoard(7, Mode.ModeA)), GameState.Playing(Board.update(startBoard(7, Mode.ModeA), ru = Option.Some(4), fox = Chute.RightUp, spawned = 1)), GameState.Playing(Board.update(startBoard(4, Mode.ModeA), lu = Option.Some(4), fox = Chute.RightDown, spawned = 1, seed = 4)), GameState.Playing(Board.update(startBoard(4, Mode.ModeA), seed = 4)), GameState.Over(Board.update(startBoard(3, Mode.ModeB), spawned = 2, caughtTotal = 1, lu = Option.Some(0)))]
+    given i: Input = [Input.Tick, Input.MoveFox(Chute.RightUp), Input.MoveFox(Chute.LeftUp), Input.Switch(Mode.ModeB)]
+    when stateDelta(gs) == 0
+    stateDelta(step(gs, i)) => 0
 
 fn stepAll(gs: GameState, inputs: List<Input>) -> GameState
     ? "Left fold of step over an input list — the whole run as one function."
