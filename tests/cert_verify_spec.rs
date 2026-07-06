@@ -173,8 +173,8 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         "missing artifact-decode line on the happy path:\n{report}"
     );
 
-    // Schema v2 is a breaking cert-data shape. The checker rejects v1 manifests
-    // honestly instead of trying to reinterpret them under the v2 schema.
+    // Schema v3 is a breaking cert-data shape. The checker rejects v1 manifests
+    // honestly instead of trying to reinterpret them under the v3 schema.
     {
         let dir = temp_dir("neg-schema-v1");
         copy_dir(&out_dir, &dir);
@@ -717,8 +717,88 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         assert!(!out.contains("CERTIFIED"), "relabel credited (u):\n{out}");
     }
 
+    // (v) M1 semantic-face vacuity — `Dom := Empty`. Empty the sumTo obligation's
+    //     domain so `holds` quantifies over no inhabitant, and swap in a vacuous
+    //     `ns.elim` proof. It builds green AND passes the code/host/self/carrier
+    //     bindings, but the witness proves `Nonempty o.Dom` over every obligation
+    //     and `Empty` has no such instance → DECLINED (the panel's M1 attack).
+    {
+        let dir = temp_dir("neg-v-empty-dom");
+        copy_dir(&out_dir, &dir);
+        let man = dir.join("cert").join("Manifest.lean");
+        let msrc = std::fs::read_to_string(&man).unwrap();
+        let edited = msrc.replacen(SUMTO_FACE, SUMTO_FACE_EMPTY_DOM, 1);
+        assert_ne!(msrc, edited, "sumToOb face shape changed; update the test");
+        std::fs::write(&man, edited).unwrap();
+        replace_simulates(
+            &dir.join("cert"),
+            "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
+             intro S add sub hadd hsub fuel ns vs w hrepr hrun\n  \
+             exact ns.elim",
+        );
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "Dom := Empty vacuity must be DECLINED (v):\n{out}");
+        assert!(out.contains("does not bind"), "wrong reason (v):\n{out}");
+        assert!(
+            !out.contains("did not build"),
+            "case (v) must build green and be caught by the witness:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "empty-domain cert credited (v):\n{out}"
+        );
+    }
+
+    // (w) M2 semantic-face vacuity — `codRepr := fun _ _ _ => True` plus a wrong
+    //     model. The codomain representation is trivialised, so `holds` is
+    //     provable by `trivial` regardless of what the body computes; the model
+    //     is changed to a wrong constant to show the false green. It builds green,
+    //     but the witness pins `codRepr` to `intRepr` by `HEq.rfl` → DECLINED
+    //     (the panel's M2 attack).
+    {
+        let dir = temp_dir("neg-w-true-codrepr");
+        copy_dir(&out_dir, &dir);
+        let man = dir.join("cert").join("Manifest.lean");
+        let msrc = std::fs::read_to_string(&man).unwrap();
+        let edited = msrc.replacen(SUMTO_FACE, SUMTO_FACE_TRUE_CODREPR, 1);
+        assert_ne!(msrc, edited, "sumToOb face shape changed; update the test");
+        std::fs::write(&man, edited).unwrap();
+        replace_simulates(
+            &dir.join("cert"),
+            "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
+             intro S add sub hadd hsub fuel ns vs w hrepr hrun\n  \
+             trivial",
+        );
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "codRepr := True vacuity must be DECLINED (w):\n{out}");
+        assert!(out.contains("does not bind"), "wrong reason (w):\n{out}");
+        assert!(
+            !out.contains("did not build"),
+            "case (w) must build green and be caught by the witness:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "true-codRepr cert credited (w):\n{out}"
+        );
+    }
+
     let _ = std::fs::remove_dir_all(&out_dir);
 }
+
+/// The byte-honest sumTo obligation face emitted for certprobe2 (the standard
+/// integer-class form), and the two panel face-vacuity mutations of it.
+const SUMTO_FACE: &str = "Dom := List Int, Cod := Int,\n    \
+    domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = 1,\n    \
+    codRepr := fun S n w => intRepr S n w,\n    \
+    model := fun ns => sumTo (ns.headD 0) }";
+const SUMTO_FACE_EMPTY_DOM: &str = "Dom := Empty, Cod := Int,\n    \
+    domRepr := fun _ (e : Empty) _ => e.elim,\n    \
+    codRepr := fun S n w => intRepr S n w,\n    \
+    model := fun (e : Empty) => e.elim }";
+const SUMTO_FACE_TRUE_CODREPR: &str = "Dom := List Int, Cod := Int,\n    \
+    domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = 1,\n    \
+    codRepr := fun _ _ _ => True,\n    \
+    model := fun _ => 999 }";
 
 /// The byte-honest `sumToCode` body for certprobe2, used verbatim as a decoy in
 /// the shadow/comment cases (planting the honest TEXT must not change `o.code`).
@@ -738,7 +818,7 @@ const HONEST_SUMTO_CODE: &str = "/-- Verbatim emitted body of `sumTo` (self-recu
 /// own proof to build green). `@BODY@` is filled with the `simp` that discharges
 /// the trapped `wFuncN`.
 const VACUOUS_SIMULATES: &str = "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-    intro S add sub hadd hsub fuel ns vs w hrepr harity hrun\n  \
+    intro S add sub hadd hsub fuel ns vs w hrepr hrun\n  \
     exfalso\n  \
     cases fuel with\n  \
     | zero => simp only [wFuncN, reduceCtorEq] at hrun\n  \
@@ -750,20 +830,20 @@ fn replace_simulates(cert_dir: &Path, replacement: &str) {
     let c = cert_dir.join("Certificate.lean");
     let src = std::fs::read_to_string(&c).unwrap();
     let old = "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-        intro S add sub hadd hsub fuel ns vs w hrepr harity hrun\n  \
-        simp only [sumToOb, AverCert.Schema.Obligation.holds] at harity hrun ⊢\n  \
+        intro S add sub hadd hsub fuel ns vs w hrepr hrun\n  \
+        simp only [sumToOb, AverCert.Schema.Obligation.holds] at hrun ⊢\n  \
+        obtain ⟨hrepr, harity⟩ := hrepr\n  \
         cases hrepr with\n  \
         | nil =>\n      \
-        simp [sumToCode] at harity\n  \
+        simp at harity\n  \
         | cons hv htail =>\n      \
         rename_i n v ns vs\n      \
         cases htail with\n      \
         | nil =>\n          \
-        simp [sumToCode] at harity\n          \
-        simpa using sumTo_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim\n            \
+        simpa [AverCert.Schema.intRepr] using sumTo_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim\n            \
         add sub hadd hsub fuel n v w hv hrun\n      \
         | cons _ _ =>\n          \
-        simp [sumToCode] at harity";
+        simp at harity";
     assert!(
         src.contains(old),
         "emitted sumTo_simulates block shape changed; update the test"
@@ -904,6 +984,64 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
     assert!(
         out.contains("does not bind") && !out.contains("CERTIFIED"),
         "padded JSON must be DECLINED, not credited:\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// An ADT class carries its witness body in `Module.lean` exactly like the
+/// integer classes: mutating the emitted `greetCode` (field-projection witness)
+/// so it no longer decodes from the bytes still builds green, but the checker
+/// pins `manifest.obligations.map (·.code)` to the byte-derived lambda by `rfl`,
+/// so the diverging body fails the kernel witness → DECLINED, never CERTIFIED.
+#[test]
+fn adt_witness_body_mutation_is_declined() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping ADT witness-mutation test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-adt-mut");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/core/user_record.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    // Bump the field-projection witness body's local count 1 -> 2 (an extra,
+    // unused local): the projection proof tolerates it, so the cert builds AND
+    // passes the report bindings, but the mutated body is not the byte-derived
+    // one, so the code `rfl` fails.
+    let m = out_dir.join("cert").join("Module.lean");
+    let src = std::fs::read_to_string(&m).unwrap();
+    let mutated = src.replacen("some ⟨1, 1,", "some ⟨1, 2,", 1);
+    assert_ne!(src, mutated, "emitted greetCode header shape changed");
+    std::fs::write(&m, mutated).unwrap();
+
+    let (ok, out) = aver_verify(&out_dir.join("user_record.wasm"), &out_dir.join("cert"));
+    assert!(!ok, "mutated ADT witness body must be DECLINED:\n{out}");
+    assert!(out.contains("does not bind"), "wrong reason:\n{out}");
+    assert!(
+        !out.contains("did not build"),
+        "must build green and be caught by the witness:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "mutated ADT witness credited:\n{out}"
     );
 
     let _ = std::fs::remove_dir_all(&out_dir);

@@ -4554,10 +4554,7 @@ fn emit_artifact_certificate(
         true,  // run_contract_lower
         true,  // run_law_lower
     );
-    let model_out = lean_codegen::transpile_for_proof_mode(
-        &mut mctx,
-        lean_codegen::VerifyEmitMode::NativeDecide,
-    );
+    let model_out = lean_codegen::transpile_for_cert_model(&mut mctx);
 
     if let Err(e) = cert::write_project(out_path, wasm_name, bytes, &analysis, &model_out.files) {
         eprintln!("{}", format!("certificate: {e}").red());

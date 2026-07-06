@@ -1,0 +1,25 @@
+module OptEval
+    intent =
+        "Sum-type with Int payloads: constructor + non-recursive match."
+    exposes [Op, mk, eval]
+
+type Op
+  Add(Int)
+  Neg(Int)
+  Zero
+
+fn mk(n: Int) -> Op
+  ? "Constructor: build an Add node."
+  Op.Add(n)
+
+fn eval(o: Op) -> Int
+  ? "Non-recursive match over three variants."
+  match o
+    Op.Add(x) -> x
+    Op.Neg(x) -> 0 - x
+    Op.Zero -> 0
+
+verify eval
+    eval(Op.Add(7)) => 7
+    eval(Op.Neg(3)) => -3
+    eval(Op.Zero) => 0

@@ -236,6 +236,7 @@ pub(super) fn transpile_unified(
     ctx: &CodegenContext,
     verify_mode: VerifyEmitMode,
     emit_mode: LeanEmitMode,
+    cert_model: bool,
 ) -> ProjectOutput {
     // Read recursion fact from `ctx.recursive_fns` — populated upstream
     // by `refresh_facts()` (test stubs) or `build_context` (production).
@@ -371,14 +372,21 @@ pub(super) fn transpile_unified(
 
     let mut entry_verify_sections: Vec<String> = Vec::new();
     let mut verify_case_counters: HashMap<String, usize> = HashMap::new();
-    for item in &ctx.items {
-        if let TopLevel::Verify(vb) = item {
-            let key = verify_counter_key(vb);
-            let start_idx = *verify_case_counters.get(&key).unwrap_or(&0);
-            let (emitted, next_idx) = toplevel::emit_verify_block(vb, ctx, verify_mode, start_idx);
-            verify_case_counters.insert(key, next_idx);
-            entry_verify_sections.push(emitted);
-            entry_verify_sections.push(String::new());
+    // Certificate model modules omit the `verify` sample-check `example`
+    // blocks: they are decided by `native_decide`, need the recursive-type
+    // `DecidableEq` shim the cert mode also drops, and a certificate carries
+    // its own decode-to-Int/bytes anti-vacuity guards instead.
+    if !cert_model {
+        for item in &ctx.items {
+            if let TopLevel::Verify(vb) = item {
+                let key = verify_counter_key(vb);
+                let start_idx = *verify_case_counters.get(&key).unwrap_or(&0);
+                let (emitted, next_idx) =
+                    toplevel::emit_verify_block(vb, ctx, verify_mode, start_idx);
+                verify_case_counters.insert(key, next_idx);
+                entry_verify_sections.push(emitted);
+                entry_verify_sections.push(String::new());
+            }
         }
     }
 
@@ -410,12 +418,27 @@ pub(super) fn transpile_unified(
                     ctx,
                     Some(module.prefix.as_str()),
                 ));
+                // Cert mode drops `deriving`, so supply the `Inhabited` instance
+                // the proof-mode recursive `panic!` sites need, explicitly.
+                if cert_model {
+                    let inst =
+                        toplevel::emit_inhabited_instance(td, ctx, Some(module.prefix.as_str()));
+                    if !inst.is_empty() {
+                        body_sections.push(inst);
+                    }
+                }
                 if toplevel::is_recursive_type_def(td)
                     && crate::codegen::proof_recognize::detect_canonical_peano(td).is_none()
                 {
-                    body_sections.push(toplevel::emit_recursive_decidable_eq(
-                        toplevel::type_def_name(td),
-                    ));
+                    // The `@[implemented_by]`/`unsafe` `DecidableEq` shim exists
+                    // only for the `native_decide` sample checks; a certificate
+                    // model file drops it (kernel-clean, and the wall rejects
+                    // `unsafe`).
+                    if !cert_model {
+                        body_sections.push(toplevel::emit_recursive_decidable_eq(
+                            toplevel::type_def_name(td),
+                        ));
+                    }
                     if matches!(emit_mode, LeanEmitMode::Proof)
                         && let Some(measure) = toplevel::emit_recursive_measure(
                             td,
@@ -539,12 +562,20 @@ pub(super) fn transpile_unified(
     let mut entry_body_sections: Vec<String> = Vec::new();
     for td in &ctx.type_defs {
         entry_body_sections.push(toplevel::emit_type_def(td, ctx));
+        if cert_model {
+            let inst = toplevel::emit_inhabited_instance(td, ctx, None);
+            if !inst.is_empty() {
+                entry_body_sections.push(inst);
+            }
+        }
         if toplevel::is_recursive_type_def(td)
             && crate::codegen::proof_recognize::detect_canonical_peano(td).is_none()
         {
-            entry_body_sections.push(toplevel::emit_recursive_decidable_eq(
-                toplevel::type_def_name(td),
-            ));
+            if !cert_model {
+                entry_body_sections.push(toplevel::emit_recursive_decidable_eq(
+                    toplevel::type_def_name(td),
+                ));
+            }
             if matches!(emit_mode, LeanEmitMode::Proof)
                 && let Some(measure) =
                     toplevel::emit_recursive_measure(td, &recursive_types, &measure_sig_type_refs)
@@ -621,7 +652,7 @@ pub(super) fn transpile_unified(
     let entry_content = entry_parts.join("\n\n");
 
     // ---- AverCommon.lean ----
-    let common_content = build_common_lean(&union_body);
+    let common_content = build_common_lean(&union_body, cert_model);
 
     // Project files
     let mut extra_roots: Vec<String> = vec!["AverCommon".to_string()];

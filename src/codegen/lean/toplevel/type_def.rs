@@ -30,6 +30,55 @@ pub fn emit_type_def_in_scope(td: &TypeDef, ctx: &CodegenContext, scope: Option<
     }
 }
 
+/// Emit an explicit `Inhabited` instance for a user type, for the certificate
+/// model mode where `deriving` is unavailable (the checker wall rejects the
+/// `deriving` token). The reused proof emission gets `Inhabited` from `deriving`;
+/// it is required because proof-mode recursive functions `panic!` on fuel
+/// exhaustion, and `panic!` demands `Inhabited` on the result type.
+///
+/// Returns `""` for the type shapes that never carry `deriving` (canonical
+/// Peano — lifted to `Nat`; an `Int`-carrier refined record — emitted as a
+/// `Subtype`), so callers can invoke it uniformly.
+///
+/// The witness is the first nullary variant when one exists (always inhabited,
+/// and self-recursion-safe), otherwise the first variant with `default` fields
+/// (matching what `deriving Inhabited` would pick for the base-case-first user
+/// ADTs in scope); for a record it is the all-`default` structure value.
+pub fn emit_inhabited_instance(td: &TypeDef, ctx: &CodegenContext, scope: Option<&str>) -> String {
+    if crate::codegen::proof_recognize::detect_canonical_peano(td).is_some() {
+        return String::new();
+    }
+    match td {
+        TypeDef::Sum { name, variants, .. } => {
+            let Some(first) = variants.first() else {
+                return String::new();
+            };
+            let nullary = variants.iter().find(|v| v.fields.is_empty());
+            let witness = match nullary {
+                Some(v) => format!("{}.{}", name, to_lower_first(&v.name)),
+                None => {
+                    let args = " default".repeat(first.fields.len());
+                    format!("{}.{}{}", name, to_lower_first(&first.name), args)
+                }
+            };
+            format!("instance : Inhabited {name} := ⟨{witness}⟩")
+        }
+        TypeDef::Product { name, fields, .. } => {
+            // Refined `Int`-carrier records emit as a `Subtype`, not a
+            // `structure`, and never carried `deriving`; skip them.
+            if let Some(decl) = crate::codegen::common::find_refined_type_scoped(ctx, name, scope)
+                && decl.carrier_type == "Int"
+            {
+                return String::new();
+            }
+            let args = std::iter::repeat_n("default", fields.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("instance : Inhabited {name} := ⟨{args}⟩")
+        }
+    }
+}
+
 fn emit_sum_type(name: &str, variants: &[TypeVariant]) -> String {
     let mut lines = Vec::new();
     let is_recursive = is_recursive_type(name, variants);

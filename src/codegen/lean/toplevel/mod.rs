@@ -10,7 +10,8 @@ pub use fn_def::{emit_fn_def, emit_fn_def_proof, emit_mutual_group, emit_mutual_
 pub use fuel::PROOF_FUEL_EXHAUSTED_MSG;
 pub(super) use fuel::{law_fuel_simp_names, law_string_pos_rank};
 pub use type_def::{
-    emit_recursive_decidable_eq, emit_recursive_measure, emit_type_def, emit_type_def_in_scope,
+    emit_inhabited_instance, emit_recursive_decidable_eq, emit_recursive_measure, emit_type_def,
+    emit_type_def_in_scope,
 };
 pub(crate) use verify::law_as_lemma_statement;
 pub(super) use verify::law_given_domain_values;
