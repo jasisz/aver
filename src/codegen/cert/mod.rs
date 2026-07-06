@@ -546,7 +546,10 @@ fn classify(
     }
 
     // ---- decline with an honest reason -----------------------------------
-    if f.arity != 1 {
+    // Arity 2 is a supported signature (the accumulator-recursion template),
+    // so a 2-argument function that did not match falls through to the
+    // shape-based reasons below instead of a contradictory signature message.
+    if f.arity != 1 && f.arity != 2 {
         return Err(format!(
             "unsupported signature ({} params); Stage-B templates cover one-argument Int functions and two-argument accumulator recursion",
             f.arity
@@ -1344,9 +1347,6 @@ fn render_accumulator_recursive_cert(c: &Cert) -> String {
         name,
         self_idx,
         carrier,
-        box_idx,
-        add_idx,
-        sub_idx,
         ..
     } = c
     else {
@@ -1354,7 +1354,6 @@ fn render_accumulator_recursive_cert(c: &Cert) -> String {
     };
     let g3 = eval_countdown(3, 0);
     let g4 = eval_countdown(3, 4);
-    let _ = (box_idx, add_idx, sub_idx);
     format!(
         r#"/-! ### {name} — accumulator self-recursive certificate (carrier type {carrier}) -/
 
@@ -1473,6 +1472,31 @@ theorem {name}_wasm_certified
                 exact ih (n - 1) (acc + n) vd va vr hrd hra hrec
 
 #print axioms {name}_wasm_certified
+
+/-- Consumer-facing composition: whatever the bytes return represents the model
+    value `{name} n acc` (faithfulness law ∘ simulation). -/
+theorem {name}_wasm_faithful
+    (Repr : Int → WVal → Prop)
+    (hcar : ∀ n v, Repr n v →
+      (∃ s sg, v = .structv {carrier} [.i64v s, .null, .i32v sg]) ∨
+      (∃ s lty les sg, v = .structv {carrier} [.i64v s, .arr lty les, .i32v sg]))
+    (hsmall_intro : ∀ k : Int, Repr k (carrierSmall {carrier} k))
+    (hsmall_elim : ∀ n s sg, Repr n (.structv {carrier} [.i64v s, .null, .i32v sg]) → s = n)
+    (hbig : ∀ n s lty les sg,
+      Repr n (.structv {carrier} [.i64v s, .arr lty les, .i32v sg]) → ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)
+    (add sub : List WVal → Option WVal)
+    (hAdd : ∀ a b va vb w, Repr a va → Repr b vb → add [va, vb] = some w → Repr (a + b) w)
+    (hSub : ∀ a b va vb w, Repr a va → Repr b vb → sub [va, vb] = some w → Repr (a - b) w) :
+    ∀ (fuel : Nat) (n acc : Int) (vn vacc w : WVal), Repr n vn → Repr acc vacc →
+      wFuncN {name}Code ({name}Host add sub) fuel {self_idx} [vn, vacc] = some w →
+      ∃ m : Int, Repr m w ∧ m = {name} n acc :=
+  fun fuel n acc vn vacc w hvn hvacc hrun =>
+    ⟨{name} n acc,
+     {name}_wasm_certified Repr hcar hsmall_intro hsmall_elim hbig add sub hAdd hSub fuel n acc vn
+       vacc w hvn hvacc hrun,
+     rfl⟩
+
+#print axioms {name}_wasm_faithful
 
 -- anti-vacuity: the emitted body actually RUNS on concrete inputs.
 def {name}HostRef : HostTbl := {name}Host (addRef {carrier}) (subRef {carrier})
