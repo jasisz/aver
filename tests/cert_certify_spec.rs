@@ -216,6 +216,11 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             "widened-match",
             vec!["boxInt"],
         ),
+        (
+            "tools/certkit/fixtures/rangepred.av",
+            "range-pred",
+            vec!["inAsciiDigit"],
+        ),
     ];
 
     for (input, prefix, expected) in cases {

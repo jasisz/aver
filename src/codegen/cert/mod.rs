@@ -205,6 +205,20 @@ enum Cert {
         box_idx: u32,
         ops: Vec<Op>,
     },
+    /// Non-recursive Int -> Bool range predicate: two nested carrier comparisons
+    /// against constants, `match cp >= k_lo { true -> cp <= k_hi; false -> false }`
+    /// (the `isHighSurrogate`/`isLowSurrogate` shape). Certified over the canonical
+    /// small-carrier domain (the constants and every code point fit i64), so the
+    /// bignum comparison arms are dead in the proof.
+    IntRangePredicate {
+        name: String,
+        self_idx: u32,
+        nlocals: usize,
+        carrier: u32,
+        k_lo: i64,
+        k_hi: i64,
+        ops: Vec<Op>,
+    },
     /// Non-recursive three-variant ADT match: Add x -> x; Neg x -> 0 - x; Zero -> 0.
     AdtMatch {
         name: String,
@@ -247,6 +261,7 @@ impl Cert {
             | Cert::AdtConstructor { name, .. }
             | Cert::FieldProjection { name, .. }
             | Cert::WidenedIntMatch { name, .. }
+            | Cert::IntRangePredicate { name, .. }
             | Cert::AdtMatch { name, .. }
             | Cert::Composition { name, .. } => name,
         }
@@ -259,6 +274,7 @@ impl Cert {
             | Cert::AdtConstructor { self_idx, .. }
             | Cert::FieldProjection { self_idx, .. }
             | Cert::WidenedIntMatch { self_idx, .. }
+            | Cert::IntRangePredicate { self_idx, .. }
             | Cert::AdtMatch { self_idx, .. }
             | Cert::Composition { self_idx, .. } => *self_idx,
         }
@@ -271,6 +287,7 @@ impl Cert {
             | Cert::AdtConstructor { carrier, .. }
             | Cert::FieldProjection { carrier, .. }
             | Cert::WidenedIntMatch { carrier, .. }
+            | Cert::IntRangePredicate { carrier, .. }
             | Cert::AdtMatch { carrier, .. }
             | Cert::Composition { carrier, .. } => *carrier,
         }
@@ -282,6 +299,7 @@ impl Cert {
             Cert::AdtConstructor { field_count, .. } => *field_count as usize,
             Cert::FieldProjection { .. }
             | Cert::WidenedIntMatch { .. }
+            | Cert::IntRangePredicate { .. }
             | Cert::AdtMatch { .. }
             | Cert::Composition { .. } => 1,
         }
@@ -299,6 +317,7 @@ impl Cert {
             Cert::AdtConstructor { .. }
             | Cert::FieldProjection { .. }
             | Cert::WidenedIntMatch { .. }
+            | Cert::IntRangePredicate { .. }
             | Cert::AdtMatch { .. } => "fun x => x".to_string(),
         }
     }
@@ -315,7 +334,9 @@ impl Cert {
             Cert::AdtConstructor { name, .. } | Cert::FieldProjection { name, .. } => {
                 format!("fun _ _ => CertModule.{name}Host")
             }
-            Cert::WidenedIntMatch { name, .. } => format!("fun _ _ => CertModule.{name}Host"),
+            Cert::WidenedIntMatch { name, .. } | Cert::IntRangePredicate { name, .. } => {
+                format!("fun _ _ => CertModule.{name}Host")
+            }
             Cert::AdtMatch { name, .. } => format!("CertModule.{name}Host"),
         }
     }
@@ -331,6 +352,7 @@ impl Cert {
             | Cert::AccumulatorRecursive { .. }
             | Cert::Composition { .. } => ("List Int".to_string(), "Int".to_string()),
             Cert::FieldProjection { .. } => ("WVal x WVal".to_string(), "WVal".to_string()),
+            Cert::IntRangePredicate { .. } => ("Int".to_string(), "Bool".to_string()),
             Cert::AdtMatch { name, .. } | Cert::WidenedIntMatch { name, .. } => {
                 let dom = model_info
                     .fns
@@ -432,7 +454,9 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
                 has_add = true;
                 has_sub = true;
             }
-            Cert::AdtConstructor { .. } | Cert::FieldProjection { .. } => {}
+            Cert::AdtConstructor { .. }
+            | Cert::FieldProjection { .. }
+            | Cert::IntRangePredicate { .. } => {}
             Cert::WidenedIntMatch { .. } => {
                 has_box = true;
             }
@@ -520,6 +544,11 @@ pub enum ObligationFace {
     /// `codRepr := verbatimRepr`,
     /// `domRepr := fun _ p vs => vs = [.structv struct_idx [p.1, p.2]]`.
     Projection { struct_idx: u32 },
+    /// Int -> Bool range predicate: `Dom := Int`, `Cod := Bool`,
+    /// `codRepr := boolRepr`,
+    /// `domRepr := fun _ cp vs => vs = [carrierSmall carrier cp]` (the canonical
+    /// small-carrier domain — every constant and code point fits i64).
+    IntPredicate,
     /// ADT variant match: `Cod := Int`, `codRepr := intRepr`. `Dom` and
     /// `domRepr` are stated over a user-inductive `Repr` the checker cannot
     /// re-derive from bytes — a read declaration (only `Nonempty Dom` is pinned).
@@ -541,6 +570,7 @@ impl ObligationFace {
             Cert::FieldProjection { struct_idx, .. } => ObligationFace::Projection {
                 struct_idx: *struct_idx,
             },
+            Cert::IntRangePredicate { .. } => ObligationFace::IntPredicate,
             Cert::AdtMatch { .. } | Cert::WidenedIntMatch { .. } => ObligationFace::AdtMatch,
             Cert::AdtConstructor { .. } => ObligationFace::AdtConstructor,
         }
@@ -557,6 +587,10 @@ impl ObligationFace {
             ),
             ObligationFace::Projection { .. } => {
                 "class: field projection  |  Dom: WVal x WVal  Cod: WVal  codRepr: verbatimRepr"
+                    .to_string()
+            }
+            ObligationFace::IntPredicate => {
+                "class: Int range predicate  |  Dom: Int (canonical small carrier)  Cod: Bool  codRepr: boolRepr"
                     .to_string()
             }
             ObligationFace::AdtMatch => {
@@ -635,6 +669,26 @@ impl ObligationFace {
                      HEq o.domRepr (fun (_S : AverCert.Schema.CarrierSpec o.carrier) \
                      (p : CertPrelude.WVal × CertPrelude.WVal) (vs : List CertPrelude.WVal) =>\n      \
                      vs = [.structv {struct_idx} [p.1, p.2]]) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+            }
+            ObligationFace::IntPredicate => {
+                s.push_str(&format!(
+                    "example : ({obl}[{idx}]?).map (fun o => o.Dom) = some Int := rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ({obl}[{idx}]?).map (fun o => o.Cod) = some Bool := rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o → \
+                     HEq o.codRepr (@AverCert.Schema.boolRepr o.carrier) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o →\n    \
+                     HEq o.domRepr (fun (_S : AverCert.Schema.CarrierSpec o.carrier) \
+                     (cp : Int) (vs : List CertPrelude.WVal) =>\n      \
+                     vs = [CertPrelude.carrierSmall o.carrier cp]) := by\n  \
                      intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
                 ));
             }
@@ -957,6 +1011,10 @@ fn classify(
     }
 
     if let Some(cert) = match_widened_int_match(f, box_idx, carrier) {
+        return Ok(cert);
+    }
+
+    if let Some(cert) = match_int_range_predicate(f, carrier) {
         return Ok(cert);
     }
 
@@ -1299,6 +1357,82 @@ fn match_widened_int_match(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Op
         carrier,
         hit_variant_idx: *ht,
         box_idx,
+        ops: ops.to_vec(),
+    })
+}
+
+/// Int -> Bool range predicate: two nested carrier comparisons against
+/// constants, `match cp >= k_lo { true -> cp <= k_hi; false -> false }`. Each
+/// comparison is the compiler's small/bignum dual (fast i64 arm guarded by a
+/// null-limbs check, bignum sign arm otherwise). The whole rigid op sequence is
+/// recorded in `code`; the certificate is stated over the canonical small-carrier
+/// domain, where the bignum arms are dead.
+fn match_int_range_predicate(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
+    use Op::*;
+    if f.arity != 1 || !f.calls.is_empty() {
+        return None;
+    }
+    let carrier = carrier?;
+    let ops = strip_trailing_end(&f.ops);
+    let [
+        LocalGet(0),
+        LocalSet(l0),
+        // cmp1: cp >= k_lo
+        LocalGet(l1),
+        StructGet(c0, 1),
+        RefIsNull,
+        If,
+        LocalGet(l2),
+        StructGet(c1, 0),
+        I64Const(k_lo),
+        I64GeS,
+        Else,
+        LocalGet(l3),
+        StructGet(c2, 2),
+        I32Const(0),
+        I32GtS,
+        End,
+        // outer branch on (cp >= k_lo)
+        If,
+        // then: cp <= k_hi
+        LocalGet(0),
+        LocalSet(l4),
+        LocalGet(l5),
+        StructGet(c3, 1),
+        RefIsNull,
+        If,
+        LocalGet(l6),
+        StructGet(c4, 0),
+        I64Const(k_hi),
+        I64LeS,
+        Else,
+        LocalGet(l7),
+        StructGet(c5, 2),
+        I32Const(0),
+        I32LtS,
+        End,
+        // else: false
+        Else,
+        I32Const(0),
+        End,
+    ] = ops
+    else {
+        return None;
+    };
+    let l = *l0;
+    if [l1, l2, l3, l4, l5, l6, l7].iter().any(|x| **x != l) {
+        return None;
+    }
+    if [c0, c1, c2, c3, c4, c5].iter().any(|c| **c != carrier) {
+        return None;
+    }
+    Some(Cert::IntRangePredicate {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier,
+        k_lo: *k_lo,
+        k_hi: *k_hi,
         ops: ops.to_vec(),
     })
 }
@@ -1838,7 +1972,9 @@ fn render_host_def(c: &Cert) -> String {
              else if fn = {add_idx} then some (2, add)\n  \
              else if fn = {sub_idx} then some (2, sub)\n  else none\n",
         ),
-        Cert::AdtConstructor { name, .. } | Cert::FieldProjection { name, .. } => format!(
+        Cert::AdtConstructor { name, .. }
+        | Cert::FieldProjection { name, .. }
+        | Cert::IntRangePredicate { name, .. } => format!(
             "/-- Runtime host wiring for `{name}` (no host calls). -/\n\
              def {name}Host : HostTbl := fun _ => none\n",
         ),
@@ -1880,6 +2016,7 @@ fn render_code_def(c: &Cert) -> String {
         Cert::AdtConstructor { .. } => "ADT constructor",
         Cert::FieldProjection { .. } => "field projection",
         Cert::WidenedIntMatch { .. } => "widened Int variant match",
+        Cert::IntRangePredicate { .. } => "Int range predicate",
         Cert::AdtMatch { .. } => "ADT variant match",
         Cert::Composition { .. } => "cross-function composition, whole call closure",
     };
@@ -1968,6 +2105,12 @@ fn render_code_value(c: &Cert) -> String {
             ops,
             ..
         }
+        | Cert::IntRangePredicate {
+            self_idx,
+            nlocals,
+            ops,
+            ..
+        }
         | Cert::AdtMatch {
             self_idx,
             nlocals,
@@ -2045,9 +2188,9 @@ fn render_host_value(c: &Cert) -> String {
              else if fn = {add_idx} then some (2, add)\n    \
              else if fn = {sub_idx} then some (2, sub)\n    else none",
         ),
-        Cert::AdtConstructor { .. } | Cert::FieldProjection { .. } => {
-            "fun _ _ => fun _ => none".to_string()
-        }
+        Cert::AdtConstructor { .. }
+        | Cert::FieldProjection { .. }
+        | Cert::IntRangePredicate { .. } => "fun _ _ => fun _ => none".to_string(),
         Cert::WidenedIntMatch {
             carrier, box_idx, ..
         } => format!(
@@ -2203,6 +2346,7 @@ fn render_certificate(
             Cert::WidenedIntMatch { .. } => {
                 s.push_str(&render_widened_int_match_cert(c, model_info))
             }
+            Cert::IntRangePredicate { .. } => s.push_str(&render_int_range_predicate_cert(c)),
             Cert::AdtMatch { .. } => s.push_str(&render_adt_match_cert(c, model_info)),
             Cert::Composition { .. } => s.push_str(&render_composition_cert(c)),
         }
@@ -3126,6 +3270,67 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
     )
 }
 
+fn render_int_range_predicate_cert(c: &Cert) -> String {
+    let Cert::IntRangePredicate {
+        name,
+        self_idx,
+        carrier,
+        k_lo,
+        k_hi,
+        ..
+    } = c
+    else {
+        unreachable!()
+    };
+    let inside = k_lo; // in [k_lo, k_hi]
+    let outside = k_lo - 1; // below k_lo
+    let evalset = format!(
+        "wFuncN, wRunF, {name}Code, {name}Host, carrierSmall, b32, popArgs, initLocals, {name}"
+    );
+    format!(
+        r#"/-! ### {name} — Int range predicate certificate (carrier type {carrier}) -/
+
+/-- The VERBATIM emitted body maps the canonical small carrier of `cp` to the
+    boolean `{name} cp = (cp >= {k_lo} && cp <= {k_hi})`, for ALL `cp : ℤ`. The
+    bignum comparison arms are dead over this domain (small carrier ⇒ null limbs). -/
+theorem {name}_wasm_certified (S : CarrierSpec {carrier}) :
+    ∀ (fuel : Nat) (cp : Int),
+      wFuncN {name}Code {name}Host (fuel + 1) {self_idx} [carrierSmall {carrier} cp]
+        = some (b32 ({name} cp)) := by
+  intro fuel cp
+  by_cases h1 : ({k_lo} : Int) ≤ cp
+  · by_cases h2 : cp ≤ ({k_hi} : Int)
+    · simp [{evalset}, ge_iff_le, h1, h2]
+    · simp [{evalset}, ge_iff_le, h1, h2]
+  · simp [{evalset}, ge_iff_le, h1]
+
+#print axioms {name}_wasm_certified
+
+-- Executable tripwires: a value inside the range yields `true` (1), a value
+-- below the low bound yields `false` (0). Decodes the i32 boolean to an Int.
+def {name}HostRef : HostTbl := {name}Host
+example :
+    ((wFuncN {name}Code {name}HostRef 4 {self_idx} [carrierSmall {carrier} ({inside})]).bind
+        (fun w => match w with | .i32v n => some n | _ => none)) = some 1 := by native_decide
+example :
+    ((wFuncN {name}Code {name}HostRef 4 {self_idx} [carrierSmall {carrier} ({outside})]).bind
+        (fun w => match w with | .i32v n => some n | _ => none)) = some 0 := by native_decide
+
+theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+  intro S add sub hadd hsub fuel cp vs w hrepr hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  subst hrepr
+  cases fuel with
+  | zero => simp [wFuncN] at hrun
+  | succ f =>
+      rw [{name}_wasm_certified S f cp] at hrun
+      simp only [Option.some.injEq] at hrun
+      subst hrun
+      simp [AverCert.Schema.boolRepr]
+"#
+    )
+}
+
 fn render_adt_match_cert(c: &Cert, model_info: &ModelInfo) -> String {
     let Cert::AdtMatch {
         name,
@@ -3471,6 +3676,17 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
                 self_idx = c.self_idx(),
             )
         }
+        Cert::IntRangePredicate { carrier, .. } => format!(
+            "abbrev {name}Ob : Schema.Obligation :=\n  \
+             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+             Dom := Int, Cod := Bool,\n    \
+             domRepr := fun _S cp vs => vs = [carrierSmall {carrier} cp],\n    \
+             codRepr := fun S b w => boolRepr S b w,\n    \
+             model := {name} }}\n\n",
+            host = c.host_expr(),
+            self_idx = c.self_idx(),
+        ),
         _ => format!(
             "abbrev {name}Ob : Schema.Obligation :=\n  \
              {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
@@ -3655,6 +3871,7 @@ fn render_manifest(
             Cert::AdtConstructor { .. } => "adt-constructor",
             Cert::FieldProjection { .. } => "field-projection",
             Cert::WidenedIntMatch { .. } => "widened-int-match",
+            Cert::IntRangePredicate { .. } => "int-range-predicate",
             Cert::AdtMatch { .. } => "adt-match",
             Cert::Composition { .. } => "cross-function-composition",
         };

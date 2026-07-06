@@ -1,0 +1,16 @@
+module RangePred
+    intent =
+        "Int -> Bool range predicate: two nested comparisons against constants."
+    exposes [inAsciiDigit]
+
+fn inAsciiDigit(c: Int) -> Bool
+  ? "True when c is the code point of an ASCII digit 0-9."
+  match c >= 48
+    true -> c <= 57
+    false -> false
+
+verify inAsciiDigit
+    inAsciiDigit(48) => true
+    inAsciiDigit(57) => true
+    inAsciiDigit(47) => false
+    inAsciiDigit(58) => false
