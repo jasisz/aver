@@ -81,7 +81,11 @@ def sleb : Nat → Int → Nat → Nat → Nat → Option (Int × Nat × Nat)
 /-  Section walk                                                          -/
 /- ===================================================================== -/
 
-/-- Whole-file section id sequence (skip is one GMP shift per section). -/
+/-- Whole-file section id sequence (skip is one GMP shift per section). Not on
+    the targeted decode paths below, but pinned per fixture by the decoder
+    differential (`tests/cert_decode_spec.rs`) so a malformed section frame
+    anywhere in the module — including regions the targeted decoders skip —
+    fails the kernel witness. -/
 def walkIds : Nat → Nat → Nat → Option (List Nat)
   | 0,      _, _   => none
   | fuel+1, n, len =>

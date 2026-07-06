@@ -394,6 +394,7 @@ def analyze(wasm_path):
         "exports": exports,
         "opcodes": sorted(opcodes),
         "funcs": funcs,
+        "sections": [s[0] for s in secs],
     }
 
 

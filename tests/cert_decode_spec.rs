@@ -1,18 +1,25 @@
 //! Integration tests for the in-kernel certificate profile decoder
 //! (`tools/certkit/prelude/CertDecode.lean`).
 //!
-//! The main test is a three-way decoder differential: for every certkit
-//! fixture it agrees, TERM FOR TERM, across the Lean kernel decoder
-//! (`CertDecode.decode…`, checked by `rfl`), the Rust
-//! `cert::rederive_obligations` (the certified-obligation oracle), and the
-//! Python byte-level `tools/certkit/decode_ref.py`.
-//! It compiles each fixture, emits a Lean witness pinning `decodeExports`,
-//! `decodeImports`, `decodeCarrier`, and per-function `decodeCode` to the oracle
-//! values, and lets `lake env lean` be the verdict — a divergence is a kernel
-//! `rfl` failure with a full repro, never a string compare (the lesson from the
-//! v1 substring checker). It also drives the 39-opcode coverage matrix (33
-//! opcodes exercised by fixture bodies plus 6 covered by a synthetic single-body
-//! probe) fail-closed.
+//! The main test is a decoder differential: for every certkit fixture the Lean
+//! kernel decoder (`CertDecode.decode…`, checked by `rfl`) agrees, TERM FOR
+//! TERM, with the Python byte-level oracle (`tools/certkit/decode_ref.py`) on
+//! every user-function body, the section walk, exports, imports and carrier —
+//! and, for the CERTIFIED obligations, additionally with the Rust
+//! `cert::rederive_obligations` (three oracles on those; two on the rest).
+//! It compiles each fixture, emits a Lean witness pinning `walkIds`,
+//! `decodeExports`, `decodeImports`, `decodeCarrier`, and per-function
+//! `decodeCode` to the oracle values, and lets `lake env lean` be the verdict —
+//! a divergence is a kernel `rfl` failure with a full repro, never a string
+//! compare (the lesson from the v1 substring checker). It also drives the
+//! 39-opcode coverage matrix (33 opcodes exercised by fixture bodies plus 6
+//! covered by a synthetic single-body probe) fail-closed.
+//!
+//! The certkit fixtures are all pure (no import section), so the import-section
+//! decode path (`decImportVec`, a non-zero function-index base) is exercised by
+//! an extra effectful module the test itself writes and compiles: its
+//! `Console.print` lowers to a real import, and the test asserts the decoded
+//! import list is non-empty so this coverage cannot silently regress.
 //!
 //! A second test performs the mutation suite M1–M6 on real bytes: a flip in a
 //! certified body changes the decode, a flip in a decoder-skipped section does
@@ -147,11 +154,11 @@ fn build_prelude() -> PathBuf {
     dst
 }
 
-fn compile_wasm(repo: &Path, fixture: &str, out: &Path) -> Vec<u8> {
+fn compile_wasm_at(repo: &Path, av_path: &Path, name: &str, out: &Path) -> Vec<u8> {
     let c = Command::new(env!("CARGO_BIN_EXE_aver"))
         .current_dir(repo)
         .arg("compile")
-        .arg(format!("tools/certkit/fixtures/{fixture}.av"))
+        .arg(av_path)
         .arg("--target")
         .arg("wasm-gc")
         .arg("-o")
@@ -160,11 +167,34 @@ fn compile_wasm(repo: &Path, fixture: &str, out: &Path) -> Vec<u8> {
         .expect("aver compile runs");
     assert!(
         c.status.success(),
-        "compile {fixture} failed:\n{}",
+        "compile {name} failed:\n{}",
         String::from_utf8_lossy(&c.stderr)
     );
-    std::fs::read(out.join(format!("{fixture}.wasm"))).unwrap()
+    std::fs::read(out.join(format!("{name}.wasm"))).unwrap()
 }
+
+/// An effectful module the test writes itself: `Console.print` lowers to a real
+/// wasm import, so this is the one module in the differential whose import
+/// section is non-empty and whose function-index base is non-zero.
+const IMPORTS_FIXTURE_NAME: &str = "certimports";
+const IMPORTS_FIXTURE_SRC: &str = r#"module CertImports
+    intent =
+        "Import-section witness for the certificate decoder differential."
+    exposes [double]
+    effects [Console]
+
+fn double(x: Int) -> Int
+    ? "Doubles an integer."
+    x + x
+
+verify double
+    double(2) => 4
+    double(-3) => -6
+
+fn main()
+    ! [Console.print]
+    Console.print("{double(21)}")
+"#;
 
 /// The Python byte-level decoder oracle for a module.
 fn oracle_json(repo: &Path, wasm: &Path) -> serde_json::Value {
@@ -287,10 +317,34 @@ fn cert_decode_three_way_differential_and_coverage() {
 
     let mut covered: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
-    for &fixture in FIXTURES {
-        let bytes = compile_wasm(&repo, fixture, &out);
+    // Repo fixtures plus the test-authored effectful module (real emitter
+    // round-trip either way; the extra module is the import-section witness).
+    let imports_av = out.join(format!("{IMPORTS_FIXTURE_NAME}.av"));
+    std::fs::write(&imports_av, IMPORTS_FIXTURE_SRC).unwrap();
+    let mut modules: Vec<(String, PathBuf)> = FIXTURES
+        .iter()
+        .map(|f| {
+            (
+                f.to_string(),
+                repo.join(format!("tools/certkit/fixtures/{f}.av")),
+            )
+        })
+        .collect();
+    modules.push((IMPORTS_FIXTURE_NAME.to_string(), imports_av));
+
+    for (fixture, av_path) in &modules {
+        let bytes = compile_wasm_at(&repo, av_path, fixture, &out);
         let wasm_path = out.join(format!("{fixture}.wasm"));
         let oracle = oracle_json(&repo, &wasm_path);
+
+        // The import-section witness must actually witness something: a lowering
+        // change that drops the imports would make this coverage vacuous again.
+        if fixture.as_str() == IMPORTS_FIXTURE_NAME {
+            assert!(
+                !oracle["imports"].as_array().unwrap().is_empty(),
+                "{fixture}: expected a non-empty import section (effect lowering changed?)"
+            );
+        }
 
         // Rust oracle: certified obligations, cross-checked against the Python
         // oracle (carrier + export-name → self), then pinned to the Lean decoder
@@ -303,7 +357,20 @@ fn cert_decode_three_way_differential_and_coverage() {
         src.push_str(&format!("def bytesN : Nat := 0x{}\n", hex_le(&bytes)));
         src.push_str(&format!("def bytesLen : Nat := {}\n\n", bytes.len()));
 
-        // Section-level bindings (oracle: Python byte decoder).
+        // Section-level bindings (oracle: Python byte decoder). The `walkIds`
+        // binding walks the ENTIRE file (one entry per section), so a malformed
+        // section frame anywhere in the module fails the differential even in
+        // regions the targeted decoders skip.
+        let sections: Vec<String> = oracle["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_u64().unwrap().to_string())
+            .collect();
+        src.push_str(&format!(
+            "example : CertDecode.walkIds 64 (bytesN >>> 64) (bytesLen - 8) = some [{}] := rfl\n",
+            sections.join(", ")
+        ));
         src.push_str(&format!(
             "example : CertDecode.decodeExports bytesN bytesLen = some {} := rfl\n",
             exports_lit(&oracle["exports"])
@@ -508,7 +575,12 @@ fn cert_decode_mutations_fail_closed() {
     let out = temp_dir("cdec-mut-wasm");
     std::fs::create_dir_all(&out).unwrap();
 
-    let bytes = compile_wasm(&repo, "certprobe2", &out);
+    let bytes = compile_wasm_at(
+        &repo,
+        &repo.join("tools/certkit/fixtures/certprobe2.av"),
+        "certprobe2",
+        &out,
+    );
     let obligations = aver::codegen::cert::rederive_obligations(&bytes).unwrap();
     let sumto = obligations.iter().find(|o| o.name == "sumTo").unwrap();
     let self_idx = sumto.self_idx;
