@@ -98,6 +98,91 @@ fn certify_straight_line_fixture_lake_builds_kernel_clean() {
 }
 
 #[test]
+fn certify_composition_fixture_lake_builds_kernel_clean() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping certify composition test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-compose");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/compose.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let cert_dir = out_dir.join("cert");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    // `quad` calls `double` twice: the cross-function composition class carries
+    // the whole call closure in one shared code table and cites the callee.
+    let certified: Vec<&str> = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        certified.contains(&"quad"),
+        "expected quad certified (composition), got {certified:?}"
+    );
+    let class = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "quad")
+        .and_then(|c| c["class"].as_str())
+        .unwrap_or("");
+    assert_eq!(class, "cross-function-composition", "wrong class for quad");
+
+    let build = Command::new("lake")
+        .current_dir(&cert_dir)
+        .arg("build")
+        .output()
+        .expect("expected `lake build` to run");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(
+        build.status.success(),
+        "lake build of emitted composition cert failed:\n{combined}"
+    );
+    // Kernel-clean: the caller theorem cites its callee's simulation lemma and
+    // stays on the core whitelist; no `sorryAx` leaks through the composition.
+    assert!(
+        combined.contains(
+            "quad_wasm_certified' depends on axioms: [propext, Classical.choice, Quot.sound]"
+        ),
+        "composition certificate theorem not kernel-clean:\n{combined}"
+    );
+    assert!(
+        !combined.contains("sorryAx"),
+        "composition certificate leaked sorryAx:\n{combined}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
 fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping certify ADT test: `lake` not available");
