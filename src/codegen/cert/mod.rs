@@ -1133,40 +1133,10 @@ fn classify(
         return Ok(cert);
     }
 
-    if let Some(cert) = match_nonrecursive(f, box_idx, carrier, user_idx_set) {
+    if let Some(cert) = classify_nonrecursive(f, box_idx, carrier, user_idx_set) {
         return Ok(Cert::NonRecursive {
             inner: Box::new(cert),
         });
-    }
-
-    // Fallback kept through the first generic step, so a mistake in the generic
-    // admission path does not silently shrink the certified set.
-    if let Some(cert) = match_straightline(f, box_idx, carrier, user_idx_set) {
-        return Ok(cert);
-    }
-
-    if let Some(cert) = match_adt_constructor(f, box_idx, carrier) {
-        return Ok(cert);
-    }
-
-    if let Some(cert) = match_field_projection(f, carrier) {
-        return Ok(cert);
-    }
-
-    if let Some(cert) = match_widened_int_match(f, box_idx, carrier) {
-        return Ok(cert);
-    }
-
-    if let Some(cert) = match_verbatim_widened_match(f, carrier) {
-        return Ok(cert);
-    }
-
-    if let Some(cert) = match_int_range_predicate(f, carrier) {
-        return Ok(cert);
-    }
-
-    if let Some(cert) = match_adt_match(f, box_idx, carrier) {
-        return Ok(cert);
     }
 
     // ---- decline with an honest reason -----------------------------------
@@ -1212,22 +1182,22 @@ fn classify(
     Err("body does not match a certified template (straight-line add-constant, single-argument self-recursion, two-argument accumulator recursion, or non-recursive ADT constructor/projection/match)".to_string())
 }
 
-fn match_nonrecursive(
+fn classify_nonrecursive(
     f: &UserFn,
     box_idx: u32,
     carrier: Option<u32>,
     user_idx_set: &std::collections::HashSet<u32>,
 ) -> Option<Cert> {
-    match_straightline(f, box_idx, carrier, user_idx_set)
-        .or_else(|| match_adt_constructor(f, box_idx, carrier))
-        .or_else(|| match_field_projection(f, carrier))
-        .or_else(|| match_widened_int_match(f, box_idx, carrier))
-        .or_else(|| match_verbatim_widened_match(f, carrier))
-        .or_else(|| match_int_range_predicate(f, carrier))
-        .or_else(|| match_adt_match(f, box_idx, carrier))
+    classify_straightline(f, box_idx, carrier, user_idx_set)
+        .or_else(|| classify_adt_constructor(f, box_idx, carrier))
+        .or_else(|| classify_field_projection(f, carrier))
+        .or_else(|| classify_widened_int_match(f, box_idx, carrier))
+        .or_else(|| classify_verbatim_widened_match(f, carrier))
+        .or_else(|| classify_int_range_predicate(f, carrier))
+        .or_else(|| classify_adt_match(f, box_idx, carrier))
 }
 
-fn match_straightline(
+fn classify_straightline(
     f: &UserFn,
     box_idx: u32,
     carrier: Option<u32>,
@@ -1416,7 +1386,7 @@ fn closure_contracts(entries: &[ClosureEntry]) -> (bool, bool, bool) {
     (has_add, false, false)
 }
 
-fn match_adt_constructor(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Option<Cert> {
+fn classify_adt_constructor(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Option<Cert> {
     use Op::*;
     let ops = strip_trailing_end(&f.ops);
     let (last, prefix) = ops.split_last()?;
@@ -1469,7 +1439,7 @@ fn match_adt_constructor(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Opti
     })
 }
 
-fn match_field_projection(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
+fn classify_field_projection(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
     use Op::*;
     if f.arity != 1 || !f.calls.is_empty() {
         return None;
@@ -1529,7 +1499,7 @@ fn match_field_projection(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
 /// The default arm is a boxed integer `0`, which pins the codomain to `Int`; the
 /// projected field is therefore an integer carrier and the model is the source
 /// function (`jsonInt : Json -> Int`).
-fn match_widened_int_match(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Option<Cert> {
+fn classify_widened_int_match(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Option<Cert> {
     use Op::*;
     if f.arity != 1 {
         return None;
@@ -1578,7 +1548,7 @@ fn match_widened_int_match(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Op
 ///       <literal default>, end]`
 /// The projected/default value is returned as-is (`Cod := WVal`, `verbatimRepr`),
 /// so the class needs no carrier/string/float representation.
-fn match_verbatim_widened_match(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
+fn classify_verbatim_widened_match(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
     use Op::*;
     if f.arity != 1 || !f.calls.is_empty() {
         return None;
@@ -1633,7 +1603,7 @@ fn match_verbatim_widened_match(f: &UserFn, carrier: Option<u32>) -> Option<Cert
 /// null-limbs check, bignum sign arm otherwise). The whole rigid op sequence is
 /// recorded in `code`; the certificate is stated over the canonical small-carrier
 /// domain, where the bignum arms are dead.
-fn match_int_range_predicate(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
+fn classify_int_range_predicate(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
     use Op::*;
     if f.arity != 1 || !f.calls.is_empty() {
         return None;
@@ -1703,7 +1673,7 @@ fn match_int_range_predicate(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
     })
 }
 
-fn match_adt_match(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Option<Cert> {
+fn classify_adt_match(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Option<Cert> {
     use Op::*;
     if f.arity != 1 {
         return None;
