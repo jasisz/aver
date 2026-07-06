@@ -1,6 +1,6 @@
 # Artifact certificates (`aver compile --certify`)
 
-> Status: v0, certification level **L1** (conditional on named runtime contracts). Two certified function classes; everything else is **declined fail-closed** and listed with a reason. This document is the contract; the emitted `cert-manifest.json` is its machine-readable form.
+> Status: v0, certification level **L1** (conditional on named runtime contracts). Three certified function classes; everything else is **declined fail-closed** and listed with a reason. This document is the contract; the emitted `cert-manifest.json` is its machine-readable form.
 
 ```
 aver compile app.av --target wasm-gc --certify -o out/
@@ -40,10 +40,10 @@ Runtime helpers a body calls (integer boxing, bignum arithmetic, …) are **not 
 
 Per certified export, the certificate proves, from the schema's fixed statement shapes:
 
-- **Simulation**: for every input in the class, running the body read back from the module bytes under the fragment semantics — with the named runtime contracts as hypotheses — returns exactly the encoding of the function's Lean model applied to that input. Recursive bodies are handled by a fuel-indexed interpreter plus a fuel-stability companion theorem.
+- **Simulation**: for every input tuple in the class, running the body read back from the module bytes under the fragment semantics — with the named runtime contracts as hypotheses — returns exactly the encoding of the function's Lean model applied to those inputs. This is partial correctness: the theorem is conditional on the run returning a value, so a trap or fuel exhaustion makes no claim — the executable anti-vacuity guards below are what witness that certified bodies actually run. Recursive bodies, including two-argument accumulator recursion, are handled by a fuel-indexed interpreter plus a fuel-stability companion theorem.
 - **Law transfer**: laws proven about the model compose with simulation into statements about the bytes themselves.
 
-All of it is bundled behind **one final theorem** per certificate, `AverCert.Final.cert : Schema.Holds manifest`, where `Schema.lean` is a fixed, audited statement schema and `manifest` is a literal describing this artifact (hash, exports, contracts, profile, ABI). A consumer never reads proof scripts; they check the final theorem's name and type, the manifest literal, and the schema/prelude hashes. If statement approval required inspecting arbitrary Lean syntax, the compiler bug would just move into a certificate-auditor bug — the schema exists so that it can't.
+All of it is bundled behind **one final theorem** per certificate, `AverCert.Final.cert : Schema.Holds manifest`, where `Schema.lean` is a fixed, audited statement schema and `manifest` is a literal describing this artifact (hash, exports, contracts, profile, ABI). Schema v2 states obligations over lists of represented integer arguments, with the exact entry arity read from the pinned decoded body rather than from a separate trusted field. A consumer never reads proof scripts; they check the final theorem's name and type, the manifest literal, and the schema/prelude hashes. If statement approval required inspecting arbitrary Lean syntax, the compiler bug would just move into a certificate-auditor bug — the schema exists so that it can't.
 
 Anti-vacuity is enforced separately: executable guard `example`s must compute each certified function on at least one concrete input (these use `native_decide` and are deliberately **outside** the proof credit). The final theorems' axioms are collected by the kernel and must be exactly the whitelist `[propext, Classical.choice, Quot.sound]` — a smuggled `axiom`, `sorryAx` (an admitted goal) or `ofReduceBool` (native-code trust) fails verification.
 
@@ -59,7 +59,7 @@ Anti-vacuity is enforced separately: executable guard `example`s must compute ea
 
 The verdict is the witness process exit code. No byte of build output is ever parsed into the verdict or the CERTIFIED report.
 
-What a consumer trusts, exhaustively: the Lean kernel and pinned toolchain; `Schema.lean` + `CertPrelude.lean` (hash-pinned in the manifest, ~500 lines total); the checker orchestration above — including, today, the audited disassembler that re-derives bodies from bytes (a Rust component of the consumer binary, trusted by inspection). Replacing that last item with an **in-kernel decoder** — so the bytes-to-body step is itself a kernel computation and a hostile consumer can re-implement the entire check against the kernel alone — is measured and in progress. The Lean **model** of each function is data in the certificate: reading the model, or the named laws proven about it, is how a consumer knows *what* was certified; the schema keeps that reading surface small and fixed.
+What a consumer trusts, exhaustively: the Lean kernel and pinned toolchain; `Schema.lean` + `CertPrelude.lean` (hash-pinned in the manifest, ~500 lines total); the checker orchestration above — including, today, the audited disassembler that re-derives bodies from bytes (a Rust component of the consumer binary, trusted by inspection). Replacing that last item with an **in-kernel decoder** — so the bytes-to-body step is itself a kernel computation and a hostile consumer can re-implement the entire check against the kernel alone — is measured and in progress. The Lean **model** of each function is data in the certificate: reading the model, or the named laws proven about it, is how a consumer knows *what* was certified; the schema keeps that reading surface small and fixed. The kernel witness pins every other obligation field to the bytes; the model itself is not byte-derivable — it is forced by the kernel proof instead (a tampered model makes the certificate fail to check), and its meaning is read, not re-derived.
 
 ## Certification levels
 
@@ -74,7 +74,7 @@ The manifest always declares its level. A certificate never silently claims more
 
 ## Honest limits (v0)
 
-- **Two certified classes**: straight-line integer functions of the add-a-constant shape, and single-argument structural self-recursion. Everything else — including mutual recursion and multi-argument recursion — is declined and listed under `source_level_only` with a reason. The classifier is fail-closed: a function whose emitted body does not match a certified template is declined even if it looks like it should fit.
+- **Three certified classes**: straight-line integer functions of the add-a-constant shape, single-argument structural self-recursion, and two-argument accumulator self-recursion (`f(n, acc)`: the first integer parameter descends, the second is an accumulator updated in the straight-line fragment). Everything else — including mutual recursion and multi-argument recursion beyond the two-argument accumulator shape — is declined and listed under `source_level_only` with a reason. The classifier is fail-closed: a function whose emitted body does not match a certified template is declined even if it looks like it should fit.
 - **Floats are excluded from certified claims.** Wasm NaN payloads are engine-nondeterministic; observed bit-exactness in the differential harness is a measurement, never a promise.
 - **Runtime contracts are assumptions** at L1. They are few, named, and stable, and the plan of record is to discharge them per release (L2), starting with the small integer helpers.
 - The elaboration-executes-code token scan on cert data files is a raised bar, not a proof; the structural fix is the in-kernel decode path.

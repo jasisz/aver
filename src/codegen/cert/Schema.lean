@@ -30,6 +30,11 @@ structure Subject where
 inductive Policy where
   | simulatesModel
 
+/-- Pointwise lifting of an integer representation relation to argument lists. -/
+inductive ReprAll (R : Int → WVal → Prop) : List Int → List WVal → Prop
+  | nil : ReprAll R [] []
+  | cons {n v ns vs} : R n v → ReprAll R ns vs → ReprAll R (n :: ns) (v :: vs)
+
 /-- The representation-relation faces a simulation certificate is stated over
     (the Int carrier `{i64 small, ref limbs, i32 sign}`). Bundled in the audited
     schema so `Obligation.holds` is self-contained. -/
@@ -54,21 +59,24 @@ structure Obligation where
   code    : CodeTbl
   host    : (List WVal → Option WVal) → (List WVal → Option WVal) → HostTbl
   self    : Nat
-  model   : Int → Int
+  model   : List Int → Int
 
 /-- Denotation of `simulatesModel`: under any representation `S` and any host
     add/sub contracts obeying the named integer laws, the emitted body run on a
-    representation of `n` yields a representation of `model n`. Partial
+    pointwise representation of exactly its decoded entry arity yields a
+    representation of `model ns`. The arity is not a separate trusted field; it
+    is read from the same pinned `code/self` pair as the body. Partial
     correctness — vacuous on trap or fuel exhaustion. -/
 def Obligation.holds (o : Obligation) : Prop :=
   ∀ (S : CarrierSpec o.carrier)
     (add sub : List WVal → Option WVal)
     (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
     (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
-    (fuel : Nat) (n : Int) (v w : WVal),
-    S.Repr n v →
-    wFuncN o.code (o.host add sub) fuel o.self [v] = some w →
-    S.Repr (o.model n) w
+    (fuel : Nat) (ns : List Int) (vs : List WVal) (w : WVal),
+    ReprAll S.Repr ns vs →
+    (o.code o.self).map (·.arity) = some ns.length →
+    wFuncN o.code (o.host add sub) fuel o.self vs = some w →
+    S.Repr (o.model ns) w
 
 structure Manifest where
   subject     : Subject
