@@ -809,6 +809,48 @@ verify rowStatus
     String.len(rowStatus("PLAY")) => 46
     String.len(rowStatus("OVER")) => 46
 
+fn foxBase(k: Int, up: Bool) -> String
+    ? "Fox art line k of the seven middle rows, for a high (up) or low pose."
+    match up
+        true -> match k
+            0 -> "/\\_/\\"
+            1 -> "( o.o )"
+            2 -> "\\_( ˇ )_/"
+            3 -> "|     |"
+            4 -> "|     |"
+            5 -> "_|     |_"
+            _ -> ""
+        false -> match k
+            0 -> ""
+            1 -> "/\\_/\\"
+            2 -> "( o.o )"
+            3 -> "\\_( ˇ )_/"
+            4 -> "|     |"
+            5 -> "|     |"
+            _ -> "_|     |_"
+
+verify foxBase
+    foxBase(0, true) => "/\\_/\\"
+    foxBase(0, false) => ""
+    foxBase(6, false) => "_|     |_"
+    foxBase(6, true) => ""
+
+fn foxRow(k: Int, f: Chute) -> String
+    ? "Fox art line k leaned toward the active side: the whole sprite sits"
+      "high for the upper catch positions, low for the lower ones, and is"
+      "nudged toward the left or right ramps by asymmetric padding."
+    match f
+        Chute.LeftUp -> foxBase(k, true) + "    "
+        Chute.RightUp -> "    " + foxBase(k, true)
+        Chute.LeftDown -> foxBase(k, false) + "    "
+        Chute.RightDown -> "    " + foxBase(k, false)
+
+verify foxRow
+    foxRow(1, Chute.LeftUp) => "( o.o )    "
+    foxRow(1, Chute.RightUp) => "    ( o.o )"
+    foxRow(1, Chute.LeftDown) => "/\\_/\\    "
+    foxRow(2, Chute.RightDown) => "    ( o.o )"
+
 fn renderBoard(b: Board, status: String) -> String
     ? "Seventeen fixed rows joined by newlines: framed header, hens, four"
       "diagonal five-cell ramps meeting at the fox, basket at its position."
@@ -819,13 +861,13 @@ fn renderBoard(b: Board, status: String) -> String
         body("  (o>", "", "<o)  "),
         body(upL(b.lu, 0), "", upR(b.ru, 0)),
         body(upL(b.lu, 1), "", upR(b.ru, 1)),
-        body(upL(b.lu, 2), "/\\_/\\", upR(b.ru, 2)),
-        body(upL(b.lu, 3), "( o.o )", upR(b.ru, 3)),
-        body(upL(b.lu, 4) + basketMark(b.fox, Chute.LeftUp), "\\_( ˇ )_/", basketMark(b.fox, Chute.RightUp) + upR(b.ru, 4)),
-        body("  (o>", "|     |", "<o)  "),
-        body(upL(b.ld, 0), "|     |", upR(b.rd, 0)),
-        body(upL(b.ld, 1), "_|     |_", upR(b.rd, 1)),
-        body(upL(b.ld, 2), "", upR(b.rd, 2)),
+        body(upL(b.lu, 2), foxRow(0, b.fox), upR(b.ru, 2)),
+        body(upL(b.lu, 3), foxRow(1, b.fox), upR(b.ru, 3)),
+        body(upL(b.lu, 4) + basketMark(b.fox, Chute.LeftUp), foxRow(2, b.fox), basketMark(b.fox, Chute.RightUp) + upR(b.ru, 4)),
+        body("  (o>", foxRow(3, b.fox), "<o)  "),
+        body(upL(b.ld, 0), foxRow(4, b.fox), upR(b.rd, 0)),
+        body(upL(b.ld, 1), foxRow(5, b.fox), upR(b.rd, 1)),
+        body(upL(b.ld, 2), foxRow(6, b.fox), upR(b.rd, 2)),
         body(upL(b.ld, 3) + basketMark(b.fox, Chute.LeftDown), "", basketMark(b.fox, Chute.RightDown) + upR(b.rd, 3)),
         body(upL(b.ld, 4), "", upR(b.rd, 4)),
         rowStatus(status),
