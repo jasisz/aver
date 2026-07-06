@@ -1069,9 +1069,11 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
         match helper.key {
             "BranchPath" => parts.push(LEAN_PRELUDE_BRANCH_PATH.to_string()),
             "AverList" => parts.push(LEAN_PRELUDE_AVER_LIST.to_string()),
-            "StringHelpers" => {
-                parts.push(generate_string_helpers_prelude(body, include_all_helpers))
-            }
+            "StringHelpers" => parts.push(generate_string_helpers_prelude(
+                body,
+                include_all_helpers,
+                false,
+            )),
             "NumericParse" => parts.push(generate_numeric_parse_prelude(body, include_all_helpers)),
             "CharByte" => parts.push(LEAN_PRELUDE_CHAR_BYTE.to_string()),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
@@ -1126,8 +1128,48 @@ fn mentions_has_set(body: &str) -> bool {
 /// a lemma ships only when the body (which includes law tactic text)
 /// mentions its name, so corpora that never cite it get byte-identical
 /// output.
-fn generate_string_helpers_prelude(body: &str, include_all_helpers: bool) -> String {
-    let mut parts = vec![LEAN_PRELUDE_STRING_HELPERS.to_string()];
+/// Return `src` with every top-level attribute-carrying declaration removed.
+/// A declaration whose first (column-0) line opens with `@[` (e.g. `@[simp]`)
+/// is the only string-prelude shape that trips the certificate checker's
+/// elaboration-executes-code wall; those `@[simp]` spec lemmas exist purely for
+/// the `SimpOverPreludeLemmas` law rung, which a certificate never proves, and
+/// nothing else in the section (its `def`s, its plain spec lemmas, or the model
+/// that imports it) references them. Plain `theorem`s are kept — the model's own
+/// `decreasing_by` proofs cite some of them by name, and they carry no wall
+/// token. Continuation lines are indented or blank, so a declaration runs until
+/// the next column-0 line.
+fn strip_proof_only_decls(src: &str) -> String {
+    let is_decl_start = |line: &str| !line.is_empty() && !line.starts_with([' ', '\t']);
+    let mut out: Vec<&str> = Vec::new();
+    let mut dropping = false;
+    for line in src.lines() {
+        if is_decl_start(line) {
+            dropping = line.starts_with("@[");
+        }
+        if !dropping {
+            out.push(line);
+        }
+    }
+    out.join("\n")
+}
+
+fn generate_string_helpers_prelude(
+    body: &str,
+    include_all_helpers: bool,
+    cert_model: bool,
+) -> String {
+    // The string prelude carries `@[simp]` spec lemmas (for the
+    // `SimpOverPreludeLemmas` law rung) that a certificate never proves and
+    // whose `@[` token the checker wall rejects. Cert mode drops just those; the
+    // computational `def`s and the plain spec lemmas the model's own
+    // `decreasing_by` cites (e.g. `String.charAt_*`) stay, including the
+    // demand-driven additions below.
+    let base = if cert_model {
+        strip_proof_only_decls(LEAN_PRELUDE_STRING_HELPERS)
+    } else {
+        LEAN_PRELUDE_STRING_HELPERS.to_string()
+    };
+    let mut parts = vec![base];
     if include_all_helpers || body.contains("String.slice_full") {
         parts.push(LEAN_PRELUDE_STRING_SLICE_FULL.to_string());
     }
@@ -1249,7 +1291,7 @@ pub(super) fn generate_toolchain() -> String {
     "leanprover/lean4:v4.31.0\n".to_string()
 }
 
-pub(super) fn build_common_lean(union_body: &str) -> String {
+pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
     let mut parts = vec![LEAN_PRELUDE_HEADER.to_string()];
     for record in crate::codegen::builtin_records::needed_records(union_body, false) {
         parts.push(crate::codegen::builtin_records::render_lean(record));
@@ -1258,12 +1300,19 @@ pub(super) fn build_common_lean(union_body: &str) -> String {
         match helper.key {
             "BranchPath" => parts.push(LEAN_PRELUDE_BRANCH_PATH.to_string()),
             "AverList" => parts.push(LEAN_PRELUDE_AVER_LIST.to_string()),
-            "StringHelpers" => parts.push(generate_string_helpers_prelude(union_body, false)),
+            "StringHelpers" => parts.push(generate_string_helpers_prelude(
+                union_body, false, cert_model,
+            )),
             "NumericParse" => parts.push(generate_numeric_parse_prelude(union_body, false)),
             "CharByte" => parts.push(LEAN_PRELUDE_CHAR_BYTE.to_string()),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
             "AverMap" => parts.push(generate_map_prelude(union_body, false)),
             "ProofFuel" => parts.push(LEAN_PRELUDE_PROOF_FUEL.to_string()),
+            // The `Float` `DecidableEq` shim is `@[implemented_by]`/`unsafe`
+            // (proof-only, for `native_decide` on float literals). A cert model
+            // needs the `Coe Int Float` definition but not the shim, which the
+            // checker wall rejects; drop just the shim in cert mode.
+            "FloatInstances" if cert_model => parts.push(LEAN_PRELUDE_FLOAT_COE.to_string()),
             "FloatInstances" => parts.extend([
                 LEAN_PRELUDE_FLOAT_COE.to_string(),
                 LEAN_PRELUDE_FLOAT_DEC_EQ.to_string(),

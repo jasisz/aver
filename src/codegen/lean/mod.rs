@@ -289,7 +289,26 @@ pub fn transpile_for_proof_mode(
     // fact (recursive_fns, mutual_tco_members, proof_ir) once.
     // Synthetic-AST tests that bypass the pipeline call refresh_facts
     // themselves before reaching this fn.
-    transpile_unified(ctx, verify_mode, LeanEmitMode::Proof)
+    transpile_unified(ctx, verify_mode, LeanEmitMode::Proof, false)
+}
+
+/// Proof-mode transpilation for an artifact CERTIFICATE's reused model
+/// modules.
+///
+/// Same model DEFINITIONS as [`transpile_for_proof_mode`], but emitted
+/// without the proof-only executable machinery that the `aver proof`
+/// sample checks rely on: the `@[implemented_by]`/`unsafe` `DecidableEq`
+/// shims (user recursive types and `Float`), the `verify` sample-check
+/// `example … := by native_decide` blocks, and the `@[simp]` string-prelude
+/// spec lemmas. A certificate never elaborates those — it carries its own
+/// decode-to-`Int`/bytes anti-vacuity guards — and the checker's
+/// elaboration-executes-code wall rejects the `unsafe`/`implemented_by`/
+/// `@[` tokens they contain. The mode drops them at the source so the
+/// certificate's model data files stay kernel-clean, instead of stripping
+/// them out of already-emitted text. The `aver proof` emission is
+/// untouched (this is a distinct entry point).
+pub fn transpile_for_cert_model(ctx: &mut CodegenContext) -> ProjectOutput {
+    transpile_unified(ctx, VerifyEmitMode::NativeDecide, LeanEmitMode::Proof, true)
 }
 
 /// Transpile an Aver program to a Lean 4 project with configurable verify proof mode.
@@ -304,5 +323,5 @@ pub fn transpile_with_verify_mode(
     // No refresh_facts call here — same reasoning as
     // `transpile_for_proof_mode`. Synthetic-AST tests refresh
     // themselves; production paths come pre-populated.
-    transpile_unified(ctx, verify_mode, LeanEmitMode::Standard)
+    transpile_unified(ctx, verify_mode, LeanEmitMode::Standard, false)
 }
