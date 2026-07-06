@@ -4113,6 +4113,18 @@ const GAME_TOUCH = {
             { key: "r", text: "R" }, { key: "q", text: "Q" },
         ]},
     ],
+    eggcatch: [
+        { label: "Left", keys: [
+            { key: "q", text: "Q \u2196" }, { key: "a", text: "A \u2199" },
+        ]},
+        { label: "Right", keys: [
+            { key: "p", text: "P \u2197" }, { key: "l", text: "L \u2198" },
+        ]},
+        { label: "Mode", keys: [
+            { key: "1", text: "A" }, { key: "2", text: "B" },
+            { key: "esc", text: "Esc" },
+        ]},
+    ],
     snake: [
         { label: "Direction", layout: "grid:arrows", keys: [
             { key: "up", text: "↑" }, { key: "left", text: "←" },

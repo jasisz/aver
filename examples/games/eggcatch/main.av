@@ -4,18 +4,19 @@ module Main
         "is named in a signature: a non-blocking key read (Terminal.readKey), the"
         "terminal clear/cursor moves, and the tick clock (Time.sleep). All game"
         "logic is the pure Core engine — this shell only threads GameState through"
-        "the loop and, on request, replays a recorded run from a seed and an input"
-        "file (Disk.readText). The pure/effectful boundary is exactly the module"
-        "boundary: Core has effects [], Main owns them all."
+        "the tick loop. Deterministic replay needs no shell code: the toolchain's"
+        "`aver run --record` / `aver replay` cover runs, and the engine-level"
+        "property is Core.replay (a left fold of the pure step, with a proven"
+        "law). The pure/effectful boundary is exactly the module boundary:"
+        "Core has effects [], Main owns them all."
     depends [Core]
-    effects [Args, Console, Disk, Terminal, Time]
+    effects [Args, Console, Terminal, Time]
 
 fn main() -> Unit
     ? "Entry point: dispatch on CLI arguments (interactive play or file replay)."
     ! [
         Args.get,
         Console.print,
-        Disk.readText,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.showCursor,
         Time.sleep,
     ]
@@ -26,7 +27,6 @@ fn dispatch(args: List<String>) -> Unit
       "`replay <seed> <mode> <path>` folds recorded keys through the pure engine."
     ! [
         Console.print,
-        Disk.readText,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.showCursor,
         Time.sleep,
     ]
@@ -39,12 +39,11 @@ fn dispatchHead(head: String, rest: List<String>) -> Unit
       "is treated as the seed for interactive play."
     ! [
         Console.print,
-        Disk.readText,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.showCursor,
         Time.sleep,
     ]
     match head
-        "replay" -> dispatchReplay(rest)
+        "replay" -> Console.print("Use the toolchain instead: `aver run --record` captures a run and `aver replay` re-plays it deterministically; the engine-level property (replay = a left fold of the pure `step`) is Core.replay with its proven leftFold law.")
         _ -> dispatchPlay(head, rest)
 
 fn dispatchPlay(seedStr: String, rest: List<String>) -> Unit
@@ -57,27 +56,6 @@ fn dispatchPlay(seedStr: String, rest: List<String>) -> Unit
     match rest
         [] -> runInteractive(Core.parseSeed(seedStr), Core.Mode.ModeA)
         [modeStr, ..more] -> runInteractive(Core.parseSeed(seedStr), Core.parseMode(modeStr))
-
-fn dispatchReplay(rest: List<String>) -> Unit
-    ? "Replay command: expects `<seed> <mode> <path>`."
-    ! [Console.print, Disk.readText]
-    match rest
-        [] -> Console.print("usage: replay <seed> <mode> <path>")
-        [seedStr, ..r2] -> dispatchReplaySeed(seedStr, r2)
-
-fn dispatchReplaySeed(seedStr: String, rest: List<String>) -> Unit
-    ? "Replay with the seed parsed; expects `<mode> <path>` next."
-    ! [Console.print, Disk.readText]
-    match rest
-        [] -> Console.print("usage: replay <seed> <mode> <path>")
-        [modeStr, ..r3] -> dispatchReplayMode(seedStr, modeStr, r3)
-
-fn dispatchReplayMode(seedStr: String, modeStr: String, rest: List<String>) -> Unit
-    ? "Replay with seed and mode parsed; the next arg is the input file path."
-    ! [Console.print, Disk.readText]
-    match rest
-        [] -> Console.print("usage: replay <seed> <mode> <path>")
-        [path, ..r4] -> runReplay(Core.parseSeed(seedStr), Core.parseMode(modeStr), path)
 
 fn runInteractive(seed: Int, mode: Core.Mode) -> Unit
     ? "Set the terminal to raw mode, run the tick loop to game over, restore."
@@ -155,22 +133,3 @@ fn drawRow(row: String, rest: List<String>, y: Int) -> Unit
     Terminal.moveTo(0, y)
     Terminal.print(row)
     drawRows(rest, y + 1)
-
-fn runReplay(seed: Int, mode: Core.Mode, path: String) -> Unit
-    ? "Replay a recorded run: read the key file, fold it through the pure engine,"
-      "and print the resulting frame and final score. No terminal, no clock."
-    ! [Console.print, Disk.readText]
-    reportReplay(seed, mode, Disk.readText(path))
-
-fn reportReplay(seed: Int, mode: Core.Mode, contents: Result<String, String>) -> Unit
-    ? "Show the replayed final state, or the read error if the file is missing."
-    ! [Console.print]
-    match contents
-        Result.Err(e) -> Console.print("Could not read input file: {e}")
-        Result.Ok(text) -> showFinal(Core.replay(seed, mode, Core.keysToInputs(String.split(text, "\n"))))
-
-fn showFinal(gs: Core.GameState) -> Unit
-    ? "Print the final frame plus a one-line score/miss summary."
-    ! [Console.print]
-    Console.print(Core.render(gs))
-    Console.print("Final score: {String.fromInt(Core.finalScore(gs))}  misses: {String.fromInt(Core.missCount(gs))}")
