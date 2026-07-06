@@ -52,7 +52,7 @@ pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
 /// Certification level of a v0 artifact certificate: conditional on the named
 /// runtime contracts (see the consult level naming L0/L1/L2/L3).
 pub const CERT_LEVEL: &str = "L1";
-pub const CERT_SCHEMA_VERSION: u32 = 3;
+pub const CERT_SCHEMA_VERSION: u32 = 4;
 /// The one approved final-theorem statement line. `aver cert verify` confirms
 /// this exact line is present in `Final.lean` (name + `Holds manifest`), which
 /// is what pins the statement without matching arbitrary Lean syntax.
@@ -98,10 +98,18 @@ enum Op {
     LocalSet(u32),
     I64Const(i64),
     I32Const(i32),
+    F64Const(u64),
     RefTest(u32),
     RefCast(u32),
     StructNew(u32, u32),
     StructGet(u32, u32),
+    ArrayNewData(u32, Vec<u8>),
+    ArrayNewDataUnresolved {
+        type_idx: u32,
+        data_idx: u32,
+        offset: i32,
+        len: i32,
+    },
     RefNull,
     RefIsNull,
     I64LeS,
@@ -138,6 +146,19 @@ struct ClosureEntry {
     nlocals: usize,
     ops: Vec<Op>,
     shape: LeafShape,
+}
+
+#[derive(Clone, PartialEq)]
+enum VerbatimDefault {
+    Null,
+    F64Bits(u64),
+    Array { type_idx: u32, bytes: Vec<u8> },
+}
+
+#[derive(Clone, PartialEq)]
+enum ConstructorField {
+    Local(u32),
+    Null,
 }
 
 /// A certified function and the template holes extracted from its body.
@@ -184,6 +205,8 @@ enum Cert {
         carrier: u32,
         struct_idx: u32,
         field_count: u32,
+        arity: usize,
+        fields: Vec<ConstructorField>,
         ops: Vec<Op>,
     },
     /// Non-recursive record/variant field projection.
@@ -222,6 +245,7 @@ enum Cert {
         nlocals: usize,
         carrier: u32,
         hit_variant_idx: u32,
+        default: VerbatimDefault,
         ops: Vec<Op>,
     },
     /// Non-recursive Int -> Bool range predicate: two nested carrier comparisons
@@ -328,7 +352,7 @@ impl Cert {
         match self.inner() {
             Cert::StraightLine { .. } | Cert::Recursive { .. } => 1,
             Cert::AccumulatorRecursive { .. } => 2,
-            Cert::AdtConstructor { field_count, .. } => *field_count as usize,
+            Cert::AdtConstructor { arity, .. } => *arity,
             Cert::FieldProjection { .. }
             | Cert::WidenedIntMatch { .. }
             | Cert::VerbatimWidenedMatch { .. }
@@ -402,7 +426,7 @@ impl Cert {
                     .unwrap_or_else(|| "Op".to_string());
                 (dom, "Int".to_string())
             }
-            Cert::AdtConstructor { field_count, .. } => {
+            Cert::AdtConstructor { arity, .. } => {
                 if adt_constructor_uses_model(self, model_info) {
                     let cod = model_info
                         .fns
@@ -411,7 +435,7 @@ impl Cert {
                         .unwrap_or_else(|| "Unit".to_string());
                     ("Int".to_string(), cod)
                 } else {
-                    let dom = if *field_count == 1 {
+                    let dom = if *arity == 1 {
                         "WVal".to_string()
                     } else {
                         "WVal x WVal".to_string()
@@ -816,7 +840,9 @@ type DisasmResult = (
 );
 
 fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
-    use wasmparser::{CompositeInnerType, Operator, Parser, Payload, StorageType, ValType};
+    use wasmparser::{
+        CompositeInnerType, DataKind, Operator, Parser, Payload, StorageType, ValType,
+    };
 
     let mut num_imported_funcs: u32 = 0;
     // defined-function index -> declared type index
@@ -830,6 +856,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
     let mut exports: Vec<(String, u32)> = Vec::new();
     // per defined-function code entry: (nlocals, ops, calls, has_loop_or_branch)
     let mut code_entries: Vec<(usize, Vec<Op>, Vec<u32>, bool)> = Vec::new();
+    let mut data_segments: Vec<Option<Vec<u8>>> = Vec::new();
     let mut carrier: Option<u32> = None;
     let mut next_type_idx: u32 = 0;
 
@@ -917,6 +944,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                         Operator::LocalSet { local_index } => Op::LocalSet(local_index),
                         Operator::I64Const { value } => Op::I64Const(value),
                         Operator::I32Const { value } => Op::I32Const(value),
+                        Operator::F64Const { value } => Op::F64Const(value.bits()),
                         Operator::RefTestNonNull { hty } | Operator::RefTestNullable { hty } => {
                             heap_type_index(hty).map(Op::RefTest).unwrap_or(Op::Other)
                         }
@@ -934,6 +962,26 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                             struct_type_index,
                             field_index,
                         } => Op::StructGet(struct_type_index, field_index),
+                        Operator::ArrayNewData {
+                            array_type_index,
+                            array_data_index,
+                        } => {
+                            let literal_operands =
+                                match (ops.get(ops.len().wrapping_sub(2)), ops.last()) {
+                                    (Some(Op::I32Const(0)), Some(Op::I32Const(len))) => Some(*len),
+                                    _ => None,
+                                };
+                            if let Some(len) = literal_operands {
+                                Op::ArrayNewDataUnresolved {
+                                    type_idx: array_type_index,
+                                    data_idx: array_data_index,
+                                    offset: 0,
+                                    len,
+                                }
+                            } else {
+                                Op::Other
+                            }
+                        }
                         Operator::RefNull { .. } => Op::RefNull,
                         Operator::RefIsNull => Op::RefIsNull,
                         Operator::I64LeS => Op::I64LeS,
@@ -964,6 +1012,15 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                     ops.push(mapped);
                 }
                 code_entries.push((nlocals, ops, calls, has_loop_or_branch));
+            }
+            Payload::DataSection(reader) => {
+                for data in reader {
+                    let data = data.map_err(|e| format!("data read: {e}"))?;
+                    match data.kind {
+                        DataKind::Passive => data_segments.push(Some(data.data.to_vec())),
+                        DataKind::Active { .. } => data_segments.push(None),
+                    }
+                }
             }
             _ => {}
         }
@@ -1004,6 +1061,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
         else {
             continue;
         };
+        let ops = resolve_data_ops(ops, &data_segments);
         let arity = func_type_idx
             .get(def_idx as usize)
             .and_then(|ti| type_arity.get(ti))
@@ -1021,6 +1079,30 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
     }
 
     Ok((user_fns, box_idx, user_idx_set, carrier))
+}
+
+fn resolve_data_ops(ops: Vec<Op>, data_segments: &[Option<Vec<u8>>]) -> Vec<Op> {
+    ops.into_iter()
+        .map(|op| match op {
+            Op::ArrayNewDataUnresolved {
+                type_idx,
+                data_idx,
+                offset,
+                len,
+            } if offset == 0 && len >= 0 => {
+                let Some(Some(bytes)) = data_segments.get(data_idx as usize) else {
+                    return Op::Other;
+                };
+                if bytes.len() == len as usize {
+                    Op::ArrayNewData(type_idx, bytes.clone())
+                } else {
+                    Op::Other
+                }
+            }
+            Op::ArrayNewDataUnresolved { .. } => Op::Other,
+            other => other,
+        })
+        .collect()
 }
 
 fn heap_type_index(hty: wasmparser::HeapType) -> Option<u32> {
@@ -1345,13 +1427,31 @@ fn match_adt_constructor(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Opti
     // real model type, and a 1- or 2-field constructor over any other codomain
     // as a verbatim pack (dual of the field projection). A wider struct has no
     // faithful rendering in this class, so it declines (fail-closed).
-    if *struct_idx == carrier? || *field_count as usize != f.arity || f.arity == 0 || f.arity > 2 {
+    if *struct_idx == carrier? || f.arity == 0 || f.arity > 2 {
         return None;
     }
-    for (i, op) in prefix.iter().enumerate() {
-        if *op != LocalGet(i as u32) {
-            return None;
+    let mut fields = Vec::new();
+    for op in prefix {
+        match op {
+            LocalGet(i) if (*i as usize) < f.arity => fields.push(ConstructorField::Local(*i)),
+            RefNull => fields.push(ConstructorField::Null),
+            _ => return None,
         }
+    }
+    if fields.len() != *field_count as usize {
+        return None;
+    }
+    let mut seen_locals = fields
+        .iter()
+        .filter_map(|f| match f {
+            ConstructorField::Local(i) => Some(*i),
+            ConstructorField::Null => None,
+        })
+        .collect::<Vec<_>>();
+    seen_locals.sort_unstable();
+    seen_locals.dedup();
+    if seen_locals != (0..f.arity as u32).collect::<Vec<_>>() {
+        return None;
     }
     if f.calls.iter().any(|c| *c == f.wasm_idx || *c != box_idx) {
         return None;
@@ -1363,6 +1463,8 @@ fn match_adt_constructor(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Opti
         carrier: carrier?,
         struct_idx: *struct_idx,
         field_count: *field_count,
+        arity: f.arity,
+        fields,
         ops: ops.to_vec(),
     })
 }
@@ -1469,14 +1571,13 @@ fn match_widened_int_match(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Op
 }
 
 /// Two-branch match projecting one variant's first field verbatim (as a raw
-/// `WVal`) with a null-reference default:
+/// `WVal`) with a byte-literal default:
 ///   `[localGet 0, localSet s, localGet s, refTest ht, if
 ///       localGet s, refCast ht, structGet ht 0, localSet r, localGet r
 ///     else
-///       refNull, end]`
-/// The projected value is returned as-is (`Cod := WVal`, `verbatimRepr`), so the
-/// class needs no carrier/string representation — the shape of an empty-list or
-/// null-defaulting variant reader such as `jsonList`.
+///       <literal default>, end]`
+/// The projected/default value is returned as-is (`Cod := WVal`, `verbatimRepr`),
+/// so the class needs no carrier/string/float representation.
 fn match_verbatim_widened_match(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
     use Op::*;
     if f.arity != 1 || !f.calls.is_empty() {
@@ -1484,23 +1585,33 @@ fn match_verbatim_widened_match(f: &UserFn, carrier: Option<u32>) -> Option<Cert
     }
     let carrier = carrier?;
     let ops = strip_trailing_end(&f.ops);
-    let [
-        LocalGet(0),
-        LocalSet(s0),
-        LocalGet(s1),
-        RefTest(ht),
-        If,
-        LocalGet(s2),
-        RefCast(hc),
-        StructGet(hg, 0),
-        LocalSet(r0),
-        LocalGet(r1),
-        Else,
-        RefNull,
-        End,
-    ] = ops
-    else {
-        return None;
+    let (prefix, default) = match ops {
+        [
+            LocalGet(0),
+            LocalSet(s0),
+            LocalGet(s1),
+            RefTest(ht),
+            If,
+            LocalGet(s2),
+            RefCast(hc),
+            StructGet(hg, 0),
+            LocalSet(r0),
+            LocalGet(r1),
+            Else,
+            default @ ..,
+            End,
+        ] => ((s0, s1, s2, ht, hc, hg, r0, r1), default),
+        _ => return None,
+    };
+    let (s0, s1, s2, ht, hc, hg, r0, r1) = prefix;
+    let default = match default {
+        [RefNull] => VerbatimDefault::Null,
+        [F64Const(bits)] => VerbatimDefault::F64Bits(*bits),
+        [I32Const(0), I32Const(_), ArrayNewData(type_idx, bytes)] => VerbatimDefault::Array {
+            type_idx: *type_idx,
+            bytes: bytes.clone(),
+        },
+        _ => return None,
     };
     if s0 != s1 || s0 != s2 || ht != hc || ht != hg || r0 != r1 || *ht == carrier {
         return None;
@@ -1511,6 +1622,7 @@ fn match_verbatim_widened_match(f: &UserFn, carrier: Option<u32>) -> Option<Cert
         nlocals: f.nlocals,
         carrier,
         hit_variant_idx: *ht,
+        default,
         ops: ops.to_vec(),
     })
 }
@@ -2452,10 +2564,12 @@ fn render_simple_op(op: &Op) -> Option<String> {
         Op::LocalSet(i) => format!(".localSet {i}"),
         Op::I64Const(n) => format!(".i64Const ({n})"),
         Op::I32Const(n) => format!(".i32Const ({n})"),
+        Op::F64Const(bits) => format!(".f64Const 0x{bits:016x}"),
         Op::RefTest(t) => format!(".refTest {t}"),
         Op::RefCast(t) => format!(".refCast {t}"),
         Op::StructNew(t, n) => format!(".structNew {t} {n}"),
         Op::StructGet(t, f) => format!(".structGet {t} {f}"),
+        Op::ArrayNewData(t, bytes) => format!(".arrayNewData {t} {}", render_nat_list(bytes)),
         Op::RefNull => ".refNull".to_string(),
         Op::RefIsNull => ".refIsNull".to_string(),
         Op::I64LeS => ".i64LeS".to_string(),
@@ -2464,8 +2578,53 @@ fn render_simple_op(op: &Op) -> Option<String> {
         Op::I32GtS => ".i32GtS".to_string(),
         Op::Call(f) => format!(".call {f}"),
         Op::ReturnCall(f) => format!(".returnCall {f}"),
-        Op::If | Op::Else | Op::End | Op::Other => return None,
+        Op::ArrayNewDataUnresolved { .. } | Op::If | Op::Else | Op::End | Op::Other => {
+            return None;
+        }
     })
+}
+
+fn render_nat_list(bytes: &[u8]) -> String {
+    let parts = bytes
+        .iter()
+        .map(|b| b.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{parts}]")
+}
+
+fn render_wval(default: &VerbatimDefault) -> String {
+    match default {
+        VerbatimDefault::Null => ".null".to_string(),
+        VerbatimDefault::F64Bits(bits) => format!(".f64v 0x{bits:016x}"),
+        VerbatimDefault::Array { type_idx, bytes } => {
+            format!(".arr {type_idx} {}", render_array_elements(bytes))
+        }
+    }
+}
+
+fn render_array_elements(bytes: &[u8]) -> String {
+    let parts = bytes
+        .iter()
+        .map(|b| format!(".i32v {}", *b as i32))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{parts}]")
+}
+
+fn render_default_guard(default: &VerbatimDefault) -> String {
+    match default {
+        VerbatimDefault::Null => {
+            "(fun w => match w with | .null => some 0 | _ => none) = some 0".to_string()
+        }
+        VerbatimDefault::F64Bits(bits) => format!(
+            "(fun w => match w with | .f64v bits => some bits | _ => none) = some (0x{bits:016x} : UInt64)"
+        ),
+        VerbatimDefault::Array { type_idx, bytes } => format!(
+            "(fun w => match w with | .arr t es => if t = {type_idx} ∧ es.length = {} then some 0 else none | _ => none) = some 0",
+            bytes.len()
+        ),
+    }
 }
 
 fn render_lean_instr_list(instrs: &[LeanInstr]) -> String {
@@ -3215,6 +3374,8 @@ fn render_adt_constructor_cert(c: &Cert, model_info: &ModelInfo) -> String {
         carrier,
         struct_idx,
         field_count,
+        arity,
+        fields,
         ..
     } = c
     else {
@@ -3227,6 +3388,8 @@ fn render_adt_constructor_cert(c: &Cert, model_info: &ModelInfo) -> String {
             *carrier,
             *struct_idx,
             *field_count,
+            *arity,
+            fields,
         );
     }
     let sig = model_info.fns.get(name);
@@ -3276,22 +3439,24 @@ fn render_verbatim_constructor_cert(
     self_idx: u32,
     carrier: u32,
     struct_idx: u32,
-    field_count: u32,
+    _field_count: u32,
+    arity: usize,
+    fields: &[ConstructorField],
 ) -> String {
-    // Binders + input list + built struct for one vs two fields.
-    let (binders, input, built, intro, split) = if field_count == 1 {
-        ("(a : WVal)", "[a]", "[a]", "intro a", "")
+    // Binders + input list + built struct for one vs two parameters.
+    let (binders, input, intro, split) = if arity == 1 {
+        ("(a : WVal)", "[a]", "intro a", "")
     } else {
         (
             "(a b : WVal)",
-            "[a, b]",
             "[a, b]",
             "intro a b",
             "  rcases p with ⟨a, b⟩\n",
         )
     };
+    let built = render_constructor_fields(fields);
     // Concrete forcing input: pack carrier value(s) and decode field 0 back.
-    let concrete = if field_count == 1 {
+    let concrete = if arity == 1 {
         format!("[carrierSmall {carrier} 7]")
     } else {
         format!("[carrierSmall {carrier} 7, carrierSmall {carrier} 9]")
@@ -3327,6 +3492,20 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
       rfl
 "#
     )
+}
+
+fn render_constructor_fields(fields: &[ConstructorField]) -> String {
+    let parts = fields
+        .iter()
+        .map(|field| match field {
+            ConstructorField::Local(0) => "a".to_string(),
+            ConstructorField::Local(1) => "b".to_string(),
+            ConstructorField::Local(i) => format!("x{i}"),
+            ConstructorField::Null => ".null".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{parts}]")
 }
 
 fn render_field_projection_cert(c: &Cert) -> String {
@@ -3451,6 +3630,7 @@ fn render_verbatim_widened_cert(c: &Cert) -> String {
         self_idx,
         carrier,
         hit_variant_idx,
+        default,
         ..
     } = c
     else {
@@ -3458,6 +3638,7 @@ fn render_verbatim_widened_cert(c: &Cert) -> String {
     };
     let hit = hit_variant_idx;
     let other = if *hit_variant_idx == 0 { 1 } else { 0 };
+    let default_guard = render_default_guard(default);
     let evalset = format!(
         "wFuncN, wRunF, {name}Code, {name}Host, {name}Model, b32, popArgs, initLocals, List.set"
     );
@@ -3492,14 +3673,14 @@ theorem {name}_wasm_certified :
 #print axioms {name}_wasm_certified
 
 -- Executable tripwires: the projected variant returns its first field, every
--- other value returns the null reference.
+-- other value returns the byte-derived default literal.
 def {name}HostRef : HostTbl := {name}Host
 example :
     (wFuncN {name}Code {name}HostRef 4 {self_idx} [.structv {hit} [.i64v 42]]).bind
       (fun w => match w with | .i64v n => some n | _ => none) = some 42 := by native_decide
 example :
-    (wFuncN {name}Code {name}HostRef 4 {self_idx} [.structv {other} []]).bind
-      (fun w => match w with | .null => some 0 | _ => none) = some 0 := by native_decide
+    (wFuncN {name}Code {name}HostRef 4 {self_idx} [.structv {other} []]).bind {default_guard} := by
+  native_decide
 
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
   intro S add sub hadd hsub fuel v vs w hrepr hrun
@@ -3737,8 +3918,12 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
         out.push_str(&format!(
             "def {name}Model : CertPrelude.WVal → CertPrelude.WVal\n  \
              | .structv {hit_variant_idx} (x :: _) => x\n  \
-             | _ => .null\n\n",
+             | _ => {default}\n\n",
             name = c.name(),
+            default = match c {
+                Cert::VerbatimWidenedMatch { default, .. } => render_wval(default),
+                _ => unreachable!(),
+            },
         ));
     }
     out
@@ -3778,12 +3963,18 @@ fn widened_match_info<'a>(
 fn adt_constructor_uses_model(c: &Cert, model_info: &ModelInfo) -> bool {
     let c = c.inner();
     let Cert::AdtConstructor {
-        name, field_count, ..
+        name,
+        field_count,
+        arity,
+        fields,
+        ..
     } = c
     else {
         return false;
     };
     *field_count == 1
+        && *arity == 1
+        && fields.as_slice() == [ConstructorField::Local(0)]
         && model_info
             .fns
             .get(name)
@@ -3794,11 +3985,25 @@ fn adt_constructor_uses_model(c: &Cert, model_info: &ModelInfo) -> bool {
 /// `(Dom type, `vs`-shape, struct-field list)` for a verbatim pack constructor
 /// of the given field count. The domain is the raw argument `WVal`s (a single
 /// value or a pair), and the model packs them into the variant struct verbatim.
-fn verbatim_ctor_shape(field_count: u32) -> (&'static str, &'static str, &'static str) {
-    if field_count == 1 {
-        ("WVal", "[p]", "[p]")
+fn verbatim_ctor_shape(
+    arity: usize,
+    fields: &[ConstructorField],
+) -> (&'static str, String, String) {
+    let args = fields
+        .iter()
+        .map(|field| match field {
+            ConstructorField::Local(0) if arity == 1 => "p".to_string(),
+            ConstructorField::Local(0) => "p.1".to_string(),
+            ConstructorField::Local(1) => "p.2".to_string(),
+            ConstructorField::Local(i) => format!("p.{i}"),
+            ConstructorField::Null => ".null".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    if arity == 1 {
+        ("WVal", "[p]".to_string(), format!("[{args}]"))
     } else {
-        ("WVal × WVal", "[p.1, p.2]", "[p.1, p.2]")
+        ("WVal × WVal", "[p.1, p.2]".to_string(), format!("[{args}]"))
     }
 }
 
@@ -3864,14 +4069,15 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
         }
         Cert::AdtConstructor {
             struct_idx,
-            field_count,
+            arity,
+            fields,
             ..
         } => {
             // Verbatim pack certificate (dual of the field projection): the body
             // wraps its `field_count` arguments into variant `struct_idx`. No
             // claim about a recursive model representation — `Cod := WVal` and
             // `verbatimRepr` pin the output to the constructed struct byte-for-byte.
-            let (dom, pat, args) = verbatim_ctor_shape(*field_count);
+            let (dom, pat, args) = verbatim_ctor_shape(*arity, fields);
             format!(
                 "abbrev {name}Ob : Schema.Obligation :=\n  \
                  {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
