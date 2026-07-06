@@ -191,6 +191,20 @@ enum Cert {
         field_idx: u32,
         ops: Vec<Op>,
     },
+    /// Non-recursive two-branch "widened" match projecting one integer-payload
+    /// variant of a user inductive, with a boxed-`0` default for every other
+    /// variant: `match j { JsonInt(n) -> n; _ -> 0 }`. Generalises the fixed
+    /// three-variant match to any inductive with a single projected Int variant.
+    WidenedIntMatch {
+        name: String,
+        self_idx: u32,
+        nlocals: usize,
+        carrier: u32,
+        /// Struct type index of the projected (integer-payload) variant.
+        hit_variant_idx: u32,
+        box_idx: u32,
+        ops: Vec<Op>,
+    },
     /// Non-recursive three-variant ADT match: Add x -> x; Neg x -> 0 - x; Zero -> 0.
     AdtMatch {
         name: String,
@@ -232,6 +246,7 @@ impl Cert {
             | Cert::AccumulatorRecursive { name, .. }
             | Cert::AdtConstructor { name, .. }
             | Cert::FieldProjection { name, .. }
+            | Cert::WidenedIntMatch { name, .. }
             | Cert::AdtMatch { name, .. }
             | Cert::Composition { name, .. } => name,
         }
@@ -243,6 +258,7 @@ impl Cert {
             | Cert::AccumulatorRecursive { self_idx, .. }
             | Cert::AdtConstructor { self_idx, .. }
             | Cert::FieldProjection { self_idx, .. }
+            | Cert::WidenedIntMatch { self_idx, .. }
             | Cert::AdtMatch { self_idx, .. }
             | Cert::Composition { self_idx, .. } => *self_idx,
         }
@@ -254,6 +270,7 @@ impl Cert {
             | Cert::AccumulatorRecursive { carrier, .. }
             | Cert::AdtConstructor { carrier, .. }
             | Cert::FieldProjection { carrier, .. }
+            | Cert::WidenedIntMatch { carrier, .. }
             | Cert::AdtMatch { carrier, .. }
             | Cert::Composition { carrier, .. } => *carrier,
         }
@@ -263,7 +280,10 @@ impl Cert {
             Cert::StraightLine { .. } | Cert::Recursive { .. } => 1,
             Cert::AccumulatorRecursive { .. } => 2,
             Cert::AdtConstructor { field_count, .. } => *field_count as usize,
-            Cert::FieldProjection { .. } | Cert::AdtMatch { .. } | Cert::Composition { .. } => 1,
+            Cert::FieldProjection { .. }
+            | Cert::WidenedIntMatch { .. }
+            | Cert::AdtMatch { .. }
+            | Cert::Composition { .. } => 1,
         }
     }
     /// The Lean expression for the model this export simulates.
@@ -276,9 +296,10 @@ impl Cert {
             Cert::AccumulatorRecursive { name, .. } => {
                 format!("fun ns => {name} (ns.headD 0) ((ns.drop 1).headD 0)")
             }
-            Cert::AdtConstructor { .. } | Cert::FieldProjection { .. } | Cert::AdtMatch { .. } => {
-                "fun x => x".to_string()
-            }
+            Cert::AdtConstructor { .. }
+            | Cert::FieldProjection { .. }
+            | Cert::WidenedIntMatch { .. }
+            | Cert::AdtMatch { .. } => "fun x => x".to_string(),
         }
     }
     /// The Lean expression for the 2-arg host builder in `Obligation` shape
@@ -294,6 +315,7 @@ impl Cert {
             Cert::AdtConstructor { name, .. } | Cert::FieldProjection { name, .. } => {
                 format!("fun _ _ => CertModule.{name}Host")
             }
+            Cert::WidenedIntMatch { name, .. } => format!("fun _ _ => CertModule.{name}Host"),
             Cert::AdtMatch { name, .. } => format!("CertModule.{name}Host"),
         }
     }
@@ -309,7 +331,7 @@ impl Cert {
             | Cert::AccumulatorRecursive { .. }
             | Cert::Composition { .. } => ("List Int".to_string(), "Int".to_string()),
             Cert::FieldProjection { .. } => ("WVal x WVal".to_string(), "WVal".to_string()),
-            Cert::AdtMatch { name, .. } => {
+            Cert::AdtMatch { name, .. } | Cert::WidenedIntMatch { name, .. } => {
                 let dom = model_info
                     .fns
                     .get(name)
@@ -411,6 +433,9 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
                 has_sub = true;
             }
             Cert::AdtConstructor { .. } | Cert::FieldProjection { .. } => {}
+            Cert::WidenedIntMatch { .. } => {
+                has_box = true;
+            }
             Cert::AdtMatch { .. } => {
                 has_box = true;
                 has_sub = true;
@@ -516,7 +541,7 @@ impl ObligationFace {
             Cert::FieldProjection { struct_idx, .. } => ObligationFace::Projection {
                 struct_idx: *struct_idx,
             },
-            Cert::AdtMatch { .. } => ObligationFace::AdtMatch,
+            Cert::AdtMatch { .. } | Cert::WidenedIntMatch { .. } => ObligationFace::AdtMatch,
             Cert::AdtConstructor { .. } => ObligationFace::AdtConstructor,
         }
     }
@@ -931,6 +956,10 @@ fn classify(
         return Ok(cert);
     }
 
+    if let Some(cert) = match_widened_int_match(f, box_idx, carrier) {
+        return Ok(cert);
+    }
+
     if let Some(cert) = match_adt_match(f, box_idx, carrier) {
         return Ok(cert);
     }
@@ -1220,6 +1249,56 @@ fn match_field_projection(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
         carrier,
         struct_idx,
         field_idx,
+        ops: ops.to_vec(),
+    })
+}
+
+/// Two-branch "widened" match projecting one integer-payload variant, boxing `0`
+/// for every other variant:
+///   `[localGet 0, localSet s, localGet s, refTest ht, if
+///       localGet s, refCast ht, structGet ht 0, localSet r, localGet r
+///     else
+///       i64Const 0, call box, end]`
+/// The default arm is a boxed integer `0`, which pins the codomain to `Int`; the
+/// projected field is therefore an integer carrier and the model is the source
+/// function (`jsonInt : Json -> Int`).
+fn match_widened_int_match(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Option<Cert> {
+    use Op::*;
+    if f.arity != 1 {
+        return None;
+    }
+    let carrier = carrier?;
+    let ops = strip_trailing_end(&f.ops);
+    let [
+        LocalGet(0),
+        LocalSet(s0),
+        LocalGet(s1),
+        RefTest(ht),
+        If,
+        LocalGet(s2),
+        RefCast(hc),
+        StructGet(hg, 0),
+        LocalSet(r0),
+        LocalGet(r1),
+        Else,
+        I64Const(0),
+        Call(bx),
+        End,
+    ] = ops
+    else {
+        return None;
+    };
+    if s0 != s1 || s0 != s2 || ht != hc || ht != hg || r0 != r1 || *bx != box_idx || *ht == carrier
+    {
+        return None;
+    }
+    Some(Cert::WidenedIntMatch {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier,
+        hit_variant_idx: *ht,
+        box_idx,
         ops: ops.to_vec(),
     })
 }
@@ -1763,6 +1842,16 @@ fn render_host_def(c: &Cert) -> String {
             "/-- Runtime host wiring for `{name}` (no host calls). -/\n\
              def {name}Host : HostTbl := fun _ => none\n",
         ),
+        Cert::WidenedIntMatch {
+            name,
+            carrier,
+            box_idx,
+            ..
+        } => format!(
+            "/-- Runtime host wiring for `{name}` (box contract for the default `0`). -/\n\
+             def {name}Host : HostTbl := fun fn =>\n  \
+             if fn = {box_idx} then some (1, boxRef {carrier})\n  else none\n",
+        ),
         Cert::AdtMatch {
             name,
             carrier,
@@ -1790,6 +1879,7 @@ fn render_code_def(c: &Cert) -> String {
         Cert::AccumulatorRecursive { .. } => "accumulator self-recursive",
         Cert::AdtConstructor { .. } => "ADT constructor",
         Cert::FieldProjection { .. } => "field projection",
+        Cert::WidenedIntMatch { .. } => "widened Int variant match",
         Cert::AdtMatch { .. } => "ADT variant match",
         Cert::Composition { .. } => "cross-function composition, whole call closure",
     };
@@ -1867,6 +1957,12 @@ fn render_code_value(c: &Cert) -> String {
             ..
         }
         | Cert::FieldProjection {
+            self_idx,
+            nlocals,
+            ops,
+            ..
+        }
+        | Cert::WidenedIntMatch {
             self_idx,
             nlocals,
             ops,
@@ -1952,6 +2048,12 @@ fn render_host_value(c: &Cert) -> String {
         Cert::AdtConstructor { .. } | Cert::FieldProjection { .. } => {
             "fun _ _ => fun _ => none".to_string()
         }
+        Cert::WidenedIntMatch {
+            carrier, box_idx, ..
+        } => format!(
+            "fun _ _ => fun fn =>\n    \
+             if fn = {box_idx} then some (1, boxRef {carrier})\n    else none",
+        ),
         Cert::AdtMatch {
             carrier,
             box_idx,
@@ -2098,6 +2200,9 @@ fn render_certificate(
             Cert::AccumulatorRecursive { .. } => s.push_str(&render_accumulator_recursive_cert(c)),
             Cert::AdtConstructor { .. } => s.push_str(&render_adt_constructor_cert(c, model_info)),
             Cert::FieldProjection { .. } => s.push_str(&render_field_projection_cert(c)),
+            Cert::WidenedIntMatch { .. } => {
+                s.push_str(&render_widened_int_match_cert(c, model_info))
+            }
             Cert::AdtMatch { .. } => s.push_str(&render_adt_match_cert(c, model_info)),
             Cert::Composition { .. } => s.push_str(&render_composition_cert(c)),
         }
@@ -2956,6 +3061,71 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
     )
 }
 
+fn render_widened_int_match_cert(c: &Cert, model_info: &ModelInfo) -> String {
+    let Cert::WidenedIntMatch {
+        name,
+        self_idx,
+        carrier,
+        hit_variant_idx,
+        ..
+    } = c
+    else {
+        unreachable!()
+    };
+    let ty = model_info
+        .fns
+        .get(name)
+        .and_then(|s| s.params.first())
+        .map(|s| s.as_str())
+        .unwrap_or("Op");
+    // A struct type distinct from the hit variant, for the default tripwire.
+    let other_idx = if *hit_variant_idx == 0 { 1 } else { 0 };
+    format!(
+        r#"/-! ### {name} — widened Int match certificate (carrier type {carrier}) -/
+
+theorem {name}_wasm_certified (S : CarrierSpec {carrier}) :
+    ∀ (fuel : Nat) (o : {ty}) (v w : WVal), {name}DomRepr S o v →
+      wFuncN {name}Code {name}Host fuel {self_idx} [v] = some w →
+      S.Repr ({name} o) w := by
+  intro fuel
+  cases fuel with
+  | zero => intro o v w hv hrun; simp [wFuncN] at hrun
+  | succ f =>
+      intro o v w hv hrun
+      cases o <;> simp only [{name}DomRepr] at hv <;>
+        first
+        | (obtain ⟨cx, rfl, hcx⟩ := hv
+           simp [wFuncN, wRunF, {name}Code, {name}Host, b32, popArgs, initLocals] at hrun
+           subst hrun
+           simpa [{name}] using hcx)
+        | (obtain ⟨t, fs, rfl, hne⟩ := hv
+           simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32, popArgs, initLocals, hne] at hrun
+           subst hrun
+           simpa [{name}] using S.smallIntro 0)
+
+#print axioms {name}_wasm_certified
+
+-- Executable tripwires: the projected variant reads its carrier, every other
+-- variant boxes the default `0`. A trapping body yields `none`, forcing a run.
+def {name}HostRef : HostTbl := {name}Host
+example :
+    ((wFuncN {name}Code {name}HostRef 4 {self_idx}
+        [.structv {hit_variant_idx} [carrierSmall {carrier} 42]]).bind carrierToInt)
+      = some 42 := by native_decide
+example :
+    ((wFuncN {name}Code {name}HostRef 4 {self_idx}
+        [.structv {other_idx} []]).bind carrierToInt)
+      = some 0 := by native_decide
+
+theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+  intro S add sub hadd hsub fuel o vs w hrepr hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  obtain ⟨v, rfl, hv⟩ := hrepr
+  simpa [AverCert.Schema.intRepr] using {name}_wasm_certified S fuel o v w hv hrun
+"#
+    )
+}
+
 fn render_adt_match_cert(c: &Cert, model_info: &ModelInfo) -> String {
     let Cert::AdtMatch {
         name,
@@ -3061,7 +3231,68 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
         }
         out.push('\n');
     }
+    // Per-function domain-representation relations for widened Int matches. Each
+    // is keyed on the projected variant's byte-derived struct index: the hit
+    // constructor is represented as that struct carrying a single Int carrier,
+    // every other constructor as any struct of a DIFFERENT type — enough to make
+    // the projection theorem provable and non-vacuous. This is a read
+    // declaration (the ADT face is not kernel-re-derived), so its exact shape is
+    // untrusted; the checker pins only `Cod = Int`, `codRepr = intRepr` and
+    // `Nonempty Dom`.
+    for c in &analysis.certs {
+        let Cert::WidenedIntMatch {
+            hit_variant_idx, ..
+        } = c
+        else {
+            continue;
+        };
+        let Some((ty, ind, hit_ctor)) = widened_match_info(c, model_info) else {
+            continue;
+        };
+        out.push_str(&format!(
+            "def {name}DomRepr (S : CarrierSpec {carrier}) : {ty} → WVal → Prop\n",
+            name = c.name(),
+            carrier = c.carrier(),
+        ));
+        for ctor in &ind.ctors {
+            let binders = " _".repeat(ctor.fields.len());
+            if ctor.name == hit_ctor {
+                out.push_str(&format!(
+                    "  | .{ctor} x, v => ∃ cx, v = .structv {hit_variant_idx} [cx] ∧ S.Repr x cx\n",
+                    ctor = ctor.name,
+                ));
+            } else {
+                out.push_str(&format!(
+                    "  | .{ctor}{binders}, v => ∃ t fs, v = .structv t fs ∧ t ≠ {hit_variant_idx}\n",
+                    ctor = ctor.name,
+                ));
+            }
+        }
+        out.push('\n');
+    }
     out
+}
+
+/// For a widened Int match: the model inductive name, its constructor list, and
+/// the name of the single integer-payload constructor the body projects (the
+/// unique `fields == ["Int"]` constructor). `None` — so the class declines by a
+/// failed render — if the model type is unknown or the projected constructor is
+/// not unique.
+fn widened_match_info<'a>(
+    c: &Cert,
+    model_info: &'a ModelInfo,
+) -> Option<(String, &'a InductiveInfo, String)> {
+    let Cert::WidenedIntMatch { name, .. } = c else {
+        return None;
+    };
+    let ty = model_info.fns.get(name)?.params.first()?.clone();
+    let ind = model_info.inductives.get(&ty)?;
+    let mut int_ctors = ind.ctors.iter().filter(|ct| ct.fields == ["Int"]);
+    let hit = int_ctors.next()?.name.clone();
+    if int_ctors.next().is_some() {
+        return None;
+    }
+    Some((ty, ind, hit))
 }
 
 /// Whether an ADT constructor certificate can name its real model type: a
@@ -3213,6 +3444,26 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
                  code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
                  Dom := {ty}, Cod := Int,\n    \
                  domRepr := fun S o vs => ∃ v, vs = [v] ∧ {ty}Repr S o v,\n    \
+                 codRepr := fun S n w => intRepr S n w,\n    \
+                 model := {name} }}\n\n",
+                carrier = c.carrier(),
+                host = c.host_expr(),
+                self_idx = c.self_idx(),
+            )
+        }
+        Cert::WidenedIntMatch { .. } => {
+            let ty = model_info
+                .fns
+                .get(name)
+                .and_then(|s| s.params.first())
+                .map(|s| s.as_str())
+                .unwrap_or("Op");
+            format!(
+                "abbrev {name}Ob : Schema.Obligation :=\n  \
+                 {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+                 code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+                 Dom := {ty}, Cod := Int,\n    \
+                 domRepr := fun S o vs => ∃ v, vs = [v] ∧ {name}DomRepr S o v,\n    \
                  codRepr := fun S n w => intRepr S n w,\n    \
                  model := {name} }}\n\n",
                 carrier = c.carrier(),
@@ -3403,6 +3654,7 @@ fn render_manifest(
             Cert::AccumulatorRecursive { .. } => "multi-argument self-recursive",
             Cert::AdtConstructor { .. } => "adt-constructor",
             Cert::FieldProjection { .. } => "field-projection",
+            Cert::WidenedIntMatch { .. } => "widened-int-match",
             Cert::AdtMatch { .. } => "adt-match",
             Cert::Composition { .. } => "cross-function-composition",
         };

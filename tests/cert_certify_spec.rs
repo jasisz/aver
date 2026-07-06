@@ -211,6 +211,11 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             "tuple-proj",
             vec!["pairFst", "pairSnd"],
         ),
+        (
+            "tools/certkit/fixtures/widenedmatch.av",
+            "widened-match",
+            vec!["boxInt"],
+        ),
     ];
 
     for (input, prefix, expected) in cases {

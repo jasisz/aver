@@ -1,0 +1,21 @@
+module WidenedMatch
+    intent =
+        "Two-branch widened match: project one integer-payload variant of a"
+        "user inductive, default to 0 for every other variant."
+    exposes [Box, boxInt]
+
+type Box
+  IntBox(Int)
+  StrBox(String)
+  Empty
+
+fn boxInt(b: Box) -> Int
+  ? "Project the integer payload, defaulting to 0."
+  match b
+    Box.IntBox(n) -> n
+    _ -> 0
+
+verify boxInt
+    boxInt(Box.IntBox(42)) => 42
+    boxInt(Box.StrBox("x")) => 0
+    boxInt(Box.Empty) => 0
