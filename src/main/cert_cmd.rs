@@ -676,25 +676,14 @@ fn checker_witness(
     )
 }
 
-/// The semantic-face bindings spliced into the witness: a single `Nonempty Dom`
-/// proof over all obligations, then one block of standard-form `Dom`/`Cod`/
-/// `domRepr`/`codRepr` pins per obligation, keyed on its BYTE-derived class (via
-/// `RederivedObligation::face`). Empty when there are no certified obligations.
+/// The semantic-face bindings spliced into the witness: one block per obligation
+/// of standard-form `Nonempty Dom` / `Dom` / `Cod` / `domRepr` / `codRepr` pins,
+/// keyed on its BYTE-derived class (via `RederivedObligation::face`). Every pin
+/// is indexed into `manifest.obligations` so the block is robust to an
+/// obligation count that diverges from the manifest. Empty when there are no
+/// certified obligations.
 fn face_bindings(rederived: &[cert::RederivedObligation]) -> String {
-    if rederived.is_empty() {
-        return String::new();
-    }
     let mut s = String::new();
-    // `rcases` splits membership in `[o0, o1, ...]` into one `rfl` per obligation.
-    let pattern = std::iter::repeat_n("rfl", rederived.len())
-        .collect::<Vec<_>>()
-        .join(" | ");
-    s.push_str(&format!(
-        "example : ∀ o ∈ AverCert.manifest.obligations, Nonempty o.Dom := by\n  \
-         intro o ho\n  \
-         simp only [AverCert.manifest, List.mem_cons, List.not_mem_nil, or_false] at ho\n  \
-         rcases ho with {pattern} <;> exact ⟨default⟩\n\n"
-    ));
     for (i, r) in rederived.iter().enumerate() {
         s.push_str(&r.face.witness_pins(i));
     }

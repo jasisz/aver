@@ -497,6 +497,14 @@ impl ObligationFace {
                       List.getElem?_cons_succ, Option.some.injEq] at h";
         let obl = "AverCert.manifest.obligations";
         let mut s = String::new();
+        // Domain inhabitation (every class): the obligation's `Dom` is a nonempty
+        // type, so a `Dom := Empty` (which makes `holds` vacuously true) has no
+        // `default` instance and this fails. Per-index so it is robust to an
+        // obligation count that diverges from the manifest.
+        s.push_str(&format!(
+            "example : ∀ o, {obl}[{idx}]? = some o → Nonempty o.Dom := by\n  \
+             intro o h\n  {reduce}\n  subst h; exact ⟨default⟩\n"
+        ));
         match self {
             ObligationFace::IntList { arity } => {
                 s.push_str(&format!(
