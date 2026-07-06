@@ -1,6 +1,6 @@
 module Main
     intent =
-        "Nu, pogodi! shell. Every effect the game performs lives in this file and"
+        "Egg Catch shell. Every effect the game performs lives in this file and"
         "is named in a signature: a non-blocking key read (Terminal.readKey), the"
         "terminal clear/cursor moves, and the tick clock (Time.sleep). All game"
         "logic is the pure Core engine — this shell only threads GameState through"
@@ -31,7 +31,7 @@ fn dispatch(args: List<String>) -> Unit
         Time.sleep,
     ]
     match args
-        [] -> runInteractive(1, Core.Mode.GameA)
+        [] -> runInteractive(1, Core.Mode.ModeA)
         [head, ..rest] -> dispatchHead(head, rest)
 
 fn dispatchHead(head: String, rest: List<String>) -> Unit
@@ -55,7 +55,7 @@ fn dispatchPlay(seedStr: String, rest: List<String>) -> Unit
         Time.sleep,
     ]
     match rest
-        [] -> runInteractive(Core.parseSeed(seedStr), Core.Mode.GameA)
+        [] -> runInteractive(Core.parseSeed(seedStr), Core.Mode.ModeA)
         [modeStr, ..more] -> runInteractive(Core.parseSeed(seedStr), Core.parseMode(modeStr))
 
 fn dispatchReplay(rest: List<String>) -> Unit

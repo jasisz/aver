@@ -1,7 +1,8 @@
 module Core
     intent =
-        "Nu, pogodi! (Elektronika IM-02) — deterministic pure engine."
-        "The wolf catches eggs rolling down four chutes. Everything here is a"
+        "Egg Catch — deterministic pure engine, inspired by classic"
+        "four-chute LCD egg-catching handhelds. The fox catches eggs rolling"
+        "down four chutes with a basket. Everything here is a"
         "pure function of state: no effects, no clock, no I/O. `step` advances"
         "one tick, `render` draws a fixed-size frame, `replay` folds `step` over"
         "a recorded seed + input list. End-of-game is a state variant (Over),"
@@ -30,15 +31,15 @@ type Chute
     RightDown
 
 type Mode
-    GameA
-    GameB
+    ModeA
+    ModeB
 
 type Outcome
     Caught
     Broken
 
 type Input
-    MoveWolf(Chute)
+    MoveFox(Chute)
     Switch(Mode)
     Tick
 
@@ -52,7 +53,7 @@ record Board
     ld: Option<Int>
     ru: Option<Int>
     rd: Option<Int>
-    wolf: Chute
+    fox: Chute
     score: Int
     misses: Int
     seed: Int
@@ -103,23 +104,23 @@ verify chuteEq
     chuteEq(Chute.LeftUp, Chute.LeftUp) => true
     chuteEq(Chute.LeftUp, Chute.RightDown) => false
 
-fn wolfCount(c: Chute) -> Int
-    ? "How many of the four catch positions the wolf occupies — always one."
+fn foxCount(c: Chute) -> Int
+    ? "How many of the four catch positions the fox occupies — always one."
     match c
         Chute.LeftUp -> 1
         Chute.LeftDown -> 1
         Chute.RightUp -> 1
         Chute.RightDown -> 1
 
-verify wolfCount
-    wolfCount(Chute.LeftUp) => 1
-    wolfCount(Chute.LeftDown) => 1
-    wolfCount(Chute.RightUp) => 1
-    wolfCount(Chute.RightDown) => 1
+verify foxCount
+    foxCount(Chute.LeftUp) => 1
+    foxCount(Chute.LeftDown) => 1
+    foxCount(Chute.RightUp) => 1
+    foxCount(Chute.RightDown) => 1
 
-verify wolfCount law exactlyOne
+verify foxCount law exactlyOne
     given c: Chute = [Chute.LeftUp, Chute.LeftDown, Chute.RightUp, Chute.RightDown]
-    wolfCount(c) => 1
+    foxCount(c) => 1
 
 fn lcg(seed: Int) -> Int
     ? "One linear-congruential step (glibc constants) mod 2^31. Int is ℤ, so no"
@@ -131,57 +132,57 @@ verify lcg
     lcg(1) => 1103527590
 
 fn spawnIndex(seed: Int, mode: Mode) -> Int
-    ? "PRNG-derived chute index [0,3]. Game A and Game B read the seed"
+    ? "PRNG-derived chute index [0,3]. mode A and mode B read the seed"
       "differently, so the two modes lay eggs in different patterns."
     match mode
-        Mode.GameA -> Result.withDefault(Int.mod(seed, 4), 0)
-        Mode.GameB -> Result.withDefault(Int.mod(Result.withDefault(Int.div(seed, 3), 0) + 1, 4), 0)
+        Mode.ModeA -> Result.withDefault(Int.mod(seed, 4), 0)
+        Mode.ModeB -> Result.withDefault(Int.mod(Result.withDefault(Int.div(seed, 3), 0) + 1, 4), 0)
 
 verify spawnIndex
-    spawnIndex(0, Mode.GameA) => 0
-    spawnIndex(0, Mode.GameB) => 1
+    spawnIndex(0, Mode.ModeA) => 0
+    spawnIndex(0, Mode.ModeB) => 1
 
 fn spawnChute(seed: Int, mode: Mode) -> Chute
     ? "Which chute the PRNG picks for a new egg under this mode."
     indexToChute(spawnIndex(seed, mode))
 
 verify spawnChute
-    spawnChute(0, Mode.GameA) => Chute.LeftUp
-    spawnChute(1, Mode.GameA) => Chute.LeftDown
-    spawnChute(2, Mode.GameA) => Chute.RightUp
-    spawnChute(3, Mode.GameA) => Chute.RightDown
-    spawnChute(0, Mode.GameB) => Chute.LeftDown
+    spawnChute(0, Mode.ModeA) => Chute.LeftUp
+    spawnChute(1, Mode.ModeA) => Chute.LeftDown
+    spawnChute(2, Mode.ModeA) => Chute.RightUp
+    spawnChute(3, Mode.ModeA) => Chute.RightDown
+    spawnChute(0, Mode.ModeB) => Chute.LeftDown
 
 fn spawnDiffers(seed: Int) -> Bool
-    ? "True when Game A and Game B pick different spawn chutes for this seed —"
+    ? "True when mode A and mode B pick different spawn chutes for this seed —"
       "the two modes are genuinely distinct spawn patterns, not a relabel."
-    Bool.not(chuteEq(spawnChute(seed, Mode.GameA), spawnChute(seed, Mode.GameB)))
+    Bool.not(chuteEq(spawnChute(seed, Mode.ModeA), spawnChute(seed, Mode.ModeB)))
 
 verify spawnDiffers
     spawnDiffers(5) => true
     spawnDiffers(1) => false
 
 fn shouldSpawn(seed: Int, mode: Mode) -> Bool
-    ? "Whether a new egg appears this tick. Game B is busier than Game A."
+    ? "Whether a new egg appears this tick. mode B is busier than mode A."
     roll = Result.withDefault(Int.mod(seed, 100), 0)
     match mode
-        Mode.GameA -> roll < 40
-        Mode.GameB -> roll < 65
+        Mode.ModeA -> roll < 40
+        Mode.ModeB -> roll < 65
 
 verify shouldSpawn
-    shouldSpawn(10, Mode.GameA) => true
-    shouldSpawn(50, Mode.GameA) => false
-    shouldSpawn(50, Mode.GameB) => true
+    shouldSpawn(10, Mode.ModeA) => true
+    shouldSpawn(50, Mode.ModeA) => false
+    shouldSpawn(50, Mode.ModeB) => true
 
 fn baseFor(mode: Mode) -> Int
     ? "Starting tick delay for a mode."
     match mode
-        Mode.GameA -> 600
-        Mode.GameB -> 400
+        Mode.ModeA -> 600
+        Mode.ModeB -> 400
 
 verify baseFor
-    baseFor(Mode.GameA) => 600
-    baseFor(Mode.GameB) => 400
+    baseFor(Mode.ModeA) => 600
+    baseFor(Mode.ModeB) => 400
 
 fn baseCap() -> Int
     ? "Largest allowed tempo drop (600 - 120 = 480), so the floor is 120ms."
@@ -203,15 +204,15 @@ verify stepDrop
 
 fn tempoMs(mode: Mode, score: Int) -> Int
     ? "Tick delay in ms. Starts higher and drops one 80ms step per 200 points,"
-      "floored at 120ms. Game B starts faster than Game A. Consumed by the"
+      "floored at 120ms. mode B starts faster than mode A. Consumed by the"
       "shell's clock; kept pure here so the schedule is testable."
     baseFor(mode) - stepDrop(score)
 
 verify tempoMs
-    tempoMs(Mode.GameA, 0) => 600
-    tempoMs(Mode.GameA, 200) => 520
-    tempoMs(Mode.GameB, 0) => 400
-    tempoMs(Mode.GameA, 100000) => 120
+    tempoMs(Mode.ModeA, 0) => 600
+    tempoMs(Mode.ModeA, 200) => 520
+    tempoMs(Mode.ModeB, 0) => 400
+    tempoMs(Mode.ModeA, 100000) => 120
 
 fn nextPos(p: Int) -> Int
     ? "Where an egg at row p rolls to next tick: always one row further down."
@@ -243,17 +244,17 @@ fn chuteSpec(egg: Option<Int>) -> Option<Int>
         Option.None -> Option.None
         Option.Some(p) -> match p >= 4
             true -> Option.None
-            false -> Option.Some(p + 1)
+            false -> Option.Some(nextPos(p))
 
 verify chuteSpec
     chuteSpec(Option.None) => Option.None
     chuteSpec(Option.Some(2)) => Option.Some(3)
     chuteSpec(Option.Some(4)) => Option.None
 
-fn resolveLip(wolf: Chute, chute: Chute) -> ChuteResult
-    ? "An egg reaches the lip of `chute`: caught iff the wolf stands there,"
+fn resolveLip(fox: Chute, chute: Chute) -> ChuteResult
+    ? "An egg reaches the lip of `chute`: caught iff the fox stands there,"
       "otherwise it breaks. Either way the chute is cleared."
-    match chuteEq(wolf, chute)
+    match chuteEq(fox, chute)
         true -> ChuteResult(egg = Option.None, caught = 1, broke = 0)
         false -> ChuteResult(egg = Option.None, caught = 0, broke = 1)
 
@@ -267,14 +268,14 @@ verify resolveLip law noFalseMiss
     given w: Chute = [Chute.LeftUp, Chute.LeftDown, Chute.RightUp, Chute.RightDown]
     resolveLip(w, w).broke => 0
 
-fn stepChute(egg: Option<Int>, wolf: Chute, chute: Chute) -> ChuteResult
+fn stepChute(egg: Option<Int>, fox: Chute, chute: Chute) -> ChuteResult
     ? "Advance one chute by a tick. An egg at the lip resolves (catch/break);"
       "an egg above the lip rolls down one row; an empty chute stays empty."
     match egg
         Option.None -> ChuteResult(egg = Option.None, caught = 0, broke = 0)
         Option.Some(p) -> match p >= 4
-            true -> resolveLip(wolf, chute)
-            false -> ChuteResult(egg = Option.Some(p + 1), caught = 0, broke = 0)
+            true -> resolveLip(fox, chute)
+            false -> ChuteResult(egg = Option.Some(nextPos(p)), caught = 0, broke = 0)
 
 verify stepChute
     stepChute(Option.None, Chute.LeftUp, Chute.LeftUp).egg => Option.None
@@ -288,6 +289,26 @@ verify stepChute law belowLipStays
     given c: Chute = [Chute.LeftUp, Chute.LeftDown]
     when Bool.not(atLip(egg))
     stepChute(egg, w, c).egg => chuteSpec(egg)
+
+verify stepChute law eggRowStaysInRange
+    given egg: Option<Int> = [Option.None, Option.Some(0), Option.Some(2), Option.Some(3), Option.Some(4)]
+    given w: Chute = [Chute.LeftUp, Chute.RightDown]
+    given c: Chute = [Chute.LeftUp, Chute.LeftDown]
+    when rowInRange(egg)
+    rowInRange(stepChute(egg, w, c).egg) => true
+
+fn rowInRange(egg: Option<Int>) -> Bool
+    ? "True when an egg slot is empty or its row sits inside [0,4]."
+    match egg
+        Option.None -> true
+        Option.Some(p) -> Bool.and(p >= 0, p <= 4)
+
+verify rowInRange
+    rowInRange(Option.None) => true
+    rowInRange(Option.Some(0)) => true
+    rowInRange(Option.Some(4)) => true
+    rowInRange(Option.Some(5)) => false
+    rowInRange(Option.Some(-1)) => false
 
 fn earn(score: Int, caught: Bool) -> Int
     ? "Score after one chute resolves: +1 when caught, unchanged otherwise."
@@ -367,25 +388,25 @@ verify clearOnBonus
     clearOnBonus(50, 60, 2) => 2
 
 fn startBoard(seed: Int, mode: Mode) -> Board
-    ? "Fresh board: empty chutes, wolf top-left, zero score and misses."
-    Board(lu = Option.None, ld = Option.None, ru = Option.None, rd = Option.None, wolf = Chute.LeftUp, score = 0, misses = 0, seed = seed, mode = mode, tick = 0)
+    ? "Fresh board: empty chutes, fox top-left, zero score and misses."
+    Board(lu = Option.None, ld = Option.None, ru = Option.None, rd = Option.None, fox = Chute.LeftUp, score = 0, misses = 0, seed = seed, mode = mode, tick = 0)
 
 verify startBoard
-    startBoard(7, Mode.GameA).seed => 7
-    startBoard(7, Mode.GameA).wolf => Chute.LeftUp
+    startBoard(7, Mode.ModeA).seed => 7
+    startBoard(7, Mode.ModeA).fox => Chute.LeftUp
 
 fn applyInput(b: Board, i: Input) -> Board
-    ? "Apply the player's key for this tick: move the wolf, switch the game"
+    ? "Apply the player's key for this tick: move the fox, switch the game"
       "mode, or (Tick) leave the board untouched. No eggs move here."
     match i
-        Input.MoveWolf(c) -> Board.update(b, wolf = c)
+        Input.MoveFox(c) -> Board.update(b, fox = c)
         Input.Switch(m) -> Board.update(b, mode = m)
         Input.Tick -> b
 
 verify applyInput
-    applyInput(startBoard(7, Mode.GameA), Input.MoveWolf(Chute.RightUp)).wolf => Chute.RightUp
-    applyInput(startBoard(7, Mode.GameA), Input.Switch(Mode.GameB)).mode => Mode.GameB
-    applyInput(startBoard(7, Mode.GameA), Input.Tick).wolf => Chute.LeftUp
+    applyInput(startBoard(7, Mode.ModeA), Input.MoveFox(Chute.RightUp)).fox => Chute.RightUp
+    applyInput(startBoard(7, Mode.ModeA), Input.Switch(Mode.ModeB)).mode => Mode.ModeB
+    applyInput(startBoard(7, Mode.ModeA), Input.Tick).fox => Chute.LeftUp
 
 fn setEgg(b: Board, target: Chute, egg: Option<Int>) -> Board
     ? "Write a chute's egg slot, leaving the other three untouched."
@@ -396,10 +417,10 @@ fn setEgg(b: Board, target: Chute, egg: Option<Int>) -> Board
         Chute.RightDown -> Board.update(b, rd = egg)
 
 verify setEgg
-    setEgg(startBoard(7, Mode.GameA), Chute.LeftUp, Option.Some(1)).lu => Option.Some(1)
-    setEgg(startBoard(7, Mode.GameA), Chute.LeftDown, Option.Some(2)).ld => Option.Some(2)
-    setEgg(startBoard(7, Mode.GameA), Chute.RightUp, Option.Some(0)).ru => Option.Some(0)
-    setEgg(startBoard(7, Mode.GameA), Chute.RightDown, Option.Some(3)).rd => Option.Some(3)
+    setEgg(startBoard(7, Mode.ModeA), Chute.LeftUp, Option.Some(1)).lu => Option.Some(1)
+    setEgg(startBoard(7, Mode.ModeA), Chute.LeftDown, Option.Some(2)).ld => Option.Some(2)
+    setEgg(startBoard(7, Mode.ModeA), Chute.RightUp, Option.Some(0)).ru => Option.Some(0)
+    setEgg(startBoard(7, Mode.ModeA), Chute.RightDown, Option.Some(3)).rd => Option.Some(3)
 
 fn putIfEmpty(b: Board, slot: Option<Int>, target: Chute) -> Board
     ? "Place a row-0 egg on `target` only when its current slot is empty."
@@ -408,8 +429,8 @@ fn putIfEmpty(b: Board, slot: Option<Int>, target: Chute) -> Board
         Option.None -> setEgg(b, target, Option.Some(0))
 
 verify putIfEmpty
-    putIfEmpty(startBoard(7, Mode.GameA), Option.None, Chute.LeftDown).ld => Option.Some(0)
-    putIfEmpty(startBoard(7, Mode.GameA), Option.Some(1), Chute.LeftDown).ld => Option.None
+    putIfEmpty(startBoard(7, Mode.ModeA), Option.None, Chute.LeftDown).ld => Option.Some(0)
+    putIfEmpty(startBoard(7, Mode.ModeA), Option.Some(1), Chute.LeftDown).ld => Option.None
 
 fn placeEgg(b: Board, target: Chute) -> Board
     ? "Drop a fresh egg at row 0 on `target` if that chute is empty; a chute"
@@ -421,11 +442,11 @@ fn placeEgg(b: Board, target: Chute) -> Board
         Chute.RightDown -> putIfEmpty(b, b.rd, target)
 
 verify placeEgg
-    placeEgg(startBoard(7, Mode.GameA), Chute.LeftUp).lu => Option.Some(0)
-    placeEgg(startBoard(7, Mode.GameA), Chute.LeftDown).ld => Option.Some(0)
-    placeEgg(startBoard(7, Mode.GameA), Chute.RightUp).ru => Option.Some(0)
-    placeEgg(startBoard(7, Mode.GameA), Chute.RightDown).rd => Option.Some(0)
-    placeEgg(Board.update(startBoard(7, Mode.GameA), ru = Option.Some(2)), Chute.RightUp).ru => Option.Some(2)
+    placeEgg(startBoard(7, Mode.ModeA), Chute.LeftUp).lu => Option.Some(0)
+    placeEgg(startBoard(7, Mode.ModeA), Chute.LeftDown).ld => Option.Some(0)
+    placeEgg(startBoard(7, Mode.ModeA), Chute.RightUp).ru => Option.Some(0)
+    placeEgg(startBoard(7, Mode.ModeA), Chute.RightDown).rd => Option.Some(0)
+    placeEgg(Board.update(startBoard(7, Mode.ModeA), ru = Option.Some(2)), Chute.RightUp).ru => Option.Some(2)
 
 fn spawnEggs(b: Board) -> Board
     ? "Maybe lay one new egg this tick, using the board's PRNG seed and mode"
@@ -435,16 +456,16 @@ fn spawnEggs(b: Board) -> Board
         true -> placeEgg(b, spawnChute(b.seed, b.mode))
 
 verify spawnEggs
-    spawnEggs(Board.update(startBoard(4, Mode.GameA), seed = 4)).lu => Option.Some(0)
-    spawnEggs(Board.update(startBoard(10, Mode.GameA), seed = 10)).ru => Option.Some(0)
-    spawnEggs(Board.update(startBoard(50, Mode.GameA), seed = 50)).lu => Option.None
+    spawnEggs(Board.update(startBoard(4, Mode.ModeA), seed = 4)).lu => Option.Some(0)
+    spawnEggs(Board.update(startBoard(10, Mode.ModeA), seed = 10)).ru => Option.Some(0)
+    spawnEggs(Board.update(startBoard(50, Mode.ModeA), seed = 50)).lu => Option.None
 
 fn rolledBoard(b: Board, rlu: ChuteResult, rld: ChuteResult, rru: ChuteResult, rrd: ChuteResult) -> Board
     ? "Write the four rolled chute results back onto the board (eggs only)."
     Board.update(b, lu = rlu.egg, ld = rld.egg, ru = rru.egg, rd = rrd.egg)
 
 verify rolledBoard
-    rolledBoard(startBoard(7, Mode.GameA), ChuteResult(egg = Option.Some(1), caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0)).lu => Option.Some(1)
+    rolledBoard(startBoard(7, Mode.ModeA), ChuteResult(egg = Option.Some(1), caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0)).lu => Option.Some(1)
 
 fn tickScore(b: Board, rlu: ChuteResult, rld: ChuteResult, rru: ChuteResult, rrd: ChuteResult) -> Int
     ? "Score after this tick: fold `earn` over each chute that caught an egg,"
@@ -452,14 +473,14 @@ fn tickScore(b: Board, rlu: ChuteResult, rld: ChuteResult, rru: ChuteResult, rrd
     capScore(earn(earn(earn(earn(b.score, rlu.caught == 1), rld.caught == 1), rru.caught == 1), rrd.caught == 1))
 
 verify tickScore
-    tickScore(startBoard(7, Mode.GameA), ChuteResult(egg = Option.None, caught = 1, broke = 0), ChuteResult(egg = Option.None, caught = 1, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0)) => 2
+    tickScore(startBoard(7, Mode.ModeA), ChuteResult(egg = Option.None, caught = 1, broke = 0), ChuteResult(egg = Option.None, caught = 1, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0)) => 2
 
 fn tickMisses(b: Board, rlu: ChuteResult, rld: ChuteResult, rru: ChuteResult, rrd: ChuteResult) -> Int
     ? "Raw miss counter after this tick: fold `addMiss` over each break."
     addMiss(addMiss(addMiss(addMiss(b.misses, rlu.broke == 1), rld.broke == 1), rru.broke == 1), rrd.broke == 1)
 
 verify tickMisses
-    tickMisses(startBoard(7, Mode.GameA), ChuteResult(egg = Option.None, caught = 0, broke = 1), ChuteResult(egg = Option.None, caught = 0, broke = 1), ChuteResult(egg = Option.None, caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0)) => 2
+    tickMisses(startBoard(7, Mode.ModeA), ChuteResult(egg = Option.None, caught = 0, broke = 1), ChuteResult(egg = Option.None, caught = 0, broke = 1), ChuteResult(egg = Option.None, caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0)) => 2
 
 fn endOrPlay(b: Board) -> GameState
     ? "Three misses ends the run (Over); otherwise the board keeps Playing."
@@ -468,8 +489,8 @@ fn endOrPlay(b: Board) -> GameState
         false -> GameState.Playing(b)
 
 verify endOrPlay
-    endOrPlay(startBoard(7, Mode.GameA)) => GameState.Playing(startBoard(7, Mode.GameA))
-    endOrPlay(Board.update(startBoard(7, Mode.GameA), misses = 3)) => GameState.Over(Board.update(startBoard(7, Mode.GameA), misses = 3))
+    endOrPlay(startBoard(7, Mode.ModeA)) => GameState.Playing(startBoard(7, Mode.ModeA))
+    endOrPlay(Board.update(startBoard(7, Mode.ModeA), misses = 3)) => GameState.Over(Board.update(startBoard(7, Mode.ModeA), misses = 3))
 
 fn finalize(rolled: Board, newScore: Int, rawMisses: Int, oldScore: Int) -> GameState
     ? "Apply the bonus wipe to the raw misses, write score/misses/seed onto the"
@@ -477,7 +498,7 @@ fn finalize(rolled: Board, newScore: Int, rawMisses: Int, oldScore: Int) -> Game
     endOrPlay(spawnEggs(Board.update(rolled, score = newScore, misses = capMisses(clearOnBonus(oldScore, newScore, rawMisses)), seed = lcg(rolled.seed), tick = rolled.tick + 1)))
 
 verify finalize
-    finalize(startBoard(7, Mode.GameA), 5, 3, 4) => endOrPlay(spawnEggs(Board.update(startBoard(7, Mode.GameA), score = 5, misses = 3, seed = lcg(7), tick = 1)))
+    finalize(startBoard(7, Mode.ModeA), 5, 3, 4) => endOrPlay(spawnEggs(Board.update(startBoard(7, Mode.ModeA), score = 5, misses = 3, seed = lcg(7), tick = 1)))
 
 fn settle(b: Board, rlu: ChuteResult, rld: ChuteResult, rru: ChuteResult, rrd: ChuteResult) -> GameState
     ? "Fold the four rolled chutes into the next state: new score, bonus-aware"
@@ -485,23 +506,23 @@ fn settle(b: Board, rlu: ChuteResult, rld: ChuteResult, rru: ChuteResult, rrd: C
     finalize(rolledBoard(b, rlu, rld, rru, rrd), tickScore(b, rlu, rld, rru, rrd), tickMisses(b, rlu, rld, rru, rrd), b.score)
 
 verify settle
-    settle(Board.update(startBoard(7, Mode.GameA), wolf = Chute.RightUp), ChuteResult(egg = Option.None, caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0), resolveLip(Chute.RightUp, Chute.RightUp), ChuteResult(egg = Option.None, caught = 0, broke = 0)) => finalize(Board.update(startBoard(7, Mode.GameA), wolf = Chute.RightUp), 1, 0, 0)
+    settle(Board.update(startBoard(7, Mode.ModeA), fox = Chute.RightUp), ChuteResult(egg = Option.None, caught = 0, broke = 0), ChuteResult(egg = Option.None, caught = 0, broke = 0), resolveLip(Chute.RightUp, Chute.RightUp), ChuteResult(egg = Option.None, caught = 0, broke = 0)) => finalize(Board.update(startBoard(7, Mode.ModeA), fox = Chute.RightUp), 1, 0, 0)
 
 fn tickBoard(b: Board) -> GameState
     ? "Advance the whole world one tick: roll every chute, resolve landings"
       "into score and misses, apply the 200-point bonus, spawn, advance the"
       "PRNG, and drop into Over once three misses stand after the bonus."
-    settle(b, stepChute(b.lu, b.wolf, Chute.LeftUp), stepChute(b.ld, b.wolf, Chute.LeftDown), stepChute(b.ru, b.wolf, Chute.RightUp), stepChute(b.rd, b.wolf, Chute.RightDown))
+    settle(b, stepChute(b.lu, b.fox, Chute.LeftUp), stepChute(b.ld, b.fox, Chute.LeftDown), stepChute(b.ru, b.fox, Chute.RightUp), stepChute(b.rd, b.fox, Chute.RightDown))
 
 verify tickBoard
-    tickBoard(Board.update(startBoard(7, Mode.GameA), ru = Option.Some(4), wolf = Chute.RightUp)) => settle(Board.update(startBoard(7, Mode.GameA), ru = Option.Some(4), wolf = Chute.RightUp), stepChute(Option.None, Chute.RightUp, Chute.LeftUp), stepChute(Option.None, Chute.RightUp, Chute.LeftDown), stepChute(Option.Some(4), Chute.RightUp, Chute.RightUp), stepChute(Option.None, Chute.RightUp, Chute.RightDown))
+    tickBoard(Board.update(startBoard(7, Mode.ModeA), ru = Option.Some(4), fox = Chute.RightUp)) => settle(Board.update(startBoard(7, Mode.ModeA), ru = Option.Some(4), fox = Chute.RightUp), stepChute(Option.None, Chute.RightUp, Chute.LeftUp), stepChute(Option.None, Chute.RightUp, Chute.LeftDown), stepChute(Option.Some(4), Chute.RightUp, Chute.RightUp), stepChute(Option.None, Chute.RightUp, Chute.RightDown))
 
 fn initialState(seed: Int, mode: Mode) -> GameState
     ? "Fresh playable game from a seed and mode."
     GameState.Playing(startBoard(seed, mode))
 
 verify initialState
-    initialState(7, Mode.GameA) => GameState.Playing(startBoard(7, Mode.GameA))
+    initialState(7, Mode.ModeA) => GameState.Playing(startBoard(7, Mode.ModeA))
 
 fn step(gs: GameState, i: Input) -> GameState
     ? "The one pure transition: apply the input, then advance one world tick."
@@ -511,19 +532,19 @@ fn step(gs: GameState, i: Input) -> GameState
         GameState.Playing(b) -> tickBoard(applyInput(b, i))
 
 verify step
-    step(initialState(7, Mode.GameA), Input.MoveWolf(Chute.RightUp)) => tickBoard(applyInput(startBoard(7, Mode.GameA), Input.MoveWolf(Chute.RightUp)))
-    step(GameState.Over(startBoard(7, Mode.GameA)), Input.Tick) => GameState.Over(startBoard(7, Mode.GameA))
-    finalScore(step(playingWith(7, Mode.GameA, Chute.RightUp, 4, Chute.RightUp, 10, 0), Input.Tick)) => 11
-    missCount(step(playingWith(7, Mode.GameA, Chute.RightUp, 4, Chute.RightUp, 10, 0), Input.Tick)) => 0
-    isOver(step(playingWith(7, Mode.GameA, Chute.RightUp, 4, Chute.RightUp, 10, 0), Input.Tick)) => false
-    finalScore(step(playingWith(7, Mode.GameA, Chute.RightUp, 4, Chute.LeftUp, 10, 0), Input.Tick)) => 10
-    missCount(step(playingWith(7, Mode.GameA, Chute.RightUp, 4, Chute.LeftUp, 10, 0), Input.Tick)) => 1
-    isOver(step(playingWith(7, Mode.GameA, Chute.RightUp, 4, Chute.LeftUp, 10, 2), Input.Tick)) => true
-    finalScore(step(playingWith(7, Mode.GameA, Chute.RightUp, 4, Chute.LeftUp, 10, 2), Input.Tick)) => 10
-    finalScore(step(playingWith(7, Mode.GameA, Chute.RightUp, 4, Chute.RightUp, 199, 2), Input.Tick)) => 200
-    missCount(step(playingWith(7, Mode.GameA, Chute.RightUp, 4, Chute.RightUp, 199, 2), Input.Tick)) => 0
-    finalScore(step(playingWith(7, Mode.GameA, Chute.RightUp, 4, Chute.RightUp, 999, 0), Input.Tick)) => 999
-    finalScore(step(playingWith(7, Mode.GameA, Chute.LeftDown, 4, Chute.RightUp, 5, 0), Input.MoveWolf(Chute.LeftDown))) => 6
+    step(initialState(7, Mode.ModeA), Input.MoveFox(Chute.RightUp)) => tickBoard(applyInput(startBoard(7, Mode.ModeA), Input.MoveFox(Chute.RightUp)))
+    step(GameState.Over(startBoard(7, Mode.ModeA)), Input.Tick) => GameState.Over(startBoard(7, Mode.ModeA))
+    finalScore(step(playingWith(7, Mode.ModeA, Chute.RightUp, 4, Chute.RightUp, 10, 0), Input.Tick)) => 11
+    missCount(step(playingWith(7, Mode.ModeA, Chute.RightUp, 4, Chute.RightUp, 10, 0), Input.Tick)) => 0
+    isOver(step(playingWith(7, Mode.ModeA, Chute.RightUp, 4, Chute.RightUp, 10, 0), Input.Tick)) => false
+    finalScore(step(playingWith(7, Mode.ModeA, Chute.RightUp, 4, Chute.LeftUp, 10, 0), Input.Tick)) => 10
+    missCount(step(playingWith(7, Mode.ModeA, Chute.RightUp, 4, Chute.LeftUp, 10, 0), Input.Tick)) => 1
+    isOver(step(playingWith(7, Mode.ModeA, Chute.RightUp, 4, Chute.LeftUp, 10, 2), Input.Tick)) => true
+    finalScore(step(playingWith(7, Mode.ModeA, Chute.RightUp, 4, Chute.LeftUp, 10, 2), Input.Tick)) => 10
+    finalScore(step(playingWith(7, Mode.ModeA, Chute.RightUp, 4, Chute.RightUp, 199, 2), Input.Tick)) => 200
+    missCount(step(playingWith(7, Mode.ModeA, Chute.RightUp, 4, Chute.RightUp, 199, 2), Input.Tick)) => 0
+    finalScore(step(playingWith(7, Mode.ModeA, Chute.RightUp, 4, Chute.RightUp, 999, 0), Input.Tick)) => 999
+    finalScore(step(playingWith(7, Mode.ModeA, Chute.LeftDown, 4, Chute.RightUp, 5, 0), Input.MoveFox(Chute.LeftDown))) => 6
 
 fn stepAll(gs: GameState, inputs: List<Input>) -> GameState
     ? "Left fold of step over an input list — the whole run as one function."
@@ -532,12 +553,12 @@ fn stepAll(gs: GameState, inputs: List<Input>) -> GameState
         [i, ..rest] -> stepAll(step(gs, i), rest)
 
 verify stepAll
-    stepAll(initialState(7, Mode.GameA), []) => initialState(7, Mode.GameA)
-    stepAll(initialState(7, Mode.GameA), [Input.Tick]) => step(initialState(7, Mode.GameA), Input.Tick)
+    stepAll(initialState(7, Mode.ModeA), []) => initialState(7, Mode.ModeA)
+    stepAll(initialState(7, Mode.ModeA), [Input.Tick]) => step(initialState(7, Mode.ModeA), Input.Tick)
 
 verify stepAll law leftFold
-    given gs: GameState = [GameState.Playing(startBoard(7, Mode.GameA)), GameState.Over(startBoard(3, Mode.GameB))]
-    given i: Input = [Input.Tick, Input.MoveWolf(Chute.RightUp), Input.Switch(Mode.GameB)]
+    given gs: GameState = [GameState.Playing(startBoard(7, Mode.ModeA)), GameState.Over(startBoard(3, Mode.ModeB))]
+    given i: Input = [Input.Tick, Input.MoveFox(Chute.RightUp), Input.Switch(Mode.ModeB)]
     given rest: List<Input> = [[], [Input.Tick], [Input.Tick, Input.Tick]]
     stepAll(gs, List.prepend(i, rest)) => stepAll(step(gs, i), rest)
 
@@ -547,8 +568,8 @@ fn replay(seed: Int, mode: Mode, inputs: List<Input>) -> GameState
     stepAll(initialState(seed, mode), inputs)
 
 verify replay
-    replay(7, Mode.GameA, []) => initialState(7, Mode.GameA)
-    replay(7, Mode.GameA, [Input.Tick, Input.Tick]) => stepAll(initialState(7, Mode.GameA), [Input.Tick, Input.Tick])
+    replay(7, Mode.ModeA, []) => initialState(7, Mode.ModeA)
+    replay(7, Mode.ModeA, [Input.Tick, Input.Tick]) => stepAll(initialState(7, Mode.ModeA), [Input.Tick, Input.Tick])
 
 fn isOver(gs: GameState) -> Bool
     ? "Whether the game has ended (three misses reached)."
@@ -557,8 +578,8 @@ fn isOver(gs: GameState) -> Bool
         GameState.Playing(_) -> false
 
 verify isOver
-    isOver(GameState.Playing(startBoard(7, Mode.GameA))) => false
-    isOver(GameState.Over(startBoard(7, Mode.GameA))) => true
+    isOver(GameState.Playing(startBoard(7, Mode.ModeA))) => false
+    isOver(GameState.Over(startBoard(7, Mode.ModeA))) => true
 
 fn finalScore(gs: GameState) -> Int
     ? "Current score, whether the game is playing or over."
@@ -567,8 +588,8 @@ fn finalScore(gs: GameState) -> Int
         GameState.Playing(b) -> b.score
 
 verify finalScore
-    finalScore(GameState.Over(Board.update(startBoard(7, Mode.GameA), score = 42))) => 42
-    finalScore(GameState.Playing(startBoard(7, Mode.GameA))) => 0
+    finalScore(GameState.Over(Board.update(startBoard(7, Mode.ModeA), score = 42))) => 42
+    finalScore(GameState.Playing(startBoard(7, Mode.ModeA))) => 0
 
 fn missCount(gs: GameState) -> Int
     ? "Current miss counter, whether the game is playing or over."
@@ -577,34 +598,34 @@ fn missCount(gs: GameState) -> Int
         GameState.Playing(b) -> b.misses
 
 verify missCount
-    missCount(GameState.Over(Board.update(startBoard(7, Mode.GameA), misses = 3))) => 3
-    missCount(GameState.Playing(startBoard(7, Mode.GameA))) => 0
+    missCount(GameState.Over(Board.update(startBoard(7, Mode.ModeA), misses = 3))) => 3
+    missCount(GameState.Playing(startBoard(7, Mode.ModeA))) => 0
 
-fn playingWith(seed: Int, mode: Mode, egg: Chute, row: Int, wolf: Chute, score: Int, misses: Int) -> GameState
+fn playingWith(seed: Int, mode: Mode, egg: Chute, row: Int, fox: Chute, score: Int, misses: Int) -> GameState
     ? "Test constructor: a Playing state with one egg at a chosen chute/row,"
-      "wolf position, score, and miss count. Used by the play scenarios below."
-    GameState.Playing(setEgg(Board.update(startBoard(seed, mode), wolf = wolf, score = score, misses = misses), egg, Option.Some(row)))
+      "fox position, score, and miss count. Used by the play scenarios below."
+    GameState.Playing(setEgg(Board.update(startBoard(seed, mode), fox = fox, score = score, misses = misses), egg, Option.Some(row)))
 
 verify playingWith
-    finalScore(playingWith(7, Mode.GameA, Chute.RightUp, 4, Chute.RightUp, 10, 1)) => 10
-    missCount(playingWith(7, Mode.GameA, Chute.RightUp, 4, Chute.RightUp, 10, 1)) => 1
+    finalScore(playingWith(7, Mode.ModeA, Chute.RightUp, 4, Chute.RightUp, 10, 1)) => 10
+    missCount(playingWith(7, Mode.ModeA, Chute.RightUp, 4, Chute.RightUp, 10, 1)) => 1
 
 fn keyToInput(key: String) -> Input
-    ? "Map a keystroke to an Input. Q/A move the wolf to the left chutes, P/L"
-      "to the right chutes, 1/2 pick Game A/B; anything else is a bare Tick."
+    ? "Map a keystroke to an Input. Q/A move the fox to the left chutes, P/L"
+      "to the right chutes, 1/2 pick mode A/B; anything else is a bare Tick."
     match key
-        "q" -> Input.MoveWolf(Chute.LeftUp)
-        "a" -> Input.MoveWolf(Chute.LeftDown)
-        "p" -> Input.MoveWolf(Chute.RightUp)
-        "l" -> Input.MoveWolf(Chute.RightDown)
-        "1" -> Input.Switch(Mode.GameA)
-        "2" -> Input.Switch(Mode.GameB)
+        "q" -> Input.MoveFox(Chute.LeftUp)
+        "a" -> Input.MoveFox(Chute.LeftDown)
+        "p" -> Input.MoveFox(Chute.RightUp)
+        "l" -> Input.MoveFox(Chute.RightDown)
+        "1" -> Input.Switch(Mode.ModeA)
+        "2" -> Input.Switch(Mode.ModeB)
         _ -> Input.Tick
 
 verify keyToInput
-    keyToInput("q") => Input.MoveWolf(Chute.LeftUp)
-    keyToInput("l") => Input.MoveWolf(Chute.RightDown)
-    keyToInput("2") => Input.Switch(Mode.GameB)
+    keyToInput("q") => Input.MoveFox(Chute.LeftUp)
+    keyToInput("l") => Input.MoveFox(Chute.RightDown)
+    keyToInput("2") => Input.Switch(Mode.ModeB)
     keyToInput("x") => Input.Tick
 
 fn modeOf(gs: GameState) -> Mode
@@ -614,29 +635,29 @@ fn modeOf(gs: GameState) -> Mode
         GameState.Playing(b) -> b.mode
 
 verify modeOf
-    modeOf(GameState.Playing(startBoard(7, Mode.GameA))) => Mode.GameA
-    modeOf(GameState.Over(startBoard(7, Mode.GameB))) => Mode.GameB
+    modeOf(GameState.Playing(startBoard(7, Mode.ModeA))) => Mode.ModeA
+    modeOf(GameState.Over(startBoard(7, Mode.ModeB))) => Mode.ModeB
 
 fn tickDelay(gs: GameState) -> Int
     ? "Tick delay in ms for the current state — the tempo the shell clock uses."
     tempoMs(modeOf(gs), finalScore(gs))
 
 verify tickDelay
-    tickDelay(GameState.Playing(startBoard(7, Mode.GameA))) => 600
-    tickDelay(GameState.Playing(Board.update(startBoard(7, Mode.GameB), score = 200))) => 320
+    tickDelay(GameState.Playing(startBoard(7, Mode.ModeA))) => 600
+    tickDelay(GameState.Playing(Board.update(startBoard(7, Mode.ModeB), score = 200))) => 320
 
 fn parseMode(s: String) -> Mode
-    ? "Parse a mode tag from a CLI argument; anything but B means Game A."
+    ? "Parse a mode tag from a CLI argument; anything but B means mode A."
     match s
-        "B" -> Mode.GameB
-        "b" -> Mode.GameB
-        "2" -> Mode.GameB
-        _ -> Mode.GameA
+        "B" -> Mode.ModeB
+        "b" -> Mode.ModeB
+        "2" -> Mode.ModeB
+        _ -> Mode.ModeA
 
 verify parseMode
-    parseMode("A") => Mode.GameA
-    parseMode("B") => Mode.GameB
-    parseMode("2") => Mode.GameB
+    parseMode("A") => Mode.ModeA
+    parseMode("B") => Mode.ModeB
+    parseMode("2") => Mode.ModeB
 
 fn parseSeed(s: String) -> Int
     ? "Parse a seed from a CLI argument, defaulting to 1 on a non-number."
@@ -651,7 +672,7 @@ fn keysToInputs(keys: List<String>) -> List<Input>
     List.reverse(keysToInputsAcc(keys, []))
 
 verify keysToInputs
-    keysToInputs(["q", "2"]) => [Input.MoveWolf(Chute.LeftUp), Input.Switch(Mode.GameB)]
+    keysToInputs(["q", "2"]) => [Input.MoveFox(Chute.LeftUp), Input.Switch(Mode.ModeB)]
     keysToInputs([]) => []
 
 fn keysToInputsAcc(keys: List<String>, acc: List<Input>) -> List<Input>
@@ -662,35 +683,35 @@ fn keysToInputsAcc(keys: List<String>, acc: List<Input>) -> List<Input>
 
 verify keysToInputsAcc
     keysToInputsAcc([], []) => []
-    keysToInputsAcc(["q"], []) => [Input.MoveWolf(Chute.LeftUp)]
+    keysToInputsAcc(["q"], []) => [Input.MoveFox(Chute.LeftUp)]
 
-fn wolfGlyph(c: Chute) -> String
-    ? "Single-cell wolf glyph, tilted toward the catch position."
+fn foxGlyph(c: Chute) -> String
+    ? "Single-cell fox glyph, tilted toward the catch position."
     match c
         Chute.LeftUp -> "⌜"
         Chute.LeftDown -> "⌞"
         Chute.RightUp -> "⌝"
         Chute.RightDown -> "⌟"
 
-verify wolfGlyph
-    wolfGlyph(Chute.LeftUp) => "⌜"
-    wolfGlyph(Chute.LeftDown) => "⌞"
-    wolfGlyph(Chute.RightUp) => "⌝"
-    wolfGlyph(Chute.RightDown) => "⌟"
+verify foxGlyph
+    foxGlyph(Chute.LeftUp) => "⌜"
+    foxGlyph(Chute.LeftDown) => "⌞"
+    foxGlyph(Chute.RightUp) => "⌝"
+    foxGlyph(Chute.RightDown) => "⌟"
 
-verify wolfGlyph law unitWidth
+verify foxGlyph law unitWidth
     given c: Chute = [Chute.LeftUp, Chute.LeftDown, Chute.RightUp, Chute.RightDown]
-    String.len(wolfGlyph(c)) => 1
+    String.len(foxGlyph(c)) => 1
 
 fn modeLetter(mode: Mode) -> String
     ? "One-letter mode tag for the status line."
     match mode
-        Mode.GameA -> "A"
-        Mode.GameB -> "B"
+        Mode.ModeA -> "A"
+        Mode.ModeB -> "B"
 
 verify modeLetter
-    modeLetter(Mode.GameA) => "A"
-    modeLetter(Mode.GameB) => "B"
+    modeLetter(Mode.ModeA) => "A"
+    modeLetter(Mode.ModeB) => "B"
 
 fn cell(egg: Option<Int>, i: Int) -> String
     ? "One track cell: a full egg glyph when the egg sits on row i, else a dot."
@@ -735,22 +756,22 @@ verify pad3
     pad3(42) => "042"
     pad3(999) => "999"
 
-fn wolfSlot(wolf: Chute, c: Chute) -> String
-    ? "Wolf row cell: the wolf glyph when it stands at chute c, else a dot."
-    match chuteEq(wolf, c)
-        true -> wolfGlyph(c)
+fn foxSlot(fox: Chute, c: Chute) -> String
+    ? "Fox row cell: the fox glyph when it stands at chute c, else a dot."
+    match chuteEq(fox, c)
+        true -> foxGlyph(c)
         false -> "·"
 
-verify wolfSlot
-    wolfSlot(Chute.LeftUp, Chute.LeftUp) => "⌜"
-    wolfSlot(Chute.LeftUp, Chute.RightDown) => "·"
+verify foxSlot
+    foxSlot(Chute.LeftUp, Chute.LeftUp) => "⌜"
+    foxSlot(Chute.LeftUp, Chute.RightDown) => "·"
 
 fn rowTitle(b: Board) -> String
     ? "Title line with the active mode tag."
-    "NU, POGODI! [" + modeLetter(b.mode) + "]"
+    "EGG CATCH [" + modeLetter(b.mode) + "]"
 
 verify rowTitle
-    rowTitle(startBoard(7, Mode.GameA)) => "NU, POGODI! [A]"
+    rowTitle(startBoard(7, Mode.ModeA)) => "EGG CATCH [A]"
 
 fn rowHens() -> String
     ? "The two hens perched in the top corners."
@@ -766,27 +787,27 @@ fn rowChute(label: String, slash: String, egg: Option<Int>) -> String
 verify rowChute
     rowChute("LU", "\\", Option.Some(0)) => "LU \\ ●····"
 
-fn rowWolf(b: Board) -> String
-    ? "Wolf row: four slots, the occupied one showing the tilted glyph."
-    "WOLF " + wolfSlot(b.wolf, Chute.LeftUp) + wolfSlot(b.wolf, Chute.LeftDown) + wolfSlot(b.wolf, Chute.RightUp) + wolfSlot(b.wolf, Chute.RightDown)
+fn rowFox(b: Board) -> String
+    ? "Fox row: four slots, the occupied one showing the tilted glyph."
+    "FOX " + foxSlot(b.fox, Chute.LeftUp) + foxSlot(b.fox, Chute.LeftDown) + foxSlot(b.fox, Chute.RightUp) + foxSlot(b.fox, Chute.RightDown)
 
-verify rowWolf
-    rowWolf(startBoard(7, Mode.GameA)) => "WOLF ⌜···"
+verify rowFox
+    rowFox(startBoard(7, Mode.ModeA)) => "FOX ⌜···"
 
 fn rowScore(b: Board, status: String) -> String
     ? "Status line: padded score, miss counter, and PLAY/OVER tag."
     "SCORE " + pad3(b.score) + " MISS " + String.fromInt(b.misses) + " " + status
 
 verify rowScore
-    rowScore(startBoard(7, Mode.GameA), "PLAY") => "SCORE 000 MISS 0 PLAY"
+    rowScore(startBoard(7, Mode.ModeA), "PLAY") => "SCORE 000 MISS 0 PLAY"
 
 fn renderBoard(b: Board, status: String) -> String
     ? "The eight fixed rows joined by newlines — same shape for every board."
-    String.join([rowTitle(b), rowHens(), rowChute("LU", "\\", b.lu), rowChute("LD", "\\", b.ld), rowChute("RU", "/", b.ru), rowChute("RD", "/", b.rd), rowWolf(b), rowScore(b, status)], "\n")
+    String.join([rowTitle(b), rowHens(), rowChute("LU", "\\", b.lu), rowChute("LD", "\\", b.ld), rowChute("RU", "/", b.ru), rowChute("RD", "/", b.rd), rowFox(b), rowScore(b, status)], "\n")
 
 verify renderBoard
-    String.len(renderBoard(startBoard(7, Mode.GameA), "PLAY")) => 107
-    String.len(renderBoard(Board.update(startBoard(9, Mode.GameB), score = 999, misses = 3, lu = Option.Some(4), rd = Option.Some(0), wolf = Chute.RightDown), "OVER")) => 107
+    String.len(renderBoard(startBoard(7, Mode.ModeA), "PLAY")) => 104
+    String.len(renderBoard(Board.update(startBoard(9, Mode.ModeB), score = 999, misses = 3, lu = Option.Some(4), rd = Option.Some(0), fox = Chute.RightDown), "OVER")) => 104
 
 fn scoreInRange(gs: GameState) -> Bool
     ? "True when the state's score sits in the machine's [0,999] window — the"
@@ -794,8 +815,8 @@ fn scoreInRange(gs: GameState) -> Bool
     Bool.and(finalScore(gs) >= 0, finalScore(gs) <= 999)
 
 verify scoreInRange
-    scoreInRange(initialState(7, Mode.GameA)) => true
-    scoreInRange(GameState.Over(Board.update(startBoard(7, Mode.GameA), score = 999))) => true
+    scoreInRange(initialState(7, Mode.ModeA)) => true
+    scoreInRange(GameState.Over(Board.update(startBoard(7, Mode.ModeA), score = 999))) => true
 
 fn render(gs: GameState) -> String
     ? "Draw one frame. Total render: fixed rows, fixed columns, for every"
@@ -805,10 +826,10 @@ fn render(gs: GameState) -> String
         GameState.Over(b) -> renderBoard(b, "OVER")
 
 verify render
-    render(GameState.Playing(startBoard(7, Mode.GameA))) => renderBoard(startBoard(7, Mode.GameA), "PLAY")
-    render(GameState.Over(startBoard(7, Mode.GameA))) => renderBoard(startBoard(7, Mode.GameA), "OVER")
+    render(GameState.Playing(startBoard(7, Mode.ModeA))) => renderBoard(startBoard(7, Mode.ModeA), "PLAY")
+    render(GameState.Over(startBoard(7, Mode.ModeA))) => renderBoard(startBoard(7, Mode.ModeA), "OVER")
 
 verify render law fixedSize
-    given gs: GameState = [GameState.Playing(startBoard(7, Mode.GameA)), GameState.Playing(Board.update(startBoard(1, Mode.GameB), score = 999, misses = 2, lu = Option.Some(4), ld = Option.Some(1), ru = Option.Some(2), rd = Option.Some(0), wolf = Chute.RightDown)), GameState.Over(Board.update(startBoard(3, Mode.GameA), score = 428, misses = 3, ru = Option.Some(3), wolf = Chute.LeftDown))]
+    given gs: GameState = [GameState.Playing(startBoard(7, Mode.ModeA)), GameState.Playing(Board.update(startBoard(1, Mode.ModeB), score = 999, misses = 2, lu = Option.Some(4), ld = Option.Some(1), ru = Option.Some(2), rd = Option.Some(0), fox = Chute.RightDown)), GameState.Over(Board.update(startBoard(3, Mode.ModeA), score = 428, misses = 3, ru = Option.Some(3), fox = Chute.LeftDown))]
     when scoreInRange(gs)
-    String.len(render(gs)) => 107
+    String.len(render(gs)) => 104
