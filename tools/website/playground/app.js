@@ -168,11 +168,33 @@ function autoSizeTerminalSurface(preferredRows = null) {
     dom.terminal.style.height = "";
 }
 
+
+// ── Mobile single-view: editor vs output ─────────────────────────────
+// Narrow screens show either the code or the output/panel, never both.
+// Running a program or opening a panel flips to output; the toolbar's
+// flip button brings the code back. Desktop layout is untouched (the
+// attribute only has effect inside the mobile media query).
+function setMobileView(view) {
+    const ws = document.querySelector(".workspace");
+    if (!ws) return;
+    ws.dataset.mobileView = view;
+    const flip = document.querySelector("[data-mobile-flip]");
+    if (flip) flip.textContent = view === "editor" ? "\u25a6 Output" : "\u270e Code";
+}
+document.querySelector("[data-mobile-flip]")?.addEventListener("click", () => {
+    const ws = document.querySelector(".workspace");
+    setMobileView(ws?.dataset.mobileView === "editor" ? "output" : "editor");
+});
+for (const sel of ["[data-audit]", "[data-trace]", "[data-context]", "[data-why]"]) {
+    document.querySelector(sel)?.addEventListener("click", () => setMobileView("output"));
+}
+
 function spawnWorker(fixedSize) {
     if (state.worker) {
         state.worker.terminate();
     }
 
+    setMobileView("output");
     state.sharedKeyView = createSharedKeyView();
     state.sharedLineBuffer = createSharedLineBuffer();
     const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });

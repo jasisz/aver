@@ -50,7 +50,7 @@
     <span data-isolation-copy></span>
 </div>
 
-<main class="workspace">
+<main class="workspace" data-mobile-view="editor">
     <!-- Left: editor -->
     <section class="editor-pane">
         <div class="editor-toolbar">
@@ -58,6 +58,8 @@
                 title="Execute your program (compiled to WASM). Console, Random, Time wired as JS imports.">▶ Run</button>
             <button type="button" data-stop disabled hidden class="btn-stop"
                 title="Halt the running program.">⏹ Stop</button>
+            <button type="button" class="mobile-flip" data-mobile-flip
+                title="Switch between the code editor and the output view.">▦ Output</button>
             <button type="button" data-audit class="btn-audit"
                 title="Three axes: static checks + verify execution + format compliance. CI gate.">🔍 Audit</button>
             <!-- Hidden hostile state holder. The user-facing flow is:
