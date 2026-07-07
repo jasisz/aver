@@ -2210,6 +2210,15 @@ fn recognize_fueled_recursion(
             Some('*') => Combinator::Mul,
             _ => return None,
         };
+        // The anti-vacuity guards evaluate the model at fixed samples; a large
+        // multiplier or base can exceed i128 — decline fail-closed rather than
+        // overflow-panic in the emitter.
+        if [3i64, 0, -4]
+            .iter()
+            .any(|&s| eval_body_recursion(s, base_k, other, combinator).is_none())
+        {
+            return None;
+        }
         Some(Cert::Recursive {
             name: f.name.clone(),
             self_idx: f.wasm_idx,
@@ -2381,25 +2390,32 @@ fn model_step_ops(model_files: &[(String, String)]) -> std::collections::HashMap
 }
 
 // ---- model evaluation (anti-vacuity guard values) ------------------------
-// Generic over the recognised base; the combinator (`+`) and descent (`n-1`) are
-// the pinned shape, the base is data — so these compute the model value for ANY
-// admitted base without a per-function evaluator.
+// The descent (`n-1`) is the pinned shape; the base is data and the combinator
+// (`+` or `*`) is read from the model — so these compute the model value for any
+// admitted base and operator without a per-function evaluator.
 
 /// `f n = if n≤0 then base else other <op> f (n-1)` (body-consumed self-recursion),
 /// where `<op>` is `+` or `*`. Both combinators commute, so operand order does not
-/// affect the value; only the operator and the non-recursive operand do.
-fn eval_body_recursion(n: i64, base: i64, other: BodyOperand, combinator: Combinator) -> i64 {
+/// affect the value; only the operator and the non-recursive operand do. Computed
+/// with checked `i128`: a large multiplier or base can exceed the range, and the
+/// caller declines fail-closed rather than emit a wrong (or overflowing) guard.
+fn eval_body_recursion(
+    n: i64,
+    base: i64,
+    other: BodyOperand,
+    combinator: Combinator,
+) -> Option<i128> {
     if n <= 0 {
-        base
+        Some(base as i128)
     } else {
         let o = match other {
-            BodyOperand::Input => n,
-            BodyOperand::Const(k) => k,
+            BodyOperand::Input => n as i128,
+            BodyOperand::Const(k) => k as i128,
         };
-        let rec = eval_body_recursion(n - 1, base, other, combinator);
+        let rec = eval_body_recursion(n - 1, base, other, combinator)?;
         match combinator {
-            Combinator::Add => o + rec,
-            Combinator::Mul => o * rec,
+            Combinator::Add => o.checked_add(rec),
+            Combinator::Mul => o.checked_mul(rec),
         }
     }
 }
@@ -2794,6 +2810,17 @@ fn render_code_def(c: &Cert) -> String {
 /// An `Int` literal for Lean source: negatives parenthesised so `.i64Const -7`
 /// does not misparse; non-negatives bare (byte-identical to the shipped `0`).
 fn lean_int_lit(k: i64) -> String {
+    if k < 0 {
+        format!("({k})")
+    } else {
+        k.to_string()
+    }
+}
+
+/// `i128` variant for anti-vacuity guard values, which can exceed `i64` for a
+/// multiplication recursion (`Int` in Lean is unbounded, so the wide value is a
+/// faithful guard).
+fn lean_int_lit128(k: i128) -> String {
     if k < 0 {
         format!("({k})")
     } else {
@@ -3351,9 +3378,14 @@ fn render_recursive_body_cert(c: &Cert) -> String {
     // base + anti-vacuity guard values are data-driven from the recognised base
     // and combinator.
     let base = lean_int_lit(*base_k);
-    let g3 = eval_body_recursion(3, *base_k, other, combinator);
-    let g0 = lean_int_lit(eval_body_recursion(0, *base_k, other, combinator));
-    let gneg = lean_int_lit(eval_body_recursion(-4, *base_k, other, combinator));
+    // Guards are validated to fit i128 at recognition; expect that here.
+    let ev = |s: i64| {
+        eval_body_recursion(s, *base_k, other, combinator)
+            .expect("guard fits (validated at recognition)")
+    };
+    let g3 = ev(3);
+    let g0 = lean_int_lit128(ev(0));
+    let gneg = lean_int_lit128(ev(-4));
     let _ = (box_idx, add_idx, sub_idx);
     // The combinator combines the recursive result `{name}(n-1)` with `other`
     // (the input, or a boxed constant); the proof cites `chyp` with the operands

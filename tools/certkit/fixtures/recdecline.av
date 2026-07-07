@@ -1,0 +1,14 @@
+module RecDecline
+    intent =
+        "A fuel recursion the certifier must DECLINE fail-closed, not crash."
+    exposes [wild]
+
+fn wild(n: Int) -> Int
+    ? "Multiplier 10^13: the guard value exceeds range, so decline (never panic)."
+    match n <= 0
+        true -> 1
+        false -> 10000000000000 * wild(n - 1)
+
+verify wild
+    wild(0) => 1
+    wild(1) => 10000000000000

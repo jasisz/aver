@@ -34,7 +34,7 @@
 //! splices those values, fully expanded, into the witness — then pins them with
 //! `rfl` against `manifest.obligations.map (·.code / ·.host / ·.self / ·.carrier)`.
 //! Those are EXACTLY the fields `Obligation.holds` reasons about
-//! (`wFuncN o.code (o.host add sub) fuel o.self`), so a fabricated body, a
+//! (`wFuncN o.code (o.host add sub mul) fuel o.self`), so a fabricated body, a
 //! decoupled `code`/`self`/`carrier`, or a nerfed `host` (which would make
 //! `holds` vacuous) all diverge from the bytes and fail a `rfl` — the file does
 //! not check and verify declines. The spliced terms are the checker's own
@@ -671,7 +671,7 @@ fn checker_witness(
          -- obligation are pinned, position for position, to the values the\n\
          -- audited disassembler re-derived from the hash-verified bytes. These\n\
          -- are EXACTLY the fields `Obligation.holds` reasons about\n\
-         -- (`wFuncN o.code (o.host add sub) fuel o.self`), so a fabricated body,\n\
+         -- (`wFuncN o.code (o.host add sub mul) fuel o.self`), so a fabricated body,\n\
          -- a decoupled `code`/`self`/`carrier`, or a nerfed `host` that would\n\
          -- make `holds` vacuous all diverge from the bytes and fail a `rfl`. The\n\
          -- spliced terms come from the checker's own audited renderer over the\n\
