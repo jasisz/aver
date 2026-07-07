@@ -1,12 +1,14 @@
-# Artifact certificates (`aver compile --certify`)
+# Artifact Behavioral Certificates (`aver compile --certify`)
 
 > Status: v0, certification level **L1** (conditional on named runtime contracts). Ten certified function classes (four integer, five ADT, and cross-function composition); everything else is **declined fail-closed** and listed with a reason. This document is the contract; the emitted `cert-manifest.json` is its machine-readable form.
+
+An **Artifact Behavioral Certificate** (ABC) is a proof of *what the compiled binary does* that travels with the binary: not a signature over who built it, nor a hash of its bytes, but a machine-checkable statement about its **behavior** — pinned to those exact bytes and verifiable without trusting the compiler.
 
 ```
 aver compile app.av --target wasm-gc --certify -o out/
 ```
 
-emits the module (`app.wasm`) and, next to it, `cert/` — a self-contained Lean project whose theorems are about **those exact bytes**: the certificate pins `sha256(app.wasm)`, embeds the certified function bodies as data read back from the module, and proves that running those bodies under the semantics of the emitted fragment computes the function's Lean model. Behavioral laws proven about the model then transfer to statements about the bytes.
+emits the module (`app.wasm`) and, next to it, `cert/` — a self-contained Lean project whose theorems are about **those exact bytes**: the certificate pins `sha256(app.wasm)`, embeds the certified function bodies as data read back from the module, and proves that running those bodies under the semantics of the emitted fragment computes the function's Lean model. Behavioral laws proven about the model then transfer to statements about the bytes — the behavioral half of the ABC, and the part no signature or reproducible-build attestation can give you.
 
 The consumer story is deliberately narrow: **checking a certificate means running the Lean kernel, not trusting Aver.** `aver cert verify` is a convenience orchestrator; the trust anchor is a small, audited, hash-pinned set of Lean files plus the kernel itself.
 
