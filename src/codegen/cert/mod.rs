@@ -3512,7 +3512,22 @@ fn render_certificate(
                 s.push_str(&render_fueled_recursion_cert(c))
             }
             Cert::AdtConstructor { .. } => s.push_str(&render_adt_constructor_cert(c, model_info)),
-            Cert::FieldProjection { .. } => s.push_str(&render_field_projection_cert(c)),
+            Cert::FieldProjection {
+                name,
+                self_idx,
+                carrier,
+                struct_idx,
+                field_idx,
+                ..
+            } => s.push_str(&render_struct_verbatim_cert(
+                name,
+                *self_idx,
+                *carrier,
+                *struct_idx,
+                StructVerbatimShape::Project {
+                    field_idx: *field_idx,
+                },
+            )),
             Cert::WidenedIntMatch { .. } | Cert::VariantDispatch { .. } => {
                 s.push_str(&render_adt_match_cert(c, model_info))
             }
@@ -3626,15 +3641,112 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
 /// two-argument tail accumulator (`f n acc = if n≤0 then acc else f (n-1) (acc+n)`).
 /// The `induction fuel` skeleton, the model-side fuel bridge, and the carrier-sign
 /// dispatch are shared; the shapes differ only in how the step arm reconstructs.
-fn render_fueled_recursion_cert(c: &Cert) -> String {
-    match c.inner() {
-        Cert::Recursive { .. } => render_recursive_body_cert(c),
-        Cert::AccumulatorRecursive { .. } => render_accumulator_recursive_cert(c),
-        _ => unreachable!(),
-    }
+/// The `Repr` carrier hypotheses shared by every fuel-recursion certificate
+/// theorem (`_wasm_certified` and `_wasm_faithful`, single- and two-argument
+/// shapes alike): the representation relation and its four faces over carrier
+/// `carrier`. Emitted once here instead of inline in each theorem.
+fn recursion_repr_hyps(carrier: u32) -> String {
+    format!(
+        r#"    (Repr : Int → WVal → Prop)
+    (hcar : ∀ n v, Repr n v →
+      (∃ s sg, v = .structv {carrier} [.i64v s, .null, .i32v sg]) ∨
+      (∃ s lty les sg, v = .structv {carrier} [.i64v s, .arr lty les, .i32v sg]))
+    (hsmall_intro : ∀ k : Int, Repr k (carrierSmall {carrier} k))
+    (hsmall_elim : ∀ n s sg, Repr n (.structv {carrier} [.i64v s, .null, .i32v sg]) → s = n)
+    (hbig : ∀ n s lty les sg,
+      Repr n (.structv {carrier} [.i64v s, .arr lty les, .i32v sg]) → ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)"#
+    )
 }
 
-fn render_recursive_body_cert(c: &Cert) -> String {
+/// The per-shape pieces of one fuel-recursion certificate spliced into the shared
+/// skeleton by [`render_fueled_recursion_cert`]. The single-argument body
+/// recursion and the two-argument tail accumulator share the `induction fuel`
+/// spine, the fuel bridge structure, the faithfulness composition and the schema
+/// obligation; they differ only in these fields (arity, the threaded `acc`, and
+/// the step reconstruction).
+struct FuelPieces {
+    doc_kind: &'static str,
+    cert_kind: &'static str,
+    vars: &'static str,
+    bridge: String,
+    comb_hyps: String,
+    concl: String,
+    zero_body: String,
+    succ_body: String,
+    faithful_concl: String,
+    faithful_body: String,
+    guards: String,
+    simulates: String,
+}
+
+/// The single fuel-recursion certificate arm: one shared skeleton (doc header,
+/// the shared `Repr` hypotheses, the two `#print axioms` lines, the anti-vacuity
+/// and obligation structure) into which the recognised shape — single-argument
+/// combinator recursion or two-argument tail accumulator — splices its pieces.
+fn render_fueled_recursion_cert(c: &Cert) -> String {
+    let name = c.name();
+    let carrier = c.carrier();
+    let hyps = recursion_repr_hyps(carrier);
+    let p = match c.inner() {
+        Cert::Recursive { .. } => recursive_fuel_pieces(c),
+        Cert::AccumulatorRecursive { .. } => accumulator_fuel_pieces(c),
+        _ => unreachable!(),
+    };
+    let FuelPieces {
+        doc_kind,
+        cert_kind,
+        vars,
+        bridge,
+        comb_hyps,
+        concl,
+        zero_body,
+        succ_body,
+        faithful_concl,
+        faithful_body,
+        guards,
+        simulates,
+    } = p;
+    format!(
+        r#"/-! ### {name} — {doc_kind} certificate (carrier type {carrier}) -/
+
+{bridge}
+
+/-- THE CERTIFICATE THEOREM: partial correctness of the VERBATIM emitted
+    {cert_kind} body against the generated model, for ALL {vars} : ℤ. -/
+theorem {name}_wasm_certified
+{hyps}
+{comb_hyps}
+{concl}
+  intro fuel
+  induction fuel with
+  | zero =>
+{zero_body}
+  | succ fuel ih =>
+{succ_body}
+
+#print axioms {name}_wasm_certified
+
+/-- Consumer-facing composition: whatever the bytes return represents the model
+    value `{name} {vars}` (faithfulness law ∘ simulation). -/
+theorem {name}_wasm_faithful
+{hyps}
+{comb_hyps}
+{faithful_concl}
+{faithful_body}
+
+#print axioms {name}_wasm_faithful
+
+-- anti-vacuity: the emitted body actually RUNS on concrete inputs.
+{guards}
+
+/-- Schema-shaped simulation obligation for `{name}` (composed by the single
+    final theorem): the emitted {cert_kind} body simulates the model `{name}`. -/
+{simulates}
+"#
+    )
+}
+
+fn recursive_fuel_pieces(c: &Cert) -> FuelPieces {
     let Cert::Recursive {
         name,
         self_idx,
@@ -3720,10 +3832,12 @@ fn render_recursive_body_cert(c: &Cert) -> String {
         "n",
         &format!(".structv {carrier} [.i64v s, .arr lty les, .i32v sg]"),
     );
-    format!(
-        r#"/-! ### {name} — self-recursive certificate (carrier type {carrier}) -/
-
--- model-side fuel bridge (the cap-induction pattern at R = 1).
+    FuelPieces {
+        doc_kind: "self-recursive",
+        cert_kind: "recursive",
+        vars: "n",
+        bridge: format!(
+            r#"-- model-side fuel bridge (the cap-induction pattern at R = 1).
 theorem {name}_fuel_irrel :
     ∀ (t k1 k2 : Nat) (n : Int), n.natAbs < t → n.natAbs < k1 → n.natAbs < k2 →
       {name}__fuel k1 n = {name}__fuel k2 n := by
@@ -3756,32 +3870,21 @@ theorem {name}_step (n : Int) (hn : ¬ n ≤ 0) : {name} n = {step_rhs} := by
 
 theorem {name}_base (n : Int) (hn : n ≤ 0) : {name} n = {base} := by
   have h0 : {name} n = {name}__fuel (n.natAbs + 1) n := rfl
-  rw [h0]; simp [{name}__fuel, hn]
-
-/-- THE CERTIFICATE THEOREM: partial correctness of the VERBATIM emitted
-    recursive body against the generated model, for ALL n : ℤ. -/
-theorem {name}_wasm_certified
-    (Repr : Int → WVal → Prop)
-    (hcar : ∀ n v, Repr n v →
-      (∃ s sg, v = .structv {carrier} [.i64v s, .null, .i32v sg]) ∨
-      (∃ s lty les sg, v = .structv {carrier} [.i64v s, .arr lty les, .i32v sg]))
-    (hsmall_intro : ∀ k : Int, Repr k (carrierSmall {carrier} k))
-    (hsmall_elim : ∀ n s sg, Repr n (.structv {carrier} [.i64v s, .null, .i32v sg]) → s = n)
-    (hbig : ∀ n s lty les sg,
-      Repr n (.structv {carrier} [.i64v s, .arr lty les, .i32v sg]) → ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)
-    ({cparam} sub : List WVal → Option WVal)
+  rw [h0]; simp [{name}__fuel, hn]"#
+        ),
+        comb_hyps: format!(
+            r#"    ({cparam} sub : List WVal → Option WVal)
     ({chyp} : ∀ a b va vb w, Repr a va → Repr b vb → {cparam} [va, vb] = some w → Repr (a {op} b) w)
-    (hSub : ∀ a b va vb w, Repr a va → Repr b vb → sub [va, vb] = some w → Repr (a - b) w) :
-    ∀ (fuel : Nat) (n : Int) (v w : WVal), Repr n v →
+    (hSub : ∀ a b va vb w, Repr a va → Repr b vb → sub [va, vb] = some w → Repr (a - b) w) :"#
+        ),
+        concl: format!(
+            r#"    ∀ (fuel : Nat) (n : Int) (v w : WVal), Repr n v →
       wFuncN {name}Code ({name}Host {cparam} sub) fuel {self_idx} [v] = some w →
-      Repr ({name} n) w := by
-  intro fuel
-  induction fuel with
-  | zero =>
-      intro n v w hv hrun
-      simp [wFuncN] at hrun
-  | succ fuel ih =>
-      intro n v w hv hrun
+      Repr ({name} n) w := by"#
+        ),
+        zero_body: "      intro n v w hv hrun\n      simp [wFuncN] at hrun".to_string(),
+        succ_body: format!(
+            r#"      intro n v w hv hrun
       rcases hcar n v hv with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
       · have hs := hsmall_elim n s sg hv
         subst hs
@@ -3832,36 +3935,21 @@ theorem {name}_wasm_certified
               · simp [hadd] at hrun
               · simp only [hadd, Option.some.injEq] at hrun
                 rw [{name}_step n hn0, ← hrun]
-                exact {chyp} {hadd_big} hadd
-
-#print axioms {name}_wasm_certified
-
-/-- Consumer-facing composition: whatever the bytes return represents the model
-    value `{name} n` (faithfulness law ∘ simulation). -/
-theorem {name}_wasm_faithful
-    (Repr : Int → WVal → Prop)
-    (hcar : ∀ n v, Repr n v →
-      (∃ s sg, v = .structv {carrier} [.i64v s, .null, .i32v sg]) ∨
-      (∃ s lty les sg, v = .structv {carrier} [.i64v s, .arr lty les, .i32v sg]))
-    (hsmall_intro : ∀ k : Int, Repr k (carrierSmall {carrier} k))
-    (hsmall_elim : ∀ n s sg, Repr n (.structv {carrier} [.i64v s, .null, .i32v sg]) → s = n)
-    (hbig : ∀ n s lty les sg,
-      Repr n (.structv {carrier} [.i64v s, .arr lty les, .i32v sg]) → ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)
-    ({cparam} sub : List WVal → Option WVal)
-    ({chyp} : ∀ a b va vb w, Repr a va → Repr b vb → {cparam} [va, vb] = some w → Repr (a {op} b) w)
-    (hSub : ∀ a b va vb w, Repr a va → Repr b vb → sub [va, vb] = some w → Repr (a - b) w) :
-    ∀ (fuel : Nat) (n : Int) (v w : WVal), Repr n v →
+                exact {chyp} {hadd_big} hadd"#
+        ),
+        faithful_concl: format!(
+            r#"    ∀ (fuel : Nat) (n : Int) (v w : WVal), Repr n v →
       wFuncN {name}Code ({name}Host {cparam} sub) fuel {self_idx} [v] = some w →
-      ∃ m : Int, Repr m w ∧ m = {name} n :=
-  fun fuel n v w hv hrun =>
+      ∃ m : Int, Repr m w ∧ m = {name} n :="#
+        ),
+        faithful_body: format!(
+            r#"  fun fuel n v w hv hrun =>
     ⟨{name} n,
      {name}_wasm_certified Repr hcar hsmall_intro hsmall_elim hbig {cparam} sub {chyp} hSub fuel n v w hv hrun,
-     rfl⟩
-
-#print axioms {name}_wasm_faithful
-
--- anti-vacuity: the emitted body actually RUNS on concrete inputs.
-def {name}HostRef : HostTbl := {name}Host ({cref} {carrier}) (subRef {carrier})
+     rfl⟩"#
+        ),
+        guards: format!(
+            r#"def {name}HostRef : HostTbl := {name}Host ({cref} {carrier}) (subRef {carrier})
 example :
     ((wFuncN {name}Code {name}HostRef 20 {self_idx} [carrierSmall {carrier} 3]).bind carrierToInt)
       = some ({g3}) := by native_decide
@@ -3870,11 +3958,10 @@ example :
       = some {g0} := by native_decide
 example :
     ((wFuncN {name}Code {name}HostRef 20 {self_idx} [carrierSmall {carrier} (-4)]).bind carrierToInt)
-      = some {gneg} := by native_decide
-
-/-- Schema-shaped simulation obligation for `{name}` (composed by the single
-    final theorem): the emitted recursive body simulates the model `{name}`. -/
-theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+      = some {gneg} := by native_decide"#
+        ),
+        simulates: format!(
+            r#"theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
   intro S add sub mul hadd hsub hmul fuel ns vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
   obtain ⟨hrepr, harity⟩ := hrepr
@@ -3888,12 +3975,12 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
           simpa [AverCert.Schema.intRepr] using {name}_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim
             {cparam} sub {coblig} hsub fuel n v w hv hrun
       | cons _ _ =>
-          simp at harity
-"#
-    )
+          simp at harity"#
+        ),
+    }
 }
 
-fn render_accumulator_recursive_cert(c: &Cert) -> String {
+fn accumulator_fuel_pieces(c: &Cert) -> FuelPieces {
     let Cert::AccumulatorRecursive {
         name,
         self_idx,
@@ -3906,10 +3993,12 @@ fn render_accumulator_recursive_cert(c: &Cert) -> String {
     let g3 = eval_accumulator(3, 0);
     let g4 = eval_accumulator(3, 4);
     let gneg = eval_accumulator(-4, 9);
-    format!(
-        r#"/-! ### {name} — accumulator self-recursive certificate (carrier type {carrier}) -/
-
--- model-side fuel bridge (fuel induction; the IH is quantified over both args).
+    FuelPieces {
+        doc_kind: "accumulator self-recursive",
+        cert_kind: "accumulator-recursive",
+        vars: "n acc",
+        bridge: format!(
+            r#"-- model-side fuel bridge (fuel induction; the IH is quantified over both args).
 theorem {name}_fuel_irrel :
     ∀ (t k1 k2 : Nat) (n acc : Int), n.natAbs < t → n.natAbs < k1 → n.natAbs < k2 →
       {name}__fuel k1 n acc = {name}__fuel k2 n acc := by
@@ -3943,32 +4032,21 @@ theorem {name}_step (n acc : Int) (hn : ¬ n ≤ 0) :
 
 theorem {name}_base (n acc : Int) (hn : n ≤ 0) : {name} n acc = acc := by
   have h0 : {name} n acc = {name}__fuel (n.natAbs + 1) n acc := rfl
-  rw [h0]; simp [{name}__fuel, hn]
-
-/-- THE CERTIFICATE THEOREM: partial correctness of the VERBATIM emitted
-    accumulator-recursive body against the generated model, for ALL n acc : ℤ. -/
-theorem {name}_wasm_certified
-    (Repr : Int → WVal → Prop)
-    (hcar : ∀ n v, Repr n v →
-      (∃ s sg, v = .structv {carrier} [.i64v s, .null, .i32v sg]) ∨
-      (∃ s lty les sg, v = .structv {carrier} [.i64v s, .arr lty les, .i32v sg]))
-    (hsmall_intro : ∀ k : Int, Repr k (carrierSmall {carrier} k))
-    (hsmall_elim : ∀ n s sg, Repr n (.structv {carrier} [.i64v s, .null, .i32v sg]) → s = n)
-    (hbig : ∀ n s lty les sg,
-      Repr n (.structv {carrier} [.i64v s, .arr lty les, .i32v sg]) → ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)
-    (add sub : List WVal → Option WVal)
+  rw [h0]; simp [{name}__fuel, hn]"#
+        ),
+        comb_hyps: r#"    (add sub : List WVal → Option WVal)
     (hAdd : ∀ a b va vb w, Repr a va → Repr b vb → add [va, vb] = some w → Repr (a + b) w)
-    (hSub : ∀ a b va vb w, Repr a va → Repr b vb → sub [va, vb] = some w → Repr (a - b) w) :
-    ∀ (fuel : Nat) (n acc : Int) (vn vacc w : WVal), Repr n vn → Repr acc vacc →
+    (hSub : ∀ a b va vb w, Repr a va → Repr b vb → sub [va, vb] = some w → Repr (a - b) w) :"#
+            .to_string(),
+        concl: format!(
+            r#"    ∀ (fuel : Nat) (n acc : Int) (vn vacc w : WVal), Repr n vn → Repr acc vacc →
       wFuncN {name}Code ({name}Host add sub) fuel {self_idx} [vn, vacc] = some w →
-      Repr ({name} n acc) w := by
-  intro fuel
-  induction fuel with
-  | zero =>
-      intro n acc vn vacc w hvn hvacc hrun
-      simp [wFuncN] at hrun
-  | succ fuel ih =>
-      intro n acc vn vacc w hvn hvacc hrun
+      Repr ({name} n acc) w := by"#
+        ),
+        zero_body: "      intro n acc vn vacc w hvn hvacc hrun\n      simp [wFuncN] at hrun"
+            .to_string(),
+        succ_body: format!(
+            r#"      intro n acc vn vacc w hvn hvacc hrun
       rcases hcar n vn hvn with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
       · have hs := hsmall_elim n s sg hvn
         subst hs
@@ -4021,37 +4099,22 @@ theorem {name}_wasm_certified
               · simp [hrec] at hrun
               · simp only [hrec, Option.some.injEq] at hrun
                 rw [{name}_step n acc hn0, ← hrun]
-                exact ih (n - 1) (acc + n) vd va vr hrd hra hrec
-
-#print axioms {name}_wasm_certified
-
-/-- Consumer-facing composition: whatever the bytes return represents the model
-    value `{name} n acc` (faithfulness law ∘ simulation). -/
-theorem {name}_wasm_faithful
-    (Repr : Int → WVal → Prop)
-    (hcar : ∀ n v, Repr n v →
-      (∃ s sg, v = .structv {carrier} [.i64v s, .null, .i32v sg]) ∨
-      (∃ s lty les sg, v = .structv {carrier} [.i64v s, .arr lty les, .i32v sg]))
-    (hsmall_intro : ∀ k : Int, Repr k (carrierSmall {carrier} k))
-    (hsmall_elim : ∀ n s sg, Repr n (.structv {carrier} [.i64v s, .null, .i32v sg]) → s = n)
-    (hbig : ∀ n s lty les sg,
-      Repr n (.structv {carrier} [.i64v s, .arr lty les, .i32v sg]) → ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)
-    (add sub : List WVal → Option WVal)
-    (hAdd : ∀ a b va vb w, Repr a va → Repr b vb → add [va, vb] = some w → Repr (a + b) w)
-    (hSub : ∀ a b va vb w, Repr a va → Repr b vb → sub [va, vb] = some w → Repr (a - b) w) :
-    ∀ (fuel : Nat) (n acc : Int) (vn vacc w : WVal), Repr n vn → Repr acc vacc →
+                exact ih (n - 1) (acc + n) vd va vr hrd hra hrec"#
+        ),
+        faithful_concl: format!(
+            r#"    ∀ (fuel : Nat) (n acc : Int) (vn vacc w : WVal), Repr n vn → Repr acc vacc →
       wFuncN {name}Code ({name}Host add sub) fuel {self_idx} [vn, vacc] = some w →
-      ∃ m : Int, Repr m w ∧ m = {name} n acc :=
-  fun fuel n acc vn vacc w hvn hvacc hrun =>
+      ∃ m : Int, Repr m w ∧ m = {name} n acc :="#
+        ),
+        faithful_body: format!(
+            r#"  fun fuel n acc vn vacc w hvn hvacc hrun =>
     ⟨{name} n acc,
      {name}_wasm_certified Repr hcar hsmall_intro hsmall_elim hbig add sub hAdd hSub fuel n acc vn
        vacc w hvn hvacc hrun,
-     rfl⟩
-
-#print axioms {name}_wasm_faithful
-
--- anti-vacuity: the emitted body actually RUNS on concrete inputs.
-def {name}HostRef : HostTbl := {name}Host (addRef {carrier}) (subRef {carrier})
+     rfl⟩"#
+        ),
+        guards: format!(
+            r#"def {name}HostRef : HostTbl := {name}Host (addRef {carrier}) (subRef {carrier})
 example :
     ((wFuncN {name}Code {name}HostRef 20 {self_idx} [carrierSmall {carrier} 3, carrierSmall {carrier} 0]).bind carrierToInt)
       = some ({g3}) := by native_decide
@@ -4060,11 +4123,10 @@ example :
       = some ({g4}) := by native_decide
 example :
     ((wFuncN {name}Code {name}HostRef 20 {self_idx} [carrierSmall {carrier} (-4), carrierSmall {carrier} 9]).bind carrierToInt)
-      = some {gneg} := by native_decide
-
-/-- Schema-shaped simulation obligation for `{name}` (composed by the single
-    final theorem): the emitted accumulator-recursive body simulates the model `{name}`. -/
-theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+      = some {gneg} := by native_decide"#
+        ),
+        simulates: format!(
+            r#"theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
   intro S add sub mul hadd hsub hmul fuel ns vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
   obtain ⟨hrepr, harity⟩ := hrepr
@@ -4083,9 +4145,9 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
               simpa [AverCert.Schema.intRepr] using {name}_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim
                 add sub hadd hsub fuel n acc vn vacc w hvn hvacc hrun
           | cons _ _ =>
-              simp at harity
-"#
-    )
+              simp at harity"#
+        ),
+    }
 }
 
 /// Post-order (callees-before-callers) topological order of a composition
@@ -4311,14 +4373,16 @@ fn render_adt_constructor_cert(c: &Cert, model_info: &ModelInfo) -> String {
         unreachable!()
     };
     if !adt_constructor_uses_model(c, model_info) {
-        return render_verbatim_constructor_cert(
+        let _ = field_count;
+        return render_struct_verbatim_cert(
             name,
             *self_idx,
             *carrier,
             *struct_idx,
-            *field_count,
-            *arity,
-            fields,
+            StructVerbatimShape::Pack {
+                arity: *arity,
+                fields,
+            },
         );
     }
     let sig = model_info.fns.get(name);
@@ -4359,60 +4423,115 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
     )
 }
 
-/// Verbatim pack constructor certificate (dual of the field projection): the
-/// body wraps its arguments into variant `struct_idx`. The obligation carries
-/// `Cod := WVal` with `verbatimRepr`, so the proof mirrors the field
-/// projection's — pop the raw arguments, reduce the interpreter, `rfl`.
-fn render_verbatim_constructor_cert(
+/// Which end of the `struct.new`/verbatim spine a certificate proves: packing
+/// arguments INTO a variant struct (the dual of) reading a field OUT of one.
+/// Both are one-step `cases fuel` proofs over `WVal`/`verbatimRepr` with no host,
+/// so [`render_struct_verbatim_cert`] emits them through one skeleton.
+enum StructVerbatimShape<'a> {
+    /// Verbatim constructor: wrap `arity` arguments into variant `struct_idx`.
+    Pack {
+        arity: usize,
+        fields: &'a [ConstructorField],
+    },
+    /// Field projection: read field `field_idx` (0 or 1) out of a two-field struct.
+    Project { field_idx: u32 },
+}
+
+/// The `struct.new`/verbatim certificate arm: a single one-step `cases fuel`
+/// proof over `WVal`/`verbatimRepr` (no host), shared by the verbatim
+/// constructor (packs its arguments into variant `struct_idx`) and the field
+/// projection (reads a field back out) — structural duals that pop the raw
+/// arguments, reduce the interpreter and close by `rfl`. The two ends differ
+/// only in the statement's argument shape, the executable tripwire and the
+/// obligation's argument destructuring.
+fn render_struct_verbatim_cert(
     name: &str,
     self_idx: u32,
     carrier: u32,
     struct_idx: u32,
-    _field_count: u32,
-    arity: usize,
-    fields: &[ConstructorField],
+    shape: StructVerbatimShape,
 ) -> String {
-    // Binders + input list + built struct for one vs two parameters.
-    let (binders, input, intro, split) = if arity == 1 {
-        ("(a : WVal)", "[a]", "intro a", "")
-    } else {
-        (
-            "(a b : WVal)",
-            "[a, b]",
-            "intro a b",
-            "  rcases p with ⟨a, b⟩\n",
-        )
-    };
-    let built = render_constructor_fields(fields);
-    // Concrete forcing input: pack carrier value(s) and decode field 0 back.
-    let concrete = if arity == 1 {
-        format!("[carrierSmall {carrier} 7]")
-    } else {
-        format!("[carrierSmall {carrier} 7, carrierSmall {carrier} 9]")
-    };
-    format!(
-        r#"/-! ### {name} — verbatim constructor certificate -/
-
-theorem {name}_wasm_certified (host : HostTbl) :
-    ∀ {binders}, wFuncN {name}Code host 1 {self_idx} {input} = some (.structv {struct_idx} {built}) := by
-  {intro}
-  simp [wFuncN, {name}Code, wRunF, popArgs, initLocals]
-
-#print axioms {name}_wasm_certified
-
--- Executable tripwire: pack concrete carriers and decode field 0 back to
+    let (title, binders, input, rhs, intro, destructure, tripwire) = match shape {
+        StructVerbatimShape::Pack { arity, fields } => {
+            let built = render_constructor_fields(fields);
+            let (binders, input, intro, destructure) = if arity == 1 {
+                (
+                    "(a : WVal)".to_string(),
+                    "[a]".to_string(),
+                    "intro a".to_string(),
+                    String::new(),
+                )
+            } else {
+                (
+                    "(a b : WVal)".to_string(),
+                    "[a, b]".to_string(),
+                    "intro a b".to_string(),
+                    "  rcases p with ⟨a, b⟩\n".to_string(),
+                )
+            };
+            let concrete = if arity == 1 {
+                format!("[carrierSmall {carrier} 7]")
+            } else {
+                format!("[carrierSmall {carrier} 7, carrierSmall {carrier} 9]")
+            };
+            let tripwire = format!(
+                r#"-- Executable tripwire: pack concrete carriers and decode field 0 back to
 -- `some 7`. A trapping body yields `none`, so this forces a real struct build.
 example :
     ((wFuncN {name}Code {name}Host 1 {self_idx} {concrete}).bind
       (fun r => match r with
         | .structv _ (f :: _) => carrierToInt f
         | _ => none))
-      = some 7 := by native_decide
+      = some 7 := by native_decide"#
+            );
+            (
+                "verbatim constructor certificate".to_string(),
+                binders,
+                input,
+                format!("(.structv {struct_idx} {built})"),
+                intro,
+                destructure,
+                tripwire,
+            )
+        }
+        StructVerbatimShape::Project { field_idx } => {
+            let expected = if field_idx == 0 { "a" } else { "b" };
+            let forced = if field_idx == 0 { 7 } else { 9 };
+            let tripwire = format!(
+                r#"-- Executable tripwire: project the field from a concrete two-carrier struct and
+-- decode it back. A trapping body yields `none`, so this forces a real read.
+example :
+    ((wFuncN {name}Code {name}Host 1 {self_idx}
+        [.structv {struct_idx} [carrierSmall {carrier} 7, carrierSmall {carrier} 9]]).bind carrierToInt)
+      = some {forced} := by native_decide"#
+            );
+            (
+                "field projection certificate".to_string(),
+                "(a b : WVal)".to_string(),
+                format!("[.structv {struct_idx} [a, b]]"),
+                expected.to_string(),
+                "intro a b".to_string(),
+                "  rcases p with ⟨a, b⟩\n".to_string(),
+                tripwire,
+            )
+        }
+    };
+    format!(
+        r#"/-! ### {name} — {title} -/
+
+theorem {name}_wasm_certified (host : HostTbl) :
+    ∀ {binders}, wFuncN {name}Code host 1 {self_idx} {input} = some {rhs} := by
+  {intro}
+  simp [wFuncN, {name}Code, wRunF, popArgs, initLocals]
+
+#print axioms {name}_wasm_certified
+
+{tripwire}
 
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
   intro S add sub mul hadd hsub hmul fuel p vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
-{split}  subst hrepr
+{destructure}  subst hrepr
   cases fuel with
   | zero => simp [wFuncN] at hrun
   | succ f =>
@@ -4435,55 +4554,6 @@ fn render_constructor_fields(fields: &[ConstructorField]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("[{parts}]")
-}
-
-fn render_field_projection_cert(c: &Cert) -> String {
-    let c = c.inner();
-    let Cert::FieldProjection {
-        name,
-        self_idx,
-        carrier,
-        struct_idx,
-        field_idx,
-        ..
-    } = c
-    else {
-        unreachable!()
-    };
-    let expected = if *field_idx == 0 { "a" } else { "b" };
-    // Concrete forcing input: project field `field_idx` from a two-carrier
-    // struct and decode it back. Field 0 carries 7, field 1 carries 9.
-    let forced = if *field_idx == 0 { 7 } else { 9 };
-    format!(
-        r#"/-! ### {name} — field projection certificate -/
-
-theorem {name}_wasm_certified (host : HostTbl) :
-    ∀ (a b : WVal), wFuncN {name}Code host 1 {self_idx} [.structv {struct_idx} [a, b]] = some {expected} := by
-  intro a b
-  simp [wFuncN, {name}Code, wRunF, popArgs, initLocals]
-
-#print axioms {name}_wasm_certified
-
--- Executable tripwire: project the field from a concrete two-carrier struct and
--- decode it back. A trapping body yields `none`, so this forces a real read.
-example :
-    ((wFuncN {name}Code {name}Host 1 {self_idx}
-        [.structv {struct_idx} [carrierSmall {carrier} 7, carrierSmall {carrier} 9]]).bind carrierToInt)
-      = some {forced} := by native_decide
-
-theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul hadd hsub hmul fuel p vs w hrepr hrun
-  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
-  rcases p with ⟨a, b⟩
-  subst hrepr
-  cases fuel with
-  | zero => simp [wFuncN] at hrun
-  | succ f =>
-      simp [wFuncN, wRunF, {name}Code, popArgs, initLocals] at hrun
-      subst hrun
-      rfl
-"#
-    )
 }
 
 /// The per-class ingredients of one ADT-match certificate: the pieces that
