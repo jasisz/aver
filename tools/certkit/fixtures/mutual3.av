@@ -1,0 +1,27 @@
+module Mutual3
+    intent = "Three mutually recursive functions forming one cycle: rotA -> rotB -> rotC -> rotA."
+    exposes [rotA, rotB, rotC]
+
+fn rotA(n: Int) -> Int
+  ? "Base 0; else steps to rotB(n-1)."
+  match n <= 0
+    true -> 0
+    false -> rotB(n - 1)
+
+fn rotB(n: Int) -> Int
+  ? "Base 1; else steps to rotC(n-1)."
+  match n <= 0
+    true -> 1
+    false -> rotC(n - 1)
+
+fn rotC(n: Int) -> Int
+  ? "Base 2; else steps to rotA(n-1)."
+  match n <= 0
+    true -> 2
+    false -> rotA(n - 1)
+
+verify rotA
+    rotA(0) => 0
+    rotA(1) => 1
+    rotA(2) => 2
+    rotA(3) => 0
