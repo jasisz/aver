@@ -1,0 +1,25 @@
+module StrDispatch
+    intent =
+        "A variant match whose every arm returns a distinct String literal — a"
+        "verbatim variant dispatch. The int helper makes the box carrier exist."
+    exposes [Tag, tagName, bump]
+
+type Tag
+  A
+  B
+  C
+
+fn tagName(t: Tag) -> String
+  ? "Name each tag as a distinct string constant."
+  match t
+    Tag.A -> "alpha"
+    Tag.B -> "beta"
+    Tag.C -> "gamma"
+
+fn bump(n: Int) -> Int
+  ? "Add one — present only so the module has an Int box carrier."
+  n + 1
+
+verify tagName
+    tagName(Tag.A) => "alpha"
+    tagName(Tag.C) => "gamma"
