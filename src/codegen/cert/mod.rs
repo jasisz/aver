@@ -52,7 +52,7 @@ pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
 /// Certification level of a v0 artifact certificate: conditional on the named
 /// runtime contracts (see the consult level naming L0/L1/L2/L3).
 pub const CERT_LEVEL: &str = "L1";
-pub const CERT_SCHEMA_VERSION: u32 = 3;
+pub const CERT_SCHEMA_VERSION: u32 = 4;
 /// The one approved final-theorem statement line. `aver cert verify` confirms
 /// this exact line is present in `Final.lean` (name + `Holds manifest`), which
 /// is what pins the statement without matching arbitrary Lean syntax.
@@ -83,11 +83,24 @@ struct UserFn {
     name: String,
     wasm_idx: u32,
     arity: usize,
+    /// Byte-level parameter type kinds from the declared function signature.
+    params: Vec<TyKind>,
+    /// Byte-level result type kind from the declared function signature.
+    result: Option<TyKind>,
     nlocals: usize,
     ops: Vec<Op>,
     /// call targets in body order, for reason reporting.
     calls: Vec<u32>,
     has_loop_or_branch: bool,
+}
+
+#[derive(Clone)]
+struct CodeEntry {
+    nlocals: usize,
+    ops: Vec<Op>,
+    calls: Vec<u32>,
+    has_loop_or_branch: bool,
+    host_role: Option<HostRole>,
 }
 
 /// The minimal opcode surface the two templates need. Anything else is `Other`
@@ -98,10 +111,18 @@ enum Op {
     LocalSet(u32),
     I64Const(i64),
     I32Const(i32),
+    F64Const(u64),
     RefTest(u32),
     RefCast(u32),
     StructNew(u32, u32),
     StructGet(u32, u32),
+    ArrayNewData(u32, Vec<u8>),
+    ArrayNewDataUnresolved {
+        type_idx: u32,
+        data_idx: u32,
+        offset: i32,
+        len: i32,
+    },
     RefNull,
     RefIsNull,
     I64LeS,
@@ -114,6 +135,44 @@ enum Op {
     Call(u32),
     ReturnCall(u32),
     Other,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HostRole {
+    Add,
+    Sub,
+}
+
+/// Byte-level summary of one wasm value type in a function signature. Typed
+/// admission gates key on these (the shape of the claim as the BYTES declare
+/// it) — never on the source model's types, and never on a bare parameter
+/// count.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TyKind {
+    /// Abstract `eq` reference — the emitter's parameter type for a user ADT
+    /// value that the body dispatches on.
+    Eqref,
+    /// Concrete reference to module type `t` (e.g. the Int carrier struct).
+    Ref(u32),
+    I64,
+    I32,
+    F64,
+    Other,
+}
+
+/// One recognised leaf of a `VariantDispatch` hit arm: what the arm computes
+/// from the variant's Int payload.
+#[derive(Clone, PartialEq)]
+enum ArmLeaf {
+    /// Return the projected payload unchanged.
+    Proj,
+    /// Combine the payload with a boxed constant through a contracted host:
+    /// `k op x` when `const_first`, else `x op k`.
+    HostOp {
+        role: HostRole,
+        k: i64,
+        const_first: bool,
+    },
 }
 
 /// The straight-line integer shape of one function inside a composition's call
@@ -140,8 +199,25 @@ struct ClosureEntry {
     shape: LeafShape,
 }
 
+#[derive(Clone, PartialEq)]
+enum VerbatimDefault {
+    Null,
+    F64Bits(u64),
+    Array { type_idx: u32, bytes: Vec<u8> },
+}
+
+#[derive(Clone, PartialEq)]
+enum ConstructorField {
+    Local(u32),
+    Null,
+}
+
 /// A certified function and the template holes extracted from its body.
 enum Cert {
+    /// Generic non-recursive certificate. The inner shape still carries the
+    /// byte-derived face and proof parameters; the outer class records that the
+    /// non-recursive walker admitted it.
+    NonRecursive { inner: Box<Cert> },
     /// `fn(x: Int) -> Int = x + k`; box=`box_idx`, add=`add_idx`.
     StraightLine {
         name: String,
@@ -180,6 +256,8 @@ enum Cert {
         carrier: u32,
         struct_idx: u32,
         field_count: u32,
+        arity: usize,
+        fields: Vec<ConstructorField>,
         ops: Vec<Op>,
     },
     /// Non-recursive record/variant field projection.
@@ -218,6 +296,7 @@ enum Cert {
         nlocals: usize,
         carrier: u32,
         hit_variant_idx: u32,
+        default: VerbatimDefault,
         ops: Vec<Op>,
     },
     /// Non-recursive Int -> Bool range predicate: two nested carrier comparisons
@@ -247,6 +326,27 @@ enum Cert {
         sub_idx: u32,
         ops: Vec<Op>,
     },
+    /// General non-recursive variant dispatch over one user inductive: a chain
+    /// of `ref.test` branches (each else-arm continuing the chain) whose hit
+    /// arms each reduce to one recognised leaf — payload projection, or a
+    /// contracted host add/sub combining the payload with an integer constant —
+    /// and whose terminal else is a boxed integer constant. Recognised from the
+    /// parsed instruction tree, so arm count, arm order, per-arm semantics and
+    /// the default value are free; no full opcode sequence is pinned.
+    VariantDispatch {
+        name: String,
+        self_idx: u32,
+        nlocals: usize,
+        carrier: u32,
+        box_idx: u32,
+        add_idx: Option<u32>,
+        sub_idx: Option<u32>,
+        /// `(variant struct tag, leaf)` in dispatch order.
+        arms: Vec<(u32, ArmLeaf)>,
+        /// The terminal else: a boxed integer constant.
+        default_k: i64,
+        ops: Vec<Op>,
+    },
     /// Cross-function composition: a non-recursive `Int -> Int` caller whose body
     /// is a unary chain of calls to other user functions, each of which is itself
     /// a straight-line integer shape (self-sum or a nested chain). The obligation
@@ -268,8 +368,15 @@ enum Cert {
 }
 
 impl Cert {
-    fn name(&self) -> &str {
+    fn inner(&self) -> &Cert {
         match self {
+            Cert::NonRecursive { inner } => inner,
+            _ => self,
+        }
+    }
+
+    fn name(&self) -> &str {
+        match self.inner() {
             Cert::StraightLine { name, .. }
             | Cert::Recursive { name, .. }
             | Cert::AccumulatorRecursive { name, .. }
@@ -279,11 +386,13 @@ impl Cert {
             | Cert::VerbatimWidenedMatch { name, .. }
             | Cert::IntRangePredicate { name, .. }
             | Cert::AdtMatch { name, .. }
+            | Cert::VariantDispatch { name, .. }
             | Cert::Composition { name, .. } => name,
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
     fn self_idx(&self) -> u32 {
-        match self {
+        match self.inner() {
             Cert::StraightLine { self_idx, .. }
             | Cert::Recursive { self_idx, .. }
             | Cert::AccumulatorRecursive { self_idx, .. }
@@ -293,11 +402,13 @@ impl Cert {
             | Cert::VerbatimWidenedMatch { self_idx, .. }
             | Cert::IntRangePredicate { self_idx, .. }
             | Cert::AdtMatch { self_idx, .. }
+            | Cert::VariantDispatch { self_idx, .. }
             | Cert::Composition { self_idx, .. } => *self_idx,
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
     fn carrier(&self) -> u32 {
-        match self {
+        match self.inner() {
             Cert::StraightLine { carrier, .. }
             | Cert::Recursive { carrier, .. }
             | Cert::AccumulatorRecursive { carrier, .. }
@@ -307,25 +418,29 @@ impl Cert {
             | Cert::VerbatimWidenedMatch { carrier, .. }
             | Cert::IntRangePredicate { carrier, .. }
             | Cert::AdtMatch { carrier, .. }
+            | Cert::VariantDispatch { carrier, .. }
             | Cert::Composition { carrier, .. } => *carrier,
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
     fn arity(&self) -> usize {
-        match self {
+        match self.inner() {
             Cert::StraightLine { .. } | Cert::Recursive { .. } => 1,
             Cert::AccumulatorRecursive { .. } => 2,
-            Cert::AdtConstructor { field_count, .. } => *field_count as usize,
+            Cert::AdtConstructor { arity, .. } => *arity,
             Cert::FieldProjection { .. }
             | Cert::WidenedIntMatch { .. }
             | Cert::VerbatimWidenedMatch { .. }
             | Cert::IntRangePredicate { .. }
             | Cert::AdtMatch { .. }
+            | Cert::VariantDispatch { .. }
             | Cert::Composition { .. } => 1,
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
     /// The Lean expression for the model this export simulates.
     fn model_expr(&self) -> String {
-        match self {
+        match self.inner() {
             Cert::StraightLine { k, .. } => format!("fun ns => ns.headD 0 + ({k})"),
             Cert::Recursive { name, .. } | Cert::Composition { name, .. } => {
                 format!("fun ns => {name} (ns.headD 0)")
@@ -338,13 +453,15 @@ impl Cert {
             | Cert::WidenedIntMatch { .. }
             | Cert::VerbatimWidenedMatch { .. }
             | Cert::IntRangePredicate { .. }
-            | Cert::AdtMatch { .. } => "fun x => x".to_string(),
+            | Cert::AdtMatch { .. }
+            | Cert::VariantDispatch { .. } => "fun x => x".to_string(),
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
     /// The Lean expression for the 2-arg host builder in `Obligation` shape
     /// (`add → sub → HostTbl`); straight-line ignores `sub`.
     fn host_expr(&self) -> String {
-        match self {
+        match self.inner() {
             Cert::StraightLine { name, .. } => format!("fun add _ => CertModule.{name}Host add"),
             Cert::Recursive { name, .. }
             | Cert::AccumulatorRecursive { name, .. }
@@ -359,7 +476,10 @@ impl Cert {
             | Cert::IntRangePredicate { name, .. } => {
                 format!("fun _ _ => CertModule.{name}Host")
             }
-            Cert::AdtMatch { name, .. } => format!("CertModule.{name}Host"),
+            Cert::AdtMatch { name, .. } | Cert::VariantDispatch { name, .. } => {
+                format!("CertModule.{name}Host")
+            }
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
     /// The source-level `Dom`/`Cod` type names recorded in the manifest JSON so
@@ -368,7 +488,7 @@ impl Cert {
     /// rendered ASCII-safe.
     fn source_dom_cod(&self, model_info: &ModelInfo) -> (String, String) {
         let ascii = |s: &str| ascii_type_name(s);
-        match self {
+        match self.inner() {
             Cert::StraightLine { .. }
             | Cert::Recursive { .. }
             | Cert::AccumulatorRecursive { .. }
@@ -376,7 +496,9 @@ impl Cert {
             Cert::FieldProjection { .. } => ("WVal x WVal".to_string(), "WVal".to_string()),
             Cert::VerbatimWidenedMatch { .. } => ("WVal".to_string(), "WVal".to_string()),
             Cert::IntRangePredicate { .. } => ("Int".to_string(), "Bool".to_string()),
-            Cert::AdtMatch { name, .. } | Cert::WidenedIntMatch { name, .. } => {
+            Cert::AdtMatch { name, .. }
+            | Cert::VariantDispatch { name, .. }
+            | Cert::WidenedIntMatch { name, .. } => {
                 let dom = model_info
                     .fns
                     .get(name)
@@ -385,7 +507,7 @@ impl Cert {
                     .unwrap_or_else(|| "Op".to_string());
                 (dom, "Int".to_string())
             }
-            Cert::AdtConstructor { field_count, .. } => {
+            Cert::AdtConstructor { arity, .. } => {
                 if adt_constructor_uses_model(self, model_info) {
                     let cod = model_info
                         .fns
@@ -394,7 +516,7 @@ impl Cert {
                         .unwrap_or_else(|| "Unit".to_string());
                     ("Int".to_string(), cod)
                 } else {
-                    let dom = if *field_count == 1 {
+                    let dom = if *arity == 1 {
                         "WVal".to_string()
                     } else {
                         "WVal x WVal".to_string()
@@ -402,6 +524,7 @@ impl Cert {
                     (dom, "WVal".to_string())
                 }
             }
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
 }
@@ -441,7 +564,7 @@ impl Analysis {
 
 /// Disassemble the emitted module and classify each user function.
 pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
-    let (user_fns, box_idx, user_idx_set, carrier) = disassemble(wasm_bytes)?;
+    let (user_fns, box_idx, user_idx_set, carrier, host_roles) = disassemble(wasm_bytes)?;
 
     // Index the user functions so the composition pass can walk the call graph.
     let fns: std::collections::HashMap<u32, &UserFn> =
@@ -450,7 +573,7 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
     let mut certs = Vec::new();
     let mut declined = Vec::new();
     for f in &user_fns {
-        match classify(f, box_idx, carrier, &user_idx_set, &fns) {
+        match classify(f, box_idx, carrier, &user_idx_set, &fns, &host_roles) {
             Ok(c) => certs.push(c),
             Err(reason) => declined.push((f.name.clone(), reason)),
         }
@@ -462,7 +585,7 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
     let mut has_add = false;
     let mut has_sub = false;
     for c in &certs {
-        match c {
+        match c.inner() {
             Cert::StraightLine { .. } => {
                 has_box = true;
                 has_add = true;
@@ -488,6 +611,13 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
                 has_box = true;
                 has_sub = true;
             }
+            Cert::VariantDispatch {
+                add_idx, sub_idx, ..
+            } => {
+                has_box = true;
+                has_add |= add_idx.is_some();
+                has_sub |= sub_idx.is_some();
+            }
             Cert::Composition {
                 has_add: a,
                 has_sub: s,
@@ -498,6 +628,7 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
                 has_sub |= *s;
                 has_box |= *b;
             }
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
     if has_box {
@@ -591,7 +722,7 @@ pub enum ObligationFace {
 
 impl ObligationFace {
     fn of_cert(c: &Cert) -> ObligationFace {
-        match c {
+        match c.inner() {
             Cert::StraightLine { .. }
             | Cert::Recursive { .. }
             | Cert::AccumulatorRecursive { .. }
@@ -601,8 +732,11 @@ impl ObligationFace {
             },
             Cert::IntRangePredicate { .. } => ObligationFace::IntPredicate,
             Cert::VerbatimWidenedMatch { .. } => ObligationFace::VerbatimWidened,
-            Cert::AdtMatch { .. } | Cert::WidenedIntMatch { .. } => ObligationFace::AdtMatch,
+            Cert::AdtMatch { .. } | Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. } => {
+                ObligationFace::AdtMatch
+            }
             Cert::AdtConstructor { .. } => ObligationFace::AdtConstructor,
+            Cert::NonRecursive { .. } => unreachable!(),
         }
     }
 
@@ -767,12 +901,12 @@ impl ObligationFace {
 /// match `render_manifest_lean`'s `obligations` list, so the checker's
 /// list-equality `rfl`s bind position for position.
 pub fn rederive_obligations(wasm_bytes: &[u8]) -> Result<Vec<RederivedObligation>, String> {
-    let (user_fns, box_idx, user_idx_set, carrier) = disassemble(wasm_bytes)?;
+    let (user_fns, box_idx, user_idx_set, carrier, host_roles) = disassemble(wasm_bytes)?;
     let fns: std::collections::HashMap<u32, &UserFn> =
         user_fns.iter().map(|f| (f.wasm_idx, f)).collect();
     let mut out = Vec::new();
     for f in &user_fns {
-        if let Ok(c) = classify(f, box_idx, carrier, &user_idx_set, &fns) {
+        if let Ok(c) = classify(f, box_idx, carrier, &user_idx_set, &fns, &host_roles) {
             out.push(RederivedObligation {
                 name: c.name().to_string(),
                 code: render_code_value(&c),
@@ -793,23 +927,27 @@ type DisasmResult = (
     u32,
     std::collections::HashSet<u32>,
     Option<u32>,
+    std::collections::HashMap<u32, HostRole>,
 );
 
 fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
-    use wasmparser::{CompositeInnerType, Operator, Parser, Payload, StorageType, ValType};
+    use wasmparser::{
+        CompositeInnerType, DataKind, Operator, Parser, Payload, StorageType, ValType,
+    };
 
     let mut num_imported_funcs: u32 = 0;
     // defined-function index -> declared type index
     let mut func_type_idx: Vec<u32> = Vec::new();
-    // type index -> arity (param count) for func types
-    let mut type_arity: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+    // type index -> byte-level signature (param kinds, result kind) for func types
+    let mut type_sigs: std::collections::HashMap<u32, (Vec<TyKind>, Option<TyKind>)> =
+        std::collections::HashMap::new();
     // type index -> struct field count
     let mut struct_field_counts: std::collections::HashMap<u32, u32> =
         std::collections::HashMap::new();
     // export name -> func index
     let mut exports: Vec<(String, u32)> = Vec::new();
-    // per defined-function code entry: (nlocals, ops, calls, has_loop_or_branch)
-    let mut code_entries: Vec<(usize, Vec<Op>, Vec<u32>, bool)> = Vec::new();
+    let mut code_entries: Vec<CodeEntry> = Vec::new();
+    let mut data_segments: Vec<Option<Vec<u8>>> = Vec::new();
     let mut carrier: Option<u32> = None;
     let mut next_type_idx: u32 = 0;
 
@@ -824,7 +962,29 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                         next_type_idx += 1;
                         match &sub.composite_type.inner {
                             CompositeInnerType::Func(ft) => {
-                                type_arity.insert(idx, ft.params().len());
+                                let kind = |vt: &ValType| match vt {
+                                    ValType::I64 => TyKind::I64,
+                                    ValType::I32 => TyKind::I32,
+                                    ValType::F64 => TyKind::F64,
+                                    ValType::Ref(rt) => match heap_type_index(rt.heap_type()) {
+                                        Some(t) => TyKind::Ref(t),
+                                        None => match rt.heap_type() {
+                                            wasmparser::HeapType::Abstract {
+                                                ty: wasmparser::AbstractHeapType::Eq,
+                                                ..
+                                            } => TyKind::Eqref,
+                                            _ => TyKind::Other,
+                                        },
+                                    },
+                                    _ => TyKind::Other,
+                                };
+                                type_sigs.insert(
+                                    idx,
+                                    (
+                                        ft.params().iter().map(kind).collect(),
+                                        ft.results().first().map(kind),
+                                    ),
+                                );
                             }
                             // Int carrier: 3 fields, {i64, ref, i32}.
                             CompositeInnerType::Struct(st)
@@ -887,6 +1047,9 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                 let mut ops = Vec::new();
                 let mut calls = Vec::new();
                 let mut has_loop_or_branch = false;
+                let mut saw_i64_add = false;
+                let mut saw_i64_sub = false;
+                let mut first_i64_arith = None;
                 let mut opr = body
                     .get_operators_reader()
                     .map_err(|e| format!("ops reader: {e}"))?;
@@ -897,6 +1060,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                         Operator::LocalSet { local_index } => Op::LocalSet(local_index),
                         Operator::I64Const { value } => Op::I64Const(value),
                         Operator::I32Const { value } => Op::I32Const(value),
+                        Operator::F64Const { value } => Op::F64Const(value.bits()),
                         Operator::RefTestNonNull { hty } | Operator::RefTestNullable { hty } => {
                             heap_type_index(hty).map(Op::RefTest).unwrap_or(Op::Other)
                         }
@@ -914,10 +1078,40 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                             struct_type_index,
                             field_index,
                         } => Op::StructGet(struct_type_index, field_index),
+                        Operator::ArrayNewData {
+                            array_type_index,
+                            array_data_index,
+                        } => {
+                            let literal_operands =
+                                match (ops.get(ops.len().wrapping_sub(2)), ops.last()) {
+                                    (Some(Op::I32Const(0)), Some(Op::I32Const(len))) => Some(*len),
+                                    _ => None,
+                                };
+                            if let Some(len) = literal_operands {
+                                Op::ArrayNewDataUnresolved {
+                                    type_idx: array_type_index,
+                                    data_idx: array_data_index,
+                                    offset: 0,
+                                    len,
+                                }
+                            } else {
+                                Op::Other
+                            }
+                        }
                         Operator::RefNull { .. } => Op::RefNull,
                         Operator::RefIsNull => Op::RefIsNull,
                         Operator::I64LeS => Op::I64LeS,
                         Operator::I64GeS => Op::I64GeS,
+                        Operator::I64Add => {
+                            saw_i64_add = true;
+                            first_i64_arith.get_or_insert(HostRole::Add);
+                            Op::Other
+                        }
+                        Operator::I64Sub => {
+                            saw_i64_sub = true;
+                            first_i64_arith.get_or_insert(HostRole::Sub);
+                            Op::Other
+                        }
                         Operator::I32LtS => Op::I32LtS,
                         Operator::I32GtS => Op::I32GtS,
                         Operator::If { .. } => Op::If,
@@ -943,7 +1137,27 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                     };
                     ops.push(mapped);
                 }
-                code_entries.push((nlocals, ops, calls, has_loop_or_branch));
+                let host_role = match (saw_i64_add, saw_i64_sub) {
+                    (true, false) => Some(HostRole::Add),
+                    (false, true) => Some(HostRole::Sub),
+                    _ => first_i64_arith,
+                };
+                code_entries.push(CodeEntry {
+                    nlocals,
+                    ops,
+                    calls,
+                    has_loop_or_branch,
+                    host_role,
+                });
+            }
+            Payload::DataSection(reader) => {
+                for data in reader {
+                    let data = data.map_err(|e| format!("data read: {e}"))?;
+                    match data.kind {
+                        DataKind::Passive => data_segments.push(Some(data.data.to_vec())),
+                        DataKind::Active { .. } => data_segments.push(None),
+                    }
+                }
             }
             _ => {}
         }
@@ -974,33 +1188,68 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
     let user_idx_set: std::collections::HashSet<u32> =
         user_exports.iter().map(|(_, i)| *i).collect();
 
+    let host_roles = code_entries
+        .iter()
+        .enumerate()
+        .filter_map(|(def_idx, entry)| {
+            entry
+                .host_role
+                .map(|role| (num_imported_funcs + def_idx as u32, role))
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+
     let mut user_fns = Vec::new();
     for (name, wasm_idx) in user_exports {
         let Some(def_idx) = wasm_idx.checked_sub(num_imported_funcs) else {
             continue;
         };
-        let Some((nlocals, ops, calls, has_loop_or_branch)) =
-            code_entries.get(def_idx as usize).cloned()
-        else {
+        let Some(entry) = code_entries.get(def_idx as usize).cloned() else {
             continue;
         };
-        let arity = func_type_idx
+        let ops = resolve_data_ops(entry.ops, &data_segments);
+        let (params, result) = func_type_idx
             .get(def_idx as usize)
-            .and_then(|ti| type_arity.get(ti))
-            .copied()
-            .unwrap_or(0);
+            .and_then(|ti| type_sigs.get(ti))
+            .cloned()
+            .unwrap_or((Vec::new(), None));
         user_fns.push(UserFn {
             name,
             wasm_idx,
-            arity,
-            nlocals,
+            arity: params.len(),
+            params,
+            result,
+            nlocals: entry.nlocals,
             ops,
-            calls,
-            has_loop_or_branch,
+            calls: entry.calls,
+            has_loop_or_branch: entry.has_loop_or_branch,
         });
     }
 
-    Ok((user_fns, box_idx, user_idx_set, carrier))
+    Ok((user_fns, box_idx, user_idx_set, carrier, host_roles))
+}
+
+fn resolve_data_ops(ops: Vec<Op>, data_segments: &[Option<Vec<u8>>]) -> Vec<Op> {
+    ops.into_iter()
+        .map(|op| match op {
+            Op::ArrayNewDataUnresolved {
+                type_idx,
+                data_idx,
+                offset,
+                len,
+            } if offset == 0 && len >= 0 => {
+                let Some(Some(bytes)) = data_segments.get(data_idx as usize) else {
+                    return Op::Other;
+                };
+                if bytes.len() == len as usize {
+                    Op::ArrayNewData(type_idx, bytes.clone())
+                } else {
+                    Op::Other
+                }
+            }
+            Op::ArrayNewDataUnresolved { .. } => Op::Other,
+            other => other,
+        })
+        .collect()
 }
 
 fn heap_type_index(hty: wasmparser::HeapType) -> Option<u32> {
@@ -1020,33 +1269,8 @@ fn classify(
     carrier: Option<u32>,
     user_idx_set: &std::collections::HashSet<u32>,
     fns: &std::collections::HashMap<u32, &UserFn>,
+    host_roles: &std::collections::HashMap<u32, HostRole>,
 ) -> Result<Cert, String> {
-    // Strip a trailing `End` (function end) for the straight-line match.
-    let ops: &[Op] = match f.ops.last() {
-        Some(Op::End) => &f.ops[..f.ops.len() - 1],
-        _ => &f.ops,
-    };
-
-    // Straight-line add-constant: [localGet 0, i64Const k, call box, call add].
-    if let [Op::LocalGet(0), Op::I64Const(k), Op::Call(b), Op::Call(a)] = ops
-        && *b == box_idx
-        && *a != f.wasm_idx
-        && !user_idx_set.contains(a)
-        && f.arity == 1
-    {
-        let carrier =
-            carrier.ok_or_else(|| "carrier struct type not found in module".to_string())?;
-        return Ok(Cert::StraightLine {
-            name: f.name.clone(),
-            self_idx: f.wasm_idx,
-            nlocals: f.nlocals,
-            carrier,
-            k: *k,
-            box_idx,
-            add_idx: *a,
-        });
-    }
-
     // sumTo-shape self-recursion.
     if let Some(cert) = match_recursive(f, box_idx) {
         return Ok(cert);
@@ -1057,28 +1281,10 @@ fn classify(
         return Ok(cert);
     }
 
-    if let Some(cert) = match_adt_constructor(f, box_idx, carrier) {
-        return Ok(cert);
-    }
-
-    if let Some(cert) = match_field_projection(f, carrier) {
-        return Ok(cert);
-    }
-
-    if let Some(cert) = match_widened_int_match(f, box_idx, carrier) {
-        return Ok(cert);
-    }
-
-    if let Some(cert) = match_verbatim_widened_match(f, carrier) {
-        return Ok(cert);
-    }
-
-    if let Some(cert) = match_int_range_predicate(f, carrier) {
-        return Ok(cert);
-    }
-
-    if let Some(cert) = match_adt_match(f, box_idx, carrier) {
-        return Ok(cert);
+    if let Some(cert) = walk_nonrecursive(f, box_idx, carrier, user_idx_set, host_roles) {
+        return Ok(Cert::NonRecursive {
+            inner: Box::new(cert),
+        });
     }
 
     // ---- decline with an honest reason -----------------------------------
@@ -1122,6 +1328,643 @@ fn classify(
         );
     }
     Err("body does not match a certified template (straight-line add-constant, single-argument self-recursion, two-argument accumulator recursion, or non-recursive ADT constructor/projection/match)".to_string())
+}
+
+#[derive(Clone)]
+enum InstrNode {
+    Op(Op),
+    IfElse(Vec<InstrNode>, Vec<InstrNode>),
+}
+
+struct StructuralBody {
+    normalized_ops: Vec<Op>,
+    tree: Vec<InstrNode>,
+}
+
+fn walk_nonrecursive(
+    f: &UserFn,
+    box_idx: u32,
+    carrier: Option<u32>,
+    user_idx_set: &std::collections::HashSet<u32>,
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<Cert> {
+    if f.arity == 0 || f.arity > 2 {
+        return None;
+    }
+    let body = structural_body(f, box_idx, user_idx_set, host_roles)?;
+    nr_straightline(f, &body, box_idx, carrier, host_roles)
+        .or_else(|| nr_adt_constructor(f, &body, box_idx, carrier))
+        .or_else(|| nr_field_projection(f, &body, carrier))
+        .or_else(|| nr_ref_dispatch_match(f, &body, box_idx, carrier, host_roles))
+        .or_else(|| nr_int_range_predicate(f, &body, carrier))
+        .or_else(|| nr_adt_match(f, &body, box_idx, carrier, host_roles))
+        .or_else(|| nr_variant_dispatch(f, &body, box_idx, carrier, host_roles))
+}
+
+/// General variant dispatch: walk a `ref.test` chain whose hit arms each
+/// reduce to one recognised leaf and whose terminal else is a boxed constant.
+/// Anything off this grammar returns `None` (falls through to the honest
+/// decline reasons). Recognition keys on the parsed tree only — no full
+/// opcode sequence is pinned, so arm count, order and per-arm semantics are
+/// free within the leaf vocabulary.
+fn nr_variant_dispatch(
+    f: &UserFn,
+    body: &StructuralBody,
+    box_idx: u32,
+    carrier: Option<u32>,
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<Cert> {
+    let carrier = carrier?;
+    // Typed admission: the byte signature must be exactly "one user ADT value
+    // in, one Int carrier out" — the claim-shape as the bytes declare it, not
+    // a bare parameter count.
+    if f.params.as_slice() != [TyKind::Eqref] || f.result != Some(TyKind::Ref(carrier)) {
+        return None;
+    }
+    let (arms, default_k) = dispatch_chain(&body.tree, box_idx, host_roles)?;
+    if arms.is_empty() {
+        return None;
+    }
+    // No duplicate variant tags.
+    let mut tags: Vec<u32> = arms.iter().map(|(t, _)| *t).collect();
+    tags.sort_unstable();
+    tags.dedup();
+    if tags.len() != arms.len() {
+        return None;
+    }
+    // At most one host helper per contract role across all arms.
+    let mut add_idx = None;
+    let mut sub_idx = None;
+    for op in body.normalized_ops.iter() {
+        let Op::Call(idx) = op else { continue };
+        match host_roles.get(idx) {
+            Some(HostRole::Add) => {
+                if add_idx.is_some_and(|a: u32| a != *idx) {
+                    return None;
+                }
+                add_idx = Some(*idx);
+            }
+            Some(HostRole::Sub) => {
+                if sub_idx.is_some_and(|s: u32| s != *idx) {
+                    return None;
+                }
+                sub_idx = Some(*idx);
+            }
+            None => {}
+        }
+    }
+    Some(Cert::VariantDispatch {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier,
+        box_idx,
+        add_idx,
+        sub_idx,
+        arms,
+        default_k,
+        ops: strip_trailing_end(&f.ops).to_vec(),
+    })
+}
+
+/// Parse `[localGet 0, refTest t, ifElse hit els]` where `els` continues the
+/// chain or terminates in a boxed constant. Returns the arms in dispatch order
+/// plus the default constant.
+fn dispatch_chain(
+    nodes: &[InstrNode],
+    box_idx: u32,
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<(Vec<(u32, ArmLeaf)>, i64)> {
+    let [
+        InstrNode::Op(Op::LocalGet(0)),
+        InstrNode::Op(Op::RefTest(tag)),
+        InstrNode::IfElse(hit, els),
+    ] = nodes
+    else {
+        // Terminal else: a boxed integer constant.
+        return match nodes {
+            [InstrNode::Op(Op::I64Const(k)), InstrNode::Op(Op::Call(b))] if *b == box_idx => {
+                Some((Vec::new(), *k))
+            }
+            _ => None,
+        };
+    };
+    if has_branch(hit) {
+        return None;
+    }
+    let leaf = leaf_of_arm(&node_ops(hit), *tag, box_idx, host_roles)?;
+    let (mut rest, default_k) = dispatch_chain(els, box_idx, host_roles)?;
+    rest.insert(0, (*tag, leaf));
+    Some((rest, default_k))
+}
+
+/// Classify one hit arm as a leaf. The arm must open with the payload
+/// projection `localGet 0; refCast tag; structGet tag 0`; the remainder is
+/// either empty (projection), a boxed constant fed to a contracted host with
+/// the payload first, or — through the emitter's one-local spill — the
+/// constant first. Anything else: no leaf.
+fn leaf_of_arm(
+    ops: &[Op],
+    tag: u32,
+    box_idx: u32,
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<ArmLeaf> {
+    use Op::*;
+    let rest = match ops {
+        [LocalGet(0), RefCast(t), StructGet(t2, 0), rest @ ..] if t == &tag && t2 == &tag => rest,
+        _ => return None,
+    };
+    let role = |idx: &u32| host_roles.get(idx).copied();
+    match rest {
+        [] => Some(ArmLeaf::Proj),
+        // payload first: x op k
+        [I64Const(k), Call(b), Call(h)] if *b == box_idx => Some(ArmLeaf::HostOp {
+            role: role(h)?,
+            k: *k,
+            const_first: false,
+        }),
+        // constant first through the spill local: k op x
+        [LocalSet(n), I64Const(k), Call(b), LocalGet(n2), Call(h)] if *b == box_idx && n == n2 => {
+            Some(ArmLeaf::HostOp {
+                role: role(h)?,
+                k: *k,
+                const_first: true,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn structural_body(
+    f: &UserFn,
+    box_idx: u32,
+    user_idx_set: &std::collections::HashSet<u32>,
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<StructuralBody> {
+    if f.has_loop_or_branch {
+        return None;
+    }
+    let ops = strip_trailing_end(&f.ops);
+    if ops
+        .iter()
+        .any(|op| matches!(op, Op::Other | Op::ReturnCall(_)))
+    {
+        return None;
+    }
+    for op in ops {
+        if let Op::Call(idx) = op {
+            if *idx == f.wasm_idx || user_idx_set.contains(idx) {
+                return None;
+            }
+            if *idx != box_idx && !host_roles.contains_key(idx) {
+                return None;
+            }
+        }
+    }
+    let normalized_ops = normalize_local_hops(ops);
+    let mut pos = 0usize;
+    let tree = parse_instr_tree(&normalized_ops, &mut pos, false)?;
+    if pos != normalized_ops.len() {
+        return None;
+    }
+    Some(StructuralBody {
+        normalized_ops,
+        tree,
+    })
+}
+
+fn parse_instr_tree(ops: &[Op], pos: &mut usize, nested: bool) -> Option<Vec<InstrNode>> {
+    let mut out = Vec::new();
+    while *pos < ops.len() {
+        match &ops[*pos] {
+            Op::Else | Op::End if nested => break,
+            Op::If => {
+                *pos += 1;
+                let then_b = parse_instr_tree(ops, pos, true)?;
+                if !matches!(ops.get(*pos), Some(Op::Else)) {
+                    return None;
+                }
+                *pos += 1;
+                let else_b = parse_instr_tree(ops, pos, true)?;
+                if !matches!(ops.get(*pos), Some(Op::End)) {
+                    return None;
+                }
+                *pos += 1;
+                out.push(InstrNode::IfElse(then_b, else_b));
+            }
+            Op::Else | Op::End => return None,
+            op => {
+                out.push(InstrNode::Op(op.clone()));
+                *pos += 1;
+            }
+        }
+    }
+    Some(out)
+}
+
+fn normalize_local_hops(ops: &[Op]) -> Vec<Op> {
+    let mut aliases = std::collections::HashMap::<u32, u32>::new();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < ops.len() {
+        if let (Some(Op::LocalGet(src)), Some(Op::LocalSet(dst))) = (ops.get(i), ops.get(i + 1)) {
+            let src = *aliases.get(src).unwrap_or(src);
+            aliases.insert(*dst, src);
+            i += 2;
+            continue;
+        }
+        let op = match &ops[i] {
+            Op::LocalGet(idx) => Op::LocalGet(*aliases.get(idx).unwrap_or(idx)),
+            other => other.clone(),
+        };
+        out.push(op);
+        i += 1;
+    }
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let mut compact = Vec::new();
+        let mut j = 0usize;
+        while j < out.len() {
+            if j + 2 < out.len()
+                && matches!(
+                    out[j],
+                    Op::StructGet(..)
+                        | Op::RefCast(..)
+                        | Op::I64Const(..)
+                        | Op::I32Const(..)
+                        | Op::F64Const(..)
+                        | Op::RefNull
+                        | Op::ArrayNewData(..)
+                )
+                && matches!((&out[j + 1], &out[j + 2]), (Op::LocalSet(a), Op::LocalGet(b)) if a == b)
+            {
+                compact.push(out[j].clone());
+                j += 3;
+                changed = true;
+            } else {
+                compact.push(out[j].clone());
+                j += 1;
+            }
+        }
+        out = compact;
+    }
+    out
+}
+
+fn flat_ops(nodes: &[InstrNode]) -> Vec<&Op> {
+    let mut out = Vec::new();
+    collect_flat_ops(nodes, &mut out);
+    out
+}
+
+fn collect_flat_ops<'a>(nodes: &'a [InstrNode], out: &mut Vec<&'a Op>) {
+    for node in nodes {
+        match node {
+            InstrNode::Op(op) => out.push(op),
+            InstrNode::IfElse(then_b, else_b) => {
+                collect_flat_ops(then_b, out);
+                collect_flat_ops(else_b, out);
+            }
+        }
+    }
+}
+
+fn node_ops(nodes: &[InstrNode]) -> Vec<Op> {
+    flat_ops(nodes).into_iter().cloned().collect()
+}
+
+fn has_branch(nodes: &[InstrNode]) -> bool {
+    nodes.iter().any(|node| match node {
+        InstrNode::Op(_) => false,
+        InstrNode::IfElse(..) => true,
+    })
+}
+
+fn nr_straightline(
+    f: &UserFn,
+    body: &StructuralBody,
+    box_idx: u32,
+    carrier: Option<u32>,
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<Cert> {
+    use Op::*;
+    if has_branch(&body.tree) {
+        return None;
+    }
+    let [LocalGet(0), I64Const(k), Call(b), Call(a)] = body.normalized_ops.as_slice() else {
+        return None;
+    };
+    if *b != box_idx || host_roles.get(a) != Some(&HostRole::Add) {
+        return None;
+    }
+    Some(Cert::StraightLine {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier: carrier?,
+        k: *k,
+        box_idx,
+        add_idx: *a,
+    })
+}
+
+fn nr_adt_constructor(
+    f: &UserFn,
+    body: &StructuralBody,
+    box_idx: u32,
+    carrier: Option<u32>,
+) -> Option<Cert> {
+    use Op::*;
+    if has_branch(&body.tree) || f.arity == 0 || f.arity > 2 {
+        return None;
+    }
+    let ops = &body.normalized_ops;
+    let (last, prefix) = ops.split_last()?;
+    let StructNew(struct_idx, field_count) = last else {
+        return None;
+    };
+    if *struct_idx == carrier? {
+        return None;
+    }
+    let mut fields = Vec::new();
+    for op in prefix {
+        match op {
+            LocalGet(i) if (*i as usize) < f.arity => fields.push(ConstructorField::Local(*i)),
+            RefNull => fields.push(ConstructorField::Null),
+            _ => return None,
+        }
+    }
+    if fields.len() != *field_count as usize {
+        return None;
+    }
+    let mut seen_locals = fields
+        .iter()
+        .filter_map(|field| match field {
+            ConstructorField::Local(i) => Some(*i),
+            ConstructorField::Null => None,
+        })
+        .collect::<Vec<_>>();
+    seen_locals.sort_unstable();
+    seen_locals.dedup();
+    if seen_locals != (0..f.arity as u32).collect::<Vec<_>>() {
+        return None;
+    }
+    if f.calls.iter().any(|c| *c == f.wasm_idx || *c != box_idx) {
+        return None;
+    }
+    Some(Cert::AdtConstructor {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier: carrier?,
+        struct_idx: *struct_idx,
+        field_count: *field_count,
+        arity: f.arity,
+        fields,
+        ops: strip_trailing_end(&f.ops).to_vec(),
+    })
+}
+
+fn nr_field_projection(f: &UserFn, body: &StructuralBody, carrier: Option<u32>) -> Option<Cert> {
+    use Op::*;
+    if has_branch(&body.tree) || !f.calls.is_empty() {
+        return None;
+    }
+    let carrier = carrier?;
+    let mut gets = body
+        .normalized_ops
+        .iter()
+        .filter_map(|op| match op {
+            StructGet(t, field) => Some((*t, *field)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if gets.len() != 1 {
+        return None;
+    }
+    let (struct_idx, field_idx) = gets.pop()?;
+    if struct_idx == carrier || field_idx > 1 {
+        return None;
+    }
+    Some(Cert::FieldProjection {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier,
+        struct_idx,
+        field_idx,
+        ops: strip_trailing_end(&f.ops).to_vec(),
+    })
+}
+
+fn nr_ref_dispatch_match(
+    f: &UserFn,
+    body: &StructuralBody,
+    box_idx: u32,
+    carrier: Option<u32>,
+    _host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<Cert> {
+    let carrier = carrier?;
+    if body
+        .normalized_ops
+        .iter()
+        .take_while(|op| !matches!(op, Op::RefTest(_)))
+        .any(|op| matches!(op, Op::StructNew(..)))
+    {
+        return None;
+    }
+    for pair in body.tree.windows(2) {
+        let [
+            InstrNode::Op(Op::RefTest(hit)),
+            InstrNode::IfElse(hit_arm, miss_arm),
+        ] = pair
+        else {
+            continue;
+        };
+        if *hit == carrier {
+            continue;
+        }
+        let hit_ops = node_ops(hit_arm);
+        if !hit_ops
+            .iter()
+            .any(|op| matches!(op, Op::StructGet(t, 0) if t == hit))
+        {
+            continue;
+        }
+        let miss_ops = node_ops(miss_arm);
+        if matches!(miss_ops.as_slice(), [Op::I64Const(0), Op::Call(b)] if *b == box_idx) {
+            return Some(Cert::WidenedIntMatch {
+                name: f.name.clone(),
+                self_idx: f.wasm_idx,
+                nlocals: f.nlocals,
+                carrier,
+                hit_variant_idx: *hit,
+                box_idx,
+                ops: strip_trailing_end(&f.ops).to_vec(),
+            });
+        }
+        if f.calls.is_empty()
+            && let Some(default) = verbatim_default_from_ops(&miss_ops)
+        {
+            return Some(Cert::VerbatimWidenedMatch {
+                name: f.name.clone(),
+                self_idx: f.wasm_idx,
+                nlocals: f.nlocals,
+                carrier,
+                hit_variant_idx: *hit,
+                default,
+                ops: strip_trailing_end(&f.ops).to_vec(),
+            });
+        }
+    }
+    None
+}
+
+fn verbatim_default_from_ops(ops: &[Op]) -> Option<VerbatimDefault> {
+    match ops {
+        [Op::RefNull] => Some(VerbatimDefault::Null),
+        [Op::F64Const(bits)] => Some(VerbatimDefault::F64Bits(*bits)),
+        [
+            Op::I32Const(0),
+            Op::I32Const(_),
+            Op::ArrayNewData(type_idx, bytes),
+        ] => Some(VerbatimDefault::Array {
+            type_idx: *type_idx,
+            bytes: bytes.clone(),
+        }),
+        _ => None,
+    }
+}
+
+fn nr_int_range_predicate(f: &UserFn, body: &StructuralBody, carrier: Option<u32>) -> Option<Cert> {
+    if f.arity != 1 || !f.calls.is_empty() {
+        return None;
+    }
+    let carrier = carrier?;
+    // The claim is a CONJUNCTION, so the branch structure is load-bearing: the
+    // `>= k_lo` comparison feeds the final decision, whose then-arm evaluates
+    // `<= k_hi` and whose else-arm is the literal boolean false. A flat scan
+    // over both branches would also accept the disjunction spelled
+    // `match x >= lo { true -> true; false -> x <= hi }` and certify a range
+    // claim the body does not compute.
+    let (InstrNode::IfElse(then_b, else_b), head) = body.tree.split_last()? else {
+        return None;
+    };
+    if node_ops(else_b) != [Op::I32Const(0)] {
+        return None;
+    }
+    let head_ops = node_ops_of(head);
+    let then_ops = node_ops(then_b);
+    let lo = single_comparison_bound(&head_ops, carrier, |op| matches!(op, Op::I64GeS))?;
+    let hi = single_comparison_bound(&then_ops, carrier, |op| matches!(op, Op::I64LeS))?;
+    if single_comparison_bound(&head_ops, carrier, |op| matches!(op, Op::I64LeS)).is_some()
+        || single_comparison_bound(&then_ops, carrier, |op| matches!(op, Op::I64GeS)).is_some()
+    {
+        return None;
+    }
+    Some(Cert::IntRangePredicate {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier,
+        k_lo: lo,
+        k_hi: hi,
+        ops: strip_trailing_end(&f.ops).to_vec(),
+    })
+}
+
+fn node_ops_of(nodes: &[InstrNode]) -> Vec<Op> {
+    let mut out = Vec::new();
+    collect_flat_ops(nodes, &mut out);
+    out.into_iter().cloned().collect()
+}
+
+/// The bound `k` of the single `[structGet(carrier, 0), i64Const k, <cmp>]`
+/// window in `ops` — `None` when absent or ambiguous (two occurrences).
+fn single_comparison_bound(ops: &[Op], carrier: u32, cmp: fn(&Op) -> bool) -> Option<i64> {
+    let mut found = None;
+    for win in ops.windows(3) {
+        if let [Op::StructGet(c, 0), Op::I64Const(k), op] = win
+            && *c == carrier
+            && cmp(op)
+        {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(*k);
+        }
+    }
+    found
+}
+
+fn nr_adt_match(
+    f: &UserFn,
+    body: &StructuralBody,
+    box_idx: u32,
+    carrier: Option<u32>,
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<Cert> {
+    if f.arity != 1 {
+        return None;
+    }
+    let carrier = carrier?;
+    for pair in body.tree.windows(2) {
+        let [
+            InstrNode::Op(Op::RefTest(add_variant_idx)),
+            InstrNode::IfElse(add_arm, rest),
+        ] = pair
+        else {
+            continue;
+        };
+        if !node_ops(add_arm)
+            .iter()
+            .any(|op| matches!(op, Op::StructGet(t, 0) if t == add_variant_idx))
+        {
+            continue;
+        }
+        for nested in rest.windows(2) {
+            let [
+                InstrNode::Op(Op::RefTest(neg_variant_idx)),
+                InstrNode::IfElse(neg_arm, zero_arm),
+            ] = nested
+            else {
+                continue;
+            };
+            let neg_ops = node_ops(neg_arm);
+            let zero_ops = node_ops(zero_arm);
+            let Some(sub_idx) = neg_ops.iter().find_map(|op| match op {
+                Op::Call(idx) if host_roles.get(idx) == Some(&HostRole::Sub) => Some(*idx),
+                _ => None,
+            }) else {
+                continue;
+            };
+            if !neg_ops
+                .iter()
+                .any(|op| matches!(op, Op::StructGet(t, 0) if t == neg_variant_idx))
+                || !neg_ops
+                    .iter()
+                    .any(|op| matches!(op, Op::Call(b) if *b == box_idx))
+                || !matches!(zero_ops.as_slice(), [Op::I64Const(0), Op::Call(b)] if *b == box_idx)
+            {
+                continue;
+            }
+            return Some(Cert::AdtMatch {
+                name: f.name.clone(),
+                self_idx: f.wasm_idx,
+                nlocals: f.nlocals,
+                carrier,
+                add_variant_idx: *add_variant_idx,
+                neg_variant_idx: *neg_variant_idx,
+                zero_variant_idx: neg_variant_idx.checked_add(1)?,
+                box_idx,
+                sub_idx,
+                ops: strip_trailing_end(&f.ops).to_vec(),
+            });
+        }
+    }
+    None
 }
 
 /// Outcome of the cross-function composition pass on a caller.
@@ -1284,332 +2127,6 @@ fn closure_contracts(entries: &[ClosureEntry]) -> (bool, bool, bool) {
         }
     }
     (has_add, false, false)
-}
-
-fn match_adt_constructor(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Option<Cert> {
-    use Op::*;
-    let ops = strip_trailing_end(&f.ops);
-    let (last, prefix) = ops.split_last()?;
-    let StructNew(struct_idx, field_count) = last else {
-        return None;
-    };
-    // The renderer models a 1-field constructor over a user inductive with its
-    // real model type, and a 1- or 2-field constructor over any other codomain
-    // as a verbatim pack (dual of the field projection). A wider struct has no
-    // faithful rendering in this class, so it declines (fail-closed).
-    if *struct_idx == carrier? || *field_count as usize != f.arity || f.arity == 0 || f.arity > 2 {
-        return None;
-    }
-    for (i, op) in prefix.iter().enumerate() {
-        if *op != LocalGet(i as u32) {
-            return None;
-        }
-    }
-    if f.calls.iter().any(|c| *c == f.wasm_idx || *c != box_idx) {
-        return None;
-    }
-    Some(Cert::AdtConstructor {
-        name: f.name.clone(),
-        self_idx: f.wasm_idx,
-        nlocals: f.nlocals,
-        carrier: carrier?,
-        struct_idx: *struct_idx,
-        field_count: *field_count,
-        ops: ops.to_vec(),
-    })
-}
-
-fn match_field_projection(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
-    use Op::*;
-    if f.arity != 1 || !f.calls.is_empty() {
-        return None;
-    }
-    let ops = strip_trailing_end(&f.ops);
-    let carrier = carrier?;
-    // Two lowerings project a single field from a one-struct argument and
-    // return it verbatim. Both are recorded op-for-op in `code`, so the proof
-    // and the checker reason about exactly the emitted bytes.
-    //
-    //  * bare record access `u.field`:
-    //        [localGet 0, structGet t field]
-    //  * tuple / record destructuring `match p { (x, _) -> x }`, which lowers
-    //    with a scrutinee bind-and-cast preamble and a result-bind tail:
-    //        [localGet 0, localSet s, localGet s, refCast t,
-    //         structGet t field, localSet r, localGet r]
-    //
-    // The class models the argument as a two-field struct (`Dom := WVal × WVal`,
-    // `model := p.1 / p.2`), so a projected `field` beyond {0,1} has no faithful
-    // model here and declines. The bare arm is left byte-identical to the prior
-    // matcher so existing certificates are unchanged.
-    let (struct_idx, field_idx) = match ops {
-        [LocalGet(0), StructGet(t, field)] => {
-            if *t == carrier {
-                return None;
-            }
-            (*t, *field)
-        }
-        [
-            LocalGet(0),
-            LocalSet(s0),
-            LocalGet(s1),
-            RefCast(tc),
-            StructGet(tg, field),
-            LocalSet(r0),
-            LocalGet(r1),
-        ] if s0 == s1 && tc == tg && r0 == r1 && *field <= 1 && *tg != carrier => (*tg, *field),
-        _ => return None,
-    };
-    Some(Cert::FieldProjection {
-        name: f.name.clone(),
-        self_idx: f.wasm_idx,
-        nlocals: f.nlocals,
-        carrier,
-        struct_idx,
-        field_idx,
-        ops: ops.to_vec(),
-    })
-}
-
-/// Two-branch "widened" match projecting one integer-payload variant, boxing `0`
-/// for every other variant:
-///   `[localGet 0, localSet s, localGet s, refTest ht, if
-///       localGet s, refCast ht, structGet ht 0, localSet r, localGet r
-///     else
-///       i64Const 0, call box, end]`
-/// The default arm is a boxed integer `0`, which pins the codomain to `Int`; the
-/// projected field is therefore an integer carrier and the model is the source
-/// function (`jsonInt : Json -> Int`).
-fn match_widened_int_match(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Option<Cert> {
-    use Op::*;
-    if f.arity != 1 {
-        return None;
-    }
-    let carrier = carrier?;
-    let ops = strip_trailing_end(&f.ops);
-    let [
-        LocalGet(0),
-        LocalSet(s0),
-        LocalGet(s1),
-        RefTest(ht),
-        If,
-        LocalGet(s2),
-        RefCast(hc),
-        StructGet(hg, 0),
-        LocalSet(r0),
-        LocalGet(r1),
-        Else,
-        I64Const(0),
-        Call(bx),
-        End,
-    ] = ops
-    else {
-        return None;
-    };
-    if s0 != s1 || s0 != s2 || ht != hc || ht != hg || r0 != r1 || *bx != box_idx || *ht == carrier
-    {
-        return None;
-    }
-    Some(Cert::WidenedIntMatch {
-        name: f.name.clone(),
-        self_idx: f.wasm_idx,
-        nlocals: f.nlocals,
-        carrier,
-        hit_variant_idx: *ht,
-        box_idx,
-        ops: ops.to_vec(),
-    })
-}
-
-/// Two-branch match projecting one variant's first field verbatim (as a raw
-/// `WVal`) with a null-reference default:
-///   `[localGet 0, localSet s, localGet s, refTest ht, if
-///       localGet s, refCast ht, structGet ht 0, localSet r, localGet r
-///     else
-///       refNull, end]`
-/// The projected value is returned as-is (`Cod := WVal`, `verbatimRepr`), so the
-/// class needs no carrier/string representation — the shape of an empty-list or
-/// null-defaulting variant reader such as `jsonList`.
-fn match_verbatim_widened_match(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
-    use Op::*;
-    if f.arity != 1 || !f.calls.is_empty() {
-        return None;
-    }
-    let carrier = carrier?;
-    let ops = strip_trailing_end(&f.ops);
-    let [
-        LocalGet(0),
-        LocalSet(s0),
-        LocalGet(s1),
-        RefTest(ht),
-        If,
-        LocalGet(s2),
-        RefCast(hc),
-        StructGet(hg, 0),
-        LocalSet(r0),
-        LocalGet(r1),
-        Else,
-        RefNull,
-        End,
-    ] = ops
-    else {
-        return None;
-    };
-    if s0 != s1 || s0 != s2 || ht != hc || ht != hg || r0 != r1 || *ht == carrier {
-        return None;
-    }
-    Some(Cert::VerbatimWidenedMatch {
-        name: f.name.clone(),
-        self_idx: f.wasm_idx,
-        nlocals: f.nlocals,
-        carrier,
-        hit_variant_idx: *ht,
-        ops: ops.to_vec(),
-    })
-}
-
-/// Int -> Bool range predicate: two nested carrier comparisons against
-/// constants, `match cp >= k_lo { true -> cp <= k_hi; false -> false }`. Each
-/// comparison is the compiler's small/bignum dual (fast i64 arm guarded by a
-/// null-limbs check, bignum sign arm otherwise). The whole rigid op sequence is
-/// recorded in `code`; the certificate is stated over the canonical small-carrier
-/// domain, where the bignum arms are dead.
-fn match_int_range_predicate(f: &UserFn, carrier: Option<u32>) -> Option<Cert> {
-    use Op::*;
-    if f.arity != 1 || !f.calls.is_empty() {
-        return None;
-    }
-    let carrier = carrier?;
-    let ops = strip_trailing_end(&f.ops);
-    let [
-        LocalGet(0),
-        LocalSet(l0),
-        // cmp1: cp >= k_lo
-        LocalGet(l1),
-        StructGet(c0, 1),
-        RefIsNull,
-        If,
-        LocalGet(l2),
-        StructGet(c1, 0),
-        I64Const(k_lo),
-        I64GeS,
-        Else,
-        LocalGet(l3),
-        StructGet(c2, 2),
-        I32Const(0),
-        I32GtS,
-        End,
-        // outer branch on (cp >= k_lo)
-        If,
-        // then: cp <= k_hi
-        LocalGet(0),
-        LocalSet(l4),
-        LocalGet(l5),
-        StructGet(c3, 1),
-        RefIsNull,
-        If,
-        LocalGet(l6),
-        StructGet(c4, 0),
-        I64Const(k_hi),
-        I64LeS,
-        Else,
-        LocalGet(l7),
-        StructGet(c5, 2),
-        I32Const(0),
-        I32LtS,
-        End,
-        // else: false
-        Else,
-        I32Const(0),
-        End,
-    ] = ops
-    else {
-        return None;
-    };
-    let l = *l0;
-    if [l1, l2, l3, l4, l5, l6, l7].iter().any(|x| **x != l) {
-        return None;
-    }
-    if [c0, c1, c2, c3, c4, c5].iter().any(|c| **c != carrier) {
-        return None;
-    }
-    Some(Cert::IntRangePredicate {
-        name: f.name.clone(),
-        self_idx: f.wasm_idx,
-        nlocals: f.nlocals,
-        carrier,
-        k_lo: *k_lo,
-        k_hi: *k_hi,
-        ops: ops.to_vec(),
-    })
-}
-
-fn match_adt_match(f: &UserFn, box_idx: u32, carrier: Option<u32>) -> Option<Cert> {
-    use Op::*;
-    if f.arity != 1 {
-        return None;
-    }
-    let ops = strip_trailing_end(&f.ops);
-    let [
-        LocalGet(0),
-        LocalSet(scrut0),
-        LocalGet(scrut1),
-        RefTest(add_ty),
-        If,
-        LocalGet(scrut2),
-        RefCast(add_cast),
-        StructGet(add_get, 0),
-        LocalSet(add_local),
-        LocalGet(add_local2),
-        Else,
-        LocalGet(scrut3),
-        RefTest(neg_ty),
-        If,
-        LocalGet(scrut4),
-        RefCast(neg_cast),
-        StructGet(neg_get, 0),
-        LocalSet(neg_local),
-        I64Const(0),
-        Call(box_call0),
-        LocalGet(neg_local2),
-        Call(sub_idx),
-        Else,
-        I64Const(0),
-        Call(box_call1),
-        End,
-        End,
-    ] = ops
-    else {
-        return None;
-    };
-    if scrut0 != scrut1
-        || scrut0 != scrut2
-        || scrut0 != scrut3
-        || scrut0 != scrut4
-        || add_ty != add_cast
-        || add_ty != add_get
-        || neg_ty != neg_cast
-        || neg_ty != neg_get
-        || add_local != add_local2
-        || neg_local != neg_local2
-        || *box_call0 != box_idx
-        || *box_call1 != box_idx
-        || *sub_idx == f.wasm_idx
-    {
-        return None;
-    }
-    let zero_variant_idx = neg_ty.checked_add(1)?;
-    Some(Cert::AdtMatch {
-        name: f.name.clone(),
-        self_idx: f.wasm_idx,
-        nlocals: f.nlocals,
-        carrier: carrier?,
-        add_variant_idx: *add_ty,
-        neg_variant_idx: *neg_ty,
-        zero_variant_idx,
-        box_idx,
-        sub_idx: *sub_idx,
-        ops: ops.to_vec(),
-    })
 }
 
 fn strip_trailing_end(ops: &[Op]) -> &[Op] {
@@ -2037,7 +2554,7 @@ fn render_module(analysis: &Analysis, wasm_name: &str, sha: &str) -> String {
 /// `CertModule` so both the certificate proofs and the manifest reference the
 /// one definition.
 fn render_host_def(c: &Cert) -> String {
-    match c {
+    match c.inner() {
         Cert::StraightLine {
             name,
             carrier,
@@ -2107,16 +2624,40 @@ fn render_host_def(c: &Cert) -> String {
              if fn = {box_idx} then some (1, boxRef {carrier})\n  \
              else if fn = {sub_idx} then some (2, sub)\n  else none\n",
         ),
+        Cert::VariantDispatch {
+            name,
+            carrier,
+            box_idx,
+            add_idx,
+            sub_idx,
+            ..
+        } => {
+            let a = if add_idx.is_some() { "add" } else { "_add" };
+            let s = if sub_idx.is_some() { "sub" } else { "_sub" };
+            let mut chain = format!("if fn = {box_idx} then some (1, boxRef {carrier})");
+            if let Some(i) = add_idx {
+                chain.push_str(&format!("\n  else if fn = {i} then some (2, add)"));
+            }
+            if let Some(i) = sub_idx {
+                chain.push_str(&format!("\n  else if fn = {i} then some (2, sub)"));
+            }
+            format!(
+                "/-- Runtime host wiring for `{name}` (box + contracted arithmetic). -/\n\
+                 def {name}Host ({a} {s} : List WVal → Option WVal) : HostTbl := fun fn =>\n  \
+                 {chain}\n  else none\n",
+            )
+        }
         Cert::Composition { name, closure, .. } => format!(
             "/-- Runtime host wiring for `{name}`'s call closure (add contract). -/\n\
              def {name}Host (add _sub : List WVal → Option WVal) : HostTbl := fun fn =>\n    {}\n",
             compose_host_arms(closure),
         ),
+        Cert::NonRecursive { .. } => unreachable!(),
     }
 }
 
 fn render_code_def(c: &Cert) -> String {
-    let doc = match c {
+    let doc = match c.inner() {
         Cert::StraightLine { .. } => "straight-line add-constant",
         Cert::Recursive { .. } => "self-recursive",
         Cert::AccumulatorRecursive { .. } => "accumulator self-recursive",
@@ -2126,7 +2667,9 @@ fn render_code_def(c: &Cert) -> String {
         Cert::VerbatimWidenedMatch { .. } => "verbatim widened variant match",
         Cert::IntRangePredicate { .. } => "Int range predicate",
         Cert::AdtMatch { .. } => "ADT variant match",
+        Cert::VariantDispatch { .. } => "general variant dispatch",
         Cert::Composition { .. } => "cross-function composition, whole call closure",
+        Cert::NonRecursive { .. } => unreachable!(),
     };
     format!(
         "/-- Verbatim emitted body of `{name}` ({doc}). -/\n\
@@ -2144,7 +2687,7 @@ fn render_code_def(c: &Cert) -> String {
 /// byte-identical to the RHS `render_code_def` emits so the emitted `Module.lean`
 /// is unchanged.
 fn render_code_value(c: &Cert) -> String {
-    match c {
+    match c.inner() {
         Cert::StraightLine {
             self_idx,
             nlocals,
@@ -2230,6 +2773,12 @@ fn render_code_value(c: &Cert) -> String {
             nlocals,
             ops,
             ..
+        }
+        | Cert::VariantDispatch {
+            self_idx,
+            nlocals,
+            ops,
+            ..
         } => format!(
             "fun fn =>\n  \
              if fn = {self_idx} then some ⟨{arity}, {nlocals}, {body}⟩ else none",
@@ -2237,6 +2786,7 @@ fn render_code_value(c: &Cert) -> String {
             body = render_ops_value(ops),
         ),
         Cert::Composition { closure, .. } => render_closure_code_value(closure),
+        Cert::NonRecursive { .. } => unreachable!(),
     }
 }
 
@@ -2267,7 +2817,7 @@ fn render_closure_code_value(closure: &[ClosureEntry]) -> String {
 /// `holds` vacuous even with an honest `code`) fails the kernel witness.
 /// Definitionally equal to the honest `render_host_def` builder.
 fn render_host_value(c: &Cert) -> String {
-    match c {
+    match c.inner() {
         Cert::StraightLine {
             carrier,
             box_idx,
@@ -2322,12 +2872,31 @@ fn render_host_value(c: &Cert) -> String {
              if fn = {box_idx} then some (1, boxRef {carrier})\n    \
              else if fn = {sub_idx} then some (2, sub)\n    else none",
         ),
+        Cert::VariantDispatch {
+            carrier,
+            box_idx,
+            add_idx,
+            sub_idx,
+            ..
+        } => {
+            let a = if add_idx.is_some() { "add" } else { "_" };
+            let s = if sub_idx.is_some() { "sub" } else { "_" };
+            let mut chain = format!("if fn = {box_idx} then some (1, boxRef {carrier})");
+            if let Some(i) = add_idx {
+                chain.push_str(&format!("\n    else if fn = {i} then some (2, add)"));
+            }
+            if let Some(i) = sub_idx {
+                chain.push_str(&format!("\n    else if fn = {i} then some (2, sub)"));
+            }
+            format!("fun {a} {s} => fun fn =>\n    {chain}\n    else none")
+        }
         Cert::Composition { closure, .. } => {
             format!(
                 "fun add _sub => fun fn =>\n    {}",
                 compose_host_arms(closure)
             )
         }
+        Cert::NonRecursive { .. } => unreachable!(),
     }
 }
 
@@ -2400,10 +2969,12 @@ fn render_simple_op(op: &Op) -> Option<String> {
         Op::LocalSet(i) => format!(".localSet {i}"),
         Op::I64Const(n) => format!(".i64Const ({n})"),
         Op::I32Const(n) => format!(".i32Const ({n})"),
+        Op::F64Const(bits) => format!(".f64Const 0x{bits:016x}"),
         Op::RefTest(t) => format!(".refTest {t}"),
         Op::RefCast(t) => format!(".refCast {t}"),
         Op::StructNew(t, n) => format!(".structNew {t} {n}"),
         Op::StructGet(t, f) => format!(".structGet {t} {f}"),
+        Op::ArrayNewData(t, bytes) => format!(".arrayNewData {t} {}", render_nat_list(bytes)),
         Op::RefNull => ".refNull".to_string(),
         Op::RefIsNull => ".refIsNull".to_string(),
         Op::I64LeS => ".i64LeS".to_string(),
@@ -2412,8 +2983,53 @@ fn render_simple_op(op: &Op) -> Option<String> {
         Op::I32GtS => ".i32GtS".to_string(),
         Op::Call(f) => format!(".call {f}"),
         Op::ReturnCall(f) => format!(".returnCall {f}"),
-        Op::If | Op::Else | Op::End | Op::Other => return None,
+        Op::ArrayNewDataUnresolved { .. } | Op::If | Op::Else | Op::End | Op::Other => {
+            return None;
+        }
     })
+}
+
+fn render_nat_list(bytes: &[u8]) -> String {
+    let parts = bytes
+        .iter()
+        .map(|b| b.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{parts}]")
+}
+
+fn render_wval(default: &VerbatimDefault) -> String {
+    match default {
+        VerbatimDefault::Null => ".null".to_string(),
+        VerbatimDefault::F64Bits(bits) => format!(".f64v 0x{bits:016x}"),
+        VerbatimDefault::Array { type_idx, bytes } => {
+            format!(".arr {type_idx} {}", render_array_elements(bytes))
+        }
+    }
+}
+
+fn render_array_elements(bytes: &[u8]) -> String {
+    let parts = bytes
+        .iter()
+        .map(|b| format!(".i32v {}", *b as i32))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{parts}]")
+}
+
+fn render_default_guard(default: &VerbatimDefault) -> String {
+    match default {
+        VerbatimDefault::Null => {
+            "(fun w => match w with | .null => some 0 | _ => none) = some 0".to_string()
+        }
+        VerbatimDefault::F64Bits(bits) => format!(
+            "(fun w => match w with | .f64v bits => some bits | _ => none) = some (0x{bits:016x} : UInt64)"
+        ),
+        VerbatimDefault::Array { type_idx, bytes } => format!(
+            "(fun w => match w with | .arr t es => if t = {type_idx} ∧ es.length = {} then some 0 else none | _ => none) = some 0",
+            bytes.len()
+        ),
+    }
 }
 
 fn render_lean_instr_list(instrs: &[LeanInstr]) -> String {
@@ -2453,7 +3069,7 @@ fn render_certificate(
          namespace CertProofs\nopen CertPrelude CertModule AverCert AverCert.Schema\n\n",
     );
     for c in &analysis.certs {
-        match c {
+        match c.inner() {
             Cert::StraightLine { .. } => s.push_str(&render_straightline_cert(c)),
             Cert::Recursive { .. } => s.push_str(&render_recursive_cert(c)),
             Cert::AccumulatorRecursive { .. } => s.push_str(&render_accumulator_recursive_cert(c)),
@@ -2465,7 +3081,11 @@ fn render_certificate(
             Cert::IntRangePredicate { .. } => s.push_str(&render_int_range_predicate_cert(c)),
             Cert::VerbatimWidenedMatch { .. } => s.push_str(&render_verbatim_widened_cert(c)),
             Cert::AdtMatch { .. } => s.push_str(&render_adt_match_cert(c, model_info)),
+            Cert::VariantDispatch { .. } => {
+                s.push_str(&render_variant_dispatch_cert(c, model_info))
+            }
             Cert::Composition { .. } => s.push_str(&render_composition_cert(c)),
+            Cert::NonRecursive { .. } => unreachable!(),
         }
         s.push('\n');
     }
@@ -2474,6 +3094,7 @@ fn render_certificate(
 }
 
 fn render_straightline_cert(c: &Cert) -> String {
+    let c = c.inner();
     let Cert::StraightLine {
         name,
         self_idx,
@@ -3154,12 +3775,15 @@ fn render_composition_cert(c: &Cert) -> String {
 }
 
 fn render_adt_constructor_cert(c: &Cert, model_info: &ModelInfo) -> String {
+    let c = c.inner();
     let Cert::AdtConstructor {
         name,
         self_idx,
         carrier,
         struct_idx,
         field_count,
+        arity,
+        fields,
         ..
     } = c
     else {
@@ -3172,6 +3796,8 @@ fn render_adt_constructor_cert(c: &Cert, model_info: &ModelInfo) -> String {
             *carrier,
             *struct_idx,
             *field_count,
+            *arity,
+            fields,
         );
     }
     let sig = model_info.fns.get(name);
@@ -3221,22 +3847,24 @@ fn render_verbatim_constructor_cert(
     self_idx: u32,
     carrier: u32,
     struct_idx: u32,
-    field_count: u32,
+    _field_count: u32,
+    arity: usize,
+    fields: &[ConstructorField],
 ) -> String {
-    // Binders + input list + built struct for one vs two fields.
-    let (binders, input, built, intro, split) = if field_count == 1 {
-        ("(a : WVal)", "[a]", "[a]", "intro a", "")
+    // Binders + input list + built struct for one vs two parameters.
+    let (binders, input, intro, split) = if arity == 1 {
+        ("(a : WVal)", "[a]", "intro a", "")
     } else {
         (
             "(a b : WVal)",
-            "[a, b]",
             "[a, b]",
             "intro a b",
             "  rcases p with ⟨a, b⟩\n",
         )
     };
+    let built = render_constructor_fields(fields);
     // Concrete forcing input: pack carrier value(s) and decode field 0 back.
-    let concrete = if field_count == 1 {
+    let concrete = if arity == 1 {
         format!("[carrierSmall {carrier} 7]")
     } else {
         format!("[carrierSmall {carrier} 7, carrierSmall {carrier} 9]")
@@ -3274,7 +3902,22 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
     )
 }
 
+fn render_constructor_fields(fields: &[ConstructorField]) -> String {
+    let parts = fields
+        .iter()
+        .map(|field| match field {
+            ConstructorField::Local(0) => "a".to_string(),
+            ConstructorField::Local(1) => "b".to_string(),
+            ConstructorField::Local(i) => format!("x{i}"),
+            ConstructorField::Null => ".null".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{parts}]")
+}
+
 fn render_field_projection_cert(c: &Cert) -> String {
+    let c = c.inner();
     let Cert::FieldProjection {
         name,
         self_idx,
@@ -3323,6 +3966,7 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
 }
 
 fn render_widened_int_match_cert(c: &Cert, model_info: &ModelInfo) -> String {
+    let c = c.inner();
     let Cert::WidenedIntMatch {
         name,
         self_idx,
@@ -3388,11 +4032,13 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
 }
 
 fn render_verbatim_widened_cert(c: &Cert) -> String {
+    let c = c.inner();
     let Cert::VerbatimWidenedMatch {
         name,
         self_idx,
         carrier,
         hit_variant_idx,
+        default,
         ..
     } = c
     else {
@@ -3400,6 +4046,7 @@ fn render_verbatim_widened_cert(c: &Cert) -> String {
     };
     let hit = hit_variant_idx;
     let other = if *hit_variant_idx == 0 { 1 } else { 0 };
+    let default_guard = render_default_guard(default);
     let evalset = format!(
         "wFuncN, wRunF, {name}Code, {name}Host, {name}Model, b32, popArgs, initLocals, List.set"
     );
@@ -3434,14 +4081,14 @@ theorem {name}_wasm_certified :
 #print axioms {name}_wasm_certified
 
 -- Executable tripwires: the projected variant returns its first field, every
--- other value returns the null reference.
+-- other value returns the byte-derived default literal.
 def {name}HostRef : HostTbl := {name}Host
 example :
     (wFuncN {name}Code {name}HostRef 4 {self_idx} [.structv {hit} [.i64v 42]]).bind
       (fun w => match w with | .i64v n => some n | _ => none) = some 42 := by native_decide
 example :
-    (wFuncN {name}Code {name}HostRef 4 {self_idx} [.structv {other} []]).bind
-      (fun w => match w with | .null => some 0 | _ => none) = some 0 := by native_decide
+    (wFuncN {name}Code {name}HostRef 4 {self_idx} [.structv {other} []]).bind {default_guard} := by
+  native_decide
 
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
   intro S add sub hadd hsub fuel v vs w hrepr hrun
@@ -3457,6 +4104,7 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
 }
 
 fn render_int_range_predicate_cert(c: &Cert) -> String {
+    let c = c.inner();
     let Cert::IntRangePredicate {
         name,
         self_idx,
@@ -3517,7 +4165,179 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
     )
 }
 
+fn render_variant_dispatch_cert(c: &Cert, model_info: &ModelInfo) -> String {
+    let c = c.inner();
+    let Cert::VariantDispatch {
+        name,
+        self_idx,
+        carrier,
+        add_idx,
+        sub_idx,
+        arms,
+        default_k,
+        ..
+    } = c
+    else {
+        unreachable!()
+    };
+    let ty = model_info
+        .fns
+        .get(name)
+        .and_then(|s| s.params.first())
+        .map(|s| s.as_str())
+        .unwrap_or("Op");
+    let repr = format!("{ty}Repr");
+    let host_ref = format!("{name}HostRef");
+    let Some(ind) = model_info.inductives.get(ty) else {
+        // Byte-classified body without a parseable source inductive: the whole
+        // build fails, never a per-function decline (the model is only proof
+        // text, but a certificate without a model is not a certificate).
+        return format!("-- {name}: no source inductive for {ty}\nexample : False := by decide\n");
+    };
+    let base = arms.iter().map(|(t, _)| *t).min().unwrap_or(0);
+    let arm_of_tag =
+        |tag: u32| -> Option<&ArmLeaf> { arms.iter().find(|(t, _)| *t == tag).map(|(_, l)| l) };
+    let simp_run = format!(
+        "simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32, popArgs, initLocals] at hrun"
+    );
+
+    // One `cases` arm per constructor, in declaration order.
+    let mut cases = Vec::new();
+    // One executable guard per constructor path, values derived from the bytes.
+    let mut guards = Vec::new();
+    for (i, ctor) in ind.ctors.iter().enumerate() {
+        let tag = base + i as u32;
+        let cn = &ctor.name;
+        let payload = !ctor.fields.is_empty();
+        // Mapping consistency: every dispatched leaf projects a payload, so a
+        // nullary constructor landing on a dispatched tag means the min-tag
+        // base anchor is shifted (the lowest-tag constructor was elided into
+        // the default). Fail the build with a named reason instead of a
+        // baffling guard failure.
+        if arm_of_tag(tag).is_some() && !payload {
+            return format!(
+                "-- {name}: variant tag mapping mismatch ({cn} is nullary but tag {tag} is dispatched)\nexample : False := by decide\n"
+            );
+        }
+        match arm_of_tag(tag) {
+            Some(ArmLeaf::Proj) => {
+                cases.push(format!(
+                    "      | {cn} x =>\n          obtain ⟨cx, rfl, hcx⟩ := hv\n          {simp_run}\n          subst hrun\n          simpa [{name}] using hcx"
+                ));
+                guards.push(format!(
+                    "example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv {tag} [carrierSmall {carrier} 5]]).bind carrierToInt)\n    = some 5 := by native_decide"
+                ));
+            }
+            Some(ArmLeaf::HostOp {
+                role,
+                k,
+                const_first,
+            }) => {
+                let (hostfn, hyp) = match role {
+                    HostRole::Add => ("add", "hadd"),
+                    HostRole::Sub => ("sub", "hsub"),
+                };
+                let (operands, cite) = if *const_first {
+                    (
+                        format!("[carrierSmall {carrier} ({k}), cx]"),
+                        format!(
+                            "{hyp} ({k}) x (carrierSmall {carrier} ({k})) cx w' (S.smallIntro ({k})) hcx hs"
+                        ),
+                    )
+                } else {
+                    (
+                        format!("[cx, carrierSmall {carrier} ({k})]"),
+                        format!(
+                            "{hyp} x ({k}) cx (carrierSmall {carrier} ({k})) w' hcx (S.smallIntro ({k})) hs"
+                        ),
+                    )
+                };
+                cases.push(format!(
+                    "      | {cn} x =>\n          obtain ⟨cx, rfl, hcx⟩ := hv\n          {simp_run}\n          rcases hs : {hostfn} {operands} with _ | w' <;> simp [hs] at hrun\n          subst hrun\n          have := {cite}\n          simpa [{name}] using this"
+                ));
+                let sample = 5i64;
+                let expected = if *const_first {
+                    match role {
+                        HostRole::Add => k + sample,
+                        HostRole::Sub => k - sample,
+                    }
+                } else {
+                    match role {
+                        HostRole::Add => sample + k,
+                        HostRole::Sub => sample - k,
+                    }
+                };
+                guards.push(format!(
+                    "example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv {tag} [carrierSmall {carrier} {sample}]]).bind carrierToInt)\n    = some ({expected}) := by native_decide"
+                ));
+            }
+            None => {
+                // Constructor covered by the terminal default.
+                if payload {
+                    cases.push(format!(
+                        "      | {cn} x =>\n          obtain ⟨cx, rfl, hcx⟩ := hv\n          {simp_run}\n          subst hrun\n          simpa [{name}] using S.smallIntro ({default_k})"
+                    ));
+                    guards.push(format!(
+                        "example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv {tag} [carrierSmall {carrier} 5]]).bind carrierToInt)\n    = some ({default_k}) := by native_decide"
+                    ));
+                } else {
+                    cases.push(format!(
+                        "      | {cn} =>\n          subst hv\n          {simp_run}\n          subst hrun\n          simpa [{name}] using S.smallIntro ({default_k})"
+                    ));
+                    guards.push(format!(
+                        "example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv {tag} []]).bind carrierToInt)\n    = some ({default_k}) := by native_decide"
+                    ));
+                }
+            }
+        }
+    }
+    let add_ref = if add_idx.is_some() {
+        format!("(addRef {carrier})")
+    } else {
+        "(fun _ => none)".to_string()
+    };
+    let sub_ref = if sub_idx.is_some() {
+        format!("(subRef {carrier})")
+    } else {
+        "(fun _ => none)".to_string()
+    };
+    format!(
+        r#"/-! ### {name} — general variant dispatch certificate (carrier type {carrier}) -/
+
+theorem {name}_wasm_certified
+    (S : CarrierSpec {carrier})
+    (add sub : List WVal → Option WVal)
+    (hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
+    (hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w) :
+    ∀ (fuel : Nat) (o : {ty}) (v w : WVal), {repr} S o v →
+      wFuncN {name}Code ({name}Host add sub) fuel {self_idx} [v] = some w →
+      S.Repr ({name} o) w := by
+  intro fuel
+  cases fuel with
+  | zero => intro o v w hv hrun; simp [wFuncN] at hrun
+  | succ f =>
+      intro o v w hv hrun
+      cases o with
+{cases}
+
+#print axioms {name}_wasm_certified
+
+def {host_ref} : HostTbl := {name}Host {add_ref} {sub_ref}
+{guards}
+
+theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+  intro S add sub hadd hsub fuel o vs w hrepr hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  obtain ⟨v, rfl, hv⟩ := hrepr
+  simpa [AverCert.Schema.intRepr] using {name}_wasm_certified S add sub hadd hsub fuel o v w hv hrun
+"#,
+        cases = cases.join("\n"),
+        guards = guards.join("\n"),
+    )
+}
+
 fn render_adt_match_cert(c: &Cert, model_info: &ModelInfo) -> String {
+    let c = c.inner();
     let Cert::AdtMatch {
         name,
         self_idx,
@@ -3631,6 +4451,7 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
     // untrusted; the checker pins only `Cod = Int`, `codRepr = intRepr` and
     // `Nonempty Dom`.
     for c in &analysis.certs {
+        let c = c.inner();
         let Cert::WidenedIntMatch {
             hit_variant_idx, ..
         } = c
@@ -3666,6 +4487,7 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
     // proof, so the two match on the SAME compiled term (an inline match would
     // elaborate to two distinct, non-defeq auxiliaries).
     for c in &analysis.certs {
+        let c = c.inner();
         let Cert::VerbatimWidenedMatch {
             hit_variant_idx, ..
         } = c
@@ -3675,8 +4497,12 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
         out.push_str(&format!(
             "def {name}Model : CertPrelude.WVal → CertPrelude.WVal\n  \
              | .structv {hit_variant_idx} (x :: _) => x\n  \
-             | _ => .null\n\n",
+             | _ => {default}\n\n",
             name = c.name(),
+            default = match c {
+                Cert::VerbatimWidenedMatch { default, .. } => render_wval(default),
+                _ => unreachable!(),
+            },
         ));
     }
     out
@@ -3691,6 +4517,7 @@ fn widened_match_info<'a>(
     c: &Cert,
     model_info: &'a ModelInfo,
 ) -> Option<(String, &'a InductiveInfo, String)> {
+    let c = c.inner();
     let Cert::WidenedIntMatch { name, .. } = c else {
         return None;
     };
@@ -3713,13 +4540,20 @@ fn widened_match_info<'a>(
 /// makes no claim about a recursive representation (deferred, see the model
 /// stop-loss on recursive-type Repr).
 fn adt_constructor_uses_model(c: &Cert, model_info: &ModelInfo) -> bool {
+    let c = c.inner();
     let Cert::AdtConstructor {
-        name, field_count, ..
+        name,
+        field_count,
+        arity,
+        fields,
+        ..
     } = c
     else {
         return false;
     };
     *field_count == 1
+        && *arity == 1
+        && fields.as_slice() == [ConstructorField::Local(0)]
         && model_info
             .fns
             .get(name)
@@ -3730,16 +4564,30 @@ fn adt_constructor_uses_model(c: &Cert, model_info: &ModelInfo) -> bool {
 /// `(Dom type, `vs`-shape, struct-field list)` for a verbatim pack constructor
 /// of the given field count. The domain is the raw argument `WVal`s (a single
 /// value or a pair), and the model packs them into the variant struct verbatim.
-fn verbatim_ctor_shape(field_count: u32) -> (&'static str, &'static str, &'static str) {
-    if field_count == 1 {
-        ("WVal", "[p]", "[p]")
+fn verbatim_ctor_shape(
+    arity: usize,
+    fields: &[ConstructorField],
+) -> (&'static str, String, String) {
+    let args = fields
+        .iter()
+        .map(|field| match field {
+            ConstructorField::Local(0) if arity == 1 => "p".to_string(),
+            ConstructorField::Local(0) => "p.1".to_string(),
+            ConstructorField::Local(1) => "p.2".to_string(),
+            ConstructorField::Local(i) => format!("p.{i}"),
+            ConstructorField::Null => ".null".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    if arity == 1 {
+        ("WVal", "[p]".to_string(), format!("[{args}]"))
     } else {
-        ("WVal × WVal", "[p.1, p.2]", "[p.1, p.2]")
+        ("WVal × WVal", "[p.1, p.2]".to_string(), format!("[{args}]"))
     }
 }
 
 fn adt_repr_indices(c: &Cert, model_info: &ModelInfo) -> Option<(String, Vec<u32>)> {
-    match c {
+    match c.inner() {
         Cert::AdtMatch {
             name,
             add_variant_idx,
@@ -3752,6 +4600,16 @@ fn adt_repr_indices(c: &Cert, model_info: &ModelInfo) -> Option<(String, Vec<u32
                 ty,
                 vec![*add_variant_idx, *neg_variant_idx, *zero_variant_idx],
             ))
+        }
+        Cert::VariantDispatch { name, arms, .. } => {
+            let ty = model_info.fns.get(name)?.params.first()?.clone();
+            let ind = model_info.inductives.get(&ty)?;
+            // Struct tags are assigned per constructor in declaration order;
+            // anchor the base on the smallest dispatched tag. A mis-anchored
+            // base renders an unprovable `Repr` and fails the lake build —
+            // never a false certificate.
+            let base = arms.iter().map(|(t, _)| *t).min()?;
+            Some((ty, (0..ind.ctors.len()).map(|i| base + i as u32).collect()))
         }
         Cert::AdtConstructor {
             name, struct_idx, ..
@@ -3771,7 +4629,7 @@ fn adt_repr_indices(c: &Cert, model_info: &ModelInfo) -> Option<(String, Vec<u32
 
 fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
     let name = c.name();
-    match c {
+    match c.inner() {
         Cert::AdtConstructor {
             struct_idx,
             field_count,
@@ -3800,14 +4658,15 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
         }
         Cert::AdtConstructor {
             struct_idx,
-            field_count,
+            arity,
+            fields,
             ..
         } => {
             // Verbatim pack certificate (dual of the field projection): the body
             // wraps its `field_count` arguments into variant `struct_idx`. No
             // claim about a recursive model representation — `Cod := WVal` and
             // `verbatimRepr` pin the output to the constructed struct byte-for-byte.
-            let (dom, pat, args) = verbatim_ctor_shape(*field_count);
+            let (dom, pat, args) = verbatim_ctor_shape(*arity, fields);
             format!(
                 "abbrev {name}Ob : Schema.Obligation :=\n  \
                  {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
@@ -3840,7 +4699,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
                 self_idx = c.self_idx(),
             )
         }
-        Cert::AdtMatch { .. } => {
+        Cert::AdtMatch { .. } | Cert::VariantDispatch { .. } => {
             let ty = model_info
                 .fns
                 .get(name)
@@ -4081,16 +4940,21 @@ fn render_manifest(
             s.push(',');
         }
         let kind = match c {
-            Cert::StraightLine { .. } => "straight-line",
-            Cert::Recursive { .. } => "self-recursive",
-            Cert::AccumulatorRecursive { .. } => "multi-argument self-recursive",
-            Cert::AdtConstructor { .. } => "adt-constructor",
-            Cert::FieldProjection { .. } => "field-projection",
-            Cert::WidenedIntMatch { .. } => "widened-int-match",
-            Cert::VerbatimWidenedMatch { .. } => "verbatim-widened-match",
-            Cert::IntRangePredicate { .. } => "int-range-predicate",
-            Cert::AdtMatch { .. } => "adt-match",
-            Cert::Composition { .. } => "cross-function-composition",
+            Cert::NonRecursive { .. } => "non-recursive",
+            _ => match c.inner() {
+                Cert::StraightLine { .. } => "straight-line",
+                Cert::Recursive { .. } => "self-recursive",
+                Cert::AccumulatorRecursive { .. } => "multi-argument self-recursive",
+                Cert::AdtConstructor { .. } => "adt-constructor",
+                Cert::FieldProjection { .. } => "field-projection",
+                Cert::WidenedIntMatch { .. } => "widened-int-match",
+                Cert::VerbatimWidenedMatch { .. } => "verbatim-widened-match",
+                Cert::IntRangePredicate { .. } => "int-range-predicate",
+                Cert::AdtMatch { .. } => "adt-match",
+                Cert::VariantDispatch { .. } => "variant-dispatch",
+                Cert::Composition { .. } => "cross-function-composition",
+                Cert::NonRecursive { .. } => unreachable!(),
+            },
         };
         let (dom, cod) = c.source_dom_cod(model_info);
         s.push_str(&format!(

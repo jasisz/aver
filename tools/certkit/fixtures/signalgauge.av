@@ -1,0 +1,25 @@
+module SignalGauge
+    intent =
+        "Four-variant sum type with non-uniform arm semantics: negation,"
+        "offset addition, identity, and a non-zero default readout."
+    exposes [Signal, gauge]
+
+type Signal
+  Lo(Int)
+  Hi(Int)
+  Mid(Int)
+  Off
+
+fn gauge(s: Signal) -> Int
+  ? "Map each signal band to its readout value."
+  match s
+    Signal.Lo(x) -> 0 - x
+    Signal.Hi(x) -> x + 9
+    Signal.Mid(x) -> x
+    Signal.Off -> 7
+
+verify gauge
+    gauge(Signal.Lo(4)) => -4
+    gauge(Signal.Hi(1)) => 10
+    gauge(Signal.Mid(5)) => 5
+    gauge(Signal.Off) => 7

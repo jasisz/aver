@@ -1,0 +1,24 @@
+module Meter
+    intent =
+        "Variant dispatch with payload-first subtraction, constant-first"
+        "addition, and payload variants elided into a wildcard default."
+    exposes [Meter, readout]
+
+type Meter
+  A(Int)
+  B(Int)
+  C(Int)
+  D
+
+fn readout(m: Meter) -> Int
+  ? "Mixed arm semantics with a wildcard default."
+  match m
+    Meter.A(x) -> x - 2
+    Meter.B(x) -> 4 + x
+    _ -> 9
+
+verify readout
+    readout(Meter.A(10)) => 8
+    readout(Meter.B(5)) => 9
+    readout(Meter.C(1)) => 9
+    readout(Meter.D) => 9

@@ -226,6 +226,17 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             "verbatim-widen",
             vec!["wrapItems"],
         ),
+        // Out-of-template variant dispatch: four constructors, mixed arm
+        // semantics (negation, offset addition, identity, non-zero default) —
+        // provable only through the structural walker, not a shape template.
+        (
+            "tools/certkit/fixtures/signalgauge.av",
+            "signal-gauge",
+            vec!["gauge"],
+        ),
+        // Payload-first subtraction, constant-first addition, and payload
+        // variants elided into the wildcard default.
+        ("tools/certkit/fixtures/meter.av", "meter", vec!["readout"]),
     ];
 
     for (input, prefix, expected) in cases {

@@ -851,6 +851,101 @@ fn replace_simulates(cert_dir: &Path, replacement: &str) {
     std::fs::write(&c, src.replacen(old, replacement, 1)).unwrap();
 }
 
+#[test]
+fn cert_verify_declines_tampered_array_new_data_operands() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping array.new_data tamper test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-json-data");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/data/json.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "json compile --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("json.wasm");
+    let cert = out_dir.join("cert");
+    let (ok, report) = aver_verify(&wasm, &cert);
+    assert!(ok, "expected clean json certificate to verify:\n{report}");
+    assert!(
+        report.contains("10 certified exports"),
+        "json should certify the widened data-segment functions:\n{report}"
+    );
+
+    let dir = temp_dir("cert-json-data-tamper");
+    copy_dir(&out_dir, &dir);
+    let w = dir.join("json.wasm");
+    let mut bytes = std::fs::read(&w).unwrap();
+    // i32.const 0; i32.const 0; array.new_data type16 seg11 (the empty string
+    // literal). Changing the length operand to 1 violates the decoder's
+    // fail-closed data-segment guard while keeping the module parseable.
+    let pat = [0x41, 0x00, 0x41, 0x00, 0xfb, 0x09, 0x10, 0x0b];
+    let mut hits = 0usize;
+    for i in 0..bytes.len().saturating_sub(pat.len()) {
+        if bytes[i..].starts_with(&pat) {
+            bytes[i + 3] = 0x01;
+            hits += 1;
+        }
+    }
+    assert!(
+        hits > 0,
+        "expected empty array.new_data literal in json wasm"
+    );
+    std::fs::write(&w, &bytes).unwrap();
+
+    let old_hash = {
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["wasm_sha256"].as_str().unwrap().to_string()
+    };
+    let new_hash = aver::codegen::cert::sha256_hex(&bytes);
+    for file in ["Module.lean", "Manifest.lean"] {
+        let path = dir.join("cert").join(file);
+        let src = std::fs::read_to_string(&path).unwrap();
+        assert!(src.contains(&old_hash), "{file} should pin the old hash");
+        std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
+    }
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    m["wasm_sha256"] = serde_json::Value::String(new_hash);
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+
+    let (ok, out) = aver_verify(&w, &dir.join("cert"));
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        !ok,
+        "tampered array.new_data operands must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("does not bind"),
+        "wrong reason for array.new_data tamper:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "tampered data segment credited:\n{out}"
+    );
+}
+
 /// A cert with zero certified exports is an admission, not a certification: it
 /// must NOT print the green CERTIFIED path and must exit nonzero (fail-closed).
 #[test]
@@ -1042,6 +1137,65 @@ fn adt_witness_body_mutation_is_declined() {
     assert!(
         !out.contains("CERTIFIED"),
         "mutated ADT witness credited:\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
+fn variant_dispatch_body_mutation_is_declined() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping variant-dispatch witness-mutation test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-vd-mut");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/signalgauge.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    // Bump the dispatch witness body's local count (an extra, unused local):
+    // the walker proof tolerates it, so the cert builds green, but the mutated
+    // body is not the byte-derived one, so the code `rfl` fails.
+    let m = out_dir.join("cert").join("Module.lean");
+    let src = std::fs::read_to_string(&m).unwrap();
+    let start = src.find("some ⟨1, ").expect("a unary code-table header") + "some ⟨1, ".len();
+    let len = src[start..].find(',').expect("locals count terminator");
+    let nlocals: u32 = src[start..start + len]
+        .trim()
+        .parse()
+        .expect("locals count");
+    let header = format!("some ⟨1, {nlocals},");
+    let bumped = format!("some ⟨1, {},", nlocals + 1);
+    let mutated = src.replacen(&header, &bumped, 1);
+    assert_ne!(src, mutated, "emitted gaugeCode header shape changed");
+    std::fs::write(&m, mutated).unwrap();
+
+    let (ok, out) = aver_verify(&out_dir.join("signalgauge.wasm"), &out_dir.join("cert"));
+    assert!(
+        !ok,
+        "mutated dispatch witness body must be DECLINED:\n{out}"
+    );
+    assert!(out.contains("does not bind"), "wrong reason:\n{out}");
+    assert!(
+        !out.contains("CERTIFIED"),
+        "mutated dispatch witness credited:\n{out}"
     );
 
     let _ = std::fs::remove_dir_all(&out_dir);
