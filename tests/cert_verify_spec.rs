@@ -733,7 +733,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         replace_simulates(
             &dir.join("cert"),
             "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-             intro S add sub hadd hsub fuel ns vs w hrepr hrun\n  \
+             intro S add sub mul hadd hsub hmul fuel ns vs w hrepr hrun\n  \
              exact ns.elim",
         );
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
@@ -766,7 +766,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         replace_simulates(
             &dir.join("cert"),
             "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-             intro S add sub hadd hsub fuel ns vs w hrepr hrun\n  \
+             intro S add sub mul hadd hsub hmul fuel ns vs w hrepr hrun\n  \
              trivial",
         );
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
@@ -818,7 +818,7 @@ const HONEST_SUMTO_CODE: &str = "/-- Verbatim emitted body of `sumTo` (self-recu
 /// own proof to build green). `@BODY@` is filled with the `simp` that discharges
 /// the trapped `wFuncN`.
 const VACUOUS_SIMULATES: &str = "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-    intro S add sub hadd hsub fuel ns vs w hrepr hrun\n  \
+    intro S add sub mul hadd hsub hmul fuel ns vs w hrepr hrun\n  \
     exfalso\n  \
     cases fuel with\n  \
     | zero => simp only [wFuncN, reduceCtorEq] at hrun\n  \
@@ -830,7 +830,7 @@ fn replace_simulates(cert_dir: &Path, replacement: &str) {
     let c = cert_dir.join("Certificate.lean");
     let src = std::fs::read_to_string(&c).unwrap();
     let old = "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-        intro S add sub hadd hsub fuel ns vs w hrepr hrun\n  \
+        intro S add sub mul hadd hsub hmul fuel ns vs w hrepr hrun\n  \
         simp only [sumToOb, AverCert.Schema.Obligation.holds] at hrun ⊢\n  \
         obtain ⟨hrepr, harity⟩ := hrepr\n  \
         cases hrepr with\n  \

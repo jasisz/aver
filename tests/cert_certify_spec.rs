@@ -141,7 +141,7 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
     // combinator operand (`constPlus`), a reversed operand order (`backward`),
     // and the two-argument tail accumulator (`countDown`) — none of which the
     // old fixed-shape recursion templates admitted.
-    for name in ["sumFrom", "constPlus", "backward", "countDown"] {
+    for name in ["sumFrom", "constPlus", "backward", "factorial", "countDown"] {
         assert!(
             certified.contains(&name),
             "expected {name} certified, got {certified:?}"
@@ -164,7 +164,7 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
     );
     // Kernel-clean on every recognised shape, including the ones the previous
     // templates could not express.
-    for name in ["sumFrom", "constPlus", "backward", "countDown"] {
+    for name in ["sumFrom", "constPlus", "backward", "factorial", "countDown"] {
         assert!(
             combined.contains(&format!(
                 "{name}_wasm_certified' depends on axioms: [propext, Classical.choice, Quot.sound]"

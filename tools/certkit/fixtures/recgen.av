@@ -1,7 +1,7 @@
 module RecGen
     intent =
         "Fuel-recursion generality: non-zero base and non-input combinator operands."
-    exposes [sumFrom, constPlus, backward, countDown]
+    exposes [sumFrom, constPlus, backward, factorial, countDown]
 
 fn sumFrom(n: Int) -> Int
     ? "Base 7 (not 0), input-first combinator."
@@ -21,6 +21,12 @@ fn backward(n: Int) -> Int
         true -> 0
         false -> backward(n - 1) + n
 
+fn factorial(n: Int) -> Int
+    ? "Multiplication combinator: n * f(n-1), base 1."
+    match n <= 0
+        true -> 1
+        false -> n * factorial(n - 1)
+
 fn countDown(n: Int, acc: Int) -> Int
     ? "Two-argument tail accumulator (same arm)."
     match n <= 0
@@ -36,6 +42,10 @@ verify constPlus
 
 verify backward
     backward(3) => 6
+
+verify factorial
+    factorial(3) => 6
+    factorial(0) => 1
 
 verify countDown
     countDown(3, 0) => 6
