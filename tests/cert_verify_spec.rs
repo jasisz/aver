@@ -49,6 +49,13 @@
 //!   (t) self decouple (vacuity): `manifest` sets `self` to a wrong index, so the
 //!       code-table lookup misses and `wFuncN` traps (vacuous, provable `holds`).
 //!       Builds green; the self `rfl` binds `o.self` to the byte index → DECLINED
+//!   (u) String.eq helper shape: a byte-level mutation inside the exact
+//!       compiler-generated helper, with the wasm hash rebound, makes the
+//!       checker re-derive a different host table and the kernel witness fails
+//!       the host binding → DECLINED
+//!   (v) String.eq contract drift: deleting the byte-required contract from
+//!       both `Manifest.lean` and `cert-manifest.json` still fails because the
+//!       checker re-derives runtime contracts from the wasm bytes → DECLINED
 //! plus a separate empty-cert test: zero certified exports must NOT print the
 //! green path and must exit nonzero, and the A5 report-line injection payload
 //! (in the manifest and/or JSON) is rejected by the charset gate.
@@ -733,7 +740,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         replace_simulates(
             &dir.join("cert"),
             "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-             intro S add sub mul hadd hsub hmul fuel ns vs w hrepr hrun\n  \
+             intro S add sub mul stringEq hadd hsub hmul hStringEq fuel ns vs w hrepr hrun\n  \
              exact ns.elim",
         );
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
@@ -766,7 +773,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         replace_simulates(
             &dir.join("cert"),
             "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-             intro S add sub mul hadd hsub hmul fuel ns vs w hrepr hrun\n  \
+             intro S add sub mul stringEq hadd hsub hmul hStringEq fuel ns vs w hrepr hrun\n  \
              trivial",
         );
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
@@ -818,7 +825,7 @@ const HONEST_SUMTO_CODE: &str = "/-- Verbatim emitted body of `sumTo` (self-recu
 /// own proof to build green). `@BODY@` is filled with the `simp` that discharges
 /// the trapped `wFuncN`.
 const VACUOUS_SIMULATES: &str = "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-    intro S add sub mul hadd hsub hmul fuel ns vs w hrepr hrun\n  \
+    intro S add sub mul stringEq hadd hsub hmul hStringEq fuel ns vs w hrepr hrun\n  \
     exfalso\n  \
     cases fuel with\n  \
     | zero => simp only [wFuncN, reduceCtorEq] at hrun\n  \
@@ -830,7 +837,7 @@ fn replace_simulates(cert_dir: &Path, replacement: &str) {
     let c = cert_dir.join("Certificate.lean");
     let src = std::fs::read_to_string(&c).unwrap();
     let old = "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-        intro S add sub mul hadd hsub hmul fuel ns vs w hrepr hrun\n  \
+        intro S add sub mul stringEq hadd hsub hmul hStringEq fuel ns vs w hrepr hrun\n  \
         simp only [sumToOb, AverCert.Schema.Obligation.holds] at hrun ⊢\n  \
         obtain ⟨hrepr, harity⟩ := hrepr\n  \
         cases hrepr with\n  \
@@ -943,6 +950,175 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     assert!(
         !out.contains("CERTIFIED"),
         "tampered data segment credited:\n{out}"
+    );
+}
+
+#[test]
+fn cert_verify_declines_tampered_string_eq_helper_shape() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping String.eq helper tamper test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-stringeq");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/stringeq.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "stringeq compile --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("stringeq.wasm");
+    let cert = out_dir.join("cert");
+    let (ok, report) = aver_verify(&wasm, &cert);
+    assert!(
+        ok,
+        "expected clean stringeq certificate to verify:\n{report}"
+    );
+    assert!(
+        report.contains("2 certified exports"),
+        "stringeq should certify quoteOrSelf plus bump:\n{report}"
+    );
+    assert!(
+        report.contains("quoteOrSelf  class: verbatim widened match"),
+        "quoteOrSelf should reuse the verbatim widened face, not introduce a new class:\n{report}"
+    );
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert.join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    let contracts: Vec<&str> = manifest["runtime_contracts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+    assert!(
+        contracts.contains(&aver::codegen::cert::STRING_EQ_CONTRACT),
+        "String.eq host contract missing from manifest, got {contracts:?}"
+    );
+    let quote_class = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"].as_str() == Some("quoteOrSelf"))
+        .and_then(|c| c["class"].as_str())
+        .unwrap_or("<missing>");
+    assert_eq!(
+        quote_class, "verbatim-widened-match",
+        "quoteOrSelf should render its inner class, got {quote_class}"
+    );
+
+    {
+        let dir = temp_dir("cert-stringeq-contract-drift");
+        copy_dir(&out_dir, &dir);
+        let man = dir.join("cert").join("Manifest.lean");
+        let src = std::fs::read_to_string(&man).unwrap();
+        let needle = format!(", \"{}\"", aver::codegen::cert::STRING_EQ_CONTRACT);
+        assert!(
+            src.contains(&needle),
+            "Manifest.lean should contain String.eq contract"
+        );
+        std::fs::write(&man, src.replace(&needle, "")).unwrap();
+
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        let contracts = m["runtime_contracts"].as_array_mut().unwrap();
+        let before = contracts.len();
+        contracts.retain(|c| c.as_str() != Some(aver::codegen::cert::STRING_EQ_CONTRACT));
+        assert_eq!(
+            contracts.len(),
+            before - 1,
+            "JSON manifest should contain one String.eq contract"
+        );
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+
+        let (ok, out) = aver_verify(&dir.join("stringeq.wasm"), &dir.join("cert"));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!ok, "deleted String.eq contract must be DECLINED:\n{out}");
+        assert!(
+            out.contains("does not bind"),
+            "wrong reason for deleted String.eq contract:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "deleted String.eq contract credited:\n{out}"
+        );
+    }
+
+    let dir = temp_dir("cert-stringeq-tamper");
+    copy_dir(&out_dir, &dir);
+    let w = dir.join("stringeq.wasm");
+    let mut bytes = std::fs::read(&w).unwrap();
+    // Tail of the compiler-generated String.eq helper loop:
+    // local.get 3; i32.const 1; i32.add; local.set 3; br 0; end; end;
+    // i32.const 1; end. Flipping the final true literal keeps the wasm
+    // parseable but makes the helper fail the exact host matcher.
+    let pat = [
+        0x20, 0x03, 0x41, 0x01, 0x6a, 0x21, 0x03, 0x0c, 0x00, 0x0b, 0x0b, 0x41, 0x01, 0x0b,
+    ];
+    let hits: Vec<usize> = bytes
+        .windows(pat.len())
+        .enumerate()
+        .filter_map(|(i, win)| (win == pat).then_some(i))
+        .collect();
+    assert_eq!(
+        hits.len(),
+        1,
+        "expected exactly one String.eq helper loop tail, got {hits:?}"
+    );
+    bytes[hits[0] + 12] = 0x00;
+    std::fs::write(&w, &bytes).unwrap();
+
+    let old_hash = {
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["wasm_sha256"].as_str().unwrap().to_string()
+    };
+    let new_hash = aver::codegen::cert::sha256_hex(&bytes);
+    for file in ["Module.lean", "Manifest.lean"] {
+        let path = dir.join("cert").join(file);
+        let src = std::fs::read_to_string(&path).unwrap();
+        assert!(src.contains(&old_hash), "{file} should pin the old hash");
+        std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
+    }
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    m["wasm_sha256"] = serde_json::Value::String(new_hash);
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+
+    let (ok, out) = aver_verify(&w, &dir.join("cert"));
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        !ok,
+        "tampered String.eq helper shape must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("does not bind"),
+        "wrong reason for String.eq helper tamper:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "tampered String.eq helper credited:\n{out}"
     );
 }
 

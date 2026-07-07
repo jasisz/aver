@@ -20,21 +20,23 @@
 //!
 //! NO byte of lake/lean stdout/stderr is ever parsed into a verdict or into a
 //! CERTIFIED report line: the verdict is the witness process exit code, and the
-//! report is built in Rust from the JSON candidates the kernel just confirmed.
-//! (stdout is shown to a human inside error messages only — a display channel,
-//! never a trust channel.) `explain` renders that same trusted report.
+//! report is built in Rust from byte-derived exports/contracts after the kernel
+//! binds the manifest to them. (stdout is shown to a human inside error messages
+//! only — a display channel, never a trust channel.) `explain` renders that
+//! same trusted report.
 //!
 //! The bytes-vs-data divergence is closed INSIDE that same kernel witness. A
 //! bare `Holds manifest` proof only says "some Lean-encoded body simulates the
 //! model and the bytes hash to S"; it does NOT say that body DECODES from those
 //! bytes, so a hostile producer could ship `WInstr` data unrelated to the real
 //! bytes with a vacuously-true `holds`. To close that, the checker re-derives
-//! each obligation's `code`, `host`, `self` and `carrier` from the hash-verified
-//! bytes with the audited Aver disassembler (`cert::rederive_obligations`) and
-//! splices those values, fully expanded, into the witness — then pins them with
+//! each obligation's `code`, `host`, `self`, `carrier` and consumed runtime
+//! contracts from the hash-verified bytes with the audited Aver disassembler
+//! (`cert::rederive_certificate`) and splices those values, fully expanded, into
+//! the witness — then pins them with
 //! `rfl` against `manifest.obligations.map (·.code / ·.host / ·.self / ·.carrier)`.
 //! Those are EXACTLY the fields `Obligation.holds` reasons about
-//! (`wFuncN o.code (o.host add sub mul) fuel o.self`), so a fabricated body, a
+//! (`wFuncN o.code (o.host add sub mul stringEq) fuel o.self`), so a fabricated body, a
 //! decoupled `code`/`self`/`carrier`, or a nerfed `host` (which would make
 //! `holds` vacuous) all diverge from the bytes and fail a `rfl` — the file does
 //! not check and verify declines. The spliced terms are the checker's own
@@ -147,8 +149,9 @@ struct CertifiedExport {
     face: String,
 }
 
-/// The certified side of the report, built from the JSON candidates the kernel
-/// witness confirmed equal to the proven `AverCert.manifest` literal.
+/// The certified side of the report, built from byte-derived exports/contracts
+/// after the kernel witness confirmed the proven `AverCert.manifest` literal
+/// binds to those bytes.
 struct TrustedReport {
     /// One entry per proven obligation.
     exports: Vec<CertifiedExport>,
@@ -167,6 +170,9 @@ struct Candidates {
     /// binding (`obligations.length`, verified by `rfl`); the export NAMES the
     /// obligations are pinned to come from the bytes, not from here.
     names: Vec<String>,
+    /// Runtime contracts as CLAIMED by the JSON. Used only for the witness
+    /// binding against the proven manifest; the final byte-binding and report
+    /// use the byte-derived list.
     contracts: Vec<String>,
     profile: String,
     abi: String,
@@ -394,15 +400,16 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     //     reading the operator here does not widen trust — `lake` rejects any
     //     mismatch. Only the `def X__fuel` operator is read; nothing is executed.
     let model_files = read_lean_files(cert_dir);
-    let rederived = cert::rederive_obligations(&bytes, &model_files)?;
+    let rederived_cert = cert::rederive_certificate(&bytes, &model_files)?;
+    let rederived = &rederived_cert.obligations;
+    let derived_contracts = &rederived_cert.contracts;
 
     // The re-derived export names come from the module's export section, which a
     // hostile producer controls via the bytes; gate them exactly like the JSON
     // candidates before they are spliced as Lean string literals in the witness.
-    for r in &rederived {
+    for r in rederived {
         gate_candidate("re-derived export name", &r.name)?;
     }
-
     // 3. Assemble a checker-owned build. The audited schema + prelude come from
     //    THIS binary, never from the cert; the cert supplies only per-artifact
     //    DATA (Module/Manifest/Certificate/Final + the model modules). Each data
@@ -426,7 +433,7 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     //    bindings (code/host/self/carrier of every obligation pinned to the
     //    bytes-derived values with `rfl`), the final-theorem type ascription,
     //    and the axiom-whitelist check (see `checker_witness`).
-    let witness = checker_witness(&actual, &cands, &rederived);
+    let witness = checker_witness(&actual, &cands, rederived, derived_contracts);
     std::fs::write(build.path.join("CheckerWitness.lean"), &witness)
         .map_err(|e| format!("cannot write checker witness: {e}"))?;
     let w = run_lake(&build.path, &["env", "lean", "CheckerWitness.lean"])?;
@@ -476,7 +483,7 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
         .collect();
     Ok(TrustedReport {
         exports,
-        contracts: cands.contracts,
+        contracts: derived_contracts.to_vec(),
         profile: cands.profile,
         abi: cands.abi,
         artifact_hash: actual,
@@ -613,6 +620,7 @@ fn checker_witness(
     sha: &str,
     cands: &Candidates,
     rederived: &[cert::RederivedObligation],
+    derived_contracts: &[String],
 ) -> String {
     // Count is the JSON-claimed number of certified exports, verified by `rfl`
     // against `obligations.length` (so a JSON claiming more or fewer than the
@@ -623,7 +631,8 @@ fn checker_witness(
     let n = cands.names.len();
     let rederived_names: Vec<String> = rederived.iter().map(|r| r.name.clone()).collect();
     let names = lean_str_list(&rederived_names);
-    let contracts = lean_str_list(&cands.contracts);
+    let json_contracts = lean_str_list(&cands.contracts);
+    let byte_contracts = lean_str_list(derived_contracts);
     let profile = &cands.profile;
     let abi = &cands.abi;
     let codes = lean_expr_list(rederived.iter().map(|r| r.code.as_str()));
@@ -661,7 +670,12 @@ fn checker_witness(
          -- byte-bound body cannot be relabelled under a different export name.\n\
          example : AverCert.manifest.obligations.map (fun o => o.export_) = {names} := rfl\n\
          example : AverCert.manifest.subject.exports = {names} := rfl\n\
-         example : AverCert.manifest.subject.contracts = {contracts} := rfl\n\
+         -- Contracts: the JSON candidate must match the proven manifest, and\n\
+         -- the proven manifest must also match the BYTE-DERIVED contract list.\n\
+         -- JSON-only padding and manifest+JSON deletion are therefore both\n\
+         -- declined; the final report uses only the byte-derived list.\n\
+         example : AverCert.manifest.subject.contracts = {json_contracts} := rfl\n\
+         example : AverCert.manifest.subject.contracts = {byte_contracts} := rfl\n\
          example : AverCert.manifest.subject.profile = \"{profile}\" := rfl\n\
          example : AverCert.manifest.subject.abi = \"{abi}\" := rfl\n\n\
          -- Hash binding: the sha the checker computed from the artifact bytes.\n\
@@ -671,7 +685,7 @@ fn checker_witness(
          -- obligation are pinned, position for position, to the values the\n\
          -- audited disassembler re-derived from the hash-verified bytes. These\n\
          -- are EXACTLY the fields `Obligation.holds` reasons about\n\
-         -- (`wFuncN o.code (o.host add sub mul) fuel o.self`), so a fabricated body,\n\
+         -- (`wFuncN o.code (o.host add sub mul stringEq) fuel o.self`), so a fabricated body,\n\
          -- a decoupled `code`/`self`/`carrier`, or a nerfed `host` that would\n\
          -- make `holds` vacuous all diverge from the bytes and fail a `rfl`. The\n\
          -- spliced terms come from the checker's own audited renderer over the\n\

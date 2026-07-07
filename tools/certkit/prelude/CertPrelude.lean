@@ -368,6 +368,25 @@ def mulRef (C : Nat) : List WVal → Option WVal
   | [a, b] => do let x ← carrierToInt a; let y ← carrierToInt b; some (carrierSmall C (x * y))
   | _ => none
 
+/-- Byte equality over the `WVal` array representation of Aver strings. It is
+    intentionally narrow: a non-byte element is unequal, and array type indices
+    are ignored because the wasm helper receives already-cast string arrays. -/
+def wByteListEq : List WVal → List WVal → Bool
+  | [], [] => true
+  | .i32v a :: as, .i32v b :: bs => a == b && wByteListEq as bs
+  | _, _ => false
+
+def stringEqW : WVal → WVal → Bool
+  | .arr _ as, .arr _ bs => wByteListEq as bs
+  | _, _ => false
+
+/-- `String.eq` executable reference face: compare represented string byte arrays
+    and return the i32 boolean the wasm helper produces. Certificate theorems use
+    the abstract contract; this reference exists for interpreter tripwires. -/
+def stringEqRef : List WVal → Option WVal
+  | [a, b] => some (b32 (stringEqW a b))
+  | _ => none
+
 /-- Int comparison contract faces: decode both carriers, compare in ℤ, return
     the i32 boolean the wasm helper produces (`<= < >= > ==`). -/
 def cmpRef (p : Int → Int → Bool) : List WVal → Option WVal
