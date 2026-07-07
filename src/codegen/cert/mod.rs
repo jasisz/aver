@@ -143,6 +143,17 @@ enum HostRole {
     Sub,
 }
 
+/// The non-recursive operand of a body-consumed fuel recursion's combinator
+/// `f n = if n≤0 then base else <combine>`, where `<combine>` is the host `add`
+/// applied to the self-call result and this operand. Recovered from the bytes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BodyOperand {
+    /// The descending input `n` (`local.get 0`), as in `sumTo`'s `n + f(n-1)`.
+    Input,
+    /// A boxed integer literal, as in `2 + f(n-1)`.
+    Const(i64),
+}
+
 /// Byte-level summary of one wasm value type in a function signature. Typed
 /// admission gates key on these (the shape of the claim as the BYTES declare
 /// it) — never on the source model's types, and never on a bare parameter
@@ -228,7 +239,13 @@ enum Cert {
         box_idx: u32,
         add_idx: u32,
     },
-    /// sumTo-shape self-recursion; box/add/sub host helpers.
+    /// Single-argument fuel self-recursion `f n = if n≤0 then BASE else <combine>`;
+    /// box/add/sub host helpers. All of the shape below is DATA recovered from the
+    /// bytes; only the descent (`n-1`) and the host `add` combinator are pinned:
+    /// - `base_k`: the literal returned in the base arm (sumTo's `0`, but any).
+    /// - `other` + `rec_first`: the `add` combines the self-call result `f(n-1)`
+    ///   with `other` (the input `n`, or a boxed constant); `rec_first` records
+    ///   which side the recursive result sits on — `f(n-1) + n` vs `n + f(n-1)`.
     Recursive {
         name: String,
         self_idx: u32,
@@ -237,6 +254,9 @@ enum Cert {
         box_idx: u32,
         add_idx: u32,
         sub_idx: u32,
+        base_k: i64,
+        rec_first: bool,
+        other: BodyOperand,
     },
     /// countDown-shape two-argument accumulator recursion; box/add/sub host helpers.
     AccumulatorRecursive {
@@ -1245,13 +1265,10 @@ fn classify(
     fns: &std::collections::HashMap<u32, &UserFn>,
     host_roles: &std::collections::HashMap<u32, HostRole>,
 ) -> Result<Cert, String> {
-    // sumTo-shape self-recursion.
-    if let Some(cert) = match_recursive(f, box_idx) {
-        return Ok(cert);
-    }
-
-    // countDown-shape accumulator self-recursion.
-    if let Some(cert) = match_accumulator_recursive(f, box_idx) {
+    // Fuel self-recursion (single-argument `n + f(n-1)` and two-argument
+    // accumulator), recognised structurally from the instruction tree. The base
+    // value is data (any literal / the accumulator), not a pinned constant.
+    if let Some(cert) = recognize_fueled_recursion(f, box_idx, carrier, host_roles) {
         return Ok(cert);
     }
 
@@ -2041,166 +2058,243 @@ fn strip_trailing_end(ops: &[Op]) -> &[Op] {
     }
 }
 
-/// Match the exact sumTo operator template, extracting `carrier` (from the
-/// `struct.get` type index), `sub`, `add`, and confirming `self`/`box`.
-fn match_recursive(f: &UserFn, box_idx: u32) -> Option<Cert> {
+/// Structurally recognise fuel self-recursion from the parsed instruction tree:
+///   f n     = if n≤0 then BASE else n + f (n-1)        (body-consumed, arity 1)
+///   f n acc = if n≤0 then acc  else f (n-1) (acc + n)   (tail accumulator, arity 2)
+/// The carrier-sign predicate preamble, the descent (`n-1`) and the combinator
+/// (host `add`) are pinned; the BASE literal of the arity-1 shape is DATA (any
+/// value, recovered from the bytes, not the fixed `0`). Recognition keys on the
+/// tree shape + host roles — never on names or the base constant.
+fn recognize_fueled_recursion(
+    f: &UserFn,
+    box_idx: u32,
+    carrier: Option<u32>,
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<Cert> {
     use Op::*;
-    if f.arity != 1 {
+    let carrier = carrier?;
+    if f.arity != 1 && f.arity != 2 {
         return None;
     }
-    let ops = &f.ops;
-    let carrier = match ops.get(3) {
-        Some(StructGet(c, 1)) => *c,
-        _ => return None,
+    let ops = strip_trailing_end(&f.ops);
+    // Only the self-call, box, and contracted host helpers may be called; no
+    // foreign user calls, no opaque ops. Must actually recurse.
+    let mut recurses = false;
+    for op in ops {
+        match op {
+            Op::Call(idx) | Op::ReturnCall(idx) => {
+                if *idx == f.wasm_idx {
+                    recurses = true;
+                } else if *idx != box_idx && !host_roles.contains_key(idx) {
+                    return None;
+                }
+            }
+            Op::Other => return None,
+            _ => {}
+        }
+    }
+    if !recurses {
+        return None;
+    }
+    let normalized = normalize_local_hops(ops);
+    let mut pos = 0usize;
+    let tree = parse_instr_tree(&normalized, &mut pos, false)?;
+    if pos != normalized.len() {
+        return None;
+    }
+    // preamble: localGet 0; structGet carrier 1; refIsNull;
+    //           IfElse(sign-predicate); IfElse(base-arm, step-arm)
+    let [
+        InstrNode::Op(LocalGet(0)),
+        InstrNode::Op(StructGet(c1, 1)),
+        InstrNode::Op(RefIsNull),
+        InstrNode::IfElse(pred_small, pred_big),
+        InstrNode::IfElse(base_arm, step_arm),
+    ] = tree.as_slice()
+    else {
+        return None;
     };
-    let l = match (ops.first(), ops.get(1)) {
-        (Some(LocalGet(0)), Some(LocalSet(l))) => *l,
-        _ => return None,
-    };
-    let expected_prefix = [
-        LocalGet(0),
-        LocalSet(l),
-        LocalGet(l),
-        StructGet(carrier, 1),
-        RefIsNull,
-        If,
-        LocalGet(l),
-        StructGet(carrier, 0),
-        I64Const(0),
-        I64LeS,
-        Else,
-        LocalGet(l),
-        StructGet(carrier, 2),
-        I32Const(0),
-        I32LtS,
-        End,
-        If,
-        I64Const(0),
-        Call(box_idx),
-        Else,
-    ];
-    if ops.len() < expected_prefix.len() {
+    if *c1 != carrier {
         return None;
     }
-    if ops[..expected_prefix.len()] != expected_prefix[..] {
+    // n≤0 predicate: small = [localGet 0, structGet c 0, i64Const 0, i64LeS];
+    //               big   = [localGet 0, structGet c 2, i32Const 0, i32LtS]
+    let small_ok = matches!(
+        node_ops(pred_small).as_slice(),
+        [LocalGet(0), StructGet(cc, 0), I64Const(0), I64LeS] if *cc == carrier
+    );
+    let big_ok = matches!(
+        node_ops(pred_big).as_slice(),
+        [LocalGet(0), StructGet(cc, 2), I32Const(0), I32LtS] if *cc == carrier
+    );
+    if !small_ok || !big_ok {
         return None;
     }
-    // recursion tail: localGet 0, localGet 0, i64Const 1, call box, call SUB,
-    //                 call SELF, call ADD, End, End
-    let tail = &ops[expected_prefix.len()..];
-    let (b2, sub_idx, self_call, add_idx) = match tail {
-        [
-            LocalGet(0),
-            LocalGet(0),
-            I64Const(1),
-            Call(b2),
-            Call(sub),
-            Call(sc),
-            Call(add),
-            End,
-            End,
-        ] => (*b2, *sub, *sc, *add),
-        _ => return None,
-    };
-    if b2 != box_idx || self_call != f.wasm_idx {
-        return None;
+    let is_host = |idx: &u32, role: HostRole| host_roles.get(idx) == Some(&role);
+    if f.arity == 1 {
+        // base arm: [i64Const k, call box] — any literal k (the data-driven base).
+        let base_k = match node_ops(base_arm).as_slice() {
+            [I64Const(k), Call(b)] if *b == box_idx => *k,
+            _ => return None,
+        };
+        // step arm: `add(_, _)` combining the self-call `f(sub(n,1))` with the
+        // input `n` or a boxed constant, in either operand order — recovered by
+        // symbolically executing the straight-line step (descent pinned to n-1).
+        let (sub_idx, add_idx, rec_first, other) =
+            parse_body_step(&node_ops(step_arm), box_idx, f.wasm_idx, host_roles)?;
+        Some(Cert::Recursive {
+            name: f.name.clone(),
+            self_idx: f.wasm_idx,
+            nlocals: f.nlocals,
+            carrier,
+            box_idx,
+            add_idx,
+            sub_idx,
+            base_k,
+            rec_first,
+            other,
+        })
+    } else {
+        // arity 2: accumulator tail recursion; base arm returns the accumulator.
+        if !matches!(node_ops(base_arm).as_slice(), [LocalGet(1)]) {
+            return None;
+        }
+        // step arm: f(n-1, acc+n) as
+        //   [localGet 0, i64Const 1, call box, call SUB, localGet 1, localGet 0, call ADD, returnCall SELF]
+        let (sub_idx, add_idx) = match node_ops(step_arm).as_slice() {
+            [
+                LocalGet(0),
+                I64Const(1),
+                Call(b),
+                Call(sub),
+                LocalGet(1),
+                LocalGet(0),
+                Call(add),
+                ReturnCall(sc),
+            ] if *b == box_idx
+                && *sc == f.wasm_idx
+                && is_host(sub, HostRole::Sub)
+                && is_host(add, HostRole::Add) =>
+            {
+                (*sub, *add)
+            }
+            _ => return None,
+        };
+        Some(Cert::AccumulatorRecursive {
+            name: f.name.clone(),
+            self_idx: f.wasm_idx,
+            nlocals: f.nlocals,
+            carrier,
+            box_idx,
+            add_idx,
+            sub_idx,
+        })
     }
-    Some(Cert::Recursive {
-        name: f.name.clone(),
-        self_idx: f.wasm_idx,
-        nlocals: f.nlocals,
-        carrier,
-        box_idx,
-        add_idx,
-        sub_idx,
-    })
 }
 
-/// Match the exact countDown accumulator-recursion operator template,
-/// extracting `carrier` (from the `struct.get` type index), `sub`, `add`, and
-/// confirming `self`/`box`.
-fn match_accumulator_recursive(f: &UserFn, box_idx: u32) -> Option<Cert> {
+/// Symbolically execute a body-consumed fuel recursion's step arm — a
+/// straight-line stack program ending in the host `add` — and recover
+/// `(sub, add, rec_first, other)`: which host helpers are the descent/combinator,
+/// which side of the `add` the recursive result sits on, and what the other
+/// operand is. The descent is pinned to `sub(input, box 1)` = `n-1`; anything the
+/// evaluator cannot account for (foreign locals, a second add, a non-descent
+/// self-call argument) fails, so the recogniser stays fail-closed.
+fn parse_body_step(
+    ops: &[Op],
+    box_idx: u32,
+    self_idx: u32,
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<(u32, u32, bool, BodyOperand)> {
     use Op::*;
-    if f.arity != 2 {
+    #[derive(Clone, Copy, PartialEq)]
+    enum V {
+        Input,
+        IntLit(i64),
+        Boxed(i64),
+        Descent,
+        Rec,
+    }
+    // The step is `<push operand A> <push operand B> add`; the trailing `add`
+    // combines the top two stack values.
+    let (last, init) = ops.split_last()?;
+    let Call(add_idx) = last else { return None };
+    if host_roles.get(add_idx) != Some(&HostRole::Add) {
         return None;
     }
-    let ops = &f.ops;
-    let carrier = match ops.get(3) {
-        Some(StructGet(c, 1)) => *c,
-        _ => return None,
+    let mut st: Vec<V> = Vec::new();
+    let mut sub_idx: Option<u32> = None;
+    for op in init {
+        match op {
+            LocalGet(0) => st.push(V::Input),
+            I64Const(k) => st.push(V::IntLit(*k)),
+            Call(idx) if *idx == box_idx => {
+                let V::IntLit(k) = st.pop()? else { return None };
+                st.push(V::Boxed(k));
+            }
+            Call(idx) if *idx == self_idx => {
+                if st.pop()? != V::Descent {
+                    return None;
+                }
+                st.push(V::Rec);
+            }
+            Call(idx) if host_roles.get(idx) == Some(&HostRole::Sub) => {
+                let b = st.pop()?;
+                let a = st.pop()?;
+                if a != V::Input || b != V::Boxed(1) {
+                    return None;
+                }
+                if sub_idx.is_some_and(|s| s != *idx) {
+                    return None;
+                }
+                sub_idx = Some(*idx);
+                st.push(V::Descent);
+            }
+            _ => return None,
+        }
+    }
+    // exactly the two `add` operands remain.
+    let [a, b] = st.as_slice() else { return None };
+    let operand = |v: &V| match v {
+        V::Input => Some(BodyOperand::Input),
+        V::Boxed(k) => Some(BodyOperand::Const(*k)),
+        _ => None,
     };
-    let l = match (ops.first(), ops.get(1)) {
-        (Some(LocalGet(0)), Some(LocalSet(l))) => *l,
-        _ => return None,
+    let (rec_first, other) = if *a == V::Rec {
+        (true, operand(b)?)
+    } else if *b == V::Rec {
+        (false, operand(a)?)
+    } else {
+        return None;
     };
-    let expected_prefix = [
-        LocalGet(0),
-        LocalSet(l),
-        LocalGet(l),
-        StructGet(carrier, 1),
-        RefIsNull,
-        If,
-        LocalGet(l),
-        StructGet(carrier, 0),
-        I64Const(0),
-        I64LeS,
-        Else,
-        LocalGet(l),
-        StructGet(carrier, 2),
-        I32Const(0),
-        I32LtS,
-        End,
-        If,
-        LocalGet(1),
-        Else,
-    ];
-    if ops.len() < expected_prefix.len() {
-        return None;
-    }
-    if ops[..expected_prefix.len()] != expected_prefix[..] {
-        return None;
-    }
-    let tail = &ops[expected_prefix.len()..];
-    let (sub_idx, add_idx, self_call) = match tail {
-        [
-            LocalGet(0),
-            I64Const(1),
-            Call(b),
-            Call(sub),
-            LocalGet(1),
-            LocalGet(0),
-            Call(add),
-            ReturnCall(sc),
-            End,
-            End,
-        ] if *b == box_idx => (*sub, *add, *sc),
-        _ => return None,
-    };
-    if self_call != f.wasm_idx {
-        return None;
-    }
-    Some(Cert::AccumulatorRecursive {
-        name: f.name.clone(),
-        self_idx: f.wasm_idx,
-        nlocals: f.nlocals,
-        carrier,
-        box_idx,
-        add_idx,
-        sub_idx,
-    })
+    Some((sub_idx?, *add_idx, rec_first, other))
 }
 
 // ---- model evaluation (anti-vacuity guard values) ------------------------
+// Generic over the recognised base; the combinator (`+`) and descent (`n-1`) are
+// the pinned shape, the base is data — so these compute the model value for ANY
+// admitted base without a per-function evaluator.
 
-fn eval_sumto(n: i64) -> i64 {
-    if n <= 0 { 0 } else { n + eval_sumto(n - 1) }
+/// `f n = if n≤0 then base else other + f (n-1)` (body-consumed self-recursion).
+/// The `+` combinator commutes, so operand order does not affect the value; only
+/// the non-recursive operand (`n` vs a constant) does.
+fn eval_body_recursion(n: i64, base: i64, other: BodyOperand) -> i64 {
+    if n <= 0 {
+        base
+    } else {
+        let o = match other {
+            BodyOperand::Input => n,
+            BodyOperand::Const(k) => k,
+        };
+        o + eval_body_recursion(n - 1, base, other)
+    }
 }
 
-fn eval_countdown(n: i64, acc: i64) -> i64 {
+/// `f n acc = if n≤0 then acc else f (n-1) (acc + n)` (accumulator tail recursion).
+fn eval_accumulator(n: i64, acc: i64) -> i64 {
     if n <= 0 {
         acc
     } else {
-        eval_countdown(n - 1, acc + n)
+        eval_accumulator(n - 1, acc + n)
     }
 }
 
@@ -2578,6 +2672,16 @@ fn render_code_def(c: &Cert) -> String {
 /// `Module.lean` that diverges from the bytes fails the kernel witness. Kept
 /// byte-identical to the RHS `render_code_def` emits so the emitted `Module.lean`
 /// is unchanged.
+/// An `Int` literal for Lean source: negatives parenthesised so `.i64Const -7`
+/// does not misparse; non-negatives bare (byte-identical to the shipped `0`).
+fn lean_int_lit(k: i64) -> String {
+    if k < 0 {
+        format!("({k})")
+    } else {
+        k.to_string()
+    }
+}
+
 fn render_code_value(c: &Cert) -> String {
     match c.inner() {
         Cert::StraightLine {
@@ -2599,18 +2703,38 @@ fn render_code_value(c: &Cert) -> String {
             box_idx,
             add_idx,
             sub_idx,
+            base_k,
+            rec_first,
+            other,
             ..
-        } => format!(
-            "fun fn =>\n  \
-             if fn = {self_idx} then some ⟨1, {nlocals},\n    \
-             [ .localGet 0, .localSet 1,\n      \
-             .localGet 1, .structGet {carrier} 1, .refIsNull,\n      \
-             .ifElse [.localGet 1, .structGet {carrier} 0, .i64Const 0, .i64LeS]\n              \
-             [.localGet 1, .structGet {carrier} 2, .i32Const 0, .i32LtS],\n      \
-             .ifElse [.i64Const 0, .call {box_idx}]\n              \
-             [.localGet 0, .localGet 0, .i64Const 1, .call {box_idx}, .call {sub_idx}, \
-             .call {self_idx}, .call {add_idx}] ]⟩\n  else none",
-        ),
+        } => {
+            let base = lean_int_lit(*base_k);
+            // The step arm pushes the two `add` operands (the recursive result and
+            // the other operand) in their recognised order, then calls `add`.
+            let rec_ops = format!(
+                ".localGet 0, .i64Const 1, .call {box_idx}, .call {sub_idx}, .call {self_idx}"
+            );
+            let other_ops = match other {
+                BodyOperand::Input => ".localGet 0".to_string(),
+                BodyOperand::Const(k) => format!(".i64Const {}, .call {box_idx}", lean_int_lit(*k)),
+            };
+            let (a_ops, b_ops) = if *rec_first {
+                (&rec_ops, &other_ops)
+            } else {
+                (&other_ops, &rec_ops)
+            };
+            let step = format!("{a_ops}, {b_ops}, .call {add_idx}");
+            format!(
+                "fun fn =>\n  \
+                 if fn = {self_idx} then some ⟨1, {nlocals},\n    \
+                 [ .localGet 0, .localSet 1,\n      \
+                 .localGet 1, .structGet {carrier} 1, .refIsNull,\n      \
+                 .ifElse [.localGet 1, .structGet {carrier} 0, .i64Const 0, .i64LeS]\n              \
+                 [.localGet 1, .structGet {carrier} 2, .i32Const 0, .i32LtS],\n      \
+                 .ifElse [.i64Const {base}, .call {box_idx}]\n              \
+                 [{step}] ]⟩\n  else none",
+            )
+        }
         Cert::AccumulatorRecursive {
             self_idx,
             nlocals,
@@ -2947,8 +3071,9 @@ fn render_certificate(
     for c in &analysis.certs {
         match c.inner() {
             Cert::StraightLine { .. } => s.push_str(&render_straightline_cert(c)),
-            Cert::Recursive { .. } => s.push_str(&render_recursive_cert(c)),
-            Cert::AccumulatorRecursive { .. } => s.push_str(&render_accumulator_recursive_cert(c)),
+            Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. } => {
+                s.push_str(&render_fueled_recursion_cert(c))
+            }
             Cert::AdtConstructor { .. } => s.push_str(&render_adt_constructor_cert(c, model_info)),
             Cert::FieldProjection { .. } => s.push_str(&render_field_projection_cert(c)),
             Cert::WidenedIntMatch { .. } => {
@@ -3060,7 +3185,21 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
     )
 }
 
-fn render_recursive_cert(c: &Cert) -> String {
+/// The single fuel-induction arm. One entry point for both recognised shapes:
+/// the body-consumed recursion (`f n = if n≤0 then base else <combine>`, generic
+/// over the base literal and the `add` combinator's operand and order) and the
+/// two-argument tail accumulator (`f n acc = if n≤0 then acc else f (n-1) (acc+n)`).
+/// The `induction fuel` skeleton, the model-side fuel bridge, and the carrier-sign
+/// dispatch are shared; the shapes differ only in how the step arm reconstructs.
+fn render_fueled_recursion_cert(c: &Cert) -> String {
+    match c.inner() {
+        Cert::Recursive { .. } => render_recursive_body_cert(c),
+        Cert::AccumulatorRecursive { .. } => render_accumulator_recursive_cert(c),
+        _ => unreachable!(),
+    }
+}
+
+fn render_recursive_body_cert(c: &Cert) -> String {
     let Cert::Recursive {
         name,
         self_idx,
@@ -3068,13 +3207,70 @@ fn render_recursive_cert(c: &Cert) -> String {
         box_idx,
         add_idx,
         sub_idx,
+        base_k,
+        rec_first,
+        other,
         ..
     } = c
     else {
         unreachable!()
     };
-    let g3 = eval_sumto(3);
+    let (rec_first, other) = (*rec_first, *other);
+    // base + anti-vacuity guard values are data-driven from the recognised base
+    // and combinator.
+    let base = lean_int_lit(*base_k);
+    let g3 = eval_body_recursion(3, *base_k, other);
+    let g0 = lean_int_lit(eval_body_recursion(0, *base_k, other));
+    let gneg = lean_int_lit(eval_body_recursion(-4, *base_k, other));
     let _ = (box_idx, add_idx, sub_idx);
+    // Combinator, data-driven from the bytes. The `+` combines the recursive
+    // result `{name}(n-1)` with `other` (the input, or a boxed constant); the
+    // proof cites `hAdd` with the operands in their recognised order.
+    let other_expr = |input: &str| match other {
+        BodyOperand::Input => input.to_string(),
+        BodyOperand::Const(k) => lean_int_lit(k),
+    };
+    let step_rhs = {
+        let rec_expr = format!("{name} (n - 1)");
+        if rec_first {
+            format!("{rec_expr} + {}", other_expr("n"))
+        } else {
+            format!("{} + {rec_expr}", other_expr("n"))
+        }
+    };
+    // Per carrier arm: `input` names the model int (`s` small / `n` big) and
+    // `input_wval` its byte form; produce the `add [..]` operand list and the
+    // `hAdd ..` argument prefix (everything before the trailing `hadd`).
+    let combinator_arm = |input: &str, input_wval: &str| -> (String, String) {
+        let other_wval = match other {
+            BodyOperand::Input => input_wval.to_string(),
+            BodyOperand::Const(k) => format!("carrierSmall {carrier} {}", lean_int_lit(k)),
+        };
+        let other_repr = match other {
+            BodyOperand::Input => "hv".to_string(),
+            BodyOperand::Const(k) => format!("(hsmall_intro {})", lean_int_lit(k)),
+        };
+        let rec_int = format!("({name} ({input} - 1))");
+        if rec_first {
+            (
+                format!("[vr, {other_wval}]"),
+                format!("{rec_int} {} _ _ wa hrr {other_repr}", other_expr(input)),
+            )
+        } else {
+            (
+                format!("[{other_wval}, vr]"),
+                format!("{} {rec_int} _ _ wa {other_repr} hrr", other_expr(input)),
+            )
+        }
+    };
+    let (add_small, hadd_small) = combinator_arm(
+        "s",
+        &format!(".structv {carrier} [.i64v s, .null, .i32v sg]"),
+    );
+    let (add_big, hadd_big) = combinator_arm(
+        "n",
+        &format!(".structv {carrier} [.i64v s, .arr lty les, .i32v sg]"),
+    );
     format!(
         r#"/-! ### {name} — self-recursive certificate (carrier type {carrier}) -/
 
@@ -3103,13 +3299,13 @@ theorem {name}_fuel_stable (k : Nat) (n : Int) (h : n.natAbs < k) :
     {name}__fuel k n = {name} n :=
   {name}_fuel_irrel (n.natAbs + k + 1) k (n.natAbs + 1) n (by omega) h (by omega)
 
-theorem {name}_step (n : Int) (hn : ¬ n ≤ 0) : {name} n = n + {name} (n - 1) := by
+theorem {name}_step (n : Int) (hn : ¬ n ≤ 0) : {name} n = {step_rhs} := by
   have h0 : {name} n = {name}__fuel (n.natAbs + 1) n := rfl
   rw [h0]
   simp only [{name}__fuel]
   rw [if_neg hn, {name}_fuel_stable n.natAbs (n - 1) (by omega)]
 
-theorem {name}_base (n : Int) (hn : n ≤ 0) : {name} n = 0 := by
+theorem {name}_base (n : Int) (hn : n ≤ 0) : {name} n = {base} := by
   have h0 : {name} n = {name}__fuel (n.natAbs + 1) n := rfl
   rw [h0]; simp [{name}__fuel, hn]
 
@@ -3144,7 +3340,7 @@ theorem {name}_wasm_certified
         · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32,
             popArgs, initLocals, hle] at hrun
           rw [{name}_base s hle, ← hrun]
-          exact hsmall_intro 0
+          exact hsmall_intro {base}
         · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32,
             popArgs, initLocals, hle] at hrun
           rcases hsub : sub [.structv {carrier} [.i64v s, .null, .i32v sg], carrierSmall {carrier} 1] with _ | vd
@@ -3156,18 +3352,18 @@ theorem {name}_wasm_certified
             · simp [hrec] at hrun
             · simp only [hrec] at hrun
               have hrr : Repr ({name} (s - 1)) vr := ih (s - 1) vd vr hrd hrec
-              rcases hadd : add [.structv {carrier} [.i64v s, .null, .i32v sg], vr] with _ | wa
+              rcases hadd : add {add_small} with _ | wa
               · simp [hadd] at hrun
               · simp only [hadd, Option.some.injEq] at hrun
                 rw [{name}_step s hle, ← hrun]
-                exact hAdd s ({name} (s - 1)) _ _ wa hv hrr hadd
+                exact hAdd {hadd_small} hadd
       · obtain ⟨hsign, hne⟩ := hbig n s lty les sg hv
         by_cases hlt : sg < (0 : Int)
         · have hn0 : n ≤ 0 := by have := hsign.mp hlt; omega
           simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32,
             popArgs, initLocals, hlt] at hrun
           rw [{name}_base n hn0, ← hrun]
-          exact hsmall_intro 0
+          exact hsmall_intro {base}
         · have hn0 : ¬ n ≤ 0 := by
             intro hle
             have : ¬ n < 0 := fun h => hlt (hsign.mpr h)
@@ -3183,11 +3379,11 @@ theorem {name}_wasm_certified
             · simp [hrec] at hrun
             · simp only [hrec] at hrun
               have hrr : Repr ({name} (n - 1)) vr := ih (n - 1) vd vr hrd hrec
-              rcases hadd : add [.structv {carrier} [.i64v s, .arr lty les, .i32v sg], vr] with _ | wa
+              rcases hadd : add {add_big} with _ | wa
               · simp [hadd] at hrun
               · simp only [hadd, Option.some.injEq] at hrun
                 rw [{name}_step n hn0, ← hrun]
-                exact hAdd n ({name} (n - 1)) _ _ wa hv hrr hadd
+                exact hAdd {hadd_big} hadd
 
 #print axioms {name}_wasm_certified
 
@@ -3222,10 +3418,10 @@ example :
       = some ({g3}) := by native_decide
 example :
     ((wFuncN {name}Code {name}HostRef 20 {self_idx} [carrierSmall {carrier} 0]).bind carrierToInt)
-      = some 0 := by native_decide
+      = some {g0} := by native_decide
 example :
     ((wFuncN {name}Code {name}HostRef 20 {self_idx} [carrierSmall {carrier} (-4)]).bind carrierToInt)
-      = some 0 := by native_decide
+      = some {gneg} := by native_decide
 
 /-- Schema-shaped simulation obligation for `{name}` (composed by the single
     final theorem): the emitted recursive body simulates the model `{name}`. -/
@@ -3258,8 +3454,9 @@ fn render_accumulator_recursive_cert(c: &Cert) -> String {
     else {
         unreachable!()
     };
-    let g3 = eval_countdown(3, 0);
-    let g4 = eval_countdown(3, 4);
+    let g3 = eval_accumulator(3, 0);
+    let g4 = eval_accumulator(3, 4);
+    let gneg = eval_accumulator(-4, 9);
     format!(
         r#"/-! ### {name} — accumulator self-recursive certificate (carrier type {carrier}) -/
 
@@ -3414,7 +3611,7 @@ example :
       = some ({g4}) := by native_decide
 example :
     ((wFuncN {name}Code {name}HostRef 20 {self_idx} [carrierSmall {carrier} (-4), carrierSmall {carrier} 9]).bind carrierToInt)
-      = some 9 := by native_decide
+      = some {gneg} := by native_decide
 
 /-- Schema-shaped simulation obligation for `{name}` (composed by the single
     final theorem): the emitted accumulator-recursive body simulates the model `{name}`. -/
