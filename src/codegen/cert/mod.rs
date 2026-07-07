@@ -708,9 +708,7 @@ impl ObligationFace {
             },
             Cert::IntRangePredicate { .. } => ObligationFace::IntPredicate,
             Cert::VerbatimWidenedMatch { .. } => ObligationFace::VerbatimWidened,
-            Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. } => {
-                ObligationFace::AdtMatch
-            }
+            Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. } => ObligationFace::AdtMatch,
             Cert::AdtConstructor { .. } => ObligationFace::AdtConstructor,
             Cert::NonRecursive { .. } => unreachable!(),
         }
