@@ -313,19 +313,6 @@ enum Cert {
         k_hi: i64,
         ops: Vec<Op>,
     },
-    /// Non-recursive three-variant ADT match: Add x -> x; Neg x -> 0 - x; Zero -> 0.
-    AdtMatch {
-        name: String,
-        self_idx: u32,
-        nlocals: usize,
-        carrier: u32,
-        add_variant_idx: u32,
-        neg_variant_idx: u32,
-        zero_variant_idx: u32,
-        box_idx: u32,
-        sub_idx: u32,
-        ops: Vec<Op>,
-    },
     /// General non-recursive variant dispatch over one user inductive: a chain
     /// of `ref.test` branches (each else-arm continuing the chain) whose hit
     /// arms each reduce to one recognised leaf — payload projection, or a
@@ -385,7 +372,6 @@ impl Cert {
             | Cert::WidenedIntMatch { name, .. }
             | Cert::VerbatimWidenedMatch { name, .. }
             | Cert::IntRangePredicate { name, .. }
-            | Cert::AdtMatch { name, .. }
             | Cert::VariantDispatch { name, .. }
             | Cert::Composition { name, .. } => name,
             Cert::NonRecursive { .. } => unreachable!(),
@@ -401,7 +387,6 @@ impl Cert {
             | Cert::WidenedIntMatch { self_idx, .. }
             | Cert::VerbatimWidenedMatch { self_idx, .. }
             | Cert::IntRangePredicate { self_idx, .. }
-            | Cert::AdtMatch { self_idx, .. }
             | Cert::VariantDispatch { self_idx, .. }
             | Cert::Composition { self_idx, .. } => *self_idx,
             Cert::NonRecursive { .. } => unreachable!(),
@@ -417,7 +402,6 @@ impl Cert {
             | Cert::WidenedIntMatch { carrier, .. }
             | Cert::VerbatimWidenedMatch { carrier, .. }
             | Cert::IntRangePredicate { carrier, .. }
-            | Cert::AdtMatch { carrier, .. }
             | Cert::VariantDispatch { carrier, .. }
             | Cert::Composition { carrier, .. } => *carrier,
             Cert::NonRecursive { .. } => unreachable!(),
@@ -432,7 +416,6 @@ impl Cert {
             | Cert::WidenedIntMatch { .. }
             | Cert::VerbatimWidenedMatch { .. }
             | Cert::IntRangePredicate { .. }
-            | Cert::AdtMatch { .. }
             | Cert::VariantDispatch { .. }
             | Cert::Composition { .. } => 1,
             Cert::NonRecursive { .. } => unreachable!(),
@@ -453,7 +436,6 @@ impl Cert {
             | Cert::WidenedIntMatch { .. }
             | Cert::VerbatimWidenedMatch { .. }
             | Cert::IntRangePredicate { .. }
-            | Cert::AdtMatch { .. }
             | Cert::VariantDispatch { .. } => "fun x => x".to_string(),
             Cert::NonRecursive { .. } => unreachable!(),
         }
@@ -476,7 +458,7 @@ impl Cert {
             | Cert::IntRangePredicate { name, .. } => {
                 format!("fun _ _ => CertModule.{name}Host")
             }
-            Cert::AdtMatch { name, .. } | Cert::VariantDispatch { name, .. } => {
+            Cert::VariantDispatch { name, .. } => {
                 format!("CertModule.{name}Host")
             }
             Cert::NonRecursive { .. } => unreachable!(),
@@ -496,9 +478,7 @@ impl Cert {
             Cert::FieldProjection { .. } => ("WVal x WVal".to_string(), "WVal".to_string()),
             Cert::VerbatimWidenedMatch { .. } => ("WVal".to_string(), "WVal".to_string()),
             Cert::IntRangePredicate { .. } => ("Int".to_string(), "Bool".to_string()),
-            Cert::AdtMatch { name, .. }
-            | Cert::VariantDispatch { name, .. }
-            | Cert::WidenedIntMatch { name, .. } => {
+            Cert::VariantDispatch { name, .. } | Cert::WidenedIntMatch { name, .. } => {
                 let dom = model_info
                     .fns
                     .get(name)
@@ -606,10 +586,6 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
             | Cert::IntRangePredicate { .. } => {}
             Cert::WidenedIntMatch { .. } => {
                 has_box = true;
-            }
-            Cert::AdtMatch { .. } => {
-                has_box = true;
-                has_sub = true;
             }
             Cert::VariantDispatch {
                 add_idx, sub_idx, ..
@@ -732,9 +708,7 @@ impl ObligationFace {
             },
             Cert::IntRangePredicate { .. } => ObligationFace::IntPredicate,
             Cert::VerbatimWidenedMatch { .. } => ObligationFace::VerbatimWidened,
-            Cert::AdtMatch { .. } | Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. } => {
-                ObligationFace::AdtMatch
-            }
+            Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. } => ObligationFace::AdtMatch,
             Cert::AdtConstructor { .. } => ObligationFace::AdtConstructor,
             Cert::NonRecursive { .. } => unreachable!(),
         }
@@ -1357,7 +1331,6 @@ fn walk_nonrecursive(
         .or_else(|| nr_field_projection(f, &body, carrier))
         .or_else(|| nr_ref_dispatch_match(f, &body, box_idx, carrier, host_roles))
         .or_else(|| nr_int_range_predicate(f, &body, carrier))
-        .or_else(|| nr_adt_match(f, &body, box_idx, carrier, host_roles))
         .or_else(|| nr_variant_dispatch(f, &body, box_idx, carrier, host_roles))
 }
 
@@ -1897,74 +1870,6 @@ fn single_comparison_bound(ops: &[Op], carrier: u32, cmp: fn(&Op) -> bool) -> Op
         }
     }
     found
-}
-
-fn nr_adt_match(
-    f: &UserFn,
-    body: &StructuralBody,
-    box_idx: u32,
-    carrier: Option<u32>,
-    host_roles: &std::collections::HashMap<u32, HostRole>,
-) -> Option<Cert> {
-    if f.arity != 1 {
-        return None;
-    }
-    let carrier = carrier?;
-    for pair in body.tree.windows(2) {
-        let [
-            InstrNode::Op(Op::RefTest(add_variant_idx)),
-            InstrNode::IfElse(add_arm, rest),
-        ] = pair
-        else {
-            continue;
-        };
-        if !node_ops(add_arm)
-            .iter()
-            .any(|op| matches!(op, Op::StructGet(t, 0) if t == add_variant_idx))
-        {
-            continue;
-        }
-        for nested in rest.windows(2) {
-            let [
-                InstrNode::Op(Op::RefTest(neg_variant_idx)),
-                InstrNode::IfElse(neg_arm, zero_arm),
-            ] = nested
-            else {
-                continue;
-            };
-            let neg_ops = node_ops(neg_arm);
-            let zero_ops = node_ops(zero_arm);
-            let Some(sub_idx) = neg_ops.iter().find_map(|op| match op {
-                Op::Call(idx) if host_roles.get(idx) == Some(&HostRole::Sub) => Some(*idx),
-                _ => None,
-            }) else {
-                continue;
-            };
-            if !neg_ops
-                .iter()
-                .any(|op| matches!(op, Op::StructGet(t, 0) if t == neg_variant_idx))
-                || !neg_ops
-                    .iter()
-                    .any(|op| matches!(op, Op::Call(b) if *b == box_idx))
-                || !matches!(zero_ops.as_slice(), [Op::I64Const(0), Op::Call(b)] if *b == box_idx)
-            {
-                continue;
-            }
-            return Some(Cert::AdtMatch {
-                name: f.name.clone(),
-                self_idx: f.wasm_idx,
-                nlocals: f.nlocals,
-                carrier,
-                add_variant_idx: *add_variant_idx,
-                neg_variant_idx: *neg_variant_idx,
-                zero_variant_idx: neg_variant_idx.checked_add(1)?,
-                box_idx,
-                sub_idx,
-                ops: strip_trailing_end(&f.ops).to_vec(),
-            });
-        }
-    }
-    None
 }
 
 /// Outcome of the cross-function composition pass on a caller.
@@ -2612,18 +2517,6 @@ fn render_host_def(c: &Cert) -> String {
              def {name}Host : HostTbl := fun fn =>\n  \
              if fn = {box_idx} then some (1, boxRef {carrier})\n  else none\n",
         ),
-        Cert::AdtMatch {
-            name,
-            carrier,
-            box_idx,
-            sub_idx,
-            ..
-        } => format!(
-            "/-- Runtime host wiring for `{name}` (box + sub contracts). -/\n\
-             def {name}Host (_add sub : List WVal → Option WVal) : HostTbl := fun fn =>\n  \
-             if fn = {box_idx} then some (1, boxRef {carrier})\n  \
-             else if fn = {sub_idx} then some (2, sub)\n  else none\n",
-        ),
         Cert::VariantDispatch {
             name,
             carrier,
@@ -2666,7 +2559,6 @@ fn render_code_def(c: &Cert) -> String {
         Cert::WidenedIntMatch { .. } => "widened Int variant match",
         Cert::VerbatimWidenedMatch { .. } => "verbatim widened variant match",
         Cert::IntRangePredicate { .. } => "Int range predicate",
-        Cert::AdtMatch { .. } => "ADT variant match",
         Cert::VariantDispatch { .. } => "general variant dispatch",
         Cert::Composition { .. } => "cross-function composition, whole call closure",
         Cert::NonRecursive { .. } => unreachable!(),
@@ -2768,12 +2660,6 @@ fn render_code_value(c: &Cert) -> String {
             ops,
             ..
         }
-        | Cert::AdtMatch {
-            self_idx,
-            nlocals,
-            ops,
-            ..
-        }
         | Cert::VariantDispatch {
             self_idx,
             nlocals,
@@ -2861,16 +2747,6 @@ fn render_host_value(c: &Cert) -> String {
         } => format!(
             "fun _ _ => fun fn =>\n    \
              if fn = {box_idx} then some (1, boxRef {carrier})\n    else none",
-        ),
-        Cert::AdtMatch {
-            carrier,
-            box_idx,
-            sub_idx,
-            ..
-        } => format!(
-            "fun _ sub => fun fn =>\n    \
-             if fn = {box_idx} then some (1, boxRef {carrier})\n    \
-             else if fn = {sub_idx} then some (2, sub)\n    else none",
         ),
         Cert::VariantDispatch {
             carrier,
@@ -3080,7 +2956,6 @@ fn render_certificate(
             }
             Cert::IntRangePredicate { .. } => s.push_str(&render_int_range_predicate_cert(c)),
             Cert::VerbatimWidenedMatch { .. } => s.push_str(&render_verbatim_widened_cert(c)),
-            Cert::AdtMatch { .. } => s.push_str(&render_adt_match_cert(c, model_info)),
             Cert::VariantDispatch { .. } => {
                 s.push_str(&render_variant_dispatch_cert(c, model_info))
             }
@@ -4336,80 +4211,6 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
     )
 }
 
-fn render_adt_match_cert(c: &Cert, model_info: &ModelInfo) -> String {
-    let c = c.inner();
-    let Cert::AdtMatch {
-        name,
-        self_idx,
-        carrier,
-        box_idx: _,
-        sub_idx: _,
-        ..
-    } = c
-    else {
-        unreachable!()
-    };
-    let ty = model_info
-        .fns
-        .get(name)
-        .and_then(|s| s.params.first())
-        .map(|s| s.as_str())
-        .unwrap_or("Op");
-    let repr = format!("{ty}Repr");
-    let host_ref = format!("{name}HostRef");
-    format!(
-        r#"/-! ### {name} — ADT match certificate (carrier type {carrier}) -/
-
-theorem {name}_wasm_certified
-    (S : CarrierSpec {carrier})
-    (sub : List WVal → Option WVal)
-    (hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w) :
-    ∀ (fuel : Nat) (o : {ty}) (v w : WVal), {repr} S o v →
-      wFuncN {name}Code ({name}Host (fun _ => none) sub) fuel {self_idx} [v] = some w →
-      S.Repr ({name} o) w := by
-  intro fuel
-  cases fuel with
-  | zero => intro o v w hv hrun; simp [wFuncN] at hrun
-  | succ f =>
-      intro o v w hv hrun
-      cases o with
-      | add x =>
-          obtain ⟨cx, rfl, hcx⟩ := hv
-          simp [wFuncN, wRunF, {name}Code, {name}Host, b32, popArgs, initLocals] at hrun
-          subst hrun
-          simpa [{name}] using hcx
-      | neg x =>
-          obtain ⟨cx, rfl, hcx⟩ := hv
-          simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32, popArgs, initLocals] at hrun
-          rcases hs : sub [carrierSmall {carrier} 0, cx] with _ | w' <;> simp [hs] at hrun
-          subst hrun
-          have := hsub 0 x (carrierSmall {carrier} 0) cx w' (S.smallIntro 0) hcx hs
-          simpa [{name}] using this
-      | zero =>
-          subst hv
-          simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32, popArgs, initLocals] at hrun
-          subst hrun
-          simpa [{name}] using S.smallIntro 0
-
-#print axioms {name}_wasm_certified
-
-def {host_ref} : HostTbl := {name}Host (fun _ => none) (subRef {carrier})
-example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv 0 [carrierSmall {carrier} 7]]).bind carrierToInt)
-    = some 7 := by native_decide
-example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv 1 [carrierSmall {carrier} 3]]).bind carrierToInt)
-    = some (-3) := by native_decide
-example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv 2 []]).bind carrierToInt)
-    = some 0 := by native_decide
-
-theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub hadd hsub fuel o vs w hrepr hrun
-  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
-  obtain ⟨v, rfl, hv⟩ := hrepr
-  simpa [AverCert.Schema.intRepr] using {name}_wasm_certified S sub hsub fuel o v w hv hrun
-"#
-    )
-}
-
 fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String {
     let mut out = String::new();
     let mut emitted = std::collections::HashSet::new();
@@ -4588,19 +4389,6 @@ fn verbatim_ctor_shape(
 
 fn adt_repr_indices(c: &Cert, model_info: &ModelInfo) -> Option<(String, Vec<u32>)> {
     match c.inner() {
-        Cert::AdtMatch {
-            name,
-            add_variant_idx,
-            neg_variant_idx,
-            zero_variant_idx,
-            ..
-        } => {
-            let ty = model_info.fns.get(name)?.params.first()?.clone();
-            Some((
-                ty,
-                vec![*add_variant_idx, *neg_variant_idx, *zero_variant_idx],
-            ))
-        }
         Cert::VariantDispatch { name, arms, .. } => {
             let ty = model_info.fns.get(name)?.params.first()?.clone();
             let ind = model_info.inductives.get(&ty)?;
@@ -4699,7 +4487,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
                 self_idx = c.self_idx(),
             )
         }
-        Cert::AdtMatch { .. } | Cert::VariantDispatch { .. } => {
+        Cert::VariantDispatch { .. } => {
             let ty = model_info
                 .fns
                 .get(name)
@@ -4950,7 +4738,6 @@ fn render_manifest(
                 Cert::WidenedIntMatch { .. } => "widened-int-match",
                 Cert::VerbatimWidenedMatch { .. } => "verbatim-widened-match",
                 Cert::IntRangePredicate { .. } => "int-range-predicate",
-                Cert::AdtMatch { .. } => "adt-match",
                 Cert::VariantDispatch { .. } => "variant-dispatch",
                 Cert::Composition { .. } => "cross-function-composition",
                 Cert::NonRecursive { .. } => unreachable!(),
