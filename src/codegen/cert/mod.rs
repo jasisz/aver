@@ -345,6 +345,25 @@ enum Cert {
         default: VerbatimDefault,
         ops: Vec<Op>,
     },
+    /// Non-recursive `ref.test` dispatch over a user enum where EVERY arm returns
+    /// a distinct VERBATIM constant (a String literal `array.new_data`, a null, or
+    /// an f64), e.g. `match code { Quote -> "\""; Backslash -> "\\"; ... }`
+    /// (`unescapedChar`). No host, no arithmetic, no field projection — each tag
+    /// maps to a byte-derived constant `WVal`. Certified `Cod := WVal`,
+    /// `verbatimRepr`, model `{name}Model : WVal → WVal`; reuses the verbatim
+    /// widened face. The generalisation of the verbatim widened match from "one
+    /// projected hit + a default" to "k constant arms".
+    VerbatimVariantDispatch {
+        name: String,
+        self_idx: u32,
+        nlocals: usize,
+        carrier: u32,
+        /// `(variant tag, its verbatim constant)`, in dispatch order.
+        arms: Vec<(u32, VerbatimDefault)>,
+        /// The terminal else constant.
+        default: VerbatimDefault,
+        ops: Vec<Op>,
+    },
     /// Non-recursive Int -> Bool range predicate: two nested carrier comparisons
     /// against constants, `match cp >= k_lo { true -> cp <= k_hi; false -> false }`
     /// (the `isHighSurrogate`/`isLowSurrogate` shape). Certified over the canonical
@@ -454,6 +473,7 @@ impl Cert {
             | Cert::FieldProjection { name, .. }
             | Cert::WidenedIntMatch { name, .. }
             | Cert::VerbatimWidenedMatch { name, .. }
+            | Cert::VerbatimVariantDispatch { name, .. }
             | Cert::IntRangePredicate { name, .. }
             | Cert::VariantDispatch { name, .. }
             | Cert::Composition { name, .. }
@@ -470,6 +490,7 @@ impl Cert {
             | Cert::FieldProjection { self_idx, .. }
             | Cert::WidenedIntMatch { self_idx, .. }
             | Cert::VerbatimWidenedMatch { self_idx, .. }
+            | Cert::VerbatimVariantDispatch { self_idx, .. }
             | Cert::IntRangePredicate { self_idx, .. }
             | Cert::VariantDispatch { self_idx, .. }
             | Cert::Composition { self_idx, .. }
@@ -486,6 +507,7 @@ impl Cert {
             | Cert::FieldProjection { carrier, .. }
             | Cert::WidenedIntMatch { carrier, .. }
             | Cert::VerbatimWidenedMatch { carrier, .. }
+            | Cert::VerbatimVariantDispatch { carrier, .. }
             | Cert::IntRangePredicate { carrier, .. }
             | Cert::VariantDispatch { carrier, .. }
             | Cert::Composition { carrier, .. }
@@ -501,6 +523,7 @@ impl Cert {
             Cert::FieldProjection { .. }
             | Cert::WidenedIntMatch { .. }
             | Cert::VerbatimWidenedMatch { .. }
+            | Cert::VerbatimVariantDispatch { .. }
             | Cert::IntRangePredicate { .. }
             | Cert::VariantDispatch { .. }
             | Cert::Composition { .. } => 1,
@@ -523,6 +546,7 @@ impl Cert {
             | Cert::FieldProjection { .. }
             | Cert::WidenedIntMatch { .. }
             | Cert::VerbatimWidenedMatch { .. }
+            | Cert::VerbatimVariantDispatch { .. }
             | Cert::IntRangePredicate { .. }
             | Cert::VariantDispatch { .. } => "fun x => x".to_string(),
             Cert::NonRecursive { .. } => unreachable!(),
@@ -557,6 +581,7 @@ impl Cert {
             }
             Cert::WidenedIntMatch { name, .. }
             | Cert::VerbatimWidenedMatch { name, .. }
+            | Cert::VerbatimVariantDispatch { name, .. }
             | Cert::IntRangePredicate { name, .. } => {
                 format!("fun _ _ _ => CertModule.{name}Host")
             }
@@ -579,7 +604,9 @@ impl Cert {
             | Cert::Composition { .. }
             | Cert::MutualRecursion { .. } => ("List Int".to_string(), "Int".to_string()),
             Cert::FieldProjection { .. } => ("WVal x WVal".to_string(), "WVal".to_string()),
-            Cert::VerbatimWidenedMatch { .. } => ("WVal".to_string(), "WVal".to_string()),
+            Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. } => {
+                ("WVal".to_string(), "WVal".to_string())
+            }
             Cert::IntRangePredicate { .. } => ("Int".to_string(), "Bool".to_string()),
             Cert::VariantDispatch { name, .. } | Cert::WidenedIntMatch { name, .. } => {
                 let dom = model_info
@@ -698,6 +725,7 @@ pub fn analyze(wasm_bytes: &[u8], model_files: &[(String, String)]) -> Result<An
             Cert::AdtConstructor { .. }
             | Cert::FieldProjection { .. }
             | Cert::VerbatimWidenedMatch { .. }
+            | Cert::VerbatimVariantDispatch { .. }
             | Cert::IntRangePredicate { .. } => {}
             Cert::MutualRecursion { .. } => {
                 // The shared host wires box + sub (no combinator).
@@ -827,7 +855,9 @@ impl ObligationFace {
                 struct_idx: *struct_idx,
             },
             Cert::IntRangePredicate { .. } => ObligationFace::IntPredicate,
-            Cert::VerbatimWidenedMatch { .. } => ObligationFace::VerbatimWidened,
+            Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. } => {
+                ObligationFace::VerbatimWidened
+            }
             Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. } => ObligationFace::AdtMatch,
             Cert::AdtConstructor { .. } => ObligationFace::AdtConstructor,
             // Each SCC member is an ordinary integer simulation face (arity 1);
@@ -1475,6 +1505,7 @@ fn walk_nonrecursive(
         .or_else(|| nr_adt_constructor(f, &body, box_idx, carrier))
         .or_else(|| nr_field_projection(f, &body, carrier))
         .or_else(|| nr_ref_dispatch_match(f, &body, box_idx, carrier, host_roles))
+        .or_else(|| nr_verbatim_variant_dispatch(f, &body, carrier))
         .or_else(|| nr_int_range_predicate(f, &body, carrier))
         .or_else(|| nr_variant_dispatch(f, &body, box_idx, carrier, host_roles))
 }
@@ -1954,6 +1985,78 @@ fn verbatim_default_from_ops(ops: &[Op]) -> Option<VerbatimDefault> {
         }),
         _ => None,
     }
+}
+
+/// A `ref.test` dispatch over a user enum where EVERY arm — hit arms and the
+/// terminal else — returns a VERBATIM constant (a String-literal `array.new_data`,
+/// a null, or an f64), with no host, no arithmetic, no field projection and no
+/// user calls (`unescapedChar`). The generalisation of the verbatim widened match
+/// from "one projected hit + a default" to "k constant arms". Certified over
+/// `Cod := WVal` / `verbatimRepr`, so no carrier or string representation is
+/// needed. Distinct from the variant dispatch (whose hit arms project an Int
+/// payload) and the verbatim widened match (whose single hit arm projects a
+/// field); a pure-constant hit arm matches neither.
+fn nr_verbatim_variant_dispatch(
+    f: &UserFn,
+    body: &StructuralBody,
+    carrier: Option<u32>,
+) -> Option<Cert> {
+    let carrier = carrier?;
+    if !f.calls.is_empty() {
+        return None;
+    }
+    // Every arm is a pure verbatim constant: no box, host or any call op.
+    if body
+        .normalized_ops
+        .iter()
+        .any(|op| matches!(op, Op::Call(_)))
+    {
+        return None;
+    }
+    let (arms, default) = verbatim_dispatch_chain(&body.tree)?;
+    if arms.is_empty() {
+        return None;
+    }
+    let mut tags: Vec<u32> = arms.iter().map(|(t, _)| *t).collect();
+    tags.sort_unstable();
+    tags.dedup();
+    if tags.len() != arms.len() {
+        return None;
+    }
+    Some(Cert::VerbatimVariantDispatch {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier,
+        arms,
+        default,
+        ops: strip_trailing_end(&f.ops).to_vec(),
+    })
+}
+
+/// Parse `[localGet 0, refTest t, ifElse hit els]` where each `hit` is a verbatim
+/// constant and `els` continues the chain or terminates in a verbatim constant.
+/// Mirrors `dispatch_chain`, but every leaf is a byte-derived constant instead of
+/// an Int projection.
+fn verbatim_dispatch_chain(
+    nodes: &[InstrNode],
+) -> Option<(Vec<(u32, VerbatimDefault)>, VerbatimDefault)> {
+    let [
+        InstrNode::Op(Op::LocalGet(0)),
+        InstrNode::Op(Op::RefTest(tag)),
+        InstrNode::IfElse(hit, els),
+    ] = nodes
+    else {
+        // Terminal else: a verbatim constant.
+        return verbatim_default_from_ops(&node_ops(nodes)).map(|d| (Vec::new(), d));
+    };
+    if has_branch(hit) {
+        return None;
+    }
+    let hit_const = verbatim_default_from_ops(&node_ops(hit))?;
+    let (mut rest, default) = verbatim_dispatch_chain(els)?;
+    rest.insert(0, (*tag, hit_const));
+    Some((rest, default))
 }
 
 fn nr_int_range_predicate(f: &UserFn, body: &StructuralBody, carrier: Option<u32>) -> Option<Cert> {
@@ -2938,6 +3041,7 @@ fn render_host_def(c: &Cert) -> String {
         Cert::AdtConstructor { name, .. }
         | Cert::FieldProjection { name, .. }
         | Cert::VerbatimWidenedMatch { name, .. }
+        | Cert::VerbatimVariantDispatch { name, .. }
         | Cert::IntRangePredicate { name, .. } => format!(
             "/-- Runtime host wiring for `{name}` (no host calls). -/\n\
              def {name}Host : HostTbl := fun _ => none\n",
@@ -3028,6 +3132,7 @@ fn render_code_def(c: &Cert) -> String {
         Cert::FieldProjection { .. } => "field projection",
         Cert::WidenedIntMatch { .. } => "widened Int variant match",
         Cert::VerbatimWidenedMatch { .. } => "verbatim widened variant match",
+        Cert::VerbatimVariantDispatch { .. } => "verbatim variant dispatch",
         Cert::IntRangePredicate { .. } => "Int range predicate",
         Cert::VariantDispatch { .. } => "general variant dispatch",
         Cert::Composition { .. } => "cross-function composition, whole call closure",
@@ -3166,6 +3271,12 @@ fn render_code_value(c: &Cert) -> String {
             ops,
             ..
         }
+        | Cert::VerbatimVariantDispatch {
+            self_idx,
+            nlocals,
+            ops,
+            ..
+        }
         | Cert::IntRangePredicate {
             self_idx,
             nlocals,
@@ -3290,6 +3401,7 @@ fn render_host_value(c: &Cert) -> String {
         Cert::AdtConstructor { .. }
         | Cert::FieldProjection { .. }
         | Cert::VerbatimWidenedMatch { .. }
+        | Cert::VerbatimVariantDispatch { .. }
         | Cert::IntRangePredicate { .. } => "fun _ _ _ => fun _ => none".to_string(),
         Cert::WidenedIntMatch {
             carrier, box_idx, ..
@@ -3532,7 +3644,9 @@ fn render_certificate(
                 s.push_str(&render_adt_match_cert(c, model_info))
             }
             Cert::IntRangePredicate { .. } => s.push_str(&render_int_range_predicate_cert(c)),
-            Cert::VerbatimWidenedMatch { .. } => s.push_str(&render_verbatim_widened_cert(c)),
+            Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. } => {
+                s.push_str(&render_verbatim_wval_match_cert(c))
+            }
             Cert::Composition { .. } => s.push_str(&render_composition_cert(c)),
             Cert::MutualRecursion { .. } => s.push_str(&render_mutual_recursion_cert(c)),
             Cert::NonRecursive { .. } => unreachable!(),
@@ -4853,65 +4967,51 @@ fn adt_match_widened_plan(c: &Cert, model_info: &ModelInfo) -> Result<AdtMatchPl
     })
 }
 
-fn render_verbatim_widened_cert(c: &Cert) -> String {
-    let c = c.inner();
-    let Cert::VerbatimWidenedMatch {
-        name,
-        self_idx,
-        carrier,
-        hit_variant_idx,
-        default,
-        ..
-    } = c
-    else {
-        unreachable!()
-    };
-    let hit = hit_variant_idx;
-    let other = if *hit_variant_idx == 0 { 1 } else { 0 };
-    let default_guard = render_default_guard(default);
-    let evalset = format!(
-        "wFuncN, wRunF, {name}Code, {name}Host, {name}Model, b32, popArgs, initLocals, List.set"
-    );
-    format!(
-        r#"/-! ### {name} — verbatim widened match certificate (carrier type {carrier}) -/
+/// A `Cod := WVal` / `verbatimRepr` match certificate: the shared theorem
+/// wrapper (statement, `cases v`, obligation) with the per-shape holes filled by
+/// a plan. The widened match (one projected hit + a default) and the variant
+/// dispatch (a constant per tag) are two ends of ONE arm — same face, same
+/// `cases v` spine — differing only in the per-arm leaf.
+struct VerbatimWvalPlan {
+    doc_title: String,
+    doc_comment: String,
+    cases_body: String,
+    guards_comment: String,
+    guards: String,
+}
 
-/-- The VERBATIM emitted body reads the first field of variant `{hit}` and
-    returns it as-is, or the null reference for any other value, for ALL inputs
-    `v : WVal` (partial correctness — a trap makes no claim). -/
+fn render_verbatim_wval_match_cert(c: &Cert) -> String {
+    let name = c.name();
+    let self_idx = c.self_idx();
+    let plan = match c.inner() {
+        Cert::VerbatimWidenedMatch { .. } => verbatim_widened_plan(c),
+        Cert::VerbatimVariantDispatch { .. } => verbatim_variant_dispatch_plan(c),
+        _ => unreachable!(),
+    };
+    let VerbatimWvalPlan {
+        doc_title,
+        doc_comment,
+        cases_body,
+        guards_comment,
+        guards,
+    } = plan;
+    format!(
+        r#"{doc_title}
+
+{doc_comment}
 theorem {name}_wasm_certified :
     ∀ (fuel : Nat) (v w : WVal),
       wFuncN {name}Code {name}Host (fuel + 1) {self_idx} [v] = some w →
       w = {name}Model v := by
   intro fuel v w hrun
   cases v with
-  | i32v n => simp [{evalset}] at hrun
-  | i64v n => simp [{evalset}] at hrun
-  | f64v b => simp [{evalset}] at hrun
-  | null => simp_all [{evalset}]
-  | arr t es =>
-      by_cases ht : t = {hit}
-      · subst ht; simp [{evalset}] at hrun
-      · simp_all [{evalset}]
-  | structv t fs =>
-      by_cases ht : t = {hit}
-      · subst ht
-        cases fs with
-        | nil => simp [{evalset}] at hrun
-        | cons x rest => simp_all [{evalset}]
-      · simp_all [{evalset}]
+{cases_body}
 
 #print axioms {name}_wasm_certified
 
--- Executable tripwires: the projected variant returns its first field, every
--- other value returns the byte-derived default literal.
+{guards_comment}
 def {name}HostRef : HostTbl := {name}Host
-example :
-    (wFuncN {name}Code {name}HostRef 4 {self_idx} [.structv {hit} [.i64v 42]]).bind
-      (fun w => match w with | .i64v n => some n | _ => none) = some 42 := by native_decide
-example :
-    (wFuncN {name}Code {name}HostRef 4 {self_idx} [.structv {other} []]).bind {default_guard} := by
-  native_decide
-
+{guards}
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
   intro S add sub mul hadd hsub hmul fuel v vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
@@ -4923,6 +5023,137 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
       simpa [AverCert.Schema.verbatimRepr] using hc
 "#
     )
+}
+
+fn verbatim_widened_plan(c: &Cert) -> VerbatimWvalPlan {
+    let Cert::VerbatimWidenedMatch {
+        name,
+        self_idx,
+        carrier,
+        hit_variant_idx,
+        default,
+        ..
+    } = c.inner()
+    else {
+        unreachable!()
+    };
+    let hit = hit_variant_idx;
+    let other = if *hit_variant_idx == 0 { 1 } else { 0 };
+    let default_guard = render_default_guard(default);
+    let evalset = format!(
+        "wFuncN, wRunF, {name}Code, {name}Host, {name}Model, b32, popArgs, initLocals, List.set"
+    );
+    VerbatimWvalPlan {
+        doc_title: format!(
+            "/-! ### {name} — verbatim widened match certificate (carrier type {carrier}) -/"
+        ),
+        doc_comment: format!(
+            "/-- The VERBATIM emitted body reads the first field of variant `{hit}` and\n    \
+             returns it as-is, or the null reference for any other value, for ALL inputs\n    \
+             `v : WVal` (partial correctness — a trap makes no claim). -/"
+        ),
+        cases_body: format!(
+            "  | i32v n => simp [{evalset}] at hrun\n  \
+             | i64v n => simp [{evalset}] at hrun\n  \
+             | f64v b => simp [{evalset}] at hrun\n  \
+             | null => simp_all [{evalset}]\n  \
+             | arr t es =>\n      \
+             by_cases ht : t = {hit}\n      \
+             · subst ht; simp [{evalset}] at hrun\n      \
+             · simp_all [{evalset}]\n  \
+             | structv t fs =>\n      \
+             by_cases ht : t = {hit}\n      \
+             · subst ht\n        \
+             cases fs with\n        \
+             | nil => simp [{evalset}] at hrun\n        \
+             | cons x rest => simp_all [{evalset}]\n      \
+             · simp_all [{evalset}]"
+        ),
+        guards_comment:
+            "-- Executable tripwires: the projected variant returns its first field, every\n\
+             -- other value returns the byte-derived default literal."
+                .to_string(),
+        guards: format!(
+            "example :\n    \
+             (wFuncN {name}Code {name}HostRef 4 {self_idx} [.structv {hit} [.i64v 42]]).bind\n      \
+             (fun w => match w with | .i64v n => some n | _ => none) = some 42 := by native_decide\n\
+             example :\n    \
+             (wFuncN {name}Code {name}HostRef 4 {self_idx} [.structv {other} []]).bind {default_guard} := by\n  \
+             native_decide\n"
+        ),
+    }
+}
+
+fn verbatim_variant_dispatch_plan(c: &Cert) -> VerbatimWvalPlan {
+    let Cert::VerbatimVariantDispatch {
+        name,
+        self_idx,
+        carrier,
+        arms,
+        default,
+        ..
+    } = c.inner()
+    else {
+        unreachable!()
+    };
+    let evalset = format!(
+        "wFuncN, wRunF, {name}Code, {name}Host, {name}Model, b32, popArgs, initLocals, List.set"
+    );
+    let dispatch = verbatim_tag_dispatch(arms, 6, &evalset);
+    let default_tag = arms.iter().map(|(t, _)| *t).max().unwrap_or(0) + 1;
+    let mut guards = String::new();
+    for (tag, konst) in arms {
+        guards.push_str(&format!(
+            "example :\n    (wFuncN {name}Code {name}HostRef 8 {self_idx} [.structv {tag} []]).bind {} := by\n  native_decide\n",
+            render_default_guard(konst),
+        ));
+    }
+    guards.push_str(&format!(
+        "example :\n    (wFuncN {name}Code {name}HostRef 8 {self_idx} [.structv {default_tag} []]).bind {} := by\n  native_decide\n",
+        render_default_guard(default),
+    ));
+    VerbatimWvalPlan {
+        doc_title: format!(
+            "/-! ### {name} — verbatim variant dispatch certificate (carrier type {carrier}) -/"
+        ),
+        doc_comment:
+            "/-- The VERBATIM emitted body dispatches on the variant and returns a byte-derived\n    \
+             constant for each tag, for ALL inputs `v : WVal` (partial correctness — a trap\n    \
+             makes no claim). -/"
+                .to_string(),
+        cases_body: format!(
+            "  | i32v n => simp_all [{evalset}]\n  \
+             | i64v n => simp_all [{evalset}]\n  \
+             | f64v b => simp_all [{evalset}]\n  \
+             | null => simp_all [{evalset}]\n  \
+             | arr t es =>\n{dispatch}\n  \
+             | structv t fs =>\n{dispatch}"
+        ),
+        guards_comment: "-- Executable tripwires: each variant returns its byte-derived constant."
+            .to_string(),
+        guards,
+    }
+}
+
+/// The nested `by_cases` block dispatching on a struct/array type index `t`: one
+/// `by_cases hI : t = tagI` per arm (each closing `subst; simp_all` to its
+/// constant), terminating in `simp_all` for the default. `base` is the leading
+/// indent of the first `by_cases`. Mirrors HueSpike.lean's proven shape.
+fn verbatim_tag_dispatch(arms: &[(u32, VerbatimDefault)], base: usize, evalset: &str) -> String {
+    let mut out = String::new();
+    for (i, (tag, _)) in arms.iter().enumerate() {
+        let ind = base + i * 2;
+        let sp = " ".repeat(ind);
+        if i == 0 {
+            out.push_str(&sp);
+        }
+        out.push_str(&format!("by_cases h{i} : t = {tag}\n"));
+        out.push_str(&format!("{sp}· subst h{i}\n"));
+        out.push_str(&format!("{sp}  simp_all [{evalset}]\n"));
+        out.push_str(&format!("{sp}· "));
+    }
+    out.push_str(&format!("simp_all [{evalset}]"));
+    out
 }
 
 fn render_int_range_predicate_cert(c: &Cert) -> String {
@@ -5080,6 +5311,29 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
                 Cert::VerbatimWidenedMatch { default, .. } => render_wval(default),
                 _ => unreachable!(),
             },
+        ));
+    }
+    // Model for a verbatim variant dispatch: each tag maps to its byte-derived
+    // constant. The body's `ref.test i` matches the WVal type index for BOTH
+    // `.structv i` and `.arr i`, and constant arms never fail on `.arr` (unlike a
+    // field projection), so the model must dispatch on the type index for both
+    // carriers; anything else falls to the terminal default.
+    for c in &analysis.certs {
+        let c = c.inner();
+        let Cert::VerbatimVariantDispatch { arms, default, .. } = c else {
+            continue;
+        };
+        let mut body = String::new();
+        for (tag, konst) in arms {
+            body.push_str(&format!("  | .structv {tag} _ => {}\n", render_wval(konst)));
+        }
+        for (tag, konst) in arms {
+            body.push_str(&format!("  | .arr {tag} _ => {}\n", render_wval(konst)));
+        }
+        out.push_str(&format!(
+            "def {name}Model : CertPrelude.WVal → CertPrelude.WVal\n{body}  | _ => {default}\n\n",
+            name = c.name(),
+            default = render_wval(default),
         ));
     }
     out
@@ -5625,7 +5879,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
             host = c.host_expr(),
             self_idx = c.self_idx(),
         ),
-        Cert::VerbatimWidenedMatch { .. } => format!(
+        Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. } => format!(
             "abbrev {name}Ob : Schema.Obligation :=\n  \
              {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
              code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
@@ -5840,6 +6094,7 @@ fn render_manifest(
                 Cert::FieldProjection { .. } => "field-projection",
                 Cert::WidenedIntMatch { .. } => "widened-int-match",
                 Cert::VerbatimWidenedMatch { .. } => "verbatim-widened-match",
+                Cert::VerbatimVariantDispatch { .. } => "verbatim-variant-dispatch",
                 Cert::IntRangePredicate { .. } => "int-range-predicate",
                 Cert::VariantDispatch { .. } => "variant-dispatch",
                 Cert::Composition { .. } => "cross-function-composition",

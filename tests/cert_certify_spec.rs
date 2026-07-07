@@ -334,6 +334,82 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
 }
 
 #[test]
+fn certify_verbatim_variant_dispatch_lake_builds_kernel_clean() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping certify verbatim-variant-dispatch test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-strdispatch");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/strdispatch.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let cert_dir = out_dir.join("cert");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    let certified: Vec<&str> = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    // A match whose every arm is a distinct String literal is certified as a
+    // verbatim variant dispatch (`Cod := WVal`, `verbatimRepr`) over the
+    // byte-exact data-segment constants — no new representation, no schema change.
+    assert!(
+        certified.contains(&"tagName"),
+        "expected tagName certified, got {certified:?}"
+    );
+
+    let build = Command::new("lake")
+        .current_dir(&cert_dir)
+        .arg("build")
+        .output()
+        .expect("expected `lake build` to run");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(
+        build.status.success(),
+        "lake build of emitted verbatim-variant-dispatch cert failed:\n{combined}"
+    );
+    assert!(
+        combined.contains(
+            "tagName_wasm_certified' depends on axioms: [propext, Classical.choice, Quot.sound]"
+        ),
+        "verbatim variant dispatch certificate not kernel-clean:\n{combined}"
+    );
+    assert!(
+        !combined.contains("sorryAx"),
+        "verbatim variant dispatch certificate leaked sorryAx:\n{combined}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
 fn certify_composition_fixture_lake_builds_kernel_clean() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping certify composition test: `lake` not available");

@@ -885,7 +885,7 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     let (ok, report) = aver_verify(&wasm, &cert);
     assert!(ok, "expected clean json certificate to verify:\n{report}");
     assert!(
-        report.contains("10 certified exports"),
+        report.contains("12 certified exports"),
         "json should certify the widened data-segment functions:\n{report}"
     );
 
