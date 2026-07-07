@@ -139,6 +139,21 @@ enum HostRole {
     Sub,
 }
 
+/// One recognised leaf of a `VariantDispatch` hit arm: what the arm computes
+/// from the variant's Int payload.
+#[derive(Clone, PartialEq)]
+enum ArmLeaf {
+    /// Return the projected payload unchanged.
+    Proj,
+    /// Combine the payload with a boxed constant through a contracted host:
+    /// `k op x` when `const_first`, else `x op k`.
+    HostOp {
+        role: HostRole,
+        k: i64,
+        const_first: bool,
+    },
+}
+
 /// The straight-line integer shape of one function inside a composition's call
 /// closure. Every shape is unary (`Int -> Int`), non-recursive, branch-free, and
 /// its simulation lemma is provable over the caller's composed code table by the
@@ -290,6 +305,27 @@ enum Cert {
         sub_idx: u32,
         ops: Vec<Op>,
     },
+    /// General non-recursive variant dispatch over one user inductive: a chain
+    /// of `ref.test` branches (each else-arm continuing the chain) whose hit
+    /// arms each reduce to one recognised leaf — payload projection, or a
+    /// contracted host add/sub combining the payload with an integer constant —
+    /// and whose terminal else is a boxed integer constant. Recognised from the
+    /// parsed instruction tree, so arm count, arm order, per-arm semantics and
+    /// the default value are free; no full opcode sequence is pinned.
+    VariantDispatch {
+        name: String,
+        self_idx: u32,
+        nlocals: usize,
+        carrier: u32,
+        box_idx: u32,
+        add_idx: Option<u32>,
+        sub_idx: Option<u32>,
+        /// `(variant struct tag, leaf)` in dispatch order.
+        arms: Vec<(u32, ArmLeaf)>,
+        /// The terminal else: a boxed integer constant.
+        default_k: i64,
+        ops: Vec<Op>,
+    },
     /// Cross-function composition: a non-recursive `Int -> Int` caller whose body
     /// is a unary chain of calls to other user functions, each of which is itself
     /// a straight-line integer shape (self-sum or a nested chain). The obligation
@@ -329,6 +365,7 @@ impl Cert {
             | Cert::VerbatimWidenedMatch { name, .. }
             | Cert::IntRangePredicate { name, .. }
             | Cert::AdtMatch { name, .. }
+            | Cert::VariantDispatch { name, .. }
             | Cert::Composition { name, .. } => name,
             Cert::NonRecursive { .. } => unreachable!(),
         }
@@ -344,6 +381,7 @@ impl Cert {
             | Cert::VerbatimWidenedMatch { self_idx, .. }
             | Cert::IntRangePredicate { self_idx, .. }
             | Cert::AdtMatch { self_idx, .. }
+            | Cert::VariantDispatch { self_idx, .. }
             | Cert::Composition { self_idx, .. } => *self_idx,
             Cert::NonRecursive { .. } => unreachable!(),
         }
@@ -359,6 +397,7 @@ impl Cert {
             | Cert::VerbatimWidenedMatch { carrier, .. }
             | Cert::IntRangePredicate { carrier, .. }
             | Cert::AdtMatch { carrier, .. }
+            | Cert::VariantDispatch { carrier, .. }
             | Cert::Composition { carrier, .. } => *carrier,
             Cert::NonRecursive { .. } => unreachable!(),
         }
@@ -373,6 +412,7 @@ impl Cert {
             | Cert::VerbatimWidenedMatch { .. }
             | Cert::IntRangePredicate { .. }
             | Cert::AdtMatch { .. }
+            | Cert::VariantDispatch { .. }
             | Cert::Composition { .. } => 1,
             Cert::NonRecursive { .. } => unreachable!(),
         }
@@ -392,7 +432,8 @@ impl Cert {
             | Cert::WidenedIntMatch { .. }
             | Cert::VerbatimWidenedMatch { .. }
             | Cert::IntRangePredicate { .. }
-            | Cert::AdtMatch { .. } => "fun x => x".to_string(),
+            | Cert::AdtMatch { .. }
+            | Cert::VariantDispatch { .. } => "fun x => x".to_string(),
             Cert::NonRecursive { .. } => unreachable!(),
         }
     }
@@ -414,7 +455,9 @@ impl Cert {
             | Cert::IntRangePredicate { name, .. } => {
                 format!("fun _ _ => CertModule.{name}Host")
             }
-            Cert::AdtMatch { name, .. } => format!("CertModule.{name}Host"),
+            Cert::AdtMatch { name, .. } | Cert::VariantDispatch { name, .. } => {
+                format!("CertModule.{name}Host")
+            }
             Cert::NonRecursive { .. } => unreachable!(),
         }
     }
@@ -432,7 +475,9 @@ impl Cert {
             Cert::FieldProjection { .. } => ("WVal x WVal".to_string(), "WVal".to_string()),
             Cert::VerbatimWidenedMatch { .. } => ("WVal".to_string(), "WVal".to_string()),
             Cert::IntRangePredicate { .. } => ("Int".to_string(), "Bool".to_string()),
-            Cert::AdtMatch { name, .. } | Cert::WidenedIntMatch { name, .. } => {
+            Cert::AdtMatch { name, .. }
+            | Cert::VariantDispatch { name, .. }
+            | Cert::WidenedIntMatch { name, .. } => {
                 let dom = model_info
                     .fns
                     .get(name)
@@ -544,6 +589,13 @@ pub fn analyze(wasm_bytes: &[u8]) -> Result<Analysis, String> {
             Cert::AdtMatch { .. } => {
                 has_box = true;
                 has_sub = true;
+            }
+            Cert::VariantDispatch {
+                add_idx, sub_idx, ..
+            } => {
+                has_box = true;
+                has_add |= add_idx.is_some();
+                has_sub |= sub_idx.is_some();
             }
             Cert::Composition {
                 has_add: a,
@@ -659,7 +711,9 @@ impl ObligationFace {
             },
             Cert::IntRangePredicate { .. } => ObligationFace::IntPredicate,
             Cert::VerbatimWidenedMatch { .. } => ObligationFace::VerbatimWidened,
-            Cert::AdtMatch { .. } | Cert::WidenedIntMatch { .. } => ObligationFace::AdtMatch,
+            Cert::AdtMatch { .. } | Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. } => {
+                ObligationFace::AdtMatch
+            }
             Cert::AdtConstructor { .. } => ObligationFace::AdtConstructor,
             Cert::NonRecursive { .. } => unreachable!(),
         }
@@ -1258,6 +1312,138 @@ fn walk_nonrecursive(
         .or_else(|| nr_ref_dispatch_match(f, &body, box_idx, carrier, host_roles))
         .or_else(|| nr_int_range_predicate(f, &body, carrier))
         .or_else(|| nr_adt_match(f, &body, box_idx, carrier, host_roles))
+        .or_else(|| nr_variant_dispatch(f, &body, box_idx, carrier, host_roles))
+}
+
+/// General variant dispatch: walk a `ref.test` chain whose hit arms each
+/// reduce to one recognised leaf and whose terminal else is a boxed constant.
+/// Anything off this grammar returns `None` (falls through to the honest
+/// decline reasons). Recognition keys on the parsed tree only — no full
+/// opcode sequence is pinned, so arm count, order and per-arm semantics are
+/// free within the leaf vocabulary.
+fn nr_variant_dispatch(
+    f: &UserFn,
+    body: &StructuralBody,
+    box_idx: u32,
+    carrier: Option<u32>,
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<Cert> {
+    if f.arity != 1 {
+        return None;
+    }
+    let carrier = carrier?;
+    let (arms, default_k) = dispatch_chain(&body.tree, box_idx, host_roles)?;
+    if arms.is_empty() {
+        return None;
+    }
+    // No duplicate variant tags.
+    let mut tags: Vec<u32> = arms.iter().map(|(t, _)| *t).collect();
+    tags.sort_unstable();
+    tags.dedup();
+    if tags.len() != arms.len() {
+        return None;
+    }
+    // At most one host helper per contract role across all arms.
+    let mut add_idx = None;
+    let mut sub_idx = None;
+    for op in body.normalized_ops.iter() {
+        let Op::Call(idx) = op else { continue };
+        match host_roles.get(idx) {
+            Some(HostRole::Add) => {
+                if add_idx.is_some_and(|a: u32| a != *idx) {
+                    return None;
+                }
+                add_idx = Some(*idx);
+            }
+            Some(HostRole::Sub) => {
+                if sub_idx.is_some_and(|s: u32| s != *idx) {
+                    return None;
+                }
+                sub_idx = Some(*idx);
+            }
+            None => {}
+        }
+    }
+    Some(Cert::VariantDispatch {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier,
+        box_idx,
+        add_idx,
+        sub_idx,
+        arms,
+        default_k,
+        ops: strip_trailing_end(&f.ops).to_vec(),
+    })
+}
+
+/// Parse `[localGet 0, refTest t, ifElse hit els]` where `els` continues the
+/// chain or terminates in a boxed constant. Returns the arms in dispatch order
+/// plus the default constant.
+fn dispatch_chain(
+    nodes: &[InstrNode],
+    box_idx: u32,
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<(Vec<(u32, ArmLeaf)>, i64)> {
+    let [
+        InstrNode::Op(Op::LocalGet(0)),
+        InstrNode::Op(Op::RefTest(tag)),
+        InstrNode::IfElse(hit, els),
+    ] = nodes
+    else {
+        // Terminal else: a boxed integer constant.
+        return match nodes {
+            [InstrNode::Op(Op::I64Const(k)), InstrNode::Op(Op::Call(b))] if *b == box_idx => {
+                Some((Vec::new(), *k))
+            }
+            _ => None,
+        };
+    };
+    if has_branch(hit) {
+        return None;
+    }
+    let leaf = leaf_of_arm(&node_ops(hit), *tag, box_idx, host_roles)?;
+    let (mut rest, default_k) = dispatch_chain(els, box_idx, host_roles)?;
+    rest.insert(0, (*tag, leaf));
+    Some((rest, default_k))
+}
+
+/// Classify one hit arm as a leaf. The arm must open with the payload
+/// projection `localGet 0; refCast tag; structGet tag 0`; the remainder is
+/// either empty (projection), a boxed constant fed to a contracted host with
+/// the payload first, or — through the emitter's one-local spill — the
+/// constant first. Anything else: no leaf.
+fn leaf_of_arm(
+    ops: &[Op],
+    tag: u32,
+    box_idx: u32,
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<ArmLeaf> {
+    use Op::*;
+    let rest = match ops {
+        [LocalGet(0), RefCast(t), StructGet(t2, 0), rest @ ..] if t == &tag && t2 == &tag => rest,
+        _ => return None,
+    };
+    let role = |idx: &u32| host_roles.get(idx).copied();
+    match rest {
+        [] => Some(ArmLeaf::Proj),
+        // payload first: x op k
+        [I64Const(k), Call(b), Call(h)] if *b == box_idx => Some(ArmLeaf::HostOp {
+            role: role(h)?,
+            k: *k,
+            const_first: false,
+        }),
+        // constant first through the spill local: k op x
+        [LocalSet(n), I64Const(k), Call(b), LocalGet(n2), Call(h)] if *b == box_idx && n == n2 => {
+            Some(ArmLeaf::HostOp {
+                role: role(h)?,
+                k: *k,
+                const_first: true,
+            })
+        }
+        _ => None,
+    }
 }
 
 fn structural_body(
@@ -2358,6 +2544,29 @@ fn render_host_def(c: &Cert) -> String {
              if fn = {box_idx} then some (1, boxRef {carrier})\n  \
              else if fn = {sub_idx} then some (2, sub)\n  else none\n",
         ),
+        Cert::VariantDispatch {
+            name,
+            carrier,
+            box_idx,
+            add_idx,
+            sub_idx,
+            ..
+        } => {
+            let a = if add_idx.is_some() { "add" } else { "_add" };
+            let s = if sub_idx.is_some() { "sub" } else { "_sub" };
+            let mut chain = format!("if fn = {box_idx} then some (1, boxRef {carrier})");
+            if let Some(i) = add_idx {
+                chain.push_str(&format!("\n  else if fn = {i} then some (2, add)"));
+            }
+            if let Some(i) = sub_idx {
+                chain.push_str(&format!("\n  else if fn = {i} then some (2, sub)"));
+            }
+            format!(
+                "/-- Runtime host wiring for `{name}` (box + contracted arithmetic). -/\n\
+                 def {name}Host ({a} {s} : List WVal → Option WVal) : HostTbl := fun fn =>\n  \
+                 {chain}\n  else none\n",
+            )
+        }
         Cert::Composition { name, closure, .. } => format!(
             "/-- Runtime host wiring for `{name}`'s call closure (add contract). -/\n\
              def {name}Host (add _sub : List WVal → Option WVal) : HostTbl := fun fn =>\n    {}\n",
@@ -2378,6 +2587,7 @@ fn render_code_def(c: &Cert) -> String {
         Cert::VerbatimWidenedMatch { .. } => "verbatim widened variant match",
         Cert::IntRangePredicate { .. } => "Int range predicate",
         Cert::AdtMatch { .. } => "ADT variant match",
+        Cert::VariantDispatch { .. } => "general variant dispatch",
         Cert::Composition { .. } => "cross-function composition, whole call closure",
         Cert::NonRecursive { .. } => unreachable!(),
     };
@@ -2483,6 +2693,12 @@ fn render_code_value(c: &Cert) -> String {
             nlocals,
             ops,
             ..
+        }
+        | Cert::VariantDispatch {
+            self_idx,
+            nlocals,
+            ops,
+            ..
         } => format!(
             "fun fn =>\n  \
              if fn = {self_idx} then some ⟨{arity}, {nlocals}, {body}⟩ else none",
@@ -2576,6 +2792,24 @@ fn render_host_value(c: &Cert) -> String {
              if fn = {box_idx} then some (1, boxRef {carrier})\n    \
              else if fn = {sub_idx} then some (2, sub)\n    else none",
         ),
+        Cert::VariantDispatch {
+            carrier,
+            box_idx,
+            add_idx,
+            sub_idx,
+            ..
+        } => {
+            let a = if add_idx.is_some() { "add" } else { "_" };
+            let s = if sub_idx.is_some() { "sub" } else { "_" };
+            let mut chain = format!("if fn = {box_idx} then some (1, boxRef {carrier})");
+            if let Some(i) = add_idx {
+                chain.push_str(&format!("\n    else if fn = {i} then some (2, add)"));
+            }
+            if let Some(i) = sub_idx {
+                chain.push_str(&format!("\n    else if fn = {i} then some (2, sub)"));
+            }
+            format!("fun {a} {s} => fun fn =>\n    {chain}\n    else none")
+        }
         Cert::Composition { closure, .. } => {
             format!(
                 "fun add _sub => fun fn =>\n    {}",
@@ -2767,6 +3001,9 @@ fn render_certificate(
             Cert::IntRangePredicate { .. } => s.push_str(&render_int_range_predicate_cert(c)),
             Cert::VerbatimWidenedMatch { .. } => s.push_str(&render_verbatim_widened_cert(c)),
             Cert::AdtMatch { .. } => s.push_str(&render_adt_match_cert(c, model_info)),
+            Cert::VariantDispatch { .. } => {
+                s.push_str(&render_variant_dispatch_cert(c, model_info))
+            }
             Cert::Composition { .. } => s.push_str(&render_composition_cert(c)),
             Cert::NonRecursive { .. } => unreachable!(),
         }
@@ -3848,6 +4085,167 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
     )
 }
 
+fn render_variant_dispatch_cert(c: &Cert, model_info: &ModelInfo) -> String {
+    let c = c.inner();
+    let Cert::VariantDispatch {
+        name,
+        self_idx,
+        carrier,
+        add_idx,
+        sub_idx,
+        arms,
+        default_k,
+        ..
+    } = c
+    else {
+        unreachable!()
+    };
+    let ty = model_info
+        .fns
+        .get(name)
+        .and_then(|s| s.params.first())
+        .map(|s| s.as_str())
+        .unwrap_or("Op");
+    let repr = format!("{ty}Repr");
+    let host_ref = format!("{name}HostRef");
+    let Some(ind) = model_info.inductives.get(ty) else {
+        // Byte-classified body without a parseable source inductive: the whole
+        // build fails, never a per-function decline (the model is only proof
+        // text, but a certificate without a model is not a certificate).
+        return format!("-- {name}: no source inductive for {ty}\nexample : False := by decide\n");
+    };
+    let base = arms.iter().map(|(t, _)| *t).min().unwrap_or(0);
+    let arm_of_tag =
+        |tag: u32| -> Option<&ArmLeaf> { arms.iter().find(|(t, _)| *t == tag).map(|(_, l)| l) };
+    let simp_run = format!(
+        "simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32, popArgs, initLocals] at hrun"
+    );
+
+    // One `cases` arm per constructor, in declaration order.
+    let mut cases = Vec::new();
+    // One executable guard per constructor path, values derived from the bytes.
+    let mut guards = Vec::new();
+    for (i, ctor) in ind.ctors.iter().enumerate() {
+        let tag = base + i as u32;
+        let cn = &ctor.name;
+        let payload = !ctor.fields.is_empty();
+        match arm_of_tag(tag) {
+            Some(ArmLeaf::Proj) => {
+                cases.push(format!(
+                    "      | {cn} x =>\n          obtain ⟨cx, rfl, hcx⟩ := hv\n          {simp_run}\n          subst hrun\n          simpa [{name}] using hcx"
+                ));
+                guards.push(format!(
+                    "example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv {tag} [carrierSmall {carrier} 5]]).bind carrierToInt)\n    = some 5 := by native_decide"
+                ));
+            }
+            Some(ArmLeaf::HostOp {
+                role,
+                k,
+                const_first,
+            }) => {
+                let (hostfn, hyp) = match role {
+                    HostRole::Add => ("add", "hadd"),
+                    HostRole::Sub => ("sub", "hsub"),
+                };
+                let (operands, cite) = if *const_first {
+                    (
+                        format!("[carrierSmall {carrier} ({k}), cx]"),
+                        format!(
+                            "{hyp} ({k}) x (carrierSmall {carrier} ({k})) cx w' (S.smallIntro ({k})) hcx hs"
+                        ),
+                    )
+                } else {
+                    (
+                        format!("[cx, carrierSmall {carrier} ({k})]"),
+                        format!(
+                            "{hyp} x ({k}) cx (carrierSmall {carrier} ({k})) w' hcx (S.smallIntro ({k})) hs"
+                        ),
+                    )
+                };
+                cases.push(format!(
+                    "      | {cn} x =>\n          obtain ⟨cx, rfl, hcx⟩ := hv\n          {simp_run}\n          rcases hs : {hostfn} {operands} with _ | w' <;> simp [hs] at hrun\n          subst hrun\n          have := {cite}\n          simpa [{name}] using this"
+                ));
+                let sample = 5i64;
+                let expected = if *const_first {
+                    match role {
+                        HostRole::Add => k + sample,
+                        HostRole::Sub => k - sample,
+                    }
+                } else {
+                    match role {
+                        HostRole::Add => sample + k,
+                        HostRole::Sub => sample - k,
+                    }
+                };
+                guards.push(format!(
+                    "example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv {tag} [carrierSmall {carrier} {sample}]]).bind carrierToInt)\n    = some ({expected}) := by native_decide"
+                ));
+            }
+            None => {
+                // Constructor covered by the terminal default.
+                if payload {
+                    cases.push(format!(
+                        "      | {cn} x =>\n          obtain ⟨cx, rfl, hcx⟩ := hv\n          {simp_run}\n          subst hrun\n          simpa [{name}] using S.smallIntro ({default_k})"
+                    ));
+                    guards.push(format!(
+                        "example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv {tag} [carrierSmall {carrier} 5]]).bind carrierToInt)\n    = some ({default_k}) := by native_decide"
+                    ));
+                } else {
+                    cases.push(format!(
+                        "      | {cn} =>\n          subst hv\n          {simp_run}\n          subst hrun\n          simpa [{name}] using S.smallIntro ({default_k})"
+                    ));
+                    guards.push(format!(
+                        "example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv {tag} []]).bind carrierToInt)\n    = some ({default_k}) := by native_decide"
+                    ));
+                }
+            }
+        }
+    }
+    let add_ref = if add_idx.is_some() {
+        format!("(addRef {carrier})")
+    } else {
+        "(fun _ => none)".to_string()
+    };
+    let sub_ref = if sub_idx.is_some() {
+        format!("(subRef {carrier})")
+    } else {
+        "(fun _ => none)".to_string()
+    };
+    format!(
+        r#"/-! ### {name} — general variant dispatch certificate (carrier type {carrier}) -/
+
+theorem {name}_wasm_certified
+    (S : CarrierSpec {carrier})
+    (add sub : List WVal → Option WVal)
+    (hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
+    (hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w) :
+    ∀ (fuel : Nat) (o : {ty}) (v w : WVal), {repr} S o v →
+      wFuncN {name}Code ({name}Host add sub) fuel {self_idx} [v] = some w →
+      S.Repr ({name} o) w := by
+  intro fuel
+  cases fuel with
+  | zero => intro o v w hv hrun; simp [wFuncN] at hrun
+  | succ f =>
+      intro o v w hv hrun
+      cases o with
+{cases}
+
+#print axioms {name}_wasm_certified
+
+def {host_ref} : HostTbl := {name}Host {add_ref} {sub_ref}
+{guards}
+
+theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+  intro S add sub hadd hsub fuel o vs w hrepr hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  obtain ⟨v, rfl, hv⟩ := hrepr
+  simpa [AverCert.Schema.intRepr] using {name}_wasm_certified S add sub hadd hsub fuel o v w hv hrun
+"#,
+        cases = cases.join("\n"),
+        guards = guards.join("\n"),
+    )
+}
+
 fn render_adt_match_cert(c: &Cert, model_info: &ModelInfo) -> String {
     let c = c.inner();
     let Cert::AdtMatch {
@@ -4113,6 +4511,16 @@ fn adt_repr_indices(c: &Cert, model_info: &ModelInfo) -> Option<(String, Vec<u32
                 vec![*add_variant_idx, *neg_variant_idx, *zero_variant_idx],
             ))
         }
+        Cert::VariantDispatch { name, arms, .. } => {
+            let ty = model_info.fns.get(name)?.params.first()?.clone();
+            let ind = model_info.inductives.get(&ty)?;
+            // Struct tags are assigned per constructor in declaration order;
+            // anchor the base on the smallest dispatched tag. A mis-anchored
+            // base renders an unprovable `Repr` and fails the lake build —
+            // never a false certificate.
+            let base = arms.iter().map(|(t, _)| *t).min()?;
+            Some((ty, (0..ind.ctors.len()).map(|i| base + i as u32).collect()))
+        }
         Cert::AdtConstructor {
             name, struct_idx, ..
         } => {
@@ -4201,7 +4609,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
                 self_idx = c.self_idx(),
             )
         }
-        Cert::AdtMatch { .. } => {
+        Cert::AdtMatch { .. } | Cert::VariantDispatch { .. } => {
             let ty = model_info
                 .fns
                 .get(name)
@@ -4453,6 +4861,7 @@ fn render_manifest(
                 Cert::VerbatimWidenedMatch { .. } => "verbatim-widened-match",
                 Cert::IntRangePredicate { .. } => "int-range-predicate",
                 Cert::AdtMatch { .. } => "adt-match",
+                Cert::VariantDispatch { .. } => "variant-dispatch",
                 Cert::Composition { .. } => "cross-function-composition",
                 Cert::NonRecursive { .. } => unreachable!(),
             },
