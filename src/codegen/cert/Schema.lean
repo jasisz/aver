@@ -69,7 +69,7 @@ structure Obligation where
   policy  : Policy
   carrier : Nat
   code    : CodeTbl
-  host    : (List WVal → Option WVal) → (List WVal → Option WVal) → HostTbl
+  host    : (List WVal → Option WVal) → (List WVal → Option WVal) → (List WVal → Option WVal) → HostTbl
   self    : Nat
   Dom     : Type
   Cod     : Type
@@ -78,17 +78,20 @@ structure Obligation where
   model   : Dom → Cod
 
 /-- Denotation of `simulatesModel`: under any representation `S` and any host
-    add/sub contracts obeying the named integer laws, the emitted body run on a
-    represented domain value yields a represented result of `model x`. Partial
-    correctness — vacuous on trap or fuel exhaustion. -/
+    add/sub/mul contracts obeying the named integer laws, the emitted body run on
+    a represented domain value yields a represented result of `model x`. Partial
+    correctness — vacuous on trap or fuel exhaustion. Each contract is an assumed
+    runtime law: the host helper wired to that slot computes the named integer
+    operation on the represented values. -/
 def Obligation.holds (o : Obligation) : Prop :=
   ∀ (S : CarrierSpec o.carrier)
-    (add sub : List WVal → Option WVal)
+    (add sub mul : List WVal → Option WVal)
     (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
     (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
+    (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
     (fuel : Nat) (x : o.Dom) (vs : List WVal) (w : WVal),
     o.domRepr S x vs →
-    wFuncN o.code (o.host add sub) fuel o.self vs = some w →
+    wFuncN o.code (o.host add sub mul) fuel o.self vs = some w →
     o.codRepr S (o.model x) w
 
 structure Manifest where

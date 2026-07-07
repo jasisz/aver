@@ -98,6 +98,144 @@ fn certify_straight_line_fixture_lake_builds_kernel_clean() {
 }
 
 #[test]
+fn certify_declines_overflowing_multiplication_recursion() {
+    // No `lake` needed: this is a pure emitter fail-closed check.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-recdecline");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/recdecline.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    // Must NOT panic / crash — a large multiplier makes the guard overflow, and
+    // the classifier declines rather than aborting the emitter.
+    assert!(
+        compile.status.success(),
+        "compile --certify must not crash on an overflowing multiplier:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    let certified: Vec<&str> = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    let declined: Vec<&str> = manifest["source_level_only"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        !certified.contains(&"wild"),
+        "out-of-range multiplier must NOT be certified, got {certified:?}"
+    );
+    assert!(
+        declined.contains(&"wild"),
+        "out-of-range multiplier must be declined, got {declined:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
+fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping certify recursion test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-recgen");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/recgen.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let cert_dir = out_dir.join("cert");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    let certified: Vec<&str> = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    // One fuel-induction arm covers: a non-zero base (`sumFrom`), a constant
+    // combinator operand (`constPlus`), a reversed operand order (`backward`),
+    // and the two-argument tail accumulator (`countDown`) — none of which the
+    // old fixed-shape recursion templates admitted.
+    for name in ["sumFrom", "constPlus", "backward", "factorial", "countDown"] {
+        assert!(
+            certified.contains(&name),
+            "expected {name} certified, got {certified:?}"
+        );
+    }
+
+    let build = Command::new("lake")
+        .current_dir(&cert_dir)
+        .arg("build")
+        .output()
+        .expect("expected `lake build` to run");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(
+        build.status.success(),
+        "lake build of emitted recursion cert failed:\n{combined}"
+    );
+    // Kernel-clean on every recognised shape, including the ones the previous
+    // templates could not express.
+    for name in ["sumFrom", "constPlus", "backward", "factorial", "countDown"] {
+        assert!(
+            combined.contains(&format!(
+                "{name}_wasm_certified' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            )),
+            "recursion certificate for {name} not kernel-clean:\n{combined}"
+        );
+    }
+    assert!(
+        !combined.contains("sorryAx"),
+        "recursion certificate leaked sorryAx:\n{combined}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
 fn certify_composition_fixture_lake_builds_kernel_clean() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping certify composition test: `lake` not available");

@@ -4532,15 +4532,9 @@ fn emit_artifact_certificate(
 ) {
     use aver::codegen::cert;
 
-    let analysis = match cert::analyze(bytes) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("{}", format!("certificate: {e}").red());
-            return;
-        }
-    };
-
     // Reuse the `aver proof` Lean model emission for the model definitions.
+    // Built before `analyze` so the recursion classifier can read the combinator
+    // operator (`+`/`*`) from the model.
     let (mut mctx, _mroot) = build_codegen_context(
         file,
         project_name,
@@ -4555,6 +4549,14 @@ fn emit_artifact_certificate(
         true,  // run_law_lower
     );
     let model_out = lean_codegen::transpile_for_cert_model(&mut mctx);
+
+    let analysis = match cert::analyze(bytes, &model_out.files) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("{}", format!("certificate: {e}").red());
+            return;
+        }
+    };
 
     if let Err(e) = cert::write_project(out_path, wasm_name, bytes, &analysis, &model_out.files) {
         eprintln!("{}", format!("certificate: {e}").red());

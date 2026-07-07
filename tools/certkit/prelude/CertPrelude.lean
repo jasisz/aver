@@ -364,6 +364,10 @@ def subRef (C : Nat) : List WVal → Option WVal
   | [a, b] => do let x ← carrierToInt a; let y ← carrierToInt b; some (carrierSmall C (x - y))
   | _ => none
 
+def mulRef (C : Nat) : List WVal → Option WVal
+  | [a, b] => do let x ← carrierToInt a; let y ← carrierToInt b; some (carrierSmall C (x * y))
+  | _ => none
+
 /-- Int comparison contract faces: decode both carriers, compare in ℤ, return
     the i32 boolean the wasm helper produces (`<= < >= > ==`). -/
 def cmpRef (p : Int → Int → Bool) : List WVal → Option WVal

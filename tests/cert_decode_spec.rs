@@ -173,6 +173,38 @@ fn compile_wasm_at(repo: &Path, av_path: &Path, name: &str, out: &Path) -> Vec<u
     std::fs::read(out.join(format!("{name}.wasm"))).unwrap()
 }
 
+/// Emit the certificate for a fixture and return its model `.lean` files, which
+/// `rederive_obligations` reads to recover the recursion combinator operator.
+fn model_lean_files(repo: &Path, av_path: &Path, out: &Path) -> Vec<(String, String)> {
+    let c = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(repo)
+        .arg("compile")
+        .arg(av_path)
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(out)
+        .output()
+        .expect("aver compile --certify runs");
+    if !c.status.success() {
+        return Vec::new();
+    }
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(out.join("cert")) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) == Some("lean") {
+                let name = p.file_name().unwrap().to_string_lossy().to_string();
+                if let Ok(content) = std::fs::read_to_string(&p) {
+                    files.push((name, content));
+                }
+            }
+        }
+    }
+    files
+}
+
 /// An effectful module the test writes itself: `Console.print` lowers to a real
 /// wasm import, so this is the one module in the differential whose import
 /// section is non-empty and whose function-index base is non-zero.
@@ -349,7 +381,8 @@ fn cert_decode_three_way_differential_and_coverage() {
         // Rust oracle: certified obligations, cross-checked against the Python
         // oracle (carrier + export-name → self), then pinned to the Lean decoder
         // with rederive's exact rendered code strings.
-        let obligations = aver::codegen::cert::rederive_obligations(&bytes)
+        let models = model_lean_files(&repo, av_path, &out);
+        let obligations = aver::codegen::cert::rederive_obligations(&bytes, &models)
             .expect("rederive succeeds on a compiled module");
 
         let mut src = String::new();
@@ -581,7 +614,12 @@ fn cert_decode_mutations_fail_closed() {
         "certprobe2",
         &out,
     );
-    let obligations = aver::codegen::cert::rederive_obligations(&bytes).unwrap();
+    let models = model_lean_files(
+        &repo,
+        &repo.join("tools/certkit/fixtures/certprobe2.av"),
+        &out,
+    );
+    let obligations = aver::codegen::cert::rederive_obligations(&bytes, &models).unwrap();
     let sumto = obligations.iter().find(|o| o.name == "sumTo").unwrap();
     let self_idx = sumto.self_idx;
     let orig_wcode = wcode_from_rederive(&sumto.code);

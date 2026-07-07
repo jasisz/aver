@@ -34,7 +34,7 @@
 //! splices those values, fully expanded, into the witness — then pins them with
 //! `rfl` against `manifest.obligations.map (·.code / ·.host / ·.self / ·.carrier)`.
 //! Those are EXACTLY the fields `Obligation.holds` reasons about
-//! (`wFuncN o.code (o.host add sub) fuel o.self`), so a fabricated body, a
+//! (`wFuncN o.code (o.host add sub mul) fuel o.self`), so a fabricated body, a
 //! decoupled `code`/`self`/`carrier`, or a nerfed `host` (which would make
 //! `holds` vacuous) all diverge from the bytes and fail a `rfl` — the file does
 //! not check and verify declines. The spliced terms are the checker's own
@@ -208,6 +208,29 @@ pub(super) fn cmd_cert_explain(artifact: &str, cert_dir: &str) {
 }
 
 /// Read + parse `cert-manifest.json` from the cert directory.
+/// Read every `*.lean` file in the cert dir as `(name, content)` pairs. Used only
+/// to extract the model recursion operator (`+`/`*`); the content is untrusted and
+/// never executed.
+fn read_lean_files(cert_dir: &Path) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(cert_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("lean") {
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    out.push((name, content));
+                }
+            }
+        }
+    }
+    out
+}
+
 fn read_manifest(cert_dir: &Path) -> Result<Value, String> {
     let path = cert_dir.join("cert-manifest.json");
     let text = std::fs::read_to_string(&path)
@@ -365,7 +388,13 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     //     reason about exactly what the bytes decode to. If disassembly fails
     //     outright (not a wasm module, no box helper), decline here — before the
     //     witness — fail-closed.
-    let rederived = cert::rederive_obligations(&bytes)?;
+    //     The model `.lean` files supply the combinator operator (`+`/`*`) that
+    //     the bytes cannot distinguish for the bignum helpers; they are the same
+    //     (untrusted) model the kernel witness proves the bytes against, so
+    //     reading the operator here does not widen trust — `lake` rejects any
+    //     mismatch. Only the `def X__fuel` operator is read; nothing is executed.
+    let model_files = read_lean_files(cert_dir);
+    let rederived = cert::rederive_obligations(&bytes, &model_files)?;
 
     // The re-derived export names come from the module's export section, which a
     // hostile producer controls via the bytes; gate them exactly like the JSON
@@ -642,7 +671,7 @@ fn checker_witness(
          -- obligation are pinned, position for position, to the values the\n\
          -- audited disassembler re-derived from the hash-verified bytes. These\n\
          -- are EXACTLY the fields `Obligation.holds` reasons about\n\
-         -- (`wFuncN o.code (o.host add sub) fuel o.self`), so a fabricated body,\n\
+         -- (`wFuncN o.code (o.host add sub mul) fuel o.self`), so a fabricated body,\n\
          -- a decoupled `code`/`self`/`carrier`, or a nerfed `host` that would\n\
          -- make `holds` vacuous all diverge from the bytes and fail a `rfl`. The\n\
          -- spliced terms come from the checker's own audited renderer over the\n\
