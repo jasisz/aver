@@ -83,6 +83,10 @@ struct UserFn {
     name: String,
     wasm_idx: u32,
     arity: usize,
+    /// Byte-level parameter type kinds from the declared function signature.
+    params: Vec<TyKind>,
+    /// Byte-level result type kind from the declared function signature.
+    result: Option<TyKind>,
     nlocals: usize,
     ops: Vec<Op>,
     /// call targets in body order, for reason reporting.
@@ -137,6 +141,23 @@ enum Op {
 enum HostRole {
     Add,
     Sub,
+}
+
+/// Byte-level summary of one wasm value type in a function signature. Typed
+/// admission gates key on these (the shape of the claim as the BYTES declare
+/// it) — never on the source model's types, and never on a bare parameter
+/// count.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TyKind {
+    /// Abstract `eq` reference — the emitter's parameter type for a user ADT
+    /// value that the body dispatches on.
+    Eqref,
+    /// Concrete reference to module type `t` (e.g. the Int carrier struct).
+    Ref(u32),
+    I64,
+    I32,
+    F64,
+    Other,
 }
 
 /// One recognised leaf of a `VariantDispatch` hit arm: what the arm computes
@@ -917,8 +938,9 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
     let mut num_imported_funcs: u32 = 0;
     // defined-function index -> declared type index
     let mut func_type_idx: Vec<u32> = Vec::new();
-    // type index -> arity (param count) for func types
-    let mut type_arity: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+    // type index -> byte-level signature (param kinds, result kind) for func types
+    let mut type_sigs: std::collections::HashMap<u32, (Vec<TyKind>, Option<TyKind>)> =
+        std::collections::HashMap::new();
     // type index -> struct field count
     let mut struct_field_counts: std::collections::HashMap<u32, u32> =
         std::collections::HashMap::new();
@@ -940,7 +962,29 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                         next_type_idx += 1;
                         match &sub.composite_type.inner {
                             CompositeInnerType::Func(ft) => {
-                                type_arity.insert(idx, ft.params().len());
+                                let kind = |vt: &ValType| match vt {
+                                    ValType::I64 => TyKind::I64,
+                                    ValType::I32 => TyKind::I32,
+                                    ValType::F64 => TyKind::F64,
+                                    ValType::Ref(rt) => match heap_type_index(rt.heap_type()) {
+                                        Some(t) => TyKind::Ref(t),
+                                        None => match rt.heap_type() {
+                                            wasmparser::HeapType::Abstract {
+                                                ty: wasmparser::AbstractHeapType::Eq,
+                                                ..
+                                            } => TyKind::Eqref,
+                                            _ => TyKind::Other,
+                                        },
+                                    },
+                                    _ => TyKind::Other,
+                                };
+                                type_sigs.insert(
+                                    idx,
+                                    (
+                                        ft.params().iter().map(kind).collect(),
+                                        ft.results().first().map(kind),
+                                    ),
+                                );
                             }
                             // Int carrier: 3 fields, {i64, ref, i32}.
                             CompositeInnerType::Struct(st)
@@ -1163,15 +1207,17 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
             continue;
         };
         let ops = resolve_data_ops(entry.ops, &data_segments);
-        let arity = func_type_idx
+        let (params, result) = func_type_idx
             .get(def_idx as usize)
-            .and_then(|ti| type_arity.get(ti))
-            .copied()
-            .unwrap_or(0);
+            .and_then(|ti| type_sigs.get(ti))
+            .cloned()
+            .unwrap_or((Vec::new(), None));
         user_fns.push(UserFn {
             name,
             wasm_idx,
-            arity,
+            arity: params.len(),
+            params,
+            result,
             nlocals: entry.nlocals,
             ops,
             calls: entry.calls,
@@ -1328,10 +1374,13 @@ fn nr_variant_dispatch(
     carrier: Option<u32>,
     host_roles: &std::collections::HashMap<u32, HostRole>,
 ) -> Option<Cert> {
-    if f.arity != 1 {
+    let carrier = carrier?;
+    // Typed admission: the byte signature must be exactly "one user ADT value
+    // in, one Int carrier out" — the claim-shape as the bytes declare it, not
+    // a bare parameter count.
+    if f.params.as_slice() != [TyKind::Eqref] || f.result != Some(TyKind::Ref(carrier)) {
         return None;
     }
-    let carrier = carrier?;
     let (arms, default_k) = dispatch_chain(&body.tree, box_idx, host_roles)?;
     if arms.is_empty() {
         return None;
