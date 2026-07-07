@@ -1,0 +1,19 @@
+module Mutual
+    intent = "Two mutually recursive parity predicates over the integers."
+    exposes [isEven, isOdd]
+
+fn isEven(n: Int) -> Int
+  ? "1 if n is even (n >= 0), recurses through isOdd."
+  match n <= 0
+    true -> 1
+    false -> isOdd(n - 1)
+
+fn isOdd(n: Int) -> Int
+  ? "1 if n is odd, recurses through isEven."
+  match n <= 0
+    true -> 0
+    false -> isEven(n - 1)
+
+verify isEven
+    isEven(4) => 1
+    isEven(3) => 0

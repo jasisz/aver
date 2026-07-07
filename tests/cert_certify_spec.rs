@@ -236,6 +236,104 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
 }
 
 #[test]
+fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping certify mutual-recursion test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    // A two-member SCC (`isEven`/`isOdd`) and a three-member cycle
+    // (`rotA -> rotB -> rotC -> rotA`), so the ONE shared conjunction proof — its
+    // `induction fuel`, its k-way destructuring and its `.2.….1` conjunct
+    // projection — is exercised at both k = 2 and k = 3. `primary` is the
+    // lowest-`self_idx` member whose `{primary}_mutual_sim` carries the proof.
+    let cases: [(&str, &[&str], &str); 2] = [
+        (
+            "tools/certkit/fixtures/mutual.av",
+            &["isEven", "isOdd"],
+            "isEven",
+        ),
+        (
+            "tools/certkit/fixtures/mutual3.av",
+            &["rotA", "rotB", "rotC"],
+            "rotA",
+        ),
+    ];
+
+    for (fixture, exports, primary) in cases {
+        let out_dir = temp_dir("certify-mutual");
+        let compile = Command::new(aver_bin)
+            .current_dir(&repo_root)
+            .arg("compile")
+            .arg(fixture)
+            .arg("--target")
+            .arg("wasm-gc")
+            .arg("--certify")
+            .arg("-o")
+            .arg(&out_dir)
+            .output()
+            .expect("expected `aver compile --certify` to run");
+        assert!(
+            compile.status.success(),
+            "compile --certify {fixture} failed:\n{}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
+
+        let cert_dir = out_dir.join("cert");
+        let manifest: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+                .expect("cert-manifest.json exists"),
+        )
+        .expect("manifest is valid JSON");
+        let certified: Vec<&str> = manifest["certified"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+        // Every member of the SCC is a certified export sharing one proof.
+        for name in exports {
+            assert!(
+                certified.contains(name),
+                "expected {name} certified for {fixture}, got {certified:?}"
+            );
+        }
+
+        let build = Command::new("lake")
+            .current_dir(&cert_dir)
+            .arg("build")
+            .output()
+            .expect("expected `lake build` to run");
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
+        );
+        assert!(
+            build.status.success(),
+            "lake build of emitted mutual cert {fixture} failed:\n{combined}"
+        );
+        // The whole SCC shares ONE simulation proof, `{primary}_mutual_sim`,
+        // kernel-clean on the core whitelist.
+        assert!(
+            combined.contains(&format!(
+                "{primary}_mutual_sim' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            )),
+            "mutual certificate for {fixture} not kernel-clean:\n{combined}"
+        );
+        assert!(
+            !combined.contains("sorryAx"),
+            "mutual certificate {fixture} leaked sorryAx:\n{combined}"
+        );
+
+        let _ = std::fs::remove_dir_all(&out_dir);
+    }
+}
+
+#[test]
 fn certify_composition_fixture_lake_builds_kernel_clean() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping certify composition test: `lake` not available");

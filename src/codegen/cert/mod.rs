@@ -398,6 +398,43 @@ enum Cert {
         has_sub: bool,
         has_box: bool,
     },
+    /// One member of a mutually-recursive SCC `f n = if n≤0 then base else g(n-1)`
+    /// (each member tail-calls the next in the cycle). Every member of the SCC is
+    /// a certified export sharing ONE proof: a conjunction fuel-induction over the
+    /// whole SCC where each cross-call is discharged by the matching conjunct of
+    /// the induction hypothesis (the `mutual_sim` shape). The lowest-`self_idx`
+    /// member is the "primary" that emits the shared code table + the conjunction
+    /// bridge + `mutual_sim`; every member emits its own obligation citing the
+    /// matching conjunct. Carries the whole (sorted) SCC so any member's cert can
+    /// render the shared block.
+    MutualRecursion {
+        name: String,
+        self_idx: u32,
+        carrier: u32,
+        box_idx: u32,
+        sub_idx: u32,
+        /// This member's index in `scc` (which conjunct of `mutual_sim`). The
+        /// member's own `nlocals`/`base_k` live in `scc[position]`.
+        position: usize,
+        /// The whole SCC, sorted by `self_idx`.
+        scc: Vec<MutualMember>,
+    },
+}
+
+/// One function of a mutually-recursive SCC. The recogniser verified this
+/// member's body against the fixed shape `f n = if n≤0 then base else g(n-1)`,
+/// so the shared code table is reconstructed losslessly from these byte-derived
+/// fields (base literal, cross-call target) the way `Cert::Recursive` is — no
+/// need to carry the raw ops.
+#[derive(Clone)]
+struct MutualMember {
+    name: String,
+    self_idx: u32,
+    nlocals: usize,
+    /// Literal returned in the base arm (`n ≤ 0`).
+    base_k: i64,
+    /// The SCC member this one tail-calls in its step arm.
+    cross_idx: u32,
 }
 
 impl Cert {
@@ -419,7 +456,8 @@ impl Cert {
             | Cert::VerbatimWidenedMatch { name, .. }
             | Cert::IntRangePredicate { name, .. }
             | Cert::VariantDispatch { name, .. }
-            | Cert::Composition { name, .. } => name,
+            | Cert::Composition { name, .. }
+            | Cert::MutualRecursion { name, .. } => name,
             Cert::NonRecursive { .. } => unreachable!(),
         }
     }
@@ -434,7 +472,8 @@ impl Cert {
             | Cert::VerbatimWidenedMatch { self_idx, .. }
             | Cert::IntRangePredicate { self_idx, .. }
             | Cert::VariantDispatch { self_idx, .. }
-            | Cert::Composition { self_idx, .. } => *self_idx,
+            | Cert::Composition { self_idx, .. }
+            | Cert::MutualRecursion { self_idx, .. } => *self_idx,
             Cert::NonRecursive { .. } => unreachable!(),
         }
     }
@@ -449,13 +488,14 @@ impl Cert {
             | Cert::VerbatimWidenedMatch { carrier, .. }
             | Cert::IntRangePredicate { carrier, .. }
             | Cert::VariantDispatch { carrier, .. }
-            | Cert::Composition { carrier, .. } => *carrier,
+            | Cert::Composition { carrier, .. }
+            | Cert::MutualRecursion { carrier, .. } => *carrier,
             Cert::NonRecursive { .. } => unreachable!(),
         }
     }
     fn arity(&self) -> usize {
         match self.inner() {
-            Cert::StraightLine { .. } | Cert::Recursive { .. } => 1,
+            Cert::StraightLine { .. } | Cert::Recursive { .. } | Cert::MutualRecursion { .. } => 1,
             Cert::AccumulatorRecursive { .. } => 2,
             Cert::AdtConstructor { arity, .. } => *arity,
             Cert::FieldProjection { .. }
@@ -471,7 +511,9 @@ impl Cert {
     fn model_expr(&self) -> String {
         match self.inner() {
             Cert::StraightLine { k, .. } => format!("fun ns => ns.headD 0 + ({k})"),
-            Cert::Recursive { name, .. } | Cert::Composition { name, .. } => {
+            Cert::Recursive { name, .. }
+            | Cert::Composition { name, .. }
+            | Cert::MutualRecursion { name, .. } => {
                 format!("fun ns => {name} (ns.headD 0)")
             }
             Cert::AccumulatorRecursive { name, .. } => {
@@ -504,6 +546,12 @@ impl Cert {
             Cert::AccumulatorRecursive { name, .. } | Cert::Composition { name, .. } => {
                 format!("fun add sub _ => CertModule.{name}Host add sub")
             }
+            // The whole SCC shares one host (box + sub only), named after the
+            // primary (lowest-`self_idx`) member; every member's obligation points
+            // at it. `add`/`mul` are ignored (mutual has no combinator).
+            Cert::MutualRecursion { scc, .. } => {
+                format!("fun _ sub _ => CertModule.{}Host sub", scc[0].name)
+            }
             Cert::AdtConstructor { name, .. } | Cert::FieldProjection { name, .. } => {
                 format!("fun _ _ _ => CertModule.{name}Host")
             }
@@ -528,7 +576,8 @@ impl Cert {
             Cert::StraightLine { .. }
             | Cert::Recursive { .. }
             | Cert::AccumulatorRecursive { .. }
-            | Cert::Composition { .. } => ("List Int".to_string(), "Int".to_string()),
+            | Cert::Composition { .. }
+            | Cert::MutualRecursion { .. } => ("List Int".to_string(), "Int".to_string()),
             Cert::FieldProjection { .. } => ("WVal x WVal".to_string(), "WVal".to_string()),
             Cert::VerbatimWidenedMatch { .. } => ("WVal".to_string(), "WVal".to_string()),
             Cert::IntRangePredicate { .. } => ("Int".to_string(), "Bool".to_string()),
@@ -650,6 +699,11 @@ pub fn analyze(wasm_bytes: &[u8], model_files: &[(String, String)]) -> Result<An
             | Cert::FieldProjection { .. }
             | Cert::VerbatimWidenedMatch { .. }
             | Cert::IntRangePredicate { .. } => {}
+            Cert::MutualRecursion { .. } => {
+                // The shared host wires box + sub (no combinator).
+                has_box = true;
+                has_sub = true;
+            }
             Cert::WidenedIntMatch { .. } => {
                 has_box = true;
             }
@@ -776,6 +830,9 @@ impl ObligationFace {
             Cert::VerbatimWidenedMatch { .. } => ObligationFace::VerbatimWidened,
             Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. } => ObligationFace::AdtMatch,
             Cert::AdtConstructor { .. } => ObligationFace::AdtConstructor,
+            // Each SCC member is an ordinary integer simulation face (arity 1);
+            // the shared proof is what differs, not the typed obligation shape.
+            Cert::MutualRecursion { .. } => ObligationFace::IntList { arity: 1 },
             Cert::NonRecursive { .. } => unreachable!(),
         }
     }
@@ -1329,6 +1386,17 @@ fn classify(
     // tree. The base value is data (any literal / the accumulator) and the
     // combinator operation comes from the model, not a pinned constant.
     if let Some(cert) = recognize_fueled_recursion(f, box_idx, carrier, host_roles, model_ops) {
+        return Ok(cert);
+    }
+
+    // Mutual-recursion SCC (each member tail-calls the next; the cycle closes),
+    // proven by one conjunction fuel-induction over the whole SCC where every
+    // cross-call is discharged by the matching conjunct of the induction
+    // hypothesis (the `mutual_sim` shape validated in
+    // probe-artifacts/mutual-fuel-probe/MutualSpike-twodefs.lean). The lowest-
+    // `self_idx` member emits the shared code table + bridge + `mutual_sim`;
+    // every member emits its own obligation citing the matching conjunct.
+    if let Some(cert) = recognize_mutual_scc(f, box_idx, carrier, user_idx_set, fns, host_roles) {
         return Ok(cert);
     }
 
@@ -2270,6 +2338,144 @@ fn recognize_fueled_recursion(
     }
 }
 
+/// Recognise one mutual-recursion member body from the parsed tree:
+///   `f n = if n≤0 then base else g (n-1)` — a tail cross-call to another user
+/// function. Returns `(base_k, cross_idx, sub_idx)`; descent pinned to `n-1`.
+/// Shares the carrier-sign preamble/predicate with `recognize_fueled_recursion`.
+fn recognize_mutual_member(
+    f: &UserFn,
+    box_idx: u32,
+    carrier: u32,
+    user_idx_set: &std::collections::HashSet<u32>,
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<(i64, u32, u32)> {
+    use Op::*;
+    if f.arity != 1 {
+        return None;
+    }
+    let ops = strip_trailing_end(&f.ops);
+    // The only call is the box; the only tail-call is one other user function; no
+    // self-call, no foreign user CALL, no opaque ops.
+    let mut cross: Option<u32> = None;
+    for op in ops {
+        match op {
+            Op::ReturnCall(idx) => {
+                if *idx == f.wasm_idx || !user_idx_set.contains(idx) {
+                    return None;
+                }
+                if cross.is_some_and(|c| c != *idx) {
+                    return None;
+                }
+                cross = Some(*idx);
+            }
+            Op::Call(idx) if *idx != box_idx && !host_roles.contains_key(idx) => {
+                return None;
+            }
+            Op::Other => return None,
+            _ => {}
+        }
+    }
+    let cross = cross?;
+    let normalized = normalize_local_hops(ops);
+    let mut pos = 0usize;
+    let tree = parse_instr_tree(&normalized, &mut pos, false)?;
+    if pos != normalized.len() {
+        return None;
+    }
+    let [
+        InstrNode::Op(LocalGet(0)),
+        InstrNode::Op(StructGet(c1, 1)),
+        InstrNode::Op(RefIsNull),
+        InstrNode::IfElse(pred_small, pred_big),
+        InstrNode::IfElse(base_arm, step_arm),
+    ] = tree.as_slice()
+    else {
+        return None;
+    };
+    if *c1 != carrier {
+        return None;
+    }
+    if !matches!(
+        node_ops(pred_small).as_slice(),
+        [LocalGet(0), StructGet(cc, 0), I64Const(0), I64LeS] if *cc == carrier
+    ) || !matches!(
+        node_ops(pred_big).as_slice(),
+        [LocalGet(0), StructGet(cc, 2), I32Const(0), I32LtS] if *cc == carrier
+    ) {
+        return None;
+    }
+    let base_k = match node_ops(base_arm).as_slice() {
+        [I64Const(k), Call(b)] if *b == box_idx => *k,
+        _ => return None,
+    };
+    // step arm: [localGet 0, i64Const 1, call box, call SUB, returnCall CROSS]
+    let sub_idx = match node_ops(step_arm).as_slice() {
+        [LocalGet(0), I64Const(1), Call(b), Call(sub), ReturnCall(cc)]
+            if *b == box_idx && *cc == cross && host_roles.get(sub) == Some(&HostRole::Sub) =>
+        {
+            *sub
+        }
+        _ => return None,
+    };
+    Some((base_k, cross, sub_idx))
+}
+
+/// Recognise a mutually-recursive SCC starting from `f`: follow the tail
+/// cross-calls; the chain must return to `f` (a simple cycle) with every member
+/// on it a mutual member. Produces this member's `Cert::MutualRecursion` carrying
+/// the whole SCC (sorted by `self_idx` so the checker re-derives the same set).
+fn recognize_mutual_scc(
+    f: &UserFn,
+    box_idx: u32,
+    carrier: Option<u32>,
+    user_idx_set: &std::collections::HashSet<u32>,
+    fns: &std::collections::HashMap<u32, &UserFn>,
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<Cert> {
+    let carrier = carrier?;
+    let (_, _, sub_idx) = recognize_mutual_member(f, box_idx, carrier, user_idx_set, host_roles)?;
+    // Walk the cross-call chain from f; it must close back to f.
+    let mut cycle: Vec<MutualMember> = Vec::new();
+    let mut cur = f.wasm_idx;
+    loop {
+        let uf = fns.get(&cur)?;
+        let (base_k, cross_idx, s) =
+            recognize_mutual_member(uf, box_idx, carrier, user_idx_set, host_roles)?;
+        if s != sub_idx {
+            return None; // all members share one sub contract
+        }
+        cycle.push(MutualMember {
+            name: uf.name.clone(),
+            self_idx: cur,
+            nlocals: uf.nlocals,
+            base_k,
+            cross_idx,
+        });
+        cur = cross_idx;
+        if cur == f.wasm_idx {
+            break;
+        }
+        if cycle.len() > 64 || cycle.iter().any(|m| m.self_idx == cur) {
+            return None; // not a simple cycle through f
+        }
+    }
+    if cycle.len() < 2 {
+        return None; // a 1-cycle is ordinary self-recursion, handled elsewhere
+    }
+    let mut scc = cycle;
+    scc.sort_by_key(|m| m.self_idx);
+    let position = scc.iter().position(|m| m.self_idx == f.wasm_idx)?;
+    Some(Cert::MutualRecursion {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        carrier,
+        box_idx,
+        sub_idx,
+        position,
+        scc,
+    })
+}
+
 /// Symbolically execute a body-consumed fuel recursion's step arm — a
 /// straight-line stack program ending in the host `add` — and recover
 /// `(sub, add, rec_first, other)`: which host helpers are the descent/combinator,
@@ -2774,11 +2980,46 @@ fn render_host_def(c: &Cert) -> String {
              def {name}Host (add _sub : List WVal → Option WVal) : HostTbl := fun fn =>\n    {}\n",
             compose_host_arms(closure),
         ),
+        // The whole SCC shares ONE host, emitted once by the primary member.
+        Cert::MutualRecursion {
+            scc,
+            position,
+            carrier,
+            box_idx,
+            sub_idx,
+            ..
+        } => {
+            if *position != 0 {
+                String::new()
+            } else {
+                let primary = &scc[0].name;
+                format!(
+                    "/-- Runtime host wiring for the mutual-recursive SCC `{primary}` (box + sub). -/\n\
+                     def {primary}Host (sub : List WVal → Option WVal) : HostTbl := fun fn =>\n  \
+                     if fn = {box_idx} then some (1, boxRef {carrier})\n  \
+                     else if fn = {sub_idx} then some (2, sub)\n  else none\n",
+                )
+            }
+        }
         Cert::NonRecursive { .. } => unreachable!(),
     }
 }
 
 fn render_code_def(c: &Cert) -> String {
+    // The SCC shares ONE code table (all members' arms), named after the primary
+    // (lowest-`self_idx`) member and emitted once by it.
+    if let Cert::MutualRecursion { scc, position, .. } = c.inner() {
+        if *position != 0 {
+            return String::new();
+        }
+        let primary = &scc[0].name;
+        return format!(
+            "/-- Verbatim shared code table for the mutual-recursive SCC `{primary}` \
+             (one arm per member). -/\n\
+             def {primary}Code : CodeTbl := {value}\n",
+            value = render_code_value(c),
+        );
+    }
     let doc = match c.inner() {
         Cert::StraightLine { .. } => "straight-line add-constant",
         Cert::Recursive { .. } => "self-recursive",
@@ -2790,6 +3031,7 @@ fn render_code_def(c: &Cert) -> String {
         Cert::IntRangePredicate { .. } => "Int range predicate",
         Cert::VariantDispatch { .. } => "general variant dispatch",
         Cert::Composition { .. } => "cross-function composition, whole call closure",
+        Cert::MutualRecursion { .. } => "mutual-recursive SCC",
         Cert::NonRecursive { .. } => unreachable!(),
     };
     format!(
@@ -2942,6 +3184,39 @@ fn render_code_value(c: &Cert) -> String {
             body = render_ops_value(ops),
         ),
         Cert::Composition { closure, .. } => render_closure_code_value(closure),
+        // Shared code table over the whole SCC: one `if fn = self then …` arm per
+        // member, in `self_idx` order. Each arm is the fixed mutual body shape
+        // (base boxes the member's literal; the else tail-calls the member's
+        // cross target on `n-1`) — the same lossless template `Cert::Recursive`
+        // uses, so it is byte-identical to the recognised bytes and to the term
+        // the checker re-derives.
+        Cert::MutualRecursion {
+            scc,
+            carrier,
+            box_idx,
+            sub_idx,
+            ..
+        } => {
+            let mut s = String::from("fun fn =>\n  ");
+            for (i, m) in scc.iter().enumerate() {
+                let kw = if i == 0 { "if" } else { "else if" };
+                let base = lean_int_lit(m.base_k);
+                s.push_str(&format!(
+                    "{kw} fn = {self_idx} then some ⟨1, {nlocals},\n    \
+                     [ .localGet 0, .localSet 1,\n      \
+                     .localGet 1, .structGet {carrier} 1, .refIsNull,\n      \
+                     .ifElse [.localGet 1, .structGet {carrier} 0, .i64Const 0, .i64LeS]\n              \
+                     [.localGet 1, .structGet {carrier} 2, .i32Const 0, .i32LtS],\n      \
+                     .ifElse [.i64Const {base}, .call {box_idx}]\n              \
+                     [.localGet 0, .i64Const 1, .call {box_idx}, .call {sub_idx}, .returnCall {cross}] ]⟩\n  ",
+                    self_idx = m.self_idx,
+                    nlocals = m.nlocals,
+                    cross = m.cross_idx,
+                ));
+            }
+            s.push_str("else none");
+            s
+        }
         Cert::NonRecursive { .. } => unreachable!(),
     }
 }
@@ -3046,6 +3321,18 @@ fn render_host_value(c: &Cert) -> String {
                 compose_host_arms(closure)
             )
         }
+        // Fully-expanded shared host (box + sub), definitionally equal to the
+        // obligation's `fun _ sub _ => CertModule.{primary}Host sub`.
+        Cert::MutualRecursion {
+            carrier,
+            box_idx,
+            sub_idx,
+            ..
+        } => format!(
+            "fun _ sub _ => fun fn =>\n    \
+             if fn = {box_idx} then some (1, boxRef {carrier})\n    \
+             else if fn = {sub_idx} then some (2, sub)\n    else none",
+        ),
         Cert::NonRecursive { .. } => unreachable!(),
     }
 }
@@ -3235,6 +3522,7 @@ fn render_certificate(
                 s.push_str(&render_variant_dispatch_cert(c, model_info))
             }
             Cert::Composition { .. } => s.push_str(&render_composition_cert(c)),
+            Cert::MutualRecursion { .. } => s.push_str(&render_mutual_recursion_cert(c)),
             Cert::NonRecursive { .. } => unreachable!(),
         }
         s.push('\n');
@@ -4776,6 +5064,317 @@ fn adt_repr_indices(c: &Cert, model_info: &ModelInfo) -> Option<(String, Vec<u32
     }
 }
 
+/// The `And` projection selecting conjunct `pos` of a right-nested `k`-way
+/// conjunction: `.1` for the first, `.2.…​.2.1` for the middle, `.2.…​.2` for the
+/// last. For the two-member SCC this is `.1` / `.2`.
+fn conjunct_proj(pos: usize, k: usize) -> String {
+    let mut s = String::new();
+    for _ in 0..pos {
+        s.push_str(".2");
+    }
+    if pos + 1 < k {
+        s.push_str(".1");
+    }
+    s
+}
+
+/// Evaluate the mutual model at `scc[pos]` on input `n` under partial-correctness
+/// semantics (`f n = if n ≤ 0 then base else cross (n-1)`) to obtain the
+/// anti-vacuity guard values. Terminates: `n` strictly descends to the base.
+fn eval_mutual(scc: &[MutualMember], pos: usize, n: i64) -> i64 {
+    if n <= 0 {
+        return scc[pos].base_k;
+    }
+    let cross_pos = scc
+        .iter()
+        .position(|m| m.self_idx == scc[pos].cross_idx)
+        .expect("mutual SCC cross target is a member");
+    eval_mutual(scc, cross_pos, n - 1)
+}
+
+/// One conjunct's proof block inside `{primary}_mutual_sim`: the carrier-sign
+/// dispatch for member `m`, whose base arm boxes `m.base_k` and whose step arm
+/// tail-calls its cross target (self index `m.cross_idx`, model `cross_name`),
+/// discharged by the matching conjunct `cross_ih` of the fuel induction
+/// hypothesis. A verbatim port of the validated probe block, parameterised by
+/// name, carrier and the byte-derived indices/literals.
+fn mutual_sim_member_block(
+    primary: &str,
+    c_ty: u32,
+    m: &MutualMember,
+    cross_name: &str,
+    cross_ih: &str,
+) -> String {
+    let base_lit = lean_int_lit(m.base_k);
+    let cs = m.cross_idx;
+    let mn = &m.name;
+    format!(
+        r#"      · intro n v w hv hrun
+        rcases hcar n v hv with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
+        · have hs := hsmall_elim n s sg hv; subst hs
+          by_cases hle : s ≤ (0 : Int)
+          · simp [wFuncN, wRunF, {primary}Code, {primary}Host, boxRef, b32, popArgs, initLocals, hle] at hrun
+            rw [{mn}_base s hle, ← hrun]; exact hsmall_intro {base_lit}
+          · simp [wFuncN, wRunF, {primary}Code, {primary}Host, boxRef, b32, popArgs, initLocals, hle] at hrun
+            rcases hsub : sub [.structv {c_ty} [.i64v s, .null, .i32v sg], carrierSmall {c_ty} 1] with _ | vd
+            · simp [hsub] at hrun
+            · simp only [hsub] at hrun
+              have hrd : Repr (s - 1) vd := hSub s 1 _ _ vd hv (hsmall_intro 1) hsub
+              rcases hrec : wFuncN {primary}Code ({primary}Host sub) fuel {cs} [vd] with _ | vr
+              · simp [hrec] at hrun
+              · simp only [hrec] at hrun
+                have hrr : Repr ({cross_name} (s - 1)) vr := {cross_ih} (s - 1) vd vr hrd hrec
+                rw [{mn}_step s hle]; rw [Option.some.injEq] at hrun; rw [← hrun]; exact hrr
+        · obtain ⟨hsign, hne⟩ := hbig n s lty les sg hv
+          by_cases hlt : sg < (0 : Int)
+          · have hn0 : n ≤ 0 := by have := hsign.mp hlt; omega
+            simp [wFuncN, wRunF, {primary}Code, {primary}Host, boxRef, b32, popArgs, initLocals, hlt] at hrun
+            rw [{mn}_base n hn0, ← hrun]; exact hsmall_intro {base_lit}
+          · have hn0 : ¬ n ≤ 0 := by
+              intro hle; have : ¬ n < 0 := fun h => hlt (hsign.mpr h); omega
+            simp [wFuncN, wRunF, {primary}Code, {primary}Host, boxRef, b32, popArgs, initLocals, hlt] at hrun
+            rcases hsub : sub [.structv {c_ty} [.i64v s, .arr lty les, .i32v sg], carrierSmall {c_ty} 1] with _ | vd
+            · simp [hsub] at hrun
+            · simp only [hsub] at hrun
+              have hrd : Repr (n - 1) vd := hSub n 1 _ _ vd hv (hsmall_intro 1) hsub
+              rcases hrec : wFuncN {primary}Code ({primary}Host sub) fuel {cs} [vd] with _ | vr
+              · simp [hrec] at hrun
+              · simp only [hrec] at hrun
+                have hrr : Repr ({cross_name} (n - 1)) vr := {cross_ih} (n - 1) vd vr hrd hrec
+                rw [{mn}_step n hn0]; rw [Option.some.injEq] at hrun; rw [← hrun]; exact hrr"#,
+    )
+}
+
+/// The certificate block for a mutually-recursive SCC. Emitted ONCE, by the
+/// primary (lowest-`self_idx`) member; the shared block proves ONE conjunction
+/// `induction fuel` over all members (`{primary}_mutual_sim`), each cross-call
+/// discharged by the matching conjunct of the IH, on top of a conjunction
+/// fuel-irrelevance bridge and per-member base/step lemmas. Every member's
+/// obligation cites its conjunct. (Two-member SCC for now; the k>2 conjunction
+/// is a follow-up.)
+fn render_mutual_recursion_cert(c: &Cert) -> String {
+    let Cert::MutualRecursion {
+        scc,
+        carrier,
+        position,
+        ..
+    } = c.inner()
+    else {
+        unreachable!()
+    };
+    if *position != 0 {
+        // The shared block is emitted once, by the primary member.
+        return String::new();
+    }
+    let k = scc.len();
+    let c_ty = *carrier;
+    let primary = &scc[0].name;
+    // The SCC position of each member's cross-call target.
+    let cross_pos: Vec<usize> = scc
+        .iter()
+        .map(|m| {
+            scc.iter()
+                .position(|x| x.self_idx == m.cross_idx)
+                .expect("cross target is an SCC member")
+        })
+        .collect();
+    let holes = std::iter::repeat_n("?_", k).collect::<Vec<_>>().join(", ");
+
+    let mut s = String::new();
+    s.push_str(&format!(
+        "/-! ### {primary} — mutual-recursive SCC certificate (carrier type {c_ty}) -/\n\n"
+    ));
+
+    // ---- model-side fuel bridge (conjunction; one cap-induction at R = 1) ----
+    let bridge_conj = scc
+        .iter()
+        .map(|m| format!("{m}__fuel k1 n = {m}__fuel k2 n", m = m.name))
+        .collect::<Vec<_>>()
+        .join(" ∧ ");
+    let all_fuel = scc
+        .iter()
+        .map(|m| format!("{}__fuel", m.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let hb_names = (0..k)
+        .map(|i| format!("hb{i}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let bridge_rewrites = scc
+        .iter()
+        .enumerate()
+        .map(|(p, m)| {
+            format!(
+                "        · simp only [{m}__fuel]; rw [if_neg hn, if_neg hn, hb{cp}]",
+                m = m.name,
+                cp = cross_pos[p],
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    s.push_str(&format!(
+        r#"-- model-side fuel bridge over the whole SCC (the cap-induction pattern at R = 1).
+theorem {primary}_fuel_irrel :
+    ∀ (t k1 k2 : Nat) (n : Int), n.natAbs < t → n.natAbs < k1 → n.natAbs < k2 →
+      {bridge_conj} := by
+  intro t
+  induction t with
+  | zero => intro k1 k2 n ht _ _; omega
+  | succ t ih =>
+      intro k1 k2 n ht h1 h2
+      cases k1 with
+      | zero => omega
+      | succ m1 =>
+      cases k2 with
+      | zero => omega
+      | succ m2 =>
+      by_cases hn : n ≤ 0
+      · refine ⟨{holes}⟩ <;> simp [{all_fuel}, hn]
+      · have hstep : (n - 1).natAbs < t := by
+          have h1n : (1 : Int) ≤ n := by omega
+          have h2n : (n - 1).natAbs = n.natAbs - 1 := by omega
+          omega
+        obtain ⟨{hb_names}⟩ := ih m1 m2 (n - 1) hstep (by omega) (by omega)
+        refine ⟨{holes}⟩
+{bridge_rewrites}
+
+"#,
+    ));
+
+    // ---- per-member base/step lemmas -----------------------------------------
+    for (p, m) in scc.iter().enumerate() {
+        let cn = &scc[cross_pos[p]].name;
+        let base_lit = lean_int_lit(m.base_k);
+        let proj = conjunct_proj(cross_pos[p], k);
+        let mn = &m.name;
+        s.push_str(&format!(
+            r#"theorem {mn}_base (n : Int) (hn : n ≤ 0) : {mn} n = {base_lit} := by
+  simp [{mn}, {mn}__fuel, hn]
+
+theorem {mn}_step (n : Int) (hn : ¬ n ≤ 0) : {mn} n = {cn} (n - 1) := by
+  simp only [{mn}, {mn}__fuel]
+  rw [if_neg hn]
+  show {cn}__fuel n.natAbs (n - 1) = {cn} (n - 1)
+  rw [{cn}]
+  exact ({primary}_fuel_irrel (n.natAbs + (n - 1).natAbs + 2) n.natAbs ((n - 1).natAbs + 1)
+    (n - 1) (by omega) (by omega) (by omega)){proj}
+
+"#,
+        ));
+    }
+
+    // ---- the conjunction simulation theorem (one `induction fuel`) -----------
+    let sim_conj = scc
+        .iter()
+        .map(|m| {
+            format!(
+                "      (∀ n v w, Repr n v →\n        wFuncN {primary}Code ({primary}Host sub) fuel {self_idx} [v] = some w → Repr ({m} n) w)",
+                self_idx = m.self_idx,
+                m = m.name,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ∧\n");
+    let ih_names = (0..k)
+        .map(|i| format!("ih{i}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let member_blocks = scc
+        .iter()
+        .enumerate()
+        .map(|(p, m)| {
+            mutual_sim_member_block(
+                primary,
+                c_ty,
+                m,
+                &scc[cross_pos[p]].name,
+                &format!("ih{}", cross_pos[p]),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    s.push_str(&format!(
+        r#"/-- THE CERTIFICATE THEOREM: partial correctness of the VERBATIM emitted mutual
+    bodies against the generated models, for ALL n : ℤ, as ONE conjunction proven
+    by a single `induction fuel` (each cross-call discharged by the matching IH
+    conjunct). -/
+theorem {primary}_mutual_sim
+    (Repr : Int → WVal → Prop)
+    (hcar : ∀ n v, Repr n v →
+      (∃ s sg, v = .structv {c_ty} [.i64v s, .null, .i32v sg]) ∨
+      (∃ s lty les sg, v = .structv {c_ty} [.i64v s, .arr lty les, .i32v sg]))
+    (hsmall_intro : ∀ k : Int, Repr k (carrierSmall {c_ty} k))
+    (hsmall_elim : ∀ n s sg, Repr n (.structv {c_ty} [.i64v s, .null, .i32v sg]) → s = n)
+    (hbig : ∀ n s lty les sg,
+      Repr n (.structv {c_ty} [.i64v s, .arr lty les, .i32v sg]) → ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)
+    (sub : List WVal → Option WVal)
+    (hSub : ∀ a b va vb w, Repr a va → Repr b vb → sub [va, vb] = some w → Repr (a - b) w) :
+    ∀ (fuel : Nat),
+{sim_conj} := by
+  intro fuel
+  induction fuel with
+  | zero =>
+      refine ⟨{holes}⟩ <;> · intro n v w hv hrun; simp [wFuncN] at hrun
+  | succ fuel ih =>
+      obtain ⟨{ih_names}⟩ := ih
+      refine ⟨{holes}⟩
+{member_blocks}
+
+#print axioms {primary}_mutual_sim
+
+"#,
+    ));
+
+    // ---- anti-vacuity: the emitted bodies actually RUN -----------------------
+    s.push_str(&format!(
+        "-- anti-vacuity: the emitted bodies actually RUN on concrete inputs.\n\
+         def {primary}HostRef : HostTbl := {primary}Host (subRef {c_ty})\n"
+    ));
+    for (p, m) in scc.iter().enumerate() {
+        for &input in &[4i64, 3, -1] {
+            let expected = eval_mutual(scc, p, input);
+            s.push_str(&format!(
+                "example :\n    \
+                 ((wFuncN {primary}Code {primary}HostRef 40 {self_idx} [carrierSmall {c_ty} {inp}]).bind carrierToInt)\n      \
+                 = some {exp} := by native_decide\n",
+                self_idx = m.self_idx,
+                inp = lean_int_lit(input),
+                exp = lean_int_lit128(expected as i128),
+            ));
+        }
+    }
+
+    // ---- per-member schema obligations (each cites its conjunct) -------------
+    for (p, m) in scc.iter().enumerate() {
+        let proj = conjunct_proj(p, k);
+        let mn = &m.name;
+        s.push_str(&format!(
+            r#"
+/-- Schema-shaped simulation obligation for `{mn}` (composed by the single final
+    theorem): the emitted mutual body simulates the model `{mn}` via the matching
+    conjunct of `{primary}_mutual_sim`. -/
+theorem {mn}_simulates : AverCert.Schema.Obligation.holds {mn}Ob := by
+  intro S add sub mul hadd hsub hmul fuel ns vs w hrepr hrun
+  simp only [{mn}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  obtain ⟨hrepr, harity⟩ := hrepr
+  cases hrepr with
+  | nil =>
+      simp at harity
+  | cons hv htail =>
+      rename_i n v ns vs
+      cases htail with
+      | nil =>
+          simpa [AverCert.Schema.intRepr] using ({primary}_mutual_sim S.Repr S.car S.smallIntro S.smallElim S.bigElim
+            sub hsub fuel){proj} n v w hv hrun
+      | cons _ _ =>
+          simp at harity
+"#,
+        ));
+    }
+
+    s
+}
+
 fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
     let name = c.name();
     match c.inner() {
@@ -4907,6 +5506,22 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
              domRepr := fun _S v vs => vs = [v],\n    \
              codRepr := fun S x w => verbatimRepr S x w,\n    \
              model := {name}Model }}\n\n",
+            carrier = c.carrier(),
+            host = c.host_expr(),
+            self_idx = c.self_idx(),
+        ),
+        // Each SCC member is its own integer-simulation obligation, but the `code`
+        // and `host` fields point at the ONE shared table/host named after the
+        // primary member (`scc[0]`); the model is this member's own function.
+        Cert::MutualRecursion { scc, .. } => format!(
+            "abbrev {name}Ob : Schema.Obligation :=\n  \
+             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             code := CertModule.{primary}Code, host := {host}, self := {self_idx},\n    \
+             Dom := List Int, Cod := Int,\n    \
+             domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = 1,\n    \
+             codRepr := fun S n w => intRepr S n w,\n    \
+             model := fun ns => {name} (ns.headD 0) }}\n\n",
+            primary = scc[0].name,
             carrier = c.carrier(),
             host = c.host_expr(),
             self_idx = c.self_idx(),
@@ -5101,6 +5716,7 @@ fn render_manifest(
                 Cert::IntRangePredicate { .. } => "int-range-predicate",
                 Cert::VariantDispatch { .. } => "variant-dispatch",
                 Cert::Composition { .. } => "cross-function-composition",
+                Cert::MutualRecursion { .. } => "mutual-recursive",
                 Cert::NonRecursive { .. } => unreachable!(),
             },
         };
