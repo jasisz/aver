@@ -234,6 +234,9 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             "signal-gauge",
             vec!["gauge"],
         ),
+        // Payload-first subtraction, constant-first addition, and payload
+        // variants elided into the wildcard default.
+        ("tools/certkit/fixtures/meter.av", "meter", vec!["readout"]),
     ];
 
     for (input, prefix, expected) in cases {

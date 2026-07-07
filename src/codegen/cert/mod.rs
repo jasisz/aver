@@ -1839,33 +1839,64 @@ fn verbatim_default_from_ops(ops: &[Op]) -> Option<VerbatimDefault> {
 }
 
 fn nr_int_range_predicate(f: &UserFn, body: &StructuralBody, carrier: Option<u32>) -> Option<Cert> {
-    if f.arity != 1 || !f.calls.is_empty() || !has_branch(&body.tree) {
+    if f.arity != 1 || !f.calls.is_empty() {
         return None;
     }
     let carrier = carrier?;
-    let ops = flat_ops(&body.tree);
-    let mut lo = None;
-    let mut hi = None;
-    for win in ops.windows(4) {
-        match win {
-            [Op::StructGet(c, 0), Op::I64Const(k), Op::I64GeS, ..] if *c == carrier => {
-                lo.get_or_insert(*k);
-            }
-            [Op::StructGet(c, 0), Op::I64Const(k), Op::I64LeS, ..] if *c == carrier => {
-                hi.get_or_insert(*k);
-            }
-            _ => {}
-        }
+    // The claim is a CONJUNCTION, so the branch structure is load-bearing: the
+    // `>= k_lo` comparison feeds the final decision, whose then-arm evaluates
+    // `<= k_hi` and whose else-arm is the literal boolean false. A flat scan
+    // over both branches would also accept the disjunction spelled
+    // `match x >= lo { true -> true; false -> x <= hi }` and certify a range
+    // claim the body does not compute.
+    let (InstrNode::IfElse(then_b, else_b), head) = body.tree.split_last()? else {
+        return None;
+    };
+    if node_ops(else_b) != [Op::I32Const(0)] {
+        return None;
+    }
+    let head_ops = node_ops_of(head);
+    let then_ops = node_ops(then_b);
+    let lo = single_comparison_bound(&head_ops, carrier, |op| matches!(op, Op::I64GeS))?;
+    let hi = single_comparison_bound(&then_ops, carrier, |op| matches!(op, Op::I64LeS))?;
+    if single_comparison_bound(&head_ops, carrier, |op| matches!(op, Op::I64LeS)).is_some()
+        || single_comparison_bound(&then_ops, carrier, |op| matches!(op, Op::I64GeS)).is_some()
+    {
+        return None;
     }
     Some(Cert::IntRangePredicate {
         name: f.name.clone(),
         self_idx: f.wasm_idx,
         nlocals: f.nlocals,
         carrier,
-        k_lo: lo?,
-        k_hi: hi?,
+        k_lo: lo,
+        k_hi: hi,
         ops: strip_trailing_end(&f.ops).to_vec(),
     })
+}
+
+fn node_ops_of(nodes: &[InstrNode]) -> Vec<Op> {
+    let mut out = Vec::new();
+    collect_flat_ops(nodes, &mut out);
+    out.into_iter().cloned().collect()
+}
+
+/// The bound `k` of the single `[structGet(carrier, 0), i64Const k, <cmp>]`
+/// window in `ops` — `None` when absent or ambiguous (two occurrences).
+fn single_comparison_bound(ops: &[Op], carrier: u32, cmp: fn(&Op) -> bool) -> Option<i64> {
+    let mut found = None;
+    for win in ops.windows(3) {
+        if let [Op::StructGet(c, 0), Op::I64Const(k), op] = win
+            && *c == carrier
+            && cmp(op)
+        {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(*k);
+        }
+    }
+    found
 }
 
 fn nr_adt_match(
@@ -4178,6 +4209,16 @@ fn render_variant_dispatch_cert(c: &Cert, model_info: &ModelInfo) -> String {
         let tag = base + i as u32;
         let cn = &ctor.name;
         let payload = !ctor.fields.is_empty();
+        // Mapping consistency: every dispatched leaf projects a payload, so a
+        // nullary constructor landing on a dispatched tag means the min-tag
+        // base anchor is shifted (the lowest-tag constructor was elided into
+        // the default). Fail the build with a named reason instead of a
+        // baffling guard failure.
+        if arm_of_tag(tag).is_some() && !payload {
+            return format!(
+                "-- {name}: variant tag mapping mismatch ({cn} is nullary but tag {tag} is dispatched)\nexample : False := by decide\n"
+            );
+        }
         match arm_of_tag(tag) {
             Some(ArmLeaf::Proj) => {
                 cases.push(format!(

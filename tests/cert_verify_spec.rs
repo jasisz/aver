@@ -1143,6 +1143,65 @@ fn adt_witness_body_mutation_is_declined() {
 }
 
 #[test]
+fn variant_dispatch_body_mutation_is_declined() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping variant-dispatch witness-mutation test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-vd-mut");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/signalgauge.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    // Bump the dispatch witness body's local count (an extra, unused local):
+    // the walker proof tolerates it, so the cert builds green, but the mutated
+    // body is not the byte-derived one, so the code `rfl` fails.
+    let m = out_dir.join("cert").join("Module.lean");
+    let src = std::fs::read_to_string(&m).unwrap();
+    let start = src.find("some ⟨1, ").expect("a unary code-table header") + "some ⟨1, ".len();
+    let len = src[start..].find(',').expect("locals count terminator");
+    let nlocals: u32 = src[start..start + len]
+        .trim()
+        .parse()
+        .expect("locals count");
+    let header = format!("some ⟨1, {nlocals},");
+    let bumped = format!("some ⟨1, {},", nlocals + 1);
+    let mutated = src.replacen(&header, &bumped, 1);
+    assert_ne!(src, mutated, "emitted gaugeCode header shape changed");
+    std::fs::write(&m, mutated).unwrap();
+
+    let (ok, out) = aver_verify(&out_dir.join("signalgauge.wasm"), &out_dir.join("cert"));
+    assert!(
+        !ok,
+        "mutated dispatch witness body must be DECLINED:\n{out}"
+    );
+    assert!(out.contains("does not bind"), "wrong reason:\n{out}");
+    assert!(
+        !out.contains("CERTIFIED"),
+        "mutated dispatch witness credited:\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
 fn composition_callee_mutation_is_declined() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping composition-mutation test: `lake` not available");
