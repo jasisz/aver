@@ -1,0 +1,17 @@
+module StringConcat
+    intent =
+        "String concatenation over one input. The int helper makes the box"
+        "carrier exist while the certified target exercises String.concat as a"
+        "host contract."
+    exposes [shout, bump]
+
+fn shout(s: String) -> String
+  ? "Append a literal suffix to a string through the wasm-gc concat helper."
+  s + "!"
+
+fn bump(n: Int) -> Int
+  ? "Add one - present only so the module has an Int box carrier."
+  n + 1
+
+verify shout
+    shout("go") => "go!"

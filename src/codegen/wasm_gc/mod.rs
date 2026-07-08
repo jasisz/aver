@@ -121,6 +121,13 @@ impl std::fmt::Display for WasmGcError {
 
 impl std::error::Error for WasmGcError {}
 
+#[derive(Debug)]
+pub struct WasmGcCompileOutput {
+    pub bytes: Vec<u8>,
+    pub mir_count: usize,
+    pub expr_fragment_plans: Vec<crate::codegen::cert::ExprFragmentPlanArtifact>,
+}
+
 /// Compile post-pipeline IR (`items`) to a WebAssembly GC module
 /// in the `AverBridge` target shape — `aver/*` host imports + the
 /// `__rt_*` JS bridge + `_start` export. This is the path used by
@@ -153,7 +160,7 @@ pub fn compile_to_wasm_gc(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::AverBridge).map(|(bytes, _)| bytes)
+    module::emit_module_with(items, None, TargetMode::AverBridge).map(|(bytes, _, _)| bytes)
 }
 
 /// `compile_to_wasm_gc` returning the MIR-coverage count alongside the
@@ -170,6 +177,7 @@ pub fn compile_to_wasm_gc_with_mir_count(
     _analysis: Option<&AnalysisResult>,
 ) -> Result<(Vec<u8>, usize), WasmGcError> {
     module::emit_module_with(items, None, TargetMode::AverBridge)
+        .map(|(bytes, mir_count, _)| (bytes, mir_count))
 }
 
 /// Same as `compile_to_wasm_gc` but exports a JS-callable
@@ -182,7 +190,23 @@ pub fn compile_to_wasm_gc_with_handler(
     _analysis: Option<&AnalysisResult>,
     handler: Option<&str>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, handler, TargetMode::AverBridge).map(|(bytes, _)| bytes)
+    module::emit_module_with(items, handler, TargetMode::AverBridge).map(|(bytes, _, _)| bytes)
+}
+
+/// Same bytes as [`compile_to_wasm_gc_with_handler`], plus the expression
+/// fragment plans that were actually used to emit certified plan-first islands.
+pub fn compile_to_wasm_gc_with_handler_and_cert_plans(
+    items: &[TopLevel],
+    _analysis: Option<&AnalysisResult>,
+    handler: Option<&str>,
+) -> Result<WasmGcCompileOutput, WasmGcError> {
+    module::emit_module_with(items, handler, TargetMode::AverBridge).map(
+        |(bytes, mir_count, expr_fragment_plans)| WasmGcCompileOutput {
+            bytes,
+            mir_count,
+            expr_fragment_plans,
+        },
+    )
 }
 
 /// Compile post-pipeline IR (`items`) to a WebAssembly GC module
@@ -201,7 +225,7 @@ pub fn compile_to_wasm_gc_for_wasip2(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::Wasip2).map(|(bytes, _)| bytes)
+    module::emit_module_with(items, None, TargetMode::Wasip2).map(|(bytes, _, _)| bytes)
 }
 
 /// `--target wasip2 --world wasi:http/proxy` entry — Phase 3 / 0.19.
@@ -225,5 +249,5 @@ pub fn compile_to_wasm_gc_for_wasip2_with_handler(
     _analysis: Option<&AnalysisResult>,
     handler: &str,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, Some(handler), TargetMode::Wasip2).map(|(bytes, _)| bytes)
+    module::emit_module_with(items, Some(handler), TargetMode::Wasip2).map(|(bytes, _, _)| bytes)
 }

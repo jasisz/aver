@@ -1,0 +1,473 @@
+pub(crate) fn expr_fragment_plan_from_mir_fn(
+    mir_fn: &crate::ir::mir::MirFn,
+) -> Option<ExprFragmentPlan> {
+    if !mir_fn.effects.is_empty() {
+        return None;
+    }
+
+    let mut params = Vec::new();
+    let mut params_by_slot = std::collections::HashMap::<u32, (u32, FragTy)>::new();
+    for (idx, param) in mir_fn.params.iter().enumerate() {
+        if param.local.0 != idx as u32 {
+            return None;
+        }
+        let ty = expr_fragment_ty_from_mir_name(&param.ty)?;
+        params.push(ty);
+        params_by_slot.insert(param.local.0, (idx as u32, ty));
+    }
+
+    let result = expr_fragment_ty_from_mir_name(&mir_fn.return_type)?;
+    let mut builder = MirExprFragmentBuilder {
+        params_by_slot: &params_by_slot,
+        nodes: Vec::new(),
+    };
+    let (root, root_ty) = builder.lower_expr(&mir_fn.body)?;
+    if root_ty != result {
+        return None;
+    }
+    Some(ExprFragmentPlan {
+        params,
+        result,
+        body: builder.finish(root)?,
+    })
+}
+
+fn expr_fragment_ty_from_mir_name(ty: &str) -> Option<FragTy> {
+    match ty.trim() {
+        "Float" => Some(FragTy::F64),
+        "Bool" => Some(FragTy::BoolI32),
+        "Int" => Some(FragTy::IntCarrier),
+        _ => None,
+    }
+}
+
+struct MirExprFragmentBuilder<'a> {
+    params_by_slot: &'a std::collections::HashMap<u32, (u32, FragTy)>,
+    nodes: Vec<FragNode>,
+}
+
+impl MirExprFragmentBuilder<'_> {
+    fn lower_expr(
+        &mut self,
+        expr: &crate::ast::Spanned<crate::ir::mir::MirExpr>,
+    ) -> Option<(FragValueId, FragTy)> {
+        match &expr.node {
+            crate::ir::mir::MirExpr::Literal(lit) => match &lit.node {
+                crate::ast::Literal::Bool(value) => {
+                    self.push_node(FragTy::BoolI32, FragNodeKind::ConstBool(*value))
+                }
+                crate::ast::Literal::Float(value) => {
+                    self.push_node(FragTy::F64, FragNodeKind::ConstF64(value.to_bits()))
+                }
+                _ => None,
+            },
+            crate::ir::mir::MirExpr::Local(local) => {
+                let (index, ty) = *self.params_by_slot.get(&local.node.slot.0)?;
+                self.push_node(ty, FragNodeKind::Local { index })
+            }
+            crate::ir::mir::MirExpr::BinOp(binop) => self.lower_binop(&binop.node),
+            crate::ir::mir::MirExpr::IfThenElse(ite) => self.lower_if(&ite.node),
+            _ => None,
+        }
+    }
+
+    fn lower_binop(&mut self, binop: &crate::ir::mir::MirBinOp) -> Option<(FragValueId, FragTy)> {
+        if let Some(cmp) = self.int_const_cmp_shape(binop) {
+            return self.lower_int_const_cmp(cmp.0, cmp.1, cmp.2, cmp.3);
+        }
+
+        let (lhs, lhs_ty) = self.lower_expr(&binop.lhs)?;
+        let (rhs, rhs_ty) = self.lower_expr(&binop.rhs)?;
+        if lhs_ty != FragTy::F64 || rhs_ty != FragTy::F64 {
+            return None;
+        }
+        let (op, result_ty) = match binop.op {
+            crate::ast::BinOp::Add => (FragPrim::F64Add, FragTy::F64),
+            crate::ast::BinOp::Mul => (FragPrim::F64Mul, FragTy::F64),
+            crate::ast::BinOp::Lte => (FragPrim::F64Le, FragTy::BoolI32),
+            _ => return None,
+        };
+        self.push_node(
+            result_ty,
+            FragNodeKind::Prim {
+                op,
+                args: vec![lhs, rhs],
+            },
+        )
+    }
+
+    fn int_const_cmp_shape<'a>(
+        &self,
+        binop: &'a crate::ir::mir::MirBinOp,
+    ) -> Option<(&'a crate::ast::Spanned<crate::ir::mir::MirExpr>, crate::ast::BinOp, i64, bool)>
+    {
+        if let Some(k) = mir_int_literal(&binop.rhs)
+            && self.expr_is_int_param(&binop.lhs)
+        {
+            return Some((&binop.lhs, binop.op, k, false));
+        }
+        if let Some(k) = mir_int_literal(&binop.lhs)
+            && self.expr_is_int_param(&binop.rhs)
+        {
+            return Some((&binop.rhs, binop.op, k, true));
+        }
+        None
+    }
+
+    fn expr_is_int_param(&self, expr: &crate::ast::Spanned<crate::ir::mir::MirExpr>) -> bool {
+        match &expr.node {
+            crate::ir::mir::MirExpr::Local(local) => self
+                .params_by_slot
+                .get(&local.node.slot.0)
+                .is_some_and(|(_, ty)| *ty == FragTy::IntCarrier),
+            _ => false,
+        }
+    }
+
+    fn lower_int_const_cmp(
+        &mut self,
+        operand: &crate::ast::Spanned<crate::ir::mir::MirExpr>,
+        op: crate::ast::BinOp,
+        k: i64,
+        const_on_left: bool,
+    ) -> Option<(FragValueId, FragTy)> {
+        let eff = if const_on_left { flip_cmp(op) } else { op };
+        let small_prim = i64_const_cmp_prim(eff)?;
+        let big_kind = big_int_const_cmp_kind(eff)?;
+
+        let (carrier, carrier_ty) = self.lower_expr(operand)?;
+        if carrier_ty != FragTy::IntCarrier {
+            return None;
+        }
+        let (magf, _) = self.push_node(
+            FragTy::Ref,
+            FragNodeKind::StructGet {
+                field: 1,
+                receiver: carrier,
+            },
+        )?;
+        let (is_small, _) =
+            self.push_node(FragTy::BoolI32, FragNodeKind::RefIsNull { value: magf })?;
+
+        let then_block = self.lower_int_small_const_cmp_block(operand, small_prim, k)?;
+        let else_block = self.lower_int_big_const_cmp_block(operand, big_kind)?;
+        self.push_node(
+            FragTy::BoolI32,
+            FragNodeKind::If {
+                cond: is_small,
+                then_block: Box::new(then_block),
+                else_block: Box::new(else_block),
+            },
+        )
+    }
+
+    fn lower_int_small_const_cmp_block(
+        &self,
+        operand: &crate::ast::Spanned<crate::ir::mir::MirExpr>,
+        op: FragPrim,
+        k: i64,
+    ) -> Option<FragBlock> {
+        let mut block = MirExprFragmentBuilder {
+            params_by_slot: self.params_by_slot,
+            nodes: Vec::new(),
+        };
+        let (carrier, carrier_ty) = block.lower_expr(operand)?;
+        if carrier_ty != FragTy::IntCarrier {
+            return None;
+        }
+        let (small, _) = block.push_node(
+            FragTy::I64,
+            FragNodeKind::StructGet {
+                field: 0,
+                receiver: carrier,
+            },
+        )?;
+        let (constant, _) = block.push_node(FragTy::I64, FragNodeKind::ConstI64(k))?;
+        let (result, _) = block.push_node(
+            FragTy::BoolI32,
+            FragNodeKind::Prim {
+                op,
+                args: vec![small, constant],
+            },
+        )?;
+        block.finish(result)
+    }
+
+    fn lower_int_big_const_cmp_block(
+        &self,
+        operand: &crate::ast::Spanned<crate::ir::mir::MirExpr>,
+        kind: BigIntConstCmpKind,
+    ) -> Option<FragBlock> {
+        let mut block = MirExprFragmentBuilder {
+            params_by_slot: self.params_by_slot,
+            nodes: Vec::new(),
+        };
+        match kind {
+            BigIntConstCmpKind::Always(value) => {
+                let (result, _) =
+                    block.push_node(FragTy::BoolI32, FragNodeKind::ConstBool(value))?;
+                block.finish(result)
+            }
+            BigIntConstCmpKind::SignLtZero | BigIntConstCmpKind::SignGtZero => {
+                let (carrier, carrier_ty) = block.lower_expr(operand)?;
+                if carrier_ty != FragTy::IntCarrier {
+                    return None;
+                }
+                let (sign, _) = block.push_node(
+                    FragTy::RawI32,
+                    FragNodeKind::StructGet {
+                        field: 2,
+                        receiver: carrier,
+                    },
+                )?;
+                let (zero, _) =
+                    block.push_node(FragTy::BoolI32, FragNodeKind::ConstBool(false))?;
+                let op = match kind {
+                    BigIntConstCmpKind::SignLtZero => FragPrim::I32LtS,
+                    BigIntConstCmpKind::SignGtZero => FragPrim::I32GtS,
+                    BigIntConstCmpKind::Always(_) => unreachable!(),
+                };
+                let (result, _) = block.push_node(
+                    FragTy::BoolI32,
+                    FragNodeKind::Prim {
+                        op,
+                        args: vec![sign, zero],
+                    },
+                )?;
+                block.finish(result)
+            }
+        }
+    }
+
+    fn lower_if(&mut self, ite: &crate::ir::mir::MirIfThenElse) -> Option<(FragValueId, FragTy)> {
+        let (cond, cond_ty) = self.lower_expr(&ite.cond)?;
+        if cond_ty != FragTy::BoolI32 {
+            return None;
+        }
+
+        let mut then_builder = MirExprFragmentBuilder {
+            params_by_slot: self.params_by_slot,
+            nodes: Vec::new(),
+        };
+        let (then_root, then_ty) = then_builder.lower_expr(&ite.then_branch)?;
+        let then_block = then_builder.finish(then_root)?;
+
+        let mut else_builder = MirExprFragmentBuilder {
+            params_by_slot: self.params_by_slot,
+            nodes: Vec::new(),
+        };
+        let (else_root, else_ty) = else_builder.lower_expr(&ite.else_branch)?;
+        let else_block = else_builder.finish(else_root)?;
+
+        if then_ty != else_ty || then_block.result_ty()? != else_block.result_ty()? {
+            return None;
+        }
+
+        self.push_node(
+            then_ty,
+            FragNodeKind::If {
+                cond,
+                then_block: Box::new(then_block),
+                else_block: Box::new(else_block),
+            },
+        )
+    }
+
+    fn push_node(&mut self, ty: FragTy, kind: FragNodeKind) -> Option<(FragValueId, FragTy)> {
+        let id = FragValueId(self.nodes.len());
+        self.nodes.push(FragNode { id, ty, kind });
+        Some((id, ty))
+    }
+
+    fn finish(self, result: FragValueId) -> Option<FragBlock> {
+        self.nodes.get(result.0)?;
+        Some(FragBlock {
+            nodes: self.nodes,
+            result,
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum BigIntConstCmpKind {
+    Always(bool),
+    SignLtZero,
+    SignGtZero,
+}
+
+fn mir_int_literal(expr: &crate::ast::Spanned<crate::ir::mir::MirExpr>) -> Option<i64> {
+    match &expr.node {
+        crate::ir::mir::MirExpr::Literal(lit) => match lit.node {
+            crate::ast::Literal::Int(k) => Some(k),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn flip_cmp(op: crate::ast::BinOp) -> crate::ast::BinOp {
+    match op {
+        crate::ast::BinOp::Lt => crate::ast::BinOp::Gt,
+        crate::ast::BinOp::Gt => crate::ast::BinOp::Lt,
+        crate::ast::BinOp::Lte => crate::ast::BinOp::Gte,
+        crate::ast::BinOp::Gte => crate::ast::BinOp::Lte,
+        crate::ast::BinOp::Eq => crate::ast::BinOp::Eq,
+        crate::ast::BinOp::Neq => crate::ast::BinOp::Neq,
+        other => other,
+    }
+}
+
+fn i64_const_cmp_prim(op: crate::ast::BinOp) -> Option<FragPrim> {
+    match op {
+        crate::ast::BinOp::Eq => Some(FragPrim::I64Eq),
+        crate::ast::BinOp::Lt => Some(FragPrim::I64LtS),
+        crate::ast::BinOp::Lte => Some(FragPrim::I64LeS),
+        crate::ast::BinOp::Gte => Some(FragPrim::I64GeS),
+        // `expr-fragment-v1` has no `i64.gt_s`/`i64.ne` proof rule yet.
+        crate::ast::BinOp::Gt | crate::ast::BinOp::Neq => None,
+        _ => None,
+    }
+}
+
+fn big_int_const_cmp_kind(op: crate::ast::BinOp) -> Option<BigIntConstCmpKind> {
+    match op {
+        crate::ast::BinOp::Eq => Some(BigIntConstCmpKind::Always(false)),
+        crate::ast::BinOp::Lt | crate::ast::BinOp::Lte => Some(BigIntConstCmpKind::SignLtZero),
+        crate::ast::BinOp::Gte => Some(BigIntConstCmpKind::SignGtZero),
+        // Kept aligned with `i64_const_cmp_prim`: no `Gt`/`Neq` admission yet.
+        crate::ast::BinOp::Gt | crate::ast::BinOp::Neq => None,
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{BinOp, Literal, Spanned};
+    use crate::ir::FnId;
+    use crate::ir::mir::{
+        LocalId, MirBinOp, MirExpr, MirFn, MirFnRepr, MirLocal, MirParam,
+    };
+
+    fn span<T>(node: T) -> Spanned<T> {
+        Spanned {
+            node,
+            line: 0,
+            ty: std::sync::OnceLock::new(),
+        }
+    }
+
+    fn int_local(slot: u32) -> Spanned<MirExpr> {
+        span(MirExpr::Local(span(MirLocal::at(LocalId(slot)))))
+    }
+
+    fn int_lit(value: i64) -> Spanned<MirExpr> {
+        span(MirExpr::Literal(span(Literal::Int(value))))
+    }
+
+    fn int_predicate_fn(op: BinOp, lhs: Spanned<MirExpr>, rhs: Spanned<MirExpr>) -> MirFn {
+        MirFn {
+            fn_id: FnId(0),
+            name: "p".to_string(),
+            params: vec![MirParam {
+                local: LocalId(0),
+                name: "x".to_string(),
+                ty: "Int".to_string(),
+            }],
+            return_type: "Bool".to_string(),
+            effects: vec![],
+            body: span(MirExpr::BinOp(span(MirBinOp {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            }))),
+            local_count: 1,
+            aliased_slots: std::sync::Arc::new(Vec::new()),
+            repr: MirFnRepr::default(),
+        }
+    }
+
+    #[test]
+    fn int_param_less_than_literal_lowers_from_mir_to_aint_plan() {
+        let mir_fn = int_predicate_fn(BinOp::Lt, int_local(0), int_lit(0));
+        let plan = expr_fragment_plan_from_mir_fn(&mir_fn).expect("plan");
+
+        assert_eq!(plan.params, vec![FragTy::IntCarrier]);
+        assert_eq!(plan.result, FragTy::BoolI32);
+        assert_eq!(plan.body.result_ty(), Some(FragTy::BoolI32));
+        assert_eq!(plan.body.nodes.len(), 4);
+
+        assert!(matches!(plan.body.nodes[0].kind, FragNodeKind::Local { index: 0 }));
+        assert!(matches!(
+            plan.body.nodes[1].kind,
+            FragNodeKind::StructGet {
+                field: 1,
+                receiver: FragValueId(0)
+            }
+        ));
+        assert!(matches!(
+            plan.body.nodes[2].kind,
+            FragNodeKind::RefIsNull {
+                value: FragValueId(1)
+            }
+        ));
+        let FragNodeKind::If {
+            cond,
+            then_block,
+            else_block,
+        } = &plan.body.nodes[3].kind
+        else {
+            panic!("root must be an if over small-vs-big AverInt carrier")
+        };
+        assert_eq!(*cond, FragValueId(2));
+        assert_eq!(then_block.result_ty(), Some(FragTy::BoolI32));
+        assert_eq!(else_block.result_ty(), Some(FragTy::BoolI32));
+        assert!(matches!(
+            then_block.nodes[2].kind,
+            FragNodeKind::ConstI64(0)
+        ));
+        assert!(matches!(
+            then_block.nodes[3].kind,
+            FragNodeKind::Prim {
+                op: FragPrim::I64LtS,
+                ..
+            }
+        ));
+        assert!(matches!(
+            else_block.nodes[3].kind,
+            FragNodeKind::Prim {
+                op: FragPrim::I32LtS,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn int_literal_on_left_flips_comparison_before_plan_lowering() {
+        let mir_fn = int_predicate_fn(BinOp::Lte, int_lit(0), int_local(0));
+        let plan = expr_fragment_plan_from_mir_fn(&mir_fn).expect("plan");
+        let FragNodeKind::If {
+            then_block,
+            else_block,
+            ..
+        } = &plan.body.nodes[3].kind
+        else {
+            panic!("root must be an if over small-vs-big AverInt carrier")
+        };
+
+        assert!(matches!(
+            then_block.nodes[3].kind,
+            FragNodeKind::Prim {
+                op: FragPrim::I64GeS,
+                ..
+            }
+        ));
+        assert!(matches!(
+            else_block.nodes[3].kind,
+            FragNodeKind::Prim {
+                op: FragPrim::I32GtS,
+                ..
+            }
+        ));
+    }
+}

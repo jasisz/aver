@@ -1872,10 +1872,25 @@ pub(crate) fn emit_mir_numeric_binop(
             .map(|k| (k, true))
             .or_else(|| mir_int_literal(r).map(|k| (k, false)));
         if let Some((k, const_on_left)) = lit {
-            // The non-literal operand (the `$AverInt` ref) goes on the
-            // stack; the literal is folded into the branch as an
-            // `i64.const`.
             let non_lit = if const_on_left { r } else { l };
+            // A simple local is pure and cheap to read repeatedly. Re-emit it
+            // instead of stashing into the const-compare scratch local so
+            // certified scalar predicates keep the same canonical shape as
+            // their plan-first lowering.
+            if aint_const_cmp_operand_is_reemittable(&non_lit.node) {
+                return emit_aint_cmp_const_reemit(
+                    func,
+                    non_lit,
+                    bop.op,
+                    k,
+                    const_on_left,
+                    slots,
+                    ctx,
+                );
+            }
+            // General path: evaluate the non-literal operand once, then let
+            // the helper stash it before multiple field reads. This avoids
+            // duplicating effects or traps for less trivial operands.
             if emit_mir_expr(func, non_lit, slots, ctx)?.is_none() {
                 return Ok(None);
             }
@@ -2025,6 +2040,91 @@ fn mir_int_literal(expr: &Spanned<MirExpr>) -> Option<i64> {
         },
         _ => None,
     }
+}
+
+fn aint_const_cmp_operand_is_reemittable(e: &MirExpr) -> bool {
+    matches!(e, MirExpr::Local(_))
+}
+
+fn emit_aint_cmp_const_reemit(
+    func: &mut Function,
+    operand: &Spanned<MirExpr>,
+    op: BinOp,
+    k: i64,
+    const_on_left: bool,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let aint_idx = ctx.registry.aint_struct_idx.ok_or(WasmGcError::Validation(
+        "const-compare specialization requires the $AverInt struct slot".into(),
+    ))?;
+    let eff = if const_on_left { flip_cmp(op) } else { op };
+    let block_ty = wasm_encoder::BlockType::Result(ValType::I32);
+
+    if emit_mir_expr(func, operand, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: aint_idx,
+        field_index: 1,
+    });
+    func.instruction(&Instruction::RefIsNull);
+    func.instruction(&Instruction::If(block_ty));
+
+    if emit_mir_expr(func, operand, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: aint_idx,
+        field_index: 0,
+    });
+    func.instruction(&Instruction::I64Const(k));
+    func.instruction(&match eff {
+        BinOp::Eq => Instruction::I64Eq,
+        BinOp::Neq => Instruction::I64Ne,
+        BinOp::Lt => Instruction::I64LtS,
+        BinOp::Gt => Instruction::I64GtS,
+        BinOp::Lte => Instruction::I64LeS,
+        BinOp::Gte => Instruction::I64GeS,
+        _ => unreachable!("emit_aint_cmp_const_reemit gated to comparisons"),
+    });
+
+    func.instruction(&Instruction::Else);
+
+    match eff {
+        BinOp::Lt | BinOp::Lte => {
+            if emit_mir_expr(func, operand, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            func.instruction(&Instruction::StructGet {
+                struct_type_index: aint_idx,
+                field_index: 2,
+            });
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::I32LtS);
+        }
+        BinOp::Gt | BinOp::Gte => {
+            if emit_mir_expr(func, operand, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            func.instruction(&Instruction::StructGet {
+                struct_type_index: aint_idx,
+                field_index: 2,
+            });
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::I32GtS);
+        }
+        BinOp::Eq => {
+            func.instruction(&Instruction::I32Const(0));
+        }
+        BinOp::Neq => {
+            func.instruction(&Instruction::I32Const(1));
+        }
+        _ => unreachable!("emit_aint_cmp_const_reemit gated to comparisons"),
+    }
+
+    func.instruction(&Instruction::End);
+    Ok(Some(()))
 }
 
 /// bignum const-compare specialization — the non-literal `$AverInt`

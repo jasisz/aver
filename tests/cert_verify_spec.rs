@@ -56,6 +56,25 @@
 //!   (v) String.eq contract drift: deleting the byte-required contract from
 //!       both `Manifest.lean` and `cert-manifest.json` still fails because the
 //!       checker re-derives runtime contracts from the wasm bytes → DECLINED
+//!   (w) String.concat helper shape / contract drift: same fail-closed checks
+//!       for the concat helper's byte-exact host-contract recognition
+//!   (x) expr-fragment sidecar drift: mutating the emitted canonical plan either
+//!       fails its sidecar hash pin or, with the hash rebound, fails plan-first
+//!       canonical lowering against the actual wasm body
+//!   (y) plan-check TCB pin drift: rebinding `plan_check_sha256` to a different
+//!       checker is rejected before Lean build, so certs cannot ship their own
+//!       weakened `PlanCheck.lean`
+//!   (z) plan-lower TCB pin drift: rebinding `plan_lower_sha256` to a different
+//!       checker is rejected before Lean build, so certs cannot ship their own
+//!       weakened `PlanLower.lean`
+//!   (aa) plan-bytes TCB pin drift: rebinding `plan_bytes_sha256` to a different
+//!       checker is rejected before Lean build, so certs cannot ship their own
+//!       weakened `PlanBytes.lean`
+//!   (ab) wasm-slice TCB pin drift: rebinding `wasm_slice_sha256` to a different
+//!       checker is rejected before Lean build, so certs cannot ship their own
+//!       weakened `WasmSlice.lean`
+//!   (ac) artifact-bytes decoy: cert-supplied `ArtifactBytes.lean` is ignored;
+//!       the checker regenerates it from the actual artifact bytes it read
 //! plus a separate empty-cert test: zero certified exports must NOT print the
 //! green path and must exit nonzero, and the A5 report-line injection payload
 //! (in the manifest and/or JSON) is rejected by the charset gate.
@@ -118,9 +137,20 @@ namespace AverCert.Schema\nopen CertPrelude\n\
 structure Subject where\n  artifactHash : String\n  profile : String\n  abi : String\n  \
 exports : List String\n  contracts : List String\n\
 inductive Policy where\n  | simulatesModel\n\
+inductive ReprAll (R : Int -> WVal -> Prop) : List Int -> List WVal -> Prop\n\
+  | nil : ReprAll R [] []\n\
+  | cons {n v ns vs} : R n v -> ReprAll R ns vs -> ReprAll R (n :: ns) (v :: vs)\n\
+structure CarrierSpec (C : Nat) where\n  Repr : Int -> WVal -> Prop\n  \
+car : forall n v, Repr n v -> (exists s sg, v = .structv C [.i64v s, .null, .i32v sg]) \\/ (exists s lty les sg, v = .structv C [.i64v s, .arr lty les, .i32v sg])\n  \
+smallIntro : forall k : Int, Repr k (carrierSmall C k)\n  \
+smallElim : forall n s sg, Repr n (.structv C [.i64v s, .null, .i32v sg]) -> s = n\n  \
+bigElim : forall n s lty les sg, Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) -> ((sg < 0) <-> (n < 0)) /\\ n != 0\n\
+def intRepr (S : CarrierSpec C) : Int -> WVal -> Prop := S.Repr\n\
+def boolRepr (_S : CarrierSpec C) (b : Bool) (w : WVal) : Prop := w = b32 b\n\
+def verbatimRepr (_S : CarrierSpec C) (v : WVal) (w : WVal) : Prop := w = v\n\
 structure Obligation where\n  export_ : String\n  policy : Policy\n  carrier : Nat\n  \
-code : CodeTbl\n  host : (List WVal -> Option WVal) -> (List WVal -> Option WVal) -> HostTbl\n  \
-self : Nat\n  model : Int -> Int\n\
+code : CodeTbl\n  host : (List WVal -> Option WVal) -> (List WVal -> Option WVal) -> (List WVal -> Option WVal) -> (List WVal -> Option WVal) -> (Nat -> List WVal -> Option WVal) -> HostTbl\n  \
+self : Nat\n  Dom : Type\n  Cod : Type\n  domRepr : CarrierSpec carrier -> Dom -> List WVal -> Prop\n  codRepr : CarrierSpec carrier -> Cod -> WVal -> Prop\n  model : Dom -> Cod\n\
 def Obligation.holds (_o : Obligation) : Prop := True\n\
 structure Manifest where\n  subject : Subject\n  obligations : List Obligation\n\
 def Holds (_m : Manifest) : Prop := True\n\
@@ -198,6 +228,82 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         );
     }
 
+    // The plan checker is audited TCB, not artifact data. A cert may carry a
+    // `PlanCheck.lean` file for human audit, but the verifier builds against
+    // its embedded copy and rejects a manifest pin for any other copy.
+    {
+        let dir = temp_dir("neg-plancheck-pin");
+        copy_dir(&out_dir, &dir);
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["plan_check_sha256"] = serde_json::json!("not-the-audited-plan-check");
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "plan-check hash drift must be rejected:\n{out}");
+        assert!(
+            out.contains("plan-check hash mismatch"),
+            "wrong reason for plan-check hash drift:\n{out}"
+        );
+    }
+
+    // The plan lowerer is audited TCB too. A cert may carry `PlanLower.lean`
+    // for auditability, but verification only accepts the embedded checker
+    // copy and its exact hash.
+    {
+        let dir = temp_dir("neg-planlower-pin");
+        copy_dir(&out_dir, &dir);
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["plan_lower_sha256"] = serde_json::json!("not-the-audited-plan-lower");
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "plan-lower hash drift must be rejected:\n{out}");
+        assert!(
+            out.contains("plan-lower hash mismatch"),
+            "wrong reason for plan-lower hash drift:\n{out}"
+        );
+    }
+
+    // The plan byte encoder is audited TCB as well. It is the Lean-side
+    // canonical RawPlan -> code-entry byte encoder, so its manifest pin must
+    // match the checker-owned copy.
+    {
+        let dir = temp_dir("neg-planbytes-pin");
+        copy_dir(&out_dir, &dir);
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["plan_bytes_sha256"] = serde_json::json!("not-the-audited-plan-bytes");
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "plan-bytes hash drift must be rejected:\n{out}");
+        assert!(
+            out.contains("plan-bytes hash mismatch"),
+            "wrong reason for plan-bytes hash drift:\n{out}"
+        );
+    }
+
+    // The relevant Wasm byte slicer is audited TCB too. It binds checker-read
+    // module bytes to export-named code-entry bytes inside Lean, so its manifest
+    // pin must match the checker-owned copy.
+    {
+        let dir = temp_dir("neg-wasmslice-pin");
+        copy_dir(&out_dir, &dir);
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["wasm_slice_sha256"] = serde_json::json!("not-the-audited-wasm-slice");
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "wasm-slice hash drift must be rejected:\n{out}");
+        assert!(
+            out.contains("wasm-slice hash mismatch"),
+            "wrong reason for wasm-slice hash drift:\n{out}"
+        );
+    }
+
     // (a) One flipped wasm byte → hash mismatch, before any build.
     {
         let dir = temp_dir("neg-a");
@@ -220,7 +326,10 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         copy_dir(&out_dir, &dir);
         let w = dir.join("certprobe2.wasm");
         let mut bytes = std::fs::read(&w).unwrap();
-        let count_down_prefix = [0x20, 0x00, 0x21, 0x02];
+        let count_down_prefix = [
+            0x20, 0x01, 0x05, 0x20, 0x00, 0x42, 0x01, 0x10, 0x07, 0x10, 0x09, 0x20, 0x01, 0x20,
+            0x00, 0x10, 0x08, 0x12, 0x02,
+        ];
         let off = bytes
             .windows(count_down_prefix.len())
             .position(|win| win == count_down_prefix)
@@ -740,7 +849,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         replace_simulates(
             &dir.join("cert"),
             "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-             intro S add sub mul stringEq hadd hsub hmul hStringEq fuel ns vs w hrepr hrun\n  \
+             intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun\n  \
              exact ns.elim",
         );
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
@@ -773,7 +882,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         replace_simulates(
             &dir.join("cert"),
             "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-             intro S add sub mul stringEq hadd hsub hmul hStringEq fuel ns vs w hrepr hrun\n  \
+             intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun\n  \
              trivial",
         );
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
@@ -825,7 +934,7 @@ const HONEST_SUMTO_CODE: &str = "/-- Verbatim emitted body of `sumTo` (self-recu
 /// own proof to build green). `@BODY@` is filled with the `simp` that discharges
 /// the trapped `wFuncN`.
 const VACUOUS_SIMULATES: &str = "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-    intro S add sub mul stringEq hadd hsub hmul hStringEq fuel ns vs w hrepr hrun\n  \
+    intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun\n  \
     exfalso\n  \
     cases fuel with\n  \
     | zero => simp only [wFuncN, reduceCtorEq] at hrun\n  \
@@ -837,7 +946,7 @@ fn replace_simulates(cert_dir: &Path, replacement: &str) {
     let c = cert_dir.join("Certificate.lean");
     let src = std::fs::read_to_string(&c).unwrap();
     let old = "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-        intro S add sub mul stringEq hadd hsub hmul hStringEq fuel ns vs w hrepr hrun\n  \
+        intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun\n  \
         simp only [sumToOb, AverCert.Schema.Obligation.holds] at hrun ⊢\n  \
         obtain ⟨hrepr, harity⟩ := hrepr\n  \
         cases hrepr with\n  \
@@ -951,6 +1060,254 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
         !out.contains("CERTIFIED"),
         "tampered data segment credited:\n{out}"
     );
+}
+
+#[test]
+fn cert_verify_declines_tampered_expr_fragment_sidecar() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping expr-fragment sidecar tamper test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-expr-sidecar");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/cert_goals.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify goals failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("cert_goals.wasm");
+    let cert = out_dir.join("cert");
+    let (ok, report) = aver_verify(&wasm, &cert);
+    assert!(ok, "expected clean goals certificate to verify:\n{report}");
+
+    let artifact_bytes_decoy_dir = temp_dir("cert-expr-artifact-bytes-decoy");
+    copy_dir(&out_dir, &artifact_bytes_decoy_dir);
+    std::fs::write(
+        artifact_bytes_decoy_dir
+            .join("cert")
+            .join("ArtifactBytes.lean"),
+        "namespace AverCert.ArtifactBytes\n\ndef wasmBytes : List Nat := []\n\nend AverCert.ArtifactBytes\n",
+    )
+    .unwrap();
+    let (ok, out) = aver_verify(
+        &artifact_bytes_decoy_dir.join("cert_goals.wasm"),
+        &artifact_bytes_decoy_dir.join("cert"),
+    );
+    assert!(
+        ok,
+        "cert-supplied ArtifactBytes.lean must be ignored and regenerated:\n{out}"
+    );
+
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap())
+            .unwrap();
+    let expr_entry = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["class"].as_str() == Some("expr-fragment-v1"))
+        .expect("at least one expr-fragment sidecar");
+    let plan = expr_entry["fragment"]["plan"]
+        .as_str()
+        .expect("expr-fragment plan path");
+    assert!(
+        expr_entry["fragment"].get("trace").is_none()
+            && expr_entry["fragment"].get("trace_sha256").is_none(),
+        "expr-fragment manifests should not emit trace/replay sidecars"
+    );
+    let float_entry = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"].as_str() == Some("floatAddGoal"))
+        .expect("floatAddGoal expr-fragment sidecar");
+    let float_plan = float_entry["fragment"]["plan"]
+        .as_str()
+        .expect("floatAddGoal plan path");
+
+    let plan_dir = temp_dir("cert-expr-plan-sidecar");
+    copy_dir(&out_dir, &plan_dir);
+    let plan_wasm = plan_dir.join("cert_goals.wasm");
+    let plan_cert = plan_dir.join("cert");
+    let plan_sidecar = plan_cert.join(plan);
+    let mut plan_text = std::fs::read_to_string(&plan_sidecar).unwrap();
+    plan_text.push_str("tamper extra-node\n");
+    std::fs::write(&plan_sidecar, plan_text).unwrap();
+
+    let (ok, out) = aver_verify(&plan_wasm, &plan_cert);
+    assert!(
+        !ok,
+        "tampered expr-fragment plan sidecar must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("sidecar") && out.contains("hash mismatch"),
+        "wrong reason for expr-fragment plan sidecar tamper:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "tampered expr-fragment plan sidecar credited:\n{out}"
+    );
+
+    let planfirst_tamper_dir = temp_dir("cert-expr-planfirst-tamper");
+    copy_dir(&out_dir, &planfirst_tamper_dir);
+    let planfirst_tamper_wasm = planfirst_tamper_dir.join("cert_goals.wasm");
+    let planfirst_tamper_cert = planfirst_tamper_dir.join("cert");
+    let float_plan_sidecar = planfirst_tamper_cert.join(float_plan);
+    let float_plan_text = std::fs::read_to_string(&float_plan_sidecar).unwrap();
+    let tampered_float_plan = float_plan_text.replacen("op=f64.add", "op=f64.mul", 1);
+    assert_ne!(
+        float_plan_text, tampered_float_plan,
+        "floatAddGoal plan shape changed"
+    );
+    std::fs::write(&float_plan_sidecar, &tampered_float_plan).unwrap();
+    let planfirst_tamper_mf = planfirst_tamper_cert.join("cert-manifest.json");
+    let mut planfirst_tamper_manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&planfirst_tamper_mf).unwrap()).unwrap();
+    let planfirst_tamper_entry = planfirst_tamper_manifest["certified"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|c| c["name"].as_str() == Some("floatAddGoal"))
+        .expect("floatAddGoal sidecar");
+    planfirst_tamper_entry["fragment"]["plan_sha256"] = serde_json::Value::String(
+        aver::codegen::cert::sha256_hex(tampered_float_plan.as_bytes()),
+    );
+    std::fs::write(
+        &planfirst_tamper_mf,
+        serde_json::to_string_pretty(&planfirst_tamper_manifest).unwrap(),
+    )
+    .unwrap();
+
+    let (ok, out) = aver_verify(&planfirst_tamper_wasm, &planfirst_tamper_cert);
+    assert!(
+        !ok,
+        "tampered plan-first expr-fragment must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("plan-first canonical lowering"),
+        "wrong reason for plan-first plan tamper:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "tampered plan-first expr-fragment credited:\n{out}"
+    );
+
+    let lean_plan_tamper_dir = temp_dir("cert-expr-lean-plan-tamper");
+    copy_dir(&out_dir, &lean_plan_tamper_dir);
+    let lean_plan_tamper_wasm = lean_plan_tamper_dir.join("cert_goals.wasm");
+    let lean_plan_tamper_cert = lean_plan_tamper_dir.join("cert");
+    let plans_lean = lean_plan_tamper_cert.join("Plans.lean");
+    let plans_text = std::fs::read_to_string(&plans_lean).unwrap();
+    let tampered_plans_text = plans_text.replacen(".f64Add [0, 1]", ".f64Mul [0, 1]", 1);
+    assert_ne!(
+        plans_text, tampered_plans_text,
+        "Plans.lean floatAddGoal shape changed"
+    );
+    std::fs::write(&plans_lean, tampered_plans_text).unwrap();
+
+    let (ok, out) = aver_verify(&lean_plan_tamper_wasm, &lean_plan_tamper_cert);
+    assert!(!ok, "tampered Lean RawPlan data must be DECLINED:\n{out}");
+    assert!(
+        out.contains("PlanLower.lowerExprFragmentBody") && out.contains("floatAddGoalCode"),
+        "wrong reason for Lean RawPlan tamper:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "tampered Lean RawPlan data credited:\n{out}"
+    );
+
+    let lean_bytes_tamper_dir = temp_dir("cert-expr-lean-bytes-tamper");
+    copy_dir(&out_dir, &lean_bytes_tamper_dir);
+    let lean_bytes_tamper_wasm = lean_bytes_tamper_dir.join("cert_goals.wasm");
+    let lean_bytes_tamper_cert = lean_bytes_tamper_dir.join("cert");
+    let plans_lean = lean_bytes_tamper_cert.join("Plans.lean");
+    let plans_text = std::fs::read_to_string(&plans_lean).unwrap();
+    let honest_bytes = "some [10, 1, 1, 99, 18, 32, 0, 32, 1, 160, 11]";
+    let tampered_bytes = "some [10, 1, 1, 99, 18, 32, 0, 32, 1, 161, 11]";
+    assert!(
+        plans_text.contains(honest_bytes),
+        "Plans.lean floatAddGoal byte pin changed"
+    );
+    std::fs::write(
+        &plans_lean,
+        plans_text.replacen(honest_bytes, tampered_bytes, 1),
+    )
+    .unwrap();
+
+    let (ok, out) = aver_verify(&lean_bytes_tamper_wasm, &lean_bytes_tamper_cert);
+    assert!(
+        !ok,
+        "tampered Lean code-entry byte pin must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("PlanBytes.lowerExprFragmentCodeEntry") && out.contains("floatAddGoalPlan"),
+        "wrong reason for Lean code-entry byte pin tamper:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "tampered Lean code-entry byte pin credited:\n{out}"
+    );
+
+    let lean_slice_tamper_dir = temp_dir("cert-expr-lean-slice-tamper");
+    copy_dir(&out_dir, &lean_slice_tamper_dir);
+    let lean_slice_tamper_wasm = lean_slice_tamper_dir.join("cert_goals.wasm");
+    let lean_slice_tamper_cert = lean_slice_tamper_dir.join("cert");
+    let plans_lean = lean_slice_tamper_cert.join("Plans.lean");
+    let plans_text = std::fs::read_to_string(&plans_lean).unwrap();
+    let marker = "__HONEST_FLOATADD_BYTES__";
+    let slice_tampered_bytes = "some [11, 1, 1, 99, 18, 32, 0, 32, 1, 160, 11]";
+    assert!(
+        plans_text.matches(honest_bytes).count() >= 2,
+        "Plans.lean should contain both PlanBytes and WasmSlice floatAddGoal byte pins"
+    );
+    let marked_first = plans_text.replacen(honest_bytes, marker, 1);
+    let tampered_second = marked_first
+        .replacen(honest_bytes, slice_tampered_bytes, 1)
+        .replace(marker, honest_bytes);
+    std::fs::write(&plans_lean, tampered_second).unwrap();
+
+    let (ok, out) = aver_verify(&lean_slice_tamper_wasm, &lean_slice_tamper_cert);
+    assert!(
+        !ok,
+        "tampered Lean WasmSlice byte-origin pin must be DECLINED:\n{out}"
+    );
+    // A false `rfl` over the full `ArtifactBytes.wasmBytes` literal can fail
+    // either as a normal `WasmSlice.codeEntryForExport` type mismatch or as a
+    // Lean stack overflow while reducing the huge byte list. Both are
+    // fail-closed build failures for this untrusted emitted audit example.
+    assert!(
+        out.contains("WasmSlice.codeEntryForExport")
+            || (out.contains("Plans") && out.contains("Stack overflow")),
+        "wrong reason for Lean WasmSlice byte-origin pin tamper:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "tampered Lean WasmSlice byte-origin pin credited:\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let _ = std::fs::remove_dir_all(&artifact_bytes_decoy_dir);
+    let _ = std::fs::remove_dir_all(&plan_dir);
+    let _ = std::fs::remove_dir_all(&planfirst_tamper_dir);
+    let _ = std::fs::remove_dir_all(&lean_plan_tamper_dir);
+    let _ = std::fs::remove_dir_all(&lean_bytes_tamper_dir);
+    let _ = std::fs::remove_dir_all(&lean_slice_tamper_dir);
 }
 
 #[test]
@@ -1119,6 +1476,174 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
     assert!(
         !out.contains("CERTIFIED"),
         "tampered String.eq helper credited:\n{out}"
+    );
+}
+
+#[test]
+fn cert_verify_declines_tampered_string_concat_helper_shape() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping String.concat helper tamper test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-stringconcat");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/stringconcat.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "stringconcat compile --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("stringconcat.wasm");
+    let cert = out_dir.join("cert");
+    let (ok, report) = aver_verify(&wasm, &cert);
+    assert!(
+        ok,
+        "expected clean stringconcat certificate to verify:\n{report}"
+    );
+    assert!(
+        report.contains("2 certified exports"),
+        "stringconcat should certify shout plus bump:\n{report}"
+    );
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert.join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    let contracts: Vec<&str> = manifest["runtime_contracts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+    assert!(
+        contracts.contains(&aver::codegen::cert::STRING_CONCAT_CONTRACT),
+        "String.concat host contract missing from manifest, got {contracts:?}"
+    );
+    let shout_class = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"].as_str() == Some("shout"))
+        .and_then(|c| c["class"].as_str())
+        .unwrap_or("<missing>");
+    assert_eq!(
+        shout_class, "verbatim-string-concat",
+        "shout should render its concat class, got {shout_class}"
+    );
+
+    {
+        let dir = temp_dir("cert-stringconcat-contract-drift");
+        copy_dir(&out_dir, &dir);
+        let man = dir.join("cert").join("Manifest.lean");
+        let src = std::fs::read_to_string(&man).unwrap();
+        let needle = format!(", \"{}\"", aver::codegen::cert::STRING_CONCAT_CONTRACT);
+        assert!(
+            src.contains(&needle),
+            "Manifest.lean should contain String.concat contract"
+        );
+        std::fs::write(&man, src.replace(&needle, "")).unwrap();
+
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        let contracts = m["runtime_contracts"].as_array_mut().unwrap();
+        let before = contracts.len();
+        contracts.retain(|c| c.as_str() != Some(aver::codegen::cert::STRING_CONCAT_CONTRACT));
+        assert_eq!(
+            contracts.len(),
+            before - 1,
+            "JSON manifest should contain one String.concat contract"
+        );
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+
+        let (ok, out) = aver_verify(&dir.join("stringconcat.wasm"), &dir.join("cert"));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            !ok,
+            "deleted String.concat contract must be DECLINED:\n{out}"
+        );
+        assert!(
+            out.contains("does not bind"),
+            "wrong reason for deleted String.concat contract:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "deleted String.concat contract credited:\n{out}"
+        );
+    }
+
+    let dir = temp_dir("cert-stringconcat-tamper");
+    copy_dir(&out_dir, &dir);
+    let w = dir.join("stringconcat.wasm");
+    let mut bytes = std::fs::read(&w).unwrap();
+    // First String.concat helper loop:
+    // local.get 2; local.get 3; i32.ge_u; br_if 1; local.get 1; local.get 0; local.get 2.
+    // Changing the exit branch depth to 0 keeps the wasm parseable but makes the
+    // byte-exact helper matcher reject the function.
+    let pat = [
+        0x20, 0x02, 0x20, 0x03, 0x4f, 0x0d, 0x01, 0x20, 0x01, 0x20, 0x00, 0x20, 0x02,
+    ];
+    let hits: Vec<usize> = bytes
+        .windows(pat.len())
+        .enumerate()
+        .filter_map(|(i, win)| (win == pat).then_some(i))
+        .collect();
+    assert_eq!(
+        hits.len(),
+        1,
+        "expected exactly one String.concat first-loop prefix, got {hits:?}"
+    );
+    bytes[hits[0] + 6] = 0x00;
+    std::fs::write(&w, &bytes).unwrap();
+
+    let old_hash = {
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["wasm_sha256"].as_str().unwrap().to_string()
+    };
+    let new_hash = aver::codegen::cert::sha256_hex(&bytes);
+    for file in ["Module.lean", "Manifest.lean"] {
+        let path = dir.join("cert").join(file);
+        let src = std::fs::read_to_string(&path).unwrap();
+        assert!(src.contains(&old_hash), "{file} should pin the old hash");
+        std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
+    }
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    m["wasm_sha256"] = serde_json::Value::String(new_hash);
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+
+    let (ok, out) = aver_verify(&w, &dir.join("cert"));
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        !ok,
+        "tampered String.concat helper shape must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("does not bind"),
+        "wrong reason for String.concat helper tamper:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "tampered String.concat helper credited:\n{out}"
     );
 }
 

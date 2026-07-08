@@ -4457,14 +4457,18 @@ fn cmd_compile_wasm_gc(
     // above; this picks up the newly appended dep FnDefs.
     aver::ir::pipeline::resolve(&mut items);
 
-    let bytes =
-        match wasm_gc::compile_to_wasm_gc_with_handler(&items, result.analysis.as_ref(), handler) {
-            Ok(b) => b,
-            Err(e) => {
-                eprintln!("{}", format!("{e}").red());
-                process::exit(1);
-            }
-        };
+    let wasm_gc_output = match wasm_gc::compile_to_wasm_gc_with_handler_and_cert_plans(
+        &items,
+        result.analysis.as_ref(),
+        handler,
+    ) {
+        Ok(output) => output,
+        Err(e) => {
+            eprintln!("{}", format!("{e}").red());
+            process::exit(1);
+        }
+    };
+    let bytes = wasm_gc_output.bytes;
 
     let out_path = Path::new(output_dir);
     if let Err(e) = std::fs::create_dir_all(out_path) {
@@ -4508,6 +4512,7 @@ fn cmd_compile_wasm_gc(
             out_path,
             &wasm_name,
             &bytes,
+            &wasm_gc_output.expr_fragment_plans,
         );
     }
     // Deployment pack — drops platform-specific bootstrap files
@@ -4529,6 +4534,7 @@ fn emit_artifact_certificate(
     out_path: &Path,
     wasm_name: &str,
     bytes: &[u8],
+    expr_fragment_plans: &[aver::codegen::cert::ExprFragmentPlanArtifact],
 ) {
     use aver::codegen::cert;
 
@@ -4550,7 +4556,11 @@ fn emit_artifact_certificate(
     );
     let model_out = lean_codegen::transpile_for_cert_model(&mut mctx);
 
-    let analysis = match cert::analyze(bytes, &model_out.files) {
+    let analysis = match cert::analyze_with_expr_fragment_plans(
+        bytes,
+        &model_out.files,
+        expr_fragment_plans,
+    ) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("{}", format!("certificate: {e}").red());

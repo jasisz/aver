@@ -1,9 +1,12 @@
 //! `aver cert verify|explain` — the consumer side of `aver compile --certify`.
 //!
-//! `verify` is a fail-closed checker whose ONLY trust channel is the exit code
-//! of the Lean toolchain over files the checker itself authored. It assembles
-//! its OWN build in a fresh, checker-owned temp directory from the audited
-//! `Schema.lean` / `CertPrelude.lean` this binary embeds plus the cert's
+//! `verify` is a fail-closed checker. The Lean/proof verdict comes only from
+//! the exit code of the Lean toolchain over files the checker itself authored;
+//! byte/plan prechecks are explicit Rust-side TCB. It assembles its OWN build
+//! in a fresh, checker-owned temp directory from the audited
+//! `Schema.lean` / `PlanCheck.lean` / `PlanLower.lean` / `PlanBytes.lean` /
+//! `WasmSlice.lean` / `CertPrelude.lean` this binary embeds, regenerates
+//! `ArtifactBytes.lean` from the artifact bytes it read, copies the cert's
 //! DATA-only Lean files, authors its own `lakefile.lean`, and builds with a
 //! clean cache. It then writes a `CheckerWitness.lean` — which the checker, not
 //! the cert, authors — that:
@@ -29,19 +32,30 @@
 //! bare `Holds manifest` proof only says "some Lean-encoded body simulates the
 //! model and the bytes hash to S"; it does NOT say that body DECODES from those
 //! bytes, so a hostile producer could ship `WInstr` data unrelated to the real
-//! bytes with a vacuously-true `holds`. To close that, the checker re-derives
-//! each obligation's `code`, `host`, `self`, `carrier` and consumed runtime
-//! contracts from the hash-verified bytes with the audited Aver disassembler
-//! (`cert::rederive_certificate`) and splices those values, fully expanded, into
-//! the witness — then pins them with
+//! bytes with a vacuously-true `holds`. To close that, the checker derives each
+//! obligation's `code`, `host`, `self`, `carrier` and consumed runtime contracts
+//! from byte-bound facts: ordinary classes come from the audited disassembler,
+//! while `expr-fragment-v1` code/face comes from a checked plan sidecar whose
+//! canonical code-entry bytes must equal the real bytes. The checker splices
+//! those values, fully expanded, into the witness — then pins them with
 //! `rfl` against `manifest.obligations.map (·.code / ·.host / ·.self / ·.carrier)`.
 //! Those are EXACTLY the fields `Obligation.holds` reasons about
 //! (`wFuncN o.code (o.host add sub mul stringEq) fuel o.self`), so a fabricated body, a
 //! decoupled `code`/`self`/`carrier`, or a nerfed `host` (which would make
 //! `holds` vacuous) all diverge from the bytes and fail a `rfl` — the file does
 //! not check and verify declines. The spliced terms are the checker's own
-//! rendering over the bytes, never attacker text, and are fully expanded so they
-//! do not reference the cert's `CertModule.*` defs (which an attacker edits).
+//! rendering over byte-bound data, never attacker text, and are fully expanded
+//! so they do not reference the cert's `CertModule.*` defs (which an attacker
+//! edits).
+//! Expression-fragment plan sidecars are useful emitted metadata, never
+//! authority. The checker parses the sidecar as an untrusted plan, typechecks it
+//! against byte-derived function facts, canonically lowers it to raw wasm
+//! code-entry bytes, and only then uses the checked plan to render the witness
+//! `code`/semantic face for that obligation. A stale or forged sidecar therefore
+//! fails before the checker-authored witness can certify it. The witness also
+//! asks `WasmSlice.lean` to recover each expression export's code-entry bytes
+//! from the checker-regenerated `ArtifactBytes.lean`, so the plan's canonical
+//! bytes are tied to a narrow Lean-side slice of the actual module bytes.
 //! `Module.lean` is never read as text for comparison. This is trusted via
 //! inspection of the disassembler, not an in-kernel wasm decode proof; a full
 //! kernel decoder is a deferred residual, and `model` (not byte-re-derivable for
@@ -84,8 +98,13 @@ const WITNESS_THEOREM: &str = "AverCertChecker.final";
 /// audited trusted computing base (taken from this binary) plus the checker's
 /// own build config and witness. A cert shipping files by these names has them
 /// ignored.
-const CHECKER_OWNED: [&str; 4] = [
+const CHECKER_OWNED: [&str; 9] = [
     "Schema.lean",
+    "PlanCheck.lean",
+    "PlanLower.lean",
+    "PlanBytes.lean",
+    "WasmSlice.lean",
+    "ArtifactBytes.lean",
     "CertPrelude.lean",
     "lakefile.lean",
     "CheckerWitness.lean",
@@ -95,12 +114,11 @@ const CHECKER_OWNED: [&str; 4] = [
 const MAX_CANDIDATE_LEN: usize = 200;
 
 /// Emitted on a CERTIFIED verdict: every obligation's code/host/self/carrier was
-/// re-derived from the hash-verified module bytes and pinned to the proven
-/// manifest by `rfl` inside the kernel witness (so the certified `holds` is a
-/// statement about what the bytes actually decode to). Trusted via the audited
-/// Aver disassembler, not an in-kernel wasm decode proof; it does not change the
-/// cert level.
-const ARTIFACT_DECODE_LINE: &str = "artifact-decode: each obligation's export name and its code/host/self/carrier are kernel-pinned (rfl) to what the bytes decode to (trusted via the audited disassembler)";
+/// pinned to checker-derived byte-bound values by `rfl` inside the kernel
+/// witness. Ordinary classes come from the byte disassembler; `expr-fragment-v1`
+/// code/face comes from a checked plan whose canonical code-entry bytes equal
+/// the artifact bytes.
+const ARTIFACT_DECODE_LINE: &str = "artifact-decode: each obligation's export name and code/host/self/carrier are kernel-pinned (rfl) to byte-bound checker values (disassembler, or checked expr-fragment plan with canonical code-entry equality and Lean byte-slice pin)";
 
 /// Tokens that make Lean ELABORATION execute code. The scan is a substring
 /// match on raw cert data-file text (see the module doc: a deliberately brittle
@@ -382,41 +400,101 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
             artifact.display()
         ));
     }
+    let schema_pin = manifest_str(&manifest, "schema_sha256")?;
+    let audited_schema = cert::audited_schema_sha();
+    if schema_pin != audited_schema {
+        return Err(format!(
+            "schema hash mismatch: certificate pins {schema_pin}, checker expects {audited_schema}"
+        ));
+    }
+    let prelude_pin = manifest_str(&manifest, "prelude_sha256")?;
+    let audited_prelude = cert::audited_prelude_sha();
+    if prelude_pin != audited_prelude {
+        return Err(format!(
+            "prelude hash mismatch: certificate pins {prelude_pin}, checker expects {audited_prelude}"
+        ));
+    }
+    let plan_check_pin = manifest_str(&manifest, "plan_check_sha256")?;
+    let audited_plan_check = cert::audited_plan_check_sha();
+    if plan_check_pin != audited_plan_check {
+        return Err(format!(
+            "plan-check hash mismatch: certificate pins {plan_check_pin}, checker expects {audited_plan_check}"
+        ));
+    }
+    let plan_lower_pin = manifest_str(&manifest, "plan_lower_sha256")?;
+    let audited_plan_lower = cert::audited_plan_lower_sha();
+    if plan_lower_pin != audited_plan_lower {
+        return Err(format!(
+            "plan-lower hash mismatch: certificate pins {plan_lower_pin}, checker expects {audited_plan_lower}"
+        ));
+    }
+    let plan_bytes_pin = manifest_str(&manifest, "plan_bytes_sha256")?;
+    let audited_plan_bytes = cert::audited_plan_bytes_sha();
+    if plan_bytes_pin != audited_plan_bytes {
+        return Err(format!(
+            "plan-bytes hash mismatch: certificate pins {plan_bytes_pin}, checker expects {audited_plan_bytes}"
+        ));
+    }
+    let wasm_slice_pin = manifest_str(&manifest, "wasm_slice_sha256")?;
+    let audited_wasm_slice = cert::audited_wasm_slice_sha();
+    if wasm_slice_pin != audited_wasm_slice {
+        return Err(format!(
+            "wasm-slice hash mismatch: certificate pins {wasm_slice_pin}, checker expects {audited_wasm_slice}"
+        ));
+    }
 
     // 2. Report candidates from the untrusted JSON, each charset-gated on its
     //    decoded value so it is safe to splice as a Lean literal below.
     let cands = read_candidates(&manifest)?;
 
-    // 2b. Re-derive the certified obligations (code/host/self/carrier) straight
-    //     from the hash-verified artifact bytes with the audited disassembler.
-    //     These are spliced into the checker witness below and pinned with `rfl`
-    //     against `manifest.obligations`, so the kernel theorem is forced to
-    //     reason about exactly what the bytes decode to. If disassembly fails
-    //     outright (not a wasm module, no box helper), decline here — before the
-    //     witness — fail-closed.
+    // 2b. Re-derive the legacy certified obligations (code/host/self/carrier)
+    //     from the hash-verified artifact bytes with the audited disassembler,
+    //     deliberately excluding expr fragments. Expr fragments are admitted in
+    //     the next step from checked plan sidecars plus canonical code-entry byte
+    //     equality, then merged back by the actual byte-derived function order.
+    //     These values are spliced into the checker witness below and pinned with
+    //     `rfl` against `manifest.obligations`. If disassembly fails outright
+    //     (not a wasm module, no box helper), decline here — before the witness —
+    //     fail-closed.
     //     The model `.lean` files supply the combinator operator (`+`/`*`) that
     //     the bytes cannot distinguish for the bignum helpers; they are the same
     //     (untrusted) model the kernel witness proves the bytes against, so
     //     reading the operator here does not widen trust — `lake` rejects any
     //     mismatch. Only the `def X__fuel` operator is read; nothing is executed.
     let model_files = read_lean_files(cert_dir);
-    let rederived_cert = cert::rederive_certificate(&bytes, &model_files)?;
-    let rederived = &rederived_cert.obligations;
-    let derived_contracts = &rederived_cert.contracts;
+    let non_expr_cert = cert::rederive_certificate_without_expr_fragments(&bytes, &model_files)?;
+    let mut rederived = non_expr_cert.obligations;
+    let derived_contracts = non_expr_cert.contracts;
+
+    // 2c. Expression-fragment sidecars are untrusted proof-carrying metadata.
+    //     For this profile, the sidecar checked plan is the source for the
+    //     witness `code` and semantic face, but only after verifier-owned
+    //     canonical lowering matches the actual raw code-entry bytes. Unlike the
+    //     old transitional overlay, the byte classifier no longer decides which
+    //     expr fragments are in scope: the manifest names the sidecar witness,
+    //     the checker validates it against the actual bytes, and the final list
+    //     is sorted by byte-derived function order before the kernel witness
+    //     binds it to `Manifest.lean`.
+    rederived.extend(checked_fragment_sidecar_obligations(
+        cert_dir, &manifest, &bytes,
+    )?);
+    rederived.sort_by_key(|r| r.func_order);
+    reject_duplicate_rederived_func_orders(&rederived)?;
 
     // The re-derived export names come from the module's export section, which a
     // hostile producer controls via the bytes; gate them exactly like the JSON
     // candidates before they are spliced as Lean string literals in the witness.
-    for r in rederived {
+    for r in &rederived {
         gate_candidate("re-derived export name", &r.name)?;
     }
+
     // 3. Assemble a checker-owned build. The audited schema + prelude come from
     //    THIS binary, never from the cert; the cert supplies only per-artifact
     //    DATA (Module/Manifest/Certificate/Final + the model modules). Each data
     //    file's name is gated (no lakefile-root injection) and its text scanned
     //    for code-executing tokens before it is staged. The cert's own lakefile
     //    / srcDir / `.lake` cache are never read.
-    let build = assemble_build(cert_dir)?;
+    let build = assemble_build(cert_dir, &bytes)?;
 
     // 4. The assembled project must build under the pinned toolchain, from a
     //    clean cache (the fresh dir has no `.lake`).
@@ -429,24 +507,24 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     }
 
     // 5. Kernel witness authored BY THE CHECKER (never shipped in the cert):
-    //    the sha binding, the report-candidate bindings, the artifact-decode
-    //    bindings (code/host/self/carrier of every obligation pinned to the
-    //    bytes-derived values with `rfl`), the final-theorem type ascription,
-    //    and the axiom-whitelist check (see `checker_witness`).
-    let witness = checker_witness(&actual, &cands, rederived, derived_contracts);
+    //    the sha binding, the report-candidate bindings, the artifact-decode /
+    //    checked-plan bindings (code/host/self/carrier of every obligation
+    //    pinned to byte-bound checker values with `rfl`), the final-theorem type
+    //    ascription, and the axiom-whitelist check (see `checker_witness`).
+    let witness = checker_witness(&actual, &cands, &rederived, &derived_contracts);
     std::fs::write(build.path.join("CheckerWitness.lean"), &witness)
         .map_err(|e| format!("cannot write checker witness: {e}"))?;
     let w = run_lake(&build.path, &["env", "lean", "CheckerWitness.lean"])?;
     if !w.status.success() {
         // The verdict is this exit code, not any parsed line. The lake output is
         // shown to the human to name which face failed (hash, a report binding,
-        // an artifact-decode binding, the `Holds manifest` type, or a
-        // non-whitelisted axiom).
+        // an artifact-decode / checked-plan binding, the `Holds manifest` type,
+        // or a non-whitelisted axiom).
         return Err(format!(
             "certificate does not bind to this artifact: the checker's kernel witness \
              (hash binding, certified-export/contract/profile/abi bindings against the \
-             proven manifest, the artifact-decode bindings that pin each obligation's \
-             code/host/self/carrier to what the bytes decode to, the semantic-face \
+             proven manifest, the artifact-decode / checked-plan bindings that pin each \
+             obligation's code/host/self/carrier to byte-bound checker values, the semantic-face \
              bindings that pin each obligation's Dom/Cod/domRepr/codRepr to the standard \
              form of its class and prove every domain is inhabited, the final-theorem type \
              `Holds manifest`, and the axiom whitelist) did not check:\n{}",
@@ -483,17 +561,175 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
         .collect();
     Ok(TrustedReport {
         exports,
-        contracts: derived_contracts.to_vec(),
+        contracts: derived_contracts,
         profile: cands.profile,
         abi: cands.abi,
         artifact_hash: actual,
     })
 }
 
+fn checked_fragment_sidecar_obligations(
+    cert_dir: &Path,
+    manifest: &Value,
+    wasm_bytes: &[u8],
+) -> Result<Vec<cert::RederivedObligation>, String> {
+    let certified = manifest
+        .get("certified")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "cert-manifest.json is missing array field `certified`".to_string())?;
+
+    let mut obligations = Vec::new();
+    for entry in certified {
+        let name = entry.get("name").and_then(Value::as_str).ok_or_else(|| {
+            "cert-manifest.json `certified[]` entry is missing string field `name`".to_string()
+        })?;
+        let class = entry.get("class").and_then(Value::as_str);
+        if class != Some("expr-fragment-v1") {
+            if entry.get("fragment").is_some() {
+                return Err(format!(
+                    "cert-manifest.json entry for `{name}` has fragment sidecar metadata but \
+                     is not class `expr-fragment-v1`"
+                ));
+            }
+            continue;
+        }
+
+        let fragment = entry.get("fragment").ok_or_else(|| {
+            format!(
+                "cert-manifest.json entry for expr fragment `{name}` is missing \
+                 `fragment` sidecar metadata"
+            )
+        })?;
+        let profile = fragment
+            .get("profile")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!(
+                    "cert-manifest.json `fragment` for `{name}` is missing string field `profile`"
+                )
+            })?;
+        if profile != "expr-fragment-v1" {
+            return Err(format!(
+                "expr fragment `{name}` sidecar profile mismatch: manifest says `{profile}`"
+            ));
+        }
+        let path = fragment
+            .get("plan")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!("cert-manifest.json `fragment` for `{name}` is missing string field `plan`")
+            })?;
+        let plan_path = checked_fragment_sidecar_path(cert_dir, path)?;
+        let claimed_sha = fragment
+            .get("plan_sha256")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!(
+                    "cert-manifest.json `fragment` for `{name}` is missing string field \
+                     `plan_sha256`"
+                )
+            })?;
+        let text = std::fs::read_to_string(&plan_path).map_err(|e| {
+            format!(
+                "cannot read expr fragment `{name}` sidecar `{}`: {e}",
+                plan_path.display()
+            )
+        })?;
+        let file_sha = cert::sha256_hex(text.as_bytes());
+        if file_sha != claimed_sha {
+            return Err(format!(
+                "expr fragment `{name}` sidecar file hash mismatch: file hashes to \
+                 {file_sha}, manifest pins {claimed_sha}"
+            ));
+        }
+        let plan_check =
+            cert::check_expr_fragment_plan_sidecar(wasm_bytes, name, &text).map_err(|e| {
+                format!("expr fragment `{name}` plan sidecar does not check against wasm: {e}")
+            })?;
+        if plan_check.sidecar.path != path {
+            return Err(format!(
+                "expr fragment `{name}` checked plan path mismatch: plan checks as `{}`, \
+                 manifest says `{path}`",
+                plan_check.sidecar.path
+            ));
+        }
+        if plan_check.sidecar.sha256 != claimed_sha || plan_check.sidecar.text != text {
+            return Err(format!(
+                "expr fragment `{name}` sidecar plan is not the canonical checked plan"
+            ));
+        }
+        if !plan_check.canonical_matches_actual {
+            return Err(format!(
+                "expr fragment `{name}` plan-first canonical lowering does not match the \
+                 actual wasm code-entry{}",
+                plan_check
+                    .mismatch_reason
+                    .as_deref()
+                    .map(|reason| format!(" ({reason})"))
+                    .unwrap_or_default()
+            ));
+        }
+
+        obligations.push(plan_check.obligation);
+    }
+    Ok(obligations)
+}
+
+fn checked_fragment_sidecar_path(cert_dir: &Path, path: &str) -> Result<PathBuf, String> {
+    let path = Path::new(path);
+    if path.is_absolute() {
+        return Err("expr-fragment sidecar path must be relative".to_string());
+    }
+    let components = path.components().collect::<Vec<_>>();
+    let [
+        std::path::Component::Normal(dir),
+        std::path::Component::Normal(file),
+    ] = components.as_slice()
+    else {
+        return Err(
+            "expr-fragment sidecar path must have shape `fragments/<name>.expr-fragment-v1.plan`"
+                .to_string(),
+        );
+    };
+    if dir.to_str() != Some("fragments") {
+        return Err(
+            "expr-fragment sidecar path must live under the `fragments/` directory".to_string(),
+        );
+    }
+    let file = file
+        .to_str()
+        .ok_or_else(|| "expr-fragment sidecar filename is not valid UTF-8".to_string())?;
+    if !file.ends_with(".expr-fragment-v1.plan") || file.contains('/') || file.contains('\\') {
+        return Err(
+            "expr-fragment sidecar filename must end with `.expr-fragment-v1.plan`".to_string(),
+        );
+    }
+    Ok(cert_dir.join(path))
+}
+
+fn reject_duplicate_rederived_func_orders(
+    rederived: &[cert::RederivedObligation],
+) -> Result<(), String> {
+    for pair in rederived.windows(2) {
+        let [a, b] = pair else {
+            continue;
+        };
+        if a.func_order == b.func_order {
+            return Err(format!(
+                "certificate re-derived duplicate obligations for wasm function order {} \
+                 (`{}` and `{}`)",
+                a.func_order, a.name, b.name
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Populate a fresh, checker-owned build directory: the cert's DATA-only Lean
-/// files (each name-gated and token-scanned), the audited schema/prelude/
-/// toolchain from THIS binary, and a checker-authored lakefile.
-fn assemble_build(cert_dir: &Path) -> Result<BuildDir, String> {
+/// files (each name-gated and token-scanned), the audited schema/plan-check/plan-lower/prelude/
+/// toolchain from THIS binary, the actual artifact bytes as checker-authored
+/// Lean data, and a checker-authored lakefile.
+fn assemble_build(cert_dir: &Path, wasm_bytes: &[u8]) -> Result<BuildDir, String> {
     let build = BuildDir::new()?;
 
     // Copy the cert's data Lean files, collecting lakefile roots as we go.
@@ -523,9 +759,23 @@ fn assemble_build(cert_dir: &Path) -> Result<BuildDir, String> {
 
     // Audited trusted computing base from THIS binary (not the cert).
     write(&build.path, "Schema.lean", cert::CERT_SCHEMA)?;
+    write(&build.path, "PlanCheck.lean", cert::CERT_PLAN_CHECK)?;
+    write(&build.path, "PlanLower.lean", cert::CERT_PLAN_LOWER)?;
+    write(&build.path, "PlanBytes.lean", cert::CERT_PLAN_BYTES)?;
+    write(&build.path, "WasmSlice.lean", cert::CERT_WASM_SLICE)?;
+    write(
+        &build.path,
+        "ArtifactBytes.lean",
+        &cert::render_artifact_bytes_lean(wasm_bytes),
+    )?;
     write(&build.path, "CertPrelude.lean", cert::CERT_PRELUDE)?;
     write(&build.path, "lean-toolchain", cert::LEAN_TOOLCHAIN)?;
     roots.push("Schema".to_string());
+    roots.push("PlanCheck".to_string());
+    roots.push("PlanLower".to_string());
+    roots.push("PlanBytes".to_string());
+    roots.push("WasmSlice".to_string());
+    roots.push("ArtifactBytes".to_string());
     roots.push("CertPrelude".to_string());
 
     // Checker-authored lakefile: fixed `srcDir := "."`, roots derived from the
@@ -610,6 +860,94 @@ fn lean_nat_list(items: impl Iterator<Item = u32>) -> String {
     format!("[{inner}]")
 }
 
+/// A Lean `List Nat` literal for raw bytes.
+fn lean_byte_list(bytes: &[u8]) -> String {
+    let inner = bytes
+        .iter()
+        .map(|b| b.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{inner}]")
+}
+
+/// A Lean list literal of `(export name, ExprFragmentRawPlan)` pairs. The names
+/// have passed the same charset gate as all other witness strings; the plan
+/// terms are checker-rendered from verified sidecars, never copied from
+/// attacker Lean text.
+fn lean_expr_fragment_plan_pairs(rederived: &[cert::RederivedObligation]) -> String {
+    let inner = rederived
+        .iter()
+        .filter_map(|r| {
+            r.fragment_plan_lean
+                .as_ref()
+                .map(|plan| format!("(\"{}\", {plan})", r.name))
+        })
+        .collect::<Vec<_>>()
+        .join(",\n   ");
+    format!("[ {inner} ]")
+}
+
+/// Checker-owned Lean `example`s proving that each checked expr-fragment plan
+/// lowers, via the audited Lean lowerer, to the same instruction body the Rust
+/// verifier rendered from the byte-bound/canonical-lowered plan.
+fn lean_expr_fragment_lower_pins(rederived: &[cert::RederivedObligation]) -> String {
+    let mut out = String::new();
+    for r in rederived {
+        let (Some(plan), Some(body)) = (
+            r.fragment_plan_lean.as_ref(),
+            r.fragment_lowered_body_lean.as_ref(),
+        ) else {
+            continue;
+        };
+        out.push_str(&format!(
+            "-- `{}`: checked RawPlan lowers to the byte-bound instruction body.\n\
+             example : AverCert.PlanLower.lowerExprFragmentBody {} ({}) = some ({}) := rfl\n",
+            r.name, r.carrier, plan, body
+        ));
+    }
+    out
+}
+
+/// Checker-owned Lean `example`s proving that each checked expr-fragment plan
+/// lowers, via the audited Lean byte lowerer, to the exact canonical code-entry
+/// bytes the verifier accepted against the artifact.
+fn lean_expr_fragment_code_entry_pins(rederived: &[cert::RederivedObligation]) -> String {
+    let mut out = String::new();
+    for r in rederived {
+        let (Some(plan), Some(bytes)) = (
+            r.fragment_plan_lean.as_ref(),
+            r.fragment_lowered_code_entry_lean.as_ref(),
+        ) else {
+            continue;
+        };
+        out.push_str(&format!(
+            "-- `{}`: checked RawPlan lowers to the canonical code-entry bytes.\n\
+             example : AverCert.PlanBytes.lowerExprFragmentCodeEntry {} ({}) = some ({}) := rfl\n",
+            r.name, r.carrier, plan, bytes
+        ));
+    }
+    out
+}
+
+/// Checker-owned Lean `example`s proving that each checked expr-fragment
+/// export's canonical code-entry bytes are actually found in the checker-read
+/// Wasm module bytes by export name.
+fn lean_expr_fragment_wasm_slice_pins(rederived: &[cert::RederivedObligation]) -> String {
+    let mut out = String::new();
+    for r in rederived {
+        let Some(bytes) = r.fragment_lowered_code_entry_lean.as_ref() else {
+            continue;
+        };
+        let export_name_bytes = lean_byte_list(r.name.as_bytes());
+        out.push_str(&format!(
+            "-- `{}`: checker-read module bytes expose this exact code-entry.\n\
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {} = some ({}) := rfl\n",
+            r.name, export_name_bytes, bytes
+        ));
+    }
+    out
+}
+
 /// The Lean file the checker authors at verify time. `sha` is what the checker
 /// computed from the artifact bytes; `cands` are the charset-gated JSON report
 /// candidates. Every claim is a `rfl` against `AverCert.manifest` (or the final
@@ -639,6 +977,10 @@ fn checker_witness(
     let hosts = lean_expr_list(rederived.iter().map(|r| r.host.as_str()));
     let selfs = lean_nat_list(rederived.iter().map(|r| r.self_idx));
     let carriers = lean_nat_list(rederived.iter().map(|r| r.carrier));
+    let expr_fragment_plans = lean_expr_fragment_plan_pairs(rederived);
+    let expr_fragment_lower_pins = lean_expr_fragment_lower_pins(rederived);
+    let expr_fragment_code_entry_pins = lean_expr_fragment_code_entry_pins(rederived);
+    let expr_fragment_wasm_slice_pins = lean_expr_fragment_wasm_slice_pins(rederived);
     // Semantic-face bindings: pin each obligation's typed `Dom`/`Cod`/`domRepr`/
     // `codRepr` to the STANDARD form its BYTE-derived class implies, and prove
     // every domain is inhabited. These are the faces the schema-v3 checker did
@@ -655,10 +997,16 @@ fn checker_witness(
         "-- Authored by `aver cert verify`, NOT shipped in the certificate.\n\
          import Lean\n\
          import Schema\n\
+         import PlanCheck\n\
+         import PlanLower\n\
+         import PlanBytes\n\
+         import WasmSlice\n\
+         import ArtifactBytes\n\
          import Module\n\
          import Manifest\n\
          import Final\n\
-         open CertPrelude\n\
+         open CertPrelude AverCert.Schema\n\
+         set_option maxRecDepth 200000\n\
          set_option linter.unusedSimpArgs false\n\
          set_option linter.unusedVariables false\n\n\
          -- Count (the verdict bit): the kernel confirms EXACTLY this many\n\
@@ -678,26 +1026,56 @@ fn checker_witness(
          example : AverCert.manifest.subject.contracts = {byte_contracts} := rfl\n\
          example : AverCert.manifest.subject.profile = \"{profile}\" := rfl\n\
          example : AverCert.manifest.subject.abi = \"{abi}\" := rfl\n\n\
+         -- Expr-fragment raw plans: the manifest's Lean-data plans are pinned\n\
+         -- to the checker-rendered `ExprFragmentRawPlan` terms reconstructed\n\
+         -- from sidecars that already passed hash, type/refinement and\n\
+         -- canonical code-entry equality against the artifact bytes.\n\
+         example : AverCert.manifest.exprFragmentPlans = {expr_fragment_plans} := rfl\n\n\
+         -- The manifest plans also pass the audited Lean-side structural\n\
+         -- checker. This is not the v2 byte-level `LowersCodeEntry` proof yet,\n\
+         -- but it makes `RawPlan -> checked structural plan` a kernel-checked\n\
+         -- artifact invariant.\n\
+         example : AverCert.manifest.exprFragmentPlans.all (fun p => AverCert.PlanCheck.checkExprFragmentRawPlan p.2) = true := rfl\n\n\
+         -- Expr-fragment plan lowering: for every checked expr-fragment sidecar,\n\
+         -- the audited Lean lowerer reconstructs the exact `WInstr` body that\n\
+         -- the verifier rendered after canonical code-entry equality against\n\
+         -- the artifact bytes. This is still WInstr-level, not raw byte-level\n\
+         -- `LowersCodeEntry`, but it moves plan-to-semantics lowering into Lean.\n\
+         {expr_fragment_lower_pins}\n\
+         -- Expr-fragment byte lowering: the audited Lean byte lowerer also\n\
+         -- reconstructs the exact canonical code-entry bytes accepted by the\n\
+         -- Rust verifier. This still relies on Rust for module slicing and for\n\
+         -- comparing those bytes to the real code section, but the plan byte\n\
+         -- encoder itself is now hash-pinned Lean code.\n\
+         {expr_fragment_code_entry_pins}\n\
+         -- Expr-fragment byte origin: the checker regenerated `ArtifactBytes.lean`\n\
+         -- from the actual artifact bytes it read, and the audited Lean slicer\n\
+         -- finds each expr-fragment export's exact code-entry bytes in that\n\
+         -- module. This is the first relevant-subset in-kernel byte-origin\n\
+         -- check; full Wasm validation remains future work.\n\
+         {expr_fragment_wasm_slice_pins}\n\
          -- Hash binding: the sha the checker computed from the artifact bytes.\n\
          example : AverCert.manifest.subject.artifactHash = \"{sha}\" := rfl\n\
          example : CertModule.wasmSha256 = \"{sha}\" := rfl\n\n\
-         -- Artifact-decode bindings: the CODE, HOST, SELF and CARRIER of every\n\
-         -- obligation are pinned, position for position, to the values the\n\
-         -- audited disassembler re-derived from the hash-verified bytes. These\n\
+         -- Artifact-decode / checked-plan bindings: the CODE, HOST, SELF and\n\
+         -- CARRIER of every obligation are pinned, position for position, to\n\
+         -- byte-bound checker values. Ordinary classes come from the audited\n\
+         -- disassembler; expr-fragment code/face comes from a checked plan\n\
+         -- whose canonical code-entry bytes equal the artifact bytes. These\n\
          -- are EXACTLY the fields `Obligation.holds` reasons about\n\
          -- (`wFuncN o.code (o.host add sub mul stringEq) fuel o.self`), so a fabricated body,\n\
          -- a decoupled `code`/`self`/`carrier`, or a nerfed `host` that would\n\
-         -- make `holds` vacuous all diverge from the bytes and fail a `rfl`. The\n\
-         -- spliced terms come from the checker's own audited renderer over the\n\
-         -- bytes, never from attacker text, and are fully expanded (they do NOT\n\
-         -- reference the cert's `CertModule.*` defs, which an attacker edits).\n\
+         -- make `holds` vacuous all diverge from byte-bound checker values and\n\
+         -- fail a `rfl`. The spliced terms come from the checker's own audited\n\
+         -- renderer, never from attacker text, and are fully expanded (they do\n\
+         -- NOT reference the cert's `CertModule.*` defs, which an attacker edits).\n\
          example : AverCert.manifest.obligations.map (fun o => o.code) =\n  {codes} := rfl\n\
          example : AverCert.manifest.obligations.map (fun o => o.host) =\n  {hosts} := rfl\n\
          example : AverCert.manifest.obligations.map (fun o => o.self) = {selfs} := rfl\n\
          example : AverCert.manifest.obligations.map (fun o => o.carrier) = {carriers} := rfl\n\n\
          -- Semantic-face bindings: the typed `Dom`/`Cod`/`domRepr`/`codRepr` of\n\
-         -- every obligation, pinned to the standard form of its byte-derived\n\
-         -- class, plus a `Nonempty Dom` proof. A manifest that weakens the face\n\
+         -- every obligation, pinned to the standard form of its byte-bound\n\
+         -- class/checked plan, plus a `Nonempty Dom` proof. A manifest that weakens the face\n\
          -- (`Dom := Empty`, `codRepr := fun _ _ _ => True`, `domRepr := fun _ _ _ => False`,\n\
          -- a nerfed arity) fails one of these kernel checks.\n\
          {face_section}\n\

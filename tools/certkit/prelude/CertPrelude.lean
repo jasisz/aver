@@ -387,6 +387,30 @@ def stringEqRef : List WVal → Option WVal
   | [a, b] => some (b32 (stringEqW a b))
   | _ => none
 
+/-- Byte-list append that only appends i32-valued bytes; non-i32 elements are
+    dropped (consistent with the byte-array representation of Aver strings). -/
+def wByteAppend : List WVal → List WVal → List WVal
+  | [], bs => bs
+  | .i32v a :: as, bs => .i32v a :: wByteAppend as bs
+  | _ :: as, bs => wByteAppend as bs
+
+/-- The `String.concat` reference at the WVal byte-array level: take a container
+    array of string-arrays, concatenate each element's bytes in order, and return
+    the helper's statically declared result array type. -/
+def stringConcatW (resultTy : Nat) : WVal → WVal
+  | .arr _ parts =>
+      .arr resultTy (parts.foldr (fun p acc =>
+        match p with | .arr _ es => wByteAppend es acc | _ => acc) [])
+  | _ => .null
+
+/-- `String.concat` executable reference face: takes a container `arr` of
+    string-arrays as a single argument and returns the byte-concatenated array.
+    Certificate theorems use the abstract contract; this reference exists for
+    interpreter tripwires. -/
+def stringConcatRef (resultTy : Nat) : List WVal → Option WVal
+  | [WVal.arr ty parts] => some (stringConcatW resultTy (.arr ty parts))
+  | _ => none
+
 /-- Int comparison contract faces: decode both carriers, compare in ℤ, return
     the i32 boolean the wasm helper produces (`<= < >= > ==`). -/
 def cmpRef (p : Int → Int → Bool) : List WVal → Option WVal

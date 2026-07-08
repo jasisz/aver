@@ -30,6 +30,71 @@ structure Subject where
 inductive Policy where
   | simulatesModel
 
+/-- Value types admitted by the `expr-fragment-v1` plan grammar. This is the
+    Lean-data mirror of the Rust `ExprFragmentPlan` sidecar: v1 proofs still use
+    the rendered `Obligation` face below, but these definitions are the stable
+    landing zone for v2 `CheckPlan`/`LowersCodeEntry`. -/
+inductive FragTy where
+  | f64
+  | boolI32
+  | intCarrier
+  | i64
+  | rawI32
+  | ref
+deriving Repr, DecidableEq
+
+/-- Primitive operations admitted by `expr-fragment-v1`. -/
+inductive FragPrim where
+  | f64Add
+  | f64Mul
+  | f64Le
+  | i64Eq
+  | i64LeS
+  | i64LtS
+  | i64GeS
+  | i32LtS
+  | i32GtS
+deriving Repr, DecidableEq
+
+mutual
+  /-- A single typed ANF node in an expression-fragment plan. -/
+  inductive FragNodeKind where
+    | local (index : Nat)
+    | constBool (value : Bool)
+    | constI64 (value : Int)
+    | constI32 (value : Int)
+    | constF64Bits (bits : Nat)
+    | structGet (field : Nat) (receiver : Nat)
+    | refIsNull (value : Nat)
+    | prim (op : FragPrim) (args : List Nat)
+    | ifElse (cond : Nat) (thenBlock elseBlock : FragBlock)
+  deriving Repr
+
+  /-- A typed value definition. `id` must match its position in the containing
+      block; v1 Rust checks this, v2 Lean `CheckPlan` will. -/
+  structure FragNode where
+    id   : Nat
+    ty   : FragTy
+    kind : FragNodeKind
+  deriving Repr
+
+  /-- Ordered ANF block. `result` is the id of the value yielded by the block. -/
+  structure FragBlock where
+    nodes  : List FragNode
+    result : Nat
+  deriving Repr
+end
+
+/-- Raw, untrusted expression-fragment plan as Lean data. The artifact may
+    provide this; only the checked plan produced by the trusted checker should
+    be used for acceptance. -/
+structure ExprFragmentRawPlan where
+  profile : String
+  params  : List FragTy
+  result  : FragTy
+  body    : FragBlock
+deriving Repr
+
 /-- Pointwise lifting of an integer representation relation to argument lists.
     Kept as the standard domain representation for the v2 integer classes. -/
 inductive ReprAll (R : Int → WVal → Prop) : List Int → List WVal → Prop
@@ -55,6 +120,12 @@ def intRepr (S : CarrierSpec C) : Int → WVal → Prop := S.Repr
 /-- Standard representation of a boolean result. -/
 def boolRepr (_S : CarrierSpec C) (b : Bool) (w : WVal) : Prop := w = b32 b
 
+/-- Standard bit-exact representation of a floating-point result. -/
+def floatRepr (_S : CarrierSpec C) (x : Float) (w : WVal) : Prop := w = .f64v x.toBits
+
+/-- Standard representation of a floating-point bit-pattern result. -/
+def floatBitsRepr (_S : CarrierSpec C) (bits : UInt64) (w : WVal) : Prop := w = .f64v bits
+
 /-- Standard representation for byte-level projections: the model value is the
     exact `WVal` the body returns. This deliberately does not inspect strings. -/
 def verbatimRepr (_S : CarrierSpec C) (v : WVal) (w : WVal) : Prop := w = v
@@ -74,6 +145,7 @@ structure Obligation where
     (List WVal → Option WVal) →
     (List WVal → Option WVal) →
     (List WVal → Option WVal) →
+    (Nat → List WVal → Option WVal) →
     HostTbl
   self    : Nat
   Dom     : Type
@@ -83,25 +155,29 @@ structure Obligation where
   model   : Dom → Cod
 
 /-- Denotation of `simulatesModel`: under any representation `S` and host
-    contracts obeying the named laws (integer add/sub/mul plus String.eq byte
-    equality), the emitted body run on a represented domain value yields a
-    represented result of `model x`. Partial correctness — vacuous on trap or
-    fuel exhaustion. Each contract is an assumed runtime law: the host helper
-    wired to that slot computes the named operation on represented values. -/
+    contracts obeying the named laws (integer add/sub/mul, String.eq byte
+    equality, and String.concat byte concatenation), the emitted body run on a
+    represented domain value yields a represented result of `model x`. Partial
+    correctness — vacuous on trap or fuel exhaustion. Each contract is an
+    assumed runtime law: the host helper wired to that slot computes the named
+    operation on represented values. -/
 def Obligation.holds (o : Obligation) : Prop :=
   ∀ (S : CarrierSpec o.carrier)
     (add sub mul stringEq : List WVal → Option WVal)
+    (stringConcat : Nat → List WVal → Option WVal)
     (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
     (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
     (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
     (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
+    (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → c = stringConcatW resultTy parts)
     (fuel : Nat) (x : o.Dom) (vs : List WVal) (w : WVal),
     o.domRepr S x vs →
-    wFuncN o.code (o.host add sub mul stringEq) fuel o.self vs = some w →
+    wFuncN o.code (o.host add sub mul stringEq stringConcat) fuel o.self vs = some w →
     o.codRepr S (o.model x) w
 
 structure Manifest where
   subject     : Subject
+  exprFragmentPlans : List (String × ExprFragmentRawPlan)
   obligations : List Obligation
 
 /-- The single audited certificate proposition: the manifest's pinned hash is

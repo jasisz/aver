@@ -150,6 +150,17 @@ decision DropLegacyNanBoxedWasm
     rejected = ["KeepBoth", "DropLegacyFirst", "FeatureFlagOffByDefault"]
     impacts = ["Codegen", "Docs", "CLI", "Tests", "ReleaseTrain"]
 
+decision PlanFirstArtifactCertification
+    date = "2026-07-08"
+    author = "Aver core team"
+    reason =
+        "Aver controls the wasm-gc codegen for certified exports, so the verifier should not recover intent from arbitrary stack-machine bytecode."
+        "The certificate sidecar should be an untrusted plan witness; the verifier typechecks that plan, canonical-lowers it in the actual module context, and compares the expected body with the byte-derived function body."
+        "Trace-guided replay remains useful only as temporary migration/debug scaffolding. Keeping it as a permanent acceptance fallback would preserve a second lifter-shaped TCB and weaken the canonical certified-island discipline."
+    chosen = "PlanFirstCanonicalLowering"
+    rejected = ["TraceGuidedAcceptance", "AdHocWholeFunctionRecognizers", "TrustedCompilerMetadata"]
+    impacts = ["Certification", "WasmGC", "Lean", "Verifier", "Codegen"]
+
 fn describeDecision(decName: String, pick: String) -> String
     ? "Formats a one-line summary of an architectural decision."
     "Decision: {decName} -> chosen = {pick}"
@@ -159,6 +170,7 @@ verify describeDecision
     describeDecision("HybridExecutionModel", "InterpreterPlusVMPlusTranspiler") => "Decision: HybridExecutionModel -> chosen = InterpreterPlusVMPlusTranspiler"
     describeDecision("Wasip2ComponentTarget", "Wasip2ComponentTarget") => "Decision: Wasip2ComponentTarget -> chosen = Wasip2ComponentTarget"
     describeDecision("DropLegacyNanBoxedWasm", "DropLegacyAfterGreenWasip2Matrix") => "Decision: DropLegacyNanBoxedWasm -> chosen = DropLegacyAfterGreenWasip2Matrix"
+    describeDecision("PlanFirstArtifactCertification", "PlanFirstCanonicalLowering") => "Decision: PlanFirstArtifactCertification -> chosen = PlanFirstCanonicalLowering"
 
 fn main() -> Unit
     ! [Console.print]
@@ -176,5 +188,6 @@ fn main() -> Unit
     Console.print(describeDecision("ListBranchingStaysInMatch", "MatchOwnsListBranching"))
     Console.print(describeDecision("Wasip2ComponentTarget", "Wasip2ComponentTarget"))
     Console.print(describeDecision("DropLegacyNanBoxedWasm", "DropLegacyAfterGreenWasip2Matrix"))
+    Console.print(describeDecision("PlanFirstArtifactCertification", "PlanFirstCanonicalLowering"))
     Console.print("")
     Console.print("Run: cargo run -- context decisions/architecture.av --decisions-only")

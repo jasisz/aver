@@ -9,6 +9,7 @@
 //! backend) and skipped when `lake` is unavailable, mirroring `proof_spec.rs`.
 #![cfg(feature = "wasm")]
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -20,6 +21,231 @@ fn temp_dir(prefix: &str) -> PathBuf {
         .unwrap_or(0);
     d.push(format!("aver-{prefix}-{nanos}"));
     d
+}
+
+#[test]
+fn certify_goal_matrix_manifest_tracks_current_surface() {
+    // This fixture is the dashboard for "how much do we certify now?". Larger
+    // programs such as examples/data/json.av remain integration side-effects;
+    // this test pins the planned numerator/denominator directly. When a backlog
+    // goal becomes certifiable, move it from `expected_backlog` into `expected`.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-goals");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/cert_goals.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    assert!(
+        compile.status.success(),
+        "compile --certify goals failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    let expected_plan_check_sha = aver::codegen::cert::audited_plan_check_sha();
+    let expected_plan_lower_sha = aver::codegen::cert::audited_plan_lower_sha();
+    let expected_plan_bytes_sha = aver::codegen::cert::audited_plan_bytes_sha();
+    let expected_wasm_slice_sha = aver::codegen::cert::audited_wasm_slice_sha();
+    assert_eq!(
+        manifest["plan_check_sha256"].as_str(),
+        Some(expected_plan_check_sha.as_str()),
+        "manifest should pin the checker-owned PlanCheck.lean"
+    );
+    assert_eq!(
+        manifest["plan_lower_sha256"].as_str(),
+        Some(expected_plan_lower_sha.as_str()),
+        "manifest should pin the checker-owned PlanLower.lean"
+    );
+    assert_eq!(
+        manifest["plan_bytes_sha256"].as_str(),
+        Some(expected_plan_bytes_sha.as_str()),
+        "manifest should pin the checker-owned PlanBytes.lean"
+    );
+    assert_eq!(
+        manifest["wasm_slice_sha256"].as_str(),
+        Some(expected_wasm_slice_sha.as_str()),
+        "manifest should pin the checker-owned WasmSlice.lean"
+    );
+
+    let actual: BTreeMap<String, String> = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["name"].as_str().unwrap().to_string(),
+                c["class"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    let expected: BTreeMap<String, String> = [
+        ("addTwo", "straight-line"),
+        ("sumFrom", "self-recursive"),
+        ("countDown", "multi-argument self-recursive"),
+        ("quad", "cross-function-composition"),
+        ("hex16", "cross-function-composition"),
+        ("isEven", "mutual-recursive"),
+        ("isOdd", "mutual-recursive"),
+        ("mkOp", "adt-constructor"),
+        ("evalOp", "variant-dispatch"),
+        ("userName", "field-projection"),
+        ("boxInt", "widened-int-match"),
+        ("wrapItems", "verbatim-widened-match"),
+        ("tagName", "verbatim-variant-dispatch"),
+        ("gauge", "variant-dispatch"),
+        ("inAsciiDigit", "expr-fragment-v1"),
+        ("quoteOrSelf", "verbatim-widened-match"),
+        ("shout", "verbatim-string-concat"),
+        ("intLessZero", "expr-fragment-v1"),
+        ("intEqZero", "expr-fragment-v1"),
+        ("boolAndGoal", "expr-fragment-v1"),
+        ("floatAddGoal", "expr-fragment-v1"),
+        ("floatMulAddGoal", "expr-fragment-v1"),
+        ("floatLeGoal", "expr-fragment-v1"),
+    ]
+    .into_iter()
+    .map(|(name, class)| (name.to_string(), class.to_string()))
+    .collect();
+    assert_eq!(
+        actual, expected,
+        "certified goal matrix changed; update the numerator deliberately"
+    );
+
+    let expr_entries = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["class"].as_str() == Some("expr-fragment-v1"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        expr_entries.len(),
+        7,
+        "expr-fragment sidecar count changed; update this deliberately"
+    );
+    for entry in expr_entries {
+        let name = entry["name"].as_str().unwrap();
+        let fragment = &entry["fragment"];
+        assert_eq!(
+            fragment["profile"].as_str(),
+            Some("expr-fragment-v1"),
+            "{name} should pin the fragment profile"
+        );
+        let plan = fragment["plan"].as_str().expect("fragment plan path");
+        assert!(
+            plan.starts_with("fragments/") && plan.ends_with(".expr-fragment-v1.plan"),
+            "{name} should point at a fragment plan sidecar, got {plan}"
+        );
+        assert!(
+            !plan.contains(".."),
+            "{name} sidecar path must stay inside cert/fragments"
+        );
+        let text = std::fs::read_to_string(out_dir.join("cert").join(plan))
+            .expect("expr fragment sidecar exists");
+        assert!(
+            text.starts_with("aver.expr-fragment.plan.v1\nprofile expr-fragment-v1\n"),
+            "{name} sidecar should be the canonical expr-fragment plan:\n{text}"
+        );
+        let expected_sha = aver::codegen::cert::sha256_hex(text.as_bytes());
+        assert_eq!(
+            fragment["plan_sha256"].as_str(),
+            Some(expected_sha.as_str()),
+            "{name} sidecar hash should match the sidecar bytes"
+        );
+        assert!(
+            fragment.get("trace").is_none() && fragment.get("trace_sha256").is_none(),
+            "{name} should not emit trace/replay sidecars after plan-first lowering"
+        );
+    }
+
+    let planned_goal_names: BTreeSet<String> = [
+        "addTwo",
+        "sumFrom",
+        "countDown",
+        "quad",
+        "hex16",
+        "isEven",
+        "isOdd",
+        "mkOp",
+        "evalOp",
+        "userName",
+        "boxInt",
+        "wrapItems",
+        "tagName",
+        "gauge",
+        "inAsciiDigit",
+        "quoteOrSelf",
+        "shout",
+        "intLessZero",
+        "intEqZero",
+        "boolAndGoal",
+        "floatAddGoal",
+        "floatMulAddGoal",
+        "floatLeGoal",
+        "listHeadGoal",
+        "sumListGoal",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    let expected_backlog: BTreeSet<String> = ["listHeadGoal", "sumListGoal"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(planned_goal_names.len(), 25, "goal denominator changed");
+    assert_eq!(actual.len(), 23, "goal numerator changed");
+
+    let contracts: Vec<&str> = manifest["runtime_contracts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        contracts,
+        vec![
+            aver::codegen::cert::BOX_CONTRACT,
+            aver::codegen::cert::INT_ADD_CONTRACT,
+            aver::codegen::cert::INT_SUB_CONTRACT,
+            aver::codegen::cert::STRING_EQ_CONTRACT,
+            aver::codegen::cert::STRING_CONCAT_CONTRACT,
+        ],
+        "goal matrix runtime contracts changed"
+    );
+
+    let declined_names: BTreeSet<String> = manifest["source_level_only"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap().to_string())
+        .collect();
+    let planned_declined: BTreeSet<String> = declined_names
+        .intersection(&planned_goal_names)
+        .cloned()
+        .collect();
+    assert_eq!(
+        planned_declined, expected_backlog,
+        "goal backlog changed; update the denominator/numerator deliberately"
+    );
+    assert!(
+        declined_names.contains("double"),
+        "composition helper should remain reported as source-level-only: {declined_names:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -499,6 +725,101 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
     assert!(
         !combined.contains("sorryAx"),
         "String.eq host-contract certificate leaked sorryAx:\n{combined}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
+fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping certify String.concat host-contract test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-stringconcat");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/stringconcat.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let cert_dir = out_dir.join("cert");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    let certified: Vec<&str> = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        certified.contains(&"shout"),
+        "expected shout certified, got {certified:?}"
+    );
+    let contracts: Vec<&str> = manifest["runtime_contracts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+    assert!(
+        contracts.contains(&aver::codegen::cert::STRING_CONCAT_CONTRACT),
+        "String.concat host contract missing from manifest, got {contracts:?}"
+    );
+    let shout_class = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"].as_str() == Some("shout"))
+        .and_then(|c| c["class"].as_str())
+        .unwrap_or("<missing>");
+    assert_eq!(
+        shout_class, "verbatim-string-concat",
+        "shout should render its concat class, got {shout_class}"
+    );
+
+    let build = Command::new("lake")
+        .current_dir(&cert_dir)
+        .arg("build")
+        .output()
+        .expect("expected `lake build` to run");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(
+        build.status.success(),
+        "lake build of emitted String.concat host-contract cert failed:\n{combined}"
+    );
+    assert!(
+        combined.contains(
+            "shout_wasm_certified' depends on axioms: [propext, Classical.choice, Quot.sound]"
+        ),
+        "String.concat host-contract certificate not kernel-clean:\n{combined}"
+    );
+    assert!(
+        !combined.contains("sorryAx"),
+        "String.concat host-contract certificate leaked sorryAx:\n{combined}"
     );
 
     let _ = std::fs::remove_dir_all(&out_dir);
