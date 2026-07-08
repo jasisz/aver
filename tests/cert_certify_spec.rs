@@ -410,6 +410,101 @@ fn certify_verbatim_variant_dispatch_lake_builds_kernel_clean() {
 }
 
 #[test]
+fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping certify String.eq host-contract test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-stringeq");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/stringeq.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let cert_dir = out_dir.join("cert");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    let certified: Vec<&str> = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        certified.contains(&"quoteOrSelf"),
+        "expected quoteOrSelf certified, got {certified:?}"
+    );
+    let contracts: Vec<&str> = manifest["runtime_contracts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+    assert!(
+        contracts.contains(&aver::codegen::cert::STRING_EQ_CONTRACT),
+        "String.eq host contract missing from manifest, got {contracts:?}"
+    );
+    let quote_class = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"].as_str() == Some("quoteOrSelf"))
+        .and_then(|c| c["class"].as_str())
+        .unwrap_or("<missing>");
+    assert_eq!(
+        quote_class, "verbatim-widened-match",
+        "quoteOrSelf should render its inner class, got {quote_class}"
+    );
+
+    let build = Command::new("lake")
+        .current_dir(&cert_dir)
+        .arg("build")
+        .output()
+        .expect("expected `lake build` to run");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(
+        build.status.success(),
+        "lake build of emitted String.eq host-contract cert failed:\n{combined}"
+    );
+    assert!(
+        combined.contains(
+            "quoteOrSelf_wasm_certified' depends on axioms: [propext, Classical.choice, Quot.sound]"
+        ),
+        "String.eq host-contract certificate not kernel-clean:\n{combined}"
+    );
+    assert!(
+        !combined.contains("sorryAx"),
+        "String.eq host-contract certificate leaked sorryAx:\n{combined}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
 fn certify_composition_fixture_lake_builds_kernel_clean() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping certify composition test: `lake` not available");

@@ -1,0 +1,19 @@
+module StringEq
+    intent =
+        "A string match over one literal. The int helper makes the box carrier"
+        "exist while the certified target exercises String.eq as a host contract."
+    exposes [quoteOrSelf, bump]
+
+fn quoteOrSelf(c: String) -> String
+  ? "Escape a quote byte, otherwise return the input string verbatim."
+  match c
+    "\"" -> "\\\""
+    _ -> c
+
+fn bump(n: Int) -> Int
+  ? "Add one — present only so the module has an Int box carrier."
+  n + 1
+
+verify quoteOrSelf
+    quoteOrSelf("\"") => "\\\""
+    quoteOrSelf("x") => "x"

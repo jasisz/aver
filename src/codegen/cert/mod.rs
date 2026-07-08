@@ -21,12 +21,13 @@
 //! the shape present in the hashed bytes.
 //!
 //! `aver cert verify` re-runs this same audited pipeline on the hash-verified
-//! bytes (`rederive_obligations`) and pins the re-derived `code`/`host`/`self`/
-//! `carrier` values into its checker-authored witness with `rfl` against the
-//! proven `manifest.obligations` — so the `WInstr` data the kernel theorem
-//! actually reasons about is forced to equal what the bytes decode to, not
-//! merely trusted. This is trusted via inspection of the disassembler, not by an
-//! in-kernel wasm decode proof (a full kernel decoder is a deferred residual).
+//! bytes (`rederive_certificate`) and pins the re-derived `code`/`host`/`self`/
+//! `carrier` values plus consumed runtime contracts into its checker-authored
+//! witness with `rfl` against the proven manifest — so the `WInstr` data and
+//! contracts the kernel theorem actually reasons about are forced to equal what
+//! the bytes decode to, not merely trusted. This is trusted via inspection of
+//! the disassembler, not by an in-kernel wasm decode proof (a full kernel
+//! decoder is a deferred residual).
 
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -52,7 +53,14 @@ pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
 /// Certification level of a v0 artifact certificate: conditional on the named
 /// runtime contracts (see the consult level naming L0/L1/L2/L3).
 pub const CERT_LEVEL: &str = "L1";
-pub const CERT_SCHEMA_VERSION: u32 = 5;
+pub const CERT_SCHEMA_VERSION: u32 = 6;
+pub const BOX_CONTRACT: &str = "__rt_aint_from_i64 (box i64 -> carrier)";
+pub const INT_ADD_CONTRACT: &str =
+    "Int.add (carrier add = exact integer addition on represented values)";
+pub const INT_SUB_CONTRACT: &str =
+    "Int.sub (carrier sub = exact integer subtraction on represented values)";
+pub const STRING_EQ_CONTRACT: &str =
+    "String.eq (WVal byte-array equality; non-arrays compare false)";
 /// The one approved final-theorem statement line. `aver cert verify` confirms
 /// this exact line is present in `Final.lean` (name + `Holds manifest`), which
 /// is what pins the statement without matching arbitrary Lean syntax.
@@ -101,6 +109,7 @@ struct CodeEntry {
     calls: Vec<u32>,
     has_loop_or_branch: bool,
     host_role: Option<HostRole>,
+    host_ops: Vec<HostOp>,
 }
 
 /// The minimal opcode surface the two templates need. Anything else is `Other`
@@ -141,6 +150,27 @@ enum Op {
 enum HostRole {
     Add,
     Sub,
+    StringEq,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HostOp {
+    LocalGet(u32),
+    LocalSet(u32),
+    I32Const(i32),
+    ArrayLen,
+    ArrayGetU(u32),
+    I32Ne,
+    I32GeU,
+    I32Add,
+    If,
+    Block,
+    Loop,
+    Br(u32),
+    BrIf(u32),
+    Return,
+    End,
+    Other,
 }
 
 /// The non-recursive operand of a body-consumed fuel recursion's combinator
@@ -239,6 +269,18 @@ enum VerbatimDefault {
     F64Bits(u64),
     Array { type_idx: u32, bytes: Vec<u8> },
 }
+
+#[derive(Clone, PartialEq)]
+enum StringEqDefault {
+    Input,
+    Verbatim(VerbatimDefault),
+}
+
+type StringEqVerbatimChain = (
+    Vec<(VerbatimDefault, VerbatimDefault)>,
+    StringEqDefault,
+    u32,
+);
 
 #[derive(Clone, PartialEq)]
 enum ConstructorField {
@@ -364,6 +406,21 @@ enum Cert {
         default: VerbatimDefault,
         ops: Vec<Op>,
     },
+    /// Non-recursive String-literal dispatch whose condition is delegated to a
+    /// contracted `String.eq` helper. The certified user body stays loop-free:
+    /// it constructs byte-derived string constants with `array.new_data`, calls
+    /// the exact String.eq host slot, then returns a byte-derived constant or
+    /// the original input verbatim.
+    StringEqVerbatimMatch {
+        name: String,
+        self_idx: u32,
+        nlocals: usize,
+        carrier: u32,
+        string_eq_idx: u32,
+        arms: Vec<(VerbatimDefault, VerbatimDefault)>,
+        default: StringEqDefault,
+        ops: Vec<Op>,
+    },
     /// Non-recursive Int -> Bool range predicate: two nested carrier comparisons
     /// against constants, `match cp >= k_lo { true -> cp <= k_hi; false -> false }`
     /// (the `isHighSurrogate`/`isLowSurrogate` shape). Certified over the canonical
@@ -474,6 +531,7 @@ impl Cert {
             | Cert::WidenedIntMatch { name, .. }
             | Cert::VerbatimWidenedMatch { name, .. }
             | Cert::VerbatimVariantDispatch { name, .. }
+            | Cert::StringEqVerbatimMatch { name, .. }
             | Cert::IntRangePredicate { name, .. }
             | Cert::VariantDispatch { name, .. }
             | Cert::Composition { name, .. }
@@ -491,6 +549,7 @@ impl Cert {
             | Cert::WidenedIntMatch { self_idx, .. }
             | Cert::VerbatimWidenedMatch { self_idx, .. }
             | Cert::VerbatimVariantDispatch { self_idx, .. }
+            | Cert::StringEqVerbatimMatch { self_idx, .. }
             | Cert::IntRangePredicate { self_idx, .. }
             | Cert::VariantDispatch { self_idx, .. }
             | Cert::Composition { self_idx, .. }
@@ -508,6 +567,7 @@ impl Cert {
             | Cert::WidenedIntMatch { carrier, .. }
             | Cert::VerbatimWidenedMatch { carrier, .. }
             | Cert::VerbatimVariantDispatch { carrier, .. }
+            | Cert::StringEqVerbatimMatch { carrier, .. }
             | Cert::IntRangePredicate { carrier, .. }
             | Cert::VariantDispatch { carrier, .. }
             | Cert::Composition { carrier, .. }
@@ -524,6 +584,7 @@ impl Cert {
             | Cert::WidenedIntMatch { .. }
             | Cert::VerbatimWidenedMatch { .. }
             | Cert::VerbatimVariantDispatch { .. }
+            | Cert::StringEqVerbatimMatch { .. }
             | Cert::IntRangePredicate { .. }
             | Cert::VariantDispatch { .. }
             | Cert::Composition { .. } => 1,
@@ -547,46 +608,52 @@ impl Cert {
             | Cert::WidenedIntMatch { .. }
             | Cert::VerbatimWidenedMatch { .. }
             | Cert::VerbatimVariantDispatch { .. }
+            | Cert::StringEqVerbatimMatch { .. }
             | Cert::IntRangePredicate { .. }
             | Cert::VariantDispatch { .. } => "fun x => x".to_string(),
             Cert::NonRecursive { .. } => unreachable!(),
         }
     }
-    /// The Lean expression for the 3-arg host builder in `Obligation` shape
-    /// (`add → sub → mul → HostTbl`). Every named host keeps its own arity; this
+    /// The Lean expression for the 4-arg host builder in `Obligation` shape
+    /// (`add → sub → mul → stringEq → HostTbl`). Every named host keeps its own arity; this
     /// wraps it to the obligation shape, ignoring the contracts it does not wire.
     fn host_expr(&self) -> String {
         match self.inner() {
-            Cert::StraightLine { name, .. } => format!("fun add _ _ => CertModule.{name}Host add"),
+            Cert::StraightLine { name, .. } => {
+                format!("fun add _ _ _ => CertModule.{name}Host add")
+            }
             Cert::Recursive {
                 name, combinator, ..
             } => {
                 // Draw the combinator slot (`add` or `mul`) from the obligation.
                 format!(
-                    "fun add sub mul => CertModule.{name}Host {} sub",
+                    "fun add sub mul _ => CertModule.{name}Host {} sub",
                     combinator.param()
                 )
             }
             Cert::AccumulatorRecursive { name, .. } | Cert::Composition { name, .. } => {
-                format!("fun add sub _ => CertModule.{name}Host add sub")
+                format!("fun add sub _ _ => CertModule.{name}Host add sub")
             }
             // The whole SCC shares one host (box + sub only), named after the
             // primary (lowest-`self_idx`) member; every member's obligation points
             // at it. `add`/`mul` are ignored (mutual has no combinator).
             Cert::MutualRecursion { scc, .. } => {
-                format!("fun _ sub _ => CertModule.{}Host sub", scc[0].name)
+                format!("fun _ sub _ _ => CertModule.{}Host sub", scc[0].name)
             }
             Cert::AdtConstructor { name, .. } | Cert::FieldProjection { name, .. } => {
-                format!("fun _ _ _ => CertModule.{name}Host")
+                format!("fun _ _ _ _ => CertModule.{name}Host")
             }
             Cert::WidenedIntMatch { name, .. }
             | Cert::VerbatimWidenedMatch { name, .. }
             | Cert::VerbatimVariantDispatch { name, .. }
             | Cert::IntRangePredicate { name, .. } => {
-                format!("fun _ _ _ => CertModule.{name}Host")
+                format!("fun _ _ _ _ => CertModule.{name}Host")
+            }
+            Cert::StringEqVerbatimMatch { name, .. } => {
+                format!("fun _ _ _ stringEq => CertModule.{name}Host stringEq")
             }
             Cert::VariantDispatch { name, .. } => {
-                format!("fun add sub _ => CertModule.{name}Host add sub")
+                format!("fun add sub _ _ => CertModule.{name}Host add sub")
             }
             Cert::NonRecursive { .. } => unreachable!(),
         }
@@ -604,9 +671,9 @@ impl Cert {
             | Cert::Composition { .. }
             | Cert::MutualRecursion { .. } => ("List Int".to_string(), "Int".to_string()),
             Cert::FieldProjection { .. } => ("WVal x WVal".to_string(), "WVal".to_string()),
-            Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. } => {
-                ("WVal".to_string(), "WVal".to_string())
-            }
+            Cert::VerbatimWidenedMatch { .. }
+            | Cert::VerbatimVariantDispatch { .. }
+            | Cert::StringEqVerbatimMatch { .. } => ("WVal".to_string(), "WVal".to_string()),
             Cert::IntRangePredicate { .. } => ("Int".to_string(), "Bool".to_string()),
             Cert::VariantDispatch { name, .. } | Cert::WidenedIntMatch { name, .. } => {
                 let dom = model_info
@@ -702,11 +769,23 @@ pub fn analyze(wasm_bytes: &[u8], model_files: &[(String, String)]) -> Result<An
     }
 
     // Named runtime contracts actually consumed by the certified functions.
+    let contracts = runtime_contracts_for_certs(&certs);
+
+    Ok(Analysis {
+        certs,
+        declined,
+        carrier,
+        contracts,
+    })
+}
+
+fn runtime_contracts_for_certs(certs: &[Cert]) -> Vec<String> {
     let mut contracts = Vec::new();
     let mut has_box = false;
     let mut has_add = false;
     let mut has_sub = false;
-    for c in &certs {
+    let mut has_string_eq = false;
+    for c in certs {
         match c.inner() {
             Cert::StraightLine { .. } => {
                 has_box = true;
@@ -727,6 +806,9 @@ pub fn analyze(wasm_bytes: &[u8], model_files: &[(String, String)]) -> Result<An
             | Cert::VerbatimWidenedMatch { .. }
             | Cert::VerbatimVariantDispatch { .. }
             | Cert::IntRangePredicate { .. } => {}
+            Cert::StringEqVerbatimMatch { .. } => {
+                has_string_eq = true;
+            }
             Cert::MutualRecursion { .. } => {
                 // The shared host wires box + sub (no combinator).
                 has_box = true;
@@ -756,25 +838,18 @@ pub fn analyze(wasm_bytes: &[u8], model_files: &[(String, String)]) -> Result<An
         }
     }
     if has_box {
-        contracts.push("__rt_aint_from_i64 (box i64 -> carrier)".to_string());
+        contracts.push(BOX_CONTRACT.to_string());
     }
     if has_add {
-        contracts.push(
-            "Int.add (carrier add = exact integer addition on represented values)".to_string(),
-        );
+        contracts.push(INT_ADD_CONTRACT.to_string());
     }
     if has_sub {
-        contracts.push(
-            "Int.sub (carrier sub = exact integer subtraction on represented values)".to_string(),
-        );
+        contracts.push(INT_SUB_CONTRACT.to_string());
     }
-
-    Ok(Analysis {
-        certs,
-        declined,
-        carrier,
-        contracts,
-    })
+    if has_string_eq {
+        contracts.push(STRING_EQ_CONTRACT.to_string());
+    }
+    contracts
 }
 
 /// A certified obligation re-derived straight from the module bytes: the
@@ -805,6 +880,11 @@ pub struct RederivedObligation {
     /// (`Dom := Empty`, `codRepr := fun _ _ _ => True`, `domRepr := fun _ _ _ => False`,
     /// or a nerfed arity) fails a kernel `rfl`/`HEq.rfl` and is DECLINED.
     pub face: ObligationFace,
+}
+
+pub struct RederivedCertificate {
+    pub obligations: Vec<RederivedObligation>,
+    pub contracts: Vec<String>,
 }
 
 /// The byte-derived semantic face of a certified obligation — enough for the
@@ -855,9 +935,9 @@ impl ObligationFace {
                 struct_idx: *struct_idx,
             },
             Cert::IntRangePredicate { .. } => ObligationFace::IntPredicate,
-            Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. } => {
-                ObligationFace::VerbatimWidened
-            }
+            Cert::VerbatimWidenedMatch { .. }
+            | Cert::VerbatimVariantDispatch { .. }
+            | Cert::StringEqVerbatimMatch { .. } => ObligationFace::VerbatimWidened,
             Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. } => ObligationFace::AdtMatch,
             Cert::AdtConstructor { .. } => ObligationFace::AdtConstructor,
             // Each SCC member is an ordinary integer simulation face (arity 1);
@@ -1031,11 +1111,20 @@ pub fn rederive_obligations(
     wasm_bytes: &[u8],
     model_files: &[(String, String)],
 ) -> Result<Vec<RederivedObligation>, String> {
+    Ok(rederive_certificate(wasm_bytes, model_files)?.obligations)
+}
+
+/// Re-derive the byte-bound certificate face: obligations plus the runtime
+/// contracts those byte-classified obligations actually consume.
+pub fn rederive_certificate(
+    wasm_bytes: &[u8],
+    model_files: &[(String, String)],
+) -> Result<RederivedCertificate, String> {
     let (user_fns, box_idx, user_idx_set, carrier, host_roles) = disassemble(wasm_bytes)?;
     let model_ops = model_step_ops(model_files);
     let fns: std::collections::HashMap<u32, &UserFn> =
         user_fns.iter().map(|f| (f.wasm_idx, f)).collect();
-    let mut out = Vec::new();
+    let mut certs = Vec::new();
     for f in &user_fns {
         if let Ok(c) = classify(
             f,
@@ -1046,17 +1135,25 @@ pub fn rederive_obligations(
             &host_roles,
             &model_ops,
         ) {
-            out.push(RederivedObligation {
-                name: c.name().to_string(),
-                code: render_code_value(&c),
-                host: render_host_value(&c),
-                self_idx: c.self_idx(),
-                carrier: c.carrier(),
-                face: ObligationFace::of_cert(&c),
-            });
+            certs.push(c);
         }
     }
-    Ok(out)
+    let contracts = runtime_contracts_for_certs(&certs);
+    let obligations = certs
+        .iter()
+        .map(|c| RederivedObligation {
+            name: c.name().to_string(),
+            code: render_code_value(c),
+            host: render_host_value(c),
+            self_idx: c.self_idx(),
+            carrier: c.carrier(),
+            face: ObligationFace::of_cert(c),
+        })
+        .collect();
+    Ok(RederivedCertificate {
+        obligations,
+        contracts,
+    })
 }
 
 // ---- disassembly ---------------------------------------------------------
@@ -1083,6 +1180,9 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
     // type index -> struct field count
     let mut struct_field_counts: std::collections::HashMap<u32, u32> =
         std::collections::HashMap::new();
+    // type indices for the string byte-array carrier `(array (mut i8))`.
+    let mut string_byte_array_types: std::collections::HashSet<u32> =
+        std::collections::HashSet::new();
     // export name -> func index
     let mut exports: Vec<(String, u32)> = Vec::new();
     let mut code_entries: Vec<CodeEntry> = Vec::new();
@@ -1144,6 +1244,11 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                             CompositeInnerType::Struct(st) => {
                                 struct_field_counts.insert(idx, st.fields.len() as u32);
                             }
+                            CompositeInnerType::Array(at)
+                                if matches!(at.0.element_type, StorageType::I8) =>
+                            {
+                                string_byte_array_types.insert(idx);
+                            }
                             _ => {}
                         }
                     }
@@ -1189,11 +1294,13 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                 let mut saw_i64_add = false;
                 let mut saw_i64_sub = false;
                 let mut first_i64_arith = None;
+                let mut host_ops = Vec::new();
                 let mut opr = body
                     .get_operators_reader()
                     .map_err(|e| format!("ops reader: {e}"))?;
                 while !opr.eof() {
                     let op = opr.read().map_err(|e| format!("op read: {e}"))?;
+                    host_ops.push(host_op(&op));
                     let mapped = match op {
                         Operator::LocalGet { local_index } => Op::LocalGet(local_index),
                         Operator::LocalSet { local_index } => Op::LocalSet(local_index),
@@ -1287,6 +1394,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                     calls,
                     has_loop_or_branch,
                     host_role,
+                    host_ops,
                 });
             }
             Payload::DataSection(reader) => {
@@ -1331,9 +1439,17 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
         .iter()
         .enumerate()
         .filter_map(|(def_idx, entry)| {
-            entry
-                .host_role
-                .map(|role| (num_imported_funcs + def_idx as u32, role))
+            let sig = func_type_idx
+                .get(def_idx)
+                .and_then(|ti| type_sigs.get(ti))
+                .cloned()
+                .unwrap_or((Vec::new(), None));
+            let role = if is_string_eq_host(entry, &sig.0, sig.1, &string_byte_array_types) {
+                Some(HostRole::StringEq)
+            } else {
+                entry.host_role
+            };
+            role.map(|role| (num_imported_funcs + def_idx as u32, role))
         })
         .collect::<std::collections::HashMap<_, _>>();
 
@@ -1365,6 +1481,91 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
     }
 
     Ok((user_fns, box_idx, user_idx_set, carrier, host_roles))
+}
+
+fn host_op(op: &wasmparser::Operator<'_>) -> HostOp {
+    match op {
+        wasmparser::Operator::LocalGet { local_index } => HostOp::LocalGet(*local_index),
+        wasmparser::Operator::LocalSet { local_index } => HostOp::LocalSet(*local_index),
+        wasmparser::Operator::I32Const { value } => HostOp::I32Const(*value),
+        wasmparser::Operator::ArrayLen => HostOp::ArrayLen,
+        wasmparser::Operator::ArrayGetU { array_type_index } => {
+            HostOp::ArrayGetU(*array_type_index)
+        }
+        wasmparser::Operator::I32Ne => HostOp::I32Ne,
+        wasmparser::Operator::I32GeU => HostOp::I32GeU,
+        wasmparser::Operator::I32Add => HostOp::I32Add,
+        wasmparser::Operator::If { .. } => HostOp::If,
+        wasmparser::Operator::Block { .. } => HostOp::Block,
+        wasmparser::Operator::Loop { .. } => HostOp::Loop,
+        wasmparser::Operator::Br { relative_depth } => HostOp::Br(*relative_depth),
+        wasmparser::Operator::BrIf { relative_depth } => HostOp::BrIf(*relative_depth),
+        wasmparser::Operator::Return => HostOp::Return,
+        wasmparser::Operator::End => HostOp::End,
+        _ => HostOp::Other,
+    }
+}
+
+fn is_string_eq_host(
+    entry: &CodeEntry,
+    params: &[TyKind],
+    result: Option<TyKind>,
+    string_byte_array_types: &std::collections::HashSet<u32>,
+) -> bool {
+    let [TyKind::Ref(lhs), TyKind::Ref(rhs)] = params else {
+        return false;
+    };
+    if lhs != rhs || result != Some(TyKind::I32) || entry.nlocals != 2 || !entry.calls.is_empty() {
+        return false;
+    }
+    use HostOp::*;
+    let t = *lhs;
+    if !string_byte_array_types.contains(&t) {
+        return false;
+    }
+    let expected = [
+        LocalGet(0),
+        ArrayLen,
+        LocalGet(1),
+        ArrayLen,
+        I32Ne,
+        If,
+        I32Const(0),
+        Return,
+        End,
+        LocalGet(0),
+        ArrayLen,
+        LocalSet(2),
+        I32Const(0),
+        LocalSet(3),
+        Block,
+        Loop,
+        LocalGet(3),
+        LocalGet(2),
+        I32GeU,
+        BrIf(1),
+        LocalGet(0),
+        LocalGet(3),
+        ArrayGetU(t),
+        LocalGet(1),
+        LocalGet(3),
+        ArrayGetU(t),
+        I32Ne,
+        If,
+        I32Const(0),
+        Return,
+        End,
+        LocalGet(3),
+        I32Const(1),
+        I32Add,
+        LocalSet(3),
+        Br(0),
+        End,
+        End,
+        I32Const(1),
+        End,
+    ];
+    entry.host_ops.as_slice() == expected
 }
 
 fn resolve_data_ops(ops: Vec<Op>, data_segments: &[Option<Vec<u8>>]) -> Vec<Op> {
@@ -1506,6 +1707,7 @@ fn walk_nonrecursive(
         .or_else(|| nr_field_projection(f, &body, carrier))
         .or_else(|| nr_ref_dispatch_match(f, &body, box_idx, carrier, host_roles))
         .or_else(|| nr_verbatim_variant_dispatch(f, &body, carrier))
+        .or_else(|| nr_string_eq_verbatim_match(f, &body, carrier, host_roles))
         .or_else(|| nr_int_range_predicate(f, &body, carrier))
         .or_else(|| nr_variant_dispatch(f, &body, box_idx, carrier, host_roles))
 }
@@ -1559,6 +1761,7 @@ fn nr_variant_dispatch(
                 }
                 sub_idx = Some(*idx);
             }
+            Some(HostRole::StringEq) => return None,
             None => {}
         }
     }
@@ -2032,6 +2235,82 @@ fn nr_verbatim_variant_dispatch(
         default,
         ops: strip_trailing_end(&f.ops).to_vec(),
     })
+}
+
+fn nr_string_eq_verbatim_match(
+    f: &UserFn,
+    body: &StructuralBody,
+    carrier: Option<u32>,
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<Cert> {
+    if f.arity != 1 {
+        return None;
+    }
+    let [TyKind::Ref(param_ty)] = f.params.as_slice() else {
+        return None;
+    };
+    if f.result != Some(TyKind::Ref(*param_ty)) {
+        return None;
+    }
+    let (arms, default, string_eq_idx) = string_eq_verbatim_chain(&body.tree, host_roles)?;
+    if arms.len() != 1 {
+        return None;
+    }
+    Some(Cert::StringEqVerbatimMatch {
+        name: f.name.clone(),
+        self_idx: f.wasm_idx,
+        nlocals: f.nlocals,
+        carrier: carrier?,
+        string_eq_idx,
+        arms,
+        default,
+        ops: strip_trailing_end(&f.ops).to_vec(),
+    })
+}
+
+fn string_eq_verbatim_chain(
+    nodes: &[InstrNode],
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> Option<StringEqVerbatimChain> {
+    use InstrNode::{IfElse, Op as Nop};
+    let ops = node_ops(nodes);
+    if matches!(ops.as_slice(), [Op::LocalGet(0)]) {
+        return Some((Vec::new(), StringEqDefault::Input, 0));
+    }
+    if let Some(k) = verbatim_default_from_ops(&ops) {
+        return Some((Vec::new(), StringEqDefault::Verbatim(k), 0));
+    }
+
+    let [
+        Nop(Op::LocalGet(0)),
+        maybe_cast @ ..,
+        Nop(Op::I32Const(0)),
+        Nop(Op::I32Const(_)),
+        Nop(Op::ArrayNewData(type_idx, bytes)),
+        Nop(Op::Call(eq_idx)),
+        IfElse(hit, els),
+    ] = nodes
+    else {
+        return None;
+    };
+    if !matches!(maybe_cast, [Nop(Op::RefCast(_))] | []) {
+        return None;
+    }
+    if host_roles.get(eq_idx) != Some(&HostRole::StringEq) {
+        return None;
+    }
+    let needle = VerbatimDefault::Array {
+        type_idx: *type_idx,
+        bytes: bytes.clone(),
+    };
+    let hit = verbatim_default_from_ops(&node_ops(hit))?;
+    let (mut rest, default, rest_eq) = string_eq_verbatim_chain(els, host_roles)?;
+    if rest_eq != 0 && rest_eq != *eq_idx {
+        return None;
+    }
+    let mut arms = vec![(needle, hit)];
+    arms.append(&mut rest);
+    Some((arms, default, *eq_idx))
 }
 
 /// Parse `[localGet 0, refTest t, ifElse hit els]` where each `hit` is a verbatim
@@ -2659,7 +2938,7 @@ fn parse_body_step(
 /// The combinator operator of each `X__fuel` model definition's else-branch:
 /// `+` (add) or `*` (mul). The bytes cannot distinguish the bignum helpers, so
 /// this is the trusted source of the operation. Both the emitter (`analyze`) and
-/// the checker (`rederive_obligations`) build the SAME map from the model, so the
+/// the checker (`rederive_certificate`) build the SAME map from the model, so the
 /// re-derived host still pins. The descent (`n - 1`) uses `-`, so it never
 /// confuses the scan; the recognised body shapes carry no other arithmetic.
 fn model_step_ops(model_files: &[(String, String)]) -> std::collections::HashMap<String, char> {
@@ -3046,6 +3325,15 @@ fn render_host_def(c: &Cert) -> String {
             "/-- Runtime host wiring for `{name}` (no host calls). -/\n\
              def {name}Host : HostTbl := fun _ => none\n",
         ),
+        Cert::StringEqVerbatimMatch {
+            name,
+            string_eq_idx,
+            ..
+        } => format!(
+            "/-- Runtime host wiring for `{name}` (String.eq contract). -/\n\
+             def {name}Host (stringEq : List WVal → Option WVal) : HostTbl := fun fn =>\n  \
+             if fn = {string_eq_idx} then some (2, stringEq)\n  else none\n",
+        ),
         Cert::WidenedIntMatch {
             name,
             carrier,
@@ -3133,6 +3421,7 @@ fn render_code_def(c: &Cert) -> String {
         Cert::WidenedIntMatch { .. } => "widened Int variant match",
         Cert::VerbatimWidenedMatch { .. } => "verbatim widened variant match",
         Cert::VerbatimVariantDispatch { .. } => "verbatim variant dispatch",
+        Cert::StringEqVerbatimMatch { .. } => "verbatim String equality match",
         Cert::IntRangePredicate { .. } => "Int range predicate",
         Cert::VariantDispatch { .. } => "general variant dispatch",
         Cert::Composition { .. } => "cross-function composition, whole call closure",
@@ -3277,6 +3566,12 @@ fn render_code_value(c: &Cert) -> String {
             ops,
             ..
         }
+        | Cert::StringEqVerbatimMatch {
+            self_idx,
+            nlocals,
+            ops,
+            ..
+        }
         | Cert::IntRangePredicate {
             self_idx,
             nlocals,
@@ -3366,7 +3661,7 @@ fn render_host_value(c: &Cert) -> String {
             add_idx,
             ..
         } => format!(
-            "fun add _ _ => fun fn =>\n    \
+            "fun add _ _ _ => fun fn =>\n    \
              if fn = {box_idx} then some (1, boxRef {carrier})\n    \
              else if fn = {add_idx} then some (2, add)\n    else none",
         ),
@@ -3380,7 +3675,7 @@ fn render_host_value(c: &Cert) -> String {
         } => {
             let cp = combinator.param();
             format!(
-                "fun add sub mul => fun fn =>\n    \
+                "fun add sub mul _ => fun fn =>\n    \
                  if fn = {box_idx} then some (1, boxRef {carrier})\n    \
                  else if fn = {add_idx} then some (2, {cp})\n    \
                  else if fn = {sub_idx} then some (2, sub)\n    else none",
@@ -3393,7 +3688,7 @@ fn render_host_value(c: &Cert) -> String {
             sub_idx,
             ..
         } => format!(
-            "fun add sub _ => fun fn =>\n    \
+            "fun add sub _ _ => fun fn =>\n    \
              if fn = {box_idx} then some (1, boxRef {carrier})\n    \
              else if fn = {add_idx} then some (2, add)\n    \
              else if fn = {sub_idx} then some (2, sub)\n    else none",
@@ -3402,11 +3697,15 @@ fn render_host_value(c: &Cert) -> String {
         | Cert::FieldProjection { .. }
         | Cert::VerbatimWidenedMatch { .. }
         | Cert::VerbatimVariantDispatch { .. }
-        | Cert::IntRangePredicate { .. } => "fun _ _ _ => fun _ => none".to_string(),
+        | Cert::IntRangePredicate { .. } => "fun _ _ _ _ => fun _ => none".to_string(),
+        Cert::StringEqVerbatimMatch { string_eq_idx, .. } => format!(
+            "fun _ _ _ stringEq => fun fn =>\n    \
+             if fn = {string_eq_idx} then some (2, stringEq)\n    else none"
+        ),
         Cert::WidenedIntMatch {
             carrier, box_idx, ..
         } => format!(
-            "fun _ _ _ => fun fn =>\n    \
+            "fun _ _ _ _ => fun fn =>\n    \
              if fn = {box_idx} then some (1, boxRef {carrier})\n    else none",
         ),
         Cert::VariantDispatch {
@@ -3425,11 +3724,11 @@ fn render_host_value(c: &Cert) -> String {
             if let Some(i) = sub_idx {
                 chain.push_str(&format!("\n    else if fn = {i} then some (2, sub)"));
             }
-            format!("fun {a} {s} _ => fun fn =>\n    {chain}\n    else none")
+            format!("fun {a} {s} _ _ => fun fn =>\n    {chain}\n    else none")
         }
         Cert::Composition { closure, .. } => {
             format!(
-                "fun add _sub _ => fun fn =>\n    {}",
+                "fun add _sub _ _ => fun fn =>\n    {}",
                 compose_host_arms(closure)
             )
         }
@@ -3441,7 +3740,7 @@ fn render_host_value(c: &Cert) -> String {
             sub_idx,
             ..
         } => format!(
-            "fun _ sub _ => fun fn =>\n    \
+            "fun _ sub _ _ => fun fn =>\n    \
              if fn = {box_idx} then some (1, boxRef {carrier})\n    \
              else if fn = {sub_idx} then some (2, sub)\n    else none",
         ),
@@ -3557,6 +3856,17 @@ fn render_wval(default: &VerbatimDefault) -> String {
     }
 }
 
+fn render_wval_arg(default: &VerbatimDefault) -> String {
+    format!("({})", render_wval(default))
+}
+
+fn render_string_eq_default(default: &StringEqDefault, input: &str) -> String {
+    match default {
+        StringEqDefault::Input => input.to_string(),
+        StringEqDefault::Verbatim(k) => render_wval(k),
+    }
+}
+
 fn render_array_elements(bytes: &[u8]) -> String {
     let parts = bytes
         .iter()
@@ -3647,6 +3957,9 @@ fn render_certificate(
             Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. } => {
                 s.push_str(&render_verbatim_wval_match_cert(c))
             }
+            Cert::StringEqVerbatimMatch { .. } => {
+                s.push_str(&render_string_eq_verbatim_match_cert(c))
+            }
             Cert::Composition { .. } => s.push_str(&render_composition_cert(c)),
             Cert::MutualRecursion { .. } => s.push_str(&render_mutual_recursion_cert(c)),
             Cert::NonRecursive { .. } => unreachable!(),
@@ -3725,7 +4038,7 @@ example :
 /-- Schema-shaped simulation obligation for `{name}` (composed by the single
     final theorem). Partial correctness over any fuel and representation. -/
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul hadd hsub hmul fuel ns vs w hrepr hrun
+  intro S add sub mul stringEq hadd hsub hmul hStringEq fuel ns vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
   obtain ⟨hrepr, harity⟩ := hrepr
   cases hrepr with
@@ -4076,7 +4389,7 @@ example :
         ),
         simulates: format!(
             r#"theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul hadd hsub hmul fuel ns vs w hrepr hrun
+  intro S add sub mul stringEq hadd hsub hmul hStringEq fuel ns vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
   obtain ⟨hrepr, harity⟩ := hrepr
   cases hrepr with
@@ -4241,7 +4554,7 @@ example :
         ),
         simulates: format!(
             r#"theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul hadd hsub hmul fuel ns vs w hrepr hrun
+  intro S add sub mul stringEq hadd hsub hmul hStringEq fuel ns vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
   obtain ⟨hrepr, harity⟩ := hrepr
   cases hrepr with
@@ -4454,7 +4767,7 @@ fn render_composition_cert(c: &Cert) -> String {
         "/-- Schema-shaped simulation obligation for `{name}` (composed by the single\n\
         \x20   final theorem): the emitted body simulates `{name}` by citing its callees. -/\n\
          theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by\n  \
-         intro S add sub mul hadd hsub hmul fuel ns vs w hrepr hrun\n  \
+         intro S add sub mul stringEq hadd hsub hmul hStringEq fuel ns vs w hrepr hrun\n  \
          simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢\n  \
          obtain ⟨hrepr, harity⟩ := hrepr\n  \
          cases hrepr with\n  \
@@ -4524,7 +4837,7 @@ example :
       = some 7 := by native_decide
 
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul hadd hsub hmul fuel n vs w hrepr hrun
+  intro S add sub mul stringEq hadd hsub hmul hStringEq fuel n vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
   obtain ⟨v, rfl, hv⟩ := hrepr
   cases fuel with
@@ -4643,7 +4956,7 @@ theorem {name}_wasm_certified (host : HostTbl) :
 {tripwire}
 
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul hadd hsub hmul fuel p vs w hrepr hrun
+  intro S add sub mul stringEq hadd hsub hmul hStringEq fuel p vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
 {destructure}  subst hrepr
   cases fuel with
@@ -4745,7 +5058,7 @@ fn render_adt_match_cert(c: &Cert, model_info: &ModelInfo) -> String {
 {guards}
 
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul hadd hsub hmul fuel o vs w hrepr hrun
+  intro S add sub mul stringEq hadd hsub hmul hStringEq fuel o vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
   obtain ⟨v, rfl, hv⟩ := hrepr
   simpa [AverCert.Schema.intRepr] using {sim_cite}
@@ -4818,6 +5131,7 @@ fn adt_match_variant_plan(c: &Cert, model_info: &ModelInfo) -> Result<AdtMatchPl
                 let (hostfn, hyp) = match role {
                     HostRole::Add => ("add", "hadd"),
                     HostRole::Sub => ("sub", "hsub"),
+                    HostRole::StringEq => unreachable!(),
                 };
                 let (operands, cite) = if *const_first {
                     (
@@ -4842,11 +5156,13 @@ fn adt_match_variant_plan(c: &Cert, model_info: &ModelInfo) -> Result<AdtMatchPl
                     match role {
                         HostRole::Add => k + sample,
                         HostRole::Sub => k - sample,
+                        HostRole::StringEq => unreachable!(),
                     }
                 } else {
                     match role {
                         HostRole::Add => sample + k,
                         HostRole::Sub => sample - k,
+                        HostRole::StringEq => unreachable!(),
                     }
                 };
                 guards.push(format!(
@@ -5013,7 +5329,7 @@ theorem {name}_wasm_certified :
 def {name}HostRef : HostTbl := {name}Host
 {guards}
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul hadd hsub hmul fuel v vs w hrepr hrun
+  intro S add sub mul stringEq hadd hsub hmul hStringEq fuel v vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
   subst hrepr
   cases fuel with
@@ -5156,6 +5472,115 @@ fn verbatim_tag_dispatch(arms: &[(u32, VerbatimDefault)], base: usize, evalset: 
     out
 }
 
+fn render_string_eq_verbatim_match_cert(c: &Cert) -> String {
+    let Cert::StringEqVerbatimMatch {
+        name,
+        self_idx,
+        arms,
+        default,
+        ..
+    } = c.inner()
+    else {
+        unreachable!()
+    };
+    let [(needle, hit)] = arms.as_slice() else {
+        unreachable!()
+    };
+    let VerbatimDefault::Array {
+        type_idx: string_ty,
+        bytes: _,
+    } = needle
+    else {
+        unreachable!()
+    };
+    let needle_w = render_wval(needle);
+    let needle_arg = render_wval_arg(needle);
+    let hit_guard = render_default_guard(hit);
+    let miss_input = VerbatimDefault::Array {
+        type_idx: *string_ty,
+        bytes: vec![120],
+    };
+    let miss_guard = match default {
+        StringEqDefault::Input => render_default_guard(&miss_input),
+        StringEqDefault::Verbatim(k) => render_default_guard(k),
+    };
+    let evalset = format!(
+        "wFuncN, wRunF, {name}Code, {name}Host, {name}Model, b32, popArgs, initLocals, List.set"
+    );
+    format!(
+        r#"/-! ### {name} — String.eq host-contract verbatim match certificate -/
+
+/-- The VERBATIM emitted body compares the input with one byte-derived String
+    literal via the contracted `String.eq` host slot, then returns either the
+    byte-derived hit literal or the byte-exact default. The loop inside the
+    helper is outside this user-code proof and enters only through `hStringEq`. -/
+theorem {name}_wasm_certified
+    (stringEq : List WVal → Option WVal)
+    (hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b)) :
+    ∀ (fuel : Nat) (v w : WVal),
+      wFuncN {name}Code ({name}Host stringEq) (fuel + 1) {self_idx} [v] = some w →
+      w = {name}Model v := by
+  intro fuel v w hrun
+  cases v with
+  | i32v n => simp [{evalset}] at hrun
+  | i64v n => simp [{evalset}] at hrun
+  | f64v bits => simp [{evalset}] at hrun
+  | null => simp [{evalset}] at hrun
+  | structv t fs =>
+      by_cases ht : t = {string_ty}
+      · subst ht
+        cases hcall : stringEq [.structv {string_ty} fs, {needle_w}] with
+        | none =>
+            simp [{evalset}, hcall] at hrun
+        | some got =>
+            have hgot : got = b32 (stringEqW (.structv {string_ty} fs) {needle_arg}) :=
+              hStringEq (.structv {string_ty} fs) {needle_arg} got hcall
+            have hmatch : stringEqW (.structv {string_ty} fs) {needle_arg} = false := by rfl
+            simp [{evalset}, hcall, hgot, hmatch] at hrun
+            simpa [{name}Model, hmatch] using hrun.symm
+      · simp [{evalset}, ht] at hrun
+  | arr t es =>
+      by_cases ht : t = {string_ty}
+      · subst ht
+        cases hcall : stringEq [.arr {string_ty} es, {needle_w}] with
+        | none =>
+            simp [{evalset}, hcall] at hrun
+        | some got =>
+            have hgot : got = b32 (stringEqW (.arr {string_ty} es) {needle_arg}) :=
+              hStringEq (.arr {string_ty} es) {needle_arg} got hcall
+            cases hmatch : stringEqW (.arr {string_ty} es) {needle_arg}
+            · simp [{evalset}, hcall, hgot, hmatch] at hrun
+              simpa [{name}Model, hmatch] using hrun.symm
+            · simp [{evalset}, hcall, hgot, hmatch] at hrun
+              simpa [{name}Model, hmatch] using hrun.symm
+      · simp [{evalset}, ht] at hrun
+
+#print axioms {name}_wasm_certified
+
+-- Executable tripwires: one equal input takes the hit arm; a distinct byte
+-- string takes the default arm. The host reference is the executable face of
+-- the same String.eq contract used abstractly above.
+def {name}HostRef : HostTbl := {name}Host stringEqRef
+example :
+    (wFuncN {name}Code {name}HostRef 8 {self_idx} [{needle_w}]).bind {hit_guard} := by
+  native_decide
+example :
+    (wFuncN {name}Code {name}HostRef 8 {self_idx} [.arr {string_ty} [.i32v 120]]).bind {miss_guard} := by
+  native_decide
+
+theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
+  intro S add sub mul stringEq hadd hsub hmul hStringEq fuel v vs w hrepr hrun
+  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
+  subst hrepr
+  cases fuel with
+  | zero => simp [wFuncN] at hrun
+  | succ f =>
+      have hc := {name}_wasm_certified stringEq hStringEq f v w hrun
+      simpa [AverCert.Schema.verbatimRepr] using hc
+"#,
+    )
+}
+
 fn render_int_range_predicate_cert(c: &Cert) -> String {
     let c = c.inner();
     let Cert::IntRangePredicate {
@@ -5204,7 +5629,7 @@ example :
         (fun w => match w with | .i32v n => some n | _ => none)) = some 0 := by native_decide
 
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul hadd hsub hmul fuel cp vs w hrepr hrun
+  intro S add sub mul stringEq hadd hsub hmul hStringEq fuel cp vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
   subst hrepr
   cases fuel with
@@ -5334,6 +5759,28 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
             "def {name}Model : CertPrelude.WVal → CertPrelude.WVal\n{body}  | _ => {default}\n\n",
             name = c.name(),
             default = render_wval(default),
+        ));
+    }
+    // Model for String-literal dispatch: the String.eq helper is a host
+    // contract, so the model uses the audited prelude's byte-array equality
+    // predicate over raw `WVal` arrays and returns byte-derived constants.
+    for c in &analysis.certs {
+        let c = c.inner();
+        let Cert::StringEqVerbatimMatch { arms, default, .. } = c else {
+            continue;
+        };
+        let mut body = String::new();
+        for (needle, hit) in arms {
+            body.push_str(&format!(
+                "  if stringEqW v {} then {}\n  else",
+                render_wval_arg(needle),
+                render_wval(hit)
+            ));
+        }
+        body.push_str(&format!(" {}\n", render_string_eq_default(default, "v")));
+        out.push_str(&format!(
+            "def {name}Model (v : CertPrelude.WVal) : CertPrelude.WVal :=\n{body}\n",
+            name = c.name(),
         ));
     }
     out
@@ -5735,7 +6182,7 @@ theorem {primary}_mutual_sim
     theorem): the emitted mutual body simulates the model `{mn}` via the matching
     conjunct of `{primary}_mutual_sim`. -/
 theorem {mn}_simulates : AverCert.Schema.Obligation.holds {mn}Ob := by
-  intro S add sub mul hadd hsub hmul fuel ns vs w hrepr hrun
+  intro S add sub mul stringEq hadd hsub hmul hStringEq fuel ns vs w hrepr hrun
   simp only [{mn}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
   obtain ⟨hrepr, harity⟩ := hrepr
   cases hrepr with
@@ -5879,7 +6326,9 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
             host = c.host_expr(),
             self_idx = c.self_idx(),
         ),
-        Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. } => format!(
+        Cert::VerbatimWidenedMatch { .. }
+        | Cert::VerbatimVariantDispatch { .. }
+        | Cert::StringEqVerbatimMatch { .. } => format!(
             "abbrev {name}Ob : Schema.Obligation :=\n  \
              {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
              code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
@@ -6084,23 +6533,21 @@ fn render_manifest(
         if i > 0 {
             s.push(',');
         }
-        let kind = match c {
-            Cert::NonRecursive { .. } => "non-recursive",
-            _ => match c.inner() {
-                Cert::StraightLine { .. } => "straight-line",
-                Cert::Recursive { .. } => "self-recursive",
-                Cert::AccumulatorRecursive { .. } => "multi-argument self-recursive",
-                Cert::AdtConstructor { .. } => "adt-constructor",
-                Cert::FieldProjection { .. } => "field-projection",
-                Cert::WidenedIntMatch { .. } => "widened-int-match",
-                Cert::VerbatimWidenedMatch { .. } => "verbatim-widened-match",
-                Cert::VerbatimVariantDispatch { .. } => "verbatim-variant-dispatch",
-                Cert::IntRangePredicate { .. } => "int-range-predicate",
-                Cert::VariantDispatch { .. } => "variant-dispatch",
-                Cert::Composition { .. } => "cross-function-composition",
-                Cert::MutualRecursion { .. } => "mutual-recursive",
-                Cert::NonRecursive { .. } => unreachable!(),
-            },
+        let kind = match c.inner() {
+            Cert::StraightLine { .. } => "straight-line",
+            Cert::Recursive { .. } => "self-recursive",
+            Cert::AccumulatorRecursive { .. } => "multi-argument self-recursive",
+            Cert::AdtConstructor { .. } => "adt-constructor",
+            Cert::FieldProjection { .. } => "field-projection",
+            Cert::WidenedIntMatch { .. } => "widened-int-match",
+            Cert::VerbatimWidenedMatch { .. } => "verbatim-widened-match",
+            Cert::VerbatimVariantDispatch { .. } => "verbatim-variant-dispatch",
+            Cert::StringEqVerbatimMatch { .. } => "verbatim-widened-match",
+            Cert::IntRangePredicate { .. } => "int-range-predicate",
+            Cert::VariantDispatch { .. } => "variant-dispatch",
+            Cert::Composition { .. } => "cross-function-composition",
+            Cert::MutualRecursion { .. } => "mutual-recursive",
+            Cert::NonRecursive { .. } => unreachable!(),
         };
         let (dom, cod) = c.source_dom_cod(model_info);
         s.push_str(&format!(
