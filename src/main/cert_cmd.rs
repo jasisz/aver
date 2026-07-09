@@ -16,8 +16,8 @@
 //!     UNTRUSTED `cert-manifest.json` claims to the `AverCert.manifest` literal
 //!     the final theorem is about (`rfl`) — a lying JSON makes a `rfl` fail;
 //!   * forces the final theorem's TYPE to `Holds manifest` by ascription;
-//!   * runs the kernel's own axiom collector (`Lean.collectAxioms`) on that
-//!     ascribed constant and throws unless every axiom is on the whitelist
+//!   * runs the kernel's own axiom collector (`Lean.collectAxioms`) on the
+//!     artifact-carried acceptance root and throws unless every axiom is on the whitelist
 //!     (full `Name` equality, not text) — a smuggled `axiom`, `sorryAx` or
 //!     `ofReduceBool` makes the file fail to check.
 //!
@@ -90,8 +90,8 @@ use serde_json::Value;
 const AXIOM_WHITELIST: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"];
 
 /// Constants the checker composes in its own witness file: `final` ascribes
-/// `AverCert.Final.cert` to `Holds manifest`, then `accepted` wraps that theorem
-/// in the artifact-level predicate used for the axiom audit.
+/// `AverCert.Final.cert` to `Holds manifest`, then `accepted` aliases the
+/// artifact-carried acceptance root used for the axiom audit.
 const FINAL_WITNESS_THEOREM: &str = "AverCertChecker.final";
 const WITNESS_THEOREM: &str = "AverCertChecker.accepted";
 
@@ -1247,12 +1247,12 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
             "example : AverCert.AcceptedArtifact.accepted {artifact} := by\n",
             "{checker_proof}\n\n",
             "-- Whole-artifact acceptance root carried by the artifact itself. The\n",
-            "-- checker only accepts it after the data pin above succeeds.\n",
+            "-- checker only accepts it after the data pin and final-theorem\n",
+            "-- ascription above have checked.\n",
             "def {witness_theorem} : AverCert.AcceptedArtifact.accepted\n",
-            "    AverCert.Artifact.data := AverCert.Artifact.acceptedWithFinal {final_witness}\n"
+            "    AverCert.Artifact.data := AverCert.Artifact.certificate\n"
         ),
         witness_theorem = WITNESS_THEOREM,
-        final_witness = FINAL_WITNESS_THEOREM,
         artifact = artifact,
         checker_proof = checker_proof
     )

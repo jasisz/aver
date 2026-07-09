@@ -435,9 +435,10 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         assert!(out.contains("did not build"), "wrong reason (b):\n{out}");
     }
 
-    // (c) A trivialized final theorem (same name, `: True := trivial`) → it
-    //     builds, but the kernel witness ascribes `Final.cert` to
-    //     `Holds manifest`, so `True` is rejected.
+    // (c) A trivialized final theorem (same name, `: True := trivial`) → the
+    //     artifact-carried self-check root imports `Final.cert`, so the cert
+    //     build fails before the checker witness can ascribe `Final.cert` to
+    //     `Holds manifest`.
     {
         let dir = temp_dir("neg-c");
         copy_dir(&out_dir, &dir);
@@ -448,7 +449,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         std::fs::write(&f, trivial).unwrap();
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "trivialized final theorem must fail:\n{out}");
-        assert!(out.contains("does not bind"), "wrong reason (c):\n{out}");
+        assert!(out.contains("did not build"), "wrong reason (c):\n{out}");
     }
 
     // (d) A swapped Schema.lean is IGNORED: the checker builds against its own
@@ -509,8 +510,8 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
 
     // (f) A2 comment smuggle: the approved statement line present only in a
     //     COMMENT, plus a `theorem AverCert.Final.cert : True := trivial`. The
-    //     kernel witness ascribes `Final.cert` to `Holds manifest`, and
-    //     `True ≠ Holds manifest`.
+    //     artifact-carried self-check root imports `Final.cert`, so this now
+    //     fails at cert build time before the checker witness.
     {
         let dir = temp_dir("neg-f");
         copy_dir(&out_dir, &dir);
@@ -522,8 +523,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         std::fs::write(&f, smuggled).unwrap();
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "A2 comment smuggle must fail:\n{out}");
-        assert!(out.contains("does not bind"), "wrong reason (f):\n{out}");
-        assert!(out.contains("Holds"), "witness not exercised (f):\n{out}");
+        assert!(out.contains("did not build"), "wrong reason (f):\n{out}");
     }
 
     // (g) A3 build-tree subversion: point the cert's lakefile `srcDir` at a

@@ -347,9 +347,10 @@ fn render_artifact(analysis: &Analysis) -> String {
          "-- Artifact-carried acceptance root.\n\
          -- This file is useful metadata, not verifier authority: `aver cert verify`\n\
          -- pins `AverCert.Artifact.data` to its checker-reconstructed literal and\n\
-         -- audits `AverCert.Artifact.acceptedWithFinal` through the Lean axiom collector.\n\
+         -- audits `AverCert.Artifact.certificate` through the Lean axiom collector.\n\
          import AcceptedArtifact\n\
          import ArtifactBytes\n\
+         import Final\n\
          import Manifest\n\
          import Plans\n\n\
          set_option maxRecDepth 200000\n\
@@ -363,6 +364,8 @@ fn render_artifact(analysis: &Analysis) -> String {
              (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n\
              AverCert.AcceptedArtifact.accepted data := by\n\
          {fragment_proof}\n\
+         def certificate : AverCert.AcceptedArtifact.accepted data :=\n  \
+           acceptedWithFinal AverCert.Final.cert\n\n\
          end AverCert.Artifact\n",
         sym_claims_list = claims.sym_claims,
         claims_list = claims.expr_claims,
