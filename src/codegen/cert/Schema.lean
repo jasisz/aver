@@ -30,10 +30,21 @@ structure Subject where
 inductive Policy where
   | simulatesModel
 
-/-- Value types admitted by the `expr-fragment-v1` plan grammar. This is the
-    Lean-data mirror of the Rust `ExprFragmentPlan` sidecar: v1 proofs still use
-    the rendered `Obligation` face below, but these definitions are the stable
-    landing zone for v2 `CheckPlan`/`LowersCodeEntry`. -/
+/-- Source-language semantic face of fragment values. `FragTy` below still
+    describes the current wasm-gc representation, while `FragSemTy` records the
+    Aver-level type that proof obligations should migrate toward. -/
+inductive FragSemTy where
+  | float
+  | bool
+  | int
+  | wval
+deriving Repr, DecidableEq
+
+/-- Value representation types admitted by the `expr-fragment-v1` plan grammar.
+    This is the Lean-data mirror of the Rust `ExprFragmentPlan` sidecar: v1
+    proofs still use the rendered `Obligation` face below, but these definitions
+    are the stable landing zone for v2 `CheckPlan`/`LowersCodeEntry` and the
+    source-level `SymPlan` split. -/
 inductive FragTy where
   | f64
   | boolI32
@@ -42,6 +53,17 @@ inductive FragTy where
   | rawI32
   | ref
 deriving Repr, DecidableEq
+
+/-- The source-language meaning carried by a representation-level fragment
+    type. Raw limbs remain `wval` until a checked source-level plan gives them
+    a higher-level role. -/
+def FragTy.semTy : FragTy → FragSemTy
+  | .f64 => .float
+  | .boolI32 => .bool
+  | .intCarrier => .int
+  | .i64 => .wval
+  | .rawI32 => .wval
+  | .ref => .wval
 
 /-- Primitive operations admitted by `expr-fragment-v1`. -/
 inductive FragPrim where

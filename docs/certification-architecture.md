@@ -61,6 +61,38 @@ This does not eliminate TCB. It reduces its shape: instead of a general-ish
 Wasm lifter/replay checker, the trusted verifier checks a small typed plan and
 regenerates one canonical byte sequence.
 
+## SymPlan Direction
+
+The long-term plan grammar should move toward a source-level semantic plan
+(`SymPlan`) rather than a wasm-shaped plan. In that design, proof obligations
+talk about Aver concepts:
+
+```text
+Int.add(x, y) : Int
+Float.mul(a, b) : Float
+Bool.and(p, q) : Bool
+String.concat(a, b) : String
+```
+
+The target-specific facts live below that as representation and encoding
+rules:
+
+```text
+Int    -> Aver Int carrier representation -> canonical wasm-gc bytes
+Float  -> f64 bits                         -> canonical wasm-gc bytes
+Bool   -> canonical i32 0/1                -> canonical wasm-gc bytes
+String -> Aver string representation       -> canonical wasm-gc bytes
+```
+
+This is still a plan-first architecture. The artifact supplies untrusted plan
+data, the checker validates it, and canonical lowering binds the checked plan
+to exact code-entry bytes. The useful shift is that the proof surface can scale
+with Aver's admitted source fragment while the encoder stays as the thin
+target-specific layer. The current `expr-fragment-v1` definitions keep the
+wasm representation type as `FragTy` and now record its source semantic face
+separately; later profiles can make `SymPlan` the primary sidecar format and
+treat representation types as checked encoding details.
+
 ## Artifact Shape
 
 The compiler emits:
