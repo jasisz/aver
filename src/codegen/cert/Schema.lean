@@ -312,7 +312,7 @@ def Obligation.holds (o : Obligation) : Prop :=
     (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
     (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
     (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
-    (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → c = stringConcatW resultTy parts)
+    (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
     (fuel : Nat) (x : o.Dom) (vs : List WVal) (w : WVal),
     o.domRepr S x vs →
     wFuncN o.code (o.host add sub mul stringEq stringConcat) fuel o.self vs = some w →

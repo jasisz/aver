@@ -1541,6 +1541,7 @@ struct LeanExprFragmentArtifactClaims {
     string_eq_claims: String,
     string_claims: String,
     construct_claims: String,
+    obligation_proof: String,
     sym_proof: String,
     string_eq_proof: String,
     string_proof: String,
@@ -1595,7 +1596,7 @@ fn lean_expr_fragment_artifact_claims(
                 carrier = r.carrier,
             ));
             string_eq_proofs.push(format!(
-                "⟨rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
+                "⟨rfl, rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
                  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
             ));
             continue;
@@ -1720,6 +1721,10 @@ fn lean_expr_fragment_artifact_claims(
     } else {
         format!("[\n  {}\n]", construct_claims.join(",\n  "))
     };
+    let obligation_proof_count =
+        sym_proofs.len() + string_eq_proofs.len() + string_proofs.len() + construct_proofs.len();
+    let obligation_proof =
+        (0..obligation_proof_count).fold("trivial".to_string(), |acc, _| format!("⟨rfl, {acc}⟩"));
     let sym_proof = sym_proofs
         .into_iter()
         .rev()
@@ -1749,6 +1754,7 @@ fn lean_expr_fragment_artifact_claims(
         string_eq_claims,
         string_claims,
         construct_claims,
+        obligation_proof,
         sym_proof,
         string_eq_proof,
         string_proof,
@@ -1848,6 +1854,8 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
             "    AverCert.AcceptedArtifact.subjectMatchesArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.expectedArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.fragmentClaimObligationsInManifest,\n",
+            "    AverCert.AcceptedArtifact.claimObligations,\n",
+            "    AverCert.AcceptedArtifact.claimObligationsInManifest,\n",
             "    AverCert.AcceptedArtifact.claimObligationExports,\n",
             "    AverCert.AcceptedArtifact.claimsMatchManifest,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimPlanPairs,\n",
@@ -1884,9 +1892,10 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
             "    AverCert.AcceptedArtifact.constructPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨{final_witness}, ⟨rfl, ⟨rfl, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, {construct_proof}⟩⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨{final_witness}, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, {construct_proof}⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         final_witness = FINAL_WITNESS_THEOREM,
+        obligation_proof = witness.obligation_proof,
         sym_proof = witness.sym_proof,
         string_eq_proof = witness.string_eq_proof,
         string_proof = witness.string_proof,

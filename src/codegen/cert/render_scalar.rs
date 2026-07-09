@@ -135,7 +135,7 @@ fn render_string_concat_verbatim_match_cert(c: &Cert) -> String {
     let prefix_parts: Vec<String> = prefixes.iter().map(render_wval_qualified).collect();
     let suffix_parts: Vec<String> = suffixes.iter().map(render_wval_qualified).collect();
     let evalset = format!(
-        "wFuncN, wRunF, {name}Code, {name}Host, {name}Model, stringConcatW, wByteAppend, b32, popArgs, initLocals, List.set"
+        "wFuncN, wRunF, {name}Code, {name}Host, {name}Model, b32, popArgs, initLocals, List.set"
     );
     // The container built by the body, in Lean form, so the proof can cite the
     // contract on exactly this value.
@@ -156,7 +156,7 @@ fn render_string_concat_verbatim_match_cert(c: &Cert) -> String {
     is outside this user-code proof and enters only through `hStringConcat`. -/
 theorem {name}_wasm_certified
     (stringConcat : Nat → List WVal → Option WVal)
-    (hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → c = stringConcatW resultTy parts) :
+    (hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c) :
     ∀ (fuel : Nat) (v w : WVal),
       wFuncN {name}Code ({name}Host stringConcat) (fuel + 1) {self_idx} [v] = some w →
       w = {name}Model v := by
@@ -164,7 +164,7 @@ theorem {name}_wasm_certified
   cases hcall : stringConcat {result_ty} [WVal.arr {container_ty} [{container_parts}]] with
   | none => simp [{evalset}, hcall] at hrun
   | some got =>
-      have hgot : got = stringConcatW {result_ty} (WVal.arr {container_ty} [{container_parts}]) :=
+      have hgot : stringConcatW {result_ty} (WVal.arr {container_ty} [{container_parts}]) = some got :=
         hStringConcat {result_ty} (WVal.arr {container_ty} [{container_parts}]) got hcall
       simp [{evalset}, hcall, hgot] at hrun ⊢
       exact hrun.symm

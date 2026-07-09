@@ -1390,6 +1390,55 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
         "expr-fragment claim without manifest obligation credited:\n{out}"
     );
 
+    let artifact_obligation_tamper_dir = temp_dir("cert-expr-artifact-obligation-tamper");
+    copy_dir(&out_dir, &artifact_obligation_tamper_dir);
+    let artifact_obligation_tamper_wasm = artifact_obligation_tamper_dir.join("cert_goals.wasm");
+    let artifact_obligation_tamper_cert = artifact_obligation_tamper_dir.join("cert");
+    let artifact_lean = artifact_obligation_tamper_cert.join("Artifact.lean");
+    let artifact_text = std::fs::read_to_string(&artifact_lean).unwrap();
+    let needle = "obligation := AverCert.";
+    let start = artifact_text
+        .find(needle)
+        .expect("Artifact.lean should render at least one claim obligation")
+        + needle.len();
+    let ob_end = start
+        + artifact_text[start..]
+            .find("Ob")
+            .expect("claim obligation should reference a generated obligation")
+        + "Ob".len();
+    let ob_ref = &artifact_text[start..ob_end];
+    let base = format!("AverCert.{ob_ref}");
+    let original = format!("obligation := {base}");
+    let tampered = format!(
+        "obligation := {{ {base} with host := fun add sub mul stringEq stringConcat fn => if fn = {base}.self + 999999 then none else {base}.host add sub mul stringEq stringConcat fn }}"
+    );
+    let tampered_artifact = artifact_text.replacen(&original, &tampered, 1);
+    assert_ne!(
+        artifact_text, tampered_artifact,
+        "Artifact.lean claim obligation shape changed"
+    );
+    std::fs::write(&artifact_lean, tampered_artifact).unwrap();
+    let (ok, out) = aver_verify(
+        &artifact_obligation_tamper_wasm,
+        &artifact_obligation_tamper_cert,
+    );
+    assert!(
+        !ok,
+        "artifact claim obligation not structurally bound to manifest must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("fragmentClaimObligationsInManifest")
+            || out.contains("List.find?")
+            || out.contains("AverCert.Artifact.data")
+            || out.contains("Artifact.lean")
+            || out.contains("does not bind"),
+        "wrong reason for artifact claim obligation tamper:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "artifact claim obligation tamper credited:\n{out}"
+    );
+
     let artifact_axiom_tamper_dir = temp_dir("cert-expr-artifact-axiom-tamper");
     copy_dir(&out_dir, &artifact_axiom_tamper_dir);
     let artifact_axiom_tamper_wasm = artifact_axiom_tamper_dir.join("cert_goals.wasm");
@@ -1614,6 +1663,7 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let _ = std::fs::remove_dir_all(&out_dir);
     let _ = std::fs::remove_dir_all(&artifact_bytes_decoy_dir);
     let _ = std::fs::remove_dir_all(&claim_without_manifest_ob_dir);
+    let _ = std::fs::remove_dir_all(&artifact_obligation_tamper_dir);
     let _ = std::fs::remove_dir_all(&artifact_axiom_tamper_dir);
     let _ = std::fs::remove_dir_all(&lean_plan_tamper_dir);
     let _ = std::fs::remove_dir_all(&lean_bytes_tamper_dir);

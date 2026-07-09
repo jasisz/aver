@@ -131,6 +131,7 @@ def stringEqPlanAccepted
     (plan : StringEqRawPlan)
     (obligation : Obligation) : Prop :=
   obligation.export_ = exportName ∧
+    obligation.carrier = carrier ∧
     AverCert.PlanCheck.checkSymRawPlan symPlan = true ∧
     AverCert.PlanCheck.stringEqPlanMatchesSymRawPlan symPlan plan = true ∧
     AverCert.PlanCheck.checkStringEqRawPlan plan = true ∧
@@ -443,10 +444,24 @@ def claimObligationExports (artifact : ArtifactData) : List String :=
   artifact.stringConcatClaims.map (fun c => c.obligation.export_) ++
   artifact.constructClaims.map (fun c => c.obligation.export_)
 
+def claimObligations (artifact : ArtifactData) : List Obligation :=
+  artifact.symFragmentClaims.map (fun c => c.obligation) ++
+  artifact.stringEqClaims.map (fun c => c.obligation) ++
+  artifact.stringConcatClaims.map (fun c => c.obligation) ++
+  artifact.constructClaims.map (fun c => c.obligation)
+
+def claimObligationsInManifest
+    (manifestObligations : List Obligation) : List Obligation → Prop
+  | [] => True
+  | obligation :: rest =>
+      manifestObligations.find?
+        (fun o => o.export_ = obligation.export_) = some obligation ∧
+      claimObligationsInManifest manifestObligations rest
+
 def fragmentClaimObligationsInManifest (artifact : ArtifactData) : Prop :=
-  (claimObligationExports artifact).all
-    (fun exportName =>
-      (artifact.manifest.obligations.map (fun o => o.export_)).contains exportName) = true
+  claimObligationsInManifest
+    artifact.manifest.obligations
+    (claimObligations artifact)
 
 def claimsMatchManifest (artifact : ArtifactData) : Prop :=
   match symFragmentClaimEncodedPlanPairs artifact.symFragmentClaims with

@@ -483,6 +483,7 @@ struct RenderedArtifactClaims {
     string_eq_claims: String,
     string_claims: String,
     construct_claims: String,
+    obligation_proof: String,
     sym_proof: String,
     string_eq_proof: String,
     string_proof: String,
@@ -607,7 +608,7 @@ fn render_artifact_expr_fragment_claims(
                     export_name = lean_str(name),
                 ));
                 string_eq_proofs.push(format!(
-                    "⟨rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
+                    "⟨rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
                      ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }
@@ -667,6 +668,11 @@ fn render_artifact_expr_fragment_claims(
     } else {
         format!("[\n  {}\n]", construct_claims.join(",\n  "))
     };
+    let obligation_proof_count =
+        sym_proofs.len() + string_eq_proofs.len() + string_proofs.len() + construct_proofs.len();
+    let obligation_proof = (0..obligation_proof_count).fold("trivial".to_string(), |acc, _| {
+        format!("⟨rfl, {acc}⟩")
+    });
     let sym_proof = sym_proofs
         .into_iter()
         .rev()
@@ -698,6 +704,7 @@ fn render_artifact_expr_fragment_claims(
         string_eq_claims,
         string_claims,
         construct_claims,
+        obligation_proof,
         sym_proof,
         string_eq_proof,
         string_proof,
@@ -713,6 +720,8 @@ fn render_artifact(analysis: &Analysis, model_info: &ModelInfo) -> String {
             "    AverCert.AcceptedArtifact.subjectMatchesArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.expectedArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.fragmentClaimObligationsInManifest,\n",
+            "    AverCert.AcceptedArtifact.claimObligations,\n",
+            "    AverCert.AcceptedArtifact.claimObligationsInManifest,\n",
             "    AverCert.AcceptedArtifact.claimObligationExports,\n",
             "    AverCert.AcceptedArtifact.claimsMatchManifest,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimPlanPairs,\n",
@@ -749,8 +758,9 @@ fn render_artifact(analysis: &Analysis, model_info: &ModelInfo) -> String {
             "    AverCert.AcceptedArtifact.constructPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨finalCert, ⟨rfl, ⟨rfl, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, {construct_proof}⟩⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨finalCert, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, {construct_proof}⟩⟩⟩⟩⟩⟩⟩\n"
         ),
+        obligation_proof = claims.obligation_proof,
         sym_proof = claims.sym_proof,
         string_eq_proof = claims.string_eq_proof,
         string_proof = claims.string_proof,

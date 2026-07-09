@@ -387,28 +387,39 @@ def stringEqRef : List WVal → Option WVal
   | [a, b] => some (b32 (stringEqW a b))
   | _ => none
 
-/-- Byte-list append that only appends i32-valued bytes; non-i32 elements are
-    dropped (consistent with the byte-array representation of Aver strings). -/
-def wByteAppend : List WVal → List WVal → List WVal
-  | [], bs => bs
-  | .i32v a :: as, bs => .i32v a :: wByteAppend as bs
-  | _ :: as, bs => wByteAppend as bs
+/-- Byte-list append for represented string bytes. A malformed element is a
+    contract failure, not a byte to skip. -/
+def wByteAppend : List WVal → List WVal → Option (List WVal)
+  | [], bs => some bs
+  | .i32v a :: as, bs => do
+      let rest ← wByteAppend as bs
+      some (.i32v a :: rest)
+  | _ :: _, _ => none
+
+def stringConcatParts : List WVal → Option (List WVal)
+  | [] => some []
+  | part :: rest => do
+      let acc ← stringConcatParts rest
+      match part with
+      | .arr _ bytes => wByteAppend bytes acc
+      | _ => none
 
 /-- The `String.concat` reference at the WVal byte-array level: take a container
     array of string-arrays, concatenate each element's bytes in order, and return
-    the helper's statically declared result array type. -/
-def stringConcatW (resultTy : Nat) : WVal → WVal
-  | .arr _ parts =>
-      .arr resultTy (parts.foldr (fun p acc =>
-        match p with | .arr _ es => wByteAppend es acc | _ => acc) [])
-  | _ => .null
+    the helper's statically declared result array type. Malformed containers or
+    byte arrays fail with `none`. -/
+def stringConcatW (resultTy : Nat) : WVal → Option WVal
+  | .arr _ parts => do
+      let bytes ← stringConcatParts parts
+      some (.arr resultTy bytes)
+  | _ => none
 
 /-- `String.concat` executable reference face: takes a container `arr` of
     string-arrays as a single argument and returns the byte-concatenated array.
     Certificate theorems use the abstract contract; this reference exists for
     interpreter tripwires. -/
 def stringConcatRef (resultTy : Nat) : List WVal → Option WVal
-  | [WVal.arr ty parts] => some (stringConcatW resultTy (.arr ty parts))
+  | [parts] => stringConcatW resultTy parts
   | _ => none
 
 /-- Int comparison contract faces: decode both carriers, compare in ℤ, return

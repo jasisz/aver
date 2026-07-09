@@ -162,8 +162,9 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
         for s in &suffix_parts {
             container_parts.push_str(&format!(", {s}"));
         }
-        let body =
-            format!("  stringConcatW {result_ty} (WVal.arr {container_ty} [{container_parts}])\n");
+        let body = format!(
+            "  match stringConcatW {result_ty} (WVal.arr {container_ty} [{container_parts}]) with\n  | some w => w\n  | none => WVal.null\n"
+        );
         out.push_str(&format!(
             "def {name}Model (v : CertPrelude.WVal) : CertPrelude.WVal :=\n{body}\n",
         ));
