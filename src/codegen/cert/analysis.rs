@@ -245,6 +245,19 @@ fn floatAddGoal(a: Float, b: Float) -> Float
                 .contains(&"floatAddGoal".to_string()),
             "matching producer plan should certify the probe"
         );
+        let source_plan = checked
+            .certs
+            .iter()
+            .find_map(|cert| match cert.inner() {
+                Cert::ExprFragment {
+                    name,
+                    source_plan,
+                    ..
+                } if name == "floatAddGoal" => source_plan.as_ref(),
+                _ => None,
+            })
+            .expect("source-level producer plan should be preserved on the cert");
+        assert_eq!(source_plan.result, SymTy::Float);
 
         let mut tampered = output
             .fragment_plans

@@ -415,8 +415,9 @@ fn rederive_certificate_inner(
                 _ => None,
             },
             fragment_sym_plan_lean: match c.inner() {
-                Cert::ExprFragment { plan, .. } => SymPlan::from_expr_fragment_source_subset(plan)
-                    .map(|sym| sym_plan_lean_value(&sym)),
+                Cert::ExprFragment {
+                    source_plan, plan, ..
+                } => expr_fragment_source_plan(source_plan, plan).map(|sym| sym_plan_lean_value(&sym)),
                 _ => None,
             },
             fragment_lowered_body_lean: match c.inner() {

@@ -252,6 +252,7 @@ fn check_expr_fragment_plan_object(
         type_idx: f.type_idx,
         nlocals: f.nlocals,
         carrier,
+        source_plan: None,
         plan: plan.clone(),
         ops: canonical_ops,
     };
@@ -347,8 +348,12 @@ fn check_sym_fragment_plan_object(
     let plan = sym_plan.to_expr_fragment_plan().ok_or_else(|| {
         format!("source plan for `{export_name}` cannot be encoded to expr-fragment-v1")
     })?;
-    let (func_order, cert, _expr_sidecar, canonical_matches_actual, mismatch_reason) =
+    let (func_order, mut cert, _expr_sidecar, canonical_matches_actual, mismatch_reason) =
         check_expr_fragment_plan_object(wasm_bytes, export_name, plan)?;
+    let Cert::ExprFragment { source_plan, .. } = &mut cert else {
+        unreachable!("expr-fragment plan checker must return an expr-fragment cert")
+    };
+    *source_plan = Some(sym_plan.clone());
     let sidecar = sym_fragment_sidecar(export_name, &sym_plan);
     Ok((
         func_order,

@@ -142,6 +142,15 @@ impl FragmentPlan {
     }
 }
 
+fn expr_fragment_source_plan(
+    source_plan: &Option<SymPlan>,
+    plan: &ExprFragmentPlan,
+) -> Option<SymPlan> {
+    source_plan
+        .clone()
+        .or_else(|| SymPlan::from_expr_fragment_source_subset(plan))
+}
+
 #[derive(Clone, Debug)]
 pub struct FragmentPlanArtifact {
     pub export_name: String,

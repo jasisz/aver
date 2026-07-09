@@ -234,8 +234,12 @@ fn render_manifest_lean(
         .certs
         .iter()
         .filter_map(|c| match c.inner() {
-            Cert::ExprFragment { name, plan, .. }
-                if SymPlan::from_expr_fragment_source_subset(plan).is_some() =>
+            Cert::ExprFragment {
+                name,
+                source_plan,
+                plan,
+                ..
+            } if expr_fragment_source_plan(source_plan, plan).is_some() =>
             {
                 Some(format!("({}, Plans.{name}Plan)", lean_str(name)))
             }
@@ -246,8 +250,12 @@ fn render_manifest_lean(
         .certs
         .iter()
         .filter_map(|c| match c.inner() {
-            Cert::ExprFragment { name, plan, .. }
-                if SymPlan::from_expr_fragment_source_subset(plan).is_none() =>
+            Cert::ExprFragment {
+                name,
+                source_plan,
+                plan,
+                ..
+            } if expr_fragment_source_plan(source_plan, plan).is_none() =>
             {
                 Some(format!("({}, Plans.{name}Plan)", lean_str(name)))
             }
@@ -263,8 +271,12 @@ fn render_manifest_lean(
         .certs
         .iter()
         .filter_map(|c| match c.inner() {
-            Cert::ExprFragment { name, plan, .. }
-                if SymPlan::from_expr_fragment_source_subset(plan).is_some() =>
+            Cert::ExprFragment {
+                name,
+                source_plan,
+                plan,
+                ..
+            } if expr_fragment_source_plan(source_plan, plan).is_some() =>
             {
                 Some(format!("({}, Plans.{name}SymPlan)", lean_str(name)))
             }
@@ -448,8 +460,10 @@ fn render_manifest(
         };
         let (dom, cod) = c.source_dom_cod(model_info);
         let fragment_json = match c.inner() {
-            Cert::ExprFragment { plan, .. } => {
-                let sidecar = SymPlan::from_expr_fragment_source_subset(plan)
+            Cert::ExprFragment {
+                source_plan, plan, ..
+            } => {
+                let sidecar = expr_fragment_source_plan(source_plan, plan)
                     .map(|sym| sym_fragment_sidecar(c.name(), &sym))
                     .unwrap_or_else(|| expr_fragment_sidecar(c.name(), plan));
                 let profile = if sidecar.path.ends_with(".sym-fragment-v1.plan") {

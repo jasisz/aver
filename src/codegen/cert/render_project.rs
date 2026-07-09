@@ -111,11 +111,14 @@ pub fn write_project(
 fn write_expr_fragment_sidecars(cert_dir: &Path, analysis: &Analysis) -> Result<(), String> {
     let mut sidecars = Vec::new();
     for c in &analysis.certs {
-        let Cert::ExprFragment { plan, .. } = c.inner() else {
+        let Cert::ExprFragment {
+            source_plan, plan, ..
+        } = c.inner()
+        else {
             continue;
         };
         sidecars.push(expr_fragment_sidecar(c.name(), plan));
-        if let Some(sym) = SymPlan::from_expr_fragment_source_subset(plan) {
+        if let Some(sym) = expr_fragment_source_plan(source_plan, plan) {
             sidecars.push(sym_fragment_sidecar(c.name(), &sym));
         }
     }
@@ -158,6 +161,7 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
             self_idx,
             code_idx,
             type_idx,
+            source_plan,
             plan,
             ..
         } = c.inner()
@@ -174,7 +178,7 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
         let func_binding = format!(
             "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
         );
-        let sym_plan = SymPlan::from_expr_fragment_source_subset(plan)
+        let sym_plan = expr_fragment_source_plan(source_plan, plan)
             .map(|sym| {
                 format!(
                     "/-- Source-level `SymPlan` projection for `{name}`. Artifact-level\n\
@@ -256,6 +260,7 @@ fn render_artifact_expr_fragment_claims(analysis: &Analysis) -> RenderedArtifact
             self_idx,
             code_idx,
             type_idx,
+            source_plan,
             plan,
             ..
         } = c.inner()
@@ -276,7 +281,7 @@ fn render_artifact_expr_fragment_claims(analysis: &Analysis) -> RenderedArtifact
             "⟨rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
              ⟨⟨rfl, rfl, rfl, rfl, rfl⟩, rfl, ⟨_, rfl⟩⟩⟩⟩"
         );
-        if SymPlan::from_expr_fragment_source_subset(plan).is_some() {
+        if expr_fragment_source_plan(source_plan, plan).is_some() {
             sym_claims.push(format!(
                 "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, plan := AverCert.Plans.{name}SymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.SymFragmentClaim)",
                 export_name = lean_str(name),

@@ -156,9 +156,11 @@ enum Cert {
         suffixes: Vec<VerbatimDefault>,
         ops: Vec<Op>,
     },
-    /// Non-recursive typed expression fragment. The body is first lifted into a
-    /// small ordered ANF plan (`ExprFragmentPlan`); the Lean proof renders from
-    /// that plan instead of from one-off whole-function scalar templates.
+    /// Non-recursive typed expression fragment. The byte-bound body lowers from
+    /// a small ordered ANF representation plan (`ExprFragmentPlan`). When the
+    /// producer/checker also has a source-level view, `source_plan` preserves
+    /// that `SymPlan` instead of making renderers recover it from the
+    /// representation shape.
     ExprFragment {
         name: String,
         self_idx: u32,
@@ -166,6 +168,7 @@ enum Cert {
         type_idx: u32,
         nlocals: usize,
         carrier: u32,
+        source_plan: Option<SymPlan>,
         plan: ExprFragmentPlan,
         ops: Vec<Op>,
     },

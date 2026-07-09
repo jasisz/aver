@@ -87,6 +87,7 @@ fn nr_expr_fragment(f: &UserFn, body: &StructuralBody, carrier: Option<u32>) -> 
         type_idx: f.type_idx,
         nlocals: f.nlocals,
         carrier,
+        source_plan: None,
         plan,
         ops: canonical_ops,
     })
