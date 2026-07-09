@@ -41,6 +41,53 @@ fn verbatim_array_chunk(value: &VerbatimDefault) -> Option<StringConcatChunkPlan
     }
 }
 
+fn string_concat_sym_plan_from_cert(c: &Cert) -> Option<SymPlan> {
+    string_concat_plan_from_cert(c).map(|plan| string_concat_sym_plan_from_plan(&plan))
+}
+
+fn string_concat_sym_plan_from_plan(plan: &StringConcatPlan) -> SymPlan {
+    let mut nodes = Vec::new();
+    let mut args = Vec::new();
+    for chunk in &plan.prefixes {
+        args.push(push_sym_string_node(
+            &mut nodes,
+            SymNodeKind::ConstStringBytes(chunk.bytes.clone()),
+        ));
+    }
+    args.push(push_sym_string_node(
+        &mut nodes,
+        SymNodeKind::Param { index: 0 },
+    ));
+    for chunk in &plan.suffixes {
+        args.push(push_sym_string_node(
+            &mut nodes,
+            SymNodeKind::ConstStringBytes(chunk.bytes.clone()),
+        ));
+    }
+    let result = push_sym_string_node(
+        &mut nodes,
+        SymNodeKind::Prim {
+            op: SymPrim::StringConcat,
+            args,
+        },
+    );
+    SymPlan {
+        params: vec![SymTy::String],
+        result: SymTy::String,
+        body: SymBlock { nodes, result },
+    }
+}
+
+fn push_sym_string_node(nodes: &mut Vec<SymNode>, kind: SymNodeKind) -> SymValueId {
+    let id = SymValueId(nodes.len());
+    nodes.push(SymNode {
+        id,
+        ty: SymTy::String,
+        kind,
+    });
+    id
+}
+
 fn string_concat_sidecar(name: &str, plan: &StringConcatPlan) -> FragmentPlanSidecar {
     let text = string_concat_plan_text(plan);
     FragmentPlanSidecar {

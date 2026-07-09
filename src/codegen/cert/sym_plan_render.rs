@@ -52,11 +52,12 @@ impl SymTy {
 }
 
 impl SymPrim {
-    fn to_frag_prim(self) -> FragPrim {
+    fn to_frag_prim(self) -> Option<FragPrim> {
         match self {
-            SymPrim::FloatAdd => FragPrim::F64Add,
-            SymPrim::FloatMul => FragPrim::F64Mul,
-            SymPrim::FloatLe => FragPrim::F64Le,
+            SymPrim::FloatAdd => Some(FragPrim::F64Add),
+            SymPrim::FloatMul => Some(FragPrim::F64Mul),
+            SymPrim::FloatLe => Some(FragPrim::F64Le),
+            SymPrim::StringConcat => None,
         }
     }
 
@@ -65,6 +66,7 @@ impl SymPrim {
             SymPrim::FloatAdd => "float.add",
             SymPrim::FloatMul => "float.mul",
             SymPrim::FloatLe => "float.le",
+            SymPrim::StringConcat => "string.concat",
         }
     }
 
@@ -73,6 +75,7 @@ impl SymPrim {
             "float.add" => Some(SymPrim::FloatAdd),
             "float.mul" => Some(SymPrim::FloatMul),
             "float.le" => Some(SymPrim::FloatLe),
+            "string.concat" => Some(SymPrim::StringConcat),
             _ => None,
         }
     }
@@ -82,6 +85,7 @@ impl SymPrim {
             SymPrim::FloatAdd => ".floatAdd",
             SymPrim::FloatMul => ".floatMul",
             SymPrim::FloatLe => ".floatLe",
+            SymPrim::StringConcat => ".stringConcat",
         }
     }
 }
@@ -143,6 +147,9 @@ fn sym_node_kind_lean_value(kind: &SymNodeKind) -> String {
         SymNodeKind::Param { index } => format!(".param {index}"),
         SymNodeKind::ConstBool(value) => format!(".constBool {value}"),
         SymNodeKind::ConstFloatBits(bits) => format!(".constFloatBits 0x{bits:016x}"),
+        SymNodeKind::ConstStringBytes(bytes) => {
+            format!(".constStringBytes {}", render_byte_list(bytes))
+        }
         SymNodeKind::Prim { op, args } => format!(
             ".prim {} [{}]",
             op.lean_plan_ctor(),
@@ -195,6 +202,9 @@ fn render_sym_node_plan(node: &SymNode, indent: usize, out: &mut String) {
         }
         SymNodeKind::ConstFloatBits(bits) => {
             out.push_str(&format!("const.float bits=0x{bits:016x}\n"));
+        }
+        SymNodeKind::ConstStringBytes(bytes) => {
+            out.push_str(&format!("const.string hex={}\n", hex(bytes)));
         }
         SymNodeKind::Prim { op, args } => {
             out.push_str(&format!(

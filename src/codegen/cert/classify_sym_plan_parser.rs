@@ -137,6 +137,11 @@ impl<'a> SymPlanParser<'a> {
                 require_sym_plan_ty(id, ty, SymTy::Float)?;
                 SymNodeKind::ConstFloatBits(bits)
             }
+            "const.string" => {
+                let bytes = parse_hex_bytes(plan_attr(FragValueId(id.0), &attrs, "hex")?)?;
+                require_sym_plan_ty(id, ty, SymTy::String)?;
+                SymNodeKind::ConstStringBytes(bytes)
+            }
             "prim" => {
                 let op = attrs
                     .get("op")
@@ -306,6 +311,7 @@ fn reject_extra_sym_plan_attrs(
         "param" => &["index"],
         "const.bool" => &["value"],
         "const.float" => &["bits"],
+        "const.string" => &["hex"],
         "prim" => &["op", "args"],
         "int.const-cmp" => &["op", "value", "constant"],
         "if" => &["cond"],
@@ -330,7 +336,17 @@ fn check_sym_plan_prim_args(
         SymPrim::FloatAdd | SymPrim::FloatMul | SymPrim::FloatLe => {
             &[SymTy::Float, SymTy::Float]
         }
+        SymPrim::StringConcat => &[],
     };
+    if op == SymPrim::StringConcat {
+        if args.is_empty() {
+            return Err(format!("source plan string.concat v{} has no args", id.0));
+        }
+        for arg in args {
+            require_sym_plan_node_ty(nodes, *arg, SymTy::String)?;
+        }
+        return Ok(SymTy::String);
+    }
     if args.len() != expected_args.len() {
         return Err(format!(
             "source plan prim v{} has {} args, expected {}",
@@ -345,6 +361,7 @@ fn check_sym_plan_prim_args(
     Ok(match op {
         SymPrim::FloatAdd | SymPrim::FloatMul => SymTy::Float,
         SymPrim::FloatLe => SymTy::Bool,
+        SymPrim::StringConcat => unreachable!(),
     })
 }
 

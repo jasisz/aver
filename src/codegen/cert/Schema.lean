@@ -75,6 +75,7 @@ inductive SymPrim where
   | floatAdd
   | floatMul
   | floatLe
+  | stringConcat
 deriving Repr, DecidableEq
 
 /-- Source-level integer comparison against a literal. This is intentionally
@@ -92,6 +93,7 @@ mutual
     | param (index : Nat)
     | constBool (value : Bool)
     | constFloatBits (bits : Nat)
+    | constStringBytes (bytes : List Nat)
     | prim (op : SymPrim) (args : List Nat)
     | intConstCmp (op : SymIntCmp) (value : Nat) (constant : Int)
     | ifElse (cond : Nat) (thenBlock elseBlock : SymBlock)

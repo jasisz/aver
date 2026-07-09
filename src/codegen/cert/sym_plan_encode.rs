@@ -30,6 +30,7 @@ impl SymToFragEncoder<'_> {
             SymNodeKind::Param { index } => self.push_node(ty, FragNodeKind::Local { index: *index }),
             SymNodeKind::ConstBool(value) => self.push_node(ty, FragNodeKind::ConstBool(*value)),
             SymNodeKind::ConstFloatBits(bits) => self.push_node(ty, FragNodeKind::ConstF64(*bits)),
+            SymNodeKind::ConstStringBytes(_) => return None,
             SymNodeKind::Prim { op, args } => {
                 let args = args
                     .iter()
@@ -38,7 +39,7 @@ impl SymToFragEncoder<'_> {
                 self.push_node(
                     ty,
                     FragNodeKind::Prim {
-                        op: op.to_frag_prim(),
+                        op: op.to_frag_prim()?,
                         args,
                     },
                 )

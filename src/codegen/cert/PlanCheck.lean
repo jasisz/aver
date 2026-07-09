@@ -73,6 +73,10 @@ def symArgsHaveTys (nodes : List SymNode) : List Nat → List SymTy → Bool
   | arg :: args, ty :: tys => hasSymTy nodes arg ty && symArgsHaveTys nodes args tys
   | _, _ => false
 
+def symArgsAllTy (nodes : List SymNode) (expected : SymTy) : List Nat → Bool
+  | [] => true
+  | arg :: args => hasSymTy nodes arg expected && symArgsAllTy nodes expected args
+
 def primResultTy? (nodes : List FragNode) (op : FragPrim) (args : List Nat) :
     Option FragTy :=
   match op with
@@ -108,11 +112,21 @@ def symPrimResultTy? (nodes : List SymNode) (op : SymPrim) (args : List Nat) :
       if symArgsHaveTys nodes args [.float, .float] then some .float else none
   | .floatLe =>
       if symArgsHaveTys nodes args [.float, .float] then some .bool else none
+  | .stringConcat =>
+      if args.isEmpty then none
+      else if symArgsAllTy nodes .string args then some .string else none
 
 /-- Hard cap for recursive plan checking. Exceeding it is a fail-closed
     unsupported fragment, matching the profile-limit discipline on the Rust
     side. -/
 def maxFuel : Nat := 10000
+
+def isByte (n : Nat) : Bool :=
+  if n <= 255 then true else false
+
+def bytesAllBytes : List Nat → Bool
+  | [] => true
+  | b :: bs => isByte b && bytesAllBytes bs
 
 def checkBlockFuel : Nat → List FragTy → FragBlock → Bool
   | 0, _, _ => false
@@ -166,6 +180,8 @@ def checkSymBlockFuel : Nat → List SymTy → SymBlock → Bool
         | .param index => params[index]?
         | .constBool _ => some .bool
         | .constFloatBits _ => some .float
+        | .constStringBytes bytes =>
+            if bytesAllBytes bytes then some .string else none
         | .prim op args => symPrimResultTy? checked op args
         | .intConstCmp _ value _ =>
             if hasSymTy checked value .int && isSymParam checked value then some .bool else none
@@ -208,13 +224,6 @@ def checkSymRawPlan (plan : SymRawPlan) : Bool :=
     | some n => sameSymTy n.ty plan.result
     | none => false
 
-def isByte (n : Nat) : Bool :=
-  if n <= 255 then true else false
-
-def bytesAllBytes : List Nat → Bool
-  | [] => true
-  | b :: bs => isByte b && bytesAllBytes bs
-
 def byteChunksAllBytes : List (List Nat) → Bool
   | [] => true
   | bytes :: rest => bytesAllBytes bytes && byteChunksAllBytes rest
@@ -227,6 +236,66 @@ def checkStringConcatRawPlan (plan : StringConcatRawPlan) : Bool :=
   plan.profile = "string-concat-v1" &&
     stringConcatChunksAllBytes plan.prefixes &&
     stringConcatChunksAllBytes plan.suffixes
+
+def stringConcatChunkBytes : StringConcatChunk → List Nat
+  | { bytes, .. } => bytes
+
+inductive SymStringConcatPart where
+  | literal (bytes : List Nat)
+  | input
+deriving Repr, DecidableEq
+
+def symStringConcatPart? (nodes : List SymNode) (id : Nat) :
+    Option SymStringConcatPart :=
+  match lookupSymNode nodes id with
+  | some { ty := .string, kind := .constStringBytes bytes, .. } =>
+      if bytesAllBytes bytes then some (.literal bytes) else none
+  | some { ty := .string, kind := .param 0, .. } => some .input
+  | _ => none
+
+def splitSymStringConcatParts :
+    List SymStringConcatPart →
+    Option (List (List Nat) × List (List Nat)) :=
+  let rec go
+      (seenInput : Bool)
+      (prefixes suffixes : List (List Nat)) :
+      List SymStringConcatPart →
+      Option (List (List Nat) × List (List Nat))
+    | [] =>
+        if seenInput then some (prefixes, suffixes) else none
+    | .input :: rest =>
+        if seenInput then none else go true prefixes suffixes rest
+    | .literal bytes :: rest =>
+        if seenInput then
+          go seenInput prefixes (suffixes ++ [bytes]) rest
+        else
+          go seenInput (prefixes ++ [bytes]) suffixes rest
+  go false [] []
+
+def symStringConcatParts? (plan : SymRawPlan) :
+    Option (List (List Nat) × List (List Nat)) :=
+  if checkSymRawPlan plan &&
+     plan.params = [.string] &&
+     plan.result = .string then
+    match lookupSymNode plan.body.nodes plan.body.result with
+    | some { kind := .prim .stringConcat args, .. } =>
+        if args = List.range args.length &&
+           args.length + 1 = plan.body.nodes.length then
+          match args.mapM (symStringConcatPart? plan.body.nodes) with
+          | some parts => splitSymStringConcatParts parts
+          | none => none
+        else none
+    | _ => none
+  else none
+
+def stringConcatPlanMatchesSymRawPlan
+    (symPlan : SymRawPlan)
+    (plan : StringConcatRawPlan) : Bool :=
+  match symStringConcatParts? symPlan with
+  | some (prefixes, suffixes) =>
+      prefixes = plan.prefixes.map stringConcatChunkBytes &&
+      suffixes = plan.suffixes.map stringConcatChunkBytes
+  | none => false
 
 def encodeSymTy? : SymTy → Option FragTy
   | .float => some .f64
@@ -241,10 +310,11 @@ def encodeSymTys? : List SymTy → Option (List FragTy)
       | some fragTy, some fragTys => some (fragTy :: fragTys)
       | _, _ => none
 
-def encodeSymPrim : SymPrim → FragPrim
-  | .floatAdd => .f64Add
-  | .floatMul => .f64Mul
-  | .floatLe => .f64Le
+def encodeSymPrim? : SymPrim → Option FragPrim
+  | .floatAdd => some .f64Add
+  | .floatMul => some .f64Mul
+  | .floatLe => some .f64Le
+  | .stringConcat => none
 
 def symIntSmallConstCmpPrim? : SymIntCmp → Option FragPrim
   | .eq => some .i64Eq
@@ -334,9 +404,11 @@ def encodeSymBlockFuel : Nat → SymBlock → Option FragBlock
           | .constFloatBits bits =>
               let (st, id) := pushEncodedNode st fragTy (.constF64Bits bits)
               some { st with symToFrag := st.symToFrag ++ [id] }
+          | .constStringBytes _ => none
           | .prim op args =>
+              let prim ← encodeSymPrim? op
               let fragArgs ← args.mapM (encodedValue? st)
-              let (st, id) := pushEncodedNode st fragTy (.prim (encodeSymPrim op) fragArgs)
+              let (st, id) := pushEncodedNode st fragTy (.prim prim fragArgs)
               some { st with symToFrag := st.symToFrag ++ [id] }
           | .intConstCmp op value constant =>
               let carrier ← encodedValue? st value

@@ -258,6 +258,7 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
         };
         let plan = string_concat_plan_from_cert(c)
             .expect("certified String.concat should project to a source plan");
+        let sym_plan = string_concat_sym_plan_from_plan(&plan);
         let code_entry_bytes = lower_string_concat_plan_code_entry_bytes(
             &plan,
             *carrier,
@@ -273,8 +274,16 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
         );
         any = true;
         s.push_str(&format!(
-            "/-- Source-level `string-concat-v1` witness for `{name}`. -/\n\
+            "/-- Source-level `SymPlan` view of `{name}`'s string concatenation. -/\n\
+             def {name}StringConcatSymPlan : SymRawPlan := {sym_plan_value}\n\n\
+             /-- Target-bound `string-concat-v1` encoder witness for `{name}`. -/\n\
              def {name}StringConcatPlan : StringConcatRawPlan := {plan_value}\n\n\
+             /-- The audited Lean-side source-plan checker accepts `{name}`'s string `SymPlan`. -/\n\
+             example : AverCert.PlanCheck.checkSymRawPlan {name}StringConcatSymPlan = true := rfl\n\n\
+             /-- The audited Lean-side source/target matcher confirms that `{name}`'s\n\
+                 string `SymPlan` explains the byte-bound String.concat plan below. -/\n\
+             example : AverCert.PlanCheck.stringConcatPlanMatchesSymRawPlan\n  \
+               {name}StringConcatSymPlan {name}StringConcatPlan = true := rfl\n\n\
              /-- The audited Lean-side structural checker accepts `{name}`'s String.concat plan. -/\n\
              example : AverCert.PlanCheck.checkStringConcatRawPlan {name}StringConcatPlan = true := rfl\n\n\
              /-- The audited Lean-side canonical lowerer maps `{name}`'s String.concat plan\n\
@@ -294,6 +303,7 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
              example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
                some {func_binding} := rfl\n\n\
              \n",
+            sym_plan_value = sym_plan_lean_value(&sym_plan),
             plan_value = string_concat_plan_lean_value(&plan),
         ));
     }
@@ -395,12 +405,12 @@ fn render_artifact_expr_fragment_claims(analysis: &Analysis) -> RenderedArtifact
                     "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
                 );
                 string_claims.push(format!(
-                    "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, resultTy := {result_ty}, containerTy := {container_ty}, concatFuncIdx := {string_concat_idx}, plan := AverCert.Plans.{name}StringConcatPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.StringConcatClaim)",
+                    "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, resultTy := {result_ty}, containerTy := {container_ty}, concatFuncIdx := {string_concat_idx}, symPlan := AverCert.Plans.{name}StringConcatSymPlan, plan := AverCert.Plans.{name}StringConcatPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.StringConcatClaim)",
                     export_name = lean_str(name),
                 ));
                 string_proofs.push(format!(
                     "⟨rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
+                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
                 ));
             }
             _ => {}

@@ -123,11 +123,14 @@ def stringConcatPlanAccepted
     (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
     (carrier resultTy containerTy concatFuncIdx : Nat)
+    (symPlan : SymRawPlan)
     (plan : StringConcatRawPlan)
     (obligation : Obligation) : Prop :=
   obligation.export_ = exportName ∧
   obligation.carrier = carrier ∧
   ∃ body codeEntry binding,
+    AverCert.PlanCheck.checkSymRawPlan symPlan = true ∧
+    AverCert.PlanCheck.stringConcatPlanMatchesSymRawPlan symPlan plan = true ∧
     AverCert.PlanCheck.checkStringConcatRawPlan plan = true ∧
     AverCert.PlanLower.lowerStringConcatBody
       resultTy containerTy concatFuncIdx plan = some body ∧
@@ -148,6 +151,7 @@ structure StringConcatClaim where
   resultTy        : Nat
   containerTy     : Nat
   concatFuncIdx   : Nat
+  symPlan         : SymRawPlan
   plan            : StringConcatRawPlan
   obligation      : Obligation
 
@@ -162,6 +166,7 @@ def stringConcatClaimAccepted
     claim.resultTy
     claim.containerTy
     claim.concatFuncIdx
+    claim.symPlan
     claim.plan
     claim.obligation
 

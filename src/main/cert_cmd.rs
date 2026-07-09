@@ -1171,6 +1171,7 @@ fn lean_expr_fragment_artifact_claims(
     for r in rederived {
         if let Some(plan) = r.string_concat_plan_lean.as_ref() {
             let (
+                Some(sym_plan),
                 Some(body),
                 Some(bytes),
                 Some(code_idx),
@@ -1179,6 +1180,7 @@ fn lean_expr_fragment_artifact_claims(
                 Some(container_ty),
                 Some(concat_func_idx),
             ) = (
+                r.string_concat_sym_plan_lean.as_ref(),
                 r.string_concat_lowered_body_lean.as_ref(),
                 r.string_concat_lowered_code_entry_lean.as_ref(),
                 r.string_concat_code_idx,
@@ -1199,6 +1201,7 @@ fn lean_expr_fragment_artifact_claims(
                 "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
                  carrier := {carrier}, resultTy := {result_ty}, containerTy := {container_ty}, \
                  concatFuncIdx := {concat_func_idx}, \
+                 symPlan := (({sym_plan}) : AverCert.Schema.SymRawPlan), \
                  plan := (({plan}) : AverCert.Schema.StringConcatRawPlan), \
                  obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.StringConcatClaim)",
                 name = r.name,
@@ -1206,7 +1209,7 @@ fn lean_expr_fragment_artifact_claims(
             ));
             string_proofs.push(format!(
                 "⟨rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
-                 ⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
+                 ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
             ));
             continue;
         }

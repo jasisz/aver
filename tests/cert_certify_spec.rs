@@ -935,6 +935,24 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
     let plans_lean =
         std::fs::read_to_string(cert_dir.join("Plans.lean")).expect("Plans.lean exists");
     assert!(
+        plans_lean.contains("def shoutStringConcatSymPlan : SymRawPlan"),
+        "String.concat cert should render a source-level SymPlan:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains(".constStringBytes [33]")
+            && plans_lean.contains(".prim .stringConcat [0, 1]"),
+        "String.concat SymPlan should expose source-level string concat:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains("checkSymRawPlan shoutStringConcatSymPlan = true := rfl"),
+        "String.concat SymPlan should be checked by the Lean-side source checker:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains("stringConcatPlanMatchesSymRawPlan")
+            && plans_lean.contains("shoutStringConcatSymPlan shoutStringConcatPlan = true := rfl"),
+        "String.concat SymPlan should be matched to the byte-bound concat plan:\n{plans_lean}"
+    );
+    assert!(
         plans_lean.contains("def shoutStringConcatPlan : StringConcatRawPlan"),
         "String.concat cert should render a Lean-data StringConcatRawPlan:\n{plans_lean}"
     );
@@ -962,6 +980,10 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
     assert!(
         artifact_lean.contains("plan := AverCert.Plans.shoutStringConcatPlan"),
         "String.concat artifact claim should point at the checked source plan:\n{artifact_lean}"
+    );
+    assert!(
+        artifact_lean.contains("symPlan := AverCert.Plans.shoutStringConcatSymPlan"),
+        "String.concat artifact claim should carry the source-level SymPlan:\n{artifact_lean}"
     );
     assert!(
         artifact_lean.contains("concatFuncIdx :=") && artifact_lean.contains("resultTy :="),

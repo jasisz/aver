@@ -75,6 +75,10 @@ pub struct RederivedObligation {
     /// `manifest.stringConcatPlans` to these checker-rendered terms so
     /// `Plans.lean` cannot drift from the verified sidecar/body pair.
     pub string_concat_plan_lean: Option<String>,
+    /// The source-level `SymRawPlan` view of the same byte-derived string
+    /// concat shape. The checker witness requires this to explain the
+    /// target-bound `StringConcatRawPlan`.
+    pub string_concat_sym_plan_lean: Option<String>,
     /// For `string-concat-v1`, the byte-derived defined-function index into the
     /// code section (`funcIdx - importedFuncCount`).
     pub string_concat_code_idx: Option<u32>,
@@ -466,6 +470,12 @@ fn rederive_certificate_inner(
             string_concat_plan_lean: match c.inner() {
                 Cert::StringConcatVerbatimMatch { .. } => {
                     string_concat_plan_from_cert(c).map(|plan| string_concat_plan_lean_value(&plan))
+                }
+                _ => None,
+            },
+            string_concat_sym_plan_lean: match c.inner() {
+                Cert::StringConcatVerbatimMatch { .. } => {
+                    string_concat_sym_plan_from_cert(c).map(|plan| sym_plan_lean_value(&plan))
                 }
                 _ => None,
             },

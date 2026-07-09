@@ -119,6 +119,9 @@ impl MirSymPlanBuilder<'_> {
                 crate::ast::Literal::Float(value) => {
                     self.push_node(SymTy::Float, SymNodeKind::ConstFloatBits(value.to_bits()))
                 }
+                crate::ast::Literal::Str(value) => {
+                    self.push_node(SymTy::String, SymNodeKind::ConstStringBytes(value.as_bytes().to_vec()))
+                }
                 _ => None,
             },
             crate::ir::mir::MirExpr::Local(local) => {
@@ -138,6 +141,19 @@ impl MirSymPlanBuilder<'_> {
 
         let (lhs, lhs_ty) = self.lower_expr(&binop.lhs)?;
         let (rhs, rhs_ty) = self.lower_expr(&binop.rhs)?;
+        if lhs_ty == SymTy::String && rhs_ty == SymTy::String {
+            if binop.op != crate::ast::BinOp::Add {
+                return None;
+            }
+            return self.push_node(
+                SymTy::String,
+                SymNodeKind::Prim {
+                    op: SymPrim::StringConcat,
+                    args: vec![lhs, rhs],
+                },
+            );
+        }
+
         if lhs_ty != SymTy::Float || rhs_ty != SymTy::Float {
             return None;
         }

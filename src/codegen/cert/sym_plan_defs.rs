@@ -56,6 +56,7 @@ pub enum SymPrim {
     FloatAdd,
     FloatMul,
     FloatLe,
+    StringConcat,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -71,6 +72,7 @@ pub enum SymNodeKind {
     Param { index: u32 },
     ConstBool(bool),
     ConstFloatBits(u64),
+    ConstStringBytes(Vec<u8>),
     Prim {
         op: SymPrim,
         args: Vec<SymValueId>,
@@ -317,5 +319,41 @@ mod sym_plan_defs_tests {
         };
 
         assert!(SymPlan::from_expr_fragment_source_subset(&plan).is_none());
+    }
+
+    #[test]
+    fn sym_plan_models_string_concat_without_expr_encoding() {
+        let plan = SymPlan {
+            params: vec![SymTy::String],
+            result: SymTy::String,
+            body: SymBlock {
+                nodes: vec![
+                    SymNode {
+                        id: SymValueId(0),
+                        ty: SymTy::String,
+                        kind: SymNodeKind::Param { index: 0 },
+                    },
+                    SymNode {
+                        id: SymValueId(1),
+                        ty: SymTy::String,
+                        kind: SymNodeKind::ConstStringBytes(vec![33]),
+                    },
+                    SymNode {
+                        id: SymValueId(2),
+                        ty: SymTy::String,
+                        kind: SymNodeKind::Prim {
+                            op: SymPrim::StringConcat,
+                            args: vec![SymValueId(0), SymValueId(1)],
+                        },
+                    },
+                ],
+                result: SymValueId(2),
+            },
+        };
+
+        let lean = sym_plan_lean_value(&plan);
+        assert!(lean.contains(".constStringBytes [33]"));
+        assert!(lean.contains(".prim .stringConcat [0, 1]"));
+        assert!(plan.to_expr_fragment_plan().is_none());
     }
 }
