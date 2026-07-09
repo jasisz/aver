@@ -932,6 +932,20 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         Some(expected_sha.as_str()),
         "shout sidecar hash should match the sidecar bytes"
     );
+    let sym_plan = "fragments/73686f7574.sym-fragment-v1.plan";
+    let sym_plan_text = std::fs::read_to_string(cert_dir.join(sym_plan))
+        .expect("String.concat SymPlan sidecar exists");
+    assert!(
+        sym_plan_text.starts_with(
+            "aver.sym-fragment.plan.v1\nprofile sym-fragment-v1\nparams string\nresult string\n"
+        ),
+        "shout should also emit the source-level SymPlan sidecar:\n{sym_plan_text}"
+    );
+    assert!(
+        sym_plan_text.contains("const.string hex=21")
+            && sym_plan_text.contains("prim op=string.concat args=v0,v1"),
+        "shout SymPlan sidecar should expose source string concat without target data indices:\n{sym_plan_text}"
+    );
     let plans_lean =
         std::fs::read_to_string(cert_dir.join("Plans.lean")).expect("Plans.lean exists");
     assert!(

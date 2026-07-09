@@ -123,6 +123,8 @@ fn write_fragment_sidecars(cert_dir: &Path, analysis: &Analysis) -> Result<(), S
             Cert::StringConcatVerbatimMatch { .. } => {
                 let plan = string_concat_plan_from_cert(c)
                     .expect("certified String.concat should project to a source plan");
+                let sym_plan = string_concat_sym_plan_from_plan(&plan);
+                sidecars.push(sym_fragment_sidecar(c.name(), &sym_plan));
                 sidecars.push(string_concat_sidecar(c.name(), &plan));
             }
             _ => {}
