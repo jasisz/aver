@@ -1278,7 +1278,11 @@ def acceptedWithFinal\n    (finalCert : AverCert.Schema.Holds AverCert.manifest)
     let planfirst_tamper_cert = planfirst_tamper_dir.join("cert");
     let float_plan_sidecar = planfirst_tamper_cert.join(float_plan);
     let float_plan_text = std::fs::read_to_string(&float_plan_sidecar).unwrap();
-    let tampered_float_plan = float_plan_text.replacen("op=f64.add", "op=f64.mul", 1);
+    let tampered_float_plan = if float_plan_text.contains("op=float.add") {
+        float_plan_text.replacen("op=float.add", "op=float.mul", 1)
+    } else {
+        float_plan_text.replacen("op=f64.add", "op=f64.mul", 1)
+    };
     assert_ne!(
         float_plan_text, tampered_float_plan,
         "floatAddGoal plan shape changed"

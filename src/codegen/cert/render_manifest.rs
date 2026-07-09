@@ -413,9 +413,16 @@ fn render_manifest(
         let (dom, cod) = c.source_dom_cod(model_info);
         let fragment_json = match c.inner() {
             Cert::ExprFragment { plan, .. } => {
-                let sidecar = expr_fragment_sidecar(c.name(), plan);
+                let sidecar = SymPlan::from_expr_fragment_source_subset(plan)
+                    .map(|sym| sym_fragment_sidecar(c.name(), &sym))
+                    .unwrap_or_else(|| expr_fragment_sidecar(c.name(), plan));
+                let profile = if sidecar.path.ends_with(".sym-fragment-v1.plan") {
+                    "sym-fragment-v1"
+                } else {
+                    "expr-fragment-v1"
+                };
                 format!(
-                    ", \"fragment\": {{\"profile\": \"expr-fragment-v1\", \
+                    ", \"fragment\": {{\"profile\": \"{profile}\", \
                      \"plan\": {}, \"plan_sha256\": {}}}",
                     json_str(&sidecar.path),
                     json_str(&sidecar.sha256)

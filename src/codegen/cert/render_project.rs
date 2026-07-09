@@ -109,14 +109,16 @@ pub fn write_project(
 }
 
 fn write_expr_fragment_sidecars(cert_dir: &Path, analysis: &Analysis) -> Result<(), String> {
-    let sidecars = analysis
-        .certs
-        .iter()
-        .filter_map(|c| match c.inner() {
-            Cert::ExprFragment { plan, .. } => Some(expr_fragment_sidecar(c.name(), plan)),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let mut sidecars = Vec::new();
+    for c in &analysis.certs {
+        let Cert::ExprFragment { plan, .. } = c.inner() else {
+            continue;
+        };
+        sidecars.push(expr_fragment_sidecar(c.name(), plan));
+        if let Some(sym) = SymPlan::from_expr_fragment_source_subset(plan) {
+            sidecars.push(sym_fragment_sidecar(c.name(), &sym));
+        }
+    }
     if sidecars.is_empty() {
         return Ok(());
     }

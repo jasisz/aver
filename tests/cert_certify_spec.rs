@@ -149,17 +149,34 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         7,
         "expr-fragment sidecar count changed; update this deliberately"
     );
+    let mut sym_sidecar_names = BTreeSet::new();
+    let mut expr_sidecar_names = BTreeSet::new();
     for entry in expr_entries {
         let name = entry["name"].as_str().unwrap();
         let fragment = &entry["fragment"];
-        assert_eq!(
-            fragment["profile"].as_str(),
-            Some("expr-fragment-v1"),
-            "{name} should pin the fragment profile"
-        );
+        let profile = fragment["profile"]
+            .as_str()
+            .expect("fragment profile string");
         let plan = fragment["plan"].as_str().expect("fragment plan path");
+        let (suffix, header) = match profile {
+            "sym-fragment-v1" => {
+                sym_sidecar_names.insert(name.to_string());
+                (
+                    ".sym-fragment-v1.plan",
+                    "aver.sym-fragment.plan.v1\nprofile sym-fragment-v1\n",
+                )
+            }
+            "expr-fragment-v1" => {
+                expr_sidecar_names.insert(name.to_string());
+                (
+                    ".expr-fragment-v1.plan",
+                    "aver.expr-fragment.plan.v1\nprofile expr-fragment-v1\n",
+                )
+            }
+            other => panic!("{name} should pin a known fragment profile, got {other}"),
+        };
         assert!(
-            plan.starts_with("fragments/") && plan.ends_with(".expr-fragment-v1.plan"),
+            plan.starts_with("fragments/") && plan.ends_with(suffix),
             "{name} should point at a fragment plan sidecar, got {plan}"
         );
         assert!(
@@ -167,10 +184,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             "{name} sidecar path must stay inside cert/fragments"
         );
         let text = std::fs::read_to_string(out_dir.join("cert").join(plan))
-            .expect("expr fragment sidecar exists");
+            .expect("fragment sidecar exists");
         assert!(
-            text.starts_with("aver.expr-fragment.plan.v1\nprofile expr-fragment-v1\n"),
-            "{name} sidecar should be the canonical expr-fragment plan:\n{text}"
+            text.starts_with(header),
+            "{name} sidecar should be the canonical {profile} plan:\n{text}"
         );
         let expected_sha = aver::codegen::cert::sha256_hex(text.as_bytes());
         assert_eq!(
@@ -183,6 +200,19 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             "{name} should not emit trace/replay sidecars after plan-first lowering"
         );
     }
+    assert!(
+        sym_sidecar_names.contains("floatAddGoal")
+            && sym_sidecar_names.contains("floatMulAddGoal")
+            && sym_sidecar_names.contains("floatLeGoal")
+            && sym_sidecar_names.contains("boolAndGoal"),
+        "direct source-level fragments should prefer sym sidecars, got {sym_sidecar_names:?}"
+    );
+    assert!(
+        expr_sidecar_names.contains("intLessZero")
+            && expr_sidecar_names.contains("intEqZero")
+            && expr_sidecar_names.contains("inAsciiDigit"),
+        "representation-only fragments should remain expr sidecars, got {expr_sidecar_names:?}"
+    );
     let plans_lean = std::fs::read_to_string(out_dir.join("cert").join("Plans.lean"))
         .expect("Plans.lean exists");
     assert!(

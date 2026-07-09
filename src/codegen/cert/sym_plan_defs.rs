@@ -18,6 +18,34 @@ impl SymTy {
             FragSemTy::WVal => None,
         }
     }
+
+    fn to_frag_ty(self) -> Option<FragTy> {
+        match self {
+            SymTy::Int => Some(FragTy::IntCarrier),
+            SymTy::Float => Some(FragTy::F64),
+            SymTy::Bool => Some(FragTy::BoolI32),
+            SymTy::String => None,
+        }
+    }
+
+    fn plan_tag(self) -> &'static str {
+        match self {
+            SymTy::Int => "int",
+            SymTy::Float => "float",
+            SymTy::Bool => "bool",
+            SymTy::String => "string",
+        }
+    }
+
+    fn from_plan_tag(tag: &str) -> Option<Self> {
+        match tag {
+            "int" => Some(SymTy::Int),
+            "float" => Some(SymTy::Float),
+            "bool" => Some(SymTy::Bool),
+            "string" => Some(SymTy::String),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -83,6 +111,48 @@ impl SymPlan {
             body: sym_block_from_frag_source_subset(&plan.body)?,
         })
     }
+
+    fn to_expr_fragment_plan(&self) -> Option<ExprFragmentPlan> {
+        Some(ExprFragmentPlan {
+            params: self
+                .params
+                .iter()
+                .copied()
+                .map(SymTy::to_frag_ty)
+                .collect::<Option<Vec<_>>>()?,
+            result: self.result.to_frag_ty()?,
+            body: expr_fragment_block_from_sym(&self.body)?,
+        })
+    }
+}
+
+fn sym_fragment_sidecar(name: &str, plan: &SymPlan) -> FragmentPlanSidecar {
+    let text = sym_fragment_plan_text(plan);
+    FragmentPlanSidecar {
+        path: sym_fragment_plan_path(name),
+        sha256: sha256_hex(text.as_bytes()),
+        text,
+    }
+}
+
+fn sym_fragment_plan_path(name: &str) -> String {
+    format!("fragments/{}.sym-fragment-v1.plan", hex(name.as_bytes()))
+}
+
+fn sym_fragment_plan_text(plan: &SymPlan) -> String {
+    let mut out = String::new();
+    out.push_str("aver.sym-fragment.plan.v1\n");
+    out.push_str("profile sym-fragment-v1\n");
+    out.push_str("params");
+    for ty in &plan.params {
+        out.push(' ');
+        out.push_str(ty.plan_tag());
+    }
+    out.push('\n');
+    out.push_str(&format!("result {}\n", plan.result.plan_tag()));
+    out.push_str("body\n");
+    render_sym_block_plan(&plan.body, 0, &mut out);
+    out
 }
 
 fn sym_plan_lean_value(plan: &SymPlan) -> String {
@@ -110,6 +180,31 @@ impl SymTy {
 }
 
 impl SymPrim {
+    fn to_frag_prim(self) -> FragPrim {
+        match self {
+            SymPrim::FloatAdd => FragPrim::F64Add,
+            SymPrim::FloatMul => FragPrim::F64Mul,
+            SymPrim::FloatLe => FragPrim::F64Le,
+        }
+    }
+
+    fn plan_tag(self) -> &'static str {
+        match self {
+            SymPrim::FloatAdd => "float.add",
+            SymPrim::FloatMul => "float.mul",
+            SymPrim::FloatLe => "float.le",
+        }
+    }
+
+    fn from_plan_tag(tag: &str) -> Option<Self> {
+        match tag {
+            "float.add" => Some(SymPrim::FloatAdd),
+            "float.mul" => Some(SymPrim::FloatMul),
+            "float.le" => Some(SymPrim::FloatLe),
+            _ => None,
+        }
+    }
+
     fn lean_plan_ctor(self) -> &'static str {
         match self {
             SymPrim::FloatAdd => ".floatAdd",
@@ -165,6 +260,96 @@ fn sym_node_kind_lean_value(kind: &SymNodeKind) -> String {
             sym_block_lean_value(else_block)
         ),
     }
+}
+
+fn render_sym_block_plan(block: &SymBlock, indent: usize, out: &mut String) {
+    let pad = "  ".repeat(indent);
+    out.push_str(&format!("{pad}block result=v{}\n", block.result.0));
+    for node in &block.nodes {
+        render_sym_node_plan(node, indent + 1, out);
+    }
+    out.push_str(&format!("{pad}end\n"));
+}
+
+fn render_sym_node_plan(node: &SymNode, indent: usize, out: &mut String) {
+    let pad = "  ".repeat(indent);
+    out.push_str(&format!("{pad}v{} ty={} ", node.id.0, node.ty.plan_tag()));
+    match &node.kind {
+        SymNodeKind::Param { index } => {
+            out.push_str(&format!("param index={index}\n"));
+        }
+        SymNodeKind::ConstBool(value) => {
+            out.push_str(&format!("const.bool value={value}\n"));
+        }
+        SymNodeKind::ConstFloatBits(bits) => {
+            out.push_str(&format!("const.float bits=0x{bits:016x}\n"));
+        }
+        SymNodeKind::Prim { op, args } => {
+            out.push_str(&format!(
+                "prim op={} args={}\n",
+                op.plan_tag(),
+                render_sym_plan_ids(args)
+            ));
+        }
+        SymNodeKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
+            out.push_str(&format!("if cond=v{}\n", cond.0));
+            out.push_str(&format!("{pad}then\n"));
+            render_sym_block_plan(then_block, indent + 1, out);
+            out.push_str(&format!("{pad}else\n"));
+            render_sym_block_plan(else_block, indent + 1, out);
+            out.push_str(&format!("{pad}endif\n"));
+        }
+    }
+}
+
+fn render_sym_plan_ids(args: &[SymValueId]) -> String {
+    args.iter()
+        .map(|id| format!("v{}", id.0))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn expr_fragment_block_from_sym(block: &SymBlock) -> Option<FragBlock> {
+    let nodes = block
+        .nodes
+        .iter()
+        .map(expr_fragment_node_from_sym)
+        .collect::<Option<Vec<_>>>()?;
+    Some(FragBlock {
+        nodes,
+        result: FragValueId(block.result.0),
+    })
+}
+
+fn expr_fragment_node_from_sym(node: &SymNode) -> Option<FragNode> {
+    let ty = node.ty.to_frag_ty()?;
+    let kind = match &node.kind {
+        SymNodeKind::Param { index } => FragNodeKind::Local { index: *index },
+        SymNodeKind::ConstBool(value) => FragNodeKind::ConstBool(*value),
+        SymNodeKind::ConstFloatBits(bits) => FragNodeKind::ConstF64(*bits),
+        SymNodeKind::Prim { op, args } => FragNodeKind::Prim {
+            op: op.to_frag_prim(),
+            args: args.iter().map(|id| FragValueId(id.0)).collect(),
+        },
+        SymNodeKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => FragNodeKind::If {
+            cond: FragValueId(cond.0),
+            then_block: Box::new(expr_fragment_block_from_sym(then_block)?),
+            else_block: Box::new(expr_fragment_block_from_sym(else_block)?),
+        },
+    };
+    Some(FragNode {
+        id: FragValueId(node.id.0),
+        ty,
+        kind,
+    })
 }
 
 fn sym_block_from_frag_source_subset(block: &FragBlock) -> Option<SymBlock> {

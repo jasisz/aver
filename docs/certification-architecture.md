@@ -99,8 +99,11 @@ already project cleanly, `AcceptedArtifact.lean` accepts a source-level
 then the existing byte-origin predicate binds that encoded representation plan
 to the exact function bytes. Representation-only fragments remain on the
 `ExprFragmentClaim` fallback until the source grammar grows explicit
-constructors for them. Later profiles should make `SymPlan` the primary sidecar
-format and treat representation types as checked encoding details.
+constructors for them. The emitted manifest now uses `sym-fragment-v1.plan` as
+the preferred sidecar for source-projectable fragments; `expr-fragment-v1.plan`
+remains the fallback and the checked encoder target. Representation types are
+therefore already moving into checked encoding details rather than the artifact
+surface.
 
 ## Artifact Shape
 
@@ -110,6 +113,7 @@ The compiler emits:
 foo.wasm
 cert/
   cert-manifest.json
+  fragments/<export>.sym-fragment-v1.plan   # preferred when source-projectable
   fragments/<export>.expr-fragment-v1.plan
   PlanCheck.lean
   PlanLower.lean

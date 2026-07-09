@@ -25,10 +25,11 @@
 > a `Schema.Obligation`. Source-projectable fragments now enter artifact
 > acceptance as `SymFragmentClaim`; Lean checks/encodes their `SymRawPlan` into
 > the byte-bound `ExprFragmentRawPlan` before applying the accepted-export
-> predicate. Representation-only fragments remain on an explicit
-> `ExprFragmentClaim` fallback. The body, code-entry bytes, and function binding
-> are internal witnesses to that bridge rather than separate authority
-> parameters.
+> predicate. Their manifest sidecar is also source-first
+> (`sym-fragment-v1.plan`); representation-only fragments remain on an explicit
+> `ExprFragmentClaim` / `expr-fragment-v1.plan` fallback. The body, code-entry
+> bytes, and function binding are internal witnesses to that bridge rather than
+> separate authority parameters.
 > The generated cert now also carries `Artifact.lean`: an untrusted artifact
 > root defining `AverCert.Artifact.data` and
 > `AverCert.Artifact.acceptedWithFinal`. The checker pins that `data` term to

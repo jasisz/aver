@@ -625,9 +625,9 @@ fn checked_fragment_sidecar_obligations(
                     "cert-manifest.json `fragment` for `{name}` is missing string field `profile`"
                 )
             })?;
-        if profile != "expr-fragment-v1" {
+        if !matches!(profile, "expr-fragment-v1" | "sym-fragment-v1") {
             return Err(format!(
-                "expr fragment `{name}` sidecar profile mismatch: manifest says `{profile}`"
+                "fragment `{name}` sidecar profile mismatch: manifest says `{profile}`"
             ));
         }
         let path = fragment
@@ -636,7 +636,7 @@ fn checked_fragment_sidecar_obligations(
             .ok_or_else(|| {
                 format!("cert-manifest.json `fragment` for `{name}` is missing string field `plan`")
             })?;
-        let plan_path = checked_fragment_sidecar_path(cert_dir, path)?;
+        let plan_path = checked_fragment_sidecar_path(cert_dir, path, profile)?;
         let claimed_sha = fragment
             .get("plan_sha256")
             .and_then(Value::as_str)
@@ -648,36 +648,38 @@ fn checked_fragment_sidecar_obligations(
             })?;
         let text = std::fs::read_to_string(&plan_path).map_err(|e| {
             format!(
-                "cannot read expr fragment `{name}` sidecar `{}`: {e}",
+                "cannot read fragment `{name}` sidecar `{}`: {e}",
                 plan_path.display()
             )
         })?;
         let file_sha = cert::sha256_hex(text.as_bytes());
         if file_sha != claimed_sha {
             return Err(format!(
-                "expr fragment `{name}` sidecar file hash mismatch: file hashes to \
+                "fragment `{name}` sidecar file hash mismatch: file hashes to \
                  {file_sha}, manifest pins {claimed_sha}"
             ));
         }
-        let plan_check =
-            cert::check_expr_fragment_plan_sidecar(wasm_bytes, name, &text).map_err(|e| {
-                format!("expr fragment `{name}` plan sidecar does not check against wasm: {e}")
-            })?;
+        let plan_check = match profile {
+            "expr-fragment-v1" => cert::check_expr_fragment_plan_sidecar(wasm_bytes, name, &text),
+            "sym-fragment-v1" => cert::check_sym_fragment_plan_sidecar(wasm_bytes, name, &text),
+            _ => unreachable!(),
+        }
+        .map_err(|e| format!("fragment `{name}` plan sidecar does not check against wasm: {e}"))?;
         if plan_check.sidecar.path != path {
             return Err(format!(
-                "expr fragment `{name}` checked plan path mismatch: plan checks as `{}`, \
+                "fragment `{name}` checked plan path mismatch: plan checks as `{}`, \
                  manifest says `{path}`",
                 plan_check.sidecar.path
             ));
         }
         if plan_check.sidecar.sha256 != claimed_sha || plan_check.sidecar.text != text {
             return Err(format!(
-                "expr fragment `{name}` sidecar plan is not the canonical checked plan"
+                "fragment `{name}` sidecar plan is not the canonical checked plan"
             ));
         }
         if !plan_check.canonical_matches_actual {
             return Err(format!(
-                "expr fragment `{name}` plan-first canonical lowering does not match the \
+                "fragment `{name}` plan-first canonical lowering does not match the \
                  actual wasm code-entry{}",
                 plan_check
                     .mismatch_reason
@@ -692,10 +694,14 @@ fn checked_fragment_sidecar_obligations(
     Ok(obligations)
 }
 
-fn checked_fragment_sidecar_path(cert_dir: &Path, path: &str) -> Result<PathBuf, String> {
+fn checked_fragment_sidecar_path(
+    cert_dir: &Path,
+    path: &str,
+    profile: &str,
+) -> Result<PathBuf, String> {
     let path = Path::new(path);
     if path.is_absolute() {
-        return Err("expr-fragment sidecar path must be relative".to_string());
+        return Err("fragment sidecar path must be relative".to_string());
     }
     let components = path.components().collect::<Vec<_>>();
     let [
@@ -704,22 +710,24 @@ fn checked_fragment_sidecar_path(cert_dir: &Path, path: &str) -> Result<PathBuf,
     ] = components.as_slice()
     else {
         return Err(
-            "expr-fragment sidecar path must have shape `fragments/<name>.expr-fragment-v1.plan`"
-                .to_string(),
+            "fragment sidecar path must have shape `fragments/<name>.<profile>.plan`".to_string(),
         );
     };
     if dir.to_str() != Some("fragments") {
-        return Err(
-            "expr-fragment sidecar path must live under the `fragments/` directory".to_string(),
-        );
+        return Err("fragment sidecar path must live under the `fragments/` directory".to_string());
     }
     let file = file
         .to_str()
-        .ok_or_else(|| "expr-fragment sidecar filename is not valid UTF-8".to_string())?;
-    if !file.ends_with(".expr-fragment-v1.plan") || file.contains('/') || file.contains('\\') {
-        return Err(
-            "expr-fragment sidecar filename must end with `.expr-fragment-v1.plan`".to_string(),
-        );
+        .ok_or_else(|| "fragment sidecar filename is not valid UTF-8".to_string())?;
+    let suffix = match profile {
+        "expr-fragment-v1" => ".expr-fragment-v1.plan",
+        "sym-fragment-v1" => ".sym-fragment-v1.plan",
+        _ => return Err(format!("unsupported fragment profile `{profile}`")),
+    };
+    if !file.ends_with(suffix) || file.contains('/') || file.contains('\\') {
+        return Err(format!(
+            "fragment sidecar filename must end with `{suffix}`"
+        ));
     }
     Ok(cert_dir.join(path))
 }
@@ -1033,8 +1041,10 @@ fn lean_expr_fragment_accepted_pins(rederived: &[cert::RederivedObligation]) -> 
     out
 }
 
-/// Checker-owned Lean `example`s proving that expr-fragment byte-origin
-/// acceptance is tied to the schema obligation used by `Final.cert`.
+/// Checker-owned Lean `example`s proving that fragment byte-origin acceptance
+/// is tied to the schema obligation used by `Final.cert`. Source-projectable
+/// fragments use `SymFragmentClaim`; representation-only fragments use the
+/// `ExprFragmentClaim` fallback.
 struct LeanExprFragmentArtifactClaims {
     sym_claims: String,
     expr_claims: String,
@@ -1336,8 +1346,8 @@ fn checker_witness(
          -- also exposed as one audited predicate. This is the v2 landing shape\n\
          -- for replacing loose examples with an `AcceptedArtifact` theorem.\n\
          {expr_fragment_accepted_pins}\n\
-         -- Expr-fragment artifact bridge: raw artifact bytes + raw plan +\n\
-         -- schema obligation imply the aggregate expr-fragment acceptance\n\
+         -- Fragment artifact bridge: raw artifact bytes + source/raw plan +\n\
+         -- schema obligation imply the aggregate fragment acceptance\n\
          -- predicate, with body/code-entry/function binding kept as internal\n\
          -- witnesses rather than extra trusted parameters.\n\
          {expr_fragment_obligation_acceptance_pins}\n\
