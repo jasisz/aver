@@ -161,6 +161,17 @@ decision PlanFirstArtifactCertification
     rejected = ["TraceGuidedAcceptance", "AdHocWholeFunctionRecognizers", "TrustedCompilerMetadata"]
     impacts = ["Certification", "WasmGC", "Lean", "Verifier", "Codegen"]
 
+decision PlanEmittedCanonicalCodegen
+    date = "2026-07-09"
+    author = "Aver core team"
+    reason =
+        "Plan-shaped functions lower through the canonical certification plan lowerer on every build, not only under `--certify`, because the certificate must certify the exact bytes users ship — gating canonical emission on the certify flag would let the sidecar describe a body the production build never emits."
+        "Lowering failure stays a loud compile error: a plan that cannot be canonical-lowered aborts the build rather than silently diverging into a separately-emitted MIR body, so the certified path and the shipped path can never disagree."
+        "The canonical plan shape carries a carrier scratch local, so plan emission engages only in modules that declare the Int carrier type (the `aint_struct_idx` gate) — a documented, semantics-neutral byte-shape dependency that a future carrier-free locals profile would remove."
+    chosen = "UnconditionalCanonicalPlanEmission"
+    rejected = ["CertifyGatedEmission", "SilentMirFallback"]
+    impacts = ["Codegen", "WasmGC", "Certification"]
+
 fn describeDecision(decName: String, pick: String) -> String
     ? "Formats a one-line summary of an architectural decision."
     "Decision: {decName} -> chosen = {pick}"
