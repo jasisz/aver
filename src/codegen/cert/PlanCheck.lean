@@ -12,7 +12,13 @@ open AverCert.Schema
 def sameTy (a b : FragTy) : Bool :=
   if a = b then true else false
 
+def sameSymTy (a b : SymTy) : Bool :=
+  if a = b then true else false
+
 def lookupNode (nodes : List FragNode) (id : Nat) : Option FragNode :=
+  nodes[id]?
+
+def lookupSymNode (nodes : List SymNode) (id : Nat) : Option SymNode :=
   nodes[id]?
 
 def lookupTy (nodes : List FragNode) (id : Nat) : Option FragTy :=
@@ -20,9 +26,19 @@ def lookupTy (nodes : List FragNode) (id : Nat) : Option FragTy :=
   | some n => some n.ty
   | none => none
 
+def lookupSymTy (nodes : List SymNode) (id : Nat) : Option SymTy :=
+  match lookupSymNode nodes id with
+  | some n => some n.ty
+  | none => none
+
 def hasTy (nodes : List FragNode) (id : Nat) (expected : FragTy) : Bool :=
   match lookupTy nodes id with
   | some got => sameTy got expected
+  | none => false
+
+def hasSymTy (nodes : List SymNode) (id : Nat) (expected : SymTy) : Bool :=
+  match lookupSymTy nodes id with
+  | some got => sameSymTy got expected
   | none => false
 
 def hasI32Ty (nodes : List FragNode) (id : Nat) : Bool :=
@@ -45,6 +61,11 @@ def isCarrierLimbField (nodes : List FragNode) (id : Nat) : Bool :=
 def argsHaveTys (nodes : List FragNode) : List Nat → List FragTy → Bool
   | [], [] => true
   | arg :: args, ty :: tys => hasTy nodes arg ty && argsHaveTys nodes args tys
+  | _, _ => false
+
+def symArgsHaveTys (nodes : List SymNode) : List Nat → List SymTy → Bool
+  | [], [] => true
+  | arg :: args, ty :: tys => hasSymTy nodes arg ty && symArgsHaveTys nodes args tys
   | _, _ => false
 
 def primResultTy? (nodes : List FragNode) (op : FragPrim) (args : List Nat) :
@@ -72,6 +93,16 @@ def primResultTy? (nodes : List FragNode) (op : FragPrim) (args : List Nat) :
       match args with
       | [a, b] => if hasI32Ty nodes a && hasI32Ty nodes b then some .boolI32 else none
       | _ => none
+
+def symPrimResultTy? (nodes : List SymNode) (op : SymPrim) (args : List Nat) :
+    Option SymTy :=
+  match op with
+  | .floatAdd =>
+      if symArgsHaveTys nodes args [.float, .float] then some .float else none
+  | .floatMul =>
+      if symArgsHaveTys nodes args [.float, .float] then some .float else none
+  | .floatLe =>
+      if symArgsHaveTys nodes args [.float, .float] then some .bool else none
 
 /-- Hard cap for recursive plan checking. Exceeding it is a fail-closed
     unsupported fragment, matching the profile-limit discipline on the Rust
@@ -121,11 +152,53 @@ def checkBlockFuel : Nat → List FragTy → FragBlock → Bool
 def checkBlock (params : List FragTy) (block : FragBlock) : Bool :=
   checkBlockFuel maxFuel params block
 
+def checkSymBlockFuel : Nat → List SymTy → SymBlock → Bool
+  | 0, _, _ => false
+  | fuel + 1, params, block =>
+      let inferNodeKindTy (checked : List SymNode) (kind : SymNodeKind) :
+          Option SymTy :=
+        match kind with
+        | .param index => params[index]?
+        | .constBool _ => some .bool
+        | .constFloatBits _ => some .float
+        | .prim op args => symPrimResultTy? checked op args
+        | .ifElse cond thenBlock elseBlock =>
+            if hasSymTy checked cond .bool &&
+               checkSymBlockFuel fuel params thenBlock &&
+               checkSymBlockFuel fuel params elseBlock then
+              match lookupSymNode thenBlock.nodes thenBlock.result,
+                    lookupSymNode elseBlock.nodes elseBlock.result with
+              | some t, some e => if t.ty = e.ty then some t.ty else none
+              | _, _ => none
+            else none
+      let rec checkNodes (checked : List SymNode) : List SymNode → Bool
+        | [] => true
+        | node :: rest =>
+            node.id = checked.length &&
+              (match inferNodeKindTy checked node.kind with
+              | some ty => sameSymTy node.ty ty
+              | none => false) &&
+              checkNodes (checked ++ [node]) rest
+      checkNodes [] block.nodes &&
+        match lookupSymNode block.nodes block.result with
+        | some n => n.id = block.result && block.result + 1 = block.nodes.length
+        | none => false
+
+def checkSymBlock (params : List SymTy) (block : SymBlock) : Bool :=
+  checkSymBlockFuel maxFuel params block
+
 def checkExprFragmentRawPlan (plan : ExprFragmentRawPlan) : Bool :=
   plan.profile = "expr-fragment-v1" &&
     checkBlock plan.params plan.body &&
     match lookupNode plan.body.nodes plan.body.result with
     | some n => sameTy n.ty plan.result
+    | none => false
+
+def checkSymRawPlan (plan : SymRawPlan) : Bool :=
+  plan.profile = "sym-fragment-v1" &&
+    checkSymBlock plan.params plan.body &&
+    match lookupSymNode plan.body.nodes plan.body.result with
+    | some n => sameSymTy n.ty plan.result
     | none => false
 
 end AverCert.PlanCheck

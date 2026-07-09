@@ -177,7 +177,9 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
                 format!(
                     "/-- Source-level `SymPlan` projection for `{name}`. This is\n\
                      non-authoritative v2 scaffolding: byte acceptance still uses `{name}Plan`. -/\n\
-                     def {name}SymPlan : SymRawPlan := {sym_plan}\n\n",
+                     def {name}SymPlan : SymRawPlan := {sym_plan}\n\n\
+                     /-- The audited Lean-side source-plan checker accepts `{name}`'s `SymPlan`. -/\n\
+                     example : AverCert.PlanCheck.checkSymRawPlan {name}SymPlan = true := rfl\n\n",
                     sym_plan = sym_plan_lean_value(&sym)
                 )
             })

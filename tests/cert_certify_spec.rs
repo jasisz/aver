@@ -194,6 +194,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "floatAddGoal SymPlan should expose source-level float add:\n{plans_lean}"
     );
     assert!(
+        plans_lean.contains("checkSymRawPlan floatAddGoalSymPlan = true := rfl"),
+        "direct SymPlan projection should be accepted by the Lean-side source checker:\n{plans_lean}"
+    );
+    assert!(
         !plans_lean.contains("def intLessZeroSymPlan : SymRawPlan"),
         "representation-only int carrier fragment must not be promoted to SymPlan yet"
     );
