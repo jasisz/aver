@@ -77,7 +77,11 @@ pub fn write_project(
         &render_certificate(analysis, &model_roots, &model_info),
     )?;
     write(&cert_dir, "Final.lean", &render_final(analysis))?;
-    write(&cert_dir, "Artifact.lean", &render_artifact(analysis))?;
+    write(
+        &cert_dir,
+        "Artifact.lean",
+        &render_artifact(analysis, &model_info),
+    )?;
     write(&cert_dir, "lakefile.lean", &render_lakefile(&model_roots))?;
 
     // Content hashes the checker re-verifies: the audited schema and the
@@ -478,18 +482,25 @@ struct RenderedArtifactClaims {
     sym_claims: String,
     string_eq_claims: String,
     string_claims: String,
+    construct_claims: String,
     sym_proof: String,
     string_eq_proof: String,
     string_proof: String,
+    construct_proof: String,
 }
 
-fn render_artifact_expr_fragment_claims(analysis: &Analysis) -> RenderedArtifactClaims {
+fn render_artifact_expr_fragment_claims(
+    analysis: &Analysis,
+    model_info: &ModelInfo,
+) -> RenderedArtifactClaims {
     let mut sym_claims = Vec::new();
     let mut string_eq_claims = Vec::new();
     let mut string_claims = Vec::new();
+    let mut construct_claims = Vec::new();
     let mut sym_proofs = Vec::new();
     let mut string_eq_proofs = Vec::new();
     let mut string_proofs = Vec::new();
+    let mut construct_proofs = Vec::new();
     for c in &analysis.certs {
         match c.inner() {
             Cert::ExprFragment {
@@ -600,6 +611,39 @@ fn render_artifact_expr_fragment_claims(analysis: &Analysis) -> RenderedArtifact
                      ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }
+            Cert::AdtConstructor {
+                name,
+                self_idx,
+                code_idx,
+                type_idx,
+                carrier,
+                ..
+            } => {
+                let Some(_sym_plan) = adt_constructor_sym_plan_from_cert(c, model_info) else {
+                    continue;
+                };
+                let Some(plan) = construct_plan_from_cert(c) else {
+                    continue;
+                };
+                let code_entry_bytes = lower_construct_plan_code_entry_bytes(&plan, *carrier)
+                    .expect("certified constructor plan lowers to code-entry bytes");
+                let code_entry_bytes = render_byte_list(&code_entry_bytes);
+                let lowered_body = lower_construct_plan(&plan)
+                    .map(|ops| render_ops_value(&ops))
+                    .expect("certified constructor plan lowers to WInstr body");
+                let export_name_bytes = render_byte_list(name.as_bytes());
+                let func_binding = format!(
+                    "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+                );
+                construct_claims.push(format!(
+                    "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, symPlan := AverCert.Plans.{name}ConstructSymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ConstructClaim)",
+                    export_name = lean_str(name),
+                ));
+                construct_proofs.push(format!(
+                    "⟨rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
+                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
+                ));
+            }
             _ => {}
         }
     }
@@ -617,6 +661,11 @@ fn render_artifact_expr_fragment_claims(analysis: &Analysis) -> RenderedArtifact
         "[]".to_string()
     } else {
         format!("[\n  {}\n]", string_eq_claims.join(",\n  "))
+    };
+    let construct_claims = if construct_claims.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[\n  {}\n]", construct_claims.join(",\n  "))
     };
     let sym_proof = sym_proofs
         .into_iter()
@@ -637,21 +686,30 @@ fn render_artifact_expr_fragment_claims(analysis: &Analysis) -> RenderedArtifact
             .fold("trivial".to_string(), |acc, proof| {
                 format!("⟨{proof}, {acc}⟩")
             });
+    let construct_proof =
+        construct_proofs
+            .into_iter()
+            .rev()
+            .fold("trivial".to_string(), |acc, proof| {
+                format!("⟨{proof}, {acc}⟩")
+            });
     RenderedArtifactClaims {
         sym_claims,
         string_eq_claims,
         string_claims,
+        construct_claims,
         sym_proof,
         string_eq_proof,
         string_proof,
+        construct_proof,
     }
 }
 
-fn render_artifact(analysis: &Analysis) -> String {
-    let claims = render_artifact_expr_fragment_claims(analysis);
+fn render_artifact(analysis: &Analysis, model_info: &ModelInfo) -> String {
+    let claims = render_artifact_expr_fragment_claims(analysis, model_info);
     let fragment_proof = format!(
         concat!(
-            "  dsimp [data, symFragmentClaims, stringEqClaims, stringConcatClaims, AverCert.AcceptedArtifact.accepted,\n",
+            "  dsimp [data, symFragmentClaims, stringEqClaims, stringConcatClaims, constructClaims, AverCert.AcceptedArtifact.accepted,\n",
             "    AverCert.AcceptedArtifact.subjectMatchesArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.expectedArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.fragmentClaimObligationsInManifest,\n",
@@ -666,10 +724,14 @@ fn render_artifact(analysis: &Analysis) -> String {
             "    AverCert.AcceptedArtifact.stringConcatClaimExportNames,\n",
             "    AverCert.AcceptedArtifact.stringConcatManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimSymPlanPairs,\n",
+            "    AverCert.AcceptedArtifact.constructClaimExportNames,\n",
+            "    AverCert.AcceptedArtifact.constructManifestPlanNames,\n",
+            "    AverCert.AcceptedArtifact.constructClaimSymPlanPairs,\n",
             "    AverCert.AcceptedArtifact.acceptedFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedSymFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedStringEqFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedStringConcatFragments,\n",
+            "    AverCert.AcceptedArtifact.acceptedConstructFragments,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
@@ -681,13 +743,18 @@ fn render_artifact(analysis: &Analysis) -> String {
             "    AverCert.AcceptedArtifact.stringConcatClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.stringConcatPlanForExport,\n",
             "    AverCert.AcceptedArtifact.stringConcatPlanAccepted,\n",
+            "    AverCert.AcceptedArtifact.constructClaimsAccepted,\n",
+            "    AverCert.AcceptedArtifact.constructClaimAccepted,\n",
+            "    AverCert.AcceptedArtifact.constructPlanForExport,\n",
+            "    AverCert.AcceptedArtifact.constructPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨finalCert, ⟨rfl, ⟨rfl, ⟨⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, {string_proof}⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨finalCert, ⟨rfl, ⟨rfl, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, {construct_proof}⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         sym_proof = claims.sym_proof,
         string_eq_proof = claims.string_eq_proof,
-        string_proof = claims.string_proof
+        string_proof = claims.string_proof,
+        construct_proof = claims.construct_proof
     );
     format!(
          "-- Artifact-carried acceptance root.\n\
@@ -705,8 +772,9 @@ fn render_artifact(analysis: &Analysis) -> String {
          def symFragmentClaims : List AverCert.AcceptedArtifact.SymFragmentClaim := {sym_claims_list}\n\n\
          def stringEqClaims : List AverCert.AcceptedArtifact.StringEqClaim := {string_eq_claims_list}\n\n\
          def stringConcatClaims : List AverCert.AcceptedArtifact.StringConcatClaim := {string_claims_list}\n\n\
+         def constructClaims : List AverCert.AcceptedArtifact.ConstructClaim := {construct_claims_list}\n\n\
          def data : AverCert.AcceptedArtifact.ArtifactData :=\n  \
-           ({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
+           ({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
          def acceptedWithFinal\n\
              (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n\
              AverCert.AcceptedArtifact.accepted data := by\n\
@@ -717,6 +785,7 @@ fn render_artifact(analysis: &Analysis) -> String {
         sym_claims_list = claims.sym_claims,
         string_eq_claims_list = claims.string_eq_claims,
         string_claims_list = claims.string_claims,
+        construct_claims_list = claims.construct_claims,
         fragment_proof = fragment_proof
     )
 }

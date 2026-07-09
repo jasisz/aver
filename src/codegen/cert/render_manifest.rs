@@ -293,9 +293,22 @@ fn render_manifest_lean(
             _ => None,
         })
         .collect::<Vec<_>>();
+    let construct_sym_fragment_plans = analysis
+        .certs
+        .iter()
+        .filter_map(|c| match c.inner() {
+            Cert::AdtConstructor { name, .. }
+                if adt_constructor_sym_plan_from_cert(c, model_info).is_some() =>
+            {
+                Some(format!("({}, Plans.{name}ConstructSymPlan)", lean_str(name)))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
     let sym_fragment_plans = expr_sym_fragment_plans
         .into_iter()
         .chain(string_sym_fragment_plans)
+        .chain(construct_sym_fragment_plans)
         .collect::<Vec<_>>()
         .join(", ");
     let string_eq_plans = analysis
@@ -320,6 +333,20 @@ fn render_manifest_lean(
         })
         .collect::<Vec<_>>()
         .join(", ");
+    let construct_plans = analysis
+        .certs
+        .iter()
+        .filter_map(|c| match c.inner() {
+            Cert::AdtConstructor { name, .. }
+                if construct_plan_from_cert(c).is_some()
+                    && adt_constructor_sym_plan_from_cert(c, model_info).is_some() =>
+            {
+                Some(format!("({}, Plans.{name}ConstructPlan)", lean_str(name)))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     s.push_str(&format!(
         "def manifest : Schema.Manifest :=\n  \
          {{ subject :=\n      \
@@ -332,6 +359,7 @@ fn render_manifest_lean(
          symFragmentPlans := [{sym_fragment_plans}],\n    \
          stringEqPlans := [{string_eq_plans}],\n    \
          stringConcatPlans := [{string_concat_plans}],\n    \
+         constructPlans := [{construct_plans}],\n    \
          exprFragmentPlans := [{expr_fragment_plans}],\n    \
          obligations := [{obligations}] }}\n\n\
          end AverCert\n",
@@ -490,7 +518,7 @@ fn render_manifest(
     let accepted_artifact_exports = analysis
         .certs
         .iter()
-        .filter(|c| artifact_bridge_profile(c) == "accepted-artifact-v1")
+        .filter(|c| artifact_bridge_profile(c, model_info) == "accepted-artifact-v1")
         .count();
     let legacy_witness_exports = analysis.certs.len().saturating_sub(accepted_artifact_exports);
     s.push_str(&format!(
@@ -576,9 +604,30 @@ fn render_manifest(
                     json_str(&sidecar.sha256)
                 )
             }
+            Cert::AdtConstructor { .. } => {
+                if let (Some(sym_plan), Some(plan)) = (
+                    adt_constructor_sym_plan_from_cert(c, model_info),
+                    construct_plan_from_cert(c),
+                ) {
+                    let sym_sidecar = sym_fragment_sidecar(c.name(), &sym_plan);
+                    let sidecar = construct_sidecar(c.name(), &plan);
+                    format!(
+                        ", \"source_fragment\": {{\"profile\": \"sym-fragment-v1\", \
+                         \"plan\": {}, \"plan_sha256\": {}}}, \
+                         \"fragment\": {{\"profile\": \"construct-v1\", \
+                         \"plan\": {}, \"plan_sha256\": {}}}",
+                        json_str(&sym_sidecar.path),
+                        json_str(&sym_sidecar.sha256),
+                        json_str(&sidecar.path),
+                        json_str(&sidecar.sha256)
+                    )
+                } else {
+                    String::new()
+                }
+            }
             _ => String::new(),
         };
-        let artifact_bridge = artifact_bridge_profile(c);
+        let artifact_bridge = artifact_bridge_profile(c, model_info);
         s.push_str(&format!(
             "\n    {{\"name\": {}, \"class\": \"{}\", \"policy\": \"simulatesModel\", \
              \"level\": \"{}\", \"artifact_bridge\": \"{}\", \"dom\": {}, \"cod\": {}, \
@@ -615,11 +664,17 @@ fn render_manifest(
     s
 }
 
-fn artifact_bridge_profile(c: &Cert) -> &'static str {
+fn artifact_bridge_profile(c: &Cert, model_info: &ModelInfo) -> &'static str {
     match c.inner() {
         Cert::ExprFragment { .. }
         | Cert::StringEqVerbatimMatch { .. }
         | Cert::StringConcatVerbatimMatch { .. } => "accepted-artifact-v1",
+        Cert::AdtConstructor { .. }
+            if adt_constructor_sym_plan_from_cert(c, model_info).is_some()
+                && construct_plan_from_cert(c).is_some() =>
+        {
+            "accepted-artifact-v1"
+        }
         _ => "legacy-witness-v1",
     }
 }

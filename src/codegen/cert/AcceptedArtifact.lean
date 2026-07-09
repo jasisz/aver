@@ -165,6 +165,16 @@ def stringConcatPlanForExport
       else
         stringConcatPlanForExport exportName rest
 
+def constructPlanForExport
+    (exportName : String) : List (String × ConstructRawPlan) →
+    Option ConstructRawPlan
+  | [] => none
+  | (name, plan) :: rest =>
+      if name == exportName then
+        some plan
+      else
+        constructPlanForExport exportName rest
+
 /-- One source-level String.concat claim inside an artifact certificate. -/
 structure StringConcatClaim where
   exportNameBytes : AverCert.WasmSlice.ByteSeq
@@ -183,6 +193,17 @@ structure StringEqClaim where
   carrier         : Nat
   stringTy        : Nat
   stringEqFuncIdx : Nat
+  symPlan         : SymRawPlan
+  obligation      : Obligation
+
+/-- One source-level ADT constructor claim inside an artifact certificate. The
+    source `SymRawPlan` describes the Aver value being constructed; the
+    target-bound `ConstructRawPlan` is taken from the manifest and checked
+    against it before byte lowering. -/
+structure ConstructClaim where
+  exportNameBytes : AverCert.WasmSlice.ByteSeq
+  exportName      : String
+  carrier         : Nat
   symPlan         : SymRawPlan
   obligation      : Obligation
 
@@ -223,6 +244,45 @@ def stringConcatClaimAccepted
         claim.obligation
   | none => False
 
+def constructPlanAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (exportName : String)
+    (carrier : Nat)
+    (symPlan : SymRawPlan)
+    (plan : ConstructRawPlan)
+    (obligation : Obligation) : Prop :=
+  obligation.export_ = exportName ∧
+    obligation.carrier = carrier ∧
+    AverCert.PlanCheck.checkSymRawPlan symPlan = true ∧
+    AverCert.PlanCheck.constructPlanMatchesSymRawPlan symPlan plan = true ∧
+    AverCert.PlanCheck.checkConstructRawPlan plan = true ∧
+    ∃ body codeEntry binding,
+      AverCert.PlanLower.lowerConstructBody plan = some body ∧
+      AverCert.PlanBytes.lowerConstructCodeEntry carrier plan = some codeEntry ∧
+      AverCert.WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
+      AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+      binding.funcIdx = obligation.self ∧
+      binding.codeEntry = codeEntry ∧
+      obligation.code binding.funcIdx =
+        some { arity := plan.arity, nlocals := 1, body := body }
+
+def constructClaimAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (manifest : AverCert.Schema.Manifest)
+    (claim : ConstructClaim) : Prop :=
+  match constructPlanForExport claim.exportName manifest.constructPlans with
+  | some plan =>
+      constructPlanAccepted
+        wasmBytes
+        claim.exportNameBytes
+        claim.exportName
+        claim.carrier
+        claim.symPlan
+        plan
+        claim.obligation
+  | none => False
+
 /-- Aggregate source-level symbolic fragment acceptance for one artifact's
     source claim list. -/
 def symFragmentClaimsAccepted
@@ -254,6 +314,17 @@ def stringEqClaimsAccepted
   | claim :: rest =>
       stringEqClaimAccepted wasmBytes manifest claim ∧
       stringEqClaimsAccepted wasmBytes manifest rest
+
+/-- Aggregate source-level constructor witness acceptance for one artifact's
+    constructor claim list. -/
+def constructClaimsAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (manifest : AverCert.Schema.Manifest) :
+    List ConstructClaim → Prop
+  | [] => True
+  | claim :: rest =>
+      constructClaimAccepted wasmBytes manifest claim ∧
+      constructClaimsAccepted wasmBytes manifest rest
 
 /-- The source plans claimed by an artifact, projected into the same manifest
     surface used for pinning. Keeping this in the audited predicate means a
@@ -297,6 +368,14 @@ def stringEqManifestPlanNames
     (manifest : AverCert.Schema.Manifest) : List String :=
   manifest.stringEqPlans.map (fun p => p.1)
 
+def constructClaimExportNames
+    (claims : List ConstructClaim) : List String :=
+  claims.map (fun c => c.exportName)
+
+def constructManifestPlanNames
+    (manifest : AverCert.Schema.Manifest) : List String :=
+  manifest.constructPlans.map (fun p => p.1)
+
 /-- The source `SymPlan`s carried by String.concat claims. These live in the
     manifest's common `symFragmentPlans` list; the byte-lowering-specific
     `StringConcatRawPlan` stays in `stringConcatPlans`. -/
@@ -306,6 +385,10 @@ def stringConcatClaimSymPlanPairs
 
 def stringEqClaimSymPlanPairs
     (claims : List StringEqClaim) : List (String × SymRawPlan) :=
+  claims.map (fun c => (c.exportName, c.symPlan))
+
+def constructClaimSymPlanPairs
+    (claims : List ConstructClaim) : List (String × SymRawPlan) :=
   claims.map (fun c => (c.exportName, c.symPlan))
 
 /-- The checker-facing artifact data currently accepted by the Lean bridge.
@@ -319,6 +402,7 @@ structure ArtifactData where
   symFragmentClaims  : List SymFragmentClaim
   stringEqClaims     : List StringEqClaim
   stringConcatClaims : List StringConcatClaim
+  constructClaims    : List ConstructClaim
 
 def acceptedSymFragments (artifact : ArtifactData) : Prop :=
   symFragmentClaimsAccepted artifact.wasmBytes artifact.symFragmentClaims
@@ -335,10 +419,17 @@ def acceptedStringEqFragments (artifact : ArtifactData) : Prop :=
     artifact.manifest
     artifact.stringEqClaims
 
+def acceptedConstructFragments (artifact : ArtifactData) : Prop :=
+  constructClaimsAccepted
+    artifact.wasmBytes
+    artifact.manifest
+    artifact.constructClaims
+
 def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedSymFragments artifact ∧
   acceptedStringEqFragments artifact ∧
-  acceptedStringConcatFragments artifact
+  acceptedStringConcatFragments artifact ∧
+  acceptedConstructFragments artifact
 
 def expectedArtifactRoot : String :=
   "AverCert.Artifact.certificate"
@@ -349,7 +440,8 @@ def subjectMatchesArtifactRoot (artifact : ArtifactData) : Prop :=
 def claimObligationExports (artifact : ArtifactData) : List String :=
   artifact.symFragmentClaims.map (fun c => c.obligation.export_) ++
   artifact.stringEqClaims.map (fun c => c.obligation.export_) ++
-  artifact.stringConcatClaims.map (fun c => c.obligation.export_)
+  artifact.stringConcatClaims.map (fun c => c.obligation.export_) ++
+  artifact.constructClaims.map (fun c => c.obligation.export_)
 
 def fragmentClaimObligationsInManifest (artifact : ArtifactData) : Prop :=
   (claimObligationExports artifact).all
@@ -361,12 +453,15 @@ def claimsMatchManifest (artifact : ArtifactData) : Prop :=
   | some encodedSymExprPlans =>
       symFragmentClaimPlanPairs artifact.symFragmentClaims ++
           stringEqClaimSymPlanPairs artifact.stringEqClaims ++
-          stringConcatClaimSymPlanPairs artifact.stringConcatClaims =
+          stringConcatClaimSymPlanPairs artifact.stringConcatClaims ++
+          constructClaimSymPlanPairs artifact.constructClaims =
           artifact.manifest.symFragmentPlans ∧
       stringEqClaimExportNames artifact.stringEqClaims =
           stringEqManifestPlanNames artifact.manifest ∧
       stringConcatClaimExportNames artifact.stringConcatClaims =
           stringConcatManifestPlanNames artifact.manifest ∧
+      constructClaimExportNames artifact.constructClaims =
+          constructManifestPlanNames artifact.manifest ∧
       encodedSymExprPlans = artifact.manifest.exprFragmentPlans
   | none => False
 

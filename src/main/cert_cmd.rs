@@ -760,11 +760,84 @@ fn checked_fragment_sidecar_obligations(
             continue;
         }
 
+        if class == Some("adt-constructor")
+            && (entry.get("fragment").is_some() || entry.get("source_fragment").is_some())
+        {
+            let (profile, path, claimed_sha, text) = read_fragment_sidecar(cert_dir, name, entry)?;
+            let (source_profile, source_path, source_claimed_sha, source_text) =
+                read_named_fragment_sidecar(cert_dir, name, entry, "source_fragment")?;
+            if profile != "construct-v1" {
+                return Err(format!(
+                    "fragment `{name}` sidecar profile mismatch: manifest says `{profile}`"
+                ));
+            }
+            if source_profile != "sym-fragment-v1" {
+                return Err(format!(
+                    "fragment `{name}` source sidecar profile mismatch: manifest says \
+                     `{source_profile}`"
+                ));
+            }
+            cert::parse_construct_plan(&text)
+                .map_err(|e| format!("fragment `{name}` construct plan is malformed: {e}"))?;
+            let expected_obligation = byte_derived_legacy
+                .iter()
+                .find(|r| r.name == name)
+                .ok_or_else(|| {
+                    format!(
+                        "fragment `{name}` declares `construct-v1`, but the wasm bytes \
+                         do not re-derive an ADT constructor certificate for that export"
+                    )
+                })?;
+            let expected = expected_obligation.construct_plan.as_ref().ok_or_else(|| {
+                format!(
+                    "fragment `{name}` declares `construct-v1`, but the wasm bytes \
+                     do not re-derive an ADT constructor plan for that export"
+                )
+            })?;
+            let expected_source =
+                expected_obligation
+                    .construct_sym_plan
+                    .as_ref()
+                    .ok_or_else(|| {
+                        format!(
+                            "fragment `{name}` declares `source_fragment`, but the wasm bytes \
+                         and source model do not re-derive a constructor SymPlan for that export"
+                        )
+                    })?;
+            if expected_source.path != source_path {
+                return Err(format!(
+                    "fragment `{name}` checked source plan path mismatch: plan checks as `{}`, \
+                     manifest says `{source_path}`",
+                    expected_source.path
+                ));
+            }
+            if expected_source.sha256 != source_claimed_sha || expected_source.text != source_text {
+                return Err(format!(
+                    "fragment `{name}` source SymPlan sidecar is not the canonical \
+                     byte-derived constructor source plan"
+                ));
+            }
+            if expected.path != path {
+                return Err(format!(
+                    "fragment `{name}` checked plan path mismatch: plan checks as `{}`, \
+                     manifest says `{path}`",
+                    expected.path
+                ));
+            }
+            if expected.sha256 != claimed_sha || expected.text != text {
+                return Err(format!(
+                    "fragment `{name}` construct sidecar is not the canonical \
+                     byte-derived constructor plan"
+                ));
+            }
+            continue;
+        }
+
         if class != Some("expr-fragment-v1") {
             if entry.get("fragment").is_some() || entry.get("source_fragment").is_some() {
                 return Err(format!(
                     "cert-manifest.json entry for `{name}` has fragment sidecar metadata but \
-                     is not class `expr-fragment-v1`"
+                     is not a plan-first class"
                 ));
             }
             continue;
@@ -897,6 +970,7 @@ fn read_named_fragment_sidecar(
         "sym-fragment-v1" => "sym-fragment-v1",
         "string-eq-v1" => "string-eq-v1",
         "string-concat-v1" => "string-concat-v1",
+        "construct-v1" => "construct-v1",
         other => {
             return Err(format!(
                 "fragment `{name}` sidecar profile mismatch: manifest says `{other}`"
@@ -965,6 +1039,7 @@ fn checked_fragment_sidecar_path(
         "sym-fragment-v1" => ".sym-fragment-v1.plan",
         "string-eq-v1" => ".string-eq-v1.plan",
         "string-concat-v1" => ".string-concat-v1.plan",
+        "construct-v1" => ".construct-v1.plan",
         _ => return Err(format!("unsupported fragment profile `{profile}`")),
     };
     if !file.ends_with(suffix) || file.contains('/') || file.contains('\\') {
@@ -1215,10 +1290,19 @@ fn lean_sym_fragment_plan_pairs(rederived: &[cert::RederivedObligation]) -> Stri
                 .map(|plan| format!("(\"{}\", {plan})", r.name))
         })
         .collect::<Vec<_>>();
+    let construct_plans = rederived
+        .iter()
+        .filter_map(|r| {
+            r.construct_sym_plan_lean
+                .as_ref()
+                .map(|plan| format!("(\"{}\", {plan})", r.name))
+        })
+        .collect::<Vec<_>>();
     let inner = expr_plans
         .into_iter()
         .chain(string_eq_plans)
         .chain(string_plans)
+        .chain(construct_plans)
         .collect::<Vec<_>>()
         .join(",\n   ");
     format!("[ {inner} ]")
@@ -1250,6 +1334,26 @@ fn lean_string_concat_plan_pairs(rederived: &[cert::RederivedObligation]) -> Str
             r.string_concat_plan_lean
                 .as_ref()
                 .map(|plan| format!("(\"{}\", {plan})", r.name))
+        })
+        .collect::<Vec<_>>()
+        .join(",\n   ");
+    format!("[ {inner} ]")
+}
+
+/// A Lean list literal of `(export name, ConstructRawPlan)` pairs for
+/// source-level ADT constructor witnesses. These terms are checker-rendered
+/// from byte-derived constructor shapes, never copied from attacker Lean text.
+fn lean_construct_plan_pairs(rederived: &[cert::RederivedObligation]) -> String {
+    let inner = rederived
+        .iter()
+        .filter_map(|r| {
+            if r.construct_sym_plan_lean.is_some() {
+                r.construct_plan_lean
+                    .as_ref()
+                    .map(|plan| format!("(\"{}\", {plan})", r.name))
+            } else {
+                None
+            }
         })
         .collect::<Vec<_>>()
         .join(",\n   ");
@@ -1290,10 +1394,21 @@ fn lean_sym_fragment_encoded_plan_pairs(rederived: &[cert::RederivedObligation])
             }
         })
         .collect::<Vec<_>>();
+    let construct_pairs = rederived
+        .iter()
+        .filter_map(|r| {
+            if r.construct_sym_plan_lean.is_some() {
+                Some(format!("(\"{}\", none)", r.name))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
     let inner = expr_pairs
         .into_iter()
         .chain(string_eq_pairs)
         .chain(string_pairs)
+        .chain(construct_pairs)
         .collect::<Vec<_>>()
         .join(",\n   ");
     format!("[ {inner} ]")
@@ -1425,9 +1540,11 @@ struct LeanExprFragmentArtifactClaims {
     sym_claims: String,
     string_eq_claims: String,
     string_claims: String,
+    construct_claims: String,
     sym_proof: String,
     string_eq_proof: String,
     string_proof: String,
+    construct_proof: String,
 }
 
 fn lean_expr_fragment_artifact_claims(
@@ -1436,9 +1553,11 @@ fn lean_expr_fragment_artifact_claims(
     let mut sym_claims = Vec::new();
     let mut string_eq_claims = Vec::new();
     let mut string_claims = Vec::new();
+    let mut construct_claims = Vec::new();
     let mut sym_proofs = Vec::new();
     let mut string_eq_proofs = Vec::new();
     let mut string_proofs = Vec::new();
+    let mut construct_proofs = Vec::new();
     for r in rederived {
         if r.string_eq_plan_lean.is_some() {
             let (
@@ -1524,6 +1643,34 @@ fn lean_expr_fragment_artifact_claims(
             ));
             continue;
         }
+        if r.construct_plan_lean.is_some() {
+            let (Some(sym_plan), Some(body), Some(bytes), Some(code_idx), Some(type_idx)) = (
+                r.construct_sym_plan_lean.as_ref(),
+                r.construct_lowered_body_lean.as_ref(),
+                r.construct_lowered_code_entry_lean.as_ref(),
+                r.construct_code_idx,
+                r.construct_type_idx,
+            ) else {
+                continue;
+            };
+            let export_name_bytes = lean_byte_list(r.name.as_bytes());
+            let binding = format!(
+                "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {} }} : AverCert.WasmSlice.FuncBinding)",
+                r.self_idx, code_idx, type_idx, bytes
+            );
+            construct_claims.push(format!(
+                "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
+                 carrier := {carrier}, symPlan := (({sym_plan}) : AverCert.Schema.SymRawPlan), \
+                 obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ConstructClaim)",
+                name = r.name,
+                carrier = r.carrier,
+            ));
+            construct_proofs.push(format!(
+                "⟨rfl, rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
+                 ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
+            ));
+            continue;
+        }
         let (Some(_plan), Some(body), Some(bytes), Some(code_idx), Some(type_idx)) = (
             r.fragment_plan_lean.as_ref(),
             r.fragment_lowered_body_lean.as_ref(),
@@ -1568,6 +1715,11 @@ fn lean_expr_fragment_artifact_claims(
     } else {
         format!("[\n  {}\n]", string_claims.join(",\n  "))
     };
+    let construct_claims = if construct_claims.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[\n  {}\n]", construct_claims.join(",\n  "))
+    };
     let sym_proof = sym_proofs
         .into_iter()
         .rev()
@@ -1586,13 +1738,21 @@ fn lean_expr_fragment_artifact_claims(
         .fold("trivial".to_string(), |acc, proof| {
             format!("⟨{proof}, {acc}⟩")
         });
+    let construct_proof = construct_proofs
+        .into_iter()
+        .rev()
+        .fold("trivial".to_string(), |acc, proof| {
+            format!("⟨{proof}, {acc}⟩")
+        });
     LeanExprFragmentArtifactClaims {
         sym_claims,
         string_eq_claims,
         string_claims,
+        construct_claims,
         sym_proof,
         string_eq_proof,
         string_proof,
+        construct_proof,
     }
 }
 
@@ -1600,12 +1760,14 @@ fn lean_artifact_data_literal(
     sym_claims: &str,
     string_eq_claims: &str,
     string_claims: &str,
+    construct_claims: &str,
 ) -> String {
     format!(
         "({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, \
          symFragmentClaims := ({sym_claims} : List AverCert.AcceptedArtifact.SymFragmentClaim), \
          stringEqClaims := ({string_eq_claims} : List AverCert.AcceptedArtifact.StringEqClaim), \
-         stringConcatClaims := ({string_claims} : List AverCert.AcceptedArtifact.StringConcatClaim) }} : \
+         stringConcatClaims := ({string_claims} : List AverCert.AcceptedArtifact.StringConcatClaim), \
+         constructClaims := ({construct_claims} : List AverCert.AcceptedArtifact.ConstructClaim) }} : \
          AverCert.AcceptedArtifact.ArtifactData)"
     )
 }
@@ -1620,6 +1782,7 @@ fn lean_fragment_acceptance_proof_block(
             "{indent}  AverCert.AcceptedArtifact.acceptedSymFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.acceptedStringEqFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.acceptedStringConcatFragments,\n",
+            "{indent}  AverCert.AcceptedArtifact.acceptedConstructFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
@@ -1631,14 +1794,19 @@ fn lean_fragment_acceptance_proof_block(
             "{indent}  AverCert.AcceptedArtifact.stringConcatClaimAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.stringConcatPlanForExport,\n",
             "{indent}  AverCert.AcceptedArtifact.stringConcatPlanAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.constructClaimsAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.constructClaimAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.constructPlanForExport,\n",
+            "{indent}  AverCert.AcceptedArtifact.constructPlanAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "{indent}  AverCert.ExprFragmentAccepted.accepted]\n",
-            "{indent}exact ⟨{sym_proof}, ⟨{string_eq_proof}, {string_proof}⟩⟩\n"
+            "{indent}exact ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, {construct_proof}⟩⟩⟩\n"
         ),
         indent = indent,
         sym_proof = witness.sym_proof,
         string_eq_proof = witness.string_eq_proof,
-        string_proof = witness.string_proof
+        string_proof = witness.string_proof,
+        construct_proof = witness.construct_proof
     )
 }
 
@@ -1651,6 +1819,7 @@ fn lean_expr_fragment_obligation_acceptance_pins(
         &witness.sym_claims,
         &witness.string_eq_claims,
         &witness.string_claims,
+        &witness.construct_claims,
     );
     format!(
         concat!(
@@ -1671,6 +1840,7 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
         &witness.sym_claims,
         &witness.string_eq_claims,
         &witness.string_claims,
+        &witness.construct_claims,
     );
     let checker_proof = format!(
         concat!(
@@ -1689,10 +1859,14 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
             "    AverCert.AcceptedArtifact.stringConcatClaimExportNames,\n",
             "    AverCert.AcceptedArtifact.stringConcatManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimSymPlanPairs,\n",
+            "    AverCert.AcceptedArtifact.constructClaimExportNames,\n",
+            "    AverCert.AcceptedArtifact.constructManifestPlanNames,\n",
+            "    AverCert.AcceptedArtifact.constructClaimSymPlanPairs,\n",
             "    AverCert.AcceptedArtifact.acceptedFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedSymFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedStringEqFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedStringConcatFragments,\n",
+            "    AverCert.AcceptedArtifact.acceptedConstructFragments,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
@@ -1704,14 +1878,19 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
             "    AverCert.AcceptedArtifact.stringConcatClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.stringConcatPlanForExport,\n",
             "    AverCert.AcceptedArtifact.stringConcatPlanAccepted,\n",
+            "    AverCert.AcceptedArtifact.constructClaimsAccepted,\n",
+            "    AverCert.AcceptedArtifact.constructClaimAccepted,\n",
+            "    AverCert.AcceptedArtifact.constructPlanForExport,\n",
+            "    AverCert.AcceptedArtifact.constructPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨{final_witness}, ⟨rfl, ⟨rfl, ⟨⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, {string_proof}⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨{final_witness}, ⟨rfl, ⟨rfl, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, {construct_proof}⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         final_witness = FINAL_WITNESS_THEOREM,
         sym_proof = witness.sym_proof,
         string_eq_proof = witness.string_eq_proof,
-        string_proof = witness.string_proof
+        string_proof = witness.string_proof,
+        construct_proof = witness.construct_proof
     );
     format!(
         concat!(
@@ -1769,6 +1948,7 @@ fn checker_witness(
     let sym_fragment_plans = lean_sym_fragment_plan_pairs(rederived);
     let string_eq_plans = lean_string_eq_plan_pairs(rederived);
     let string_concat_plans = lean_string_concat_plan_pairs(rederived);
+    let construct_plans = lean_construct_plan_pairs(rederived);
     let sym_fragment_encoded_plans = lean_sym_fragment_encoded_plan_pairs(rederived);
     let expr_fragment_lower_pins = lean_expr_fragment_lower_pins(rederived);
     let expr_fragment_code_entry_pins = lean_expr_fragment_code_entry_pins(rederived);
@@ -1848,6 +2028,12 @@ fn checker_witness(
          -- String.concat helper-shape validation.\n\
          example : AverCert.manifest.stringConcatPlans = {string_concat_plans} := rfl\n\
          example : AverCert.manifest.stringConcatPlans.all (fun p => AverCert.PlanCheck.checkStringConcatRawPlan p.2) = true := rfl\n\n\
+         -- ADT constructor target plans: the manifest's Lean-data constructor\n\
+         -- plans are pinned to checker-rendered `ConstructRawPlan` terms\n\
+         -- reconstructed from byte-derived constructor shapes and matched\n\
+         -- against their source `SymRawPlan` witnesses.\n\
+         example : AverCert.manifest.constructPlans = {construct_plans} := rfl\n\
+         example : AverCert.manifest.constructPlans.all (fun p => AverCert.PlanCheck.checkConstructRawPlan p.2) = true := rfl\n\n\
          -- Expr-fragment raw plans: the manifest's Lean-data representation plans\n\
          -- are pinned to checker-rendered `ExprFragmentRawPlan` terms derived\n\
          -- from checked source sidecars, or from representation fallback sidecars\n\

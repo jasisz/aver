@@ -125,6 +125,30 @@ pub struct RederivedObligation {
     pub string_eq_string_ty: Option<u32>,
     /// The wasm function index of the `String.eq` host helper.
     pub string_eq_func_idx: Option<u32>,
+    /// For `construct-v1`, the byte-derived target-bound ADT constructor plan.
+    pub construct_plan: Option<FragmentPlanSidecar>,
+    /// For `construct-v1`, the byte-derived source-level symbolic constructor
+    /// view. This is reconstructed from the checked source model plus the
+    /// byte-derived constructor shape.
+    pub construct_sym_plan: Option<FragmentPlanSidecar>,
+    /// The same checked construct plan rendered as a Lean `ConstructRawPlan`
+    /// term. `aver cert verify` pins `manifest.constructPlans` to these
+    /// checker-rendered terms.
+    pub construct_plan_lean: Option<String>,
+    /// The source-level `SymRawPlan` view of the same byte-derived constructor
+    /// shape.
+    pub construct_sym_plan_lean: Option<String>,
+    /// For `construct-v1`, the byte-derived defined-function index into the
+    /// code section (`funcIdx - importedFuncCount`).
+    pub construct_code_idx: Option<u32>,
+    /// For `construct-v1`, the byte-derived function-section type index.
+    pub construct_type_idx: Option<u32>,
+    /// For `construct-v1`, the verifier-rendered `List WInstr` body that the
+    /// checked constructor plan canonically lowers to.
+    pub construct_lowered_body_lean: Option<String>,
+    /// For `construct-v1`, the verifier-rendered canonical raw code-entry bytes
+    /// that the checked constructor plan lowers to.
+    pub construct_lowered_code_entry_lean: Option<String>,
 }
 
 pub struct RederivedCertificate {
@@ -410,6 +434,7 @@ fn rederive_certificate_inner(
 ) -> Result<RederivedCertificate, String> {
     let (user_fns, box_idx, user_idx_set, carrier, host_roles) = disassemble(wasm_bytes)?;
     let model_ops = model_step_ops(model_files);
+    let model_info = ModelInfo::from_files(model_files);
     let fns: std::collections::HashMap<u32, &UserFn> =
         user_fns.iter().map(|f| (f.wasm_idx, f)).collect();
     let mut certs = Vec::new();
@@ -641,6 +666,48 @@ fn rederive_certificate_inner(
             },
             string_eq_func_idx: match c.inner() {
                 Cert::StringEqVerbatimMatch { string_eq_idx, .. } => Some(*string_eq_idx),
+                _ => None,
+            },
+            construct_plan: match c.inner() {
+                Cert::AdtConstructor { .. } => {
+                    construct_plan_from_cert(c).map(|plan| construct_sidecar(c.name(), &plan))
+                }
+                _ => None,
+            },
+            construct_sym_plan: match c.inner() {
+                Cert::AdtConstructor { .. } => adt_constructor_sym_plan_from_cert(c, &model_info)
+                    .map(|plan| sym_fragment_sidecar(c.name(), &plan)),
+                _ => None,
+            },
+            construct_plan_lean: match c.inner() {
+                Cert::AdtConstructor { .. } => {
+                    construct_plan_from_cert(c).map(|plan| construct_plan_lean_value(&plan))
+                }
+                _ => None,
+            },
+            construct_sym_plan_lean: match c.inner() {
+                Cert::AdtConstructor { .. } => adt_constructor_sym_plan_from_cert(c, &model_info)
+                    .map(|plan| sym_plan_lean_value(&plan)),
+                _ => None,
+            },
+            construct_code_idx: match c.inner() {
+                Cert::AdtConstructor { code_idx, .. } => Some(*code_idx),
+                _ => None,
+            },
+            construct_type_idx: match c.inner() {
+                Cert::AdtConstructor { type_idx, .. } => Some(*type_idx),
+                _ => None,
+            },
+            construct_lowered_body_lean: match c.inner() {
+                Cert::AdtConstructor { .. } => construct_plan_from_cert(c)
+                    .and_then(|plan| lower_construct_plan(&plan).ok())
+                    .map(|ops| render_ops_value(&ops)),
+                _ => None,
+            },
+            construct_lowered_code_entry_lean: match c.inner() {
+                Cert::AdtConstructor { carrier, .. } => construct_plan_from_cert(c)
+                    .and_then(|plan| lower_construct_plan_code_entry_bytes(&plan, *carrier).ok())
+                    .map(|bytes| render_byte_list(&bytes)),
                 _ => None,
             },
         })

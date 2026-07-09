@@ -144,18 +144,19 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
-        Some(9),
+        Some(10),
         "AcceptedArtifact coverage changed; update this migration counter deliberately"
     );
     assert_eq!(
         manifest["artifact_bridge_counts"]["legacy-witness-v1"].as_u64(),
-        Some((expected.len() - 9) as u64),
+        Some((expected.len() - 10) as u64),
         "legacy witness count changed; update this migration counter deliberately"
     );
     let expected_bridge = |class: &str| match class {
-        "expr-fragment-v1" | "verbatim-string-eq" | "verbatim-string-concat" => {
-            "accepted-artifact-v1"
-        }
+        "adt-constructor"
+        | "expr-fragment-v1"
+        | "verbatim-string-eq"
+        | "verbatim-string-concat" => "accepted-artifact-v1",
         _ => "legacy-witness-v1",
     };
     for entry in manifest["certified"].as_array().unwrap() {
@@ -296,9 +297,12 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         .find(|entry| entry["name"].as_str() == Some("mkOp"))
         .expect("mkOp manifest entry");
     assert!(
-        mkop_entry.get("source_fragment").is_none(),
-        "mkOp should not advertise source_fragment in the checked manifest until \
-         construct has byte-bound lowering"
+        mkop_entry["source_fragment"]["profile"].as_str() == Some("sym-fragment-v1"),
+        "mkOp should advertise its source constructor plan in the checked manifest:\n{mkop_entry:?}"
+    );
+    assert!(
+        mkop_entry["fragment"]["profile"].as_str() == Some("construct-v1"),
+        "mkOp should advertise its byte-bound constructor plan in the checked manifest:\n{mkop_entry:?}"
     );
     let mkop_source_plan =
         std::fs::read_to_string(out_dir.join("cert/fragments/6d6b4f70.sym-fragment-v1.plan"))
@@ -352,8 +356,13 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "source-level int fragment should not carry a duplicate ExprFragmentClaim:\n{artifact_lean}"
     );
     assert!(
-        !artifact_lean.contains("mkOpConstructSymPlan"),
-        "mkOp construct SymPlan is not an AcceptedArtifact claim until construct lowering lands:\n{artifact_lean}"
+        artifact_lean
+            .contains("def constructClaims : List AverCert.AcceptedArtifact.ConstructClaim"),
+        "artifact should carry constructor claims:\n{artifact_lean}"
+    );
+    assert!(
+        artifact_lean.contains("symPlan := AverCert.Plans.mkOpConstructSymPlan"),
+        "mkOp construct SymPlan should now be an AcceptedArtifact claim:\n{artifact_lean}"
     );
 
     let planned_goal_names: BTreeSet<String> = [

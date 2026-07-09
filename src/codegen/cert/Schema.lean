@@ -323,6 +323,7 @@ structure Manifest where
   symFragmentPlans : List (String × SymRawPlan)
   stringEqPlans : List (String × StringEqRawPlan)
   stringConcatPlans : List (String × StringConcatRawPlan)
+  constructPlans : List (String × ConstructRawPlan)
   exprFragmentPlans : List (String × ExprFragmentRawPlan)
   obligations : List Obligation
 

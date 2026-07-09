@@ -87,8 +87,7 @@ fn construct_field_lean_value(field: &ConstructFieldPlan) -> String {
     }
 }
 
-#[cfg(test)]
-fn parse_construct_plan(text: &str) -> Result<ConstructPlan, String> {
+pub fn parse_construct_plan(text: &str) -> Result<ConstructPlan, String> {
     let mut lines = text.lines();
     expect_construct_plan_line(&mut lines, "aver.construct-fragment.plan.v1")?;
     expect_construct_plan_line(&mut lines, "profile construct-v1")?;
@@ -229,7 +228,6 @@ fn check_construct_plan(plan: &ConstructPlan) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(test)]
 fn expect_construct_plan_line<'a>(
     lines: &mut std::str::Lines<'a>,
     expected: &str,
@@ -247,7 +245,6 @@ fn expect_construct_plan_line<'a>(
     }
 }
 
-#[cfg(test)]
 fn parse_construct_nat_line<'a>(
     lines: &mut std::str::Lines<'a>,
     label: &str,

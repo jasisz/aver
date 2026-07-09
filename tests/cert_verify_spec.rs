@@ -159,14 +159,16 @@ def intRepr (S : CarrierSpec C) : Int -> WVal -> Prop := S.Repr\n\
 def boolRepr (_S : CarrierSpec C) (b : Bool) (w : WVal) : Prop := w = b32 b\n\
 def verbatimRepr (_S : CarrierSpec C) (v : WVal) (w : WVal) : Prop := w = v\n\
 structure SymRawPlan where\n\
+structure StringEqRawPlan where\n\
 structure StringConcatRawPlan where\n\
+structure ConstructRawPlan where\n\
 structure ExprFragmentRawPlan where\n\
 structure Obligation where\n  export_ : String\n  policy : Policy\n  carrier : Nat\n  \
 code : CodeTbl\n  host : (List WVal -> Option WVal) -> (List WVal -> Option WVal) -> (List WVal -> Option WVal) -> (List WVal -> Option WVal) -> (Nat -> List WVal -> Option WVal) -> HostTbl\n  \
 self : Nat\n  Dom : Type\n  Cod : Type\n  domRepr : CarrierSpec carrier -> Dom -> List WVal -> Prop\n  codRepr : CarrierSpec carrier -> Cod -> WVal -> Prop\n  model : Dom -> Cod\n\
 def Obligation.holds (_o : Obligation) : Prop := True\n\
 structure Manifest where\n  subject : Subject\n  obligations : List Obligation\n\
-  symFragmentPlans : List (String × SymRawPlan)\n  stringConcatPlans : List (String × StringConcatRawPlan)\n  exprFragmentPlans : List (String × ExprFragmentRawPlan)\n\
+  symFragmentPlans : List (String × SymRawPlan)\n  stringEqPlans : List (String × StringEqRawPlan)\n  stringConcatPlans : List (String × StringConcatRawPlan)\n  constructPlans : List (String × ConstructRawPlan)\n  exprFragmentPlans : List (String × ExprFragmentRawPlan)\n\
 def Holds (_m : Manifest) : Prop := True\n\
 end AverCert.Schema\n";
 
