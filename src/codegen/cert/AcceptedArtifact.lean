@@ -93,9 +93,14 @@ def exprFragmentClaimsAccepted
     behind this same shape rather than adding new loose examples. -/
 structure ArtifactData where
   wasmBytes          : AverCert.WasmSlice.ByteSeq
+  manifest           : AverCert.Schema.Manifest
   exprFragmentClaims : List ExprFragmentClaim
 
 def acceptedExprFragments (artifact : ArtifactData) : Prop :=
   exprFragmentClaimsAccepted artifact.wasmBytes artifact.exprFragmentClaims
+
+def accepted (artifact : ArtifactData) : Prop :=
+  AverCert.Schema.Holds artifact.manifest ∧
+  acceptedExprFragments artifact
 
 end AverCert.AcceptedArtifact

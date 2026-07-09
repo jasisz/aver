@@ -89,10 +89,11 @@ use serde_json::Value;
 /// compared by full-name equality by `Lean.collectAxioms`.
 const AXIOM_WHITELIST: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"];
 
-/// The constant the checker composes in its own witness file: it ascribes
-/// `AverCert.Final.cert` to the type `Holds manifest`, so collecting its axioms
-/// transitively covers the final theorem without matching any text.
-const WITNESS_THEOREM: &str = "AverCertChecker.final";
+/// Constants the checker composes in its own witness file: `final` ascribes
+/// `AverCert.Final.cert` to `Holds manifest`, then `accepted` wraps that theorem
+/// in the artifact-level predicate used for the axiom audit.
+const FINAL_WITNESS_THEOREM: &str = "AverCertChecker.final";
+const WITNESS_THEOREM: &str = "AverCertChecker.accepted";
 
 /// Lean source files the checker owns and never copies from the cert: the
 /// audited trusted computing base (taken from this binary) plus the checker's
@@ -1034,9 +1035,15 @@ fn lean_expr_fragment_accepted_pins(rederived: &[cert::RederivedObligation]) -> 
 
 /// Checker-owned Lean `example`s proving that expr-fragment byte-origin
 /// acceptance is tied to the schema obligation used by `Final.cert`.
-fn lean_expr_fragment_obligation_acceptance_pins(
+struct LeanExprFragmentArtifactClaims {
+    claims: String,
+    proof: String,
+    has_claims: bool,
+}
+
+fn lean_expr_fragment_artifact_claims(
     rederived: &[cert::RederivedObligation],
-) -> String {
+) -> LeanExprFragmentArtifactClaims {
     let mut claims = Vec::new();
     let mut proofs = Vec::new();
     for r in rederived {
@@ -1078,33 +1085,101 @@ fn lean_expr_fragment_obligation_acceptance_pins(
         .fold("trivial".to_string(), |acc, proof| {
             format!("⟨{proof}, {acc}⟩")
         });
-    let proof_block = if has_claims {
+    LeanExprFragmentArtifactClaims {
+        claims,
+        proof,
+        has_claims,
+    }
+}
+
+fn lean_artifact_data_literal(claims: &str) -> String {
+    format!(
+        "({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, \
+         exprFragmentClaims := ({claims} : List AverCert.AcceptedArtifact.ExprFragmentClaim) }} : \
+         AverCert.AcceptedArtifact.ArtifactData)"
+    )
+}
+
+fn lean_expr_fragment_acceptance_proof_block(
+    witness: &LeanExprFragmentArtifactClaims,
+    indent: &str,
+) -> String {
+    if witness.has_claims {
         format!(
             concat!(
-                "  dsimp [AverCert.AcceptedArtifact.acceptedExprFragments,\n",
-                "    AverCert.AcceptedArtifact.exprFragmentClaimsAccepted,\n",
-                "    AverCert.AcceptedArtifact.exprFragmentClaimAccepted,\n",
-                "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
-                "    AverCert.ExprFragmentAccepted.accepted]\n",
-                "  exact {proof}\n"
+                "{indent}dsimp [AverCert.AcceptedArtifact.acceptedExprFragments,\n",
+                "{indent}  AverCert.AcceptedArtifact.exprFragmentClaimsAccepted,\n",
+                "{indent}  AverCert.AcceptedArtifact.exprFragmentClaimAccepted,\n",
+                "{indent}  AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
+                "{indent}  AverCert.ExprFragmentAccepted.accepted]\n",
+                "{indent}exact {proof}\n"
             ),
-            proof = proof
+            indent = indent,
+            proof = witness.proof
         )
     } else {
-        "  exact trivial\n".to_string()
-    };
+        format!("{indent}exact trivial\n")
+    }
+}
+
+fn lean_expr_fragment_obligation_acceptance_pins(
+    rederived: &[cert::RederivedObligation],
+) -> String {
+    let witness = lean_expr_fragment_artifact_claims(rederived);
+    let proof_block = lean_expr_fragment_acceptance_proof_block(&witness, "  ");
+    let artifact = lean_artifact_data_literal(&witness.claims);
     format!(
         concat!(
             "-- Expr-fragment artifact data: accepted raw artifact bytes + raw plans\n",
             "-- are tied to the schema obligations used by `Final.cert`.\n",
             "example : (AverCert.AcceptedArtifact.acceptedExprFragments\n",
-            "    ({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes,\n",
-            "       exprFragmentClaims := ({claims} : List AverCert.AcceptedArtifact.ExprFragmentClaim)\n",
-            "     }} : AverCert.AcceptedArtifact.ArtifactData)) := by\n",
+            "    {artifact}) := by\n",
             "{proof_block}"
         ),
-        claims = claims,
+        artifact = artifact,
         proof_block = proof_block
+    )
+}
+
+fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> String {
+    let witness = lean_expr_fragment_artifact_claims(rederived);
+    let artifact = lean_artifact_data_literal(&witness.claims);
+    let expr_proof = if witness.has_claims {
+        format!(
+            concat!(
+                "  dsimp [AverCert.AcceptedArtifact.accepted,\n",
+                "    AverCert.AcceptedArtifact.acceptedExprFragments,\n",
+                "    AverCert.AcceptedArtifact.exprFragmentClaimsAccepted,\n",
+                "    AverCert.AcceptedArtifact.exprFragmentClaimAccepted,\n",
+                "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
+                "    AverCert.ExprFragmentAccepted.accepted]\n",
+                "  exact ⟨{final_witness}, {proof}⟩\n"
+            ),
+            final_witness = FINAL_WITNESS_THEOREM,
+            proof = witness.proof
+        )
+    } else {
+        format!(
+            concat!(
+                "  dsimp [AverCert.AcceptedArtifact.accepted,\n",
+                "    AverCert.AcceptedArtifact.acceptedExprFragments,\n",
+                "    AverCert.AcceptedArtifact.exprFragmentClaimsAccepted]\n",
+                "  exact ⟨{final_witness}, trivial⟩\n"
+            ),
+            final_witness = FINAL_WITNESS_THEOREM
+        )
+    };
+    format!(
+        concat!(
+            "-- Whole-artifact acceptance root: the final schema theorem plus\n",
+            "-- checker-owned expr-fragment artifact claims, under one predicate.\n",
+            "def {witness_theorem} : AverCert.AcceptedArtifact.accepted\n",
+            "    {artifact} := by\n",
+            "{expr_proof}"
+        ),
+        witness_theorem = WITNESS_THEOREM,
+        artifact = artifact,
+        expr_proof = expr_proof
     )
 }
 
@@ -1145,6 +1220,7 @@ fn checker_witness(
     let expr_fragment_accepted_pins = lean_expr_fragment_accepted_pins(rederived);
     let expr_fragment_obligation_acceptance_pins =
         lean_expr_fragment_obligation_acceptance_pins(rederived);
+    let accepted_artifact_witness = lean_accepted_artifact_witness(rederived);
     // Semantic-face bindings: pin each obligation's typed `Dom`/`Cod`/`domRepr`/
     // `codRepr` to the STANDARD form its BYTE-derived class implies, and prove
     // every domain is inhabited. These are the faces the schema-v3 checker did
@@ -1258,8 +1334,12 @@ fn checker_witness(
          -- (`Dom := Empty`, `codRepr := fun _ _ _ => True`, `domRepr := fun _ _ _ => False`,\n\
          -- a nerfed arity) fails one of these kernel checks.\n\
          {face_section}\n\
-         -- Statement: force the final theorem's TYPE by ascription (no text match).\n\
-         def {WITNESS_THEOREM} : AverCert.Schema.Holds AverCert.manifest := AverCert.Final.cert\n\n\
+         -- Statement: force the final theorem's TYPE by ascription (no text match),\n\
+         -- then wrap it in the artifact-level acceptance predicate. The axiom\n\
+         -- audit below is collected from the artifact root, not the looser\n\
+         -- schema-only theorem.\n\
+         def {FINAL_WITNESS_THEOREM} : AverCert.Schema.Holds AverCert.manifest := AverCert.Final.cert\n\n\
+         {accepted_artifact_witness}\n\n\
          -- Axiom whitelist, enforced by the kernel's own axiom collector over the\n\
          -- ascribed constant: full `Name` equality, not text. Any non-whitelisted\n\
          -- axiom (a smuggled `axiom evil`, `sorryAx`, `ofReduceBool`, ...) makes\n\
