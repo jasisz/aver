@@ -25,7 +25,8 @@
 > `Schema.Obligation`; the body, code-entry bytes, and function binding are
 > internal witnesses to that bridge rather than separate authority parameters.
 > The checker witness proves that bridge for the whole expr-fragment claim list
-> in one aggregate predicate.
+> through `AcceptedArtifact.ArtifactData` and its artifact-level
+> `acceptedExprFragments` predicate.
 > The verifier-authored witness
 > pins `manifest.exprFragmentPlans` to checker-rendered terms and re-checks the
 > plan lowerings plus the relevant byte-origin slice. This is the v2 landing

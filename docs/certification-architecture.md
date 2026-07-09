@@ -121,12 +121,14 @@ example :
     ArtifactBytes.wasmBytes [/* export name */] "floatAddGoal"
     carrier floatAddGoalPlan floatAddGoalOb
 example :
-  AcceptedArtifact.exprFragmentClaimsAccepted ArtifactBytes.wasmBytes
-    [ { exportNameBytes := [/* export name */],
-        exportName := "floatAddGoal",
-        carrier := carrier,
-        plan := floatAddGoalPlan,
-        obligation := floatAddGoalOb } ]
+  AcceptedArtifact.acceptedExprFragments
+    { wasmBytes := ArtifactBytes.wasmBytes,
+      exprFragmentClaims :=
+        [ { exportNameBytes := [/* export name */],
+            exportName := "floatAddGoal",
+            carrier := carrier,
+            plan := floatAddGoalPlan,
+            obligation := floatAddGoalOb } ] }
 ```
 
 This is not yet the v2 raw-byte in-kernel checker. In v1, Rust still
@@ -228,11 +230,12 @@ packages those checks as one accepted-export predicate for the current
 expr-fragment profile. `AcceptedArtifact.lean` exposes the v2-shaped bridge
 from raw artifact bytes + raw plan + schema obligation to that predicate; the
 lowered body, code-entry bytes and function binding are internal witnesses,
-not trusted parameters. The checker witness proves that bridge for the entire
-expr-fragment claim list via `exprFragmentClaimsAccepted`. This removes another
-slice of plan-to-semantics, plan-to-bytes, byte-origin and schema-binding logic
-from unreviewed generated proof text. The remaining gap is full module
-validation in Lean:
+not trusted parameters. The checker witness proves that bridge through
+`AcceptedArtifact.ArtifactData` and the artifact-level
+`acceptedExprFragments` predicate for the entire expr-fragment claim list. This
+removes another slice of plan-to-semantics, plan-to-bytes, byte-origin and
+schema-binding logic from unreviewed generated proof text. The remaining gap is
+full module validation in Lean:
 `WasmSlice.lean` is intentionally a relevant-subset slicer, while Rust still
 hashes the artifact, performs the executable equality gate and derives the
 complete obligation list for non-expression classes.
@@ -519,9 +522,10 @@ Sunset criteria:
 11. Done for the first artifact bridge: add audited `AcceptedArtifact.lean` and
     make checker-owned Lean prove raw artifact bytes + raw plan +
     `Schema.Obligation` imply accepted expr-fragment byte origin, plan lowering
-    and obligation-code binding for the aggregate expr-fragment claim list. The
-    remaining v2 work is to carry checked signature/spec satisfaction into the
-    artifact-level predicate.
+    and obligation-code binding through `ArtifactData.acceptedExprFragments`
+    for the aggregate expr-fragment claim list. The remaining v2 work is to
+    carry checked signature/spec satisfaction and ordinary/recursive obligation
+    families into the artifact-level predicate.
 12. Done: remove the transitional byte classifier from expr-fragment
    admission/order; manifest entries are checked by plan-first lowering
    directly and merged by byte-derived function order.

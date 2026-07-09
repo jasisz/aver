@@ -86,4 +86,16 @@ def exprFragmentClaimsAccepted
       exprFragmentClaimAccepted wasmBytes claim ∧
       exprFragmentClaimsAccepted wasmBytes rest
 
+/-- The checker-facing artifact data currently accepted by the Lean bridge.
+    This intentionally starts with expression-fragment claims only; ordinary
+    legacy obligations are still pinned by the verifier witness outside this
+    artifact-level wrapper. Future v2 work should move those remaining claims
+    behind this same shape rather than adding new loose examples. -/
+structure ArtifactData where
+  wasmBytes          : AverCert.WasmSlice.ByteSeq
+  exprFragmentClaims : List ExprFragmentClaim
+
+def acceptedExprFragments (artifact : ArtifactData) : Prop :=
+  exprFragmentClaimsAccepted artifact.wasmBytes artifact.exprFragmentClaims
+
 end AverCert.AcceptedArtifact

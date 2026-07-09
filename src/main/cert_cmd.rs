@@ -1081,7 +1081,8 @@ fn lean_expr_fragment_obligation_acceptance_pins(
     let proof_block = if has_claims {
         format!(
             concat!(
-                "  dsimp [AverCert.AcceptedArtifact.exprFragmentClaimsAccepted,\n",
+                "  dsimp [AverCert.AcceptedArtifact.acceptedExprFragments,\n",
+                "    AverCert.AcceptedArtifact.exprFragmentClaimsAccepted,\n",
                 "    AverCert.AcceptedArtifact.exprFragmentClaimAccepted,\n",
                 "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
                 "    AverCert.ExprFragmentAccepted.accepted]\n",
@@ -1094,11 +1095,12 @@ fn lean_expr_fragment_obligation_acceptance_pins(
     };
     format!(
         concat!(
-            "-- Expr-fragment artifact claims: accepted raw artifact bytes + raw plans\n",
+            "-- Expr-fragment artifact data: accepted raw artifact bytes + raw plans\n",
             "-- are tied to the schema obligations used by `Final.cert`.\n",
-            "example : (AverCert.AcceptedArtifact.exprFragmentClaimsAccepted\n",
-            "    AverCert.ArtifactBytes.wasmBytes\n",
-            "    ({claims} : List AverCert.AcceptedArtifact.ExprFragmentClaim)) := by\n",
+            "example : (AverCert.AcceptedArtifact.acceptedExprFragments\n",
+            "    ({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes,\n",
+            "       exprFragmentClaims := ({claims} : List AverCert.AcceptedArtifact.ExprFragmentClaim)\n",
+            "     }} : AverCert.AcceptedArtifact.ArtifactData)) := by\n",
             "{proof_block}"
         ),
         claims = claims,
