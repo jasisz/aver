@@ -65,6 +65,63 @@ def FragTy.semTy : FragTy → FragSemTy
   | .rawI32 => .wval
   | .ref => .wval
 
+/-- Source-level types for the planned `SymPlan` grammar. This is intentionally
+    one step above `FragTy`: target representation is checked by an encoder
+    relation, while symbolic proofs should talk in these types. -/
+inductive SymTy where
+  | int
+  | float
+  | bool
+  | string
+  | wval
+deriving Repr, DecidableEq
+
+def FragSemTy.toSymTy : FragSemTy → SymTy
+  | .float => .float
+  | .bool => .bool
+  | .int => .int
+  | .wval => .wval
+
+/-- Source-level primitive operations admitted by the initial `SymPlan`
+    scaffold. Representation-level integer carrier operations are intentionally
+    absent until they can be expressed as Aver `Int` operations. -/
+inductive SymPrim where
+  | floatAdd
+  | floatMul
+  | floatLe
+deriving Repr, DecidableEq
+
+mutual
+  inductive SymNodeKind where
+    | param (index : Nat)
+    | constBool (value : Bool)
+    | constFloatBits (bits : Nat)
+    | prim (op : SymPrim) (args : List Nat)
+    | ifElse (cond : Nat) (thenBlock elseBlock : SymBlock)
+  deriving Repr
+
+  structure SymNode where
+    id   : Nat
+    ty   : SymTy
+    kind : SymNodeKind
+  deriving Repr
+
+  structure SymBlock where
+    nodes  : List SymNode
+    result : Nat
+  deriving Repr
+end
+
+/-- Raw, untrusted source-level symbolic plan. Future profiles should prefer
+    this over the wasm-representation-shaped `ExprFragmentRawPlan`; a checked
+    encoder/lowerer then binds it to exact wasm code-entry bytes. -/
+structure SymRawPlan where
+  profile : String
+  params  : List SymTy
+  result  : SymTy
+  body    : SymBlock
+deriving Repr
+
 /-- Primitive operations admitted by `expr-fragment-v1`. -/
 inductive FragPrim where
   | f64Add

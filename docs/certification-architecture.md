@@ -92,8 +92,11 @@ target-specific layer. The current `expr-fragment-v1` definitions keep the
 wasm representation type as `FragTy` and now record its source semantic face
 separately. Rust also has a first `SymPlan` model that can project direct
 source-level float/bool fragments and intentionally rejects representation-only
-carrier-limb fragments. Later profiles can make `SymPlan` the primary sidecar
-format and treat representation types as checked encoding details.
+carrier-limb fragments. The audited Lean `Schema.lean` mirrors this direction
+with `SymTy`, `SymPrim` and `SymRawPlan` data definitions, ready for a later
+kernel-checked `SymRawPlan -> CheckedPlan -> LowersCodeEntry` path. Later
+profiles can make `SymPlan` the primary sidecar format and treat
+representation types as checked encoding details.
 
 ## Artifact Shape
 
