@@ -122,6 +122,8 @@ include!("core_wasm.rs");
 include!("core_shapes.rs");
 include!("expr_fragment_defs.rs");
 include!("sym_plan_defs.rs");
+include!("sym_plan_render.rs");
+include!("sym_plan_encode.rs");
 include!("expr_fragment_from_mir.rs");
 include!("cert_defs.rs");
 include!("cert_methods.rs");
