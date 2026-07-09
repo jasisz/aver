@@ -198,6 +198,14 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "direct SymPlan projection should be accepted by the Lean-side source checker:\n{plans_lean}"
     );
     assert!(
+        plans_lean.contains("encodeSymRawPlanToExprFragmentRawPlan floatAddGoalSymPlan"),
+        "direct SymPlan projection should encode to the byte-bound ExprFragment plan:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains("some floatAddGoalPlan := rfl"),
+        "SymPlan encoder witness should target the existing ExprFragment plan:\n{plans_lean}"
+    );
+    assert!(
         !plans_lean.contains("def intLessZeroSymPlan : SymRawPlan"),
         "representation-only int carrier fragment must not be promoted to SymPlan yet"
     );

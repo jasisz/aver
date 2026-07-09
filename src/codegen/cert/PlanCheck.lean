@@ -201,4 +201,66 @@ def checkSymRawPlan (plan : SymRawPlan) : Bool :=
     | some n => sameSymTy n.ty plan.result
     | none => false
 
+def encodeSymTy? : SymTy → Option FragTy
+  | .float => some .f64
+  | .bool => some .boolI32
+  | .int => none
+  | .string => none
+  | .wval => none
+
+def encodeSymTys? : List SymTy → Option (List FragTy)
+  | [] => some []
+  | ty :: tys =>
+      match encodeSymTy? ty, encodeSymTys? tys with
+      | some fragTy, some fragTys => some (fragTy :: fragTys)
+      | _, _ => none
+
+def encodeSymPrim : SymPrim → FragPrim
+  | .floatAdd => .f64Add
+  | .floatMul => .f64Mul
+  | .floatLe => .f64Le
+
+def encodeSymBlockFuel : Nat → SymBlock → Option FragBlock
+  | 0, _ => none
+  | fuel + 1, block =>
+      let encodeNodeKind (kind : SymNodeKind) : Option FragNodeKind :=
+        match kind with
+        | .param index => some (.local index)
+        | .constBool value => some (.constBool value)
+        | .constFloatBits bits => some (.constF64Bits bits)
+        | .prim op args => some (.prim (encodeSymPrim op) args)
+        | .ifElse cond thenBlock elseBlock =>
+            match encodeSymBlockFuel fuel thenBlock,
+                  encodeSymBlockFuel fuel elseBlock with
+            | some thenFrag, some elseFrag =>
+                some (.ifElse cond thenFrag elseFrag)
+            | _, _ => none
+      let encodeNode (node : SymNode) : Option FragNode :=
+        match encodeSymTy? node.ty, encodeNodeKind node.kind with
+        | some fragTy, some fragKind =>
+            some { id := node.id, ty := fragTy, kind := fragKind }
+        | _, _ => none
+      let rec encodeNodes : List SymNode → Option (List FragNode)
+        | [] => some []
+        | node :: rest =>
+            match encodeNode node, encodeNodes rest with
+            | some fragNode, some fragRest => some (fragNode :: fragRest)
+            | _, _ => none
+      match encodeNodes block.nodes with
+      | some nodes => some { nodes := nodes, result := block.result }
+      | none => none
+
+def encodeSymBlock? (block : SymBlock) : Option FragBlock :=
+  encodeSymBlockFuel maxFuel block
+
+def encodeSymRawPlanToExprFragmentRawPlan (plan : SymRawPlan) :
+    Option ExprFragmentRawPlan :=
+  if checkSymRawPlan plan then
+    match encodeSymTys? plan.params, encodeSymTy? plan.result, encodeSymBlock? plan.body with
+    | some params, some result, some body =>
+        some { profile := "expr-fragment-v1", params := params, result := result, body := body }
+    | _, _, _ => none
+  else
+    none
+
 end AverCert.PlanCheck
