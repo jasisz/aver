@@ -172,10 +172,26 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
         let func_binding = format!(
             "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
         );
+        let sym_plan = SymPlan::from_expr_fragment_source_subset(plan)
+            .map(|sym| {
+                format!(
+                    "/-- Source-level `SymPlan` projection for `{name}`. This is\n\
+                     non-authoritative v2 scaffolding: byte acceptance still uses `{name}Plan`. -/\n\
+                     def {name}SymPlan : SymRawPlan := {sym_plan}\n\n",
+                    sym_plan = sym_plan_lean_value(&sym)
+                )
+            })
+            .unwrap_or_else(|| {
+                format!(
+                    "-- `{name}` has no source-level `SymPlan` projection yet;\n\
+                     -- its current fragment uses representation-only nodes.\n\n"
+                )
+            });
         any = true;
         s.push_str(&format!(
             "/-- Raw `expr-fragment-v1` plan for `{name}`. -/\n\
              def {name}Plan : ExprFragmentRawPlan := {plan_value}\n\n\
+             {sym_plan}\
              /-- The audited Lean-side structural checker accepts `{name}`'s raw plan. -/\n\
              example : AverCert.PlanCheck.checkExprFragmentRawPlan {name}Plan = true := rfl\n\n\
              /-- The audited Lean-side canonical lowerer maps `{name}`'s raw plan\n\
@@ -202,6 +218,7 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
                {code_entry_bytes}\n  \
                {func_binding} := by dsimp [AverCert.ExprFragmentAccepted.accepted]; exact ⟨rfl, rfl, rfl, rfl, rfl⟩\n\n",
             plan_value = expr_fragment_plan_lean_value(plan),
+            sym_plan = sym_plan,
         ));
     }
     if !any {

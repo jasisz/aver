@@ -183,6 +183,20 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             "{name} should not emit trace/replay sidecars after plan-first lowering"
         );
     }
+    let plans_lean = std::fs::read_to_string(out_dir.join("cert").join("Plans.lean"))
+        .expect("Plans.lean exists");
+    assert!(
+        plans_lean.contains("def floatAddGoalSymPlan : SymRawPlan"),
+        "direct float fragment should render a source-level SymPlan:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains(".prim .floatAdd [0, 1]"),
+        "floatAddGoal SymPlan should expose source-level float add:\n{plans_lean}"
+    );
+    assert!(
+        !plans_lean.contains("def intLessZeroSymPlan : SymRawPlan"),
+        "representation-only int carrier fragment must not be promoted to SymPlan yet"
+    );
 
     let planned_goal_names: BTreeSet<String> = [
         "addTwo",
