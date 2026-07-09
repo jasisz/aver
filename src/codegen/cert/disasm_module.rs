@@ -335,14 +335,18 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
             continue;
         };
         let ops = resolve_data_ops(entry.ops, &data_segments);
-        let (params, result) = func_type_idx
-            .get(def_idx as usize)
-            .and_then(|ti| type_sigs.get(ti))
+        let Some(type_idx) = func_type_idx.get(def_idx as usize).copied() else {
+            continue;
+        };
+        let (params, result) = type_sigs
+            .get(&type_idx)
             .cloned()
             .unwrap_or((Vec::new(), None));
         user_fns.push(UserFn {
             name,
             wasm_idx,
+            code_idx: def_idx,
+            type_idx,
             arity: params.len(),
             params,
             result,

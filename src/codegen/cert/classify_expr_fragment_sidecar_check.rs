@@ -53,6 +53,14 @@ pub fn check_expr_fragment_plan_sidecar(
         self_idx: cert.self_idx(),
         carrier: cert.carrier(),
         face: ObligationFace::of_cert(&cert),
+        fragment_code_idx: match cert.inner() {
+            Cert::ExprFragment { code_idx, .. } => Some(*code_idx),
+            _ => None,
+        },
+        fragment_type_idx: match cert.inner() {
+            Cert::ExprFragment { type_idx, .. } => Some(*type_idx),
+            _ => None,
+        },
         fragment_plan: Some(sidecar.clone()),
         fragment_plan_lean: Some(plan_lean),
         fragment_lowered_body_lean: match cert.inner() {
@@ -126,6 +134,8 @@ fn check_expr_fragment_plan_object(
     let cert = Cert::ExprFragment {
         name: export_name.to_string(),
         self_idx: f.wasm_idx,
+        code_idx: f.code_idx,
+        type_idx: f.type_idx,
         nlocals: f.nlocals,
         carrier,
         plan: plan.clone(),

@@ -31,6 +31,14 @@ pub struct RederivedObligation {
     /// (`Dom := Empty`, `codRepr := fun _ _ _ => True`, `domRepr := fun _ _ _ => False`,
     /// or a nerfed arity) fails a kernel `rfl`/`HEq.rfl` and is DECLINED.
     pub face: ObligationFace,
+    /// For expression fragments, the byte-derived defined-function index into
+    /// the code section (`funcIdx - importedFuncCount`). Lean's relevant Wasm
+    /// slicer re-derives and pins this through `FuncBinding`.
+    pub fragment_code_idx: Option<u32>,
+    /// For expression fragments, the byte-derived function-section type index.
+    /// This connects export/function routing to the actual declared function
+    /// signature slot before later in-kernel signature decoding lands.
+    pub fragment_type_idx: Option<u32>,
     /// For expression fragments, the canonical plan sidecar attached to this
     /// obligation. During `aver cert verify`, transitional byte re-derivation
     /// may populate this first, then the plan-first sidecar checker overlays the
@@ -376,6 +384,14 @@ fn rederive_certificate_inner(
             self_idx: c.self_idx(),
             carrier: c.carrier(),
             face: ObligationFace::of_cert(c),
+            fragment_code_idx: match c.inner() {
+                Cert::ExprFragment { code_idx, .. } => Some(*code_idx),
+                _ => None,
+            },
+            fragment_type_idx: match c.inner() {
+                Cert::ExprFragment { type_idx, .. } => Some(*type_idx),
+                _ => None,
+            },
             fragment_plan: match c.inner() {
                 Cert::ExprFragment { plan, .. } => Some(expr_fragment_sidecar(c.name(), plan)),
                 _ => None,

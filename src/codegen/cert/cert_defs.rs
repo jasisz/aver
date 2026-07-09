@@ -162,6 +162,8 @@ enum Cert {
     ExprFragment {
         name: String,
         self_idx: u32,
+        code_idx: u32,
+        type_idx: u32,
         nlocals: usize,
         carrier: u32,
         plan: ExprFragmentPlan,

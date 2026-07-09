@@ -107,8 +107,14 @@ example :
   WasmSlice.codeEntryForExport ArtifactBytes.wasmBytes [/* export name */] =
     some [/* exact code-entry bytes */] := rfl
 example :
+  WasmSlice.funcBindingForExport ArtifactBytes.wasmBytes [/* export name */] =
+    some { funcIdx := selfIdx, codeIdx := codeIdx, typeIdx := typeIdx,
+           codeEntry := [/* exact code-entry bytes */] } := rfl
+example :
   ExprFragmentAccepted.accepted ArtifactBytes.wasmBytes [/* export name */]
     carrier floatAddGoalPlan floatAddGoalBody [/* exact code-entry bytes */]
+    { funcIdx := selfIdx, codeIdx := codeIdx, typeIdx := typeIdx,
+      codeEntry := [/* exact code-entry bytes */] }
 ```
 
 This is not yet the v2 raw-byte in-kernel checker. In v1, Rust still
@@ -119,10 +125,11 @@ checker-owned Lean `ExprFragmentRawPlan` term and pinned by
 checks that all manifest plans pass `PlanCheck.checkExprFragmentRawPlan`, that
 `PlanLower.lowerExprFragmentBody` produces the byte-bound `WInstr` body, and
 that `PlanBytes.lowerExprFragmentCodeEntry` produces the verifier-derived
-canonical code-entry bytes. It also checks that `WasmSlice.codeEntryForExport`
-finds those same code-entry bytes from the checker-regenerated module bytes,
-then proves the same facts through one `ExprFragmentAccepted.accepted`
-predicate.
+canonical code-entry bytes. It also checks that `WasmSlice.funcBindingForExport`
+routes the export through the byte-derived function index, defined-code index
+and function-section type index before finding those same code-entry bytes from
+the checker-regenerated module bytes, then proves the same facts through one
+`ExprFragmentAccepted.accepted` predicate.
 So `Plans.lean` is an untrusted data surface, but it cannot drift from the
 sidecar/body pair without failing verifier-authored `rfl`.
 
@@ -202,7 +209,8 @@ accepted raw plan to the measured `CertPrelude.WInstr` body used by
 `Module.lean`, and `PlanBytes.lean` canonically lowers the same plan to the
 exact code-entry byte sequence used by the current cert island. `WasmSlice.lean`
 then parses the checker-regenerated `ArtifactBytes.wasmBytes` just far enough to
-resolve an export name to the same code-entry bytes. `ExprFragmentAccepted.lean`
+resolve an export name to the same `FuncBinding` (function index, defined-code
+index, function-section type index and code-entry bytes). `ExprFragmentAccepted.lean`
 packages those checks as one accepted-export predicate for the current
 expr-fragment profile. This removes another slice of plan-to-semantics,
 plan-to-bytes and byte-origin logic from unreviewed generated proof text and
@@ -483,14 +491,15 @@ Sunset criteria:
    checker-owned `ArtifactBytes.lean` from the actual module bytes during
    verification, hash-pin the slicer, and make both `Plans.lean` and
    `CheckerWitness.lean` prove that each expression export resolves to the
-   canonical code-entry bytes. The remaining v2 work is full module binding
-   extraction and non-expression obligation derivation in Lean.
+   canonical code-entry bytes and byte-derived `FuncBinding`. The remaining v2
+   work is full module binding extraction and non-expression obligation
+   derivation in Lean.
 10. Done for aggregate expr-fragment acceptance: add audited
     `ExprFragmentAccepted.lean` and make generated/checker-owned Lean prove one
     accepted-export predicate that composes `PlanCheck`, `PlanLower`,
-    `PlanBytes` and `WasmSlice`. The remaining v2 work is to make this predicate
-    carry typed module binding and spec satisfaction, then lift it into
-    `AcceptedArtifact`.
+    `PlanBytes` and `WasmSlice`. The predicate now carries the byte-derived
+    function binding; the remaining v2 work is to carry checked signature/spec
+    satisfaction and lift it into `AcceptedArtifact`.
 11. Done: remove the transitional byte classifier from expr-fragment
    admission/order; manifest entries are checked by plan-first lowering
    directly and merged by byte-derived function order.

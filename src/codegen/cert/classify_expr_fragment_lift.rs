@@ -83,6 +83,8 @@ fn nr_expr_fragment(f: &UserFn, body: &StructuralBody, carrier: Option<u32>) -> 
     Some(Cert::ExprFragment {
         name: f.name.clone(),
         self_idx: f.wasm_idx,
+        code_idx: f.code_idx,
+        type_idx: f.type_idx,
         nlocals: f.nlocals,
         carrier,
         plan,

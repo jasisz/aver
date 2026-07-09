@@ -962,23 +962,57 @@ fn lean_expr_fragment_wasm_slice_pins(rederived: &[cert::RederivedObligation]) -
     out
 }
 
-/// Checker-owned Lean `example`s proving that the single expr-fragment
-/// acceptance predicate holds for each checked plan/export pair.
-fn lean_expr_fragment_accepted_pins(rederived: &[cert::RederivedObligation]) -> String {
+/// Checker-owned Lean `example`s proving that each checked expr-fragment export
+/// resolves, from the checker-read Wasm bytes, to the exact function binding
+/// expected by the verified plan: func index, defined-code index, function type
+/// index and code-entry bytes.
+fn lean_expr_fragment_func_binding_pins(rederived: &[cert::RederivedObligation]) -> String {
     let mut out = String::new();
     for r in rederived {
-        let (Some(plan), Some(body), Some(bytes)) = (
-            r.fragment_plan_lean.as_ref(),
-            r.fragment_lowered_body_lean.as_ref(),
+        let (Some(code_idx), Some(type_idx), Some(bytes)) = (
+            r.fragment_code_idx,
+            r.fragment_type_idx,
             r.fragment_lowered_code_entry_lean.as_ref(),
         ) else {
             continue;
         };
         let export_name_bytes = lean_byte_list(r.name.as_bytes());
+        let binding = format!(
+            "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {} }} : AverCert.WasmSlice.FuncBinding)",
+            r.self_idx, code_idx, type_idx, bytes
+        );
+        out.push_str(&format!(
+            "-- `{}`: checker-read module bytes expose this exact function binding.\n\
+             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes {} = some {} := rfl\n",
+            r.name, export_name_bytes, binding
+        ));
+    }
+    out
+}
+
+/// Checker-owned Lean `example`s proving that the single expr-fragment
+/// acceptance predicate holds for each checked plan/export pair.
+fn lean_expr_fragment_accepted_pins(rederived: &[cert::RederivedObligation]) -> String {
+    let mut out = String::new();
+    for r in rederived {
+        let (Some(plan), Some(body), Some(bytes), Some(code_idx), Some(type_idx)) = (
+            r.fragment_plan_lean.as_ref(),
+            r.fragment_lowered_body_lean.as_ref(),
+            r.fragment_lowered_code_entry_lean.as_ref(),
+            r.fragment_code_idx,
+            r.fragment_type_idx,
+        ) else {
+            continue;
+        };
+        let export_name_bytes = lean_byte_list(r.name.as_bytes());
+        let binding = format!(
+            "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {} }} : AverCert.WasmSlice.FuncBinding)",
+            r.self_idx, code_idx, type_idx, bytes
+        );
         out.push_str(&format!(
             "-- `{}`: one aggregate expr-fragment acceptance check.\n\
-             example : AverCert.ExprFragmentAccepted.accepted AverCert.ArtifactBytes.wasmBytes {} {} ({}) ({}) ({}) := by dsimp [AverCert.ExprFragmentAccepted.accepted]; exact ⟨rfl, rfl, rfl, rfl⟩\n",
-            r.name, export_name_bytes, r.carrier, plan, body, bytes
+             example : AverCert.ExprFragmentAccepted.accepted AverCert.ArtifactBytes.wasmBytes {} {} ({}) ({}) ({}) {} := by dsimp [AverCert.ExprFragmentAccepted.accepted]; exact ⟨rfl, rfl, rfl, rfl, rfl⟩\n",
+            r.name, export_name_bytes, r.carrier, plan, body, bytes, binding
         ));
     }
     out
@@ -1017,6 +1051,7 @@ fn checker_witness(
     let expr_fragment_lower_pins = lean_expr_fragment_lower_pins(rederived);
     let expr_fragment_code_entry_pins = lean_expr_fragment_code_entry_pins(rederived);
     let expr_fragment_wasm_slice_pins = lean_expr_fragment_wasm_slice_pins(rederived);
+    let expr_fragment_func_binding_pins = lean_expr_fragment_func_binding_pins(rederived);
     let expr_fragment_accepted_pins = lean_expr_fragment_accepted_pins(rederived);
     // Semantic-face bindings: pin each obligation's typed `Dom`/`Cod`/`domRepr`/
     // `codRepr` to the STANDARD form its BYTE-derived class implies, and prove
@@ -1092,7 +1127,11 @@ fn checker_witness(
          -- module. This is the first relevant-subset in-kernel byte-origin\n\
          -- check; full Wasm validation remains future work.\n\
          {expr_fragment_wasm_slice_pins}\n\
-         -- Expr-fragment aggregate acceptance: the four separate pins above are\n\
+         -- Expr-fragment function binding: the audited Lean slicer also routes\n\
+         -- each export through its function index, defined-code index and\n\
+         -- function-section type index before exposing the code-entry bytes.\n\
+         {expr_fragment_func_binding_pins}\n\
+         -- Expr-fragment aggregate acceptance: the separate pins above are\n\
          -- also exposed as one audited predicate. This is the v2 landing shape\n\
          -- for replacing loose examples with an `AcceptedArtifact` theorem.\n\
          {expr_fragment_accepted_pins}\n\

@@ -150,6 +150,8 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
             name,
             carrier,
             self_idx,
+            code_idx,
+            type_idx,
             plan,
             ..
         } = c.inner()
@@ -163,6 +165,9 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
             .map(|ops| render_ops_value(&ops))
             .expect("certified expr-fragment plan lowers to WInstr body");
         let export_name_bytes = render_byte_list(name.as_bytes());
+        let func_binding = format!(
+            "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+        );
         any = true;
         s.push_str(&format!(
             "/-- Raw `expr-fragment-v1` plan for `{name}`. -/\n\
@@ -181,12 +186,17 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
                  inside the emitted module bytes by export name. -/\n\
              example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
                some {code_entry_bytes} := rfl\n\n\
+             /-- The audited Lean-side Wasm slicer binds `{name}` to its function\n\
+                 index, defined-code index, type index and code-entry bytes. -/\n\
+             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+               some {func_binding} := rfl\n\n\
              /-- The audited Lean-side expr-fragment acceptance predicate aggregates\n\
-                 plan checking, semantic lowering, byte lowering and byte-origin slicing. -/\n\
+                 plan checking, semantic lowering, byte lowering and byte-origin binding. -/\n\
              example : AverCert.ExprFragmentAccepted.accepted AverCert.ArtifactBytes.wasmBytes\n  \
                {export_name_bytes} {carrier} {name}Plan\n  \
                {lowered_body}\n  \
-               {code_entry_bytes} := by dsimp [AverCert.ExprFragmentAccepted.accepted]; exact ⟨rfl, rfl, rfl, rfl⟩\n\n",
+               {code_entry_bytes}\n  \
+               {func_binding} := by dsimp [AverCert.ExprFragmentAccepted.accepted]; exact ⟨rfl, rfl, rfl, rfl, rfl⟩\n\n",
             plan_value = expr_fragment_plan_lean_value(plan),
         ));
     }

@@ -1,13 +1,20 @@
 -- Lean-side relevant Wasm byte slicer for certificate artifacts.
 --
 -- This is intentionally not a full WebAssembly validator. It parses only the
--- module facts needed to bind an exported function name to its raw code-entry
--- bytes: header, import function count, export section and code section.
+-- module facts needed to bind an exported function name to its raw function
+-- binding: header, import function count, function section type index, export
+-- section and code section.
 -- Unsupported import kinds decline.
 
 namespace AverCert.WasmSlice
 
 abbrev ByteSeq := List Nat
+
+structure FuncBinding where
+  funcIdx : Nat
+  codeIdx : Nat
+  typeIdx : Nat
+  codeEntry : ByteSeq
 
 def takeN : Nat → ByteSeq → Option (ByteSeq × ByteSeq)
   | 0, xs => some ([], xs)
@@ -172,6 +179,30 @@ def codeEntryByCodeIndex (wasmBytes : ByteSeq) (codeIdx : Nat) : Option ByteSeq 
       | none => none
   | none => none
 
+def typeIndexByCodeIndexFuel : Nat → Nat → Nat → ByteSeq → Option Nat
+  | 0, _, _, _ => none
+  | _fuel + 1, _idx, 0, _bytes => none
+  | fuel + 1, idx, count + 1, bytes =>
+      match readUleb32 bytes with
+      | some (typeIdx, rest) =>
+          if idx = 0 then
+            some typeIdx
+          else
+            typeIndexByCodeIndexFuel fuel (idx - 1) count rest
+      | none => none
+
+def typeIndexByCodeIndex (wasmBytes : ByteSeq) (codeIdx : Nat) : Option Nat :=
+  match findSectionPayload 0x03 wasmBytes with
+  | some payload =>
+      match readUleb32 payload with
+      | some (count, rest) =>
+          if codeIdx < count then
+            typeIndexByCodeIndexFuel (count + 1) codeIdx count rest
+          else
+            none
+      | none => none
+  | none => none
+
 def codeEntryByFuncIndex (wasmBytes : ByteSeq) (funcIdx : Nat) : Option ByteSeq :=
   match importedFuncCount wasmBytes with
   | some imported =>
@@ -181,9 +212,28 @@ def codeEntryByFuncIndex (wasmBytes : ByteSeq) (funcIdx : Nat) : Option ByteSeq 
         none
   | none => none
 
+def funcBindingByFuncIndex (wasmBytes : ByteSeq) (funcIdx : Nat) : Option FuncBinding :=
+  match importedFuncCount wasmBytes with
+  | some imported =>
+      if imported ≤ funcIdx then
+        let codeIdx := funcIdx - imported
+        match typeIndexByCodeIndex wasmBytes codeIdx,
+              codeEntryByCodeIndex wasmBytes codeIdx with
+        | some typeIdx, some codeEntry =>
+            some { funcIdx := funcIdx, codeIdx := codeIdx, typeIdx := typeIdx, codeEntry := codeEntry }
+        | _, _ => none
+      else
+        none
+  | none => none
+
 def codeEntryForExport (wasmBytes targetName : ByteSeq) : Option ByteSeq :=
   match exportFuncIndex wasmBytes targetName with
   | some funcIdx => codeEntryByFuncIndex wasmBytes funcIdx
+  | none => none
+
+def funcBindingForExport (wasmBytes targetName : ByteSeq) : Option FuncBinding :=
+  match exportFuncIndex wasmBytes targetName with
+  | some funcIdx => funcBindingByFuncIndex wasmBytes funcIdx
   | none => none
 
 end AverCert.WasmSlice

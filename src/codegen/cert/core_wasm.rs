@@ -3,6 +3,8 @@
 struct UserFn {
     name: String,
     wasm_idx: u32,
+    code_idx: u32,
+    type_idx: u32,
     arity: usize,
     /// Byte-level parameter type kinds from the declared function signature.
     params: Vec<TyKind>,
