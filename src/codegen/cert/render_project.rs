@@ -52,6 +52,11 @@ pub fn write_project(
     write(&cert_dir, "WasmSlice.lean", CERT_WASM_SLICE)?;
     write(
         &cert_dir,
+        "ExprFragmentAccepted.lean",
+        CERT_EXPR_FRAGMENT_ACCEPTED,
+    )?;
+    write(
+        &cert_dir,
         "ArtifactBytes.lean",
         &render_artifact_bytes_lean(wasm_bytes),
     )?;
@@ -78,6 +83,7 @@ pub fn write_project(
     let plan_lower_sha = sha256_hex(CERT_PLAN_LOWER.as_bytes());
     let plan_bytes_sha = sha256_hex(CERT_PLAN_BYTES.as_bytes());
     let wasm_slice_sha = sha256_hex(CERT_WASM_SLICE.as_bytes());
+    let expr_fragment_accepted_sha = sha256_hex(CERT_EXPR_FRAGMENT_ACCEPTED.as_bytes());
     std::fs::write(
         cert_dir.join("cert-manifest.json"),
         render_manifest(
@@ -91,6 +97,7 @@ pub fn write_project(
             &plan_lower_sha,
             &plan_bytes_sha,
             &wasm_slice_sha,
+            &expr_fragment_accepted_sha,
         ),
     )
     .map_err(|e| format!("write manifest: {e}"))?;
@@ -130,6 +137,7 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
          import PlanLower\n\
          import PlanBytes\n\
          import WasmSlice\n\
+         import ExprFragmentAccepted\n\
          import ArtifactBytes\n\
          import Module\n\n\
          set_option maxRecDepth 200000\n\n\
@@ -151,6 +159,9 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
         let code_entry_bytes = lower_expr_fragment_plan_code_entry_bytes(plan, *carrier)
             .expect("certified expr-fragment plan lowers to code-entry bytes");
         let code_entry_bytes = render_byte_list(&code_entry_bytes);
+        let lowered_body = lower_expr_fragment_plan(plan, *carrier)
+            .map(|ops| render_ops_value(&ops))
+            .expect("certified expr-fragment plan lowers to WInstr body");
         let export_name_bytes = render_byte_list(name.as_bytes());
         any = true;
         s.push_str(&format!(
@@ -169,7 +180,13 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
              /-- The audited Lean-side Wasm slicer finds `{name}`'s exact code-entry bytes\n\
                  inside the emitted module bytes by export name. -/\n\
              example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
-               some {code_entry_bytes} := rfl\n\n",
+               some {code_entry_bytes} := rfl\n\n\
+             /-- The audited Lean-side expr-fragment acceptance predicate aggregates\n\
+                 plan checking, semantic lowering, byte lowering and byte-origin slicing. -/\n\
+             example : AverCert.ExprFragmentAccepted.accepted AverCert.ArtifactBytes.wasmBytes\n  \
+               {export_name_bytes} {carrier} {name}Plan\n  \
+               {lowered_body}\n  \
+               {code_entry_bytes} := by dsimp [AverCert.ExprFragmentAccepted.accepted]; exact ⟨rfl, rfl, rfl, rfl⟩\n\n",
             plan_value = expr_fragment_plan_lean_value(plan),
         ));
     }

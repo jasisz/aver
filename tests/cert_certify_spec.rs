@@ -60,6 +60,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     let expected_plan_lower_sha = aver::codegen::cert::audited_plan_lower_sha();
     let expected_plan_bytes_sha = aver::codegen::cert::audited_plan_bytes_sha();
     let expected_wasm_slice_sha = aver::codegen::cert::audited_wasm_slice_sha();
+    let expected_expr_fragment_accepted_sha =
+        aver::codegen::cert::audited_expr_fragment_accepted_sha();
     assert_eq!(
         manifest["plan_check_sha256"].as_str(),
         Some(expected_plan_check_sha.as_str()),
@@ -79,6 +81,11 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         manifest["wasm_slice_sha256"].as_str(),
         Some(expected_wasm_slice_sha.as_str()),
         "manifest should pin the checker-owned WasmSlice.lean"
+    );
+    assert_eq!(
+        manifest["expr_fragment_accepted_sha256"].as_str(),
+        Some(expected_expr_fragment_accepted_sha.as_str()),
+        "manifest should pin the checker-owned ExprFragmentAccepted.lean"
     );
 
     let actual: BTreeMap<String, String> = manifest["certified"]

@@ -73,7 +73,10 @@
 //!   (ab) wasm-slice TCB pin drift: rebinding `wasm_slice_sha256` to a different
 //!       checker is rejected before Lean build, so certs cannot ship their own
 //!       weakened `WasmSlice.lean`
-//!   (ac) artifact-bytes decoy: cert-supplied `ArtifactBytes.lean` is ignored;
+//!   (ac) expr-fragment-accepted TCB pin drift: rebinding
+//!       `expr_fragment_accepted_sha256` to a different checker is rejected
+//!       before Lean build
+//!   (ad) artifact-bytes decoy: cert-supplied `ArtifactBytes.lean` is ignored;
 //!       the checker regenerates it from the actual artifact bytes it read
 //! plus a separate empty-cert test: zero certified exports must NOT print the
 //! green path and must exit nonzero, and the A5 report-line injection payload
@@ -301,6 +304,28 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         assert!(
             out.contains("wasm-slice hash mismatch"),
             "wrong reason for wasm-slice hash drift:\n{out}"
+        );
+    }
+
+    // The aggregate expr-fragment acceptance predicate is audited TCB. A cert
+    // cannot swap it for a weaker definition and rebind the manifest.
+    {
+        let dir = temp_dir("neg-expr-fragment-accepted-pin");
+        copy_dir(&out_dir, &dir);
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["expr_fragment_accepted_sha256"] =
+            serde_json::json!("not-the-audited-expr-fragment-accepted");
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(
+            !ok,
+            "expr-fragment-accepted hash drift must be rejected:\n{out}"
+        );
+        assert!(
+            out.contains("expr-fragment-accepted hash mismatch"),
+            "wrong reason for expr-fragment-accepted hash drift:\n{out}"
         );
     }
 
@@ -1223,8 +1248,12 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
 
     let (ok, out) = aver_verify(&lean_plan_tamper_wasm, &lean_plan_tamper_cert);
     assert!(!ok, "tampered Lean RawPlan data must be DECLINED:\n{out}");
+    let old_body_pin_failed =
+        out.contains("PlanLower.lowerExprFragmentBody") && out.contains("floatAddGoalCode");
+    let plan_byte_or_aggregate_pin_failed = out.contains("PlanBytes.lowerExprFragmentCodeEntry")
+        || out.contains("ExprFragmentAccepted.accepted");
     assert!(
-        out.contains("PlanLower.lowerExprFragmentBody") && out.contains("floatAddGoalCode"),
+        old_body_pin_failed || plan_byte_or_aggregate_pin_failed,
         "wrong reason for Lean RawPlan tamper:\n{out}"
     );
     assert!(

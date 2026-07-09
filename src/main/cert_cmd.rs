@@ -5,7 +5,7 @@
 //! byte/plan prechecks are explicit Rust-side TCB. It assembles its OWN build
 //! in a fresh, checker-owned temp directory from the audited
 //! `Schema.lean` / `PlanCheck.lean` / `PlanLower.lean` / `PlanBytes.lean` /
-//! `WasmSlice.lean` / `CertPrelude.lean` this binary embeds, regenerates
+//! `WasmSlice.lean` / `ExprFragmentAccepted.lean` / `CertPrelude.lean` this binary embeds, regenerates
 //! `ArtifactBytes.lean` from the artifact bytes it read, copies the cert's
 //! DATA-only Lean files, authors its own `lakefile.lean`, and builds with a
 //! clean cache. It then writes a `CheckerWitness.lean` — which the checker, not
@@ -98,12 +98,13 @@ const WITNESS_THEOREM: &str = "AverCertChecker.final";
 /// audited trusted computing base (taken from this binary) plus the checker's
 /// own build config and witness. A cert shipping files by these names has them
 /// ignored.
-const CHECKER_OWNED: [&str; 9] = [
+const CHECKER_OWNED: [&str; 10] = [
     "Schema.lean",
     "PlanCheck.lean",
     "PlanLower.lean",
     "PlanBytes.lean",
     "WasmSlice.lean",
+    "ExprFragmentAccepted.lean",
     "ArtifactBytes.lean",
     "CertPrelude.lean",
     "lakefile.lean",
@@ -442,6 +443,13 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
             "wasm-slice hash mismatch: certificate pins {wasm_slice_pin}, checker expects {audited_wasm_slice}"
         ));
     }
+    let expr_fragment_accepted_pin = manifest_str(&manifest, "expr_fragment_accepted_sha256")?;
+    let audited_expr_fragment_accepted = cert::audited_expr_fragment_accepted_sha();
+    if expr_fragment_accepted_pin != audited_expr_fragment_accepted {
+        return Err(format!(
+            "expr-fragment-accepted hash mismatch: certificate pins {expr_fragment_accepted_pin}, checker expects {audited_expr_fragment_accepted}"
+        ));
+    }
 
     // 2. Report candidates from the untrusted JSON, each charset-gated on its
     //    decoded value so it is safe to splice as a Lean literal below.
@@ -765,6 +773,11 @@ fn assemble_build(cert_dir: &Path, wasm_bytes: &[u8]) -> Result<BuildDir, String
     write(&build.path, "WasmSlice.lean", cert::CERT_WASM_SLICE)?;
     write(
         &build.path,
+        "ExprFragmentAccepted.lean",
+        cert::CERT_EXPR_FRAGMENT_ACCEPTED,
+    )?;
+    write(
+        &build.path,
         "ArtifactBytes.lean",
         &cert::render_artifact_bytes_lean(wasm_bytes),
     )?;
@@ -775,6 +788,7 @@ fn assemble_build(cert_dir: &Path, wasm_bytes: &[u8]) -> Result<BuildDir, String
     roots.push("PlanLower".to_string());
     roots.push("PlanBytes".to_string());
     roots.push("WasmSlice".to_string());
+    roots.push("ExprFragmentAccepted".to_string());
     roots.push("ArtifactBytes".to_string());
     roots.push("CertPrelude".to_string());
 
@@ -948,6 +962,28 @@ fn lean_expr_fragment_wasm_slice_pins(rederived: &[cert::RederivedObligation]) -
     out
 }
 
+/// Checker-owned Lean `example`s proving that the single expr-fragment
+/// acceptance predicate holds for each checked plan/export pair.
+fn lean_expr_fragment_accepted_pins(rederived: &[cert::RederivedObligation]) -> String {
+    let mut out = String::new();
+    for r in rederived {
+        let (Some(plan), Some(body), Some(bytes)) = (
+            r.fragment_plan_lean.as_ref(),
+            r.fragment_lowered_body_lean.as_ref(),
+            r.fragment_lowered_code_entry_lean.as_ref(),
+        ) else {
+            continue;
+        };
+        let export_name_bytes = lean_byte_list(r.name.as_bytes());
+        out.push_str(&format!(
+            "-- `{}`: one aggregate expr-fragment acceptance check.\n\
+             example : AverCert.ExprFragmentAccepted.accepted AverCert.ArtifactBytes.wasmBytes {} {} ({}) ({}) ({}) := by dsimp [AverCert.ExprFragmentAccepted.accepted]; exact ⟨rfl, rfl, rfl, rfl⟩\n",
+            r.name, export_name_bytes, r.carrier, plan, body, bytes
+        ));
+    }
+    out
+}
+
 /// The Lean file the checker authors at verify time. `sha` is what the checker
 /// computed from the artifact bytes; `cands` are the charset-gated JSON report
 /// candidates. Every claim is a `rfl` against `AverCert.manifest` (or the final
@@ -981,6 +1017,7 @@ fn checker_witness(
     let expr_fragment_lower_pins = lean_expr_fragment_lower_pins(rederived);
     let expr_fragment_code_entry_pins = lean_expr_fragment_code_entry_pins(rederived);
     let expr_fragment_wasm_slice_pins = lean_expr_fragment_wasm_slice_pins(rederived);
+    let expr_fragment_accepted_pins = lean_expr_fragment_accepted_pins(rederived);
     // Semantic-face bindings: pin each obligation's typed `Dom`/`Cod`/`domRepr`/
     // `codRepr` to the STANDARD form its BYTE-derived class implies, and prove
     // every domain is inhabited. These are the faces the schema-v3 checker did
@@ -1001,6 +1038,7 @@ fn checker_witness(
          import PlanLower\n\
          import PlanBytes\n\
          import WasmSlice\n\
+         import ExprFragmentAccepted\n\
          import ArtifactBytes\n\
          import Module\n\
          import Manifest\n\
@@ -1054,6 +1092,10 @@ fn checker_witness(
          -- module. This is the first relevant-subset in-kernel byte-origin\n\
          -- check; full Wasm validation remains future work.\n\
          {expr_fragment_wasm_slice_pins}\n\
+         -- Expr-fragment aggregate acceptance: the four separate pins above are\n\
+         -- also exposed as one audited predicate. This is the v2 landing shape\n\
+         -- for replacing loose examples with an `AcceptedArtifact` theorem.\n\
+         {expr_fragment_accepted_pins}\n\
          -- Hash binding: the sha the checker computed from the artifact bytes.\n\
          example : AverCert.manifest.subject.artifactHash = \"{sha}\" := rfl\n\
          example : CertModule.wasmSha256 = \"{sha}\" := rfl\n\n\

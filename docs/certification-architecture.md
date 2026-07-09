@@ -74,6 +74,7 @@ cert/
   PlanLower.lean
   PlanBytes.lean
   WasmSlice.lean
+  ExprFragmentAccepted.lean
   ArtifactBytes.lean
   Plans.lean
   Certificate.lean
@@ -84,12 +85,12 @@ cert/
 Trace files are not emitted for this profile. Debug traces, if reintroduced as
 developer tooling, must remain outside certificate acceptance.
 
-`PlanCheck.lean`, `PlanLower.lean`, `PlanBytes.lean` and `WasmSlice.lean` are
-audited checker code copied from the verifier binary and hash-pinned in
-`cert-manifest.json`; cert-supplied files by those names are ignored by
-`aver cert verify`. `ArtifactBytes.lean` is also checker-owned: it is
-regenerated from the actual wasm bytes read by the verifier, not trusted from
-the certificate directory.
+`PlanCheck.lean`, `PlanLower.lean`, `PlanBytes.lean`, `WasmSlice.lean` and
+`ExprFragmentAccepted.lean` are audited checker code copied from the verifier
+binary and hash-pinned in `cert-manifest.json`; cert-supplied files by those
+names are ignored by `aver cert verify`. `ArtifactBytes.lean` is also
+checker-owned: it is regenerated from the actual wasm bytes read by the
+verifier, not trusted from the certificate directory.
 `Plans.lean` carries the same expression-fragment plans as Lean data and pins
 their Lean-side lowering and byte-origin slice:
 
@@ -105,6 +106,9 @@ example :
 example :
   WasmSlice.codeEntryForExport ArtifactBytes.wasmBytes [/* export name */] =
     some [/* exact code-entry bytes */] := rfl
+example :
+  ExprFragmentAccepted.accepted ArtifactBytes.wasmBytes [/* export name */]
+    carrier floatAddGoalPlan floatAddGoalBody [/* exact code-entry bytes */]
 ```
 
 This is not yet the v2 raw-byte in-kernel checker. In v1, Rust still
@@ -116,7 +120,9 @@ checks that all manifest plans pass `PlanCheck.checkExprFragmentRawPlan`, that
 `PlanLower.lowerExprFragmentBody` produces the byte-bound `WInstr` body, and
 that `PlanBytes.lowerExprFragmentCodeEntry` produces the verifier-derived
 canonical code-entry bytes. It also checks that `WasmSlice.codeEntryForExport`
-finds those same code-entry bytes from the checker-regenerated module bytes.
+finds those same code-entry bytes from the checker-regenerated module bytes,
+then proves the same facts through one `ExprFragmentAccepted.accepted`
+predicate.
 So `Plans.lean` is an untrusted data surface, but it cannot drift from the
 sidecar/body pair without failing verifier-authored `rfl`.
 
@@ -134,6 +140,7 @@ trusted_plan_check_hash
 trusted_plan_lower_hash
 trusted_plan_bytes_hash
 trusted_wasm_slice_hash
+trusted_expr_fragment_accepted_hash
 host_registry_hash
 ```
 
@@ -195,9 +202,12 @@ accepted raw plan to the measured `CertPrelude.WInstr` body used by
 `Module.lean`, and `PlanBytes.lean` canonically lowers the same plan to the
 exact code-entry byte sequence used by the current cert island. `WasmSlice.lean`
 then parses the checker-regenerated `ArtifactBytes.wasmBytes` just far enough to
-resolve an export name to the same code-entry bytes. This removes another slice
-of plan-to-semantics, plan-to-bytes and byte-origin logic from unreviewed
-generated proof text. The remaining gap is full module validation in Lean:
+resolve an export name to the same code-entry bytes. `ExprFragmentAccepted.lean`
+packages those checks as one accepted-export predicate for the current
+expr-fragment profile. This removes another slice of plan-to-semantics,
+plan-to-bytes and byte-origin logic from unreviewed generated proof text and
+sets up the shape of the later `AcceptedArtifact` theorem. The remaining gap is
+full module validation in Lean:
 `WasmSlice.lean` is intentionally a relevant-subset slicer, while Rust still
 hashes the artifact, performs the executable equality gate and derives the
 complete obligation list for non-expression classes.
@@ -348,7 +358,7 @@ Acceptance requires:
 - theorem type definitionally equals the verifier-generated goal;
 - Lean kernel/checker accepts it;
 - axiom dependencies are exactly the approved whitelist;
-- schema/prelude/plan-check/plan-lower/plan-bytes/wasm-slice/toolchain hashes match
+- schema/prelude/plan-check/plan-lower/plan-bytes/wasm-slice/expr-fragment-accepted/toolchain hashes match
   policy.
 
 ## V2 Target
@@ -475,17 +485,23 @@ Sunset criteria:
    `CheckerWitness.lean` prove that each expression export resolves to the
    canonical code-entry bytes. The remaining v2 work is full module binding
    extraction and non-expression obligation derivation in Lean.
-10. Done: remove the transitional byte classifier from expr-fragment
+10. Done for aggregate expr-fragment acceptance: add audited
+    `ExprFragmentAccepted.lean` and make generated/checker-owned Lean prove one
+    accepted-export predicate that composes `PlanCheck`, `PlanLower`,
+    `PlanBytes` and `WasmSlice`. The remaining v2 work is to make this predicate
+    carry typed module binding and spec satisfaction, then lift it into
+    `AcceptedArtifact`.
+11. Done: remove the transitional byte classifier from expr-fragment
    admission/order; manifest entries are checked by plan-first lowering
    directly and merged by byte-derived function order.
-11. Done: make producer-side expr-fragment certification require that the plan
+12. Done: make producer-side expr-fragment certification require that the plan
     canonically lowers to the exact emitted code-entry bytes, and store the
     canonical lowered ops.
-12. Done for current scalar expression islands: host-free Float/Bool and Int
+13. Done for current scalar expression islands: host-free Float/Bool and Int
     literal-comparison codegen now follows
     `MIR -> CertPlan -> canonical Wasm body`. Add future Int-carrier arithmetic
     by extending that plan grammar/lowerer path, not by adding byte recognizers.
-13. Delete old whole-function scalar recognizer acceptance once plan-first has
+14. Delete old whole-function scalar recognizer acceptance once plan-first has
    parity.
 
 The implementation should move slowly, but every step should tighten the
