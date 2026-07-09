@@ -952,6 +952,17 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         manifest_lean.contains("stringConcatPlans := [(\"shout\", Plans.shoutStringConcatPlan)]"),
         "manifest should pin the String.concat plan list:\n{manifest_lean}"
     );
+    let artifact_lean =
+        std::fs::read_to_string(cert_dir.join("Artifact.lean")).expect("Artifact.lean exists");
+    assert!(
+        artifact_lean
+            .contains("def stringConcatClaims : List AverCert.AcceptedArtifact.StringConcatClaim"),
+        "artifact should carry source-level String.concat claims:\n{artifact_lean}"
+    );
+    assert!(
+        artifact_lean.contains("plan := AverCert.Plans.shoutStringConcatPlan"),
+        "String.concat artifact claim should point at the checked source plan:\n{artifact_lean}"
+    );
 
     let build = Command::new("lake")
         .current_dir(&cert_dir)

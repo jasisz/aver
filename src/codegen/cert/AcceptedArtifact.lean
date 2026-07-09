@@ -113,6 +113,19 @@ def symFragmentClaimAccepted
     claim.plan
     claim.obligation
 
+/-- One source-level String.concat claim inside an artifact certificate. This
+    does not yet prove string byte semantics; it pins the checked source witness
+    into the artifact-level data surface so the manifest cannot advertise a
+    different String.concat plan list than the proof carried. -/
+structure StringConcatClaim where
+  exportName : String
+  plan       : StringConcatRawPlan
+  obligation : Obligation
+
+def stringConcatClaimAccepted (claim : StringConcatClaim) : Prop :=
+  AverCert.PlanCheck.checkStringConcatRawPlan claim.plan = true ∧
+  claim.obligation.export_ = claim.exportName
+
 /-- Aggregate expression-fragment acceptance for one artifact's fragment list.
     This is intentionally recursive rather than tactic-heavy, so a generated
     checker witness can prove it with a small nested pair term. -/
@@ -133,6 +146,14 @@ def symFragmentClaimsAccepted
   | claim :: rest =>
       symFragmentClaimAccepted wasmBytes claim ∧
       symFragmentClaimsAccepted wasmBytes rest
+
+/-- Aggregate source-level String.concat witness acceptance for one artifact's
+    string claim list. -/
+def stringConcatClaimsAccepted : List StringConcatClaim → Prop
+  | [] => True
+  | claim :: rest =>
+      stringConcatClaimAccepted claim ∧
+      stringConcatClaimsAccepted rest
 
 /-- The source plans claimed by an artifact, projected into the same manifest
     surface used for pinning. Keeping this in the audited predicate means a
@@ -166,6 +187,12 @@ def exprFragmentClaimPlanPairs
     (claims : List ExprFragmentClaim) : List (String × ExprFragmentRawPlan) :=
   claims.map (fun c => (c.exportName, c.plan))
 
+/-- The source-level String.concat plans claimed by an artifact, projected into
+    the same manifest surface used for pinning. -/
+def stringConcatClaimPlanPairs
+    (claims : List StringConcatClaim) : List (String × StringConcatRawPlan) :=
+  claims.map (fun c => (c.exportName, c.plan))
+
 /-- The checker-facing artifact data currently accepted by the Lean bridge.
     `symFragmentClaims` is the preferred source-level surface. Raw
     `exprFragmentClaims` remains as a fallback for representation-only fragments
@@ -176,16 +203,21 @@ structure ArtifactData where
   wasmBytes          : AverCert.WasmSlice.ByteSeq
   manifest           : AverCert.Schema.Manifest
   symFragmentClaims  : List SymFragmentClaim
+  stringConcatClaims : List StringConcatClaim
   exprFragmentClaims : List ExprFragmentClaim
 
 def acceptedSymFragments (artifact : ArtifactData) : Prop :=
   symFragmentClaimsAccepted artifact.wasmBytes artifact.symFragmentClaims
+
+def acceptedStringConcatFragments (artifact : ArtifactData) : Prop :=
+  stringConcatClaimsAccepted artifact.stringConcatClaims
 
 def acceptedExprFragments (artifact : ArtifactData) : Prop :=
   exprFragmentClaimsAccepted artifact.wasmBytes artifact.exprFragmentClaims
 
 def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedSymFragments artifact ∧
+  acceptedStringConcatFragments artifact ∧
   acceptedExprFragments artifact
 
 def expectedArtifactRoot : String :=
@@ -196,6 +228,7 @@ def subjectMatchesArtifactRoot (artifact : ArtifactData) : Prop :=
 
 def claimObligationExports (artifact : ArtifactData) : List String :=
   artifact.symFragmentClaims.map (fun c => c.obligation.export_) ++
+  artifact.stringConcatClaims.map (fun c => c.obligation.export_) ++
   artifact.exprFragmentClaims.map (fun c => c.obligation.export_)
 
 def fragmentClaimObligationsInManifest (artifact : ArtifactData) : Prop :=
@@ -208,6 +241,8 @@ def claimsMatchManifest (artifact : ArtifactData) : Prop :=
   | some encodedSymExprPlans =>
       symFragmentClaimPlanPairs artifact.symFragmentClaims =
           artifact.manifest.symFragmentPlans ∧
+      stringConcatClaimPlanPairs artifact.stringConcatClaims =
+          artifact.manifest.stringConcatPlans ∧
       encodedSymExprPlans ++ exprFragmentClaimPlanPairs artifact.exprFragmentClaims =
           artifact.manifest.exprFragmentPlans
   | none => False
