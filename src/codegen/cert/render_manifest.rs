@@ -507,10 +507,16 @@ fn render_manifest(
             Cert::StringConcatVerbatimMatch { .. } => {
                 let plan = string_concat_plan_from_cert(c)
                     .expect("certified String.concat should project to a source plan");
+                let sym_plan = string_concat_sym_plan_from_plan(&plan);
+                let sym_sidecar = sym_fragment_sidecar(c.name(), &sym_plan);
                 let sidecar = string_concat_sidecar(c.name(), &plan);
                 format!(
-                    ", \"fragment\": {{\"profile\": \"string-concat-v1\", \
+                    ", \"source_fragment\": {{\"profile\": \"sym-fragment-v1\", \
+                     \"plan\": {}, \"plan_sha256\": {}}}, \
+                     \"fragment\": {{\"profile\": \"string-concat-v1\", \
                      \"plan\": {}, \"plan_sha256\": {}}}",
+                    json_str(&sym_sidecar.path),
+                    json_str(&sym_sidecar.sha256),
                     json_str(&sidecar.path),
                     json_str(&sidecar.sha256)
                 )

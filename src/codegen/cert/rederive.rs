@@ -68,8 +68,12 @@ pub struct RederivedObligation {
     /// bytes that the checked plan lowers to. The checker witness pins
     /// `PlanBytes.lowerExprFragmentCodeEntry carrier plan = some bytes`.
     pub fragment_lowered_code_entry_lean: Option<String>,
-    /// For `string-concat-v1`, the byte-derived source-level concat plan.
+    /// For `string-concat-v1`, the byte-derived target-bound concat plan.
     pub string_concat_plan: Option<FragmentPlanSidecar>,
+    /// For `string-concat-v1`, the byte-derived source-level symbolic view of
+    /// the concat plan. This is the JSON/sidecar counterpart of
+    /// `string_concat_sym_plan_lean`.
+    pub string_concat_sym_plan: Option<FragmentPlanSidecar>,
     /// The same checked string-concat plan rendered as a Lean
     /// `StringConcatRawPlan` term. `aver cert verify` pins
     /// `manifest.stringConcatPlans` to these checker-rendered terms so
@@ -465,6 +469,12 @@ fn rederive_certificate_inner(
                 Cert::StringConcatVerbatimMatch { .. } => {
                     string_concat_plan_from_cert(c).map(|plan| string_concat_sidecar(c.name(), &plan))
                 }
+                _ => None,
+            },
+            string_concat_sym_plan: match c.inner() {
+                Cert::StringConcatVerbatimMatch { .. } => string_concat_plan_from_cert(c)
+                    .map(|plan| string_concat_sym_plan_from_plan(&plan))
+                    .map(|plan| sym_fragment_sidecar(c.name(), &plan)),
                 _ => None,
             },
             string_concat_plan_lean: match c.inner() {

@@ -611,23 +611,61 @@ fn checked_fragment_sidecar_obligations(
         let class = entry.get("class").and_then(Value::as_str);
         if class == Some("verbatim-string-concat") {
             let (profile, path, claimed_sha, text) = read_fragment_sidecar(cert_dir, name, entry)?;
+            let (source_profile, source_path, source_claimed_sha, source_text) =
+                read_named_fragment_sidecar(cert_dir, name, entry, "source_fragment")?;
             if profile != "string-concat-v1" {
                 return Err(format!(
                     "fragment `{name}` sidecar profile mismatch: manifest says `{profile}`"
                 ));
             }
+            if source_profile != "sym-fragment-v1" {
+                return Err(format!(
+                    "fragment `{name}` source sidecar profile mismatch: manifest says \
+                     `{source_profile}`"
+                ));
+            }
             cert::parse_string_concat_plan(&text)
                 .map_err(|e| format!("fragment `{name}` string-concat plan is malformed: {e}"))?;
-            let expected = byte_derived_legacy
+            let expected_obligation = byte_derived_legacy
                 .iter()
                 .find(|r| r.name == name)
-                .and_then(|r| r.string_concat_plan.as_ref())
                 .ok_or_else(|| {
                     format!(
                         "fragment `{name}` declares `string-concat-v1`, but the wasm bytes \
                          do not re-derive a String.concat certificate for that export"
                     )
                 })?;
+            let expected = expected_obligation
+                .string_concat_plan
+                .as_ref()
+                .ok_or_else(|| {
+                    format!(
+                        "fragment `{name}` declares `string-concat-v1`, but the wasm bytes \
+                         do not re-derive a String.concat certificate for that export"
+                    )
+                })?;
+            let expected_source = expected_obligation
+                .string_concat_sym_plan
+                .as_ref()
+                .ok_or_else(|| {
+                    format!(
+                        "fragment `{name}` declares `source_fragment`, but the wasm bytes \
+                         do not re-derive a String.concat SymPlan for that export"
+                    )
+                })?;
+            if expected_source.path != source_path {
+                return Err(format!(
+                    "fragment `{name}` checked source plan path mismatch: plan checks as `{}`, \
+                     manifest says `{source_path}`",
+                    expected_source.path
+                ));
+            }
+            if expected_source.sha256 != source_claimed_sha || expected_source.text != source_text {
+                return Err(format!(
+                    "fragment `{name}` source SymPlan sidecar is not the canonical \
+                     byte-derived source plan"
+                ));
+            }
             if expected.path != path {
                 return Err(format!(
                     "fragment `{name}` checked plan path mismatch: plan checks as `{}`, \
@@ -638,7 +676,7 @@ fn checked_fragment_sidecar_obligations(
             if expected.sha256 != claimed_sha || expected.text != text {
                 return Err(format!(
                     "fragment `{name}` string-concat sidecar is not the canonical \
-                     byte-derived source plan"
+                     byte-derived concat plan"
                 ));
             }
             continue;
@@ -700,14 +738,23 @@ fn read_fragment_sidecar(
     name: &str,
     entry: &Value,
 ) -> Result<(&'static str, String, String, String), String> {
-    let fragment = entry.get("fragment").ok_or_else(|| {
-        format!("cert-manifest.json entry for `{name}` is missing `fragment` sidecar metadata")
+    read_named_fragment_sidecar(cert_dir, name, entry, "fragment")
+}
+
+fn read_named_fragment_sidecar(
+    cert_dir: &Path,
+    name: &str,
+    entry: &Value,
+    field: &str,
+) -> Result<(&'static str, String, String, String), String> {
+    let fragment = entry.get(field).ok_or_else(|| {
+        format!("cert-manifest.json entry for `{name}` is missing `{field}` sidecar metadata")
     })?;
     let profile = fragment
         .get("profile")
         .and_then(Value::as_str)
         .ok_or_else(|| {
-            format!("cert-manifest.json `fragment` for `{name}` is missing string field `profile`")
+            format!("cert-manifest.json `{field}` for `{name}` is missing string field `profile`")
         })?;
     let profile = match profile {
         "expr-fragment-v1" => "expr-fragment-v1",
@@ -723,7 +770,7 @@ fn read_fragment_sidecar(
         .get("plan")
         .and_then(Value::as_str)
         .ok_or_else(|| {
-            format!("cert-manifest.json `fragment` for `{name}` is missing string field `plan`")
+            format!("cert-manifest.json `{field}` for `{name}` is missing string field `plan`")
         })?;
     let plan_path = checked_fragment_sidecar_path(cert_dir, path, profile)?;
     let claimed_sha = fragment
@@ -731,20 +778,20 @@ fn read_fragment_sidecar(
         .and_then(Value::as_str)
         .ok_or_else(|| {
             format!(
-                "cert-manifest.json `fragment` for `{name}` is missing string field \
+                "cert-manifest.json `{field}` for `{name}` is missing string field \
                  `plan_sha256`"
             )
         })?;
     let text = std::fs::read_to_string(&plan_path).map_err(|e| {
         format!(
-            "cannot read fragment `{name}` sidecar `{}`: {e}",
+            "cannot read fragment `{name}` `{field}` sidecar `{}`: {e}",
             plan_path.display()
         )
     })?;
     let file_sha = cert::sha256_hex(text.as_bytes());
     if file_sha != claimed_sha {
         return Err(format!(
-            "fragment `{name}` sidecar file hash mismatch: file hashes to \
+            "fragment `{name}` `{field}` sidecar file hash mismatch: file hashes to \
              {file_sha}, manifest pins {claimed_sha}"
         ));
     }
