@@ -1036,16 +1036,19 @@ fn lean_expr_fragment_accepted_pins(rederived: &[cert::RederivedObligation]) -> 
 /// Checker-owned Lean `example`s proving that expr-fragment byte-origin
 /// acceptance is tied to the schema obligation used by `Final.cert`.
 struct LeanExprFragmentArtifactClaims {
-    claims: String,
-    proof: String,
-    has_claims: bool,
+    sym_claims: String,
+    expr_claims: String,
+    sym_proof: String,
+    expr_proof: String,
 }
 
 fn lean_expr_fragment_artifact_claims(
     rederived: &[cert::RederivedObligation],
 ) -> LeanExprFragmentArtifactClaims {
-    let mut claims = Vec::new();
-    let mut proofs = Vec::new();
+    let mut sym_claims = Vec::new();
+    let mut expr_claims = Vec::new();
+    let mut sym_proofs = Vec::new();
+    let mut expr_proofs = Vec::new();
     for r in rederived {
         let (Some(plan), Some(body), Some(bytes), Some(code_idx), Some(type_idx)) = (
             r.fragment_plan_lean.as_ref(),
@@ -1061,78 +1064,104 @@ fn lean_expr_fragment_artifact_claims(
             "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {} }} : AverCert.WasmSlice.FuncBinding)",
             r.self_idx, code_idx, type_idx, bytes
         );
-        claims.push(format!(
-            "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
-             carrier := {carrier}, plan := (({plan}) : AverCert.Schema.ExprFragmentRawPlan), \
-             obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ExprFragmentClaim)",
-            name = r.name,
-            carrier = r.carrier
-        ));
-        proofs.push(format!(
+        let proof = format!(
             "⟨rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
              ⟨⟨rfl, rfl, rfl, rfl, rfl⟩, rfl, ⟨_, rfl⟩⟩⟩⟩"
-        ));
+        );
+        if let Some(sym_plan) = r.fragment_sym_plan_lean.as_ref() {
+            sym_claims.push(format!(
+                "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
+                 carrier := {carrier}, plan := (({sym_plan}) : AverCert.Schema.SymRawPlan), \
+                 obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.SymFragmentClaim)",
+                name = r.name,
+                carrier = r.carrier
+            ));
+            sym_proofs.push(proof);
+        } else {
+            expr_claims.push(format!(
+                "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
+                 carrier := {carrier}, plan := (({plan}) : AverCert.Schema.ExprFragmentRawPlan), \
+                 obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ExprFragmentClaim)",
+                name = r.name,
+                carrier = r.carrier
+            ));
+            expr_proofs.push(proof);
+        }
     }
-    let has_claims = !claims.is_empty();
-    let claims = if claims.is_empty() {
+    let sym_claims = if sym_claims.is_empty() {
         "[]".to_string()
     } else {
-        format!("[\n  {}\n]", claims.join(",\n  "))
+        format!("[\n  {}\n]", sym_claims.join(",\n  "))
     };
-    let proof = proofs
+    let expr_claims = if expr_claims.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[\n  {}\n]", expr_claims.join(",\n  "))
+    };
+    let sym_proof = sym_proofs
+        .into_iter()
+        .rev()
+        .fold("trivial".to_string(), |acc, proof| {
+            format!("⟨{proof}, {acc}⟩")
+        });
+    let expr_proof = expr_proofs
         .into_iter()
         .rev()
         .fold("trivial".to_string(), |acc, proof| {
             format!("⟨{proof}, {acc}⟩")
         });
     LeanExprFragmentArtifactClaims {
-        claims,
-        proof,
-        has_claims,
+        sym_claims,
+        expr_claims,
+        sym_proof,
+        expr_proof,
     }
 }
 
-fn lean_artifact_data_literal(claims: &str) -> String {
+fn lean_artifact_data_literal(sym_claims: &str, expr_claims: &str) -> String {
     format!(
         "({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, \
-         exprFragmentClaims := ({claims} : List AverCert.AcceptedArtifact.ExprFragmentClaim) }} : \
+         symFragmentClaims := ({sym_claims} : List AverCert.AcceptedArtifact.SymFragmentClaim), \
+         exprFragmentClaims := ({expr_claims} : List AverCert.AcceptedArtifact.ExprFragmentClaim) }} : \
          AverCert.AcceptedArtifact.ArtifactData)"
     )
 }
 
-fn lean_expr_fragment_acceptance_proof_block(
+fn lean_fragment_acceptance_proof_block(
     witness: &LeanExprFragmentArtifactClaims,
     indent: &str,
 ) -> String {
-    if witness.has_claims {
-        format!(
-            concat!(
-                "{indent}dsimp [AverCert.AcceptedArtifact.acceptedExprFragments,\n",
-                "{indent}  AverCert.AcceptedArtifact.exprFragmentClaimsAccepted,\n",
-                "{indent}  AverCert.AcceptedArtifact.exprFragmentClaimAccepted,\n",
-                "{indent}  AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
-                "{indent}  AverCert.ExprFragmentAccepted.accepted]\n",
-                "{indent}exact {proof}\n"
-            ),
-            indent = indent,
-            proof = witness.proof
-        )
-    } else {
-        format!("{indent}exact trivial\n")
-    }
+    format!(
+        concat!(
+            "{indent}dsimp [AverCert.AcceptedArtifact.acceptedFragments,\n",
+            "{indent}  AverCert.AcceptedArtifact.acceptedSymFragments,\n",
+            "{indent}  AverCert.AcceptedArtifact.acceptedExprFragments,\n",
+            "{indent}  AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.exprFragmentClaimsAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.exprFragmentClaimAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
+            "{indent}  AverCert.ExprFragmentAccepted.accepted]\n",
+            "{indent}exact ⟨{sym_proof}, {expr_proof}⟩\n"
+        ),
+        indent = indent,
+        sym_proof = witness.sym_proof,
+        expr_proof = witness.expr_proof
+    )
 }
 
 fn lean_expr_fragment_obligation_acceptance_pins(
     rederived: &[cert::RederivedObligation],
 ) -> String {
     let witness = lean_expr_fragment_artifact_claims(rederived);
-    let proof_block = lean_expr_fragment_acceptance_proof_block(&witness, "  ");
-    let artifact = lean_artifact_data_literal(&witness.claims);
+    let proof_block = lean_fragment_acceptance_proof_block(&witness, "  ");
+    let artifact = lean_artifact_data_literal(&witness.sym_claims, &witness.expr_claims);
     format!(
         concat!(
-            "-- Expr-fragment artifact data: accepted raw artifact bytes + raw plans\n",
+            "-- Fragment artifact data: accepted raw artifact bytes + source/raw plans\n",
             "-- are tied to the schema obligations used by `Final.cert`.\n",
-            "example : (AverCert.AcceptedArtifact.acceptedExprFragments\n",
+            "example : (AverCert.AcceptedArtifact.acceptedFragments\n",
             "    {artifact}) := by\n",
             "{proof_block}"
         ),
@@ -1143,32 +1172,26 @@ fn lean_expr_fragment_obligation_acceptance_pins(
 
 fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> String {
     let witness = lean_expr_fragment_artifact_claims(rederived);
-    let artifact = lean_artifact_data_literal(&witness.claims);
-    let checker_proof = if witness.has_claims {
-        format!(
-            concat!(
-                "  dsimp [AverCert.AcceptedArtifact.accepted,\n",
-                "    AverCert.AcceptedArtifact.acceptedExprFragments,\n",
-                "    AverCert.AcceptedArtifact.exprFragmentClaimsAccepted,\n",
-                "    AverCert.AcceptedArtifact.exprFragmentClaimAccepted,\n",
-                "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
-                "    AverCert.ExprFragmentAccepted.accepted]\n",
-                "  exact ⟨{final_witness}, {proof}⟩\n"
-            ),
-            final_witness = FINAL_WITNESS_THEOREM,
-            proof = witness.proof
-        )
-    } else {
-        format!(
-            concat!(
-                "  dsimp [AverCert.AcceptedArtifact.accepted,\n",
-                "    AverCert.AcceptedArtifact.acceptedExprFragments,\n",
-                "    AverCert.AcceptedArtifact.exprFragmentClaimsAccepted]\n",
-                "  exact ⟨{final_witness}, trivial⟩\n"
-            ),
-            final_witness = FINAL_WITNESS_THEOREM
-        )
-    };
+    let artifact = lean_artifact_data_literal(&witness.sym_claims, &witness.expr_claims);
+    let checker_proof = format!(
+        concat!(
+            "  dsimp [AverCert.AcceptedArtifact.accepted,\n",
+            "    AverCert.AcceptedArtifact.acceptedFragments,\n",
+            "    AverCert.AcceptedArtifact.acceptedSymFragments,\n",
+            "    AverCert.AcceptedArtifact.acceptedExprFragments,\n",
+            "    AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
+            "    AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
+            "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
+            "    AverCert.AcceptedArtifact.exprFragmentClaimsAccepted,\n",
+            "    AverCert.AcceptedArtifact.exprFragmentClaimAccepted,\n",
+            "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
+            "    AverCert.ExprFragmentAccepted.accepted]\n",
+            "  exact ⟨{final_witness}, ⟨{sym_proof}, {expr_proof}⟩⟩\n"
+        ),
+        final_witness = FINAL_WITNESS_THEOREM,
+        sym_proof = witness.sym_proof,
+        expr_proof = witness.expr_proof
+    );
     format!(
         concat!(
             "-- Artifact-carried data pin: the cert-supplied `Artifact.lean` data\n",

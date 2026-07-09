@@ -7,6 +7,7 @@
 -- examples.
 import CertPrelude
 import Schema
+import PlanCheck
 import ExprFragmentAccepted
 import WasmSlice
 
@@ -75,6 +76,43 @@ def exprFragmentClaimAccepted
     claim.plan
     claim.obligation
 
+/-- Artifact-level acceptance for one source-level symbolic fragment export.
+    The source plan is still untrusted data: the audited checker/encoder must
+    accept it and produce the representation-level expr-fragment plan before
+    the existing byte-origin predicate is allowed to run. -/
+def symFragmentPlanAccepted
+    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (exportName : String)
+    (carrier : Nat)
+    (plan : SymRawPlan)
+    (obligation : Obligation) : Prop :=
+  match AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan plan with
+  | some exprPlan =>
+      exprFragmentPlanAccepted
+        wasmBytes exportNameBytes exportName carrier exprPlan obligation
+  | none => False
+
+/-- One source-level symbolic fragment claim inside an artifact certificate.
+    This is the preferred v2 shape for fragments whose meaning can already be
+    stated in Aver-level terms. -/
+structure SymFragmentClaim where
+  exportNameBytes : AverCert.WasmSlice.ByteSeq
+  exportName      : String
+  carrier         : Nat
+  plan            : SymRawPlan
+  obligation      : Obligation
+
+def symFragmentClaimAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (claim : SymFragmentClaim) : Prop :=
+  symFragmentPlanAccepted
+    wasmBytes
+    claim.exportNameBytes
+    claim.exportName
+    claim.carrier
+    claim.plan
+    claim.obligation
+
 /-- Aggregate expression-fragment acceptance for one artifact's fragment list.
     This is intentionally recursive rather than tactic-heavy, so a generated
     checker witness can prove it with a small nested pair term. -/
@@ -86,21 +124,40 @@ def exprFragmentClaimsAccepted
       exprFragmentClaimAccepted wasmBytes claim ∧
       exprFragmentClaimsAccepted wasmBytes rest
 
+/-- Aggregate source-level symbolic fragment acceptance for one artifact's
+    source claim list. -/
+def symFragmentClaimsAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq) :
+    List SymFragmentClaim → Prop
+  | [] => True
+  | claim :: rest =>
+      symFragmentClaimAccepted wasmBytes claim ∧
+      symFragmentClaimsAccepted wasmBytes rest
+
 /-- The checker-facing artifact data currently accepted by the Lean bridge.
-    This intentionally starts with expression-fragment claims only; ordinary
-    legacy obligations are still pinned by the verifier witness outside this
-    artifact-level wrapper. Future v2 work should move those remaining claims
-    behind this same shape rather than adding new loose examples. -/
+    `symFragmentClaims` is the preferred source-level surface. Raw
+    `exprFragmentClaims` remains as a fallback for representation-only fragments
+    until the source grammar grows constructors for them. Ordinary legacy
+    obligations are still pinned by the verifier witness outside this
+    artifact-level wrapper. -/
 structure ArtifactData where
   wasmBytes          : AverCert.WasmSlice.ByteSeq
   manifest           : AverCert.Schema.Manifest
+  symFragmentClaims  : List SymFragmentClaim
   exprFragmentClaims : List ExprFragmentClaim
+
+def acceptedSymFragments (artifact : ArtifactData) : Prop :=
+  symFragmentClaimsAccepted artifact.wasmBytes artifact.symFragmentClaims
 
 def acceptedExprFragments (artifact : ArtifactData) : Prop :=
   exprFragmentClaimsAccepted artifact.wasmBytes artifact.exprFragmentClaims
 
+def acceptedFragments (artifact : ArtifactData) : Prop :=
+  acceptedSymFragments artifact ∧
+  acceptedExprFragments artifact
+
 def accepted (artifact : ArtifactData) : Prop :=
   AverCert.Schema.Holds artifact.manifest ∧
-  acceptedExprFragments artifact
+  acceptedFragments artifact
 
 end AverCert.AcceptedArtifact

@@ -43,6 +43,8 @@ pub fn check_expr_fragment_plan_sidecar(
         body,
     };
     let plan_lean = expr_fragment_plan_lean_value(&plan);
+    let sym_plan_lean =
+        SymPlan::from_expr_fragment_source_subset(&plan).map(|sym| sym_plan_lean_value(&sym));
     let (func_order, cert, sidecar, canonical_matches_actual, mismatch_reason) =
         check_expr_fragment_plan_object(wasm_bytes, export_name, plan)?;
     let obligation = RederivedObligation {
@@ -67,6 +69,7 @@ pub fn check_expr_fragment_plan_sidecar(
         },
         fragment_plan: Some(sidecar.clone()),
         fragment_plan_lean: Some(plan_lean),
+        fragment_sym_plan_lean: sym_plan_lean,
         fragment_lowered_body_lean: match cert.inner() {
             Cert::ExprFragment { ops, .. } => Some(render_ops_value(ops)),
             _ => None,

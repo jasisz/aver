@@ -55,6 +55,11 @@ pub struct RederivedObligation {
     /// `manifest.exprFragmentPlans` to these checker-rendered terms so
     /// `Plans.lean` cannot drift from the sidecar/body pair.
     pub fragment_plan_lean: Option<String>,
+    /// For expression fragments whose checked representation plan can be
+    /// projected into the source-level symbolic grammar, the same verifier
+    /// result rendered as a `SymRawPlan` term. This feeds the preferred v2
+    /// artifact claim shape; representation-only fragments leave it absent.
+    pub fragment_sym_plan_lean: Option<String>,
     /// For expression fragments, the verifier-rendered `List WInstr` body that
     /// the checked plan canonically lowers to. The checker witness pins
     /// `PlanLower.lowerExprFragmentBody carrier plan = some body`.
@@ -407,6 +412,11 @@ fn rederive_certificate_inner(
             },
             fragment_plan_lean: match c.inner() {
                 Cert::ExprFragment { plan, .. } => Some(expr_fragment_plan_lean_value(plan)),
+                _ => None,
+            },
+            fragment_sym_plan_lean: match c.inner() {
+                Cert::ExprFragment { plan, .. } => SymPlan::from_expr_fragment_source_subset(plan)
+                    .map(|sym| sym_plan_lean_value(&sym)),
                 _ => None,
             },
             fragment_lowered_body_lean: match c.inner() {

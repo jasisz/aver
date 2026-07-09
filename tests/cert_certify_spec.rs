@@ -209,6 +209,26 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         !plans_lean.contains("def intLessZeroSymPlan : SymRawPlan"),
         "representation-only int carrier fragment must not be promoted to SymPlan yet"
     );
+    let artifact_lean = std::fs::read_to_string(out_dir.join("cert").join("Artifact.lean"))
+        .expect("Artifact.lean exists");
+    assert!(
+        artifact_lean
+            .contains("def symFragmentClaims : List AverCert.AcceptedArtifact.SymFragmentClaim"),
+        "artifact should carry source-level fragment claims:\n{artifact_lean}"
+    );
+    assert!(
+        artifact_lean.contains("plan := AverCert.Plans.floatAddGoalSymPlan"),
+        "source-projectable fragment should be claimed through SymPlan:\n{artifact_lean}"
+    );
+    assert!(
+        artifact_lean
+            .contains("def exprFragmentClaims : List AverCert.AcceptedArtifact.ExprFragmentClaim"),
+        "artifact should keep a representation-level fallback claim list:\n{artifact_lean}"
+    );
+    assert!(
+        artifact_lean.contains("plan := AverCert.Plans.intLessZeroPlan"),
+        "representation-only fragment should remain on ExprFragmentClaim fallback:\n{artifact_lean}"
+    );
 
     let planned_goal_names: BTreeSet<String> = [
         "addTwo",
