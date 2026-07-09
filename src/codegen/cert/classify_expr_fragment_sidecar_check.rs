@@ -126,14 +126,15 @@ pub fn check_sym_fragment_plan_sidecar(
     .ok_or_else(|| format!("source plan for `{export_name}` has unsupported wasm result type"))?;
     let params = frag_params
         .iter()
-        .map(|ty| SymTy::from_frag_sem_ty(ty.sem_ty()))
+        .copied()
+        .map(SymTy::from_frag_ty)
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| {
             format!(
                 "source plan for `{export_name}` cannot describe one of the wasm representation parameters"
             )
         })?;
-    let result = SymTy::from_frag_sem_ty(frag_result.sem_ty()).ok_or_else(|| {
+    let result = SymTy::from_frag_ty(frag_result).ok_or_else(|| {
         format!(
             "source plan for `{export_name}` cannot describe the wasm representation result"
         )

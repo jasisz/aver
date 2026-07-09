@@ -10,12 +10,12 @@ pub enum SymTy {
 }
 
 impl SymTy {
-    fn from_frag_sem_ty(value: FragSemTy) -> Option<Self> {
+    fn from_frag_ty(value: FragTy) -> Option<Self> {
         match value {
-            FragSemTy::Float => Some(SymTy::Float),
-            FragSemTy::Bool => Some(SymTy::Bool),
-            FragSemTy::Int => Some(SymTy::Int),
-            FragSemTy::WVal => None,
+            FragTy::F64 => Some(SymTy::Float),
+            FragTy::BoolI32 => Some(SymTy::Bool),
+            FragTy::IntCarrier => Some(SymTy::Int),
+            FragTy::I64 | FragTy::RawI32 | FragTy::Ref => None,
         }
     }
 
@@ -105,9 +105,10 @@ impl SymPlan {
             params: plan
                 .params
                 .iter()
-                .map(|ty| SymTy::from_frag_sem_ty(ty.sem_ty()))
+                .copied()
+                .map(SymTy::from_frag_ty)
                 .collect::<Option<Vec<_>>>()?,
-            result: SymTy::from_frag_sem_ty(plan.result.sem_ty())?,
+            result: SymTy::from_frag_ty(plan.result)?,
             body: sym_block_from_frag_source_subset(&plan.body)?,
         })
     }
@@ -365,7 +366,7 @@ fn sym_block_from_frag_source_subset(block: &FragBlock) -> Option<SymBlock> {
 }
 
 fn sym_node_from_frag_source_subset(node: &FragNode) -> Option<SymNode> {
-    let ty = SymTy::from_frag_sem_ty(node.ty.sem_ty())?;
+    let ty = SymTy::from_frag_ty(node.ty)?;
     let kind = match &node.kind {
         FragNodeKind::Local { index } => SymNodeKind::Param { index: *index },
         FragNodeKind::ConstBool(value) => SymNodeKind::ConstBool(*value),

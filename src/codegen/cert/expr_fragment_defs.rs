@@ -1,31 +1,30 @@
-/// Source-language semantic type described by a fragment value. This is the
-/// face proof obligations should migrate toward: `FragTy` still describes the
-/// current wasm-gc representation, but every accepted representation has a
-/// small, explicit Aver-level meaning.
+/// Model-facing type used by the legacy `ExprFragment` obligation. This is not
+/// the source-level `SymPlan` type system: raw representation limbs stay `WVal`
+/// here because older obligations can still be byte-level/verbatim.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum FragSemTy {
+pub enum FragModelTy {
     Float,
     Bool,
     Int,
     WVal,
 }
 
-impl FragSemTy {
-    fn source_name(self) -> &'static str {
+impl FragModelTy {
+    fn display_name(self) -> &'static str {
         match self {
-            FragSemTy::Float => "Float",
-            FragSemTy::Bool => "Bool",
-            FragSemTy::Int => "Int",
-            FragSemTy::WVal => "WVal",
+            FragModelTy::Float => "Float",
+            FragModelTy::Bool => "Bool",
+            FragModelTy::Int => "Int",
+            FragModelTy::WVal => "WVal",
         }
     }
 
     fn lean_dom_type(self) -> &'static str {
         match self {
-            FragSemTy::Float => "UInt64",
-            FragSemTy::Bool => "Bool",
-            FragSemTy::Int => "Int",
-            FragSemTy::WVal => "WVal",
+            FragModelTy::Float => "UInt64",
+            FragModelTy::Bool => "Bool",
+            FragModelTy::Int => "Int",
+            FragModelTy::WVal => "WVal",
         }
     }
 }
@@ -45,12 +44,12 @@ pub enum FragTy {
 }
 
 impl FragTy {
-    fn sem_ty(self) -> FragSemTy {
+    fn model_ty(self) -> FragModelTy {
         match self {
-            FragTy::F64 => FragSemTy::Float,
-            FragTy::BoolI32 => FragSemTy::Bool,
-            FragTy::IntCarrier => FragSemTy::Int,
-            FragTy::I64 | FragTy::RawI32 | FragTy::Ref => FragSemTy::WVal,
+            FragTy::F64 => FragModelTy::Float,
+            FragTy::BoolI32 => FragModelTy::Bool,
+            FragTy::IntCarrier => FragModelTy::Int,
+            FragTy::I64 | FragTy::RawI32 | FragTy::Ref => FragModelTy::WVal,
         }
     }
 
@@ -89,11 +88,11 @@ impl FragTy {
     }
 
     fn source_name(self) -> &'static str {
-        self.sem_ty().source_name()
+        self.model_ty().display_name()
     }
 
     fn lean_dom_type(self) -> &'static str {
-        self.sem_ty().lean_dom_type()
+        self.model_ty().lean_dom_type()
     }
 
     fn lean_arg_repr(self, name: &str, carrier: &str) -> String {
@@ -443,13 +442,13 @@ mod expr_fragment_sem_ty_tests {
     use super::*;
 
     #[test]
-    fn frag_ty_keeps_semantic_face_separate_from_wasm_repr() {
-        assert_eq!(FragTy::F64.sem_ty(), FragSemTy::Float);
-        assert_eq!(FragTy::BoolI32.sem_ty(), FragSemTy::Bool);
-        assert_eq!(FragTy::IntCarrier.sem_ty(), FragSemTy::Int);
-        assert_eq!(FragTy::I64.sem_ty(), FragSemTy::WVal);
-        assert_eq!(FragTy::RawI32.sem_ty(), FragSemTy::WVal);
-        assert_eq!(FragTy::Ref.sem_ty(), FragSemTy::WVal);
+    fn frag_ty_keeps_model_face_separate_from_wasm_repr() {
+        assert_eq!(FragTy::F64.model_ty(), FragModelTy::Float);
+        assert_eq!(FragTy::BoolI32.model_ty(), FragModelTy::Bool);
+        assert_eq!(FragTy::IntCarrier.model_ty(), FragModelTy::Int);
+        assert_eq!(FragTy::I64.model_ty(), FragModelTy::WVal);
+        assert_eq!(FragTy::RawI32.model_ty(), FragModelTy::WVal);
+        assert_eq!(FragTy::Ref.model_ty(), FragModelTy::WVal);
 
         assert_eq!(FragTy::IntCarrier.plan_tag(), "int-carrier");
         assert_eq!(FragTy::IntCarrier.source_name(), "Int");

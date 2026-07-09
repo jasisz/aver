@@ -31,21 +31,12 @@ structure Subject where
 inductive Policy where
   | simulatesModel
 
-/-- Source-language semantic face of fragment values. `FragTy` below still
-    describes the current wasm-gc representation, while `FragSemTy` records the
-    Aver-level type that proof obligations should migrate toward. -/
-inductive FragSemTy where
-  | float
-  | bool
-  | int
-  | wval
-deriving Repr, DecidableEq
-
 /-- Value representation types admitted by the `expr-fragment-v1` plan grammar.
     This is the Lean-data mirror of the Rust `ExprFragmentPlan` sidecar: v1
-    proofs still use the rendered `Obligation` face below, but these definitions
-    are the stable landing zone for v2 `CheckPlan`/`LowersCodeEntry` and the
-    source-level `SymPlan` split. -/
+    proofs still use the rendered `Obligation` face below, but this
+    representation grammar is the stable landing zone for v2
+    `CheckPlan`/`LowersCodeEntry`. Source-level projection is explicit through
+    `FragTy.sourceTy?` below rather than a raw `WVal` fallback. -/
 inductive FragTy where
   | f64
   | boolI32
@@ -54,17 +45,6 @@ inductive FragTy where
   | rawI32
   | ref
 deriving Repr, DecidableEq
-
-/-- The semantic face carried by a representation-level fragment type. Raw
-    limbs remain quarantined as `wval` here and deliberately do not project to
-    `SymTy`; they need an explicit source constructor first. -/
-def FragTy.semTy : FragTy → FragSemTy
-  | .f64 => .float
-  | .boolI32 => .bool
-  | .intCarrier => .int
-  | .i64 => .wval
-  | .rawI32 => .wval
-  | .ref => .wval
 
 /-- Source-level types for the planned `SymPlan` grammar. This intentionally
     has no raw `WVal` escape hatch: if a fragment value cannot be named as an
@@ -76,11 +56,17 @@ inductive SymTy where
   | string
 deriving Repr, DecidableEq
 
-def FragSemTy.toSymTy? : FragSemTy → Option SymTy
-  | .float => some .float
-  | .bool => some .bool
-  | .int => some .int
-  | .wval => none
+/-- Projection from representation-level fragment types into the source-level
+    `SymPlan` type system. Raw wasm limbs and references deliberately return
+    `none`; they need an explicit source constructor/encoder before they can
+    participate in source-level certificates. -/
+def FragTy.sourceTy? : FragTy → Option SymTy
+  | .f64 => some .float
+  | .boolI32 => some .bool
+  | .intCarrier => some .int
+  | .i64 => none
+  | .rawI32 => none
+  | .ref => none
 
 /-- Source-level primitive operations admitted by the initial `SymPlan`
     scaffold. Representation-level integer carrier operations are intentionally

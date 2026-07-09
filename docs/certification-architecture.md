@@ -89,11 +89,12 @@ data, the checker validates it, and canonical lowering binds the checked plan
 to exact code-entry bytes. The useful shift is that the proof surface can scale
 with Aver's admitted source fragment while the encoder stays as the thin
 target-specific layer. The current `expr-fragment-v1` definitions keep the
-wasm representation type as `FragTy` and now record its source semantic face
-separately. Rust also has a first `SymPlan` model that can project direct
-source-level float/bool fragments and intentionally rejects representation-only
-carrier-limb fragments. The audited Lean `Schema.lean` mirrors this direction
-with `SymTy`, `SymPrim` and `SymRawPlan` data definitions. For fragments that
+wasm representation type as `FragTy`; source-level projection is explicit
+(`FragTy.sourceTy?`) and deliberately has no raw `WVal` fallback. Rust also has
+a first `SymPlan` model that can project direct source-level float/bool
+fragments and intentionally rejects representation-only carrier-limb fragments.
+The audited Lean `Schema.lean` mirrors this direction with `SymTy`, `SymPrim`
+and `SymRawPlan` data definitions. For fragments that
 already project cleanly, `AcceptedArtifact.lean` accepts a source-level
 `SymFragmentClaim`: Lean checks/encodes `SymRawPlan -> ExprFragmentRawPlan`,
 then the existing byte-origin predicate binds that encoded representation plan
