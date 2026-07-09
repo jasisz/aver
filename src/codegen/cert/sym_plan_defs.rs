@@ -83,6 +83,11 @@ pub enum SymNodeKind {
         op: SymPrim,
         args: Vec<SymValueId>,
     },
+    Construct {
+        type_name: String,
+        ctor_name: String,
+        args: Vec<SymValueId>,
+    },
     IntConstCmp {
         op: SymIntCmp,
         value: SymValueId,
@@ -169,6 +174,94 @@ fn expr_fragment_source_plan(
     source_plan
         .clone()
         .or_else(|| SymPlan::from_expr_fragment_source_subset(plan))
+}
+
+fn adt_constructor_sym_plan_from_cert(c: &Cert, model_info: &ModelInfo) -> Option<SymPlan> {
+    if !adt_constructor_uses_model(c, model_info) {
+        return None;
+    }
+    let Cert::AdtConstructor {
+        name,
+        arity,
+        fields,
+        ..
+    } = c.inner()
+    else {
+        return None;
+    };
+    let sig = model_info.fns.get(name)?;
+    if sig.params.len() != *arity {
+        return None;
+    }
+    let ind = model_info.inductives.get(&sig.ret)?;
+    let ctor = ind.ctors.first()?;
+    if ctor.fields != sig.params {
+        return None;
+    }
+    let params = sig
+        .params
+        .iter()
+        .map(|ty| sym_ty_from_source_type_name(ty))
+        .collect::<Option<Vec<_>>>()?;
+    let result = sym_ty_from_source_type_name(&sig.ret)?;
+    let SymTy::Named(type_name) = result.clone() else {
+        return None;
+    };
+    if !sym_plan_simple_token(&type_name) || !sym_plan_simple_token(&ctor.name) {
+        return None;
+    }
+    let mut nodes = params
+        .iter()
+        .enumerate()
+        .map(|(i, ty)| SymNode {
+            id: SymValueId(i),
+            ty: ty.clone(),
+            kind: SymNodeKind::Param { index: i as u32 },
+        })
+        .collect::<Vec<_>>();
+    let args = fields
+        .iter()
+        .map(|field| match field {
+            ConstructorField::Local(i) if (*i as usize) < params.len() => {
+                Some(SymValueId(*i as usize))
+            }
+            ConstructorField::Local(_) | ConstructorField::Null => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let result_id = SymValueId(nodes.len());
+    nodes.push(SymNode {
+        id: result_id,
+        ty: result,
+        kind: SymNodeKind::Construct {
+            type_name,
+            ctor_name: ctor.name.clone(),
+            args,
+        },
+    });
+    Some(SymPlan {
+        params,
+        result: sym_ty_from_source_type_name(&sig.ret)?,
+        body: SymBlock {
+            nodes,
+            result: result_id,
+        },
+    })
+}
+
+fn sym_ty_from_source_type_name(ty: &str) -> Option<SymTy> {
+    let ty = ty.trim();
+    match ty {
+        "Int" => Some(SymTy::Int),
+        "Float" => Some(SymTy::Float),
+        "Bool" => Some(SymTy::Bool),
+        "String" => Some(SymTy::String),
+        _ if sym_plan_simple_token(ty) => Some(SymTy::Named(ty.to_string())),
+        _ => None,
+    }
+}
+
+fn sym_plan_simple_token(value: &str) -> bool {
+    !value.is_empty() && !value.chars().any(char::is_whitespace) && !value.contains('=')
 }
 
 #[derive(Clone, Debug)]
@@ -355,6 +448,91 @@ mod sym_plan_defs_tests {
         let lean = sym_plan_lean_value(&plan);
         assert!(lean.contains("params := [(.named \"User\")]"));
         assert!(plan.to_expr_fragment_plan().is_none());
+    }
+
+    #[test]
+    fn sym_plan_construct_roundtrips_but_does_not_encode_to_expr_fragment() {
+        let plan = SymPlan {
+            params: vec![SymTy::Int],
+            result: SymTy::Named("Op".to_string()),
+            body: SymBlock {
+                nodes: vec![
+                    SymNode {
+                        id: SymValueId(0),
+                        ty: SymTy::Int,
+                        kind: SymNodeKind::Param { index: 0 },
+                    },
+                    SymNode {
+                        id: SymValueId(1),
+                        ty: SymTy::Named("Op".to_string()),
+                        kind: SymNodeKind::Construct {
+                            type_name: "Op".to_string(),
+                            ctor_name: "Add".to_string(),
+                            args: vec![SymValueId(0)],
+                        },
+                    },
+                ],
+                result: SymValueId(1),
+            },
+        };
+
+        let text = sym_fragment_plan_text(&plan);
+        assert!(text.contains("result named:Op"));
+        assert!(text.contains("construct type=Op ctor=Add args=v0"));
+
+        let lean = sym_plan_lean_value(&plan);
+        assert!(lean.contains("result := (.named \"Op\")"));
+        assert!(lean.contains(".construct \"Op\" \"Add\" [0]"));
+
+        let mut parser = SymPlanParser::new(&text, vec![SymTy::Int], SymTy::Named("Op".to_string()));
+        let parsed = parser.parse().expect("parse construct plan");
+        assert_eq!(parsed, plan.body);
+        assert!(plan.to_expr_fragment_plan().is_none());
+    }
+
+    #[test]
+    fn adt_constructor_cert_projects_to_source_construct_plan() {
+        let cert = Cert::AdtConstructor {
+            name: "mkOp".to_string(),
+            self_idx: 1,
+            nlocals: 0,
+            carrier: 0,
+            struct_idx: 3,
+            field_count: 1,
+            arity: 1,
+            fields: vec![ConstructorField::Local(0)],
+            ops: Vec::new(),
+        };
+        let mut model_info = ModelInfo::default();
+        model_info.fns.insert(
+            "mkOp".to_string(),
+            FnSig {
+                params: vec!["Int".to_string()],
+                ret: "Op".to_string(),
+            },
+        );
+        model_info.inductives.insert(
+            "Op".to_string(),
+            InductiveInfo {
+                ctors: vec![CtorInfo {
+                    name: "Add".to_string(),
+                    fields: vec!["Int".to_string()],
+                }],
+            },
+        );
+
+        let plan = adt_constructor_sym_plan_from_cert(&cert, &model_info)
+            .expect("project constructor to SymPlan");
+        assert_eq!(plan.params, vec![SymTy::Int]);
+        assert_eq!(plan.result, SymTy::Named("Op".to_string()));
+        assert!(matches!(
+            &plan.body.nodes[1].kind,
+            SymNodeKind::Construct {
+                type_name,
+                ctor_name,
+                args,
+            } if type_name == "Op" && ctor_name == "Add" && args == &[SymValueId(0)]
+        ));
     }
 
     #[test]

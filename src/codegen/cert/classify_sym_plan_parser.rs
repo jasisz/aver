@@ -153,6 +153,23 @@ impl<'a> SymPlanParser<'a> {
                 require_sym_plan_ty(id, &ty, &expected)?;
                 SymNodeKind::Prim { op, args }
             }
+            "construct" => {
+                let type_name = plan_attr(FragValueId(id.0), &attrs, "type")?.to_string();
+                let ctor_name = plan_attr(FragValueId(id.0), &attrs, "ctor")?.to_string();
+                require_sym_plan_token(id, "type", &type_name)?;
+                require_sym_plan_token(id, "ctor", &ctor_name)?;
+                let args = sym_plan_attr_values(id, &attrs, "args")?;
+                let expected = SymTy::Named(type_name.clone());
+                require_sym_plan_ty(id, &ty, &expected)?;
+                for arg in &args {
+                    require_sym_plan_node_exists(nodes, *arg)?;
+                }
+                SymNodeKind::Construct {
+                    type_name,
+                    ctor_name,
+                    args,
+                }
+            }
             "int.const-cmp" => {
                 let op = attrs
                     .get("op")
@@ -315,6 +332,7 @@ fn reject_extra_sym_plan_attrs(
         "const.float" => &["bits"],
         "const.string" => &["hex"],
         "prim" => &["op", "args"],
+        "construct" => &["type", "ctor", "args"],
         "int.const-cmp" => &["op", "value", "constant"],
         "if" => &["cond"],
         _ => &[],
@@ -326,6 +344,24 @@ fn reject_extra_sym_plan_attrs(
         ));
     }
     Ok(())
+}
+
+fn require_sym_plan_node_exists(nodes: &[SymNode], id: SymValueId) -> Result<(), String> {
+    nodes
+        .get(id.0)
+        .map(|_| ())
+        .ok_or_else(|| format!("source plan references missing node v{}", id.0))
+}
+
+fn require_sym_plan_token(id: SymValueId, key: &str, value: &str) -> Result<(), String> {
+    if value.is_empty() || value.chars().any(char::is_whitespace) || value.contains('=') {
+        Err(format!(
+            "source plan node v{} has non-canonical `{key}` token",
+            id.0
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn check_sym_plan_prim_args(

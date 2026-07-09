@@ -77,6 +77,13 @@ def symArgsAllTy (nodes : List SymNode) (expected : SymTy) : List Nat → Bool
   | [] => true
   | arg :: args => hasSymTy nodes arg expected && symArgsAllTy nodes expected args
 
+def symArgsExist (nodes : List SymNode) : List Nat → Bool
+  | [] => true
+  | arg :: args =>
+      match lookupSymNode nodes arg with
+      | some _ => symArgsExist nodes args
+      | none => false
+
 def primResultTy? (nodes : List FragNode) (op : FragPrim) (args : List Nat) :
     Option FragTy :=
   match op with
@@ -185,6 +192,11 @@ def checkSymBlockFuel : Nat → List SymTy → SymBlock → Bool
         | .constStringBytes bytes =>
             if bytesAllBytes bytes then some .string else none
         | .prim op args => symPrimResultTy? checked op args
+        | .construct typeName _ args =>
+            if symArgsExist checked args then
+              some (.named typeName)
+            else
+              none
         | .intConstCmp _ value _ =>
             if hasSymTy checked value .int && isSymParam checked value then some .bool else none
         | .ifElse cond thenBlock elseBlock =>
@@ -481,6 +493,7 @@ def encodeSymBlockFuel : Nat → SymBlock → Option FragBlock
               let fragArgs ← args.mapM (encodedValue? st)
               let (st, id) := pushEncodedNode st fragTy (.prim prim fragArgs)
               some { st with symToFrag := st.symToFrag ++ [id] }
+          | .construct _ _ _ => none
           | .intConstCmp op value constant =>
               let carrier ← encodedValue? st value
               let index ← sourceParamIndex? block.nodes value

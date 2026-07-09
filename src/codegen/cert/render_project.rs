@@ -35,7 +35,7 @@ pub fn write_project(
         hex(&h.finalize())
     };
 
-    write_fragment_sidecars(&cert_dir, analysis)?;
+    write_fragment_sidecars(&cert_dir, analysis, &model_info)?;
 
     write(&cert_dir, "Contracts.lean", &render_contracts(analysis))?;
     write(
@@ -61,7 +61,11 @@ pub fn write_project(
         "ArtifactBytes.lean",
         &render_artifact_bytes_lean(wasm_bytes),
     )?;
-    write(&cert_dir, "Plans.lean", &render_expr_fragment_plans(analysis))?;
+    write(
+        &cert_dir,
+        "Plans.lean",
+        &render_expr_fragment_plans(analysis, &model_info),
+    )?;
     write(
         &cert_dir,
         "Manifest.lean",
@@ -105,7 +109,11 @@ pub fn write_project(
     Ok(())
 }
 
-fn write_fragment_sidecars(cert_dir: &Path, analysis: &Analysis) -> Result<(), String> {
+fn write_fragment_sidecars(
+    cert_dir: &Path,
+    analysis: &Analysis,
+    model_info: &ModelInfo,
+) -> Result<(), String> {
     let mut sidecars = Vec::new();
     for c in &analysis.certs {
         match c.inner() {
@@ -132,6 +140,11 @@ fn write_fragment_sidecars(cert_dir: &Path, analysis: &Analysis) -> Result<(), S
                 sidecars.push(sym_fragment_sidecar(c.name(), &sym_plan));
                 sidecars.push(string_eq_sidecar(c.name(), &plan));
             }
+            Cert::AdtConstructor { .. } => {
+                if let Some(sym_plan) = adt_constructor_sym_plan_from_cert(c, model_info) {
+                    sidecars.push(sym_fragment_sidecar(c.name(), &sym_plan));
+                }
+            }
             _ => {}
         }
     }
@@ -148,7 +161,7 @@ fn write_fragment_sidecars(cert_dir: &Path, analysis: &Analysis) -> Result<(), S
     Ok(())
 }
 
-fn render_expr_fragment_plans(analysis: &Analysis) -> String {
+fn render_expr_fragment_plans(analysis: &Analysis, model_info: &ModelInfo) -> String {
     let mut s = String::new();
     s.push_str(
         "-- Compiler-emitted source/fragment plans as Lean data.\n\
@@ -246,6 +259,27 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
                {func_binding} := by dsimp [AverCert.ExprFragmentAccepted.accepted]; exact ⟨rfl, rfl, rfl, rfl, rfl⟩\n\n",
             plan_value = expr_fragment_plan_lean_value(plan),
             sym_plan = sym_plan,
+        ));
+    }
+    for c in &analysis.certs {
+        let Cert::AdtConstructor { name, .. } = c.inner() else {
+            continue;
+        };
+        let Some(sym_plan) = adt_constructor_sym_plan_from_cert(c, model_info) else {
+            continue;
+        };
+        any = true;
+        s.push_str(&format!(
+            "/-- Source-level constructor `SymPlan` for legacy ADT constructor `{name}`.\n\
+                This is intentionally source-only for now: the plan checker accepts it,\n\
+                but the v1 source encoder cannot yet lower `construct` to byte-bound\n\
+                `struct.new` code-entry bytes. -/\n\
+             def {name}ConstructSymPlan : SymRawPlan := {sym_plan_value}\n\n\
+             /-- The audited Lean-side source-plan checker accepts `{name}`'s constructor plan. -/\n\
+             example : AverCert.PlanCheck.checkSymRawPlan {name}ConstructSymPlan = true := rfl\n\n\
+             /-- `construct` is not yet part of the v1 source-to-fragment encoder. -/\n\
+             example : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan {name}ConstructSymPlan = none := rfl\n\n",
+            sym_plan_value = sym_plan_lean_value(&sym_plan),
         ));
     }
     for c in &analysis.certs {

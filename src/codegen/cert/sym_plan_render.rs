@@ -163,6 +163,19 @@ fn sym_node_kind_lean_value(kind: &SymNodeKind) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        SymNodeKind::Construct {
+            type_name,
+            ctor_name,
+            args,
+        } => format!(
+            ".construct {} {} [{}]",
+            lean_str(type_name),
+            lean_str(ctor_name),
+            args.iter()
+                .map(|id| id.0.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         SymNodeKind::IntConstCmp {
             op,
             value,
@@ -215,6 +228,18 @@ fn render_sym_node_plan(node: &SymNode, indent: usize, out: &mut String) {
             out.push_str(&format!(
                 "prim op={} args={}\n",
                 op.plan_tag(),
+                render_sym_plan_ids(args)
+            ));
+        }
+        SymNodeKind::Construct {
+            type_name,
+            ctor_name,
+            args,
+        } => {
+            out.push_str(&format!(
+                "construct type={} ctor={} args={}\n",
+                type_name,
+                ctor_name,
                 render_sym_plan_ids(args)
             ));
         }

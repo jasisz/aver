@@ -258,6 +258,37 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         plans_lean.contains(".intConstCmp .lt 0 (0 : Int)"),
         "intLessZero SymPlan should expose a source-level Int comparison:\n{plans_lean}"
     );
+    assert!(
+        plans_lean.contains("def mkOpConstructSymPlan : SymRawPlan"),
+        "legacy ADT constructors should render source-only construct SymPlans:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains(".construct \"Op\" \"add\" [0]"),
+        "mkOp construct SymPlan should expose source-level ADT construction:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean
+            .contains("encodeSymRawPlanToExprFragmentRawPlan mkOpConstructSymPlan = none := rfl"),
+        "construct SymPlan should remain source-only until a struct.new lowerer lands:\n{plans_lean}"
+    );
+    let mkop_entry = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"].as_str() == Some("mkOp"))
+        .expect("mkOp manifest entry");
+    assert!(
+        mkop_entry.get("source_fragment").is_none(),
+        "mkOp should not advertise source_fragment in the checked manifest until \
+         construct has byte-bound lowering"
+    );
+    let mkop_source_plan =
+        std::fs::read_to_string(out_dir.join("cert/fragments/6d6b4f70.sym-fragment-v1.plan"))
+            .expect("mkOp source-only construct sidecar exists");
+    assert!(
+        mkop_source_plan.contains("construct type=Op ctor=add args=v0"),
+        "mkOp sidecar should carry the constructor plan:\n{mkop_source_plan}"
+    );
     let artifact_lean = std::fs::read_to_string(out_dir.join("cert").join("Artifact.lean"))
         .expect("Artifact.lean exists");
     assert!(
@@ -292,6 +323,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     assert!(
         !artifact_lean.contains("plan := AverCert.Plans.intLessZeroPlan"),
         "source-level int fragment should not carry a duplicate ExprFragmentClaim:\n{artifact_lean}"
+    );
+    assert!(
+        !artifact_lean.contains("mkOpConstructSymPlan"),
+        "mkOp construct SymPlan is not an AcceptedArtifact claim until construct lowering lands:\n{artifact_lean}"
     );
 
     let planned_goal_names: BTreeSet<String> = [

@@ -97,6 +97,7 @@ mutual
     | constFloatBits (bits : Nat)
     | constStringBytes (bytes : List Nat)
     | prim (op : SymPrim) (args : List Nat)
+    | construct (typeName ctorName : String) (args : List Nat)
     | intConstCmp (op : SymIntCmp) (value : Nat) (constant : Int)
     | ifElse (cond : Nat) (thenBlock elseBlock : SymBlock)
   deriving Repr

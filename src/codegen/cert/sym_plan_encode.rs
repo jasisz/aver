@@ -44,6 +44,7 @@ impl SymToFragEncoder<'_> {
                     },
                 )
             }
+            SymNodeKind::Construct { .. } => return None,
             SymNodeKind::IntConstCmp {
                 op,
                 value,
