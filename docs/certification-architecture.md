@@ -5,8 +5,10 @@ Lean witness now also checks the relevant export-to-code-entry byte slice for
 expression fragments.
 
 This document records the target architecture for Aver artifact certificates.
-It supersedes trace-guided lifting as the certification core for new
-certificate work. Trace/replay sidecars are not an acceptance path.
+It establishes plan-first canonical lowering as the certification core for new
+certificate work, in place of the trace-guided lifting alternative that was
+weighed during prototyping but never landed on `main`. Trace/replay sidecars
+are not, and have never been, an acceptance path.
 
 ## Core Claim
 
@@ -52,7 +54,7 @@ Not trusted:
 - Aver compiler;
 - emitted manifest JSON;
 - emitted plan sidecars;
-- any legacy trace/replay metadata;
+- any trace/replay metadata, should any ever appear;
 - generated Lean proof text before kernel checking;
 - source names/debug names except where byte-derived from exports;
 - legacy recognizers.
@@ -151,8 +153,9 @@ cert/
   ...
 ```
 
-Trace files are not emitted for this profile. Debug traces, if reintroduced as
-developer tooling, must remain outside certificate acceptance.
+Trace files are not emitted for this profile, and never have been; the cert
+test suite asserts no `trace`/`trace_sha256` sidecar is written. Debug traces,
+if ever added as developer tooling, must remain outside certificate acceptance.
 
 `PlanCheck.lean`, `PlanLower.lean`, `PlanBytes.lean`, `WasmSlice.lean` and
 `ExprFragmentAccepted.lean` are audited checker code copied from the verifier
@@ -269,8 +272,14 @@ For each certified export:
 5. Canonically lower `CheckedPlan` in the actual module context to the expected
    Wasm code-entry bytes.
 6. Compare expected bytes with the actual bytes. Any difference rejects.
-7. Canonically serialize and hash `CheckedPlan` and the function binding.
-8. Compare computed hashes with manifest pins.
+7. Pin the untrusted sidecar plan file by its manifest `plan_sha256` and require
+   its text to equal the checker's canonical re-render of the checked plan.
+   `CheckedPlan` and the function binding are not serialized into a manifest
+   hash; the byte-derived function binding is instead bound inside the generated
+   Lean witness by
+   `WasmSlice.funcBindingForExport ArtifactBytes.wasmBytes exportName = some binding := rfl`.
+8. Compare that sidecar plan hash, together with the trusted Lean-file and module
+   hashes, against their manifest pins.
 9. Generate the Lean challenge from `CheckedPlan`, the function binding and the
    selected specification face.
 10. Check that the supplied proof proves exactly that verifier-generated
@@ -321,8 +330,12 @@ for the entire fragment claim set. The checker pins that `data` term to its own
 reconstruction with `rfl`, type-ascribes `Final.cert : Schema.Holds manifest`,
 and roots the axiom audit at `Artifact.certificate`. The audited
 `AcceptedArtifact.accepted` predicate also requires the manifest subject to name
-that same artifact root and requires fragment claim obligations to be present in
-`manifest.obligations`.
+that same artifact root, and its `fragmentClaimObligationsInManifest` component
+requires each fragment claim's obligation export *name* to appear among
+`manifest.obligations` — export-name membership only, not full obligation-record
+identity. That full record identity is closed separately, outside the audited
+predicate, by the checker-side `rfl` that pins the reconstructed
+`AverCert.Artifact.data`.
 This removes another slice of plan-to-semantics, plan-to-bytes, byte-origin and
 schema-binding logic from unreviewed generated proof text while still preventing
 the artifact from choosing the final theorem target. The remaining gap is full
@@ -550,45 +563,49 @@ The staged path is:
 3. v3: Lean checks the full relevant Wasm profile if the assurance tradeoff
    justifies the cost.
 
-## Trace Sunset
+## Trace-Guided Replay Is Excluded
 
-Trace-guided replay is not part of the final acceptance architecture.
+Trace-guided replay is not part of the acceptance architecture. It was a
+prototype-era design alternative — accept a `CheckedPlan` reconstructed from an
+observed execution trace — and it never landed on `main`. It is recorded here
+only to state plainly why it must stay out of the acceptance path.
 
-During migration it may help:
+As an out-of-band developer aid it could still be useful to:
 
-- debug the difference between current byte lifting and plan-first lowering;
+- debug the difference between byte lifting and plan-first lowering;
 - generate candidate plans for inspection;
-- compare old and new classifiers in shadow mode.
+- compare classifiers in shadow mode.
 
-It must not remain as an acceptance fallback. A fallback of:
+It must never become an acceptance fallback. A fallback of:
 
 ```text
 actual Wasm + trace -> CheckedPlan
 ```
 
-would keep the lifter/replay checker in the TCB. The final verifier accepts
-only:
+would put a lifter/replay checker back in the TCB. The verifier accepts only:
 
 ```text
 RawPlan -> CheckedPlan -> canonicalLower(CheckedPlan) == actual bytes
 ```
 
-Sunset criteria:
+The invariants that keep it excluded:
 
 - `expr-fragment-v1` plan-first covers every current certified scalar fragment;
 - negative tests show operand swaps, extra instructions, bad `Bool01`, bad plan
   annotations and plan/proof/hash drift reject fail-closed;
-- no required certificate is accepted only by trace replay;
-- trace sidecars are not emitted;
-- trace replay code is not part of the acceptance path.
+- negative tests assert no certificate entry emits a trace/replay sidecar;
+- no certificate is accepted by trace replay;
+- no trace-replay code is part of the acceptance path.
 
 ## Migration Plan
 
 1. Done: add a `RawPlan` parser for the existing fragment plan format.
 2. Done: add `RawPlan -> CheckedPlan` type/refinement/effect checking.
 3. Done: add canonical lowering from `CheckedPlan` to expected decoded `CodeTbl`.
-4. Done: move the equality gate from trace replay to plan-first lowering.
-5. Done: stop emitting trace sidecars.
+4. Done: the equality gate is plan-first canonical lowering; there was never a
+   shipped trace-replay gate to migrate away from.
+5. Done: no trace/replay sidecars are emitted, and negative tests assert none
+   appear in the certificate.
 6. Done for `expr-fragment-v1`: replace decoded `CodeTbl` comparison with
    byte-exact canonical code-entry comparison.
 7. Done for `expr-fragment-v1`: render witness `code` and semantic face from
@@ -668,10 +685,16 @@ Sunset criteria:
     representation-only fallback fragments.
 21. Done for `String.eq`: add `string-eq-v1` beside the source-level SymPlan,
     pin it in `manifest.stringEqPlans`, and accept the exported equality
-    dispatch through `AcceptedArtifact.StringEqClaim`. The bridge counter is
-    now 9/23 exports on `accepted-artifact-v1`.
-22. Next: migrate ADT/list/verbatim and recursion families into source-level
-    plan families or deliberately sunset them from the certified surface.
+    dispatch through `AcceptedArtifact.StringEqClaim`. The bridge counter was
+    9/23 exports on `accepted-artifact-v1` at this point.
+22. Done for `adt-constructor`: add source construct nodes to `SymPlan`, pin the
+    byte-bound `construct-v1` plans in `manifest.constructPlans`, and accept the
+    exported constructor through `AcceptedArtifact.ConstructClaim`
+    (`PlanCheck.checkConstructRawPlan`, looked up by export name). The bridge
+    counter is now 10/23 exports on `accepted-artifact-v1`.
+23. Next: migrate the remaining ADT variant/projection, verbatim, list and
+    recursion families into source-level plan families or deliberately sunset
+    them from the certified surface.
 
 The implementation should move slowly, but every step should tighten the
 acceptance path rather than add another permanent recognizer.
