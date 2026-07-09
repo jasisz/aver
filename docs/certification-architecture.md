@@ -292,10 +292,11 @@ to the byte-bound representation plan in Lean; for representation-only
 fragments it is still an `ExprFragmentClaim` fallback. The lowered body,
 code-entry bytes and function binding are internal witnesses, not trusted
 parameters. The emitted certificate now includes `Artifact.lean`, which defines
-`AverCert.Artifact.data` and an artifact-carried `acceptedWithFinal` bridge for
-the entire fragment claim set. The checker pins that `data` term to its own
+`AverCert.Artifact.data`, a parameterized `acceptedWithFinal` bridge, and the
+self-checking `AverCert.Artifact.certificate : AcceptedArtifact.accepted data`
+for the entire fragment claim set. The checker pins that `data` term to its own
 reconstruction with `rfl`, type-ascribes `Final.cert : Schema.Holds manifest`,
-and only then calls `acceptedWithFinal`.
+and roots the axiom audit at `Artifact.certificate`.
 This removes another slice of plan-to-semantics, plan-to-bytes, byte-origin and
 schema-binding logic from unreviewed generated proof text while still preventing
 the artifact from choosing the final theorem target. The remaining gap is full
@@ -591,10 +592,11 @@ Sunset criteria:
     carry checked signature/spec satisfaction and ordinary/recursive obligation
     families into the artifact-level predicate.
 12. Done for artifact-carried bridge data: emit `Artifact.lean` with
-    `AverCert.Artifact.data` and `acceptedWithFinal`, then make the
-    verifier-authored witness pin that data to its checker reconstruction and
-    root the axiom audit at the artifact-carried bridge after supplying the
-    checker-ascribed `Final.cert : Holds manifest`.
+    `AverCert.Artifact.data`, `acceptedWithFinal`, and
+    `Artifact.certificate`, then make the verifier-authored witness pin that
+    data to its checker reconstruction and root the axiom audit at
+    `Artifact.certificate` after separately type-ascribing
+    `Final.cert : Holds manifest`.
 13. Done: remove the transitional byte classifier from expr-fragment
    admission/order; manifest entries are checked by plan-first lowering
    directly and merged by byte-derived function order.
