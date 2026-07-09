@@ -54,9 +54,9 @@ inductive FragTy where
   | ref
 deriving Repr, DecidableEq
 
-/-- The source-language meaning carried by a representation-level fragment
-    type. Raw limbs remain `wval` until a checked source-level plan gives them
-    a higher-level role. -/
+/-- The semantic face carried by a representation-level fragment type. Raw
+    limbs remain quarantined as `wval` here and deliberately do not project to
+    `SymTy`; they need an explicit source constructor first. -/
 def FragTy.semTy : FragTy → FragSemTy
   | .f64 => .float
   | .boolI32 => .bool
@@ -65,22 +65,21 @@ def FragTy.semTy : FragTy → FragSemTy
   | .rawI32 => .wval
   | .ref => .wval
 
-/-- Source-level types for the planned `SymPlan` grammar. This is intentionally
-    one step above `FragTy`: target representation is checked by an encoder
-    relation, while symbolic proofs should talk in these types. -/
+/-- Source-level types for the planned `SymPlan` grammar. This intentionally
+    has no raw `WVal` escape hatch: if a fragment value cannot be named as an
+    Aver source type, it should not project to `SymPlan` yet. -/
 inductive SymTy where
   | int
   | float
   | bool
   | string
-  | wval
 deriving Repr, DecidableEq
 
-def FragSemTy.toSymTy : FragSemTy → SymTy
-  | .float => .float
-  | .bool => .bool
-  | .int => .int
-  | .wval => .wval
+def FragSemTy.toSymTy? : FragSemTy → Option SymTy
+  | .float => some .float
+  | .bool => some .bool
+  | .int => some .int
+  | .wval => none
 
 /-- Source-level primitive operations admitted by the initial `SymPlan`
     scaffold. Representation-level integer carrier operations are intentionally

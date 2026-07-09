@@ -206,7 +206,6 @@ def encodeSymTy? : SymTy → Option FragTy
   | .bool => some .boolI32
   | .int => none
   | .string => none
-  | .wval => none
 
 def encodeSymTys? : List SymTy → Option (List FragTy)
   | [] => some []

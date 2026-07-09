@@ -7,16 +7,15 @@ pub enum SymTy {
     Float,
     Bool,
     String,
-    WVal,
 }
 
-impl From<FragSemTy> for SymTy {
-    fn from(value: FragSemTy) -> Self {
+impl SymTy {
+    fn from_frag_sem_ty(value: FragSemTy) -> Option<Self> {
         match value {
-            FragSemTy::Float => SymTy::Float,
-            FragSemTy::Bool => SymTy::Bool,
-            FragSemTy::Int => SymTy::Int,
-            FragSemTy::WVal => SymTy::WVal,
+            FragSemTy::Float => Some(SymTy::Float),
+            FragSemTy::Bool => Some(SymTy::Bool),
+            FragSemTy::Int => Some(SymTy::Int),
+            FragSemTy::WVal => None,
         }
     }
 }
@@ -78,9 +77,9 @@ impl SymPlan {
             params: plan
                 .params
                 .iter()
-                .map(|ty| SymTy::from(ty.sem_ty()))
-                .collect(),
-            result: SymTy::from(plan.result.sem_ty()),
+                .map(|ty| SymTy::from_frag_sem_ty(ty.sem_ty()))
+                .collect::<Option<Vec<_>>>()?,
+            result: SymTy::from_frag_sem_ty(plan.result.sem_ty())?,
             body: sym_block_from_frag_source_subset(&plan.body)?,
         })
     }
@@ -106,7 +105,6 @@ impl SymTy {
             SymTy::Float => ".float",
             SymTy::Bool => ".bool",
             SymTy::String => ".string",
-            SymTy::WVal => ".wval",
         }
     }
 }
@@ -182,7 +180,7 @@ fn sym_block_from_frag_source_subset(block: &FragBlock) -> Option<SymBlock> {
 }
 
 fn sym_node_from_frag_source_subset(node: &FragNode) -> Option<SymNode> {
-    let ty = SymTy::from(node.ty.sem_ty());
+    let ty = SymTy::from_frag_sem_ty(node.ty.sem_ty())?;
     let kind = match &node.kind {
         FragNodeKind::Local { index } => SymNodeKind::Param { index: *index },
         FragNodeKind::ConstBool(value) => SymNodeKind::ConstBool(*value),
@@ -294,6 +292,24 @@ mod sym_plan_defs_tests {
                     },
                 ],
                 result: FragValueId(1),
+            },
+        };
+
+        assert!(SymPlan::from_expr_fragment_source_subset(&plan).is_none());
+    }
+
+    #[test]
+    fn sym_plan_rejects_raw_wasm_value_fragment() {
+        let plan = ExprFragmentPlan {
+            params: vec![FragTy::I64],
+            result: FragTy::I64,
+            body: FragBlock {
+                nodes: vec![FragNode {
+                    id: FragValueId(0),
+                    ty: FragTy::I64,
+                    kind: FragNodeKind::Local { index: 0 },
+                }],
+                result: FragValueId(0),
             },
         };
 
