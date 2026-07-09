@@ -1347,13 +1347,13 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
         .unwrap()
         .iter()
         .find(|c| c["class"].as_str() == Some("expr-fragment-v1"))
-        .expect("at least one expr-fragment sidecar");
-    let plan = expr_entry["fragment"]["plan"]
-        .as_str()
-        .expect("expr-fragment plan path");
+        .expect("at least one expr-fragment manifest entry");
     assert!(
-        expr_entry["fragment"].get("trace").is_none()
-            && expr_entry["fragment"].get("trace_sha256").is_none(),
+        expr_entry.get("fragment").is_none(),
+        "source-projectable expr fragments should not emit duplicate target sidecars"
+    );
+    assert!(
+        expr_entry.get("trace").is_none() && expr_entry.get("trace_sha256").is_none(),
         "expr-fragment manifests should not emit trace/replay sidecars"
     );
     let source_plan = expr_entry["source_fragment"]["plan"]
@@ -1368,36 +1368,14 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
         .unwrap()
         .iter()
         .find(|c| c["name"].as_str() == Some("floatAddGoal"))
-        .expect("floatAddGoal expr-fragment sidecar");
-    let float_plan = float_entry["fragment"]["plan"]
-        .as_str()
-        .expect("floatAddGoal plan path");
+        .expect("floatAddGoal expr-fragment entry");
+    assert!(
+        float_entry.get("fragment").is_none(),
+        "floatAddGoal should be verified from its source SymPlan only"
+    );
     let float_source_plan = float_entry["source_fragment"]["plan"]
         .as_str()
         .expect("floatAddGoal source plan path");
-
-    let plan_dir = temp_dir("cert-expr-plan-sidecar");
-    copy_dir(&out_dir, &plan_dir);
-    let plan_wasm = plan_dir.join("cert_goals.wasm");
-    let plan_cert = plan_dir.join("cert");
-    let plan_sidecar = plan_cert.join(plan);
-    let mut plan_text = std::fs::read_to_string(&plan_sidecar).unwrap();
-    plan_text.push_str("tamper extra-node\n");
-    std::fs::write(&plan_sidecar, plan_text).unwrap();
-
-    let (ok, out) = aver_verify(&plan_wasm, &plan_cert);
-    assert!(
-        !ok,
-        "tampered expr-fragment plan sidecar must be DECLINED:\n{out}"
-    );
-    assert!(
-        out.contains("sidecar") && out.contains("hash mismatch"),
-        "wrong reason for expr-fragment plan sidecar tamper:\n{out}"
-    );
-    assert!(
-        !out.contains("CERTIFIED"),
-        "tampered expr-fragment plan sidecar credited:\n{out}"
-    );
 
     let source_plan_tamper_dir = temp_dir("cert-expr-source-plan-tamper");
     copy_dir(&out_dir, &source_plan_tamper_dir);
@@ -1441,54 +1419,6 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     assert!(
         !out.contains("CERTIFIED"),
         "tampered expr-fragment source SymPlan credited:\n{out}"
-    );
-
-    let planfirst_tamper_dir = temp_dir("cert-expr-planfirst-tamper");
-    copy_dir(&out_dir, &planfirst_tamper_dir);
-    let planfirst_tamper_wasm = planfirst_tamper_dir.join("cert_goals.wasm");
-    let planfirst_tamper_cert = planfirst_tamper_dir.join("cert");
-    let float_plan_sidecar = planfirst_tamper_cert.join(float_plan);
-    let float_plan_text = std::fs::read_to_string(&float_plan_sidecar).unwrap();
-    let tampered_float_plan = if float_plan_text.contains("op=float.add") {
-        float_plan_text.replacen("op=float.add", "op=float.mul", 1)
-    } else {
-        float_plan_text.replacen("op=f64.add", "op=f64.mul", 1)
-    };
-    assert_ne!(
-        float_plan_text, tampered_float_plan,
-        "floatAddGoal plan shape changed"
-    );
-    std::fs::write(&float_plan_sidecar, &tampered_float_plan).unwrap();
-    let planfirst_tamper_mf = planfirst_tamper_cert.join("cert-manifest.json");
-    let mut planfirst_tamper_manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&planfirst_tamper_mf).unwrap()).unwrap();
-    let planfirst_tamper_entry = planfirst_tamper_manifest["certified"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|c| c["name"].as_str() == Some("floatAddGoal"))
-        .expect("floatAddGoal sidecar");
-    planfirst_tamper_entry["fragment"]["plan_sha256"] = serde_json::Value::String(
-        aver::codegen::cert::sha256_hex(tampered_float_plan.as_bytes()),
-    );
-    std::fs::write(
-        &planfirst_tamper_mf,
-        serde_json::to_string_pretty(&planfirst_tamper_manifest).unwrap(),
-    )
-    .unwrap();
-
-    let (ok, out) = aver_verify(&planfirst_tamper_wasm, &planfirst_tamper_cert);
-    assert!(
-        !ok,
-        "tampered plan-first expr-fragment must be DECLINED:\n{out}"
-    );
-    assert!(
-        out.contains("plan-first canonical lowering"),
-        "wrong reason for plan-first plan tamper:\n{out}"
-    );
-    assert!(
-        !out.contains("CERTIFIED"),
-        "tampered plan-first expr-fragment credited:\n{out}"
     );
 
     let lean_plan_tamper_dir = temp_dir("cert-expr-lean-plan-tamper");
@@ -1592,8 +1522,6 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let _ = std::fs::remove_dir_all(&artifact_bytes_decoy_dir);
     let _ = std::fs::remove_dir_all(&claim_without_manifest_ob_dir);
     let _ = std::fs::remove_dir_all(&artifact_axiom_tamper_dir);
-    let _ = std::fs::remove_dir_all(&plan_dir);
-    let _ = std::fs::remove_dir_all(&planfirst_tamper_dir);
     let _ = std::fs::remove_dir_all(&lean_plan_tamper_dir);
     let _ = std::fs::remove_dir_all(&lean_bytes_tamper_dir);
     let _ = std::fs::remove_dir_all(&lean_slice_tamper_dir);

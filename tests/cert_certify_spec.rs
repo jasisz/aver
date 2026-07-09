@@ -178,41 +178,15 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "expr-fragment sidecar count changed; update this deliberately"
     );
     let mut sym_sidecar_names = BTreeSet::new();
-    let mut expr_sidecar_names = BTreeSet::new();
     for entry in expr_entries {
         let name = entry["name"].as_str().unwrap();
-        let fragment = &entry["fragment"];
-        let profile = fragment["profile"]
-            .as_str()
-            .expect("fragment profile string");
-        assert_eq!(
-            profile, "expr-fragment-v1",
-            "{name} should pin its byte-bound expr fragment in `fragment`"
-        );
-        let plan = fragment["plan"].as_str().expect("fragment plan path");
-        expr_sidecar_names.insert(name.to_string());
         assert!(
-            plan.starts_with("fragments/") && plan.ends_with(".expr-fragment-v1.plan"),
-            "{name} should point at a fragment plan sidecar, got {plan}"
+            entry.get("fragment").is_none(),
+            "{name} should not emit a duplicate byte-bound expr sidecar when a \
+             source SymPlan can encode it"
         );
         assert!(
-            !plan.contains(".."),
-            "{name} sidecar path must stay inside cert/fragments"
-        );
-        let text = std::fs::read_to_string(out_dir.join("cert").join(plan))
-            .expect("fragment sidecar exists");
-        assert!(
-            text.starts_with("aver.expr-fragment.plan.v1\nprofile expr-fragment-v1\n"),
-            "{name} sidecar should be the canonical {profile} plan:\n{text}"
-        );
-        let expected_sha = aver::codegen::cert::sha256_hex(text.as_bytes());
-        assert_eq!(
-            fragment["plan_sha256"].as_str(),
-            Some(expected_sha.as_str()),
-            "{name} sidecar hash should match the sidecar bytes"
-        );
-        assert!(
-            fragment.get("trace").is_none() && fragment.get("trace_sha256").is_none(),
+            entry.get("trace").is_none() && entry.get("trace_sha256").is_none(),
             "{name} should not emit trace/replay sidecars after plan-first lowering"
         );
         let source_fragment = &entry["source_fragment"];
@@ -251,10 +225,6 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             && sym_sidecar_names.contains("intEqZero")
             && sym_sidecar_names.contains("inAsciiDigit"),
         "direct source-level fragments should prefer sym sidecars, got {sym_sidecar_names:?}"
-    );
-    assert!(
-        expr_sidecar_names == sym_sidecar_names,
-        "current expr fragments should pin both source and target sidecars, got target={expr_sidecar_names:?}, source={sym_sidecar_names:?}"
     );
     let plans_lean = std::fs::read_to_string(out_dir.join("cert").join("Plans.lean"))
         .expect("Plans.lean exists");

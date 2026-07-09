@@ -496,24 +496,23 @@ fn render_manifest(
             Cert::ExprFragment {
                 source_plan, plan, ..
             } => {
-                let sidecar = expr_fragment_sidecar(c.name(), plan);
-                let source_json = expr_fragment_source_plan(source_plan, plan)
-                    .map(|sym| {
-                        let sym_sidecar = sym_fragment_sidecar(c.name(), &sym);
-                        format!(
-                            ", \"source_fragment\": {{\"profile\": \"sym-fragment-v1\", \
-                             \"plan\": {}, \"plan_sha256\": {}}}",
-                            json_str(&sym_sidecar.path),
-                            json_str(&sym_sidecar.sha256)
-                        )
-                    })
-                    .unwrap_or_default();
-                format!(
-                    "{source_json}, \"fragment\": {{\"profile\": \"expr-fragment-v1\", \
-                     \"plan\": {}, \"plan_sha256\": {}}}",
-                    json_str(&sidecar.path),
-                    json_str(&sidecar.sha256)
-                )
+                if let Some(sym) = expr_fragment_source_plan(source_plan, plan) {
+                    let sym_sidecar = sym_fragment_sidecar(c.name(), &sym);
+                    format!(
+                        ", \"source_fragment\": {{\"profile\": \"sym-fragment-v1\", \
+                         \"plan\": {}, \"plan_sha256\": {}}}",
+                        json_str(&sym_sidecar.path),
+                        json_str(&sym_sidecar.sha256)
+                    )
+                } else {
+                    let sidecar = expr_fragment_sidecar(c.name(), plan);
+                    format!(
+                        ", \"fragment\": {{\"profile\": \"expr-fragment-v1\", \
+                         \"plan\": {}, \"plan_sha256\": {}}}",
+                        json_str(&sidecar.path),
+                        json_str(&sidecar.sha256)
+                    )
+                }
             }
             Cert::StringConcatVerbatimMatch { .. } => {
                 let plan = string_concat_plan_from_cert(c)

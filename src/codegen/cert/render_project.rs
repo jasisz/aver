@@ -115,9 +115,10 @@ fn write_fragment_sidecars(cert_dir: &Path, analysis: &Analysis) -> Result<(), S
             Cert::ExprFragment {
                 source_plan, plan, ..
             } => {
-                sidecars.push(expr_fragment_sidecar(c.name(), plan));
                 if let Some(sym) = expr_fragment_source_plan(source_plan, plan) {
                     sidecars.push(sym_fragment_sidecar(c.name(), &sym));
+                } else {
+                    sidecars.push(expr_fragment_sidecar(c.name(), plan));
                 }
             }
             Cert::StringConcatVerbatimMatch { .. } => {

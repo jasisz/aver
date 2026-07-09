@@ -104,7 +104,8 @@ to the exact function bytes. Representation-only fragments remain on the
 `ExprFragmentClaim` fallback until the source grammar grows explicit
 constructors for them. The emitted manifest now uses `sym-fragment-v1.plan` as
 the preferred sidecar for every current scalar expression fragment;
-`expr-fragment-v1.plan` remains the fallback and the checked encoder target.
+`expr-fragment-v1.plan` remains only the representation-only fallback and the
+checked encoder target inside Lean/checker witnesses.
 Representation types are therefore already moving into checked encoding details
 rather than the artifact surface.
 
@@ -119,8 +120,9 @@ at a time rather than folded into `SymPlan` through a raw `WVal` escape hatch.
 `String.concat` has started that migration as a separate `string-concat-v1`
 source witness: the sidecar records `prefix* + input + suffix*` at the Aver
 String level and the verifier checks it against the byte-derived concat
-certificate. It is intentionally not yet a Lean `SymFragmentClaim`; the next
-step is to add the Lean data/checker/lowering bridge for this string family.
+certificate. It also carries a source `SymPlan` and an artifact-level
+`StringConcatClaim`, because the string family needs target data-index bindings
+that a plain `SymFragmentClaim` deliberately does not contain.
 
 ## Artifact Shape
 
@@ -131,7 +133,7 @@ foo.wasm
 cert/
   cert-manifest.json
   fragments/<export>.sym-fragment-v1.plan   # preferred when source-projectable
-  fragments/<export>.expr-fragment-v1.plan
+  fragments/<export>.expr-fragment-v1.plan  # only representation-only fallback
   fragments/<export>.string-concat-v1.plan  # source witness for String.concat
   PlanCheck.lean
   PlanLower.lean
@@ -287,7 +289,8 @@ against the bytes sliced from the actual Wasm code section. The checked bytes
 include the body-size prefix, the local declaration vector and the final `end`.
 The checker derives non-expression obligations with the legacy byte
 classifiers, derives expression-fragment obligations from manifest-named plan
-sidecars, checks each sidecar against byte-derived function facts, and only then
+sidecars (`SymPlan` first, representation fallback only when needed), checks
+each sidecar against byte-derived function facts, and only then
 merges the two lists by the actual byte-derived function order before
 generating `CheckerWitness.lean`. The old expr-fragment byte classifier is no
 longer part of verifier-side admission or ordering. The remaining v1 residual
@@ -652,9 +655,15 @@ Sunset criteria:
     `accepted-artifact-v1`.
 19. Done for `expr-fragment-v1`: delete the old byte-derived expression
     lifter/recognizer from the verifier admission path. Expression fragments
-    now enter only through producer `SymPlan`/`ExprFragmentPlan` sidecars whose
-    checked canonical lowering matches the exact code-entry bytes.
-20. Next: migrate ADT/list/verbatim and recursion families into source-level
+    now enter only through producer plan sidecars whose checked canonical
+    lowering matches the exact code-entry bytes.
+20. Done for source-first expr artifact shape: current source-projectable
+    expression fragments no longer emit a duplicate public
+    `expr-fragment-v1.plan` sidecar. The verifier reads the `SymPlan`, derives
+    the representation `ExprFragmentRawPlan`, and uses that derived plan for
+    Lean manifest/witness pins. The target plan sidecar remains only for future
+    representation-only fallback fragments.
+21. Next: migrate ADT/list/verbatim and recursion families into source-level
     plan families or deliberately sunset them from the certified surface.
 
 The implementation should move slowly, but every step should tighten the

@@ -35,9 +35,10 @@
 //! bytes with a vacuously-true `holds`. To close that, the checker derives each
 //! obligation's `code`, `host`, `self`, `carrier` and consumed runtime contracts
 //! from byte-bound facts: ordinary classes come from the audited disassembler,
-//! while `expr-fragment-v1` code/face comes from a checked plan sidecar whose
-//! canonical code-entry bytes must equal the real bytes. The checker splices
-//! those values, fully expanded, into the witness — then pins them with
+//! while `expr-fragment-v1` code/face comes from a checked source plan sidecar
+//! or, only for representation-only fallbacks, a checked representation plan
+//! sidecar whose canonical code-entry bytes must equal the real bytes. The
+//! checker splices those values, fully expanded, into the witness — then pins them with
 //! `rfl` against `manifest.obligations.map (·.code / ·.host / ·.self / ·.carrier)`.
 //! Those are EXACTLY the fields `Obligation.holds` reasons about
 //! (`wFuncN o.code (o.host add sub mul stringEq) fuel o.self`), so a fabricated body, a
@@ -47,15 +48,17 @@
 //! rendering over byte-bound data, never attacker text, and are fully expanded
 //! so they do not reference the cert's `CertModule.*` defs (which an attacker
 //! edits).
-//! Expression-fragment plan sidecars are useful emitted metadata, never
-//! authority. The checker parses the sidecar as an untrusted plan, typechecks it
-//! against byte-derived function facts, canonically lowers it to raw wasm
-//! code-entry bytes, and only then uses the checked plan to render the witness
-//! `code`/semantic face for that obligation. A stale or forged sidecar therefore
-//! fails before the checker-authored witness can certify it. The witness also
-//! asks `WasmSlice.lean` to recover each expression export's code-entry bytes
-//! from the checker-regenerated `ArtifactBytes.lean`, so the plan's canonical
-//! bytes are tied to a narrow Lean-side slice of the actual module bytes.
+//! Expression-fragment sidecars are useful emitted metadata, never authority.
+//! The preferred sidecar is now a source-level `SymPlan`; the checker parses it
+//! as untrusted data, typechecks it against byte-derived function facts, derives
+//! the representation `ExprFragmentRawPlan`, canonically lowers that derived
+//! plan to raw wasm code-entry bytes, and only then uses it to render the
+//! witness `code`/semantic face for that obligation. A stale or forged sidecar
+//! therefore fails before the checker-authored witness can certify it. The
+//! witness also asks `WasmSlice.lean` to recover each expression export's
+//! code-entry bytes from the checker-regenerated `ArtifactBytes.lean`, so the
+//! plan's canonical bytes are tied to a narrow Lean-side slice of the actual
+//! module bytes.
 //! `Module.lean` is never read as text for comparison. This is trusted via
 //! inspection of the disassembler, not an in-kernel wasm decode proof; a full
 //! kernel decoder is a deferred residual, and `model` (not byte-re-derivable for
@@ -491,14 +494,13 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     let derived_contracts = non_expr_cert.contracts;
 
     // 2c. Expression-fragment sidecars are untrusted proof-carrying metadata.
-    //     For this profile, the sidecar checked plan is the source for the
-    //     witness `code` and semantic face, but only after verifier-owned
-    //     canonical lowering matches the actual raw code-entry bytes. Unlike the
-    //     old transitional overlay, the byte classifier no longer decides which
-    //     expr fragments are in scope: the manifest names the sidecar witness,
-    //     the checker validates it against the actual bytes, and the final list
-    //     is sorted by byte-derived function order before the kernel witness
-    //     binds it to `Manifest.lean`.
+    //     Source-projectable fragments are admitted from `source_fragment`
+    //     only: the checker validates the SymPlan, derives the representation
+    //     ExprFragmentRawPlan itself, and accepts it only after verifier-owned
+    //     canonical lowering matches the actual raw code-entry bytes.
+    //     Representation `fragment` remains solely as a fallback for fragments
+    //     that cannot yet be named in SymPlan. The byte classifier no longer
+    //     decides which expr fragments are in scope.
     let sidecar_obligations =
         checked_fragment_sidecar_obligations(cert_dir, &manifest, &bytes, &rederived)?;
     rederived.extend(sidecar_obligations);
@@ -692,6 +694,60 @@ fn checked_fragment_sidecar_obligations(
             continue;
         }
 
+        if entry.get("source_fragment").is_some() {
+            if entry.get("fragment").is_some() {
+                return Err(format!(
+                    "cert-manifest.json entry for `{name}` carries both `source_fragment` and \
+                     `fragment`; source-projectable expr fragments must use `source_fragment` \
+                     only"
+                ));
+            }
+            let (source_profile, source_path, source_claimed_sha, source_text) =
+                read_named_fragment_sidecar(cert_dir, name, entry, "source_fragment")?;
+            if source_profile != "sym-fragment-v1" {
+                return Err(format!(
+                    "fragment `{name}` source sidecar profile mismatch: manifest says \
+                     `{source_profile}`"
+                ));
+            }
+            let source_check = cert::check_sym_fragment_plan_sidecar(
+                wasm_bytes,
+                name,
+                &source_text,
+            )
+            .map_err(|e| {
+                format!("fragment `{name}` source plan sidecar does not check against wasm: {e}")
+            })?;
+            if source_check.sidecar.path != source_path {
+                return Err(format!(
+                    "fragment `{name}` checked source plan path mismatch: plan checks as `{}`, \
+                     manifest says `{source_path}`",
+                    source_check.sidecar.path
+                ));
+            }
+            if source_check.sidecar.sha256 != source_claimed_sha
+                || source_check.sidecar.text != source_text
+            {
+                return Err(format!(
+                    "fragment `{name}` source SymPlan sidecar is not the canonical \
+                     checked source plan"
+                ));
+            }
+            if !source_check.canonical_matches_actual {
+                return Err(format!(
+                    "fragment `{name}` source plan-first canonical lowering does not match \
+                     the actual wasm code-entry{}",
+                    source_check
+                        .mismatch_reason
+                        .as_deref()
+                        .map(|reason| format!(" ({reason})"))
+                        .unwrap_or_default()
+                ));
+            }
+            obligations.push(source_check.obligation);
+            continue;
+        }
+
         let (profile, path, claimed_sha, text) = read_fragment_sidecar(cert_dir, name, entry)?;
         if profile != "expr-fragment-v1" {
             return Err(format!(
@@ -725,87 +781,14 @@ fn checked_fragment_sidecar_obligations(
                     .unwrap_or_default()
             ));
         }
-        let mut obligation = plan_check.obligation;
-        match entry.get("source_fragment") {
-            Some(_) => {
-                let (source_profile, source_path, source_claimed_sha, source_text) =
-                    read_named_fragment_sidecar(cert_dir, name, entry, "source_fragment")?;
-                if source_profile != "sym-fragment-v1" {
-                    return Err(format!(
-                        "fragment `{name}` source sidecar profile mismatch: manifest says \
-                         `{source_profile}`"
-                    ));
-                }
-                let source_check = cert::check_sym_fragment_plan_sidecar(
-                    wasm_bytes,
-                    name,
-                    &source_text,
-                )
-                .map_err(|e| {
-                    format!(
-                        "fragment `{name}` source plan sidecar does not check against wasm: {e}"
-                    )
-                })?;
-                if source_check.sidecar.path != source_path {
-                    return Err(format!(
-                        "fragment `{name}` checked source plan path mismatch: plan checks as `{}`, \
-                         manifest says `{source_path}`",
-                        source_check.sidecar.path
-                    ));
-                }
-                if source_check.sidecar.sha256 != source_claimed_sha
-                    || source_check.sidecar.text != source_text
-                {
-                    return Err(format!(
-                        "fragment `{name}` source SymPlan sidecar is not the canonical \
-                         byte-derived source plan"
-                    ));
-                }
-                if !source_check.canonical_matches_actual {
-                    return Err(format!(
-                        "fragment `{name}` source plan-first canonical lowering does not match \
-                         the actual wasm code-entry{}",
-                        source_check
-                            .mismatch_reason
-                            .as_deref()
-                            .map(|reason| format!(" ({reason})"))
-                            .unwrap_or_default()
-                    ));
-                }
-                let source_target =
-                    source_check
-                        .obligation
-                        .fragment_plan
-                        .as_ref()
-                        .ok_or_else(|| {
-                            format!(
-                                "fragment `{name}` source plan did not produce a byte-bound \
-                             expr-fragment plan"
-                            )
-                        })?;
-                if source_target.path != plan_check.sidecar.path
-                    || source_target.sha256 != plan_check.sidecar.sha256
-                    || source_target.text != plan_check.sidecar.text
-                {
-                    return Err(format!(
-                        "fragment `{name}` source SymPlan does not encode to the same \
-                         byte-bound expr plan as `fragment`"
-                    ));
-                }
-                obligation.fragment_sym_plan = source_check.obligation.fragment_sym_plan;
-                obligation.fragment_sym_plan_lean = source_check.obligation.fragment_sym_plan_lean;
-            }
-            None => {
-                if obligation.fragment_sym_plan.is_some() {
-                    return Err(format!(
-                        "cert-manifest.json entry for `{name}` is missing `source_fragment` \
-                         sidecar metadata"
-                    ));
-                }
-            }
+        if plan_check.obligation.fragment_sym_plan.is_some() {
+            return Err(format!(
+                "cert-manifest.json entry for `{name}` uses representation `fragment` metadata, \
+                 but the checked plan is source-projectable; use `source_fragment` instead"
+            ));
         }
 
-        obligations.push(obligation);
+        obligations.push(plan_check.obligation);
     }
     Ok(obligations)
 }
@@ -1698,17 +1681,19 @@ fn checker_witness(
          -- String.concat helper-shape validation.\n\
          example : AverCert.manifest.stringConcatPlans = {string_concat_plans} := rfl\n\
          example : AverCert.manifest.stringConcatPlans.all (fun p => AverCert.PlanCheck.checkStringConcatRawPlan p.2) = true := rfl\n\n\
-         -- Expr-fragment raw plans: the manifest's Lean-data representation plans are pinned\n\
-         -- to the checker-rendered `ExprFragmentRawPlan` terms reconstructed\n\
-         -- from sidecars that already passed hash, type/refinement and\n\
-         -- canonical code-entry equality against the artifact bytes.\n\
+         -- Expr-fragment raw plans: the manifest's Lean-data representation plans\n\
+         -- are pinned to checker-rendered `ExprFragmentRawPlan` terms derived\n\
+         -- from checked source sidecars, or from representation fallback sidecars\n\
+         -- when no source plan can describe the fragment. In both cases they\n\
+         -- already passed hash, type/refinement and canonical code-entry equality\n\
+         -- against the artifact bytes.\n\
          example : AverCert.manifest.exprFragmentPlans = {expr_fragment_plans} := rfl\n\n\
          -- The manifest plans also pass the audited Lean-side structural\n\
          -- checker. This is not the v2 byte-level `LowersCodeEntry` proof yet,\n\
          -- but it makes `RawPlan -> checked structural plan` a kernel-checked\n\
          -- artifact invariant.\n\
          example : AverCert.manifest.exprFragmentPlans.all (fun p => AverCert.PlanCheck.checkExprFragmentRawPlan p.2) = true := rfl\n\n\
-         -- Expr-fragment plan lowering: for every checked expr-fragment sidecar,\n\
+         -- Expr-fragment plan lowering: for every checked expr-fragment plan,\n\
          -- the audited Lean lowerer reconstructs the exact `WInstr` body that\n\
          -- the verifier rendered after canonical code-entry equality against\n\
          -- the artifact bytes. This is still WInstr-level, not raw byte-level\n\
