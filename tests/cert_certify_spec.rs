@@ -272,9 +272,12 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "source-projectable fragment should not carry a duplicate ExprFragmentClaim:\n{artifact_lean}"
     );
     assert!(
-        artifact_lean
-            .contains("def exprFragmentClaims : List AverCert.AcceptedArtifact.ExprFragmentClaim"),
-        "artifact should keep a representation-level fallback claim list:\n{artifact_lean}"
+        !artifact_lean.contains("ExprFragmentClaim"),
+        "artifact-level expr fragments should be source-first, with no raw ExprFragmentClaim fallback:\n{artifact_lean}"
+    );
+    assert!(
+        !artifact_lean.contains("exprFragmentClaims"),
+        "artifact-level expr fragments should not expose a raw exprFragmentClaims list:\n{artifact_lean}"
     );
     assert!(
         artifact_lean.contains("plan := AverCert.Plans.intLessZeroSymPlan"),

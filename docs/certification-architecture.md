@@ -100,12 +100,13 @@ fragments. The audited Lean `Schema.lean` mirrors this direction with `SymTy`,
 already project cleanly, `AcceptedArtifact.lean` accepts a source-level
 `SymFragmentClaim`: Lean checks/encodes `SymRawPlan -> ExprFragmentRawPlan`,
 then the existing byte-origin predicate binds that encoded representation plan
-to the exact function bytes. Representation-only fragments remain on the
-`ExprFragmentClaim` fallback until the source grammar grows explicit
-constructors for them. The emitted manifest now uses `sym-fragment-v1.plan` as
-the preferred sidecar for every current scalar expression fragment;
-`expr-fragment-v1.plan` remains only the representation-only fallback and the
-checked encoder target inside Lean/checker witnesses.
+to the exact function bytes. Representation-only expr fragments are no longer
+accepted through the artifact-level bridge until the source grammar grows
+explicit constructors for them. The emitted manifest now uses
+`sym-fragment-v1.plan` as the preferred sidecar for every current scalar
+expression fragment; `expr-fragment-v1.plan` remains only the checked encoder
+target inside Lean/checker witnesses, not a duplicate public sidecar for
+current source-projectable fragments.
 Representation types are therefore already moving into checked encoding details
 rather than the artifact surface.
 
@@ -197,9 +198,7 @@ example :
             exportName := "floatAddGoal",
             carrier := carrier,
             plan := floatAddGoalSymPlan,
-            obligation := floatAddGoalOb } ],
-      exprFragmentClaims :=
-        [] }
+            obligation := floatAddGoalOb } ] }
 ```
 
 This is not yet the v2 raw-byte in-kernel checker. In v1, Rust still
@@ -219,8 +218,8 @@ the checker-owned artifact bytes, then proves the same facts through one
 `ExprFragmentAccepted.accepted` predicate. For fragments with a source
 projection, the artifact-level claim is now `SymFragmentClaim`: Lean checks
 `encodeSymRawPlanToExprFragmentRawPlan symPlan = some exprPlan` before applying
-the existing representation-plan acceptance predicate. For fragments without a
-source projection, the fallback remains `ExprFragmentClaim`.
+the existing representation-plan acceptance predicate. Fragments without a
+source projection are not admitted by the artifact-level wrapper yet.
 So `Plans.lean` is an untrusted data surface, but it cannot drift from the
 sidecar/body pair without failing verifier-authored `rfl`.
 
@@ -310,8 +309,8 @@ packages those checks as one accepted-export predicate for the current
 expr-fragment profile. `AcceptedArtifact.lean` exposes the v2-shaped bridge
 from raw artifact bytes + source/raw plan + schema obligation to that predicate.
 For source-projectable fragments this is a `SymFragmentClaim` that must encode
-to the byte-bound representation plan in Lean; for representation-only
-fragments it is still an `ExprFragmentClaim` fallback. The lowered body,
+to the byte-bound representation plan in Lean; representation-only expr
+fragments are not admitted by the artifact-level wrapper yet. The lowered body,
 code-entry bytes and function binding are internal witnesses, not trusted
 parameters. The emitted certificate now includes `Artifact.lean`, which defines
 `AverCert.Artifact.data`, a parameterized `acceptedWithFinal` bridge, and the
@@ -614,7 +613,7 @@ Sunset criteria:
 11. Done for the first artifact bridge: add audited `AcceptedArtifact.lean` and
     make checker-owned Lean prove raw artifact bytes + raw plan +
     `Schema.Obligation` imply accepted expr-fragment byte origin, plan lowering
-    and obligation-code binding through `ArtifactData.acceptedExprFragments`
+    and obligation-code binding through source-first `SymFragmentClaim`s
     for the aggregate expr-fragment claim list. The remaining v2 work is to
     carry checked signature/spec satisfaction and ordinary/recursive obligation
     families into the artifact-level predicate.

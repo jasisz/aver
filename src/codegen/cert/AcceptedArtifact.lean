@@ -57,27 +57,6 @@ def exprFragmentPlanAccepted
       obligation.code binding.funcIdx =
         some { arity := plan.params.length, nlocals := nlocals, body := body }
 
-/-- One expression-fragment claim inside an artifact certificate. The plan and
-    obligation are still untrusted data until `exprFragmentClaimAccepted`
-    checks them against the checker-owned artifact bytes. -/
-structure ExprFragmentClaim where
-  exportNameBytes : AverCert.WasmSlice.ByteSeq
-  exportName      : String
-  carrier         : Nat
-  plan            : ExprFragmentRawPlan
-  obligation      : Obligation
-
-def exprFragmentClaimAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
-    (claim : ExprFragmentClaim) : Prop :=
-  exprFragmentPlanAccepted
-    wasmBytes
-    claim.exportNameBytes
-    claim.exportName
-    claim.carrier
-    claim.plan
-    claim.obligation
-
 /-- Artifact-level acceptance for one source-level symbolic fragment export.
     The source plan is still untrusted data: the audited checker/encoder must
     accept it and produce the representation-level expr-fragment plan before
@@ -170,17 +149,6 @@ def stringConcatClaimAccepted
     claim.plan
     claim.obligation
 
-/-- Aggregate expression-fragment acceptance for one artifact's fragment list.
-    This is intentionally recursive rather than tactic-heavy, so a generated
-    checker witness can prove it with a small nested pair term. -/
-def exprFragmentClaimsAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq) :
-    List ExprFragmentClaim → Prop
-  | [] => True
-  | claim :: rest =>
-      exprFragmentClaimAccepted wasmBytes claim ∧
-      exprFragmentClaimsAccepted wasmBytes rest
-
 /-- Aggregate source-level symbolic fragment acceptance for one artifact's
     source claim list. -/
 def symFragmentClaimsAccepted
@@ -209,9 +177,9 @@ def symFragmentClaimPlanPairs
     (claims : List SymFragmentClaim) : List (String × SymRawPlan) :=
   claims.map (fun c => (c.exportName, c.plan))
 
-/-- Representation plans induced by source-level claims. This is what lets a
-    source-projectable fragment avoid carrying a duplicate `ExprFragmentClaim`:
-    the byte-bound plan is computed by the audited encoder. -/
+/-- Representation plans induced by source-level claims. This is what keeps the
+    artifact surface source-first: the byte-bound plan is computed by the
+    audited encoder rather than carried as a separate claim. -/
 def symFragmentClaimEncodedPlanPair?
     (claim : SymFragmentClaim) : Option (String × ExprFragmentRawPlan) :=
   match AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan claim.plan with
@@ -227,12 +195,6 @@ def symFragmentClaimEncodedPlanPairs :
       | some pair, some pairs => some (pair :: pairs)
       | _, _ => none
 
-/-- The representation plans claimed by an artifact, projected into the same
-    manifest surface used for pinning. -/
-def exprFragmentClaimPlanPairs
-    (claims : List ExprFragmentClaim) : List (String × ExprFragmentRawPlan) :=
-  claims.map (fun c => (c.exportName, c.plan))
-
 /-- The source-level String.concat plans claimed by an artifact, projected into
     the same manifest surface used for pinning. -/
 def stringConcatClaimPlanPairs
@@ -247,17 +209,15 @@ def stringConcatClaimSymPlanPairs
   claims.map (fun c => (c.exportName, c.symPlan))
 
 /-- The checker-facing artifact data currently accepted by the Lean bridge.
-    `symFragmentClaims` is the preferred source-level surface. Raw
-    `exprFragmentClaims` remains as a fallback for representation-only fragments
-    until the source grammar grows constructors for them. Ordinary legacy
-    obligations are still pinned by the verifier witness outside this
-    artifact-level wrapper. -/
+    `symFragmentClaims` is the source-level expression surface. There is no
+    artifact-level raw `ExprFragmentClaim`; representation plans are derived by
+    the audited source encoder. Ordinary legacy obligations are still pinned by
+    the verifier witness outside this artifact-level wrapper. -/
 structure ArtifactData where
   wasmBytes          : AverCert.WasmSlice.ByteSeq
   manifest           : AverCert.Schema.Manifest
   symFragmentClaims  : List SymFragmentClaim
   stringConcatClaims : List StringConcatClaim
-  exprFragmentClaims : List ExprFragmentClaim
 
 def acceptedSymFragments (artifact : ArtifactData) : Prop :=
   symFragmentClaimsAccepted artifact.wasmBytes artifact.symFragmentClaims
@@ -265,13 +225,9 @@ def acceptedSymFragments (artifact : ArtifactData) : Prop :=
 def acceptedStringConcatFragments (artifact : ArtifactData) : Prop :=
   stringConcatClaimsAccepted artifact.wasmBytes artifact.stringConcatClaims
 
-def acceptedExprFragments (artifact : ArtifactData) : Prop :=
-  exprFragmentClaimsAccepted artifact.wasmBytes artifact.exprFragmentClaims
-
 def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedSymFragments artifact ∧
-  acceptedStringConcatFragments artifact ∧
-  acceptedExprFragments artifact
+  acceptedStringConcatFragments artifact
 
 def expectedArtifactRoot : String :=
   "AverCert.Artifact.certificate"
@@ -281,8 +237,7 @@ def subjectMatchesArtifactRoot (artifact : ArtifactData) : Prop :=
 
 def claimObligationExports (artifact : ArtifactData) : List String :=
   artifact.symFragmentClaims.map (fun c => c.obligation.export_) ++
-  artifact.stringConcatClaims.map (fun c => c.obligation.export_) ++
-  artifact.exprFragmentClaims.map (fun c => c.obligation.export_)
+  artifact.stringConcatClaims.map (fun c => c.obligation.export_)
 
 def fragmentClaimObligationsInManifest (artifact : ArtifactData) : Prop :=
   (claimObligationExports artifact).all
@@ -297,8 +252,7 @@ def claimsMatchManifest (artifact : ArtifactData) : Prop :=
           artifact.manifest.symFragmentPlans ∧
       stringConcatClaimPlanPairs artifact.stringConcatClaims =
           artifact.manifest.stringConcatPlans ∧
-      encodedSymExprPlans ++ exprFragmentClaimPlanPairs artifact.exprFragmentClaims =
-          artifact.manifest.exprFragmentPlans
+      encodedSymExprPlans = artifact.manifest.exprFragmentPlans
   | none => False
 
 def accepted (artifact : ArtifactData) : Prop :=
