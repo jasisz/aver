@@ -81,6 +81,10 @@
 //!       Lean build
 //!   (ae) artifact-bytes decoy: cert-supplied `ArtifactBytes.lean` is ignored;
 //!       the checker regenerates it from the actual artifact bytes it read
+//!   (af) artifact-data decoy: cert-supplied `Artifact.lean` data is pinned to
+//!       the checker-reconstructed artifact data with `rfl`
+//!   (ag) artifact-root axiom: the artifact-carried bridge proof is the axiom
+//!       audit root, so a smuggled axiom there is rejected
 //! plus a separate empty-cert test: zero certified exports must NOT print the
 //! green path and must exit nonzero, and the A5 report-line injection payload
 //! (in the manifest and/or JSON) is rejected by the charset gate.
@@ -347,6 +351,30 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         assert!(
             out.contains("accepted-artifact hash mismatch"),
             "wrong reason for accepted-artifact hash drift:\n{out}"
+        );
+    }
+
+    // The artifact-carried data root is useful metadata, not authority. Even
+    // when a fixture has no expr-fragment claims, the checker pins
+    // `AverCert.Artifact.data` to its own reconstruction before accepting the
+    // artifact-level root.
+    {
+        let dir = temp_dir("neg-artifact-data-pin");
+        copy_dir(&out_dir, &dir);
+        let artifact = dir.join("cert").join("Artifact.lean");
+        let src = std::fs::read_to_string(&artifact).unwrap();
+        let corrupted = src.replacen(
+            "wasmBytes := AverCert.ArtifactBytes.wasmBytes",
+            "wasmBytes := []",
+            1,
+        );
+        assert_ne!(src, corrupted, "Artifact.lean data shape changed");
+        std::fs::write(&artifact, corrupted).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "tampered Artifact.lean data must fail:\n{out}");
+        assert!(
+            out.contains("AverCert.Artifact.data") || out.contains("does not bind"),
+            "wrong reason for artifact data tamper:\n{out}"
         );
     }
 
@@ -1160,6 +1188,40 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
         "cert-supplied ArtifactBytes.lean must be ignored and regenerated:\n{out}"
     );
 
+    let artifact_axiom_tamper_dir = temp_dir("cert-expr-artifact-axiom-tamper");
+    copy_dir(&out_dir, &artifact_axiom_tamper_dir);
+    let artifact_axiom_tamper_wasm = artifact_axiom_tamper_dir.join("cert_goals.wasm");
+    let artifact_axiom_tamper_cert = artifact_axiom_tamper_dir.join("cert");
+    let artifact_lean = artifact_axiom_tamper_cert.join("Artifact.lean");
+    let artifact_text = std::fs::read_to_string(&artifact_lean).unwrap();
+    let def_start = artifact_text
+        .find("def acceptedWithFinal")
+        .expect("Artifact.lean should define acceptedWithFinal");
+    let end_marker = "end AverCert.Artifact\n";
+    let def_end = artifact_text
+        .find(end_marker)
+        .expect("Artifact.lean should close namespace");
+    let evil_bridge = "axiom artifactEvil : ∀ (finalCert : AverCert.Schema.Holds AverCert.manifest), AverCert.AcceptedArtifact.accepted data\n\n\
+def acceptedWithFinal\n    (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n    AverCert.AcceptedArtifact.accepted data := artifactEvil finalCert\n\n";
+    let mut tampered_artifact = String::new();
+    tampered_artifact.push_str(&artifact_text[..def_start]);
+    tampered_artifact.push_str(evil_bridge);
+    tampered_artifact.push_str(&artifact_text[def_end..]);
+    std::fs::write(&artifact_lean, tampered_artifact).unwrap();
+    let (ok, out) = aver_verify(&artifact_axiom_tamper_wasm, &artifact_axiom_tamper_cert);
+    assert!(
+        !ok,
+        "artifact-carried axiom bridge must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("non-whitelisted axiom") && out.contains("artifactEvil"),
+        "wrong reason for artifact bridge axiom:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "artifact-carried axiom bridge credited:\n{out}"
+    );
+
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap())
             .unwrap();
@@ -1353,6 +1415,7 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
 
     let _ = std::fs::remove_dir_all(&out_dir);
     let _ = std::fs::remove_dir_all(&artifact_bytes_decoy_dir);
+    let _ = std::fs::remove_dir_all(&artifact_axiom_tamper_dir);
     let _ = std::fs::remove_dir_all(&plan_dir);
     let _ = std::fs::remove_dir_all(&planfirst_tamper_dir);
     let _ = std::fs::remove_dir_all(&lean_plan_tamper_dir);
