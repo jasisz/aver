@@ -683,7 +683,7 @@ fn checked_fragment_sidecar_obligations(
         }
 
         if class != Some("expr-fragment-v1") {
-            if entry.get("fragment").is_some() {
+            if entry.get("fragment").is_some() || entry.get("source_fragment").is_some() {
                 return Err(format!(
                     "cert-manifest.json entry for `{name}` has fragment sidecar metadata but \
                      is not class `expr-fragment-v1`"
@@ -693,17 +693,15 @@ fn checked_fragment_sidecar_obligations(
         }
 
         let (profile, path, claimed_sha, text) = read_fragment_sidecar(cert_dir, name, entry)?;
-        if !matches!(profile, "expr-fragment-v1" | "sym-fragment-v1") {
+        if profile != "expr-fragment-v1" {
             return Err(format!(
                 "fragment `{name}` sidecar profile mismatch: manifest says `{profile}`"
             ));
         }
-        let plan_check = match profile {
-            "expr-fragment-v1" => cert::check_expr_fragment_plan_sidecar(wasm_bytes, name, &text),
-            "sym-fragment-v1" => cert::check_sym_fragment_plan_sidecar(wasm_bytes, name, &text),
-            _ => unreachable!(),
-        }
-        .map_err(|e| format!("fragment `{name}` plan sidecar does not check against wasm: {e}"))?;
+        let plan_check =
+            cert::check_expr_fragment_plan_sidecar(wasm_bytes, name, &text).map_err(|e| {
+                format!("fragment `{name}` plan sidecar does not check against wasm: {e}")
+            })?;
         if plan_check.sidecar.path != path {
             return Err(format!(
                 "fragment `{name}` checked plan path mismatch: plan checks as `{}`, \
@@ -727,8 +725,87 @@ fn checked_fragment_sidecar_obligations(
                     .unwrap_or_default()
             ));
         }
+        let mut obligation = plan_check.obligation;
+        match entry.get("source_fragment") {
+            Some(_) => {
+                let (source_profile, source_path, source_claimed_sha, source_text) =
+                    read_named_fragment_sidecar(cert_dir, name, entry, "source_fragment")?;
+                if source_profile != "sym-fragment-v1" {
+                    return Err(format!(
+                        "fragment `{name}` source sidecar profile mismatch: manifest says \
+                         `{source_profile}`"
+                    ));
+                }
+                let source_check = cert::check_sym_fragment_plan_sidecar(
+                    wasm_bytes,
+                    name,
+                    &source_text,
+                )
+                .map_err(|e| {
+                    format!(
+                        "fragment `{name}` source plan sidecar does not check against wasm: {e}"
+                    )
+                })?;
+                if source_check.sidecar.path != source_path {
+                    return Err(format!(
+                        "fragment `{name}` checked source plan path mismatch: plan checks as `{}`, \
+                         manifest says `{source_path}`",
+                        source_check.sidecar.path
+                    ));
+                }
+                if source_check.sidecar.sha256 != source_claimed_sha
+                    || source_check.sidecar.text != source_text
+                {
+                    return Err(format!(
+                        "fragment `{name}` source SymPlan sidecar is not the canonical \
+                         byte-derived source plan"
+                    ));
+                }
+                if !source_check.canonical_matches_actual {
+                    return Err(format!(
+                        "fragment `{name}` source plan-first canonical lowering does not match \
+                         the actual wasm code-entry{}",
+                        source_check
+                            .mismatch_reason
+                            .as_deref()
+                            .map(|reason| format!(" ({reason})"))
+                            .unwrap_or_default()
+                    ));
+                }
+                let source_target =
+                    source_check
+                        .obligation
+                        .fragment_plan
+                        .as_ref()
+                        .ok_or_else(|| {
+                            format!(
+                                "fragment `{name}` source plan did not produce a byte-bound \
+                             expr-fragment plan"
+                            )
+                        })?;
+                if source_target.path != plan_check.sidecar.path
+                    || source_target.sha256 != plan_check.sidecar.sha256
+                    || source_target.text != plan_check.sidecar.text
+                {
+                    return Err(format!(
+                        "fragment `{name}` source SymPlan does not encode to the same \
+                         byte-bound expr plan as `fragment`"
+                    ));
+                }
+                obligation.fragment_sym_plan = source_check.obligation.fragment_sym_plan;
+                obligation.fragment_sym_plan_lean = source_check.obligation.fragment_sym_plan_lean;
+            }
+            None => {
+                if obligation.fragment_sym_plan.is_some() {
+                    return Err(format!(
+                        "cert-manifest.json entry for `{name}` is missing `source_fragment` \
+                         sidecar metadata"
+                    ));
+                }
+            }
+        }
 
-        obligations.push(plan_check.obligation);
+        obligations.push(obligation);
     }
     Ok(obligations)
 }
@@ -1017,13 +1094,33 @@ fn lean_byte_list(bytes: &[u8]) -> String {
 /// terms are checker-rendered from verified sidecars, never copied from
 /// attacker Lean text.
 fn lean_expr_fragment_plan_pairs(rederived: &[cert::RederivedObligation]) -> String {
-    let inner = rederived
+    let source_expr = rederived
         .iter()
         .filter_map(|r| {
-            r.fragment_plan_lean
-                .as_ref()
-                .map(|plan| format!("(\"{}\", {plan})", r.name))
+            if r.fragment_sym_plan_lean.is_some() {
+                r.fragment_plan_lean
+                    .as_ref()
+                    .map(|plan| format!("(\"{}\", {plan})", r.name))
+            } else {
+                None
+            }
         })
+        .collect::<Vec<_>>();
+    let fallback_expr = rederived
+        .iter()
+        .filter_map(|r| {
+            if r.fragment_sym_plan_lean.is_none() {
+                r.fragment_plan_lean
+                    .as_ref()
+                    .map(|plan| format!("(\"{}\", {plan})", r.name))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    let inner = source_expr
+        .into_iter()
+        .chain(fallback_expr)
         .collect::<Vec<_>>()
         .join(",\n   ");
     format!("[ {inner} ]")
@@ -1033,14 +1130,25 @@ fn lean_expr_fragment_plan_pairs(rederived: &[cert::RederivedObligation]) -> Str
 /// fragment plans. These terms are checker-rendered from verified sidecars,
 /// never copied from attacker Lean text.
 fn lean_sym_fragment_plan_pairs(rederived: &[cert::RederivedObligation]) -> String {
-    let inner = rederived
+    let expr_plans = rederived
         .iter()
         .filter_map(|r| {
             r.fragment_sym_plan_lean
                 .as_ref()
-                .or(r.string_concat_sym_plan_lean.as_ref())
                 .map(|plan| format!("(\"{}\", {plan})", r.name))
         })
+        .collect::<Vec<_>>();
+    let string_plans = rederived
+        .iter()
+        .filter_map(|r| {
+            r.string_concat_sym_plan_lean
+                .as_ref()
+                .map(|plan| format!("(\"{}\", {plan})", r.name))
+        })
+        .collect::<Vec<_>>();
+    let inner = expr_plans
+        .into_iter()
+        .chain(string_plans)
         .collect::<Vec<_>>()
         .join(",\n   ");
     format!("[ {inner} ]")
@@ -1065,18 +1173,30 @@ fn lean_string_concat_plan_pairs(rederived: &[cert::RederivedObligation]) -> Str
 /// A Lean list literal pinning each source plan to the representation-level
 /// plan obtained by the audited `SymRawPlan -> ExprFragmentRawPlan` encoder.
 fn lean_sym_fragment_encoded_plan_pairs(rederived: &[cert::RederivedObligation]) -> String {
-    let inner = rederived
+    let expr_pairs = rederived
         .iter()
         .filter_map(|r| {
             if r.fragment_sym_plan_lean.is_some() {
                 let expr = r.fragment_plan_lean.as_ref()?;
                 Some(format!("(\"{}\", some ({expr}))", r.name))
-            } else if r.string_concat_sym_plan_lean.is_some() {
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    let string_pairs = rederived
+        .iter()
+        .filter_map(|r| {
+            if r.string_concat_sym_plan_lean.is_some() {
                 Some(format!("(\"{}\", none)", r.name))
             } else {
                 None
             }
         })
+        .collect::<Vec<_>>();
+    let inner = expr_pairs
+        .into_iter()
+        .chain(string_pairs)
         .collect::<Vec<_>>()
         .join(",\n   ");
     format!("[ {inner} ]")

@@ -162,26 +162,14 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         let profile = fragment["profile"]
             .as_str()
             .expect("fragment profile string");
+        assert_eq!(
+            profile, "expr-fragment-v1",
+            "{name} should pin its byte-bound expr fragment in `fragment`"
+        );
         let plan = fragment["plan"].as_str().expect("fragment plan path");
-        let (suffix, header) = match profile {
-            "sym-fragment-v1" => {
-                sym_sidecar_names.insert(name.to_string());
-                (
-                    ".sym-fragment-v1.plan",
-                    "aver.sym-fragment.plan.v1\nprofile sym-fragment-v1\n",
-                )
-            }
-            "expr-fragment-v1" => {
-                expr_sidecar_names.insert(name.to_string());
-                (
-                    ".expr-fragment-v1.plan",
-                    "aver.expr-fragment.plan.v1\nprofile expr-fragment-v1\n",
-                )
-            }
-            other => panic!("{name} should pin a known fragment profile, got {other}"),
-        };
+        expr_sidecar_names.insert(name.to_string());
         assert!(
-            plan.starts_with("fragments/") && plan.ends_with(suffix),
+            plan.starts_with("fragments/") && plan.ends_with(".expr-fragment-v1.plan"),
             "{name} should point at a fragment plan sidecar, got {plan}"
         );
         assert!(
@@ -191,7 +179,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         let text = std::fs::read_to_string(out_dir.join("cert").join(plan))
             .expect("fragment sidecar exists");
         assert!(
-            text.starts_with(header),
+            text.starts_with("aver.expr-fragment.plan.v1\nprofile expr-fragment-v1\n"),
             "{name} sidecar should be the canonical {profile} plan:\n{text}"
         );
         let expected_sha = aver::codegen::cert::sha256_hex(text.as_bytes());
@@ -203,6 +191,32 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         assert!(
             fragment.get("trace").is_none() && fragment.get("trace_sha256").is_none(),
             "{name} should not emit trace/replay sidecars after plan-first lowering"
+        );
+        let source_fragment = &entry["source_fragment"];
+        assert_eq!(
+            source_fragment["profile"].as_str(),
+            Some("sym-fragment-v1"),
+            "{name} should carry its source-level SymPlan in `source_fragment`"
+        );
+        let source_plan = source_fragment["plan"]
+            .as_str()
+            .expect("source fragment plan path");
+        sym_sidecar_names.insert(name.to_string());
+        assert!(
+            source_plan.starts_with("fragments/") && source_plan.ends_with(".sym-fragment-v1.plan"),
+            "{name} should point at a source SymPlan sidecar, got {source_plan}"
+        );
+        let source_text = std::fs::read_to_string(out_dir.join("cert").join(source_plan))
+            .expect("source fragment sidecar exists");
+        assert!(
+            source_text.starts_with("aver.sym-fragment.plan.v1\nprofile sym-fragment-v1\n"),
+            "{name} source sidecar should be the canonical SymPlan:\n{source_text}"
+        );
+        let expected_source_sha = aver::codegen::cert::sha256_hex(source_text.as_bytes());
+        assert_eq!(
+            source_fragment["plan_sha256"].as_str(),
+            Some(expected_source_sha.as_str()),
+            "{name} source sidecar hash should match the sidecar bytes"
         );
     }
     assert!(
@@ -216,8 +230,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "direct source-level fragments should prefer sym sidecars, got {sym_sidecar_names:?}"
     );
     assert!(
-        expr_sidecar_names.is_empty(),
-        "all current expr fragments should now have source-level SymPlan sidecars, got fallback expr sidecars {expr_sidecar_names:?}"
+        expr_sidecar_names == sym_sidecar_names,
+        "current expr fragments should pin both source and target sidecars, got target={expr_sidecar_names:?}, source={sym_sidecar_names:?}"
     );
     let plans_lean = std::fs::read_to_string(out_dir.join("cert").join("Plans.lean"))
         .expect("Plans.lean exists");

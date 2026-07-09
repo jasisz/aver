@@ -56,6 +56,10 @@ pub struct RederivedObligation {
     /// `Plans.lean` cannot drift from the sidecar/body pair.
     pub fragment_plan_lean: Option<String>,
     /// For expression fragments whose checked representation plan can be
+    /// projected into the source-level symbolic grammar, the canonical
+    /// `sym-fragment-v1` sidecar.
+    pub fragment_sym_plan: Option<FragmentPlanSidecar>,
+    /// For expression fragments whose checked representation plan can be
     /// projected into the source-level symbolic grammar, the same verifier
     /// result rendered as a `SymRawPlan` term. This feeds the preferred v2
     /// artifact claim shape; representation-only fragments leave it absent.
@@ -451,6 +455,13 @@ fn rederive_certificate_inner(
                 Cert::ExprFragment {
                     source_plan, plan, ..
                 } => expr_fragment_source_plan(source_plan, plan).map(|sym| sym_plan_lean_value(&sym)),
+                _ => None,
+            },
+            fragment_sym_plan: match c.inner() {
+                Cert::ExprFragment {
+                    source_plan, plan, ..
+                } => expr_fragment_source_plan(source_plan, plan)
+                    .map(|sym| sym_fragment_sidecar(c.name(), &sym)),
                 _ => None,
             },
             fragment_lowered_body_lean: match c.inner() {

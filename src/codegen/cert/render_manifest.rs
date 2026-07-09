@@ -239,8 +239,7 @@ fn render_manifest_lean(
                 source_plan,
                 plan,
                 ..
-            } if expr_fragment_source_plan(source_plan, plan).is_some() =>
-            {
+            } if expr_fragment_source_plan(source_plan, plan).is_some() => {
                 Some(format!("({}, Plans.{name}Plan)", lean_str(name)))
             }
             _ => None,
@@ -255,8 +254,7 @@ fn render_manifest_lean(
                 source_plan,
                 plan,
                 ..
-            } if expr_fragment_source_plan(source_plan, plan).is_none() =>
-            {
+            } if expr_fragment_source_plan(source_plan, plan).is_none() => {
                 Some(format!("({}, Plans.{name}Plan)", lean_str(name)))
             }
             _ => None,
@@ -276,8 +274,7 @@ fn render_manifest_lean(
                 source_plan,
                 plan,
                 ..
-            } if expr_fragment_source_plan(source_plan, plan).is_some() =>
-            {
+            } if expr_fragment_source_plan(source_plan, plan).is_some() => {
                 Some(format!("({}, Plans.{name}SymPlan)", lean_str(name)))
             }
             _ => None,
@@ -489,16 +486,20 @@ fn render_manifest(
             Cert::ExprFragment {
                 source_plan, plan, ..
             } => {
-                let sidecar = expr_fragment_source_plan(source_plan, plan)
-                    .map(|sym| sym_fragment_sidecar(c.name(), &sym))
-                    .unwrap_or_else(|| expr_fragment_sidecar(c.name(), plan));
-                let profile = if sidecar.path.ends_with(".sym-fragment-v1.plan") {
-                    "sym-fragment-v1"
-                } else {
-                    "expr-fragment-v1"
-                };
+                let sidecar = expr_fragment_sidecar(c.name(), plan);
+                let source_json = expr_fragment_source_plan(source_plan, plan)
+                    .map(|sym| {
+                        let sym_sidecar = sym_fragment_sidecar(c.name(), &sym);
+                        format!(
+                            ", \"source_fragment\": {{\"profile\": \"sym-fragment-v1\", \
+                             \"plan\": {}, \"plan_sha256\": {}}}",
+                            json_str(&sym_sidecar.path),
+                            json_str(&sym_sidecar.sha256)
+                        )
+                    })
+                    .unwrap_or_default();
                 format!(
-                    ", \"fragment\": {{\"profile\": \"{profile}\", \
+                    "{source_json}, \"fragment\": {{\"profile\": \"expr-fragment-v1\", \
                      \"plan\": {}, \"plan_sha256\": {}}}",
                     json_str(&sidecar.path),
                     json_str(&sidecar.sha256)

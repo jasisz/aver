@@ -43,8 +43,11 @@ pub fn check_expr_fragment_plan_sidecar(
         body,
     };
     let plan_lean = expr_fragment_plan_lean_value(&plan);
-    let sym_plan_lean =
-        SymPlan::from_expr_fragment_source_subset(&plan).map(|sym| sym_plan_lean_value(&sym));
+    let sym_plan = SymPlan::from_expr_fragment_source_subset(&plan);
+    let sym_plan_lean = sym_plan.as_ref().map(sym_plan_lean_value);
+    let sym_plan_sidecar = sym_plan
+        .as_ref()
+        .map(|sym| sym_fragment_sidecar(export_name, sym));
     let (func_order, cert, sidecar, canonical_matches_actual, mismatch_reason) =
         check_expr_fragment_plan_object(wasm_bytes, export_name, plan)?;
     let obligation = RederivedObligation {
@@ -69,6 +72,7 @@ pub fn check_expr_fragment_plan_sidecar(
         },
         fragment_plan: Some(sidecar.clone()),
         fragment_plan_lean: Some(plan_lean),
+        fragment_sym_plan: sym_plan_sidecar,
         fragment_sym_plan_lean: sym_plan_lean,
         fragment_lowered_body_lean: match cert.inner() {
             Cert::ExprFragment { ops, .. } => Some(render_ops_value(ops)),
@@ -162,7 +166,7 @@ pub fn check_sym_fragment_plan_sidecar(
     })?;
     let plan_lean = expr_fragment_plan_lean_value(&plan);
     let sym_plan_lean = sym_plan_lean_value(&sym_plan);
-    let (func_order, cert, _expr_sidecar, canonical_matches_actual, mismatch_reason) =
+    let (func_order, cert, expr_sidecar, canonical_matches_actual, mismatch_reason) =
         check_expr_fragment_plan_object(wasm_bytes, export_name, plan)?;
     let sidecar = sym_fragment_sidecar(export_name, &sym_plan);
     let obligation = RederivedObligation {
@@ -185,8 +189,9 @@ pub fn check_sym_fragment_plan_sidecar(
             Cert::ExprFragment { nlocals, .. } => Some(*nlocals as u32),
             _ => None,
         },
-        fragment_plan: Some(sidecar.clone()),
+        fragment_plan: Some(expr_sidecar),
         fragment_plan_lean: Some(plan_lean),
+        fragment_sym_plan: Some(sidecar.clone()),
         fragment_sym_plan_lean: Some(sym_plan_lean),
         fragment_lowered_body_lean: match cert.inner() {
             Cert::ExprFragment { ops, .. } => Some(render_ops_value(ops)),

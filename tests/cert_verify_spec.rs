@@ -1357,6 +1357,13 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
             && expr_entry["fragment"].get("trace_sha256").is_none(),
         "expr-fragment manifests should not emit trace/replay sidecars"
     );
+    let source_plan = expr_entry["source_fragment"]["plan"]
+        .as_str()
+        .expect("expr-fragment source plan path");
+    assert!(
+        source_plan.ends_with(".sym-fragment-v1.plan"),
+        "expr-fragment source plan should be a SymPlan sidecar, got {source_plan}"
+    );
     let float_entry = manifest["certified"]
         .as_array()
         .unwrap()
@@ -1366,6 +1373,9 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let float_plan = float_entry["fragment"]["plan"]
         .as_str()
         .expect("floatAddGoal plan path");
+    let float_source_plan = float_entry["source_fragment"]["plan"]
+        .as_str()
+        .expect("floatAddGoal source plan path");
 
     let plan_dir = temp_dir("cert-expr-plan-sidecar");
     copy_dir(&out_dir, &plan_dir);
@@ -1388,6 +1398,50 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     assert!(
         !out.contains("CERTIFIED"),
         "tampered expr-fragment plan sidecar credited:\n{out}"
+    );
+
+    let source_plan_tamper_dir = temp_dir("cert-expr-source-plan-tamper");
+    copy_dir(&out_dir, &source_plan_tamper_dir);
+    let source_plan_tamper_wasm = source_plan_tamper_dir.join("cert_goals.wasm");
+    let source_plan_tamper_cert = source_plan_tamper_dir.join("cert");
+    let source_sidecar = source_plan_tamper_cert.join(float_source_plan);
+    let source_text = std::fs::read_to_string(&source_sidecar).unwrap();
+    let tampered_source = source_text.replacen("op=float.add", "op=float.mul", 1);
+    assert_ne!(
+        source_text, tampered_source,
+        "floatAddGoal source plan shape changed"
+    );
+    std::fs::write(&source_sidecar, &tampered_source).unwrap();
+    let source_plan_tamper_mf = source_plan_tamper_cert.join("cert-manifest.json");
+    let mut source_plan_tamper_manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&source_plan_tamper_mf).unwrap()).unwrap();
+    let source_plan_tamper_entry = source_plan_tamper_manifest["certified"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|c| c["name"].as_str() == Some("floatAddGoal"))
+        .expect("floatAddGoal sidecar");
+    source_plan_tamper_entry["source_fragment"]["plan_sha256"] =
+        serde_json::Value::String(aver::codegen::cert::sha256_hex(tampered_source.as_bytes()));
+    std::fs::write(
+        &source_plan_tamper_mf,
+        serde_json::to_string_pretty(&source_plan_tamper_manifest).unwrap(),
+    )
+    .unwrap();
+
+    let (ok, out) = aver_verify(&source_plan_tamper_wasm, &source_plan_tamper_cert);
+    assert!(
+        !ok,
+        "tampered expr-fragment source SymPlan must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("source plan-first canonical lowering")
+            && out.contains("does not match the actual wasm code-entry"),
+        "wrong reason for expr-fragment source SymPlan tamper:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "tampered expr-fragment source SymPlan credited:\n{out}"
     );
 
     let planfirst_tamper_dir = temp_dir("cert-expr-planfirst-tamper");
