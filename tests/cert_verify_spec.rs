@@ -144,7 +144,7 @@ fn aver_cert(sub: &[&str], artifact: &Path, cert_dir: &Path) -> (bool, String) {
 /// build under the OLD (cert-controlled) build path.
 const WEAK_SCHEMA: &str = "import CertPrelude\nimport Module\n\
 namespace AverCert.Schema\nopen CertPrelude\n\
-structure Subject where\n  artifactHash : String\n  profile : String\n  abi : String\n  \
+structure Subject where\n  artifactHash : String\n  profile : String\n  abi : String\n  artifactRoot : String\n  \
 exports : List String\n  contracts : List String\n\
 inductive Policy where\n  | simulatesModel\n\
 inductive ReprAll (R : Int -> WVal -> Prop) : List Int -> List WVal -> Prop\n\
@@ -223,8 +223,9 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         "missing artifact-decode line on the happy path:\n{report}"
     );
 
-    // Schema v3 is a breaking cert-data shape. The checker rejects v1 manifests
-    // honestly instead of trying to reinterpret them under the v3 schema.
+    // The cert schema version is a breaking cert-data shape. The checker rejects
+    // old manifests honestly instead of trying to reinterpret them under the
+    // current schema.
     {
         let dir = temp_dir("neg-schema-v1");
         copy_dir(&out_dir, &dir);
@@ -354,6 +355,27 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         assert!(
             out.contains("accepted-artifact hash mismatch"),
             "wrong reason for accepted-artifact hash drift:\n{out}"
+        );
+    }
+
+    // The artifact-level certificate root is pinned as routing metadata. A
+    // consumer should not have to guess which theorem is the self-check root.
+    {
+        let dir = temp_dir("neg-artifact-root-pin");
+        copy_dir(&out_dir, &dir);
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["artifact_certificate_root"] = serde_json::json!("AverCert.Final.cert");
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(
+            !ok,
+            "wrong artifact certificate root must be rejected:\n{out}"
+        );
+        assert!(
+            out.contains("artifact certificate root mismatch"),
+            "wrong reason for artifact root drift:\n{out}"
         );
     }
 

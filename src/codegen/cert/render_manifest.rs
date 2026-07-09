@@ -260,6 +260,7 @@ fn render_manifest_lean(
          {{ artifactHash := \"{sha}\",\n        \
          profile := \"{PROFILE_ID}\",\n        \
          abi := \"{RUNTIME_ABI}\",\n        \
+         artifactRoot := \"{ARTIFACT_CERTIFICATE_ROOT}\",\n        \
          exports := [{exports}],\n        \
          contracts := [{contracts}] }},\n    \
          symFragmentPlans := [{sym_fragment_plans}],\n    \
@@ -366,6 +367,9 @@ fn render_manifest(
     s.push_str(&format!("  \"profile\": \"{PROFILE_ID}\",\n"));
     s.push_str(&format!("  \"abi\": \"{RUNTIME_ABI}\",\n"));
     s.push_str(&format!("  \"final_theorem\": \"{FINAL_THEOREM}\",\n"));
+    s.push_str(&format!(
+        "  \"artifact_certificate_root\": \"{ARTIFACT_CERTIFICATE_ROOT}\",\n"
+    ));
     s.push_str(&format!("  \"schema_sha256\": \"{schema_sha}\",\n"));
     s.push_str(&format!("  \"prelude_sha256\": \"{prelude_sha}\",\n"));
     s.push_str(&format!(

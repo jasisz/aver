@@ -15,13 +15,14 @@ namespace AverCert.Schema
 open CertPrelude
 
 /-- What the artifact is: its pinned hash, the emitted-fragment profile, the
-    runtime ABI, the certified export names, and the named runtime contracts
-    every certificate is conditional on. Pure data, mirrored in
-    `cert-manifest.json`. -/
+    runtime ABI, the artifact-level theorem root, the certified export names,
+    and the named runtime contracts every certificate is conditional on. Pure
+    data, mirrored in `cert-manifest.json`. -/
 structure Subject where
   artifactHash : String
   profile      : String
   abi          : String
+  artifactRoot : String
   exports      : List String
   contracts    : List String
 

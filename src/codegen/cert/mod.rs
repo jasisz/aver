@@ -63,7 +63,7 @@ pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
 /// Certification level of a v0 artifact certificate: conditional on the named
 /// runtime contracts (see the consult level naming L0/L1/L2/L3).
 pub const CERT_LEVEL: &str = "L1";
-pub const CERT_SCHEMA_VERSION: u32 = 18;
+pub const CERT_SCHEMA_VERSION: u32 = 19;
 pub const BOX_CONTRACT: &str = "__rt_aint_from_i64 (box i64 -> carrier)";
 pub const INT_ADD_CONTRACT: &str =
     "Int.add (carrier add = exact integer addition on represented values)";
@@ -79,6 +79,9 @@ pub const STRING_CONCAT_CONTRACT: &str =
 pub const FINAL_THEOREM: &str = "AverCert.Final.cert";
 pub const FINAL_STATEMENT_LINE: &str =
     "theorem AverCert.Final.cert : AverCert.Schema.Holds manifest";
+/// The artifact-level theorem root that v2-style consumers should check. It
+/// packages the final schema theorem through `AcceptedArtifact.accepted`.
+pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 
 /// sha256 of a byte slice, lowercase hex.
 pub fn sha256_hex(bytes: &[u8]) -> String {

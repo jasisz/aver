@@ -209,6 +209,7 @@ The manifest is a routing and consistency witness. It may pin:
 ```text
 wasm_sha256
 profile_id
+artifact_certificate_root
 plan_hash
 function_binding_hash
 proof_hash

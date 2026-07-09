@@ -93,6 +93,11 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         Some(expected_accepted_artifact_sha.as_str()),
         "manifest should pin the checker-owned AcceptedArtifact.lean"
     );
+    assert_eq!(
+        manifest["artifact_certificate_root"].as_str(),
+        Some(aver::codegen::cert::ARTIFACT_CERTIFICATE_ROOT),
+        "manifest should expose the artifact-level certificate root"
+    );
 
     let actual: BTreeMap<String, String> = manifest["certified"]
         .as_array()

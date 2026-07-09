@@ -459,6 +459,13 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
             "accepted-artifact hash mismatch: certificate pins {accepted_artifact_pin}, checker expects {audited_accepted_artifact}"
         ));
     }
+    let artifact_root = manifest_str(&manifest, "artifact_certificate_root")?;
+    if artifact_root != cert::ARTIFACT_CERTIFICATE_ROOT {
+        return Err(format!(
+            "artifact certificate root mismatch: certificate pins {artifact_root}, checker expects {}",
+            cert::ARTIFACT_CERTIFICATE_ROOT
+        ));
+    }
 
     // 2. Report candidates from the untrusted JSON, each charset-gated on its
     //    decoded value so it is safe to splice as a Lean literal below.
@@ -540,7 +547,7 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
         return Err(format!(
             "certificate does not bind to this artifact: the checker's kernel witness \
              (hash binding, certified-export/contract/profile/abi bindings against the \
-             proven manifest, the artifact-decode / checked-plan bindings that pin each \
+             proven manifest, the artifact-root binding, the artifact-decode / checked-plan bindings that pin each \
              obligation's code/host/self/carrier to byte-bound checker values, the semantic-face \
              bindings that pin each obligation's Dom/Cod/domRepr/codRepr to the standard \
              form of its class and prove every domain is inhabited, the final-theorem type \
@@ -1283,6 +1290,7 @@ fn checker_witness(
     let byte_contracts = lean_str_list(derived_contracts);
     let profile = &cands.profile;
     let abi = &cands.abi;
+    let artifact_root = cert::ARTIFACT_CERTIFICATE_ROOT;
     let codes = lean_expr_list(rederived.iter().map(|r| r.code.as_str()));
     let hosts = lean_expr_list(rederived.iter().map(|r| r.host.as_str()));
     let selfs = lean_nat_list(rederived.iter().map(|r| r.self_idx));
@@ -1345,7 +1353,8 @@ fn checker_witness(
          example : AverCert.manifest.subject.contracts = {json_contracts} := rfl\n\
          example : AverCert.manifest.subject.contracts = {byte_contracts} := rfl\n\
          example : AverCert.manifest.subject.profile = \"{profile}\" := rfl\n\
-         example : AverCert.manifest.subject.abi = \"{abi}\" := rfl\n\n\
+         example : AverCert.manifest.subject.abi = \"{abi}\" := rfl\n\
+         example : AverCert.manifest.subject.artifactRoot = \"{artifact_root}\" := rfl\n\n\
          -- Source fragment plans: the manifest's Lean-data source plans are\n\
          -- pinned to checker-rendered `SymRawPlan` terms reconstructed from\n\
          -- sidecars that already passed hash, source type/refinement checks,\n\
