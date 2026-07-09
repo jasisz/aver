@@ -304,7 +304,8 @@ fn expr_fragment_simp_tactic(plan: &ExprFragmentPlan, evalset: &str) -> String {
         .params
         .iter()
         .enumerate()
-        .filter_map(|(i, ty)| (*ty == FragTy::BoolI32).then(|| format!("cases a{i}")))
+        .filter(|(_, ty)| **ty == FragTy::BoolI32)
+        .map(|(i, _)| format!("cases a{i}"))
         .collect::<Vec<_>>();
     let mut conds = Vec::new();
     collect_expr_fragment_conditions(&plan.body, &|idx, _ty| format!("a{idx}"), &mut conds);

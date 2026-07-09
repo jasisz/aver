@@ -695,7 +695,7 @@ fn expect_plan_line<'a>(
 }
 
 fn parse_hex_bytes(raw: &str) -> Result<Vec<u8>, String> {
-    if raw.len() % 2 != 0 {
+    if (raw.len() & 1) != 0 {
         return Err(format!("hex byte string has odd length: `{raw}`"));
     }
     let mut bytes = Vec::with_capacity(raw.len() / 2);

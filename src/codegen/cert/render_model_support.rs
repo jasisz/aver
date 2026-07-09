@@ -158,7 +158,7 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
         for p in &prefix_parts {
             container_parts.push_str(&format!("{p}, "));
         }
-        container_parts.push_str("v");
+        container_parts.push('v');
         for s in &suffix_parts {
             container_parts.push_str(&format!(", {s}"));
         }

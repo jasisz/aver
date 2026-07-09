@@ -87,22 +87,19 @@ pub fn write_project(
     let wasm_slice_sha = sha256_hex(CERT_WASM_SLICE.as_bytes());
     let expr_fragment_accepted_sha = sha256_hex(CERT_EXPR_FRAGMENT_ACCEPTED.as_bytes());
     let accepted_artifact_sha = sha256_hex(CERT_ACCEPTED_ARTIFACT.as_bytes());
+    let manifest_hashes = ManifestHashes {
+        schema: &schema_sha,
+        prelude: &prelude_sha,
+        plan_check: &plan_check_sha,
+        plan_lower: &plan_lower_sha,
+        plan_bytes: &plan_bytes_sha,
+        wasm_slice: &wasm_slice_sha,
+        expr_fragment_accepted: &expr_fragment_accepted_sha,
+        accepted_artifact: &accepted_artifact_sha,
+    };
     std::fs::write(
         cert_dir.join("cert-manifest.json"),
-        render_manifest(
-            analysis,
-            &model_info,
-            wasm_name,
-            &sha,
-            &schema_sha,
-            &prelude_sha,
-            &plan_check_sha,
-            &plan_lower_sha,
-            &plan_bytes_sha,
-            &wasm_slice_sha,
-            &expr_fragment_accepted_sha,
-            &accepted_artifact_sha,
-        ),
+        render_manifest(analysis, &model_info, wasm_name, &sha, &manifest_hashes),
     )
     .map_err(|e| format!("write manifest: {e}"))?;
     Ok(())

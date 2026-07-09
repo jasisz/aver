@@ -412,19 +412,23 @@ fn render_lakefile(model_roots: &[String]) -> String {
     )
 }
 
+struct ManifestHashes<'a> {
+    schema: &'a str,
+    prelude: &'a str,
+    plan_check: &'a str,
+    plan_lower: &'a str,
+    plan_bytes: &'a str,
+    wasm_slice: &'a str,
+    expr_fragment_accepted: &'a str,
+    accepted_artifact: &'a str,
+}
+
 fn render_manifest(
     analysis: &Analysis,
     model_info: &ModelInfo,
     wasm_name: &str,
     sha: &str,
-    schema_sha: &str,
-    prelude_sha: &str,
-    plan_check_sha: &str,
-    plan_lower_sha: &str,
-    plan_bytes_sha: &str,
-    wasm_slice_sha: &str,
-    expr_fragment_accepted_sha: &str,
-    accepted_artifact_sha: &str,
+    hashes: &ManifestHashes<'_>,
 ) -> String {
     let mut s = String::new();
     s.push_str("{\n");
@@ -438,25 +442,34 @@ fn render_manifest(
     s.push_str(&format!(
         "  \"artifact_certificate_root\": \"{ARTIFACT_CERTIFICATE_ROOT}\",\n"
     ));
-    s.push_str(&format!("  \"schema_sha256\": \"{schema_sha}\",\n"));
-    s.push_str(&format!("  \"prelude_sha256\": \"{prelude_sha}\",\n"));
+    s.push_str(&format!("  \"schema_sha256\": \"{}\",\n", hashes.schema));
     s.push_str(&format!(
-        "  \"plan_check_sha256\": \"{plan_check_sha}\",\n"
+        "  \"prelude_sha256\": \"{}\",\n",
+        hashes.prelude
     ));
     s.push_str(&format!(
-        "  \"plan_lower_sha256\": \"{plan_lower_sha}\",\n"
+        "  \"plan_check_sha256\": \"{}\",\n",
+        hashes.plan_check
     ));
     s.push_str(&format!(
-        "  \"plan_bytes_sha256\": \"{plan_bytes_sha}\",\n"
+        "  \"plan_lower_sha256\": \"{}\",\n",
+        hashes.plan_lower
     ));
     s.push_str(&format!(
-        "  \"wasm_slice_sha256\": \"{wasm_slice_sha}\",\n"
+        "  \"plan_bytes_sha256\": \"{}\",\n",
+        hashes.plan_bytes
     ));
     s.push_str(&format!(
-        "  \"expr_fragment_accepted_sha256\": \"{expr_fragment_accepted_sha}\",\n"
+        "  \"wasm_slice_sha256\": \"{}\",\n",
+        hashes.wasm_slice
     ));
     s.push_str(&format!(
-        "  \"accepted_artifact_sha256\": \"{accepted_artifact_sha}\",\n"
+        "  \"expr_fragment_accepted_sha256\": \"{}\",\n",
+        hashes.expr_fragment_accepted
+    ));
+    s.push_str(&format!(
+        "  \"accepted_artifact_sha256\": \"{}\",\n",
+        hashes.accepted_artifact
     ));
     if let Some(c) = analysis.carrier {
         s.push_str(&format!("  \"carrier_type_index\": {c},\n"));

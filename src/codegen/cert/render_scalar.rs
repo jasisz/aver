@@ -132,8 +132,8 @@ fn render_string_concat_verbatim_match_cert(c: &Cert) -> String {
     // prepends each prefix byte-list and appends each suffix byte-list to the
     // input's bytes, all under the container's type index (the type the
     // backend assigns to the concat result, distinct from the input's).
-    let prefix_parts: Vec<String> = prefixes.iter().map(|p| render_wval_qualified(p)).collect();
-    let suffix_parts: Vec<String> = suffixes.iter().map(|s| render_wval_qualified(s)).collect();
+    let prefix_parts: Vec<String> = prefixes.iter().map(render_wval_qualified).collect();
+    let suffix_parts: Vec<String> = suffixes.iter().map(render_wval_qualified).collect();
     let evalset = format!(
         "wFuncN, wRunF, {name}Code, {name}Host, {name}Model, stringConcatW, wByteAppend, b32, popArgs, initLocals, List.set"
     );
@@ -143,7 +143,7 @@ fn render_string_concat_verbatim_match_cert(c: &Cert) -> String {
     for p in &prefix_parts {
         container_parts.push_str(&format!("{p}, "));
     }
-    container_parts.push_str("v");
+    container_parts.push('v');
     for s in &suffix_parts {
         container_parts.push_str(&format!(", {s}"));
     }
