@@ -242,17 +242,58 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
         ));
     }
     for c in &analysis.certs {
-        let Cert::StringConcatVerbatimMatch { name, .. } = c.inner() else {
+        let Cert::StringConcatVerbatimMatch {
+            name,
+            self_idx,
+            code_idx,
+            type_idx,
+            carrier,
+            string_concat_idx,
+            container_ty,
+            result_ty,
+            ..
+        } = c.inner()
+        else {
             continue;
         };
         let plan = string_concat_plan_from_cert(c)
             .expect("certified String.concat should project to a source plan");
+        let code_entry_bytes = lower_string_concat_plan_code_entry_bytes(
+            &plan,
+            *carrier,
+            *result_ty,
+            *container_ty,
+            *string_concat_idx,
+        )
+        .expect("certified String.concat plan lowers to code-entry bytes");
+        let code_entry_bytes = render_byte_list(&code_entry_bytes);
+        let export_name_bytes = render_byte_list(name.as_bytes());
+        let func_binding = format!(
+            "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+        );
         any = true;
         s.push_str(&format!(
             "/-- Source-level `string-concat-v1` witness for `{name}`. -/\n\
              def {name}StringConcatPlan : StringConcatRawPlan := {plan_value}\n\n\
              /-- The audited Lean-side structural checker accepts `{name}`'s String.concat plan. -/\n\
-             example : AverCert.PlanCheck.checkStringConcatRawPlan {name}StringConcatPlan = true := rfl\n\n",
+             example : AverCert.PlanCheck.checkStringConcatRawPlan {name}StringConcatPlan = true := rfl\n\n\
+             /-- The audited Lean-side canonical lowerer maps `{name}`'s String.concat plan\n\
+                 to the same instruction body emitted in `Module.lean`. -/\n\
+             example : (CertModule.{name}Code {self_idx}).map (fun c => c.body) =\n  \
+               AverCert.PlanLower.lowerStringConcatBody {result_ty} {container_ty} {string_concat_idx} {name}StringConcatPlan := rfl\n\n\
+             /-- The audited Lean-side byte lowerer maps `{name}`'s String.concat plan\n\
+                 to the exact canonical code-entry bytes. -/\n\
+             example : AverCert.PlanBytes.lowerStringConcatCodeEntry {carrier} {result_ty} {container_ty} {string_concat_idx} {name}StringConcatPlan =\n  \
+               some {code_entry_bytes} := rfl\n\n\
+             /-- The audited Lean-side Wasm slicer finds `{name}`'s exact code-entry bytes\n\
+                 inside the emitted module bytes by export name. -/\n\
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+               some {code_entry_bytes} := rfl\n\n\
+             /-- The audited Lean-side Wasm slicer binds `{name}` to its function\n\
+                 index, defined-code index, type index and code-entry bytes. -/\n\
+             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+               some {func_binding} := rfl\n\n\
+             \n",
             plan_value = string_concat_plan_lean_value(&plan),
         ));
     }
@@ -319,12 +360,48 @@ fn render_artifact_expr_fragment_claims(analysis: &Analysis) -> RenderedArtifact
                     expr_proofs.push(proof);
                 }
             }
-            Cert::StringConcatVerbatimMatch { name, .. } => {
+            Cert::StringConcatVerbatimMatch {
+                name,
+                self_idx,
+                code_idx,
+                type_idx,
+                carrier,
+                string_concat_idx,
+                container_ty,
+                result_ty,
+                ..
+            } => {
+                let plan = string_concat_plan_from_cert(c)
+                    .expect("certified String.concat should project to a source plan");
+                let code_entry_bytes = lower_string_concat_plan_code_entry_bytes(
+                    &plan,
+                    *carrier,
+                    *result_ty,
+                    *container_ty,
+                    *string_concat_idx,
+                )
+                .expect("certified String.concat plan lowers to code-entry bytes");
+                let code_entry_bytes = render_byte_list(&code_entry_bytes);
+                let lowered_body = lower_string_concat_plan(
+                    &plan,
+                    *result_ty,
+                    *container_ty,
+                    *string_concat_idx,
+                )
+                .map(|ops| render_ops_value(&ops))
+                .expect("certified String.concat plan lowers to WInstr body");
+                let export_name_bytes = render_byte_list(name.as_bytes());
+                let func_binding = format!(
+                    "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+                );
                 string_claims.push(format!(
-                    "({{ exportName := {export_name}, plan := AverCert.Plans.{name}StringConcatPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.StringConcatClaim)",
+                    "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, resultTy := {result_ty}, containerTy := {container_ty}, concatFuncIdx := {string_concat_idx}, plan := AverCert.Plans.{name}StringConcatPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.StringConcatClaim)",
                     export_name = lean_str(name),
                 ));
-                string_proofs.push("⟨rfl, rfl⟩".to_string());
+                string_proofs.push(format!(
+                    "⟨rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
+                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
+                ));
             }
             _ => {}
         }
@@ -396,6 +473,7 @@ fn render_artifact(analysis: &Analysis) -> String {
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimAccepted,\n",
+            "    AverCert.AcceptedArtifact.stringConcatPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",

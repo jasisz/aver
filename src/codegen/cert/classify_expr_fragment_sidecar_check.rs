@@ -84,6 +84,13 @@ pub fn check_expr_fragment_plan_sidecar(
         },
         string_concat_plan: None,
         string_concat_plan_lean: None,
+        string_concat_code_idx: None,
+        string_concat_type_idx: None,
+        string_concat_lowered_body_lean: None,
+        string_concat_lowered_code_entry_lean: None,
+        string_concat_result_ty: None,
+        string_concat_container_ty: None,
+        string_concat_func_idx: None,
     };
     Ok(FragmentPlanCheck {
         sidecar,
@@ -193,6 +200,13 @@ pub fn check_sym_fragment_plan_sidecar(
         },
         string_concat_plan: None,
         string_concat_plan_lean: None,
+        string_concat_code_idx: None,
+        string_concat_type_idx: None,
+        string_concat_lowered_body_lean: None,
+        string_concat_lowered_code_entry_lean: None,
+        string_concat_result_ty: None,
+        string_concat_container_ty: None,
+        string_concat_func_idx: None,
     };
     Ok(FragmentPlanCheck {
         sidecar,

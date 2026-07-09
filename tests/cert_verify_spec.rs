@@ -1797,7 +1797,7 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         copy_dir(&out_dir, &dir);
         let sidecar = dir.join("cert").join(&shout_plan);
         let plan_text = std::fs::read_to_string(&sidecar).unwrap();
-        let tampered_plan = plan_text.replacen("suffix hex=21", "suffix hex=3f", 1);
+        let tampered_plan = plan_text.replacen("suffix data=0 hex=21", "suffix data=0 hex=3f", 1);
         assert_ne!(
             plan_text, tampered_plan,
             "String.concat sidecar shape changed"

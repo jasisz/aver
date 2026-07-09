@@ -68,14 +68,31 @@ pub struct RederivedObligation {
     /// bytes that the checked plan lowers to. The checker witness pins
     /// `PlanBytes.lowerExprFragmentCodeEntry carrier plan = some bytes`.
     pub fragment_lowered_code_entry_lean: Option<String>,
-    /// For `string-concat-v1`, the byte-derived source-level concat plan. It is
-    /// metadata for the next migration step, not yet a Lean acceptance claim.
+    /// For `string-concat-v1`, the byte-derived source-level concat plan.
     pub string_concat_plan: Option<FragmentPlanSidecar>,
     /// The same checked string-concat plan rendered as a Lean
     /// `StringConcatRawPlan` term. `aver cert verify` pins
     /// `manifest.stringConcatPlans` to these checker-rendered terms so
     /// `Plans.lean` cannot drift from the verified sidecar/body pair.
     pub string_concat_plan_lean: Option<String>,
+    /// For `string-concat-v1`, the byte-derived defined-function index into the
+    /// code section (`funcIdx - importedFuncCount`).
+    pub string_concat_code_idx: Option<u32>,
+    /// For `string-concat-v1`, the byte-derived function-section type index.
+    pub string_concat_type_idx: Option<u32>,
+    /// For `string-concat-v1`, the verifier-rendered `List WInstr` body that the
+    /// checked source plan canonically lowers to.
+    pub string_concat_lowered_body_lean: Option<String>,
+    /// For `string-concat-v1`, the verifier-rendered canonical raw code-entry
+    /// bytes that the checked source plan lowers to.
+    pub string_concat_lowered_code_entry_lean: Option<String>,
+    /// The string byte-array type used by `array.new_data` and returned by the
+    /// concat helper.
+    pub string_concat_result_ty: Option<u32>,
+    /// The array-of-string-arrays container type used by `array.new_fixed`.
+    pub string_concat_container_ty: Option<u32>,
+    /// The wasm function index of the `String.concat` host helper.
+    pub string_concat_func_idx: Option<u32>,
 }
 
 pub struct RederivedCertificate {
@@ -450,6 +467,68 @@ fn rederive_certificate_inner(
                 Cert::StringConcatVerbatimMatch { .. } => {
                     string_concat_plan_from_cert(c).map(|plan| string_concat_plan_lean_value(&plan))
                 }
+                _ => None,
+            },
+            string_concat_code_idx: match c.inner() {
+                Cert::StringConcatVerbatimMatch { code_idx, .. } => Some(*code_idx),
+                _ => None,
+            },
+            string_concat_type_idx: match c.inner() {
+                Cert::StringConcatVerbatimMatch { type_idx, .. } => Some(*type_idx),
+                _ => None,
+            },
+            string_concat_lowered_body_lean: match c.inner() {
+                Cert::StringConcatVerbatimMatch {
+                    result_ty,
+                    container_ty,
+                    string_concat_idx,
+                    ..
+                } => string_concat_plan_from_cert(c)
+                    .and_then(|plan| {
+                        lower_string_concat_plan(
+                            &plan,
+                            *result_ty,
+                            *container_ty,
+                            *string_concat_idx,
+                        )
+                        .ok()
+                    })
+                    .map(|ops| render_ops_value(&ops)),
+                _ => None,
+            },
+            string_concat_lowered_code_entry_lean: match c.inner() {
+                Cert::StringConcatVerbatimMatch {
+                    carrier,
+                    result_ty,
+                    container_ty,
+                    string_concat_idx,
+                    ..
+                } => string_concat_plan_from_cert(c)
+                    .and_then(|plan| {
+                        lower_string_concat_plan_code_entry_bytes(
+                            &plan,
+                            *carrier,
+                            *result_ty,
+                            *container_ty,
+                            *string_concat_idx,
+                        )
+                        .ok()
+                    })
+                    .map(|bytes| render_byte_list(&bytes)),
+                _ => None,
+            },
+            string_concat_result_ty: match c.inner() {
+                Cert::StringConcatVerbatimMatch { result_ty, .. } => Some(*result_ty),
+                _ => None,
+            },
+            string_concat_container_ty: match c.inner() {
+                Cert::StringConcatVerbatimMatch { container_ty, .. } => Some(*container_ty),
+                _ => None,
+            },
+            string_concat_func_idx: match c.inner() {
+                Cert::StringConcatVerbatimMatch {
+                    string_concat_idx, ..
+                } => Some(*string_concat_idx),
                 _ => None,
             },
         })

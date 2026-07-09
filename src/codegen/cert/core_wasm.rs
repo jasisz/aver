@@ -44,7 +44,11 @@ enum Op {
     RefCast(u32),
     StructNew(u32, u32),
     StructGet(u32, u32),
-    ArrayNewData(u32, Vec<u8>),
+    ArrayNewData {
+        type_idx: u32,
+        data_idx: u32,
+        bytes: Vec<u8>,
+    },
     ArrayNewDataUnresolved {
         type_idx: u32,
         data_idx: u32,

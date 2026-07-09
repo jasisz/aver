@@ -5,9 +5,14 @@ fn verbatim_default_from_ops(ops: &[Op]) -> Option<VerbatimDefault> {
         [
             Op::I32Const(0),
             Op::I32Const(_),
-            Op::ArrayNewData(type_idx, bytes),
+            Op::ArrayNewData {
+                type_idx,
+                data_idx,
+                bytes,
+            },
         ] => Some(VerbatimDefault::Array {
             type_idx: *type_idx,
+            data_idx: *data_idx,
             bytes: bytes.clone(),
         }),
         _ => None,
@@ -168,7 +173,9 @@ fn nr_string_concat_verbatim_match(
         let trio @ [
             Op::I32Const(0),
             Op::I32Const(_len),
-            Op::ArrayNewData(lit_ty, _bytes),
+            Op::ArrayNewData {
+                type_idx: lit_ty, ..
+            },
         ] = operands.get(i..i + 3)?
         else {
             return None; // unrecognised operand shape — decline
@@ -179,8 +186,12 @@ fn nr_string_concat_verbatim_match(
         }
         let lit = VerbatimDefault::Array {
             type_idx: *lit_ty,
+            data_idx: match &operands[i + 2] {
+                Op::ArrayNewData { data_idx, .. } => *data_idx,
+                _ => return None,
+            },
             bytes: match &operands[i + 2] {
-                Op::ArrayNewData(_, bytes) => bytes.clone(),
+                Op::ArrayNewData { bytes, .. } => bytes.clone(),
                 _ => return None,
             },
         };
@@ -198,6 +209,8 @@ fn nr_string_concat_verbatim_match(
     Some(Cert::StringConcatVerbatimMatch {
         name: f.name.clone(),
         self_idx: f.wasm_idx,
+        code_idx: f.code_idx,
+        type_idx: f.type_idx,
         nlocals: f.nlocals,
         carrier: carrier?,
         string_concat_idx: *concat_idx,
@@ -241,7 +254,11 @@ fn string_eq_verbatim_chain(
         maybe_cast @ ..,
         Nop(Op::I32Const(0)),
         Nop(Op::I32Const(_)),
-        Nop(Op::ArrayNewData(type_idx, bytes)),
+        Nop(Op::ArrayNewData {
+            type_idx,
+            data_idx,
+            bytes,
+        }),
         Nop(Op::Call(eq_idx)),
         IfElse(hit, els),
     ] = nodes
@@ -256,6 +273,7 @@ fn string_eq_verbatim_chain(
     }
     let needle = VerbatimDefault::Array {
         type_idx: *type_idx,
+        data_idx: *data_idx,
         bytes: bytes.clone(),
     };
     let hit = verbatim_default_from_ops(&node_ops(hit))?;

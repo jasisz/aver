@@ -102,4 +102,30 @@ def lowerExprFragmentBody (carrier : Nat) (plan : ExprFragmentRawPlan) :
   else
     none
 
+def lowerStringConcatChunk (resultTy : Nat) (chunk : StringConcatChunk) :
+    List WInstr :=
+  [.i32Const 0, .i32Const (Int.ofNat chunk.bytes.length),
+    .arrayNewData resultTy chunk.bytes]
+
+def lowerStringConcatChunks (resultTy : Nat) :
+    List StringConcatChunk → List WInstr
+  | [] => []
+  | chunk :: rest =>
+      lowerStringConcatChunk resultTy chunk ++
+        lowerStringConcatChunks resultTy rest
+
+def lowerStringConcatBody
+    (resultTy containerTy concatFuncIdx : Nat)
+    (plan : StringConcatRawPlan) : Option (List WInstr) :=
+  if AverCert.PlanCheck.checkStringConcatRawPlan plan then
+    some (
+      lowerStringConcatChunks resultTy plan.prefixes ++
+      [.localGet 0] ++
+      lowerStringConcatChunks resultTy plan.suffixes ++
+      [.arrayNewFixed containerTy (plan.prefixes.length + 1 + plan.suffixes.length),
+        .call concatFuncIdx]
+    )
+  else
+    none
+
 end AverCert.PlanLower

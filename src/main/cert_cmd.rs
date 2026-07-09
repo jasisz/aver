@@ -1170,13 +1170,44 @@ fn lean_expr_fragment_artifact_claims(
     let mut expr_proofs = Vec::new();
     for r in rederived {
         if let Some(plan) = r.string_concat_plan_lean.as_ref() {
+            let (
+                Some(body),
+                Some(bytes),
+                Some(code_idx),
+                Some(type_idx),
+                Some(result_ty),
+                Some(container_ty),
+                Some(concat_func_idx),
+            ) = (
+                r.string_concat_lowered_body_lean.as_ref(),
+                r.string_concat_lowered_code_entry_lean.as_ref(),
+                r.string_concat_code_idx,
+                r.string_concat_type_idx,
+                r.string_concat_result_ty,
+                r.string_concat_container_ty,
+                r.string_concat_func_idx,
+            )
+            else {
+                continue;
+            };
+            let export_name_bytes = lean_byte_list(r.name.as_bytes());
+            let binding = format!(
+                "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {} }} : AverCert.WasmSlice.FuncBinding)",
+                r.self_idx, code_idx, type_idx, bytes
+            );
             string_claims.push(format!(
-                "({{ exportName := \"{name}\", \
+                "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
+                 carrier := {carrier}, resultTy := {result_ty}, containerTy := {container_ty}, \
+                 concatFuncIdx := {concat_func_idx}, \
                  plan := (({plan}) : AverCert.Schema.StringConcatRawPlan), \
                  obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.StringConcatClaim)",
                 name = r.name,
+                carrier = r.carrier,
             ));
-            string_proofs.push("⟨rfl, rfl⟩".to_string());
+            string_proofs.push(format!(
+                "⟨rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
+                 ⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
+            ));
             continue;
         }
         let (Some(plan), Some(body), Some(bytes), Some(code_idx), Some(type_idx)) = (
@@ -1285,6 +1316,7 @@ fn lean_fragment_acceptance_proof_block(
             "{indent}  AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.stringConcatClaimsAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.stringConcatClaimAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.stringConcatPlanAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.exprFragmentClaimsAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.exprFragmentClaimAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
@@ -1350,6 +1382,7 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimAccepted,\n",
+            "    AverCert.AcceptedArtifact.stringConcatPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",

@@ -171,15 +171,23 @@ structure ExprFragmentRawPlan where
   body    : FragBlock
 deriving Repr
 
-/-- Raw, untrusted source-level String.concat witness. It intentionally stores
-    only source-shaped byte chunks (`prefixes ++ input ++ suffixes`); the
-    current v1 semantic obligation remains verbatim byte-level, while this is
-    the Lean-data surface that prevents the emitted string-fragment sidecar and
-    manifest from drifting. -/
+/-- One String.concat literal chunk. `bytes` is the source-level content; `dataIdx`
+    is the target binding needed to lower back to exact `array.new_data` code
+    bytes. A later self-checking parser can derive `dataIdx` from the module's
+    passive data section instead of carrying it in the raw plan. -/
+structure StringConcatChunk where
+  dataIdx : Nat
+  bytes   : List Nat
+deriving Repr
+
+/-- Raw, untrusted String.concat witness. It is source-shaped around the value
+    flow (`prefixes ++ input ++ suffixes`) but still carries the current wasm-gc
+    encoder binding for each literal chunk, so the checked plan can lower to the
+    exact function code-entry bytes. -/
 structure StringConcatRawPlan where
   profile  : String
-  prefixes : List (List Nat)
-  suffixes : List (List Nat)
+  prefixes : List StringConcatChunk
+  suffixes : List StringConcatChunk
 deriving Repr
 
 /-- Pointwise lifting of an integer representation relation to argument lists.

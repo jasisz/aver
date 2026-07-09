@@ -14,6 +14,7 @@ fn render_string_eq_verbatim_match_cert(c: &Cert) -> String {
     };
     let VerbatimDefault::Array {
         type_idx: string_ty,
+        data_idx: _,
         bytes: _,
     } = needle
     else {
@@ -24,6 +25,7 @@ fn render_string_eq_verbatim_match_cert(c: &Cert) -> String {
     let hit_guard = render_default_guard(hit);
     let miss_input = VerbatimDefault::Array {
         type_idx: *string_ty,
+        data_idx: 0,
         bytes: vec![120],
     };
     let miss_guard = match default {

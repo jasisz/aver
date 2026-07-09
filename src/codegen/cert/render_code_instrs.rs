@@ -49,7 +49,9 @@ fn render_simple_op(op: &Op) -> Option<String> {
         Op::RefCast(t) => format!(".refCast {t}"),
         Op::StructNew(t, n) => format!(".structNew {t} {n}"),
         Op::StructGet(t, f) => format!(".structGet {t} {f}"),
-        Op::ArrayNewData(t, bytes) => format!(".arrayNewData {t} {}", render_nat_list(bytes)),
+        Op::ArrayNewData {
+            type_idx, bytes, ..
+        } => format!(".arrayNewData {type_idx} {}", render_nat_list(bytes)),
         Op::ArrayNewFixed(t, n) => format!(".arrayNewFixed {t} {n}"),
         Op::RefNull => ".refNull".to_string(),
         Op::RefIsNull => ".refIsNull".to_string(),
@@ -83,7 +85,9 @@ fn render_wval(default: &VerbatimDefault) -> String {
     match default {
         VerbatimDefault::Null => ".null".to_string(),
         VerbatimDefault::F64Bits(bits) => format!(".f64v 0x{bits:016x}"),
-        VerbatimDefault::Array { type_idx, bytes } => {
+        VerbatimDefault::Array {
+            type_idx, bytes, ..
+        } => {
             format!(".arr {type_idx} {}", render_array_elements(bytes))
         }
     }
@@ -93,7 +97,9 @@ fn render_wval_qualified(default: &VerbatimDefault) -> String {
     match default {
         VerbatimDefault::Null => "WVal.null".to_string(),
         VerbatimDefault::F64Bits(bits) => format!("WVal.f64v 0x{bits:016x}"),
-        VerbatimDefault::Array { type_idx, bytes } => {
+        VerbatimDefault::Array {
+            type_idx, bytes, ..
+        } => {
             format!("WVal.arr {type_idx} {}", render_array_elements(bytes))
         }
     }
@@ -127,7 +133,9 @@ fn render_default_guard(default: &VerbatimDefault) -> String {
         VerbatimDefault::F64Bits(bits) => format!(
             "(fun w => match w with | .f64v bits => some bits | _ => none) = some (0x{bits:016x} : UInt64)"
         ),
-        VerbatimDefault::Array { type_idx, bytes } => format!(
+        VerbatimDefault::Array {
+            type_idx, bytes, ..
+        } => format!(
             "(fun w => match w with | .arr t es => if t = {type_idx} ∧ es.length = {} then some 0 else none | _ => none) = some 0",
             bytes.len()
         ),

@@ -141,6 +141,8 @@ enum Cert {
     StringConcatVerbatimMatch {
         name: String,
         self_idx: u32,
+        code_idx: u32,
+        type_idx: u32,
         nlocals: usize,
         carrier: u32,
         /// The wasm func index of the String.concat host helper.

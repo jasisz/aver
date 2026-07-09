@@ -923,7 +923,7 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         "shout sidecar should be the canonical string source plan:\n{plan_text}"
     );
     assert!(
-        plan_text.contains("input index=0") && plan_text.contains("suffix hex=21"),
+        plan_text.contains("input index=0") && plan_text.contains("suffix data=0 hex=21"),
         "shout sidecar should preserve the input plus literal suffix:\n{plan_text}"
     );
     let expected_sha = aver::codegen::cert::sha256_hex(plan_text.as_bytes());
@@ -939,8 +939,8 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         "String.concat cert should render a Lean-data StringConcatRawPlan:\n{plans_lean}"
     );
     assert!(
-        plans_lean.contains("suffixes := [[33]]"),
-        "String.concat Lean plan should expose the literal suffix as bytes:\n{plans_lean}"
+        plans_lean.contains("suffixes := [({ dataIdx := 0, bytes := [33] } : StringConcatChunk)]"),
+        "String.concat Lean plan should expose the literal suffix bytes and data segment binding:\n{plans_lean}"
     );
     assert!(
         plans_lean.contains("checkStringConcatRawPlan shoutStringConcatPlan = true := rfl"),
@@ -962,6 +962,10 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
     assert!(
         artifact_lean.contains("plan := AverCert.Plans.shoutStringConcatPlan"),
         "String.concat artifact claim should point at the checked source plan:\n{artifact_lean}"
+    );
+    assert!(
+        artifact_lean.contains("concatFuncIdx :=") && artifact_lean.contains("resultTy :="),
+        "String.concat artifact claim should carry lowering indices:\n{artifact_lean}"
     );
 
     let build = Command::new("lake")

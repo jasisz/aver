@@ -8,6 +8,8 @@
 import CertPrelude
 import Schema
 import PlanCheck
+import PlanLower
+import PlanBytes
 import ExprFragmentAccepted
 import WasmSlice
 
@@ -113,18 +115,55 @@ def symFragmentClaimAccepted
     claim.plan
     claim.obligation
 
-/-- One source-level String.concat claim inside an artifact certificate. This
-    does not yet prove string byte semantics; it pins the checked source witness
-    into the artifact-level data surface so the manifest cannot advertise a
-    different String.concat plan list than the proof carried. -/
-structure StringConcatClaim where
-  exportName : String
-  plan       : StringConcatRawPlan
-  obligation : Obligation
+/-- Artifact-level acceptance for one String.concat export. The raw plan carries
+    source-level chunks plus the encoder's data-index binding; the audited Lean
+    lowerers rebuild both the semantic `WInstr` body and exact code-entry bytes,
+    and the Wasm slicer binds those bytes to the exported function. -/
+def stringConcatPlanAccepted
+    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (exportName : String)
+    (carrier resultTy containerTy concatFuncIdx : Nat)
+    (plan : StringConcatRawPlan)
+    (obligation : Obligation) : Prop :=
+  obligation.export_ = exportName ∧
+  obligation.carrier = carrier ∧
+  ∃ body codeEntry binding,
+    AverCert.PlanCheck.checkStringConcatRawPlan plan = true ∧
+    AverCert.PlanLower.lowerStringConcatBody
+      resultTy containerTy concatFuncIdx plan = some body ∧
+    AverCert.PlanBytes.lowerStringConcatCodeEntry
+      carrier resultTy containerTy concatFuncIdx plan = some codeEntry ∧
+    AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+    binding.codeEntry = codeEntry ∧
+    obligation.self = binding.funcIdx ∧
+    ∃ nlocals,
+      obligation.code binding.funcIdx =
+        some { arity := 1, nlocals := nlocals, body := body }
 
-def stringConcatClaimAccepted (claim : StringConcatClaim) : Prop :=
-  AverCert.PlanCheck.checkStringConcatRawPlan claim.plan = true ∧
-  claim.obligation.export_ = claim.exportName
+/-- One source-level String.concat claim inside an artifact certificate. -/
+structure StringConcatClaim where
+  exportNameBytes : AverCert.WasmSlice.ByteSeq
+  exportName      : String
+  carrier         : Nat
+  resultTy        : Nat
+  containerTy     : Nat
+  concatFuncIdx   : Nat
+  plan            : StringConcatRawPlan
+  obligation      : Obligation
+
+def stringConcatClaimAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (claim : StringConcatClaim) : Prop :=
+  stringConcatPlanAccepted
+    wasmBytes
+    claim.exportNameBytes
+    claim.exportName
+    claim.carrier
+    claim.resultTy
+    claim.containerTy
+    claim.concatFuncIdx
+    claim.plan
+    claim.obligation
 
 /-- Aggregate expression-fragment acceptance for one artifact's fragment list.
     This is intentionally recursive rather than tactic-heavy, so a generated
@@ -149,11 +188,13 @@ def symFragmentClaimsAccepted
 
 /-- Aggregate source-level String.concat witness acceptance for one artifact's
     string claim list. -/
-def stringConcatClaimsAccepted : List StringConcatClaim → Prop
+def stringConcatClaimsAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq) :
+    List StringConcatClaim → Prop
   | [] => True
   | claim :: rest =>
-      stringConcatClaimAccepted claim ∧
-      stringConcatClaimsAccepted rest
+      stringConcatClaimAccepted wasmBytes claim ∧
+      stringConcatClaimsAccepted wasmBytes rest
 
 /-- The source plans claimed by an artifact, projected into the same manifest
     surface used for pinning. Keeping this in the audited predicate means a
@@ -210,7 +251,7 @@ def acceptedSymFragments (artifact : ArtifactData) : Prop :=
   symFragmentClaimsAccepted artifact.wasmBytes artifact.symFragmentClaims
 
 def acceptedStringConcatFragments (artifact : ArtifactData) : Prop :=
-  stringConcatClaimsAccepted artifact.stringConcatClaims
+  stringConcatClaimsAccepted artifact.wasmBytes artifact.stringConcatClaims
 
 def acceptedExprFragments (artifact : ArtifactData) : Prop :=
   exprFragmentClaimsAccepted artifact.wasmBytes artifact.exprFragmentClaims

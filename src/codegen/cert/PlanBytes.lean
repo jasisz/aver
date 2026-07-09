@@ -202,4 +202,73 @@ def lowerExprFragmentCodeEntry (carrier : Nat) (plan : ExprFragmentRawPlan) :
       | none => none
   | none => none
 
+def lowerStringConcatChunkBytes
+    (resultTy : Nat) (chunk : StringConcatChunk) : Option (List Nat) :=
+  match sleb32 0,
+        sleb32 (Int.ofNat chunk.bytes.length),
+        uleb32 0x09,
+        uleb32 resultTy,
+        uleb32 chunk.dataIdx with
+  | some offsetBytes, some lenBytes, some opBytes, some resultTyBytes, some dataIdxBytes =>
+      some (
+        [0x41] ++ offsetBytes ++
+        [0x41] ++ lenBytes ++
+        [0xfb] ++ opBytes ++ resultTyBytes ++ dataIdxBytes
+      )
+  | _, _, _, _, _ => none
+
+def lowerStringConcatChunksBytes (resultTy : Nat) :
+    List StringConcatChunk → Option (List Nat)
+  | [] => some []
+  | chunk :: rest =>
+      match lowerStringConcatChunkBytes resultTy chunk,
+            lowerStringConcatChunksBytes resultTy rest with
+      | some chunkBytes, some restBytes => some (chunkBytes ++ restBytes)
+      | _, _ => none
+
+def lowerStringConcatExprBytes
+    (resultTy containerTy concatFuncIdx : Nat)
+    (plan : StringConcatRawPlan) : Option (List Nat) :=
+  if AverCert.PlanCheck.checkStringConcatRawPlan plan then
+    match lowerStringConcatChunksBytes resultTy plan.prefixes,
+          uleb32 0,
+          lowerStringConcatChunksBytes resultTy plan.suffixes,
+          uleb32 0x08,
+          uleb32 containerTy,
+          uleb32 (plan.prefixes.length + 1 + plan.suffixes.length),
+          uleb32 concatFuncIdx with
+    | some prefixBytes, some localIdxBytes, some suffixBytes,
+      some arrayNewFixedOpBytes, some containerTyBytes, some partCountBytes,
+      some concatFuncIdxBytes =>
+        some (
+          prefixBytes ++
+          [0x20] ++ localIdxBytes ++
+          suffixBytes ++
+          [0xfb] ++ arrayNewFixedOpBytes ++ containerTyBytes ++ partCountBytes ++
+          [0x10] ++ concatFuncIdxBytes ++
+          [0x0b]
+        )
+    | _, _, _, _, _, _, _ => none
+  else
+    none
+
+def lowerStringConcatBodyBytes
+    (carrier resultTy containerTy concatFuncIdx : Nat)
+    (plan : StringConcatRawPlan) : Option (List Nat) :=
+  match uleb32 1, uleb32 1, uleb32 carrier,
+        lowerStringConcatExprBytes resultTy containerTy concatFuncIdx plan with
+  | some localDeclCount, some localCount, some carrierBytes, some exprBytes =>
+      some (localDeclCount ++ localCount ++ [0x63] ++ carrierBytes ++ exprBytes)
+  | _, _, _, _ => none
+
+def lowerStringConcatCodeEntry
+    (carrier resultTy containerTy concatFuncIdx : Nat)
+    (plan : StringConcatRawPlan) : Option (List Nat) :=
+  match lowerStringConcatBodyBytes carrier resultTy containerTy concatFuncIdx plan with
+  | some body =>
+      match uleb32 body.length with
+      | some lenBytes => some (lenBytes ++ body)
+      | none => none
+  | none => none
+
 end AverCert.PlanBytes

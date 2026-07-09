@@ -219,10 +219,14 @@ def byteChunksAllBytes : List (List Nat) → Bool
   | [] => true
   | bytes :: rest => bytesAllBytes bytes && byteChunksAllBytes rest
 
+def stringConcatChunksAllBytes : List StringConcatChunk → Bool
+  | [] => true
+  | chunk :: rest => bytesAllBytes chunk.bytes && stringConcatChunksAllBytes rest
+
 def checkStringConcatRawPlan (plan : StringConcatRawPlan) : Bool :=
   plan.profile = "string-concat-v1" &&
-    byteChunksAllBytes plan.prefixes &&
-    byteChunksAllBytes plan.suffixes
+    stringConcatChunksAllBytes plan.prefixes &&
+    stringConcatChunksAllBytes plan.suffixes
 
 def encodeSymTy? : SymTy → Option FragTy
   | .float => some .f64

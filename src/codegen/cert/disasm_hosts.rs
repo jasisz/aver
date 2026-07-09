@@ -222,7 +222,11 @@ fn resolve_data_ops(ops: Vec<Op>, data_segments: &[Option<Vec<u8>>]) -> Vec<Op> 
                     return Op::Other;
                 };
                 if bytes.len() == len as usize {
-                    Op::ArrayNewData(type_idx, bytes.clone())
+                    Op::ArrayNewData {
+                        type_idx,
+                        data_idx,
+                        bytes: bytes.clone(),
+                    }
                 } else {
                     Op::Other
                 }

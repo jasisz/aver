@@ -41,7 +41,11 @@ struct ClosureEntry {
 enum VerbatimDefault {
     Null,
     F64Bits(u64),
-    Array { type_idx: u32, bytes: Vec<u8> },
+    Array {
+        type_idx: u32,
+        data_idx: u32,
+        bytes: Vec<u8>,
+    },
 }
 
 #[derive(Clone, PartialEq)]
