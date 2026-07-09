@@ -379,6 +379,29 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         );
     }
 
+    // The Lean manifest must also name the artifact-level certificate root.
+    // JSON consistency alone is not enough; the checker witness pins the
+    // proven manifest literal and the artifact predicate checks the same root.
+    {
+        let dir = temp_dir("neg-lean-artifact-root-pin");
+        copy_dir(&out_dir, &dir);
+        let manifest = dir.join("cert").join("Manifest.lean");
+        let src = std::fs::read_to_string(&manifest).unwrap();
+        let poisoned = src.replacen(
+            "artifactRoot := \"AverCert.Artifact.certificate\"",
+            "artifactRoot := \"AverCert.Final.cert\"",
+            1,
+        );
+        assert_ne!(src, poisoned, "Manifest.lean artifactRoot shape changed");
+        std::fs::write(&manifest, poisoned).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "wrong Lean artifact root must be rejected:\n{out}");
+        assert!(
+            out.contains("manifest.subject.artifactRoot"),
+            "wrong reason for Lean artifact root drift:\n{out}"
+        );
+    }
+
     // The artifact-carried data root is useful metadata, not authority. Even
     // when a fixture has no expr-fragment claims, the checker pins
     // `AverCert.Artifact.data` to its own reconstruction before accepting the

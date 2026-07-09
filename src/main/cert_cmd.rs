@@ -1224,6 +1224,8 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
     let checker_proof = format!(
         concat!(
             "  dsimp [AverCert.AcceptedArtifact.accepted,\n",
+            "    AverCert.AcceptedArtifact.subjectMatchesArtifactRoot,\n",
+            "    AverCert.AcceptedArtifact.expectedArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.claimsMatchManifest,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimPlanPairs,\n",
             "    AverCert.AcceptedArtifact.exprFragmentClaimPlanPairs,\n",
@@ -1237,7 +1239,7 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
             "    AverCert.AcceptedArtifact.exprFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨{final_witness}, ⟨⟨rfl, rfl⟩, ⟨{sym_proof}, {expr_proof}⟩⟩⟩\n"
+            "  exact ⟨{final_witness}, ⟨rfl, ⟨⟨rfl, rfl⟩, ⟨{sym_proof}, {expr_proof}⟩⟩⟩⟩\n"
         ),
         final_witness = FINAL_WITNESS_THEOREM,
         sym_proof = witness.sym_proof,

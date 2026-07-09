@@ -325,6 +325,8 @@ fn render_artifact(analysis: &Analysis) -> String {
     let fragment_proof = format!(
         concat!(
             "  dsimp [data, symFragmentClaims, exprFragmentClaims, AverCert.AcceptedArtifact.accepted,\n",
+            "    AverCert.AcceptedArtifact.subjectMatchesArtifactRoot,\n",
+            "    AverCert.AcceptedArtifact.expectedArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.claimsMatchManifest,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimPlanPairs,\n",
             "    AverCert.AcceptedArtifact.exprFragmentClaimPlanPairs,\n",
@@ -338,7 +340,7 @@ fn render_artifact(analysis: &Analysis) -> String {
             "    AverCert.AcceptedArtifact.exprFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨finalCert, ⟨⟨rfl, rfl⟩, ⟨{sym_proof}, {expr_proof}⟩⟩⟩\n"
+            "  exact ⟨finalCert, ⟨rfl, ⟨⟨rfl, rfl⟩, ⟨{sym_proof}, {expr_proof}⟩⟩⟩⟩\n"
         ),
         sym_proof = claims.sym_proof,
         expr_proof = claims.expr_proof

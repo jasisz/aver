@@ -170,6 +170,12 @@ def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedSymFragments artifact ∧
   acceptedExprFragments artifact
 
+def expectedArtifactRoot : String :=
+  "AverCert.Artifact.certificate"
+
+def subjectMatchesArtifactRoot (artifact : ArtifactData) : Prop :=
+  artifact.manifest.subject.artifactRoot = expectedArtifactRoot
+
 def claimsMatchManifest (artifact : ArtifactData) : Prop :=
   symFragmentClaimPlanPairs artifact.symFragmentClaims =
       artifact.manifest.symFragmentPlans ∧
@@ -178,6 +184,7 @@ def claimsMatchManifest (artifact : ArtifactData) : Prop :=
 
 def accepted (artifact : ArtifactData) : Prop :=
   AverCert.Schema.Holds artifact.manifest ∧
+  subjectMatchesArtifactRoot artifact ∧
   claimsMatchManifest artifact ∧
   acceptedFragments artifact
 
