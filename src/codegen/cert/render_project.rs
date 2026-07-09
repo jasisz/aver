@@ -398,7 +398,7 @@ fn render_artifact_expr_fragment_claims(analysis: &Analysis) -> RenderedArtifact
                     "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
                 );
                 string_claims.push(format!(
-                    "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, resultTy := {result_ty}, containerTy := {container_ty}, concatFuncIdx := {string_concat_idx}, symPlan := AverCert.Plans.{name}StringConcatSymPlan, plan := AverCert.Plans.{name}StringConcatPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.StringConcatClaim)",
+                    "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, resultTy := {result_ty}, containerTy := {container_ty}, concatFuncIdx := {string_concat_idx}, symPlan := AverCert.Plans.{name}StringConcatSymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.StringConcatClaim)",
                     export_name = lean_str(name),
                 ));
                 string_proofs.push(format!(
@@ -452,7 +452,8 @@ fn render_artifact(analysis: &Analysis) -> String {
             "    AverCert.AcceptedArtifact.symFragmentClaimPlanPairs,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimEncodedPlanPairs,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimEncodedPlanPair?,\n",
-            "    AverCert.AcceptedArtifact.stringConcatClaimPlanPairs,\n",
+            "    AverCert.AcceptedArtifact.stringConcatClaimExportNames,\n",
+            "    AverCert.AcceptedArtifact.stringConcatManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimSymPlanPairs,\n",
             "    AverCert.AcceptedArtifact.acceptedFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedSymFragments,\n",
@@ -462,6 +463,7 @@ fn render_artifact(analysis: &Analysis) -> String {
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimAccepted,\n",
+            "    AverCert.AcceptedArtifact.stringConcatPlanForExport,\n",
             "    AverCert.AcceptedArtifact.stringConcatPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",

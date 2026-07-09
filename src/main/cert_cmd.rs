@@ -1322,7 +1322,7 @@ fn lean_expr_fragment_artifact_claims(
     let mut sym_proofs = Vec::new();
     let mut string_proofs = Vec::new();
     for r in rederived {
-        if let Some(plan) = r.string_concat_plan_lean.as_ref() {
+        if r.string_concat_plan_lean.is_some() {
             let (
                 Some(sym_plan),
                 Some(body),
@@ -1355,7 +1355,6 @@ fn lean_expr_fragment_artifact_claims(
                  carrier := {carrier}, resultTy := {result_ty}, containerTy := {container_ty}, \
                  concatFuncIdx := {concat_func_idx}, \
                  symPlan := (({sym_plan}) : AverCert.Schema.SymRawPlan), \
-                 plan := (({plan}) : AverCert.Schema.StringConcatRawPlan), \
                  obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.StringConcatClaim)",
                 name = r.name,
                 carrier = r.carrier,
@@ -1448,6 +1447,7 @@ fn lean_fragment_acceptance_proof_block(
             "{indent}  AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.stringConcatClaimsAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.stringConcatClaimAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.stringConcatPlanForExport,\n",
             "{indent}  AverCert.AcceptedArtifact.stringConcatPlanAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "{indent}  AverCert.ExprFragmentAccepted.accepted]\n",
@@ -1492,7 +1492,8 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
             "    AverCert.AcceptedArtifact.symFragmentClaimPlanPairs,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimEncodedPlanPairs,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimEncodedPlanPair?,\n",
-            "    AverCert.AcceptedArtifact.stringConcatClaimPlanPairs,\n",
+            "    AverCert.AcceptedArtifact.stringConcatClaimExportNames,\n",
+            "    AverCert.AcceptedArtifact.stringConcatManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimSymPlanPairs,\n",
             "    AverCert.AcceptedArtifact.acceptedFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedSymFragments,\n",
@@ -1502,6 +1503,7 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimAccepted,\n",
+            "    AverCert.AcceptedArtifact.stringConcatPlanForExport,\n",
             "    AverCert.AcceptedArtifact.stringConcatPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",

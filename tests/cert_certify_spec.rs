@@ -1025,8 +1025,8 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         "artifact should carry source-level String.concat claims:\n{artifact_lean}"
     );
     assert!(
-        artifact_lean.contains("plan := AverCert.Plans.shoutStringConcatPlan"),
-        "String.concat artifact claim should point at the checked source plan:\n{artifact_lean}"
+        !artifact_lean.contains("plan := AverCert.Plans.shoutStringConcatPlan"),
+        "String.concat artifact claim should not duplicate the target StringConcatRawPlan:\n{artifact_lean}"
     );
     assert!(
         artifact_lean.contains("symPlan := AverCert.Plans.shoutStringConcatSymPlan"),

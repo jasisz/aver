@@ -122,8 +122,10 @@ at a time rather than folded into `SymPlan` through a raw `WVal` escape hatch.
 source witness: the sidecar records `prefix* + input + suffix*` at the Aver
 String level and the verifier checks it against the byte-derived concat
 certificate. It also carries a source `SymPlan` and an artifact-level
-`StringConcatClaim`, because the string family needs target data-index bindings
-that a plain `SymFragmentClaim` deliberately does not contain.
+`StringConcatClaim`. The claim itself stays source-first (`SymPlan` plus
+lowering indices); the byte-bound data-index plan is pinned in
+`manifest.stringConcatPlans` and looked up by export name inside the audited
+artifact predicate.
 
 ## Artifact Shape
 
@@ -637,18 +639,20 @@ Sunset criteria:
 16. Done for source-level bridge v0: current scalar expression fragments now
     enter artifact acceptance as `SymFragmentClaim`; Lean checks/encodes their
     `SymRawPlan` into the byte-bound `ExprFragmentRawPlan` before applying the
-    existing accepted-export predicate. Representation-only fragments remain on
-    an explicit fallback list, which is empty for the current goal matrix.
+    existing accepted-export predicate. Representation-only expr fragments are
+    no longer admitted by the artifact-level wrapper yet.
 17. Done for the first string witness: `String.concat` emits
     `string-concat-v1.plan`, pins it in `cert-manifest.json`, and `aver cert
     verify` checks it against the byte-derived concat certificate. This is not
     yet Lean-side artifact acceptance; it is the source data surface that will
     feed that bridge.
 18. Done for `String.concat`: add a Lean-side checked string plan family and
-    artifact-level `StringConcatClaim`, so the source `SymPlan`, byte-bound
-    `string-concat-v1` plan, canonical body/code-entry lowering and Wasm
-    slice binding are checked inside `AcceptedArtifact` instead of leaving the
-    concat proof as only a `WVal` verbatim model.
+    artifact-level `StringConcatClaim`, so the source `SymPlan`,
+    manifest-pinned byte-bound `string-concat-v1` plan, canonical
+    body/code-entry lowering and Wasm slice binding are checked inside
+    `AcceptedArtifact` instead of leaving the concat proof as only a `WVal`
+    verbatim model. The claim no longer duplicates the target plan; the
+    audited predicate looks it up in the manifest by export name.
     The JSON manifest now exposes this migration surface explicitly with
     `artifact_bridge_counts`; the current goal matrix is 8/23 exports on
     `accepted-artifact-v1`.

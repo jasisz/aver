@@ -6,8 +6,8 @@
 > families, scalar expression fragments, mutual recursion, and the
 > `String.concat` beachhead. `String.concat` now emits a source-level
 > `string-concat-v1.plan` witness that `aver cert verify` checks against the
-> byte-derived concat certificate; it is not yet a Lean-side
-> `AcceptedArtifact` claim. The one-literal `String.eq` beachhead reuses the
+> byte-derived concat certificate and carries through a Lean-side
+> `AcceptedArtifact.StringConcatClaim`. The one-literal `String.eq` beachhead reuses the
 > existing verbatim widened match class rather than adding a class. Everything
 > else is **declined fail-closed** and listed with a reason. This document is
 > the contract; the emitted `cert-manifest.json` is its machine-readable form.
@@ -27,8 +27,8 @@
 > byte-layout facts that do not yet have a source constructor. `String.concat`
 > is the first non-expression source witness: its sidecar records the source
 > string parts (`prefix*`, input, `suffix*`) and is checked by Rust against the
-> byte-derived legacy concat cert while the Lean bridge for string source plans
-> is still pending. The same checked
+> byte-derived legacy concat cert, then the artifact-level Lean bridge looks up
+> the byte-bound concat plan from `manifest.stringConcatPlans`. The same checked
 > expression plans are also emitted as `Plans.lean` Lean data. The
 > audited, hash-pinned `PlanCheck.lean` module structurally checks those raw
 > plans in Lean (`checkExprFragmentRawPlan = true`), and `PlanLower.lean`
