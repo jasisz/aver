@@ -1769,17 +1769,69 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         contracts.contains(&aver::codegen::cert::STRING_CONCAT_CONTRACT),
         "String.concat host contract missing from manifest, got {contracts:?}"
     );
-    let shout_class = manifest["certified"]
+    let shout_entry = manifest["certified"]
         .as_array()
         .unwrap()
         .iter()
         .find(|c| c["name"].as_str() == Some("shout"))
-        .and_then(|c| c["class"].as_str())
-        .unwrap_or("<missing>");
+        .expect("shout manifest entry");
+    let shout_class = shout_entry["class"].as_str().unwrap_or("<missing>");
     assert_eq!(
         shout_class, "verbatim-string-concat",
         "shout should render its concat class, got {shout_class}"
     );
+    let shout_fragment = &shout_entry["fragment"];
+    assert_eq!(
+        shout_fragment["profile"].as_str(),
+        Some("string-concat-v1"),
+        "shout should carry a source-level String.concat sidecar"
+    );
+    let shout_plan = shout_fragment["plan"]
+        .as_str()
+        .expect("shout string-concat plan path")
+        .to_string();
+
+    {
+        let dir = temp_dir("cert-stringconcat-sidecar-tamper");
+        copy_dir(&out_dir, &dir);
+        let sidecar = dir.join("cert").join(&shout_plan);
+        let plan_text = std::fs::read_to_string(&sidecar).unwrap();
+        let tampered_plan = plan_text.replacen("suffix hex=21", "suffix hex=3f", 1);
+        assert_ne!(
+            plan_text, tampered_plan,
+            "String.concat sidecar shape changed"
+        );
+        std::fs::write(&sidecar, &tampered_plan).unwrap();
+
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        let entry = m["certified"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|c| c["name"].as_str() == Some("shout"))
+            .expect("shout manifest entry");
+        entry["fragment"]["plan_sha256"] =
+            serde_json::Value::String(aver::codegen::cert::sha256_hex(tampered_plan.as_bytes()));
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+
+        let (ok, out) = aver_verify(&dir.join("stringconcat.wasm"), &dir.join("cert"));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            !ok,
+            "tampered String.concat sidecar must be DECLINED:\n{out}"
+        );
+        assert!(
+            out.contains("string-concat sidecar")
+                && out.contains("canonical byte-derived source plan"),
+            "wrong reason for String.concat sidecar tamper:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "tampered String.concat sidecar credited:\n{out}"
+        );
+    }
 
     {
         let dir = temp_dir("cert-stringconcat-contract-drift");
@@ -1873,7 +1925,8 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         "tampered String.concat helper shape must be DECLINED:\n{out}"
     );
     assert!(
-        out.contains("does not bind"),
+        out.contains("does not bind")
+            || out.contains("do not re-derive a String.concat certificate"),
         "wrong reason for String.concat helper tamper:\n{out}"
     );
     assert!(

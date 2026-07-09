@@ -499,9 +499,9 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     //     the checker validates it against the actual bytes, and the final list
     //     is sorted by byte-derived function order before the kernel witness
     //     binds it to `Manifest.lean`.
-    rederived.extend(checked_fragment_sidecar_obligations(
-        cert_dir, &manifest, &bytes,
-    )?);
+    let sidecar_obligations =
+        checked_fragment_sidecar_obligations(cert_dir, &manifest, &bytes, &rederived)?;
+    rederived.extend(sidecar_obligations);
     rederived.sort_by_key(|r| r.func_order);
     reject_duplicate_rederived_func_orders(&rederived)?;
 
@@ -596,6 +596,7 @@ fn checked_fragment_sidecar_obligations(
     cert_dir: &Path,
     manifest: &Value,
     wasm_bytes: &[u8],
+    byte_derived_legacy: &[cert::RederivedObligation],
 ) -> Result<Vec<cert::RederivedObligation>, String> {
     let certified = manifest
         .get("certified")
@@ -608,6 +609,41 @@ fn checked_fragment_sidecar_obligations(
             "cert-manifest.json `certified[]` entry is missing string field `name`".to_string()
         })?;
         let class = entry.get("class").and_then(Value::as_str);
+        if class == Some("verbatim-string-concat") {
+            let (profile, path, claimed_sha, text) = read_fragment_sidecar(cert_dir, name, entry)?;
+            if profile != "string-concat-v1" {
+                return Err(format!(
+                    "fragment `{name}` sidecar profile mismatch: manifest says `{profile}`"
+                ));
+            }
+            cert::parse_string_concat_plan(&text)
+                .map_err(|e| format!("fragment `{name}` string-concat plan is malformed: {e}"))?;
+            let expected = byte_derived_legacy
+                .iter()
+                .find(|r| r.name == name)
+                .and_then(|r| r.string_concat_plan.as_ref())
+                .ok_or_else(|| {
+                    format!(
+                        "fragment `{name}` declares `string-concat-v1`, but the wasm bytes \
+                         do not re-derive a String.concat certificate for that export"
+                    )
+                })?;
+            if expected.path != path {
+                return Err(format!(
+                    "fragment `{name}` checked plan path mismatch: plan checks as `{}`, \
+                     manifest says `{path}`",
+                    expected.path
+                ));
+            }
+            if expected.sha256 != claimed_sha || expected.text != text {
+                return Err(format!(
+                    "fragment `{name}` string-concat sidecar is not the canonical \
+                     byte-derived source plan"
+                ));
+            }
+            continue;
+        }
+
         if class != Some("expr-fragment-v1") {
             if entry.get("fragment").is_some() {
                 return Err(format!(
@@ -618,52 +654,10 @@ fn checked_fragment_sidecar_obligations(
             continue;
         }
 
-        let fragment = entry.get("fragment").ok_or_else(|| {
-            format!(
-                "cert-manifest.json entry for expr fragment `{name}` is missing \
-                 `fragment` sidecar metadata"
-            )
-        })?;
-        let profile = fragment
-            .get("profile")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                format!(
-                    "cert-manifest.json `fragment` for `{name}` is missing string field `profile`"
-                )
-            })?;
+        let (profile, path, claimed_sha, text) = read_fragment_sidecar(cert_dir, name, entry)?;
         if !matches!(profile, "expr-fragment-v1" | "sym-fragment-v1") {
             return Err(format!(
                 "fragment `{name}` sidecar profile mismatch: manifest says `{profile}`"
-            ));
-        }
-        let path = fragment
-            .get("plan")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                format!("cert-manifest.json `fragment` for `{name}` is missing string field `plan`")
-            })?;
-        let plan_path = checked_fragment_sidecar_path(cert_dir, path, profile)?;
-        let claimed_sha = fragment
-            .get("plan_sha256")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                format!(
-                    "cert-manifest.json `fragment` for `{name}` is missing string field \
-                     `plan_sha256`"
-                )
-            })?;
-        let text = std::fs::read_to_string(&plan_path).map_err(|e| {
-            format!(
-                "cannot read fragment `{name}` sidecar `{}`: {e}",
-                plan_path.display()
-            )
-        })?;
-        let file_sha = cert::sha256_hex(text.as_bytes());
-        if file_sha != claimed_sha {
-            return Err(format!(
-                "fragment `{name}` sidecar file hash mismatch: file hashes to \
-                 {file_sha}, manifest pins {claimed_sha}"
             ));
         }
         let plan_check = match profile {
@@ -701,6 +695,62 @@ fn checked_fragment_sidecar_obligations(
     Ok(obligations)
 }
 
+fn read_fragment_sidecar(
+    cert_dir: &Path,
+    name: &str,
+    entry: &Value,
+) -> Result<(&'static str, String, String, String), String> {
+    let fragment = entry.get("fragment").ok_or_else(|| {
+        format!("cert-manifest.json entry for `{name}` is missing `fragment` sidecar metadata")
+    })?;
+    let profile = fragment
+        .get("profile")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            format!("cert-manifest.json `fragment` for `{name}` is missing string field `profile`")
+        })?;
+    let profile = match profile {
+        "expr-fragment-v1" => "expr-fragment-v1",
+        "sym-fragment-v1" => "sym-fragment-v1",
+        "string-concat-v1" => "string-concat-v1",
+        other => {
+            return Err(format!(
+                "fragment `{name}` sidecar profile mismatch: manifest says `{other}`"
+            ));
+        }
+    };
+    let path = fragment
+        .get("plan")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            format!("cert-manifest.json `fragment` for `{name}` is missing string field `plan`")
+        })?;
+    let plan_path = checked_fragment_sidecar_path(cert_dir, path, profile)?;
+    let claimed_sha = fragment
+        .get("plan_sha256")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            format!(
+                "cert-manifest.json `fragment` for `{name}` is missing string field \
+                 `plan_sha256`"
+            )
+        })?;
+    let text = std::fs::read_to_string(&plan_path).map_err(|e| {
+        format!(
+            "cannot read fragment `{name}` sidecar `{}`: {e}",
+            plan_path.display()
+        )
+    })?;
+    let file_sha = cert::sha256_hex(text.as_bytes());
+    if file_sha != claimed_sha {
+        return Err(format!(
+            "fragment `{name}` sidecar file hash mismatch: file hashes to \
+             {file_sha}, manifest pins {claimed_sha}"
+        ));
+    }
+    Ok((profile, path.to_string(), claimed_sha.to_string(), text))
+}
+
 fn checked_fragment_sidecar_path(
     cert_dir: &Path,
     path: &str,
@@ -729,6 +779,7 @@ fn checked_fragment_sidecar_path(
     let suffix = match profile {
         "expr-fragment-v1" => ".expr-fragment-v1.plan",
         "sym-fragment-v1" => ".sym-fragment-v1.plan",
+        "string-concat-v1" => ".string-concat-v1.plan",
         _ => return Err(format!("unsupported fragment profile `{profile}`")),
     };
     if !file.ends_with(suffix) || file.contains('/') || file.contains('\\') {

@@ -892,16 +892,45 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         contracts.contains(&aver::codegen::cert::STRING_CONCAT_CONTRACT),
         "String.concat host contract missing from manifest, got {contracts:?}"
     );
-    let shout_class = manifest["certified"]
+    let shout_entry = manifest["certified"]
         .as_array()
         .unwrap()
         .iter()
         .find(|c| c["name"].as_str() == Some("shout"))
-        .and_then(|c| c["class"].as_str())
-        .unwrap_or("<missing>");
+        .expect("shout manifest entry");
+    let shout_class = shout_entry["class"].as_str().unwrap_or("<missing>");
     assert_eq!(
         shout_class, "verbatim-string-concat",
         "shout should render its concat class, got {shout_class}"
+    );
+    let fragment = &shout_entry["fragment"];
+    assert_eq!(
+        fragment["profile"].as_str(),
+        Some("string-concat-v1"),
+        "shout should carry a source-level String.concat plan sidecar"
+    );
+    let plan = fragment["plan"].as_str().expect("shout plan path");
+    assert!(
+        plan.starts_with("fragments/") && plan.ends_with(".string-concat-v1.plan"),
+        "shout should point at a string-concat sidecar, got {plan}"
+    );
+    let plan_text =
+        std::fs::read_to_string(cert_dir.join(plan)).expect("String.concat sidecar exists");
+    assert!(
+        plan_text.starts_with(
+            "aver.string-fragment.plan.v1\nprofile string-concat-v1\nparams string\nresult string\n"
+        ),
+        "shout sidecar should be the canonical string source plan:\n{plan_text}"
+    );
+    assert!(
+        plan_text.contains("input index=0") && plan_text.contains("suffix hex=21"),
+        "shout sidecar should preserve the input plus literal suffix:\n{plan_text}"
+    );
+    let expected_sha = aver::codegen::cert::sha256_hex(plan_text.as_bytes());
+    assert_eq!(
+        fragment["plan_sha256"].as_str(),
+        Some(expected_sha.as_str()),
+        "shout sidecar hash should match the sidecar bytes"
     );
 
     let build = Command::new("lake")

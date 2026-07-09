@@ -82,6 +82,7 @@ pub fn check_expr_fragment_plan_sidecar(
             }
             _ => None,
         },
+        string_concat_plan: None,
     };
     Ok(FragmentPlanCheck {
         sidecar,
@@ -189,6 +190,7 @@ pub fn check_sym_fragment_plan_sidecar(
             }
             _ => None,
         },
+        string_concat_plan: None,
     };
     Ok(FragmentPlanCheck {
         sidecar,

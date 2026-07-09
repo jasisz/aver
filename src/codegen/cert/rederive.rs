@@ -68,6 +68,9 @@ pub struct RederivedObligation {
     /// bytes that the checked plan lowers to. The checker witness pins
     /// `PlanBytes.lowerExprFragmentCodeEntry carrier plan = some bytes`.
     pub fragment_lowered_code_entry_lean: Option<String>,
+    /// For `string-concat-v1`, the byte-derived source-level concat plan. It is
+    /// metadata for the next migration step, not yet a Lean acceptance claim.
+    pub string_concat_plan: Option<FragmentPlanSidecar>,
 }
 
 pub struct RederivedCertificate {
@@ -429,6 +432,12 @@ fn rederive_certificate_inner(
                     lower_expr_fragment_plan_code_entry_bytes(plan, *carrier)
                         .ok()
                         .map(|bytes| render_byte_list(&bytes))
+                }
+                _ => None,
+            },
+            string_concat_plan: match c.inner() {
+                Cert::StringConcatVerbatimMatch { .. } => {
+                    string_concat_plan_from_cert(c).map(|plan| string_concat_sidecar(c.name(), &plan))
                 }
                 _ => None,
             },

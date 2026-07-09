@@ -478,6 +478,17 @@ fn render_manifest(
                     json_str(&sidecar.sha256)
                 )
             }
+            Cert::StringConcatVerbatimMatch { .. } => {
+                let plan = string_concat_plan_from_cert(c)
+                    .expect("certified String.concat should project to a source plan");
+                let sidecar = string_concat_sidecar(c.name(), &plan);
+                format!(
+                    ", \"fragment\": {{\"profile\": \"string-concat-v1\", \
+                     \"plan\": {}, \"plan_sha256\": {}}}",
+                    json_str(&sidecar.path),
+                    json_str(&sidecar.sha256)
+                )
+            }
             _ => String::new(),
         };
         s.push_str(&format!(

@@ -35,7 +35,7 @@ pub fn write_project(
         hex(&h.finalize())
     };
 
-    write_expr_fragment_sidecars(&cert_dir, analysis)?;
+    write_fragment_sidecars(&cert_dir, analysis)?;
 
     write(&cert_dir, "Contracts.lean", &render_contracts(analysis))?;
     write(
@@ -108,18 +108,24 @@ pub fn write_project(
     Ok(())
 }
 
-fn write_expr_fragment_sidecars(cert_dir: &Path, analysis: &Analysis) -> Result<(), String> {
+fn write_fragment_sidecars(cert_dir: &Path, analysis: &Analysis) -> Result<(), String> {
     let mut sidecars = Vec::new();
     for c in &analysis.certs {
-        let Cert::ExprFragment {
-            source_plan, plan, ..
-        } = c.inner()
-        else {
-            continue;
-        };
-        sidecars.push(expr_fragment_sidecar(c.name(), plan));
-        if let Some(sym) = expr_fragment_source_plan(source_plan, plan) {
-            sidecars.push(sym_fragment_sidecar(c.name(), &sym));
+        match c.inner() {
+            Cert::ExprFragment {
+                source_plan, plan, ..
+            } => {
+                sidecars.push(expr_fragment_sidecar(c.name(), plan));
+                if let Some(sym) = expr_fragment_source_plan(source_plan, plan) {
+                    sidecars.push(sym_fragment_sidecar(c.name(), &sym));
+                }
+            }
+            Cert::StringConcatVerbatimMatch { .. } => {
+                let plan = string_concat_plan_from_cert(c)
+                    .expect("certified String.concat should project to a source plan");
+                sidecars.push(string_concat_sidecar(c.name(), &plan));
+            }
+            _ => {}
         }
     }
     if sidecars.is_empty() {

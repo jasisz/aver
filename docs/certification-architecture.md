@@ -116,6 +116,11 @@ note, `expr-fragment` has crossed that line for the current goal matrix.
 String/host-call fragments, ADT/list/verbatim shapes and recursion families
 still use older obligation-specific renderers and should be migrated one family
 at a time rather than folded into `SymPlan` through a raw `WVal` escape hatch.
+`String.concat` has started that migration as a separate `string-concat-v1`
+source witness: the sidecar records `prefix* + input + suffix*` at the Aver
+String level and the verifier checks it against the byte-derived concat
+certificate. It is intentionally not yet a Lean `SymFragmentClaim`; the next
+step is to add the Lean data/checker/lowering bridge for this string family.
 
 ## Artifact Shape
 
@@ -127,6 +132,7 @@ cert/
   cert-manifest.json
   fragments/<export>.sym-fragment-v1.plan   # preferred when source-projectable
   fragments/<export>.expr-fragment-v1.plan
+  fragments/<export>.string-concat-v1.plan  # source witness for String.concat
   PlanCheck.lean
   PlanLower.lean
   PlanBytes.lean
@@ -631,12 +637,16 @@ Sunset criteria:
     `SymRawPlan` into the byte-bound `ExprFragmentRawPlan` before applying the
     existing accepted-export predicate. Representation-only fragments remain on
     an explicit fallback list, which is empty for the current goal matrix.
-17. Next: add a source-level plan family for string/host-call fragments instead
-    of treating them as `WVal` verbatim models; start with the existing
-    `String.concat` beachhead.
-18. Then: migrate ADT/list/verbatim and recursion families into source-level
+17. Done for the first string witness: `String.concat` emits
+    `string-concat-v1.plan`, pins it in `cert-manifest.json`, and `aver cert
+    verify` checks it against the byte-derived concat certificate. This is not
+    yet Lean-side artifact acceptance; it is the source data surface that will
+    feed that bridge.
+18. Next: add a Lean-side checked string plan family for `String.concat` instead
+    of treating it only as a `WVal` verbatim model.
+19. Then: migrate ADT/list/verbatim and recursion families into source-level
     plan families or deliberately sunset them from the certified surface.
-19. Delete old whole-function scalar recognizer acceptance once plan-first has
+20. Delete old whole-function scalar recognizer acceptance once plan-first has
     parity and diagnostics no longer depend on it.
 
 The implementation should move slowly, but every step should tighten the

@@ -126,6 +126,7 @@ include!("sym_plan_render.rs");
 include!("sym_plan_encode.rs");
 include!("expr_fragment_from_mir.rs");
 include!("cert_defs.rs");
+include!("string_plan_defs.rs");
 include!("cert_methods.rs");
 include!("analysis.rs");
 include!("rederive.rs");
