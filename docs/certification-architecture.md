@@ -654,7 +654,7 @@ Sunset criteria:
     verbatim model. The claim no longer duplicates the target plan; the
     audited predicate looks it up in the manifest by export name.
     The JSON manifest now exposes this migration surface explicitly with
-    `artifact_bridge_counts`; the current goal matrix is 8/23 exports on
+    `artifact_bridge_counts`; at this point the goal matrix was 8/23 exports on
     `accepted-artifact-v1`.
 19. Done for `expr-fragment-v1`: delete the old byte-derived expression
     lifter/recognizer from the verifier admission path. Expression fragments
@@ -666,7 +666,11 @@ Sunset criteria:
     the representation `ExprFragmentRawPlan`, and uses that derived plan for
     Lean manifest/witness pins. The target plan sidecar remains only for future
     representation-only fallback fragments.
-21. Next: migrate ADT/list/verbatim and recursion families into source-level
+21. Done for `String.eq`: add `string-eq-v1` beside the source-level SymPlan,
+    pin it in `manifest.stringEqPlans`, and accept the exported equality
+    dispatch through `AcceptedArtifact.StringEqClaim`. The bridge counter is
+    now 9/23 exports on `accepted-artifact-v1`.
+22. Next: migrate ADT/list/verbatim and recursion families into source-level
     plan families or deliberately sunset them from the certified surface.
 
 The implementation should move slowly, but every step should tighten the

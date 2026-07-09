@@ -57,6 +57,7 @@ impl SymPrim {
             SymPrim::FloatAdd => Some(FragPrim::F64Add),
             SymPrim::FloatMul => Some(FragPrim::F64Mul),
             SymPrim::FloatLe => Some(FragPrim::F64Le),
+            SymPrim::StringEq => None,
             SymPrim::StringConcat => None,
         }
     }
@@ -66,6 +67,7 @@ impl SymPrim {
             SymPrim::FloatAdd => "float.add",
             SymPrim::FloatMul => "float.mul",
             SymPrim::FloatLe => "float.le",
+            SymPrim::StringEq => "string.eq",
             SymPrim::StringConcat => "string.concat",
         }
     }
@@ -75,6 +77,7 @@ impl SymPrim {
             "float.add" => Some(SymPrim::FloatAdd),
             "float.mul" => Some(SymPrim::FloatMul),
             "float.le" => Some(SymPrim::FloatLe),
+            "string.eq" => Some(SymPrim::StringEq),
             "string.concat" => Some(SymPrim::StringConcat),
             _ => None,
         }
@@ -85,6 +88,7 @@ impl SymPrim {
             SymPrim::FloatAdd => ".floatAdd",
             SymPrim::FloatMul => ".floatMul",
             SymPrim::FloatLe => ".floatLe",
+            SymPrim::StringEq => ".stringEq",
             SymPrim::StringConcat => ".stringConcat",
         }
     }

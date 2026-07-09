@@ -128,4 +128,28 @@ def lowerStringConcatBody
   else
     none
 
+def lowerStringEqChunk (stringTy : Nat) (chunk : StringEqChunk) :
+    List WInstr :=
+  [.i32Const 0, .i32Const (Int.ofNat chunk.bytes.length),
+    .arrayNewData stringTy chunk.bytes]
+
+def lowerStringEqResult (stringTy : Nat) : StringEqResult → List WInstr
+  | .input => [.localGet 0]
+  | .literal chunk => lowerStringEqChunk stringTy chunk
+
+def lowerStringEqBody
+    (stringTy stringEqFuncIdx : Nat)
+    (plan : StringEqRawPlan) : Option (List WInstr) :=
+  if AverCert.PlanCheck.checkStringEqRawPlan plan then
+    some (
+      [.localGet 0, .localSet 1, .localGet 1, .refCast stringTy] ++
+      lowerStringEqChunk stringTy plan.needle ++
+      [.call stringEqFuncIdx,
+        .ifElse
+          (lowerStringEqResult stringTy plan.hit)
+          (lowerStringEqResult stringTy plan.default)]
+    )
+  else
+    none
+
 end AverCert.PlanLower

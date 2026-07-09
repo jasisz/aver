@@ -105,6 +105,26 @@ pub struct RederivedObligation {
     pub string_concat_container_ty: Option<u32>,
     /// The wasm function index of the `String.concat` host helper.
     pub string_concat_func_idx: Option<u32>,
+    /// For `string-eq-v1`, the byte-derived target-bound equality dispatch plan.
+    pub string_eq_plan: Option<FragmentPlanSidecar>,
+    /// For `string-eq-v1`, the byte-derived source-level symbolic view.
+    pub string_eq_sym_plan: Option<FragmentPlanSidecar>,
+    /// The same checked String.eq plan rendered as a Lean `StringEqRawPlan` term.
+    pub string_eq_plan_lean: Option<String>,
+    /// The source-level `SymRawPlan` view of the same byte-derived String.eq shape.
+    pub string_eq_sym_plan_lean: Option<String>,
+    /// For `string-eq-v1`, the byte-derived defined-function index.
+    pub string_eq_code_idx: Option<u32>,
+    /// For `string-eq-v1`, the byte-derived function-section type index.
+    pub string_eq_type_idx: Option<u32>,
+    /// For `string-eq-v1`, the verifier-rendered `List WInstr` body.
+    pub string_eq_lowered_body_lean: Option<String>,
+    /// For `string-eq-v1`, the verifier-rendered canonical raw code-entry bytes.
+    pub string_eq_lowered_code_entry_lean: Option<String>,
+    /// The string byte-array type used by the String.eq dispatch.
+    pub string_eq_string_ty: Option<u32>,
+    /// The wasm function index of the `String.eq` host helper.
+    pub string_eq_func_idx: Option<u32>,
 }
 
 pub struct RederivedCertificate {
@@ -547,6 +567,80 @@ fn rederive_certificate_inner(
                 Cert::StringConcatVerbatimMatch {
                     string_concat_idx, ..
                 } => Some(*string_concat_idx),
+                _ => None,
+            },
+            string_eq_plan: match c.inner() {
+                Cert::StringEqVerbatimMatch { .. } => {
+                    string_eq_plan_from_cert(c).map(|plan| string_eq_sidecar(c.name(), &plan))
+                }
+                _ => None,
+            },
+            string_eq_sym_plan: match c.inner() {
+                Cert::StringEqVerbatimMatch { .. } => string_eq_plan_from_cert(c)
+                    .map(|plan| string_eq_sym_plan_from_plan(&plan))
+                    .map(|plan| sym_fragment_sidecar(c.name(), &plan)),
+                _ => None,
+            },
+            string_eq_plan_lean: match c.inner() {
+                Cert::StringEqVerbatimMatch { .. } => {
+                    string_eq_plan_from_cert(c).map(|plan| string_eq_plan_lean_value(&plan))
+                }
+                _ => None,
+            },
+            string_eq_sym_plan_lean: match c.inner() {
+                Cert::StringEqVerbatimMatch { .. } => {
+                    string_eq_sym_plan_from_cert(c).map(|plan| sym_plan_lean_value(&plan))
+                }
+                _ => None,
+            },
+            string_eq_code_idx: match c.inner() {
+                Cert::StringEqVerbatimMatch { code_idx, .. } => Some(*code_idx),
+                _ => None,
+            },
+            string_eq_type_idx: match c.inner() {
+                Cert::StringEqVerbatimMatch { type_idx, .. } => Some(*type_idx),
+                _ => None,
+            },
+            string_eq_lowered_body_lean: match c.inner() {
+                Cert::StringEqVerbatimMatch { string_eq_idx, .. } => {
+                    string_eq_string_ty_from_cert(c).and_then(|string_ty| {
+                        string_eq_plan_from_cert(c)
+                            .and_then(|plan| {
+                                lower_string_eq_plan(&plan, string_ty, *string_eq_idx).ok()
+                            })
+                            .map(|ops| render_ops_value(&ops))
+                    })
+                }
+                _ => None,
+            },
+            string_eq_lowered_code_entry_lean: match c.inner() {
+                Cert::StringEqVerbatimMatch {
+                    carrier,
+                    string_eq_idx,
+                    ..
+                } => {
+                    string_eq_string_ty_from_cert(c).and_then(|string_ty| {
+                        string_eq_plan_from_cert(c)
+                            .and_then(|plan| {
+                                lower_string_eq_plan_code_entry_bytes(
+                                    &plan,
+                                    *carrier,
+                                    string_ty,
+                                    *string_eq_idx,
+                                )
+                                .ok()
+                            })
+                            .map(|bytes| render_byte_list(&bytes))
+                    })
+                }
+                _ => None,
+            },
+            string_eq_string_ty: match c.inner() {
+                Cert::StringEqVerbatimMatch { .. } => string_eq_string_ty_from_cert(c),
+                _ => None,
+            },
+            string_eq_func_idx: match c.inner() {
+                Cert::StringEqVerbatimMatch { string_eq_idx, .. } => Some(*string_eq_idx),
                 _ => None,
             },
         })

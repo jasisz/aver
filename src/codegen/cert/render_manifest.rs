@@ -284,6 +284,9 @@ fn render_manifest_lean(
         .certs
         .iter()
         .filter_map(|c| match c.inner() {
+            Cert::StringEqVerbatimMatch { name, .. } => {
+                Some(format!("({}, Plans.{name}StringEqSymPlan)", lean_str(name)))
+            }
             Cert::StringConcatVerbatimMatch { name, .. } => {
                 Some(format!("({}, Plans.{name}StringConcatSymPlan)", lean_str(name)))
             }
@@ -293,6 +296,17 @@ fn render_manifest_lean(
     let sym_fragment_plans = expr_sym_fragment_plans
         .into_iter()
         .chain(string_sym_fragment_plans)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let string_eq_plans = analysis
+        .certs
+        .iter()
+        .filter_map(|c| match c.inner() {
+            Cert::StringEqVerbatimMatch { name, .. } => {
+                Some(format!("({}, Plans.{name}StringEqPlan)", lean_str(name)))
+            }
+            _ => None,
+        })
         .collect::<Vec<_>>()
         .join(", ");
     let string_concat_plans = analysis
@@ -316,6 +330,7 @@ fn render_manifest_lean(
          exports := [{exports}],\n        \
          contracts := [{contracts}] }},\n    \
          symFragmentPlans := [{sym_fragment_plans}],\n    \
+         stringEqPlans := [{string_eq_plans}],\n    \
          stringConcatPlans := [{string_concat_plans}],\n    \
          exprFragmentPlans := [{expr_fragment_plans}],\n    \
          obligations := [{obligations}] }}\n\n\
@@ -483,7 +498,7 @@ fn render_manifest(
             Cert::WidenedIntMatch { .. } => "widened-int-match",
             Cert::VerbatimWidenedMatch { .. } => "verbatim-widened-match",
             Cert::VerbatimVariantDispatch { .. } => "verbatim-variant-dispatch",
-            Cert::StringEqVerbatimMatch { .. } => "verbatim-widened-match",
+            Cert::StringEqVerbatimMatch { .. } => "verbatim-string-eq",
             Cert::StringConcatVerbatimMatch { .. } => "verbatim-string-concat",
             Cert::ExprFragment { .. } => "expr-fragment-v1",
             Cert::VariantDispatch { .. } => "variant-dispatch",
@@ -524,6 +539,23 @@ fn render_manifest(
                     ", \"source_fragment\": {{\"profile\": \"sym-fragment-v1\", \
                      \"plan\": {}, \"plan_sha256\": {}}}, \
                      \"fragment\": {{\"profile\": \"string-concat-v1\", \
+                     \"plan\": {}, \"plan_sha256\": {}}}",
+                    json_str(&sym_sidecar.path),
+                    json_str(&sym_sidecar.sha256),
+                    json_str(&sidecar.path),
+                    json_str(&sidecar.sha256)
+                )
+            }
+            Cert::StringEqVerbatimMatch { .. } => {
+                let plan = string_eq_plan_from_cert(c)
+                    .expect("certified String.eq should project to a source plan");
+                let sym_plan = string_eq_sym_plan_from_plan(&plan);
+                let sym_sidecar = sym_fragment_sidecar(c.name(), &sym_plan);
+                let sidecar = string_eq_sidecar(c.name(), &plan);
+                format!(
+                    ", \"source_fragment\": {{\"profile\": \"sym-fragment-v1\", \
+                     \"plan\": {}, \"plan_sha256\": {}}}, \
+                     \"fragment\": {{\"profile\": \"string-eq-v1\", \
                      \"plan\": {}, \"plan_sha256\": {}}}",
                     json_str(&sym_sidecar.path),
                     json_str(&sym_sidecar.sha256),
@@ -572,9 +604,9 @@ fn render_manifest(
 
 fn artifact_bridge_profile(c: &Cert) -> &'static str {
     match c.inner() {
-        Cert::ExprFragment { .. } | Cert::StringConcatVerbatimMatch { .. } => {
-            "accepted-artifact-v1"
-        }
+        Cert::ExprFragment { .. }
+        | Cert::StringEqVerbatimMatch { .. }
+        | Cert::StringConcatVerbatimMatch { .. } => "accepted-artifact-v1",
         _ => "legacy-witness-v1",
     }
 }

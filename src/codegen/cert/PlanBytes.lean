@@ -271,4 +271,81 @@ def lowerStringConcatCodeEntry
       | none => none
   | none => none
 
+def lowerStringEqChunkBytes
+    (stringTy : Nat)
+    (chunk : StringEqChunk) : Option (List Nat) :=
+  match sleb32 0, sleb32 (Int.ofNat chunk.bytes.length),
+        uleb32 0x09, uleb32 stringTy, uleb32 chunk.dataIdx with
+  | some offsetBytes, some lenBytes, some arrayNewDataOpBytes,
+    some stringTyBytes, some dataIdxBytes =>
+      some (
+        [0x41] ++ offsetBytes ++
+        [0x41] ++ lenBytes ++
+        [0xfb] ++ arrayNewDataOpBytes ++ stringTyBytes ++ dataIdxBytes
+      )
+  | _, _, _, _, _ => none
+
+def lowerStringEqResultBytes
+    (stringTy : Nat) : StringEqResult → Option (List Nat)
+  | .input =>
+      match uleb32 0 with
+      | some inputIdxBytes => some ([0x20] ++ inputIdxBytes)
+      | none => none
+  | .literal chunk => lowerStringEqChunkBytes stringTy chunk
+
+def lowerStringEqExprBytes
+    (stringTy stringEqFuncIdx : Nat)
+    (plan : StringEqRawPlan) : Option (List Nat) :=
+  if AverCert.PlanCheck.checkStringEqRawPlan plan then
+    match uleb32 0, uleb32 1, uleb32 1, uleb32 0x17,
+          uleb32 stringTy, lowerStringEqChunkBytes stringTy plan.needle,
+          uleb32 stringEqFuncIdx, uleb32 stringTy,
+          lowerStringEqResultBytes stringTy plan.hit,
+          lowerStringEqResultBytes stringTy plan.default with
+    | some inputIdxBytes, some scratchIdxBytes, some localOneBytes,
+      some refCastOpBytes, some stringTyBytes, some needleBytes,
+      some stringEqFuncIdxBytes, some blockTypeBytes, some hitBytes,
+      some defaultBytes =>
+        some (
+          [0x20] ++ inputIdxBytes ++
+          [0x21] ++ scratchIdxBytes ++
+          [0x20] ++ scratchIdxBytes ++
+          [0xfb] ++ refCastOpBytes ++ stringTyBytes ++
+          needleBytes ++
+          [0x10] ++ stringEqFuncIdxBytes ++
+          [0x04, 0x63] ++ blockTypeBytes ++
+          hitBytes ++
+          [0x05] ++
+          defaultBytes ++
+          [0x0b, 0x0b]
+        )
+    | _, _, _, _, _, _, _, _, _, _ => none
+  else
+    none
+
+def lowerStringEqBodyBytes
+    (carrier stringTy stringEqFuncIdx : Nat)
+    (plan : StringEqRawPlan) : Option (List Nat) :=
+  match uleb32 2, uleb32 1, uleb32 1, uleb32 carrier,
+        lowerStringEqExprBytes stringTy stringEqFuncIdx plan with
+  | some localDeclCount, some localCount, some carrierLocalCount,
+    some carrierBytes, some exprBytes =>
+      some (
+        localDeclCount ++
+        localCount ++ [0x6d] ++
+        carrierLocalCount ++ [0x63] ++ carrierBytes ++
+        exprBytes
+      )
+  | _, _, _, _, _ => none
+
+def lowerStringEqCodeEntry
+    (carrier stringTy stringEqFuncIdx : Nat)
+    (plan : StringEqRawPlan) : Option (List Nat) :=
+  match lowerStringEqBodyBytes carrier stringTy stringEqFuncIdx plan with
+  | some body =>
+      match uleb32 body.length with
+      | some lenBytes => some (lenBytes ++ body)
+      | none => none
+  | none => none
+
 end AverCert.PlanBytes

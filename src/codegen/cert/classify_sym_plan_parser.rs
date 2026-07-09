@@ -336,6 +336,7 @@ fn check_sym_plan_prim_args(
         SymPrim::FloatAdd | SymPrim::FloatMul | SymPrim::FloatLe => {
             &[SymTy::Float, SymTy::Float]
         }
+        SymPrim::StringEq => &[SymTy::String, SymTy::String],
         SymPrim::StringConcat => &[],
     };
     if op == SymPrim::StringConcat {
@@ -361,6 +362,7 @@ fn check_sym_plan_prim_args(
     Ok(match op {
         SymPrim::FloatAdd | SymPrim::FloatMul => SymTy::Float,
         SymPrim::FloatLe => SymTy::Bool,
+        SymPrim::StringEq => SymTy::Bool,
         SymPrim::StringConcat => unreachable!(),
     })
 }

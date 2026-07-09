@@ -112,6 +112,8 @@ def symPrimResultTy? (nodes : List SymNode) (op : SymPrim) (args : List Nat) :
       if symArgsHaveTys nodes args [.float, .float] then some .float else none
   | .floatLe =>
       if symArgsHaveTys nodes args [.float, .float] then some .bool else none
+  | .stringEq =>
+      if symArgsHaveTys nodes args [.string, .string] then some .bool else none
   | .stringConcat =>
       if args.isEmpty then none
       else if symArgsAllTy nodes .string args then some .string else none
@@ -240,10 +242,23 @@ def checkStringConcatRawPlan (plan : StringConcatRawPlan) : Bool :=
 def stringConcatChunkBytes : StringConcatChunk → List Nat
   | { bytes, .. } => bytes
 
+def stringEqChunkBytes : StringEqChunk → List Nat
+  | { bytes, .. } => bytes
+
 inductive SymStringConcatPart where
   | literal (bytes : List Nat)
   | input
 deriving Repr, DecidableEq
+
+inductive SymStringEqResult where
+  | literal (bytes : List Nat)
+  | input
+deriving Repr, DecidableEq
+
+def stringEqResultBytes? : StringEqResult → Option SymStringEqResult
+  | .input => some .input
+  | .literal chunk =>
+      if bytesAllBytes chunk.bytes then some (.literal chunk.bytes) else none
 
 def symStringConcatPart? (nodes : List SymNode) (id : Nat) :
     Option SymStringConcatPart :=
@@ -297,6 +312,60 @@ def stringConcatPlanMatchesSymRawPlan
       suffixes = plan.suffixes.map stringConcatChunkBytes
   | none => false
 
+def checkStringEqResult : StringEqResult → Bool
+  | .input => true
+  | .literal chunk => bytesAllBytes chunk.bytes
+
+def checkStringEqRawPlan (plan : StringEqRawPlan) : Bool :=
+  plan.profile = "string-eq-v1" &&
+    bytesAllBytes plan.needle.bytes &&
+    checkStringEqResult plan.hit &&
+    checkStringEqResult plan.default
+
+def symStringEqResult? (block : SymBlock) : Option SymStringEqResult :=
+  match block.nodes, lookupSymNode block.nodes block.result with
+  | [_], some { ty := .string, kind := .constStringBytes bytes, .. } =>
+      if bytesAllBytes bytes then some (.literal bytes) else none
+  | [_], some { ty := .string, kind := .param 0, .. } => some .input
+  | _, _ => none
+
+def symStringEqParts? (plan : SymRawPlan) :
+    Option (List Nat × SymStringEqResult × SymStringEqResult) :=
+  if checkSymRawPlan plan &&
+     plan.params = [.string] &&
+     plan.result = .string then
+    match lookupSymNode plan.body.nodes plan.body.result with
+    | some { ty := .string, kind := .ifElse cond thenBlock elseBlock, .. } =>
+        match lookupSymNode plan.body.nodes cond,
+              symStringEqResult? thenBlock,
+              symStringEqResult? elseBlock with
+        | some { ty := .bool, kind := .prim .stringEq [input, needle], .. },
+          some hit,
+          some default =>
+            match lookupSymNode plan.body.nodes input,
+                  lookupSymNode plan.body.nodes needle with
+            | some { ty := .string, kind := .param 0, .. },
+              some { ty := .string, kind := .constStringBytes bytes, .. } =>
+                if bytesAllBytes bytes then some (bytes, hit, default) else none
+            | _, _ => none
+        | _, _, _ => none
+    | _ => none
+  else none
+
+def stringEqPlanMatchesSymRawPlan
+    (symPlan : SymRawPlan)
+    (plan : StringEqRawPlan) : Bool :=
+  if checkStringEqRawPlan plan then
+    match symStringEqParts? symPlan,
+          stringEqResultBytes? plan.hit,
+          stringEqResultBytes? plan.default with
+    | some (needle, hit, default), some planHit, some planDefault =>
+        needle = plan.needle.bytes &&
+        hit = planHit &&
+        default = planDefault
+    | _, _, _ => false
+  else false
+
 def encodeSymTy? : SymTy → Option FragTy
   | .float => some .f64
   | .bool => some .boolI32
@@ -314,6 +383,7 @@ def encodeSymPrim? : SymPrim → Option FragPrim
   | .floatAdd => some .f64Add
   | .floatMul => some .f64Mul
   | .floatLe => some .f64Le
+  | .stringEq => none
   | .stringConcat => none
 
 def symIntSmallConstCmpPrim? : SymIntCmp → Option FragPrim

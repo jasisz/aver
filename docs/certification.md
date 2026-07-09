@@ -1,14 +1,15 @@
 # Artifact Behavioral Certificates (`aver compile --certify`)
 
 > Status: v0, certification level **L1** (conditional on named runtime
-> contracts). The current goal matrix certifies 24 exports across 13 manifest
+> contracts). The current goal matrix certifies 23 exports across 14 manifest
 > classes: integer recursion/composition families, ADT/variant/verbatim
 > families, scalar expression fragments, mutual recursion, and the
-> `String.concat` beachhead. `String.concat` now emits a source-level
-> `string-concat-v1.plan` witness that `aver cert verify` checks against the
-> byte-derived concat certificate and carries through a Lean-side
-> `AcceptedArtifact.StringConcatClaim`. The one-literal `String.eq` beachhead reuses the
-> existing verbatim widened match class rather than adding a class. Everything
+> `String.eq`/`String.concat` beachheads. `String.eq` and `String.concat` now
+> emit source-level `sym-fragment-v1.plan` witnesses plus target-bound
+> `string-eq-v1.plan` / `string-concat-v1.plan` witnesses that `aver cert
+> verify` checks against byte-derived helper certificates and carries through
+> Lean-side `AcceptedArtifact.StringEqClaim` /
+> `AcceptedArtifact.StringConcatClaim`. Everything
 > else is **declined fail-closed** and listed with a reason. This document is
 > the contract; the emitted `cert-manifest.json` is its machine-readable form.
 
@@ -24,11 +25,12 @@
 > `MIR -> ExprFragmentPlan -> canonical Wasm` fallback. New expression
 > certificates should extend the source-level `SymPlan` path whenever the
 > operation has Aver-level meaning, and use the representation fallback only for
-> byte-layout facts that do not yet have a source constructor. `String.concat`
-> is the first non-expression source witness: its sidecar records the source
-> string parts (`prefix*`, input, `suffix*`) and is checked by Rust against the
-> byte-derived legacy concat cert, then the artifact-level Lean bridge looks up
-> the byte-bound concat plan from `manifest.stringConcatPlans`. The same checked
+> byte-layout facts that do not yet have a source constructor. `String.eq` and
+> `String.concat` are the first non-expression source witnesses: their sidecars
+> record source-level string operations and are checked by Rust against the
+> byte-derived helper certs, then the artifact-level Lean bridge looks up the
+> byte-bound target plans from `manifest.stringEqPlans` /
+> `manifest.stringConcatPlans`. The same checked
 > expression plans are also emitted as `Plans.lean` Lean data. The
 > audited, hash-pinned `PlanCheck.lean` module structurally checks those raw
 > plans in Lean (`checkExprFragmentRawPlan = true`), and `PlanLower.lean`

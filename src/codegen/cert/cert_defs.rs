@@ -124,6 +124,8 @@ enum Cert {
     StringEqVerbatimMatch {
         name: String,
         self_idx: u32,
+        code_idx: u32,
+        type_idx: u32,
         nlocals: usize,
         carrier: u32,
         string_eq_idx: u32,

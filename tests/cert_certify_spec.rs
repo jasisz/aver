@@ -126,7 +126,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         ("tagName", "verbatim-variant-dispatch"),
         ("gauge", "variant-dispatch"),
         ("inAsciiDigit", "expr-fragment-v1"),
-        ("quoteOrSelf", "verbatim-widened-match"),
+        ("quoteOrSelf", "verbatim-string-eq"),
         ("shout", "verbatim-string-concat"),
         ("intLessZero", "expr-fragment-v1"),
         ("intEqZero", "expr-fragment-v1"),
@@ -144,16 +144,18 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
-        Some(8),
+        Some(9),
         "AcceptedArtifact coverage changed; update this migration counter deliberately"
     );
     assert_eq!(
         manifest["artifact_bridge_counts"]["legacy-witness-v1"].as_u64(),
-        Some((expected.len() - 8) as u64),
+        Some((expected.len() - 9) as u64),
         "legacy witness count changed; update this migration counter deliberately"
     );
     let expected_bridge = |class: &str| match class {
-        "expr-fragment-v1" | "verbatim-string-concat" => "accepted-artifact-v1",
+        "expr-fragment-v1" | "verbatim-string-eq" | "verbatim-string-concat" => {
+            "accepted-artifact-v1"
+        }
         _ => "legacy-witness-v1",
     };
     for entry in manifest["certified"].as_array().unwrap() {
@@ -815,8 +817,74 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
         .and_then(|c| c["class"].as_str())
         .unwrap_or("<missing>");
     assert_eq!(
-        quote_class, "verbatim-widened-match",
+        quote_class, "verbatim-string-eq",
         "quoteOrSelf should render its inner class, got {quote_class}"
+    );
+    let quote_entry = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"].as_str() == Some("quoteOrSelf"))
+        .expect("quoteOrSelf manifest entry exists");
+    assert_eq!(
+        quote_entry["artifact_bridge"].as_str(),
+        Some("accepted-artifact-v1"),
+        "quoteOrSelf should now be covered by AcceptedArtifact"
+    );
+    assert_eq!(
+        quote_entry["source_fragment"]["profile"].as_str(),
+        Some("sym-fragment-v1"),
+        "quoteOrSelf should expose a source-level SymPlan sidecar"
+    );
+    assert_eq!(
+        quote_entry["fragment"]["profile"].as_str(),
+        Some("string-eq-v1"),
+        "quoteOrSelf should expose a target-bound String.eq sidecar"
+    );
+    let plans_lean =
+        std::fs::read_to_string(cert_dir.join("Plans.lean")).expect("Plans.lean exists");
+    assert!(
+        plans_lean.contains("def quoteOrSelfStringEqSymPlan : SymRawPlan"),
+        "String.eq cert should render a source-level SymPlan:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains("def quoteOrSelfStringEqPlan : StringEqRawPlan"),
+        "String.eq cert should render a Lean-data StringEqRawPlan:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains("stringEqPlanMatchesSymRawPlan")
+            && plans_lean
+                .contains("quoteOrSelfStringEqSymPlan quoteOrSelfStringEqPlan = true := rfl"),
+        "String.eq SymPlan should be matched to the byte-bound equality plan:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains("checkStringEqRawPlan quoteOrSelfStringEqPlan = true := rfl"),
+        "String.eq Lean plan should be checked by the Lean-side structural checker:\n{plans_lean}"
+    );
+    let manifest_lean =
+        std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
+    assert!(
+        manifest_lean.contains("(\"quoteOrSelf\", Plans.quoteOrSelfStringEqSymPlan)"),
+        "manifest should pin the String.eq source SymPlan list:\n{manifest_lean}"
+    );
+    assert!(
+        manifest_lean
+            .contains("stringEqPlans := [(\"quoteOrSelf\", Plans.quoteOrSelfStringEqPlan)]"),
+        "manifest should pin the String.eq plan list:\n{manifest_lean}"
+    );
+    let artifact_lean =
+        std::fs::read_to_string(cert_dir.join("Artifact.lean")).expect("Artifact.lean exists");
+    assert!(
+        artifact_lean.contains("def stringEqClaims : List AverCert.AcceptedArtifact.StringEqClaim"),
+        "artifact should carry source-level String.eq claims:\n{artifact_lean}"
+    );
+    assert!(
+        artifact_lean.contains("symPlan := AverCert.Plans.quoteOrSelfStringEqSymPlan"),
+        "String.eq artifact claim should carry the source-level SymPlan:\n{artifact_lean}"
+    );
+    assert!(
+        artifact_lean.contains("stringEqFuncIdx :=") && artifact_lean.contains("stringTy :="),
+        "String.eq artifact claim should carry lowering indices:\n{artifact_lean}"
     );
 
     let build = Command::new("lake")

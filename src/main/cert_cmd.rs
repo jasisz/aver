@@ -581,7 +581,12 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
             CertifiedExport {
                 name: r.name.clone(),
                 policy: "simulatesModel".to_string(),
-                face: r.face.describe(dom.as_deref(), cod.as_deref()),
+                face: if r.string_eq_plan_lean.is_some() {
+                    "class: verbatim string equality match  |  Dom: WVal  Cod: WVal  codRepr: verbatimRepr  (model is a read declaration; behaviour pinned by an interpreter tripwire)"
+                        .to_string()
+                } else {
+                    r.face.describe(dom.as_deref(), cod.as_deref())
+                },
             }
         })
         .collect();
@@ -611,6 +616,77 @@ fn checked_fragment_sidecar_obligations(
             "cert-manifest.json `certified[]` entry is missing string field `name`".to_string()
         })?;
         let class = entry.get("class").and_then(Value::as_str);
+        if class == Some("verbatim-string-eq") {
+            let (profile, path, claimed_sha, text) = read_fragment_sidecar(cert_dir, name, entry)?;
+            let (source_profile, source_path, source_claimed_sha, source_text) =
+                read_named_fragment_sidecar(cert_dir, name, entry, "source_fragment")?;
+            if profile != "string-eq-v1" {
+                return Err(format!(
+                    "fragment `{name}` sidecar profile mismatch: manifest says `{profile}`"
+                ));
+            }
+            if source_profile != "sym-fragment-v1" {
+                return Err(format!(
+                    "fragment `{name}` source sidecar profile mismatch: manifest says \
+                     `{source_profile}`"
+                ));
+            }
+            cert::parse_string_eq_plan(&text)
+                .map_err(|e| format!("fragment `{name}` string-eq plan is malformed: {e}"))?;
+            let expected_obligation = byte_derived_legacy
+                .iter()
+                .find(|r| r.name == name)
+                .ok_or_else(|| {
+                    format!(
+                        "fragment `{name}` declares `string-eq-v1`, but the wasm bytes \
+                         do not re-derive a String.eq certificate for that export"
+                    )
+                })?;
+            let expected = expected_obligation.string_eq_plan.as_ref().ok_or_else(|| {
+                format!(
+                    "fragment `{name}` declares `string-eq-v1`, but the wasm bytes \
+                     do not re-derive a String.eq certificate for that export"
+                )
+            })?;
+            let expected_source =
+                expected_obligation
+                    .string_eq_sym_plan
+                    .as_ref()
+                    .ok_or_else(|| {
+                        format!(
+                            "fragment `{name}` declares `source_fragment`, but the wasm bytes \
+                         do not re-derive a String.eq SymPlan for that export"
+                        )
+                    })?;
+            if expected_source.path != source_path {
+                return Err(format!(
+                    "fragment `{name}` checked source plan path mismatch: plan checks as `{}`, \
+                     manifest says `{source_path}`",
+                    expected_source.path
+                ));
+            }
+            if expected_source.sha256 != source_claimed_sha || expected_source.text != source_text {
+                return Err(format!(
+                    "fragment `{name}` source SymPlan sidecar is not the canonical \
+                     byte-derived source plan"
+                ));
+            }
+            if expected.path != path {
+                return Err(format!(
+                    "fragment `{name}` checked plan path mismatch: plan checks as `{}`, \
+                     manifest says `{path}`",
+                    expected.path
+                ));
+            }
+            if expected.sha256 != claimed_sha || expected.text != text {
+                return Err(format!(
+                    "fragment `{name}` string-eq sidecar is not the canonical \
+                     byte-derived equality plan"
+                ));
+            }
+            continue;
+        }
+
         if class == Some("verbatim-string-concat") {
             let (profile, path, claimed_sha, text) = read_fragment_sidecar(cert_dir, name, entry)?;
             let (source_profile, source_path, source_claimed_sha, source_text) =
@@ -819,6 +895,7 @@ fn read_named_fragment_sidecar(
     let profile = match profile {
         "expr-fragment-v1" => "expr-fragment-v1",
         "sym-fragment-v1" => "sym-fragment-v1",
+        "string-eq-v1" => "string-eq-v1",
         "string-concat-v1" => "string-concat-v1",
         other => {
             return Err(format!(
@@ -886,6 +963,7 @@ fn checked_fragment_sidecar_path(
     let suffix = match profile {
         "expr-fragment-v1" => ".expr-fragment-v1.plan",
         "sym-fragment-v1" => ".sym-fragment-v1.plan",
+        "string-eq-v1" => ".string-eq-v1.plan",
         "string-concat-v1" => ".string-concat-v1.plan",
         _ => return Err(format!("unsupported fragment profile `{profile}`")),
     };
@@ -1129,9 +1207,34 @@ fn lean_sym_fragment_plan_pairs(rederived: &[cert::RederivedObligation]) -> Stri
                 .map(|plan| format!("(\"{}\", {plan})", r.name))
         })
         .collect::<Vec<_>>();
+    let string_eq_plans = rederived
+        .iter()
+        .filter_map(|r| {
+            r.string_eq_sym_plan_lean
+                .as_ref()
+                .map(|plan| format!("(\"{}\", {plan})", r.name))
+        })
+        .collect::<Vec<_>>();
     let inner = expr_plans
         .into_iter()
+        .chain(string_eq_plans)
         .chain(string_plans)
+        .collect::<Vec<_>>()
+        .join(",\n   ");
+    format!("[ {inner} ]")
+}
+
+/// A Lean list literal of `(export name, StringEqRawPlan)` pairs for
+/// source-level `String.eq` witnesses. These terms are checker-rendered from
+/// byte-derived helper shapes, never copied from attacker Lean text.
+fn lean_string_eq_plan_pairs(rederived: &[cert::RederivedObligation]) -> String {
+    let inner = rederived
+        .iter()
+        .filter_map(|r| {
+            r.string_eq_plan_lean
+                .as_ref()
+                .map(|plan| format!("(\"{}\", {plan})", r.name))
+        })
         .collect::<Vec<_>>()
         .join(",\n   ");
     format!("[ {inner} ]")
@@ -1177,8 +1280,19 @@ fn lean_sym_fragment_encoded_plan_pairs(rederived: &[cert::RederivedObligation])
             }
         })
         .collect::<Vec<_>>();
+    let string_eq_pairs = rederived
+        .iter()
+        .filter_map(|r| {
+            if r.string_eq_sym_plan_lean.is_some() {
+                Some(format!("(\"{}\", none)", r.name))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
     let inner = expr_pairs
         .into_iter()
+        .chain(string_eq_pairs)
         .chain(string_pairs)
         .collect::<Vec<_>>()
         .join(",\n   ");
@@ -1309,8 +1423,10 @@ fn lean_expr_fragment_accepted_pins(rederived: &[cert::RederivedObligation]) -> 
 /// that source plan rather than accepted as a public fallback claim.
 struct LeanExprFragmentArtifactClaims {
     sym_claims: String,
+    string_eq_claims: String,
     string_claims: String,
     sym_proof: String,
+    string_eq_proof: String,
     string_proof: String,
 }
 
@@ -1318,10 +1434,53 @@ fn lean_expr_fragment_artifact_claims(
     rederived: &[cert::RederivedObligation],
 ) -> LeanExprFragmentArtifactClaims {
     let mut sym_claims = Vec::new();
+    let mut string_eq_claims = Vec::new();
     let mut string_claims = Vec::new();
     let mut sym_proofs = Vec::new();
+    let mut string_eq_proofs = Vec::new();
     let mut string_proofs = Vec::new();
     for r in rederived {
+        if r.string_eq_plan_lean.is_some() {
+            let (
+                Some(sym_plan),
+                Some(body),
+                Some(bytes),
+                Some(code_idx),
+                Some(type_idx),
+                Some(string_ty),
+                Some(string_eq_func_idx),
+            ) = (
+                r.string_eq_sym_plan_lean.as_ref(),
+                r.string_eq_lowered_body_lean.as_ref(),
+                r.string_eq_lowered_code_entry_lean.as_ref(),
+                r.string_eq_code_idx,
+                r.string_eq_type_idx,
+                r.string_eq_string_ty,
+                r.string_eq_func_idx,
+            )
+            else {
+                continue;
+            };
+            let export_name_bytes = lean_byte_list(r.name.as_bytes());
+            let binding = format!(
+                "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {} }} : AverCert.WasmSlice.FuncBinding)",
+                r.self_idx, code_idx, type_idx, bytes
+            );
+            string_eq_claims.push(format!(
+                "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
+                 carrier := {carrier}, stringTy := {string_ty}, \
+                 stringEqFuncIdx := {string_eq_func_idx}, \
+                 symPlan := (({sym_plan}) : AverCert.Schema.SymRawPlan), \
+                 obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.StringEqClaim)",
+                name = r.name,
+                carrier = r.carrier,
+            ));
+            string_eq_proofs.push(format!(
+                "⟨rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
+                 ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
+            ));
+            continue;
+        }
         if r.string_concat_plan_lean.is_some() {
             let (
                 Some(sym_plan),
@@ -1399,12 +1558,23 @@ fn lean_expr_fragment_artifact_claims(
     } else {
         format!("[\n  {}\n]", sym_claims.join(",\n  "))
     };
+    let string_eq_claims = if string_eq_claims.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[\n  {}\n]", string_eq_claims.join(",\n  "))
+    };
     let string_claims = if string_claims.is_empty() {
         "[]".to_string()
     } else {
         format!("[\n  {}\n]", string_claims.join(",\n  "))
     };
     let sym_proof = sym_proofs
+        .into_iter()
+        .rev()
+        .fold("trivial".to_string(), |acc, proof| {
+            format!("⟨{proof}, {acc}⟩")
+        });
+    let string_eq_proof = string_eq_proofs
         .into_iter()
         .rev()
         .fold("trivial".to_string(), |acc, proof| {
@@ -1418,16 +1588,23 @@ fn lean_expr_fragment_artifact_claims(
         });
     LeanExprFragmentArtifactClaims {
         sym_claims,
+        string_eq_claims,
         string_claims,
         sym_proof,
+        string_eq_proof,
         string_proof,
     }
 }
 
-fn lean_artifact_data_literal(sym_claims: &str, string_claims: &str) -> String {
+fn lean_artifact_data_literal(
+    sym_claims: &str,
+    string_eq_claims: &str,
+    string_claims: &str,
+) -> String {
     format!(
         "({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, \
          symFragmentClaims := ({sym_claims} : List AverCert.AcceptedArtifact.SymFragmentClaim), \
+         stringEqClaims := ({string_eq_claims} : List AverCert.AcceptedArtifact.StringEqClaim), \
          stringConcatClaims := ({string_claims} : List AverCert.AcceptedArtifact.StringConcatClaim) }} : \
          AverCert.AcceptedArtifact.ArtifactData)"
     )
@@ -1441,20 +1618,26 @@ fn lean_fragment_acceptance_proof_block(
         concat!(
             "{indent}dsimp [AverCert.AcceptedArtifact.acceptedFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.acceptedSymFragments,\n",
+            "{indent}  AverCert.AcceptedArtifact.acceptedStringEqFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.acceptedStringConcatFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.stringEqClaimsAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.stringEqClaimAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.stringEqPlanForExport,\n",
+            "{indent}  AverCert.AcceptedArtifact.stringEqPlanAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.stringConcatClaimsAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.stringConcatClaimAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.stringConcatPlanForExport,\n",
             "{indent}  AverCert.AcceptedArtifact.stringConcatPlanAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "{indent}  AverCert.ExprFragmentAccepted.accepted]\n",
-            "{indent}exact ⟨{sym_proof}, {string_proof}⟩\n"
+            "{indent}exact ⟨{sym_proof}, ⟨{string_eq_proof}, {string_proof}⟩⟩\n"
         ),
         indent = indent,
         sym_proof = witness.sym_proof,
+        string_eq_proof = witness.string_eq_proof,
         string_proof = witness.string_proof
     )
 }
@@ -1464,7 +1647,11 @@ fn lean_expr_fragment_obligation_acceptance_pins(
 ) -> String {
     let witness = lean_expr_fragment_artifact_claims(rederived);
     let proof_block = lean_fragment_acceptance_proof_block(&witness, "  ");
-    let artifact = lean_artifact_data_literal(&witness.sym_claims, &witness.string_claims);
+    let artifact = lean_artifact_data_literal(
+        &witness.sym_claims,
+        &witness.string_eq_claims,
+        &witness.string_claims,
+    );
     format!(
         concat!(
             "-- Fragment artifact data: accepted raw artifact bytes + source/raw plans\n",
@@ -1480,7 +1667,11 @@ fn lean_expr_fragment_obligation_acceptance_pins(
 
 fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> String {
     let witness = lean_expr_fragment_artifact_claims(rederived);
-    let artifact = lean_artifact_data_literal(&witness.sym_claims, &witness.string_claims);
+    let artifact = lean_artifact_data_literal(
+        &witness.sym_claims,
+        &witness.string_eq_claims,
+        &witness.string_claims,
+    );
     let checker_proof = format!(
         concat!(
             "  dsimp [AverCert.AcceptedArtifact.accepted,\n",
@@ -1492,25 +1683,34 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
             "    AverCert.AcceptedArtifact.symFragmentClaimPlanPairs,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimEncodedPlanPairs,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimEncodedPlanPair?,\n",
+            "    AverCert.AcceptedArtifact.stringEqClaimExportNames,\n",
+            "    AverCert.AcceptedArtifact.stringEqManifestPlanNames,\n",
+            "    AverCert.AcceptedArtifact.stringEqClaimSymPlanPairs,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimExportNames,\n",
             "    AverCert.AcceptedArtifact.stringConcatManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimSymPlanPairs,\n",
             "    AverCert.AcceptedArtifact.acceptedFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedSymFragments,\n",
+            "    AverCert.AcceptedArtifact.acceptedStringEqFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedStringConcatFragments,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
+            "    AverCert.AcceptedArtifact.stringEqClaimsAccepted,\n",
+            "    AverCert.AcceptedArtifact.stringEqClaimAccepted,\n",
+            "    AverCert.AcceptedArtifact.stringEqPlanForExport,\n",
+            "    AverCert.AcceptedArtifact.stringEqPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.stringConcatPlanForExport,\n",
             "    AverCert.AcceptedArtifact.stringConcatPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨{final_witness}, ⟨rfl, ⟨rfl, ⟨⟨rfl, ⟨rfl, rfl⟩⟩, ⟨{sym_proof}, {string_proof}⟩⟩⟩⟩⟩\n"
+            "  exact ⟨{final_witness}, ⟨rfl, ⟨rfl, ⟨⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, {string_proof}⟩⟩⟩⟩⟩⟩\n"
         ),
         final_witness = FINAL_WITNESS_THEOREM,
         sym_proof = witness.sym_proof,
+        string_eq_proof = witness.string_eq_proof,
         string_proof = witness.string_proof
     );
     format!(
@@ -1567,6 +1767,7 @@ fn checker_witness(
     let carriers = lean_nat_list(rederived.iter().map(|r| r.carrier));
     let expr_fragment_plans = lean_expr_fragment_plan_pairs(rederived);
     let sym_fragment_plans = lean_sym_fragment_plan_pairs(rederived);
+    let string_eq_plans = lean_string_eq_plan_pairs(rederived);
     let string_concat_plans = lean_string_concat_plan_pairs(rederived);
     let sym_fragment_encoded_plans = lean_sym_fragment_encoded_plan_pairs(rederived);
     let expr_fragment_lower_pins = lean_expr_fragment_lower_pins(rederived);
@@ -1629,11 +1830,18 @@ fn checker_witness(
          -- Source fragment plans: the manifest's Lean-data source plans are\n\
          -- pinned to checker-rendered `SymRawPlan` terms reconstructed from\n\
          -- sidecars or byte-derived string witnesses. Expr-subset source plans\n\
-         -- encode to `some ExprFragmentRawPlan`; String.concat source plans\n\
-         -- deliberately encode to `none` and are bound through stringConcatPlans.\n\
+         -- encode to `some ExprFragmentRawPlan`; String.eq/concat source plans\n\
+         -- deliberately encode to `none` and are bound through stringEqPlans\n\
+         -- or stringConcatPlans.\n\
          example : AverCert.manifest.symFragmentPlans = {sym_fragment_plans} := rfl\n\
          example : AverCert.manifest.symFragmentPlans.all (fun p => AverCert.PlanCheck.checkSymRawPlan p.2) = true := rfl\n\
          example : AverCert.manifest.symFragmentPlans.map (fun p => (p.1, AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan p.2)) = {sym_fragment_encoded_plans} := rfl\n\n\
+         -- String.eq source plans: the manifest's Lean-data equality plans\n\
+         -- are pinned to checker-rendered `StringEqRawPlan` terms reconstructed\n\
+         -- from sidecars that already passed hash checks and byte-derived\n\
+         -- String.eq helper-shape validation.\n\
+         example : AverCert.manifest.stringEqPlans = {string_eq_plans} := rfl\n\
+         example : AverCert.manifest.stringEqPlans.all (fun p => AverCert.PlanCheck.checkStringEqRawPlan p.2) = true := rfl\n\n\
          -- String.concat source plans: the manifest's Lean-data string plans\n\
          -- are pinned to checker-rendered `StringConcatRawPlan` terms reconstructed\n\
          -- from sidecars that already passed hash checks and byte-derived\n\

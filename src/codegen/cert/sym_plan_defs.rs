@@ -56,6 +56,7 @@ pub enum SymPrim {
     FloatAdd,
     FloatMul,
     FloatLe,
+    StringEq,
     StringConcat,
 }
 

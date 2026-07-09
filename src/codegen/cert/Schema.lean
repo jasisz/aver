@@ -75,6 +75,7 @@ inductive SymPrim where
   | floatAdd
   | floatMul
   | floatLe
+  | stringEq
   | stringConcat
 deriving Repr, DecidableEq
 
@@ -192,6 +193,31 @@ structure StringConcatRawPlan where
   suffixes : List StringConcatChunk
 deriving Repr
 
+/-- One literal used by the String.eq dispatch beachhead. `bytes` is the
+    source-level string content; `dataIdx` is the target binding needed for the
+    exact `array.new_data` code bytes. -/
+structure StringEqChunk where
+  dataIdx : Nat
+  bytes   : List Nat
+deriving Repr
+
+/-- Result branch of the String.eq dispatch: either return the original input
+    string or return one byte-derived literal. -/
+inductive StringEqResult where
+  | input
+  | literal (chunk : StringEqChunk)
+deriving Repr
+
+/-- Raw, untrusted String.eq witness for a one-literal match:
+    `if String.eq(input, needle) then hit else default`. It is source-shaped but
+    still carries data segment bindings for exact byte lowering. -/
+structure StringEqRawPlan where
+  profile : String
+  needle  : StringEqChunk
+  hit     : StringEqResult
+  default : StringEqResult
+deriving Repr
+
 /-- Pointwise lifting of an integer representation relation to argument lists.
     Kept as the standard domain representation for the v2 integer classes. -/
 inductive ReprAll (R : Int → WVal → Prop) : List Int → List WVal → Prop
@@ -275,6 +301,7 @@ def Obligation.holds (o : Obligation) : Prop :=
 structure Manifest where
   subject     : Subject
   symFragmentPlans : List (String × SymRawPlan)
+  stringEqPlans : List (String × StringEqRawPlan)
   stringConcatPlans : List (String × StringConcatRawPlan)
   exprFragmentPlans : List (String × ExprFragmentRawPlan)
   obligations : List Obligation

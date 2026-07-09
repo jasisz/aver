@@ -1568,8 +1568,8 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
         "stringeq should certify quoteOrSelf plus bump:\n{report}"
     );
     assert!(
-        report.contains("quoteOrSelf  class: verbatim widened match"),
-        "quoteOrSelf should reuse the verbatim widened face, not introduce a new class:\n{report}"
+        report.contains("quoteOrSelf  class: verbatim string equality match"),
+        "quoteOrSelf should report the byte-derived String.eq class:\n{report}"
     );
     let manifest: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(cert.join("cert-manifest.json"))
@@ -1594,8 +1594,8 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
         .and_then(|c| c["class"].as_str())
         .unwrap_or("<missing>");
     assert_eq!(
-        quote_class, "verbatim-widened-match",
-        "quoteOrSelf should render its inner class, got {quote_class}"
+        quote_class, "verbatim-string-eq",
+        "quoteOrSelf should render the String.eq class, got {quote_class}"
     );
 
     {
@@ -1687,7 +1687,7 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
         "tampered String.eq helper shape must be DECLINED:\n{out}"
     );
     assert!(
-        out.contains("does not bind"),
+        out.contains("do not re-derive a String.eq certificate"),
         "wrong reason for String.eq helper tamper:\n{out}"
     );
     assert!(
