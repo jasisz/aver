@@ -371,7 +371,7 @@ pub fn rederive_certificate(
     wasm_bytes: &[u8],
     model_files: &[(String, String)],
 ) -> Result<RederivedCertificate, String> {
-    rederive_certificate_inner(wasm_bytes, model_files, true)
+    rederive_certificate_inner(wasm_bytes, model_files)
 }
 
 /// Re-derive only non-expression-fragment obligations. The verifier uses this
@@ -381,13 +381,12 @@ pub fn rederive_certificate_without_expr_fragments(
     wasm_bytes: &[u8],
     model_files: &[(String, String)],
 ) -> Result<RederivedCertificate, String> {
-    rederive_certificate_inner(wasm_bytes, model_files, false)
+    rederive_certificate(wasm_bytes, model_files)
 }
 
 fn rederive_certificate_inner(
     wasm_bytes: &[u8],
     model_files: &[(String, String)],
-    include_expr_fragments: bool,
 ) -> Result<RederivedCertificate, String> {
     let (user_fns, box_idx, user_idx_set, carrier, host_roles) = disassemble(wasm_bytes)?;
     let model_ops = model_step_ops(model_files);
@@ -395,27 +394,15 @@ fn rederive_certificate_inner(
         user_fns.iter().map(|f| (f.wasm_idx, f)).collect();
     let mut certs = Vec::new();
     for (func_order, f) in user_fns.iter().enumerate() {
-        let classified = if include_expr_fragments {
-            classify(
-                f,
-                box_idx,
-                carrier,
-                &user_idx_set,
-                &fns,
-                &host_roles,
-                &model_ops,
-            )
-        } else {
-            classify_without_expr_fragment(
-                f,
-                box_idx,
-                carrier,
-                &user_idx_set,
-                &fns,
-                &host_roles,
-                &model_ops,
-            )
-        };
+        let classified = classify_without_expr_fragment(
+            f,
+            box_idx,
+            carrier,
+            &user_idx_set,
+            &fns,
+            &host_roles,
+            &model_ops,
+        );
         if let Ok(c) = classified {
             certs.push((func_order, c));
         }

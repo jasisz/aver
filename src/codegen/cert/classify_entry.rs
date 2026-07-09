@@ -1,24 +1,3 @@
-fn classify(
-    f: &UserFn,
-    box_idx: u32,
-    carrier: Option<u32>,
-    user_idx_set: &std::collections::HashSet<u32>,
-    fns: &std::collections::HashMap<u32, &UserFn>,
-    host_roles: &std::collections::HashMap<u32, HostRole>,
-    model_ops: &std::collections::HashMap<String, char>,
-) -> Result<Cert, String> {
-    classify_with_options(
-        f,
-        box_idx,
-        carrier,
-        user_idx_set,
-        fns,
-        host_roles,
-        model_ops,
-        true,
-    )
-}
-
 fn classify_without_expr_fragment(
     f: &UserFn,
     box_idx: u32,
@@ -27,28 +6,6 @@ fn classify_without_expr_fragment(
     fns: &std::collections::HashMap<u32, &UserFn>,
     host_roles: &std::collections::HashMap<u32, HostRole>,
     model_ops: &std::collections::HashMap<String, char>,
-) -> Result<Cert, String> {
-    classify_with_options(
-        f,
-        box_idx,
-        carrier,
-        user_idx_set,
-        fns,
-        host_roles,
-        model_ops,
-        false,
-    )
-}
-
-fn classify_with_options(
-    f: &UserFn,
-    box_idx: u32,
-    carrier: Option<u32>,
-    user_idx_set: &std::collections::HashSet<u32>,
-    fns: &std::collections::HashMap<u32, &UserFn>,
-    host_roles: &std::collections::HashMap<u32, HostRole>,
-    model_ops: &std::collections::HashMap<String, char>,
-    include_expr_fragment: bool,
 ) -> Result<Cert, String> {
     // Fuel self-recursion (single-argument `n + f(n-1)` / `n * f(n-1)` and
     // two-argument accumulator), recognised structurally from the instruction
@@ -75,7 +32,6 @@ fn classify_with_options(
         carrier,
         user_idx_set,
         host_roles,
-        include_expr_fragment,
     ) {
         return Ok(Cert::NonRecursive {
             inner: Box::new(cert),
@@ -142,20 +98,12 @@ fn walk_nonrecursive(
     carrier: Option<u32>,
     user_idx_set: &std::collections::HashSet<u32>,
     host_roles: &std::collections::HashMap<u32, HostRole>,
-    include_expr_fragment: bool,
 ) -> Option<Cert> {
     if f.arity == 0 {
         return None;
     }
     let body = structural_body(f, box_idx, user_idx_set, host_roles)?;
     let cert = nr_straightline(f, &body, box_idx, carrier, host_roles);
-    let cert = cert.or_else(|| {
-        if include_expr_fragment {
-            nr_expr_fragment(f, &body, carrier)
-        } else {
-            None
-        }
-    });
     cert
         .or_else(|| nr_adt_constructor(f, &body, box_idx, carrier))
         .or_else(|| nr_field_projection(f, &body, carrier))

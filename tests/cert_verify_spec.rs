@@ -1044,10 +1044,9 @@ const SUMTO_FACE_TRUE_CODREPR: &str = "Dom := List Int, Cod := Int,\n    \
 const HONEST_SUMTO_CODE: &str = "/-- Verbatim emitted body of `sumTo` (self-recursive). -/\n\
     def sumToCode : CodeTbl := fun fn =>\n  \
     if fn = 1 then some ⟨1, 1,\n    \
-    [ .localGet 0, .localSet 1,\n      \
-    .localGet 1, .structGet 2 1, .refIsNull,\n      \
-    .ifElse [.localGet 1, .structGet 2 0, .i64Const 0, .i64LeS]\n              \
-    [.localGet 1, .structGet 2 2, .i32Const 0, .i32LtS],\n      \
+    [ .localGet 0, .structGet 2 1, .refIsNull,\n      \
+    .ifElse [.localGet 0, .structGet 2 0, .i64Const 0, .i64LeS]\n              \
+    [.localGet 0, .structGet 2 2, .i32Const 0, .i32LtS],\n      \
     .ifElse [.i64Const 0, .call 7]\n              \
     [.localGet 0, .localGet 0, .i64Const 1, .call 7, .call 9, .call 1, .call 8] ]⟩\n  \
     else none";

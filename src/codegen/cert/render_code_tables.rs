@@ -71,10 +71,9 @@ fn render_code_value(c: &Cert) -> String {
             format!(
                 "fun fn =>\n  \
                  if fn = {self_idx} then some ⟨1, {nlocals},\n    \
-                 [ .localGet 0, .localSet 1,\n      \
-                 .localGet 1, .structGet {carrier} 1, .refIsNull,\n      \
-                 .ifElse [.localGet 1, .structGet {carrier} 0, .i64Const 0, .i64LeS]\n              \
-                 [.localGet 1, .structGet {carrier} 2, .i32Const 0, .i32LtS],\n      \
+                 [ .localGet 0, .structGet {carrier} 1, .refIsNull,\n      \
+                 .ifElse [.localGet 0, .structGet {carrier} 0, .i64Const 0, .i64LeS]\n              \
+                 [.localGet 0, .structGet {carrier} 2, .i32Const 0, .i32LtS],\n      \
                  .ifElse [.i64Const {base}, .call {box_idx}]\n              \
                  [{step}] ]⟩\n  else none",
             )
@@ -90,10 +89,9 @@ fn render_code_value(c: &Cert) -> String {
         } => format!(
             "fun fn =>\n  \
              if fn = {self_idx} then some ⟨2, {nlocals},\n    \
-             [ .localGet 0, .localSet 2,\n      \
-             .localGet 2, .structGet {carrier} 1, .refIsNull,\n      \
-             .ifElse [.localGet 2, .structGet {carrier} 0, .i64Const 0, .i64LeS]\n              \
-             [.localGet 2, .structGet {carrier} 2, .i32Const 0, .i32LtS],\n      \
+             [ .localGet 0, .structGet {carrier} 1, .refIsNull,\n      \
+             .ifElse [.localGet 0, .structGet {carrier} 0, .i64Const 0, .i64LeS]\n              \
+             [.localGet 0, .structGet {carrier} 2, .i32Const 0, .i32LtS],\n      \
              .ifElse [.localGet 1]\n              \
              [.localGet 0, .i64Const 1, .call {box_idx}, .call {sub_idx}, \
              .localGet 1, .localGet 0, .call {add_idx}, .returnCall {self_idx}] ]⟩\n  else none",
@@ -177,10 +175,9 @@ fn render_code_value(c: &Cert) -> String {
                 let base = lean_int_lit(m.base_k);
                 s.push_str(&format!(
                     "{kw} fn = {self_idx} then some ⟨1, {nlocals},\n    \
-                     [ .localGet 0, .localSet 1,\n      \
-                     .localGet 1, .structGet {carrier} 1, .refIsNull,\n      \
-                     .ifElse [.localGet 1, .structGet {carrier} 0, .i64Const 0, .i64LeS]\n              \
-                     [.localGet 1, .structGet {carrier} 2, .i32Const 0, .i32LtS],\n      \
+                     [ .localGet 0, .structGet {carrier} 1, .refIsNull,\n      \
+                     .ifElse [.localGet 0, .structGet {carrier} 0, .i64Const 0, .i64LeS]\n              \
+                     [.localGet 0, .structGet {carrier} 2, .i32Const 0, .i32LtS],\n      \
                      .ifElse [.i64Const {base}, .call {box_idx}]\n              \
                      [.localGet 0, .i64Const 1, .call {box_idx}, .call {sub_idx}, .returnCall {cross}] ]⟩\n  ",
                     self_idx = m.self_idx,

@@ -650,10 +650,12 @@ Sunset criteria:
     The JSON manifest now exposes this migration surface explicitly with
     `artifact_bridge_counts`; the current goal matrix is 8/23 exports on
     `accepted-artifact-v1`.
-19. Next: migrate ADT/list/verbatim and recursion families into source-level
+19. Done for `expr-fragment-v1`: delete the old byte-derived expression
+    lifter/recognizer from the verifier admission path. Expression fragments
+    now enter only through producer `SymPlan`/`ExprFragmentPlan` sidecars whose
+    checked canonical lowering matches the exact code-entry bytes.
+20. Next: migrate ADT/list/verbatim and recursion families into source-level
     plan families or deliberately sunset them from the certified surface.
-20. Delete old whole-function scalar recognizer acceptance once plan-first has
-    parity and diagnostics no longer depend on it.
 
 The implementation should move slowly, but every step should tighten the
 acceptance path rather than add another permanent recognizer.
