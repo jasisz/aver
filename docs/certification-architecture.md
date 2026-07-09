@@ -642,9 +642,15 @@ Sunset criteria:
     verify` checks it against the byte-derived concat certificate. This is not
     yet Lean-side artifact acceptance; it is the source data surface that will
     feed that bridge.
-18. Next: add a Lean-side checked string plan family for `String.concat` instead
-    of treating it only as a `WVal` verbatim model.
-19. Then: migrate ADT/list/verbatim and recursion families into source-level
+18. Done for `String.concat`: add a Lean-side checked string plan family and
+    artifact-level `StringConcatClaim`, so the source `SymPlan`, byte-bound
+    `string-concat-v1` plan, canonical body/code-entry lowering and Wasm
+    slice binding are checked inside `AcceptedArtifact` instead of leaving the
+    concat proof as only a `WVal` verbatim model.
+    The JSON manifest now exposes this migration surface explicitly with
+    `artifact_bridge_counts`; the current goal matrix is 8/23 exports on
+    `accepted-artifact-v1`.
+19. Next: migrate ADT/list/verbatim and recursion families into source-level
     plan families or deliberately sunset them from the certified surface.
 20. Delete old whole-function scalar recognizer acceptance once plan-first has
     parity and diagnostics no longer depend on it.

@@ -142,6 +142,29 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         actual, expected,
         "certified goal matrix changed; update the numerator deliberately"
     );
+    assert_eq!(
+        manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
+        Some(8),
+        "AcceptedArtifact coverage changed; update this migration counter deliberately"
+    );
+    assert_eq!(
+        manifest["artifact_bridge_counts"]["legacy-witness-v1"].as_u64(),
+        Some((expected.len() - 8) as u64),
+        "legacy witness count changed; update this migration counter deliberately"
+    );
+    let expected_bridge = |class: &str| match class {
+        "expr-fragment-v1" | "verbatim-string-concat" => "accepted-artifact-v1",
+        _ => "legacy-witness-v1",
+    };
+    for entry in manifest["certified"].as_array().unwrap() {
+        let name = entry["name"].as_str().unwrap();
+        let class = entry["class"].as_str().unwrap();
+        assert_eq!(
+            entry["artifact_bridge"].as_str(),
+            Some(expected_bridge(class)),
+            "{name} artifact bridge profile should track whether it is covered by AcceptedArtifact"
+        );
+    }
 
     let expr_entries = manifest["certified"]
         .as_array()
