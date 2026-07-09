@@ -991,6 +991,7 @@ fn lean_sym_fragment_plan_pairs(rederived: &[cert::RederivedObligation]) -> Stri
         .filter_map(|r| {
             r.fragment_sym_plan_lean
                 .as_ref()
+                .or(r.string_concat_sym_plan_lean.as_ref())
                 .map(|plan| format!("(\"{}\", {plan})", r.name))
         })
         .collect::<Vec<_>>()
@@ -1020,9 +1021,14 @@ fn lean_sym_fragment_encoded_plan_pairs(rederived: &[cert::RederivedObligation])
     let inner = rederived
         .iter()
         .filter_map(|r| {
-            r.fragment_sym_plan_lean.as_ref()?;
-            let expr = r.fragment_plan_lean.as_ref()?;
-            Some(format!("(\"{}\", some ({expr}))", r.name))
+            if r.fragment_sym_plan_lean.is_some() {
+                let expr = r.fragment_plan_lean.as_ref()?;
+                Some(format!("(\"{}\", some ({expr}))", r.name))
+            } else if r.string_concat_sym_plan_lean.is_some() {
+                Some(format!("(\"{}\", none)", r.name))
+            } else {
+                None
+            }
         })
         .collect::<Vec<_>>()
         .join(",\n   ");
@@ -1375,6 +1381,7 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
             "    AverCert.AcceptedArtifact.symFragmentClaimEncodedPlanPairs,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimEncodedPlanPair?,\n",
             "    AverCert.AcceptedArtifact.stringConcatClaimPlanPairs,\n",
+            "    AverCert.AcceptedArtifact.stringConcatClaimSymPlanPairs,\n",
             "    AverCert.AcceptedArtifact.exprFragmentClaimPlanPairs,\n",
             "    AverCert.AcceptedArtifact.acceptedFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedSymFragments,\n",
@@ -1512,9 +1519,9 @@ fn checker_witness(
          example : AverCert.manifest.subject.artifactRoot = \"{artifact_root}\" := rfl\n\n\
          -- Source fragment plans: the manifest's Lean-data source plans are\n\
          -- pinned to checker-rendered `SymRawPlan` terms reconstructed from\n\
-         -- sidecars that already passed hash, source type/refinement checks,\n\
-         -- encoding to an expr plan, and canonical code-entry equality against\n\
-         -- the artifact bytes.\n\
+         -- sidecars or byte-derived string witnesses. Expr-subset source plans\n\
+         -- encode to `some ExprFragmentRawPlan`; String.concat source plans\n\
+         -- deliberately encode to `none` and are bound through stringConcatPlans.\n\
          example : AverCert.manifest.symFragmentPlans = {sym_fragment_plans} := rfl\n\
          example : AverCert.manifest.symFragmentPlans.all (fun p => AverCert.PlanCheck.checkSymRawPlan p.2) = true := rfl\n\
          example : AverCert.manifest.symFragmentPlans.map (fun p => (p.1, AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan p.2)) = {sym_fragment_encoded_plans} := rfl\n\n\

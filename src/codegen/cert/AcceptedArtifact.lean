@@ -239,6 +239,13 @@ def stringConcatClaimPlanPairs
     (claims : List StringConcatClaim) : List (String × StringConcatRawPlan) :=
   claims.map (fun c => (c.exportName, c.plan))
 
+/-- The source `SymPlan`s carried by String.concat claims. These live in the
+    manifest's common `symFragmentPlans` list; the byte-lowering-specific
+    `StringConcatRawPlan` stays in `stringConcatPlans`. -/
+def stringConcatClaimSymPlanPairs
+    (claims : List StringConcatClaim) : List (String × SymRawPlan) :=
+  claims.map (fun c => (c.exportName, c.symPlan))
+
 /-- The checker-facing artifact data currently accepted by the Lean bridge.
     `symFragmentClaims` is the preferred source-level surface. Raw
     `exprFragmentClaims` remains as a fallback for representation-only fragments
@@ -285,7 +292,8 @@ def fragmentClaimObligationsInManifest (artifact : ArtifactData) : Prop :=
 def claimsMatchManifest (artifact : ArtifactData) : Prop :=
   match symFragmentClaimEncodedPlanPairs artifact.symFragmentClaims with
   | some encodedSymExprPlans =>
-      symFragmentClaimPlanPairs artifact.symFragmentClaims =
+      symFragmentClaimPlanPairs artifact.symFragmentClaims ++
+          stringConcatClaimSymPlanPairs artifact.stringConcatClaims =
           artifact.manifest.symFragmentPlans ∧
       stringConcatClaimPlanPairs artifact.stringConcatClaims =
           artifact.manifest.stringConcatPlans ∧

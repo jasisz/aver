@@ -981,6 +981,10 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
     let manifest_lean =
         std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
     assert!(
+        manifest_lean.contains("(\"shout\", Plans.shoutStringConcatSymPlan)"),
+        "manifest should pin the String.concat source SymPlan list:\n{manifest_lean}"
+    );
+    assert!(
         manifest_lean.contains("stringConcatPlans := [(\"shout\", Plans.shoutStringConcatPlan)]"),
         "manifest should pin the String.concat plan list:\n{manifest_lean}"
     );

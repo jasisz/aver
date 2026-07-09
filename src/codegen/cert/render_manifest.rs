@@ -267,7 +267,7 @@ fn render_manifest_lean(
         .chain(fallback_expr_fragment_plans)
         .collect::<Vec<_>>()
         .join(", ");
-    let sym_fragment_plans = analysis
+    let expr_sym_fragment_plans = analysis
         .certs
         .iter()
         .filter_map(|c| match c.inner() {
@@ -282,6 +282,20 @@ fn render_manifest_lean(
             }
             _ => None,
         })
+        .collect::<Vec<_>>();
+    let string_sym_fragment_plans = analysis
+        .certs
+        .iter()
+        .filter_map(|c| match c.inner() {
+            Cert::StringConcatVerbatimMatch { name, .. } => {
+                Some(format!("({}, Plans.{name}StringConcatSymPlan)", lean_str(name)))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let sym_fragment_plans = expr_sym_fragment_plans
+        .into_iter()
+        .chain(string_sym_fragment_plans)
         .collect::<Vec<_>>()
         .join(", ");
     let string_concat_plans = analysis
