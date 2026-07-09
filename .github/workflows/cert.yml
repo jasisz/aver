@@ -25,9 +25,20 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Cache Lean toolchain
+        # The certification tests build every cert project from a clean lake
+        # cache by design (the verifier must not trust caches); the toolchain
+        # download itself is the only cacheable part.
+        uses: actions/cache@v4
+        with:
+          path: ~/.elan
+          key: elan-${{ runner.os }}-${{ hashFiles('tools/certkit/prelude/lean-toolchain') }}
+
       - name: Install Lean (via elan)
         run: |
-          curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30             https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh             | sh -s -- -y --default-toolchain stable
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30             https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh             | sh -s -- -y --default-toolchain stable
+          fi
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
       - name: Install wasm-tools
