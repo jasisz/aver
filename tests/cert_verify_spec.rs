@@ -139,6 +139,88 @@ fn aver_cert(sub: &[&str], artifact: &Path, cert_dir: &Path) -> (bool, String) {
     (out.status.success(), combined)
 }
 
+fn compile_cert_goals(prefix: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir(prefix);
+    let compile = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/cert_goals.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify goals failed:
+{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("cert_goals.wasm");
+    let cert = out_dir.join("cert");
+    let (ok, report) = aver_verify(&wasm, &cert);
+    assert!(
+        ok,
+        "expected clean goals certificate to verify:
+{report}"
+    );
+    assert!(
+        report.contains("CERTIFIED"),
+        "clean goals certificate should be certified:
+{report}"
+    );
+    (out_dir, wasm, cert)
+}
+
+fn source_fragment_plan_path(cert_dir: &Path, export_name: &str) -> String {
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert_dir.join("cert-manifest.json")).unwrap(),
+    )
+    .unwrap();
+    manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"].as_str() == Some(export_name))
+        .and_then(|c| c["source_fragment"]["plan"].as_str())
+        .unwrap_or_else(|| panic!("{export_name} should have a source fragment plan"))
+        .to_string()
+}
+
+fn rebind_source_fragment_plan_sha(cert_dir: &Path, export_name: &str, plan_text: &str) {
+    let mf = cert_dir.join("cert-manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    let entry = manifest["certified"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|c| c["name"].as_str() == Some(export_name))
+        .unwrap_or_else(|| panic!("{export_name} manifest entry should exist"));
+    entry["source_fragment"]["plan_sha256"] =
+        serde_json::Value::String(aver::codegen::cert::sha256_hex(plan_text.as_bytes()));
+    std::fs::write(&mf, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
+}
+
+fn assert_source_plan_byte_mismatch(export_name: &str, out: &str) {
+    assert!(
+        out.contains("source plan-first canonical lowering")
+            && out.contains("does not match the actual wasm code-entry"),
+        "wrong reason for {export_name} source plan tamper:
+{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "tampered {export_name} source plan credited:
+{out}"
+    );
+}
+
 /// A weakened schema whose `Holds` is trivially `True`. Used by the A3 decoy;
 /// it defines the same surface the data modules import so the decoy tree would
 /// build under the OLD (cert-controlled) build path.
@@ -1113,11 +1195,20 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
         .arg(&out_dir)
         .output()
         .expect("aver compile --certify runs");
-    assert!(
-        compile.status.success(),
-        "json compile --certify failed:\n{}{}",
+    let compile_report = format!(
+        "{}{}",
         String::from_utf8_lossy(&compile.stdout),
         String::from_utf8_lossy(&compile.stderr)
+    );
+    assert!(
+        compile.status.success(),
+        "json compile --certify failed:
+{compile_report}"
+    );
+    assert!(
+        compile_report.contains("(12 certified, 76 source-level-only)"),
+        "json certificate KPI denominator changed:
+{compile_report}"
     );
 
     let wasm = out_dir.join("json.wasm");
@@ -1527,6 +1618,171 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let _ = std::fs::remove_dir_all(&lean_plan_tamper_dir);
     let _ = std::fs::remove_dir_all(&lean_bytes_tamper_dir);
     let _ = std::fs::remove_dir_all(&lean_slice_tamper_dir);
+}
+
+#[test]
+fn cert_verify_declines_expr_fragment_operand_swap_sidecar() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping expr-fragment operand-swap sidecar test: `lake` not available");
+        return;
+    }
+
+    let (out_dir, wasm, cert) = compile_cert_goals("cert-expr-operand-swap");
+    let plan_path = source_fragment_plan_path(&cert, "floatLeGoal");
+    let sidecar = cert.join(plan_path);
+    let source_text = std::fs::read_to_string(&sidecar).unwrap();
+    let tampered = source_text.replacen(
+        "prim op=float.le args=v0,v1",
+        "prim op=float.le args=v1,v0",
+        1,
+    );
+    assert_ne!(
+        source_text, tampered,
+        "floatLeGoal source plan operand shape changed"
+    );
+    std::fs::write(&sidecar, &tampered).unwrap();
+    rebind_source_fragment_plan_sha(&cert, "floatLeGoal", &tampered);
+
+    let (ok, out) = aver_verify(&wasm, &cert);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    assert!(
+        !ok,
+        "operand-swapped expr-fragment source plan must be DECLINED:
+{out}"
+    );
+    // The operand swap is caught by the verifier's canonical plan lowering
+    // (stack-order check on the swapped prim arguments) before the byte
+    // comparison stage — an earlier, equally fail-closed gate of the same
+    // plan-first path.
+    assert!(
+        out.contains("source plan sidecar does not check against wasm"),
+        "wrong reason for floatLeGoal operand swap:
+{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "operand-swapped expr-fragment source plan credited:
+{out}"
+    );
+}
+
+#[test]
+fn cert_verify_declines_expr_fragment_extra_instruction_sidecar() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping expr-fragment extra-instruction sidecar test: `lake` not available");
+        return;
+    }
+
+    let (out_dir, wasm, cert) = compile_cert_goals("cert-expr-extra-instr");
+    let plan_path = source_fragment_plan_path(&cert, "floatAddGoal");
+    let sidecar = cert.join(plan_path);
+    let source_text = std::fs::read_to_string(&sidecar).unwrap();
+    let honest_block = concat!(
+        "block result=v2
+",
+        "  v0 ty=float param index=0
+",
+        "  v1 ty=float param index=1
+",
+        "  v2 ty=float prim op=float.add args=v0,v1
+",
+        "end
+",
+    );
+    let tampered_block = concat!(
+        "block result=v4
+",
+        "  v0 ty=float param index=0
+",
+        "  v1 ty=float param index=1
+",
+        "  v2 ty=float prim op=float.add args=v0,v1
+",
+        "  v3 ty=float const.float bits=0x0000000000000000
+",
+        "  v4 ty=float prim op=float.add args=v2,v3
+",
+        "end
+",
+    );
+    let tampered = source_text.replacen(honest_block, tampered_block, 1);
+    assert_ne!(
+        source_text, tampered,
+        "floatAddGoal source plan block shape changed"
+    );
+    std::fs::write(&sidecar, &tampered).unwrap();
+    rebind_source_fragment_plan_sha(&cert, "floatAddGoal", &tampered);
+
+    let (ok, out) = aver_verify(&wasm, &cert);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    assert!(
+        !ok,
+        "extra-instruction expr-fragment source plan must be DECLINED:
+{out}"
+    );
+    assert_source_plan_byte_mismatch("floatAddGoal", &out);
+}
+
+#[test]
+fn cert_verify_declines_expr_fragment_bad_bool01_raw_plan() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping expr-fragment bad Bool01 raw-plan test: `lake` not available");
+        return;
+    }
+
+    let (out_dir, wasm, cert) = compile_cert_goals("cert-expr-bad-bool01");
+    let plans = cert.join("Plans.lean");
+    let plans_text = std::fs::read_to_string(&plans).unwrap();
+    let def_start = plans_text
+        .find("def floatLeGoalPlan : ExprFragmentRawPlan :=")
+        .expect("Plans.lean should define floatLeGoalPlan");
+    let def_end = def_start
+        + plans_text[def_start..]
+            .find(
+                "
+
+/-- Source-level `SymPlan` projection for `floatLeGoal`",
+            )
+            .expect("floatLeGoalPlan should be followed by its SymPlan");
+    let target = "{ id := 0, ty := .boolI32, kind := .constBool true }";
+    let replacement = "{ id := 0, ty := .boolI32, kind := .constI32 (2 : Int) }";
+    let plan_def = &plans_text[def_start..def_end];
+    assert!(
+        plan_def.contains(target),
+        "floatLeGoalPlan Bool01 constant shape changed"
+    );
+    let tampered_plan_def = plan_def.replacen(target, replacement, 1);
+    let mut tampered = String::new();
+    tampered.push_str(&plans_text[..def_start]);
+    tampered.push_str(&tampered_plan_def);
+    tampered.push_str(&plans_text[def_end..]);
+    std::fs::write(&plans, tampered).unwrap();
+
+    let (ok, out) = aver_verify(&wasm, &cert);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    assert!(
+        !ok,
+        "bad Bool01 raw plan must be DECLINED:
+{out}"
+    );
+    // PlanCheck rejects the ill-typed Bool01 node (`constI32` is inferred
+    // `rawI32`; `sameTy` fails against the declared `boolI32`), so the
+    // Plans.lean examples fail to elaborate. The verify report keeps only the
+    // tail of the lake output (`tail(.., 20)` in cert_cmd), so the earliest
+    // error (the `checkExprFragmentRawPlan` example) can be cut when the later
+    // byte-pin errors fill the tail — accept either attribution of the same
+    // fail-closed Plans.lean build failure.
+    assert!(
+        out.contains("did not build")
+            && (out.contains("checkExprFragmentRawPlan") || out.contains("Plans")),
+        "bad Bool01 raw plan should fail the Plans.lean checks:
+{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "bad Bool01 raw plan credited:
+{out}"
+    );
 }
 
 #[test]
