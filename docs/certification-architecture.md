@@ -331,11 +331,15 @@ reconstruction with `rfl`, type-ascribes `Final.cert : Schema.Holds manifest`,
 and roots the axiom audit at `Artifact.certificate`. The audited
 `AcceptedArtifact.accepted` predicate also requires the manifest subject to name
 that same artifact root, and its `fragmentClaimObligationsInManifest` component
-requires each fragment claim's obligation export *name* to appear among
-`manifest.obligations` — export-name membership only, not full obligation-record
-identity. That full record identity is closed separately, outside the audited
-predicate, by the checker-side `rfl` that pins the reconstructed
-`AverCert.Artifact.data`.
+binds each fragment claim's obligation to the manifest by *record identity*:
+the first `manifest.obligations` entry carrying the claim's export name must
+equal the claim's obligation record
+(`manifest.obligations.find? (fun o => o.export_ = c.obligation.export_) =
+some c.obligation`), so a claim cannot cite a same-named obligation whose code,
+model or contracts differ from the manifest's. The checker-side `rfl` that pins
+the reconstructed `AverCert.Artifact.data` still contributes the outer binding:
+it forces the artifact's claim list, manifest literal and byte data to equal
+the checker's own reconstruction before this predicate is consulted.
 This removes another slice of plan-to-semantics, plan-to-bytes, byte-origin and
 schema-binding logic from unreviewed generated proof text while still preventing
 the artifact from choosing the final theorem target. The remaining gap is full

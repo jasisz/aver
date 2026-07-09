@@ -158,6 +158,7 @@ jobs:
             wasm_gc_carrier_i64_differential \
             wasm_gc_codegen_regression \
             wasm_gc_differential_mir \
+            wasm_gc_plan_mir_equivalence \
             wasm_gc_effect_arg_overflow_regression \
             wasm_gc_games_differential_mir \
             wasm_gc_handler_carrier \

@@ -30,6 +30,16 @@ jobs:
           curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30             https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh             | sh -s -- -y --default-toolchain stable
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
+      - name: Install wasm-tools
+        # The decode differential test shells out to `wasm-tools print`
+        # (tools/certkit/decode_ref.py); pin the same major line used locally.
+        run: |
+          curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 -o /tmp/wasm-tools.tar.gz \
+            https://github.com/bytecodealliance/wasm-tools/releases/download/v1.246.2/wasm-tools-1.246.2-x86_64-linux.tar.gz
+          tar -xzf /tmp/wasm-tools.tar.gz -C /tmp
+          sudo mv /tmp/wasm-tools-1.246.2-x86_64-linux/wasm-tools /usr/local/bin/wasm-tools
+          wasm-tools --version
+
       - name: Verify `lake` reachable
         run: |
           for attempt in 1 2 3 4 5 6; do
