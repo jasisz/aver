@@ -378,6 +378,62 @@ def stringEqPlanMatchesSymRawPlan
     | _, _, _ => false
   else false
 
+def constructFieldOk (arity : Nat) : ConstructField → Bool
+  | .local index => index < arity
+  -- `ref.null` byte lowering needs an explicit heap-type binding. The semantic
+  -- constructor exists in the schema, but `construct-v1` accepts only local
+  -- argument fields until that binding is part of the plan.
+  | .null => false
+
+def constructFieldsOk (arity : Nat) : List ConstructField → Bool
+  | [] => true
+  | field :: rest => constructFieldOk arity field && constructFieldsOk arity rest
+
+def constructLocalFields : List ConstructField → List Nat
+  | [] => []
+  | .local index :: rest => index :: constructLocalFields rest
+  | .null :: rest => constructLocalFields rest
+
+def natListNoDup : List Nat → Bool
+  | [] => true
+  | n :: rest => (!rest.contains n) && natListNoDup rest
+
+def rangeAllContained (locals : List Nat) : Nat → Bool
+  | 0 => true
+  | n + 1 => rangeAllContained locals n && locals.contains n
+
+def constructUsesAllParams (arity : Nat) (fields : List ConstructField) : Bool :=
+  let locals := constructLocalFields fields
+  locals.length = arity &&
+    natListNoDup locals &&
+    rangeAllContained locals arity
+
+def checkConstructRawPlan (plan : ConstructRawPlan) : Bool :=
+  plan.profile = "construct-v1" &&
+    0 < plan.arity &&
+    0 < plan.fields.length &&
+    constructFieldsOk plan.arity plan.fields &&
+    constructUsesAllParams plan.arity plan.fields
+
+def symConstructArgs? (plan : SymRawPlan) : Option (String × String × List Nat) :=
+  if checkSymRawPlan plan then
+    match lookupSymNode plan.body.nodes plan.body.result with
+    | some { ty := .named typeName, kind := .construct _ ctorName args, .. } =>
+        some (typeName, ctorName, args)
+    | _ => none
+  else none
+
+def constructPlanMatchesSymRawPlan
+    (symPlan : SymRawPlan)
+    (plan : ConstructRawPlan) : Bool :=
+  if checkConstructRawPlan plan then
+    match symConstructArgs? symPlan with
+    | some (_, _, args) =>
+        args = constructLocalFields plan.fields &&
+          args.length = plan.arity
+    | none => false
+  else false
+
 def encodeSymTy? : SymTy → Option FragTy
   | .float => some .f64
   | .bool => some .boolI32
@@ -441,14 +497,14 @@ def encodeIntBigConstCmpBlock? (index : Nat) (op : SymIntCmp) :
   | some .signLtZero =>
       let (nodes, carrier) := appendFragNode [] .intCarrier (.local index)
       let (nodes, sign) := appendFragNode nodes .rawI32 (.structGet 2 carrier)
-      let (nodes, zero) := appendFragNode nodes .boolI32 (.constBool false)
-      let (nodes, result) := appendFragNode nodes .boolI32 (.prim .i32LtS [sign, zero])
+      let (nodes, zeroId) := appendFragNode nodes .boolI32 (.constBool false)
+      let (nodes, result) := appendFragNode nodes .boolI32 (.prim .i32LtS [sign, zeroId])
       some { nodes := nodes, result := result }
   | some .signGtZero =>
       let (nodes, carrier) := appendFragNode [] .intCarrier (.local index)
       let (nodes, sign) := appendFragNode nodes .rawI32 (.structGet 2 carrier)
-      let (nodes, zero) := appendFragNode nodes .boolI32 (.constBool false)
-      let (nodes, result) := appendFragNode nodes .boolI32 (.prim .i32GtS [sign, zero])
+      let (nodes, zeroId) := appendFragNode nodes .boolI32 (.constBool false)
+      let (nodes, result) := appendFragNode nodes .boolI32 (.prim .i32GtS [sign, zeroId])
       some { nodes := nodes, result := result }
   | none => none
 

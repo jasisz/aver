@@ -302,7 +302,7 @@ def lowerStringEqExprBytes
           uleb32 stringEqFuncIdx, uleb32 stringTy,
           lowerStringEqResultBytes stringTy plan.hit,
           lowerStringEqResultBytes stringTy plan.default with
-    | some inputIdxBytes, some scratchIdxBytes, some localOneBytes,
+    | some inputIdxBytes, some scratchIdxBytes, some _localOneBytes,
       some refCastOpBytes, some stringTyBytes, some needleBytes,
       some stringEqFuncIdxBytes, some blockTypeBytes, some hitBytes,
       some defaultBytes =>
@@ -342,6 +342,50 @@ def lowerStringEqCodeEntry
     (carrier stringTy stringEqFuncIdx : Nat)
     (plan : StringEqRawPlan) : Option (List Nat) :=
   match lowerStringEqBodyBytes carrier stringTy stringEqFuncIdx plan with
+  | some body =>
+      match uleb32 body.length with
+      | some lenBytes => some (lenBytes ++ body)
+      | none => none
+  | none => none
+
+def lowerConstructFieldBytes : ConstructField → Option (List Nat)
+  | .local index =>
+      match uleb32 index with
+      | some indexBytes => some ([0x20] ++ indexBytes)
+      | none => none
+  | .null => none
+
+def lowerConstructFieldsBytes : List ConstructField → Option (List Nat)
+  | [] => some []
+  | field :: rest =>
+      match lowerConstructFieldBytes field, lowerConstructFieldsBytes rest with
+      | some fieldBytes, some restBytes => some (fieldBytes ++ restBytes)
+      | _, _ => none
+
+def lowerConstructExprBytes (plan : ConstructRawPlan) : Option (List Nat) :=
+  if AverCert.PlanCheck.checkConstructRawPlan plan then
+    match lowerConstructFieldsBytes plan.fields,
+          uleb32 0x00,
+          uleb32 plan.structIdx with
+    | some fieldBytes, some structNewOpBytes, some structIdxBytes =>
+        some (fieldBytes ++ [0xfb] ++ structNewOpBytes ++ structIdxBytes ++ [0x0b])
+    | _, _, _ => none
+  else
+    none
+
+def lowerConstructBodyBytes
+    (carrier : Nat)
+    (plan : ConstructRawPlan) : Option (List Nat) :=
+  match uleb32 1, uleb32 1, uleb32 carrier,
+        lowerConstructExprBytes plan with
+  | some localDeclCount, some localCount, some carrierBytes, some exprBytes =>
+      some (localDeclCount ++ localCount ++ [0x63] ++ carrierBytes ++ exprBytes)
+  | _, _, _, _ => none
+
+def lowerConstructCodeEntry
+    (carrier : Nat)
+    (plan : ConstructRawPlan) : Option (List Nat) :=
+  match lowerConstructBodyBytes carrier plan with
   | some body =>
       match uleb32 body.length with
       | some lenBytes => some (lenBytes ++ body)

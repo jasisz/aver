@@ -33,7 +33,7 @@ struct CodeEntry {
 
 /// The minimal opcode surface the two templates need. Anything else is `Other`
 /// (which forces a decline) — a certified body never contains an `Other`.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Op {
     LocalGet(u32),
     LocalSet(u32),

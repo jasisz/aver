@@ -260,16 +260,34 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert!(
         plans_lean.contains("def mkOpConstructSymPlan : SymRawPlan"),
-        "legacy ADT constructors should render source-only construct SymPlans:\n{plans_lean}"
+        "legacy ADT constructors should render source-level construct SymPlans:\n{plans_lean}"
     );
     assert!(
         plans_lean.contains(".construct \"Op\" \"add\" [0]"),
         "mkOp construct SymPlan should expose source-level ADT construction:\n{plans_lean}"
     );
     assert!(
+        plans_lean.contains("def mkOpConstructPlan : ConstructRawPlan"),
+        "mkOp should render a target-bound construct plan:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains("checkConstructRawPlan mkOpConstructPlan = true := rfl"),
+        "mkOp construct plan should pass the Lean-side target checker:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains(
+            "constructPlanMatchesSymRawPlan\n  mkOpConstructSymPlan mkOpConstructPlan = true := rfl"
+        ),
+        "mkOp source construct plan should match the target-bound construct plan:\n{plans_lean}"
+    );
+    assert!(
         plans_lean
             .contains("encodeSymRawPlanToExprFragmentRawPlan mkOpConstructSymPlan = none := rfl"),
-        "construct SymPlan should remain source-only until a struct.new lowerer lands:\n{plans_lean}"
+        "construct SymPlan should remain outside the expr-fragment encoder:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains("lowerConstructCodeEntry 18 mkOpConstructPlan =\n  some [10, 1, 1, 99, 18, 32, 0, 251, 0, 0, 11] := rfl"),
+        "mkOp construct plan should lower to the exact code-entry bytes:\n{plans_lean}"
     );
     let mkop_entry = manifest["certified"]
         .as_array()
@@ -288,6 +306,15 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     assert!(
         mkop_source_plan.contains("construct type=Op ctor=add args=v0"),
         "mkOp sidecar should carry the constructor plan:\n{mkop_source_plan}"
+    );
+    let mkop_target_plan =
+        std::fs::read_to_string(out_dir.join("cert/fragments/6d6b4f70.construct-v1.plan"))
+            .expect("mkOp target-bound construct sidecar exists");
+    assert!(
+        mkop_target_plan.contains("profile construct-v1")
+            && mkop_target_plan.contains("struct 0")
+            && mkop_target_plan.contains("local index=0"),
+        "mkOp target sidecar should carry the struct.new binding:\n{mkop_target_plan}"
     );
     let artifact_lean = std::fs::read_to_string(out_dir.join("cert").join("Artifact.lean"))
         .expect("Artifact.lean exists");

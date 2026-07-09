@@ -144,6 +144,11 @@ fn write_fragment_sidecars(
                 if let Some(sym_plan) = adt_constructor_sym_plan_from_cert(c, model_info) {
                     sidecars.push(sym_fragment_sidecar(c.name(), &sym_plan));
                 }
+                if let Some(plan) = construct_plan_from_cert(c)
+                    && check_construct_plan(&plan).is_ok()
+                {
+                    sidecars.push(construct_sidecar(c.name(), &plan));
+                }
             }
             _ => {}
         }
@@ -262,24 +267,77 @@ fn render_expr_fragment_plans(analysis: &Analysis, model_info: &ModelInfo) -> St
         ));
     }
     for c in &analysis.certs {
-        let Cert::AdtConstructor { name, .. } = c.inner() else {
+        let Cert::AdtConstructor {
+            name,
+            self_idx,
+            code_idx,
+            type_idx,
+            carrier,
+            ..
+        } = c.inner()
+        else {
             continue;
         };
         let Some(sym_plan) = adt_constructor_sym_plan_from_cert(c, model_info) else {
             continue;
         };
+        let Some(construct_plan) = construct_plan_from_cert(c) else {
+            continue;
+        };
+        let Ok(code_entry_bytes) =
+            lower_construct_plan_code_entry_bytes(&construct_plan, *carrier)
+        else {
+            continue;
+        };
+        let lowered_body = lower_construct_plan(&construct_plan)
+            .map(|ops| render_ops_value(&ops))
+            .expect("checked construct plan lowers to WInstr body");
+        let code_entry_bytes = render_byte_list(&code_entry_bytes);
+        let export_name_bytes = render_byte_list(name.as_bytes());
+        let func_binding = format!(
+            "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+        );
         any = true;
         s.push_str(&format!(
             "/-- Source-level constructor `SymPlan` for legacy ADT constructor `{name}`.\n\
-                This is intentionally source-only for now: the plan checker accepts it,\n\
-                but the v1 source encoder cannot yet lower `construct` to byte-bound\n\
-                `struct.new` code-entry bytes. -/\n\
+                This says what source value is being constructed; the target-bound\n\
+                `ConstructRawPlan` below pins the wasm-gc `struct.new` layout. -/\n\
              def {name}ConstructSymPlan : SymRawPlan := {sym_plan_value}\n\n\
+             /-- Target-bound constructor witness for `{name}`. -/\n\
+             def {name}ConstructPlan : ConstructRawPlan := {construct_plan_value}\n\n\
              /-- The audited Lean-side source-plan checker accepts `{name}`'s constructor plan. -/\n\
              example : AverCert.PlanCheck.checkSymRawPlan {name}ConstructSymPlan = true := rfl\n\n\
+             /-- The audited Lean-side structural checker accepts `{name}`'s target constructor plan. -/\n\
+             example : AverCert.PlanCheck.checkConstructRawPlan {name}ConstructPlan = true := rfl\n\n\
+             /-- The audited Lean-side source/target matcher confirms that `{name}`'s\n\
+                 source constructor plan explains the byte-bound constructor witness. -/\n\
+             example : AverCert.PlanCheck.constructPlanMatchesSymRawPlan\n  \
+               {name}ConstructSymPlan {name}ConstructPlan = true := rfl\n\n\
              /-- `construct` is not yet part of the v1 source-to-fragment encoder. -/\n\
-             example : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan {name}ConstructSymPlan = none := rfl\n\n",
+             example : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan {name}ConstructSymPlan = none := rfl\n\n\
+             /-- The audited Lean-side canonical lowerer maps `{name}`'s constructor plan\n\
+                 to the exact instruction body. -/\n\
+             example : AverCert.PlanLower.lowerConstructBody {name}ConstructPlan =\n  \
+               some {lowered_body} := rfl\n\n\
+             /-- The audited Lean-side canonical lowerer maps `{name}`'s constructor plan\n\
+                 to the same instruction body emitted in `Module.lean`. -/\n\
+             example : (CertModule.{name}Code {self_idx}).map (fun c => c.body) =\n  \
+               AverCert.PlanLower.lowerConstructBody {name}ConstructPlan := rfl\n\n\
+             /-- The audited Lean-side byte lowerer maps `{name}`'s constructor plan\n\
+                 to the exact canonical code-entry bytes. -/\n\
+             example : AverCert.PlanBytes.lowerConstructCodeEntry {carrier} {name}ConstructPlan =\n  \
+               some {code_entry_bytes} := rfl\n\n\
+             /-- The audited Lean-side Wasm slicer finds `{name}`'s exact constructor\n\
+                 code-entry bytes inside the emitted module bytes by export name. -/\n\
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+               some {code_entry_bytes} := rfl\n\n\
+             /-- The audited Lean-side Wasm slicer binds `{name}` to its function\n\
+                 index, defined-code index, type index and code-entry bytes. -/\n\
+             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+               some {func_binding} := rfl\n\n",
             sym_plan_value = sym_plan_lean_value(&sym_plan),
+            construct_plan_value = construct_plan_lean_value(&construct_plan),
+            lowered_body = lowered_body,
         ));
     }
     for c in &analysis.certs {

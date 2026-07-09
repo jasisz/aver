@@ -220,6 +220,24 @@ structure StringEqRawPlan where
   default : StringEqResult
 deriving Repr
 
+/-- Target-bound constructor field used by `construct-v1`: either replay one
+    source/local argument, or emit the null representation slot that the wasm-gc
+    layout requires but the source constructor does not expose. -/
+inductive ConstructField where
+  | local (index : Nat)
+  | null
+deriving Repr, DecidableEq
+
+/-- Raw, untrusted ADT constructor witness. The source-level `SymPlan` says
+    "construct this Aver value"; this plan carries the current wasm-gc binding
+    needed to lower that constructor to exact `struct.new` bytes. -/
+structure ConstructRawPlan where
+  profile   : String
+  arity     : Nat
+  structIdx : Nat
+  fields    : List ConstructField
+deriving Repr
+
 /-- Pointwise lifting of an integer representation relation to argument lists.
     Kept as the standard domain representation for the v2 integer classes. -/
 inductive ReprAll (R : Int → WVal → Prop) : List Int → List WVal → Prop
