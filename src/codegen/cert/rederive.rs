@@ -197,6 +197,12 @@ pub enum ObligationFace {
 
 impl ObligationFace {
     fn of_cert(c: &Cert) -> ObligationFace {
+        // A host-call expr fragment with the straight-line integer face keeps
+        // the full-strength integer simulation face (List Int / ReprAll /
+        // intRepr), exactly like the legacy straight-line class.
+        if c.int_add_face().is_some() {
+            return ObligationFace::IntList { arity: 1 };
+        }
         match c.inner() {
             Cert::StraightLine { .. }
             | Cert::Recursive { .. }
@@ -415,22 +421,30 @@ pub fn rederive_certificate(
     wasm_bytes: &[u8],
     model_files: &[(String, String)],
 ) -> Result<RederivedCertificate, String> {
-    rederive_certificate_inner(wasm_bytes, model_files)
+    rederive_certificate_inner(wasm_bytes, model_files, &[])
 }
 
 /// Re-derive only non-expression-fragment obligations. The verifier uses this
 /// for plan-first checking: expr fragments are admitted by checked sidecar plans
 /// plus canonical code-entry byte equality, not by the old byte lifter.
+/// `plan_covered_exports` are the export names the manifest routes through
+/// checked plan sidecars; they are excluded from legacy byte classification BY
+/// NAME so a plan-first export that also happens to match a legacy template
+/// (e.g. the straight-line integer shape) does not produce a duplicate
+/// obligation for the same function. This never widens acceptance: an export
+/// claimed as plan-first that fails its sidecar check is declined outright.
 pub fn rederive_certificate_without_expr_fragments(
     wasm_bytes: &[u8],
     model_files: &[(String, String)],
+    plan_covered_exports: &[String],
 ) -> Result<RederivedCertificate, String> {
-    rederive_certificate(wasm_bytes, model_files)
+    rederive_certificate_inner(wasm_bytes, model_files, plan_covered_exports)
 }
 
 fn rederive_certificate_inner(
     wasm_bytes: &[u8],
     model_files: &[(String, String)],
+    plan_covered_exports: &[String],
 ) -> Result<RederivedCertificate, String> {
     let (user_fns, box_idx, user_idx_set, carrier, host_roles) = disassemble(wasm_bytes)?;
     let model_ops = model_step_ops(model_files);
@@ -439,6 +453,9 @@ fn rederive_certificate_inner(
         user_fns.iter().map(|f| (f.wasm_idx, f)).collect();
     let mut certs = Vec::new();
     for (func_order, f) in user_fns.iter().enumerate() {
+        if plan_covered_exports.contains(&f.name) {
+            continue;
+        }
         let classified = classify_without_expr_fragment(
             f,
             box_idx,

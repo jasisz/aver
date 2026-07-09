@@ -105,6 +105,92 @@ impl FragTy {
     }
 }
 
+/// Runtime host-helper role admitted by `expr-fragment-v1`. Each role fixes a
+/// representation-level type signature; the resolved wasm function index is
+/// carried on the node (variant B) and bound to the module bytes by the
+/// byte-exact gate, and to the byte-derived role table by the Rust checker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum FragHostRole {
+    Box,
+    Add,
+}
+
+impl FragHostRole {
+    fn plan_tag(self) -> &'static str {
+        match self {
+            FragHostRole::Box => "box",
+            FragHostRole::Add => "add",
+        }
+    }
+
+    fn lean_ctor(self) -> &'static str {
+        match self {
+            FragHostRole::Box => ".box",
+            FragHostRole::Add => ".add",
+        }
+    }
+
+    pub(crate) fn from_plan_tag(tag: &str) -> Option<Self> {
+        match tag {
+            "box" => Some(FragHostRole::Box),
+            "add" => Some(FragHostRole::Add),
+            _ => None,
+        }
+    }
+
+    /// Static registry of representation-level role signatures: argument types
+    /// and result type. Twin of `PlanCheck.hostCallResultTy?`.
+    pub(crate) fn signature(self) -> (&'static [FragTy], FragTy) {
+        match self {
+            FragHostRole::Box => (&[FragTy::I64], FragTy::IntCarrier),
+            FragHostRole::Add => (&[FragTy::IntCarrier, FragTy::IntCarrier], FragTy::IntCarrier),
+        }
+    }
+}
+
+/// The byte-derived host-role table: which wasm function index realises each
+/// admitted host role in THIS module. Derived from the audited disassembler
+/// (`box` = the exported `__rt_aint_from_i64`; `add` = the body-shape role),
+/// never from a plan or sidecar. Plans must cite exactly these indices.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct FragHostTable {
+    pub(crate) box_idx: Option<u32>,
+    pub(crate) add_idx: Option<u32>,
+}
+
+impl FragHostTable {
+    pub(crate) fn lookup(&self, role: FragHostRole) -> Option<u32> {
+        match role {
+            FragHostRole::Box => self.box_idx,
+            FragHostRole::Add => self.add_idx,
+        }
+    }
+
+    /// The `List (HostRole × Nat)` literal the Lean encoder and artifact claims
+    /// consume, in fixed role order (box, add) for deterministic rendering.
+    pub(crate) fn lean_value(&self) -> String {
+        let mut entries = Vec::new();
+        if let Some(idx) = self.box_idx {
+            entries.push(format!("(.box, {idx})"));
+        }
+        if let Some(idx) = self.add_idx {
+            entries.push(format!("(.add, {idx})"));
+        }
+        format!("[{}]", entries.join(", "))
+    }
+
+    /// A placeholder table for producer-side encodability gating at MIR time,
+    /// before any wasm indices exist. Encoding shape does not depend on the
+    /// index values, so gating with placeholders is exact; real byte-derived
+    /// indices are always used wherever bytes are available.
+    pub(crate) fn placeholder() -> Self {
+        FragHostTable {
+            box_idx: Some(0),
+            add_idx: Some(0),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct FragValueId(pub(crate) usize);
 
@@ -167,6 +253,11 @@ pub(crate) enum FragNodeKind {
     },
     Prim {
         op: FragPrim,
+        args: Vec<FragValueId>,
+    },
+    HostCall {
+        role: FragHostRole,
+        func_idx: u32,
         args: Vec<FragValueId>,
     },
     If {
@@ -317,6 +408,18 @@ fn expr_fragment_node_kind_lean_value(kind: &FragNodeKind) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        FragNodeKind::HostCall {
+            role,
+            func_idx,
+            args,
+        } => format!(
+            ".hostCall {} {func_idx} [{}]",
+            role.lean_ctor(),
+            args.iter()
+                .map(|id| id.0.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         FragNodeKind::If {
             cond,
             then_block,
@@ -372,6 +475,17 @@ fn render_fragment_node_plan(node: &FragNode, indent: usize, out: &mut String) {
             out.push_str(&format!(
                 "prim op={} args={}\n",
                 op.plan_tag(),
+                render_fragment_plan_ids(args)
+            ));
+        }
+        FragNodeKind::HostCall {
+            role,
+            func_idx,
+            args,
+        } => {
+            out.push_str(&format!(
+                "hostcall role={} func={func_idx} args={}\n",
+                role.plan_tag(),
                 render_fragment_plan_ids(args)
             ));
         }
@@ -447,5 +561,88 @@ mod expr_fragment_sem_ty_tests {
         assert_eq!(FragTy::IntCarrier.plan_tag(), "int-carrier");
         assert_eq!(FragTy::IntCarrier.source_name(), "Int");
         assert_eq!(FragTy::IntCarrier.lean_dom_type(), "Int");
+    }
+
+    fn add_two_hostcall_plan() -> ExprFragmentPlan {
+        ExprFragmentPlan {
+            params: vec![FragTy::IntCarrier],
+            result: FragTy::IntCarrier,
+            body: FragBlock {
+                nodes: vec![
+                    FragNode {
+                        id: FragValueId(0),
+                        ty: FragTy::IntCarrier,
+                        kind: FragNodeKind::Local { index: 0 },
+                    },
+                    FragNode {
+                        id: FragValueId(1),
+                        ty: FragTy::I64,
+                        kind: FragNodeKind::ConstI64(2),
+                    },
+                    FragNode {
+                        id: FragValueId(2),
+                        ty: FragTy::IntCarrier,
+                        kind: FragNodeKind::HostCall {
+                            role: FragHostRole::Box,
+                            func_idx: 6,
+                            args: vec![FragValueId(1)],
+                        },
+                    },
+                    FragNode {
+                        id: FragValueId(3),
+                        ty: FragTy::IntCarrier,
+                        kind: FragNodeKind::HostCall {
+                            role: FragHostRole::Add,
+                            func_idx: 7,
+                            args: vec![FragValueId(0), FragValueId(2)],
+                        },
+                    },
+                ],
+                result: FragValueId(3),
+            },
+        }
+    }
+
+    #[test]
+    fn hostcall_plan_lowers_to_addtwo_bytes_and_ops() {
+        let plan = add_two_hostcall_plan();
+        // Byte lowering reproduces the empirically pinned addTwo code-entry
+        // `0d 01 01 63 02 20 00 42 02 10 06 10 07 0b`.
+        let bytes = lower_expr_fragment_plan_code_entry_bytes(&plan, 2).expect("lower bytes");
+        assert_eq!(
+            bytes,
+            vec![13, 1, 1, 99, 2, 32, 0, 66, 2, 16, 6, 16, 7, 11]
+        );
+        // Op lowering matches the straight-line body the checker re-derives.
+        let ops = lower_expr_fragment_plan(&plan, 2).expect("lower ops");
+        assert_eq!(
+            ops,
+            vec![Op::LocalGet(0), Op::I64Const(2), Op::Call(6), Op::Call(7)]
+        );
+    }
+
+    #[test]
+    fn hostcall_plan_text_round_trips_through_parser() {
+        let plan = add_two_hostcall_plan();
+        let text = expr_fragment_plan_text(&plan);
+        let mut parser =
+            FragPlanParser::new(&text, vec![FragTy::IntCarrier], FragTy::IntCarrier);
+        let body = parser.parse().expect("parse hostcall plan");
+        let reparsed = ExprFragmentPlan {
+            params: vec![FragTy::IntCarrier],
+            result: FragTy::IntCarrier,
+            body,
+        };
+        assert_eq!(
+            lower_expr_fragment_plan_code_entry_bytes(&reparsed, 2).expect("relower"),
+            vec![13, 1, 1, 99, 2, 32, 0, 66, 2, 16, 6, 16, 7, 11]
+        );
+    }
+
+    #[test]
+    fn hostcall_plan_lean_value_uses_host_call_ctor() {
+        let lean = expr_fragment_plan_lean_value(&add_two_hostcall_plan());
+        assert!(lean.contains(".hostCall .box 6 [1]"), "lean = {lean}");
+        assert!(lean.contains(".hostCall .add 7 [0, 2]"), "lean = {lean}");
     }
 }

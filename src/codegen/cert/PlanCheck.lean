@@ -110,6 +110,19 @@ def primResultTy? (nodes : List FragNode) (op : FragPrim) (args : List Nat) :
       | [a, b] => if hasI32Ty nodes a && hasI32Ty nodes b then some .boolI32 else none
       | _ => none
 
+/-- Static registry of host-helper role type signatures. `box` takes one raw
+    `i64` and returns the Int carrier; `add` takes two Int carriers and returns
+    the Int carrier. The resolved wasm function index is not checked here (it is
+    bound to the module bytes by the byte-exact gate and to the byte-derived
+    role table by the Rust checker); this is purely the representation-level
+    type discipline. -/
+def hostCallResultTy? (nodes : List FragNode) (role : HostRole) (args : List Nat) :
+    Option FragTy :=
+  match role with
+  | .box => if argsHaveTys nodes args [.i64] then some .intCarrier else none
+  | .add =>
+      if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .intCarrier else none
+
 def symPrimResultTy? (nodes : List SymNode) (op : SymPrim) (args : List Nat) :
     Option SymTy :=
   match op with
@@ -119,6 +132,8 @@ def symPrimResultTy? (nodes : List SymNode) (op : SymPrim) (args : List Nat) :
       if symArgsHaveTys nodes args [.float, .float] then some .float else none
   | .floatLe =>
       if symArgsHaveTys nodes args [.float, .float] then some .bool else none
+  | .intAdd =>
+      if symArgsHaveTys nodes args [.int, .int] then some .int else none
   | .stringEq =>
       if symArgsHaveTys nodes args [.string, .string] then some .bool else none
   | .stringConcat =>
@@ -155,6 +170,7 @@ def checkBlockFuel : Nat → List FragTy → FragBlock → Bool
             then some .boolI32
             else none
         | .prim op args => primResultTy? checked op args
+        | .hostCall role _funcIdx args => hostCallResultTy? checked role args
         | .ifElse cond thenBlock elseBlock =>
             if hasTy checked cond .boolI32 &&
                checkBlockFuel fuel params thenBlock &&
@@ -188,6 +204,7 @@ def checkSymBlockFuel : Nat → List SymTy → SymBlock → Bool
         match kind with
         | .param index => params[index]?
         | .constBool _ => some .bool
+        | .constInt _ => some .int
         | .constFloatBits _ => some .float
         | .constStringBytes bytes =>
             if bytesAllBytes bytes then some .string else none
@@ -452,8 +469,19 @@ def encodeSymPrim? : SymPrim → Option FragPrim
   | .floatAdd => some .f64Add
   | .floatMul => some .f64Mul
   | .floatLe => some .f64Le
+  -- `intAdd` has no representation-level primitive: the encoder binds it to a
+  -- `hostCall .add` node through the byte-derived host-role table instead.
+  | .intAdd => none
   | .stringEq => none
   | .stringConcat => none
+
+/-- Look up the resolved wasm function index for one host role in the
+    byte-derived role table an artifact claim carries. A role the table lacks
+    fail-closes the encoding (`none`). -/
+def hostRoleIdx? (hostTable : List (HostRole × Nat)) (role : HostRole) : Option Nat :=
+  match hostTable with
+  | [] => none
+  | (r, idx) :: rest => if r = role then some idx else hostRoleIdx? rest role
 
 def symIntSmallConstCmpPrim? : SymIntCmp → Option FragPrim
   | .eq => some .i64Eq
@@ -527,9 +555,9 @@ def pushEncodedNode
   let (nodes, id) := appendFragNode st.nodes ty kind
   ({ st with nodes := nodes }, id)
 
-def encodeSymBlockFuel : Nat → SymBlock → Option FragBlock
-  | 0, _ => none
-  | fuel + 1, block =>
+def encodeSymBlockFuel : Nat → List (HostRole × Nat) → SymBlock → Option FragBlock
+  | 0, _, _ => none
+  | fuel + 1, hostTable, block =>
       let encodeNode (st : SymEncodeState) (node : SymNode) : Option SymEncodeState := do
         if node.id = st.symToFrag.length then
           let fragTy ← encodeSymTy? node.ty
@@ -540,15 +568,32 @@ def encodeSymBlockFuel : Nat → SymBlock → Option FragBlock
           | .constBool value =>
               let (st, id) := pushEncodedNode st fragTy (.constBool value)
               some { st with symToFrag := st.symToFrag ++ [id] }
+          | .constInt value =>
+              -- A source Int literal is representation-boxed at the point of
+              -- appearance: push the raw `i64` constant, then the byte-derived
+              -- `box` host call; the source node maps to the boxed carrier.
+              let boxIdx ← hostRoleIdx? hostTable .box
+              let (st, constId) := pushEncodedNode st .i64 (.constI64 value)
+              let (st, boxedId) :=
+                pushEncodedNode st fragTy (.hostCall .box boxIdx [constId])
+              some { st with symToFrag := st.symToFrag ++ [boxedId] }
           | .constFloatBits bits =>
               let (st, id) := pushEncodedNode st fragTy (.constF64Bits bits)
               some { st with symToFrag := st.symToFrag ++ [id] }
           | .constStringBytes _ => none
           | .prim op args =>
-              let prim ← encodeSymPrim? op
-              let fragArgs ← args.mapM (encodedValue? st)
-              let (st, id) := pushEncodedNode st fragTy (.prim prim fragArgs)
-              some { st with symToFrag := st.symToFrag ++ [id] }
+              match op with
+              | .intAdd =>
+                  let addIdx ← hostRoleIdx? hostTable .add
+                  let fragArgs ← args.mapM (encodedValue? st)
+                  let (st, id) :=
+                    pushEncodedNode st fragTy (.hostCall .add addIdx fragArgs)
+                  some { st with symToFrag := st.symToFrag ++ [id] }
+              | _ =>
+                  let prim ← encodeSymPrim? op
+                  let fragArgs ← args.mapM (encodedValue? st)
+                  let (st, id) := pushEncodedNode st fragTy (.prim prim fragArgs)
+                  some { st with symToFrag := st.symToFrag ++ [id] }
           | .construct _ _ _ => none
           | .intConstCmp op value constant =>
               let carrier ← encodedValue? st value
@@ -561,8 +606,8 @@ def encodeSymBlockFuel : Nat → SymBlock → Option FragBlock
               some { st with symToFrag := st.symToFrag ++ [id] }
           | .ifElse cond thenBlock elseBlock =>
               let cond ← encodedValue? st cond
-              let thenFrag ← encodeSymBlockFuel fuel thenBlock
-              let elseFrag ← encodeSymBlockFuel fuel elseBlock
+              let thenFrag ← encodeSymBlockFuel fuel hostTable thenBlock
+              let elseFrag ← encodeSymBlockFuel fuel hostTable elseBlock
               let (st, id) := pushEncodedNode st fragTy (.ifElse cond thenFrag elseFrag)
               some { st with symToFrag := st.symToFrag ++ [id] }
         else
@@ -580,13 +625,16 @@ def encodeSymBlockFuel : Nat → SymBlock → Option FragBlock
           | none => none
       | none => none
 
-def encodeSymBlock? (block : SymBlock) : Option FragBlock :=
-  encodeSymBlockFuel maxFuel block
+def encodeSymBlock? (hostTable : List (HostRole × Nat)) (block : SymBlock) :
+    Option FragBlock :=
+  encodeSymBlockFuel maxFuel hostTable block
 
-def encodeSymRawPlanToExprFragmentRawPlan (plan : SymRawPlan) :
+def encodeSymRawPlanToExprFragmentRawPlan
+    (hostTable : List (HostRole × Nat)) (plan : SymRawPlan) :
     Option ExprFragmentRawPlan :=
   if checkSymRawPlan plan then
-    match encodeSymTys? plan.params, encodeSymTy? plan.result, encodeSymBlock? plan.body with
+    match encodeSymTys? plan.params, encodeSymTy? plan.result,
+          encodeSymBlock? hostTable plan.body with
     | some params, some result, some body =>
         some { profile := "expr-fragment-v1", params := params, result := result, body := body }
     | _, _, _ => none

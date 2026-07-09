@@ -3022,17 +3022,27 @@ pub(super) fn emit_module_with(
         codes.function(&start);
     }
 
+    // Host-bound plan nodes (Int literals box; `intAdd` calls the carrier
+    // add helper) encode against the module's own helper indices, which the
+    // classifier later re-derives from the emitted bytes as the host-role
+    // table.
+    let fragment_host_table = crate::codegen::cert::FragHostTable {
+        box_idx: registry.aint_from_i64_fn_idx,
+        add_idx: builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintAdd),
+    };
     for (i, _fd) in fn_defs.iter().enumerate() {
         let self_wasm_idx = import_count + 1 + (i as u32);
         if let (Some(plan), Some(carrier)) =
             (fragment_plan_for[i].as_ref(), registry.aint_struct_idx)
         {
-            let expr_plan = plan.to_expr_fragment_plan().ok_or_else(|| {
-                WasmGcError::Validation(format!(
-                    "fragment plan encoding for fn `{}` failed",
-                    resolved_fn_defs[i].name
-                ))
-            })?;
+            let expr_plan = plan
+                .to_expr_fragment_plan(&fragment_host_table)
+                .ok_or_else(|| {
+                    WasmGcError::Validation(format!(
+                        "fragment plan encoding for fn `{}` failed",
+                        resolved_fn_defs[i].name
+                    ))
+                })?;
             let func = crate::codegen::cert::lower_expr_fragment_plan_function(&expr_plan, carrier)
                 .map_err(|e| {
                     WasmGcError::Validation(format!(

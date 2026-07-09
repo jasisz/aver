@@ -116,6 +116,11 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
     let mut has_string_eq = false;
     let mut has_string_concat = false;
     for c in certs {
+        if c.int_add_face().is_some() {
+            has_box = true;
+            has_add = true;
+            continue;
+        }
         match c.inner() {
             Cert::StraightLine { .. } => {
                 has_box = true;

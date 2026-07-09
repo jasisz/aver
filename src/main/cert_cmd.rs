@@ -489,9 +489,20 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     //     reading the operator here does not widen trust — `lake` rejects any
     //     mismatch. Only the `def X__fuel` operator is read; nothing is executed.
     let model_files = read_lean_files(cert_dir);
-    let non_expr_cert = cert::rederive_certificate_without_expr_fragments(&bytes, &model_files)?;
+    // Exports the manifest routes through checked expr-fragment plan sidecars
+    // are excluded from legacy byte classification BY NAME: a plan-first
+    // export that also matches a legacy template (the straight-line integer
+    // shape) must not produce a duplicate obligation for the same function.
+    // This is fail-closed: an entry claiming the plan-first class without a
+    // sidecar that checks against the bytes is declined below, never silently
+    // re-admitted through the legacy classifier.
+    let plan_covered_exports = expr_fragment_class_exports(&manifest)?;
+    let non_expr_cert = cert::rederive_certificate_without_expr_fragments(
+        &bytes,
+        &model_files,
+        &plan_covered_exports,
+    )?;
     let mut rederived = non_expr_cert.obligations;
-    let derived_contracts = non_expr_cert.contracts;
 
     // 2c. Expression-fragment sidecars are untrusted proof-carrying metadata.
     //     Source-projectable fragments are admitted from `source_fragment`
@@ -501,8 +512,12 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     //     Representation `fragment` remains solely as a fallback for fragments
     //     that cannot yet be named in SymPlan. The byte classifier no longer
     //     decides which expr fragments are in scope.
-    let sidecar_obligations =
+    let (sidecar_obligations, sidecar_contracts) =
         checked_fragment_sidecar_obligations(cert_dir, &manifest, &bytes, &rederived)?;
+    // Plan-covered exports contribute their runtime contracts here instead of
+    // through the legacy classifier they are excluded from; merged in the
+    // canonical contract order the emitter uses.
+    let derived_contracts = merge_runtime_contracts(non_expr_cert.contracts, sidecar_contracts);
     rederived.extend(sidecar_obligations);
     rederived.sort_by_key(|r| r.func_order);
     reject_duplicate_rederived_func_orders(&rederived)?;
@@ -537,7 +552,17 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     //    checked-plan bindings (code/host/self/carrier of every obligation
     //    pinned to byte-bound checker values with `rfl`), the final-theorem type
     //    ascription, and the axiom-whitelist check (see `checker_witness`).
-    let witness = checker_witness(&actual, &cands, &rederived, &derived_contracts);
+    // Byte-derived host-role table: source-plan encoding in the witness and
+    // artifact claims always runs against these indices, never plan-supplied
+    // ones.
+    let host_table_lean = cert::byte_derived_frag_host_table_lean(&bytes)?;
+    let witness = checker_witness(
+        &actual,
+        &cands,
+        &rederived,
+        &derived_contracts,
+        &host_table_lean,
+    );
     std::fs::write(build.path.join("CheckerWitness.lean"), &witness)
         .map_err(|e| format!("cannot write checker witness: {e}"))?;
     let w = run_lake(&build.path, &["env", "lean", "CheckerWitness.lean"])?;
@@ -599,18 +624,56 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     })
 }
 
+/// The export names the untrusted manifest routes through the plan-first
+/// expr-fragment class. Used only to EXCLUDE those names from legacy byte
+/// classification; admission still requires the sidecar check to succeed.
+fn expr_fragment_class_exports(manifest: &Value) -> Result<Vec<String>, String> {
+    let certified = manifest
+        .get("certified")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "cert-manifest.json is missing array field `certified`".to_string())?;
+    let mut names = Vec::new();
+    for entry in certified {
+        let name = entry.get("name").and_then(Value::as_str).ok_or_else(|| {
+            "cert-manifest.json `certified[]` entry is missing string field `name`".to_string()
+        })?;
+        if entry.get("class").and_then(Value::as_str) == Some("expr-fragment-v1") {
+            names.push(name.to_string());
+        }
+    }
+    Ok(names)
+}
+
+/// Union of byte-derived legacy contracts and plan-sidecar contracts, in the
+/// canonical order the emitter renders.
+fn merge_runtime_contracts(legacy: Vec<String>, sidecar: Vec<String>) -> Vec<String> {
+    let canonical = [
+        cert::BOX_CONTRACT,
+        cert::INT_ADD_CONTRACT,
+        cert::INT_SUB_CONTRACT,
+        cert::STRING_EQ_CONTRACT,
+        cert::STRING_CONCAT_CONTRACT,
+    ];
+    canonical
+        .iter()
+        .filter(|c| legacy.iter().any(|l| l == *c) || sidecar.iter().any(|s| s == *c))
+        .map(|c| c.to_string())
+        .collect()
+}
+
 fn checked_fragment_sidecar_obligations(
     cert_dir: &Path,
     manifest: &Value,
     wasm_bytes: &[u8],
     byte_derived_legacy: &[cert::RederivedObligation],
-) -> Result<Vec<cert::RederivedObligation>, String> {
+) -> Result<(Vec<cert::RederivedObligation>, Vec<String>), String> {
     let certified = manifest
         .get("certified")
         .and_then(Value::as_array)
         .ok_or_else(|| "cert-manifest.json is missing array field `certified`".to_string())?;
 
     let mut obligations = Vec::new();
+    let mut contracts = Vec::new();
     for entry in certified {
         let name = entry.get("name").and_then(Value::as_str).ok_or_else(|| {
             "cert-manifest.json `certified[]` entry is missing string field `name`".to_string()
@@ -893,6 +956,7 @@ fn checked_fragment_sidecar_obligations(
                         .unwrap_or_default()
                 ));
             }
+            contracts.extend(source_check.runtime_contracts.iter().cloned());
             obligations.push(source_check.obligation);
             continue;
         }
@@ -937,9 +1001,10 @@ fn checked_fragment_sidecar_obligations(
             ));
         }
 
+        contracts.extend(plan_check.runtime_contracts.iter().cloned());
         obligations.push(plan_check.obligation);
     }
-    Ok(obligations)
+    Ok((obligations, contracts))
 }
 
 fn read_fragment_sidecar(
@@ -1550,6 +1615,7 @@ struct LeanExprFragmentArtifactClaims {
 
 fn lean_expr_fragment_artifact_claims(
     rederived: &[cert::RederivedObligation],
+    host_table_lean: &str,
 ) -> LeanExprFragmentArtifactClaims {
     let mut sym_claims = Vec::new();
     let mut string_eq_claims = Vec::new();
@@ -1693,7 +1759,8 @@ fn lean_expr_fragment_artifact_claims(
         if let Some(sym_plan) = r.fragment_sym_plan_lean.as_ref() {
             sym_claims.push(format!(
                 "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
-                 carrier := {carrier}, plan := (({sym_plan}) : AverCert.Schema.SymRawPlan), \
+                 carrier := {carrier}, hostTable := {host_table_lean}, \
+                 plan := (({sym_plan}) : AverCert.Schema.SymRawPlan), \
                  obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.SymFragmentClaim)",
                 name = r.name,
                 carrier = r.carrier
@@ -1818,8 +1885,9 @@ fn lean_fragment_acceptance_proof_block(
 
 fn lean_expr_fragment_obligation_acceptance_pins(
     rederived: &[cert::RederivedObligation],
+    host_table_lean: &str,
 ) -> String {
-    let witness = lean_expr_fragment_artifact_claims(rederived);
+    let witness = lean_expr_fragment_artifact_claims(rederived, host_table_lean);
     let proof_block = lean_fragment_acceptance_proof_block(&witness, "  ");
     let artifact = lean_artifact_data_literal(
         &witness.sym_claims,
@@ -1840,8 +1908,11 @@ fn lean_expr_fragment_obligation_acceptance_pins(
     )
 }
 
-fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> String {
-    let witness = lean_expr_fragment_artifact_claims(rederived);
+fn lean_accepted_artifact_witness(
+    rederived: &[cert::RederivedObligation],
+    host_table_lean: &str,
+) -> String {
+    let witness = lean_expr_fragment_artifact_claims(rederived, host_table_lean);
     let artifact = lean_artifact_data_literal(
         &witness.sym_claims,
         &witness.string_eq_claims,
@@ -1934,6 +2005,7 @@ fn checker_witness(
     cands: &Candidates,
     rederived: &[cert::RederivedObligation],
     derived_contracts: &[String],
+    host_table_lean: &str,
 ) -> String {
     // Count is the JSON-claimed number of certified exports, verified by `rfl`
     // against `obligations.length` (so a JSON claiming more or fewer than the
@@ -1965,8 +2037,8 @@ fn checker_witness(
     let expr_fragment_func_binding_pins = lean_expr_fragment_func_binding_pins(rederived);
     let expr_fragment_accepted_pins = lean_expr_fragment_accepted_pins(rederived);
     let expr_fragment_obligation_acceptance_pins =
-        lean_expr_fragment_obligation_acceptance_pins(rederived);
-    let accepted_artifact_witness = lean_accepted_artifact_witness(rederived);
+        lean_expr_fragment_obligation_acceptance_pins(rederived, host_table_lean);
+    let accepted_artifact_witness = lean_accepted_artifact_witness(rederived, host_table_lean);
     // Semantic-face bindings: pin each obligation's typed `Dom`/`Cod`/`domRepr`/
     // `codRepr` to the STANDARD form its BYTE-derived class implies, and prove
     // every domain is inhabited. These are the faces the schema-v3 checker did
@@ -2024,7 +2096,7 @@ fn checker_witness(
          -- or stringConcatPlans.\n\
          example : AverCert.manifest.symFragmentPlans = {sym_fragment_plans} := rfl\n\
          example : AverCert.manifest.symFragmentPlans.all (fun p => AverCert.PlanCheck.checkSymRawPlan p.2) = true := rfl\n\
-         example : AverCert.manifest.symFragmentPlans.map (fun p => (p.1, AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan p.2)) = {sym_fragment_encoded_plans} := rfl\n\n\
+         example : AverCert.manifest.symFragmentPlans.map (fun p => (p.1, AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan {host_table_lean} p.2)) = {sym_fragment_encoded_plans} := rfl\n\n\
          -- String.eq source plans: the manifest's Lean-data equality plans\n\
          -- are pinned to checker-rendered `StringEqRawPlan` terms reconstructed\n\
          -- from sidecars that already passed hash checks and byte-derived\n\

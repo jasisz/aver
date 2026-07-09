@@ -1,19 +1,29 @@
 pub(crate) fn fragment_plan_from_mir_fn(
     mir_fn: &crate::ir::mir::MirFn,
 ) -> Option<FragmentPlan> {
+    // Encodability gate at MIR time uses a placeholder host table (indices do
+    // not affect encoding SHAPE) and requires full canonical BYTE lowering to
+    // succeed, because the wasm-gc emitter emits the function body from this
+    // plan: a plan that cannot byte-lower must never be selected.
     if let Some(plan) = sym_plan_from_mir_fn(mir_fn)
-        && plan.to_expr_fragment_plan().is_some()
+        && let Some(frag) = plan.to_expr_fragment_plan(&FragHostTable::placeholder())
+        && lower_expr_fragment_plan_code_entry_bytes(&frag, 0).is_ok()
     {
         return Some(FragmentPlan::Sym(plan));
     }
-    repr_expr_fragment_plan_from_mir_fn(mir_fn).map(FragmentPlan::Expr)
+    let plan = repr_expr_fragment_plan_from_mir_fn(mir_fn)?;
+    if lower_expr_fragment_plan_code_entry_bytes(&plan, 0).is_ok() {
+        Some(FragmentPlan::Expr(plan))
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
 pub(crate) fn expr_fragment_plan_from_mir_fn(
     mir_fn: &crate::ir::mir::MirFn,
 ) -> Option<ExprFragmentPlan> {
-    fragment_plan_from_mir_fn(mir_fn)?.to_expr_fragment_plan()
+    fragment_plan_from_mir_fn(mir_fn)?.to_expr_fragment_plan(&FragHostTable::placeholder())
 }
 
 pub(crate) fn sym_plan_from_mir_fn(mir_fn: &crate::ir::mir::MirFn) -> Option<SymPlan> {
@@ -137,6 +147,29 @@ impl MirSymPlanBuilder<'_> {
     }
 
     fn lower_binop(&mut self, binop: &crate::ir::mir::MirBinOp) -> Option<(SymValueId, SymTy)> {
+        // Narrow straight-line integer face: exactly `param + k` over the
+        // single Int parameter (const on the right, matching the emitted byte
+        // shape). Anything broader stays unplanned so the emitted bytes are
+        // untouched and legacy classification is unaffected.
+        if binop.op == crate::ast::BinOp::Add
+            && self.params_by_slot.len() == 1
+            && self.expr_is_int_param(&binop.lhs)
+            && let Some(k) = mir_int_literal(&binop.rhs)
+        {
+            let (lhs, lhs_ty) = self.lower_expr(&binop.lhs)?;
+            if lhs_ty != SymTy::Int {
+                return None;
+            }
+            let (rhs, _) = self.push_node(SymTy::Int, SymNodeKind::ConstInt(k))?;
+            return self.push_node(
+                SymTy::Int,
+                SymNodeKind::Prim {
+                    op: SymPrim::IntAdd,
+                    args: vec![lhs, rhs],
+                },
+            );
+        }
+
         if let Some((operand, op, k, const_on_left)) = self.int_const_cmp_shape(binop) {
             return self.lower_int_const_cmp(operand, op, k, const_on_left);
         }
@@ -723,7 +756,7 @@ mod tests {
         assert_eq!(sym.result, SymTy::Int);
         assert!(matches!(sym.body.nodes[0].kind, SymNodeKind::Param { index: 0 }));
         let expr_plan = sym
-            .to_expr_fragment_plan()
+            .to_expr_fragment_plan(&FragHostTable::placeholder())
             .expect("source int identity should encode to expr-fragment");
         assert_eq!(expr_plan.params, vec![FragTy::IntCarrier]);
         assert_eq!(expr_plan.result, FragTy::IntCarrier);

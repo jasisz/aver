@@ -184,6 +184,33 @@ impl<'a> FragPlanParser<'a> {
                 require_plan_ty(id, ty, expected)?;
                 FragNodeKind::Prim { op, args }
             }
+            "hostcall" => {
+                let role = attrs
+                    .get("role")
+                    .map(String::as_str)
+                    .and_then(FragHostRole::from_plan_tag)
+                    .ok_or_else(|| format!("plan node v{} has unknown host role", id.0))?;
+                let func_idx = plan_attr_u32(id, &attrs, "func")?;
+                let args = plan_attr_values(id, &attrs, "args")?;
+                let (expected_args, result_ty) = role.signature();
+                if args.len() != expected_args.len() {
+                    return Err(format!(
+                        "plan hostcall v{} has {} args, expected {}",
+                        id.0,
+                        args.len(),
+                        expected_args.len()
+                    ));
+                }
+                for (arg, expected) in args.iter().zip(expected_args) {
+                    require_plan_node_ty(nodes, *arg, *expected)?;
+                }
+                require_plan_ty(id, ty, result_ty)?;
+                FragNodeKind::HostCall {
+                    role,
+                    func_idx,
+                    args,
+                }
+            }
             "if" => {
                 let cond = plan_attr_value(id, &attrs, "cond")?;
                 require_plan_node_ty(nodes, cond, FragTy::BoolI32)?;
@@ -368,6 +395,7 @@ fn reject_extra_plan_attrs(
         "struct.get" => &["field", "receiver"],
         "ref.is_null" => &["value"],
         "prim" => &["op", "args"],
+        "hostcall" => &["role", "func", "args"],
         "if" => &["cond"],
         _ => &[],
     };

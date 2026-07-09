@@ -219,6 +219,18 @@ fn render_closure_code_value(closure: &[ClosureEntry]) -> String {
 /// `holds` vacuous even with an honest `code`) fails the kernel witness.
 /// Definitionally equal to the honest `render_host_def` builder.
 fn render_host_value(c: &Cert) -> String {
+    // Host-call expr fragments with the straight-line integer face wire the
+    // byte-derived box/add indices exactly like the legacy straight-line class.
+    if let Some(face) = c.int_add_face() {
+        return format!(
+            "fun add _ _ _ _ => fun fn =>\n    \
+             if fn = {box_idx} then some (1, boxRef {carrier})\n    \
+             else if fn = {add_idx} then some (2, add)\n    else none",
+            box_idx = face.box_idx,
+            add_idx = face.add_idx,
+            carrier = c.carrier(),
+        );
+    }
     match c.inner() {
         Cert::StraightLine {
             carrier,
