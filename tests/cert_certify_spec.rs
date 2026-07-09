@@ -286,6 +286,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "source-level int fragment should be claimed through SymPlan:\n{artifact_lean}"
     );
     assert!(
+        artifact_lean.contains("theorem certificate : AverCert.AcceptedArtifact.accepted data :="),
+        "artifact root should be a theorem with the exact AcceptedArtifact target:\n{artifact_lean}"
+    );
+    assert!(
         !artifact_lean.contains("plan := AverCert.Plans.intLessZeroPlan"),
         "source-level int fragment should not carry a duplicate ExprFragmentClaim:\n{artifact_lean}"
     );

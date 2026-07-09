@@ -622,7 +622,7 @@ fn render_artifact(analysis: &Analysis) -> String {
              (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n\
              AverCert.AcceptedArtifact.accepted data := by\n\
          {fragment_proof}\n\
-         def certificate : AverCert.AcceptedArtifact.accepted data :=\n  \
+         theorem certificate : AverCert.AcceptedArtifact.accepted data :=\n  \
            acceptedWithFinal AverCert.Final.cert\n\n\
          end AverCert.Artifact\n",
         sym_claims_list = claims.sym_claims,
