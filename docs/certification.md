@@ -1,16 +1,23 @@
 # Artifact Behavioral Certificates (`aver compile --certify`)
 
-> Status: v0, certification level **L1** (conditional on named runtime contracts). Nine certified function classes (three integer, four ADT, and two cross-function: composition and mutual recursion); the one-literal `String.eq` beachhead reuses the existing verbatim widened match class rather than adding a class. Everything else is **declined fail-closed** and listed with a reason. This document is the contract; the emitted `cert-manifest.json` is its machine-readable form.
+> Status: v0, certification level **L1** (conditional on named runtime
+> contracts). The current goal matrix certifies 24 exports across 13 manifest
+> classes: integer recursion/composition families, ADT/variant/verbatim
+> families, scalar expression fragments, mutual recursion, and the
+> `String.concat` beachhead. The one-literal `String.eq` beachhead reuses the
+> existing verbatim widened match class rather than adding a class. Everything
+> else is **declined fail-closed** and listed with a reason. This document is
+> the contract; the emitted `cert-manifest.json` is its machine-readable form.
 
 > Architecture direction: new certificate work should follow
 > [plan-first canonical lowering](certification-architecture.md). Expression
 > fragments no longer emit or accept trace sidecars; their plan sidecars are
 > untrusted witnesses checked by verifier-owned canonical lowering, then merged
 > with non-expression obligations by the byte-derived function order. The
-> compiler now emits source-projectable Float/Bool expression islands from
+> compiler now emits source-projectable Float/Bool and Int literal-predicate
+> expression islands from
 > `MIR -> SymPlan -> ExprFragmentPlan encoding -> canonical Wasm`; fragments
-> that still only have representation meaning, such as the current Int-carrier
-> literal-comparison predicates, remain on an explicit
+> that still only have representation meaning remain on an explicit
 > `MIR -> ExprFragmentPlan -> canonical Wasm` fallback. New expression
 > certificates should extend the source-level `SymPlan` path whenever the
 > operation has Aver-level meaning, and use the representation fallback only for

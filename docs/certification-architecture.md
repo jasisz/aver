@@ -91,20 +91,31 @@ with Aver's admitted source fragment while the encoder stays as the thin
 target-specific layer. The current `expr-fragment-v1` definitions keep the
 wasm representation type as `FragTy`; source-level projection is explicit
 (`FragTy.sourceTy?`) and deliberately has no raw `WVal` fallback. Rust also has
-a first `SymPlan` model that can project direct source-level float/bool
-fragments and intentionally rejects representation-only carrier-limb fragments.
-The audited Lean `Schema.lean` mirrors this direction with `SymTy`, `SymPrim`
-and `SymRawPlan` data definitions. For fragments that
+a first `SymPlan` model that can project the current host-free scalar
+expression fragments: direct Float/Bool expressions and Int literal predicates
+whose source meaning is explicit even though their encoder expands to carrier
+limb checks. It still intentionally rejects representation-only carrier-limb
+fragments. The audited Lean `Schema.lean` mirrors this direction with `SymTy`,
+`SymPrim`, `SymIntCmp` and `SymRawPlan` data definitions. For fragments that
 already project cleanly, `AcceptedArtifact.lean` accepts a source-level
 `SymFragmentClaim`: Lean checks/encodes `SymRawPlan -> ExprFragmentRawPlan`,
 then the existing byte-origin predicate binds that encoded representation plan
 to the exact function bytes. Representation-only fragments remain on the
 `ExprFragmentClaim` fallback until the source grammar grows explicit
 constructors for them. The emitted manifest now uses `sym-fragment-v1.plan` as
-the preferred sidecar for source-projectable fragments; `expr-fragment-v1.plan`
-remains the fallback and the checked encoder target. Representation types are
-therefore already moving into checked encoding details rather than the artifact
-surface.
+the preferred sidecar for every current scalar expression fragment;
+`expr-fragment-v1.plan` remains the fallback and the checked encoder target.
+Representation types are therefore already moving into checked encoding details
+rather than the artifact surface.
+
+Full migration to `SymPlan` means more than replacing scalar sidecars. It means
+every accepted certificate family is either represented by an Aver-level source
+plan whose checker/encoder/lowerer binds it to exact Wasm bytes, or explicitly
+outside the certified surface and declined fail-closed. At the time of this
+note, `expr-fragment` has crossed that line for the current goal matrix.
+String/host-call fragments, ADT/list/verbatim shapes and recursion families
+still use older obligation-specific renderers and should be migrated one family
+at a time rather than folded into `SymPlan` through a raw `WVal` escape hatch.
 
 ## Artifact Shape
 
@@ -312,12 +323,11 @@ complete obligation list for non-expression classes.
 
 Producer-side status: the compiler now uses plan-first emission for the current
 host-free scalar expression islands. Source-projectable Float/Bool expression
-islands are derived as `SymPlan` directly from MIR, encoded to the
-representation `ExprFragmentPlan`, and emitted through the same canonical plan
-lowerer used by the verifier. Representation-only islands, such as the current
-Int-carrier literal-comparison predicates, remain on an explicit
-`ExprFragmentPlan` fallback until their Aver-level constructors exist. More
-complex future fragments should move into the
+islands and Int literal predicates are derived as `SymPlan` directly from MIR,
+encoded to the representation `ExprFragmentPlan`, and emitted through the same
+canonical plan lowerer used by the verifier. Representation-only islands remain
+on an explicit `ExprFragmentPlan` fallback until their Aver-level constructors
+exist. More complex future fragments should move into the
 `source/MIR -> SymPlan -> representation encoding -> canonical Wasm` path
 instead of adding new post-emission recognizers.
 
@@ -612,19 +622,22 @@ Sunset criteria:
     canonically lowers to the exact emitted code-entry bytes, and store the
     canonical lowered ops.
 15. Done for current scalar expression islands: source-projectable host-free
-    Float/Bool codegen now follows
-    `MIR -> SymPlan -> ExprFragmentPlan encoding -> canonical Wasm body`, while
-    current Int literal-comparison codegen remains an explicit
-    representation-level fallback. Add future Int-carrier arithmetic by adding
-    Aver-level `SymPlan` constructors plus their representation encoding, not by
-    adding byte recognizers.
-16. Done for source-level bridge v0: source-projectable scalar fragments now
+    Float/Bool codegen and Int literal-predicate codegen now follow
+    `MIR -> SymPlan -> ExprFragmentPlan encoding -> canonical Wasm body`. Add
+    future Int-carrier arithmetic by adding Aver-level `SymPlan` constructors
+    plus their representation encoding, not by adding byte recognizers.
+16. Done for source-level bridge v0: current scalar expression fragments now
     enter artifact acceptance as `SymFragmentClaim`; Lean checks/encodes their
     `SymRawPlan` into the byte-bound `ExprFragmentRawPlan` before applying the
     existing accepted-export predicate. Representation-only fragments remain on
-    an explicit fallback list.
-17. Delete old whole-function scalar recognizer acceptance once plan-first has
-   parity.
+    an explicit fallback list, which is empty for the current goal matrix.
+17. Next: add a source-level plan family for string/host-call fragments instead
+    of treating them as `WVal` verbatim models; start with the existing
+    `String.concat` beachhead.
+18. Then: migrate ADT/list/verbatim and recursion families into source-level
+    plan families or deliberately sunset them from the certified surface.
+19. Delete old whole-function scalar recognizer acceptance once plan-first has
+    parity and diagnostics no longer depend on it.
 
 The implementation should move slowly, but every step should tighten the
 acceptance path rather than add another permanent recognizer.
