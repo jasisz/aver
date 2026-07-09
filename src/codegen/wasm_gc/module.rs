@@ -12,11 +12,15 @@
 //! 3. **Export section** — `_start` (always at fn idx 0) plus every
 //!    user fn by name.
 //! 4. **Code section** — `_start` calls `main` and drops any return
-//!    value; user fns get their bodies from the MIR body emitter
-//!    (`body::emit_fn_body_via_mir`), with an `unreachable` trap stub
-//!    for the rare shape it doesn't cover (a first-class fn value with
-//!    no funcref-table slot — a builtin/variant `FnValue` or a
-//!    let-bound fn-value call).
+//!    value; user fns normally get their bodies from the MIR body emitter
+//!    (`body::emit_fn_body_via_mir`). Small host-free expression certificate
+//!    islands are first lowered from MIR into source-level `SymPlan` when
+//!    possible, otherwise representation-level `ExprFragmentPlan`, and then
+//!    emitted through the shared canonical plan lowerer, so codegen and the
+//!    verifier share one byte rule. A residual function gets an `unreachable`
+//!    trap stub for the rare shape MIR does not cover (a first-class fn value
+//!    with no funcref-table slot — a builtin/variant `FnValue` or a let-bound
+//!    fn-value call).
 //!
 //! First-class `Fn` values lower to an `i32` dense index into a single
 //! funcref table (table 0); `Fn`-param calls dispatch via
@@ -128,7 +132,14 @@ pub(super) fn emit_module_with(
     items: &[TopLevel],
     handler_name: Option<&str>,
     target: super::TargetMode,
-) -> Result<(Vec<u8>, usize), WasmGcError> {
+) -> Result<
+    (
+        Vec<u8>,
+        usize,
+        Vec<crate::codegen::cert::FragmentPlanArtifact>,
+    ),
+    WasmGcError,
+> {
     let fn_defs: Vec<&FnDef> = items
         .iter()
         .filter_map(|it| match it {
@@ -2720,9 +2731,11 @@ pub(super) fn emit_module_with(
     //
     // `mir_fn_for[i]` is `Some(&MirFn)` when the i-th fn lowered to
     // MIR (always true on valid input — every resolved fn lowers).
-    // `mir_dispatch[i]` is the final per-fn decision: `true` when the
-    // MIR body emitter rendered the fn, `false` when it returned `None`
-    // and the fn got a trap-stub body instead. It is computed once in
+    // `fragment_plan_for[i]` is set when a small certified island
+    // can be emitted from `MIR -> FragmentPlan -> canonical Wasm`.
+    // `mir_dispatch[i]` is the final per-fn non-stub decision: `true`
+    // when either the plan path or the MIR body emitter rendered the fn,
+    // `false` when the fn got a trap-stub body. It is computed once in
     // the caller_fn pre-pass below and reused verbatim by the dry-run +
     // real code-emit loops, so all three see the same path per fn and
     // the discovered locals / caller_fn registration stay consistent.
@@ -2730,6 +2743,15 @@ pub(super) fn emit_module_with(
         .iter()
         .map(|rfd| mir_program.fn_by_id(rfd.fn_id))
         .collect();
+    let fragment_plan_for: Vec<Option<crate::codegen::cert::FragmentPlan>> =
+        if registry.aint_struct_idx.is_some() {
+            mir_fn_for
+                .iter()
+                .map(|mir_fn| mir_fn.and_then(crate::codegen::cert::fragment_plan_from_mir_fn))
+                .collect()
+        } else {
+            vec![None; fn_defs.len()]
+        };
     let mut mir_dispatch: Vec<bool> = vec![false; fn_defs.len()];
 
     // Pre-pass over user fn bodies — populates `caller_fn_collector`
@@ -2740,11 +2762,15 @@ pub(super) fn emit_module_with(
     // emit later in the code section calls `register` again with the
     // same names; the collector is idempotent so the idx assignment
     // matches what the call sites observed during this probe. This
-    // pass also decides MIR-emit vs trap-stub per fn (`mir_dispatch`):
+    // pass also decides plan/MIR-emit vs trap-stub per fn (`mir_dispatch`):
     // the chosen emitter runs here so its caller_fn registrations match
-    // the real code-emit loop. A trap-stub body emits no calls, so the
-    // pre-pass simply skips caller_fn collection for those fns.
+    // the real code-emit loop. Plan fragments and trap-stub bodies emit no
+    // calls, so the pre-pass simply skips caller_fn collection for those fns.
     for (i, _fd) in fn_defs.iter().enumerate() {
+        if fragment_plan_for[i].is_some() {
+            mir_dispatch[i] = true;
+            continue;
+        }
         let self_wasm_idx = import_count + 1 + (i as u32);
         let mut probe = Function::new([]);
         let used_mir = match mir_fn_for[i] {
@@ -2998,11 +3024,30 @@ pub(super) fn emit_module_with(
 
     for (i, _fd) in fn_defs.iter().enumerate() {
         let self_wasm_idx = import_count + 1 + (i as u32);
+        if let (Some(plan), Some(carrier)) =
+            (fragment_plan_for[i].as_ref(), registry.aint_struct_idx)
+        {
+            let expr_plan = plan.to_expr_fragment_plan().ok_or_else(|| {
+                WasmGcError::Validation(format!(
+                    "fragment plan encoding for fn `{}` failed",
+                    resolved_fn_defs[i].name
+                ))
+            })?;
+            let func = crate::codegen::cert::lower_expr_fragment_plan_function(&expr_plan, carrier)
+                .map_err(|e| {
+                    WasmGcError::Validation(format!(
+                        "fragment plan lowering for fn `{}` failed: {e}",
+                        resolved_fn_defs[i].name
+                    ))
+                })?;
+            codes.function(&func);
+            continue;
+        }
         // Dry run: discover extra locals by emitting into a throwaway
-        // fn. Cheaper than threading a separate pre-pass. The MIR /
-        // ResolvedExpr decision (`mir_dispatch[i]`) was fixed in the
-        // caller_fn pre-pass; reuse it here so the discovered locals
-        // match the body the real emit produces below.
+        // fn. Cheaper than threading a separate pre-pass. The plan/MIR
+        // decision (`mir_dispatch[i]` plus `fragment_plan_for[i]`)
+        // was fixed in the caller_fn pre-pass; reuse it here so the
+        // discovered locals match the body the real emit produces below.
         // A fn the MIR walker doesn't cover (`mir_dispatch[i] == false`)
         // gets a `unreachable` trap stub with zero extra locals —
         // `unreachable` is polymorphic so it validates for any
@@ -4521,7 +4566,18 @@ pub(super) fn emit_module_with(
     if std::env::var_os("AVER_WASMGC_MIR_COUNT").is_some() {
         eprintln!("AVER_WASMGC_MIR_EMITTED={mir_emitted}");
     }
-    Ok((bytes, mir_emitted))
+    let fragment_plans = fragment_plan_for
+        .iter()
+        .enumerate()
+        .filter_map(|(i, plan)| {
+            plan.clone()
+                .map(|plan| crate::codegen::cert::FragmentPlanArtifact {
+                    export_name: resolved_fn_defs[i].name.clone(),
+                    plan,
+                })
+        })
+        .collect();
+    Ok((bytes, mir_emitted, fragment_plans))
 }
 
 fn emit_user_types(

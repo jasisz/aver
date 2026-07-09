@@ -812,9 +812,7 @@ pub(super) fn body_has_self_tailcall(body: &FnBody, fn_name: &str) -> bool {
 fn expr_has_self_tailcall(expr: &Expr, fn_name: &str) -> bool {
     match expr {
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target, args: _, ..
-            } = boxed.as_ref();
+            let TailCallData { target, .. } = boxed.as_ref();
             target == fn_name
         }
         Expr::Match { arms, .. } => arms

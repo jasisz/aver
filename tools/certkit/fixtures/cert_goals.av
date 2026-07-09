@@ -1,0 +1,249 @@
+module CertGoals
+    intent =
+        "Certification goal matrix. This fixture is the primary progress"
+        "dashboard for artifact-level certificates; larger examples such as JSON"
+        "remain integration side-effects."
+    exposes [Op, Box, Wrap, Tag, Signal, User, addTwo, sumFrom, countDown, quad, hex16, isEven, isOdd, mkOp, evalOp, userName, boxInt, wrapItems, tagName, gauge, inAsciiDigit, quoteOrSelf, shout, intLessZero, intEqZero, boolAndGoal, floatAddGoal, floatMulAddGoal, floatLeGoal, listHeadGoal, sumListGoal]
+
+type Op
+  Add(Int)
+  Neg(Int)
+  Zero
+
+type Box
+  IntBox(Int)
+  StrBox(String)
+  Empty
+
+type Wrap
+  Items(List<Int>)
+  Nothing
+
+type Tag
+  A
+  B
+  C
+
+type Signal
+  Lo(Int)
+  Hi(Int)
+  Mid(Int)
+  Off
+
+record User
+  name: String
+  age: Int
+
+fn addTwo(x: Int) -> Int
+  ? "Straight-line integer arithmetic."
+  x + 2
+
+fn sumFrom(n: Int) -> Int
+  ? "Single-argument self recursion with non-zero base."
+  match n <= 0
+    true -> 7
+    false -> n + sumFrom(n - 1)
+
+fn countDown(n: Int, acc: Int) -> Int
+  ? "Two-argument tail-recursive accumulator."
+  match n <= 0
+    true -> acc
+    false -> countDown(n - 1, acc + n)
+
+fn double(x: Int) -> Int
+  ? "Straight-line callee for composition."
+  x + x
+
+fn quad(x: Int) -> Int
+  ? "Cross-function composition over an integer callee."
+  double(double(x))
+
+fn hex16(x: Int) -> Int
+  ? "Nested cross-function composition."
+  quad(quad(x))
+
+fn isEven(n: Int) -> Int
+  ? "Mutual-recursion member: 1 when n is even."
+  match n <= 0
+    true -> 1
+    false -> isOdd(n - 1)
+
+fn isOdd(n: Int) -> Int
+  ? "Mutual-recursion member: 1 when n is odd."
+  match n <= 0
+    true -> 0
+    false -> isEven(n - 1)
+
+fn mkOp(n: Int) -> Op
+  ? "ADT constructor certificate target."
+  Op.Add(n)
+
+fn evalOp(o: Op) -> Int
+  ? "ADT variant dispatch to integer results."
+  match o
+    Op.Add(x) -> x
+    Op.Neg(x) -> 0 - x
+    Op.Zero -> 0
+
+fn userName(u: User) -> String
+  ? "Record field projection."
+  u.name
+
+fn boxInt(b: Box) -> Int
+  ? "Widened integer match over a selected payload variant."
+  match b
+    Box.IntBox(n) -> n
+    _ -> 0
+
+fn wrapItems(w: Wrap) -> List<Int>
+  ? "Verbatim widened match over a list payload."
+  match w
+    Wrap.Items(xs) -> xs
+    _ -> []
+
+fn tagName(t: Tag) -> String
+  ? "Verbatim variant dispatch to distinct string literals."
+  match t
+    Tag.A -> "alpha"
+    Tag.B -> "beta"
+    Tag.C -> "gamma"
+
+fn gauge(s: Signal) -> Int
+  ? "General ADT variant dispatch with mixed arm semantics."
+  match s
+    Signal.Lo(x) -> 0 - x
+    Signal.Hi(x) -> x + 9
+    Signal.Mid(x) -> x
+    Signal.Off -> 7
+
+fn inAsciiDigit(c: Int) -> Bool
+  ? "Integer range predicate."
+  match c >= 48
+    true -> c <= 57
+    false -> false
+
+fn quoteOrSelf(c: String) -> String
+  ? "String.eq host contract through a literal match."
+  match c
+    "\"" -> "\\\""
+    _ -> c
+
+fn shout(s: String) -> String
+  ? "String.concat host contract through a literal suffix."
+  s + "!"
+
+fn intLessZero(n: Int) -> Bool
+  ? "Aspirational scalar comparison goal: n < 0."
+  match n < 0
+    true -> true
+    false -> false
+
+fn intEqZero(n: Int) -> Bool
+  ? "Aspirational scalar equality goal: n == 0."
+  match n == 0
+    true -> true
+    false -> false
+
+fn boolAndGoal(a: Bool, b: Bool) -> Bool
+  ? "Aspirational boolean branching goal."
+  match a
+    true -> b
+    false -> false
+
+fn floatAddGoal(a: Float, b: Float) -> Float
+  ? "Aspirational float arithmetic goal."
+  a + b
+
+fn floatMulAddGoal(a: Float, b: Float) -> Float
+  ? "Aspirational mixed float arithmetic goal."
+  a * b + a
+
+fn floatLeGoal(a: Float, b: Float) -> Bool
+  ? "Aspirational float comparison goal."
+  match a <= b
+    true -> true
+    false -> false
+
+fn listHeadGoal(xs: List<Int>) -> Int
+  ? "Aspirational list destructuring goal."
+  match xs
+    [] -> 0
+    [h, ..t] -> h
+
+fn sumListGoal(xs: List<Int>) -> Int
+  ? "Aspirational structural list recursion goal."
+  match xs
+    [] -> 0
+    [h, ..t] -> h + sumListGoal(t)
+
+verify addTwo
+  addTwo(1) => 3
+
+verify sumFrom
+  sumFrom(3) => 13
+
+verify countDown
+  countDown(3, 0) => 6
+
+verify hex16
+  hex16(3) => 48
+
+verify isEven
+  isEven(4) => 1
+
+verify evalOp
+  evalOp(Op.Neg(3)) => -3
+
+verify userName
+  userName(User(name = "Ada", age = 42)) => "Ada"
+
+verify boxInt
+  boxInt(Box.StrBox("x")) => 0
+
+verify wrapItems
+  wrapItems(Wrap.Items([1, 2])) => [1, 2]
+
+verify tagName
+  tagName(Tag.C) => "gamma"
+
+verify gauge
+  gauge(Signal.Hi(1)) => 10
+
+verify inAsciiDigit
+  inAsciiDigit(48) => true
+  inAsciiDigit(58) => false
+
+verify quoteOrSelf
+  quoteOrSelf("\"") => "\\\""
+
+verify shout
+  shout("go") => "go!"
+
+verify intLessZero
+  intLessZero(-1) => true
+  intLessZero(2) => false
+
+verify intEqZero
+  intEqZero(0) => true
+  intEqZero(3) => false
+
+verify boolAndGoal
+  boolAndGoal(true, false) => false
+  boolAndGoal(true, true) => true
+
+verify floatAddGoal
+  floatAddGoal(1.5, 2.0) => 3.5
+
+verify floatMulAddGoal
+  floatMulAddGoal(2.0, 3.0) => 8.0
+
+verify floatLeGoal
+  floatLeGoal(1.0, 2.0) => true
+  floatLeGoal(3.0, 2.0) => false
+
+verify listHeadGoal
+  listHeadGoal([4, 5]) => 4
+  listHeadGoal([]) => 0
+
+verify sumListGoal
+  sumListGoal([1, 2, 3]) => 6

@@ -85,6 +85,15 @@ jobs:
   wasm:
     name: WASM
     runs-on: ubuntu-latest
+    env:
+      # The wasm/wasip2 feature set pulls in wasmtime + component-model
+      # crates and several large integration-test binaries. Keep this job's
+      # artifact footprint bounded on GitHub's small runners; debug symbols
+      # are not useful for the CI pass/fail signal here, and lower parallelism
+      # avoids multiple large links peaking at once.
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      RUSTFLAGS: -C debuginfo=0
     steps:
       - uses: actions/checkout@v5
 
@@ -108,12 +117,17 @@ jobs:
       - name: Clippy (wasm + wasip2)
         run: cargo clippy -p aver-lang --lib --bin aver --features wasm,wasip2 -- -D warnings
 
-      - name: Test (wasm + wasip2)
-        # `wasip2` is a separate feature; `wasm` alone leaves every
-        # `#![cfg(feature = "wasip2")]` test file at 0 tests, so the
-        # wasip2 codegen / component-model surface went unchecked by the
-        # gate. Enable both (they share `wasm-compile`) so the wasip2_*
-        # suites run.
+      - name: Unit tests (wasm + wasip2)
+        run: cargo test -p aver-lang --lib --features wasm,wasip2
+
+      - name: Test wasm-gc suites
+        # Run the wasm-gc integration surface explicitly under `wasm`, not
+        # the whole package under `wasm,wasip2`. The old package-wide command
+        # also built unrelated integration tests and bins with the full
+        # component-model dependency graph, which was enough to exhaust the
+        # hosted runner during link. This list is the feature-gated wasm
+        # corpus plus the one ordinary regression file that contains an
+        # extra wasm-gc test behind `#[cfg(feature = "wasm")]`.
         #
         # Proptest budget — split per-PR vs nightly. The wasm-feature
         # proptests include the cross-backend DIFFERENTIAL sweeps
@@ -130,7 +144,55 @@ jobs:
         # in-process differential.
         env:
           PROPTEST_CASES: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '2000' || '64' }}
-        run: cargo test -p aver-lang --features wasm,wasip2
+        run: |
+          set -euo pipefail
+          for test in \
+            bigint_literals_differential \
+            cert_certify_spec \
+            cert_decode_spec \
+            cert_verify_spec \
+            cross_backend_proptest \
+            cross_backend_stress \
+            verify_runner_regressions \
+            wasm_gc_capture_output \
+            wasm_gc_carrier_i64_differential \
+            wasm_gc_codegen_regression \
+            wasm_gc_differential_mir \
+            wasm_gc_plan_mir_equivalence \
+            wasm_gc_effect_arg_overflow_regression \
+            wasm_gc_games_differential_mir \
+            wasm_gc_handler_carrier \
+            wasm_gc_optimize_trunc_sat \
+            wasm_gc_perslot_int_unboxing_differential \
+            wasm_gc_record_replay_spec \
+            wasm_gc_spec \
+            wasm_gc_string_scalar_semantics_regression \
+            wasm_gc_verify_bool_case_regression \
+            wasm_gc_verify_option_case_regression \
+            wasm_gc_verify_result_record_eq_regression
+          do
+            cargo test -p aver-lang --features wasm --test "$test"
+          done
+
+      - name: Test wasip2 suites
+        # `wasip2` is a separate feature; `wasm` alone leaves every
+        # `#![cfg(feature = "wasip2")]` test file at 0 tests. Keep these
+        # component-model suites in their own loop so only wasip2 tests pay
+        # for the heavier wasmtime-wasi dependency graph.
+        run: |
+          set -euo pipefail
+          for test in \
+            wasip2_codegen_regression \
+            wasip2_http \
+            wasip2_http_server \
+            wasip2_http_server_stress \
+            wasip2_poc \
+            wasip2_stress \
+            wasip2_tcp \
+            wasip2_tcp_stress
+          do
+            cargo test -p aver-lang --features wasm,wasip2 --test "$test"
+          done
 
   wasm_release_build:
     # Post-merge release-build verification under `--features wasm`.
@@ -197,4 +259,3 @@ jobs:
           name: bench-results
           path: bench-results.ndjson
           retention-days: 30
-

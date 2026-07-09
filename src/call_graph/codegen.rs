@@ -122,9 +122,7 @@ fn collect_tailcall_deps_expr(
 ) {
     match &expr.node {
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target, args: _, ..
-            } = boxed.as_ref();
+            let TailCallData { target, .. } = boxed.as_ref();
             if fn_names.contains(target) {
                 out.insert(target.clone());
             }

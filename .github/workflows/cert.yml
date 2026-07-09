@@ -1,0 +1,54 @@
+name: Certification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cert-kernel:
+    name: Cert Kernel (Lean)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      RUSTFLAGS: -C debuginfo=0
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Lean (via elan)
+        run: |
+          curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30             https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh             | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Install wasm-tools
+        # The decode differential test shells out to `wasm-tools print`
+        # (tools/certkit/decode_ref.py); pin the same major line used locally.
+        run: |
+          curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 -o /tmp/wasm-tools.tar.gz \
+            https://github.com/bytecodealliance/wasm-tools/releases/download/v1.246.2/wasm-tools-1.246.2-x86_64-linux.tar.gz
+          tar -xzf /tmp/wasm-tools.tar.gz -C /tmp
+          sudo mv /tmp/wasm-tools-1.246.2-x86_64-linux/wasm-tools /usr/local/bin/wasm-tools
+          wasm-tools --version
+
+      - name: Verify `lake` reachable
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if lake --version; then exit 0; fi
+            echo "::warning::lake/toolchain fetch failed (attempt ${attempt}/6); retrying in 15s"
+            sleep 15
+          done
+          echo "::error::lake unreachable after 6 attempts (toolchain download)"
+          exit 1
+
+      - name: Run certification tests
+        run: cargo test -p aver-lang --features wasm --test cert_certify_spec --test cert_verify_spec --test cert_decode_spec

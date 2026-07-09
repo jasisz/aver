@@ -4457,14 +4457,18 @@ fn cmd_compile_wasm_gc(
     // above; this picks up the newly appended dep FnDefs.
     aver::ir::pipeline::resolve(&mut items);
 
-    let bytes =
-        match wasm_gc::compile_to_wasm_gc_with_handler(&items, result.analysis.as_ref(), handler) {
-            Ok(b) => b,
-            Err(e) => {
-                eprintln!("{}", format!("{e}").red());
-                process::exit(1);
-            }
-        };
+    let wasm_gc_output = match wasm_gc::compile_to_wasm_gc_with_handler_and_cert_plans(
+        &items,
+        result.analysis.as_ref(),
+        handler,
+    ) {
+        Ok(output) => output,
+        Err(e) => {
+            eprintln!("{}", format!("{e}").red());
+            process::exit(1);
+        }
+    };
+    let bytes = wasm_gc_output.bytes;
 
     let out_path = Path::new(output_dir);
     if let Err(e) = std::fs::create_dir_all(out_path) {
@@ -4508,6 +4512,7 @@ fn cmd_compile_wasm_gc(
             out_path,
             &wasm_name,
             &bytes,
+            &wasm_gc_output.fragment_plans,
         );
     }
     // Deployment pack — drops platform-specific bootstrap files
@@ -4529,6 +4534,7 @@ fn emit_artifact_certificate(
     out_path: &Path,
     wasm_name: &str,
     bytes: &[u8],
+    fragment_plans: &[aver::codegen::cert::FragmentPlanArtifact],
 ) {
     use aver::codegen::cert;
 
@@ -4550,7 +4556,8 @@ fn emit_artifact_certificate(
     );
     let model_out = lean_codegen::transpile_for_cert_model(&mut mctx);
 
-    let analysis = match cert::analyze(bytes, &model_out.files) {
+    let analysis = match cert::analyze_with_fragment_plans(bytes, &model_out.files, fragment_plans)
+    {
         Ok(a) => a,
         Err(e) => {
             eprintln!("{}", format!("certificate: {e}").red());
@@ -8269,10 +8276,9 @@ fn parse_lean_diag_header(line: &str) -> Option<(usize, String)> {
     // Find `: error: ` or `: warning: ` (the severity marker).
     let (head, msg) = if let Some(idx) = line.find(": error: ") {
         (&line[..idx], line[idx + ": error: ".len()..].to_string())
-    } else if let Some(idx) = line.find(": warning: ") {
-        (&line[..idx], line[idx + ": warning: ".len()..].to_string())
     } else {
-        return None;
+        let idx = line.find(": warning: ")?;
+        (&line[..idx], line[idx + ": warning: ".len()..].to_string())
     };
     // `head` == `<file>:<line>:<col>`. The last two colon-separated fields must
     // be decimal `line`/`col`.

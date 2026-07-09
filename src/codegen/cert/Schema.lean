@@ -15,13 +15,14 @@ namespace AverCert.Schema
 open CertPrelude
 
 /-- What the artifact is: its pinned hash, the emitted-fragment profile, the
-    runtime ABI, the certified export names, and the named runtime contracts
-    every certificate is conditional on. Pure data, mirrored in
-    `cert-manifest.json`. -/
+    runtime ABI, the artifact-level theorem root, the certified export names,
+    and the named runtime contracts every certificate is conditional on. Pure
+    data, mirrored in `cert-manifest.json`. -/
 structure Subject where
   artifactHash : String
   profile      : String
   abi          : String
+  artifactRoot : String
   exports      : List String
   contracts    : List String
 
@@ -29,6 +30,213 @@ structure Subject where
     one constructor: the emitted body simulates the generated model. -/
 inductive Policy where
   | simulatesModel
+
+/-- Value representation types admitted by the `expr-fragment-v1` plan grammar.
+    This is the Lean-data mirror of the Rust `ExprFragmentPlan` sidecar: v1
+    proofs still use the rendered `Obligation` face below, but this
+    representation grammar is the stable landing zone for v2
+    `CheckPlan`/`LowersCodeEntry`. Source-level projection is explicit through
+    `FragTy.sourceTy?` below rather than a raw `WVal` fallback. -/
+inductive FragTy where
+  | f64
+  | boolI32
+  | intCarrier
+  | i64
+  | rawI32
+  | ref
+deriving Repr, DecidableEq
+
+/-- Source-level types for the planned `SymPlan` grammar. This intentionally
+    has no raw `WVal` escape hatch: if a fragment value cannot be named as an
+    Aver source type, it should not project to `SymPlan` yet. -/
+inductive SymTy where
+  | int
+  | float
+  | bool
+  | string
+  | named (name : String)
+deriving Repr, DecidableEq
+
+/-- Projection from representation-level fragment types into the source-level
+    `SymPlan` type system. Raw wasm limbs and references deliberately return
+    `none`; they need an explicit source constructor/encoder before they can
+    participate in source-level certificates. -/
+def FragTy.sourceTy? : FragTy → Option SymTy
+  | .f64 => some .float
+  | .boolI32 => some .bool
+  | .intCarrier => some .int
+  | .i64 => none
+  | .rawI32 => none
+  | .ref => none
+
+/-- Source-level primitive operations admitted by the initial `SymPlan`
+    scaffold. Representation-level integer carrier operations are intentionally
+    absent until they can be expressed as Aver `Int` operations. -/
+inductive SymPrim where
+  | floatAdd
+  | floatMul
+  | floatLe
+  | stringEq
+  | stringConcat
+deriving Repr, DecidableEq
+
+/-- Source-level integer comparison against a literal. This is intentionally
+    narrower than general `Int` comparison so the v1 encoder can stay canonical
+    and avoid SSA/local sharing. -/
+inductive SymIntCmp where
+  | eq
+  | lt
+  | le
+  | ge
+deriving Repr, DecidableEq
+
+mutual
+  inductive SymNodeKind where
+    | param (index : Nat)
+    | constBool (value : Bool)
+    | constFloatBits (bits : Nat)
+    | constStringBytes (bytes : List Nat)
+    | prim (op : SymPrim) (args : List Nat)
+    | construct (typeName ctorName : String) (args : List Nat)
+    | intConstCmp (op : SymIntCmp) (value : Nat) (constant : Int)
+    | ifElse (cond : Nat) (thenBlock elseBlock : SymBlock)
+  deriving Repr
+
+  structure SymNode where
+    id   : Nat
+    ty   : SymTy
+    kind : SymNodeKind
+  deriving Repr
+
+  structure SymBlock where
+    nodes  : List SymNode
+    result : Nat
+  deriving Repr
+end
+
+/-- Raw, untrusted source-level symbolic plan. Future profiles should prefer
+    this over the wasm-representation-shaped `ExprFragmentRawPlan`; a checked
+    encoder/lowerer then binds it to exact wasm code-entry bytes. -/
+structure SymRawPlan where
+  profile : String
+  params  : List SymTy
+  result  : SymTy
+  body    : SymBlock
+deriving Repr
+
+/-- Primitive operations admitted by `expr-fragment-v1`. -/
+inductive FragPrim where
+  | f64Add
+  | f64Mul
+  | f64Le
+  | i64Eq
+  | i64LeS
+  | i64LtS
+  | i64GeS
+  | i32LtS
+  | i32GtS
+deriving Repr, DecidableEq
+
+mutual
+  /-- A single typed ANF node in an expression-fragment plan. -/
+  inductive FragNodeKind where
+    | local (index : Nat)
+    | constBool (value : Bool)
+    | constI64 (value : Int)
+    | constI32 (value : Int)
+    | constF64Bits (bits : Nat)
+    | structGet (field : Nat) (receiver : Nat)
+    | refIsNull (value : Nat)
+    | prim (op : FragPrim) (args : List Nat)
+    | ifElse (cond : Nat) (thenBlock elseBlock : FragBlock)
+  deriving Repr
+
+  /-- A typed value definition. `id` must match its position in the containing
+      block; v1 Rust checks this, v2 Lean `CheckPlan` will. -/
+  structure FragNode where
+    id   : Nat
+    ty   : FragTy
+    kind : FragNodeKind
+  deriving Repr
+
+  /-- Ordered ANF block. `result` is the id of the value yielded by the block. -/
+  structure FragBlock where
+    nodes  : List FragNode
+    result : Nat
+  deriving Repr
+end
+
+/-- Raw, untrusted expression-fragment plan as Lean data. The artifact may
+    provide this; only the checked plan produced by the trusted checker should
+    be used for acceptance. -/
+structure ExprFragmentRawPlan where
+  profile : String
+  params  : List FragTy
+  result  : FragTy
+  body    : FragBlock
+deriving Repr
+
+/-- One String.concat literal chunk. `bytes` is the source-level content; `dataIdx`
+    is the target binding needed to lower back to exact `array.new_data` code
+    bytes. A later self-checking parser can derive `dataIdx` from the module's
+    passive data section instead of carrying it in the raw plan. -/
+structure StringConcatChunk where
+  dataIdx : Nat
+  bytes   : List Nat
+deriving Repr
+
+/-- Raw, untrusted String.concat witness. It is source-shaped around the value
+    flow (`prefixes ++ input ++ suffixes`) but still carries the current wasm-gc
+    encoder binding for each literal chunk, so the checked plan can lower to the
+    exact function code-entry bytes. -/
+structure StringConcatRawPlan where
+  profile  : String
+  prefixes : List StringConcatChunk
+  suffixes : List StringConcatChunk
+deriving Repr
+
+/-- One literal used by the String.eq dispatch beachhead. `bytes` is the
+    source-level string content; `dataIdx` is the target binding needed for the
+    exact `array.new_data` code bytes. -/
+structure StringEqChunk where
+  dataIdx : Nat
+  bytes   : List Nat
+deriving Repr
+
+/-- Result branch of the String.eq dispatch: either return the original input
+    string or return one byte-derived literal. -/
+inductive StringEqResult where
+  | input
+  | literal (chunk : StringEqChunk)
+deriving Repr
+
+/-- Raw, untrusted String.eq witness for a one-literal match:
+    `if String.eq(input, needle) then hit else default`. It is source-shaped but
+    still carries data segment bindings for exact byte lowering. -/
+structure StringEqRawPlan where
+  profile : String
+  needle  : StringEqChunk
+  hit     : StringEqResult
+  default : StringEqResult
+deriving Repr
+
+/-- Target-bound constructor field used by `construct-v1`: either replay one
+    source/local argument, or emit the null representation slot that the wasm-gc
+    layout requires but the source constructor does not expose. -/
+inductive ConstructField where
+  | local (index : Nat)
+  | null
+deriving Repr, DecidableEq
+
+/-- Raw, untrusted ADT constructor witness. The source-level `SymPlan` says
+    "construct this Aver value"; this plan carries the current wasm-gc binding
+    needed to lower that constructor to exact `struct.new` bytes. -/
+structure ConstructRawPlan where
+  profile   : String
+  arity     : Nat
+  structIdx : Nat
+  fields    : List ConstructField
+deriving Repr
 
 /-- Pointwise lifting of an integer representation relation to argument lists.
     Kept as the standard domain representation for the v2 integer classes. -/
@@ -55,6 +263,12 @@ def intRepr (S : CarrierSpec C) : Int → WVal → Prop := S.Repr
 /-- Standard representation of a boolean result. -/
 def boolRepr (_S : CarrierSpec C) (b : Bool) (w : WVal) : Prop := w = b32 b
 
+/-- Standard bit-exact representation of a floating-point result. -/
+def floatRepr (_S : CarrierSpec C) (x : Float) (w : WVal) : Prop := w = .f64v x.toBits
+
+/-- Standard representation of a floating-point bit-pattern result. -/
+def floatBitsRepr (_S : CarrierSpec C) (bits : UInt64) (w : WVal) : Prop := w = .f64v bits
+
 /-- Standard representation for byte-level projections: the model value is the
     exact `WVal` the body returns. This deliberately does not inspect strings. -/
 def verbatimRepr (_S : CarrierSpec C) (v : WVal) (w : WVal) : Prop := w = v
@@ -74,6 +288,7 @@ structure Obligation where
     (List WVal → Option WVal) →
     (List WVal → Option WVal) →
     (List WVal → Option WVal) →
+    (Nat → List WVal → Option WVal) →
     HostTbl
   self    : Nat
   Dom     : Type
@@ -83,25 +298,33 @@ structure Obligation where
   model   : Dom → Cod
 
 /-- Denotation of `simulatesModel`: under any representation `S` and host
-    contracts obeying the named laws (integer add/sub/mul plus String.eq byte
-    equality), the emitted body run on a represented domain value yields a
-    represented result of `model x`. Partial correctness — vacuous on trap or
-    fuel exhaustion. Each contract is an assumed runtime law: the host helper
-    wired to that slot computes the named operation on represented values. -/
+    contracts obeying the named laws (integer add/sub/mul, String.eq byte
+    equality, and String.concat byte concatenation), the emitted body run on a
+    represented domain value yields a represented result of `model x`. Partial
+    correctness — vacuous on trap or fuel exhaustion. Each contract is an
+    assumed runtime law: the host helper wired to that slot computes the named
+    operation on represented values. -/
 def Obligation.holds (o : Obligation) : Prop :=
   ∀ (S : CarrierSpec o.carrier)
     (add sub mul stringEq : List WVal → Option WVal)
+    (stringConcat : Nat → List WVal → Option WVal)
     (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
     (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
     (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
     (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
+    (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
     (fuel : Nat) (x : o.Dom) (vs : List WVal) (w : WVal),
     o.domRepr S x vs →
-    wFuncN o.code (o.host add sub mul stringEq) fuel o.self vs = some w →
+    wFuncN o.code (o.host add sub mul stringEq stringConcat) fuel o.self vs = some w →
     o.codRepr S (o.model x) w
 
 structure Manifest where
   subject     : Subject
+  symFragmentPlans : List (String × SymRawPlan)
+  stringEqPlans : List (String × StringEqRawPlan)
+  stringConcatPlans : List (String × StringConcatRawPlan)
+  constructPlans : List (String × ConstructRawPlan)
+  exprFragmentPlans : List (String × ExprFragmentRawPlan)
   obligations : List Obligation
 
 /-- The single audited certificate proposition: the manifest's pinned hash is
