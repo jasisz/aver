@@ -584,6 +584,24 @@ mod tests {
         }
     }
 
+    fn int_identity_fn() -> MirFn {
+        MirFn {
+            fn_id: FnId(0),
+            name: "id".to_string(),
+            params: vec![MirParam {
+                local: LocalId(0),
+                name: "x".to_string(),
+                ty: "Int".to_string(),
+            }],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            body: int_local(0),
+            local_count: 1,
+            aliased_slots: std::sync::Arc::new(Vec::new()),
+            repr: MirFnRepr::default(),
+        }
+    }
+
     #[test]
     fn direct_float_mir_prefers_source_level_sym_plan() {
         let mir_fn = float_binop_fn(BinOp::Add);
@@ -601,6 +619,24 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn direct_int_identity_prefers_source_level_sym_plan() {
+        let mir_fn = int_identity_fn();
+        let plan = fragment_plan_from_mir_fn(&mir_fn).expect("plan");
+        let FragmentPlan::Sym(sym) = plan else {
+            panic!("direct source-level int identity should use SymPlan")
+        };
+
+        assert_eq!(sym.params, vec![SymTy::Int]);
+        assert_eq!(sym.result, SymTy::Int);
+        assert!(matches!(sym.body.nodes[0].kind, SymNodeKind::Param { index: 0 }));
+        let expr_plan = sym
+            .to_expr_fragment_plan()
+            .expect("source int identity should encode to expr-fragment");
+        assert_eq!(expr_plan.params, vec![FragTy::IntCarrier]);
+        assert_eq!(expr_plan.result, FragTy::IntCarrier);
     }
 
     #[test]

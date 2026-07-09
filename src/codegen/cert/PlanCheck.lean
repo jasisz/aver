@@ -204,7 +204,7 @@ def checkSymRawPlan (plan : SymRawPlan) : Bool :=
 def encodeSymTy? : SymTy → Option FragTy
   | .float => some .f64
   | .bool => some .boolI32
-  | .int => none
+  | .int => some .intCarrier
   | .string => none
 
 def encodeSymTys? : List SymTy → Option (List FragTy)
