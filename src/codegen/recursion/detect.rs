@@ -1298,11 +1298,8 @@ pub(crate) fn ranks_from_same_edges(
     let mut indegree: HashMap<String, usize> = names.iter().map(|n| (n.clone(), 0)).collect();
     for outs in same_edges.values() {
         for to in outs {
-            if let Some(entry) = indegree.get_mut(to) {
-                *entry += 1;
-            } else {
-                return None;
-            }
+            let entry = indegree.get_mut(to)?;
+            *entry += 1;
         }
     }
 
@@ -1317,13 +1314,10 @@ pub(crate) fn ranks_from_same_edges(
         let outs = same_edges.get(&node).cloned().unwrap_or_default();
         let mut newly_zero = Vec::new();
         for to in outs {
-            if let Some(entry) = indegree.get_mut(&to) {
-                *entry -= 1;
-                if *entry == 0 {
-                    newly_zero.push(to);
-                }
-            } else {
-                return None;
+            let entry = indegree.get_mut(&to)?;
+            *entry -= 1;
+            if *entry == 0 {
+                newly_zero.push(to);
             }
         }
         newly_zero.sort();
@@ -1435,11 +1429,8 @@ pub(crate) fn supports_mutual_string_pos_advance(
 
             match classify_string_pos_edge(arg1, string_param, pos_param) {
                 Some(StringPosEdge::Same) => {
-                    if let Some(edges) = same_edges.get_mut(&fd.name) {
-                        edges.insert(callee);
-                    } else {
-                        return None;
-                    }
+                    let edges = same_edges.get_mut(&fd.name)?;
+                    edges.insert(callee);
                 }
                 Some(StringPosEdge::Advance) => {}
                 None => return None,
@@ -1652,11 +1643,8 @@ pub(crate) fn supports_mutual_sizeof_ranked(
                         is_ident(arg, caller_metric_params[pos])
                     });
             if is_same_edge {
-                if let Some(edges) = same_edges.get_mut(&fd.name) {
-                    edges.insert(callee);
-                } else {
-                    return None;
-                }
+                let edges = same_edges.get_mut(&fd.name)?;
+                edges.insert(callee);
             }
         }
     }
