@@ -54,4 +54,36 @@ def exprFragmentPlanAccepted
       obligation.code binding.funcIdx =
         some { arity := plan.params.length, nlocals := nlocals, body := body }
 
+/-- One expression-fragment claim inside an artifact certificate. The plan and
+    obligation are still untrusted data until `exprFragmentClaimAccepted`
+    checks them against the checker-owned artifact bytes. -/
+structure ExprFragmentClaim where
+  exportNameBytes : AverCert.WasmSlice.ByteSeq
+  exportName      : String
+  carrier         : Nat
+  plan            : ExprFragmentRawPlan
+  obligation      : Obligation
+
+def exprFragmentClaimAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (claim : ExprFragmentClaim) : Prop :=
+  exprFragmentPlanAccepted
+    wasmBytes
+    claim.exportNameBytes
+    claim.exportName
+    claim.carrier
+    claim.plan
+    claim.obligation
+
+/-- Aggregate expression-fragment acceptance for one artifact's fragment list.
+    This is intentionally recursive rather than tactic-heavy, so a generated
+    checker witness can prove it with a small nested pair term. -/
+def exprFragmentClaimsAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq) :
+    List ExprFragmentClaim → Prop
+  | [] => True
+  | claim :: rest =>
+      exprFragmentClaimAccepted wasmBytes claim ∧
+      exprFragmentClaimsAccepted wasmBytes rest
+
 end AverCert.AcceptedArtifact

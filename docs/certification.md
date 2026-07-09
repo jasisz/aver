@@ -24,6 +24,8 @@
 > exposes the v2-shaped bridge over raw artifact bytes, a raw plan, and a
 > `Schema.Obligation`; the body, code-entry bytes, and function binding are
 > internal witnesses to that bridge rather than separate authority parameters.
+> The checker witness proves that bridge for the whole expr-fragment claim list
+> in one aggregate predicate.
 > The verifier-authored witness
 > pins `manifest.exprFragmentPlans` to checker-rendered terms and re-checks the
 > plan lowerings plus the relevant byte-origin slice. This is the v2 landing

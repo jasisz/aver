@@ -1037,7 +1037,8 @@ fn lean_expr_fragment_accepted_pins(rederived: &[cert::RederivedObligation]) -> 
 fn lean_expr_fragment_obligation_acceptance_pins(
     rederived: &[cert::RederivedObligation],
 ) -> String {
-    let mut out = String::new();
+    let mut claims = Vec::new();
+    let mut proofs = Vec::new();
     for r in rederived {
         let (Some(plan), Some(body), Some(bytes), Some(code_idx), Some(type_idx)) = (
             r.fragment_plan_lean.as_ref(),
@@ -1053,21 +1054,56 @@ fn lean_expr_fragment_obligation_acceptance_pins(
             "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {} }} : AverCert.WasmSlice.FuncBinding)",
             r.self_idx, code_idx, type_idx, bytes
         );
-        out.push_str(&format!(
-            "-- `{}`: accepted expr-fragment artifact data is tied to the schema obligation.\n\
-             example : AverCert.AcceptedArtifact.exprFragmentPlanAccepted AverCert.ArtifactBytes.wasmBytes {} \"{}\" {} ({}) AverCert.{}Ob := by dsimp [AverCert.AcceptedArtifact.exprFragmentPlanAccepted, AverCert.ExprFragmentAccepted.accepted]; exact ⟨rfl, rfl, ⟨({}), ({}), {}, ⟨⟨rfl, rfl, rfl, rfl, rfl⟩, rfl, ⟨_, rfl⟩⟩⟩⟩\n",
-            r.name,
-            export_name_bytes,
-            r.name,
-            r.carrier,
-            plan,
-            r.name,
-            body,
-            bytes,
-            binding
+        claims.push(format!(
+            "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
+             carrier := {carrier}, plan := (({plan}) : AverCert.Schema.ExprFragmentRawPlan), \
+             obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ExprFragmentClaim)",
+            name = r.name,
+            carrier = r.carrier
+        ));
+        proofs.push(format!(
+            "⟨rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
+             ⟨⟨rfl, rfl, rfl, rfl, rfl⟩, rfl, ⟨_, rfl⟩⟩⟩⟩"
         ));
     }
-    out
+    let has_claims = !claims.is_empty();
+    let claims = if claims.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[\n  {}\n]", claims.join(",\n  "))
+    };
+    let proof = proofs
+        .into_iter()
+        .rev()
+        .fold("trivial".to_string(), |acc, proof| {
+            format!("⟨{proof}, {acc}⟩")
+        });
+    let proof_block = if has_claims {
+        format!(
+            concat!(
+                "  dsimp [AverCert.AcceptedArtifact.exprFragmentClaimsAccepted,\n",
+                "    AverCert.AcceptedArtifact.exprFragmentClaimAccepted,\n",
+                "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
+                "    AverCert.ExprFragmentAccepted.accepted]\n",
+                "  exact {proof}\n"
+            ),
+            proof = proof
+        )
+    } else {
+        "  exact trivial\n".to_string()
+    };
+    format!(
+        concat!(
+            "-- Expr-fragment artifact claims: accepted raw artifact bytes + raw plans\n",
+            "-- are tied to the schema obligations used by `Final.cert`.\n",
+            "example : (AverCert.AcceptedArtifact.exprFragmentClaimsAccepted\n",
+            "    AverCert.ArtifactBytes.wasmBytes\n",
+            "    ({claims} : List AverCert.AcceptedArtifact.ExprFragmentClaim)) := by\n",
+            "{proof_block}"
+        ),
+        claims = claims,
+        proof_block = proof_block
+    )
 }
 
 /// The Lean file the checker authors at verify time. `sha` is what the checker
