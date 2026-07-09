@@ -76,7 +76,10 @@
 //!   (ac) expr-fragment-accepted TCB pin drift: rebinding
 //!       `expr_fragment_accepted_sha256` to a different checker is rejected
 //!       before Lean build
-//!   (ad) artifact-bytes decoy: cert-supplied `ArtifactBytes.lean` is ignored;
+//!   (ad) accepted-artifact TCB pin drift: rebinding
+//!       `accepted_artifact_sha256` to a different checker is rejected before
+//!       Lean build
+//!   (ae) artifact-bytes decoy: cert-supplied `ArtifactBytes.lean` is ignored;
 //!       the checker regenerates it from the actual artifact bytes it read
 //! plus a separate empty-cert test: zero certified exports must NOT print the
 //! green path and must exit nonzero, and the A5 report-line injection payload
@@ -326,6 +329,24 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         assert!(
             out.contains("expr-fragment-accepted hash mismatch"),
             "wrong reason for expr-fragment-accepted hash drift:\n{out}"
+        );
+    }
+
+    // The artifact-acceptance bridge is audited TCB too. A cert cannot swap the
+    // obligation bridge for a weaker definition and rebind the manifest.
+    {
+        let dir = temp_dir("neg-accepted-artifact-pin");
+        copy_dir(&out_dir, &dir);
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["accepted_artifact_sha256"] = serde_json::json!("not-the-audited-accepted-artifact");
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "accepted-artifact hash drift must be rejected:\n{out}");
+        assert!(
+            out.contains("accepted-artifact hash mismatch"),
+            "wrong reason for accepted-artifact hash drift:\n{out}"
         );
     }
 

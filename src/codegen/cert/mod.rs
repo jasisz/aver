@@ -53,6 +53,7 @@ pub const CERT_PLAN_LOWER: &str = include_str!("PlanLower.lean");
 pub const CERT_PLAN_BYTES: &str = include_str!("PlanBytes.lean");
 pub const CERT_WASM_SLICE: &str = include_str!("WasmSlice.lean");
 pub const CERT_EXPR_FRAGMENT_ACCEPTED: &str = include_str!("ExprFragmentAccepted.lean");
+pub const CERT_ACCEPTED_ARTIFACT: &str = include_str!("AcceptedArtifact.lean");
 
 /// Emitted-fragment profile and runtime ABI identifiers recorded in the
 /// manifest. Stable strings the checker echoes; bumped when the certified
@@ -62,7 +63,7 @@ pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
 /// Certification level of a v0 artifact certificate: conditional on the named
 /// runtime contracts (see the consult level naming L0/L1/L2/L3).
 pub const CERT_LEVEL: &str = "L1";
-pub const CERT_SCHEMA_VERSION: u32 = 17;
+pub const CERT_SCHEMA_VERSION: u32 = 18;
 pub const BOX_CONTRACT: &str = "__rt_aint_from_i64 (box i64 -> carrier)";
 pub const INT_ADD_CONTRACT: &str =
     "Int.add (carrier add = exact integer addition on represented values)";
@@ -109,6 +110,9 @@ pub fn audited_wasm_slice_sha() -> String {
 }
 pub fn audited_expr_fragment_accepted_sha() -> String {
     sha256_hex(CERT_EXPR_FRAGMENT_ACCEPTED.as_bytes())
+}
+pub fn audited_accepted_artifact_sha() -> String {
+    sha256_hex(CERT_ACCEPTED_ARTIFACT.as_bytes())
 }
 
 include!("core_wasm.rs");

@@ -39,6 +39,11 @@ pub struct RederivedObligation {
     /// This connects export/function routing to the actual declared function
     /// signature slot before later in-kernel signature decoding lands.
     pub fragment_type_idx: Option<u32>,
+    /// For expression fragments, the byte-derived local count recorded in the
+    /// `WCode` body. The current plan-first lowering emits one scratch carrier
+    /// local; this pin keeps the artifact acceptance bridge tied to the schema
+    /// code table rather than only to the lowered instruction list.
+    pub fragment_nlocals: Option<u32>,
     /// For expression fragments, the canonical plan sidecar attached to this
     /// obligation. During `aver cert verify`, transitional byte re-derivation
     /// may populate this first, then the plan-first sidecar checker overlays the
@@ -390,6 +395,10 @@ fn rederive_certificate_inner(
             },
             fragment_type_idx: match c.inner() {
                 Cert::ExprFragment { type_idx, .. } => Some(*type_idx),
+                _ => None,
+            },
+            fragment_nlocals: match c.inner() {
+                Cert::ExprFragment { nlocals, .. } => Some(*nlocals as u32),
                 _ => None,
             },
             fragment_plan: match c.inner() {

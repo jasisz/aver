@@ -61,6 +61,10 @@ pub fn check_expr_fragment_plan_sidecar(
             Cert::ExprFragment { type_idx, .. } => Some(*type_idx),
             _ => None,
         },
+        fragment_nlocals: match cert.inner() {
+            Cert::ExprFragment { nlocals, .. } => Some(*nlocals as u32),
+            _ => None,
+        },
         fragment_plan: Some(sidecar.clone()),
         fragment_plan_lean: Some(plan_lean),
         fragment_lowered_body_lean: match cert.inner() {

@@ -98,13 +98,14 @@ const WITNESS_THEOREM: &str = "AverCertChecker.final";
 /// audited trusted computing base (taken from this binary) plus the checker's
 /// own build config and witness. A cert shipping files by these names has them
 /// ignored.
-const CHECKER_OWNED: [&str; 10] = [
+const CHECKER_OWNED: [&str; 11] = [
     "Schema.lean",
     "PlanCheck.lean",
     "PlanLower.lean",
     "PlanBytes.lean",
     "WasmSlice.lean",
     "ExprFragmentAccepted.lean",
+    "AcceptedArtifact.lean",
     "ArtifactBytes.lean",
     "CertPrelude.lean",
     "lakefile.lean",
@@ -450,6 +451,13 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
             "expr-fragment-accepted hash mismatch: certificate pins {expr_fragment_accepted_pin}, checker expects {audited_expr_fragment_accepted}"
         ));
     }
+    let accepted_artifact_pin = manifest_str(&manifest, "accepted_artifact_sha256")?;
+    let audited_accepted_artifact = cert::audited_accepted_artifact_sha();
+    if accepted_artifact_pin != audited_accepted_artifact {
+        return Err(format!(
+            "accepted-artifact hash mismatch: certificate pins {accepted_artifact_pin}, checker expects {audited_accepted_artifact}"
+        ));
+    }
 
     // 2. Report candidates from the untrusted JSON, each charset-gated on its
     //    decoded value so it is safe to splice as a Lean literal below.
@@ -778,6 +786,11 @@ fn assemble_build(cert_dir: &Path, wasm_bytes: &[u8]) -> Result<BuildDir, String
     )?;
     write(
         &build.path,
+        "AcceptedArtifact.lean",
+        cert::CERT_ACCEPTED_ARTIFACT,
+    )?;
+    write(
+        &build.path,
         "ArtifactBytes.lean",
         &cert::render_artifact_bytes_lean(wasm_bytes),
     )?;
@@ -789,6 +802,7 @@ fn assemble_build(cert_dir: &Path, wasm_bytes: &[u8]) -> Result<BuildDir, String
     roots.push("PlanBytes".to_string());
     roots.push("WasmSlice".to_string());
     roots.push("ExprFragmentAccepted".to_string());
+    roots.push("AcceptedArtifact".to_string());
     roots.push("ArtifactBytes".to_string());
     roots.push("CertPrelude".to_string());
 
@@ -1018,6 +1032,44 @@ fn lean_expr_fragment_accepted_pins(rederived: &[cert::RederivedObligation]) -> 
     out
 }
 
+/// Checker-owned Lean `example`s proving that expr-fragment byte-origin
+/// acceptance is tied to the schema obligation used by `Final.cert`.
+fn lean_expr_fragment_obligation_acceptance_pins(
+    rederived: &[cert::RederivedObligation],
+) -> String {
+    let mut out = String::new();
+    for r in rederived {
+        let (Some(plan), Some(body), Some(bytes), Some(code_idx), Some(type_idx)) = (
+            r.fragment_plan_lean.as_ref(),
+            r.fragment_lowered_body_lean.as_ref(),
+            r.fragment_lowered_code_entry_lean.as_ref(),
+            r.fragment_code_idx,
+            r.fragment_type_idx,
+        ) else {
+            continue;
+        };
+        let export_name_bytes = lean_byte_list(r.name.as_bytes());
+        let binding = format!(
+            "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {} }} : AverCert.WasmSlice.FuncBinding)",
+            r.self_idx, code_idx, type_idx, bytes
+        );
+        out.push_str(&format!(
+            "-- `{}`: accepted expr-fragment data is tied to the schema obligation.\n\
+             example : AverCert.AcceptedArtifact.exprFragmentObligationAccepted AverCert.ArtifactBytes.wasmBytes {} \"{}\" {} ({}) ({}) ({}) {} AverCert.{}Ob := by dsimp [AverCert.AcceptedArtifact.exprFragmentObligationAccepted, AverCert.ExprFragmentAccepted.accepted]; exact ⟨⟨rfl, rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, ⟨_, rfl⟩⟩\n",
+            r.name,
+            export_name_bytes,
+            r.name,
+            r.carrier,
+            plan,
+            body,
+            bytes,
+            binding,
+            r.name
+        ));
+    }
+    out
+}
+
 /// The Lean file the checker authors at verify time. `sha` is what the checker
 /// computed from the artifact bytes; `cands` are the charset-gated JSON report
 /// candidates. Every claim is a `rfl` against `AverCert.manifest` (or the final
@@ -1053,6 +1105,8 @@ fn checker_witness(
     let expr_fragment_wasm_slice_pins = lean_expr_fragment_wasm_slice_pins(rederived);
     let expr_fragment_func_binding_pins = lean_expr_fragment_func_binding_pins(rederived);
     let expr_fragment_accepted_pins = lean_expr_fragment_accepted_pins(rederived);
+    let expr_fragment_obligation_acceptance_pins =
+        lean_expr_fragment_obligation_acceptance_pins(rederived);
     // Semantic-face bindings: pin each obligation's typed `Dom`/`Cod`/`domRepr`/
     // `codRepr` to the STANDARD form its BYTE-derived class implies, and prove
     // every domain is inhabited. These are the faces the schema-v3 checker did
@@ -1074,6 +1128,7 @@ fn checker_witness(
          import PlanBytes\n\
          import WasmSlice\n\
          import ExprFragmentAccepted\n\
+         import AcceptedArtifact\n\
          import ArtifactBytes\n\
          import Module\n\
          import Manifest\n\
@@ -1135,6 +1190,9 @@ fn checker_witness(
          -- also exposed as one audited predicate. This is the v2 landing shape\n\
          -- for replacing loose examples with an `AcceptedArtifact` theorem.\n\
          {expr_fragment_accepted_pins}\n\
+         -- Expr-fragment schema bridge: accepted byte-origin/plan data is tied\n\
+         -- to the exact `Schema.Obligation` body that `Final.cert` proves.\n\
+         {expr_fragment_obligation_acceptance_pins}\n\
          -- Hash binding: the sha the checker computed from the artifact bytes.\n\
          example : AverCert.manifest.subject.artifactHash = \"{sha}\" := rfl\n\
          example : CertModule.wasmSha256 = \"{sha}\" := rfl\n\n\

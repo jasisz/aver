@@ -55,6 +55,7 @@ pub fn write_project(
         "ExprFragmentAccepted.lean",
         CERT_EXPR_FRAGMENT_ACCEPTED,
     )?;
+    write(&cert_dir, "AcceptedArtifact.lean", CERT_ACCEPTED_ARTIFACT)?;
     write(
         &cert_dir,
         "ArtifactBytes.lean",
@@ -84,6 +85,7 @@ pub fn write_project(
     let plan_bytes_sha = sha256_hex(CERT_PLAN_BYTES.as_bytes());
     let wasm_slice_sha = sha256_hex(CERT_WASM_SLICE.as_bytes());
     let expr_fragment_accepted_sha = sha256_hex(CERT_EXPR_FRAGMENT_ACCEPTED.as_bytes());
+    let accepted_artifact_sha = sha256_hex(CERT_ACCEPTED_ARTIFACT.as_bytes());
     std::fs::write(
         cert_dir.join("cert-manifest.json"),
         render_manifest(
@@ -98,6 +100,7 @@ pub fn write_project(
             &plan_bytes_sha,
             &wasm_slice_sha,
             &expr_fragment_accepted_sha,
+            &accepted_artifact_sha,
         ),
     )
     .map_err(|e| format!("write manifest: {e}"))?;

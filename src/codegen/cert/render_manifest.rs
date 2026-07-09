@@ -315,6 +315,7 @@ fn render_lakefile(model_roots: &[String]) -> String {
     roots.push("`PlanBytes".to_string());
     roots.push("`WasmSlice".to_string());
     roots.push("`ExprFragmentAccepted".to_string());
+    roots.push("`AcceptedArtifact".to_string());
     roots.push("`ArtifactBytes".to_string());
     roots.push("`Plans".to_string());
     roots.push("`Manifest".to_string());
@@ -339,6 +340,7 @@ fn render_manifest(
     plan_bytes_sha: &str,
     wasm_slice_sha: &str,
     expr_fragment_accepted_sha: &str,
+    accepted_artifact_sha: &str,
 ) -> String {
     let mut s = String::new();
     s.push_str("{\n");
@@ -365,6 +367,9 @@ fn render_manifest(
     ));
     s.push_str(&format!(
         "  \"expr_fragment_accepted_sha256\": \"{expr_fragment_accepted_sha}\",\n"
+    ));
+    s.push_str(&format!(
+        "  \"accepted_artifact_sha256\": \"{accepted_artifact_sha}\",\n"
     ));
     if let Some(c) = analysis.carrier {
         s.push_str(&format!("  \"carrier_type_index\": {c},\n"));
