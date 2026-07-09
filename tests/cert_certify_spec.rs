@@ -256,6 +256,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "source-projectable fragment should be claimed through SymPlan:\n{artifact_lean}"
     );
     assert!(
+        !artifact_lean.contains("plan := AverCert.Plans.floatAddGoalPlan"),
+        "source-projectable fragment should not carry a duplicate ExprFragmentClaim:\n{artifact_lean}"
+    );
+    assert!(
         artifact_lean
             .contains("def exprFragmentClaims : List AverCert.AcceptedArtifact.ExprFragmentClaim"),
         "artifact should keep a representation-level fallback claim list:\n{artifact_lean}"

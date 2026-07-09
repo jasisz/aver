@@ -142,6 +142,24 @@ def symFragmentClaimPlanPairs
     (claims : List SymFragmentClaim) : List (String × SymRawPlan) :=
   claims.map (fun c => (c.exportName, c.plan))
 
+/-- Representation plans induced by source-level claims. This is what lets a
+    source-projectable fragment avoid carrying a duplicate `ExprFragmentClaim`:
+    the byte-bound plan is computed by the audited encoder. -/
+def symFragmentClaimEncodedPlanPair?
+    (claim : SymFragmentClaim) : Option (String × ExprFragmentRawPlan) :=
+  match AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan claim.plan with
+  | some exprPlan => some (claim.exportName, exprPlan)
+  | none => none
+
+def symFragmentClaimEncodedPlanPairs :
+    List SymFragmentClaim → Option (List (String × ExprFragmentRawPlan))
+  | [] => some []
+  | claim :: rest =>
+      match symFragmentClaimEncodedPlanPair? claim,
+            symFragmentClaimEncodedPlanPairs rest with
+      | some pair, some pairs => some (pair :: pairs)
+      | _, _ => none
+
 /-- The representation plans claimed by an artifact, projected into the same
     manifest surface used for pinning. -/
 def exprFragmentClaimPlanPairs
@@ -186,10 +204,13 @@ def fragmentClaimObligationsInManifest (artifact : ArtifactData) : Prop :=
       (artifact.manifest.obligations.map (fun o => o.export_)).contains exportName) = true
 
 def claimsMatchManifest (artifact : ArtifactData) : Prop :=
-  symFragmentClaimPlanPairs artifact.symFragmentClaims =
-      artifact.manifest.symFragmentPlans ∧
-  exprFragmentClaimPlanPairs artifact.exprFragmentClaims =
-      artifact.manifest.exprFragmentPlans
+  match symFragmentClaimEncodedPlanPairs artifact.symFragmentClaims with
+  | some encodedSymExprPlans =>
+      symFragmentClaimPlanPairs artifact.symFragmentClaims =
+          artifact.manifest.symFragmentPlans ∧
+      encodedSymExprPlans ++ exprFragmentClaimPlanPairs artifact.exprFragmentClaims =
+          artifact.manifest.exprFragmentPlans
+  | none => False
 
 def accepted (artifact : ArtifactData) : Prop :=
   AverCert.Schema.Holds artifact.manifest ∧

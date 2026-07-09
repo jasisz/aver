@@ -281,13 +281,14 @@ fn render_artifact_expr_fragment_claims(analysis: &Analysis) -> RenderedArtifact
                 "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, plan := AverCert.Plans.{name}SymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.SymFragmentClaim)",
                 export_name = lean_str(name),
             ));
-            sym_proofs.push(proof.clone());
+            sym_proofs.push(proof);
+        } else {
+            expr_claims.push(format!(
+                "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, plan := AverCert.Plans.{name}Plan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ExprFragmentClaim)",
+                export_name = lean_str(name),
+            ));
+            expr_proofs.push(proof);
         }
-        expr_claims.push(format!(
-            "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, plan := AverCert.Plans.{name}Plan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ExprFragmentClaim)",
-            export_name = lean_str(name),
-        ));
-        expr_proofs.push(proof);
     }
     let sym_claims = if sym_claims.is_empty() {
         "[]".to_string()
@@ -330,6 +331,8 @@ fn render_artifact(analysis: &Analysis) -> String {
             "    AverCert.AcceptedArtifact.claimObligationExports,\n",
             "    AverCert.AcceptedArtifact.claimsMatchManifest,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimPlanPairs,\n",
+            "    AverCert.AcceptedArtifact.symFragmentClaimEncodedPlanPairs,\n",
+            "    AverCert.AcceptedArtifact.symFragmentClaimEncodedPlanPair?,\n",
             "    AverCert.AcceptedArtifact.exprFragmentClaimPlanPairs,\n",
             "    AverCert.AcceptedArtifact.acceptedFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedSymFragments,\n",

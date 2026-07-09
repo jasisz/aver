@@ -1080,9 +1080,9 @@ fn lean_expr_fragment_accepted_pins(rederived: &[cert::RederivedObligation]) -> 
 }
 
 /// Checker-owned Lean `example`s proving that fragment byte-origin acceptance
-/// is tied to the schema obligation used by `Final.cert`. Every fragment keeps
-/// its byte-bound `ExprFragmentClaim`; source-projectable fragments also carry
-/// a `SymFragmentClaim` overlay.
+/// is tied to the schema obligation used by `Final.cert`. Source-projectable
+/// fragments carry a `SymFragmentClaim`; representation-only fragments keep
+/// the byte-bound `ExprFragmentClaim` fallback.
 struct LeanExprFragmentArtifactClaims {
     sym_claims: String,
     expr_claims: String,
@@ -1124,16 +1124,17 @@ fn lean_expr_fragment_artifact_claims(
                 name = r.name,
                 carrier = r.carrier
             ));
-            sym_proofs.push(proof.clone());
+            sym_proofs.push(proof);
+        } else {
+            expr_claims.push(format!(
+                "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
+                 carrier := {carrier}, plan := (({plan}) : AverCert.Schema.ExprFragmentRawPlan), \
+                 obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ExprFragmentClaim)",
+                name = r.name,
+                carrier = r.carrier
+            ));
+            expr_proofs.push(proof);
         }
-        expr_claims.push(format!(
-            "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
-             carrier := {carrier}, plan := (({plan}) : AverCert.Schema.ExprFragmentRawPlan), \
-             obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ExprFragmentClaim)",
-            name = r.name,
-            carrier = r.carrier
-        ));
-        expr_proofs.push(proof);
     }
     let sym_claims = if sym_claims.is_empty() {
         "[]".to_string()
@@ -1229,6 +1230,8 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
             "    AverCert.AcceptedArtifact.claimObligationExports,\n",
             "    AverCert.AcceptedArtifact.claimsMatchManifest,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimPlanPairs,\n",
+            "    AverCert.AcceptedArtifact.symFragmentClaimEncodedPlanPairs,\n",
+            "    AverCert.AcceptedArtifact.symFragmentClaimEncodedPlanPair?,\n",
             "    AverCert.AcceptedArtifact.exprFragmentClaimPlanPairs,\n",
             "    AverCert.AcceptedArtifact.acceptedFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedSymFragments,\n",

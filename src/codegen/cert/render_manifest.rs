@@ -230,15 +230,33 @@ fn render_manifest_lean(
         .map(|c| format!("{}Ob", c.name()))
         .collect::<Vec<_>>()
         .join(", ");
-    let expr_fragment_plans = analysis
+    let sym_expr_fragment_plans = analysis
         .certs
         .iter()
         .filter_map(|c| match c.inner() {
-            Cert::ExprFragment { name, .. } => {
+            Cert::ExprFragment { name, plan, .. }
+                if SymPlan::from_expr_fragment_source_subset(plan).is_some() =>
+            {
                 Some(format!("({}, Plans.{name}Plan)", lean_str(name)))
             }
             _ => None,
         })
+        .collect::<Vec<_>>();
+    let fallback_expr_fragment_plans = analysis
+        .certs
+        .iter()
+        .filter_map(|c| match c.inner() {
+            Cert::ExprFragment { name, plan, .. }
+                if SymPlan::from_expr_fragment_source_subset(plan).is_none() =>
+            {
+                Some(format!("({}, Plans.{name}Plan)", lean_str(name)))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let expr_fragment_plans = sym_expr_fragment_plans
+        .into_iter()
+        .chain(fallback_expr_fragment_plans)
         .collect::<Vec<_>>()
         .join(", ");
     let sym_fragment_plans = analysis
