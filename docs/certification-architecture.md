@@ -311,12 +311,15 @@ hashes the artifact, performs the executable equality gate and derives the
 complete obligation list for non-expression classes.
 
 Producer-side status: the compiler now uses plan-first emission for the current
-host-free scalar expression islands: Float/Bool expressions and Int
-literal-comparison predicates. It derives an `ExprFragmentPlan` from MIR and
-emits the function body through the same canonical plan lowerer used by the
-verifier. More complex future Int-carrier fragments should move into this
-`source/MIR -> CertPlan -> canonical Wasm` path instead of adding new
-post-emission recognizers.
+host-free scalar expression islands. Source-projectable Float/Bool expression
+islands are derived as `SymPlan` directly from MIR, encoded to the
+representation `ExprFragmentPlan`, and emitted through the same canonical plan
+lowerer used by the verifier. Representation-only islands, such as the current
+Int-carrier literal-comparison predicates, remain on an explicit
+`ExprFragmentPlan` fallback until their Aver-level constructors exist. More
+complex future fragments should move into the
+`source/MIR -> SymPlan -> representation encoding -> canonical Wasm` path
+instead of adding new post-emission recognizers.
 
 ## Plan Shape
 
@@ -608,10 +611,13 @@ Sunset criteria:
 14. Done: make producer-side expr-fragment certification require that the plan
     canonically lowers to the exact emitted code-entry bytes, and store the
     canonical lowered ops.
-15. Done for current scalar expression islands: host-free Float/Bool and Int
-    literal-comparison codegen now follows
-    `MIR -> CertPlan -> canonical Wasm body`. Add future Int-carrier arithmetic
-    by extending that plan grammar/lowerer path, not by adding byte recognizers.
+15. Done for current scalar expression islands: source-projectable host-free
+    Float/Bool codegen now follows
+    `MIR -> SymPlan -> ExprFragmentPlan encoding -> canonical Wasm body`, while
+    current Int literal-comparison codegen remains an explicit
+    representation-level fallback. Add future Int-carrier arithmetic by adding
+    Aver-level `SymPlan` constructors plus their representation encoding, not by
+    adding byte recognizers.
 16. Done for source-level bridge v0: source-projectable scalar fragments now
     enter artifact acceptance as `SymFragmentClaim`; Lean checks/encodes their
     `SymRawPlan` into the byte-bound `ExprFragmentRawPlan` before applying the

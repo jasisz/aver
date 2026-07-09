@@ -1,4 +1,54 @@
+pub(crate) fn fragment_plan_from_mir_fn(
+    mir_fn: &crate::ir::mir::MirFn,
+) -> Option<FragmentPlan> {
+    if let Some(plan) = sym_plan_from_mir_fn(mir_fn)
+        && plan.to_expr_fragment_plan().is_some()
+    {
+        return Some(FragmentPlan::Sym(plan));
+    }
+    repr_expr_fragment_plan_from_mir_fn(mir_fn).map(FragmentPlan::Expr)
+}
+
+#[cfg(test)]
 pub(crate) fn expr_fragment_plan_from_mir_fn(
+    mir_fn: &crate::ir::mir::MirFn,
+) -> Option<ExprFragmentPlan> {
+    fragment_plan_from_mir_fn(mir_fn)?.to_expr_fragment_plan()
+}
+
+pub(crate) fn sym_plan_from_mir_fn(mir_fn: &crate::ir::mir::MirFn) -> Option<SymPlan> {
+    if !mir_fn.effects.is_empty() {
+        return None;
+    }
+
+    let mut params = Vec::new();
+    let mut params_by_slot = std::collections::HashMap::<u32, (u32, SymTy)>::new();
+    for (idx, param) in mir_fn.params.iter().enumerate() {
+        if param.local.0 != idx as u32 {
+            return None;
+        }
+        let ty = sym_ty_from_mir_name(&param.ty)?;
+        params.push(ty);
+        params_by_slot.insert(param.local.0, (idx as u32, ty));
+    }
+
+    let result = sym_ty_from_mir_name(&mir_fn.return_type)?;
+    let mut builder = MirSymPlanBuilder {
+        params_by_slot: &params_by_slot,
+        nodes: Vec::new(),
+    };
+    let (root, root_ty) = builder.lower_expr(&mir_fn.body)?;
+    if root_ty != result {
+        return None;
+    }
+    Some(SymPlan {
+        params,
+        result,
+        body: builder.finish(root)?,
+    })
+}
+
+fn repr_expr_fragment_plan_from_mir_fn(
     mir_fn: &crate::ir::mir::MirFn,
 ) -> Option<ExprFragmentPlan> {
     if !mir_fn.effects.is_empty() {
@@ -32,12 +82,123 @@ pub(crate) fn expr_fragment_plan_from_mir_fn(
     })
 }
 
+fn sym_ty_from_mir_name(ty: &str) -> Option<SymTy> {
+    match ty.trim() {
+        "Int" => Some(SymTy::Int),
+        "Float" => Some(SymTy::Float),
+        "Bool" => Some(SymTy::Bool),
+        "String" => Some(SymTy::String),
+        _ => None,
+    }
+}
+
 fn expr_fragment_ty_from_mir_name(ty: &str) -> Option<FragTy> {
     match ty.trim() {
         "Float" => Some(FragTy::F64),
         "Bool" => Some(FragTy::BoolI32),
         "Int" => Some(FragTy::IntCarrier),
         _ => None,
+    }
+}
+
+struct MirSymPlanBuilder<'a> {
+    params_by_slot: &'a std::collections::HashMap<u32, (u32, SymTy)>,
+    nodes: Vec<SymNode>,
+}
+
+impl MirSymPlanBuilder<'_> {
+    fn lower_expr(
+        &mut self,
+        expr: &crate::ast::Spanned<crate::ir::mir::MirExpr>,
+    ) -> Option<(SymValueId, SymTy)> {
+        match &expr.node {
+            crate::ir::mir::MirExpr::Literal(lit) => match &lit.node {
+                crate::ast::Literal::Bool(value) => {
+                    self.push_node(SymTy::Bool, SymNodeKind::ConstBool(*value))
+                }
+                crate::ast::Literal::Float(value) => {
+                    self.push_node(SymTy::Float, SymNodeKind::ConstFloatBits(value.to_bits()))
+                }
+                _ => None,
+            },
+            crate::ir::mir::MirExpr::Local(local) => {
+                let (index, ty) = *self.params_by_slot.get(&local.node.slot.0)?;
+                self.push_node(ty, SymNodeKind::Param { index })
+            }
+            crate::ir::mir::MirExpr::BinOp(binop) => self.lower_binop(&binop.node),
+            crate::ir::mir::MirExpr::IfThenElse(ite) => self.lower_if(&ite.node),
+            _ => None,
+        }
+    }
+
+    fn lower_binop(&mut self, binop: &crate::ir::mir::MirBinOp) -> Option<(SymValueId, SymTy)> {
+        let (lhs, lhs_ty) = self.lower_expr(&binop.lhs)?;
+        let (rhs, rhs_ty) = self.lower_expr(&binop.rhs)?;
+        if lhs_ty != SymTy::Float || rhs_ty != SymTy::Float {
+            return None;
+        }
+        let (op, result_ty) = match binop.op {
+            crate::ast::BinOp::Add => (SymPrim::FloatAdd, SymTy::Float),
+            crate::ast::BinOp::Mul => (SymPrim::FloatMul, SymTy::Float),
+            crate::ast::BinOp::Lte => (SymPrim::FloatLe, SymTy::Bool),
+            _ => return None,
+        };
+        self.push_node(
+            result_ty,
+            SymNodeKind::Prim {
+                op,
+                args: vec![lhs, rhs],
+            },
+        )
+    }
+
+    fn lower_if(&mut self, ite: &crate::ir::mir::MirIfThenElse) -> Option<(SymValueId, SymTy)> {
+        let (cond, cond_ty) = self.lower_expr(&ite.cond)?;
+        if cond_ty != SymTy::Bool {
+            return None;
+        }
+
+        let mut then_builder = MirSymPlanBuilder {
+            params_by_slot: self.params_by_slot,
+            nodes: Vec::new(),
+        };
+        let (then_root, then_ty) = then_builder.lower_expr(&ite.then_branch)?;
+        let then_block = then_builder.finish(then_root)?;
+
+        let mut else_builder = MirSymPlanBuilder {
+            params_by_slot: self.params_by_slot,
+            nodes: Vec::new(),
+        };
+        let (else_root, else_ty) = else_builder.lower_expr(&ite.else_branch)?;
+        let else_block = else_builder.finish(else_root)?;
+
+        if then_ty != else_ty || then_block.result_ty() != else_block.result_ty() {
+            return None;
+        }
+
+        self.push_node(
+            then_ty,
+            SymNodeKind::If {
+                cond,
+                then_block: Box::new(then_block),
+                else_block: Box::new(else_block),
+            },
+        )
+    }
+
+    fn push_node(&mut self, ty: SymTy, kind: SymNodeKind) -> Option<(SymValueId, SymTy)> {
+        let id = SymValueId(self.nodes.len());
+        self.nodes.push(SymNode { id, ty, kind });
+        Some((id, ty))
+    }
+
+    fn finish(self, result: SymValueId) -> Option<SymBlock> {
+        let block = SymBlock {
+            nodes: self.nodes,
+            result,
+        };
+        block.result_ty()?;
+        Some(block)
     }
 }
 
@@ -365,6 +526,42 @@ mod tests {
         span(MirExpr::Literal(span(Literal::Int(value))))
     }
 
+    fn float_local(slot: u32) -> Spanned<MirExpr> {
+        span(MirExpr::Local(span(MirLocal::at(LocalId(slot)))))
+    }
+
+    fn float_binop_fn(op: BinOp) -> MirFn {
+        MirFn {
+            fn_id: FnId(0),
+            name: "f".to_string(),
+            params: vec![
+                MirParam {
+                    local: LocalId(0),
+                    name: "a".to_string(),
+                    ty: "Float".to_string(),
+                },
+                MirParam {
+                    local: LocalId(1),
+                    name: "b".to_string(),
+                    ty: "Float".to_string(),
+                },
+            ],
+            return_type: match op {
+                BinOp::Lte => "Bool".to_string(),
+                _ => "Float".to_string(),
+            },
+            effects: vec![],
+            body: span(MirExpr::BinOp(span(MirBinOp {
+                op,
+                lhs: Box::new(float_local(0)),
+                rhs: Box::new(float_local(1)),
+            }))),
+            local_count: 2,
+            aliased_slots: std::sync::Arc::new(Vec::new()),
+            repr: MirFnRepr::default(),
+        }
+    }
+
     fn int_predicate_fn(op: BinOp, lhs: Spanned<MirExpr>, rhs: Spanned<MirExpr>) -> MirFn {
         MirFn {
             fn_id: FnId(0),
@@ -385,6 +582,32 @@ mod tests {
             aliased_slots: std::sync::Arc::new(Vec::new()),
             repr: MirFnRepr::default(),
         }
+    }
+
+    #[test]
+    fn direct_float_mir_prefers_source_level_sym_plan() {
+        let mir_fn = float_binop_fn(BinOp::Add);
+        let plan = fragment_plan_from_mir_fn(&mir_fn).expect("plan");
+        let FragmentPlan::Sym(sym) = plan else {
+            panic!("direct source-level float fragment should use SymPlan")
+        };
+
+        assert_eq!(sym.params, vec![SymTy::Float, SymTy::Float]);
+        assert_eq!(sym.result, SymTy::Float);
+        assert!(matches!(
+            sym.body.nodes[2].kind,
+            SymNodeKind::Prim {
+                op: SymPrim::FloatAdd,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn int_carrier_comparison_stays_representation_fragment() {
+        let mir_fn = int_predicate_fn(BinOp::Lt, int_local(0), int_lit(0));
+        let plan = fragment_plan_from_mir_fn(&mir_fn).expect("plan");
+        assert!(matches!(plan, FragmentPlan::Expr(_)));
     }
 
     #[test]

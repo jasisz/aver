@@ -20,13 +20,13 @@ impl Analysis {
 /// combinator operator (`+`/`*`) from them since the bytes cannot tell the bignum
 /// helpers apart.
 pub fn analyze(wasm_bytes: &[u8], model_files: &[(String, String)]) -> Result<Analysis, String> {
-    analyze_with_expr_fragment_plans(wasm_bytes, model_files, &[])
+    analyze_with_fragment_plans(wasm_bytes, model_files, &[])
 }
 
-pub fn analyze_with_expr_fragment_plans(
+pub fn analyze_with_fragment_plans(
     wasm_bytes: &[u8],
     model_files: &[(String, String)],
-    expr_fragment_plans: &[ExprFragmentPlanArtifact],
+    fragment_plans: &[FragmentPlanArtifact],
 ) -> Result<Analysis, String> {
     let (user_fns, box_idx, user_idx_set, carrier, host_roles) = disassemble(wasm_bytes)?;
     let model_ops = model_step_ops(model_files);
@@ -36,11 +36,11 @@ pub fn analyze_with_expr_fragment_plans(
         user_fns.iter().map(|f| (f.wasm_idx, f)).collect();
     let user_names: std::collections::HashSet<&str> =
         user_fns.iter().map(|f| f.name.as_str()).collect();
-    let mut producer_plans = std::collections::HashMap::<&str, &ExprFragmentPlan>::new();
-    for artifact in expr_fragment_plans {
+    let mut producer_plans = std::collections::HashMap::<&str, &FragmentPlan>::new();
+    for artifact in fragment_plans {
         if !user_names.contains(artifact.export_name.as_str()) {
             return Err(format!(
-                "producer supplied expr-fragment plan for unknown export `{}`",
+                "producer supplied fragment plan for unknown export `{}`",
                 artifact.export_name
             ));
         }
@@ -49,7 +49,7 @@ pub fn analyze_with_expr_fragment_plans(
             .is_some()
         {
             return Err(format!(
-                "producer supplied duplicate expr-fragment plan for `{}`",
+                "producer supplied duplicate fragment plan for `{}`",
                 artifact.export_name
             ));
         }
@@ -59,18 +59,26 @@ pub fn analyze_with_expr_fragment_plans(
     let mut declined = Vec::new();
     for f in &user_fns {
         if let Some(plan) = producer_plans.get(f.name.as_str()) {
-            match check_expr_fragment_plan_object(wasm_bytes, &f.name, (*plan).clone()) {
+            let checked = match plan {
+                FragmentPlan::Sym(plan) => {
+                    check_sym_fragment_plan_object(wasm_bytes, &f.name, (*plan).clone())
+                }
+                FragmentPlan::Expr(plan) => {
+                    check_expr_fragment_plan_object(wasm_bytes, &f.name, (*plan).clone())
+                }
+            };
+            match checked {
                 Ok((_func_order, cert, _sidecar, true, _reason)) => certs.push(cert),
                 Ok((_func_order, _cert, _sidecar, false, reason)) => declined.push((
                     f.name.clone(),
                     format!(
-                        "producer expr-fragment plan does not match emitted wasm: {}",
+                        "producer fragment plan does not match emitted wasm: {}",
                         reason.unwrap_or_else(|| "unknown mismatch".to_string())
                     ),
                 )),
                 Err(reason) => declined.push((
                     f.name.clone(),
-                    format!("producer expr-fragment plan rejected: {reason}"),
+                    format!("producer fragment plan rejected: {reason}"),
                 )),
             }
             continue;
@@ -229,12 +237,8 @@ fn floatAddGoal(a: Float, b: Float) -> Float
             "expr-fragment should not be certified without a producer plan"
         );
 
-        let checked = analyze_with_expr_fragment_plans(
-            &output.bytes,
-            &[],
-            &output.expr_fragment_plans,
-        )
-        .expect("analysis with producer plan");
+        let checked = analyze_with_fragment_plans(&output.bytes, &[], &output.fragment_plans)
+            .expect("analysis with producer plan");
         assert!(
             checked
                 .certified_names()
@@ -243,24 +247,27 @@ fn floatAddGoal(a: Float, b: Float) -> Float
         );
 
         let mut tampered = output
-            .expr_fragment_plans
+            .fragment_plans
             .iter()
             .find(|artifact| artifact.export_name == "floatAddGoal")
             .expect("producer emitted a floatAddGoal plan")
             .clone();
+        let FragmentPlan::Sym(sym_plan) = &mut tampered.plan else {
+            panic!("source-level producer should emit floatAddGoal as a SymPlan");
+        };
         let mut changed = false;
-        for node in &mut tampered.plan.body.nodes {
-            if let FragNodeKind::Prim { op, .. } = &mut node.kind
-                && *op == FragPrim::F64Add
+        for node in &mut sym_plan.body.nodes {
+            if let SymNodeKind::Prim { op, .. } = &mut node.kind
+                && *op == SymPrim::FloatAdd
             {
-                *op = FragPrim::F64Mul;
+                *op = SymPrim::FloatMul;
                 changed = true;
                 break;
             }
         }
-        assert!(changed, "probe plan should contain f64.add");
+        assert!(changed, "probe source plan should contain float.add");
 
-        let checked = analyze_with_expr_fragment_plans(&output.bytes, &[], &[tampered])
+        let checked = analyze_with_fragment_plans(&output.bytes, &[], &[tampered])
             .expect("analysis should report a declined producer plan");
         assert!(
             !checked
@@ -275,7 +282,7 @@ fn floatAddGoal(a: Float, b: Float) -> Float
             .map(|(_, reason)| reason.as_str())
             .expect("floatAddGoal should be declined");
         assert!(
-            reason.contains("producer expr-fragment plan does not match emitted wasm"),
+            reason.contains("producer fragment plan does not match emitted wasm"),
             "decline reason should identify producer-plan mismatch, got: {reason}"
         );
     }

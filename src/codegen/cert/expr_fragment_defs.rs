@@ -225,12 +225,6 @@ impl ExprFragmentPlan {
 }
 
 #[derive(Clone, Debug)]
-pub struct ExprFragmentPlanArtifact {
-    pub export_name: String,
-    pub plan: ExprFragmentPlan,
-}
-
-#[derive(Clone, Debug)]
 pub struct FragmentPlanSidecar {
     pub path: String,
     pub sha256: String,

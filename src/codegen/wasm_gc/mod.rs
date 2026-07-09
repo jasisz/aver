@@ -125,7 +125,7 @@ impl std::error::Error for WasmGcError {}
 pub struct WasmGcCompileOutput {
     pub bytes: Vec<u8>,
     pub mir_count: usize,
-    pub expr_fragment_plans: Vec<crate::codegen::cert::ExprFragmentPlanArtifact>,
+    pub fragment_plans: Vec<crate::codegen::cert::FragmentPlanArtifact>,
 }
 
 /// Compile post-pipeline IR (`items`) to a WebAssembly GC module
@@ -201,10 +201,10 @@ pub fn compile_to_wasm_gc_with_handler_and_cert_plans(
     handler: Option<&str>,
 ) -> Result<WasmGcCompileOutput, WasmGcError> {
     module::emit_module_with(items, handler, TargetMode::AverBridge).map(
-        |(bytes, mir_count, expr_fragment_plans)| WasmGcCompileOutput {
+        |(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
             bytes,
             mir_count,
-            expr_fragment_plans,
+            fragment_plans,
         },
     )
 }

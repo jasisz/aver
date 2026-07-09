@@ -7,11 +7,15 @@
 > fragments no longer emit or accept trace sidecars; their plan sidecars are
 > untrusted witnesses checked by verifier-owned canonical lowering, then merged
 > with non-expression obligations by the byte-derived function order. The
-> compiler already emits the current host-free Float/Bool expressions and Int
-> literal-comparison predicates from
-> `MIR -> ExprFragmentPlan -> canonical Wasm`; new expression certificates
-> should extend that path rather than adding post-emission recognizers. The same
-> checked expression plans are also emitted as `Plans.lean` Lean data. The
+> compiler now emits source-projectable Float/Bool expression islands from
+> `MIR -> SymPlan -> ExprFragmentPlan encoding -> canonical Wasm`; fragments
+> that still only have representation meaning, such as the current Int-carrier
+> literal-comparison predicates, remain on an explicit
+> `MIR -> ExprFragmentPlan -> canonical Wasm` fallback. New expression
+> certificates should extend the source-level `SymPlan` path whenever the
+> operation has Aver-level meaning, and use the representation fallback only for
+> byte-layout facts that do not yet have a source constructor. The same checked
+> expression plans are also emitted as `Plans.lean` Lean data. The
 > audited, hash-pinned `PlanCheck.lean` module structurally checks those raw
 > plans in Lean (`checkExprFragmentRawPlan = true`), and `PlanLower.lean`
 > canonically lowers accepted raw plans to the same `WInstr` body emitted in

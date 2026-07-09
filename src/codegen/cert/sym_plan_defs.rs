@@ -113,7 +113,7 @@ impl SymPlan {
         })
     }
 
-    fn to_expr_fragment_plan(&self) -> Option<ExprFragmentPlan> {
+    pub(crate) fn to_expr_fragment_plan(&self) -> Option<ExprFragmentPlan> {
         Some(ExprFragmentPlan {
             params: self
                 .params
@@ -125,6 +125,27 @@ impl SymPlan {
             body: expr_fragment_block_from_sym(&self.body)?,
         })
     }
+}
+
+#[derive(Clone, Debug)]
+pub enum FragmentPlan {
+    Sym(SymPlan),
+    Expr(ExprFragmentPlan),
+}
+
+impl FragmentPlan {
+    pub(crate) fn to_expr_fragment_plan(&self) -> Option<ExprFragmentPlan> {
+        match self {
+            FragmentPlan::Sym(plan) => plan.to_expr_fragment_plan(),
+            FragmentPlan::Expr(plan) => Some(plan.clone()),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FragmentPlanArtifact {
+    pub export_name: String,
+    pub plan: FragmentPlan,
 }
 
 fn sym_fragment_sidecar(name: &str, plan: &SymPlan) -> FragmentPlanSidecar {

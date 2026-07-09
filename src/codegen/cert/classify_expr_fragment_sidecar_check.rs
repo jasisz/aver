@@ -276,6 +276,89 @@ fn check_expr_fragment_plan_object(
         mismatch_reason,
     ))
 }
+
+fn check_sym_fragment_plan_object(
+    wasm_bytes: &[u8],
+    export_name: &str,
+    sym_plan: SymPlan,
+) -> Result<(usize, Cert, FragmentPlanSidecar, bool, Option<String>), String> {
+    let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles) = disassemble(wasm_bytes)?;
+    let (_func_order, f) = user_fns
+        .iter()
+        .enumerate()
+        .find(|(_, f)| f.name == export_name)
+        .ok_or_else(|| format!("source plan names unknown export `{export_name}`"))?;
+    if f.arity == 0 || !f.calls.is_empty() {
+        return Err(format!(
+            "source plan for `{export_name}` does not target a non-recursive expr fragment"
+        ));
+    }
+    let carrier = carrier.ok_or_else(|| {
+        format!("source plan for `{export_name}` needs the Int carrier type from the wasm module")
+    })?;
+    let frag_params = f
+        .params
+        .iter()
+        .map(|ty| expr_fragment_ty_from_wasm_param(ty, carrier))
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| {
+            format!("source plan for `{export_name}` has unsupported wasm parameter types")
+        })?;
+    let frag_result = expr_fragment_ty_from_wasm_result(
+        f.result.ok_or_else(|| {
+            format!("source plan for `{export_name}` targets a function with no result")
+        })?,
+    )
+    .ok_or_else(|| format!("source plan for `{export_name}` has unsupported wasm result type"))?;
+    let params = frag_params
+        .iter()
+        .copied()
+        .map(SymTy::from_frag_ty)
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| {
+            format!(
+                "source plan for `{export_name}` cannot describe one of the wasm representation parameters"
+            )
+        })?;
+    let result = SymTy::from_frag_ty(frag_result).ok_or_else(|| {
+        format!(
+            "source plan for `{export_name}` cannot describe the wasm representation result"
+        )
+    })?;
+    if sym_plan.params != params {
+        return Err(format!(
+            "source plan for `{export_name}` has params {:?}, but wasm signature requires {:?}",
+            sym_ty_tags(&sym_plan.params),
+            sym_ty_tags(&params)
+        ));
+    }
+    if sym_plan.result != result {
+        return Err(format!(
+            "source plan for `{export_name}` has result `{}`, but wasm signature requires `{}`",
+            sym_plan.result.plan_tag(),
+            result.plan_tag()
+        ));
+    }
+    if sym_plan.body.result_ty() != Some(result) {
+        return Err(format!(
+            "source plan for `{export_name}` root type does not match function result type"
+        ));
+    }
+    let plan = sym_plan.to_expr_fragment_plan().ok_or_else(|| {
+        format!("source plan for `{export_name}` cannot be encoded to expr-fragment-v1")
+    })?;
+    let (func_order, cert, _expr_sidecar, canonical_matches_actual, mismatch_reason) =
+        check_expr_fragment_plan_object(wasm_bytes, export_name, plan)?;
+    let sidecar = sym_fragment_sidecar(export_name, &sym_plan);
+    Ok((
+        func_order,
+        cert,
+        sidecar,
+        canonical_matches_actual,
+        mismatch_reason,
+    ))
+}
+
 fn byte_match_summary(label: &str, expected: &[u8], actual: &[u8]) -> String {
     if expected == actual {
         return format!("{label}_match=true, len={}", actual.len());
