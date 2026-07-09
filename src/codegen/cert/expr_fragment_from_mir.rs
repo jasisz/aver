@@ -132,6 +132,10 @@ impl MirSymPlanBuilder<'_> {
     }
 
     fn lower_binop(&mut self, binop: &crate::ir::mir::MirBinOp) -> Option<(SymValueId, SymTy)> {
+        if let Some((operand, op, k, const_on_left)) = self.int_const_cmp_shape(binop) {
+            return self.lower_int_const_cmp(operand, op, k, const_on_left);
+        }
+
         let (lhs, lhs_ty) = self.lower_expr(&binop.lhs)?;
         let (rhs, rhs_ty) = self.lower_expr(&binop.rhs)?;
         if lhs_ty != SymTy::Float || rhs_ty != SymTy::Float {
@@ -148,6 +152,57 @@ impl MirSymPlanBuilder<'_> {
             SymNodeKind::Prim {
                 op,
                 args: vec![lhs, rhs],
+            },
+        )
+    }
+
+    fn int_const_cmp_shape<'a>(
+        &self,
+        binop: &'a crate::ir::mir::MirBinOp,
+    ) -> Option<(&'a crate::ast::Spanned<crate::ir::mir::MirExpr>, crate::ast::BinOp, i64, bool)>
+    {
+        if let Some(k) = mir_int_literal(&binop.rhs)
+            && self.expr_is_int_param(&binop.lhs)
+        {
+            return Some((&binop.lhs, binop.op, k, false));
+        }
+        if let Some(k) = mir_int_literal(&binop.lhs)
+            && self.expr_is_int_param(&binop.rhs)
+        {
+            return Some((&binop.rhs, binop.op, k, true));
+        }
+        None
+    }
+
+    fn expr_is_int_param(&self, expr: &crate::ast::Spanned<crate::ir::mir::MirExpr>) -> bool {
+        match &expr.node {
+            crate::ir::mir::MirExpr::Local(local) => self
+                .params_by_slot
+                .get(&local.node.slot.0)
+                .is_some_and(|(_, ty)| *ty == SymTy::Int),
+            _ => false,
+        }
+    }
+
+    fn lower_int_const_cmp(
+        &mut self,
+        operand: &crate::ast::Spanned<crate::ir::mir::MirExpr>,
+        op: crate::ast::BinOp,
+        k: i64,
+        const_on_left: bool,
+    ) -> Option<(SymValueId, SymTy)> {
+        let eff = if const_on_left { flip_cmp(op) } else { op };
+        let op = sym_int_const_cmp_op(eff)?;
+        let (value, value_ty) = self.lower_expr(operand)?;
+        if value_ty != SymTy::Int {
+            return None;
+        }
+        self.push_node(
+            SymTy::Bool,
+            SymNodeKind::IntConstCmp {
+                op,
+                value,
+                constant: k,
             },
         )
     }
@@ -490,6 +545,19 @@ fn i64_const_cmp_prim(op: crate::ast::BinOp) -> Option<FragPrim> {
     }
 }
 
+fn sym_int_const_cmp_op(op: crate::ast::BinOp) -> Option<SymIntCmp> {
+    match op {
+        crate::ast::BinOp::Eq => Some(SymIntCmp::Eq),
+        crate::ast::BinOp::Lt => Some(SymIntCmp::Lt),
+        crate::ast::BinOp::Lte => Some(SymIntCmp::Le),
+        crate::ast::BinOp::Gte => Some(SymIntCmp::Ge),
+        // Kept aligned with the representation encoder: no `Gt`/`Neq`
+        // admission until the carrier proof rules grow those branches.
+        crate::ast::BinOp::Gt | crate::ast::BinOp::Neq => None,
+        _ => None,
+    }
+}
+
 fn big_int_const_cmp_kind(op: crate::ast::BinOp) -> Option<BigIntConstCmpKind> {
     match op {
         crate::ast::BinOp::Eq => Some(BigIntConstCmpKind::Always(false)),
@@ -640,10 +708,24 @@ mod tests {
     }
 
     #[test]
-    fn int_carrier_comparison_stays_representation_fragment() {
+    fn int_carrier_comparison_prefers_source_level_sym_plan() {
         let mir_fn = int_predicate_fn(BinOp::Lt, int_local(0), int_lit(0));
         let plan = fragment_plan_from_mir_fn(&mir_fn).expect("plan");
-        assert!(matches!(plan, FragmentPlan::Expr(_)));
+        let FragmentPlan::Sym(sym) = plan else {
+            panic!("source-level int const comparison should use SymPlan")
+        };
+
+        assert_eq!(sym.params, vec![SymTy::Int]);
+        assert_eq!(sym.result, SymTy::Bool);
+        assert!(matches!(sym.body.nodes[0].kind, SymNodeKind::Param { index: 0 }));
+        assert!(matches!(
+            sym.body.nodes[1].kind,
+            SymNodeKind::IntConstCmp {
+                op: SymIntCmp::Lt,
+                value: SymValueId(0),
+                constant: 0,
+            }
+        ));
     }
 
     #[test]

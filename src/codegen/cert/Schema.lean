@@ -77,12 +77,23 @@ inductive SymPrim where
   | floatLe
 deriving Repr, DecidableEq
 
+/-- Source-level integer comparison against a literal. This is intentionally
+    narrower than general `Int` comparison so the v1 encoder can stay canonical
+    and avoid SSA/local sharing. -/
+inductive SymIntCmp where
+  | eq
+  | lt
+  | le
+  | ge
+deriving Repr, DecidableEq
+
 mutual
   inductive SymNodeKind where
     | param (index : Nat)
     | constBool (value : Bool)
     | constFloatBits (bits : Nat)
     | prim (op : SymPrim) (args : List Nat)
+    | intConstCmp (op : SymIntCmp) (value : Nat) (constant : Int)
     | ifElse (cond : Nat) (thenBlock elseBlock : SymBlock)
   deriving Repr
 

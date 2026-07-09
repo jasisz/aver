@@ -41,6 +41,11 @@ def hasSymTy (nodes : List SymNode) (id : Nat) (expected : SymTy) : Bool :=
   | some got => sameSymTy got expected
   | none => false
 
+def isSymParam (nodes : List SymNode) (id : Nat) : Bool :=
+  match lookupSymNode nodes id with
+  | some { kind := .param _, .. } => true
+  | _ => false
+
 def hasI32Ty (nodes : List FragNode) (id : Nat) : Bool :=
   match lookupTy nodes id with
   | some .rawI32 => true
@@ -162,6 +167,8 @@ def checkSymBlockFuel : Nat → List SymTy → SymBlock → Bool
         | .constBool _ => some .bool
         | .constFloatBits _ => some .float
         | .prim op args => symPrimResultTy? checked op args
+        | .intConstCmp _ value _ =>
+            if hasSymTy checked value .int && isSymParam checked value then some .bool else none
         | .ifElse cond thenBlock elseBlock =>
             if hasSymTy checked cond .bool &&
                checkSymBlockFuel fuel params thenBlock &&
@@ -219,34 +226,126 @@ def encodeSymPrim : SymPrim → FragPrim
   | .floatMul => .f64Mul
   | .floatLe => .f64Le
 
+def symIntSmallConstCmpPrim? : SymIntCmp → Option FragPrim
+  | .eq => some .i64Eq
+  | .lt => some .i64LtS
+  | .le => some .i64LeS
+  | .ge => some .i64GeS
+
+inductive SymBigIntConstCmpKind where
+  | always (value : Bool)
+  | signLtZero
+  | signGtZero
+
+def symIntBigConstCmpKind? : SymIntCmp → Option SymBigIntConstCmpKind
+  | .eq => some (.always false)
+  | .lt => some .signLtZero
+  | .le => some .signLtZero
+  | .ge => some .signGtZero
+
+def appendFragNode
+    (nodes : List FragNode)
+    (ty : FragTy)
+    (kind : FragNodeKind) : List FragNode × Nat :=
+  let id := nodes.length
+  (nodes ++ [{ id := id, ty := ty, kind := kind }], id)
+
+def encodeIntSmallConstCmpBlock? (index : Nat) (op : SymIntCmp) (k : Int) :
+    Option FragBlock := do
+  let prim ← symIntSmallConstCmpPrim? op
+  let (nodes, carrier) := appendFragNode [] .intCarrier (.local index)
+  let (nodes, small) := appendFragNode nodes .i64 (.structGet 0 carrier)
+  let (nodes, constant) := appendFragNode nodes .i64 (.constI64 k)
+  let (nodes, result) := appendFragNode nodes .boolI32 (.prim prim [small, constant])
+  some { nodes := nodes, result := result }
+
+def encodeIntBigConstCmpBlock? (index : Nat) (op : SymIntCmp) :
+    Option FragBlock := do
+  match symIntBigConstCmpKind? op with
+  | some (.always value) =>
+      let (nodes, result) := appendFragNode [] .boolI32 (.constBool value)
+      some { nodes := nodes, result := result }
+  | some .signLtZero =>
+      let (nodes, carrier) := appendFragNode [] .intCarrier (.local index)
+      let (nodes, sign) := appendFragNode nodes .rawI32 (.structGet 2 carrier)
+      let (nodes, zero) := appendFragNode nodes .boolI32 (.constBool false)
+      let (nodes, result) := appendFragNode nodes .boolI32 (.prim .i32LtS [sign, zero])
+      some { nodes := nodes, result := result }
+  | some .signGtZero =>
+      let (nodes, carrier) := appendFragNode [] .intCarrier (.local index)
+      let (nodes, sign) := appendFragNode nodes .rawI32 (.structGet 2 carrier)
+      let (nodes, zero) := appendFragNode nodes .boolI32 (.constBool false)
+      let (nodes, result) := appendFragNode nodes .boolI32 (.prim .i32GtS [sign, zero])
+      some { nodes := nodes, result := result }
+  | none => none
+
+structure SymEncodeState where
+  nodes      : List FragNode
+  symToFrag  : List Nat
+
+def sourceParamIndex? (nodes : List SymNode) (id : Nat) : Option Nat :=
+  match lookupSymNode nodes id with
+  | some { ty := .int, kind := .param index, .. } => some index
+  | _ => none
+
+def encodedValue? (st : SymEncodeState) (id : Nat) : Option Nat :=
+  st.symToFrag[id]?
+
+def pushEncodedNode
+    (st : SymEncodeState)
+    (ty : FragTy)
+    (kind : FragNodeKind) : SymEncodeState × Nat :=
+  let (nodes, id) := appendFragNode st.nodes ty kind
+  ({ st with nodes := nodes }, id)
+
 def encodeSymBlockFuel : Nat → SymBlock → Option FragBlock
   | 0, _ => none
   | fuel + 1, block =>
-      let encodeNodeKind (kind : SymNodeKind) : Option FragNodeKind :=
-        match kind with
-        | .param index => some (.local index)
-        | .constBool value => some (.constBool value)
-        | .constFloatBits bits => some (.constF64Bits bits)
-        | .prim op args => some (.prim (encodeSymPrim op) args)
-        | .ifElse cond thenBlock elseBlock =>
-            match encodeSymBlockFuel fuel thenBlock,
-                  encodeSymBlockFuel fuel elseBlock with
-            | some thenFrag, some elseFrag =>
-                some (.ifElse cond thenFrag elseFrag)
-            | _, _ => none
-      let encodeNode (node : SymNode) : Option FragNode :=
-        match encodeSymTy? node.ty, encodeNodeKind node.kind with
-        | some fragTy, some fragKind =>
-            some { id := node.id, ty := fragTy, kind := fragKind }
-        | _, _ => none
-      let rec encodeNodes : List SymNode → Option (List FragNode)
-        | [] => some []
+      let encodeNode (st : SymEncodeState) (node : SymNode) : Option SymEncodeState := do
+        if node.id = st.symToFrag.length then
+          let fragTy ← encodeSymTy? node.ty
+          match node.kind with
+          | .param index =>
+              let (st, id) := pushEncodedNode st fragTy (.local index)
+              some { st with symToFrag := st.symToFrag ++ [id] }
+          | .constBool value =>
+              let (st, id) := pushEncodedNode st fragTy (.constBool value)
+              some { st with symToFrag := st.symToFrag ++ [id] }
+          | .constFloatBits bits =>
+              let (st, id) := pushEncodedNode st fragTy (.constF64Bits bits)
+              some { st with symToFrag := st.symToFrag ++ [id] }
+          | .prim op args =>
+              let fragArgs ← args.mapM (encodedValue? st)
+              let (st, id) := pushEncodedNode st fragTy (.prim (encodeSymPrim op) fragArgs)
+              some { st with symToFrag := st.symToFrag ++ [id] }
+          | .intConstCmp op value constant =>
+              let carrier ← encodedValue? st value
+              let index ← sourceParamIndex? block.nodes value
+              let (st, magf) := pushEncodedNode st .ref (.structGet 1 carrier)
+              let (st, isSmall) := pushEncodedNode st .boolI32 (.refIsNull magf)
+              let thenBlock ← encodeIntSmallConstCmpBlock? index op constant
+              let elseBlock ← encodeIntBigConstCmpBlock? index op
+              let (st, id) := pushEncodedNode st .boolI32 (.ifElse isSmall thenBlock elseBlock)
+              some { st with symToFrag := st.symToFrag ++ [id] }
+          | .ifElse cond thenBlock elseBlock =>
+              let cond ← encodedValue? st cond
+              let thenFrag ← encodeSymBlockFuel fuel thenBlock
+              let elseFrag ← encodeSymBlockFuel fuel elseBlock
+              let (st, id) := pushEncodedNode st fragTy (.ifElse cond thenFrag elseFrag)
+              some { st with symToFrag := st.symToFrag ++ [id] }
+        else
+          none
+      let rec encodeNodes (st : SymEncodeState) : List SymNode → Option SymEncodeState
+        | [] => some st
         | node :: rest =>
-            match encodeNode node, encodeNodes rest with
-            | some fragNode, some fragRest => some (fragNode :: fragRest)
-            | _, _ => none
-      match encodeNodes block.nodes with
-      | some nodes => some { nodes := nodes, result := block.result }
+            match encodeNode st node with
+            | some st => encodeNodes st rest
+            | none => none
+      match encodeNodes { nodes := [], symToFrag := [] } block.nodes with
+      | some st =>
+          match st.symToFrag[block.result]? with
+          | some result => some { nodes := st.nodes, result := result }
+          | none => none
       | none => none
 
 def encodeSymBlock? (block : SymBlock) : Option FragBlock :=

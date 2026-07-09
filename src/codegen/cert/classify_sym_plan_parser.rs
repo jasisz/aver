@@ -147,6 +147,24 @@ impl<'a> SymPlanParser<'a> {
                 require_sym_plan_ty(id, ty, expected)?;
                 SymNodeKind::Prim { op, args }
             }
+            "int.const-cmp" => {
+                let op = attrs
+                    .get("op")
+                    .and_then(|raw| SymIntCmp::from_plan_tag(raw))
+                    .ok_or_else(|| {
+                        format!("source plan node v{} has unknown int comparison op", id.0)
+                    })?;
+                let value = sym_plan_attr_value(id, &attrs, "value")?;
+                let constant = plan_attr_i64(FragValueId(id.0), &attrs, "constant")?;
+                require_sym_plan_node_ty(nodes, value, SymTy::Int)?;
+                require_sym_plan_param_node(nodes, value)?;
+                require_sym_plan_ty(id, ty, SymTy::Bool)?;
+                SymNodeKind::IntConstCmp {
+                    op,
+                    value,
+                    constant,
+                }
+            }
             "if" => {
                 let cond = sym_plan_attr_value(id, &attrs, "cond")?;
                 require_sym_plan_node_ty(nodes, cond, SymTy::Bool)?;
@@ -239,6 +257,20 @@ fn require_sym_plan_node_ty(
     require_sym_plan_ty(id, got, expected)
 }
 
+fn require_sym_plan_param_node(nodes: &[SymNode], id: SymValueId) -> Result<(), String> {
+    let node = nodes
+        .get(id.0)
+        .ok_or_else(|| format!("source plan references missing node v{}", id.0))?;
+    if matches!(node.kind, SymNodeKind::Param { .. }) {
+        Ok(())
+    } else {
+        Err(format!(
+            "source plan int.const-cmp value v{} is not a parameter",
+            id.0
+        ))
+    }
+}
+
 fn sym_plan_attr_value(
     id: SymValueId,
     attrs: &std::collections::HashMap<String, String>,
@@ -275,6 +307,7 @@ fn reject_extra_sym_plan_attrs(
         "const.bool" => &["value"],
         "const.float" => &["bits"],
         "prim" => &["op", "args"],
+        "int.const-cmp" => &["op", "value", "constant"],
         "if" => &["cond"],
         _ => &[],
     };

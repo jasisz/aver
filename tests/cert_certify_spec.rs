@@ -209,14 +209,15 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         sym_sidecar_names.contains("floatAddGoal")
             && sym_sidecar_names.contains("floatMulAddGoal")
             && sym_sidecar_names.contains("floatLeGoal")
-            && sym_sidecar_names.contains("boolAndGoal"),
+            && sym_sidecar_names.contains("boolAndGoal")
+            && sym_sidecar_names.contains("intLessZero")
+            && sym_sidecar_names.contains("intEqZero")
+            && sym_sidecar_names.contains("inAsciiDigit"),
         "direct source-level fragments should prefer sym sidecars, got {sym_sidecar_names:?}"
     );
     assert!(
-        expr_sidecar_names.contains("intLessZero")
-            && expr_sidecar_names.contains("intEqZero")
-            && expr_sidecar_names.contains("inAsciiDigit"),
-        "representation-only fragments should remain expr sidecars, got {expr_sidecar_names:?}"
+        expr_sidecar_names.is_empty(),
+        "all current expr fragments should now have source-level SymPlan sidecars, got fallback expr sidecars {expr_sidecar_names:?}"
     );
     let plans_lean = std::fs::read_to_string(out_dir.join("cert").join("Plans.lean"))
         .expect("Plans.lean exists");
@@ -241,8 +242,12 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "SymPlan encoder witness should target the existing ExprFragment plan:\n{plans_lean}"
     );
     assert!(
-        !plans_lean.contains("def intLessZeroSymPlan : SymRawPlan"),
-        "representation-only int carrier fragment must not be promoted to SymPlan yet"
+        plans_lean.contains("def intLessZeroSymPlan : SymRawPlan"),
+        "intLessZero should render a source-level SymPlan:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains(".intConstCmp .lt 0 (0 : Int)"),
+        "intLessZero SymPlan should expose a source-level Int comparison:\n{plans_lean}"
     );
     let artifact_lean = std::fs::read_to_string(out_dir.join("cert").join("Artifact.lean"))
         .expect("Artifact.lean exists");
@@ -265,8 +270,12 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "artifact should keep a representation-level fallback claim list:\n{artifact_lean}"
     );
     assert!(
-        artifact_lean.contains("plan := AverCert.Plans.intLessZeroPlan"),
-        "representation-only fragment should remain on ExprFragmentClaim fallback:\n{artifact_lean}"
+        artifact_lean.contains("plan := AverCert.Plans.intLessZeroSymPlan"),
+        "source-level int fragment should be claimed through SymPlan:\n{artifact_lean}"
+    );
+    assert!(
+        !artifact_lean.contains("plan := AverCert.Plans.intLessZeroPlan"),
+        "source-level int fragment should not carry a duplicate ExprFragmentClaim:\n{artifact_lean}"
     );
 
     let planned_goal_names: BTreeSet<String> = [
