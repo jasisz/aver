@@ -924,6 +924,37 @@ fn lean_expr_fragment_plan_pairs(rederived: &[cert::RederivedObligation]) -> Str
     format!("[ {inner} ]")
 }
 
+/// A Lean list literal of `(export name, SymRawPlan)` pairs for source-level
+/// fragment plans. These terms are checker-rendered from verified sidecars,
+/// never copied from attacker Lean text.
+fn lean_sym_fragment_plan_pairs(rederived: &[cert::RederivedObligation]) -> String {
+    let inner = rederived
+        .iter()
+        .filter_map(|r| {
+            r.fragment_sym_plan_lean
+                .as_ref()
+                .map(|plan| format!("(\"{}\", {plan})", r.name))
+        })
+        .collect::<Vec<_>>()
+        .join(",\n   ");
+    format!("[ {inner} ]")
+}
+
+/// A Lean list literal pinning each source plan to the representation-level
+/// plan obtained by the audited `SymRawPlan -> ExprFragmentRawPlan` encoder.
+fn lean_sym_fragment_encoded_plan_pairs(rederived: &[cert::RederivedObligation]) -> String {
+    let inner = rederived
+        .iter()
+        .filter_map(|r| {
+            r.fragment_sym_plan_lean.as_ref()?;
+            let expr = r.fragment_plan_lean.as_ref()?;
+            Some(format!("(\"{}\", some ({expr}))", r.name))
+        })
+        .collect::<Vec<_>>()
+        .join(",\n   ");
+    format!("[ {inner} ]")
+}
+
 /// Checker-owned Lean `example`s proving that each checked expr-fragment plan
 /// lowers, via the audited Lean lowerer, to the same instruction body the Rust
 /// verifier rendered from the byte-bound/canonical-lowered plan.
@@ -1254,6 +1285,8 @@ fn checker_witness(
     let selfs = lean_nat_list(rederived.iter().map(|r| r.self_idx));
     let carriers = lean_nat_list(rederived.iter().map(|r| r.carrier));
     let expr_fragment_plans = lean_expr_fragment_plan_pairs(rederived);
+    let sym_fragment_plans = lean_sym_fragment_plan_pairs(rederived);
+    let sym_fragment_encoded_plans = lean_sym_fragment_encoded_plan_pairs(rederived);
     let expr_fragment_lower_pins = lean_expr_fragment_lower_pins(rederived);
     let expr_fragment_code_entry_pins = lean_expr_fragment_code_entry_pins(rederived);
     let expr_fragment_wasm_slice_pins = lean_expr_fragment_wasm_slice_pins(rederived);
@@ -1310,7 +1343,15 @@ fn checker_witness(
          example : AverCert.manifest.subject.contracts = {byte_contracts} := rfl\n\
          example : AverCert.manifest.subject.profile = \"{profile}\" := rfl\n\
          example : AverCert.manifest.subject.abi = \"{abi}\" := rfl\n\n\
-         -- Expr-fragment raw plans: the manifest's Lean-data plans are pinned\n\
+         -- Source fragment plans: the manifest's Lean-data source plans are\n\
+         -- pinned to checker-rendered `SymRawPlan` terms reconstructed from\n\
+         -- sidecars that already passed hash, source type/refinement checks,\n\
+         -- encoding to an expr plan, and canonical code-entry equality against\n\
+         -- the artifact bytes.\n\
+         example : AverCert.manifest.symFragmentPlans = {sym_fragment_plans} := rfl\n\
+         example : AverCert.manifest.symFragmentPlans.all (fun p => AverCert.PlanCheck.checkSymRawPlan p.2) = true := rfl\n\
+         example : AverCert.manifest.symFragmentPlans.map (fun p => (p.1, AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan p.2)) = {sym_fragment_encoded_plans} := rfl\n\n\
+         -- Expr-fragment raw plans: the manifest's Lean-data representation plans are pinned\n\
          -- to the checker-rendered `ExprFragmentRawPlan` terms reconstructed\n\
          -- from sidecars that already passed hash, type/refinement and\n\
          -- canonical code-entry equality against the artifact bytes.\n\

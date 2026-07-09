@@ -184,12 +184,14 @@ example :
 
 This is not yet the v2 raw-byte in-kernel checker. In v1, Rust still
 parses/checks the text sidecar, lowers it canonically and compares it to the
-Wasm code-entry bytes. The verified plan is then rendered back as a
-checker-owned Lean `ExprFragmentRawPlan` term and pinned by
-`CheckerWitness.lean` against `manifest.exprFragmentPlans`; the witness also
-checks that all manifest plans pass `PlanCheck.checkExprFragmentRawPlan`, that
-`PlanLower.lowerExprFragmentBody` produces the byte-bound `WInstr` body, and
-that `PlanBytes.lowerExprFragmentCodeEntry` produces the verifier-derived
+Wasm code-entry bytes. The verified plan is then rendered back as
+checker-owned Lean `SymRawPlan` / `ExprFragmentRawPlan` data and pinned by
+`CheckerWitness.lean` against `manifest.symFragmentPlans` and
+`manifest.exprFragmentPlans`; the witness also checks that all source plans
+pass `PlanCheck.checkSymRawPlan`, that they encode to their representation
+plans, that all representation plans pass `PlanCheck.checkExprFragmentRawPlan`,
+that `PlanLower.lowerExprFragmentBody` produces the byte-bound `WInstr` body,
+and that `PlanBytes.lowerExprFragmentCodeEntry` produces the verifier-derived
 canonical code-entry bytes. It also checks that `WasmSlice.funcBindingForExport`
 routes the export through the byte-derived function index, defined-code index
 and function-section type index before finding those same code-entry bytes in

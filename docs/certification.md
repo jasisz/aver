@@ -37,8 +37,9 @@
 > `Schema.Holds manifest`, and only then calls `acceptedWithFinal`. This makes
 > the artifact carry the v2-shaped bridge proof without letting it choose the
 > final theorem target.
-> The verifier-authored witness
-> pins `manifest.exprFragmentPlans` to checker-rendered terms and re-checks the
+> The verifier-authored witness pins `manifest.symFragmentPlans` and
+> `manifest.exprFragmentPlans` to checker-rendered terms, checks that each
+> source plan encodes to its byte-bound representation plan, and re-checks the
 > plan lowerings plus the relevant byte-origin slice. This is the v2 landing
 > zone for moving the remaining module validation/raw-byte binding fully into
 > `AverCert`.

@@ -241,6 +241,19 @@ fn render_manifest_lean(
         })
         .collect::<Vec<_>>()
         .join(", ");
+    let sym_fragment_plans = analysis
+        .certs
+        .iter()
+        .filter_map(|c| match c.inner() {
+            Cert::ExprFragment { name, plan, .. }
+                if SymPlan::from_expr_fragment_source_subset(plan).is_some() =>
+            {
+                Some(format!("({}, Plans.{name}SymPlan)", lean_str(name)))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     s.push_str(&format!(
         "def manifest : Schema.Manifest :=\n  \
          {{ subject :=\n      \
@@ -249,6 +262,7 @@ fn render_manifest_lean(
          abi := \"{RUNTIME_ABI}\",\n        \
          exports := [{exports}],\n        \
          contracts := [{contracts}] }},\n    \
+         symFragmentPlans := [{sym_fragment_plans}],\n    \
          exprFragmentPlans := [{expr_fragment_plans}],\n    \
          obligations := [{obligations}] }}\n\n\
          end AverCert\n",

@@ -255,6 +255,7 @@ def Obligation.holds (o : Obligation) : Prop :=
 
 structure Manifest where
   subject     : Subject
+  symFragmentPlans : List (String × SymRawPlan)
   exprFragmentPlans : List (String × ExprFragmentRawPlan)
   obligations : List Obligation
 
