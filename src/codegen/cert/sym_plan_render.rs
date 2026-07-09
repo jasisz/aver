@@ -18,7 +18,7 @@ fn sym_fragment_plan_text(plan: &SymPlan) -> String {
     out.push_str("params");
     for ty in &plan.params {
         out.push(' ');
-        out.push_str(ty.plan_tag());
+        out.push_str(&ty.plan_tag());
     }
     out.push('\n');
     out.push_str(&format!("result {}\n", plan.result.plan_tag()));
@@ -41,12 +41,13 @@ fn sym_plan_lean_value(plan: &SymPlan) -> String {
 }
 
 impl SymTy {
-    fn lean_plan_ctor(self) -> &'static str {
+    fn lean_plan_ctor(&self) -> String {
         match self {
-            SymTy::Int => ".int",
-            SymTy::Float => ".float",
-            SymTy::Bool => ".bool",
-            SymTy::String => ".string",
+            SymTy::Int => ".int".to_string(),
+            SymTy::Float => ".float".to_string(),
+            SymTy::Bool => ".bool".to_string(),
+            SymTy::String => ".string".to_string(),
+            SymTy::Named(name) => format!("(.named {})", lean_str(name)),
         }
     }
 }

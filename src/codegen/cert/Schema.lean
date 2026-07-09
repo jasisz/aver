@@ -54,6 +54,7 @@ inductive SymTy where
   | float
   | bool
   | string
+  | named (name : String)
 deriving Repr, DecidableEq
 
 /-- Projection from representation-level fragment types into the source-level

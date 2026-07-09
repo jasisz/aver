@@ -28,7 +28,7 @@ pub(crate) fn sym_plan_from_mir_fn(mir_fn: &crate::ir::mir::MirFn) -> Option<Sym
             return None;
         }
         let ty = sym_ty_from_mir_name(&param.ty)?;
-        params.push(ty);
+        params.push(ty.clone());
         params_by_slot.insert(param.local.0, (idx as u32, ty));
     }
 
@@ -83,12 +83,14 @@ fn repr_expr_fragment_plan_from_mir_fn(
 }
 
 fn sym_ty_from_mir_name(ty: &str) -> Option<SymTy> {
-    match ty.trim() {
+    let ty = ty.trim();
+    match ty {
         "Int" => Some(SymTy::Int),
         "Float" => Some(SymTy::Float),
         "Bool" => Some(SymTy::Bool),
         "String" => Some(SymTy::String),
-        _ => None,
+        "" => None,
+        other => Some(SymTy::Named(other.to_string())),
     }
 }
 
@@ -125,7 +127,7 @@ impl MirSymPlanBuilder<'_> {
                 _ => None,
             },
             crate::ir::mir::MirExpr::Local(local) => {
-                let (index, ty) = *self.params_by_slot.get(&local.node.slot.0)?;
+                let (index, ty) = self.params_by_slot.get(&local.node.slot.0)?.clone();
                 self.push_node(ty, SymNodeKind::Param { index })
             }
             crate::ir::mir::MirExpr::BinOp(binop) => self.lower_binop(&binop.node),
@@ -195,7 +197,7 @@ impl MirSymPlanBuilder<'_> {
             crate::ir::mir::MirExpr::Local(local) => self
                 .params_by_slot
                 .get(&local.node.slot.0)
-                .is_some_and(|(_, ty)| *ty == SymTy::Int),
+                .is_some_and(|(_, ty)| ty == &SymTy::Int),
             _ => false,
         }
     }
@@ -259,7 +261,11 @@ impl MirSymPlanBuilder<'_> {
 
     fn push_node(&mut self, ty: SymTy, kind: SymNodeKind) -> Option<(SymValueId, SymTy)> {
         let id = SymValueId(self.nodes.len());
-        self.nodes.push(SymNode { id, ty, kind });
+        self.nodes.push(SymNode {
+            id,
+            ty: ty.clone(),
+            kind,
+        });
         Some((id, ty))
     }
 

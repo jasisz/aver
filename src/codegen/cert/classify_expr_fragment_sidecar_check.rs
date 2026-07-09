@@ -164,7 +164,7 @@ pub fn check_sym_fragment_plan_sidecar(
             "source plan for `{export_name}` cannot describe the wasm representation result"
         )
     })?;
-    let mut parser = SymPlanParser::new(plan_text, params.clone(), result);
+    let mut parser = SymPlanParser::new(plan_text, params.clone(), result.clone());
     let body = parser.parse()?;
     let sym_plan = SymPlan {
         params,
@@ -387,7 +387,7 @@ fn check_sym_fragment_plan_object(
             result.plan_tag()
         ));
     }
-    if sym_plan.body.result_ty() != Some(result) {
+    if sym_plan.body.result_ty() != Some(result.clone()) {
         return Err(format!(
             "source plan for `{export_name}` root type does not match function result type"
         ));

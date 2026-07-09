@@ -8276,10 +8276,9 @@ fn parse_lean_diag_header(line: &str) -> Option<(usize, String)> {
     // Find `: error: ` or `: warning: ` (the severity marker).
     let (head, msg) = if let Some(idx) = line.find(": error: ") {
         (&line[..idx], line[idx + ": error: ".len()..].to_string())
-    } else if let Some(idx) = line.find(": warning: ") {
-        (&line[..idx], line[idx + ": warning: ".len()..].to_string())
     } else {
-        return None;
+        let idx = line.find(": warning: ")?;
+        (&line[..idx], line[idx + ": warning: ".len()..].to_string())
     };
     // `head` == `<file>:<line>:<col>`. The last two colon-separated fields must
     // be decimal `line`/`col`.

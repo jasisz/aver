@@ -41,7 +41,7 @@ impl<'a> SymPlanParser<'a> {
         }
         self.expect_exact("body")?;
         let block = self.parse_block()?;
-        if block.result_ty() != Some(self.result) {
+        if block.result_ty() != Some(self.result.clone()) {
             return Err("source plan root type does not match function result type".to_string());
         }
         if self.pos != self.lines.len() {
@@ -120,26 +120,27 @@ impl<'a> SymPlanParser<'a> {
         let kind = match kind_name {
             "param" => {
                 let index = plan_attr_u32(FragValueId(id.0), &attrs, "index")?;
-                let expected = *self
+                let expected = self
                     .params
                     .get(index as usize)
+                    .cloned()
                     .ok_or_else(|| format!("source plan param {index} is outside parameters"))?;
-                require_sym_plan_ty(id, ty, expected)?;
+                require_sym_plan_ty(id, &ty, &expected)?;
                 SymNodeKind::Param { index }
             }
             "const.bool" => {
                 let value = plan_attr_bool(FragValueId(id.0), &attrs, "value")?;
-                require_sym_plan_ty(id, ty, SymTy::Bool)?;
+                require_sym_plan_ty(id, &ty, &SymTy::Bool)?;
                 SymNodeKind::ConstBool(value)
             }
             "const.float" => {
                 let bits = plan_attr_u64_hex(FragValueId(id.0), &attrs, "bits")?;
-                require_sym_plan_ty(id, ty, SymTy::Float)?;
+                require_sym_plan_ty(id, &ty, &SymTy::Float)?;
                 SymNodeKind::ConstFloatBits(bits)
             }
             "const.string" => {
                 let bytes = parse_hex_bytes(plan_attr(FragValueId(id.0), &attrs, "hex")?)?;
-                require_sym_plan_ty(id, ty, SymTy::String)?;
+                require_sym_plan_ty(id, &ty, &SymTy::String)?;
                 SymNodeKind::ConstStringBytes(bytes)
             }
             "prim" => {
@@ -149,7 +150,7 @@ impl<'a> SymPlanParser<'a> {
                     .ok_or_else(|| format!("source plan node v{} has unknown prim op", id.0))?;
                 let args = sym_plan_attr_values(id, &attrs, "args")?;
                 let expected = check_sym_plan_prim_args(id, op, &args, nodes)?;
-                require_sym_plan_ty(id, ty, expected)?;
+                require_sym_plan_ty(id, &ty, &expected)?;
                 SymNodeKind::Prim { op, args }
             }
             "int.const-cmp" => {
@@ -161,9 +162,9 @@ impl<'a> SymPlanParser<'a> {
                     })?;
                 let value = sym_plan_attr_value(id, &attrs, "value")?;
                 let constant = plan_attr_i64(FragValueId(id.0), &attrs, "constant")?;
-                require_sym_plan_node_ty(nodes, value, SymTy::Int)?;
+                require_sym_plan_node_ty(nodes, value, &SymTy::Int)?;
                 require_sym_plan_param_node(nodes, value)?;
-                require_sym_plan_ty(id, ty, SymTy::Bool)?;
+                require_sym_plan_ty(id, &ty, &SymTy::Bool)?;
                 SymNodeKind::IntConstCmp {
                     op,
                     value,
@@ -172,7 +173,7 @@ impl<'a> SymPlanParser<'a> {
             }
             "if" => {
                 let cond = sym_plan_attr_value(id, &attrs, "cond")?;
-                require_sym_plan_node_ty(nodes, cond, SymTy::Bool)?;
+                require_sym_plan_node_ty(nodes, cond, &SymTy::Bool)?;
                 self.expect_exact("then")?;
                 let then_block = self.parse_block()?;
                 self.expect_exact("else")?;
@@ -181,13 +182,13 @@ impl<'a> SymPlanParser<'a> {
                 let expected = then_block
                     .result_ty()
                     .ok_or_else(|| format!("source plan if v{} then branch has no result", id.0))?;
-                if else_block.result_ty() != Some(expected) {
+                if else_block.result_ty() != Some(expected.clone()) {
                     return Err(format!(
                         "source plan if v{} branch result types do not match",
                         id.0
                     ));
                 }
-                require_sym_plan_ty(id, ty, expected)?;
+                require_sym_plan_ty(id, &ty, &expected)?;
                 SymNodeKind::If {
                     cond,
                     then_block: Box::new(then_block),
@@ -233,11 +234,11 @@ impl SymBlock {
         self.nodes
             .get(self.result.0)
             .filter(|node| node.id == self.result)
-            .map(|node| node.ty)
+            .map(|node| node.ty.clone())
     }
 }
 
-fn require_sym_plan_ty(id: SymValueId, got: SymTy, expected: SymTy) -> Result<(), String> {
+fn require_sym_plan_ty(id: SymValueId, got: &SymTy, expected: &SymTy) -> Result<(), String> {
     if got == expected {
         Ok(())
     } else {
@@ -253,13 +254,14 @@ fn require_sym_plan_ty(id: SymValueId, got: SymTy, expected: SymTy) -> Result<()
 fn require_sym_plan_node_ty(
     nodes: &[SymNode],
     id: SymValueId,
-    expected: SymTy,
+    expected: &SymTy,
 ) -> Result<(), String> {
     let got = nodes
         .get(id.0)
         .ok_or_else(|| format!("source plan references missing node v{}", id.0))?
-        .ty;
-    require_sym_plan_ty(id, got, expected)
+        .ty
+        .clone();
+    require_sym_plan_ty(id, &got, expected)
 }
 
 fn require_sym_plan_param_node(nodes: &[SymNode], id: SymValueId) -> Result<(), String> {
@@ -332,19 +334,19 @@ fn check_sym_plan_prim_args(
     args: &[SymValueId],
     nodes: &[SymNode],
 ) -> Result<SymTy, String> {
-    let expected_args: &[SymTy] = match op {
+    let expected_args: Vec<SymTy> = match op {
         SymPrim::FloatAdd | SymPrim::FloatMul | SymPrim::FloatLe => {
-            &[SymTy::Float, SymTy::Float]
+            vec![SymTy::Float, SymTy::Float]
         }
-        SymPrim::StringEq => &[SymTy::String, SymTy::String],
-        SymPrim::StringConcat => &[],
+        SymPrim::StringEq => vec![SymTy::String, SymTy::String],
+        SymPrim::StringConcat => Vec::new(),
     };
     if op == SymPrim::StringConcat {
         if args.is_empty() {
             return Err(format!("source plan string.concat v{} has no args", id.0));
         }
         for arg in args {
-            require_sym_plan_node_ty(nodes, *arg, SymTy::String)?;
+            require_sym_plan_node_ty(nodes, *arg, &SymTy::String)?;
         }
         return Ok(SymTy::String);
     }
@@ -356,8 +358,8 @@ fn check_sym_plan_prim_args(
             expected_args.len()
         ));
     }
-    for (arg, expected) in args.iter().zip(expected_args) {
-        require_sym_plan_node_ty(nodes, *arg, *expected)?;
+    for (arg, expected) in args.iter().zip(expected_args.iter()) {
+        require_sym_plan_node_ty(nodes, *arg, expected)?;
     }
     Ok(match op {
         SymPrim::FloatAdd | SymPrim::FloatMul => SymTy::Float,
@@ -378,8 +380,8 @@ fn parse_sym_plan_params(line: &str) -> Result<Vec<SymTy>, String> {
         .collect()
 }
 
-fn sym_ty_tags(items: &[SymTy]) -> Vec<&'static str> {
-    items.iter().map(|ty| ty.plan_tag()).collect()
+fn sym_ty_tags(items: &[SymTy]) -> Vec<String> {
+    items.iter().map(SymTy::plan_tag).collect()
 }
 
 fn parse_sym_value_id(raw: &str) -> Option<SymValueId> {

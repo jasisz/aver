@@ -1,12 +1,13 @@
 /// Source-level certificate plan. Unlike `ExprFragmentPlan`, this IR talks in
 /// Aver semantic types and operations first; target representation only enters
 /// later through a checked encoder/lowerer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SymTy {
     Int,
     Float,
     Bool,
     String,
+    Named(String),
 }
 
 impl SymTy {
@@ -19,21 +20,22 @@ impl SymTy {
         }
     }
 
-    fn to_frag_ty(self) -> Option<FragTy> {
+    fn to_frag_ty(&self) -> Option<FragTy> {
         match self {
             SymTy::Int => Some(FragTy::IntCarrier),
             SymTy::Float => Some(FragTy::F64),
             SymTy::Bool => Some(FragTy::BoolI32),
-            SymTy::String => None,
+            SymTy::String | SymTy::Named(_) => None,
         }
     }
 
-    fn plan_tag(self) -> &'static str {
+    fn plan_tag(&self) -> String {
         match self {
-            SymTy::Int => "int",
-            SymTy::Float => "float",
-            SymTy::Bool => "bool",
-            SymTy::String => "string",
+            SymTy::Int => "int".to_string(),
+            SymTy::Float => "float".to_string(),
+            SymTy::Bool => "bool".to_string(),
+            SymTy::String => "string".to_string(),
+            SymTy::Named(name) => format!("named:{name}"),
         }
     }
 
@@ -43,7 +45,10 @@ impl SymTy {
             "float" => Some(SymTy::Float),
             "bool" => Some(SymTy::Bool),
             "string" => Some(SymTy::String),
-            _ => None,
+            _ => tag
+                .strip_prefix("named:")
+                .filter(|name| !name.is_empty() && !name.chars().any(char::is_whitespace))
+                .map(|name| SymTy::Named(name.to_string())),
         }
     }
 }
@@ -134,7 +139,6 @@ impl SymPlan {
             params: self
                 .params
                 .iter()
-                .copied()
                 .map(SymTy::to_frag_ty)
                 .collect::<Option<Vec<_>>>()?,
             result: self.result.to_frag_ty()?,
@@ -320,6 +324,37 @@ mod sym_plan_defs_tests {
         };
 
         assert!(SymPlan::from_expr_fragment_source_subset(&plan).is_none());
+    }
+
+    #[test]
+    fn sym_plan_named_types_roundtrip_but_do_not_encode_to_expr_fragment() {
+        let named = SymTy::Named("User".to_string());
+        assert_eq!(named.plan_tag(), "named:User");
+        assert_eq!(SymTy::from_plan_tag("named:User"), Some(named.clone()));
+        assert_eq!(named.to_frag_ty(), None);
+
+        let plan = SymPlan {
+            params: vec![named.clone()],
+            result: SymTy::String,
+            body: SymBlock {
+                nodes: vec![
+                    SymNode {
+                        id: SymValueId(0),
+                        ty: named,
+                        kind: SymNodeKind::Param { index: 0 },
+                    },
+                    SymNode {
+                        id: SymValueId(1),
+                        ty: SymTy::String,
+                        kind: SymNodeKind::ConstStringBytes(b"Ada".to_vec()),
+                    },
+                ],
+                result: SymValueId(1),
+            },
+        };
+        let lean = sym_plan_lean_value(&plan);
+        assert!(lean.contains("params := [(.named \"User\")]"));
+        assert!(plan.to_expr_fragment_plan().is_none());
     }
 
     #[test]
