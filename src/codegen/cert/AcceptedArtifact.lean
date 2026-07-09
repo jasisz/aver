@@ -176,6 +176,15 @@ def expectedArtifactRoot : String :=
 def subjectMatchesArtifactRoot (artifact : ArtifactData) : Prop :=
   artifact.manifest.subject.artifactRoot = expectedArtifactRoot
 
+def claimObligationExports (artifact : ArtifactData) : List String :=
+  artifact.symFragmentClaims.map (fun c => c.obligation.export_) ++
+  artifact.exprFragmentClaims.map (fun c => c.obligation.export_)
+
+def fragmentClaimObligationsInManifest (artifact : ArtifactData) : Prop :=
+  (claimObligationExports artifact).all
+    (fun exportName =>
+      (artifact.manifest.obligations.map (fun o => o.export_)).contains exportName) = true
+
 def claimsMatchManifest (artifact : ArtifactData) : Prop :=
   symFragmentClaimPlanPairs artifact.symFragmentClaims =
       artifact.manifest.symFragmentPlans ∧
@@ -185,6 +194,7 @@ def claimsMatchManifest (artifact : ArtifactData) : Prop :=
 def accepted (artifact : ArtifactData) : Prop :=
   AverCert.Schema.Holds artifact.manifest ∧
   subjectMatchesArtifactRoot artifact ∧
+  fragmentClaimObligationsInManifest artifact ∧
   claimsMatchManifest artifact ∧
   acceptedFragments artifact
 

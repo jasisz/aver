@@ -299,7 +299,8 @@ for the entire fragment claim set. The checker pins that `data` term to its own
 reconstruction with `rfl`, type-ascribes `Final.cert : Schema.Holds manifest`,
 and roots the axiom audit at `Artifact.certificate`. The audited
 `AcceptedArtifact.accepted` predicate also requires the manifest subject to name
-that same artifact root.
+that same artifact root and requires fragment claim obligations to be present in
+`manifest.obligations`.
 This removes another slice of plan-to-semantics, plan-to-bytes, byte-origin and
 schema-binding logic from unreviewed generated proof text while still preventing
 the artifact from choosing the final theorem target. The remaining gap is full

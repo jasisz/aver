@@ -1080,9 +1080,9 @@ fn lean_expr_fragment_accepted_pins(rederived: &[cert::RederivedObligation]) -> 
 }
 
 /// Checker-owned Lean `example`s proving that fragment byte-origin acceptance
-/// is tied to the schema obligation used by `Final.cert`. Source-projectable
-/// fragments use `SymFragmentClaim`; representation-only fragments use the
-/// `ExprFragmentClaim` fallback.
+/// is tied to the schema obligation used by `Final.cert`. Every fragment keeps
+/// its byte-bound `ExprFragmentClaim`; source-projectable fragments also carry
+/// a `SymFragmentClaim` overlay.
 struct LeanExprFragmentArtifactClaims {
     sym_claims: String,
     expr_claims: String,
@@ -1124,17 +1124,16 @@ fn lean_expr_fragment_artifact_claims(
                 name = r.name,
                 carrier = r.carrier
             ));
-            sym_proofs.push(proof);
-        } else {
-            expr_claims.push(format!(
-                "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
-                 carrier := {carrier}, plan := (({plan}) : AverCert.Schema.ExprFragmentRawPlan), \
-                 obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ExprFragmentClaim)",
-                name = r.name,
-                carrier = r.carrier
-            ));
-            expr_proofs.push(proof);
+            sym_proofs.push(proof.clone());
         }
+        expr_claims.push(format!(
+            "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
+             carrier := {carrier}, plan := (({plan}) : AverCert.Schema.ExprFragmentRawPlan), \
+             obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ExprFragmentClaim)",
+            name = r.name,
+            carrier = r.carrier
+        ));
+        expr_proofs.push(proof);
     }
     let sym_claims = if sym_claims.is_empty() {
         "[]".to_string()
@@ -1226,6 +1225,8 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
             "  dsimp [AverCert.AcceptedArtifact.accepted,\n",
             "    AverCert.AcceptedArtifact.subjectMatchesArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.expectedArtifactRoot,\n",
+            "    AverCert.AcceptedArtifact.fragmentClaimObligationsInManifest,\n",
+            "    AverCert.AcceptedArtifact.claimObligationExports,\n",
             "    AverCert.AcceptedArtifact.claimsMatchManifest,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimPlanPairs,\n",
             "    AverCert.AcceptedArtifact.exprFragmentClaimPlanPairs,\n",
@@ -1239,7 +1240,7 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
             "    AverCert.AcceptedArtifact.exprFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨{final_witness}, ⟨rfl, ⟨⟨rfl, rfl⟩, ⟨{sym_proof}, {expr_proof}⟩⟩⟩⟩\n"
+            "  exact ⟨{final_witness}, ⟨rfl, ⟨rfl, ⟨⟨rfl, rfl⟩, ⟨{sym_proof}, {expr_proof}⟩⟩⟩⟩⟩\n"
         ),
         final_witness = FINAL_WITNESS_THEOREM,
         sym_proof = witness.sym_proof,

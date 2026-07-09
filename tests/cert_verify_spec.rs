@@ -1236,6 +1236,67 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
         "cert-supplied ArtifactBytes.lean must be ignored and regenerated:\n{out}"
     );
 
+    let claim_without_manifest_ob_dir = temp_dir("cert-expr-claim-without-obligation");
+    copy_dir(&out_dir, &claim_without_manifest_ob_dir);
+    let claim_without_manifest_ob_wasm = claim_without_manifest_ob_dir.join("cert_goals.wasm");
+    let claim_without_manifest_ob_cert = claim_without_manifest_ob_dir.join("cert");
+    let manifest_lean = claim_without_manifest_ob_cert.join("Manifest.lean");
+    let manifest_text = std::fs::read_to_string(&manifest_lean).unwrap();
+    let marker = "obligations := [";
+    let start = manifest_text
+        .find(marker)
+        .expect("Manifest.lean should render obligations")
+        + marker.len();
+    let end = start
+        + manifest_text[start..]
+            .find("] }")
+            .expect("Manifest.lean obligations list should close");
+    let mut weakened_manifest = String::new();
+    weakened_manifest.push_str(&manifest_text[..start]);
+    weakened_manifest.push_str(&manifest_text[end..]);
+    assert_ne!(
+        manifest_text, weakened_manifest,
+        "Manifest.lean obligations shape changed"
+    );
+    std::fs::write(&manifest_lean, weakened_manifest).unwrap();
+    std::fs::write(
+        claim_without_manifest_ob_cert.join("Final.lean"),
+        concat!(
+            "import Certificate\n",
+            "import Manifest\n",
+            "import Schema\n\n",
+            "set_option maxRecDepth 1000000\n",
+            "set_option linter.unusedSimpArgs false\n\n",
+            "open AverCert AverCert.Schema\n\n",
+            "theorem AverCert.Final.cert : AverCert.Schema.Holds manifest := by\n",
+            "  refine ⟨rfl, ?_⟩\n",
+            "  intro o ho\n",
+            "  simp only [manifest, List.mem_nil_iff, List.not_mem_nil] at ho\n",
+            "\n",
+            "#print axioms AverCert.Final.cert\n",
+        ),
+    )
+    .unwrap();
+    let (ok, out) = aver_verify(
+        &claim_without_manifest_ob_wasm,
+        &claim_without_manifest_ob_cert,
+    );
+    assert!(
+        !ok,
+        "expr-fragment claim without manifest obligation must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("fragmentClaimObligationsInManifest")
+            || out.contains("manifest.obligations).contains")
+            || out.contains("AverCert.Artifact.certificate")
+            || out.contains("Artifact.lean"),
+        "wrong reason for missing manifest obligation:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "expr-fragment claim without manifest obligation credited:\n{out}"
+    );
+
     let artifact_axiom_tamper_dir = temp_dir("cert-expr-artifact-axiom-tamper");
     copy_dir(&out_dir, &artifact_axiom_tamper_dir);
     let artifact_axiom_tamper_wasm = artifact_axiom_tamper_dir.join("cert_goals.wasm");
@@ -1249,8 +1310,16 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let def_end = artifact_text
         .find(end_marker)
         .expect("Artifact.lean should close namespace");
-    let evil_bridge = "axiom artifactEvil : ∀ (finalCert : AverCert.Schema.Holds AverCert.manifest), AverCert.AcceptedArtifact.accepted data\n\n\
-def acceptedWithFinal\n    (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n    AverCert.AcceptedArtifact.accepted data := artifactEvil finalCert\n\n";
+    let evil_bridge = concat!(
+        "axiom artifactEvil : ∀ (finalCert : AverCert.Schema.Holds AverCert.manifest), ",
+        "AverCert.AcceptedArtifact.accepted data\n\n",
+        "def acceptedWithFinal\n",
+        "    (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n",
+        "    AverCert.AcceptedArtifact.accepted data := artifactEvil finalCert\n\n",
+        "theorem certificate : AverCert.AcceptedArtifact.accepted data := ",
+        "acceptedWithFinal AverCert.Final.cert\n\n",
+        "#print axioms AverCert.Artifact.certificate\n\n",
+    );
     let mut tampered_artifact = String::new();
     tampered_artifact.push_str(&artifact_text[..def_start]);
     tampered_artifact.push_str(evil_bridge);
@@ -1467,6 +1536,7 @@ def acceptedWithFinal\n    (finalCert : AverCert.Schema.Holds AverCert.manifest)
 
     let _ = std::fs::remove_dir_all(&out_dir);
     let _ = std::fs::remove_dir_all(&artifact_bytes_decoy_dir);
+    let _ = std::fs::remove_dir_all(&claim_without_manifest_ob_dir);
     let _ = std::fs::remove_dir_all(&artifact_axiom_tamper_dir);
     let _ = std::fs::remove_dir_all(&plan_dir);
     let _ = std::fs::remove_dir_all(&planfirst_tamper_dir);

@@ -37,9 +37,10 @@
 > pins that `data` term to its own reconstruction with `rfl`, type-ascribes
 > `Final.cert` to `Schema.Holds manifest`, and roots the axiom audit at
 > `Artifact.certificate`. `AcceptedArtifact.accepted` itself requires the
-> manifest subject to name that same artifact root. The artifact therefore
-> carries the v2-shaped bridge proof without letting it choose the final theorem
-> target.
+> manifest subject to name that same artifact root, and it rejects fragment
+> claims whose obligation export is not present in `manifest.obligations`. The
+> artifact therefore carries the v2-shaped bridge proof without letting it
+> choose the final theorem target.
 > The verifier-authored witness pins `manifest.symFragmentPlans` and
 > `manifest.exprFragmentPlans` to checker-rendered terms, checks that each
 > source plan encodes to its byte-bound representation plan, and re-checks the
