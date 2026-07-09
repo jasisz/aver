@@ -1054,17 +1054,17 @@ fn lean_expr_fragment_obligation_acceptance_pins(
             r.self_idx, code_idx, type_idx, bytes
         );
         out.push_str(&format!(
-            "-- `{}`: accepted expr-fragment data is tied to the schema obligation.\n\
-             example : AverCert.AcceptedArtifact.exprFragmentObligationAccepted AverCert.ArtifactBytes.wasmBytes {} \"{}\" {} ({}) ({}) ({}) {} AverCert.{}Ob := by dsimp [AverCert.AcceptedArtifact.exprFragmentObligationAccepted, AverCert.ExprFragmentAccepted.accepted]; exact ⟨⟨rfl, rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, ⟨_, rfl⟩⟩\n",
+            "-- `{}`: accepted expr-fragment artifact data is tied to the schema obligation.\n\
+             example : AverCert.AcceptedArtifact.exprFragmentPlanAccepted AverCert.ArtifactBytes.wasmBytes {} \"{}\" {} ({}) AverCert.{}Ob := by dsimp [AverCert.AcceptedArtifact.exprFragmentPlanAccepted, AverCert.ExprFragmentAccepted.accepted]; exact ⟨rfl, rfl, ⟨({}), ({}), {}, ⟨⟨rfl, rfl, rfl, rfl, rfl⟩, rfl, ⟨_, rfl⟩⟩⟩⟩\n",
             r.name,
             export_name_bytes,
             r.name,
             r.carrier,
             plan,
+            r.name,
             body,
             bytes,
-            binding,
-            r.name
+            binding
         ));
     }
     out
@@ -1190,8 +1190,10 @@ fn checker_witness(
          -- also exposed as one audited predicate. This is the v2 landing shape\n\
          -- for replacing loose examples with an `AcceptedArtifact` theorem.\n\
          {expr_fragment_accepted_pins}\n\
-         -- Expr-fragment schema bridge: accepted byte-origin/plan data is tied\n\
-         -- to the exact `Schema.Obligation` body that `Final.cert` proves.\n\
+         -- Expr-fragment artifact bridge: raw artifact bytes + raw plan +\n\
+         -- schema obligation imply the aggregate expr-fragment acceptance\n\
+         -- predicate, with body/code-entry/function binding kept as internal\n\
+         -- witnesses rather than extra trusted parameters.\n\
          {expr_fragment_obligation_acceptance_pins}\n\
          -- Hash binding: the sha the checker computed from the artifact bytes.\n\
          example : AverCert.manifest.subject.artifactHash = \"{sha}\" := rfl\n\

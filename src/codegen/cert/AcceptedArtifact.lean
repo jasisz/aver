@@ -32,4 +32,26 @@ def exprFragmentObligationAccepted
     obligation.code binding.funcIdx =
       some { arity := plan.params.length, nlocals := nlocals, body := body }
 
+/-- Artifact-level acceptance for one expression-fragment export. Unlike
+    `exprFragmentObligationAccepted`, this does not accept checker-rendered
+    intermediate values as parameters. The body, canonical code-entry bytes, and
+    function binding are witnesses to the audited Lean predicate
+    `ExprFragmentAccepted.accepted`. This is the v2-shaped API: raw artifact
+    bytes + raw plan + schema obligation. -/
+def exprFragmentPlanAccepted
+    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (exportName : String)
+    (carrier : Nat)
+    (plan : ExprFragmentRawPlan)
+    (obligation : Obligation) : Prop :=
+  obligation.export_ = exportName ∧
+  obligation.carrier = carrier ∧
+  ∃ body codeEntry binding,
+    AverCert.ExprFragmentAccepted.accepted
+      wasmBytes exportNameBytes carrier plan body codeEntry binding ∧
+    obligation.self = binding.funcIdx ∧
+    ∃ nlocals,
+      obligation.code binding.funcIdx =
+        some { arity := plan.params.length, nlocals := nlocals, body := body }
+
 end AverCert.AcceptedArtifact

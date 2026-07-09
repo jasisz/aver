@@ -75,6 +75,7 @@ cert/
   PlanBytes.lean
   WasmSlice.lean
   ExprFragmentAccepted.lean
+  AcceptedArtifact.lean
   ArtifactBytes.lean
   Plans.lean
   Certificate.lean
@@ -115,6 +116,10 @@ example :
     carrier floatAddGoalPlan floatAddGoalBody [/* exact code-entry bytes */]
     { funcIdx := selfIdx, codeIdx := codeIdx, typeIdx := typeIdx,
       codeEntry := [/* exact code-entry bytes */] }
+example :
+  AcceptedArtifact.exprFragmentPlanAccepted
+    ArtifactBytes.wasmBytes [/* export name */] "floatAddGoal"
+    carrier floatAddGoalPlan floatAddGoalOb
 ```
 
 This is not yet the v2 raw-byte in-kernel checker. In v1, Rust still
@@ -213,12 +218,12 @@ then parses the checker-regenerated `ArtifactBytes.wasmBytes` just far enough to
 resolve an export name to the same `FuncBinding` (function index, defined-code
 index, function-section type index and code-entry bytes). `ExprFragmentAccepted.lean`
 packages those checks as one accepted-export predicate for the current
-expr-fragment profile. `AcceptedArtifact.lean` bridges that predicate to the
-`Schema.Obligation` fields used by `Final.cert`: export string, carrier, self
-index and `code self = some ⟨arity,nlocals,body⟩`. This removes another slice
-of plan-to-semantics, plan-to-bytes, byte-origin and schema-binding logic from
-unreviewed generated proof text. The remaining gap is full module validation
-in Lean:
+expr-fragment profile. `AcceptedArtifact.lean` exposes the v2-shaped bridge
+from raw artifact bytes + raw plan + schema obligation to that predicate; the
+lowered body, code-entry bytes and function binding are internal witnesses,
+not trusted parameters. This removes another slice of plan-to-semantics,
+plan-to-bytes, byte-origin and schema-binding logic from unreviewed generated
+proof text. The remaining gap is full module validation in Lean:
 `WasmSlice.lean` is intentionally a relevant-subset slicer, while Rust still
 hashes the artifact, performs the executable equality gate and derives the
 complete obligation list for non-expression classes.
@@ -503,10 +508,11 @@ Sunset criteria:
     `PlanBytes` and `WasmSlice`. The predicate now carries the byte-derived
     function binding.
 11. Done for the first artifact bridge: add audited `AcceptedArtifact.lean` and
-    make checker-owned Lean prove each accepted expr-fragment is tied to the
-    exact `Schema.Obligation` body used by `Final.cert`. The remaining v2 work
-    is to carry checked signature/spec satisfaction and lift the per-fragment
-    bridge into one artifact-level predicate.
+    make checker-owned Lean prove raw artifact bytes + raw plan +
+    `Schema.Obligation` imply accepted expr-fragment byte origin, plan lowering
+    and obligation-code binding. The remaining v2 work is to carry checked
+    signature/spec satisfaction and lift the per-fragment bridge into one
+    artifact-level predicate.
 12. Done: remove the transitional byte classifier from expr-fragment
    admission/order; manifest entries are checked by plan-first lowering
    directly and merged by byte-derived function order.
