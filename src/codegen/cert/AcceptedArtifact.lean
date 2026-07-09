@@ -134,6 +134,20 @@ def symFragmentClaimsAccepted
       symFragmentClaimAccepted wasmBytes claim ∧
       symFragmentClaimsAccepted wasmBytes rest
 
+/-- The source plans claimed by an artifact, projected into the same manifest
+    surface used for pinning. Keeping this in the audited predicate means a
+    self-checking artifact cannot prove acceptance for one claim list while
+    advertising a different source-plan list in its manifest. -/
+def symFragmentClaimPlanPairs
+    (claims : List SymFragmentClaim) : List (String × SymRawPlan) :=
+  claims.map (fun c => (c.exportName, c.plan))
+
+/-- The representation plans claimed by an artifact, projected into the same
+    manifest surface used for pinning. -/
+def exprFragmentClaimPlanPairs
+    (claims : List ExprFragmentClaim) : List (String × ExprFragmentRawPlan) :=
+  claims.map (fun c => (c.exportName, c.plan))
+
 /-- The checker-facing artifact data currently accepted by the Lean bridge.
     `symFragmentClaims` is the preferred source-level surface. Raw
     `exprFragmentClaims` remains as a fallback for representation-only fragments
@@ -156,8 +170,15 @@ def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedSymFragments artifact ∧
   acceptedExprFragments artifact
 
+def claimsMatchManifest (artifact : ArtifactData) : Prop :=
+  symFragmentClaimPlanPairs artifact.symFragmentClaims =
+      artifact.manifest.symFragmentPlans ∧
+  exprFragmentClaimPlanPairs artifact.exprFragmentClaims =
+      artifact.manifest.exprFragmentPlans
+
 def accepted (artifact : ArtifactData) : Prop :=
   AverCert.Schema.Holds artifact.manifest ∧
+  claimsMatchManifest artifact ∧
   acceptedFragments artifact
 
 end AverCert.AcceptedArtifact
