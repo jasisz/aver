@@ -175,8 +175,9 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
         let sym_plan = SymPlan::from_expr_fragment_source_subset(plan)
             .map(|sym| {
                 format!(
-                    "/-- Source-level `SymPlan` projection for `{name}`. This is\n\
-                     non-authoritative v2 scaffolding: byte acceptance still uses `{name}Plan`. -/\n\
+                    "/-- Source-level `SymPlan` projection for `{name}`. Artifact-level\n\
+                     acceptance prefers this claim when the fragment has a direct\n\
+                     Aver-level meaning; the encoder below still binds it to `{name}Plan`. -/\n\
                      def {name}SymPlan : SymRawPlan := {sym_plan}\n\n\
                      /-- The audited Lean-side source-plan checker accepts `{name}`'s `SymPlan`. -/\n\
                      example : AverCert.PlanCheck.checkSymRawPlan {name}SymPlan = true := rfl\n\n\

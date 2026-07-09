@@ -93,10 +93,14 @@ wasm representation type as `FragTy` and now record its source semantic face
 separately. Rust also has a first `SymPlan` model that can project direct
 source-level float/bool fragments and intentionally rejects representation-only
 carrier-limb fragments. The audited Lean `Schema.lean` mirrors this direction
-with `SymTy`, `SymPrim` and `SymRawPlan` data definitions, ready for a later
-kernel-checked `SymRawPlan -> CheckedPlan -> LowersCodeEntry` path. Later
-profiles can make `SymPlan` the primary sidecar format and treat
-representation types as checked encoding details.
+with `SymTy`, `SymPrim` and `SymRawPlan` data definitions. For fragments that
+already project cleanly, `AcceptedArtifact.lean` accepts a source-level
+`SymFragmentClaim`: Lean checks/encodes `SymRawPlan -> ExprFragmentRawPlan`,
+then the existing byte-origin predicate binds that encoded representation plan
+to the exact function bytes. Representation-only fragments remain on the
+`ExprFragmentClaim` fallback until the source grammar grows explicit
+constructors for them. Later profiles should make `SymPlan` the primary sidecar
+format and treat representation types as checked encoding details.
 
 ## Artifact Shape
 
@@ -158,14 +162,20 @@ example :
     ArtifactBytes.wasmBytes [/* export name */] "floatAddGoal"
     carrier floatAddGoalPlan floatAddGoalOb
 example :
-  AcceptedArtifact.acceptedExprFragments
+  AcceptedArtifact.symFragmentPlanAccepted
+    ArtifactBytes.wasmBytes [/* export name */] "floatAddGoal"
+    carrier floatAddGoalSymPlan floatAddGoalOb
+example :
+  AcceptedArtifact.acceptedFragments
     { wasmBytes := ArtifactBytes.wasmBytes,
-      exprFragmentClaims :=
+      symFragmentClaims :=
         [ { exportNameBytes := [/* export name */],
             exportName := "floatAddGoal",
             carrier := carrier,
-            plan := floatAddGoalPlan,
-            obligation := floatAddGoalOb } ] }
+            plan := floatAddGoalSymPlan,
+            obligation := floatAddGoalOb } ],
+      exprFragmentClaims :=
+        [] }
 ```
 
 This is not yet the v2 raw-byte in-kernel checker. In v1, Rust still
@@ -178,9 +188,13 @@ checks that all manifest plans pass `PlanCheck.checkExprFragmentRawPlan`, that
 that `PlanBytes.lowerExprFragmentCodeEntry` produces the verifier-derived
 canonical code-entry bytes. It also checks that `WasmSlice.funcBindingForExport`
 routes the export through the byte-derived function index, defined-code index
-and function-section type index before finding those same code-entry bytes from
-the checker-regenerated module bytes, then proves the same facts through one
-`ExprFragmentAccepted.accepted` predicate.
+and function-section type index before finding those same code-entry bytes in
+the checker-owned artifact bytes, then proves the same facts through one
+`ExprFragmentAccepted.accepted` predicate. For fragments with a source
+projection, the artifact-level claim is now `SymFragmentClaim`: Lean checks
+`encodeSymRawPlanToExprFragmentRawPlan symPlan = some exprPlan` before applying
+the existing representation-plan acceptance predicate. For fragments without a
+source projection, the fallback remains `ExprFragmentClaim`.
 So `Plans.lean` is an untrusted data surface, but it cannot drift from the
 sidecar/body pair without failing verifier-authored `rfl`.
 
@@ -266,13 +280,16 @@ resolve an export name to the same `FuncBinding` (function index, defined-code
 index, function-section type index and code-entry bytes). `ExprFragmentAccepted.lean`
 packages those checks as one accepted-export predicate for the current
 expr-fragment profile. `AcceptedArtifact.lean` exposes the v2-shaped bridge
-from raw artifact bytes + raw plan + schema obligation to that predicate; the
-lowered body, code-entry bytes and function binding are internal witnesses,
-not trusted parameters. The emitted certificate now includes `Artifact.lean`,
-which defines `AverCert.Artifact.data` and an artifact-carried
-`acceptedWithFinal` bridge for the entire expr-fragment claim list. The checker
-pins that `data` term to its own reconstruction with `rfl`, type-ascribes
-`Final.cert : Schema.Holds manifest`, and only then calls `acceptedWithFinal`.
+from raw artifact bytes + source/raw plan + schema obligation to that predicate.
+For source-projectable fragments this is a `SymFragmentClaim` that must encode
+to the byte-bound representation plan in Lean; for representation-only
+fragments it is still an `ExprFragmentClaim` fallback. The lowered body,
+code-entry bytes and function binding are internal witnesses, not trusted
+parameters. The emitted certificate now includes `Artifact.lean`, which defines
+`AverCert.Artifact.data` and an artifact-carried `acceptedWithFinal` bridge for
+the entire fragment claim set. The checker pins that `data` term to its own
+reconstruction with `rfl`, type-ascribes `Final.cert : Schema.Holds manifest`,
+and only then calls `acceptedWithFinal`.
 This removes another slice of plan-to-semantics, plan-to-bytes, byte-origin and
 schema-binding logic from unreviewed generated proof text while still preventing
 the artifact from choosing the final theorem target. The remaining gap is full
@@ -582,7 +599,12 @@ Sunset criteria:
     literal-comparison codegen now follows
     `MIR -> CertPlan -> canonical Wasm body`. Add future Int-carrier arithmetic
     by extending that plan grammar/lowerer path, not by adding byte recognizers.
-16. Delete old whole-function scalar recognizer acceptance once plan-first has
+16. Done for source-level bridge v0: source-projectable scalar fragments now
+    enter artifact acceptance as `SymFragmentClaim`; Lean checks/encodes their
+    `SymRawPlan` into the byte-bound `ExprFragmentRawPlan` before applying the
+    existing accepted-export predicate. Representation-only fragments remain on
+    an explicit fallback list.
+17. Delete old whole-function scalar recognizer acceptance once plan-first has
    parity.
 
 The implementation should move slowly, but every step should tighten the
