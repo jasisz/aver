@@ -1144,7 +1144,7 @@ fn lean_expr_fragment_obligation_acceptance_pins(
 fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> String {
     let witness = lean_expr_fragment_artifact_claims(rederived);
     let artifact = lean_artifact_data_literal(&witness.claims);
-    let expr_proof = if witness.has_claims {
+    let checker_proof = if witness.has_claims {
         format!(
             concat!(
                 "  dsimp [AverCert.AcceptedArtifact.accepted,\n",
@@ -1171,15 +1171,23 @@ fn lean_accepted_artifact_witness(rederived: &[cert::RederivedObligation]) -> St
     };
     format!(
         concat!(
-            "-- Whole-artifact acceptance root: the final schema theorem plus\n",
-            "-- checker-owned expr-fragment artifact claims, under one predicate.\n",
+            "-- Artifact-carried data pin: the cert-supplied `Artifact.lean` data\n",
+            "-- must be exactly the checker-reconstructed artifact literal.\n",
+            "example : AverCert.Artifact.data = {artifact} := rfl\n\n",
+            "-- Checker-owned mirror proof kept as a narrow diagnostic. The axiom\n",
+            "-- audit below is rooted at the artifact-carried proof, after the data\n",
+            "-- pin above has checked.\n",
+            "example : AverCert.AcceptedArtifact.accepted {artifact} := by\n",
+            "{checker_proof}\n\n",
+            "-- Whole-artifact acceptance root carried by the artifact itself. The\n",
+            "-- checker only accepts it after the data pin above succeeds.\n",
             "def {witness_theorem} : AverCert.AcceptedArtifact.accepted\n",
-            "    {artifact} := by\n",
-            "{expr_proof}"
+            "    AverCert.Artifact.data := AverCert.Artifact.acceptedWithFinal {final_witness}\n"
         ),
         witness_theorem = WITNESS_THEOREM,
+        final_witness = FINAL_WITNESS_THEOREM,
         artifact = artifact,
-        expr_proof = expr_proof
+        checker_proof = checker_proof
     )
 }
 
@@ -1247,6 +1255,7 @@ fn checker_witness(
          import Module\n\
          import Manifest\n\
          import Final\n\
+         import Artifact\n\
          open CertPrelude AverCert.Schema\n\
          set_option maxRecDepth 200000\n\
          set_option linter.unusedSimpArgs false\n\

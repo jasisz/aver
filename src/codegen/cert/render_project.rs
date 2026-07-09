@@ -73,6 +73,7 @@ pub fn write_project(
         &render_certificate(analysis, &model_roots, &model_info),
     )?;
     write(&cert_dir, "Final.lean", &render_final(analysis))?;
+    write(&cert_dir, "Artifact.lean", &render_artifact(analysis))?;
     write(&cert_dir, "lakefile.lean", &render_lakefile(&model_roots))?;
 
     // Content hashes the checker re-verifies: the audited schema and the
@@ -208,6 +209,115 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
     }
     s.push_str("end AverCert.Plans\n");
     s
+}
+
+struct RenderedArtifactClaims {
+    claims: String,
+    proof: String,
+    has_claims: bool,
+}
+
+fn render_artifact_expr_fragment_claims(analysis: &Analysis) -> RenderedArtifactClaims {
+    let mut claims = Vec::new();
+    let mut proofs = Vec::new();
+    for c in &analysis.certs {
+        let Cert::ExprFragment {
+            name,
+            carrier,
+            self_idx,
+            code_idx,
+            type_idx,
+            plan,
+            ..
+        } = c.inner()
+        else {
+            continue;
+        };
+        let code_entry_bytes = lower_expr_fragment_plan_code_entry_bytes(plan, *carrier)
+            .expect("certified expr-fragment plan lowers to code-entry bytes");
+        let code_entry_bytes = render_byte_list(&code_entry_bytes);
+        let lowered_body = lower_expr_fragment_plan(plan, *carrier)
+            .map(|ops| render_ops_value(&ops))
+            .expect("certified expr-fragment plan lowers to WInstr body");
+        let export_name_bytes = render_byte_list(name.as_bytes());
+        let func_binding = format!(
+            "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+        );
+        claims.push(format!(
+            "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, plan := AverCert.Plans.{name}Plan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ExprFragmentClaim)",
+            export_name = lean_str(name),
+        ));
+        proofs.push(format!(
+            "⟨rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
+             ⟨⟨rfl, rfl, rfl, rfl, rfl⟩, rfl, ⟨_, rfl⟩⟩⟩⟩"
+        ));
+    }
+    let has_claims = !claims.is_empty();
+    let claims = if claims.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[\n  {}\n]", claims.join(",\n  "))
+    };
+    let proof = proofs
+        .into_iter()
+        .rev()
+        .fold("trivial".to_string(), |acc, proof| {
+            format!("⟨{proof}, {acc}⟩")
+        });
+    RenderedArtifactClaims {
+        claims,
+        proof,
+        has_claims,
+    }
+}
+
+fn render_artifact(analysis: &Analysis) -> String {
+    let claims = render_artifact_expr_fragment_claims(analysis);
+    let expr_proof = if claims.has_claims {
+        format!(
+            concat!(
+                "  dsimp [data, exprFragmentClaims, AverCert.AcceptedArtifact.accepted,\n",
+                "    AverCert.AcceptedArtifact.acceptedExprFragments,\n",
+                "    AverCert.AcceptedArtifact.exprFragmentClaimsAccepted,\n",
+                "    AverCert.AcceptedArtifact.exprFragmentClaimAccepted,\n",
+                "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
+                "    AverCert.ExprFragmentAccepted.accepted]\n",
+                "  exact ⟨finalCert, {proof}⟩\n"
+            ),
+            proof = claims.proof
+        )
+    } else {
+        concat!(
+            "  dsimp [data, exprFragmentClaims, AverCert.AcceptedArtifact.accepted,\n",
+            "    AverCert.AcceptedArtifact.acceptedExprFragments,\n",
+            "    AverCert.AcceptedArtifact.exprFragmentClaimsAccepted]\n",
+            "  exact ⟨finalCert, trivial⟩\n"
+        )
+        .to_string()
+    };
+    format!(
+         "-- Artifact-carried acceptance root.\n\
+         -- This file is useful metadata, not verifier authority: `aver cert verify`\n\
+         -- pins `AverCert.Artifact.data` to its checker-reconstructed literal and\n\
+         -- audits `AverCert.Artifact.acceptedWithFinal` through the Lean axiom collector.\n\
+         import AcceptedArtifact\n\
+         import ArtifactBytes\n\
+         import Manifest\n\
+         import Plans\n\n\
+         set_option maxRecDepth 200000\n\
+         set_option linter.unusedSimpArgs false\n\n\
+         namespace AverCert.Artifact\n\n\
+         def exprFragmentClaims : List AverCert.AcceptedArtifact.ExprFragmentClaim := {claims_list}\n\n\
+         def data : AverCert.AcceptedArtifact.ArtifactData :=\n  \
+           ({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, exprFragmentClaims := exprFragmentClaims }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
+         def acceptedWithFinal\n\
+             (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n\
+             AverCert.AcceptedArtifact.accepted data := by\n\
+         {expr_proof}\n\
+         end AverCert.Artifact\n",
+        claims_list = claims.claims,
+        expr_proof = expr_proof
+    )
 }
 
 fn render_byte_list(bytes: &[u8]) -> String {

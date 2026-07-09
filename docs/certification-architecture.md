@@ -163,6 +163,7 @@ trusted_plan_bytes_hash
 trusted_wasm_slice_hash
 trusted_expr_fragment_accepted_hash
 trusted_accepted_artifact_hash
+artifact_data_hash
 host_registry_hash
 ```
 
@@ -230,12 +231,15 @@ packages those checks as one accepted-export predicate for the current
 expr-fragment profile. `AcceptedArtifact.lean` exposes the v2-shaped bridge
 from raw artifact bytes + raw plan + schema obligation to that predicate; the
 lowered body, code-entry bytes and function binding are internal witnesses,
-not trusted parameters. The checker witness proves that bridge through
-`AcceptedArtifact.ArtifactData` and the artifact-level
-`acceptedExprFragments` predicate for the entire expr-fragment claim list. This
-removes another slice of plan-to-semantics, plan-to-bytes, byte-origin and
-schema-binding logic from unreviewed generated proof text. The remaining gap is
-full module validation in Lean:
+not trusted parameters. The emitted certificate now includes `Artifact.lean`,
+which defines `AverCert.Artifact.data` and an artifact-carried
+`acceptedWithFinal` bridge for the entire expr-fragment claim list. The checker
+pins that `data` term to its own reconstruction with `rfl`, type-ascribes
+`Final.cert : Schema.Holds manifest`, and only then calls `acceptedWithFinal`.
+This removes another slice of plan-to-semantics, plan-to-bytes, byte-origin and
+schema-binding logic from unreviewed generated proof text while still preventing
+the artifact from choosing the final theorem target. The remaining gap is full
+module validation in Lean:
 `WasmSlice.lean` is intentionally a relevant-subset slicer, while Rust still
 hashes the artifact, performs the executable equality gate and derives the
 complete obligation list for non-expression classes.
@@ -526,17 +530,22 @@ Sunset criteria:
     for the aggregate expr-fragment claim list. The remaining v2 work is to
     carry checked signature/spec satisfaction and ordinary/recursive obligation
     families into the artifact-level predicate.
-12. Done: remove the transitional byte classifier from expr-fragment
+12. Done for artifact-carried bridge data: emit `Artifact.lean` with
+    `AverCert.Artifact.data` and `acceptedWithFinal`, then make the
+    verifier-authored witness pin that data to its checker reconstruction and
+    root the axiom audit at the artifact-carried bridge after supplying the
+    checker-ascribed `Final.cert : Holds manifest`.
+13. Done: remove the transitional byte classifier from expr-fragment
    admission/order; manifest entries are checked by plan-first lowering
    directly and merged by byte-derived function order.
-13. Done: make producer-side expr-fragment certification require that the plan
+14. Done: make producer-side expr-fragment certification require that the plan
     canonically lowers to the exact emitted code-entry bytes, and store the
     canonical lowered ops.
-14. Done for current scalar expression islands: host-free Float/Bool and Int
+15. Done for current scalar expression islands: host-free Float/Bool and Int
     literal-comparison codegen now follows
     `MIR -> CertPlan -> canonical Wasm body`. Add future Int-carrier arithmetic
     by extending that plan grammar/lowerer path, not by adding byte recognizers.
-14. Delete old whole-function scalar recognizer acceptance once plan-first has
+16. Delete old whole-function scalar recognizer acceptance once plan-first has
    parity.
 
 The implementation should move slowly, but every step should tighten the

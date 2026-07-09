@@ -321,6 +321,7 @@ fn render_lakefile(model_roots: &[String]) -> String {
     roots.push("`Manifest".to_string());
     roots.push("`Certificate".to_string());
     roots.push("`Final".to_string());
+    roots.push("`Artifact".to_string());
     format!(
         "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
          @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  roots := #[{}]\n",
