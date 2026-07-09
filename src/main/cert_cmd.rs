@@ -998,6 +998,22 @@ fn lean_sym_fragment_plan_pairs(rederived: &[cert::RederivedObligation]) -> Stri
     format!("[ {inner} ]")
 }
 
+/// A Lean list literal of `(export name, StringConcatRawPlan)` pairs for
+/// source-level `String.concat` witnesses. These terms are checker-rendered
+/// from verified sidecars, never copied from attacker Lean text.
+fn lean_string_concat_plan_pairs(rederived: &[cert::RederivedObligation]) -> String {
+    let inner = rederived
+        .iter()
+        .filter_map(|r| {
+            r.string_concat_plan_lean
+                .as_ref()
+                .map(|plan| format!("(\"{}\", {plan})", r.name))
+        })
+        .collect::<Vec<_>>()
+        .join(",\n   ");
+    format!("[ {inner} ]")
+}
+
 /// A Lean list literal pinning each source plan to the representation-level
 /// plan obtained by the audited `SymRawPlan -> ExprFragmentRawPlan` encoder.
 fn lean_sym_fragment_encoded_plan_pairs(rederived: &[cert::RederivedObligation]) -> String {
@@ -1354,6 +1370,7 @@ fn checker_witness(
     let carriers = lean_nat_list(rederived.iter().map(|r| r.carrier));
     let expr_fragment_plans = lean_expr_fragment_plan_pairs(rederived);
     let sym_fragment_plans = lean_sym_fragment_plan_pairs(rederived);
+    let string_concat_plans = lean_string_concat_plan_pairs(rederived);
     let sym_fragment_encoded_plans = lean_sym_fragment_encoded_plan_pairs(rederived);
     let expr_fragment_lower_pins = lean_expr_fragment_lower_pins(rederived);
     let expr_fragment_code_entry_pins = lean_expr_fragment_code_entry_pins(rederived);
@@ -1420,6 +1437,12 @@ fn checker_witness(
          example : AverCert.manifest.symFragmentPlans = {sym_fragment_plans} := rfl\n\
          example : AverCert.manifest.symFragmentPlans.all (fun p => AverCert.PlanCheck.checkSymRawPlan p.2) = true := rfl\n\
          example : AverCert.manifest.symFragmentPlans.map (fun p => (p.1, AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan p.2)) = {sym_fragment_encoded_plans} := rfl\n\n\
+         -- String.concat source plans: the manifest's Lean-data string plans\n\
+         -- are pinned to checker-rendered `StringConcatRawPlan` terms reconstructed\n\
+         -- from sidecars that already passed hash checks and byte-derived\n\
+         -- String.concat helper-shape validation.\n\
+         example : AverCert.manifest.stringConcatPlans = {string_concat_plans} := rfl\n\
+         example : AverCert.manifest.stringConcatPlans.all (fun p => AverCert.PlanCheck.checkStringConcatRawPlan p.2) = true := rfl\n\n\
          -- Expr-fragment raw plans: the manifest's Lean-data representation plans are pinned\n\
          -- to the checker-rendered `ExprFragmentRawPlan` terms reconstructed\n\
          -- from sidecars that already passed hash, type/refinement and\n\

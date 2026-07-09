@@ -208,6 +208,22 @@ def checkSymRawPlan (plan : SymRawPlan) : Bool :=
     | some n => sameSymTy n.ty plan.result
     | none => false
 
+def isByte (n : Nat) : Bool :=
+  if n <= 255 then true else false
+
+def bytesAllBytes : List Nat → Bool
+  | [] => true
+  | b :: bs => isByte b && bytesAllBytes bs
+
+def byteChunksAllBytes : List (List Nat) → Bool
+  | [] => true
+  | bytes :: rest => bytesAllBytes bytes && byteChunksAllBytes rest
+
+def checkStringConcatRawPlan (plan : StringConcatRawPlan) : Bool :=
+  plan.profile = "string-concat-v1" &&
+    byteChunksAllBytes plan.prefixes &&
+    byteChunksAllBytes plan.suffixes
+
 def encodeSymTy? : SymTy → Option FragTy
   | .float => some .f64
   | .bool => some .boolI32

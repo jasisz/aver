@@ -65,6 +65,22 @@ fn string_concat_plan_text(plan: &StringConcatPlan) -> String {
     out
 }
 
+fn string_concat_plan_lean_value(plan: &StringConcatPlan) -> String {
+    fn chunks(chunks: &[Vec<u8>]) -> String {
+        chunks
+            .iter()
+            .map(|bytes| render_byte_list(bytes))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    format!(
+        "({{ profile := \"string-concat-v1\", prefixes := [{}], suffixes := [{}] }} : StringConcatRawPlan)",
+        chunks(&plan.prefixes),
+        chunks(&plan.suffixes)
+    )
+}
+
 pub fn parse_string_concat_plan(text: &str) -> Result<StringConcatPlan, String> {
     let mut lines = text.lines();
     expect_plan_line(&mut lines, "aver.string-fragment.plan.v1")?;

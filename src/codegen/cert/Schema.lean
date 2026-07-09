@@ -171,6 +171,17 @@ structure ExprFragmentRawPlan where
   body    : FragBlock
 deriving Repr
 
+/-- Raw, untrusted source-level String.concat witness. It intentionally stores
+    only source-shaped byte chunks (`prefixes ++ input ++ suffixes`); the
+    current v1 semantic obligation remains verbatim byte-level, while this is
+    the Lean-data surface that prevents the emitted string-fragment sidecar and
+    manifest from drifting. -/
+structure StringConcatRawPlan where
+  profile  : String
+  prefixes : List (List Nat)
+  suffixes : List (List Nat)
+deriving Repr
+
 /-- Pointwise lifting of an integer representation relation to argument lists.
     Kept as the standard domain representation for the v2 integer classes. -/
 inductive ReprAll (R : Int → WVal → Prop) : List Int → List WVal → Prop
@@ -254,6 +265,7 @@ def Obligation.holds (o : Obligation) : Prop :=
 structure Manifest where
   subject     : Subject
   symFragmentPlans : List (String × SymRawPlan)
+  stringConcatPlans : List (String × StringConcatRawPlan)
   exprFragmentPlans : List (String × ExprFragmentRawPlan)
   obligations : List Obligation
 

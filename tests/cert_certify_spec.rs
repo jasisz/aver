@@ -932,6 +932,26 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         Some(expected_sha.as_str()),
         "shout sidecar hash should match the sidecar bytes"
     );
+    let plans_lean =
+        std::fs::read_to_string(cert_dir.join("Plans.lean")).expect("Plans.lean exists");
+    assert!(
+        plans_lean.contains("def shoutStringConcatPlan : StringConcatRawPlan"),
+        "String.concat cert should render a Lean-data StringConcatRawPlan:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains("suffixes := [[33]]"),
+        "String.concat Lean plan should expose the literal suffix as bytes:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains("checkStringConcatRawPlan shoutStringConcatPlan = true := rfl"),
+        "String.concat Lean plan should be checked by the Lean-side structural checker:\n{plans_lean}"
+    );
+    let manifest_lean =
+        std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
+    assert!(
+        manifest_lean.contains("stringConcatPlans := [(\"shout\", Plans.shoutStringConcatPlan)]"),
+        "manifest should pin the String.concat plan list:\n{manifest_lean}"
+    );
 
     let build = Command::new("lake")
         .current_dir(&cert_dir)

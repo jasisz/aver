@@ -284,6 +284,17 @@ fn render_manifest_lean(
         })
         .collect::<Vec<_>>()
         .join(", ");
+    let string_concat_plans = analysis
+        .certs
+        .iter()
+        .filter_map(|c| match c.inner() {
+            Cert::StringConcatVerbatimMatch { name, .. } => {
+                Some(format!("({}, Plans.{name}StringConcatPlan)", lean_str(name)))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     s.push_str(&format!(
         "def manifest : Schema.Manifest :=\n  \
          {{ subject :=\n      \
@@ -294,6 +305,7 @@ fn render_manifest_lean(
          exports := [{exports}],\n        \
          contracts := [{contracts}] }},\n    \
          symFragmentPlans := [{sym_fragment_plans}],\n    \
+         stringConcatPlans := [{string_concat_plans}],\n    \
          exprFragmentPlans := [{expr_fragment_plans}],\n    \
          obligations := [{obligations}] }}\n\n\
          end AverCert\n",

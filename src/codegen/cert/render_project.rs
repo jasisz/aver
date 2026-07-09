@@ -144,9 +144,10 @@ fn write_fragment_sidecars(cert_dir: &Path, analysis: &Analysis) -> Result<(), S
 fn render_expr_fragment_plans(analysis: &Analysis) -> String {
     let mut s = String::new();
     s.push_str(
-        "-- Compiler-emitted expression-fragment plans as Lean data.\n\
-         -- v1 still checks/canonical-lowers these in Rust before rendering proofs;\n\
-         -- this module is the stable data surface for the v2 in-kernel checker.\n\
+        "-- Compiler-emitted source/fragment plans as Lean data.\n\
+         -- v1 still checks/canonical-lowers byte-bound fragments in Rust before\n\
+         -- rendering proofs; this module is the stable data surface for the v2\n\
+         -- in-kernel checker.\n\
          import Schema\n\
          import PlanCheck\n\n\
          import PlanLower\n\
@@ -240,8 +241,23 @@ fn render_expr_fragment_plans(analysis: &Analysis) -> String {
             sym_plan = sym_plan,
         ));
     }
+    for c in &analysis.certs {
+        let Cert::StringConcatVerbatimMatch { name, .. } = c.inner() else {
+            continue;
+        };
+        let plan = string_concat_plan_from_cert(c)
+            .expect("certified String.concat should project to a source plan");
+        any = true;
+        s.push_str(&format!(
+            "/-- Source-level `string-concat-v1` witness for `{name}`. -/\n\
+             def {name}StringConcatPlan : StringConcatRawPlan := {plan_value}\n\n\
+             /-- The audited Lean-side structural checker accepts `{name}`'s String.concat plan. -/\n\
+             example : AverCert.PlanCheck.checkStringConcatRawPlan {name}StringConcatPlan = true := rfl\n\n",
+            plan_value = string_concat_plan_lean_value(&plan),
+        ));
+    }
     if !any {
-        s.push_str("-- This artifact contains no expr-fragment plans.\n\n");
+        s.push_str("-- This artifact contains no source/fragment plans.\n\n");
     }
     s.push_str("end AverCert.Plans\n");
     s
