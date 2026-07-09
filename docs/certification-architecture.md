@@ -90,8 +90,10 @@ to exact code-entry bytes. The useful shift is that the proof surface can scale
 with Aver's admitted source fragment while the encoder stays as the thin
 target-specific layer. The current `expr-fragment-v1` definitions keep the
 wasm representation type as `FragTy` and now record its source semantic face
-separately; later profiles can make `SymPlan` the primary sidecar format and
-treat representation types as checked encoding details.
+separately. Rust also has a first `SymPlan` model that can project direct
+source-level float/bool fragments and intentionally rejects representation-only
+carrier-limb fragments. Later profiles can make `SymPlan` the primary sidecar
+format and treat representation types as checked encoding details.
 
 ## Artifact Shape
 
