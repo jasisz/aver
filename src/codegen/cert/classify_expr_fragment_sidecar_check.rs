@@ -130,6 +130,13 @@ pub fn check_expr_fragment_plan_sidecar(
         recursion_type_idx: None,
         recursion_lowered_body_lean: None,
         recursion_lowered_code_entry_lean: None,
+        mutual_plan_lean: None,
+        mutual_host_table_lean: None,
+        mutual_member_set_lean: None,
+        mutual_code_idx: None,
+        mutual_type_idx: None,
+        mutual_lowered_body_lean: None,
+        mutual_lowered_code_entry_lean: None,
     };
     Ok(FragmentPlanCheck {
         sidecar,
@@ -266,6 +273,13 @@ pub fn check_sym_fragment_plan_sidecar(
         recursion_type_idx: None,
         recursion_lowered_body_lean: None,
         recursion_lowered_code_entry_lean: None,
+        mutual_plan_lean: None,
+        mutual_host_table_lean: None,
+        mutual_member_set_lean: None,
+        mutual_code_idx: None,
+        mutual_type_idx: None,
+        mutual_lowered_body_lean: None,
+        mutual_lowered_code_entry_lean: None,
     };
     Ok(FragmentPlanCheck {
         sidecar,

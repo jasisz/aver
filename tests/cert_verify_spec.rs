@@ -3071,3 +3071,357 @@ fn cert_verify_declines_tampered_recursion_plan() {
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }
+
+/// A tampered byte-first `mutual-plan-v1` plan is declined. Each vector mutates
+/// the mutual-member plan for `isEven` in the shipped `Plans.lean` while leaving
+/// the wasm untouched, so the member plan no longer canonically lowers to
+/// `isEven`'s real code-entry bytes in the shared SCC code table. The checker
+/// rebuilds the shipped plan (its `rfl` chain is pinned to the honest bytes) and
+/// its kernel witness proves `accepted` over `manifest.mutualPlans`, so either
+/// gate rejects the plan. This is the S4 generalisation of the recursion tamper
+/// test: `isEven`'s step arm tail-calls a SIBLING SCC member (`isOdd`, index 2),
+/// not itself.
+#[test]
+fn cert_verify_declines_tampered_mutual_plan() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping mutual-plan tamper test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-mutual-plan");
+    let compile = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/mutual.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "mutual compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("mutual.wasm");
+    let cert = out_dir.join("cert");
+    let (ok, report) = aver_verify(&wasm, &cert);
+    assert!(ok, "honest mutual certificate should verify:\n{report}");
+
+    let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    // (a) member-call retargeted OUTSIDE the byte-derived SCC set ({1, 2}): the
+    //     tail cross-call to `isOdd` (index 2) becomes a call to index 5, which
+    //     is neither a member nor `isEven` itself. The context-sensitive grammar
+    //     (`checkMutualPlanShape`, `5 ∉ [1, 2]`) AND the byte gate both reject.
+    // (b) tail/non-tail flag flipped (`return_call 12 -> call 10`): the grammar
+    //     requires a TAIL member-call, and the bytes change, so both gates reject.
+    // (c) base literal changed (`i64.const 1 -> 5`): the base arm boxes the wrong
+    //     literal, so the member's bytes diverge (byte gate rejects).
+    // (d) member-call MISLABELLED as a self-call: the cross-call to `isOdd`
+    //     (index 2) is retargeted at `isEven`'s OWN index (1). Index 1 IS in the
+    //     SCC set, so the grammar check alone would pass — but `isEven`'s real
+    //     bytes tail-call index 2, so the byte-equality gate rejects it. This is
+    //     the defence-in-depth case: the shape check accepts, the byte gate does
+    //     not.
+    // (The byte-IDENTICAL `.hostCall .sub` -> `.selfCall false` relabel — which
+    //  ONLY `checkMutualPlanShape` distinguishes — is NOT tested here: routed
+    //  through `aver cert verify` it is also caught by the manifest-plan
+    //  equality pin and the standalone shape example, so it would not isolate the
+    //  shape guard. It is a DIRECT Lean assertion in
+    //  `mutual_scc_kernel_guards_are_isolating` instead.)
+    let tampers: [(&str, &str, &str); 4] = [
+        (
+            "member-call outside SCC",
+            ".selfCall true 2 [3]",
+            ".selfCall true 5 [3]",
+        ),
+        (
+            "tail flag flip",
+            ".selfCall true 2 [3]",
+            ".selfCall false 2 [3]",
+        ),
+        (
+            "base literal change",
+            ".constI64 (1 : Int) }, { id := 1, ty := .intCarrier, kind := .hostCall .box 7 [0] }",
+            ".constI64 (5 : Int) }, { id := 1, ty := .intCarrier, kind := .hostCall .box 7 [0] }",
+        ),
+        (
+            "member-call mislabelled as self-call",
+            ".selfCall true 2 [3]",
+            ".selfCall true 1 [3]",
+        ),
+    ];
+    for (label, from, to) in tampers {
+        assert!(
+            honest.contains(from),
+            "mutual Plans.lean mutual-plan shape changed ({label}); update the test"
+        );
+        let dir = temp_dir("cert-mutual-plan-tamper");
+        copy_dir(&out_dir, &dir);
+        let tampered_plans = dir.join("cert").join("Plans.lean");
+        let src = std::fs::read_to_string(&tampered_plans).unwrap();
+        std::fs::write(&tampered_plans, src.replacen(from, to, 1)).unwrap();
+        let (ok, report) = aver_verify(&dir.join("mutual.wasm"), &dir.join("cert"));
+        assert!(
+            !ok,
+            "{label}: tampered mutual plan must be declined:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// A mutual-recursion artifact whose per-member byte-origin claims are each
+/// individually honest but whose declared `memberSet` is wrong is declined by
+/// the REAL acceptance-proof closure conjunct (`mutualClaimsFormClosedSccs`,
+/// wired into `acceptedMutualRecursionFragments`) — not by byte equality and not
+/// by the per-claim shape check. Each vector mutates ONE claim's `memberSet` in
+/// the cert's own `Artifact.lean` while keeping the member's own call target in
+/// the set, so `checkMutualPlanShape` still ACCEPTS and every code-entry byte is
+/// untouched; only the closure's `memberSet == byte-derived cycle` check rejects.
+/// Building the cert's own `acceptedWithFinal` proof with `lake` (no checker data
+/// pin) isolates that conjunct. Graph-structural rejections that cannot be
+/// expressed as a `memberSet` edit (dangling / non-closing / rho-tail / one-node
+/// / disjoint-SCCs) are proven directly in
+/// `mutual_scc_kernel_guards_are_isolating`.
+#[test]
+fn cert_verify_declines_broken_mutual_scc_membership() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping mutual-SCC closure test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    // (fixture, [(label, from, to)]). Each `from`/`to` mutates ONE claim's
+    // `memberSet` in `Artifact.lean` — checked by the acceptance-proof closure.
+    // The per-claim shape check still passes (the member's own call target stays
+    // in the set), so the closure conjunct is the sole rejector. No code-entry
+    // byte changes.
+    type Tamper = (&'static str, &'static str, &'static str);
+    let cases: [(&str, Vec<Tamper>); 2] = [
+        (
+            "tools/certkit/fixtures/mutual.av",
+            vec![
+                // memberSet gains a non-member (extra); closure length check.
+                (
+                    "extra member",
+                    "memberSet := [1, 2]",
+                    "memberSet := [1, 2, 3]",
+                ),
+                // memberSet drops a member but keeps the call target (omission);
+                // shape check passes, closure cycle-set check fails.
+                ("omitted member", "memberSet := [1, 2]", "memberSet := [2]"),
+                // memberSet repeats a member (duplicate); closure length check.
+                (
+                    "duplicate member",
+                    "memberSet := [1, 2]",
+                    "memberSet := [1, 2, 2]",
+                ),
+                // one member declares a set inconsistent with the byte-derived
+                // cycle (keeps its own target so the shape check still passes).
+                (
+                    "inconsistent set",
+                    "memberSet := [1, 2]",
+                    "memberSet := [2, 4]",
+                ),
+            ],
+        ),
+        (
+            "tools/certkit/fixtures/mutual3.av",
+            vec![
+                (
+                    "extra member",
+                    "memberSet := [1, 2, 3]",
+                    "memberSet := [1, 2, 3, 4]",
+                ),
+                (
+                    "inconsistent set",
+                    "memberSet := [1, 2, 3]",
+                    "memberSet := [2, 3, 5]",
+                ),
+            ],
+        ),
+    ];
+
+    let lake_ok = |cert: &Path| -> bool {
+        Command::new("lake")
+            .arg("build")
+            .current_dir(cert)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+
+    for (fixture, vectors) in cases {
+        let out_dir = temp_dir("cert-mutual-scc");
+        let compile = Command::new(env!("CARGO_BIN_EXE_aver"))
+            .current_dir(&repo_root)
+            .arg("compile")
+            .arg(fixture)
+            .arg("--target")
+            .arg("wasm-gc")
+            .arg("--certify")
+            .arg("-o")
+            .arg(&out_dir)
+            .output()
+            .expect("aver compile --certify runs");
+        assert!(
+            compile.status.success(),
+            "{fixture} compile --certify failed:\n{}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
+        let cert = out_dir.join("cert");
+        // Honest cert must build (and populates the `.lake` cache so each tamper
+        // below only rebuilds the leaf `Artifact` module).
+        assert!(lake_ok(&cert), "honest {fixture} cert must lake-build");
+
+        let artifact = cert.join("Artifact.lean");
+        let honest = std::fs::read_to_string(&artifact).unwrap();
+        for (label, from, to) in vectors {
+            assert!(
+                honest.contains(from),
+                "{fixture} Artifact.lean SCC shape changed ({label}); update the test"
+            );
+            std::fs::write(&artifact, honest.replacen(from, to, 1)).unwrap();
+            let ok = lake_ok(&cert);
+            std::fs::write(&artifact, &honest).unwrap(); // restore before asserting
+            assert!(
+                !ok,
+                "{fixture} {label}: broken mutual-SCC membership must be declined in-kernel"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&out_dir);
+    }
+}
+
+/// GUARD-ISOLATING direct Lean assertions for the two mutual-recursion kernel
+/// guards, elaborated with `lake env lean` against the audited cert modules — no
+/// `aver cert verify`, no sibling defence in the path. Each assertion is
+/// constructed so it holds ONLY because its target guard fires (verified by
+/// weakening each guard in a throwaway copy: weakening `checkMutualPlanShape` to
+/// the generic checker breaks solely the relabel-rejection line; weakening
+/// `mutualMembersFormClosedSccs` to `true` breaks solely the closure
+/// reject/wrapper lines — nothing else moves).
+///
+/// FIX A (`checkMutualPlanShape`): the descent `.hostCall .sub 9` relabelled
+/// byte-identically as a non-tail `.selfCall false 9` — the ONLY thing
+/// `checkMutualPlanShape` catches that the generic checker + byte lowering do
+/// not. Asserts (i) `checkMutualRawPlan` ACCEPTS it, (ii) its `WInstr` body and
+/// code-entry bytes are IDENTICAL to the honest plan, (iii) `checkMutualPlanShape`
+/// REJECTS it. Sibling rejectors avoided: the byte-equality face (ii proves it is
+/// blind here) and the generic typed-block checker (i proves it accepts).
+///
+/// FIX B (`mutualMembersFormClosedSccs` / `mutualClaimsFormClosedSccs`): a
+/// truth-table over synthetic `(self, target, memberSet)` groups where every
+/// rejected group keeps each member's target IN its `memberSet` (so the per-claim
+/// shape check would ACCEPT — the closure is the sole rejector): dangling /
+/// dropped-member, rho-tail, duplicate self, one-node cycle, disjoint SCCs
+/// claimed as one group. Plus a wrapper case against the REAL acceptance conjunct
+/// `mutualClaimsFormClosedSccs` (fed a minimal manifest + claim) proving it
+/// extracts the byte-pinned edge from `obligation.self` + `mutualPlanTarget` and
+/// refutes a dangling group while the per-claim shape check passes.
+#[test]
+fn mutual_scc_kernel_guards_are_isolating() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping mutual-guard isolation test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    // The honest `isEven` mutual-plan literal (carrier 2, box=call 7, sub=call 9,
+    // tail cross-call to isOdd=index 2), kept byte-for-byte in sync with the
+    // emitter's `mutual_plan_lean_value`. The `checkMutualPlanShape honestPlan =
+    // true` and `checkMutualRawPlan` assertions below fail loudly if it drifts.
+    const HONEST: &str = r#"{ profile := "mutual-plan-v1", params := [.intCarrier], result := .intCarrier, body := ({ nodes := [{ id := 0, ty := .intCarrier, kind := .local 0 }, { id := 1, ty := .ref, kind := .structGet 1 0 }, { id := 2, ty := .boolI32, kind := .refIsNull 1 }, { id := 3, ty := .boolI32, kind := .ifElse 2 ({ nodes := [{ id := 0, ty := .intCarrier, kind := .local 0 }, { id := 1, ty := .i64, kind := .structGet 0 0 }, { id := 2, ty := .i64, kind := .constI64 (0 : Int) }, { id := 3, ty := .boolI32, kind := .prim .i64LeS [1, 2] }], result := 3 } : FragBlock) ({ nodes := [{ id := 0, ty := .intCarrier, kind := .local 0 }, { id := 1, ty := .rawI32, kind := .structGet 2 0 }, { id := 2, ty := .boolI32, kind := .constBool false }, { id := 3, ty := .boolI32, kind := .prim .i32LtS [1, 2] }], result := 3 } : FragBlock) }, { id := 4, ty := .intCarrier, kind := .ifElse 3 ({ nodes := [{ id := 0, ty := .i64, kind := .constI64 (1 : Int) }, { id := 1, ty := .intCarrier, kind := .hostCall .box 7 [0] }], result := 1 } : FragBlock) ({ nodes := [{ id := 0, ty := .intCarrier, kind := .local 0 }, { id := 1, ty := .i64, kind := .constI64 (1 : Int) }, { id := 2, ty := .intCarrier, kind := .hostCall .box 7 [1] }, { id := 3, ty := .intCarrier, kind := .hostCall .sub 9 [0, 2] }, { id := 4, ty := .intCarrier, kind := .selfCall true 2 [3] }], result := 4 } : FragBlock) }], result := 4 } : FragBlock) }"#;
+    // Byte-identical relabel: the descent's `sub` host call becomes a non-tail
+    // self-call at the SAME index; both lower to `10 09` and the same `WInstr`.
+    let relabeled = HONEST.replace(".hostCall .sub 9 [0, 2]", ".selfCall false 9 [0, 2]");
+    assert_ne!(
+        relabeled, HONEST,
+        "relabel target string drifted; update the test"
+    );
+
+    let mut lean = String::new();
+    lean.push_str("import Schema\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\nimport AcceptedArtifact\n\n");
+    lean.push_str("open AverCert.Schema\nopen AverCert.AcceptedArtifact\n\n");
+    lean.push_str("def honestPlan : MutualRawPlan := ");
+    lean.push_str(HONEST);
+    lean.push_str("\ndef relabeledPlan : MutualRawPlan := ");
+    lean.push_str(&relabeled);
+    lean.push_str("\n\n");
+    // FIX A.
+    lean.push_str("example : AverCert.PlanCheck.checkMutualRawPlan relabeledPlan = true := rfl\n");
+    lean.push_str("example : AverCert.PlanLower.lowerMutualBody 2 relabeledPlan = AverCert.PlanLower.lowerMutualBody 2 honestPlan := rfl\n");
+    lean.push_str("example : AverCert.PlanBytes.lowerMutualCodeEntry 2 relabeledPlan = AverCert.PlanBytes.lowerMutualCodeEntry 2 honestPlan := rfl\n");
+    lean.push_str("example : AverCert.PlanCheck.checkMutualPlanShape [1, 2] [(.box, 7), (.sub, 9)] honestPlan = true := rfl\n");
+    lean.push_str("example : AverCert.PlanCheck.checkMutualPlanShape [1, 2] [(.box, 7), (.sub, 9)] relabeledPlan = false := rfl\n\n");
+    // FIX B: closure truth-table (each reject keeps target in memberSet).
+    lean.push_str(
+        "example : mutualMembersFormClosedSccs [(1, 2, [1, 2]), (2, 1, [1, 2])] = true := rfl\n",
+    );
+    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3]), (2, 3, [1, 2, 3]), (3, 1, [1, 2, 3])] = true := rfl\n");
+    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2]), (2, 1, [1, 2]), (3, 4, [3, 4]), (4, 3, [3, 4])] = true := rfl\n");
+    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2])] = false := rfl\n");
+    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3]), (2, 3, [1, 2, 3]), (3, 2, [1, 2, 3])] = false := rfl\n");
+    lean.push_str(
+        "example : mutualMembersFormClosedSccs [(1, 2, [1, 2]), (1, 2, [1, 2])] = false := rfl\n",
+    );
+    lean.push_str("example : mutualMembersFormClosedSccs [(1, 1, [1])] = false := rfl\n");
+    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3, 4]), (2, 1, [1, 2, 3, 4]), (3, 4, [1, 2, 3, 4]), (4, 3, [1, 2, 3, 4])] = false := rfl\n\n");
+    // FIX B: the REAL acceptance conjunct rejects a dangling group; shape passes.
+    lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := 2, code := fun _ => none,\n    host := fun _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
+    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], obligations := [] }\n\n");
+    lean.push_str("def claimsS : List MutualRecursionClaim :=\n  [ { exportNameBytes := [], exportName := \"a\", carrier := 2, memberSet := [1, 2],\n      hostTable := [(.box, 7), (.sub, 9)], obligation := dummyOb \"a\" 1 } ]\n\n");
+    lean.push_str("example : AverCert.PlanCheck.checkMutualPlanShape [1, 2] [(.box, 7), (.sub, 9)] honestPlan = true := rfl\n");
+    lean.push_str("example : mutualClaimEdges manifestS claimsS = some [(1, 2, [1, 2])] := rfl\n");
+    lean.push_str(
+        "example : ¬ mutualClaimsFormClosedSccs manifestS claimsS := fun h => nomatch h\n",
+    );
+
+    let out_dir = temp_dir("cert-mutual-guard-iso");
+    let compile = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/mutual.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "mutual compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let cert = out_dir.join("cert");
+    // Build the audited modules so `lake env lean` can resolve the imports.
+    let honest_build = Command::new("lake")
+        .arg("build")
+        .current_dir(&cert)
+        .output()
+        .expect("lake build runs");
+    assert!(honest_build.status.success(), "honest cert must lake-build");
+
+    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
+    let elab = Command::new("lake")
+        .arg("env")
+        .arg("lean")
+        .arg("GuardIso.lean")
+        .current_dir(&cert)
+        .output()
+        .expect("lake env lean runs");
+    assert!(
+        elab.status.success(),
+        "guard-isolation assertions must all hold:\n{}\n{}",
+        String::from_utf8_lossy(&elab.stdout),
+        String::from_utf8_lossy(&elab.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&out_dir);
+}

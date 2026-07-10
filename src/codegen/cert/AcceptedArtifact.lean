@@ -238,6 +238,27 @@ structure RecursionClaim where
   hostTable       : List (HostRole × Nat)
   obligation      : Obligation
 
+/-- One mutual-recursion member claim inside an artifact certificate. Its
+    byte-derived `MutualRawPlan` lives in `manifest.mutualPlans` (a byte-origin
+    veneer, no source `SymPlan`): the plan is checked against the mutual member
+    grammar (its cross member-call pinned IN the byte-derived SCC member set,
+    host calls pinned to the byte-derived box/sub role table), lowered to the
+    member body and its exact code-entry bytes, and bound to the exported
+    member. `memberSet` is the byte-derived SCC self-index set and `hostTable`
+    the byte-derived box/sub indices this SCC's shared obligation wires — both
+    representation context like `RecursionClaim`'s `hostTable`; a wrong set or
+    table describes calls the module bytes cannot reproduce, so the claim
+    fail-closes at the byte gate. The `obligation` is the unchanged conjunction
+    fuel-induction obligation the manifest already pins (each member cites its
+    own conjunct); this claim only certifies where its body bytes came from. -/
+structure MutualRecursionClaim where
+  exportNameBytes : AverCert.WasmSlice.ByteSeq
+  exportName      : String
+  carrier         : Nat
+  memberSet       : List Nat
+  hostTable       : List (HostRole × Nat)
+  obligation      : Obligation
+
 def stringEqClaimAccepted
     (wasmBytes : AverCert.WasmSlice.ByteSeq)
     (manifest : AverCert.Schema.Manifest)
@@ -374,6 +395,69 @@ def recursionClaimAccepted
         claim.obligation
   | none => False
 
+/-- Artifact-level acceptance for one mutual-recursion member export. The
+    `MutualRawPlan` is checked (generic block typing AND the context-sensitive
+    mutual member grammar: the member-call must target an index IN the
+    byte-derived SCC member set and every host call must cite the byte-derived
+    box/sub role table), lowered to the member `WInstr` body and the exact
+    code-entry bytes, those bytes are bound to the exported member, and the
+    binding's declared type-section entry must be the canonical certified
+    signature `[(ref null carrier)] → [(ref null carrier)]`. The member index is
+    tied to the (shared) obligation through `binding.funcIdx = obligation.self`;
+    `obligation.code binding.funcIdx` picks this member's arm out of the shared
+    multi-arm code table. -/
+def mutualPlanAccepted
+    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (exportName : String)
+    (carrier : Nat)
+    (memberSet : List Nat)
+    (hostTable : List (HostRole × Nat))
+    (plan : MutualRawPlan)
+    (obligation : Obligation) : Prop :=
+  obligation.export_ = exportName ∧
+    obligation.carrier = carrier ∧
+    AverCert.PlanCheck.checkMutualRawPlan plan = true ∧
+    ∃ body codeEntry binding,
+      AverCert.PlanLower.lowerMutualBody carrier plan = some body ∧
+      AverCert.PlanBytes.lowerMutualCodeEntry carrier plan = some codeEntry ∧
+      AverCert.WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
+      AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+      binding.funcIdx = obligation.self ∧
+      binding.codeEntry = codeEntry ∧
+      AverCert.PlanCheck.checkMutualPlanShape memberSet hostTable plan = true ∧
+      AverCert.WasmSlice.funcTypeMatches
+        wasmBytes binding.typeIdx plan.params.length carrier = true ∧
+      ∃ nlocals,
+        obligation.code binding.funcIdx =
+          some { arity := plan.params.length, nlocals := nlocals, body := body }
+
+def mutualPlanForExport
+    (exportName : String) : List (String × MutualRawPlan) →
+    Option MutualRawPlan
+  | [] => none
+  | (name, plan) :: rest =>
+      if name == exportName then
+        some plan
+      else
+        mutualPlanForExport exportName rest
+
+def mutualRecursionClaimAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (manifest : AverCert.Schema.Manifest)
+    (claim : MutualRecursionClaim) : Prop :=
+  match mutualPlanForExport claim.exportName manifest.mutualPlans with
+  | some plan =>
+      mutualPlanAccepted
+        wasmBytes
+        claim.exportNameBytes
+        claim.exportName
+        claim.carrier
+        claim.memberSet
+        claim.hostTable
+        plan
+        claim.obligation
+  | none => False
+
 /-- Aggregate source-level symbolic fragment acceptance for one artifact's
     source claim list. -/
 def symFragmentClaimsAccepted
@@ -427,6 +511,127 @@ def recursionClaimsAccepted
   | claim :: rest =>
       recursionClaimAccepted wasmBytes manifest claim ∧
       recursionClaimsAccepted wasmBytes manifest rest
+
+/-- Aggregate mutual-recursion witness acceptance for one artifact's mutual
+    claim list. -/
+def mutualRecursionClaimsAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (manifest : AverCert.Schema.Manifest) :
+    List MutualRecursionClaim → Prop
+  | [] => True
+  | claim :: rest =>
+      mutualRecursionClaimAccepted wasmBytes manifest claim ∧
+      mutualRecursionClaimsAccepted wasmBytes manifest rest
+
+/-! ### Byte-derived SCC closure
+
+`mutualRecursionClaimsAccepted` above certifies each member's body byte-origin
+in ISOLATION. On its own that leaves the SCC's IDENTITY as unconstrained claim
+data: a claim's `memberSet` could list extra/missing members, the members could
+disagree on the set, and nothing forces the member-call graph to be one closed
+cycle visiting every member. This section binds the SCC to bytes: it derives
+each member's `(self, cross-target)` edge from the SAME byte-bound facts the
+per-claim acceptance pins — `self` is the obligation's byte-pinned function
+index (`= binding.funcIdx` from `mutualPlanAccepted`), `target` is read from the
+byte-pinned plan (`lowerMutualCodeEntry plan = codeEntryForExport …`). It then
+checks, purely over those byte-derived edges, that the claims form disjoint
+CLOSED simple cycles and that every member's declared `memberSet` equals its own
+cycle's vertex set — so `memberSet` is a function of the bytes, not a free
+choice. Composed with the per-claim acceptance (which pins `self`/`target` to
+bytes) this makes the negative-space closure property hold in-kernel. -/
+
+/-- The byte-pinned member-call target of a checked mutual member plan: the
+    tail `selfCall` index in the step arm of the fixed mutual grammar. Returns
+    `none` for any other shape (fail-closed); the per-claim `checkMutualPlanShape`
+    already forces this exact shape, so a claimed member always yields `some`. -/
+def mutualPlanTarget (plan : MutualRawPlan) : Option Nat :=
+  match plan.body.result, plan.body.nodes with
+  | 4, [_, _, _, _, { kind := .ifElse 3 _ step, .. }] =>
+      match step.result, step.nodes with
+      | 4, [_, _, _, _, { kind := .selfCall true cc [3], .. }] => some cc
+      | _, _ => none
+  | _, _ => none
+
+/-- The byte-derived edge and declared member set for one claim:
+    `(self, cross-target, memberSet)`. `self` is the obligation's byte-pinned
+    index; `target` is read from the byte-pinned manifest plan. -/
+def mutualClaimEdge
+    (manifest : AverCert.Schema.Manifest)
+    (claim : MutualRecursionClaim) : Option (Nat × Nat × List Nat) :=
+  match mutualPlanForExport claim.exportName manifest.mutualPlans with
+  | some plan =>
+      match mutualPlanTarget plan with
+      | some t => some (claim.obligation.self, t, claim.memberSet)
+      | none => none
+  | none => none
+
+def mutualClaimEdges
+    (manifest : AverCert.Schema.Manifest) :
+    List MutualRecursionClaim → Option (List (Nat × Nat × List Nat))
+  | [] => some []
+  | claim :: rest =>
+      match mutualClaimEdge manifest claim, mutualClaimEdges manifest rest with
+      | some m, some ms => some (m :: ms)
+      | _, _ => none
+
+/-- No repeated element (no two claims for the same byte-derived member index). -/
+def natListNodup : List Nat → Bool
+  | [] => true
+  | x :: rest => !rest.contains x && natListNodup rest
+
+/-- Set equality via mutual containment plus equal length: rejects extras,
+    omissions AND duplicates (a duplicate makes the lengths differ). -/
+def natListSetEq (xs ys : List Nat) : Bool :=
+  xs.length == ys.length && xs.all (fun x => ys.contains x) &&
+    ys.all (fun y => xs.contains y)
+
+def natEdgeLookup : List (Nat × Nat) → Nat → Option Nat
+  | [], _ => none
+  | (a, b) :: rest, k => if a == k then some b else natEdgeLookup rest k
+
+/-- Follow the target-chain from `start`, collecting visited members, until the
+    next hop closes the walk. A SIMPLE closed cycle returns to `start` (the head
+    of the visited list); a hop to any other already-visited node (a rho tail) or
+    a hop to a non-member (dangling edge) fail-closes to `none`. -/
+def followSccCycle (edges : List (Nat × Nat)) :
+    Nat → Nat → List Nat → Option (List Nat)
+  | 0, _, _ => none
+  | fuel + 1, cur, visited =>
+      match natEdgeLookup edges cur with
+      | some nxt =>
+          let visited := visited ++ [cur]
+          if visited.contains nxt then
+            (if visited.head? == some nxt then some visited else none)
+          else
+            followSccCycle edges fuel nxt visited
+      | none => none
+
+/-- The byte-derived closure check over all mutual members: the member indices
+    are distinct (no duplicate claims), and every member sits on a SINGLE closed
+    simple cycle of length ≥ 2 whose vertex set equals that member's declared
+    `memberSet`. Since every target must be a member index and every member must
+    lie on a cycle returning to itself, the edge relation is a disjoint union of
+    pure cycles — exactly the mutual-recursion SCC shape — and `memberSet` is
+    pinned to the byte-derived cycle rather than chosen by the claim. -/
+def mutualMembersFormClosedSccs (members : List (Nat × Nat × List Nat)) : Bool :=
+  let selfs := members.map (fun m => m.1)
+  let edges := members.map (fun m => (m.1, m.2.1))
+  natListNodup selfs &&
+    members.all (fun m =>
+      selfs.contains m.2.1 &&
+        (match followSccCycle edges (members.length + 1) m.1 [] with
+         | some cyc => decide (2 ≤ cyc.length) && natListSetEq m.2.2 cyc
+         | none => false))
+
+/-- The artifact's mutual claims form byte-derived closed SCCs. Composed with
+    `mutualRecursionClaimsAccepted` (which pins each `self`/`target` to bytes)
+    this establishes the whole closed-call-graph property in-kernel. -/
+def mutualClaimsFormClosedSccs
+    (manifest : AverCert.Schema.Manifest)
+    (claims : List MutualRecursionClaim) : Prop :=
+  match mutualClaimEdges manifest claims with
+  | some members => mutualMembersFormClosedSccs members = true
+  | none => False
 
 /-- The source plans claimed by an artifact, projected into the same manifest
     surface used for pinning. Keeping this in the audited predicate means a
@@ -491,6 +696,17 @@ def recursionManifestPlanNames
     (manifest : AverCert.Schema.Manifest) : List String :=
   manifest.recursionPlans.map (fun p => p.1)
 
+/-- Mutual-recursion claims are pinned to `manifest.mutualPlans` by export name,
+    mirroring the recursion family: a self-checking artifact cannot advertise a
+    different mutual-plan list than the claims it proves acceptance for. -/
+def mutualRecursionClaimExportNames
+    (claims : List MutualRecursionClaim) : List String :=
+  claims.map (fun c => c.exportName)
+
+def mutualManifestPlanNames
+    (manifest : AverCert.Schema.Manifest) : List String :=
+  manifest.mutualPlans.map (fun p => p.1)
+
 /-- The source `SymPlan`s carried by String.concat claims. These live in the
     manifest's common `symFragmentPlans` list; the byte-lowering-specific
     `StringConcatRawPlan` stays in `stringConcatPlans`. -/
@@ -519,6 +735,7 @@ structure ArtifactData where
   stringConcatClaims : List StringConcatClaim
   constructClaims    : List ConstructClaim
   recursionClaims    : List RecursionClaim
+  mutualRecursionClaims : List MutualRecursionClaim
 
 def acceptedSymFragments (artifact : ArtifactData) : Prop :=
   symFragmentClaimsAccepted artifact.wasmBytes artifact.symFragmentClaims
@@ -547,12 +764,22 @@ def acceptedRecursionFragments (artifact : ArtifactData) : Prop :=
     artifact.manifest
     artifact.recursionClaims
 
+def acceptedMutualRecursionFragments (artifact : ArtifactData) : Prop :=
+  mutualRecursionClaimsAccepted
+    artifact.wasmBytes
+    artifact.manifest
+    artifact.mutualRecursionClaims ∧
+  mutualClaimsFormClosedSccs
+    artifact.manifest
+    artifact.mutualRecursionClaims
+
 def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedSymFragments artifact ∧
   acceptedStringEqFragments artifact ∧
   acceptedStringConcatFragments artifact ∧
   acceptedConstructFragments artifact ∧
-  acceptedRecursionFragments artifact
+  acceptedRecursionFragments artifact ∧
+  acceptedMutualRecursionFragments artifact
 
 def expectedArtifactRoot : String :=
   "AverCert.Artifact.certificate"
@@ -565,14 +792,16 @@ def claimObligationExports (artifact : ArtifactData) : List String :=
   artifact.stringEqClaims.map (fun c => c.obligation.export_) ++
   artifact.stringConcatClaims.map (fun c => c.obligation.export_) ++
   artifact.constructClaims.map (fun c => c.obligation.export_) ++
-  artifact.recursionClaims.map (fun c => c.obligation.export_)
+  artifact.recursionClaims.map (fun c => c.obligation.export_) ++
+  artifact.mutualRecursionClaims.map (fun c => c.obligation.export_)
 
 def claimObligations (artifact : ArtifactData) : List Obligation :=
   artifact.symFragmentClaims.map (fun c => c.obligation) ++
   artifact.stringEqClaims.map (fun c => c.obligation) ++
   artifact.stringConcatClaims.map (fun c => c.obligation) ++
   artifact.constructClaims.map (fun c => c.obligation) ++
-  artifact.recursionClaims.map (fun c => c.obligation)
+  artifact.recursionClaims.map (fun c => c.obligation) ++
+  artifact.mutualRecursionClaims.map (fun c => c.obligation)
 
 def claimObligationsInManifest
     (manifestObligations : List Obligation) : List Obligation → Prop
@@ -603,7 +832,9 @@ def claimsMatchManifest (artifact : ArtifactData) : Prop :=
           constructManifestPlanNames artifact.manifest ∧
       encodedSymExprPlans = artifact.manifest.exprFragmentPlans ∧
       recursionClaimExportNames artifact.recursionClaims =
-          recursionManifestPlanNames artifact.manifest
+          recursionManifestPlanNames artifact.manifest ∧
+      mutualRecursionClaimExportNames artifact.mutualRecursionClaims =
+          mutualManifestPlanNames artifact.manifest
   | none => False
 
 def accepted (artifact : ArtifactData) : Prop :=

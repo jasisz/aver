@@ -172,6 +172,26 @@ pub struct RederivedObligation {
     /// For `recursion-plan-v1`, the verifier-rendered canonical raw code-entry
     /// bytes the checked recursion plan lowers to.
     pub recursion_lowered_code_entry_lean: Option<String>,
+    /// For `mutual-plan-v1` (mutual-recursion member), the byte-derived member
+    /// plan rendered as a Lean `MutualRawPlan` term. `aver cert verify` pins
+    /// `manifest.mutualPlans` to this checker-rendered term.
+    pub mutual_plan_lean: Option<String>,
+    /// For `mutual-plan-v1`, the byte-derived SCC box/sub host-role table
+    /// rendered as the Lean `List (HostRole × Nat)` literal the claim carries.
+    pub mutual_host_table_lean: Option<String>,
+    /// For `mutual-plan-v1`, the byte-derived SCC member-index set rendered as
+    /// the Lean `List Nat` literal the claim threads as member-call context.
+    pub mutual_member_set_lean: Option<String>,
+    /// For `mutual-plan-v1`, this member's byte-derived defined-function index.
+    pub mutual_code_idx: Option<u32>,
+    /// For `mutual-plan-v1`, this member's byte-derived function-section type index.
+    pub mutual_type_idx: Option<u32>,
+    /// For `mutual-plan-v1`, the verifier-rendered `List WInstr` body this
+    /// member's checked plan lowers to (equal to its arm of the shared table).
+    pub mutual_lowered_body_lean: Option<String>,
+    /// For `mutual-plan-v1`, the verifier-rendered canonical raw code-entry
+    /// bytes this member's checked plan lowers to.
+    pub mutual_lowered_code_entry_lean: Option<String>,
 }
 
 pub struct RederivedCertificate {
@@ -816,6 +836,43 @@ fn rederive_certificate_inner(
                         })
                         .map(|bytes| render_byte_list(&bytes))
                 }
+                _ => None,
+            },
+            mutual_plan_lean: mutual_plan_from_cert(c).map(|plan| mutual_plan_lean_value(&plan)),
+            mutual_host_table_lean: match c.inner() {
+                Cert::MutualRecursion {
+                    box_idx, sub_idx, ..
+                } => Some(mutual_host_table_lean_value(*box_idx, *sub_idx)),
+                _ => None,
+            },
+            mutual_member_set_lean: match c.inner() {
+                Cert::MutualRecursion { scc, .. } => Some(mutual_member_set_lean_value(scc)),
+                _ => None,
+            },
+            mutual_code_idx: match c.inner() {
+                Cert::MutualRecursion { position, scc, .. } => {
+                    scc.get(*position).map(|m| m.code_idx)
+                }
+                _ => None,
+            },
+            mutual_type_idx: match c.inner() {
+                Cert::MutualRecursion { position, scc, .. } => {
+                    scc.get(*position).map(|m| m.type_idx)
+                }
+                _ => None,
+            },
+            mutual_lowered_body_lean: match c.inner() {
+                Cert::MutualRecursion { carrier, .. } => mutual_plan_from_cert(c)
+                    .and_then(|plan| lower_expr_fragment_plan(&plan, *carrier).ok())
+                    .map(|ops| render_ops_value(&ops)),
+                _ => None,
+            },
+            mutual_lowered_code_entry_lean: match c.inner() {
+                Cert::MutualRecursion { carrier, .. } => mutual_plan_from_cert(c)
+                    .and_then(|plan| {
+                        lower_expr_fragment_plan_code_entry_bytes(&plan, *carrier).ok()
+                    })
+                    .map(|bytes| render_byte_list(&bytes)),
                 _ => None,
             },
         })

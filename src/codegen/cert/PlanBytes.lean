@@ -254,6 +254,32 @@ def lowerRecursionCodeEntry (carrier : Nat) (plan : RecursionRawPlan) :
       | none => none
   | none => none
 
+def lowerMutualExprBytes (carrier : Nat) (plan : MutualRawPlan) :
+    Option (List Nat) :=
+  if AverCert.PlanCheck.checkMutualRawPlan plan then
+    match lowerBlockBytes carrier plan.body with
+    | some bytes => some (bytes ++ [0x0b])
+    | none => none
+  else
+    none
+
+def lowerMutualBodyBytes (carrier : Nat) (plan : MutualRawPlan) :
+    Option (List Nat) :=
+  match uleb32 1, uleb32 1, s33HeapIdx carrier,
+        lowerMutualExprBytes carrier plan with
+  | some localDeclCount, some localCount, some carrierBytes, some exprBytes =>
+      some (localDeclCount ++ localCount ++ [0x63] ++ carrierBytes ++ exprBytes)
+  | _, _, _, _ => none
+
+def lowerMutualCodeEntry (carrier : Nat) (plan : MutualRawPlan) :
+    Option (List Nat) :=
+  match lowerMutualBodyBytes carrier plan with
+  | some body =>
+      match uleb32 body.length with
+      | some lenBytes => some (lenBytes ++ body)
+      | none => none
+  | none => none
+
 def lowerStringConcatChunkBytes
     (resultTy : Nat) (chunk : StringConcatChunk) : Option (List Nat) :=
   match sleb32 0,

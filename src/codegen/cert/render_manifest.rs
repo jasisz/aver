@@ -396,6 +396,15 @@ fn render_manifest_lean(
         })
         .collect::<Vec<_>>()
         .join(", ");
+    let mutual_plans = analysis
+        .certs
+        .iter()
+        .filter_map(|c| {
+            mutual_plan_from_cert(c)
+                .map(|_| format!("({}, Plans.{}MutualPlan)", lean_str(c.name()), c.name()))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     s.push_str(&format!(
         "def manifest : Schema.Manifest :=\n  \
          {{ subject :=\n      \
@@ -411,6 +420,7 @@ fn render_manifest_lean(
          constructPlans := [{construct_plans}],\n    \
          exprFragmentPlans := [{expr_fragment_plans}],\n    \
          recursionPlans := [{recursion_plans}],\n    \
+         mutualPlans := [{mutual_plans}],\n    \
          obligations := [{obligations}] }}\n\n\
          end AverCert\n",
     ));
@@ -722,6 +732,9 @@ fn artifact_bridge_profile(c: &Cert, model_info: &ModelInfo) -> &'static str {
         Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. }
             if recursion_plan_from_cert(c).is_some() =>
         {
+            "accepted-artifact-v1"
+        }
+        Cert::MutualRecursion { .. } if mutual_plan_from_cert(c).is_some() => {
             "accepted-artifact-v1"
         }
         Cert::AdtConstructor { .. }
