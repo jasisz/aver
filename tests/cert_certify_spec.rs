@@ -120,7 +120,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         ("isOdd", "mutual-recursive"),
         ("mkOp", "adt-constructor"),
         ("evalOp", "variant-dispatch"),
-        ("userName", "field-projection"),
+        ("userName", "expr-fragment-v1"),
         ("boxInt", "widened-int-match"),
         ("wrapItems", "verbatim-widened-match"),
         ("tagName", "verbatim-variant-dispatch"),
@@ -144,12 +144,12 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
-        Some(11),
+        Some(12),
         "AcceptedArtifact coverage changed; update this migration counter deliberately"
     );
     assert_eq!(
         manifest["artifact_bridge_counts"]["legacy-witness-v1"].as_u64(),
-        Some((expected.len() - 11) as u64),
+        Some((expected.len() - 12) as u64),
         "legacy witness count changed; update this migration counter deliberately"
     );
     let expected_bridge = |class: &str| match class {
@@ -177,7 +177,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         .collect::<Vec<_>>();
     assert_eq!(
         expr_entries.len(),
-        8,
+        9,
         "expr-fragment sidecar count changed; update this deliberately"
     );
     let mut sym_sidecar_names = BTreeSet::new();
@@ -221,6 +221,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     }
     assert!(
         sym_sidecar_names.contains("addTwo")
+            && sym_sidecar_names.contains("userName")
             && sym_sidecar_names.contains("floatAddGoal")
             && sym_sidecar_names.contains("floatMulAddGoal")
             && sym_sidecar_names.contains("floatLeGoal")
@@ -261,6 +262,20 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     assert!(
         plans_lean.contains(".intConstCmp .lt 0 (0 : Int)"),
         "intLessZero SymPlan should expose a source-level Int comparison:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains("def userNameSymPlan : SymRawPlan"),
+        "userName should render a source-level SymPlan:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains(".projectField \"User\" 0 .string 0"),
+        "userName SymPlan should expose the source-level field projection:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains("[(\"User\", ")
+            && plans_lean.contains(" userNameSymPlan =\n  some userNamePlan := rfl"),
+        "userName SymPlan should encode, under the byte-derived host-role and struct \
+         tables, to the byte-bound ExprFragment plan:\n{plans_lean}"
     );
     assert!(
         plans_lean.contains("def mkOpConstructSymPlan : SymRawPlan"),

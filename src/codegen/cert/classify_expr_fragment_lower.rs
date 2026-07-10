@@ -84,6 +84,15 @@ fn lower_expr_fragment_block(block: &FragBlock, carrier: u32) -> Result<Vec<Op>,
                 ops.push(Op::StructGet(carrier, *field));
                 stack.push(node.id);
             }
+            FragNodeKind::StructGetUser {
+                ty_idx,
+                field,
+                value,
+            } => {
+                lower_pop(&mut stack, *value, node.id)?;
+                ops.push(Op::StructGet(*ty_idx, *field));
+                stack.push(node.id);
+            }
             FragNodeKind::RefIsNull { value } => {
                 lower_pop(&mut stack, *value, node.id)?;
                 ops.push(Op::RefIsNull);
@@ -175,6 +184,18 @@ fn lower_expr_fragment_block_bytes(
                 push_u32_leb(out, *field);
                 stack.push(node.id);
             }
+            FragNodeKind::StructGetUser {
+                ty_idx,
+                field,
+                value,
+            } => {
+                lower_pop(&mut stack, *value, node.id)?;
+                out.push(0xfb);
+                push_u32_leb(out, 0x02);
+                push_u32_leb(out, *ty_idx);
+                push_u32_leb(out, *field);
+                stack.push(node.id);
+            }
             FragNodeKind::RefIsNull { value } => {
                 lower_pop(&mut stack, *value, node.id)?;
                 out.push(0xd1);
@@ -232,7 +253,7 @@ fn push_expr_fragment_blocktype(out: &mut Vec<u8>, ty: FragTy) -> Result<(), Str
         FragTy::BoolI32 | FragTy::RawI32 => 0x7f,
         FragTy::I64 => 0x7e,
         FragTy::F64 => 0x7c,
-        FragTy::IntCarrier | FragTy::Ref => {
+        FragTy::IntCarrier | FragTy::Ref | FragTy::AdtRef => {
             return Err(format!(
                 "canonical byte lowering does not support if result `{}` yet",
                 ty.plan_tag()

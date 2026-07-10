@@ -556,12 +556,21 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     // artifact claims always runs against these indices, never plan-supplied
     // ones.
     let host_table_lean = cert::byte_derived_frag_host_table_lean(&bytes)?;
+    // Byte-derived struct table: the consistent union of every checked
+    // projection sidecar's per-export entries (each pinned by canonical
+    // code-entry byte equality against this module's bytes).
+    let struct_table_lean = cert::frag_struct_table_lean_from_entries(
+        rederived
+            .iter()
+            .flat_map(|r| r.fragment_struct_entries.iter()),
+    )?;
     let witness = checker_witness(
         &actual,
         &cands,
         &rederived,
         &derived_contracts,
         &host_table_lean,
+        &struct_table_lean,
     );
     std::fs::write(build.path.join("CheckerWitness.lean"), &witness)
         .map_err(|e| format!("cannot write checker witness: {e}"))?;
@@ -1616,6 +1625,7 @@ struct LeanExprFragmentArtifactClaims {
 fn lean_expr_fragment_artifact_claims(
     rederived: &[cert::RederivedObligation],
     host_table_lean: &str,
+    struct_table_lean: &str,
 ) -> LeanExprFragmentArtifactClaims {
     let mut sym_claims = Vec::new();
     let mut string_eq_claims = Vec::new();
@@ -1760,6 +1770,7 @@ fn lean_expr_fragment_artifact_claims(
             sym_claims.push(format!(
                 "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
                  carrier := {carrier}, hostTable := {host_table_lean}, \
+                 structTable := {struct_table_lean}, \
                  plan := (({sym_plan}) : AverCert.Schema.SymRawPlan), \
                  obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.SymFragmentClaim)",
                 name = r.name,
@@ -1886,8 +1897,9 @@ fn lean_fragment_acceptance_proof_block(
 fn lean_expr_fragment_obligation_acceptance_pins(
     rederived: &[cert::RederivedObligation],
     host_table_lean: &str,
+    struct_table_lean: &str,
 ) -> String {
-    let witness = lean_expr_fragment_artifact_claims(rederived, host_table_lean);
+    let witness = lean_expr_fragment_artifact_claims(rederived, host_table_lean, struct_table_lean);
     let proof_block = lean_fragment_acceptance_proof_block(&witness, "  ");
     let artifact = lean_artifact_data_literal(
         &witness.sym_claims,
@@ -1911,8 +1923,9 @@ fn lean_expr_fragment_obligation_acceptance_pins(
 fn lean_accepted_artifact_witness(
     rederived: &[cert::RederivedObligation],
     host_table_lean: &str,
+    struct_table_lean: &str,
 ) -> String {
-    let witness = lean_expr_fragment_artifact_claims(rederived, host_table_lean);
+    let witness = lean_expr_fragment_artifact_claims(rederived, host_table_lean, struct_table_lean);
     let artifact = lean_artifact_data_literal(
         &witness.sym_claims,
         &witness.string_eq_claims,
@@ -2006,6 +2019,7 @@ fn checker_witness(
     rederived: &[cert::RederivedObligation],
     derived_contracts: &[String],
     host_table_lean: &str,
+    struct_table_lean: &str,
 ) -> String {
     // Count is the JSON-claimed number of certified exports, verified by `rfl`
     // against `obligations.length` (so a JSON claiming more or fewer than the
@@ -2036,9 +2050,13 @@ fn checker_witness(
     let expr_fragment_wasm_slice_pins = lean_expr_fragment_wasm_slice_pins(rederived);
     let expr_fragment_func_binding_pins = lean_expr_fragment_func_binding_pins(rederived);
     let expr_fragment_accepted_pins = lean_expr_fragment_accepted_pins(rederived);
-    let expr_fragment_obligation_acceptance_pins =
-        lean_expr_fragment_obligation_acceptance_pins(rederived, host_table_lean);
-    let accepted_artifact_witness = lean_accepted_artifact_witness(rederived, host_table_lean);
+    let expr_fragment_obligation_acceptance_pins = lean_expr_fragment_obligation_acceptance_pins(
+        rederived,
+        host_table_lean,
+        struct_table_lean,
+    );
+    let accepted_artifact_witness =
+        lean_accepted_artifact_witness(rederived, host_table_lean, struct_table_lean);
     // Semantic-face bindings: pin each obligation's typed `Dom`/`Cod`/`domRepr`/
     // `codRepr` to the STANDARD form its BYTE-derived class implies, and prove
     // every domain is inhabited. These are the faces the schema-v3 checker did
@@ -2096,7 +2114,7 @@ fn checker_witness(
          -- or stringConcatPlans.\n\
          example : AverCert.manifest.symFragmentPlans = {sym_fragment_plans} := rfl\n\
          example : AverCert.manifest.symFragmentPlans.all (fun p => AverCert.PlanCheck.checkSymRawPlan p.2) = true := rfl\n\
-         example : AverCert.manifest.symFragmentPlans.map (fun p => (p.1, AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan {host_table_lean} p.2)) = {sym_fragment_encoded_plans} := rfl\n\n\
+         example : AverCert.manifest.symFragmentPlans.map (fun p => (p.1, AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan {host_table_lean} {struct_table_lean} p.2)) = {sym_fragment_encoded_plans} := rfl\n\n\
          -- String.eq source plans: the manifest's Lean-data equality plans\n\
          -- are pinned to checker-rendered `StringEqRawPlan` terms reconstructed\n\
          -- from sidecars that already passed hash checks and byte-derived\n\

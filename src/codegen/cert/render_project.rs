@@ -65,11 +65,16 @@ pub fn write_project(
     // value: every sym-plan encode example and artifact claim consumes it, so
     // plan-supplied indices can never enter the encoder.
     let host_table_lean = byte_derived_frag_host_table_lean(wasm_bytes)?;
+    // Struct-binding table for field projections: one module-wide value,
+    // unioned from the per-export (source plan, encoded plan) pairs the
+    // byte-exact gate already pinned. Like the host-role table, plan-supplied
+    // indices can never enter the encoder.
+    let struct_table_lean = emit_frag_struct_table_lean(analysis)?;
 
     write(
         &cert_dir,
         "Plans.lean",
-        &render_expr_fragment_plans(analysis, &model_info, &host_table_lean),
+        &render_expr_fragment_plans(analysis, &model_info, &host_table_lean, &struct_table_lean),
     )?;
     write(
         &cert_dir,
@@ -85,7 +90,7 @@ pub fn write_project(
     write(
         &cert_dir,
         "Artifact.lean",
-        &render_artifact(analysis, &model_info, &host_table_lean),
+        &render_artifact(analysis, &model_info, &host_table_lean, &struct_table_lean),
     )?;
     write(&cert_dir, "lakefile.lean", &render_lakefile(&model_roots))?;
 
@@ -175,10 +180,32 @@ fn write_fragment_sidecars(
     Ok(())
 }
 
+/// The module-wide struct table rendered at emit time: the consistent union of
+/// every projection cert's byte-pinned entries.
+fn emit_frag_struct_table_lean(analysis: &Analysis) -> Result<String, String> {
+    let mut entries: Vec<(String, u32)> = Vec::new();
+    for c in &analysis.certs {
+        if let Cert::ExprFragment {
+            source_plan: Some(source_plan),
+            plan,
+            ..
+        } = c.inner()
+        {
+            let plan_entries =
+                expr_fragment_struct_table_entries(source_plan, plan).ok_or_else(|| {
+                    format!("inconsistent struct bindings in `{}` fragment plan", c.name())
+                })?;
+            entries.extend(plan_entries);
+        }
+    }
+    frag_struct_table_lean_from_entries(entries.iter())
+}
+
 fn render_expr_fragment_plans(
     analysis: &Analysis,
     model_info: &ModelInfo,
     host_table_lean: &str,
+    struct_table_lean: &str,
 ) -> String {
     let mut s = String::new();
     s.push_str(
@@ -233,9 +260,9 @@ fn render_expr_fragment_plans(
                      /-- The audited Lean-side source-plan checker accepts `{name}`'s `SymPlan`. -/\n\
                      example : AverCert.PlanCheck.checkSymRawPlan {name}SymPlan = true := rfl\n\n\
                      /-- The audited Lean-side source encoder maps `{name}`'s `SymPlan`,\n\
-                         under the byte-derived host-role table, to the representation\n\
-                         plan that is bound to bytes below. -/\n\
-                     example : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan {host_table_lean} {name}SymPlan =\n  \
+                         under the byte-derived host-role and struct tables, to the\n\
+                         representation plan that is bound to bytes below. -/\n\
+                     example : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan {host_table_lean} {struct_table_lean} {name}SymPlan =\n  \
                        some {name}Plan := rfl\n\n",
                     sym_plan = sym_plan_lean_value(&sym)
                 )
@@ -328,7 +355,7 @@ fn render_expr_fragment_plans(
              example : AverCert.PlanCheck.constructPlanMatchesSymRawPlan\n  \
                {name}ConstructSymPlan {name}ConstructPlan = true := rfl\n\n\
              /-- `construct` is not yet part of the v1 source-to-fragment encoder. -/\n\
-             example : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan {host_table_lean} {name}ConstructSymPlan = none := rfl\n\n\
+             example : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan {host_table_lean} {struct_table_lean} {name}ConstructSymPlan = none := rfl\n\n\
              /-- The audited Lean-side canonical lowerer maps `{name}`'s constructor plan\n\
                  to the exact instruction body. -/\n\
              example : AverCert.PlanLower.lowerConstructBody {name}ConstructPlan =\n  \
@@ -504,6 +531,7 @@ fn render_artifact_expr_fragment_claims(
     analysis: &Analysis,
     model_info: &ModelInfo,
     host_table_lean: &str,
+    struct_table_lean: &str,
 ) -> RenderedArtifactClaims {
     let mut sym_claims = Vec::new();
     let mut string_eq_claims = Vec::new();
@@ -541,7 +569,7 @@ fn render_artifact_expr_fragment_claims(
                 );
                 if expr_fragment_source_plan(source_plan, plan).is_some() {
                     sym_claims.push(format!(
-                        "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, hostTable := {host_table_lean}, plan := AverCert.Plans.{name}SymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.SymFragmentClaim)",
+                        "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, hostTable := {host_table_lean}, structTable := {struct_table_lean}, plan := AverCert.Plans.{name}SymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.SymFragmentClaim)",
                         export_name = lean_str(name),
                     ));
                     sym_proofs.push(proof);
@@ -727,8 +755,14 @@ fn render_artifact(
     analysis: &Analysis,
     model_info: &ModelInfo,
     host_table_lean: &str,
+    struct_table_lean: &str,
 ) -> String {
-    let claims = render_artifact_expr_fragment_claims(analysis, model_info, host_table_lean);
+    let claims = render_artifact_expr_fragment_claims(
+        analysis,
+        model_info,
+        host_table_lean,
+        struct_table_lean,
+    );
     let fragment_proof = format!(
         concat!(
             "  dsimp [data, symFragmentClaims, stringEqClaims, stringConcatClaims, constructClaims, AverCert.AcceptedArtifact.accepted,\n",

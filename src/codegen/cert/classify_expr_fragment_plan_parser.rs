@@ -160,6 +160,18 @@ impl<'a> FragPlanParser<'a> {
                 require_plan_ty(id, ty, expected)?;
                 FragNodeKind::StructGet { field, receiver }
             }
+            "struct.get.user" => {
+                let ty_idx = plan_attr_u32(id, &attrs, "ty")?;
+                let field = plan_attr_u32(id, &attrs, "field")?;
+                let value = plan_attr_value(id, &attrs, "value")?;
+                require_plan_node_ty(nodes, value, FragTy::AdtRef)?;
+                require_plan_ty(id, ty, FragTy::AdtRef)?;
+                FragNodeKind::StructGetUser {
+                    ty_idx,
+                    field,
+                    value,
+                }
+            }
             "ref.is_null" => {
                 let value = plan_attr_value(id, &attrs, "value")?;
                 require_plan_node_ty(nodes, value, FragTy::Ref)?;
@@ -393,6 +405,7 @@ fn reject_extra_plan_attrs(
         "const.i32" => &["value"],
         "const.f64" => &["bits"],
         "struct.get" => &["field", "receiver"],
+        "struct.get.user" => &["ty", "field", "value"],
         "ref.is_null" => &["value"],
         "prim" => &["op", "args"],
         "hostcall" => &["role", "func", "args"],

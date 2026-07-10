@@ -2743,15 +2743,34 @@ pub(super) fn emit_module_with(
         .iter()
         .map(|rfd| mir_program.fn_by_id(rfd.fn_id))
         .collect();
-    let fragment_plan_for: Vec<Option<crate::codegen::cert::FragmentPlan>> =
-        if registry.aint_struct_idx.is_some() {
-            mir_fn_for
-                .iter()
-                .map(|mir_fn| mir_fn.and_then(crate::codegen::cert::fragment_plan_from_mir_fn))
-                .collect()
-        } else {
-            vec![None; fn_defs.len()]
-        };
+    // Record layout resolver for the plan producer: field name -> (declared
+    // field index, field source type). Newtypes/carriers return `None` (their
+    // field reads are identity, not `struct.get`), so they never plan a
+    // projection the emitter would not have emitted.
+    let record_field_lookup = |record: &str, field: &str| -> Option<(u32, String)> {
+        if registry.newtype_underlying(record).is_some() {
+            return None;
+        }
+        registry.record_type_idx(record)?;
+        let idx = registry.record_field_index(record, field)?;
+        let ty = registry.record_field_type(record, field)?.to_string();
+        Some((idx, ty))
+    };
+    let fragment_plan_for: Vec<Option<crate::codegen::cert::FragmentPlan>> = if registry
+        .aint_struct_idx
+        .is_some()
+    {
+        mir_fn_for
+            .iter()
+            .map(|mir_fn| {
+                mir_fn.and_then(|mir_fn| {
+                    crate::codegen::cert::fragment_plan_from_mir_fn(mir_fn, &record_field_lookup)
+                })
+            })
+            .collect()
+    } else {
+        vec![None; fn_defs.len()]
+    };
     let mut mir_dispatch: Vec<bool> = vec![false; fn_defs.len()];
 
     // Pre-pass over user fn bodies — populates `caller_fn_collector`
@@ -3038,8 +3057,20 @@ pub(super) fn emit_module_with(
         if let (Some(plan), Some(carrier)) =
             (fragment_plan_for[i].as_ref(), registry.aint_struct_idx)
         {
+            // Struct-binding table for the plan's projections, resolved from
+            // the same registry the MIR emitter would have used, so the
+            // plan-lowered `struct.get` cites exactly the emitter's type index.
+            let struct_table = crate::codegen::cert::frag_struct_table_for_plan(plan, &|name| {
+                registry.record_type_idx(name)
+            })
+            .ok_or_else(|| {
+                WasmGcError::Validation(format!(
+                    "fragment plan struct binding for fn `{}` failed",
+                    resolved_fn_defs[i].name
+                ))
+            })?;
             let expr_plan = plan
-                .to_expr_fragment_plan(&fragment_host_table)
+                .to_expr_fragment_plan(&fragment_host_table, &struct_table)
                 .ok_or_else(|| {
                     WasmGcError::Validation(format!(
                         "fragment plan encoding for fn `{}` failed",

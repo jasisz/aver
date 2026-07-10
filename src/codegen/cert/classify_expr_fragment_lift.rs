@@ -3,6 +3,10 @@ fn expr_fragment_ty_from_wasm_param(ty: &TyKind, carrier: u32) -> Option<FragTy>
         TyKind::F64 => Some(FragTy::F64),
         TyKind::I32 => Some(FragTy::BoolI32),
         TyKind::Ref(idx) if *idx == carrier => Some(FragTy::IntCarrier),
+        // Any other concrete reference is an opaque user-ADT/record reference.
+        // Fail-closed downstream: plans over `AdtRef` are accepted ONLY when
+        // they match the exact field-projection face.
+        TyKind::Ref(_) => Some(FragTy::AdtRef),
         _ => None,
     }
 }
@@ -12,6 +16,7 @@ fn expr_fragment_ty_from_wasm_result(ty: TyKind, carrier: u32) -> Option<FragTy>
         TyKind::F64 => Some(FragTy::F64),
         TyKind::I32 => Some(FragTy::BoolI32),
         TyKind::Ref(idx) if idx == carrier => Some(FragTy::IntCarrier),
+        TyKind::Ref(_) => Some(FragTy::AdtRef),
         _ => None,
     }
 }
@@ -23,7 +28,7 @@ fn expr_fragment_ty_from_wasm_result(ty: TyKind, carrier: u32) -> Option<FragTy>
 /// ones. The table itself is derived inside `disassemble` (exact carrier-binop
 /// signature + first-i64-arith body shape + uniqueness, fail-closed).
 pub fn byte_derived_frag_host_table_lean(wasm_bytes: &[u8]) -> Result<String, String> {
-    let (_user_fns, _box_idx, _user_idx_set, _carrier, _host_roles, host_table) =
+    let (_user_fns, _box_idx, _user_idx_set, _carrier, _host_roles, host_table, _struct_field_counts) =
         disassemble(wasm_bytes)?;
     Ok(host_table.lean_value())
 }
@@ -140,4 +145,166 @@ fn expr_fragment_int_add_face(plan: &ExprFragmentPlan) -> Option<FragIntAddFace>
         box_idx: *box_idx,
         add_idx: *add_idx,
     })
+}
+
+
+/// The verbatim field-projection face of an ADT-ref expr fragment: exactly
+/// `struct.get ty field∈{0,1}` of the single reference parameter, returned
+/// unchanged. This is the only fragment shape admitting `AdtRef` values today;
+/// any other ADT-ref plan fail-closes on producer and verifier alike.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FragProjectFace {
+    pub(crate) struct_idx: u32,
+    pub(crate) field_idx: u32,
+}
+
+fn expr_fragment_project_face(plan: &ExprFragmentPlan) -> Option<FragProjectFace> {
+    if plan.params.as_slice() != [FragTy::AdtRef] || plan.result != FragTy::AdtRef {
+        return None;
+    }
+    let [n0, n1] = plan.body.nodes.as_slice() else {
+        return None;
+    };
+    if plan.body.result != FragValueId(1) {
+        return None;
+    }
+    let FragNodeKind::Local { index: 0 } = n0.kind else {
+        return None;
+    };
+    let FragNodeKind::StructGetUser {
+        ty_idx,
+        field,
+        value,
+    } = n1.kind
+    else {
+        return None;
+    };
+    if value != FragValueId(0) || field > 1 {
+        return None;
+    }
+    if n0.ty != FragTy::AdtRef || n1.ty != FragTy::AdtRef {
+        return None;
+    }
+    Some(FragProjectFace {
+        struct_idx: ty_idx,
+        field_idx: field,
+    })
+}
+
+fn frag_block_touches_adt_ref(block: &FragBlock) -> bool {
+    block.nodes.iter().any(|node| {
+        node.ty == FragTy::AdtRef
+            || match &node.kind {
+                FragNodeKind::StructGetUser { .. } => true,
+                FragNodeKind::If {
+                    then_block,
+                    else_block,
+                    ..
+                } => frag_block_touches_adt_ref(then_block) || frag_block_touches_adt_ref(else_block),
+                _ => false,
+            }
+    })
+}
+
+/// Whether a plan involves opaque user-ADT references anywhere (params, result
+/// or body). Such plans are admitted ONLY through the field-projection face.
+fn expr_fragment_plan_touches_adt_ref(plan: &ExprFragmentPlan) -> bool {
+    plan.params.contains(&FragTy::AdtRef)
+        || plan.result == FragTy::AdtRef
+        || frag_block_touches_adt_ref(&plan.body)
+}
+
+/// Fail-closed validation of every `struct.get.user` node against the
+/// byte-derived module struct context: the cited type index must be a real
+/// module struct type, must not be the Int carrier, and the field must be
+/// inside the struct's field count — the projection twin of the hostCall
+/// func-idx-vs-role-table check.
+fn check_plan_struct_gets(
+    block: &FragBlock,
+    carrier: u32,
+    struct_field_counts: &std::collections::HashMap<u32, u32>,
+) -> Result<(), String> {
+    for node in &block.nodes {
+        match &node.kind {
+            FragNodeKind::StructGetUser { ty_idx, field, .. } => {
+                let Some(count) = struct_field_counts.get(ty_idx) else {
+                    return Err(format!(
+                        "plan struct.get.user v{} cites type {} outside the module's struct types",
+                        node.id.0, ty_idx
+                    ));
+                };
+                if *ty_idx == carrier {
+                    return Err(format!(
+                        "plan struct.get.user v{} cites the Int carrier type {}",
+                        node.id.0, ty_idx
+                    ));
+                }
+                if field >= count {
+                    return Err(format!(
+                        "plan struct.get.user v{} cites field {} outside struct {}'s {} fields",
+                        node.id.0, field, ty_idx, count
+                    ));
+                }
+            }
+            FragNodeKind::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                check_plan_struct_gets(then_block, carrier, struct_field_counts)?;
+                check_plan_struct_gets(else_block, carrier, struct_field_counts)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Byte-derived struct table for ONE export's source plan: the plan's
+/// `project.field` type names bound to the export body's own (unique,
+/// non-carrier) `struct.get` type index. Names come from the untrusted
+/// sidecar, indices come ONLY from the module bytes, and the byte-exact gate
+/// then pins the pairing. Fail-closed: no projections → empty table; more
+/// than one projected type name or more than one distinct byte-level
+/// `struct.get` type → decline.
+fn byte_derived_frag_struct_table(
+    sym_plan: &SymPlan,
+    f: &UserFn,
+    carrier: u32,
+    struct_field_counts: &std::collections::HashMap<u32, u32>,
+) -> Result<FragStructTable, String> {
+    let names = sym_plan_project_type_names(sym_plan);
+    if names.is_empty() {
+        return Ok(FragStructTable::default());
+    }
+    let [name] = names.as_slice() else {
+        return Err(format!(
+            "source plan projects {} distinct types; the field-projection face admits one",
+            names.len()
+        ));
+    };
+    let mut tys = f
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::StructGet(t, _) if *t != carrier => Some(*t),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    tys.sort_unstable();
+    tys.dedup();
+    let [ty_idx] = tys.as_slice() else {
+        return Err(format!(
+            "export body must contain exactly one non-carrier struct.get type to bind `{name}`, found {}",
+            tys.len()
+        ));
+    };
+    if !struct_field_counts.contains_key(ty_idx) {
+        return Err(format!(
+            "byte-derived struct.get type {ty_idx} is not a module struct type"
+        ));
+    }
+    let mut table = FragStructTable::default();
+    table.insert(name, *ty_idx);
+    Ok(table)
 }

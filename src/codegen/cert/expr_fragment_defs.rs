@@ -41,6 +41,12 @@ pub enum FragTy {
     I64,
     RawI32,
     Ref,
+    /// Opaque user-ADT / record reference. Unlike `Ref` (a carrier limb), this
+    /// is a whole user struct/array reference read verbatim (`model_ty = WVal`).
+    /// The concrete wasm type index is never part of the type: it lives on the
+    /// projecting node (`StructGetUser`) and is bound to bytes by the byte-exact
+    /// gate, mirroring how `HostCall` carries its resolved `func_idx`.
+    AdtRef,
 }
 
 impl FragTy {
@@ -49,7 +55,7 @@ impl FragTy {
             FragTy::F64 => FragModelTy::Float,
             FragTy::BoolI32 => FragModelTy::Bool,
             FragTy::IntCarrier => FragModelTy::Int,
-            FragTy::I64 | FragTy::RawI32 | FragTy::Ref => FragModelTy::WVal,
+            FragTy::I64 | FragTy::RawI32 | FragTy::Ref | FragTy::AdtRef => FragModelTy::WVal,
         }
     }
 
@@ -61,6 +67,7 @@ impl FragTy {
             FragTy::I64 => "i64",
             FragTy::RawI32 => "raw-i32",
             FragTy::Ref => "ref",
+            FragTy::AdtRef => "adt-ref",
         }
     }
 
@@ -72,6 +79,7 @@ impl FragTy {
             FragTy::I64 => ".i64",
             FragTy::RawI32 => ".rawI32",
             FragTy::Ref => ".ref",
+            FragTy::AdtRef => ".adtRef",
         }
     }
 
@@ -83,6 +91,7 @@ impl FragTy {
             "i64" => Some(FragTy::I64),
             "raw-i32" => Some(FragTy::RawI32),
             "ref" => Some(FragTy::Ref),
+            "adt-ref" => Some(FragTy::AdtRef),
             _ => None,
         }
     }
@@ -100,7 +109,7 @@ impl FragTy {
             FragTy::F64 => format!(".f64v {name}"),
             FragTy::BoolI32 => format!("b32 {name}"),
             FragTy::IntCarrier => format!("carrierSmall {carrier} {name}"),
-            FragTy::I64 | FragTy::RawI32 | FragTy::Ref => name.to_string(),
+            FragTy::I64 | FragTy::RawI32 | FragTy::Ref | FragTy::AdtRef => name.to_string(),
         }
     }
 }
@@ -202,6 +211,83 @@ impl FragHostTable {
     }
 }
 
+/// The struct-binding table: which wasm struct type index realises each source
+/// record/ADT type name in THIS module. On the producer side it is resolved
+/// from the emitter's type registry; on the verifier side it is re-derived from
+/// the export's own byte-derived `struct.get` instructions and validated
+/// against the module's struct context. Plans never carry these indices as
+/// trusted data: a wrong table encodes to canonical bytes that cannot match
+/// the module, so the claim fail-closes at the byte-exact gate.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct FragStructTable {
+    /// `(source type name, wasm struct type index)`, sorted by name for
+    /// deterministic rendering.
+    pub(crate) entries: Vec<(String, u32)>,
+}
+
+impl FragStructTable {
+    pub(crate) fn lookup(&self, name: &str) -> Option<u32> {
+        self.entries
+            .iter()
+            .find(|(entry, _)| entry == name)
+            .map(|(_, idx)| *idx)
+    }
+
+    /// Insert one binding; `false` when the name is already bound to a
+    /// DIFFERENT index (an inconsistent table must fail-close).
+    pub(crate) fn insert(&mut self, name: &str, idx: u32) -> bool {
+        match self.lookup(name) {
+            Some(existing) => existing == idx,
+            None => {
+                self.entries.push((name.to_string(), idx));
+                self.entries.sort();
+                true
+            }
+        }
+    }
+
+    /// The Lean `List (String × Nat)` literal claims and witnesses consume.
+    pub(crate) fn lean_value(&self) -> String {
+        format!(
+            "[{}]",
+            self.entries
+                .iter()
+                .map(|(name, idx)| format!("({}, {idx})", lean_str(name)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+
+    /// A placeholder table for producer-side encodability gating at MIR time,
+    /// before any wasm type indices exist: every projected type name maps to 0.
+    /// Encoding shape does not depend on the index values.
+    pub(crate) fn placeholder_for(plan: &SymPlan) -> Self {
+        let mut names = sym_plan_project_type_names(plan);
+        names.sort();
+        FragStructTable {
+            entries: names.into_iter().map(|name| (name, 0)).collect(),
+        }
+    }
+}
+
+/// The Lean `List (String × Nat)` literal of a module-wide struct table: the
+/// consistent union of per-export entries. An inconsistent union (one name
+/// bound to two indices) fail-closes.
+pub fn frag_struct_table_lean_from_entries<'a>(
+    entries: impl IntoIterator<Item = &'a (String, u32)>,
+) -> Result<String, String> {
+    let mut table = FragStructTable::default();
+    for (name, idx) in entries {
+        if !table.insert(name, *idx) {
+            return Err(format!(
+                "inconsistent byte-derived struct table: `{name}` binds to both {} and {idx}",
+                table.lookup(name).unwrap_or(0)
+            ));
+        }
+    }
+    Ok(table.lean_value())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct FragValueId(pub(crate) usize);
 
@@ -258,6 +344,15 @@ pub(crate) enum FragNodeKind {
     StructGet {
         field: u32,
         receiver: FragValueId,
+    },
+    /// Projection of `field` out of a user struct of wasm type `ty_idx` (a whole
+    /// record/ADT, not the Int carrier). Lowers to `struct.get ty_idx field`
+    /// with the type index taken from the node (bound to bytes by the byte-exact
+    /// gate; validated against the byte-derived struct context by the checker).
+    StructGetUser {
+        ty_idx: u32,
+        field: u32,
+        value: FragValueId,
     },
     RefIsNull {
         value: FragValueId,
@@ -410,6 +505,11 @@ fn expr_fragment_node_kind_lean_value(kind: &FragNodeKind) -> String {
         FragNodeKind::StructGet { field, receiver } => {
             format!(".structGet {field} {}", receiver.0)
         }
+        FragNodeKind::StructGetUser {
+            ty_idx,
+            field,
+            value,
+        } => format!(".structGetUser {ty_idx} {field} {}", value.0),
         FragNodeKind::RefIsNull { value } => format!(".refIsNull {}", value.0),
         FragNodeKind::Prim { op, args } => format!(
             ".prim {} [{}]",
@@ -478,6 +578,16 @@ fn render_fragment_node_plan(node: &FragNode, indent: usize, out: &mut String) {
         }
         FragNodeKind::StructGet { field, receiver } => {
             out.push_str(&format!("struct.get field={field} receiver=v{}\n", receiver.0));
+        }
+        FragNodeKind::StructGetUser {
+            ty_idx,
+            field,
+            value,
+        } => {
+            out.push_str(&format!(
+                "struct.get.user ty={ty_idx} field={field} value=v{}\n",
+                value.0
+            ));
         }
         FragNodeKind::RefIsNull { value } => {
             out.push_str(&format!("ref.is_null value=v{}\n", value.0));
@@ -655,5 +765,82 @@ mod expr_fragment_sem_ty_tests {
         let lean = expr_fragment_plan_lean_value(&add_two_hostcall_plan());
         assert!(lean.contains(".hostCall .box 6 [1]"), "lean = {lean}");
         assert!(lean.contains(".hostCall .add 7 [0, 2]"), "lean = {lean}");
+    }
+
+    /// The field-projection plan shape for `userName(u: User) -> String` = `u.name`.
+    /// Param 0 is the User reference (`AdtRef`); the body projects field 0 of the
+    /// user struct (wasm type index 15) verbatim. Carrier scratch-local type = 18.
+    fn user_name_projection_plan() -> ExprFragmentPlan {
+        ExprFragmentPlan {
+            params: vec![FragTy::AdtRef],
+            result: FragTy::AdtRef,
+            body: FragBlock {
+                nodes: vec![
+                    FragNode {
+                        id: FragValueId(0),
+                        ty: FragTy::AdtRef,
+                        kind: FragNodeKind::Local { index: 0 },
+                    },
+                    FragNode {
+                        id: FragValueId(1),
+                        ty: FragTy::AdtRef,
+                        kind: FragNodeKind::StructGetUser {
+                            ty_idx: 15,
+                            field: 0,
+                            value: FragValueId(0),
+                        },
+                    },
+                ],
+                result: FragValueId(1),
+            },
+        }
+    }
+
+    #[test]
+    fn user_struct_projection_plan_lowers_to_username_bytes_and_ops() {
+        let plan = user_name_projection_plan();
+        // Byte lowering reproduces the empirically pinned userName code-entry
+        // `0b 01 01 63 12 20 00 fb 02 0f 00 0b` (carrier scratch local type 18,
+        // `struct.get 15 0`).
+        let bytes = lower_expr_fragment_plan_code_entry_bytes(&plan, 18).expect("lower bytes");
+        assert_eq!(
+            bytes,
+            vec![0x0b, 0x01, 0x01, 0x63, 0x12, 0x20, 0x00, 0xfb, 0x02, 0x0f, 0x00, 0x0b]
+        );
+        // Op lowering matches the `[local.get 0, struct.get 15 0]` body the
+        // checker re-derives (struct type index from the node, not the carrier).
+        let ops = lower_expr_fragment_plan(&plan, 18).expect("lower ops");
+        assert_eq!(ops, vec![Op::LocalGet(0), Op::StructGet(15, 0)]);
+    }
+
+    #[test]
+    fn user_struct_projection_plan_text_round_trips_through_parser() {
+        let plan = user_name_projection_plan();
+        let text = expr_fragment_plan_text(&plan);
+        let mut parser = FragPlanParser::new(&text, vec![FragTy::AdtRef], FragTy::AdtRef);
+        let body = parser.parse().expect("parse projection plan");
+        let reparsed = ExprFragmentPlan {
+            params: vec![FragTy::AdtRef],
+            result: FragTy::AdtRef,
+            body,
+        };
+        assert_eq!(
+            lower_expr_fragment_plan_code_entry_bytes(&reparsed, 18).expect("relower"),
+            vec![0x0b, 0x01, 0x01, 0x63, 0x12, 0x20, 0x00, 0xfb, 0x02, 0x0f, 0x00, 0x0b]
+        );
+    }
+
+    #[test]
+    fn user_struct_projection_plan_text_and_lean_render_the_user_node() {
+        let plan = user_name_projection_plan();
+        let text = expr_fragment_plan_text(&plan);
+        assert!(
+            text.contains("struct.get.user ty=15 field=0 value=v0"),
+            "plan text = {text}"
+        );
+        let lean = expr_fragment_plan_lean_value(&plan);
+        assert!(lean.contains(".structGetUser 15 0 0"), "lean = {lean}");
+        assert!(lean.contains("params := [.adtRef]"), "lean = {lean}");
+        assert!(lean.contains("result := .adtRef"), "lean = {lean}");
     }
 }

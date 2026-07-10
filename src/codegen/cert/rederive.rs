@@ -64,6 +64,11 @@ pub struct RederivedObligation {
     /// result rendered as a `SymRawPlan` term. This feeds the preferred v2
     /// artifact claim shape; representation-only fragments leave it absent.
     pub fragment_sym_plan_lean: Option<String>,
+    /// For field-projection fragments, the byte-derived struct-table entries
+    /// (`source type name -> wasm struct type index`) this export pins. The
+    /// verifier unions these into the module-wide struct table its witnesses
+    /// and artifact claims cite; empty for non-projection fragments.
+    pub fragment_struct_entries: Vec<(String, u32)>,
     /// For expression fragments, the verifier-rendered `List WInstr` body that
     /// the checked plan canonically lowers to. The checker witness pins
     /// `PlanLower.lowerExprFragmentBody carrier plan = some body`.
@@ -203,6 +208,14 @@ impl ObligationFace {
         if c.int_add_face().is_some() {
             return ObligationFace::IntList { arity: 1 };
         }
+        // A projection-faced expr fragment keeps the legacy field-projection
+        // semantic face (WVal x WVal / verbatimRepr), exactly like the legacy
+        // class it migrates.
+        if let Some(face) = c.project_face() {
+            return ObligationFace::Projection {
+                struct_idx: face.struct_idx,
+            };
+        }
         match c.inner() {
             Cert::StraightLine { .. }
             | Cert::Recursive { .. }
@@ -245,9 +258,11 @@ impl ObligationFace {
                 let repr = match result {
                     FragTy::F64 => "floatBitsRepr",
                     FragTy::BoolI32 => "boolRepr",
-                    FragTy::IntCarrier | FragTy::I64 | FragTy::RawI32 | FragTy::Ref => {
-                        "verbatimRepr"
-                    }
+                    FragTy::IntCarrier
+                    | FragTy::I64
+                    | FragTy::RawI32
+                    | FragTy::Ref
+                    | FragTy::AdtRef => "verbatimRepr",
                 };
                 format!(
                     "class: expr-fragment-v1  |  Dom: {}  Cod: {}  codRepr: {repr}",
@@ -345,9 +360,11 @@ impl ObligationFace {
                 let cod_repr = match result {
                     FragTy::F64 => "AverCert.Schema.floatBitsRepr",
                     FragTy::BoolI32 => "AverCert.Schema.boolRepr",
-                    FragTy::IntCarrier | FragTy::I64 | FragTy::RawI32 | FragTy::Ref => {
-                        "AverCert.Schema.verbatimRepr"
-                    }
+                    FragTy::IntCarrier
+                    | FragTy::I64
+                    | FragTy::RawI32
+                    | FragTy::Ref
+                    | FragTy::AdtRef => "AverCert.Schema.verbatimRepr",
                 };
                 s.push_str(&format!(
                     "example : ({obl}[{idx}]?).map (fun o => o.Dom) = some ({dom}) := rfl\n"
@@ -446,7 +463,7 @@ fn rederive_certificate_inner(
     model_files: &[(String, String)],
     plan_covered_exports: &[String],
 ) -> Result<RederivedCertificate, String> {
-    let (user_fns, box_idx, user_idx_set, carrier, host_roles, _frag_host_table) =
+    let (user_fns, box_idx, user_idx_set, carrier, host_roles, _frag_host_table, _struct_field_counts) =
         disassemble(wasm_bytes)?;
     let model_ops = model_step_ops(model_files);
     let model_info = ModelInfo::from_files(model_files);
@@ -513,6 +530,14 @@ fn rederive_certificate_inner(
                 } => expr_fragment_source_plan(source_plan, plan)
                     .map(|sym| sym_fragment_sidecar(c.name(), &sym)),
                 _ => None,
+            },
+            fragment_struct_entries: match c.inner() {
+                Cert::ExprFragment {
+                    source_plan: Some(source_plan),
+                    plan,
+                    ..
+                } => expr_fragment_struct_table_entries(source_plan, plan).unwrap_or_default(),
+                _ => Vec::new(),
             },
             fragment_lowered_body_lean: match c.inner() {
                 Cert::ExprFragment { ops, .. } => Some(render_ops_value(ops)),

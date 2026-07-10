@@ -2,6 +2,21 @@ fn render_expr_fragment_cert(c: &Cert) -> String {
     if let Some(face) = c.int_add_face() {
         return render_expr_fragment_int_add_cert(c, face);
     }
+    // The verbatim Project face over the plan-lowered body: the SAME theorem
+    // and closer the legacy field-projection class ships (`wFuncN` plays the
+    // identical `WInstr` body), so migrating the class changes recognition,
+    // not the proof shape.
+    if let Some(face) = c.project_face() {
+        return render_struct_verbatim_cert(
+            c.name(),
+            c.self_idx(),
+            c.carrier(),
+            face.struct_idx,
+            StructVerbatimShape::Project {
+                field_idx: face.field_idx,
+            },
+        );
+    }
     let c = c.inner();
     let Cert::ExprFragment {
         name,
@@ -162,7 +177,7 @@ fn expr_fragment_cod_repr(ty: FragTy) -> &'static str {
     match ty {
         FragTy::F64 => "AverCert.Schema.floatBitsRepr",
         FragTy::BoolI32 => "AverCert.Schema.boolRepr",
-        FragTy::IntCarrier | FragTy::I64 | FragTy::RawI32 | FragTy::Ref => {
+        FragTy::IntCarrier | FragTy::I64 | FragTy::RawI32 | FragTy::Ref | FragTy::AdtRef => {
             "AverCert.Schema.verbatimRepr"
         }
     }
@@ -190,7 +205,7 @@ where
     match root.ty {
         FragTy::F64 => format!(".f64v ({value})"),
         FragTy::BoolI32 => format!("b32 ({value})"),
-        FragTy::IntCarrier | FragTy::I64 | FragTy::RawI32 | FragTy::Ref => {
+        FragTy::IntCarrier | FragTy::I64 | FragTy::RawI32 | FragTy::Ref | FragTy::AdtRef => {
             unreachable!("expr-fragment root must be a certified result type")
         }
     }
@@ -231,6 +246,9 @@ where
                 2 => "0".to_string(),
                 _ => unreachable!("unsupported carrier field in fragment"),
             }
+        }
+        FragNodeKind::StructGetUser { .. } => {
+            unreachable!("user struct projection is rendered by the projection face, not the generic value renderer")
         }
         FragNodeKind::RefIsNull { value } => {
             let v = expr_fragment_value_expr(block, *value, local);
@@ -374,7 +392,8 @@ where
         | FragNodeKind::ConstI32(_)
         | FragNodeKind::ConstF64(_)
         | FragNodeKind::HostCall { .. }
-        | FragNodeKind::StructGet { .. } => unreachable!("node is not BoolI32"),
+        | FragNodeKind::StructGet { .. }
+        | FragNodeKind::StructGetUser { .. } => unreachable!("node is not BoolI32"),
     }
 }
 

@@ -175,6 +175,19 @@ impl<'a> SymPlanParser<'a> {
                     args,
                 }
             }
+            "project.field" => {
+                let type_name = plan_attr(FragValueId(id.0), &attrs, "type")?.to_string();
+                require_sym_plan_token(id, "type", &type_name)?;
+                let field = plan_attr_u32(FragValueId(id.0), &attrs, "field")?;
+                let value = sym_plan_attr_value(id, &attrs, "value")?;
+                require_sym_plan_node_ty(nodes, value, &SymTy::Named(type_name.clone()))?;
+                SymNodeKind::ProjectField {
+                    type_name,
+                    field,
+                    field_ty: ty.clone(),
+                    value,
+                }
+            }
             "int.const-cmp" => {
                 let op = attrs
                     .get("op")
@@ -339,6 +352,7 @@ fn reject_extra_sym_plan_attrs(
         "const.string" => &["hex"],
         "prim" => &["op", "args"],
         "construct" => &["type", "ctor", "args"],
+        "project.field" => &["type", "field", "value"],
         "int.const-cmp" => &["op", "value", "constant"],
         "if" => &["cond"],
         _ => &[],
