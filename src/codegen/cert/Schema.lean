@@ -245,6 +245,45 @@ structure MutualRawPlan where
   body    : FragBlock
 deriving Repr
 
+/-- One terminal leaf of a verbatim `ref.test`-dispatch arm (`verbatim-plan-v1`).
+    `Cod := WVal`; each leaf is a byte-derived constant or a single-variant
+    projection. The concrete wasm type/data indices are node data bound to the
+    module bytes by the byte-exact gate, never trusted from the plan. -/
+inductive VerbatimLeaf where
+  /-- Project field `field` of the scrutinee cast to user struct type `tyIdx`,
+      spilled through the field scratch local:
+      `localGet S; refCast tyIdx; structGet tyIdx field; localSet F; localGet F`. -/
+  | project (tyIdx field : Nat)
+  /-- A String literal built by `array.new_data arrTy dataIdx` over `bytes`:
+      `i32Const 0; i32Const bytes.length; arrayNewData arrTy bytes`. -/
+  | arrayNewData (arrTy dataIdx : Nat) (bytes : List Nat)
+  /-- The null reference default (`ref.null resultHeapTy`). -/
+  | refNull
+  /-- A float-bits constant (`f64.const bits`). -/
+  | f64Bits (bits : Nat)
+deriving Repr
+
+/-- A right-nested `ref.test` dispatch cascade over the (spilled) scrutinee. Each
+    `test` reads the scrutinee local and branches on `ref.test tyIdx`; the final
+    `leaf` is the fall-through default. -/
+inductive VerbatimDispatch where
+  | leaf (l : VerbatimLeaf)
+  | test (tyIdx : Nat) (hit : VerbatimLeaf) (rest : VerbatimDispatch)
+deriving Repr
+
+/-- Raw, untrusted verbatim `ref.test`-dispatch plan (`verbatim-plan-v1`). A
+    byte-origin veneer: the `Cod := WVal` / `verbatimRepr` proof face and the
+    emitted `Module.lean` body literal are unchanged, so the plan claim never
+    touches the proof. The multi-use scrutinee is spilled to a scratch local
+    (which pure ANF `FragBlock` cannot express), so this is its own grammar. -/
+structure VerbatimRawPlan where
+  profile        : String
+  scrutineeLocal : Nat
+  fieldLocal     : Nat
+  resultHeapTy   : Nat
+  body           : VerbatimDispatch
+deriving Repr
+
 /-- One String.concat literal chunk. `bytes` is the source-level content; `dataIdx`
     is the target binding needed to lower back to exact `array.new_data` code
     bytes. A later self-checking parser can derive `dataIdx` from the module's
@@ -396,6 +435,7 @@ structure Manifest where
   exprFragmentPlans : List (String × ExprFragmentRawPlan)
   recursionPlans : List (String × RecursionRawPlan)
   mutualPlans : List (String × MutualRawPlan)
+  verbatimPlans : List (String × VerbatimRawPlan)
   obligations : List Obligation
 
 /-- The single audited certificate proposition: the manifest's pinned hash is

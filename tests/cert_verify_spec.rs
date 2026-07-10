@@ -1353,8 +1353,15 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
         !ok,
         "tampered array.new_data operands must be DECLINED:\n{out}"
     );
+    // The empty-string literal this vector tampers is now byte-origin-pinned by
+    // `jsonStr`'s `verbatim-plan-v1` claim, so the tamper is caught one stage
+    // earlier — the shipped `Plans.lean`/`Artifact.lean` byte-equality pins fail
+    // during the checker's `lake build` ("did not build") rather than at the
+    // later kernel-witness obligation binding ("does not bind"). Either is a
+    // fail-closed decline; accept both so the assertion tracks the tamper being
+    // rejected, not which in-kernel gate rejects it.
     assert!(
-        out.contains("does not bind"),
+        out.contains("does not bind") || out.contains("did not build"),
         "wrong reason for array.new_data tamper:\n{out}"
     );
     assert!(
@@ -3391,7 +3398,7 @@ fn mutual_scc_kernel_guards_are_isolating() {
     lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3, 4]), (2, 1, [1, 2, 3, 4]), (3, 4, [1, 2, 3, 4]), (4, 3, [1, 2, 3, 4])] = false := rfl\n\n");
     // FIX B: the REAL acceptance conjunct rejects a dangling group; shape passes.
     lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := 2, code := fun _ => none,\n    host := fun _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
-    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], obligations := [] }\n\n");
+    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], verbatimPlans := [], obligations := [] }\n\n");
     lean.push_str("def claimsS : List MutualRecursionClaim :=\n  [ { exportNameBytes := [], exportName := \"a\", carrier := 2, memberSet := [1, 2],\n      hostTable := [(.box, 7), (.sub, 9)], obligation := dummyOb \"a\" 1 } ]\n\n");
     lean.push_str("example : AverCert.PlanCheck.checkMutualPlanShape [1, 2] [(.box, 7), (.sub, 9)] honestPlan = true := rfl\n");
     lean.push_str("example : mutualClaimEdges manifestS claimsS = some [(1, 2, [1, 2])] := rfl\n");
@@ -3436,6 +3443,137 @@ fn mutual_scc_kernel_guards_are_isolating() {
     assert!(
         elab.status.success(),
         "guard-isolation assertions must all hold:\n{}\n{}",
+        String::from_utf8_lossy(&elab.stdout),
+        String::from_utf8_lossy(&elab.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// A tampered byte-first `verbatim-plan-v1` plan is declined, and the four spike
+/// tamper vectors are shown to be guard-isolating. Each vector mutates the
+/// verbatim `ref.test`-dispatch plan for `wrapItems`/`tagName` in the shipped
+/// `Plans.lean` while leaving the wasm untouched, so the plan no longer
+/// canonically lowers to the export's real code-entry bytes. For verbatim
+/// `Cod := WVal` matches there are NO host/self calls to bind, so the
+/// byte-equality gate is the WHOLE soundness binding: both the shipped
+/// `Plans.lean` `lowerVerbatimCodeEntry`/`codeEntryForExport` `rfl` pins and the
+/// checker's `manifest.verbatimPlans` `rfl` pin reject the tampered plan. The
+/// `GuardIso.lean` block below isolates each vector by proving in-kernel
+/// (`by decide`) that its lowered code entry diverges from the honest one — the
+/// spike's four vectors lifted onto the real cert.
+#[test]
+fn cert_verify_declines_tampered_verbatim_plan() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping verbatim-plan tamper test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-verbatim-plan");
+    let compile = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/verbatimgen.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "verbatimgen compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("verbatimgen.wasm");
+    let cert = out_dir.join("cert");
+    let (ok, report) = aver_verify(&wasm, &cert);
+    assert!(ok, "honest verbatim certificate should verify:\n{report}");
+
+    let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    // (a) wrong `ref.test` type index: `wrapItems` tests struct type 0 -> 1.
+    // (b) swapped dispatch cascade: `tagName` tests tags 2 <-> 3.
+    // (c) wrong `array.new_data` data-segment index: `tagName`'s "alpha" 0 -> 9.
+    // (d) wrong `ref.null` result heap type: `wrapItems` 8 -> 18.
+    let tampers: [(&str, &str, &str); 4] = [
+        (
+            "ref.test type index",
+            ".test 0 (.project 0 0) (.leaf (.refNull))",
+            ".test 1 (.project 0 0) (.leaf (.refNull))",
+        ),
+        (
+            "swapped dispatch cascade",
+            ".test 2 (.arrayNewData 5 0 [97, 108, 112, 104, 97]) (.test 3",
+            ".test 3 (.arrayNewData 5 0 [97, 108, 112, 104, 97]) (.test 2",
+        ),
+        (
+            "array.new_data data index",
+            ".arrayNewData 5 0 [97, 108, 112, 104, 97]",
+            ".arrayNewData 5 9 [97, 108, 112, 104, 97]",
+        ),
+        (
+            "ref.null heap type",
+            "resultHeapTy := 8",
+            "resultHeapTy := 18",
+        ),
+    ];
+    for (label, from, to) in tampers {
+        assert!(
+            honest.contains(from),
+            "verbatimgen Plans.lean verbatim-plan shape changed ({label}); update the test"
+        );
+        let dir = temp_dir("cert-verbatim-plan-tamper");
+        copy_dir(&out_dir, &dir);
+        let tampered_plans = dir.join("cert").join("Plans.lean");
+        let src = std::fs::read_to_string(&tampered_plans).unwrap();
+        std::fs::write(&tampered_plans, src.replacen(from, to, 1)).unwrap();
+        let (ok, report) = aver_verify(&dir.join("verbatimgen.wasm"), &dir.join("cert"));
+        assert!(
+            !ok,
+            "{label}: tampered verbatim plan must be declined:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Guard-isolation: prove in-kernel that each vector diverges the lowered
+    // code-entry bytes (so the byte-equality gate — the whole binding — catches
+    // it), mirroring the spike's four `by decide` vectors on the real plans.
+    // carrier 7; `wrapItems` result heap 8, `tagName` string-array type 5.
+    let mut lean = String::new();
+    lean.push_str("import Schema\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\n\n");
+    lean.push_str("open AverCert.Schema\nopen AverCert.PlanBytes\n\n");
+    lean.push_str("def honestWrap : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 2, fieldLocal := 1, resultHeapTy := 8, body := .test 0 (.project 0 0) (.leaf (.refNull)) }\n");
+    lean.push_str("def honestTag : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultHeapTy := 5, body := .test 2 (.arrayNewData 5 0 [97, 108, 112, 104, 97]) (.test 3 (.arrayNewData 5 1 [98, 101, 116, 97]) (.leaf (.arrayNewData 5 2 [103, 97, 109, 109, 97]))) }\n\n");
+    lean.push_str("example : AverCert.PlanCheck.checkVerbatimRawPlan honestWrap = true := rfl\n");
+    lean.push_str("example : AverCert.PlanCheck.checkVerbatimRawPlan honestTag = true := rfl\n\n");
+    lean.push_str("def tamper1 : VerbatimRawPlan := { honestWrap with body := .test 1 (.project 0 0) (.leaf (.refNull)) }\n");
+    lean.push_str("example : lowerVerbatimCodeEntry 7 tamper1 ≠ lowerVerbatimCodeEntry 7 honestWrap := by decide\n");
+    lean.push_str("def tamper2 : VerbatimRawPlan := { honestTag with body := .test 3 (.arrayNewData 5 0 [97, 108, 112, 104, 97]) (.test 2 (.arrayNewData 5 1 [98, 101, 116, 97]) (.leaf (.arrayNewData 5 2 [103, 97, 109, 109, 97]))) }\n");
+    lean.push_str("example : lowerVerbatimCodeEntry 7 tamper2 ≠ lowerVerbatimCodeEntry 7 honestTag := by decide\n");
+    lean.push_str("def tamper3 : VerbatimRawPlan := { honestTag with body := .test 2 (.arrayNewData 5 9 [97, 108, 112, 104, 97]) (.test 3 (.arrayNewData 5 1 [98, 101, 116, 97]) (.leaf (.arrayNewData 5 2 [103, 97, 109, 109, 97]))) }\n");
+    lean.push_str("example : lowerVerbatimCodeEntry 7 tamper3 ≠ lowerVerbatimCodeEntry 7 honestTag := by decide\n");
+    lean.push_str("def tamper4 : VerbatimRawPlan := { honestWrap with resultHeapTy := 18 }\n");
+    lean.push_str("example : lowerVerbatimCodeEntry 7 tamper4 ≠ lowerVerbatimCodeEntry 7 honestWrap := by decide\n");
+
+    let honest_build = Command::new("lake")
+        .arg("build")
+        .current_dir(&cert)
+        .output()
+        .expect("lake build runs");
+    assert!(honest_build.status.success(), "honest cert must lake-build");
+    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
+    let elab = Command::new("lake")
+        .arg("env")
+        .arg("lean")
+        .arg("GuardIso.lean")
+        .current_dir(&cert)
+        .output()
+        .expect("lake env lean runs");
+    assert!(
+        elab.status.success(),
+        "verbatim guard-isolation assertions must all hold:\n{}\n{}",
         String::from_utf8_lossy(&elab.stdout),
         String::from_utf8_lossy(&elab.stderr)
     );

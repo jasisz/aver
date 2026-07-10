@@ -173,6 +173,7 @@ fn nr_ref_dispatch_match(
                 carrier,
                 hit_variant_idx: *hit,
                 default,
+                code_entry_bytes: f.code_entry_bytes.clone(),
                 ops: strip_trailing_end(&f.ops).to_vec(),
             });
         }

@@ -259,6 +259,22 @@ structure MutualRecursionClaim where
   hostTable       : List (HostRole × Nat)
   obligation      : Obligation
 
+/-- One verbatim `ref.test`-dispatch claim inside an artifact certificate. Its
+    byte-derived `VerbatimRawPlan` lives in `manifest.verbatimPlans` (a
+    byte-origin veneer, no source `SymPlan`: `Cod := WVal` / `verbatimRepr`, no
+    representation to name). The plan is checked structurally, lowered to the
+    match body and its exact code-entry bytes, and bound to the exported
+    function. Unlike the recursion/mutual families there are NO host/self calls
+    to tie, so the byte-equality gate IS the whole soundness binding; the
+    `obligation` is the unchanged verbatim widened-match / variant-dispatch
+    obligation the manifest already pins, and this claim only certifies where its
+    body bytes came from. -/
+structure VerbatimClaim where
+  exportNameBytes : AverCert.WasmSlice.ByteSeq
+  exportName      : String
+  carrier         : Nat
+  obligation      : Obligation
+
 def stringEqClaimAccepted
     (wasmBytes : AverCert.WasmSlice.ByteSeq)
     (manifest : AverCert.Schema.Manifest)
@@ -458,6 +474,60 @@ def mutualRecursionClaimAccepted
         claim.obligation
   | none => False
 
+/-- Artifact-level acceptance for one verbatim `ref.test`-dispatch export. The
+    `VerbatimRawPlan` is checked structurally (`checkVerbatimRawPlan`), lowered to
+    the match `WInstr` body and its exact code-entry bytes, and those bytes are
+    bound to the exported function by name. The byte-equality gate (the lowered
+    code entry equals both `codeEntryForExport` and the `funcBinding`'s code
+    entry) is the whole soundness binding — there are no host/self calls to tie —
+    so a body byte-noisier than the canonical dispatch lowering fails closed. The
+    member index is tied to the obligation through `binding.funcIdx =
+    obligation.self`. -/
+def verbatimPlanAccepted
+    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (exportName : String)
+    (carrier : Nat)
+    (plan : VerbatimRawPlan)
+    (obligation : Obligation) : Prop :=
+  obligation.export_ = exportName ∧
+    obligation.carrier = carrier ∧
+    AverCert.PlanCheck.checkVerbatimRawPlan plan = true ∧
+    ∃ codeEntry binding,
+      AverCert.PlanBytes.lowerVerbatimCodeEntry carrier plan = some codeEntry ∧
+      AverCert.WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
+      AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+      binding.funcIdx = obligation.self ∧
+      binding.codeEntry = codeEntry ∧
+      ∃ nlocals,
+        obligation.code binding.funcIdx =
+          some { arity := 1, nlocals := nlocals,
+                 body := AverCert.PlanLower.lowerVerbatimBody plan }
+
+def verbatimPlanForExport
+    (exportName : String) : List (String × VerbatimRawPlan) →
+    Option VerbatimRawPlan
+  | [] => none
+  | (name, plan) :: rest =>
+      if name == exportName then
+        some plan
+      else
+        verbatimPlanForExport exportName rest
+
+def verbatimClaimAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (manifest : AverCert.Schema.Manifest)
+    (claim : VerbatimClaim) : Prop :=
+  match verbatimPlanForExport claim.exportName manifest.verbatimPlans with
+  | some plan =>
+      verbatimPlanAccepted
+        wasmBytes
+        claim.exportNameBytes
+        claim.exportName
+        claim.carrier
+        plan
+        claim.obligation
+  | none => False
+
 /-- Aggregate source-level symbolic fragment acceptance for one artifact's
     source claim list. -/
 def symFragmentClaimsAccepted
@@ -522,6 +592,17 @@ def mutualRecursionClaimsAccepted
   | claim :: rest =>
       mutualRecursionClaimAccepted wasmBytes manifest claim ∧
       mutualRecursionClaimsAccepted wasmBytes manifest rest
+
+/-- Aggregate verbatim `ref.test`-dispatch acceptance for one artifact's verbatim
+    claim list. -/
+def verbatimClaimsAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (manifest : AverCert.Schema.Manifest) :
+    List VerbatimClaim → Prop
+  | [] => True
+  | claim :: rest =>
+      verbatimClaimAccepted wasmBytes manifest claim ∧
+      verbatimClaimsAccepted wasmBytes manifest rest
 
 /-! ### Byte-derived SCC closure
 
@@ -707,6 +788,18 @@ def mutualManifestPlanNames
     (manifest : AverCert.Schema.Manifest) : List String :=
   manifest.mutualPlans.map (fun p => p.1)
 
+/-- Verbatim claims are pinned to `manifest.verbatimPlans` by export name,
+    mirroring the recursion/mutual families: a self-checking artifact cannot
+    advertise a different verbatim-plan list than the claims it proves acceptance
+    for. -/
+def verbatimClaimExportNames
+    (claims : List VerbatimClaim) : List String :=
+  claims.map (fun c => c.exportName)
+
+def verbatimManifestPlanNames
+    (manifest : AverCert.Schema.Manifest) : List String :=
+  manifest.verbatimPlans.map (fun p => p.1)
+
 /-- The source `SymPlan`s carried by String.concat claims. These live in the
     manifest's common `symFragmentPlans` list; the byte-lowering-specific
     `StringConcatRawPlan` stays in `stringConcatPlans`. -/
@@ -736,6 +829,7 @@ structure ArtifactData where
   constructClaims    : List ConstructClaim
   recursionClaims    : List RecursionClaim
   mutualRecursionClaims : List MutualRecursionClaim
+  verbatimClaims     : List VerbatimClaim
 
 def acceptedSymFragments (artifact : ArtifactData) : Prop :=
   symFragmentClaimsAccepted artifact.wasmBytes artifact.symFragmentClaims
@@ -773,13 +867,20 @@ def acceptedMutualRecursionFragments (artifact : ArtifactData) : Prop :=
     artifact.manifest
     artifact.mutualRecursionClaims
 
+def acceptedVerbatimFragments (artifact : ArtifactData) : Prop :=
+  verbatimClaimsAccepted
+    artifact.wasmBytes
+    artifact.manifest
+    artifact.verbatimClaims
+
 def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedSymFragments artifact ∧
   acceptedStringEqFragments artifact ∧
   acceptedStringConcatFragments artifact ∧
   acceptedConstructFragments artifact ∧
   acceptedRecursionFragments artifact ∧
-  acceptedMutualRecursionFragments artifact
+  acceptedMutualRecursionFragments artifact ∧
+  acceptedVerbatimFragments artifact
 
 def expectedArtifactRoot : String :=
   "AverCert.Artifact.certificate"
@@ -793,7 +894,8 @@ def claimObligationExports (artifact : ArtifactData) : List String :=
   artifact.stringConcatClaims.map (fun c => c.obligation.export_) ++
   artifact.constructClaims.map (fun c => c.obligation.export_) ++
   artifact.recursionClaims.map (fun c => c.obligation.export_) ++
-  artifact.mutualRecursionClaims.map (fun c => c.obligation.export_)
+  artifact.mutualRecursionClaims.map (fun c => c.obligation.export_) ++
+  artifact.verbatimClaims.map (fun c => c.obligation.export_)
 
 def claimObligations (artifact : ArtifactData) : List Obligation :=
   artifact.symFragmentClaims.map (fun c => c.obligation) ++
@@ -801,7 +903,8 @@ def claimObligations (artifact : ArtifactData) : List Obligation :=
   artifact.stringConcatClaims.map (fun c => c.obligation) ++
   artifact.constructClaims.map (fun c => c.obligation) ++
   artifact.recursionClaims.map (fun c => c.obligation) ++
-  artifact.mutualRecursionClaims.map (fun c => c.obligation)
+  artifact.mutualRecursionClaims.map (fun c => c.obligation) ++
+  artifact.verbatimClaims.map (fun c => c.obligation)
 
 def claimObligationsInManifest
     (manifestObligations : List Obligation) : List Obligation → Prop
@@ -834,7 +937,9 @@ def claimsMatchManifest (artifact : ArtifactData) : Prop :=
       recursionClaimExportNames artifact.recursionClaims =
           recursionManifestPlanNames artifact.manifest ∧
       mutualRecursionClaimExportNames artifact.mutualRecursionClaims =
-          mutualManifestPlanNames artifact.manifest
+          mutualManifestPlanNames artifact.manifest ∧
+      verbatimClaimExportNames artifact.verbatimClaims =
+          verbatimManifestPlanNames artifact.manifest
   | none => False
 
 def accepted (artifact : ArtifactData) : Prop :=

@@ -192,6 +192,13 @@ pub struct RederivedObligation {
     /// For `mutual-plan-v1`, the verifier-rendered canonical raw code-entry
     /// bytes this member's checked plan lowers to.
     pub mutual_lowered_code_entry_lean: Option<String>,
+    /// For `verbatim-plan-v1` (a `Cod := WVal` verbatim `ref.test`-dispatch
+    /// match), the byte-derived plan rendered as a Lean `VerbatimRawPlan` term.
+    /// `aver cert verify` pins `manifest.verbatimPlans` to this checker-rendered
+    /// term. There is no host/self call to bind, so no host-table/member-set/
+    /// lowered-body/code-entry companion fields are needed: the byte-equality
+    /// gate is the whole soundness binding and the claim's witness is anonymous.
+    pub verbatim_plan_lean: Option<String>,
 }
 
 pub struct RederivedCertificate {
@@ -875,6 +882,8 @@ fn rederive_certificate_inner(
                     .map(|bytes| render_byte_list(&bytes)),
                 _ => None,
             },
+            verbatim_plan_lean: verbatim_plan_from_cert(c)
+                .map(|plan| verbatim_plan_lean_value(&plan)),
         })
         .collect();
     Ok(RederivedCertificate {

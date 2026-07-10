@@ -113,6 +113,13 @@ enum Cert {
         carrier: u32,
         hit_variant_idx: u32,
         default: VerbatimDefault,
+        /// Raw code-entry bytes of the export. The `verbatim-plan-v1` claim is
+        /// emitted ONLY when the canonical plan lowering reproduces exactly
+        /// these bytes (otherwise the export stays on the legacy witness route),
+        /// exactly like `Cert::Recursive::code_entry_bytes`. The claim binds the
+        /// export by name (anonymous `FuncBinding` witness), so no code/type
+        /// index is carried.
+        code_entry_bytes: Vec<u8>,
         ops: Vec<Op>,
     },
     /// Non-recursive `ref.test` dispatch over a user enum where EVERY arm returns
@@ -132,6 +139,9 @@ enum Cert {
         arms: Vec<(u32, VerbatimDefault)>,
         /// The terminal else constant.
         default: VerbatimDefault,
+        /// Raw code-entry bytes of the export; see
+        /// `VerbatimWidenedMatch::code_entry_bytes`.
+        code_entry_bytes: Vec<u8>,
         ops: Vec<Op>,
     },
     /// Non-recursive String-literal dispatch whose condition is delegated to a

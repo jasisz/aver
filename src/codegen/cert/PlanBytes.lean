@@ -280,6 +280,85 @@ def lowerMutualCodeEntry (carrier : Nat) (plan : MutualRawPlan) :
       | none => none
   | none => none
 
+/-! ### Verbatim `ref.test`-dispatch byte lowering (exact code-entry bytes).
+
+`ref.test`/`ref.cast`/`ref.null`/block-type heap indices are s33 SIGNED;
+`struct.get`/`array.new_data` type/field/data indices are uleb32. -/
+
+def lowerLeafBytes (S F resultHeapTy : Nat) : VerbatimLeaf → Option (List Nat)
+  | .project tyIdx field =>
+      match uleb32 S, s33HeapIdx tyIdx, uleb32 tyIdx, uleb32 field, uleb32 F with
+      | some sB, some castTy, some getTy, some fieldB, some fB =>
+          some ([0x20] ++ sB ++ [0xfb, 0x16] ++ castTy ++
+                [0xfb, 0x02] ++ getTy ++ fieldB ++ [0x21] ++ fB ++ [0x20] ++ fB)
+      | _, _, _, _, _ => none
+  | .arrayNewData arrTy dataIdx bytes =>
+      match sleb32 0, sleb32 (Int.ofNat bytes.length), uleb32 arrTy, uleb32 dataIdx with
+      | some off, some len, some arrTyB, some dataIdxB =>
+          some ([0x41] ++ off ++ [0x41] ++ len ++ [0xfb, 0x09] ++ arrTyB ++ dataIdxB)
+      | _, _, _, _ => none
+  | .refNull =>
+      match s33HeapIdx resultHeapTy with
+      | some ht => some ([0xd0] ++ ht)
+      | none => none
+  | .f64Bits bits =>
+      match f64Bytes bits with
+      | some fb => some ([0x44] ++ fb)
+      | none => none
+
+def lowerDispatchBytes (S F resultHeapTy : Nat) (first : Bool) :
+    VerbatimDispatch → Option (List Nat)
+  | .leaf l => lowerLeafBytes S F resultHeapTy l
+  | .test tyIdx hit rest =>
+      match (if first then some ([] : List Nat)
+             else (uleb32 S).map (fun b => [0x20] ++ b)),
+            s33HeapIdx tyIdx, s33HeapIdx resultHeapTy,
+            lowerLeafBytes S F resultHeapTy hit,
+            lowerDispatchBytes S F resultHeapTy false rest with
+      | some reload, some testTy, some blockTy, some hitBytes, some restBytes =>
+          some (reload ++ [0xfb, 0x14] ++ testTy ++ [0x04, 0x63] ++ blockTy ++
+                hitBytes ++ [0x05] ++ restBytes ++ [0x0b])
+      | _, _, _, _, _ => none
+
+def lowerVerbatimExprBytes (plan : VerbatimRawPlan) : Option (List Nat) :=
+  match uleb32 plan.scrutineeLocal,
+        lowerDispatchBytes plan.scrutineeLocal plan.fieldLocal plan.resultHeapTy true plan.body with
+  | some sB, some dispatchBytes =>
+      some ([0x20, 0x00] ++ [0x21] ++ sB ++ [0x20] ++ sB ++ dispatchBytes ++ [0x0b])
+  | _, _ => none
+
+/-- Local declarations. A projecting (widened-match) body declares the field
+    scratch local (of the result heap type) first, then the eqref scrutinee, then
+    the always-present unused Int-carrier scratch; a non-projecting (variant
+    dispatch) body declares only the scrutinee and the carrier scratch. -/
+def lowerVerbatimLocalsBytes (carrier resultHeapTy : Nat) (hasProj : Bool) :
+    Option (List Nat) :=
+  match s33HeapIdx carrier with
+  | some carrierB =>
+      if hasProj then
+        match s33HeapIdx resultHeapTy with
+        | some rhtB =>
+            some ([0x03] ++ [0x01, 0x63] ++ rhtB ++ [0x01, 0x6d] ++ [0x01, 0x63] ++ carrierB)
+        | none => none
+      else
+        some ([0x02] ++ [0x01, 0x6d] ++ [0x01, 0x63] ++ carrierB)
+  | none => none
+
+def lowerVerbatimBodyBytes (carrier : Nat) (plan : VerbatimRawPlan) : Option (List Nat) :=
+  match lowerVerbatimLocalsBytes carrier plan.resultHeapTy
+          (AverCert.PlanCheck.dispatchHasProjection plan.body),
+        lowerVerbatimExprBytes plan with
+  | some localsBytes, some exprBytes => some (localsBytes ++ exprBytes)
+  | _, _ => none
+
+def lowerVerbatimCodeEntry (carrier : Nat) (plan : VerbatimRawPlan) : Option (List Nat) :=
+  match lowerVerbatimBodyBytes carrier plan with
+  | some body =>
+      match uleb32 body.length with
+      | some lenBytes => some (lenBytes ++ body)
+      | none => none
+  | none => none
+
 def lowerStringConcatChunkBytes
     (resultTy : Nat) (chunk : StringConcatChunk) : Option (List Nat) :=
   match sleb32 0,

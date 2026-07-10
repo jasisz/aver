@@ -62,6 +62,7 @@ fn nr_verbatim_variant_dispatch(
         carrier,
         arms,
         default,
+        code_entry_bytes: f.code_entry_bytes.clone(),
         ops: strip_trailing_end(&f.ops).to_vec(),
     })
 }
