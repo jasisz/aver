@@ -438,6 +438,12 @@ fn check_sym_fragment_plan_object(
             "source plan for `{export_name}` root type does not match function result type"
         ));
     }
+    // Source-level type names carry the model trust story (see
+    // docs/certification.md "Read surface"): they are not byte-derivable, but
+    // they must be internally consistent — every used name anchored by a
+    // projection, every projection owner matching its value's declared type.
+    check_sym_plan_named_consistency(&sym_plan)
+        .map_err(|e| format!("source plan for `{export_name}`: {e}"))?;
     // Struct bindings are byte-derived per export (the export's own unique
     // non-carrier struct.get), never taken from the sidecar; encoding under
     // this table plus canonical byte equality pins the pairing.

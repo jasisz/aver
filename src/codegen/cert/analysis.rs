@@ -758,6 +758,119 @@ fn userName(u: User) -> String
         );
     }
 
+    /// Source-level type names in projection plans carry the MODEL trust
+    /// story (producer-asserted, not byte-derivable), but they must be
+    /// internally CONSISTENT: a projection whose claimed owner differs from
+    /// its value's declared type, or a `named:` type that no projection
+    /// anchors to a byte-derived struct index, declines fail-closed. A fully
+    /// coordinated relabel remains a read-surface change (equivalent to
+    /// shipping a different model) — see docs/certification.md "Read surface".
+    #[test]
+    fn field_projection_source_name_inconsistency_declines() {
+        let bytes = compile_probe_bytes(
+            r#"
+module ProjNameProbe
+    intent = "field projection source-name consistency probe"
+    depends []
+    exposes [User, userName, addTwo]
+
+record User
+  name: String
+  age: Int
+
+fn addTwo(x: Int) -> Int
+  ? "Pulls in the Int carrier and box helper."
+  x + 2
+
+fn userName(u: User) -> String
+  ? "Record field projection."
+  u.name
+"#,
+        );
+        let sym_projection_plan = |param_name: &str, owner: &str, field_ty: SymTy| SymPlan {
+            params: vec![SymTy::Named(param_name.to_string())],
+            result: field_ty.clone(),
+            body: SymBlock {
+                nodes: vec![
+                    SymNode {
+                        id: SymValueId(0),
+                        ty: SymTy::Named(param_name.to_string()),
+                        kind: SymNodeKind::Param { index: 0 },
+                    },
+                    SymNode {
+                        id: SymValueId(1),
+                        ty: field_ty.clone(),
+                        kind: SymNodeKind::ProjectField {
+                            type_name: owner.to_string(),
+                            field: 0,
+                            field_ty,
+                            value: SymValueId(0),
+                        },
+                    },
+                ],
+                result: SymValueId(1),
+            },
+        };
+
+        // Baseline sanity: the consistent plan is admitted and byte-matched.
+        let (_o, _c, _s, matches, reason) = check_sym_fragment_plan_object(
+            &bytes,
+            "userName",
+            sym_projection_plan("User", "User", SymTy::String),
+        )
+        .expect("consistent projection plan is admitted");
+        assert!(matches, "consistent plan must match bytes: {reason:?}");
+
+        // Owner name diverging from the projected value's declared type. The
+        // used-name anchor rule fires first here (`User` is used but never
+        // projected); the owner-vs-value rule is defense-in-depth behind it.
+        let Err(err) = check_sym_fragment_plan_object(
+            &bytes,
+            "userName",
+            sym_projection_plan("User", "Other", SymTy::String),
+        ) else {
+            panic!("owner/value name mismatch must be declined")
+        };
+        assert!(
+            err.contains("never projected") || err.contains("claims owner type"),
+            "wrong reason for owner mismatch: {err}"
+        );
+
+        // A named field type that no projection anchors to the bytes.
+        let Err(err) = check_sym_fragment_plan_object(
+            &bytes,
+            "userName",
+            sym_projection_plan("User", "User", SymTy::Named("Ghost".to_string())),
+        ) else {
+            panic!("unanchored named field type must be declined")
+        };
+        assert!(
+            err.contains("`Ghost` is never projected"),
+            "wrong reason for unanchored name: {err}"
+        );
+
+        // A named parameter that is never projected at all.
+        let bare = SymPlan {
+            params: vec![SymTy::Named("User".to_string())],
+            result: SymTy::Named("User".to_string()),
+            body: SymBlock {
+                nodes: vec![SymNode {
+                    id: SymValueId(0),
+                    ty: SymTy::Named("User".to_string()),
+                    kind: SymNodeKind::Param { index: 0 },
+                }],
+                result: SymValueId(0),
+            },
+        };
+        let Err(err) = check_sym_fragment_plan_object(&bytes, "userName", bare) else {
+            panic!("bare named passthrough must be declined")
+        };
+        assert!(
+            err.contains("never projected") || err.contains("no rendered proof face"),
+            "wrong reason for bare named passthrough: {err}"
+        );
+    }
+
     /// An `add`-first body must not compete for the `sub` role even though it
     /// contains an `i64.sub`: `first arith == sub` keeps it out of sub
     /// candidacy, so the genuine `i64.sub`-first helper (idx 2) binds alone.

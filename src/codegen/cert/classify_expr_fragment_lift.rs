@@ -260,6 +260,87 @@ fn check_plan_struct_gets(
     Ok(())
 }
 
+fn collect_sym_block_named_tys(block: &SymBlock, out: &mut Vec<String>) {
+    for node in &block.nodes {
+        if let SymTy::Named(name) = &node.ty
+            && !out.contains(name)
+        {
+            out.push(name.clone());
+        }
+        if let SymNodeKind::If {
+            then_block,
+            else_block,
+            ..
+        } = &node.kind
+        {
+            collect_sym_block_named_tys(then_block, out);
+            collect_sym_block_named_tys(else_block, out);
+        }
+    }
+}
+
+fn check_sym_block_projection_owners(block: &SymBlock) -> Result<(), String> {
+    for node in &block.nodes {
+        match &node.kind {
+            SymNodeKind::ProjectField {
+                type_name, value, ..
+            } => {
+                let got = block.nodes.get(value.0).map(|n| n.ty.clone());
+                if got != Some(SymTy::Named(type_name.clone())) {
+                    return Err(format!(
+                        "project.field v{} claims owner type `{type_name}`, but its value is declared `{}`",
+                        node.id.0,
+                        got.map(|ty| ty.plan_tag()).unwrap_or_else(|| "<missing>".to_string())
+                    ));
+                }
+            }
+            SymNodeKind::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                check_sym_block_projection_owners(then_block)?;
+                check_sym_block_projection_owners(else_block)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Fail-closed intra-plan consistency for source-level type names. Names are
+/// producer-asserted annotations with the MODEL trust story (see
+/// docs/certification.md "Read surface"): the kernel-checked content of a
+/// projection claim is the byte-derived struct identity (type index + field
+/// index), never the name. What CAN be checked is internal consistency, so a
+/// relabel must be total across the artifact or decline:
+/// - every `named:` source type used anywhere in the plan (params, result,
+///   node types) must be anchored by a `project.field` owner — and therefore
+///   bound to a byte-derived struct index by the struct table; unanchored
+///   names decline;
+/// - every projection's claimed owner must be exactly the declared type of
+///   the value it projects from.
+fn check_sym_plan_named_consistency(plan: &SymPlan) -> Result<(), String> {
+    let owners = sym_plan_project_type_names(plan);
+    let mut used = Vec::new();
+    for ty in plan.params.iter().chain(std::iter::once(&plan.result)) {
+        if let SymTy::Named(name) = ty
+            && !used.contains(name)
+        {
+            used.push(name.clone());
+        }
+    }
+    collect_sym_block_named_tys(&plan.body, &mut used);
+    for name in &used {
+        if !owners.contains(name) {
+            return Err(format!(
+                "source type `{name}` is never projected, so no byte-derived struct binding anchors it"
+            ));
+        }
+    }
+    check_sym_block_projection_owners(&plan.body)
+}
+
 /// Byte-derived struct table for ONE export's source plan: the plan's
 /// `project.field` type names bound to the export body's own (unique,
 /// non-carrier) `struct.get` type index. Names come from the untrusted
