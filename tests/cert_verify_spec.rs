@@ -119,12 +119,21 @@ fn copy_dir(src: &Path, dst: &Path) {
     }
 }
 
+fn aver_command() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_aver"));
+    command.env(
+        "AVER_CERT_PRELUDE_CACHE",
+        std::env::temp_dir().join("aver-cert-prelude-store"),
+    );
+    command
+}
+
 fn aver_verify(artifact: &Path, cert_dir: &Path) -> (bool, String) {
     aver_cert(&["verify"], artifact, cert_dir)
 }
 
 fn aver_cert(sub: &[&str], artifact: &Path, cert_dir: &Path) -> (bool, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_aver"))
+    let out = aver_command()
         .arg("cert")
         .args(sub)
         .arg(artifact)
@@ -139,10 +148,29 @@ fn aver_cert(sub: &[&str], artifact: &Path, cert_dir: &Path) -> (bool, String) {
     (out.status.success(), combined)
 }
 
+fn aver_verify_clean_cache(artifact: &Path, cert_dir: &Path) -> (bool, String) {
+    // Clean-cache litmus for the production verifier path: keep exactly this
+    // positive end-to-end verification independent of the test-only store.
+    let out = aver_command()
+        .env_remove("AVER_CERT_PRELUDE_CACHE")
+        .arg("cert")
+        .arg("verify")
+        .arg(artifact)
+        .arg(cert_dir)
+        .output()
+        .expect("aver cert verify runs");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.success(), combined)
+}
+
 fn compile_cert_goals(prefix: &str) -> (PathBuf, PathBuf, PathBuf) {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir(prefix);
-    let compile = Command::new(env!("CARGO_BIN_EXE_aver"))
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/cert_goals.av")
@@ -267,10 +295,9 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("certverify");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
     // Emit the recursive fixture's certificate.
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/certprobe2.av")
@@ -290,10 +317,9 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     let wasm = out_dir.join("certprobe2.wasm");
     let cert = out_dir.join("cert");
 
-    // Happy path: the freshly emitted certificate verifies end to end. The
-    // checker builds in its OWN fresh temp dir, so nothing here is cached for
-    // the tamper cases below.
-    let (ok, report) = aver_verify(&wasm, &cert);
+    // Happy path: the freshly emitted certificate verifies end to end through
+    // the production clean-cache path. Tamper cases below use the test store.
+    let (ok, report) = aver_verify_clean_cache(&wasm, &cert);
     assert!(ok, "expected clean certificate to verify, got:\n{report}");
     assert!(report.contains("CERTIFIED"), "missing CERTIFIED:\n{report}");
     assert!(
@@ -616,7 +642,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let dir = temp_dir("neg-e");
         copy_dir(&out_dir, &dir);
         let foreign_out = temp_dir("neg-e-foreign");
-        let fc = Command::new(aver_bin)
+        let fc = aver_command()
             .current_dir(&repo_root)
             .arg("compile")
             .arg("tools/certkit/fixtures/certprobe.av")
@@ -659,7 +685,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     //      witness hash face exercised now that claim-covered certs die earlier.
     {
         let empty_out = temp_dir("neg-e2-empty");
-        let ec = Command::new(aver_bin)
+        let ec = aver_command()
             .current_dir(&repo_root)
             .arg("compile")
             .arg("tools/certkit/fixtures/certempty.av")
@@ -1243,9 +1269,8 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("cert-json-data");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("examples/data/json.av")
@@ -1347,9 +1372,8 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("cert-expr-sidecar");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/cert_goals.av")
@@ -2023,9 +2047,8 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("cert-stringeq");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/stringeq.av")
@@ -2192,9 +2215,8 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("cert-stringconcat");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/stringconcat.av")
@@ -2467,9 +2489,8 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("certempty");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/certempty.av")
@@ -2608,9 +2629,8 @@ fn adt_witness_body_mutation_is_declined() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("cert-adt-mut");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("examples/core/user_record.av")
@@ -2661,9 +2681,8 @@ fn variant_dispatch_body_mutation_is_declined() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("cert-vd-mut");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/signalgauge.av")
@@ -2720,9 +2739,8 @@ fn composition_callee_mutation_is_declined() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("cert-compose-mut");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/compose.av")
@@ -2784,9 +2802,8 @@ fn cert_verify_declines_flipped_field_projection_sidecar() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("cert-proj-sidecar");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/cert_goals.av")
@@ -2894,9 +2911,8 @@ fn cert_verify_declines_relabeled_projection_source_types() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("cert-proj-relabel");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/cert_goals.av")
@@ -2996,7 +3012,7 @@ fn cert_verify_declines_tampered_recursion_plan() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("cert-recursion-plan");
-    let compile = Command::new(env!("CARGO_BIN_EXE_aver"))
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/recgen.av")
@@ -3090,7 +3106,7 @@ fn cert_verify_declines_tampered_mutual_plan() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("cert-mutual-plan");
-    let compile = Command::new(env!("CARGO_BIN_EXE_aver"))
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/mutual.av")
@@ -3259,7 +3275,7 @@ fn cert_verify_declines_broken_mutual_scc_membership() {
 
     for (fixture, vectors) in cases {
         let out_dir = temp_dir("cert-mutual-scc");
-        let compile = Command::new(env!("CARGO_BIN_EXE_aver"))
+        let compile = aver_command()
             .current_dir(&repo_root)
             .arg("compile")
             .arg(fixture)
@@ -3384,7 +3400,7 @@ fn mutual_scc_kernel_guards_are_isolating() {
     );
 
     let out_dir = temp_dir("cert-mutual-guard-iso");
-    let compile = Command::new(env!("CARGO_BIN_EXE_aver"))
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/mutual.av")

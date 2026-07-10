@@ -12,12 +12,12 @@ env:
 jobs:
   cert-kernel:
     # One job per certification suite so the long verify suite (each test does a
-    # clean-cache lake kernel build by design) no longer serializes behind the
+    # fresh checker-owned lake kernel build) no longer serializes behind the
     # fast certify/decode suites, and each suite fails independently. Shared
     # toolchain setup is duplicated per matrix leg but runs in parallel.
     name: Cert Kernel (${{ matrix.suite }})
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -34,9 +34,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Cache Lean toolchain
-        # The certification tests build every cert project from a clean lake
-        # cache by design (the verifier must not trust caches); the toolchain
-        # download itself is the only cacheable part.
+        # The verifier's production default remains a clean Lake build. Tests
+        # may copy an exact-byte-keyed pristine prelude cache into fresh builds;
+        # the Lean toolchain download is cached separately here.
         uses: actions/cache@v4
         with:
           path: ~/.elan

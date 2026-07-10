@@ -85,6 +85,7 @@ use std::process::Command;
 use aver::codegen::cert;
 use colored::Colorize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 /// Kernel axioms a certificate is allowed to depend on. Anything else — most
 /// importantly `sorryAx` (an admitted goal) or `ofReduceBool` (native-code
@@ -115,6 +116,24 @@ const CHECKER_OWNED: [&str; 11] = [
     "lakefile.lean",
     "CheckerWitness.lean",
 ];
+
+/// Audited modules whose exact bytes are shared by every certificate build.
+/// ArtifactBytes and certificate/model modules are deliberately absent.
+const STATIC_PRELUDE_ROOTS: [&str; 8] = [
+    "Schema",
+    "PlanCheck",
+    "PlanLower",
+    "PlanBytes",
+    "WasmSlice",
+    "ExprFragmentAccepted",
+    "AcceptedArtifact",
+    "CertPrelude",
+];
+
+/// Static roots whose imports are also entirely static. Schema imports the
+/// artifact-specific Module, so it and its dependants must be rebuilt after
+/// the pristine cache is copied into an artifact build.
+const PRISTINE_PRELUDE_ROOTS: [&str; 2] = ["CertPrelude", "WasmSlice"];
 
 /// Maximum length (bytes) of a JSON-supplied string spliced into the witness.
 const MAX_CANDIDATE_LEN: usize = 200;
@@ -537,9 +556,17 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     //    / srcDir / `.lake` cache are never read.
     let build = assemble_build(cert_dir, &bytes)?;
 
+    // Test harness opt-in only. Production verification remains a fresh build
+    // with no `.lake`; cache failures silently retain that clean-cache path.
+    let reused_prelude = reuse_prebuilt_prelude(&build.path);
+
     // 4. The assembled project must build under the pinned toolchain, from a
     //    clean cache (the fresh dir has no `.lake`).
-    let b = run_lake(&build.path, &["build"])?;
+    let mut b = run_lake(&build.path, &["build"])?;
+    if reused_prelude && !b.status.success() {
+        let _ = std::fs::remove_dir_all(build.path.join(".lake"));
+        b = run_lake(&build.path, &["build"])?;
+    }
     if !b.status.success() {
         return Err(format!(
             "certificate did not build (lake build failed):\n{}",
@@ -574,7 +601,20 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     );
     std::fs::write(build.path.join("CheckerWitness.lean"), &witness)
         .map_err(|e| format!("cannot write checker witness: {e}"))?;
-    let w = run_lake(&build.path, &["env", "lean", "CheckerWitness.lean"])?;
+    let mut w = run_lake(&build.path, &["env", "lean", "CheckerWitness.lean"])?;
+    if reused_prelude && !w.status.success() {
+        // A corrupt or stale test cache must not turn a clean success into a
+        // decline. Rebuild from scratch and ask the unchanged witness again.
+        let _ = std::fs::remove_dir_all(build.path.join(".lake"));
+        let clean = run_lake(&build.path, &["build"])?;
+        if !clean.status.success() {
+            return Err(format!(
+                "certificate did not build (lake build failed):\n{}",
+                tail(&clean.combined, 20)
+            ));
+        }
+        w = run_lake(&build.path, &["env", "lean", "CheckerWitness.lean"])?;
+    }
     if !w.status.success() {
         // The verdict is this exit code, not any parsed line. The lake output is
         // shown to the human to name which face failed (hash, a report binding,
@@ -1175,35 +1215,24 @@ fn assemble_build(cert_dir: &Path, wasm_bytes: &[u8]) -> Result<BuildDir, String
     }
 
     // Audited trusted computing base from THIS binary (not the cert).
-    write(&build.path, "Schema.lean", cert::CERT_SCHEMA)?;
-    write(&build.path, "PlanCheck.lean", cert::CERT_PLAN_CHECK)?;
-    write(&build.path, "PlanLower.lean", cert::CERT_PLAN_LOWER)?;
-    write(&build.path, "PlanBytes.lean", cert::CERT_PLAN_BYTES)?;
-    write(&build.path, "WasmSlice.lean", cert::CERT_WASM_SLICE)?;
-    write(
-        &build.path,
-        "ExprFragmentAccepted.lean",
-        cert::CERT_EXPR_FRAGMENT_ACCEPTED,
-    )?;
-    write(
-        &build.path,
-        "AcceptedArtifact.lean",
-        cert::CERT_ACCEPTED_ARTIFACT,
-    )?;
+    for (name, bytes) in static_prelude_files() {
+        if name == "lakefile.lean" {
+            continue;
+        }
+        std::fs::write(build.path.join(&name), bytes)
+            .map_err(|e| format!("cannot stage {name}: {e}"))?;
+    }
     write(
         &build.path,
         "ArtifactBytes.lean",
         &cert::render_artifact_bytes_lean(wasm_bytes),
     )?;
-    write(&build.path, "CertPrelude.lean", cert::CERT_PRELUDE)?;
-    write(&build.path, "lean-toolchain", cert::LEAN_TOOLCHAIN)?;
-    roots.push("Schema".to_string());
-    roots.push("PlanCheck".to_string());
-    roots.push("PlanLower".to_string());
-    roots.push("PlanBytes".to_string());
-    roots.push("WasmSlice".to_string());
-    roots.push("ExprFragmentAccepted".to_string());
-    roots.push("AcceptedArtifact".to_string());
+    // Preserve the production lakefile's historical root order exactly.
+    roots.extend(
+        STATIC_PRELUDE_ROOTS[..STATIC_PRELUDE_ROOTS.len() - 1]
+            .iter()
+            .map(|root| (*root).to_string()),
+    );
     roots.push("ArtifactBytes".to_string());
     roots.push("CertPrelude".to_string());
 
@@ -1211,6 +1240,125 @@ fn assemble_build(cert_dir: &Path, wasm_bytes: &[u8]) -> Result<BuildDir, String
     // (gated) files actually present.
     write(&build.path, "lakefile.lean", &checker_lakefile(&roots))?;
     Ok(build)
+}
+
+/// Exact, artifact-independent files used to build the reusable prelude. The
+/// returned sequence is filename-sorted so both staging and keying are stable.
+fn static_prelude_files() -> Vec<(String, Vec<u8>)> {
+    let static_lakefile = checker_lakefile(
+        &PRISTINE_PRELUDE_ROOTS
+            .iter()
+            .map(|root| (*root).to_string())
+            .collect::<Vec<_>>(),
+    );
+    let mut files = vec![
+        (
+            "AcceptedArtifact.lean",
+            cert::CERT_ACCEPTED_ARTIFACT.as_bytes().to_vec(),
+        ),
+        ("CertPrelude.lean", cert::CERT_PRELUDE.as_bytes().to_vec()),
+        (
+            "ExprFragmentAccepted.lean",
+            cert::CERT_EXPR_FRAGMENT_ACCEPTED.as_bytes().to_vec(),
+        ),
+        ("PlanBytes.lean", cert::CERT_PLAN_BYTES.as_bytes().to_vec()),
+        ("PlanCheck.lean", cert::CERT_PLAN_CHECK.as_bytes().to_vec()),
+        ("PlanLower.lean", cert::CERT_PLAN_LOWER.as_bytes().to_vec()),
+        ("Schema.lean", cert::CERT_SCHEMA.as_bytes().to_vec()),
+        ("WasmSlice.lean", cert::CERT_WASM_SLICE.as_bytes().to_vec()),
+        ("lakefile.lean", static_lakefile.into_bytes()),
+        ("lean-toolchain", cert::LEAN_TOOLCHAIN.as_bytes().to_vec()),
+    ]
+    .into_iter()
+    .map(|(name, bytes)| (name.to_string(), bytes))
+    .collect::<Vec<_>>();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files
+}
+
+/// SHA-256 of the unambiguous, filename-sorted `(filename, exact bytes)`
+/// sequence. Length prefixes prevent different pairs from sharing a framing.
+fn static_prelude_key(files: &[(String, Vec<u8>)]) -> String {
+    let mut hasher = Sha256::new();
+    for (name, bytes) in files {
+        hasher.update((name.len() as u64).to_be_bytes());
+        hasher.update(name.as_bytes());
+        hasher.update((bytes.len() as u64).to_be_bytes());
+        hasher.update(bytes);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+/// Reuse a pristine prelude-only Lake build when the certification test
+/// harness opts in. Every failure returns silently to the fresh-cache build.
+fn reuse_prebuilt_prelude(build_dir: &Path) -> bool {
+    let Some(store) = std::env::var_os("AVER_CERT_PRELUDE_CACHE").map(PathBuf::from) else {
+        return false;
+    };
+    try_reuse_prebuilt_prelude(&store, build_dir).is_ok()
+}
+
+fn try_reuse_prebuilt_prelude(store: &Path, build_dir: &Path) -> Result<(), ()> {
+    let files = static_prelude_files();
+    let key = static_prelude_key(&files);
+    let entry = store.join(key);
+    let cached_lake = entry.join(".lake");
+
+    if !cached_lake.is_dir() {
+        populate_prebuilt_prelude(store, &entry, &files)?;
+    }
+    if !cached_lake.is_dir() {
+        return Err(());
+    }
+
+    let destination = build_dir.join(".lake");
+    if let Err(()) = copy_tree(&cached_lake, &destination) {
+        let _ = std::fs::remove_dir_all(destination);
+        return Err(());
+    }
+    Ok(())
+}
+
+/// Build only the artifact-independent files, then atomically publish the
+/// whole pristine project directory. Thus no artifact data can enter a store
+/// entry, and concurrent builders either publish or consume the winner.
+fn populate_prebuilt_prelude(
+    store: &Path,
+    entry: &Path,
+    files: &[(String, Vec<u8>)],
+) -> Result<(), ()> {
+    std::fs::create_dir_all(store).map_err(|_| ())?;
+    let temp = store.join(format!("tmp-{}-{}", std::process::id(), unique_nanos()));
+    let pristine = StoreBuildDir::new(temp)?;
+    for (name, bytes) in files {
+        std::fs::write(pristine.path.join(name), bytes).map_err(|_| ())?;
+    }
+
+    let built = run_lake(&pristine.path, &["build"]).map_err(|_| ())?;
+    if !built.status.success() || !pristine.path.join(".lake").is_dir() {
+        return Err(());
+    }
+
+    match std::fs::rename(&pristine.path, entry) {
+        Ok(()) => pristine.keep(),
+        Err(_) if entry.join(".lake").is_dir() => {}
+        Err(_) => return Err(()),
+    }
+    Ok(())
+}
+
+fn copy_tree(source: &Path, destination: &Path) -> Result<(), ()> {
+    std::fs::create_dir(destination).map_err(|_| ())?;
+    for entry in std::fs::read_dir(source).map_err(|_| ())? {
+        let entry = entry.map_err(|_| ())?;
+        let destination_entry = destination.join(entry.file_name());
+        if entry.file_type().map_err(|_| ())?.is_dir() {
+            copy_tree(&entry.path(), &destination_entry)?;
+        } else {
+            std::fs::copy(entry.path(), destination_entry).map_err(|_| ())?;
+        }
+    }
+    Ok(())
 }
 
 /// A cert data file must be named `<Ident>.lean` where `<Ident>` matches
@@ -2427,12 +2575,11 @@ struct BuildDir {
 
 impl BuildDir {
     fn new() -> Result<BuildDir, String> {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let path =
-            std::env::temp_dir().join(format!("aver-certverify-{}-{nanos}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "aver-certverify-{}-{}",
+            std::process::id(),
+            unique_nanos()
+        ));
         std::fs::create_dir_all(&path).map_err(|e| format!("create checker build dir: {e}"))?;
         Ok(BuildDir { path })
     }
@@ -2442,6 +2589,40 @@ impl Drop for BuildDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.path);
     }
+}
+
+struct StoreBuildDir {
+    path: PathBuf,
+    remove_on_drop: std::cell::Cell<bool>,
+}
+
+impl StoreBuildDir {
+    fn new(path: PathBuf) -> Result<Self, ()> {
+        std::fs::create_dir(&path).map_err(|_| ())?;
+        Ok(Self {
+            path,
+            remove_on_drop: std::cell::Cell::new(true),
+        })
+    }
+
+    fn keep(&self) {
+        self.remove_on_drop.set(false);
+    }
+}
+
+impl Drop for StoreBuildDir {
+    fn drop(&mut self) {
+        if self.remove_on_drop.get() {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+fn unique_nanos() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
 }
 
 fn write(dir: &Path, name: &str, content: &str) -> Result<(), String> {
