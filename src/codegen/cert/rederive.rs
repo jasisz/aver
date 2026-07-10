@@ -446,7 +446,8 @@ fn rederive_certificate_inner(
     model_files: &[(String, String)],
     plan_covered_exports: &[String],
 ) -> Result<RederivedCertificate, String> {
-    let (user_fns, box_idx, user_idx_set, carrier, host_roles) = disassemble(wasm_bytes)?;
+    let (user_fns, box_idx, user_idx_set, carrier, host_roles, _frag_host_table) =
+        disassemble(wasm_bytes)?;
     let model_ops = model_step_ops(model_files);
     let model_info = ModelInfo::from_files(model_files);
     let fns: std::collections::HashMap<u32, &UserFn> =

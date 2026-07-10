@@ -28,6 +28,11 @@ struct CodeEntry {
     calls: Vec<u32>,
     has_loop_or_branch: bool,
     host_role: Option<HostRole>,
+    /// The first `i64` arithmetic operator seen in the body — the strict
+    /// discriminator the plan-first host-role table uses to tell the
+    /// behavioural `add` helper apart from the `mul` helper (whose umag loops
+    /// also contain `i64.add`).
+    first_arith_strict: Option<FirstI64Arith>,
     host_ops: Vec<HostOp>,
 }
 

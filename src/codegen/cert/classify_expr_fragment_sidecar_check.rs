@@ -16,13 +16,13 @@ pub fn check_expr_fragment_plan_sidecar(
     export_name: &str,
     plan_text: &str,
 ) -> Result<FragmentPlanCheck, String> {
-    let (user_fns, box_idx, _user_idx_set, carrier, host_roles) = disassemble(wasm_bytes)?;
+    let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles, host_table) =
+        disassemble(wasm_bytes)?;
     let (_func_order, f) = user_fns
         .iter()
         .enumerate()
         .find(|(_, f)| f.name == export_name)
         .ok_or_else(|| format!("plan names unknown export `{export_name}`"))?;
-    let host_table = frag_host_table_from_disasm(box_idx, &host_roles);
     if f.arity == 0 || !frag_calls_resolvable(&f.calls, &host_table) {
         return Err(format!(
             "plan for `{export_name}` does not target a non-recursive expr fragment"
@@ -138,13 +138,13 @@ pub fn check_sym_fragment_plan_sidecar(
     export_name: &str,
     plan_text: &str,
 ) -> Result<FragmentPlanCheck, String> {
-    let (user_fns, box_idx, _user_idx_set, carrier, host_roles) = disassemble(wasm_bytes)?;
+    let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles, host_table) =
+        disassemble(wasm_bytes)?;
     let (_func_order, f) = user_fns
         .iter()
         .enumerate()
         .find(|(_, f)| f.name == export_name)
         .ok_or_else(|| format!("source plan names unknown export `{export_name}`"))?;
-    let host_table = frag_host_table_from_disasm(box_idx, &host_roles);
     if f.arity == 0 || !frag_calls_resolvable(&f.calls, &host_table) {
         return Err(format!(
             "source plan for `{export_name}` does not target a non-recursive expr fragment"
@@ -278,13 +278,13 @@ fn check_expr_fragment_plan_object(
     export_name: &str,
     plan: ExprFragmentPlan,
 ) -> Result<(usize, Cert, FragmentPlanSidecar, bool, Option<String>), String> {
-    let (user_fns, box_idx, _user_idx_set, carrier, host_roles) = disassemble(wasm_bytes)?;
+    let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles, host_table) =
+        disassemble(wasm_bytes)?;
     let (func_order, f) = user_fns
         .iter()
         .enumerate()
         .find(|(_, f)| f.name == export_name)
         .ok_or_else(|| format!("plan names unknown export `{export_name}`"))?;
-    let host_table = frag_host_table_from_disasm(box_idx, &host_roles);
     if f.arity == 0 || !frag_calls_resolvable(&f.calls, &host_table) {
         return Err(format!(
             "plan for `{export_name}` does not target a non-recursive expr fragment"
@@ -306,15 +306,19 @@ fn check_expr_fragment_plan_object(
     )
     .ok_or_else(|| format!("plan for `{export_name}` has unsupported wasm result type"))?;
     // Fail-closed host-call discipline: every hostCall node must cite exactly
-    // the byte-derived index for its role, and the only host-call fragment
-    // shape with a rendered proof face today is the straight-line
-    // `add(param0, box(k))` integer face.
+    // the byte-derived index for its role. The only fragment shape with a
+    // rendered proof face over the Int carrier is the straight-line
+    // `add(param0, box(k))` integer face — any other carrier-returning plan
+    // (a bare Int passthrough, a host-call chain) has no coherent `Cod`/
+    // `codRepr` and is declined here, mirroring the producer gate.
     check_plan_host_calls(&plan.body, &host_table)
         .map_err(|e| format!("plan for `{export_name}`: {e}"))?;
-    if plan_has_host_calls(&plan.body) && expr_fragment_int_add_face(&plan).is_none() {
+    if (plan_has_host_calls(&plan.body) || plan.result == FragTy::IntCarrier)
+        && expr_fragment_int_add_face(&plan).is_none()
+    {
         return Err(format!(
-            "plan for `{export_name}` uses host calls outside the supported \
-             straight-line integer face"
+            "plan for `{export_name}` has no rendered proof face: Int-carrier results \
+             are supported only through the straight-line integer face"
         ));
     }
     if plan.params != params {
@@ -372,13 +376,13 @@ fn check_sym_fragment_plan_object(
     export_name: &str,
     sym_plan: SymPlan,
 ) -> Result<(usize, Cert, FragmentPlanSidecar, bool, Option<String>), String> {
-    let (user_fns, box_idx, _user_idx_set, carrier, host_roles) = disassemble(wasm_bytes)?;
+    let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles, host_table) =
+        disassemble(wasm_bytes)?;
     let (_func_order, f) = user_fns
         .iter()
         .enumerate()
         .find(|(_, f)| f.name == export_name)
         .ok_or_else(|| format!("source plan names unknown export `{export_name}`"))?;
-    let host_table = frag_host_table_from_disasm(box_idx, &host_roles);
     if f.arity == 0 || !frag_calls_resolvable(&f.calls, &host_table) {
         return Err(format!(
             "source plan for `{export_name}` does not target a non-recursive expr fragment"

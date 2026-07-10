@@ -391,17 +391,18 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "floatAddGoal",
         "floatMulAddGoal",
         "floatLeGoal",
+        "idGoal",
         "listHeadGoal",
         "sumListGoal",
     ]
     .into_iter()
     .map(str::to_string)
     .collect();
-    let expected_backlog: BTreeSet<String> = ["listHeadGoal", "sumListGoal"]
+    let expected_backlog: BTreeSet<String> = ["idGoal", "listHeadGoal", "sumListGoal"]
         .into_iter()
         .map(str::to_string)
         .collect();
-    assert_eq!(planned_goal_names.len(), 25, "goal denominator changed");
+    assert_eq!(planned_goal_names.len(), 26, "goal denominator changed");
     assert_eq!(actual.len(), 23, "goal numerator changed");
 
     let contracts: Vec<&str> = manifest["runtime_contracts"]

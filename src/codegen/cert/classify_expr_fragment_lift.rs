@@ -16,32 +16,16 @@ fn expr_fragment_ty_from_wasm_result(ty: TyKind, carrier: u32) -> Option<FragTy>
     }
 }
 
-/// The byte-derived host-role table for one disassembled module: `box` is the
-/// exported `__rt_aint_from_i64`, `add` is the body-shape carrier-add role
-/// (deterministically the smallest such index). Plans never contribute
-/// indices; they must cite exactly these.
-fn frag_host_table_from_disasm(
-    box_idx: u32,
-    host_roles: &std::collections::HashMap<u32, HostRole>,
-) -> FragHostTable {
-    FragHostTable {
-        box_idx: Some(box_idx),
-        add_idx: host_roles
-            .iter()
-            .filter(|(_, role)| **role == HostRole::Add)
-            .map(|(idx, _)| *idx)
-            .min(),
-    }
-}
-
 /// The Lean `List (HostRole × Nat)` literal of the byte-derived host-role
 /// table for a whole module. `aver cert verify` splices this into its kernel
 /// witness (and the emitter into `Plans.lean`/`Artifact.lean`), so source-plan
 /// encoding always runs against byte-derived indices, never plan-supplied
-/// ones.
+/// ones. The table itself is derived inside `disassemble` (exact carrier-binop
+/// signature + first-i64-arith body shape + uniqueness, fail-closed).
 pub fn byte_derived_frag_host_table_lean(wasm_bytes: &[u8]) -> Result<String, String> {
-    let (_user_fns, box_idx, _user_idx_set, _carrier, host_roles) = disassemble(wasm_bytes)?;
-    Ok(frag_host_table_from_disasm(box_idx, &host_roles).lean_value())
+    let (_user_fns, _box_idx, _user_idx_set, _carrier, _host_roles, host_table) =
+        disassemble(wasm_bytes)?;
+    Ok(host_table.lean_value())
 }
 
 /// Every `call` in a candidate expr-fragment body must resolve through the

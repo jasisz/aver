@@ -4,7 +4,20 @@ type DisasmResult = (
     std::collections::HashSet<u32>,
     Option<u32>,
     std::collections::HashMap<u32, HostRole>,
+    FragHostTable,
 );
+
+/// The first `i64` arithmetic operator in a helper body. Strictly narrower
+/// than `HostRole`'s arithmetic marker (which deliberately covers the whole
+/// add/mul combinator family for the fueled-recursion classes, where the
+/// model text disambiguates `+` vs `*`): the plan-first host-role TABLE must
+/// bind the behavioural `add` exactly, so `mul`-first bodies are excluded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FirstI64Arith {
+    Add,
+    Sub,
+    Mul,
+}
 
 fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
     use wasmparser::{
@@ -155,6 +168,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                 let mut saw_i64_add = false;
                 let mut saw_i64_sub = false;
                 let mut first_i64_arith = None;
+                let mut first_arith_strict = None;
                 let mut host_ops = Vec::new();
                 let mut opr = body
                     .get_operators_reader()
@@ -217,11 +231,17 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                         Operator::I64Add => {
                             saw_i64_add = true;
                             first_i64_arith.get_or_insert(HostRole::Add);
+                            first_arith_strict.get_or_insert(FirstI64Arith::Add);
                             Op::Other
                         }
                         Operator::I64Sub => {
                             saw_i64_sub = true;
                             first_i64_arith.get_or_insert(HostRole::Sub);
+                            first_arith_strict.get_or_insert(FirstI64Arith::Sub);
+                            Op::Other
+                        }
+                        Operator::I64Mul => {
+                            first_arith_strict.get_or_insert(FirstI64Arith::Mul);
                             Op::Other
                         }
                         Operator::I32LtS => Op::I32LtS,
@@ -265,6 +285,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                     calls,
                     has_loop_or_branch,
                     host_role,
+                    first_arith_strict,
                     host_ops,
                 });
             }
@@ -326,6 +347,47 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
         })
         .collect::<std::collections::HashMap<_, _>>();
 
+    // The plan-first host-role TABLE, strictly narrower than `host_roles`
+    // above (which deliberately keeps the coarse add/mul combinator family for
+    // the fueled-recursion classes). A table entry binds the behavioural role,
+    // so a candidate must have the exact carrier-binop signature
+    // (`[ref carrier, ref carrier] -> ref carrier`) AND `i64.add` as the FIRST
+    // i64 arithmetic operator in its body (the `mul` helper's umag loops also
+    // contain `i64.add`, but its fast path multiplies first). If the module
+    // does not determine a UNIQUE candidate, the role stays unbound (`None`)
+    // and every plan citing it declines fail-closed — never guess by index
+    // order. `box` is the exported `__rt_aint_from_i64`, exact by name.
+    let frag_host_table = {
+        let is_carrier_binop = |def_idx: usize| -> bool {
+            let Some(c) = carrier else {
+                return false;
+            };
+            let Some((params, result)) = func_type_idx
+                .get(def_idx)
+                .and_then(|ti| type_sigs.get(ti))
+            else {
+                return false;
+            };
+            params.as_slice() == [TyKind::Ref(c), TyKind::Ref(c)]
+                && *result == Some(TyKind::Ref(c))
+        };
+        let add_candidates: Vec<u32> = code_entries
+            .iter()
+            .enumerate()
+            .filter(|(def_idx, entry)| {
+                entry.first_arith_strict == Some(FirstI64Arith::Add) && is_carrier_binop(*def_idx)
+            })
+            .map(|(def_idx, _)| num_imported_funcs + def_idx as u32)
+            .collect();
+        FragHostTable {
+            box_idx: Some(box_idx),
+            add_idx: match add_candidates.as_slice() {
+                [only] => Some(*only),
+                _ => None,
+            },
+        }
+    };
+
     let mut user_fns = Vec::new();
     for (name, wasm_idx) in user_exports {
         let Some(def_idx) = wasm_idx.checked_sub(num_imported_funcs) else {
@@ -358,5 +420,12 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
         });
     }
 
-    Ok((user_fns, box_idx, user_idx_set, carrier, host_roles))
+    Ok((
+        user_fns,
+        box_idx,
+        user_idx_set,
+        carrier,
+        host_roles,
+        frag_host_table,
+    ))
 }

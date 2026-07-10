@@ -1,18 +1,34 @@
+/// Whether a representation plan has a rendered proof face. `IntCarrier`
+/// results are admitted ONLY through the exact straight-line integer face
+/// (`add(param0, box(k))`): a bare Int passthrough or any other
+/// carrier-returning shape has no coherent face yet (its `Cod` would read as
+/// `Int` while `codRepr` falls to the verbatim `WVal` relation), so it must
+/// never be selected here nor accepted by the verifier.
+fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan) -> bool {
+    plan.result != FragTy::IntCarrier || expr_fragment_int_add_face(plan).is_some()
+}
+
 pub(crate) fn fragment_plan_from_mir_fn(
     mir_fn: &crate::ir::mir::MirFn,
 ) -> Option<FragmentPlan> {
     // Encodability gate at MIR time uses a placeholder host table (indices do
     // not affect encoding SHAPE) and requires full canonical BYTE lowering to
     // succeed, because the wasm-gc emitter emits the function body from this
-    // plan: a plan that cannot byte-lower must never be selected.
+    // plan: a plan that cannot byte-lower must never be selected. The face
+    // gate mirrors the verifier: carrier-returning plans without the
+    // straight-line integer face stay unplanned (fail-closed decline there,
+    // untouched bytes here).
     if let Some(plan) = sym_plan_from_mir_fn(mir_fn)
         && let Some(frag) = plan.to_expr_fragment_plan(&FragHostTable::placeholder())
         && lower_expr_fragment_plan_code_entry_bytes(&frag, 0).is_ok()
+        && expr_fragment_plan_has_face(&frag)
     {
         return Some(FragmentPlan::Sym(plan));
     }
     let plan = repr_expr_fragment_plan_from_mir_fn(mir_fn)?;
-    if lower_expr_fragment_plan_code_entry_bytes(&plan, 0).is_ok() {
+    if lower_expr_fragment_plan_code_entry_bytes(&plan, 0).is_ok()
+        && expr_fragment_plan_has_face(&plan)
+    {
         Some(FragmentPlan::Expr(plan))
     } else {
         None
@@ -745,21 +761,30 @@ mod tests {
     }
 
     #[test]
-    fn direct_int_identity_prefers_source_level_sym_plan() {
+    fn direct_int_identity_stays_unplanned_without_a_face() {
+        // A bare Int passthrough ENCODES (the sym plan and its representation
+        // encoding both exist), but it has no rendered proof face: its `Cod`
+        // would read as `Int` while `codRepr` falls to the verbatim `WVal`
+        // relation. The producer must therefore never select it — the export
+        // keeps its ordinary MIR-emitted body and declines fail-closed at
+        // classification (see `idGoal` in the goal-matrix fixture).
         let mir_fn = int_identity_fn();
-        let plan = fragment_plan_from_mir_fn(&mir_fn).expect("plan");
-        let FragmentPlan::Sym(sym) = plan else {
-            panic!("direct source-level int identity should use SymPlan")
-        };
-
+        let sym = sym_plan_from_mir_fn(&mir_fn).expect("sym plan exists");
         assert_eq!(sym.params, vec![SymTy::Int]);
         assert_eq!(sym.result, SymTy::Int);
-        assert!(matches!(sym.body.nodes[0].kind, SymNodeKind::Param { index: 0 }));
         let expr_plan = sym
             .to_expr_fragment_plan(&FragHostTable::placeholder())
-            .expect("source int identity should encode to expr-fragment");
-        assert_eq!(expr_plan.params, vec![FragTy::IntCarrier]);
+            .expect("source int identity encodes to a representation plan");
         assert_eq!(expr_plan.result, FragTy::IntCarrier);
+        assert!(
+            !expr_fragment_plan_has_face(&expr_plan),
+            "carrier identity must not have a rendered proof face"
+        );
+        assert!(
+            fragment_plan_from_mir_fn(&mir_fn).is_none(),
+            "producer must not select a carrier-returning plan without the \
+             straight-line integer face"
+        );
     }
 
     #[test]

@@ -28,7 +28,8 @@ pub fn analyze_with_fragment_plans(
     model_files: &[(String, String)],
     fragment_plans: &[FragmentPlanArtifact],
 ) -> Result<Analysis, String> {
-    let (user_fns, box_idx, user_idx_set, carrier, host_roles) = disassemble(wasm_bytes)?;
+    let (user_fns, box_idx, user_idx_set, carrier, host_roles, _frag_host_table) =
+        disassemble(wasm_bytes)?;
     let model_ops = model_step_ops(model_files);
 
     // Index the user functions so the composition pass can walk the call graph.
@@ -302,6 +303,159 @@ fn floatAddGoal(a: Float, b: Float) -> Float
         assert!(
             reason.contains("producer fragment plan does not match emitted wasm"),
             "decline reason should identify producer-plan mismatch, got: {reason}"
+        );
+    }
+
+    #[test]
+    /// The plan-first host-role table must bind `add` to EXACTLY the callee a
+    /// straight-line body actually cites. In a real bignum module the coarse
+    /// `host_roles` map carries the whole add/mul combinator family (the mul
+    /// helper's umag loops also contain `i64.add`), so this pins that the
+    /// strict table (signature + first-i64-arith + uniqueness) never rides on
+    /// index order the way the removed `min()` derivation did.
+    #[test]
+    fn frag_host_table_binds_add_to_the_cited_callee() {
+        let mut items = crate::source::parse_source(
+            r#"
+module RoleProbe
+    intent = "host role probe"
+    depends []
+    exposes [addTwo]
+
+fn addTwo(x: Int) -> Int
+    ? "Straight-line integer arithmetic."
+    x + 2
+"#,
+        )
+        .expect("source parses");
+        let pipeline = crate::ir::pipeline::run(
+            &mut items,
+            crate::ir::PipelineConfig {
+                typecheck: Some(crate::ir::TypecheckMode::Full { base_dir: None }),
+                ..Default::default()
+            },
+        );
+        assert!(
+            pipeline
+                .typecheck
+                .as_ref()
+                .is_none_or(|tc| tc.errors.is_empty()),
+            "probe source should typecheck"
+        );
+        let output = crate::codegen::wasm_gc::compile_to_wasm_gc_with_handler_and_cert_plans(
+            &items, None, None,
+        )
+        .expect("probe compiles to wasm-gc");
+        let (user_fns, box_idx, _set, _carrier, host_roles, host_table) =
+            disassemble(&output.bytes).expect("disassemble");
+        let add_two = user_fns
+            .iter()
+            .find(|f| f.name == "addTwo")
+            .expect("addTwo user fn");
+        let [cited_box, cited_add] = add_two.calls.as_slice() else {
+            panic!("addTwo should cite exactly box + add, got {:?}", add_two.calls);
+        };
+        // The coarse role family really is ambiguous in a bignum module: more
+        // than one helper carries the Add marker (genuine add + mul at least).
+        let coarse_add_count = host_roles
+            .values()
+            .filter(|role| **role == HostRole::Add)
+            .count();
+        assert!(
+            coarse_add_count >= 2,
+            "expected the coarse role map to be ambiguous (add + mul family), \
+             got {coarse_add_count} Add-marked helpers"
+        );
+        // The strict table still binds box/add to exactly the cited callees.
+        assert_eq!(host_table.box_idx, Some(box_idx));
+        assert_eq!(host_table.box_idx, Some(*cited_box));
+        assert_eq!(
+            host_table.add_idx,
+            Some(*cited_add),
+            "the strict host-role table must bind `add` to the callee the \
+             emitted body cites"
+        );
+    }
+
+    /// Synthetic-module template for the role-table derivation tests: an
+    /// optional decoy function (placed at a LOWER index than the genuine add
+    /// helper) plus the exact carrier-binop add helper and the named box
+    /// export the disassembler requires.
+    fn role_table_module(decoy: &str) -> Vec<u8> {
+        wat::parse_str(format!(
+            r#"(module
+  (type $mag (array (mut i64)))
+  (type $c (struct (field i64) (field (ref null $mag)) (field i32)))
+  (type $bin (func (param (ref null $c)) (param (ref null $c)) (result (ref null $c))))
+  (type $box (func (param i64) (result (ref null $c))))
+  {decoy}
+  (func $box (type $box)
+    local.get 0 ref.null $mag i32.const 0 struct.new $c)
+  (func $add (type $bin)
+    i64.const 1 i64.const 2 i64.add drop local.get 0)
+  (export "__rt_aint_from_i64" (func $box))
+)"#
+        ))
+        .expect("role-table module WAT parses")
+    }
+
+    /// An EARLIER helper whose body is `i64.add`-shaped but whose signature is
+    /// not the carrier binop must never capture the `add` role: the table
+    /// binds the genuine helper, index order notwithstanding.
+    #[test]
+    fn frag_host_table_ignores_earlier_non_carrier_i64_add_helper() {
+        let bytes = role_table_module(
+            r#"(func $decoy (param i64) (param i64) (result i64)
+    local.get 0 local.get 1 i64.add)"#,
+        );
+        let (_fns, box_idx, _set, carrier, _roles, host_table) =
+            disassemble(&bytes).expect("disassemble");
+        assert_eq!(carrier, Some(1), "carrier struct should be recognised");
+        assert_eq!(host_table.box_idx, Some(box_idx));
+        assert_eq!(
+            host_table.add_idx,
+            Some(2),
+            "the genuine carrier-binop add helper (idx 2) must win over the \
+             earlier i64-shaped decoy (idx 0)"
+        );
+    }
+
+    /// If more than one candidate matches the strict signature + body shape,
+    /// the role stays UNBOUND and every plan citing it declines fail-closed —
+    /// the table never guesses by index order.
+    #[test]
+    fn frag_host_table_declines_ambiguous_add_candidates() {
+        let bytes = role_table_module(
+            r#"(func $decoy (type $bin)
+    i64.const 3 i64.const 4 i64.add drop local.get 1)"#,
+        );
+        let (_fns, box_idx, _set, _carrier, _roles, host_table) =
+            disassemble(&bytes).expect("disassemble");
+        assert_eq!(host_table.box_idx, Some(box_idx));
+        assert_eq!(
+            host_table.add_idx, None,
+            "two byte-shape-identical add candidates must leave the role \
+             unbound (fail-closed), never bound by index order"
+        );
+    }
+
+    /// The mul helper's fast path multiplies FIRST, so `first arith == add`
+    /// keeps it out of the add candidacy even though its umag loops contain
+    /// `i64.add` (which is what earns it the coarse Add marker).
+    #[test]
+    fn frag_host_table_excludes_mul_first_bodies() {
+        let bytes = role_table_module(
+            r#"(func $decoy (type $bin)
+    i64.const 3 i64.const 4 i64.mul drop
+    i64.const 3 i64.const 4 i64.add drop
+    local.get 1)"#,
+        );
+        let (_fns, _box_idx, _set, _carrier, _roles, host_table) =
+            disassemble(&bytes).expect("disassemble");
+        assert_eq!(
+            host_table.add_idx,
+            Some(2),
+            "a mul-first body must not compete for the add role"
         );
     }
 }
