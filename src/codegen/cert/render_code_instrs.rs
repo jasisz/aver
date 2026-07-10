@@ -53,7 +53,11 @@ fn render_simple_op(op: &Op) -> Option<String> {
             type_idx, bytes, ..
         } => format!(".arrayNewData {type_idx} {}", render_nat_list(bytes)),
         Op::ArrayNewFixed(t, n) => format!(".arrayNewFixed {t} {n}"),
-        Op::RefNull => ".refNull".to_string(),
+        // The heap-type payload is deliberately NOT rendered: Lean's
+        // `CoreInstr.refNull` is a unit constructor, so emitting the index
+        // would change the audited artifact bytes. The index is carried only
+        // for Rust-side re-lowering in the S2 grammar leg.
+        Op::RefNull(_) => ".refNull".to_string(),
         Op::RefIsNull => ".refIsNull".to_string(),
         Op::I64Eq => ".i64Eq".to_string(),
         Op::I64LeS => ".i64LeS".to_string(),

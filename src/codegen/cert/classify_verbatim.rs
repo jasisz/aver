@@ -1,6 +1,6 @@
 fn verbatim_default_from_ops(ops: &[Op]) -> Option<VerbatimDefault> {
     match ops {
-        [Op::RefNull] => Some(VerbatimDefault::Null),
+        [Op::RefNull(_)] => Some(VerbatimDefault::Null),
         [Op::F64Const(bits)] => Some(VerbatimDefault::F64Bits(*bits)),
         [
             Op::I32Const(0),

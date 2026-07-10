@@ -458,4 +458,164 @@ fn addTwo(x: Int) -> Int
             "a mul-first body must not compete for the add role"
         );
     }
+
+    fn compile_probe_bytes(src: &str) -> Vec<u8> {
+        let mut items = crate::source::parse_source(src).expect("probe source parses");
+        let pipeline = crate::ir::pipeline::run(
+            &mut items,
+            crate::ir::PipelineConfig {
+                typecheck: Some(crate::ir::TypecheckMode::Full { base_dir: None }),
+                ..Default::default()
+            },
+        );
+        assert!(
+            pipeline
+                .typecheck
+                .as_ref()
+                .is_none_or(|tc| tc.errors.is_empty()),
+            "probe source should typecheck"
+        );
+        crate::codegen::wasm_gc::compile_to_wasm_gc_with_handler_and_cert_plans(&items, None, None)
+            .expect("probe compiles to wasm-gc")
+            .bytes
+    }
+
+    /// The verbatim-widened fixture's `_ -> []` default arm lowers to a
+    /// `ref.null` of the `List` struct type. Disassembly must thread that
+    /// heap-type index through `Op::RefNull` (not drop it, as the old unit
+    /// variant did) so the S2 grammar can re-lower the empty-list default
+    /// byte-exactly. The index must equal the module's List struct type — the
+    /// same concrete type the function's `List<Int>` result references.
+    #[test]
+    fn ref_null_threads_default_arm_heap_type() {
+        let bytes = compile_probe_bytes(include_str!(
+            "../../../tools/certkit/fixtures/verbatimwiden.av"
+        ));
+        let (user_fns, _box_idx, _set, _carrier, _roles, _table) =
+            disassemble(&bytes).expect("disassemble");
+        let wrap_items = user_fns
+            .iter()
+            .find(|f| f.name == "wrapItems")
+            .expect("wrapItems user fn");
+        // `wrapItems` returns `List<Int>`, i.e. a concrete `(ref null $list)`.
+        let Some(TyKind::Ref(list_idx)) = wrap_items.result else {
+            panic!("wrapItems should return a concrete list ref");
+        };
+        let ref_null_hty = wrap_items
+            .ops
+            .iter()
+            .find_map(|op| match op {
+                Op::RefNull(hty) => Some(*hty),
+                _ => None,
+            })
+            .expect("wrapItems `[]` default arm should lower to a ref.null");
+        assert_eq!(
+            ref_null_hty,
+            Some(list_idx),
+            "ref.null must carry the List struct heap-type index (the `[]` \
+             default's type), not drop it"
+        );
+    }
+
+    /// Mirror of `frag_host_table_binds_add_to_the_cited_callee` for the strict
+    /// `sub` binding: a straight-line integer subtraction body cites box + sub,
+    /// and the strict table must bind `sub` to EXACTLY that cited callee (never
+    /// by index order). `x - 2` lowers to `sub(x, box(2))` — the compiler does
+    /// not rewrite it as add-with-negated-constant, so it genuinely cites sub.
+    #[test]
+    fn frag_host_table_binds_sub_to_the_cited_callee() {
+        let bytes = compile_probe_bytes(
+            r#"
+module SubRoleProbe
+    intent = "host sub role probe"
+    depends []
+    exposes [subTwo]
+
+fn subTwo(x: Int) -> Int
+    ? "Straight-line integer subtraction."
+    x - 2
+"#,
+        );
+        let (user_fns, box_idx, _set, _carrier, _roles, host_table) =
+            disassemble(&bytes).expect("disassemble");
+        let sub_two = user_fns
+            .iter()
+            .find(|f| f.name == "subTwo")
+            .expect("subTwo user fn");
+        let [cited_box, cited_sub] = sub_two.calls.as_slice() else {
+            panic!("subTwo should cite exactly box + sub, got {:?}", sub_two.calls);
+        };
+        assert_eq!(host_table.box_idx, Some(box_idx));
+        assert_eq!(host_table.box_idx, Some(*cited_box));
+        assert_eq!(
+            host_table.sub_idx,
+            Some(*cited_sub),
+            "the strict host-role table must bind `sub` to the callee the \
+             emitted body cites"
+        );
+    }
+
+    /// Synthetic-module template for the `sub` role-table derivation tests: an
+    /// optional decoy function plus the exact carrier-binop `sub` helper (its
+    /// first i64 arithmetic op is `i64.sub`) and the named box export the
+    /// disassembler requires. Parallel to `role_table_module` (which emits an
+    /// `add`-shaped helper); kept separate so the `add` tests' index
+    /// assertions are unaffected.
+    fn role_table_module_sub(decoy: &str) -> Vec<u8> {
+        wat::parse_str(format!(
+            r#"(module
+  (type $mag (array (mut i64)))
+  (type $c (struct (field i64) (field (ref null $mag)) (field i32)))
+  (type $bin (func (param (ref null $c)) (param (ref null $c)) (result (ref null $c))))
+  (type $box (func (param i64) (result (ref null $c))))
+  {decoy}
+  (func $box (type $box)
+    local.get 0 ref.null $mag i32.const 0 struct.new $c)
+  (func $sub (type $bin)
+    i64.const 1 i64.const 2 i64.sub drop local.get 0)
+  (export "__rt_aint_from_i64" (func $box))
+)"#
+        ))
+        .expect("role-table-sub module WAT parses")
+    }
+
+    /// If more than one candidate matches the strict carrier-binop signature +
+    /// `i64.sub`-first body shape, the `sub` role stays UNBOUND (fail-closed) —
+    /// the table never guesses by index order. Mirrors the `add` ambiguity test.
+    #[test]
+    fn frag_host_table_declines_ambiguous_sub_candidates() {
+        let bytes = role_table_module_sub(
+            r#"(func $decoy (type $bin)
+    i64.const 3 i64.const 4 i64.sub drop local.get 1)"#,
+        );
+        let (_fns, box_idx, _set, _carrier, _roles, host_table) =
+            disassemble(&bytes).expect("disassemble");
+        assert_eq!(host_table.box_idx, Some(box_idx));
+        assert_eq!(
+            host_table.sub_idx, None,
+            "two byte-shape-identical sub candidates must leave the role \
+             unbound (fail-closed), never bound by index order"
+        );
+    }
+
+    /// An `add`-first body must not compete for the `sub` role even though it
+    /// contains an `i64.sub`: `first arith == sub` keeps it out of sub
+    /// candidacy, so the genuine `i64.sub`-first helper (idx 2) binds alone.
+    /// Mirrors `frag_host_table_excludes_mul_first_bodies` for the add role.
+    #[test]
+    fn frag_host_table_excludes_add_first_bodies_from_sub() {
+        let bytes = role_table_module_sub(
+            r#"(func $decoy (type $bin)
+    i64.const 3 i64.const 4 i64.add drop
+    i64.const 3 i64.const 4 i64.sub drop
+    local.get 1)"#,
+        );
+        let (_fns, _box_idx, _set, _carrier, _roles, host_table) =
+            disassemble(&bytes).expect("disassemble");
+        assert_eq!(
+            host_table.sub_idx,
+            Some(2),
+            "an add-first body must not compete for the sub role"
+        );
+    }
 }

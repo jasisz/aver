@@ -98,7 +98,7 @@ fn normalize_local_hops(ops: &[Op]) -> Vec<Op> {
                         | Op::I64Const(..)
                         | Op::I32Const(..)
                         | Op::F64Const(..)
-                        | Op::RefNull
+                        | Op::RefNull(_)
                         | Op::ArrayNewData { .. }
                 )
                 && matches!((&out[j + 1], &out[j + 2]), (Op::LocalSet(a), Op::LocalGet(b)) if a == b)

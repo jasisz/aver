@@ -3029,6 +3029,9 @@ pub(super) fn emit_module_with(
     let fragment_host_table = crate::codegen::cert::FragHostTable {
         box_idx: registry.aint_from_i64_fn_idx,
         add_idx: builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintAdd),
+        // `sub` mirrors `add` for parity with the byte-derived table, but is
+        // not yet consumed by any plan encoding (S2 prerequisite only).
+        sub_idx: builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintSub),
     };
     for (i, _fd) in fn_defs.iter().enumerate() {
         let self_wasm_idx = import_count + 1 + (i as u32);
