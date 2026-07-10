@@ -183,6 +183,17 @@ fn sym_node_kind_lean_value(kind: &SymNodeKind) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        SymNodeKind::ProjectField {
+            type_name,
+            field,
+            field_ty,
+            value,
+        } => format!(
+            ".projectField {} {field} {} {}",
+            lean_str(type_name),
+            field_ty.lean_plan_ctor(),
+            value.0
+        ),
         SymNodeKind::IntConstCmp {
             op,
             value,
@@ -251,6 +262,19 @@ fn render_sym_node_plan(node: &SymNode, indent: usize, out: &mut String) {
                 type_name,
                 ctor_name,
                 render_sym_plan_ids(args)
+            ));
+        }
+        SymNodeKind::ProjectField {
+            type_name,
+            field,
+            // The node line's `ty=` tag carries the field type; the parser
+            // reads it back from there.
+            field_ty: _,
+            value,
+        } => {
+            out.push_str(&format!(
+                "project.field type={type_name} field={field} value=v{}\n",
+                value.0
             ));
         }
         SymNodeKind::IntConstCmp {

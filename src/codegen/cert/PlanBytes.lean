@@ -79,6 +79,7 @@ def blockTypeBytes : FragTy → Option (List Nat)
   | .f64 => some [0x7c]
   | .intCarrier => none
   | .ref => none
+  | .adtRef => none
 
 def primBytes : FragPrim → List Nat
   | .f64Add => [0xa0]
@@ -137,6 +138,11 @@ mutual
               match popExpected stack receiver, uleb32 0x02, uleb32 carrier, uleb32 field with
               | some stack', some opBytes, some carrierBytes, some fieldBytes =>
                   some ([0xfb] ++ opBytes ++ carrierBytes ++ fieldBytes, node.id :: stack')
+              | _, _, _, _ => none
+          | .structGetUser tyIdx field value =>
+              match popExpected stack value, uleb32 0x02, uleb32 tyIdx, uleb32 field with
+              | some stack', some opBytes, some tyBytes, some fieldBytes =>
+                  some ([0xfb] ++ opBytes ++ tyBytes ++ fieldBytes, node.id :: stack')
               | _, _, _, _ => none
           | .refIsNull value =>
               match popExpected stack value with

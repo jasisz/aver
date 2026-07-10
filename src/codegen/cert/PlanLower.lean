@@ -59,6 +59,10 @@ mutual
               match popExpected stack receiver with
               | some stack' => some ([.structGet carrier field], node.id :: stack')
               | none => none
+          | .structGetUser tyIdx field value =>
+              match popExpected stack value with
+              | some stack' => some ([.structGet tyIdx field], node.id :: stack')
+              | none => none
           | .refIsNull value =>
               match popExpected stack value with
               | some stack' => some ([.refIsNull], node.id :: stack')

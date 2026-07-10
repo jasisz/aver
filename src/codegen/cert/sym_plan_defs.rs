@@ -16,7 +16,7 @@ impl SymTy {
             FragTy::F64 => Some(SymTy::Float),
             FragTy::BoolI32 => Some(SymTy::Bool),
             FragTy::IntCarrier => Some(SymTy::Int),
-            FragTy::I64 | FragTy::RawI32 | FragTy::Ref => None,
+            FragTy::I64 | FragTy::RawI32 | FragTy::Ref | FragTy::AdtRef => None,
         }
     }
 
@@ -25,7 +25,12 @@ impl SymTy {
             SymTy::Int => Some(FragTy::IntCarrier),
             SymTy::Float => Some(FragTy::F64),
             SymTy::Bool => Some(FragTy::BoolI32),
-            SymTy::String | SymTy::Named(_) => None,
+            // Strings and named user types are whole references at the
+            // representation level: both encode to the opaque `adtRef` (twin
+            // of the Lean `encodeSymTy?`). String OPERATIONS still do not
+            // encode; this only lets reference-typed values flow verbatim
+            // through the field-projection face.
+            SymTy::String | SymTy::Named(_) => Some(FragTy::AdtRef),
         }
     }
 
@@ -90,6 +95,16 @@ pub enum SymNodeKind {
         ctor_name: String,
         args: Vec<SymValueId>,
     },
+    /// Source-level record/ADT field projection: read declared field `field`
+    /// (source declaration order) of a value of the named user type.
+    /// `field_ty` is the field's source type; encoding binds the projection to
+    /// the exact wasm struct type index through the byte-derived struct table.
+    ProjectField {
+        type_name: String,
+        field: u32,
+        field_ty: SymTy,
+        value: SymValueId,
+    },
     IntConstCmp {
         op: SymIntCmp,
         value: SymValueId,
@@ -149,6 +164,7 @@ impl SymPlan {
     pub(crate) fn to_expr_fragment_plan(
         &self,
         host_table: &FragHostTable,
+        struct_table: &FragStructTable,
     ) -> Option<ExprFragmentPlan> {
         Some(ExprFragmentPlan {
             params: self
@@ -157,7 +173,7 @@ impl SymPlan {
                 .map(SymTy::to_frag_ty)
                 .collect::<Option<Vec<_>>>()?,
             result: self.result.to_frag_ty()?,
-            body: expr_fragment_block_from_sym(&self.body, host_table)?,
+            body: expr_fragment_block_from_sym(&self.body, host_table, struct_table)?,
         })
     }
 }
@@ -172,9 +188,10 @@ impl FragmentPlan {
     pub(crate) fn to_expr_fragment_plan(
         &self,
         host_table: &FragHostTable,
+        struct_table: &FragStructTable,
     ) -> Option<ExprFragmentPlan> {
         match self {
-            FragmentPlan::Sym(plan) => plan.to_expr_fragment_plan(host_table),
+            FragmentPlan::Sym(plan) => plan.to_expr_fragment_plan(host_table, struct_table),
             FragmentPlan::Expr(plan) => Some(plan.clone()),
         }
     }
@@ -283,6 +300,99 @@ pub struct FragmentPlanArtifact {
     pub plan: FragmentPlan,
 }
 
+fn sym_block_project_names_in_order(block: &SymBlock, out: &mut Vec<String>) {
+    for node in &block.nodes {
+        match &node.kind {
+            SymNodeKind::ProjectField { type_name, .. } => out.push(type_name.clone()),
+            SymNodeKind::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                sym_block_project_names_in_order(then_block, out);
+                sym_block_project_names_in_order(else_block, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The distinct user type names a source plan projects fields out of, in first
+/// appearance order.
+pub(crate) fn sym_plan_project_type_names(plan: &SymPlan) -> Vec<String> {
+    let mut all = Vec::new();
+    sym_block_project_names_in_order(&plan.body, &mut all);
+    let mut out = Vec::new();
+    for name in all {
+        if !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
+}
+
+fn frag_block_struct_get_user_tys_in_order(block: &FragBlock, out: &mut Vec<u32>) {
+    for node in &block.nodes {
+        match &node.kind {
+            FragNodeKind::StructGetUser { ty_idx, .. } => out.push(*ty_idx),
+            FragNodeKind::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                frag_block_struct_get_user_tys_in_order(then_block, out);
+                frag_block_struct_get_user_tys_in_order(else_block, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The struct-table entries a source plan and its encoded representation plan
+/// pin together: each `project.field` type name paired with the wasm struct
+/// index its `struct.get.user` encoding resolved to (deterministic node
+/// order). `None` when the pairing is inconsistent — fail-closed.
+fn expr_fragment_struct_table_entries(
+    source_plan: &SymPlan,
+    plan: &ExprFragmentPlan,
+) -> Option<Vec<(String, u32)>> {
+    let mut names = Vec::new();
+    sym_block_project_names_in_order(&source_plan.body, &mut names);
+    let mut indices = Vec::new();
+    frag_block_struct_get_user_tys_in_order(&plan.body, &mut indices);
+    if names.len() != indices.len() {
+        return None;
+    }
+    let mut table = FragStructTable::default();
+    for (name, idx) in names.into_iter().zip(indices) {
+        if !table.insert(&name, idx) {
+            return None;
+        }
+    }
+    Some(table.entries)
+}
+
+/// Resolve the struct table a producer fragment plan needs at emit time, from
+/// the emitter's own type registry (`resolve`: record type name -> wasm struct
+/// type index). Fail-closed on any unknown name.
+pub(crate) fn frag_struct_table_for_plan(
+    plan: &FragmentPlan,
+    resolve: &dyn Fn(&str) -> Option<u32>,
+) -> Option<FragStructTable> {
+    let names = match plan {
+        FragmentPlan::Sym(plan) => sym_plan_project_type_names(plan),
+        FragmentPlan::Expr(_) => Vec::new(),
+    };
+    let mut table = FragStructTable::default();
+    for name in names {
+        let idx = resolve(&name)?;
+        if !table.insert(&name, idx) {
+            return None;
+        }
+    }
+    Some(table)
+}
+
 fn sym_block_from_frag_source_subset(block: &FragBlock) -> Option<SymBlock> {
     let nodes = block
         .nodes
@@ -324,10 +434,15 @@ fn sym_node_from_frag_source_subset(node: &FragNode) -> Option<SymNode> {
             then_block: Box::new(sym_block_from_frag_source_subset(then_block)?),
             else_block: Box::new(sym_block_from_frag_source_subset(else_block)?),
         },
+        // `StructGetUser` deliberately does NOT project back to source here:
+        // the source meaning (type name, field) cannot be recovered from the
+        // representation node alone. Projection certs carry their SymPlan
+        // forward from the producer instead.
         FragNodeKind::ConstI64(_)
         | FragNodeKind::ConstI32(_)
         | FragNodeKind::HostCall { .. }
         | FragNodeKind::StructGet { .. }
+        | FragNodeKind::StructGetUser { .. }
         | FragNodeKind::RefIsNull { .. } => return None,
     };
     Some(SymNode {
@@ -438,7 +553,10 @@ mod sym_plan_defs_tests {
         let named = SymTy::Named("User".to_string());
         assert_eq!(named.plan_tag(), "named:User");
         assert_eq!(SymTy::from_plan_tag("named:User"), Some(named.clone()));
-        assert_eq!(named.to_frag_ty(), None);
+        // Named types encode to the opaque `adtRef` representation type; the
+        // plan below still does NOT encode because its body carries a string
+        // literal (no representation-level constructor).
+        assert_eq!(named.to_frag_ty(), Some(FragTy::AdtRef));
 
         let plan = SymPlan {
             params: vec![named.clone()],
@@ -461,7 +579,7 @@ mod sym_plan_defs_tests {
         };
         let lean = sym_plan_lean_value(&plan);
         assert!(lean.contains("params := [(.named \"User\")]"));
-        assert!(plan.to_expr_fragment_plan(&FragHostTable::placeholder()).is_none());
+        assert!(plan.to_expr_fragment_plan(&FragHostTable::placeholder(), &FragStructTable::default()).is_none());
     }
 
     #[test]
@@ -501,7 +619,7 @@ mod sym_plan_defs_tests {
         let mut parser = SymPlanParser::new(&text, vec![SymTy::Int], SymTy::Named("Op".to_string()));
         let parsed = parser.parse().expect("parse construct plan");
         assert_eq!(parsed, plan.body);
-        assert!(plan.to_expr_fragment_plan(&FragHostTable::placeholder()).is_none());
+        assert!(plan.to_expr_fragment_plan(&FragHostTable::placeholder(), &FragStructTable::default()).is_none());
     }
 
     #[test]
@@ -584,6 +702,6 @@ mod sym_plan_defs_tests {
         let lean = sym_plan_lean_value(&plan);
         assert!(lean.contains(".constStringBytes [33]"));
         assert!(lean.contains(".prim .stringConcat [0, 1]"));
-        assert!(plan.to_expr_fragment_plan(&FragHostTable::placeholder()).is_none());
+        assert!(plan.to_expr_fragment_plan(&FragHostTable::placeholder(), &FragStructTable::default()).is_none());
     }
 }

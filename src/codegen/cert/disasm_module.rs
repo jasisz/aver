@@ -5,6 +5,9 @@ type DisasmResult = (
     Option<u32>,
     std::collections::HashMap<u32, HostRole>,
     FragHostTable,
+    // Byte-derived struct context: module struct type index -> field count.
+    // The plan checker validates every `struct.get.user` node against it.
+    std::collections::HashMap<u32, u32>,
 );
 
 /// The first `i64` arithmetic operator in a helper body. Strictly narrower
@@ -436,5 +439,6 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
         carrier,
         host_roles,
         frag_host_table,
+        struct_field_counts,
     ))
 }

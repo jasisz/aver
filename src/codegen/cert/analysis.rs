@@ -28,7 +28,7 @@ pub fn analyze_with_fragment_plans(
     model_files: &[(String, String)],
     fragment_plans: &[FragmentPlanArtifact],
 ) -> Result<Analysis, String> {
-    let (user_fns, box_idx, user_idx_set, carrier, host_roles, _frag_host_table) =
+    let (user_fns, box_idx, user_idx_set, carrier, host_roles, _frag_host_table, _struct_field_counts) =
         disassemble(wasm_bytes)?;
     let model_ops = model_step_ops(model_files);
 
@@ -346,7 +346,7 @@ fn addTwo(x: Int) -> Int
             &items, None, None,
         )
         .expect("probe compiles to wasm-gc");
-        let (user_fns, box_idx, _set, _carrier, host_roles, host_table) =
+        let (user_fns, box_idx, _set, _carrier, host_roles, host_table, _struct_counts) =
             disassemble(&output.bytes).expect("disassemble");
         let add_two = user_fns
             .iter()
@@ -408,7 +408,7 @@ fn addTwo(x: Int) -> Int
             r#"(func $decoy (param i64) (param i64) (result i64)
     local.get 0 local.get 1 i64.add)"#,
         );
-        let (_fns, box_idx, _set, carrier, _roles, host_table) =
+        let (_fns, box_idx, _set, carrier, _roles, host_table, _struct_counts) =
             disassemble(&bytes).expect("disassemble");
         assert_eq!(carrier, Some(1), "carrier struct should be recognised");
         assert_eq!(host_table.box_idx, Some(box_idx));
@@ -429,7 +429,7 @@ fn addTwo(x: Int) -> Int
             r#"(func $decoy (type $bin)
     i64.const 3 i64.const 4 i64.add drop local.get 1)"#,
         );
-        let (_fns, box_idx, _set, _carrier, _roles, host_table) =
+        let (_fns, box_idx, _set, _carrier, _roles, host_table, _struct_counts) =
             disassemble(&bytes).expect("disassemble");
         assert_eq!(host_table.box_idx, Some(box_idx));
         assert_eq!(
@@ -450,7 +450,7 @@ fn addTwo(x: Int) -> Int
     i64.const 3 i64.const 4 i64.add drop
     local.get 1)"#,
         );
-        let (_fns, _box_idx, _set, _carrier, _roles, host_table) =
+        let (_fns, _box_idx, _set, _carrier, _roles, host_table, _struct_counts) =
             disassemble(&bytes).expect("disassemble");
         assert_eq!(
             host_table.add_idx,
@@ -491,7 +491,7 @@ fn addTwo(x: Int) -> Int
         let bytes = compile_probe_bytes(include_str!(
             "../../../tools/certkit/fixtures/verbatimwiden.av"
         ));
-        let (user_fns, _box_idx, _set, _carrier, _roles, _table) =
+        let (user_fns, _box_idx, _set, _carrier, _roles, _table, _struct_counts) =
             disassemble(&bytes).expect("disassemble");
         let wrap_items = user_fns
             .iter()
@@ -536,7 +536,7 @@ fn subTwo(x: Int) -> Int
     x - 2
 "#,
         );
-        let (user_fns, box_idx, _set, _carrier, _roles, host_table) =
+        let (user_fns, box_idx, _set, _carrier, _roles, host_table, _struct_counts) =
             disassemble(&bytes).expect("disassemble");
         let sub_two = user_fns
             .iter()
@@ -588,13 +588,286 @@ fn subTwo(x: Int) -> Int
             r#"(func $decoy (type $bin)
     i64.const 3 i64.const 4 i64.sub drop local.get 1)"#,
         );
-        let (_fns, box_idx, _set, _carrier, _roles, host_table) =
+        let (_fns, box_idx, _set, _carrier, _roles, host_table, _struct_counts) =
             disassemble(&bytes).expect("disassemble");
         assert_eq!(host_table.box_idx, Some(box_idx));
         assert_eq!(
             host_table.sub_idx, None,
             "two byte-shape-identical sub candidates must leave the role \
              unbound (fail-closed), never bound by index order"
+        );
+    }
+
+    /// Field-projection tamper matrix at the plan checker (fail-closed, no
+    /// lake needed): a `struct.get.user` citing a type outside the module's
+    /// struct context or the Int carrier is DECLINED at the checker; a wrong
+    /// (but real) struct type or a flipped field index survives the checker
+    /// but fails canonical code-entry byte equality.
+    #[test]
+    fn field_projection_plan_tampers_decline_fail_closed() {
+        let bytes = compile_probe_bytes(
+            r#"
+module ProjTamperProbe
+    intent = "field projection tamper probe"
+    depends []
+    exposes [User, userName, addTwo]
+
+record User
+  name: String
+  age: Int
+
+fn addTwo(x: Int) -> Int
+  ? "Pulls in the Int carrier and box helper."
+  x + 2
+
+fn userName(u: User) -> String
+  ? "Record field projection."
+  u.name
+"#,
+        );
+        let (user_fns, _box_idx, _set, carrier, _roles, _table, struct_counts) =
+            disassemble(&bytes).expect("disassemble");
+        let carrier = carrier.expect("carrier struct");
+        let user_name = user_fns
+            .iter()
+            .find(|f| f.name == "userName")
+            .expect("userName user fn");
+        let real_ty = user_name
+            .ops
+            .iter()
+            .find_map(|op| match op {
+                Op::StructGet(t, _) if *t != carrier => Some(*t),
+                _ => None,
+            })
+            .expect("userName projects a user struct");
+        assert_eq!(
+            struct_counts.get(&real_ty),
+            Some(&2),
+            "User struct should have two fields"
+        );
+        let projection_plan = |ty_idx: u32, field: u32| ExprFragmentPlan {
+            params: vec![FragTy::AdtRef],
+            result: FragTy::AdtRef,
+            body: FragBlock {
+                nodes: vec![
+                    FragNode {
+                        id: FragValueId(0),
+                        ty: FragTy::AdtRef,
+                        kind: FragNodeKind::Local { index: 0 },
+                    },
+                    FragNode {
+                        id: FragValueId(1),
+                        ty: FragTy::AdtRef,
+                        kind: FragNodeKind::StructGetUser {
+                            ty_idx,
+                            field,
+                            value: FragValueId(0),
+                        },
+                    },
+                ],
+                result: FragValueId(1),
+            },
+        };
+
+        // Baseline: the honest plan checks and matches the bytes.
+        let (_order, _cert, _sidecar, matches, reason) =
+            check_expr_fragment_plan_object(&bytes, "userName", projection_plan(real_ty, 0))
+                .expect("honest projection plan is admitted");
+        assert!(matches, "honest projection plan must match bytes: {reason:?}");
+
+        // (c) ty_idx outside the module's struct types -> DECLINE at checker.
+        let Err(err) =
+            check_expr_fragment_plan_object(&bytes, "userName", projection_plan(9999, 0))
+        else {
+            panic!("out-of-module struct type must be declined")
+        };
+        assert!(
+            err.contains("outside the module's struct types"),
+            "wrong reason for out-of-module struct type: {err}"
+        );
+
+        // The Int carrier is never a projectable user struct -> DECLINE at checker.
+        let Err(err) =
+            check_expr_fragment_plan_object(&bytes, "userName", projection_plan(carrier, 0))
+        else {
+            panic!("carrier-typed projection must be declined")
+        };
+        assert!(
+            err.contains("cites the Int carrier"),
+            "wrong reason for carrier projection: {err}"
+        );
+
+        // Field outside the struct's byte-derived field count -> DECLINE at checker.
+        let Err(err) =
+            check_expr_fragment_plan_object(&bytes, "userName", projection_plan(real_ty, 5))
+        else {
+            panic!("projection past the field count must be declined at the checker")
+        };
+        assert!(
+            err.contains("outside struct"),
+            "wrong reason for out-of-range field: {err}"
+        );
+
+        // (a) wrong (but real) struct type index -> canonical bytes differ.
+        let wrong_ty = struct_counts
+            .keys()
+            .copied()
+            .find(|t| *t != real_ty && *t != carrier)
+            .expect("module has another struct type");
+        let (_order, _cert, _sidecar, matches, reason) =
+            check_expr_fragment_plan_object(&bytes, "userName", projection_plan(wrong_ty, 0))
+                .expect("wrong-type plan is well-formed but must not match");
+        assert!(
+            !matches,
+            "wrong struct type must fail canonical byte equality"
+        );
+        assert!(
+            reason.unwrap_or_default().contains("code_entry_bytes_match=false"),
+            "wrong-type mismatch should name the byte inequality"
+        );
+
+        // (b) field index flipped 0 -> 1: well-typed, wrong bytes.
+        let (_order, _cert, _sidecar, matches, _reason) =
+            check_expr_fragment_plan_object(&bytes, "userName", projection_plan(real_ty, 1))
+                .expect("flipped-field plan is well-formed but must not match");
+        assert!(
+            !matches,
+            "flipped field index must fail canonical byte equality"
+        );
+
+        // A bad producer plan must decline, never fall back to legacy classes.
+        let tampered = FragmentPlanArtifact {
+            export_name: "userName".to_string(),
+            plan: FragmentPlan::Expr(projection_plan(real_ty, 1)),
+        };
+        let checked = analyze_with_fragment_plans(&bytes, &[], &[tampered])
+            .expect("analysis reports the declined producer plan");
+        assert!(
+            !checked.certified_names().contains(&"userName".to_string()),
+            "tampered projection plan must not certify"
+        );
+        let reason = checked
+            .declined()
+            .iter()
+            .find(|(name, _)| name == "userName")
+            .map(|(_, reason)| reason.as_str())
+            .expect("userName should be declined");
+        assert!(
+            reason.contains("producer fragment plan does not match emitted wasm"),
+            "wrong tamper decline reason: {reason}"
+        );
+    }
+
+    /// Source-level type names in projection plans carry the MODEL trust
+    /// story (producer-asserted, not byte-derivable), but they must be
+    /// internally CONSISTENT: a projection whose claimed owner differs from
+    /// its value's declared type, or a `named:` type that no projection
+    /// anchors to a byte-derived struct index, declines fail-closed. A fully
+    /// coordinated relabel remains a read-surface change (equivalent to
+    /// shipping a different model) — see docs/certification.md "Read surface".
+    #[test]
+    fn field_projection_source_name_inconsistency_declines() {
+        let bytes = compile_probe_bytes(
+            r#"
+module ProjNameProbe
+    intent = "field projection source-name consistency probe"
+    depends []
+    exposes [User, userName, addTwo]
+
+record User
+  name: String
+  age: Int
+
+fn addTwo(x: Int) -> Int
+  ? "Pulls in the Int carrier and box helper."
+  x + 2
+
+fn userName(u: User) -> String
+  ? "Record field projection."
+  u.name
+"#,
+        );
+        let sym_projection_plan = |param_name: &str, owner: &str, field_ty: SymTy| SymPlan {
+            params: vec![SymTy::Named(param_name.to_string())],
+            result: field_ty.clone(),
+            body: SymBlock {
+                nodes: vec![
+                    SymNode {
+                        id: SymValueId(0),
+                        ty: SymTy::Named(param_name.to_string()),
+                        kind: SymNodeKind::Param { index: 0 },
+                    },
+                    SymNode {
+                        id: SymValueId(1),
+                        ty: field_ty.clone(),
+                        kind: SymNodeKind::ProjectField {
+                            type_name: owner.to_string(),
+                            field: 0,
+                            field_ty,
+                            value: SymValueId(0),
+                        },
+                    },
+                ],
+                result: SymValueId(1),
+            },
+        };
+
+        // Baseline sanity: the consistent plan is admitted and byte-matched.
+        let (_o, _c, _s, matches, reason) = check_sym_fragment_plan_object(
+            &bytes,
+            "userName",
+            sym_projection_plan("User", "User", SymTy::String),
+        )
+        .expect("consistent projection plan is admitted");
+        assert!(matches, "consistent plan must match bytes: {reason:?}");
+
+        // Owner name diverging from the projected value's declared type. The
+        // used-name anchor rule fires first here (`User` is used but never
+        // projected); the owner-vs-value rule is defense-in-depth behind it.
+        let Err(err) = check_sym_fragment_plan_object(
+            &bytes,
+            "userName",
+            sym_projection_plan("User", "Other", SymTy::String),
+        ) else {
+            panic!("owner/value name mismatch must be declined")
+        };
+        assert!(
+            err.contains("never projected") || err.contains("claims owner type"),
+            "wrong reason for owner mismatch: {err}"
+        );
+
+        // A named field type that no projection anchors to the bytes.
+        let Err(err) = check_sym_fragment_plan_object(
+            &bytes,
+            "userName",
+            sym_projection_plan("User", "User", SymTy::Named("Ghost".to_string())),
+        ) else {
+            panic!("unanchored named field type must be declined")
+        };
+        assert!(
+            err.contains("`Ghost` is never projected"),
+            "wrong reason for unanchored name: {err}"
+        );
+
+        // A named parameter that is never projected at all.
+        let bare = SymPlan {
+            params: vec![SymTy::Named("User".to_string())],
+            result: SymTy::Named("User".to_string()),
+            body: SymBlock {
+                nodes: vec![SymNode {
+                    id: SymValueId(0),
+                    ty: SymTy::Named("User".to_string()),
+                    kind: SymNodeKind::Param { index: 0 },
+                }],
+                result: SymValueId(0),
+            },
+        };
+        let Err(err) = check_sym_fragment_plan_object(&bytes, "userName", bare) else {
+            panic!("bare named passthrough must be declined")
+        };
+        assert!(
+            err.contains("never projected") || err.contains("no rendered proof face"),
+            "wrong reason for bare named passthrough: {err}"
         );
     }
 
@@ -610,7 +883,7 @@ fn subTwo(x: Int) -> Int
     i64.const 3 i64.const 4 i64.sub drop
     local.get 1)"#,
         );
-        let (_fns, _box_idx, _set, _carrier, _roles, host_table) =
+        let (_fns, _box_idx, _set, _carrier, _roles, host_table, _struct_counts) =
             disassemble(&bytes).expect("disassemble");
         assert_eq!(
             host_table.sub_idx,

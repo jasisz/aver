@@ -17,6 +17,18 @@ impl Cert {
         }
     }
 
+    /// The verbatim field-projection face of an ADT-ref expr fragment, when
+    /// this cert is an `ExprFragment` whose plan is exactly `struct.get ty
+    /// field∈{0,1}` of the single reference parameter. Renderers branch on
+    /// this to state the same obligation and proof the legacy field-projection
+    /// class ships (no weakening).
+    fn project_face(&self) -> Option<FragProjectFace> {
+        match self.inner() {
+            Cert::ExprFragment { plan, .. } => expr_fragment_project_face(plan),
+            _ => None,
+        }
+    }
+
     fn name(&self) -> &str {
         match self.inner() {
             Cert::StraightLine { name, .. }
@@ -179,6 +191,9 @@ impl Cert {
         let ascii = |s: &str| ascii_type_name(s);
         if self.int_add_face().is_some() {
             return ("List Int".to_string(), "Int".to_string());
+        }
+        if self.project_face().is_some() {
+            return ("WVal x WVal".to_string(), "WVal".to_string());
         }
         match self.inner() {
             Cert::StraightLine { .. }

@@ -165,6 +165,14 @@ def checkBlockFuel : Nat → List FragTy → FragBlock → Bool
         | .constF64Bits _ => some .f64
         | .structGet field receiver =>
             if hasTy checked receiver .intCarrier then carrierFieldTy? field else none
+        -- v1 admits only opaque reference fields out of user structs: the
+        -- projected value is handled verbatim (`adtRef`), never reinterpreted
+        -- as a scalar. Scalar-field projections need their own proof face
+        -- before they can be typed here. The node's `tyIdx`/`field` are bound
+        -- to the module bytes by the byte-exact gate and validated against the
+        -- byte-derived struct context by the Rust checker.
+        | .structGetUser _tyIdx _field value =>
+            if hasTy checked value .adtRef then some .adtRef else none
         | .refIsNull value =>
             if hasTy checked value .ref && isCarrierLimbField checked value
             then some .boolI32
@@ -214,6 +222,12 @@ def checkSymBlockFuel : Nat → List SymTy → SymBlock → Bool
               some (.named typeName)
             else
               none
+        -- Field projection is typed by the claimed field type; the claim is
+        -- honest because encoding + byte-exact lowering pin the projection to
+        -- the module's real struct layout (a lying `fieldTy` encodes to a
+        -- fragment the byte gate rejects).
+        | .projectField typeName _field fieldTy value =>
+            if hasSymTy checked value (.named typeName) then some fieldTy else none
         | .intConstCmp _ value _ =>
             if hasSymTy checked value .int && isSymParam checked value then some .bool else none
         | .ifElse cond thenBlock elseBlock =>
@@ -455,8 +469,12 @@ def encodeSymTy? : SymTy → Option FragTy
   | .float => some .f64
   | .bool => some .boolI32
   | .int => some .intCarrier
-  | .string => none
-  | .named _ => none
+  -- Strings and named user types are whole references at the representation
+  -- level: both encode to the opaque `adtRef`. String OPERATIONS still do not
+  -- encode (their nodes return `none` below); this only lets reference-typed
+  -- values flow verbatim through the field-projection face.
+  | .string => some .adtRef
+  | .named _ => some .adtRef
 
 def encodeSymTys? : List SymTy → Option (List FragTy)
   | [] => some []
@@ -482,6 +500,16 @@ def hostRoleIdx? (hostTable : List (HostRole × Nat)) (role : HostRole) : Option
   match hostTable with
   | [] => none
   | (r, idx) :: rest => if r = role then some idx else hostRoleIdx? rest role
+
+/-- Look up the resolved wasm struct type index for one source type name in the
+    byte-derived struct table an artifact claim carries. A name the table lacks
+    fail-closes the encoding (`none`). Like the host-role table, a wrong table
+    encodes to a representation plan whose canonical bytes cannot match the
+    module, so the claim fail-closes at the byte gate. -/
+def structTyIdx? (structTable : List (String × Nat)) (name : String) : Option Nat :=
+  match structTable with
+  | [] => none
+  | (n, idx) :: rest => if n = name then some idx else structTyIdx? rest name
 
 def symIntSmallConstCmpPrim? : SymIntCmp → Option FragPrim
   | .eq => some .i64Eq
@@ -555,9 +583,10 @@ def pushEncodedNode
   let (nodes, id) := appendFragNode st.nodes ty kind
   ({ st with nodes := nodes }, id)
 
-def encodeSymBlockFuel : Nat → List (HostRole × Nat) → SymBlock → Option FragBlock
-  | 0, _, _ => none
-  | fuel + 1, hostTable, block =>
+def encodeSymBlockFuel :
+    Nat → List (HostRole × Nat) → List (String × Nat) → SymBlock → Option FragBlock
+  | 0, _, _, _ => none
+  | fuel + 1, hostTable, structTable, block =>
       let encodeNode (st : SymEncodeState) (node : SymNode) : Option SymEncodeState := do
         if node.id = st.symToFrag.length then
           let fragTy ← encodeSymTy? node.ty
@@ -595,6 +624,18 @@ def encodeSymBlockFuel : Nat → List (HostRole × Nat) → SymBlock → Option 
                   let (st, id) := pushEncodedNode st fragTy (.prim prim fragArgs)
                   some { st with symToFrag := st.symToFrag ++ [id] }
           | .construct _ _ _ => none
+          | .projectField typeName field _fieldTy value =>
+              -- Only opaque reference fields encode: the projected value flows
+              -- verbatim through the field-projection face. Scalar fields have
+              -- no rendered proof face yet, so they fail-close the encoding.
+              if fragTy = FragTy.adtRef then
+                let tyIdx ← structTyIdx? structTable typeName
+                let value ← encodedValue? st value
+                let (st, id) :=
+                  pushEncodedNode st fragTy (.structGetUser tyIdx field value)
+                some { st with symToFrag := st.symToFrag ++ [id] }
+              else
+                none
           | .intConstCmp op value constant =>
               let carrier ← encodedValue? st value
               let index ← sourceParamIndex? block.nodes value
@@ -606,8 +647,8 @@ def encodeSymBlockFuel : Nat → List (HostRole × Nat) → SymBlock → Option 
               some { st with symToFrag := st.symToFrag ++ [id] }
           | .ifElse cond thenBlock elseBlock =>
               let cond ← encodedValue? st cond
-              let thenFrag ← encodeSymBlockFuel fuel hostTable thenBlock
-              let elseFrag ← encodeSymBlockFuel fuel hostTable elseBlock
+              let thenFrag ← encodeSymBlockFuel fuel hostTable structTable thenBlock
+              let elseFrag ← encodeSymBlockFuel fuel hostTable structTable elseBlock
               let (st, id) := pushEncodedNode st fragTy (.ifElse cond thenFrag elseFrag)
               some { st with symToFrag := st.symToFrag ++ [id] }
         else
@@ -625,16 +666,21 @@ def encodeSymBlockFuel : Nat → List (HostRole × Nat) → SymBlock → Option 
           | none => none
       | none => none
 
-def encodeSymBlock? (hostTable : List (HostRole × Nat)) (block : SymBlock) :
+def encodeSymBlock?
+    (hostTable : List (HostRole × Nat))
+    (structTable : List (String × Nat))
+    (block : SymBlock) :
     Option FragBlock :=
-  encodeSymBlockFuel maxFuel hostTable block
+  encodeSymBlockFuel maxFuel hostTable structTable block
 
 def encodeSymRawPlanToExprFragmentRawPlan
-    (hostTable : List (HostRole × Nat)) (plan : SymRawPlan) :
+    (hostTable : List (HostRole × Nat))
+    (structTable : List (String × Nat))
+    (plan : SymRawPlan) :
     Option ExprFragmentRawPlan :=
   if checkSymRawPlan plan then
     match encodeSymTys? plan.params, encodeSymTy? plan.result,
-          encodeSymBlock? hostTable plan.body with
+          encodeSymBlock? hostTable structTable plan.body with
     | some params, some result, some body =>
         some { profile := "expr-fragment-v1", params := params, result := result, body := body }
     | _, _, _ => none

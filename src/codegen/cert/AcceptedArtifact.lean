@@ -66,9 +66,11 @@ def symFragmentPlanAccepted
     (exportName : String)
     (carrier : Nat)
     (hostTable : List (HostRole × Nat))
+    (structTable : List (String × Nat))
     (plan : SymRawPlan)
     (obligation : Obligation) : Prop :=
-  match AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan hostTable plan with
+  match AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+      hostTable structTable plan with
   | some exprPlan =>
       exprFragmentPlanAccepted
         wasmBytes exportNameBytes exportName carrier exprPlan obligation
@@ -76,15 +78,17 @@ def symFragmentPlanAccepted
 
 /-- One source-level symbolic fragment claim inside an artifact certificate.
     This is the preferred v2 shape for fragments whose meaning can already be
-    stated in Aver-level terms. `hostTable` is representation context (the
-    byte-derived host-role indices), not part of the source plan: a wrong table
-    encodes to a representation plan that cannot match the byte-bound
-    `exprFragmentPlans` the checker pins, so the claim fail-closes. -/
+    stated in Aver-level terms. `hostTable`/`structTable` are representation
+    context (the byte-derived host-role and struct-type indices), not part of
+    the source plan: a wrong table encodes to a representation plan that cannot
+    match the byte-bound `exprFragmentPlans` the checker pins, so the claim
+    fail-closes. -/
 structure SymFragmentClaim where
   exportNameBytes : AverCert.WasmSlice.ByteSeq
   exportName      : String
   carrier         : Nat
   hostTable       : List (HostRole × Nat)
+  structTable     : List (String × Nat)
   plan            : SymRawPlan
   obligation      : Obligation
 
@@ -97,6 +101,7 @@ def symFragmentClaimAccepted
     claim.exportName
     claim.carrier
     claim.hostTable
+    claim.structTable
     claim.plan
     claim.obligation
 
@@ -347,7 +352,7 @@ def symFragmentClaimPlanPairs
 def symFragmentClaimEncodedPlanPair?
     (claim : SymFragmentClaim) : Option (String × ExprFragmentRawPlan) :=
   match AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
-      claim.hostTable claim.plan with
+      claim.hostTable claim.structTable claim.plan with
   | some exprPlan => some (claim.exportName, exprPlan)
   | none => none
 

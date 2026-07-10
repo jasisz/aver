@@ -44,6 +44,12 @@ inductive FragTy where
   | i64
   | rawI32
   | ref
+  /-- Opaque user-ADT / record reference. Unlike `ref` (an Int-carrier limb),
+      this is a whole user struct/array reference handled verbatim. The concrete
+      wasm type index is never part of the type: it lives on the projecting
+      node (`structGetUser`) and is bound to the module bytes by the byte-exact
+      gate, mirroring how `hostCall` carries its resolved function index. -/
+  | adtRef
 deriving Repr, DecidableEq
 
 /-- Source-level types for the planned `SymPlan` grammar. This intentionally
@@ -68,6 +74,9 @@ def FragTy.sourceTy? : FragTy → Option SymTy
   | .i64 => none
   | .rawI32 => none
   | .ref => none
+  -- An opaque ADT reference names no single source type by itself; the source
+  -- meaning lives in the `SymPlan` node that produced it.
+  | .adtRef => none
 
 /-- Source-level primitive operations admitted by the initial `SymPlan`
     scaffold. `intAdd` is exact integer addition on Aver `Int` (ℤ); its
@@ -101,6 +110,11 @@ mutual
     | constStringBytes (bytes : List Nat)
     | prim (op : SymPrim) (args : List Nat)
     | construct (typeName ctorName : String) (args : List Nat)
+    /-- Source-level record/ADT field projection: read declared field `field`
+        (source declaration order) of a value of the named user type. `fieldTy`
+        is the field's source type; encoding binds the projection to the exact
+        wasm struct type index through the byte-derived struct table. -/
+    | projectField (typeName : String) (field : Nat) (fieldTy : SymTy) (value : Nat)
     | intConstCmp (op : SymIntCmp) (value : Nat) (constant : Int)
     | ifElse (cond : Nat) (thenBlock elseBlock : SymBlock)
   deriving Repr
@@ -158,6 +172,12 @@ mutual
     | constI32 (value : Int)
     | constF64Bits (bits : Nat)
     | structGet (field : Nat) (receiver : Nat)
+    /-- Projection of `field` out of a user struct of wasm type `tyIdx` (a whole
+        record/ADT, not the Int carrier). The type index is node data bound to
+        the module bytes by the byte-exact gate and validated against the
+        byte-derived struct context by the Rust checker, mirroring `hostCall`'s
+        resolved function index. -/
+    | structGetUser (tyIdx : Nat) (field : Nat) (value : Nat)
     | refIsNull (value : Nat)
     | prim (op : FragPrim) (args : List Nat)
     | hostCall (role : HostRole) (funcIdx : Nat) (args : List Nat)

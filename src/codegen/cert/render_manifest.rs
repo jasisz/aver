@@ -19,6 +19,25 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
             arity = c.arity(),
         );
     }
+    // An ADT-ref expr fragment with the field-projection face states the SAME
+    // verbatim projection obligation the legacy field-projection class ships:
+    // a two-field struct in, the projected field out unchanged.
+    if let Some(face) = c.project_face() {
+        let model = if face.field_idx == 0 { "p.1" } else { "p.2" };
+        return format!(
+            "abbrev {name}Ob : Schema.Obligation :=\n  \
+             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+             Dom := WVal × WVal, Cod := WVal,\n    \
+             domRepr := fun _ p vs => vs = [.structv {struct_idx} [p.1, p.2]],\n    \
+             codRepr := fun S v w => verbatimRepr S v w,\n    \
+             model := fun p => {model} }}\n\n",
+            carrier = c.carrier(),
+            host = c.host_expr(),
+            self_idx = c.self_idx(),
+            struct_idx = face.struct_idx,
+        );
+    }
     match c.inner() {
         Cert::AdtConstructor {
             struct_idx,
@@ -137,9 +156,11 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
             let cod_repr = match plan.result {
                 FragTy::F64 => "fun S bits w => floatBitsRepr S bits w",
                 FragTy::BoolI32 => "fun S b w => boolRepr S b w",
-                FragTy::IntCarrier | FragTy::I64 | FragTy::RawI32 | FragTy::Ref => {
-                    "fun S v w => verbatimRepr S v w"
-                }
+                FragTy::IntCarrier
+                | FragTy::I64
+                | FragTy::RawI32
+                | FragTy::Ref
+                | FragTy::AdtRef => "fun S v w => verbatimRepr S v w",
             };
             let model =
                 expr_fragment_value_expr(&plan.body, plan.body.result, &|idx, _ty| {

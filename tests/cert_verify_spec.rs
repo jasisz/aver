@@ -2707,3 +2707,215 @@ fn composition_callee_mutation_is_declined() {
         "tampered composition cert must not verify:\n{out}"
     );
 }
+
+/// S2a field-projection tamper: flipping the projected field index 0 -> 1 in
+/// `userName`'s source SymPlan sidecar (with the sidecar sha rebound in the
+/// JSON manifest, so only the plan-vs-bytes gate is in play) lowers to
+/// `struct.get ty 1` — canonical code-entry bytes that do not match the
+/// module — and must be DECLINED, never silently re-admitted through the
+/// legacy field-projection classifier.
+#[test]
+fn cert_verify_declines_flipped_field_projection_sidecar() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping field-projection sidecar tamper test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-proj-sidecar");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/cert_goals.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify goals failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let user_entry = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"].as_str() == Some("userName"))
+        .expect("userName manifest entry");
+    assert_eq!(
+        user_entry["class"].as_str(),
+        Some("expr-fragment-v1"),
+        "userName should be plan-first before tampering"
+    );
+    let source_plan = user_entry["source_fragment"]["plan"]
+        .as_str()
+        .expect("userName source plan path")
+        .to_string();
+
+    let tamper_dir = temp_dir("cert-proj-sidecar-flip");
+    copy_dir(&out_dir, &tamper_dir);
+    let tamper_wasm = tamper_dir.join("cert_goals.wasm");
+    let tamper_cert = tamper_dir.join("cert");
+    let sidecar_path = tamper_cert.join(&source_plan);
+    let sidecar_text = std::fs::read_to_string(&sidecar_path).unwrap();
+    let tampered_text = sidecar_text.replacen(
+        "project.field type=User field=0",
+        "project.field type=User field=1",
+        1,
+    );
+    assert_ne!(
+        sidecar_text, tampered_text,
+        "userName sidecar shape changed"
+    );
+    std::fs::write(&sidecar_path, &tampered_text).unwrap();
+    let mf = tamper_cert.join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    let entry = m["certified"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|c| c["name"].as_str() == Some("userName"))
+        .expect("userName sidecar entry");
+    entry["source_fragment"]["plan_sha256"] =
+        serde_json::Value::String(aver::codegen::cert::sha256_hex(tampered_text.as_bytes()));
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+
+    let (ok, out) = aver_verify(&tamper_wasm, &tamper_cert);
+    assert!(
+        !ok,
+        "flipped field-projection sidecar must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("source plan-first canonical lowering")
+            && out.contains("does not match the actual wasm code-entry"),
+        "wrong reason for flipped projection field:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "flipped field-projection sidecar credited:\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let _ = std::fs::remove_dir_all(&tamper_dir);
+}
+
+/// Cross-vendor review follow-up (S2a): source-level TYPE NAMES in projection
+/// claims carry the MODEL trust story — the kernel-checked content is the
+/// byte-derived struct identity (type index + field index), while `named:`
+/// types are producer-asserted annotations (docs/certification.md, "Read
+/// surface"). What the checker DOES enforce is consistency across the
+/// artifact: a PARTIAL relabel (the `userName` sidecar renamed
+/// `named:User`/`type=User` -> `Other` with its sha rebound, but the
+/// Lean-side `Plans.lean`/`Artifact.lean` claims untouched) diverges from the
+/// checker-rendered plan terms, fails the kernel `rfl` pins, and must be
+/// DECLINED. A FULLY coordinated relabel of every surface at once is a
+/// read-surface change equivalent to shipping a different model — out of
+/// scope for a decline (and deliberately NOT asserted as accepted here);
+/// binding names to true source provenance is the planned provenance flip.
+#[test]
+fn cert_verify_declines_relabeled_projection_source_types() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping projection relabel tamper test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-proj-relabel");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/cert_goals.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify goals failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let user_entry = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"].as_str() == Some("userName"))
+        .expect("userName manifest entry");
+    let source_plan = user_entry["source_fragment"]["plan"]
+        .as_str()
+        .expect("userName source plan path")
+        .to_string();
+
+    let tamper_dir = temp_dir("cert-proj-relabel-partial");
+    copy_dir(&out_dir, &tamper_dir);
+    let tamper_wasm = tamper_dir.join("cert_goals.wasm");
+    let tamper_cert = tamper_dir.join("cert");
+    let sidecar_path = tamper_cert.join(&source_plan);
+    let sidecar_text = std::fs::read_to_string(&sidecar_path).unwrap();
+    // A sidecar-internally CONSISTENT rename (params + node type + projection
+    // owner), so the Rust-side intra-plan consistency checks pass and the
+    // decline is forced by the cross-file kernel pins alone.
+    let tampered_text = sidecar_text
+        .replace("named:User", "named:Other")
+        .replace("type=User", "type=Other");
+    assert_ne!(
+        sidecar_text, tampered_text,
+        "userName sidecar shape changed"
+    );
+    std::fs::write(&sidecar_path, &tampered_text).unwrap();
+    let mf = tamper_cert.join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    let entry = m["certified"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|c| c["name"].as_str() == Some("userName"))
+        .expect("userName sidecar entry");
+    entry["source_fragment"]["plan_sha256"] =
+        serde_json::Value::String(aver::codegen::cert::sha256_hex(tampered_text.as_bytes()));
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+
+    let (ok, out) = aver_verify(&tamper_wasm, &tamper_cert);
+    assert!(
+        !ok,
+        "partially relabeled projection source types must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("does not bind"),
+        "wrong reason for partial source-type relabel:\n{out}"
+    );
+    assert!(
+        !out.contains("did not build"),
+        "partial relabel must be caught by the kernel witness, not a broken build:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "partially relabeled projection source types credited:\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let _ = std::fs::remove_dir_all(&tamper_dir);
+}

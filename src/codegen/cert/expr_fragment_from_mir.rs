@@ -3,23 +3,41 @@
 /// (`add(param0, box(k))`): a bare Int passthrough or any other
 /// carrier-returning shape has no coherent face yet (its `Cod` would read as
 /// `Int` while `codRepr` falls to the verbatim `WVal` relation), so it must
-/// never be selected here nor accepted by the verifier.
+/// never be selected here nor accepted by the verifier. Likewise, `AdtRef`
+/// values are admitted ONLY through the exact field-projection face: any other
+/// ADT-ref plan (a bare reference passthrough, a projection chain) stays
+/// unplanned here and declines fail-closed at the verifier.
 fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan) -> bool {
-    plan.result != FragTy::IntCarrier || expr_fragment_int_add_face(plan).is_some()
+    let int_face_ok =
+        plan.result != FragTy::IntCarrier || expr_fragment_int_add_face(plan).is_some();
+    let adt_face_ok =
+        !expr_fragment_plan_touches_adt_ref(plan) || expr_fragment_project_face(plan).is_some();
+    int_face_ok && adt_face_ok
 }
+
+/// Producer-side record layout resolver: `(record type name, field name) ->
+/// (declared field index, field source type name)`. Backed by the wasm-gc
+/// emitter's type registry; returns `None` for newtypes/carriers (whose field
+/// reads are identity, not `struct.get`), so those never plan a projection.
+pub(crate) type RecordFieldLookup<'a> = &'a dyn Fn(&str, &str) -> Option<(u32, String)>;
 
 pub(crate) fn fragment_plan_from_mir_fn(
     mir_fn: &crate::ir::mir::MirFn,
+    record_fields: RecordFieldLookup,
 ) -> Option<FragmentPlan> {
-    // Encodability gate at MIR time uses a placeholder host table (indices do
-    // not affect encoding SHAPE) and requires full canonical BYTE lowering to
-    // succeed, because the wasm-gc emitter emits the function body from this
-    // plan: a plan that cannot byte-lower must never be selected. The face
-    // gate mirrors the verifier: carrier-returning plans without the
-    // straight-line integer face stay unplanned (fail-closed decline there,
+    // Encodability gate at MIR time uses placeholder host/struct tables
+    // (indices do not affect encoding SHAPE) and requires full canonical BYTE
+    // lowering to succeed, because the wasm-gc emitter emits the function body
+    // from this plan: a plan that cannot byte-lower must never be selected.
+    // The face gate mirrors the verifier: carrier-returning plans without the
+    // straight-line integer face, and ADT-ref plans without the
+    // field-projection face, stay unplanned (fail-closed decline there,
     // untouched bytes here).
-    if let Some(plan) = sym_plan_from_mir_fn(mir_fn)
-        && let Some(frag) = plan.to_expr_fragment_plan(&FragHostTable::placeholder())
+    if let Some(plan) = sym_plan_from_mir_fn(mir_fn, record_fields)
+        && let Some(frag) = plan.to_expr_fragment_plan(
+            &FragHostTable::placeholder(),
+            &FragStructTable::placeholder_for(&plan),
+        )
         && lower_expr_fragment_plan_code_entry_bytes(&frag, 0).is_ok()
         && expr_fragment_plan_has_face(&frag)
     {
@@ -39,10 +57,18 @@ pub(crate) fn fragment_plan_from_mir_fn(
 pub(crate) fn expr_fragment_plan_from_mir_fn(
     mir_fn: &crate::ir::mir::MirFn,
 ) -> Option<ExprFragmentPlan> {
-    fragment_plan_from_mir_fn(mir_fn)?.to_expr_fragment_plan(&FragHostTable::placeholder())
+    let plan = fragment_plan_from_mir_fn(mir_fn, &|_, _| None)?;
+    let struct_table = match &plan {
+        FragmentPlan::Sym(sym) => FragStructTable::placeholder_for(sym),
+        FragmentPlan::Expr(_) => FragStructTable::default(),
+    };
+    plan.to_expr_fragment_plan(&FragHostTable::placeholder(), &struct_table)
 }
 
-pub(crate) fn sym_plan_from_mir_fn(mir_fn: &crate::ir::mir::MirFn) -> Option<SymPlan> {
+pub(crate) fn sym_plan_from_mir_fn(
+    mir_fn: &crate::ir::mir::MirFn,
+    record_fields: RecordFieldLookup,
+) -> Option<SymPlan> {
     if !mir_fn.effects.is_empty() {
         return None;
     }
@@ -61,6 +87,7 @@ pub(crate) fn sym_plan_from_mir_fn(mir_fn: &crate::ir::mir::MirFn) -> Option<Sym
     let result = sym_ty_from_mir_name(&mir_fn.return_type)?;
     let mut builder = MirSymPlanBuilder {
         params_by_slot: &params_by_slot,
+        record_fields,
         nodes: Vec::new(),
     };
     let (root, root_ty) = builder.lower_expr(&mir_fn.body)?;
@@ -114,9 +141,34 @@ fn sym_ty_from_mir_name(ty: &str) -> Option<SymTy> {
         "Int" => Some(SymTy::Int),
         "Float" => Some(SymTy::Float),
         "Bool" => Some(SymTy::Bool),
-        "String" => Some(SymTy::String),
+        // MIR carries the resolver type's Debug rendering: the source String
+        // type prints as `Str`.
+        "String" | "Str" => Some(SymTy::String),
         "" => None,
-        other => Some(SymTy::Named(other.to_string())),
+        other => {
+            // User records/ADTs print as `Named { id: ..., name: "User" }`;
+            // extract the source name. Anything else keeps the pre-existing
+            // whole-token fallback.
+            if let Some(name) = mir_named_type_name(other) {
+                return Some(SymTy::Named(name));
+            }
+            Some(SymTy::Named(other.to_string()))
+        }
+    }
+}
+
+/// Extract the source type name from the resolver `Type::Named` Debug
+/// rendering (`Named { id: ..., name: "User" }`). Returns `None` for any
+/// other shape or a non-canonical name token.
+fn mir_named_type_name(ty: &str) -> Option<String> {
+    let rest = ty.strip_prefix("Named {")?.strip_suffix('}')?;
+    let idx = rest.find("name: \"")?;
+    let after = &rest[idx + 7..];
+    let name = &after[..after.find('"')?];
+    if !name.is_empty() && !name.chars().any(char::is_whitespace) && !name.contains('=') {
+        Some(name.to_string())
+    } else {
+        None
     }
 }
 
@@ -131,6 +183,7 @@ fn expr_fragment_ty_from_mir_name(ty: &str) -> Option<FragTy> {
 
 struct MirSymPlanBuilder<'a> {
     params_by_slot: &'a std::collections::HashMap<u32, (u32, SymTy)>,
+    record_fields: RecordFieldLookup<'a>,
     nodes: Vec<SymNode>,
 }
 
@@ -157,6 +210,28 @@ impl MirSymPlanBuilder<'_> {
                 self.push_node(ty, SymNodeKind::Param { index })
             }
             crate::ir::mir::MirExpr::BinOp(binop) => self.lower_binop(&binop.node),
+            crate::ir::mir::MirExpr::Project(spanned_proj) => {
+                // Record field access `base.field`: only a named-record base
+                // resolvable through the emitter's registry plans a
+                // projection; newtypes/carriers (identity reads) and unknown
+                // layouts return `None` from the lookup and stay unplanned.
+                let proj = &spanned_proj.node;
+                let (value, base_ty) = self.lower_expr(&proj.base)?;
+                let SymTy::Named(type_name) = base_ty else {
+                    return None;
+                };
+                let (field, field_ty_name) = (self.record_fields)(&type_name, &proj.field)?;
+                let field_ty = sym_ty_from_mir_name(&field_ty_name)?;
+                self.push_node(
+                    field_ty.clone(),
+                    SymNodeKind::ProjectField {
+                        type_name,
+                        field,
+                        field_ty,
+                        value,
+                    },
+                )
+            }
             crate::ir::mir::MirExpr::IfThenElse(ite) => self.lower_if(&ite.node),
             _ => None,
         }
@@ -282,6 +357,7 @@ impl MirSymPlanBuilder<'_> {
 
         let mut then_builder = MirSymPlanBuilder {
             params_by_slot: self.params_by_slot,
+            record_fields: self.record_fields,
             nodes: Vec::new(),
         };
         let (then_root, then_ty) = then_builder.lower_expr(&ite.then_branch)?;
@@ -289,6 +365,7 @@ impl MirSymPlanBuilder<'_> {
 
         let mut else_builder = MirSymPlanBuilder {
             params_by_slot: self.params_by_slot,
+            record_fields: self.record_fields,
             nodes: Vec::new(),
         };
         let (else_root, else_ty) = else_builder.lower_expr(&ite.else_branch)?;
@@ -744,7 +821,7 @@ mod tests {
     #[test]
     fn direct_float_mir_prefers_source_level_sym_plan() {
         let mir_fn = float_binop_fn(BinOp::Add);
-        let plan = fragment_plan_from_mir_fn(&mir_fn).expect("plan");
+        let plan = fragment_plan_from_mir_fn(&mir_fn, &|_, _| None).expect("plan");
         let FragmentPlan::Sym(sym) = plan else {
             panic!("direct source-level float fragment should use SymPlan")
         };
@@ -769,11 +846,11 @@ mod tests {
         // keeps its ordinary MIR-emitted body and declines fail-closed at
         // classification (see `idGoal` in the goal-matrix fixture).
         let mir_fn = int_identity_fn();
-        let sym = sym_plan_from_mir_fn(&mir_fn).expect("sym plan exists");
+        let sym = sym_plan_from_mir_fn(&mir_fn, &|_, _| None).expect("sym plan exists");
         assert_eq!(sym.params, vec![SymTy::Int]);
         assert_eq!(sym.result, SymTy::Int);
         let expr_plan = sym
-            .to_expr_fragment_plan(&FragHostTable::placeholder())
+            .to_expr_fragment_plan(&FragHostTable::placeholder(), &FragStructTable::default())
             .expect("source int identity encodes to a representation plan");
         assert_eq!(expr_plan.result, FragTy::IntCarrier);
         assert!(
@@ -781,7 +858,7 @@ mod tests {
             "carrier identity must not have a rendered proof face"
         );
         assert!(
-            fragment_plan_from_mir_fn(&mir_fn).is_none(),
+            fragment_plan_from_mir_fn(&mir_fn, &|_, _| None).is_none(),
             "producer must not select a carrier-returning plan without the \
              straight-line integer face"
         );
@@ -790,7 +867,7 @@ mod tests {
     #[test]
     fn int_carrier_comparison_prefers_source_level_sym_plan() {
         let mir_fn = int_predicate_fn(BinOp::Lt, int_local(0), int_lit(0));
-        let plan = fragment_plan_from_mir_fn(&mir_fn).expect("plan");
+        let plan = fragment_plan_from_mir_fn(&mir_fn, &|_, _| None).expect("plan");
         let FragmentPlan::Sym(sym) = plan else {
             panic!("source-level int const comparison should use SymPlan")
         };
@@ -861,6 +938,85 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    fn user_name_projection_fn() -> MirFn {
+        MirFn {
+            fn_id: FnId(0),
+            name: "userName".to_string(),
+            params: vec![MirParam {
+                local: LocalId(0),
+                name: "u".to_string(),
+                ty: "User".to_string(),
+            }],
+            return_type: "String".to_string(),
+            effects: vec![],
+            body: span(MirExpr::Project(span(crate::ir::mir::MirProject {
+                base: Box::new(int_local(0)),
+                field: "name".to_string(),
+            }))),
+            local_count: 1,
+            aliased_slots: std::sync::Arc::new(Vec::new()),
+            repr: MirFnRepr::default(),
+        }
+    }
+
+    #[test]
+    fn record_string_field_projection_plans_through_the_project_face() {
+        let mir_fn = user_name_projection_fn();
+        let record_fields = |record: &str, field: &str| -> Option<(u32, String)> {
+            (record == "User" && field == "name").then(|| (0, "String".to_string()))
+        };
+        let plan = fragment_plan_from_mir_fn(&mir_fn, &record_fields).expect("plan");
+        let FragmentPlan::Sym(sym) = &plan else {
+            panic!("record projection should plan as a source-level SymPlan")
+        };
+        assert_eq!(sym.params, vec![SymTy::Named("User".to_string())]);
+        assert_eq!(sym.result, SymTy::String);
+        assert!(matches!(
+            &sym.body.nodes[1].kind,
+            SymNodeKind::ProjectField {
+                type_name,
+                field: 0,
+                field_ty: SymTy::String,
+                value: SymValueId(0),
+            } if type_name == "User"
+        ));
+        let frag = sym
+            .to_expr_fragment_plan(
+                &FragHostTable::placeholder(),
+                &FragStructTable::placeholder_for(sym),
+            )
+            .expect("projection encodes to a representation plan");
+        assert!(
+            expr_fragment_project_face(&frag).is_some(),
+            "encoded projection must match the field-projection face"
+        );
+    }
+
+    #[test]
+    fn record_int_field_projection_stays_unplanned_without_a_face() {
+        // `pairFst`-style Int-field reads have no verbatim projection face:
+        // the SymPlan exists, but the encoder fail-closes (scalar field), so
+        // the export keeps its MIR-emitted body and legacy classification.
+        let mut mir_fn = user_name_projection_fn();
+        mir_fn.return_type = "Int".to_string();
+        let record_fields = |record: &str, field: &str| -> Option<(u32, String)> {
+            (record == "User" && field == "name").then(|| (0, "Int".to_string()))
+        };
+        assert!(
+            fragment_plan_from_mir_fn(&mir_fn, &record_fields).is_none(),
+            "scalar-field projection must stay unplanned"
+        );
+    }
+
+    #[test]
+    fn record_projection_without_layout_lookup_stays_unplanned() {
+        let mir_fn = user_name_projection_fn();
+        assert!(
+            fragment_plan_from_mir_fn(&mir_fn, &|_, _| None).is_none(),
+            "projection over an unknown record layout must stay unplanned"
+        );
     }
 
     #[test]

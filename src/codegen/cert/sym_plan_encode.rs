@@ -1,10 +1,12 @@
 fn expr_fragment_block_from_sym(
     block: &SymBlock,
     host_table: &FragHostTable,
+    struct_table: &FragStructTable,
 ) -> Option<FragBlock> {
     let mut encoder = SymToFragEncoder {
         source_nodes: &block.nodes,
         host_table,
+        struct_table,
         nodes: Vec::new(),
         sym_to_frag: Vec::new(),
     };
@@ -21,6 +23,7 @@ fn expr_fragment_block_from_sym(
 struct SymToFragEncoder<'a> {
     source_nodes: &'a [SymNode],
     host_table: &'a FragHostTable,
+    struct_table: &'a FragStructTable,
     nodes: Vec<FragNode>,
     sym_to_frag: Vec<FragValueId>,
 }
@@ -83,6 +86,30 @@ impl SymToFragEncoder<'_> {
                 )
             }
             SymNodeKind::Construct { .. } => return None,
+            SymNodeKind::ProjectField {
+                type_name,
+                field,
+                field_ty: _,
+                value,
+            } => {
+                // Only opaque reference fields encode: the projected value
+                // flows verbatim through the field-projection face. Scalar
+                // fields have no rendered proof face yet, so they fail-close
+                // the encoding (twin of the Lean encoder arm).
+                if ty != FragTy::AdtRef {
+                    return None;
+                }
+                let ty_idx = self.struct_table.lookup(type_name)?;
+                let value = *self.sym_to_frag.get(value.0)?;
+                self.push_node(
+                    ty,
+                    FragNodeKind::StructGetUser {
+                        ty_idx,
+                        field: *field,
+                        value,
+                    },
+                )
+            }
             SymNodeKind::IntConstCmp {
                 op,
                 value,
@@ -101,10 +128,12 @@ impl SymToFragEncoder<'_> {
                         then_block: Box::new(expr_fragment_block_from_sym(
                             then_block,
                             self.host_table,
+                            self.struct_table,
                         )?),
                         else_block: Box::new(expr_fragment_block_from_sym(
                             else_block,
                             self.host_table,
+                            self.struct_table,
                         )?),
                     },
                 )
