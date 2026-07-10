@@ -3662,7 +3662,54 @@ fn verbatim_kernel_guards_are_isolating() {
     );
     lean.push_str("example : AcceptedArtifact.verbatimPayloadsBound unaryMod planAlphB.body = false := rfl\n\n");
     // FIX 2(c): an out-of-range payload element is rejected up front.
-    lean.push_str("example : PlanCheck.checkVerbatimRawPlan { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultHeapTy := 5, body := .leaf (.arrayNewData 5 0 [256]) } = false := rfl\n");
+    lean.push_str("example : PlanCheck.checkVerbatimRawPlan { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultHeapTy := 5, body := .leaf (.arrayNewData 5 0 [256]) } = false := rfl\n\n");
+
+    // NULLABILITY isolation (re-review FIX 2): the certified verbatim signature is
+    // `[eqref] -> [(ref null resultHeapTy)]` — the `0x63` nullable form the
+    // `ref.null` default requires. A non-null `0x64` result is rejected. The only
+    // byte differing between `unaryMod` and `nonNullMod` is `0x63 -> 0x64`, so the
+    // byte-derived binding and code entry are IDENTICAL (the reftype is never in
+    // the code entry) — only `checkVerbatimFuncType` tells them apart.
+    lean.push_str(
+        "example : WasmSlice.checkVerbatimFuncType 5 [96, 1, 109, 1, 99, 5] = true := rfl\n",
+    );
+    lean.push_str(
+        "example : WasmSlice.checkVerbatimFuncType 5 [96, 1, 109, 1, 100, 5] = false := rfl\n",
+    );
+    lean.push_str(
+        "def nonNullMod : List Nat := hdr ++ [1, 7, 1, 96, 1, 109, 1, 100, 5] ++ tailSecs\n",
+    );
+    lean.push_str("example : WasmSlice.funcBindingForExport nonNullMod nameF = WasmSlice.funcBindingForExport unaryMod nameF := rfl\n");
+    lean.push_str("example : WasmSlice.codeEntryForExport nonNullMod nameF = WasmSlice.codeEntryForExport unaryMod nameF := rfl\n");
+    lean.push_str("example : WasmSlice.verbatimFuncTypeMatches nonNullMod 0 5 = false := rfl\n\n");
+
+    // PARSER STRICTNESS isolation (re-review FIX 3): the type-section and
+    // data-section walkers parse EVERY declared entry/segment and require EXACT
+    // payload exhaustion, so a valid entry followed by trailing bytes, or a count
+    // that does not match the bytes, declines — and an over-wide LEB is rejected
+    // by the width cap. The honest single-entry sections still match.
+    // Type section: a trailing `0xff` after the one valid func type.
+    lean.push_str("def trailingTypeMod : List Nat := hdr ++ [1, 8, 1, 96, 1, 109, 1, 99, 5, 255] ++ tailSecs\n");
+    lean.push_str(
+        "example : WasmSlice.verbatimFuncTypeMatches trailingTypeMod 0 5 = false := rfl\n",
+    );
+    // Type section: count claims 2 rectypes but only 1 is present.
+    lean.push_str("def countMismatchTypeMod : List Nat := hdr ++ [1, 7, 2, 96, 1, 109, 1, 99, 5] ++ tailSecs\n");
+    lean.push_str(
+        "example : WasmSlice.verbatimFuncTypeMatches countMismatchTypeMod 0 5 = false := rfl\n",
+    );
+    // Data section: a trailing `0xff` after the one valid segment.
+    lean.push_str(
+        "def dataTrailMod : List Nat := hdr ++ [11, 9, 1, 1, 5, 97, 108, 112, 104, 97, 255]\n",
+    );
+    lean.push_str("example : WasmSlice.dataSegmentBytes dataTrailMod 0 = none := rfl\n");
+    // Data section: count claims 2 segments but only 1 is present.
+    lean.push_str(
+        "def dataCountMismatchMod : List Nat := hdr ++ [11, 8, 2, 1, 5, 97, 108, 112, 104, 97]\n",
+    );
+    lean.push_str("example : WasmSlice.dataSegmentBytes dataCountMismatchMod 0 = none := rfl\n");
+    // Over-wide (6-byte) unsigned LEB32 exceeds the u32 width cap and declines.
+    lean.push_str("example : WasmSlice.readUleb32 [128, 128, 128, 128, 128, 0] = none := rfl\n");
 
     let out_dir = temp_dir("cert-verbatim-guard-iso");
     let compile = Command::new(env!("CARGO_BIN_EXE_aver"))

@@ -165,11 +165,13 @@ fn nr_ref_dispatch_match(
         }
         // Typed admission: exactly one user ADT (eqref) value in — a two-parameter
         // dispatch keeps a byte-identical code entry, so a unary obligation must
-        // not be certified for a binary export. The ref-returning case is pinned
-        // in-kernel to the `[eqref] -> [ref]` signature via the plan path.
+        // not be certified for a binary export — and exactly one result of the
+        // kind the default implies (a nullable ref here; the plan path additionally
+        // pins the exact `[eqref] -> [(ref null) resultHeapTy]` signature in-kernel).
         if f.calls.is_empty()
             && matches!(f.params.as_slice(), [TyKind::Eqref])
             && let Some(default) = verbatim_default_from_ops(&miss_ops)
+            && verbatim_results_ok(&f.results, &default)
         {
             return Some(Cert::VerbatimWidenedMatch {
                 name: f.name.clone(),

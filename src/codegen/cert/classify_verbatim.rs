@@ -1,3 +1,22 @@
+/// The COMPLETE result-kind vector of a verbatim dispatch must be exactly one
+/// result of the kind its fall-through default implies: a scalar `f64` default
+/// returns `f64` (the legacy no-plan route), and every reference-producing
+/// default (`ref.null`, `array.new_data`) — like the field-projection hit of a
+/// widened match — returns a NULLABLE reference (`ref null`, the exact form the
+/// certified `[eqref] -> [(ref null) resultHeapTy]` signature promises). A
+/// zero-result, two-result, non-nullable-reference, or scalar-integer signature
+/// is declined. The plan-backed reference case is additionally pinned in-kernel
+/// to the exact concrete type by `verbatimFuncTypeMatches`; this belt binds the
+/// legacy `f64` route, which never reaches that kernel check.
+fn verbatim_results_ok(results: &[TyKind], default: &VerbatimDefault) -> bool {
+    match default {
+        VerbatimDefault::F64Bits(_) => matches!(results, [TyKind::F64]),
+        VerbatimDefault::Null | VerbatimDefault::Array { .. } => {
+            matches!(results, [TyKind::Ref { nullable: true, .. }])
+        }
+    }
+}
+
 fn verbatim_default_from_ops(ops: &[Op]) -> Option<VerbatimDefault> {
     match ops {
         [Op::RefNull(_)] => Some(VerbatimDefault::Null),
@@ -59,6 +78,11 @@ fn nr_verbatim_variant_dispatch(
     if arms.is_empty() {
         return None;
     }
+    // Exactly one result of the kind the default implies (binds the legacy f64
+    // route's signature, and rejects a forged extra/zero result).
+    if !verbatim_results_ok(&f.results, &default) {
+        return None;
+    }
     let mut tags: Vec<u32> = arms.iter().map(|(t, _)| *t).collect();
     tags.sort_unstable();
     tags.dedup();
@@ -86,10 +110,10 @@ fn nr_string_eq_verbatim_match(
     if f.arity != 1 {
         return None;
     }
-    let [TyKind::Ref(param_ty)] = f.params.as_slice() else {
+    let [TyKind::Ref { idx: param_ty, .. }] = f.params.as_slice() else {
         return None;
     };
-    if f.result != Some(TyKind::Ref(*param_ty)) {
+    if !matches!(f.result, Some(TyKind::Ref { idx, .. }) if idx == *param_ty) {
         return None;
     }
     let (arms, default, string_eq_idx) = string_eq_verbatim_chain(&body.tree, host_roles)?;
@@ -129,11 +153,11 @@ fn nr_string_concat_verbatim_match(
     if f.arity != 1 {
         return None;
     }
-    let [TyKind::Ref(param_ty)] = f.params.as_slice() else {
+    let [TyKind::Ref { idx: param_ty, .. }] = f.params.as_slice() else {
         return None;
     };
     // The result must be a (ref) string array too — concat returns a string.
-    let Some(TyKind::Ref(result_ty)) = f.result else {
+    let Some(TyKind::Ref { idx: result_ty, .. }) = f.result else {
         return None;
     };
     let string_ty = *param_ty;

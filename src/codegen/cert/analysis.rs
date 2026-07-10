@@ -480,6 +480,33 @@ fn addTwo(x: Int) -> Int
             .bytes
     }
 
+    /// FIX A admission gate: `disassemble` runs full wasm validation BEFORE any
+    /// rederivation, so no byte-derived fact is ever trusted from a module that
+    /// is not well-typed wasm. An honest module passes; a truncated one and one
+    /// carrying an out-of-range section id are rejected up front. Weakening the
+    /// gate (dropping the `Validator::validate_all` call) makes the two negative
+    /// cases pass — this is the sole line that fails then.
+    #[test]
+    fn disassemble_validates_module_before_rederiving() {
+        let honest = compile_probe_bytes(include_str!(
+            "../../../tools/certkit/fixtures/verbatimwiden.av"
+        ));
+        assert!(
+            disassemble(&honest).is_ok(),
+            "an honest, well-typed module must validate and disassemble"
+        );
+        assert!(
+            disassemble(&honest[..honest.len() - 1]).is_err(),
+            "a truncated module must fail validation, not be rederived"
+        );
+        let mut bogus = honest[..8].to_vec();
+        bogus.extend_from_slice(&[0x7f, 0x01, 0x00]);
+        assert!(
+            disassemble(&bogus).is_err(),
+            "an out-of-range section id must fail validation, not be rederived"
+        );
+    }
+
     /// The verbatim-widened fixture's `_ -> []` default arm lowers to a
     /// `ref.null` of the `List` struct type. Disassembly must thread that
     /// heap-type index through `Op::RefNull` (not drop it, as the old unit
@@ -498,7 +525,7 @@ fn addTwo(x: Int) -> Int
             .find(|f| f.name == "wrapItems")
             .expect("wrapItems user fn");
         // `wrapItems` returns `List<Int>`, i.e. a concrete `(ref null $list)`.
-        let Some(TyKind::Ref(list_idx)) = wrap_items.result else {
+        let Some(TyKind::Ref { idx: list_idx, .. }) = wrap_items.result else {
             panic!("wrapItems should return a concrete list ref");
         };
         let ref_null_hty = wrap_items

@@ -238,59 +238,79 @@ def checkCanonicalFuncType (arity carrier : Nat) (bytes : ByteSeq) : Bool :=
       | none => false
   | _ => false
 
-/-- Walk the type section's rectype vector to the `target`-th TYPE INDEX
-    (an explicit rec group defines several consecutive indices) and validate that
-    entry with the supplied leaf `check`. Generic over the leaf predicate so the
-    canonical carrier-signature check and the verbatim `eqref → ref` signature
-    check share the same rec-group navigation. -/
-def walkTypeEntriesFuel (check : ByteSeq → Bool) :
-    Nat → Nat → Nat → ByteSeq → Bool
-  | 0, _, _, _ => false
-  | _fuel + 1, 0, _target, _bytes => false
-  | fuel + 1, remaining + 1, target, bytes =>
+/-- Walk exactly `n` consecutive subtypes at cumulative type index `base`,
+    applying `check` to the one at absolute index `target`. Returns the remaining
+    bytes and whether the target (if it fell in this run) passed `check`. Every
+    subtype is fully skipped (`skipSubType` fail-closes on malformed), so the run
+    is exact — a garbage subtype anywhere in the run declines. -/
+def walkSubtypesFuel (check : ByteSeq → Bool) (target : Nat) :
+    Nat → Nat → Nat → ByteSeq → Bool → Option (ByteSeq × Bool)
+  | 0, _, _, _, _ => none
+  | _fuel + 1, 0, _base, bytes, acc => some (bytes, acc)
+  | fuel + 1, n + 1, base, bytes, acc =>
+      let acc := if base = target then check bytes else acc
+      match skipSubType bytes with
+      | some rest => walkSubtypesFuel check target fuel n (base + 1) rest acc
+      | none => none
+
+/-- Walk the type section's ENTIRE rectype vector (all `remaining` rec groups —
+    an explicit `0x4e cnt` group defines `cnt` consecutive type indices, a bare
+    subtype defines one), applying `check` to the subtype at absolute index
+    `target`. Every rec group is fully parsed (not just up to `target`), so the
+    remainder returned is the tail after the last declared rectype; the caller
+    requires it to be EMPTY, rejecting trailing bytes / a count mismatch. -/
+def walkRecTypesFuel (check : ByteSeq → Bool) (target : Nat) :
+    Nat → Nat → Nat → ByteSeq → Bool → Option (ByteSeq × Bool)
+  | 0, _, _, _, _ => none
+  | _fuel + 1, 0, _base, bytes, acc => some (bytes, acc)
+  | fuel + 1, rem + 1, base, bytes, acc =>
       match bytes with
       | 0x4e :: rest =>
           match readUleb32 rest with
           | some (cnt, r1) =>
-              if target < cnt then
-                match skipSubTypesFuel (target + 1) target r1 with
-                | some r2 => check r2
-                | none => false
-              else
-                match skipSubTypesFuel (cnt + 1) cnt r1 with
-                | some r2 =>
-                    walkTypeEntriesFuel check fuel remaining (target - cnt) r2
-                | none => false
-          | none => false
+              match walkSubtypesFuel check target (cnt + 1) cnt base r1 acc with
+              | some (r2, acc') => walkRecTypesFuel check target fuel rem (base + cnt) r2 acc'
+              | none => none
+          | none => none
       | _ =>
-          if target = 0 then
-            check bytes
-          else
-            match skipSubType bytes with
-            | some rest => walkTypeEntriesFuel check fuel remaining (target - 1) rest
-            | none => false
+          match walkSubtypesFuel check target 2 1 base bytes acc with
+          | some (r2, acc') => walkRecTypesFuel check target fuel rem (base + 1) r2 acc'
+          | none => none
 
-/-- Whether the module's type-section entry `typeIdx` is exactly the canonical
-    certified function type `[(ref null carrier)^arity] → [(ref null carrier)]`.
-    This binds a claimed function binding's declared signature to the plan's
-    params/result without trusting either. -/
-def funcTypeMatches (wasmBytes : ByteSeq) (typeIdx arity carrier : Nat) : Bool :=
+/-- Whether the module's type section is well-formed AND its entry `typeIdx`
+    satisfies `check`. The whole rectype vector is parsed and required to consume
+    the section payload EXACTLY (no trailing bytes past the last rectype), so a
+    valid target entry followed by garbage is rejected, not silently accepted. -/
+def typeSectionMatches (check : ByteSeq → Bool)
+    (wasmBytes : ByteSeq) (typeIdx : Nat) : Bool :=
   match findSectionPayload 0x01 wasmBytes with
   | some payload =>
       match readUleb32 payload with
       | some (count, rest) =>
-          walkTypeEntriesFuel (checkCanonicalFuncType arity carrier) (count + 1) count typeIdx rest
+          match walkRecTypesFuel check typeIdx (count + 1) count 0 rest false with
+          | some ([], acc) => acc
+          | _ => false
       | none => false
   | none => false
 
+/-- Whether the module's type-section entry `typeIdx` is exactly the canonical
+    certified function type `[(ref null carrier)^arity] → [(ref null carrier)]`.
+    This binds a claimed function binding's declared signature to the plan's
+    params/result without trusting either, and (via `typeSectionMatches`) requires
+    the whole type section to be well-formed and exactly consumed. -/
+def funcTypeMatches (wasmBytes : ByteSeq) (typeIdx arity carrier : Nat) : Bool :=
+  typeSectionMatches (checkCanonicalFuncType arity carrier) wasmBytes typeIdx
+
 /-- Whether the head of `bytes` is EXACTLY the certified verbatim dispatch
-    function type `[eqref] → [(ref null resultHeapTy)]` (or its non-null variant):
-    one abstract `eq` reference parameter (`0x6d`) and one concrete reference
-    result (`0x63`/`0x64` followed by the s33 heap index `resultHeapTy`). Subtype
-    prefixes and every other shape fail-close. This pins a verbatim binding's
-    declared signature to UNARY arity, the `eqref` domain the dispatch reads, and
-    the plan's result heap type — none of which the code-entry bytes encode (a
-    second parameter leaves the code entry byte-identical). -/
+    function type `[eqref] → [(ref null resultHeapTy)]`: one abstract `eq`
+    reference parameter (`0x6d`) and one NULLABLE concrete reference result
+    (`0x63` — the exact `ref null` form — followed by the s33 heap index
+    `resultHeapTy`). A non-null result (`0x64`), a subtype prefix, and every other
+    shape fail-close. This pins a verbatim binding's declared signature to UNARY
+    arity, the `eqref` domain the dispatch reads, the `ref null` nullability the
+    `ref.null` default requires, and the plan's result heap type — none of which
+    the code-entry bytes encode (a second parameter leaves the code entry
+    byte-identical, and the result reftype is never in the code entry at all). -/
 def checkVerbatimFuncType (resultHeapTy : Nat) (bytes : ByteSeq) : Bool :=
   match bytes with
   | 0x60 :: 0x01 :: 0x6d :: rest =>
@@ -298,14 +318,11 @@ def checkVerbatimFuncType (resultHeapTy : Nat) (bytes : ByteSeq) : Bool :=
       | some (nr, r1) =>
           if nr = 1 then
             match r1 with
-            | b :: r2 =>
-                if b = 0x63 ∨ b = 0x64 then
-                  match readS33 r2 with
-                  | some (idx, _) => idx == Int.ofNat resultHeapTy
-                  | none => false
-                else
-                  false
-            | [] => false
+            | 0x63 :: r2 =>
+                match readS33 r2 with
+                | some (idx, _) => idx == Int.ofNat resultHeapTy
+                | none => false
+            | _ => false
           else
             false
       | none => false
@@ -316,13 +333,7 @@ def checkVerbatimFuncType (resultHeapTy : Nat) (bytes : ByteSeq) : Bool :=
     claimed verbatim binding's declared signature to unary arity, the `eqref`
     domain and the plan's result heap type without trusting any of them. -/
 def verbatimFuncTypeMatches (wasmBytes : ByteSeq) (typeIdx resultHeapTy : Nat) : Bool :=
-  match findSectionPayload 0x01 wasmBytes with
-  | some payload =>
-      match readUleb32 payload with
-      | some (count, rest) =>
-          walkTypeEntriesFuel (checkVerbatimFuncType resultHeapTy) (count + 1) count typeIdx rest
-      | none => false
-  | none => false
+  typeSectionMatches (checkVerbatimFuncType resultHeapTy) wasmBytes typeIdx
 
 /-! ### Passive data-section navigation
 
@@ -343,24 +354,36 @@ def readPassiveDataSegment : ByteSeq → Option (ByteSeq × ByteSeq)
       | none => none
   | _ => none
 
-def dataSegmentBytesFuel : Nat → Nat → ByteSeq → Option ByteSeq
-  | 0, _, _ => none
-  | fuel + 1, idx, bytes =>
+/-- Walk ALL `remaining` passive data segments, recording the contents of the one
+    at absolute index `target`. Returns the tail after the last segment and the
+    recorded contents; the caller requires the tail to be EMPTY, so a segment
+    followed by garbage or a count that overshoots the payload declines. -/
+def walkDataSegmentsFuel (target : Nat) :
+    Nat → Nat → Nat → ByteSeq → Option ByteSeq → Option (ByteSeq × Option ByteSeq)
+  | 0, _, _, _, _ => none
+  | _fuel + 1, 0, _cur, bytes, found => some (bytes, found)
+  | fuel + 1, rem + 1, cur, bytes, found =>
       match readPassiveDataSegment bytes with
       | some (contents, rest) =>
-          if idx = 0 then some contents
-          else dataSegmentBytesFuel fuel (idx - 1) rest
+          let found := if cur = target then some contents else found
+          walkDataSegmentsFuel target fuel rem (cur + 1) rest found
       | none => none
 
 /-- The exact byte contents of passive data segment `dataIdx`, recovered from the
-    module's data section (id 11). `none` if the section is absent, `dataIdx` is
-    out of range, or any segment on the way is not passive. -/
+    module's data section (id 11). The WHOLE segment vector is parsed and required
+    to consume the section payload EXACTLY (no trailing bytes), so a valid target
+    segment followed by garbage — or a declared count that does not match the
+    bytes — declines. `none` if the section is absent, `dataIdx` is out of range,
+    or any segment on the way is not passive. -/
 def dataSegmentBytes (wasmBytes : ByteSeq) (dataIdx : Nat) : Option ByteSeq :=
   match findSectionPayload 0x0b wasmBytes with
   | some payload =>
       match readUleb32 payload with
       | some (count, rest) =>
-          if dataIdx < count then dataSegmentBytesFuel (count + 1) dataIdx rest
+          if dataIdx < count then
+            match walkDataSegmentsFuel dataIdx (count + 1) count 0 rest none with
+            | some ([], found) => found
+            | _ => none
           else none
       | none => none
   | none => none

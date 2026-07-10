@@ -447,4 +447,50 @@ mod verbatim_plan_gate_tests {
             "byte-exact tagName must carry a plan claim"
         );
     }
+
+    /// FIX 1 belt: `verbatim_results_ok` requires EXACTLY one result of the kind
+    /// the fall-through default implies. This binds the legacy `f64` route (which
+    /// never reaches the in-kernel signature check) and rejects a forged
+    /// zero/two-result declaration or a non-nullable reference. Each negative
+    /// assertion fails only if the belt itself is weakened.
+    #[test]
+    fn verbatim_results_ok_binds_the_result_signature() {
+        use TyKind::*;
+        let f64_default = VerbatimDefault::F64Bits(0);
+        let null_default = VerbatimDefault::Null;
+        let arr_default = VerbatimDefault::Array {
+            type_idx: 5,
+            data_idx: 0,
+            bytes: vec![97],
+        };
+        let null_ref = Ref {
+            nullable: true,
+            idx: 5,
+        };
+        let non_null_ref = Ref {
+            nullable: false,
+            idx: 5,
+        };
+        // Honest shapes: scalar f64 route returns exactly `[f64]`; every
+        // reference-producing default returns exactly one NULLABLE reference.
+        assert!(verbatim_results_ok(&[F64], &f64_default));
+        assert!(verbatim_results_ok(&[null_ref], &null_default));
+        assert!(verbatim_results_ok(&[null_ref], &arr_default));
+        // Zero results (forged empty signature) — rejected on every route.
+        assert!(!verbatim_results_ok(&[], &f64_default));
+        assert!(!verbatim_results_ok(&[], &null_default));
+        // Two results (the exact HIGH-1 attack: a second result the first-only
+        // summary hid) — rejected on every route.
+        assert!(!verbatim_results_ok(&[F64, F64], &f64_default));
+        assert!(!verbatim_results_ok(&[null_ref, null_ref], &null_default));
+        // Wrong scalar kind on the f64 route.
+        assert!(!verbatim_results_ok(&[I64], &f64_default));
+        assert!(!verbatim_results_ok(&[I32], &f64_default));
+        // Route/kind must agree: no ref on the f64 route, no f64 on the ref route.
+        assert!(!verbatim_results_ok(&[null_ref], &f64_default));
+        assert!(!verbatim_results_ok(&[F64], &null_default));
+        // FIX 2 belt: a NON-nullable reference is rejected on the ref route.
+        assert!(!verbatim_results_ok(&[non_null_ref], &null_default));
+        assert!(!verbatim_results_ok(&[non_null_ref], &arr_default));
+    }
 }

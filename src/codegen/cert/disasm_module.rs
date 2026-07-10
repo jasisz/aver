@@ -27,11 +27,25 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
         CompositeInnerType, DataKind, Operator, Parser, Payload, StorageType, ValType,
     };
 
+    // Admission gate: never trust a byte-derived fact from a module that is not
+    // well-typed wasm. Full validation runs BEFORE any rederivation reads a
+    // section, so a forged result type, a nullability-mismatched signature, or
+    // malformed/trailing section bytes are all rejected up front rather than
+    // slipping past the relevant-subset slicer. `Validator::new()` enables the
+    // GC / tail-call / function-reference proposals the backend emits (all
+    // default-on), matching the emitter's own feature set.
+    wasmparser::Validator::new()
+        .validate_all(wasm_bytes)
+        .map_err(|e| format!("wasm module failed validation: {e}"))?;
+
     let mut num_imported_funcs: u32 = 0;
     // defined-function index -> declared type index
     let mut func_type_idx: Vec<u32> = Vec::new();
-    // type index -> byte-level signature (param kinds, result kind) for func types
-    let mut type_sigs: std::collections::HashMap<u32, (Vec<TyKind>, Option<TyKind>)> =
+    // type index -> byte-level signature (param kinds, FULL result-kind vector)
+    // for func types. The complete result vector is retained (not just the first
+    // result) so a verbatim route can require EXACTLY one result of the
+    // recognized kind — a zero-result or two-result declaration is rejected.
+    let mut type_sigs: std::collections::HashMap<u32, (Vec<TyKind>, Vec<TyKind>)> =
         std::collections::HashMap::new();
     // type index -> struct field count
     let mut struct_field_counts: std::collections::HashMap<u32, u32> =
@@ -63,7 +77,10 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                                     ValType::I32 => TyKind::I32,
                                     ValType::F64 => TyKind::F64,
                                     ValType::Ref(rt) => match heap_type_index(rt.heap_type()) {
-                                        Some(t) => TyKind::Ref(t),
+                                        Some(t) => TyKind::Ref {
+                                            nullable: rt.is_nullable(),
+                                            idx: t,
+                                        },
                                         None => match rt.heap_type() {
                                             wasmparser::HeapType::Abstract {
                                                 ty: wasmparser::AbstractHeapType::Eq,
@@ -78,7 +95,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                                     idx,
                                     (
                                         ft.params().iter().map(kind).collect(),
-                                        ft.results().first().map(kind),
+                                        ft.results().iter().map(kind).collect(),
                                     ),
                                 );
                             }
@@ -338,10 +355,11 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                 .get(def_idx)
                 .and_then(|ti| type_sigs.get(ti))
                 .cloned()
-                .unwrap_or((Vec::new(), None));
-            let role = if is_string_eq_host(entry, &sig.0, sig.1, &string_byte_array_types) {
+                .unwrap_or((Vec::new(), Vec::new()));
+            let result0 = sig.1.first().copied();
+            let role = if is_string_eq_host(entry, &sig.0, result0, &string_byte_array_types) {
                 Some(HostRole::StringEq)
-            } else if is_string_concat_host(entry, &sig.0, sig.1, &string_byte_array_types) {
+            } else if is_string_concat_host(entry, &sig.0, result0, &string_byte_array_types) {
                 Some(HostRole::StringConcat)
             } else {
                 entry.host_role
@@ -368,14 +386,15 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
             let Some(c) = carrier else {
                 return false;
             };
-            let Some((params, result)) = func_type_idx
+            let Some((params, results)) = func_type_idx
                 .get(def_idx)
                 .and_then(|ti| type_sigs.get(ti))
             else {
                 return false;
             };
-            params.as_slice() == [TyKind::Ref(c), TyKind::Ref(c)]
-                && *result == Some(TyKind::Ref(c))
+            let is_carrier_ref = |t: &TyKind| matches!(t, TyKind::Ref { idx, .. } if *idx == c);
+            matches!(params.as_slice(), [a, b] if is_carrier_ref(a) && is_carrier_ref(b))
+                && matches!(results.as_slice(), [r] if is_carrier_ref(r))
         };
         let strict_binop_candidates = |arith: FirstI64Arith| -> Vec<u32> {
             code_entries
@@ -412,10 +431,11 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
         let Some(type_idx) = func_type_idx.get(def_idx as usize).copied() else {
             continue;
         };
-        let (params, result) = type_sigs
+        let (params, results) = type_sigs
             .get(&type_idx)
             .cloned()
-            .unwrap_or((Vec::new(), None));
+            .unwrap_or((Vec::new(), Vec::new()));
+        let result = results.first().copied();
         user_fns.push(UserFn {
             name,
             wasm_idx,
@@ -424,6 +444,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
             arity: params.len(),
             params,
             result,
+            results,
             nlocals: entry.nlocals,
             code_entry_bytes: entry.code_entry_bytes,
             ops,

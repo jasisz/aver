@@ -15,7 +15,9 @@ fn nr_variant_dispatch(
     // Typed admission: the byte signature must be exactly "one user ADT value
     // in, one Int carrier out" — the claim-shape as the bytes declare it, not
     // a bare parameter count.
-    if f.params.as_slice() != [TyKind::Eqref] || f.result != Some(TyKind::Ref(carrier)) {
+    if f.params.as_slice() != [TyKind::Eqref]
+        || !matches!(f.result, Some(TyKind::Ref { idx, .. }) if idx == carrier)
+    {
         return None;
     }
     let (arms, default_k) = dispatch_chain(&body.tree, box_idx, host_roles)?;
