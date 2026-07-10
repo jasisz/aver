@@ -3127,7 +3127,16 @@ fn cert_verify_declines_tampered_mutual_plan() {
     //     bytes tail-call index 2, so the byte-equality gate rejects it. This is
     //     the defence-in-depth case: the shape check accepts, the byte gate does
     //     not.
-    let tampers: [(&str, &str, &str); 4] = [
+    // (e) GUARD-ISOLATING: the descent's `sub` host call `.hostCall .sub 9 [0,2]`
+    //     is relabelled as a NON-TAIL `.selfCall false 9 [0,2]`. Both lower to the
+    //     identical byte `10 09` (`call 9`) and identical `WInstr`, so the whole
+    //     byte-equality face — canonical code-entry bytes, `Module.lean` body,
+    //     `codeEntryForExport` — still holds, and the generic typed-block checker
+    //     accepts it. ONLY the context-sensitive `checkMutualPlanShape` (its step
+    //     arm pins node 3 to `.hostCall .sub`) rejects it. If the shape guard were
+    //     replaced by the generic checker this vector would slip through, so it
+    //     isolates the guard the other four cannot.
+    let tampers: [(&str, &str, &str); 5] = [
         (
             "member-call outside SCC",
             ".selfCall true 2 [3]",
@@ -3147,6 +3156,11 @@ fn cert_verify_declines_tampered_mutual_plan() {
             "member-call mislabelled as self-call",
             ".selfCall true 2 [3]",
             ".selfCall true 1 [3]",
+        ),
+        (
+            "byte-identical sub-to-selfCall relabel",
+            ".hostCall .sub 9 [0, 2]",
+            ".selfCall false 9 [0, 2]",
         ),
     ];
     for (label, from, to) in tampers {
@@ -3168,4 +3182,131 @@ fn cert_verify_declines_tampered_mutual_plan() {
     }
 
     let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// A mutual-recursion artifact whose per-member byte-origin claims are each
+/// individually honest but whose SCC IDENTITY is wrong is declined by the
+/// audited closure predicate — not by byte equality. The SCC group is derived
+/// IN-KERNEL from the byte-pinned member edges (`obligation.self` +
+/// `mutualPlanTarget`), and `mutualMembersFormClosedSccs` requires distinct
+/// members, every declared `memberSet` to equal its own byte-derived cycle, and
+/// the member-call graph to be one closed cycle. This test builds the cert's OWN
+/// `Artifact.lean` (its self-carried `acceptedWithFinal` proof + the concrete
+/// closure pin) with `lake` — no checker data pin, no byte tampering — so a
+/// failure isolates the closure guard itself. Every vector keeps the wasm and
+/// every code-entry byte untouched; only the SCC membership data is wrong.
+#[test]
+fn cert_verify_declines_broken_mutual_scc_membership() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping mutual-SCC closure test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    // (fixture, wasm, [(label, from, to)]). The `from`/`to` mutate ONLY the SCC
+    // membership data in `Artifact.lean`: either a claim's `memberSet` (checked
+    // by the acceptance-proof closure — the per-claim shape check still passes
+    // because the member's own call target stays in the set) or the concrete
+    // `mutualMembersFormClosedSccs` closure pin (a broken cross-edge / dropped
+    // member). None change any code-entry byte.
+    let cases: [(&str, Vec<(&str, &str, &str)>); 2] = [
+        (
+            "tools/certkit/fixtures/mutual.av",
+            vec![
+                // memberSet gains a non-member (extra); closure length check.
+                (
+                    "extra member",
+                    "memberSet := [1, 2]",
+                    "memberSet := [1, 2, 3]",
+                ),
+                // memberSet drops a member but keeps the call target (omission);
+                // shape check passes, closure cycle-set check fails.
+                ("omitted member", "memberSet := [1, 2]", "memberSet := [2]"),
+                // memberSet repeats a member (duplicate); closure length check.
+                (
+                    "duplicate member",
+                    "memberSet := [1, 2]",
+                    "memberSet := [1, 2, 2]",
+                ),
+                // one member declares a set inconsistent with the byte-derived
+                // cycle (keeps its own target so the shape check still passes).
+                (
+                    "inconsistent set",
+                    "memberSet := [1, 2]",
+                    "memberSet := [2, 4]",
+                ),
+                // closure pin: a member's cross-edge points outside the group.
+                ("non-closing edge", "(2, 1, [1, 2])", "(2, 3, [1, 2])"),
+                // closure pin: drop a member entirely — the cycle cannot close.
+                ("dropped member", ", (2, 1, [1, 2])", ""),
+            ],
+        ),
+        (
+            "tools/certkit/fixtures/mutual3.av",
+            vec![
+                (
+                    "extra member",
+                    "memberSet := [1, 2, 3]",
+                    "memberSet := [1, 2, 3, 4]",
+                ),
+                (
+                    "inconsistent set",
+                    "memberSet := [1, 2, 3]",
+                    "memberSet := [2, 3, 5]",
+                ),
+                ("non-closing edge", "(3, 1, [1, 2, 3])", "(3, 4, [1, 2, 3])"),
+                ("dropped member", ", (3, 1, [1, 2, 3])", ""),
+            ],
+        ),
+    ];
+
+    let lake_ok = |cert: &Path| -> bool {
+        Command::new("lake")
+            .arg("build")
+            .current_dir(cert)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+
+    for (fixture, vectors) in cases {
+        let out_dir = temp_dir("cert-mutual-scc");
+        let compile = Command::new(env!("CARGO_BIN_EXE_aver"))
+            .current_dir(&repo_root)
+            .arg("compile")
+            .arg(fixture)
+            .arg("--target")
+            .arg("wasm-gc")
+            .arg("--certify")
+            .arg("-o")
+            .arg(&out_dir)
+            .output()
+            .expect("aver compile --certify runs");
+        assert!(
+            compile.status.success(),
+            "{fixture} compile --certify failed:\n{}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
+        let cert = out_dir.join("cert");
+        // Honest cert must build (and populates the `.lake` cache so each tamper
+        // below only rebuilds the leaf `Artifact` module).
+        assert!(lake_ok(&cert), "honest {fixture} cert must lake-build");
+
+        let artifact = cert.join("Artifact.lean");
+        let honest = std::fs::read_to_string(&artifact).unwrap();
+        for (label, from, to) in vectors {
+            assert!(
+                honest.contains(from),
+                "{fixture} Artifact.lean SCC shape changed ({label}); update the test"
+            );
+            std::fs::write(&artifact, honest.replacen(from, to, 1)).unwrap();
+            let ok = lake_ok(&cert);
+            std::fs::write(&artifact, &honest).unwrap(); // restore before asserting
+            assert!(
+                !ok,
+                "{fixture} {label}: broken mutual-SCC membership must be declined in-kernel"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&out_dir);
+    }
 }

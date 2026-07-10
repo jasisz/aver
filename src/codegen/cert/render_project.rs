@@ -1057,7 +1057,7 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.mutualPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨finalCert, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, {mutual_proof}⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨finalCert, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨{mutual_proof}, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         obligation_proof = claims.obligation_proof,
         sym_proof = claims.sym_proof,
@@ -1086,6 +1086,7 @@ fn render_artifact(
          def constructClaims : List AverCert.AcceptedArtifact.ConstructClaim := {construct_claims_list}\n\n\
          def recursionClaims : List AverCert.AcceptedArtifact.RecursionClaim := {recursion_claims_list}\n\n\
          def mutualRecursionClaims : List AverCert.AcceptedArtifact.MutualRecursionClaim := {mutual_claims_list}\n\n\
+         {mutual_scc_closure_pins}\
          def data : AverCert.AcceptedArtifact.ArtifactData :=\n  \
            ({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
          def acceptedWithFinal\n\
@@ -1101,8 +1102,47 @@ fn render_artifact(
         construct_claims_list = claims.construct_claims,
         recursion_claims_list = claims.recursion_claims,
         mutual_claims_list = claims.mutual_claims,
+        mutual_scc_closure_pins = render_mutual_scc_closure_pins(analysis),
         fragment_proof = fragment_proof
     )
+}
+
+/// One redundant-but-honest closure pin per mutual-recursion SCC (emitted for the
+/// primary member so each SCC appears once): the byte-derived
+/// `(self, cross-target, memberSet)` triples the artifact's claims carry,
+/// asserted to form a single closed cycle by the audited
+/// `mutualMembersFormClosedSccs`. The artifact's `acceptedWithFinal` proof
+/// already binds this closure over the real claims; this concrete pin documents
+/// the byte-derived SCC group and gives the checker a self-contained surface
+/// that fails closed if the group is not one closed cycle (a member's declared
+/// set diverging, an extra/omitted/duplicate member, or a broken cross-edge).
+fn render_mutual_scc_closure_pins(analysis: &Analysis) -> String {
+    let mut out = String::new();
+    for c in &analysis.certs {
+        let Cert::MutualRecursion {
+            position, scc, name, ..
+        } = c.inner()
+        else {
+            continue;
+        };
+        if *position != 0 {
+            continue;
+        }
+        if mutual_plan_from_cert(c).is_none() {
+            continue;
+        }
+        let member_set = mutual_member_set_lean_value(scc);
+        let members = scc
+            .iter()
+            .map(|m| format!("({}, {}, {member_set})", m.self_idx, m.cross_idx))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&format!(
+            "/-- The byte-derived `{name}` SCC forms one closed mutual-recursion cycle. -/\n\
+             example : AverCert.AcceptedArtifact.mutualMembersFormClosedSccs [{members}] = true := rfl\n\n",
+        ));
+    }
+    out
 }
 
 fn render_byte_list(bytes: &[u8]) -> String {

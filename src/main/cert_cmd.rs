@@ -2031,7 +2031,7 @@ fn lean_fragment_acceptance_proof_block(
             "{indent}  AverCert.AcceptedArtifact.mutualPlanAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "{indent}  AverCert.ExprFragmentAccepted.accepted]\n",
-            "{indent}exact ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, {mutual_proof}⟩⟩⟩⟩⟩\n"
+            "{indent}exact ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨{mutual_proof}, rfl⟩⟩⟩⟩⟩⟩\n"
         ),
         indent = indent,
         sym_proof = witness.sym_proof,
@@ -2143,7 +2143,7 @@ fn lean_accepted_artifact_witness(
             "    AverCert.AcceptedArtifact.mutualPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨{final_witness}, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, {mutual_proof}⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨{final_witness}, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨{mutual_proof}, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         final_witness = FINAL_WITNESS_THEOREM,
         obligation_proof = witness.obligation_proof,

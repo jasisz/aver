@@ -523,6 +523,116 @@ def mutualRecursionClaimsAccepted
       mutualRecursionClaimAccepted wasmBytes manifest claim ∧
       mutualRecursionClaimsAccepted wasmBytes manifest rest
 
+/-! ### Byte-derived SCC closure
+
+`mutualRecursionClaimsAccepted` above certifies each member's body byte-origin
+in ISOLATION. On its own that leaves the SCC's IDENTITY as unconstrained claim
+data: a claim's `memberSet` could list extra/missing members, the members could
+disagree on the set, and nothing forces the member-call graph to be one closed
+cycle visiting every member. This section binds the SCC to bytes: it derives
+each member's `(self, cross-target)` edge from the SAME byte-bound facts the
+per-claim acceptance pins — `self` is the obligation's byte-pinned function
+index (`= binding.funcIdx` from `mutualPlanAccepted`), `target` is read from the
+byte-pinned plan (`lowerMutualCodeEntry plan = codeEntryForExport …`). It then
+checks, purely over those byte-derived edges, that the claims form disjoint
+CLOSED simple cycles and that every member's declared `memberSet` equals its own
+cycle's vertex set — so `memberSet` is a function of the bytes, not a free
+choice. Composed with the per-claim acceptance (which pins `self`/`target` to
+bytes) this makes the negative-space closure property hold in-kernel. -/
+
+/-- The byte-pinned member-call target of a checked mutual member plan: the
+    tail `selfCall` index in the step arm of the fixed mutual grammar. Returns
+    `none` for any other shape (fail-closed); the per-claim `checkMutualPlanShape`
+    already forces this exact shape, so a claimed member always yields `some`. -/
+def mutualPlanTarget (plan : MutualRawPlan) : Option Nat :=
+  match plan.body.result, plan.body.nodes with
+  | 4, [_, _, _, _, { kind := .ifElse 3 _ step, .. }] =>
+      match step.result, step.nodes with
+      | 4, [_, _, _, _, { kind := .selfCall true cc [3], .. }] => some cc
+      | _, _ => none
+  | _, _ => none
+
+/-- The byte-derived edge and declared member set for one claim:
+    `(self, cross-target, memberSet)`. `self` is the obligation's byte-pinned
+    index; `target` is read from the byte-pinned manifest plan. -/
+def mutualClaimEdge
+    (manifest : AverCert.Schema.Manifest)
+    (claim : MutualRecursionClaim) : Option (Nat × Nat × List Nat) :=
+  match mutualPlanForExport claim.exportName manifest.mutualPlans with
+  | some plan =>
+      match mutualPlanTarget plan with
+      | some t => some (claim.obligation.self, t, claim.memberSet)
+      | none => none
+  | none => none
+
+def mutualClaimEdges
+    (manifest : AverCert.Schema.Manifest) :
+    List MutualRecursionClaim → Option (List (Nat × Nat × List Nat))
+  | [] => some []
+  | claim :: rest =>
+      match mutualClaimEdge manifest claim, mutualClaimEdges manifest rest with
+      | some m, some ms => some (m :: ms)
+      | _, _ => none
+
+/-- No repeated element (no two claims for the same byte-derived member index). -/
+def natListNodup : List Nat → Bool
+  | [] => true
+  | x :: rest => !rest.contains x && natListNodup rest
+
+/-- Set equality via mutual containment plus equal length: rejects extras,
+    omissions AND duplicates (a duplicate makes the lengths differ). -/
+def natListSetEq (xs ys : List Nat) : Bool :=
+  xs.length == ys.length && xs.all (fun x => ys.contains x) &&
+    ys.all (fun y => xs.contains y)
+
+def natEdgeLookup : List (Nat × Nat) → Nat → Option Nat
+  | [], _ => none
+  | (a, b) :: rest, k => if a == k then some b else natEdgeLookup rest k
+
+/-- Follow the target-chain from `start`, collecting visited members, until the
+    next hop closes the walk. A SIMPLE closed cycle returns to `start` (the head
+    of the visited list); a hop to any other already-visited node (a rho tail) or
+    a hop to a non-member (dangling edge) fail-closes to `none`. -/
+def followSccCycle (edges : List (Nat × Nat)) :
+    Nat → Nat → List Nat → Option (List Nat)
+  | 0, _, _ => none
+  | fuel + 1, cur, visited =>
+      match natEdgeLookup edges cur with
+      | some nxt =>
+          let visited := visited ++ [cur]
+          if visited.contains nxt then
+            (if visited.head? == some nxt then some visited else none)
+          else
+            followSccCycle edges fuel nxt visited
+      | none => none
+
+/-- The byte-derived closure check over all mutual members: the member indices
+    are distinct (no duplicate claims), and every member sits on a SINGLE closed
+    simple cycle of length ≥ 2 whose vertex set equals that member's declared
+    `memberSet`. Since every target must be a member index and every member must
+    lie on a cycle returning to itself, the edge relation is a disjoint union of
+    pure cycles — exactly the mutual-recursion SCC shape — and `memberSet` is
+    pinned to the byte-derived cycle rather than chosen by the claim. -/
+def mutualMembersFormClosedSccs (members : List (Nat × Nat × List Nat)) : Bool :=
+  let selfs := members.map (fun m => m.1)
+  let edges := members.map (fun m => (m.1, m.2.1))
+  natListNodup selfs &&
+    members.all (fun m =>
+      selfs.contains m.2.1 &&
+        (match followSccCycle edges (members.length + 1) m.1 [] with
+         | some cyc => decide (2 ≤ cyc.length) && natListSetEq m.2.2 cyc
+         | none => false))
+
+/-- The artifact's mutual claims form byte-derived closed SCCs. Composed with
+    `mutualRecursionClaimsAccepted` (which pins each `self`/`target` to bytes)
+    this establishes the whole closed-call-graph property in-kernel. -/
+def mutualClaimsFormClosedSccs
+    (manifest : AverCert.Schema.Manifest)
+    (claims : List MutualRecursionClaim) : Prop :=
+  match mutualClaimEdges manifest claims with
+  | some members => mutualMembersFormClosedSccs members = true
+  | none => False
+
 /-- The source plans claimed by an artifact, projected into the same manifest
     surface used for pinning. Keeping this in the audited predicate means a
     self-checking artifact cannot prove acceptance for one claim list while
@@ -657,6 +767,9 @@ def acceptedRecursionFragments (artifact : ArtifactData) : Prop :=
 def acceptedMutualRecursionFragments (artifact : ArtifactData) : Prop :=
   mutualRecursionClaimsAccepted
     artifact.wasmBytes
+    artifact.manifest
+    artifact.mutualRecursionClaims ∧
+  mutualClaimsFormClosedSccs
     artifact.manifest
     artifact.mutualRecursionClaims
 
