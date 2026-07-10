@@ -124,6 +124,15 @@ fn temp_dir(prefix: &str) -> PathBuf {
     d
 }
 
+fn aver_command() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_aver"));
+    command.env(
+        "AVER_CERT_PRELUDE_CACHE",
+        std::env::temp_dir().join("aver-cert-prelude-store"),
+    );
+    command
+}
+
 /// Copy the decoder prelude sources into a fresh temp dir and `lake build` them
 /// (the witnesses import the resulting `.olean`s).
 fn build_prelude() -> PathBuf {
@@ -155,7 +164,7 @@ fn build_prelude() -> PathBuf {
 }
 
 fn compile_wasm_at(repo: &Path, av_path: &Path, name: &str, out: &Path) -> Vec<u8> {
-    let c = Command::new(env!("CARGO_BIN_EXE_aver"))
+    let c = aver_command()
         .current_dir(repo)
         .arg("compile")
         .arg(av_path)
@@ -176,7 +185,7 @@ fn compile_wasm_at(repo: &Path, av_path: &Path, name: &str, out: &Path) -> Vec<u
 /// Emit the certificate for a fixture and return its model `.lean` files, which
 /// `rederive_obligations` reads to recover the recursion combinator operator.
 fn model_lean_files(repo: &Path, av_path: &Path, out: &Path) -> Vec<(String, String)> {
-    let c = Command::new(env!("CARGO_BIN_EXE_aver"))
+    let c = aver_command()
         .current_dir(repo)
         .arg("compile")
         .arg(av_path)

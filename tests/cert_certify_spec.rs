@@ -23,6 +23,15 @@ fn temp_dir(prefix: &str) -> PathBuf {
     d
 }
 
+fn aver_command() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_aver"));
+    command.env(
+        "AVER_CERT_PRELUDE_CACHE",
+        std::env::temp_dir().join("aver-cert-prelude-store"),
+    );
+    command
+}
+
 #[test]
 fn certify_goal_matrix_manifest_tracks_current_surface() {
     // This fixture is the dashboard for "how much do we certify now?". Larger
@@ -31,9 +40,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     // goal becomes certifiable, move it from `expected_backlog` into `expected`.
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("certify-goals");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
-
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/cert_goals.av")
@@ -472,9 +479,8 @@ fn certify_straight_line_fixture_lake_builds_kernel_clean() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("certify");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/certprobe.av")
@@ -543,9 +549,8 @@ fn certify_declines_overflowing_multiplication_recursion() {
     // No `lake` needed: this is a pure emitter fail-closed check.
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("certify-recdecline");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/recdecline.av")
@@ -602,9 +607,8 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("certify-recgen");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/recgen.av")
@@ -684,7 +688,6 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
     }
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
     // A two-member SCC (`isEven`/`isOdd`) and a three-member cycle
     // (`rotA -> rotB -> rotC -> rotA`), so the ONE shared conjunction proof — its
@@ -706,7 +709,7 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
 
     for (fixture, exports, primary) in cases {
         let out_dir = temp_dir("certify-mutual");
-        let compile = Command::new(aver_bin)
+        let compile = aver_command()
             .current_dir(&repo_root)
             .arg("compile")
             .arg(fixture)
@@ -783,9 +786,8 @@ fn certify_verbatim_variant_dispatch_lake_builds_kernel_clean() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("certify-strdispatch");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/strdispatch.av")
@@ -859,9 +861,8 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("certify-stringeq");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/stringeq.av")
@@ -1020,9 +1021,8 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("certify-stringconcat");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/stringconcat.av")
@@ -1238,9 +1238,8 @@ fn certify_composition_fixture_lake_builds_kernel_clean() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("certify-compose");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/compose.av")
@@ -1329,7 +1328,6 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
     }
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
     let cases = [
         (
@@ -1373,7 +1371,7 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
 
     for (input, prefix, expected) in cases {
         let out_dir = temp_dir(prefix);
-        let compile = Command::new(aver_bin)
+        let compile = aver_command()
             .current_dir(&repo_root)
             .arg("compile")
             .arg(input)
@@ -1447,9 +1445,8 @@ fn certify_carrier_at_type_index_64_lake_builds_kernel_clean() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("certify-manytypes");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let compile = Command::new(aver_bin)
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/manytypes.av")
