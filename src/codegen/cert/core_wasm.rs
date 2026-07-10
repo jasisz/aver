@@ -8,8 +8,14 @@ struct UserFn {
     arity: usize,
     /// Byte-level parameter type kinds from the declared function signature.
     params: Vec<TyKind>,
-    /// Byte-level result type kind from the declared function signature.
+    /// Byte-level FIRST result type kind (convenience for the many single-result
+    /// classifiers). `None` when the function returns nothing.
     result: Option<TyKind>,
+    /// Byte-level COMPLETE result-kind vector from the declared function
+    /// signature. Verbatim routes require this to be exactly one recognized kind
+    /// (a nullable reference for plan-backed dispatches, `f64` for the scalar
+    /// legacy route), so a two-result or zero-result signature is rejected.
+    results: Vec<TyKind>,
     nlocals: usize,
     /// Raw code-entry bytes: body-size prefix followed by the function body
     /// bytes, ending after the final `end`.
@@ -173,8 +179,11 @@ enum TyKind {
     /// Abstract `eq` reference — the emitter's parameter type for a user ADT
     /// value that the body dispatches on.
     Eqref,
-    /// Concrete reference to module type `t` (e.g. the Int carrier struct).
-    Ref(u32),
+    /// Concrete reference to module type `idx`, carrying the declared
+    /// `nullable` bit (`ref null idx` vs `ref idx`). Nullability is retained
+    /// rather than erased so a verbatim result can be pinned to the exact
+    /// `ref null` form the certified signature promises.
+    Ref { nullable: bool, idx: u32 },
     I64,
     I32,
     F64,

@@ -480,6 +480,67 @@ fn addTwo(x: Int) -> Int
             .bytes
     }
 
+    /// Admission gate: `disassemble` runs full wasm validation BEFORE any
+    /// rederivation, so no byte-derived fact is ever trusted from a module that
+    /// is not well-typed wasm. An honest module passes; a truncated one and one
+    /// carrying an out-of-range section id are rejected up front.
+    #[test]
+    fn disassemble_validates_module_before_rederiving() {
+        let honest = compile_probe_bytes(include_str!(
+            "../../../tools/certkit/fixtures/verbatimwiden.av"
+        ));
+        assert!(
+            disassemble(&honest).is_ok(),
+            "an honest, well-typed module must validate and disassemble"
+        );
+        assert!(
+            disassemble(&honest[..honest.len() - 1]).is_err(),
+            "a truncated module must fail validation, not be rederived"
+        );
+        let mut bogus = honest[..8].to_vec();
+        bogus.extend_from_slice(&[0x7f, 0x01, 0x00]);
+        assert!(
+            disassemble(&bogus).is_err(),
+            "an out-of-range section id must fail validation, not be rederived"
+        );
+    }
+
+    /// Isolates the `Validator::validate_all` call itself: a module whose every
+    /// section is well-formed (the section parser accepts it) and which carries
+    /// everything `disassemble` structurally requires (the box-helper export),
+    /// but whose exported function is ill-typed — declared `(result i64)` with
+    /// a body that leaves an i32. Only full validation can reject it, so
+    /// dropping the `validate_all` line is exactly what makes this test fail
+    /// (the truncated/bad-section cases in the test above are also caught by
+    /// the section parser and do not isolate the validator).
+    #[test]
+    fn disassemble_rejects_parseable_but_ill_typed_module() {
+        // `wat` encodes without type-checking, so the ill-typed body survives
+        // into well-formed binary sections.
+        let ill_typed = wat::parse_str(
+            r#"(module
+                (type $t (func (param i64) (result i64)))
+                (func $box (type $t) local.get 0)
+                (func $bad (type $t) i32.const 0)
+                (export "__rt_aint_from_i64" (func $box))
+                (export "bad" (func $bad))
+            )"#,
+        )
+        .expect("wat must encode the ill-typed module");
+        assert!(
+            wasmparser::Parser::new(0)
+                .parse_all(&ill_typed)
+                .all(|p| p.is_ok()),
+            "the fixture must stay structurally parseable, or this test no \
+             longer isolates the validator from the section parser"
+        );
+        assert!(
+            disassemble(&ill_typed).is_err(),
+            "a parseable but ill-typed module must be rejected by validation \
+             before any rederivation"
+        );
+    }
+
     /// The verbatim-widened fixture's `_ -> []` default arm lowers to a
     /// `ref.null` of the `List` struct type. Disassembly must thread that
     /// heap-type index through `Op::RefNull` (not drop it, as the old unit
@@ -498,7 +559,7 @@ fn addTwo(x: Int) -> Int
             .find(|f| f.name == "wrapItems")
             .expect("wrapItems user fn");
         // `wrapItems` returns `List<Int>`, i.e. a concrete `(ref null $list)`.
-        let Some(TyKind::Ref(list_idx)) = wrap_items.result else {
+        let Some(TyKind::Ref { idx: list_idx, .. }) = wrap_items.result else {
             panic!("wrapItems should return a concrete list ref");
         };
         let ref_null_hty = wrap_items

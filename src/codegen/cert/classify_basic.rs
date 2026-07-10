@@ -163,8 +163,15 @@ fn nr_ref_dispatch_match(
                 ops: strip_trailing_end(&f.ops).to_vec(),
             });
         }
+        // Typed admission: exactly one user ADT (eqref) value in — a two-parameter
+        // dispatch keeps a byte-identical code entry, so a unary obligation must
+        // not be certified for a binary export — and exactly one result of the
+        // kind the default implies (a nullable ref here; the plan path additionally
+        // pins the exact `[eqref] -> [(ref null) resultHeapTy]` signature in-kernel).
         if f.calls.is_empty()
+            && matches!(f.params.as_slice(), [TyKind::Eqref])
             && let Some(default) = verbatim_default_from_ops(&miss_ops)
+            && verbatim_results_ok(&f.results, &default)
         {
             return Some(Cert::VerbatimWidenedMatch {
                 name: f.name.clone(),
@@ -173,6 +180,7 @@ fn nr_ref_dispatch_match(
                 carrier,
                 hit_variant_idx: *hit,
                 default,
+                code_entry_bytes: f.code_entry_bytes.clone(),
                 ops: strip_trailing_end(&f.ops).to_vec(),
             });
         }

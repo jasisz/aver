@@ -130,6 +130,26 @@ def lowerMutualBody (carrier : Nat) (plan : MutualRawPlan) :
   else
     none
 
+/-! ### Verbatim `ref.test`-dispatch WInstr lowering (mirrors `{name}Code`). -/
+
+def lowerLeaf (S F : Nat) : VerbatimLeaf → List WInstr
+  | .project tyIdx field =>
+      [.localGet S, .refCast tyIdx, .structGet tyIdx field, .localSet F, .localGet F]
+  | .arrayNewData arrTy _dataIdx bytes =>
+      [.i32Const 0, .i32Const (Int.ofNat bytes.length), .arrayNewData arrTy bytes]
+  | .refNull => [.refNull]
+  | .f64Bits bits => [.f64Const (UInt64.ofNat bits)]
+
+def lowerDispatch (S F : Nat) (first : Bool) : VerbatimDispatch → List WInstr
+  | .leaf l => lowerLeaf S F l
+  | .test tyIdx hit rest =>
+      (if first then [] else [.localGet S]) ++
+      [.refTest tyIdx, .ifElse (lowerLeaf S F hit) (lowerDispatch S F false rest)]
+
+def lowerVerbatimBody (plan : VerbatimRawPlan) : List WInstr :=
+  [.localGet 0, .localSet plan.scrutineeLocal, .localGet plan.scrutineeLocal] ++
+    lowerDispatch plan.scrutineeLocal plan.fieldLocal true plan.body
+
 def lowerStringConcatChunk (resultTy : Nat) (chunk : StringConcatChunk) :
     List WInstr :=
   [.i32Const 0, .i32Const (Int.ofNat chunk.bytes.length),

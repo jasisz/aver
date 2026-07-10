@@ -35,7 +35,7 @@ fn is_string_eq_host(
     result: Option<TyKind>,
     string_byte_array_types: &std::collections::HashSet<u32>,
 ) -> bool {
-    let [TyKind::Ref(lhs), TyKind::Ref(rhs)] = params else {
+    let [TyKind::Ref { idx: lhs, .. }, TyKind::Ref { idx: rhs, .. }] = params else {
         return false;
     };
     if lhs != rhs || result != Some(TyKind::I32) || entry.nlocals != 2 || !entry.calls.is_empty() {
@@ -113,10 +113,10 @@ fn is_string_concat_host(
     string_byte_array_types: &std::collections::HashSet<u32>,
 ) -> bool {
     // Signature: `(ref null container_ty) -> (ref null byte_ty)`, one arg.
-    let [TyKind::Ref(container_ty)] = params else {
+    let [TyKind::Ref { idx: container_ty, .. }] = params else {
         return false;
     };
-    let Some(TyKind::Ref(result_ty)) = result else {
+    let Some(TyKind::Ref { idx: result_ty, .. }) = result else {
         return false;
     };
     // The helper has exactly 7 locals (i32 i32 i32 ref i32 ref i32) and no

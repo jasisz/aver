@@ -292,6 +292,41 @@ def checkMutualRawPlan (plan : MutualRawPlan) : Bool :=
     | some n => sameTy n.ty plan.result
     | none => false
 
+/-! ### Verbatim `ref.test`-dispatch checker
+
+The `verbatim-plan-v1` grammar has its own dedicated types (the multi-use
+scrutinee is spilled to a scratch local, which pure ANF `FragBlock` cannot
+express). The soundness binding is the byte-equality gate in
+`AcceptedArtifact.verbatimPlanAccepted`; this structural check only rejects
+degenerate plans (wrong profile, or a projection sharing the scrutinee's scratch
+local). -/
+
+def leafHasProjection : VerbatimLeaf → Bool
+  | .project _ _ => true
+  | _ => false
+
+def dispatchHasProjection : VerbatimDispatch → Bool
+  | .leaf l => leafHasProjection l
+  | .test _ hit rest => leafHasProjection hit || dispatchHasProjection rest
+
+def checkVerbatimLeaf : VerbatimLeaf → Bool
+  | .project _ _ => true
+  -- Every payload element must be a real byte: the data-section binding compares
+  -- the claimed payload against recovered `0..255` segment bytes, so an
+  -- out-of-range element could never match and is rejected up front.
+  | .arrayNewData _ _ bytes => bytesAllBytes bytes
+  | .refNull => true
+  | .f64Bits _ => true
+
+def checkVerbatimDispatch : VerbatimDispatch → Bool
+  | .leaf l => checkVerbatimLeaf l
+  | .test _ hit rest => checkVerbatimLeaf hit && checkVerbatimDispatch rest
+
+def checkVerbatimRawPlan (plan : VerbatimRawPlan) : Bool :=
+  plan.profile == "verbatim-plan-v1" &&
+  checkVerbatimDispatch plan.body &&
+  (!dispatchHasProjection plan.body || plan.fieldLocal != plan.scrutineeLocal)
+
 def checkSymRawPlan (plan : SymRawPlan) : Bool :=
   plan.profile = "sym-fragment-v1" &&
     checkSymBlock plan.params plan.body &&

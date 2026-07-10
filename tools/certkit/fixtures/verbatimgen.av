@@ -1,0 +1,33 @@
+module VerbatimGen
+    intent =
+        "Verbatim Cod := WVal ADT-match byte-origin plans: a widened match with a null default and a variant dispatch to distinct string literals."
+    exposes [Wrap, Tag, wrapItems, tagName]
+
+type Wrap
+  Items(List<Int>)
+  Nothing
+
+type Tag
+  A
+  B
+  C
+
+fn wrapItems(w: Wrap) -> List<Int>
+  ? "Verbatim widened match over a list payload (null default)."
+  match w
+    Wrap.Items(xs) -> xs
+    _ -> []
+
+fn tagName(t: Tag) -> String
+  ? "Verbatim variant dispatch to distinct string literals."
+  match t
+    Tag.A -> "alpha"
+    Tag.B -> "beta"
+    Tag.C -> "gamma"
+
+verify wrapItems
+    wrapItems(Wrap.Items([1, 2])) => [1, 2]
+    wrapItems(Wrap.Nothing) => []
+
+verify tagName
+    tagName(Tag.C) => "gamma"
