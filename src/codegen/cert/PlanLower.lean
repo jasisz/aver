@@ -123,6 +123,13 @@ def lowerRecursionBody (carrier : Nat) (plan : RecursionRawPlan) :
   else
     none
 
+def lowerMutualBody (carrier : Nat) (plan : MutualRawPlan) :
+    Option (List WInstr) :=
+  if AverCert.PlanCheck.checkMutualRawPlan plan then
+    lowerBlock carrier plan.body
+  else
+    none
+
 def lowerStringConcatChunk (resultTy : Nat) (chunk : StringConcatChunk) :
     List WInstr :=
   [.i32Const 0, .i32Const (Int.ofNat chunk.bytes.length),

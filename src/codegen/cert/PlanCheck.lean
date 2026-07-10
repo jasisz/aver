@@ -285,6 +285,13 @@ def checkRecursionRawPlan (plan : RecursionRawPlan) : Bool :=
     | some n => sameTy n.ty plan.result
     | none => false
 
+def checkMutualRawPlan (plan : MutualRawPlan) : Bool :=
+  plan.profile = "mutual-plan-v1" &&
+    checkBlock plan.params plan.body &&
+    match lookupNode plan.body.nodes plan.body.result with
+    | some n => sameTy n.ty plan.result
+    | none => false
+
 def checkSymRawPlan (plan : SymRawPlan) : Bool :=
   plan.profile = "sym-fragment-v1" &&
     checkSymBlock plan.params plan.body &&
@@ -852,5 +859,62 @@ def checkRecursionPlanShape
         | [.intCarrier, .intCarrier] => recTopBlock true self boxIdx addIdx subIdx plan.body
         | _ => false)
   | _, _, _ => false
+
+/-! ### `mutual-plan-v1` shape checking
+
+`checkMutualRawPlan` above is only the generic typed-block discipline. This
+section pins the mutual-member grammar context-sensitively, generalising the
+fuel-recursion self-call to a mutual member's cross-call: the carrier-sign
+dispatch the emitter produces, a boxed-literal base arm, a step arm whose
+descent is `sub(n, box 1)` feeding a TAIL member-call, host calls citing exactly
+the byte-derived box/sub role table, and a member-call whose target is IN the
+byte-derived SCC member set (`memberSet`). The member set and role table are
+context threaded from the byte-derived SCC binding — never plan data. Unlike
+`checkRecursionPlanShape` a member's call is NOT pinned to its own index: it
+targets a SIBLING member, so the check binds it to the SCC set (the member's own
+index is in that set, so a legitimate 2-cycle back-edge is admitted too). The
+byte-exact gate then forces it to the member's actual cross target. -/
+
+/-- Mutual-member step arm: descent `sub(n, box 1)` feeding a TAIL member-call
+    `g(n-1)` whose target `cc` is in the byte-derived SCC member set. -/
+def recStepMutual (memberSet : List Nat) (boxIdx subIdx : Nat) (b : FragBlock) : Bool :=
+  match b.nodes, b.result with
+  | [{ id := 0, ty := .intCarrier, kind := .local 0 },
+     { id := 1, ty := .i64, kind := .constI64 one },
+     { id := 2, ty := .intCarrier, kind := .hostCall .box bi [1] },
+     { id := 3, ty := .intCarrier, kind := .hostCall .sub si [0, 2] },
+     { id := 4, ty := .intCarrier, kind := .selfCall true cc [3] }], 4 =>
+      one = 1 && bi = boxIdx && si = subIdx && memberSet.contains cc
+  | _, _ => false
+
+/-- The whole mutual-member body: the carrier discriminator, the sign-predicate
+    `if`, and the value `if` over a boxed-literal base and the mutual step. -/
+def mutTopBlock (memberSet : List Nat) (boxIdx subIdx : Nat) (b : FragBlock) : Bool :=
+  match b.nodes, b.result with
+  | [{ id := 0, ty := .intCarrier, kind := .local 0 },
+     { id := 1, ty := .ref, kind := .structGet 1 0 },
+     { id := 2, ty := .boolI32, kind := .refIsNull 1 },
+     { id := 3, ty := .boolI32, kind := .ifElse 2 signS signB },
+     { id := 4, ty := .intCarrier, kind := .ifElse 3 base step }], 4 =>
+      recSignSmall signS && recSignBig signB &&
+        recBaseUnary boxIdx base && recStepMutual memberSet boxIdx subIdx step
+  | _, _ => false
+
+/-- Context-sensitive `mutual-plan-v1` checking: the plan must be the mutual
+    member grammar, and its member-call must target an index IN the byte-derived
+    SCC member set with host calls citing the byte-derived box/sub role table. A
+    table missing the box or sub role fail-closes. -/
+def checkMutualPlanShape
+    (memberSet : List Nat)
+    (hostTable : List (HostRole × Nat))
+    (plan : MutualRawPlan) : Bool :=
+  match hostRoleIdx? hostTable .box, hostRoleIdx? hostTable .sub with
+  | some boxIdx, some subIdx =>
+      plan.profile = "mutual-plan-v1" &&
+        sameTy plan.result .intCarrier &&
+        (match plan.params with
+        | [.intCarrier] => mutTopBlock memberSet boxIdx subIdx plan.body
+        | _ => false)
+  | _, _ => false
 
 end AverCert.PlanCheck

@@ -3071,3 +3071,101 @@ fn cert_verify_declines_tampered_recursion_plan() {
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }
+
+/// A tampered byte-first `mutual-plan-v1` plan is declined. Each vector mutates
+/// the mutual-member plan for `isEven` in the shipped `Plans.lean` while leaving
+/// the wasm untouched, so the member plan no longer canonically lowers to
+/// `isEven`'s real code-entry bytes in the shared SCC code table. The checker
+/// rebuilds the shipped plan (its `rfl` chain is pinned to the honest bytes) and
+/// its kernel witness proves `accepted` over `manifest.mutualPlans`, so either
+/// gate rejects the plan. This is the S4 generalisation of the recursion tamper
+/// test: `isEven`'s step arm tail-calls a SIBLING SCC member (`isOdd`, index 2),
+/// not itself.
+#[test]
+fn cert_verify_declines_tampered_mutual_plan() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping mutual-plan tamper test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-mutual-plan");
+    let compile = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/mutual.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "mutual compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("mutual.wasm");
+    let cert = out_dir.join("cert");
+    let (ok, report) = aver_verify(&wasm, &cert);
+    assert!(ok, "honest mutual certificate should verify:\n{report}");
+
+    let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    // (a) member-call retargeted OUTSIDE the byte-derived SCC set ({1, 2}): the
+    //     tail cross-call to `isOdd` (index 2) becomes a call to index 5, which
+    //     is neither a member nor `isEven` itself. The context-sensitive grammar
+    //     (`checkMutualPlanShape`, `5 ∉ [1, 2]`) AND the byte gate both reject.
+    // (b) tail/non-tail flag flipped (`return_call 12 -> call 10`): the grammar
+    //     requires a TAIL member-call, and the bytes change, so both gates reject.
+    // (c) base literal changed (`i64.const 1 -> 5`): the base arm boxes the wrong
+    //     literal, so the member's bytes diverge (byte gate rejects).
+    // (d) member-call MISLABELLED as a self-call: the cross-call to `isOdd`
+    //     (index 2) is retargeted at `isEven`'s OWN index (1). Index 1 IS in the
+    //     SCC set, so the grammar check alone would pass — but `isEven`'s real
+    //     bytes tail-call index 2, so the byte-equality gate rejects it. This is
+    //     the defence-in-depth case: the shape check accepts, the byte gate does
+    //     not.
+    let tampers: [(&str, &str, &str); 4] = [
+        (
+            "member-call outside SCC",
+            ".selfCall true 2 [3]",
+            ".selfCall true 5 [3]",
+        ),
+        (
+            "tail flag flip",
+            ".selfCall true 2 [3]",
+            ".selfCall false 2 [3]",
+        ),
+        (
+            "base literal change",
+            ".constI64 (1 : Int) }, { id := 1, ty := .intCarrier, kind := .hostCall .box 7 [0] }",
+            ".constI64 (5 : Int) }, { id := 1, ty := .intCarrier, kind := .hostCall .box 7 [0] }",
+        ),
+        (
+            "member-call mislabelled as self-call",
+            ".selfCall true 2 [3]",
+            ".selfCall true 1 [3]",
+        ),
+    ];
+    for (label, from, to) in tampers {
+        assert!(
+            honest.contains(from),
+            "mutual Plans.lean mutual-plan shape changed ({label}); update the test"
+        );
+        let dir = temp_dir("cert-mutual-plan-tamper");
+        copy_dir(&out_dir, &dir);
+        let tampered_plans = dir.join("cert").join("Plans.lean");
+        let src = std::fs::read_to_string(&tampered_plans).unwrap();
+        std::fs::write(&tampered_plans, src.replacen(from, to, 1)).unwrap();
+        let (ok, report) = aver_verify(&dir.join("mutual.wasm"), &dir.join("cert"));
+        assert!(
+            !ok,
+            "{label}: tampered mutual plan must be declined:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}

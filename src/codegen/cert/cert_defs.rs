@@ -265,9 +265,19 @@ enum Cert {
 struct MutualMember {
     name: String,
     self_idx: u32,
+    /// Defined-code index and declared type index of this member's exported
+    /// function, carried for the byte-first `mutual-plan-v1` artifact claim's
+    /// function binding. They do not enter the fuel-induction obligation.
+    code_idx: u32,
+    type_idx: u32,
     nlocals: usize,
     /// Literal returned in the base arm (`n ≤ 0`).
     base_k: i64,
     /// The SCC member this one tail-calls in its step arm.
     cross_idx: u32,
+    /// Raw code-entry bytes of this member's export. The `mutual-plan-v1` claim
+    /// is emitted ONLY when the canonical plan lowering reproduces exactly these
+    /// bytes (otherwise the member stays on the legacy witness route — never an
+    /// unverifiable claim), exactly like `Cert::Recursive::code_entry_bytes`.
+    code_entry_bytes: Vec<u8>,
 }

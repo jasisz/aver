@@ -566,6 +566,58 @@ fn render_expr_fragment_plans(
             plan_value = recursion_plan_lean_value(&plan),
         ));
     }
+    for c in &analysis.certs {
+        let Cert::MutualRecursion {
+            name,
+            self_idx,
+            carrier,
+            box_idx,
+            sub_idx,
+            position,
+            scc,
+        } = c.inner()
+        else {
+            continue;
+        };
+        let Some(plan) = mutual_plan_from_cert(c) else {
+            continue;
+        };
+        let member = &scc[*position];
+        let type_idx = member.type_idx;
+        let primary = &scc[0].name;
+        let code_entry_bytes = lower_expr_fragment_plan_code_entry_bytes(&plan, *carrier)
+            .expect("certified mutual member plan lowers to code-entry bytes");
+        let code_entry_bytes = render_byte_list(&code_entry_bytes);
+        let export_name_bytes = render_byte_list(name.as_bytes());
+        let host_table = mutual_host_table_lean_value(*box_idx, *sub_idx);
+        let member_set = mutual_member_set_lean_value(scc);
+        any = true;
+        s.push_str(&format!(
+            "/-- Byte-derived `mutual-plan-v1` plan for `{name}` (one member of the\n\
+                 mutually-recursive SCC whose shared code table `{primary}Code` emits). -/\n\
+             def {name}MutualPlan : MutualRawPlan := {plan_value}\n\n\
+             /-- The audited mutual-plan checker accepts `{name}`'s byte-derived plan. -/\n\
+             example : AverCert.PlanCheck.checkMutualRawPlan {name}MutualPlan = true := rfl\n\n\
+             /-- The context-sensitive mutual grammar accepts `{name}`'s plan: the\n\
+                 member-call targets an index in the byte-derived SCC member set and every\n\
+                 host call cites the byte-derived box/sub role table. -/\n\
+             example : AverCert.PlanCheck.checkMutualPlanShape {member_set} {host_table} {name}MutualPlan = true := rfl\n\n\
+             /-- The declared function type of `{name}` is the canonical certified\n\
+                 signature over the Int carrier. -/\n\
+             example : AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.wasmBytes {type_idx} 1 {carrier} = true := rfl\n\n\
+             /-- The audited mutual lowerer maps `{name}`'s plan to its arm of the shared\n\
+                 `{primary}Code` table (the exact `Module.lean` body). -/\n\
+             example : (CertModule.{primary}Code {self_idx}).map (fun c => c.body) =\n  \
+               AverCert.PlanLower.lowerMutualBody {carrier} {name}MutualPlan := rfl\n\n\
+             /-- The audited mutual byte lowerer reproduces `{name}`'s exact code-entry bytes. -/\n\
+             example : AverCert.PlanBytes.lowerMutualCodeEntry {carrier} {name}MutualPlan =\n  \
+               some {code_entry_bytes} := rfl\n\n\
+             /-- The Wasm slicer finds `{name}`'s exact code-entry bytes by export name. -/\n\
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+               some {code_entry_bytes} := rfl\n\n",
+            plan_value = mutual_plan_lean_value(&plan),
+        ));
+    }
     if !any {
         s.push_str("-- This artifact contains no source/fragment plans.\n\n");
     }
@@ -579,12 +631,14 @@ struct RenderedArtifactClaims {
     string_claims: String,
     construct_claims: String,
     recursion_claims: String,
+    mutual_claims: String,
     obligation_proof: String,
     sym_proof: String,
     string_eq_proof: String,
     string_proof: String,
     construct_proof: String,
     recursion_proof: String,
+    mutual_proof: String,
 }
 
 fn render_artifact_expr_fragment_claims(
@@ -598,11 +652,13 @@ fn render_artifact_expr_fragment_claims(
     let mut string_claims = Vec::new();
     let mut construct_claims = Vec::new();
     let mut recursion_claims = Vec::new();
+    let mut mutual_claims = Vec::new();
     let mut sym_proofs = Vec::new();
     let mut string_eq_proofs = Vec::new();
     let mut string_proofs = Vec::new();
     let mut construct_proofs = Vec::new();
     let mut recursion_proofs = Vec::new();
+    let mut mutual_proofs = Vec::new();
     for c in &analysis.certs {
         match c.inner() {
             Cert::ExprFragment {
@@ -794,6 +850,45 @@ fn render_artifact_expr_fragment_claims(
                      ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
                 ));
             }
+            Cert::MutualRecursion {
+                name,
+                self_idx,
+                carrier,
+                box_idx,
+                sub_idx,
+                position,
+                scc,
+            } => {
+                // Byte-equality gated per member, exactly like the recursion
+                // route: a member whose canonical plan cannot reproduce its exact
+                // bytes stays on the legacy witness route with no claim.
+                let Some(plan) = mutual_plan_from_cert(c) else {
+                    continue;
+                };
+                let member = &scc[*position];
+                let code_entry_bytes = lower_expr_fragment_plan_code_entry_bytes(&plan, *carrier)
+                    .expect("certified mutual member plan lowers to code-entry bytes");
+                let code_entry_bytes = render_byte_list(&code_entry_bytes);
+                let lowered_body = lower_expr_fragment_plan(&plan, *carrier)
+                    .map(|ops| render_ops_value(&ops))
+                    .expect("certified mutual member plan lowers to WInstr body");
+                let export_name_bytes = render_byte_list(name.as_bytes());
+                let host_table = mutual_host_table_lean_value(*box_idx, *sub_idx);
+                let member_set = mutual_member_set_lean_value(scc);
+                let func_binding = format!(
+                    "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)",
+                    code_idx = member.code_idx,
+                    type_idx = member.type_idx,
+                );
+                mutual_claims.push(format!(
+                    "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, memberSet := {member_set}, hostTable := {host_table}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.MutualRecursionClaim)",
+                    export_name = lean_str(name),
+                ));
+                mutual_proofs.push(format!(
+                    "⟨rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
+                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
+                ));
+            }
             _ => {}
         }
     }
@@ -822,11 +917,17 @@ fn render_artifact_expr_fragment_claims(
     } else {
         format!("[\n  {}\n]", recursion_claims.join(",\n  "))
     };
+    let mutual_claims = if mutual_claims.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[\n  {}\n]", mutual_claims.join(",\n  "))
+    };
     let obligation_proof_count = sym_proofs.len()
         + string_eq_proofs.len()
         + string_proofs.len()
         + construct_proofs.len()
-        + recursion_proofs.len();
+        + recursion_proofs.len()
+        + mutual_proofs.len();
     let obligation_proof = (0..obligation_proof_count).fold("trivial".to_string(), |acc, _| {
         format!("⟨rfl, {acc}⟩")
     });
@@ -863,18 +964,26 @@ fn render_artifact_expr_fragment_claims(
             .fold("trivial".to_string(), |acc, proof| {
                 format!("⟨{proof}, {acc}⟩")
             });
+    let mutual_proof = mutual_proofs
+        .into_iter()
+        .rev()
+        .fold("trivial".to_string(), |acc, proof| {
+            format!("⟨{proof}, {acc}⟩")
+        });
     RenderedArtifactClaims {
         sym_claims,
         string_eq_claims,
         string_claims,
         construct_claims,
         recursion_claims,
+        mutual_claims,
         obligation_proof,
         sym_proof,
         string_eq_proof,
         string_proof,
         construct_proof,
         recursion_proof,
+        mutual_proof,
     }
 }
 
@@ -892,7 +1001,7 @@ fn render_artifact(
     );
     let fragment_proof = format!(
         concat!(
-            "  dsimp [data, symFragmentClaims, stringEqClaims, stringConcatClaims, constructClaims, recursionClaims, AverCert.AcceptedArtifact.accepted,\n",
+            "  dsimp [data, symFragmentClaims, stringEqClaims, stringConcatClaims, constructClaims, recursionClaims, mutualRecursionClaims, AverCert.AcceptedArtifact.accepted,\n",
             "    AverCert.AcceptedArtifact.subjectMatchesArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.expectedArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.fragmentClaimObligationsInManifest,\n",
@@ -914,12 +1023,15 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.constructClaimSymPlanPairs,\n",
             "    AverCert.AcceptedArtifact.recursionClaimExportNames,\n",
             "    AverCert.AcceptedArtifact.recursionManifestPlanNames,\n",
+            "    AverCert.AcceptedArtifact.mutualRecursionClaimExportNames,\n",
+            "    AverCert.AcceptedArtifact.mutualManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.acceptedFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedSymFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedStringEqFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedStringConcatFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedConstructFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedRecursionFragments,\n",
+            "    AverCert.AcceptedArtifact.acceptedMutualRecursionFragments,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
@@ -939,16 +1051,21 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.recursionClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.recursionPlanForExport,\n",
             "    AverCert.AcceptedArtifact.recursionPlanAccepted,\n",
+            "    AverCert.AcceptedArtifact.mutualRecursionClaimsAccepted,\n",
+            "    AverCert.AcceptedArtifact.mutualRecursionClaimAccepted,\n",
+            "    AverCert.AcceptedArtifact.mutualPlanForExport,\n",
+            "    AverCert.AcceptedArtifact.mutualPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨finalCert, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, {recursion_proof}⟩⟩⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨finalCert, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, {mutual_proof}⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         obligation_proof = claims.obligation_proof,
         sym_proof = claims.sym_proof,
         string_eq_proof = claims.string_eq_proof,
         string_proof = claims.string_proof,
         construct_proof = claims.construct_proof,
-        recursion_proof = claims.recursion_proof
+        recursion_proof = claims.recursion_proof,
+        mutual_proof = claims.mutual_proof
     );
     format!(
          "-- Artifact-carried acceptance root.\n\
@@ -968,8 +1085,9 @@ fn render_artifact(
          def stringConcatClaims : List AverCert.AcceptedArtifact.StringConcatClaim := {string_claims_list}\n\n\
          def constructClaims : List AverCert.AcceptedArtifact.ConstructClaim := {construct_claims_list}\n\n\
          def recursionClaims : List AverCert.AcceptedArtifact.RecursionClaim := {recursion_claims_list}\n\n\
+         def mutualRecursionClaims : List AverCert.AcceptedArtifact.MutualRecursionClaim := {mutual_claims_list}\n\n\
          def data : AverCert.AcceptedArtifact.ArtifactData :=\n  \
-           ({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
+           ({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
          def acceptedWithFinal\n\
              (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n\
              AverCert.AcceptedArtifact.accepted data := by\n\
@@ -982,6 +1100,7 @@ fn render_artifact(
         string_claims_list = claims.string_claims,
         construct_claims_list = claims.construct_claims,
         recursion_claims_list = claims.recursion_claims,
+        mutual_claims_list = claims.mutual_claims,
         fragment_proof = fragment_proof
     )
 }

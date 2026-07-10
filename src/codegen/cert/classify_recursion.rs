@@ -265,9 +265,12 @@ fn recognize_mutual_scc(
         cycle.push(MutualMember {
             name: uf.name.clone(),
             self_idx: cur,
+            code_idx: uf.code_idx,
+            type_idx: uf.type_idx,
             nlocals: uf.nlocals,
             base_k,
             cross_idx,
+            code_entry_bytes: uf.code_entry_bytes.clone(),
         });
         cur = cross_idx;
         if cur == f.wasm_idx {

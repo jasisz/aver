@@ -230,6 +230,21 @@ structure RecursionRawPlan where
   body    : FragBlock
 deriving Repr
 
+/-- Raw, untrusted mutual-recursion member plan. Like `RecursionRawPlan` it
+    reuses the `expr-fragment` ANF grammar with a `selfCall` node and an
+    Int-carrier value-if, but the call is a TAIL call to a SIBLING member of the
+    byte-derived SCC rather than the member's own index. The checked lowerer
+    binds it to the exact code-entry bytes of ONE member of a mutually-recursive
+    SCC. This is a byte-origin veneer only: the conjunction fuel-induction proof
+    face and the emitted shared `Module.lean` code literal are unchanged, so the
+    plan claim never touches the proof. -/
+structure MutualRawPlan where
+  profile : String
+  params  : List FragTy
+  result  : FragTy
+  body    : FragBlock
+deriving Repr
+
 /-- One String.concat literal chunk. `bytes` is the source-level content; `dataIdx`
     is the target binding needed to lower back to exact `array.new_data` code
     bytes. A later self-checking parser can derive `dataIdx` from the module's
@@ -380,6 +395,7 @@ structure Manifest where
   constructPlans : List (String × ConstructRawPlan)
   exprFragmentPlans : List (String × ExprFragmentRawPlan)
   recursionPlans : List (String × RecursionRawPlan)
+  mutualPlans : List (String × MutualRawPlan)
   obligations : List Obligation
 
 /-- The single audited certificate proposition: the manifest's pinned hash is
