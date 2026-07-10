@@ -75,6 +75,12 @@ mutual
               match popExpectedAll stack args.reverse with
               | some stack' => some ([.call funcIdx], node.id :: stack')
               | none => none
+          | .selfCall tail funcIdx args =>
+              match popExpectedAll stack args.reverse with
+              | some stack' =>
+                  some ([if tail then .returnCall funcIdx else .call funcIdx],
+                    node.id :: stack')
+              | none => none
           | .ifElse cond thenBlock elseBlock =>
               match popExpected stack cond with
               | some [] =>
@@ -106,6 +112,13 @@ def lowerBlock (carrier : Nat) (block : FragBlock) : Option (List WInstr) :=
 def lowerExprFragmentBody (carrier : Nat) (plan : ExprFragmentRawPlan) :
     Option (List WInstr) :=
   if AverCert.PlanCheck.checkExprFragmentRawPlan plan then
+    lowerBlock carrier plan.body
+  else
+    none
+
+def lowerRecursionBody (carrier : Nat) (plan : RecursionRawPlan) :
+    Option (List WInstr) :=
+  if AverCert.PlanCheck.checkRecursionRawPlan plan then
     lowerBlock carrier plan.body
   else
     none

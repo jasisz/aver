@@ -72,12 +72,15 @@ def f64Bytes (bits : Nat) : Option (List Nat) :=
   else
     none
 
-def blockTypeBytes : FragTy → Option (List Nat)
+/-- Block-type bytes for an `if (result …)`. Scalar results are their value
+    type byte; an Int-carrier result is the ref-null heap type `63 <carrier>`
+    (the value-if of a fuel-recursion body). `carrier` supplies that index. -/
+def blockTypeBytes (carrier : Nat) : FragTy → Option (List Nat)
   | .boolI32 => some [0x7f]
   | .rawI32 => some [0x7f]
   | .i64 => some [0x7e]
   | .f64 => some [0x7c]
-  | .intCarrier => none
+  | .intCarrier => (uleb32 carrier).map (fun c => [0x63] ++ c)
   | .ref => none
   | .adtRef => none
 
@@ -156,10 +159,15 @@ mutual
               match popExpectedAll stack args.reverse, uleb32 funcIdx with
               | some stack', some idxBytes => some ([0x10] ++ idxBytes, node.id :: stack')
               | _, _ => none
+          | .selfCall tail funcIdx args =>
+              match popExpectedAll stack args.reverse, uleb32 funcIdx with
+              | some stack', some idxBytes =>
+                  some ((if tail then [0x12] else [0x10]) ++ idxBytes, node.id :: stack')
+              | _, _ => none
           | .ifElse cond thenBlock elseBlock =>
               match popExpected stack cond with
               | some [] =>
-                  match blockTypeBytes node.ty,
+                  match blockTypeBytes carrier node.ty,
                         lowerBlockBytesFuel fuel carrier thenBlock,
                         lowerBlockBytesFuel fuel carrier elseBlock with
                   | some blockTy, some thenBytes, some elseBytes =>
@@ -206,6 +214,32 @@ def lowerExprFragmentBodyBytes (carrier : Nat) (plan : ExprFragmentRawPlan) :
 def lowerExprFragmentCodeEntry (carrier : Nat) (plan : ExprFragmentRawPlan) :
     Option (List Nat) :=
   match lowerExprFragmentBodyBytes carrier plan with
+  | some body =>
+      match uleb32 body.length with
+      | some lenBytes => some (lenBytes ++ body)
+      | none => none
+  | none => none
+
+def lowerRecursionExprBytes (carrier : Nat) (plan : RecursionRawPlan) :
+    Option (List Nat) :=
+  if AverCert.PlanCheck.checkRecursionRawPlan plan then
+    match lowerBlockBytes carrier plan.body with
+    | some bytes => some (bytes ++ [0x0b])
+    | none => none
+  else
+    none
+
+def lowerRecursionBodyBytes (carrier : Nat) (plan : RecursionRawPlan) :
+    Option (List Nat) :=
+  match uleb32 1, uleb32 1, uleb32 carrier,
+        lowerRecursionExprBytes carrier plan with
+  | some localDeclCount, some localCount, some carrierBytes, some exprBytes =>
+      some (localDeclCount ++ localCount ++ [0x63] ++ carrierBytes ++ exprBytes)
+  | _, _, _, _ => none
+
+def lowerRecursionCodeEntry (carrier : Nat) (plan : RecursionRawPlan) :
+    Option (List Nat) :=
+  match lowerRecursionBodyBytes carrier plan with
   | some body =>
       match uleb32 body.length with
       | some lenBytes => some (lenBytes ++ body)

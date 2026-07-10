@@ -112,6 +112,21 @@ fn lower_expr_fragment_block(block: &FragBlock, carrier: u32) -> Result<Vec<Op>,
                 ops.push(Op::Call(*func_idx));
                 stack.push(node.id);
             }
+            FragNodeKind::SelfCall {
+                tail,
+                func_idx,
+                args,
+            } => {
+                for arg in args.iter().rev() {
+                    lower_pop(&mut stack, *arg, node.id)?;
+                }
+                ops.push(if *tail {
+                    Op::ReturnCall(*func_idx)
+                } else {
+                    Op::Call(*func_idx)
+                });
+                stack.push(node.id);
+            }
             FragNodeKind::If {
                 cond,
                 then_block,
@@ -216,6 +231,18 @@ fn lower_expr_fragment_block_bytes(
                 push_u32_leb(out, *func_idx);
                 stack.push(node.id);
             }
+            FragNodeKind::SelfCall {
+                tail,
+                func_idx,
+                args,
+            } => {
+                for arg in args.iter().rev() {
+                    lower_pop(&mut stack, *arg, node.id)?;
+                }
+                out.push(if *tail { 0x12 } else { 0x10 });
+                push_u32_leb(out, *func_idx);
+                stack.push(node.id);
+            }
             FragNodeKind::If {
                 cond,
                 then_block,
@@ -229,7 +256,7 @@ fn lower_expr_fragment_block_bytes(
                     ));
                 }
                 out.push(0x04);
-                push_expr_fragment_blocktype(out, node.ty)?;
+                push_expr_fragment_blocktype(out, node.ty, carrier)?;
                 lower_expr_fragment_block_bytes(then_block, carrier, out)?;
                 out.push(0x05);
                 lower_expr_fragment_block_bytes(else_block, carrier, out)?;
@@ -248,19 +275,24 @@ fn lower_expr_fragment_block_bytes(
     Ok(())
 }
 
-fn push_expr_fragment_blocktype(out: &mut Vec<u8>, ty: FragTy) -> Result<(), String> {
-    let byte = match ty {
-        FragTy::BoolI32 | FragTy::RawI32 => 0x7f,
-        FragTy::I64 => 0x7e,
-        FragTy::F64 => 0x7c,
-        FragTy::IntCarrier | FragTy::Ref | FragTy::AdtRef => {
+fn push_expr_fragment_blocktype(out: &mut Vec<u8>, ty: FragTy, carrier: u32) -> Result<(), String> {
+    match ty {
+        FragTy::BoolI32 | FragTy::RawI32 => out.push(0x7f),
+        FragTy::I64 => out.push(0x7e),
+        FragTy::F64 => out.push(0x7c),
+        // An Int-carrier `if` result (the value-if of a fuel-recursion body) is
+        // the ref-null heap type `63 <carrier>`.
+        FragTy::IntCarrier => {
+            out.push(0x63);
+            push_u32_leb(out, carrier);
+        }
+        FragTy::Ref | FragTy::AdtRef => {
             return Err(format!(
                 "canonical byte lowering does not support if result `{}` yet",
                 ty.plan_tag()
             ));
         }
-    };
-    out.push(byte);
+    }
     Ok(())
 }
 

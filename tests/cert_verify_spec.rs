@@ -487,10 +487,12 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         );
     }
 
-    // The artifact-carried data root is useful metadata, not authority. Even
-    // when a fixture has no expr-fragment claims, the checker pins
-    // `AverCert.Artifact.data` to its own reconstruction before accepting the
-    // artifact-level root.
+    // The artifact-carried data root is useful metadata, not authority. Since
+    // the recursion exports carry byte-origin plan claims, an `Artifact.lean`
+    // whose `data` points at empty bytes can no longer even prove its own
+    // claims (`codeEntryForExport [] … = some …` has no `rfl`), so the tamper
+    // dies at the cert's own build — before the checker's `AverCert.Artifact.data`
+    // reconstruction pin, which remains the authority for claim-free certs.
     {
         let dir = temp_dir("neg-artifact-data-pin");
         copy_dir(&out_dir, &dir);
@@ -506,8 +508,14 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "tampered Artifact.lean data must fail:\n{out}");
         assert!(
-            out.contains("AverCert.Artifact.data") || out.contains("does not bind"),
+            out.contains("did not build")
+                || out.contains("AverCert.Artifact.data")
+                || out.contains("does not bind"),
             "wrong reason for artifact data tamper:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "tampered artifact data credited:\n{out}"
         );
     }
 
@@ -600,9 +608,10 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     // (e) A1 hash rebind: replace the artifact with a DIFFERENT but genuine cert
     //     module (certprobe's wasm) and edit ONLY `wasm_sha256` in the JSON to
     //     match it. The fast JSON pre-check passes and the swapped module still
-    //     disassembles, so the checker reaches the kernel witness — which rejects
-    //     it because the theorems (and `CertModule.wasmSha256`) talk about the
-    //     ORIGINAL hash, not the checker-computed one.
+    //     disassembles. The recursion exports carry byte-origin plan claims that
+    //     bind the checker-staged `ArtifactBytes` (the actual, swapped bytes), so
+    //     the cert's own build now fails before the checker witness even runs —
+    //     an even earlier fail-closed decline than the witness hash face.
     {
         let dir = temp_dir("neg-e");
         copy_dir(&out_dir, &dir);
@@ -630,11 +639,57 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         let _ = std::fs::remove_dir_all(&foreign_out);
         assert!(!ok, "A1 hash rebind must fail:\n{out}");
-        assert!(out.contains("does not bind"), "wrong reason (e):\n{out}");
+        assert!(
+            out.contains("did not build") || out.contains("does not bind"),
+            "wrong reason (e):\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "hash rebind credited (e):\n{out}"
+        );
+    }
+
+    // (e2) A1 hash rebind against a CLAIM-FREE cert: `certempty` proves zero
+    //      obligations and ships no plan claims, so its Lean data builds green
+    //      over any staged bytes. Appending an inert custom section changes the
+    //      artifact hash without perturbing any byte-derived fact, and the JSON
+    //      pin is rebound to match — so ONLY the kernel witness's hash faces can
+    //      catch the swap: the theorems (and `CertModule.wasmSha256`) talk about
+    //      the ORIGINAL hash, not the checker-computed one. This keeps the
+    //      witness hash face exercised now that claim-covered certs die earlier.
+    {
+        let empty_out = temp_dir("neg-e2-empty");
+        let ec = Command::new(aver_bin)
+            .current_dir(&repo_root)
+            .arg("compile")
+            .arg("tools/certkit/fixtures/certempty.av")
+            .arg("--target")
+            .arg("wasm-gc")
+            .arg("--certify")
+            .arg("-o")
+            .arg(&empty_out)
+            .output()
+            .expect("aver compile --certify runs");
+        assert!(ec.status.success(), "certempty fixture compile failed");
+        let w = empty_out.join("certempty.wasm");
+        let mut foreign = std::fs::read(&w).unwrap();
+        // Inert trailing custom section (id 0, size 2, name "x", empty payload).
+        foreign.extend_from_slice(&[0x00, 0x02, 0x01, 0x78]);
+        std::fs::write(&w, &foreign).unwrap();
+        let sha = aver::codegen::cert::sha256_hex(&foreign);
+        let mf = empty_out.join("cert").join("cert-manifest.json");
+        let json = std::fs::read_to_string(&mf).unwrap();
+        let mut m: serde_json::Value = serde_json::from_str(&json).unwrap();
+        m["wasm_sha256"] = serde_json::Value::String(sha);
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        let (ok, out) = aver_verify(&w, &empty_out.join("cert"));
+        let _ = std::fs::remove_dir_all(&empty_out);
+        assert!(!ok, "A1 hash rebind on claim-free cert must fail:\n{out}");
+        assert!(out.contains("does not bind"), "wrong reason (e2):\n{out}");
         // The witness names the exact face the kernel rejected.
         assert!(
             out.contains("CertModule.wasmSha256"),
-            "witness not exercised (e):\n{out}"
+            "witness not exercised (e2):\n{out}"
         );
     }
 
@@ -936,9 +991,11 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
 
     // (s) Code decouple: point the obligation's `code` at a decoy `wrongCode` that
     //     always traps, so `holds` is vacuous and trivially provable, while the
-    //     honest `sumToCode` is left dead. The cert builds green (the vacuous proof
-    //     replaces the honest one). The code `rfl` binds `o.code` to the
-    //     bytes-derived lambda, not `wrongCode`, so the witness fails: DECLINED.
+    //     honest `sumToCode` is left dead. The artifact-carried recursion claim
+    //     pins `obligation.code` to the plan-lowered body, so the decoupled
+    //     obligation now fails the cert's OWN build — an even earlier fail-closed
+    //     decline than the checker witness's code `rfl` (which remains exercised
+    //     by cases (p)/(q)/(r), whose nlocals-only mutations build green).
     {
         let dir = temp_dir("neg-s");
         copy_dir(&out_dir, &dir);
@@ -968,10 +1025,9 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         replace_simulates(&cert, &vac);
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &cert);
         assert!(!ok, "code decouple must be DECLINED:\n{out}");
-        assert!(out.contains("does not bind"), "wrong reason (s):\n{out}");
         assert!(
-            !out.contains("did not build"),
-            "case (s) must build green and be caught by the witness:\n{out}"
+            out.contains("did not build") || out.contains("does not bind"),
+            "wrong reason (s):\n{out}"
         );
         assert!(
             !out.contains("CERTIFIED"),
@@ -981,8 +1037,10 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
 
     // (t) Self decouple (vacuity): set the obligation's `self` to a wrong index so
     //     `code self` misses the table and `wFuncN` traps — `holds` is vacuous and
-    //     provable. Builds green; the self `rfl` binds `o.self` to the byte index,
-    //     so the witness fails: DECLINED.
+    //     provable. The artifact-carried recursion claim pins
+    //     `binding.funcIdx = obligation.self` to the byte-derived function
+    //     binding, so the decoupled `self` now fails the cert's OWN build — an
+    //     even earlier fail-closed decline than the checker witness's self `rfl`.
     {
         let dir = temp_dir("neg-t");
         copy_dir(&out_dir, &dir);
@@ -1000,10 +1058,9 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         replace_simulates(&cert, &vac);
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &cert);
         assert!(!ok, "self decouple must be DECLINED:\n{out}");
-        assert!(out.contains("does not bind"), "wrong reason (t):\n{out}");
         assert!(
-            !out.contains("did not build"),
-            "case (t) must build green and be caught by the witness:\n{out}"
+            out.contains("did not build") || out.contains("does not bind"),
+            "wrong reason (t):\n{out}"
         );
         assert!(
             !out.contains("CERTIFIED"),
@@ -1013,9 +1070,10 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
 
     // (u) Export-name relabel: keep the byte-bound honest body/self/carrier, but
     //     relabel the first obligation (and the JSON) to a duplicate export name
-    //     (`countDown`). The certified export names are re-derived from the
-    //     module's export section and pinned by `rfl`, so the label list no
-    //     longer matches the export table → DECLINED.
+    //     (`countDown`). The artifact-carried recursion claim pins
+    //     `obligation.export_` to the claimed export name, so the relabel now
+    //     fails the cert's OWN build; the checker witness's re-derived export
+    //     list `rfl` remains the backstop for claim-free certs → DECLINED.
     {
         let dir = temp_dir("neg-u");
         copy_dir(&out_dir, &dir);
@@ -1036,7 +1094,10 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "export-name relabel must be DECLINED (u):\n{out}");
-        assert!(out.contains("does not bind"), "wrong reason (u):\n{out}");
+        assert!(
+            out.contains("did not build") || out.contains("does not bind"),
+            "wrong reason (u):\n{out}"
+        );
         assert!(!out.contains("CERTIFIED"), "relabel credited (u):\n{out}");
     }
 
@@ -2918,4 +2979,84 @@ fn cert_verify_declines_relabeled_projection_source_types() {
 
     let _ = std::fs::remove_dir_all(&out_dir);
     let _ = std::fs::remove_dir_all(&tamper_dir);
+}
+
+/// A tampered byte-first `recursion-plan-v1` plan is declined. Each vector
+/// mutates the fuel-recursion plan for `sumFrom` in the shipped `Plans.lean`
+/// while leaving the wasm untouched, so the plan no longer canonically lowers to
+/// `sumFrom`'s real code-entry bytes. The checker rebuilds the shipped plan (its
+/// `rfl` chain is pinned to the honest bytes) and its kernel witness proves
+/// `accepted` over `manifest.recursionPlans`, so either gate rejects the plan.
+#[test]
+fn cert_verify_declines_tampered_recursion_plan() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping recursion-plan tamper test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-recursion-plan");
+    let compile = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/recgen.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "recgen compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("recgen.wasm");
+    let cert = out_dir.join("cert");
+    let (ok, report) = aver_verify(&wasm, &cert);
+    assert!(ok, "honest recursion certificate should verify:\n{report}");
+
+    let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    // (a) descent role/target swap: `sub(n, box 1)` becomes `add(n, box 1)`, so
+    //     the descent computes `n + 1` instead of `n - 1` (byte `10 0c -> 10 0b`).
+    // (b) self-call retargeted at another user function (`backward`, `10 01 -> 10 03`).
+    // (c) base literal changed (`i64.const 7 -> 5`).
+    let tampers: [(&str, &str, &str); 3] = [
+        (
+            "descent role swap",
+            ".hostCall .sub 12 [1, 3]",
+            ".hostCall .add 11 [1, 3]",
+        ),
+        (
+            "self-call retarget",
+            ".selfCall false 1 [4]",
+            ".selfCall false 3 [4]",
+        ),
+        (
+            "base literal change",
+            ".constI64 (7 : Int)",
+            ".constI64 (5 : Int)",
+        ),
+    ];
+    for (label, from, to) in tampers {
+        assert!(
+            honest.contains(from),
+            "recgen Plans.lean recursion-plan shape changed ({label}); update the test"
+        );
+        let dir = temp_dir("cert-recursion-plan-tamper");
+        copy_dir(&out_dir, &dir);
+        let tampered_plans = dir.join("cert").join("Plans.lean");
+        let src = std::fs::read_to_string(&tampered_plans).unwrap();
+        std::fs::write(&tampered_plans, src.replacen(from, to, 1)).unwrap();
+        let (ok, report) = aver_verify(&dir.join("recgen.wasm"), &dir.join("cert"));
+        assert!(
+            !ok,
+            "{label}: tampered recursion plan must be declined:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    let _ = std::fs::remove_dir_all(&out_dir);
 }

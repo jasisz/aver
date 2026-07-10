@@ -122,6 +122,14 @@ def hostCallResultTy? (nodes : List FragNode) (role : HostRole) (args : List Nat
   | .box => if argsHaveTys nodes args [.i64] then some .intCarrier else none
   | .add =>
       if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .intCarrier else none
+  | .sub =>
+      if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .intCarrier else none
+
+/-- All arguments of a self-call must be Int carriers; the recursion class only
+    threads Int values through its recursive descent. -/
+def fragArgsAllTy (nodes : List FragNode) (expected : FragTy) : List Nat → Bool
+  | [] => true
+  | arg :: args => hasTy nodes arg expected && fragArgsAllTy nodes expected args
 
 def symPrimResultTy? (nodes : List SymNode) (op : SymPrim) (args : List Nat) :
     Option SymTy :=
@@ -179,6 +187,14 @@ def checkBlockFuel : Nat → List FragTy → FragBlock → Bool
             else none
         | .prim op args => primResultTy? checked op args
         | .hostCall role _funcIdx args => hostCallResultTy? checked role args
+        -- A self-call yields the Int carrier when every argument is an Int
+        -- carrier. `funcIdx` is not typed here (the byte gate binds it and the
+        -- Rust checker validates it against the byte-derived self index),
+        -- mirroring `hostCall`.
+        | .selfCall _tail _funcIdx args =>
+            if !args.isEmpty && fragArgsAllTy checked .intCarrier args then
+              some .intCarrier
+            else none
         | .ifElse cond thenBlock elseBlock =>
             if hasTy checked cond .boolI32 &&
                checkBlockFuel fuel params thenBlock &&
@@ -257,6 +273,13 @@ def checkSymBlock (params : List SymTy) (block : SymBlock) : Bool :=
 
 def checkExprFragmentRawPlan (plan : ExprFragmentRawPlan) : Bool :=
   plan.profile = "expr-fragment-v1" &&
+    checkBlock plan.params plan.body &&
+    match lookupNode plan.body.nodes plan.body.result with
+    | some n => sameTy n.ty plan.result
+    | none => false
+
+def checkRecursionRawPlan (plan : RecursionRawPlan) : Bool :=
+  plan.profile = "recursion-plan-v1" &&
     checkBlock plan.params plan.body &&
     match lookupNode plan.body.nodes plan.body.result with
     | some n => sameTy n.ty plan.result

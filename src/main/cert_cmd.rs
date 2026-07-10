@@ -1398,6 +1398,22 @@ fn lean_string_eq_plan_pairs(rederived: &[cert::RederivedObligation]) -> String 
     format!("[ {inner} ]")
 }
 
+/// A Lean list literal of `(export name, RecursionRawPlan)` pairs for
+/// byte-first fuel-recursion plans. These terms are checker-rendered from the
+/// byte-derived recursion holes, never copied from attacker Lean text.
+fn lean_recursion_plan_pairs(rederived: &[cert::RederivedObligation]) -> String {
+    let inner = rederived
+        .iter()
+        .filter_map(|r| {
+            r.recursion_plan_lean
+                .as_ref()
+                .map(|plan| format!("(\"{}\", {plan})", r.name))
+        })
+        .collect::<Vec<_>>()
+        .join(",\n   ");
+    format!("[ {inner} ]")
+}
+
 /// A Lean list literal of `(export name, StringConcatRawPlan)` pairs for
 /// source-level `String.concat` witnesses. These terms are checker-rendered
 /// from verified sidecars, never copied from attacker Lean text.
@@ -1615,11 +1631,13 @@ struct LeanExprFragmentArtifactClaims {
     string_eq_claims: String,
     string_claims: String,
     construct_claims: String,
+    recursion_claims: String,
     obligation_proof: String,
     sym_proof: String,
     string_eq_proof: String,
     string_proof: String,
     construct_proof: String,
+    recursion_proof: String,
 }
 
 fn lean_expr_fragment_artifact_claims(
@@ -1631,11 +1649,39 @@ fn lean_expr_fragment_artifact_claims(
     let mut string_eq_claims = Vec::new();
     let mut string_claims = Vec::new();
     let mut construct_claims = Vec::new();
+    let mut recursion_claims = Vec::new();
     let mut sym_proofs = Vec::new();
     let mut string_eq_proofs = Vec::new();
     let mut string_proofs = Vec::new();
     let mut construct_proofs = Vec::new();
+    let mut recursion_proofs = Vec::new();
     for r in rederived {
+        if r.recursion_plan_lean.is_some() {
+            let (Some(body), Some(bytes), Some(code_idx), Some(type_idx)) = (
+                r.recursion_lowered_body_lean.as_ref(),
+                r.recursion_lowered_code_entry_lean.as_ref(),
+                r.recursion_code_idx,
+                r.recursion_type_idx,
+            ) else {
+                continue;
+            };
+            let export_name_bytes = lean_byte_list(r.name.as_bytes());
+            let binding = format!(
+                "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {} }} : AverCert.WasmSlice.FuncBinding)",
+                r.self_idx, code_idx, type_idx, bytes
+            );
+            recursion_claims.push(format!(
+                "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
+                 carrier := {carrier}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.RecursionClaim)",
+                name = r.name,
+                carrier = r.carrier,
+            ));
+            recursion_proofs.push(format!(
+                "⟨rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
+                 ⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
+            ));
+            continue;
+        }
         if r.string_eq_plan_lean.is_some() {
             let (
                 Some(sym_plan),
@@ -1799,8 +1845,16 @@ fn lean_expr_fragment_artifact_claims(
     } else {
         format!("[\n  {}\n]", construct_claims.join(",\n  "))
     };
-    let obligation_proof_count =
-        sym_proofs.len() + string_eq_proofs.len() + string_proofs.len() + construct_proofs.len();
+    let recursion_claims = if recursion_claims.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[\n  {}\n]", recursion_claims.join(",\n  "))
+    };
+    let obligation_proof_count = sym_proofs.len()
+        + string_eq_proofs.len()
+        + string_proofs.len()
+        + construct_proofs.len()
+        + recursion_proofs.len();
     let obligation_proof =
         (0..obligation_proof_count).fold("trivial".to_string(), |acc, _| format!("⟨rfl, {acc}⟩"));
     let sym_proof = sym_proofs
@@ -1827,16 +1881,24 @@ fn lean_expr_fragment_artifact_claims(
         .fold("trivial".to_string(), |acc, proof| {
             format!("⟨{proof}, {acc}⟩")
         });
+    let recursion_proof = recursion_proofs
+        .into_iter()
+        .rev()
+        .fold("trivial".to_string(), |acc, proof| {
+            format!("⟨{proof}, {acc}⟩")
+        });
     LeanExprFragmentArtifactClaims {
         sym_claims,
         string_eq_claims,
         string_claims,
         construct_claims,
+        recursion_claims,
         obligation_proof,
         sym_proof,
         string_eq_proof,
         string_proof,
         construct_proof,
+        recursion_proof,
     }
 }
 
@@ -1845,13 +1907,15 @@ fn lean_artifact_data_literal(
     string_eq_claims: &str,
     string_claims: &str,
     construct_claims: &str,
+    recursion_claims: &str,
 ) -> String {
     format!(
         "({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, \
          symFragmentClaims := ({sym_claims} : List AverCert.AcceptedArtifact.SymFragmentClaim), \
          stringEqClaims := ({string_eq_claims} : List AverCert.AcceptedArtifact.StringEqClaim), \
          stringConcatClaims := ({string_claims} : List AverCert.AcceptedArtifact.StringConcatClaim), \
-         constructClaims := ({construct_claims} : List AverCert.AcceptedArtifact.ConstructClaim) }} : \
+         constructClaims := ({construct_claims} : List AverCert.AcceptedArtifact.ConstructClaim), \
+         recursionClaims := ({recursion_claims} : List AverCert.AcceptedArtifact.RecursionClaim) }} : \
          AverCert.AcceptedArtifact.ArtifactData)"
     )
 }
@@ -1867,6 +1931,7 @@ fn lean_fragment_acceptance_proof_block(
             "{indent}  AverCert.AcceptedArtifact.acceptedStringEqFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.acceptedStringConcatFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.acceptedConstructFragments,\n",
+            "{indent}  AverCert.AcceptedArtifact.acceptedRecursionFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
@@ -1882,15 +1947,20 @@ fn lean_fragment_acceptance_proof_block(
             "{indent}  AverCert.AcceptedArtifact.constructClaimAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.constructPlanForExport,\n",
             "{indent}  AverCert.AcceptedArtifact.constructPlanAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.recursionClaimsAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.recursionClaimAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.recursionPlanForExport,\n",
+            "{indent}  AverCert.AcceptedArtifact.recursionPlanAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "{indent}  AverCert.ExprFragmentAccepted.accepted]\n",
-            "{indent}exact ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, {construct_proof}⟩⟩⟩\n"
+            "{indent}exact ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, {recursion_proof}⟩⟩⟩⟩\n"
         ),
         indent = indent,
         sym_proof = witness.sym_proof,
         string_eq_proof = witness.string_eq_proof,
         string_proof = witness.string_proof,
-        construct_proof = witness.construct_proof
+        construct_proof = witness.construct_proof,
+        recursion_proof = witness.recursion_proof
     )
 }
 
@@ -1906,6 +1976,7 @@ fn lean_expr_fragment_obligation_acceptance_pins(
         &witness.string_eq_claims,
         &witness.string_claims,
         &witness.construct_claims,
+        &witness.recursion_claims,
     );
     format!(
         concat!(
@@ -1931,6 +2002,7 @@ fn lean_accepted_artifact_witness(
         &witness.string_eq_claims,
         &witness.string_claims,
         &witness.construct_claims,
+        &witness.recursion_claims,
     );
     let checker_proof = format!(
         concat!(
@@ -1954,11 +2026,14 @@ fn lean_accepted_artifact_witness(
             "    AverCert.AcceptedArtifact.constructClaimExportNames,\n",
             "    AverCert.AcceptedArtifact.constructManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.constructClaimSymPlanPairs,\n",
+            "    AverCert.AcceptedArtifact.recursionClaimExportNames,\n",
+            "    AverCert.AcceptedArtifact.recursionManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.acceptedFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedSymFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedStringEqFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedStringConcatFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedConstructFragments,\n",
+            "    AverCert.AcceptedArtifact.acceptedRecursionFragments,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
@@ -1974,16 +2049,21 @@ fn lean_accepted_artifact_witness(
             "    AverCert.AcceptedArtifact.constructClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.constructPlanForExport,\n",
             "    AverCert.AcceptedArtifact.constructPlanAccepted,\n",
+            "    AverCert.AcceptedArtifact.recursionClaimsAccepted,\n",
+            "    AverCert.AcceptedArtifact.recursionClaimAccepted,\n",
+            "    AverCert.AcceptedArtifact.recursionPlanForExport,\n",
+            "    AverCert.AcceptedArtifact.recursionPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨{final_witness}, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, {construct_proof}⟩⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨{final_witness}, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, {recursion_proof}⟩⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         final_witness = FINAL_WITNESS_THEOREM,
         obligation_proof = witness.obligation_proof,
         sym_proof = witness.sym_proof,
         string_eq_proof = witness.string_eq_proof,
         string_proof = witness.string_proof,
-        construct_proof = witness.construct_proof
+        construct_proof = witness.construct_proof,
+        recursion_proof = witness.recursion_proof
     );
     format!(
         concat!(
@@ -2044,6 +2124,7 @@ fn checker_witness(
     let string_eq_plans = lean_string_eq_plan_pairs(rederived);
     let string_concat_plans = lean_string_concat_plan_pairs(rederived);
     let construct_plans = lean_construct_plan_pairs(rederived);
+    let recursion_plans = lean_recursion_plan_pairs(rederived);
     let sym_fragment_encoded_plans = lean_sym_fragment_encoded_plan_pairs(rederived);
     let expr_fragment_lower_pins = lean_expr_fragment_lower_pins(rederived);
     let expr_fragment_code_entry_pins = lean_expr_fragment_code_entry_pins(rederived);
@@ -2133,6 +2214,12 @@ fn checker_witness(
          -- against their source `SymRawPlan` witnesses.\n\
          example : AverCert.manifest.constructPlans = {construct_plans} := rfl\n\
          example : AverCert.manifest.constructPlans.all (fun p => AverCert.PlanCheck.checkConstructRawPlan p.2) = true := rfl\n\n\
+         -- Fuel-recursion byte-origin plans: the manifest's Lean-data recursion\n\
+         -- plans are pinned to checker-rendered `RecursionRawPlan` terms\n\
+         -- reconstructed from the byte-derived recursion holes, and each passes\n\
+         -- the audited Lean structural checker.\n\
+         example : AverCert.manifest.recursionPlans = {recursion_plans} := rfl\n\
+         example : AverCert.manifest.recursionPlans.all (fun p => AverCert.PlanCheck.checkRecursionRawPlan p.2) = true := rfl\n\n\
          -- Expr-fragment raw plans: the manifest's Lean-data representation plans\n\
          -- are pinned to checker-rendered `ExprFragmentRawPlan` terms derived\n\
          -- from checked source sidecars, or from representation fallback sidecars\n\

@@ -122,6 +122,9 @@ impl FragTy {
 pub(crate) enum FragHostRole {
     Box,
     Add,
+    /// The strict integer-subtraction contract (`carrier sub`). Admitted by the
+    /// Lean `HostRole` grammar for the fuel-recursion descent `sub(n, box(1))`.
+    Sub,
 }
 
 impl FragHostRole {
@@ -129,6 +132,7 @@ impl FragHostRole {
         match self {
             FragHostRole::Box => "box",
             FragHostRole::Add => "add",
+            FragHostRole::Sub => "sub",
         }
     }
 
@@ -136,6 +140,7 @@ impl FragHostRole {
         match self {
             FragHostRole::Box => ".box",
             FragHostRole::Add => ".add",
+            FragHostRole::Sub => ".sub",
         }
     }
 
@@ -143,6 +148,7 @@ impl FragHostRole {
         match tag {
             "box" => Some(FragHostRole::Box),
             "add" => Some(FragHostRole::Add),
+            "sub" => Some(FragHostRole::Sub),
             _ => None,
         }
     }
@@ -153,6 +159,7 @@ impl FragHostRole {
         match self {
             FragHostRole::Box => (&[FragTy::I64], FragTy::IntCarrier),
             FragHostRole::Add => (&[FragTy::IntCarrier, FragTy::IntCarrier], FragTy::IntCarrier),
+            FragHostRole::Sub => (&[FragTy::IntCarrier, FragTy::IntCarrier], FragTy::IntCarrier),
         }
     }
 }
@@ -178,6 +185,7 @@ impl FragHostTable {
         match role {
             FragHostRole::Box => self.box_idx,
             FragHostRole::Add => self.add_idx,
+            FragHostRole::Sub => self.sub_idx,
         }
     }
 
@@ -366,6 +374,14 @@ pub(crate) enum FragNodeKind {
         func_idx: u32,
         args: Vec<FragValueId>,
     },
+    /// A self-recursive call to the function being certified. `tail` selects
+    /// `return_call` (`0x12`) over `call` (`0x10`). `func_idx` is the resolved
+    /// self index, bound to the module bytes by the byte-exact gate.
+    SelfCall {
+        tail: bool,
+        func_idx: u32,
+        args: Vec<FragValueId>,
+    },
     If {
         cond: FragValueId,
         then_block: Box<FragBlock>,
@@ -531,6 +547,17 @@ fn expr_fragment_node_kind_lean_value(kind: &FragNodeKind) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        FragNodeKind::SelfCall {
+            tail,
+            func_idx,
+            args,
+        } => format!(
+            ".selfCall {tail} {func_idx} [{}]",
+            args.iter()
+                .map(|id| id.0.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         FragNodeKind::If {
             cond,
             then_block,
@@ -607,6 +634,16 @@ fn render_fragment_node_plan(node: &FragNode, indent: usize, out: &mut String) {
             out.push_str(&format!(
                 "hostcall role={} func={func_idx} args={}\n",
                 role.plan_tag(),
+                render_fragment_plan_ids(args)
+            ));
+        }
+        FragNodeKind::SelfCall {
+            tail,
+            func_idx,
+            args,
+        } => {
+            out.push_str(&format!(
+                "selfcall tail={tail} func={func_idx} args={}\n",
                 render_fragment_plan_ids(args)
             ));
         }

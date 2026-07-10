@@ -24,6 +24,11 @@ enum Cert {
     Recursive {
         name: String,
         self_idx: u32,
+        /// Defined-code index and declared type index of the exported function,
+        /// carried for the byte-first `recursion-plan-v1` artifact claim's
+        /// function binding. They do not enter the fuel-induction obligation.
+        code_idx: u32,
+        type_idx: u32,
         nlocals: usize,
         carrier: u32,
         box_idx: u32,
@@ -40,6 +45,8 @@ enum Cert {
     AccumulatorRecursive {
         name: String,
         self_idx: u32,
+        code_idx: u32,
+        type_idx: u32,
         nlocals: usize,
         carrier: u32,
         box_idx: u32,

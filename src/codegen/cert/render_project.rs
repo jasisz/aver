@@ -508,6 +508,47 @@ fn render_expr_fragment_plans(
             plan_value = string_eq_plan_lean_value(&plan),
         ));
     }
+    for c in &analysis.certs {
+        let (name, self_idx, carrier) = match c.inner() {
+            Cert::Recursive {
+                name,
+                self_idx,
+                carrier,
+                ..
+            }
+            | Cert::AccumulatorRecursive {
+                name,
+                self_idx,
+                carrier,
+                ..
+            } => (name, *self_idx, *carrier),
+            _ => continue,
+        };
+        let Some(plan) = recursion_plan_from_cert(c) else {
+            continue;
+        };
+        let code_entry_bytes = lower_expr_fragment_plan_code_entry_bytes(&plan, carrier)
+            .expect("certified recursion plan lowers to code-entry bytes");
+        let code_entry_bytes = render_byte_list(&code_entry_bytes);
+        let export_name_bytes = render_byte_list(name.as_bytes());
+        any = true;
+        s.push_str(&format!(
+            "/-- Byte-derived `recursion-plan-v1` plan for `{name}` (fuel-recursive). -/\n\
+             def {name}RecursionPlan : RecursionRawPlan := {plan_value}\n\n\
+             /-- The audited recursion-plan checker accepts `{name}`'s byte-derived plan. -/\n\
+             example : AverCert.PlanCheck.checkRecursionRawPlan {name}RecursionPlan = true := rfl\n\n\
+             /-- The audited recursion lowerer maps `{name}`'s plan to the exact `Module.lean` body. -/\n\
+             example : (CertModule.{name}Code {self_idx}).map (fun c => c.body) =\n  \
+               AverCert.PlanLower.lowerRecursionBody {carrier} {name}RecursionPlan := rfl\n\n\
+             /-- The audited recursion byte lowerer reproduces `{name}`'s exact code-entry bytes. -/\n\
+             example : AverCert.PlanBytes.lowerRecursionCodeEntry {carrier} {name}RecursionPlan =\n  \
+               some {code_entry_bytes} := rfl\n\n\
+             /-- The Wasm slicer finds `{name}`'s exact code-entry bytes by export name. -/\n\
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+               some {code_entry_bytes} := rfl\n\n",
+            plan_value = recursion_plan_lean_value(&plan),
+        ));
+    }
     if !any {
         s.push_str("-- This artifact contains no source/fragment plans.\n\n");
     }
@@ -520,11 +561,13 @@ struct RenderedArtifactClaims {
     string_eq_claims: String,
     string_claims: String,
     construct_claims: String,
+    recursion_claims: String,
     obligation_proof: String,
     sym_proof: String,
     string_eq_proof: String,
     string_proof: String,
     construct_proof: String,
+    recursion_proof: String,
 }
 
 fn render_artifact_expr_fragment_claims(
@@ -537,10 +580,12 @@ fn render_artifact_expr_fragment_claims(
     let mut string_eq_claims = Vec::new();
     let mut string_claims = Vec::new();
     let mut construct_claims = Vec::new();
+    let mut recursion_claims = Vec::new();
     let mut sym_proofs = Vec::new();
     let mut string_eq_proofs = Vec::new();
     let mut string_proofs = Vec::new();
     let mut construct_proofs = Vec::new();
+    let mut recursion_proofs = Vec::new();
     for c in &analysis.certs {
         match c.inner() {
             Cert::ExprFragment {
@@ -684,6 +729,43 @@ fn render_artifact_expr_fragment_claims(
                      ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }
+            Cert::Recursive {
+                name,
+                self_idx,
+                code_idx,
+                type_idx,
+                carrier,
+                ..
+            }
+            | Cert::AccumulatorRecursive {
+                name,
+                self_idx,
+                code_idx,
+                type_idx,
+                carrier,
+                ..
+            } => {
+                let plan = recursion_plan_from_cert(c)
+                    .expect("certified recursion cert builds a recursion plan");
+                let code_entry_bytes = lower_expr_fragment_plan_code_entry_bytes(&plan, *carrier)
+                    .expect("certified recursion plan lowers to code-entry bytes");
+                let code_entry_bytes = render_byte_list(&code_entry_bytes);
+                let lowered_body = lower_expr_fragment_plan(&plan, *carrier)
+                    .map(|ops| render_ops_value(&ops))
+                    .expect("certified recursion plan lowers to WInstr body");
+                let export_name_bytes = render_byte_list(name.as_bytes());
+                let func_binding = format!(
+                    "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+                );
+                recursion_claims.push(format!(
+                    "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.RecursionClaim)",
+                    export_name = lean_str(name),
+                ));
+                recursion_proofs.push(format!(
+                    "⟨rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
+                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
+                ));
+            }
             _ => {}
         }
     }
@@ -707,8 +789,16 @@ fn render_artifact_expr_fragment_claims(
     } else {
         format!("[\n  {}\n]", construct_claims.join(",\n  "))
     };
-    let obligation_proof_count =
-        sym_proofs.len() + string_eq_proofs.len() + string_proofs.len() + construct_proofs.len();
+    let recursion_claims = if recursion_claims.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[\n  {}\n]", recursion_claims.join(",\n  "))
+    };
+    let obligation_proof_count = sym_proofs.len()
+        + string_eq_proofs.len()
+        + string_proofs.len()
+        + construct_proofs.len()
+        + recursion_proofs.len();
     let obligation_proof = (0..obligation_proof_count).fold("trivial".to_string(), |acc, _| {
         format!("⟨rfl, {acc}⟩")
     });
@@ -738,16 +828,25 @@ fn render_artifact_expr_fragment_claims(
             .fold("trivial".to_string(), |acc, proof| {
                 format!("⟨{proof}, {acc}⟩")
             });
+    let recursion_proof =
+        recursion_proofs
+            .into_iter()
+            .rev()
+            .fold("trivial".to_string(), |acc, proof| {
+                format!("⟨{proof}, {acc}⟩")
+            });
     RenderedArtifactClaims {
         sym_claims,
         string_eq_claims,
         string_claims,
         construct_claims,
+        recursion_claims,
         obligation_proof,
         sym_proof,
         string_eq_proof,
         string_proof,
         construct_proof,
+        recursion_proof,
     }
 }
 
@@ -765,7 +864,7 @@ fn render_artifact(
     );
     let fragment_proof = format!(
         concat!(
-            "  dsimp [data, symFragmentClaims, stringEqClaims, stringConcatClaims, constructClaims, AverCert.AcceptedArtifact.accepted,\n",
+            "  dsimp [data, symFragmentClaims, stringEqClaims, stringConcatClaims, constructClaims, recursionClaims, AverCert.AcceptedArtifact.accepted,\n",
             "    AverCert.AcceptedArtifact.subjectMatchesArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.expectedArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.fragmentClaimObligationsInManifest,\n",
@@ -785,11 +884,14 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.constructClaimExportNames,\n",
             "    AverCert.AcceptedArtifact.constructManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.constructClaimSymPlanPairs,\n",
+            "    AverCert.AcceptedArtifact.recursionClaimExportNames,\n",
+            "    AverCert.AcceptedArtifact.recursionManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.acceptedFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedSymFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedStringEqFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedStringConcatFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedConstructFragments,\n",
+            "    AverCert.AcceptedArtifact.acceptedRecursionFragments,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
@@ -805,15 +907,20 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.constructClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.constructPlanForExport,\n",
             "    AverCert.AcceptedArtifact.constructPlanAccepted,\n",
+            "    AverCert.AcceptedArtifact.recursionClaimsAccepted,\n",
+            "    AverCert.AcceptedArtifact.recursionClaimAccepted,\n",
+            "    AverCert.AcceptedArtifact.recursionPlanForExport,\n",
+            "    AverCert.AcceptedArtifact.recursionPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨finalCert, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, {construct_proof}⟩⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨finalCert, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, {recursion_proof}⟩⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         obligation_proof = claims.obligation_proof,
         sym_proof = claims.sym_proof,
         string_eq_proof = claims.string_eq_proof,
         string_proof = claims.string_proof,
-        construct_proof = claims.construct_proof
+        construct_proof = claims.construct_proof,
+        recursion_proof = claims.recursion_proof
     );
     format!(
          "-- Artifact-carried acceptance root.\n\
@@ -832,8 +939,9 @@ fn render_artifact(
          def stringEqClaims : List AverCert.AcceptedArtifact.StringEqClaim := {string_eq_claims_list}\n\n\
          def stringConcatClaims : List AverCert.AcceptedArtifact.StringConcatClaim := {string_claims_list}\n\n\
          def constructClaims : List AverCert.AcceptedArtifact.ConstructClaim := {construct_claims_list}\n\n\
+         def recursionClaims : List AverCert.AcceptedArtifact.RecursionClaim := {recursion_claims_list}\n\n\
          def data : AverCert.AcceptedArtifact.ArtifactData :=\n  \
-           ({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
+           ({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
          def acceptedWithFinal\n\
              (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n\
              AverCert.AcceptedArtifact.accepted data := by\n\
@@ -845,6 +953,7 @@ fn render_artifact(
         string_eq_claims_list = claims.string_eq_claims,
         string_claims_list = claims.string_claims,
         construct_claims_list = claims.construct_claims,
+        recursion_claims_list = claims.recursion_claims,
         fragment_proof = fragment_proof
     )
 }

@@ -124,6 +124,11 @@ pub fn check_expr_fragment_plan_sidecar(
         construct_type_idx: None,
         construct_lowered_body_lean: None,
         construct_lowered_code_entry_lean: None,
+        recursion_plan_lean: None,
+        recursion_code_idx: None,
+        recursion_type_idx: None,
+        recursion_lowered_body_lean: None,
+        recursion_lowered_code_entry_lean: None,
     };
     Ok(FragmentPlanCheck {
         sidecar,
@@ -254,6 +259,11 @@ pub fn check_sym_fragment_plan_sidecar(
         construct_type_idx: None,
         construct_lowered_body_lean: None,
         construct_lowered_code_entry_lean: None,
+        recursion_plan_lean: None,
+        recursion_code_idx: None,
+        recursion_type_idx: None,
+        recursion_lowered_body_lean: None,
+        recursion_lowered_code_entry_lean: None,
     };
     Ok(FragmentPlanCheck {
         sidecar,

@@ -154,6 +154,20 @@ pub struct RederivedObligation {
     /// For `construct-v1`, the verifier-rendered canonical raw code-entry bytes
     /// that the checked constructor plan lowers to.
     pub construct_lowered_code_entry_lean: Option<String>,
+    /// For `recursion-plan-v1` (fuel-recursion), the byte-derived recursion plan
+    /// rendered as a Lean `RecursionRawPlan` term. `aver cert verify` pins
+    /// `manifest.recursionPlans` to this checker-rendered term.
+    pub recursion_plan_lean: Option<String>,
+    /// For `recursion-plan-v1`, the byte-derived defined-function index.
+    pub recursion_code_idx: Option<u32>,
+    /// For `recursion-plan-v1`, the byte-derived function-section type index.
+    pub recursion_type_idx: Option<u32>,
+    /// For `recursion-plan-v1`, the verifier-rendered `List WInstr` body the
+    /// checked recursion plan canonically lowers to (equal to `Module.lean`).
+    pub recursion_lowered_body_lean: Option<String>,
+    /// For `recursion-plan-v1`, the verifier-rendered canonical raw code-entry
+    /// bytes the checked recursion plan lowers to.
+    pub recursion_lowered_code_entry_lean: Option<String>,
 }
 
 pub struct RederivedCertificate {
@@ -751,6 +765,38 @@ fn rederive_certificate_inner(
                 Cert::AdtConstructor { carrier, .. } => construct_plan_from_cert(c)
                     .and_then(|plan| lower_construct_plan_code_entry_bytes(&plan, *carrier).ok())
                     .map(|bytes| render_byte_list(&bytes)),
+                _ => None,
+            },
+            recursion_plan_lean: recursion_plan_from_cert(c)
+                .map(|plan| recursion_plan_lean_value(&plan)),
+            recursion_code_idx: match c.inner() {
+                Cert::Recursive { code_idx, .. } | Cert::AccumulatorRecursive { code_idx, .. } => {
+                    Some(*code_idx)
+                }
+                _ => None,
+            },
+            recursion_type_idx: match c.inner() {
+                Cert::Recursive { type_idx, .. } | Cert::AccumulatorRecursive { type_idx, .. } => {
+                    Some(*type_idx)
+                }
+                _ => None,
+            },
+            recursion_lowered_body_lean: match c.inner() {
+                Cert::Recursive { carrier, .. } | Cert::AccumulatorRecursive { carrier, .. } => {
+                    recursion_plan_from_cert(c)
+                        .and_then(|plan| lower_expr_fragment_plan(&plan, *carrier).ok())
+                        .map(|ops| render_ops_value(&ops))
+                }
+                _ => None,
+            },
+            recursion_lowered_code_entry_lean: match c.inner() {
+                Cert::Recursive { carrier, .. } | Cert::AccumulatorRecursive { carrier, .. } => {
+                    recursion_plan_from_cert(c)
+                        .and_then(|plan| {
+                            lower_expr_fragment_plan_code_entry_bytes(&plan, *carrier).ok()
+                        })
+                        .map(|bytes| render_byte_list(&bytes))
+                }
                 _ => None,
             },
         })
