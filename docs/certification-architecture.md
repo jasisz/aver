@@ -140,11 +140,14 @@ cert/
   fragments/<export>.sym-fragment-v1.plan   # preferred when source-projectable
   fragments/<export>.expr-fragment-v1.plan  # only representation-only fallback
   fragments/<export>.string-concat-v1.plan  # source witness for String.concat
+  SchemaCore.lean
+  Schema.lean
   PlanCheck.lean
   PlanLower.lean
   PlanBytes.lean
   WasmSlice.lean
   ExprFragmentAccepted.lean
+  AcceptedArtifactCore.lean
   AcceptedArtifact.lean
   ArtifactBytes.lean
   Plans.lean
@@ -157,10 +160,14 @@ Trace files are not emitted for this profile, and never have been; the cert
 test suite asserts no `trace`/`trace_sha256` sidecar is written. Debug traces,
 if ever added as developer tooling, must remain outside certificate acceptance.
 
-`PlanCheck.lean`, `PlanLower.lean`, `PlanBytes.lean`, `WasmSlice.lean` and
-`ExprFragmentAccepted.lean` are audited checker code copied from the verifier
-binary and hash-pinned in `cert-manifest.json`; cert-supplied files by those
-names are ignored by `aver cert verify`. `ArtifactBytes.lean` is also
+`SchemaCore.lean`, `Schema.lean`, `PlanCheck.lean`, `PlanLower.lean`,
+`PlanBytes.lean`, `WasmSlice.lean`, `ExprFragmentAccepted.lean`,
+`AcceptedArtifactCore.lean`, and `AcceptedArtifact.lean` are audited checker
+code copied from the verifier binary and hash-pinned in `cert-manifest.json`;
+cert-supplied files by those names are ignored by `aver cert verify`.
+`SchemaCore.lean` and `AcceptedArtifactCore.lean` are the dependency-closed
+parts reusable across artifacts; their shims contain the Module-dependent
+conjunctions. `ArtifactBytes.lean` is also
 checker-owned: it is regenerated from the actual wasm bytes read by the
 verifier, not trusted from the certificate directory.
 `Plans.lean` carries the same expression-fragment plans as Lean data and pins
@@ -238,12 +245,14 @@ plan_hash
 function_binding_hash
 proof_hash
 trusted_prelude_hash
+trusted_schema_core_hash
 trusted_schema_hash
 trusted_plan_check_hash
 trusted_plan_lower_hash
 trusted_plan_bytes_hash
 trusted_wasm_slice_hash
 trusted_expr_fragment_accepted_hash
+trusted_accepted_artifact_core_hash
 trusted_accepted_artifact_hash
 artifact_data_hash
 host_registry_hash
@@ -496,7 +505,7 @@ Acceptance requires:
 - theorem type definitionally equals the verifier-generated goal;
 - Lean kernel/checker accepts it;
 - axiom dependencies are exactly the approved whitelist;
-- schema/prelude/plan-check/plan-lower/plan-bytes/wasm-slice/expr-fragment-accepted/toolchain hashes match
+- schema-core/schema/prelude/plan-check/plan-lower/plan-bytes/wasm-slice/expr-fragment-accepted/accepted-artifact-core/accepted-artifact/toolchain hashes match
   policy.
 
 ## V2 Target

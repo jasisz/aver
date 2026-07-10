@@ -490,12 +490,14 @@ fn render_lakefile(model_roots: &[String]) -> String {
         roots.push(format!("`{r}"));
     }
     roots.push("`Module".to_string());
+    roots.push("`SchemaCore".to_string());
     roots.push("`Schema".to_string());
     roots.push("`PlanCheck".to_string());
     roots.push("`PlanLower".to_string());
     roots.push("`PlanBytes".to_string());
     roots.push("`WasmSlice".to_string());
     roots.push("`ExprFragmentAccepted".to_string());
+    roots.push("`AcceptedArtifactCore".to_string());
     roots.push("`AcceptedArtifact".to_string());
     roots.push("`ArtifactBytes".to_string());
     roots.push("`Plans".to_string());
@@ -512,6 +514,7 @@ fn render_lakefile(model_roots: &[String]) -> String {
 
 struct ManifestHashes<'a> {
     schema: &'a str,
+    schema_core: &'a str,
     prelude: &'a str,
     plan_check: &'a str,
     plan_lower: &'a str,
@@ -519,6 +522,7 @@ struct ManifestHashes<'a> {
     wasm_slice: &'a str,
     expr_fragment_accepted: &'a str,
     accepted_artifact: &'a str,
+    accepted_artifact_core: &'a str,
 }
 
 fn render_manifest(
@@ -541,6 +545,10 @@ fn render_manifest(
         "  \"artifact_certificate_root\": \"{ARTIFACT_CERTIFICATE_ROOT}\",\n"
     ));
     s.push_str(&format!("  \"schema_sha256\": \"{}\",\n", hashes.schema));
+    s.push_str(&format!(
+        "  \"schema_core_sha256\": \"{}\",\n",
+        hashes.schema_core
+    ));
     s.push_str(&format!(
         "  \"prelude_sha256\": \"{}\",\n",
         hashes.prelude
@@ -568,6 +576,10 @@ fn render_manifest(
     s.push_str(&format!(
         "  \"accepted_artifact_sha256\": \"{}\",\n",
         hashes.accepted_artifact
+    ));
+    s.push_str(&format!(
+        "  \"accepted_artifact_core_sha256\": \"{}\",\n",
+        hashes.accepted_artifact_core
     ));
     if let Some(c) = analysis.carrier {
         s.push_str(&format!("  \"carrier_type_index\": {c},\n"));

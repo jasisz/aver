@@ -46,6 +46,7 @@ pub fn write_project(
     // Audited statement schema (fixed) + generated manifest literal + the one
     // final theorem that composes the per-export obligations.
     write(&cert_dir, "Schema.lean", CERT_SCHEMA)?;
+    write(&cert_dir, "SchemaCore.lean", CERT_SCHEMA_CORE)?;
     write(&cert_dir, "PlanCheck.lean", CERT_PLAN_CHECK)?;
     write(&cert_dir, "PlanLower.lean", CERT_PLAN_LOWER)?;
     write(&cert_dir, "PlanBytes.lean", CERT_PLAN_BYTES)?;
@@ -56,6 +57,11 @@ pub fn write_project(
         CERT_EXPR_FRAGMENT_ACCEPTED,
     )?;
     write(&cert_dir, "AcceptedArtifact.lean", CERT_ACCEPTED_ARTIFACT)?;
+    write(
+        &cert_dir,
+        "AcceptedArtifactCore.lean",
+        CERT_ACCEPTED_ARTIFACT_CORE,
+    )?;
     write(
         &cert_dir,
         "ArtifactBytes.lean",
@@ -98,6 +104,7 @@ pub fn write_project(
     // semantics prelude. Pinning these plus the final theorem name and the
     // manifest literal is the whole trust story.
     let schema_sha = sha256_hex(CERT_SCHEMA.as_bytes());
+    let schema_core_sha = sha256_hex(CERT_SCHEMA_CORE.as_bytes());
     let prelude_sha = sha256_hex(CERT_PRELUDE.as_bytes());
     let plan_check_sha = sha256_hex(CERT_PLAN_CHECK.as_bytes());
     let plan_lower_sha = sha256_hex(CERT_PLAN_LOWER.as_bytes());
@@ -105,8 +112,10 @@ pub fn write_project(
     let wasm_slice_sha = sha256_hex(CERT_WASM_SLICE.as_bytes());
     let expr_fragment_accepted_sha = sha256_hex(CERT_EXPR_FRAGMENT_ACCEPTED.as_bytes());
     let accepted_artifact_sha = sha256_hex(CERT_ACCEPTED_ARTIFACT.as_bytes());
+    let accepted_artifact_core_sha = sha256_hex(CERT_ACCEPTED_ARTIFACT_CORE.as_bytes());
     let manifest_hashes = ManifestHashes {
         schema: &schema_sha,
+        schema_core: &schema_core_sha,
         prelude: &prelude_sha,
         plan_check: &plan_check_sha,
         plan_lower: &plan_lower_sha,
@@ -114,6 +123,7 @@ pub fn write_project(
         wasm_slice: &wasm_slice_sha,
         expr_fragment_accepted: &expr_fragment_accepted_sha,
         accepted_artifact: &accepted_artifact_sha,
+        accepted_artifact_core: &accepted_artifact_core_sha,
     };
     std::fs::write(
         cert_dir.join("cert-manifest.json"),

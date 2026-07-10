@@ -4,7 +4,7 @@
 -- decoder. v1 still binds plans to bytes in Rust by canonical lowering and raw
 -- code-entry equality; this module is the trusted Lean landing zone for v2:
 -- `RawPlan -> CheckedPlan -> LowersCodeEntry`.
-import Schema
+import SchemaCore
 
 namespace AverCert.PlanCheck
 open AverCert.Schema
