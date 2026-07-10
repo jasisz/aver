@@ -169,7 +169,7 @@ fn lower_construct_plan_body_bytes(
     push_u32_leb(&mut out, 1);
     push_u32_leb(&mut out, 1);
     out.push(0x63);
-    push_u32_leb(&mut out, carrier);
+    push_s33_heap_idx(&mut out, carrier);
     for field in &plan.fields {
         match field {
             ConstructFieldPlan::Local(index) => {

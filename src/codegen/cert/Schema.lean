@@ -161,6 +161,7 @@ deriving Repr, DecidableEq
 inductive HostRole where
   | box
   | add
+  | sub
 deriving Repr, DecidableEq
 
 mutual
@@ -181,6 +182,13 @@ mutual
     | refIsNull (value : Nat)
     | prim (op : FragPrim) (args : List Nat)
     | hostCall (role : HostRole) (funcIdx : Nat) (args : List Nat)
+    /-- A self-recursive call to the function being certified. `tail` selects
+        `return_call` (tail position, `0x12`) over `call` (`0x10`). `funcIdx` is
+        the resolved self function index; it is bound to the module bytes by the
+        byte-exact gate and validated against the byte-derived self index by the
+        Rust checker, exactly as `hostCall` binds its resolved index. The plan
+        never invents it. -/
+    | selfCall (tail : Bool) (funcIdx : Nat) (args : List Nat)
     | ifElse (cond : Nat) (thenBlock elseBlock : FragBlock)
   deriving Repr
 
@@ -203,6 +211,19 @@ end
     provide this; only the checked plan produced by the trusted checker should
     be used for acceptance. -/
 structure ExprFragmentRawPlan where
+  profile : String
+  params  : List FragTy
+  result  : FragTy
+  body    : FragBlock
+deriving Repr
+
+/-- Raw, untrusted fuel-recursion plan. It reuses the `expr-fragment` ANF
+    grammar, but its body carries `selfCall` nodes and its value-if yields the
+    Int carrier. The checked lowerer binds it to the exact self-recursive
+    function code-entry bytes. This is a byte-origin veneer only: the
+    fuel-induction proof face and the emitted `Module.lean` body literal are
+    unchanged, so the plan claim never touches the proof. -/
+structure RecursionRawPlan where
   profile : String
   params  : List FragTy
   result  : FragTy
@@ -358,6 +379,7 @@ structure Manifest where
   stringConcatPlans : List (String × StringConcatRawPlan)
   constructPlans : List (String × ConstructRawPlan)
   exprFragmentPlans : List (String × ExprFragmentRawPlan)
+  recursionPlans : List (String × RecursionRawPlan)
   obligations : List Obligation
 
 /-- The single audited certificate proposition: the manifest's pinned hash is

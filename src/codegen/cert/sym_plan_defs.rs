@@ -441,6 +441,7 @@ fn sym_node_from_frag_source_subset(node: &FragNode) -> Option<SymNode> {
         FragNodeKind::ConstI64(_)
         | FragNodeKind::ConstI32(_)
         | FragNodeKind::HostCall { .. }
+        | FragNodeKind::SelfCall { .. }
         | FragNodeKind::StructGet { .. }
         | FragNodeKind::StructGetUser { .. }
         | FragNodeKind::RefIsNull { .. } => return None,

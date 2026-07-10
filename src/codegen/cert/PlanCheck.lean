@@ -122,6 +122,14 @@ def hostCallResultTy? (nodes : List FragNode) (role : HostRole) (args : List Nat
   | .box => if argsHaveTys nodes args [.i64] then some .intCarrier else none
   | .add =>
       if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .intCarrier else none
+  | .sub =>
+      if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .intCarrier else none
+
+/-- All arguments of a self-call must be Int carriers; the recursion class only
+    threads Int values through its recursive descent. -/
+def fragArgsAllTy (nodes : List FragNode) (expected : FragTy) : List Nat → Bool
+  | [] => true
+  | arg :: args => hasTy nodes arg expected && fragArgsAllTy nodes expected args
 
 def symPrimResultTy? (nodes : List SymNode) (op : SymPrim) (args : List Nat) :
     Option SymTy :=
@@ -179,6 +187,14 @@ def checkBlockFuel : Nat → List FragTy → FragBlock → Bool
             else none
         | .prim op args => primResultTy? checked op args
         | .hostCall role _funcIdx args => hostCallResultTy? checked role args
+        -- A self-call yields the Int carrier when every argument is an Int
+        -- carrier. `funcIdx` is not typed here (the byte gate binds it and the
+        -- Rust checker validates it against the byte-derived self index),
+        -- mirroring `hostCall`.
+        | .selfCall _tail _funcIdx args =>
+            if !args.isEmpty && fragArgsAllTy checked .intCarrier args then
+              some .intCarrier
+            else none
         | .ifElse cond thenBlock elseBlock =>
             if hasTy checked cond .boolI32 &&
                checkBlockFuel fuel params thenBlock &&
@@ -257,6 +273,13 @@ def checkSymBlock (params : List SymTy) (block : SymBlock) : Bool :=
 
 def checkExprFragmentRawPlan (plan : ExprFragmentRawPlan) : Bool :=
   plan.profile = "expr-fragment-v1" &&
+    checkBlock plan.params plan.body &&
+    match lookupNode plan.body.nodes plan.body.result with
+    | some n => sameTy n.ty plan.result
+    | none => false
+
+def checkRecursionRawPlan (plan : RecursionRawPlan) : Bool :=
+  plan.profile = "recursion-plan-v1" &&
     checkBlock plan.params plan.body &&
     match lookupNode plan.body.nodes plan.body.result with
     | some n => sameTy n.ty plan.result
@@ -686,5 +709,148 @@ def encodeSymRawPlanToExprFragmentRawPlan
     | _, _, _ => none
   else
     none
+
+/-! ### `recursion-plan-v1` shape checking
+
+`checkRecursionRawPlan` above is only the generic typed-block discipline; it
+deliberately knows nothing about WHICH function a `selfCall` may target or
+which indices realise the host roles. This section pins the fuel-recursion
+grammar itself, context-sensitively: the exact carrier-sign dispatch the
+emitter produces, a base arm that is a boxed literal (unary) or the
+accumulator (two-argument), a step arm whose descent is `sub(n, box 1)`, host
+calls citing exactly the byte-derived role table, and a self-call whose target
+is EXACTLY the exported function's own index. The self index and role table
+are context threaded from the byte-derived function binding — never plan
+data. -/
+
+/-- The small-limb arm of the sign predicate: `n.small ≤ 0`. -/
+def recSignSmall (b : FragBlock) : Bool :=
+  match b.nodes, b.result with
+  | [{ id := 0, ty := .intCarrier, kind := .local 0 },
+     { id := 1, ty := .i64, kind := .structGet 0 0 },
+     { id := 2, ty := .i64, kind := .constI64 z },
+     { id := 3, ty := .boolI32, kind := .prim .i64LeS [1, 2] }], 3 => z = 0
+  | _, _ => false
+
+/-- The big-limb arm of the sign predicate: `n.sign < 0`. -/
+def recSignBig (b : FragBlock) : Bool :=
+  match b.nodes, b.result with
+  | [{ id := 0, ty := .intCarrier, kind := .local 0 },
+     { id := 1, ty := .rawI32, kind := .structGet 2 0 },
+     { id := 2, ty := .boolI32, kind := .constBool false },
+     { id := 3, ty := .boolI32, kind := .prim .i32LtS [1, 2] }], 3 => true
+  | _, _ => false
+
+/-- Unary base arm: a boxed integer literal (`i64.const k; box`). -/
+def recBaseUnary (boxIdx : Nat) (b : FragBlock) : Bool :=
+  match b.nodes, b.result with
+  | [{ id := 0, ty := .i64, kind := .constI64 _ },
+     { id := 1, ty := .intCarrier, kind := .hostCall .box bi [0] }], 1 => bi = boxIdx
+  | _, _ => false
+
+/-- Accumulator base arm: return the accumulator parameter. -/
+def recBaseAcc (b : FragBlock) : Bool :=
+  match b.nodes, b.result with
+  | [{ id := 0, ty := .intCarrier, kind := .local 1 }], 0 => true
+  | _, _ => false
+
+/-- Unary step arm, all four byte-derived variants: the descent
+    `sub(n, box 1)` feeding a NON-TAIL self-call, combined with the other
+    operand (the input `n`, or a boxed constant) on either side by the
+    role-`add` combinator helper. Every host index must cite the table and the
+    self-call must target `self`. -/
+def recStepUnary (self boxIdx addIdx subIdx : Nat) (b : FragBlock) : Bool :=
+  match b.nodes, b.result with
+  -- other = input, recursive result second: `n + f(n-1)`
+  | [{ id := 0, ty := .intCarrier, kind := .local 0 },
+     { id := 1, ty := .intCarrier, kind := .local 0 },
+     { id := 2, ty := .i64, kind := .constI64 one },
+     { id := 3, ty := .intCarrier, kind := .hostCall .box bi [2] },
+     { id := 4, ty := .intCarrier, kind := .hostCall .sub si [1, 3] },
+     { id := 5, ty := .intCarrier, kind := .selfCall false sc [4] },
+     { id := 6, ty := .intCarrier, kind := .hostCall .add ai [0, 5] }], 6 =>
+      one = 1 && bi = boxIdx && si = subIdx && sc = self && ai = addIdx
+  -- other = boxed constant, recursive result second: `k + f(n-1)`
+  | [{ id := 0, ty := .i64, kind := .constI64 _ },
+     { id := 1, ty := .intCarrier, kind := .hostCall .box bk [0] },
+     { id := 2, ty := .intCarrier, kind := .local 0 },
+     { id := 3, ty := .i64, kind := .constI64 one },
+     { id := 4, ty := .intCarrier, kind := .hostCall .box bi [3] },
+     { id := 5, ty := .intCarrier, kind := .hostCall .sub si [2, 4] },
+     { id := 6, ty := .intCarrier, kind := .selfCall false sc [5] },
+     { id := 7, ty := .intCarrier, kind := .hostCall .add ai [1, 6] }], 7 =>
+      one = 1 && bk = boxIdx && bi = boxIdx && si = subIdx && sc = self && ai = addIdx
+  -- other = input, recursive result first: `f(n-1) + n`
+  | [{ id := 0, ty := .intCarrier, kind := .local 0 },
+     { id := 1, ty := .i64, kind := .constI64 one },
+     { id := 2, ty := .intCarrier, kind := .hostCall .box bi [1] },
+     { id := 3, ty := .intCarrier, kind := .hostCall .sub si [0, 2] },
+     { id := 4, ty := .intCarrier, kind := .selfCall false sc [3] },
+     { id := 5, ty := .intCarrier, kind := .local 0 },
+     { id := 6, ty := .intCarrier, kind := .hostCall .add ai [4, 5] }], 6 =>
+      one = 1 && bi = boxIdx && si = subIdx && sc = self && ai = addIdx
+  -- other = boxed constant, recursive result first: `f(n-1) + k`
+  | [{ id := 0, ty := .intCarrier, kind := .local 0 },
+     { id := 1, ty := .i64, kind := .constI64 one },
+     { id := 2, ty := .intCarrier, kind := .hostCall .box bi [1] },
+     { id := 3, ty := .intCarrier, kind := .hostCall .sub si [0, 2] },
+     { id := 4, ty := .intCarrier, kind := .selfCall false sc [3] },
+     { id := 5, ty := .i64, kind := .constI64 _ },
+     { id := 6, ty := .intCarrier, kind := .hostCall .box bk [5] },
+     { id := 7, ty := .intCarrier, kind := .hostCall .add ai [4, 6] }], 7 =>
+      one = 1 && bi = boxIdx && bk = boxIdx && si = subIdx && sc = self && ai = addIdx
+  | _, _ => false
+
+/-- Accumulator step arm: descent `sub(n, box 1)`, next accumulator
+    `add(acc, n)`, then a TAIL self-call `f(n-1, acc+n)`. -/
+def recStepAcc (self boxIdx addIdx subIdx : Nat) (b : FragBlock) : Bool :=
+  match b.nodes, b.result with
+  | [{ id := 0, ty := .intCarrier, kind := .local 0 },
+     { id := 1, ty := .i64, kind := .constI64 one },
+     { id := 2, ty := .intCarrier, kind := .hostCall .box bi [1] },
+     { id := 3, ty := .intCarrier, kind := .hostCall .sub si [0, 2] },
+     { id := 4, ty := .intCarrier, kind := .local 1 },
+     { id := 5, ty := .intCarrier, kind := .local 0 },
+     { id := 6, ty := .intCarrier, kind := .hostCall .add ai [4, 5] },
+     { id := 7, ty := .intCarrier, kind := .selfCall true sc [3, 6] }], 7 =>
+      one = 1 && bi = boxIdx && si = subIdx && sc = self && ai = addIdx
+  | _, _ => false
+
+/-- The whole recursion body: the carrier discriminator, the sign-predicate
+    `if`, and the value `if` over base/step. -/
+def recTopBlock (isAcc : Bool) (self boxIdx addIdx subIdx : Nat) (b : FragBlock) : Bool :=
+  match b.nodes, b.result with
+  | [{ id := 0, ty := .intCarrier, kind := .local 0 },
+     { id := 1, ty := .ref, kind := .structGet 1 0 },
+     { id := 2, ty := .boolI32, kind := .refIsNull 1 },
+     { id := 3, ty := .boolI32, kind := .ifElse 2 signS signB },
+     { id := 4, ty := .intCarrier, kind := .ifElse 3 base step }], 4 =>
+      recSignSmall signS && recSignBig signB &&
+        (if isAcc then
+          recBaseAcc base && recStepAcc self boxIdx addIdx subIdx step
+        else
+          recBaseUnary boxIdx base && recStepUnary self boxIdx addIdx subIdx step)
+  | _, _ => false
+
+/-- Context-sensitive `recursion-plan-v1` checking: the plan must be one of the
+    two recognised fuel-recursion grammars, every self-call must target `self`
+    (the byte-derived function binding of the claimed export), and every host
+    call must cite the byte-derived role table. A table missing any of the
+    box/add/sub roles fail-closes. -/
+def checkRecursionPlanShape
+    (self : Nat)
+    (hostTable : List (HostRole × Nat))
+    (plan : RecursionRawPlan) : Bool :=
+  match hostRoleIdx? hostTable .box,
+        hostRoleIdx? hostTable .add,
+        hostRoleIdx? hostTable .sub with
+  | some boxIdx, some addIdx, some subIdx =>
+      plan.profile = "recursion-plan-v1" &&
+        sameTy plan.result .intCarrier &&
+        (match plan.params with
+        | [.intCarrier] => recTopBlock false self boxIdx addIdx subIdx plan.body
+        | [.intCarrier, .intCarrier] => recTopBlock true self boxIdx addIdx subIdx plan.body
+        | _ => false)
+  | _, _, _ => false
 
 end AverCert.PlanCheck

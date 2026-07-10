@@ -102,6 +102,8 @@ fn recognize_fueled_recursion(
         Some(Cert::Recursive {
             name: f.name.clone(),
             self_idx: f.wasm_idx,
+            code_idx: f.code_idx,
+            type_idx: f.type_idx,
             nlocals: f.nlocals,
             carrier,
             box_idx,
@@ -111,6 +113,7 @@ fn recognize_fueled_recursion(
             rec_first,
             other,
             combinator,
+            code_entry_bytes: f.code_entry_bytes.clone(),
         })
     } else {
         // arity 2: accumulator tail recursion; base arm returns the accumulator.
@@ -141,11 +144,14 @@ fn recognize_fueled_recursion(
         Some(Cert::AccumulatorRecursive {
             name: f.name.clone(),
             self_idx: f.wasm_idx,
+            code_idx: f.code_idx,
+            type_idx: f.type_idx,
             nlocals: f.nlocals,
             carrier,
             box_idx,
             add_idx,
             sub_idx,
+            code_entry_bytes: f.code_entry_bytes.clone(),
         })
     }
 }

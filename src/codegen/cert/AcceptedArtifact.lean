@@ -219,6 +219,25 @@ structure ConstructClaim where
   symPlan         : SymRawPlan
   obligation      : Obligation
 
+/-- One fuel-recursion claim inside an artifact certificate. Its byte-derived
+    `RecursionRawPlan` lives in `manifest.recursionPlans` (a byte-origin veneer,
+    no source `SymPlan`): the plan is checked against the fuel-recursion grammar
+    (self-calls pinned to the byte-derived function binding, host calls pinned
+    to the byte-derived role table), lowered to the self-recursive body and its
+    exact code-entry bytes, and bound to the exported function. `hostTable` is
+    representation context like `SymFragmentClaim`'s: byte-derived indices for
+    the box/combinator/sub roles this export's obligation wires — a wrong table
+    describes calls the module bytes cannot reproduce, so the claim fail-closes
+    at the byte gate. The `obligation` is the unchanged fuel-induction
+    obligation the manifest already pins; this claim only certifies where its
+    body bytes came from. -/
+structure RecursionClaim where
+  exportNameBytes : AverCert.WasmSlice.ByteSeq
+  exportName      : String
+  carrier         : Nat
+  hostTable       : List (HostRole × Nat)
+  obligation      : Obligation
+
 def stringEqClaimAccepted
     (wasmBytes : AverCert.WasmSlice.ByteSeq)
     (manifest : AverCert.Schema.Manifest)
@@ -295,6 +314,66 @@ def constructClaimAccepted
         claim.obligation
   | none => False
 
+/-- Artifact-level acceptance for one fuel-recursion export. The
+    `RecursionRawPlan` is checked (generic block typing AND the
+    context-sensitive fuel-recursion grammar: every `selfCall` must target the
+    byte-derived binding's own function index and every host call must cite the
+    byte-derived role table), lowered to the self-recursive `WInstr` body and
+    the exact code-entry bytes, those bytes are bound to the exported function,
+    and the binding's declared type-section entry must be the canonical
+    certified signature `[(ref null carrier)^arity] → [(ref null carrier)]`.
+    The self index is additionally tied to the obligation through
+    `binding.funcIdx = obligation.self`. -/
+def recursionPlanAccepted
+    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (exportName : String)
+    (carrier : Nat)
+    (hostTable : List (HostRole × Nat))
+    (plan : RecursionRawPlan)
+    (obligation : Obligation) : Prop :=
+  obligation.export_ = exportName ∧
+    obligation.carrier = carrier ∧
+    AverCert.PlanCheck.checkRecursionRawPlan plan = true ∧
+    ∃ body codeEntry binding,
+      AverCert.PlanLower.lowerRecursionBody carrier plan = some body ∧
+      AverCert.PlanBytes.lowerRecursionCodeEntry carrier plan = some codeEntry ∧
+      AverCert.WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
+      AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+      binding.funcIdx = obligation.self ∧
+      binding.codeEntry = codeEntry ∧
+      AverCert.PlanCheck.checkRecursionPlanShape binding.funcIdx hostTable plan = true ∧
+      AverCert.WasmSlice.funcTypeMatches
+        wasmBytes binding.typeIdx plan.params.length carrier = true ∧
+      ∃ nlocals,
+        obligation.code binding.funcIdx =
+          some { arity := plan.params.length, nlocals := nlocals, body := body }
+
+def recursionPlanForExport
+    (exportName : String) : List (String × RecursionRawPlan) →
+    Option RecursionRawPlan
+  | [] => none
+  | (name, plan) :: rest =>
+      if name == exportName then
+        some plan
+      else
+        recursionPlanForExport exportName rest
+
+def recursionClaimAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (manifest : AverCert.Schema.Manifest)
+    (claim : RecursionClaim) : Prop :=
+  match recursionPlanForExport claim.exportName manifest.recursionPlans with
+  | some plan =>
+      recursionPlanAccepted
+        wasmBytes
+        claim.exportNameBytes
+        claim.exportName
+        claim.carrier
+        claim.hostTable
+        plan
+        claim.obligation
+  | none => False
+
 /-- Aggregate source-level symbolic fragment acceptance for one artifact's
     source claim list. -/
 def symFragmentClaimsAccepted
@@ -337,6 +416,17 @@ def constructClaimsAccepted
   | claim :: rest =>
       constructClaimAccepted wasmBytes manifest claim ∧
       constructClaimsAccepted wasmBytes manifest rest
+
+/-- Aggregate fuel-recursion witness acceptance for one artifact's recursion
+    claim list. -/
+def recursionClaimsAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (manifest : AverCert.Schema.Manifest) :
+    List RecursionClaim → Prop
+  | [] => True
+  | claim :: rest =>
+      recursionClaimAccepted wasmBytes manifest claim ∧
+      recursionClaimsAccepted wasmBytes manifest rest
 
 /-- The source plans claimed by an artifact, projected into the same manifest
     surface used for pinning. Keeping this in the audited predicate means a
@@ -389,6 +479,18 @@ def constructManifestPlanNames
     (manifest : AverCert.Schema.Manifest) : List String :=
   manifest.constructPlans.map (fun p => p.1)
 
+/-- Recursion claims are pinned to `manifest.recursionPlans` by export name,
+    mirroring the String.eq/constructor families: a self-checking artifact
+    cannot advertise a different recursion-plan list than the claims it proves
+    acceptance for. -/
+def recursionClaimExportNames
+    (claims : List RecursionClaim) : List String :=
+  claims.map (fun c => c.exportName)
+
+def recursionManifestPlanNames
+    (manifest : AverCert.Schema.Manifest) : List String :=
+  manifest.recursionPlans.map (fun p => p.1)
+
 /-- The source `SymPlan`s carried by String.concat claims. These live in the
     manifest's common `symFragmentPlans` list; the byte-lowering-specific
     `StringConcatRawPlan` stays in `stringConcatPlans`. -/
@@ -416,6 +518,7 @@ structure ArtifactData where
   stringEqClaims     : List StringEqClaim
   stringConcatClaims : List StringConcatClaim
   constructClaims    : List ConstructClaim
+  recursionClaims    : List RecursionClaim
 
 def acceptedSymFragments (artifact : ArtifactData) : Prop :=
   symFragmentClaimsAccepted artifact.wasmBytes artifact.symFragmentClaims
@@ -438,11 +541,18 @@ def acceptedConstructFragments (artifact : ArtifactData) : Prop :=
     artifact.manifest
     artifact.constructClaims
 
+def acceptedRecursionFragments (artifact : ArtifactData) : Prop :=
+  recursionClaimsAccepted
+    artifact.wasmBytes
+    artifact.manifest
+    artifact.recursionClaims
+
 def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedSymFragments artifact ∧
   acceptedStringEqFragments artifact ∧
   acceptedStringConcatFragments artifact ∧
-  acceptedConstructFragments artifact
+  acceptedConstructFragments artifact ∧
+  acceptedRecursionFragments artifact
 
 def expectedArtifactRoot : String :=
   "AverCert.Artifact.certificate"
@@ -454,13 +564,15 @@ def claimObligationExports (artifact : ArtifactData) : List String :=
   artifact.symFragmentClaims.map (fun c => c.obligation.export_) ++
   artifact.stringEqClaims.map (fun c => c.obligation.export_) ++
   artifact.stringConcatClaims.map (fun c => c.obligation.export_) ++
-  artifact.constructClaims.map (fun c => c.obligation.export_)
+  artifact.constructClaims.map (fun c => c.obligation.export_) ++
+  artifact.recursionClaims.map (fun c => c.obligation.export_)
 
 def claimObligations (artifact : ArtifactData) : List Obligation :=
   artifact.symFragmentClaims.map (fun c => c.obligation) ++
   artifact.stringEqClaims.map (fun c => c.obligation) ++
   artifact.stringConcatClaims.map (fun c => c.obligation) ++
-  artifact.constructClaims.map (fun c => c.obligation)
+  artifact.constructClaims.map (fun c => c.obligation) ++
+  artifact.recursionClaims.map (fun c => c.obligation)
 
 def claimObligationsInManifest
     (manifestObligations : List Obligation) : List Obligation → Prop
@@ -489,7 +601,9 @@ def claimsMatchManifest (artifact : ArtifactData) : Prop :=
           stringConcatManifestPlanNames artifact.manifest ∧
       constructClaimExportNames artifact.constructClaims =
           constructManifestPlanNames artifact.manifest ∧
-      encodedSymExprPlans = artifact.manifest.exprFragmentPlans
+      encodedSymExprPlans = artifact.manifest.exprFragmentPlans ∧
+      recursionClaimExportNames artifact.recursionClaims =
+          recursionManifestPlanNames artifact.manifest
   | none => False
 
 def accepted (artifact : ArtifactData) : Prop :=

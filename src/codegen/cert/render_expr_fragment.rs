@@ -306,6 +306,9 @@ where
         FragNodeKind::HostCall { .. } => {
             unreachable!("host-free expr-fragment value renderer does not handle host calls")
         }
+        FragNodeKind::SelfCall { .. } => {
+            unreachable!("self-call is rendered by the fuel-recursion face, not the generic value renderer")
+        }
         FragNodeKind::If {
             cond,
             then_block,
@@ -392,6 +395,7 @@ where
         | FragNodeKind::ConstI32(_)
         | FragNodeKind::ConstF64(_)
         | FragNodeKind::HostCall { .. }
+        | FragNodeKind::SelfCall { .. }
         | FragNodeKind::StructGet { .. }
         | FragNodeKind::StructGetUser { .. } => unreachable!("node is not BoolI32"),
     }

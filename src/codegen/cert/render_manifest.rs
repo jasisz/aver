@@ -387,6 +387,15 @@ fn render_manifest_lean(
         })
         .collect::<Vec<_>>()
         .join(", ");
+    let recursion_plans = analysis
+        .certs
+        .iter()
+        .filter_map(|c| {
+            recursion_plan_from_cert(c)
+                .map(|_| format!("({}, Plans.{}RecursionPlan)", lean_str(c.name()), c.name()))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     s.push_str(&format!(
         "def manifest : Schema.Manifest :=\n  \
          {{ subject :=\n      \
@@ -401,6 +410,7 @@ fn render_manifest_lean(
          stringConcatPlans := [{string_concat_plans}],\n    \
          constructPlans := [{construct_plans}],\n    \
          exprFragmentPlans := [{expr_fragment_plans}],\n    \
+         recursionPlans := [{recursion_plans}],\n    \
          obligations := [{obligations}] }}\n\n\
          end AverCert\n",
     ));
@@ -709,6 +719,11 @@ fn artifact_bridge_profile(c: &Cert, model_info: &ModelInfo) -> &'static str {
         Cert::ExprFragment { .. }
         | Cert::StringEqVerbatimMatch { .. }
         | Cert::StringConcatVerbatimMatch { .. } => "accepted-artifact-v1",
+        Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. }
+            if recursion_plan_from_cert(c).is_some() =>
+        {
+            "accepted-artifact-v1"
+        }
         Cert::AdtConstructor { .. }
             if adt_constructor_sym_plan_from_cert(c, model_info).is_some()
                 && construct_plan_from_cert(c).is_some() =>

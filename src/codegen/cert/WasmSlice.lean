@@ -75,6 +75,211 @@ def findSectionPayload (target : Nat) (wasmBytes : ByteSeq) : Option ByteSeq :=
   | some sections => findSectionPayloadFuel (sections.length + 1) target sections
   | none => none
 
+/-- Signed LEB128 reader (s33 heap-type indices in value types). -/
+def readSlebFuel : Nat → Nat → Int → ByteSeq → Option (Int × ByteSeq)
+  | 0, _, _, _ => none
+  | _fuel + 1, _shift, _acc, [] => none
+  | fuel + 1, shift, acc, b :: rest =>
+      if b < 256 then
+        let low := b % 128
+        let acc' := acc + Int.ofNat (low * (2 ^ shift))
+        if b < 128 then
+          let signed := if 64 ≤ low then acc' - Int.ofNat (2 ^ (shift + 7)) else acc'
+          some (signed, rest)
+        else
+          readSlebFuel fuel (shift + 7) acc' rest
+      else
+        none
+
+def readS33 (bytes : ByteSeq) : Option (Int × ByteSeq) :=
+  readSlebFuel 6 0 0 bytes
+
+/-! ### Type-section navigation
+
+Just enough of the wasm-gc type grammar to bind a function-section type index
+to the canonical certified signature `[(ref null C)^n] → [(ref null C)]`. Like
+the rest of this slicer it is deliberately not a validator: every unrecognised
+byte fail-closes to `none`/`false`. -/
+
+/-- Skip one value type: numeric types (`0x7b`–`0x7f`) and abstract heap-type
+    shorthands (`0x69`–`0x73`) are single bytes; a concrete reference type is
+    `0x63`/`0x64` followed by an s33 heap-type index. -/
+def skipValType : ByteSeq → Option ByteSeq
+  | b :: rest =>
+      if b = 0x63 ∨ b = 0x64 then
+        match readS33 rest with
+        | some (_, rest') => some rest'
+        | none => none
+      else if (0x7b ≤ b ∧ b ≤ 0x7f) ∨ (0x69 ≤ b ∧ b ≤ 0x73) then
+        some rest
+      else
+        none
+  | [] => none
+
+def skipValTypesFuel : Nat → Nat → ByteSeq → Option ByteSeq
+  | 0, _, _ => none
+  | _fuel + 1, 0, bytes => some bytes
+  | fuel + 1, n + 1, bytes =>
+      match skipValType bytes with
+      | some rest => skipValTypesFuel fuel n rest
+      | none => none
+
+/-- Skip one field type: a storage type (value type, or packed `0x78`/`0x77`)
+    followed by a mutability byte. -/
+def skipFieldType (bytes : ByteSeq) : Option ByteSeq :=
+  let storage? : Option ByteSeq :=
+    match bytes with
+    | 0x78 :: rest => some rest
+    | 0x77 :: rest => some rest
+    | _ => skipValType bytes
+  match storage? with
+  | some (m :: rest) => if m = 0x00 ∨ m = 0x01 then some rest else none
+  | _ => none
+
+def skipFieldTypesFuel : Nat → Nat → ByteSeq → Option ByteSeq
+  | 0, _, _ => none
+  | _fuel + 1, 0, bytes => some bytes
+  | fuel + 1, n + 1, bytes =>
+      match skipFieldType bytes with
+      | some rest => skipFieldTypesFuel fuel n rest
+      | none => none
+
+/-- Skip one composite type: `0x60` func (params vec + results vec), `0x5f`
+    struct (field vec), `0x5e` array (one field). -/
+def skipCompType (bytes : ByteSeq) : Option ByteSeq :=
+  match bytes with
+  | 0x60 :: rest =>
+      match readUleb32 rest with
+      | some (np, r1) =>
+          match skipValTypesFuel (np + 1) np r1 with
+          | some r2 =>
+              match readUleb32 r2 with
+              | some (nr, r3) => skipValTypesFuel (nr + 1) nr r3
+              | none => none
+          | none => none
+      | none => none
+  | 0x5f :: rest =>
+      match readUleb32 rest with
+      | some (nf, r1) => skipFieldTypesFuel (nf + 1) nf r1
+      | none => none
+  | 0x5e :: rest => skipFieldType rest
+  | _ => none
+
+def skipUlebsFuel : Nat → Nat → ByteSeq → Option ByteSeq
+  | 0, _, _ => none
+  | _fuel + 1, 0, bytes => some bytes
+  | fuel + 1, n + 1, bytes =>
+      match readUleb32 bytes with
+      | some (_, rest) => skipUlebsFuel fuel n rest
+      | none => none
+
+/-- Skip one subtype: an optional `0x50`/`0x4f` prefix carrying a supertype
+    index vector, then the composite type. -/
+def skipSubType (bytes : ByteSeq) : Option ByteSeq :=
+  match bytes with
+  | 0x50 :: rest | 0x4f :: rest =>
+      match readUleb32 rest with
+      | some (ns, r1) =>
+          match skipUlebsFuel (ns + 1) ns r1 with
+          | some r2 => skipCompType r2
+          | none => none
+      | none => none
+  | _ => skipCompType bytes
+
+def skipSubTypesFuel : Nat → Nat → ByteSeq → Option ByteSeq
+  | 0, _, _ => none
+  | _fuel + 1, 0, bytes => some bytes
+  | fuel + 1, n + 1, bytes =>
+      match skipSubType bytes with
+      | some rest => skipSubTypesFuel fuel n rest
+      | none => none
+
+/-- Whether `n` value types, each exactly `(ref null carrier)`, sit at the head
+    of `bytes`; returns the remainder. -/
+def readCarrierRefsFuel : Nat → Nat → Nat → ByteSeq → Option ByteSeq
+  | 0, _, _, _ => none
+  | _fuel + 1, 0, _carrier, bytes => some bytes
+  | fuel + 1, n + 1, carrier, bytes =>
+      match bytes with
+      | 0x63 :: rest =>
+          match readS33 rest with
+          | some (idx, rest') =>
+              if idx = Int.ofNat carrier then
+                readCarrierRefsFuel fuel n carrier rest'
+              else
+                none
+          | none => none
+      | _ => none
+
+/-- Whether the subtype at the head of `bytes` is EXACTLY the plain (final,
+    supertype-free) canonical certified function type
+    `[(ref null carrier)^arity] → [(ref null carrier)]`. Subtype prefixes
+    fail-close: the emitter never produces them for certified functions. -/
+def checkCanonicalFuncType (arity carrier : Nat) (bytes : ByteSeq) : Bool :=
+  match bytes with
+  | 0x60 :: rest =>
+      match readUleb32 rest with
+      | some (np, r1) =>
+          if np = arity then
+            match readCarrierRefsFuel (np + 1) np carrier r1 with
+            | some r2 =>
+                match readUleb32 r2 with
+                | some (nr, r3) =>
+                    if nr = 1 then
+                      match readCarrierRefsFuel 2 1 carrier r3 with
+                      | some _ => true
+                      | none => false
+                    else
+                      false
+                | none => false
+            | none => false
+          else
+            false
+      | none => false
+  | _ => false
+
+/-- Walk the type section's rectype vector to the `target`-th TYPE INDEX
+    (an explicit rec group defines several consecutive indices) and check it
+    with `checkCanonicalFuncType`. -/
+def walkTypeEntriesFuel (arity carrier : Nat) :
+    Nat → Nat → Nat → ByteSeq → Bool
+  | 0, _, _, _ => false
+  | _fuel + 1, 0, _target, _bytes => false
+  | fuel + 1, remaining + 1, target, bytes =>
+      match bytes with
+      | 0x4e :: rest =>
+          match readUleb32 rest with
+          | some (cnt, r1) =>
+              if target < cnt then
+                match skipSubTypesFuel (target + 1) target r1 with
+                | some r2 => checkCanonicalFuncType arity carrier r2
+                | none => false
+              else
+                match skipSubTypesFuel (cnt + 1) cnt r1 with
+                | some r2 =>
+                    walkTypeEntriesFuel arity carrier fuel remaining (target - cnt) r2
+                | none => false
+          | none => false
+      | _ =>
+          if target = 0 then
+            checkCanonicalFuncType arity carrier bytes
+          else
+            match skipSubType bytes with
+            | some rest => walkTypeEntriesFuel arity carrier fuel remaining (target - 1) rest
+            | none => false
+
+/-- Whether the module's type-section entry `typeIdx` is exactly the canonical
+    certified function type `[(ref null carrier)^arity] → [(ref null carrier)]`.
+    This binds a claimed function binding's declared signature to the plan's
+    params/result without trusting either. -/
+def funcTypeMatches (wasmBytes : ByteSeq) (typeIdx arity carrier : Nat) : Bool :=
+  match findSectionPayload 0x01 wasmBytes with
+  | some payload =>
+      match readUleb32 payload with
+      | some (count, rest) => walkTypeEntriesFuel arity carrier (count + 1) count typeIdx rest
+      | none => false
+  | none => false
+
 def readImportFuncFlag (bytes : ByteSeq) : Option (Bool × ByteSeq) :=
   match readNameBytes bytes with
   | some (_, rest1) =>

@@ -122,6 +122,9 @@ impl FragTy {
 pub(crate) enum FragHostRole {
     Box,
     Add,
+    /// The strict integer-subtraction contract (`carrier sub`). Admitted by the
+    /// Lean `HostRole` grammar for the fuel-recursion descent `sub(n, box(1))`.
+    Sub,
 }
 
 impl FragHostRole {
@@ -129,6 +132,7 @@ impl FragHostRole {
         match self {
             FragHostRole::Box => "box",
             FragHostRole::Add => "add",
+            FragHostRole::Sub => "sub",
         }
     }
 
@@ -136,6 +140,7 @@ impl FragHostRole {
         match self {
             FragHostRole::Box => ".box",
             FragHostRole::Add => ".add",
+            FragHostRole::Sub => ".sub",
         }
     }
 
@@ -143,6 +148,7 @@ impl FragHostRole {
         match tag {
             "box" => Some(FragHostRole::Box),
             "add" => Some(FragHostRole::Add),
+            "sub" => Some(FragHostRole::Sub),
             _ => None,
         }
     }
@@ -153,6 +159,7 @@ impl FragHostRole {
         match self {
             FragHostRole::Box => (&[FragTy::I64], FragTy::IntCarrier),
             FragHostRole::Add => (&[FragTy::IntCarrier, FragTy::IntCarrier], FragTy::IntCarrier),
+            FragHostRole::Sub => (&[FragTy::IntCarrier, FragTy::IntCarrier], FragTy::IntCarrier),
         }
     }
 }
@@ -178,6 +185,7 @@ impl FragHostTable {
         match role {
             FragHostRole::Box => self.box_idx,
             FragHostRole::Add => self.add_idx,
+            FragHostRole::Sub => self.sub_idx,
         }
     }
 
@@ -366,6 +374,14 @@ pub(crate) enum FragNodeKind {
         func_idx: u32,
         args: Vec<FragValueId>,
     },
+    /// A self-recursive call to the function being certified. `tail` selects
+    /// `return_call` (`0x12`) over `call` (`0x10`). `func_idx` is the resolved
+    /// self index, bound to the module bytes by the byte-exact gate.
+    SelfCall {
+        tail: bool,
+        func_idx: u32,
+        args: Vec<FragValueId>,
+    },
     If {
         cond: FragValueId,
         then_block: Box<FragBlock>,
@@ -531,6 +547,17 @@ fn expr_fragment_node_kind_lean_value(kind: &FragNodeKind) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        FragNodeKind::SelfCall {
+            tail,
+            func_idx,
+            args,
+        } => format!(
+            ".selfCall {tail} {func_idx} [{}]",
+            args.iter()
+                .map(|id| id.0.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         FragNodeKind::If {
             cond,
             then_block,
@@ -610,6 +637,16 @@ fn render_fragment_node_plan(node: &FragNode, indent: usize, out: &mut String) {
                 render_fragment_plan_ids(args)
             ));
         }
+        FragNodeKind::SelfCall {
+            tail,
+            func_idx,
+            args,
+        } => {
+            out.push_str(&format!(
+                "selfcall tail={tail} func={func_idx} args={}\n",
+                render_fragment_plan_ids(args)
+            ));
+        }
         FragNodeKind::If {
             cond,
             then_block,
@@ -669,6 +706,50 @@ fn expr_fragment_dom_repr_list(params: &[FragTy], root: &str, carrier: &str) -> 
 #[cfg(test)]
 mod expr_fragment_sem_ty_tests {
     use super::*;
+
+    /// Concrete heap-type indices are SIGNED s33 LEB128: 63 is the last index
+    /// whose signed encoding coincides with the unsigned one; 64 has bit 6 set
+    /// in its low group, so signed encoding needs a continuation (`c0 00`).
+    #[test]
+    fn heap_type_indices_use_signed_s33_leb() {
+        let enc = |idx: u32| {
+            let mut out = Vec::new();
+            push_s33_heap_idx(&mut out, idx);
+            out
+        };
+        assert_eq!(enc(0), vec![0x00]);
+        assert_eq!(enc(2), vec![0x02]);
+        assert_eq!(enc(63), vec![0x3f]);
+        assert_eq!(enc(64), vec![0xc0, 0x00]);
+        assert_eq!(enc(127), vec![0xff, 0x00]);
+        assert_eq!(enc(128), vec![0x80, 0x01]);
+    }
+
+    /// The carrier local declaration and the Int-carrier `if` block type both
+    /// carry a concrete heap-type index; at carrier 64 they must use the s33
+    /// continuation encoding, at 63 the single byte.
+    #[test]
+    fn carrier_local_decl_and_blocktype_are_s33_at_boundary() {
+        // Local declaration prefix of the canonical body: `01 01 63 <s33 c>`.
+        let plan = add_two_hostcall_plan();
+        let bytes63 = lower_expr_fragment_plan_code_entry_bytes(&plan, 63).expect("carrier 63");
+        assert_eq!(&bytes63[1..5], &[0x01, 0x01, 0x63, 0x3f]);
+        let bytes64 = lower_expr_fragment_plan_code_entry_bytes(&plan, 64).expect("carrier 64");
+        assert_eq!(&bytes64[1..6], &[0x01, 0x01, 0x63, 0xc0, 0x00]);
+
+        // Value-if block type `04 63 <s33 c>` in a recursion-shaped body.
+        let rec63 = recursion_plan_recursive(10, 11, 12, 1, 7, false, BodyOperand::Input);
+        let rb63 = lower_expr_fragment_plan_code_entry_bytes(&rec63, 63).expect("rec carrier 63");
+        assert!(
+            rb63.windows(3).any(|w| w == [0x04, 0x63, 0x3f]),
+            "carrier-63 value-if block type missing: {rb63:02x?}"
+        );
+        let rb64 = lower_expr_fragment_plan_code_entry_bytes(&rec63, 64).expect("rec carrier 64");
+        assert!(
+            rb64.windows(4).any(|w| w == [0x04, 0x63, 0xc0, 0x00]),
+            "carrier-64 value-if block type missing: {rb64:02x?}"
+        );
+    }
 
     #[test]
     fn frag_ty_keeps_model_face_separate_from_wasm_repr() {
