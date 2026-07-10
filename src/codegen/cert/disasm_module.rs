@@ -219,7 +219,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                                 Op::Other
                             }
                         }
-                        Operator::RefNull { .. } => Op::RefNull,
+                        Operator::RefNull { hty } => Op::RefNull(heap_type_index(hty)),
                         Operator::RefIsNull => Op::RefIsNull,
                         Operator::I64Eq => Op::I64Eq,
                         Operator::I64LeS => Op::I64LeS,
@@ -356,7 +356,10 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
     // contain `i64.add`, but its fast path multiplies first). If the module
     // does not determine a UNIQUE candidate, the role stays unbound (`None`)
     // and every plan citing it declines fail-closed — never guess by index
-    // order. `box` is the exported `__rt_aint_from_i64`, exact by name.
+    // order. `box` is the exported `__rt_aint_from_i64`, exact by name. `sub`
+    // is derived exactly like `add` (same carrier-binop signature, but
+    // `i64.sub`-first with its own uniqueness check); it is carried here as an
+    // S2 prerequisite and NOT yet surfaced to Lean (see `FragHostTable::lean_value`).
     let frag_host_table = {
         let is_carrier_binop = |def_idx: usize| -> bool {
             let Some(c) = carrier else {
@@ -371,20 +374,26 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
             params.as_slice() == [TyKind::Ref(c), TyKind::Ref(c)]
                 && *result == Some(TyKind::Ref(c))
         };
-        let add_candidates: Vec<u32> = code_entries
-            .iter()
-            .enumerate()
-            .filter(|(def_idx, entry)| {
-                entry.first_arith_strict == Some(FirstI64Arith::Add) && is_carrier_binop(*def_idx)
-            })
-            .map(|(def_idx, _)| num_imported_funcs + def_idx as u32)
-            .collect();
-        FragHostTable {
-            box_idx: Some(box_idx),
-            add_idx: match add_candidates.as_slice() {
+        let strict_binop_candidates = |arith: FirstI64Arith| -> Vec<u32> {
+            code_entries
+                .iter()
+                .enumerate()
+                .filter(|(def_idx, entry)| {
+                    entry.first_arith_strict == Some(arith) && is_carrier_binop(*def_idx)
+                })
+                .map(|(def_idx, _)| num_imported_funcs + def_idx as u32)
+                .collect()
+        };
+        let unique = |candidates: Vec<u32>| -> Option<u32> {
+            match candidates.as_slice() {
                 [only] => Some(*only),
                 _ => None,
-            },
+            }
+        };
+        FragHostTable {
+            box_idx: Some(box_idx),
+            add_idx: unique(strict_binop_candidates(FirstI64Arith::Add)),
+            sub_idx: unique(strict_binop_candidates(FirstI64Arith::Sub)),
         }
     };
 

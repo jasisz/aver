@@ -48,7 +48,7 @@ fn nr_adt_constructor(
     for op in prefix {
         match op {
             LocalGet(i) if (*i as usize) < f.arity => fields.push(ConstructorField::Local(*i)),
-            RefNull => fields.push(ConstructorField::Null),
+            RefNull(_) => fields.push(ConstructorField::Null),
             _ => return None,
         }
     }

@@ -65,7 +65,14 @@ enum Op {
     /// recognizer can see the container construction; functions that use it in
     /// any shape other than the contracted concat beachhead are still declined.
     ArrayNewFixed(u32, u32),
-    RefNull,
+    /// `ref.null <heap>` carrying the disassembled heap type. `Some(idx)` is a
+    /// concrete module type index (e.g. the List struct a widened match's `[]`
+    /// default nulls); `None` is any abstract heap type (func/extern/none/…),
+    /// which is not re-lowerable by the plan grammar and so is a fail-closed
+    /// form. Every classifier ignores the payload (matches `RefNull(_)`), so
+    /// null-default recognition is unchanged; the index is threaded purely for
+    /// byte-exact re-lowering in the S2 control-flow grammar.
+    RefNull(Option<u32>),
     RefIsNull,
     I64Eq,
     I64LeS,

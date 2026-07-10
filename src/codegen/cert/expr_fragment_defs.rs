@@ -156,6 +156,12 @@ impl FragHostRole {
 pub(crate) struct FragHostTable {
     pub(crate) box_idx: Option<u32>,
     pub(crate) add_idx: Option<u32>,
+    /// The strict `sub` binding (byte-derived exactly like `add`: carrier-binop
+    /// signature + `i64.sub`-first + uniqueness, fail-closed to `None`).
+    /// Carried Rust-side as an S2 prerequisite but NOT yet part of the Lean
+    /// grammar: it is deliberately absent from `lean_value()` and `lookup()`
+    /// until the S2 control-flow leg extends the `HostRole` enum.
+    pub(crate) sub_idx: Option<u32>,
 }
 
 impl FragHostTable {
@@ -176,6 +182,10 @@ impl FragHostTable {
         if let Some(idx) = self.add_idx {
             entries.push(format!("(.add, {idx})"));
         }
+        // `sub_idx` is deliberately NOT rendered: the Lean `HostRole` grammar
+        // gains `.sub` only in the S2 control-flow leg. Emitting it now would
+        // change the audited artifact/claim surface, so `sub` stays invisible
+        // to Lean even though it is derived and carried Rust-side.
         format!("[{}]", entries.join(", "))
     }
 
@@ -187,6 +197,7 @@ impl FragHostTable {
         FragHostTable {
             box_idx: Some(0),
             add_idx: Some(0),
+            sub_idx: Some(0),
         }
     }
 }
