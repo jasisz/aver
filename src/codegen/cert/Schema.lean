@@ -70,12 +70,14 @@ def FragTy.sourceTy? : FragTy → Option SymTy
   | .ref => none
 
 /-- Source-level primitive operations admitted by the initial `SymPlan`
-    scaffold. Representation-level integer carrier operations are intentionally
-    absent until they can be expressed as Aver `Int` operations. -/
+    scaffold. `intAdd` is exact integer addition on Aver `Int` (ℤ); its
+    encoding binds to the runtime carrier `add` contract through the
+    byte-derived host-role table. -/
 inductive SymPrim where
   | floatAdd
   | floatMul
   | floatLe
+  | intAdd
   | stringEq
   | stringConcat
 deriving Repr, DecidableEq
@@ -94,6 +96,7 @@ mutual
   inductive SymNodeKind where
     | param (index : Nat)
     | constBool (value : Bool)
+    | constInt (value : Int)
     | constFloatBits (bits : Nat)
     | constStringBytes (bytes : List Nat)
     | prim (op : SymPrim) (args : List Nat)
@@ -137,6 +140,15 @@ inductive FragPrim where
   | i32GtS
 deriving Repr, DecidableEq
 
+/-- Runtime host helper roles admitted by `expr-fragment-v1`. Each role fixes a
+    representation-level type signature (checked by `PlanCheck`); the resolved
+    wasm function index is carried on the node and bound to the module bytes by
+    the byte-exact gate, and to the byte-derived role table by the Rust checker. -/
+inductive HostRole where
+  | box
+  | add
+deriving Repr, DecidableEq
+
 mutual
   /-- A single typed ANF node in an expression-fragment plan. -/
   inductive FragNodeKind where
@@ -148,6 +160,7 @@ mutual
     | structGet (field : Nat) (receiver : Nat)
     | refIsNull (value : Nat)
     | prim (op : FragPrim) (args : List Nat)
+    | hostCall (role : HostRole) (funcIdx : Nat) (args : List Nat)
     | ifElse (cond : Nat) (thenBlock elseBlock : FragBlock)
   deriving Repr
 

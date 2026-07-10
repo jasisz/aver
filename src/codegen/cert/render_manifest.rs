@@ -1,5 +1,24 @@
 fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
     let name = c.name();
+    // A host-call expr fragment with the straight-line integer face states the
+    // SAME full-strength obligation the legacy straight-line class shipped:
+    // any representation in, represented `n + k` out, under the add contract.
+    if c.int_add_face().is_some() {
+        return format!(
+            "abbrev {name}Ob : Schema.Obligation :=\n  \
+             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+             Dom := List Int, Cod := Int,\n    \
+             domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = {arity},\n    \
+             codRepr := fun S n w => intRepr S n w,\n    \
+             model := {model} }}\n\n",
+            carrier = c.carrier(),
+            host = c.host_expr(),
+            self_idx = c.self_idx(),
+            model = c.model_expr(),
+            arity = c.arity(),
+        );
+    }
     match c.inner() {
         Cert::AdtConstructor {
             struct_idx,

@@ -133,6 +133,11 @@ impl<'a> SymPlanParser<'a> {
                 require_sym_plan_ty(id, &ty, &SymTy::Bool)?;
                 SymNodeKind::ConstBool(value)
             }
+            "const.int" => {
+                let value = plan_attr_i64(FragValueId(id.0), &attrs, "value")?;
+                require_sym_plan_ty(id, &ty, &SymTy::Int)?;
+                SymNodeKind::ConstInt(value)
+            }
             "const.float" => {
                 let bits = plan_attr_u64_hex(FragValueId(id.0), &attrs, "bits")?;
                 require_sym_plan_ty(id, &ty, &SymTy::Float)?;
@@ -329,6 +334,7 @@ fn reject_extra_sym_plan_attrs(
     let allowed: &[&str] = match kind {
         "param" => &["index"],
         "const.bool" => &["value"],
+        "const.int" => &["value"],
         "const.float" => &["bits"],
         "const.string" => &["hex"],
         "prim" => &["op", "args"],
@@ -374,6 +380,7 @@ fn check_sym_plan_prim_args(
         SymPrim::FloatAdd | SymPrim::FloatMul | SymPrim::FloatLe => {
             vec![SymTy::Float, SymTy::Float]
         }
+        SymPrim::IntAdd => vec![SymTy::Int, SymTy::Int],
         SymPrim::StringEq => vec![SymTy::String, SymTy::String],
         SymPrim::StringConcat => Vec::new(),
     };
@@ -399,6 +406,7 @@ fn check_sym_plan_prim_args(
     }
     Ok(match op {
         SymPrim::FloatAdd | SymPrim::FloatMul => SymTy::Float,
+        SymPrim::IntAdd => SymTy::Int,
         SymPrim::FloatLe => SymTy::Bool,
         SymPrim::StringEq => SymTy::Bool,
         SymPrim::StringConcat => unreachable!(),

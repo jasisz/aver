@@ -61,6 +61,7 @@ pub enum SymPrim {
     FloatAdd,
     FloatMul,
     FloatLe,
+    IntAdd,
     StringEq,
     StringConcat,
 }
@@ -77,6 +78,7 @@ pub enum SymIntCmp {
 pub enum SymNodeKind {
     Param { index: u32 },
     ConstBool(bool),
+    ConstInt(i64),
     ConstFloatBits(u64),
     ConstStringBytes(Vec<u8>),
     Prim {
@@ -139,7 +141,15 @@ impl SymPlan {
         })
     }
 
-    pub(crate) fn to_expr_fragment_plan(&self) -> Option<ExprFragmentPlan> {
+    /// Encode to the representation-level plan. `host_table` supplies the
+    /// byte-derived wasm indices for host-bound source operations (Int
+    /// literals box; `intAdd` calls the carrier `add`); a role the table
+    /// lacks fail-closes the encoding. Twin of the audited Lean
+    /// `PlanCheck.encodeSymRawPlanToExprFragmentRawPlan`.
+    pub(crate) fn to_expr_fragment_plan(
+        &self,
+        host_table: &FragHostTable,
+    ) -> Option<ExprFragmentPlan> {
         Some(ExprFragmentPlan {
             params: self
                 .params
@@ -147,7 +157,7 @@ impl SymPlan {
                 .map(SymTy::to_frag_ty)
                 .collect::<Option<Vec<_>>>()?,
             result: self.result.to_frag_ty()?,
-            body: expr_fragment_block_from_sym(&self.body)?,
+            body: expr_fragment_block_from_sym(&self.body, host_table)?,
         })
     }
 }
@@ -159,9 +169,12 @@ pub enum FragmentPlan {
 }
 
 impl FragmentPlan {
-    pub(crate) fn to_expr_fragment_plan(&self) -> Option<ExprFragmentPlan> {
+    pub(crate) fn to_expr_fragment_plan(
+        &self,
+        host_table: &FragHostTable,
+    ) -> Option<ExprFragmentPlan> {
         match self {
-            FragmentPlan::Sym(plan) => plan.to_expr_fragment_plan(),
+            FragmentPlan::Sym(plan) => plan.to_expr_fragment_plan(host_table),
             FragmentPlan::Expr(plan) => Some(plan.clone()),
         }
     }
@@ -313,6 +326,7 @@ fn sym_node_from_frag_source_subset(node: &FragNode) -> Option<SymNode> {
         },
         FragNodeKind::ConstI64(_)
         | FragNodeKind::ConstI32(_)
+        | FragNodeKind::HostCall { .. }
         | FragNodeKind::StructGet { .. }
         | FragNodeKind::RefIsNull { .. } => return None,
     };
@@ -447,7 +461,7 @@ mod sym_plan_defs_tests {
         };
         let lean = sym_plan_lean_value(&plan);
         assert!(lean.contains("params := [(.named \"User\")]"));
-        assert!(plan.to_expr_fragment_plan().is_none());
+        assert!(plan.to_expr_fragment_plan(&FragHostTable::placeholder()).is_none());
     }
 
     #[test]
@@ -487,7 +501,7 @@ mod sym_plan_defs_tests {
         let mut parser = SymPlanParser::new(&text, vec![SymTy::Int], SymTy::Named("Op".to_string()));
         let parsed = parser.parse().expect("parse construct plan");
         assert_eq!(parsed, plan.body);
-        assert!(plan.to_expr_fragment_plan().is_none());
+        assert!(plan.to_expr_fragment_plan(&FragHostTable::placeholder()).is_none());
     }
 
     #[test]
@@ -570,6 +584,6 @@ mod sym_plan_defs_tests {
         let lean = sym_plan_lean_value(&plan);
         assert!(lean.contains(".constStringBytes [33]"));
         assert!(lean.contains(".prim .stringConcat [0, 1]"));
-        assert!(plan.to_expr_fragment_plan().is_none());
+        assert!(plan.to_expr_fragment_plan(&FragHostTable::placeholder()).is_none());
     }
 }

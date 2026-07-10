@@ -1716,6 +1716,124 @@ fn cert_verify_declines_expr_fragment_operand_swap_sidecar() {
     );
 }
 
+/// Byte-derived host-role indices for the goals module, read from the
+/// checker-rendered `addTwoPlan` in `Plans.lean` (`.hostCall .box N`,
+/// `.hostCall .add M`). Used to compose host-call tamper plans without
+/// hardcoding module layout.
+fn add_two_host_indices(cert_dir: &Path) -> (u32, u32) {
+    let plans = std::fs::read_to_string(cert_dir.join("Plans.lean")).expect("Plans.lean exists");
+    let extract = |tag: &str| -> u32 {
+        let at = plans
+            .find(tag)
+            .unwrap_or_else(|| panic!("Plans.lean should contain `{tag}`"));
+        plans[at + tag.len()..]
+            .split_whitespace()
+            .next()
+            .and_then(|tok| tok.parse::<u32>().ok())
+            .unwrap_or_else(|| panic!("`{tag}` should be followed by a function index"))
+    };
+    (extract(".hostCall .box "), extract(".hostCall .add "))
+}
+
+/// Rebind `addTwo`'s manifest entry from the emitted `source_fragment` SymPlan
+/// to an attacker-supplied representation `fragment` sidecar with the given
+/// text (sha rebound so only the plan-vs-bytes gates decide).
+fn rebind_add_two_to_repr_fragment(cert_dir: &Path, plan_text: &str) {
+    let plan_path = "fragments/61646454776f.expr-fragment-v1.plan";
+    std::fs::write(cert_dir.join(plan_path), plan_text).unwrap();
+    let mf = cert_dir.join("cert-manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    let entry = manifest["certified"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|c| c["name"].as_str() == Some("addTwo"))
+        .expect("addTwo manifest entry should exist");
+    entry.as_object_mut().unwrap().remove("source_fragment");
+    entry["fragment"] = serde_json::json!({
+        "profile": "expr-fragment-v1",
+        "plan": plan_path,
+        "plan_sha256": aver::codegen::cert::sha256_hex(plan_text.as_bytes()),
+    });
+    std::fs::write(&mf, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
+}
+
+fn add_two_host_call_plan_text(box_idx: u32, add_call_idx: u32) -> String {
+    format!(
+        "aver.expr-fragment.plan.v1\nprofile expr-fragment-v1\nparams int-carrier\n\
+         result int-carrier\nbody\nblock result=v3\n  v0 ty=int-carrier local index=0\n  \
+         v1 ty=i64 const.i64 value=2\n  v2 ty=int-carrier hostcall role=box func={box_idx} args=v1\n  \
+         v3 ty=int-carrier hostcall role=add func={add_call_idx} args=v0,v2\nend\n"
+    )
+}
+
+#[test]
+fn cert_verify_declines_expr_fragment_host_role_swap() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping expr-fragment host-role swap test: `lake` not available");
+        return;
+    }
+
+    let (out_dir, wasm, cert) = compile_cert_goals("cert-expr-host-role-swap");
+    let (box_idx, add_idx) = add_two_host_indices(&cert);
+    assert_ne!(
+        box_idx, add_idx,
+        "goals module should have distinct host roles"
+    );
+    // The `add` host call is rebound to a helper that IS in the module (the
+    // box constructor) but does not realise the `add` role: the byte-derived
+    // role table must decline the swap fail-closed.
+    let tampered = add_two_host_call_plan_text(box_idx, box_idx);
+    rebind_add_two_to_repr_fragment(&cert, &tampered);
+
+    let (ok, out) = aver_verify(&wasm, &cert);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    assert!(
+        !ok,
+        "host-role-swapped expr-fragment plan must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("plan sidecar does not check against wasm") && out.contains("cites function"),
+        "wrong reason for addTwo host-role swap:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "host-role-swapped expr-fragment plan credited:\n{out}"
+    );
+}
+
+#[test]
+fn cert_verify_declines_expr_fragment_host_call_outside_role_table() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping expr-fragment host-call outside-table test: `lake` not available");
+        return;
+    }
+
+    let (out_dir, wasm, cert) = compile_cert_goals("cert-expr-host-outside-table");
+    let (box_idx, _add_idx) = add_two_host_indices(&cert);
+    // A callee index that resolves through NO role in the byte-derived table:
+    // the Rust checker declines before any byte comparison or kernel work.
+    let tampered = add_two_host_call_plan_text(box_idx, 9999);
+    rebind_add_two_to_repr_fragment(&cert, &tampered);
+
+    let (ok, out) = aver_verify(&wasm, &cert);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    assert!(
+        !ok,
+        "expr-fragment plan citing a callee outside the role table must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("plan sidecar does not check against wasm")
+            && out.contains("cites function 9999"),
+        "wrong reason for addTwo outside-table host call:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "outside-table expr-fragment plan credited:\n{out}"
+    );
+}
+
 #[test]
 fn cert_verify_declines_expr_fragment_extra_instruction_sidecar() {
     if Command::new("lake").arg("--version").output().is_err() {

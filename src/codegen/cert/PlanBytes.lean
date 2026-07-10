@@ -146,6 +146,10 @@ mutual
               match popExpectedAll stack args.reverse with
               | some stack' => some (primBytes op, node.id :: stack')
               | none => none
+          | .hostCall _role funcIdx args =>
+              match popExpectedAll stack args.reverse, uleb32 funcIdx with
+              | some stack', some idxBytes => some ([0x10] ++ idxBytes, node.id :: stack')
+              | _, _ => none
           | .ifElse cond thenBlock elseBlock =>
               match popExpected stack cond with
               | some [] =>

@@ -1,6 +1,10 @@
-fn expr_fragment_block_from_sym(block: &SymBlock) -> Option<FragBlock> {
+fn expr_fragment_block_from_sym(
+    block: &SymBlock,
+    host_table: &FragHostTable,
+) -> Option<FragBlock> {
     let mut encoder = SymToFragEncoder {
         source_nodes: &block.nodes,
+        host_table,
         nodes: Vec::new(),
         sym_to_frag: Vec::new(),
     };
@@ -16,6 +20,7 @@ fn expr_fragment_block_from_sym(block: &SymBlock) -> Option<FragBlock> {
 
 struct SymToFragEncoder<'a> {
     source_nodes: &'a [SymNode],
+    host_table: &'a FragHostTable,
     nodes: Vec<FragNode>,
     sym_to_frag: Vec<FragValueId>,
 }
@@ -29,8 +34,41 @@ impl SymToFragEncoder<'_> {
         let result = match &node.kind {
             SymNodeKind::Param { index } => self.push_node(ty, FragNodeKind::Local { index: *index }),
             SymNodeKind::ConstBool(value) => self.push_node(ty, FragNodeKind::ConstBool(*value)),
+            SymNodeKind::ConstInt(value) => {
+                // A source Int literal is representation-boxed at the point of
+                // appearance: raw i64 const, then the byte-derived `box` host
+                // call. The source node maps to the boxed carrier value.
+                let box_idx = self.host_table.lookup(FragHostRole::Box)?;
+                let const_id = self.push_node(FragTy::I64, FragNodeKind::ConstI64(*value));
+                self.push_node(
+                    ty,
+                    FragNodeKind::HostCall {
+                        role: FragHostRole::Box,
+                        func_idx: box_idx,
+                        args: vec![const_id],
+                    },
+                )
+            }
             SymNodeKind::ConstFloatBits(bits) => self.push_node(ty, FragNodeKind::ConstF64(*bits)),
             SymNodeKind::ConstStringBytes(_) => return None,
+            SymNodeKind::Prim {
+                op: SymPrim::IntAdd,
+                args,
+            } => {
+                let add_idx = self.host_table.lookup(FragHostRole::Add)?;
+                let args = args
+                    .iter()
+                    .map(|id| self.sym_to_frag.get(id.0).copied())
+                    .collect::<Option<Vec<_>>>()?;
+                self.push_node(
+                    ty,
+                    FragNodeKind::HostCall {
+                        role: FragHostRole::Add,
+                        func_idx: add_idx,
+                        args,
+                    },
+                )
+            }
             SymNodeKind::Prim { op, args } => {
                 let args = args
                     .iter()
@@ -60,8 +98,14 @@ impl SymToFragEncoder<'_> {
                     ty,
                     FragNodeKind::If {
                         cond,
-                        then_block: Box::new(expr_fragment_block_from_sym(then_block)?),
-                        else_block: Box::new(expr_fragment_block_from_sym(else_block)?),
+                        then_block: Box::new(expr_fragment_block_from_sym(
+                            then_block,
+                            self.host_table,
+                        )?),
+                        else_block: Box::new(expr_fragment_block_from_sym(
+                            else_block,
+                            self.host_table,
+                        )?),
                     },
                 )
             }

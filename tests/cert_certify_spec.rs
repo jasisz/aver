@@ -111,7 +111,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         })
         .collect();
     let expected: BTreeMap<String, String> = [
-        ("addTwo", "straight-line"),
+        ("addTwo", "expr-fragment-v1"),
         ("sumFrom", "self-recursive"),
         ("countDown", "multi-argument self-recursive"),
         ("quad", "cross-function-composition"),
@@ -144,12 +144,12 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
-        Some(10),
+        Some(11),
         "AcceptedArtifact coverage changed; update this migration counter deliberately"
     );
     assert_eq!(
         manifest["artifact_bridge_counts"]["legacy-witness-v1"].as_u64(),
-        Some((expected.len() - 10) as u64),
+        Some((expected.len() - 11) as u64),
         "legacy witness count changed; update this migration counter deliberately"
     );
     let expected_bridge = |class: &str| match class {
@@ -177,7 +177,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         .collect::<Vec<_>>();
     assert_eq!(
         expr_entries.len(),
-        7,
+        8,
         "expr-fragment sidecar count changed; update this deliberately"
     );
     let mut sym_sidecar_names = BTreeSet::new();
@@ -220,7 +220,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         );
     }
     assert!(
-        sym_sidecar_names.contains("floatAddGoal")
+        sym_sidecar_names.contains("addTwo")
+            && sym_sidecar_names.contains("floatAddGoal")
             && sym_sidecar_names.contains("floatMulAddGoal")
             && sym_sidecar_names.contains("floatLeGoal")
             && sym_sidecar_names.contains("boolAndGoal")
@@ -244,8 +245,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "direct SymPlan projection should be accepted by the Lean-side source checker:\n{plans_lean}"
     );
     assert!(
-        plans_lean.contains("encodeSymRawPlanToExprFragmentRawPlan floatAddGoalSymPlan"),
-        "direct SymPlan projection should encode to the byte-bound ExprFragment plan:\n{plans_lean}"
+        plans_lean.contains("encodeSymRawPlanToExprFragmentRawPlan [(.box, ")
+            && plans_lean.contains(" floatAddGoalSymPlan =\n  some floatAddGoalPlan := rfl"),
+        "direct SymPlan projection should encode, under the byte-derived host-role table, \
+         to the byte-bound ExprFragment plan:\n{plans_lean}"
     );
     assert!(
         plans_lean.contains("some floatAddGoalPlan := rfl"),
@@ -282,8 +285,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "mkOp source construct plan should match the target-bound construct plan:\n{plans_lean}"
     );
     assert!(
-        plans_lean
-            .contains("encodeSymRawPlanToExprFragmentRawPlan mkOpConstructSymPlan = none := rfl"),
+        plans_lean.contains("] mkOpConstructSymPlan = none := rfl"),
         "construct SymPlan should remain outside the expr-fragment encoder:\n{plans_lean}"
     );
     assert!(
@@ -389,17 +391,18 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "floatAddGoal",
         "floatMulAddGoal",
         "floatLeGoal",
+        "idGoal",
         "listHeadGoal",
         "sumListGoal",
     ]
     .into_iter()
     .map(str::to_string)
     .collect();
-    let expected_backlog: BTreeSet<String> = ["listHeadGoal", "sumListGoal"]
+    let expected_backlog: BTreeSet<String> = ["idGoal", "listHeadGoal", "sumListGoal"]
         .into_iter()
         .map(str::to_string)
         .collect();
-    assert_eq!(planned_goal_names.len(), 25, "goal denominator changed");
+    assert_eq!(planned_goal_names.len(), 26, "goal denominator changed");
     assert_eq!(actual.len(), 23, "goal numerator changed");
 
     let contracts: Vec<&str> = manifest["runtime_contracts"]

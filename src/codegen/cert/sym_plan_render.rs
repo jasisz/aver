@@ -58,6 +58,9 @@ impl SymPrim {
             SymPrim::FloatAdd => Some(FragPrim::F64Add),
             SymPrim::FloatMul => Some(FragPrim::F64Mul),
             SymPrim::FloatLe => Some(FragPrim::F64Le),
+            // `IntAdd` has no representation-level primitive: the encoder
+            // binds it to a `hostCall add` node through the role table.
+            SymPrim::IntAdd => None,
             SymPrim::StringEq => None,
             SymPrim::StringConcat => None,
         }
@@ -68,6 +71,7 @@ impl SymPrim {
             SymPrim::FloatAdd => "float.add",
             SymPrim::FloatMul => "float.mul",
             SymPrim::FloatLe => "float.le",
+            SymPrim::IntAdd => "int.add",
             SymPrim::StringEq => "string.eq",
             SymPrim::StringConcat => "string.concat",
         }
@@ -78,6 +82,7 @@ impl SymPrim {
             "float.add" => Some(SymPrim::FloatAdd),
             "float.mul" => Some(SymPrim::FloatMul),
             "float.le" => Some(SymPrim::FloatLe),
+            "int.add" => Some(SymPrim::IntAdd),
             "string.eq" => Some(SymPrim::StringEq),
             "string.concat" => Some(SymPrim::StringConcat),
             _ => None,
@@ -89,6 +94,7 @@ impl SymPrim {
             SymPrim::FloatAdd => ".floatAdd",
             SymPrim::FloatMul => ".floatMul",
             SymPrim::FloatLe => ".floatLe",
+            SymPrim::IntAdd => ".intAdd",
             SymPrim::StringEq => ".stringEq",
             SymPrim::StringConcat => ".stringConcat",
         }
@@ -151,6 +157,7 @@ fn sym_node_kind_lean_value(kind: &SymNodeKind) -> String {
     match kind {
         SymNodeKind::Param { index } => format!(".param {index}"),
         SymNodeKind::ConstBool(value) => format!(".constBool {value}"),
+        SymNodeKind::ConstInt(value) => format!(".constInt ({value} : Int)"),
         SymNodeKind::ConstFloatBits(bits) => format!(".constFloatBits 0x{bits:016x}"),
         SymNodeKind::ConstStringBytes(bytes) => {
             format!(".constStringBytes {}", render_byte_list(bytes))
@@ -217,6 +224,9 @@ fn render_sym_node_plan(node: &SymNode, indent: usize, out: &mut String) {
         }
         SymNodeKind::ConstBool(value) => {
             out.push_str(&format!("const.bool value={value}\n"));
+        }
+        SymNodeKind::ConstInt(value) => {
+            out.push_str(&format!("const.int value={value}\n"));
         }
         SymNodeKind::ConstFloatBits(bits) => {
             out.push_str(&format!("const.float bits=0x{bits:016x}\n"));

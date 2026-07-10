@@ -3,7 +3,7 @@ module CertGoals
         "Certification goal matrix. This fixture is the primary progress"
         "dashboard for artifact-level certificates; larger examples such as JSON"
         "remain integration side-effects."
-    exposes [Op, Box, Wrap, Tag, Signal, User, addTwo, sumFrom, countDown, quad, hex16, isEven, isOdd, mkOp, evalOp, userName, boxInt, wrapItems, tagName, gauge, inAsciiDigit, quoteOrSelf, shout, intLessZero, intEqZero, boolAndGoal, floatAddGoal, floatMulAddGoal, floatLeGoal, listHeadGoal, sumListGoal]
+    exposes [Op, Box, Wrap, Tag, Signal, User, addTwo, sumFrom, countDown, quad, hex16, isEven, isOdd, mkOp, evalOp, userName, boxInt, wrapItems, tagName, gauge, inAsciiDigit, quoteOrSelf, shout, intLessZero, intEqZero, boolAndGoal, floatAddGoal, floatMulAddGoal, floatLeGoal, idGoal, listHeadGoal, sumListGoal]
 
 type Op
   Add(Int)
@@ -164,6 +164,10 @@ fn floatLeGoal(a: Float, b: Float) -> Bool
     true -> true
     false -> false
 
+fn idGoal(x: Int) -> Int
+  ? "BACKLOG: bare Int passthrough. The carrier identity has no rendered proof face yet (Int-carrier results are certified only through the straight-line integer face), so this stays source-level-only fail-closed."
+  x
+
 fn listHeadGoal(xs: List<Int>) -> Int
   ? "Aspirational list destructuring goal."
   match xs
@@ -240,6 +244,9 @@ verify floatMulAddGoal
 verify floatLeGoal
   floatLeGoal(1.0, 2.0) => true
   floatLeGoal(3.0, 2.0) => false
+
+verify idGoal
+  idGoal(7) => 7
 
 verify listHeadGoal
   listHeadGoal([4, 5]) => 4

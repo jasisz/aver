@@ -6,6 +6,17 @@ impl Cert {
         }
     }
 
+    /// The straight-line integer face of a host-call expr fragment, when this
+    /// cert is an `ExprFragment` whose plan is exactly `add(param0, box(k))`.
+    /// Renderers branch on this to state the same obligation and proof the
+    /// legacy straight-line class shipped (no weakening).
+    fn int_add_face(&self) -> Option<FragIntAddFace> {
+        match self.inner() {
+            Cert::ExprFragment { plan, .. } => expr_fragment_int_add_face(plan),
+            _ => None,
+        }
+    }
+
     fn name(&self) -> &str {
         match self.inner() {
             Cert::StraightLine { name, .. }
@@ -82,6 +93,9 @@ impl Cert {
     }
     /// The Lean expression for the model this export simulates.
     fn model_expr(&self) -> String {
+        if let Some(face) = self.int_add_face() {
+            return format!("fun ns => ns.headD 0 + ({})", face.k);
+        }
         match self.inner() {
             Cert::StraightLine { k, .. } => format!("fun ns => ns.headD 0 + ({k})"),
             Cert::Recursive { name, .. }
@@ -108,6 +122,10 @@ impl Cert {
     /// (`add → sub → mul → stringEq → HostTbl`). Every named host keeps its own arity; this
     /// wraps it to the obligation shape, ignoring the contracts it does not wire.
     fn host_expr(&self) -> String {
+        if let Some(_face) = self.int_add_face() {
+            let name = self.name();
+            return format!("fun add _ _ _ _ => CertModule.{name}Host add");
+        }
         match self.inner() {
             Cert::StraightLine { name, .. } => {
                 format!("fun add _ _ _ _ => CertModule.{name}Host add")
@@ -159,6 +177,9 @@ impl Cert {
     /// rendered ASCII-safe.
     fn source_dom_cod(&self, model_info: &ModelInfo) -> (String, String) {
         let ascii = |s: &str| ascii_type_name(s);
+        if self.int_add_face().is_some() {
+            return ("List Int".to_string(), "Int".to_string());
+        }
         match self.inner() {
             Cert::StraightLine { .. }
             | Cert::Recursive { .. }

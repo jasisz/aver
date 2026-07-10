@@ -67,6 +67,10 @@ mutual
               match popExpectedAll stack args.reverse with
               | some stack' => some ([primInstr op], node.id :: stack')
               | none => none
+          | .hostCall _role funcIdx args =>
+              match popExpectedAll stack args.reverse with
+              | some stack' => some ([.call funcIdx], node.id :: stack')
+              | none => none
           | .ifElse cond thenBlock elseBlock =>
               match popExpected stack cond with
               | some [] =>

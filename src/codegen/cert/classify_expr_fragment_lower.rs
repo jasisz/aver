@@ -96,6 +96,13 @@ fn lower_expr_fragment_block(block: &FragBlock, carrier: u32) -> Result<Vec<Op>,
                 ops.push(op_to_wasm(*op));
                 stack.push(node.id);
             }
+            FragNodeKind::HostCall { func_idx, args, .. } => {
+                for arg in args.iter().rev() {
+                    lower_pop(&mut stack, *arg, node.id)?;
+                }
+                ops.push(Op::Call(*func_idx));
+                stack.push(node.id);
+            }
             FragNodeKind::If {
                 cond,
                 then_block,
@@ -178,6 +185,14 @@ fn lower_expr_fragment_block_bytes(
                     lower_pop(&mut stack, *arg, node.id)?;
                 }
                 push_prim_opcode(out, *op);
+                stack.push(node.id);
+            }
+            FragNodeKind::HostCall { func_idx, args, .. } => {
+                for arg in args.iter().rev() {
+                    lower_pop(&mut stack, *arg, node.id)?;
+                }
+                out.push(0x10);
+                push_u32_leb(out, *func_idx);
                 stack.push(node.id);
             }
             FragNodeKind::If {

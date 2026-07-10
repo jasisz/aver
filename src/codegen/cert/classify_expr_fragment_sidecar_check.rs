@@ -3,6 +3,12 @@ pub struct FragmentPlanCheck {
     pub obligation: RederivedObligation,
     pub canonical_matches_actual: bool,
     pub mismatch_reason: Option<String>,
+    /// Named runtime contracts this checked plan's obligation consumes (the
+    /// box/add wiring of the straight-line integer face; empty for host-free
+    /// fragments). The verifier merges these with the byte-derived legacy
+    /// contract list, since plan-covered exports are excluded from legacy
+    /// classification.
+    pub runtime_contracts: Vec<String>,
 }
 
 pub fn check_expr_fragment_plan_sidecar(
@@ -10,13 +16,14 @@ pub fn check_expr_fragment_plan_sidecar(
     export_name: &str,
     plan_text: &str,
 ) -> Result<FragmentPlanCheck, String> {
-    let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles) = disassemble(wasm_bytes)?;
+    let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles, host_table) =
+        disassemble(wasm_bytes)?;
     let (_func_order, f) = user_fns
         .iter()
         .enumerate()
         .find(|(_, f)| f.name == export_name)
         .ok_or_else(|| format!("plan names unknown export `{export_name}`"))?;
-    if f.arity == 0 || !f.calls.is_empty() {
+    if f.arity == 0 || !frag_calls_resolvable(&f.calls, &host_table) {
         return Err(format!(
             "plan for `{export_name}` does not target a non-recursive expr fragment"
         ));
@@ -33,6 +40,7 @@ pub fn check_expr_fragment_plan_sidecar(
     let result = expr_fragment_ty_from_wasm_result(
         f.result
             .ok_or_else(|| format!("plan for `{export_name}` targets a function with no result"))?,
+        carrier,
     )
     .ok_or_else(|| format!("plan for `{export_name}` has unsupported wasm result type"))?;
     let mut parser = FragPlanParser::new(plan_text, params.clone(), result);
@@ -121,6 +129,7 @@ pub fn check_expr_fragment_plan_sidecar(
         obligation,
         canonical_matches_actual,
         mismatch_reason,
+        runtime_contracts: runtime_contracts_for_certs(std::iter::once(&cert)),
     })
 }
 
@@ -129,13 +138,14 @@ pub fn check_sym_fragment_plan_sidecar(
     export_name: &str,
     plan_text: &str,
 ) -> Result<FragmentPlanCheck, String> {
-    let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles) = disassemble(wasm_bytes)?;
+    let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles, host_table) =
+        disassemble(wasm_bytes)?;
     let (_func_order, f) = user_fns
         .iter()
         .enumerate()
         .find(|(_, f)| f.name == export_name)
         .ok_or_else(|| format!("source plan names unknown export `{export_name}`"))?;
-    if f.arity == 0 || !f.calls.is_empty() {
+    if f.arity == 0 || !frag_calls_resolvable(&f.calls, &host_table) {
         return Err(format!(
             "source plan for `{export_name}` does not target a non-recursive expr fragment"
         ));
@@ -155,6 +165,7 @@ pub fn check_sym_fragment_plan_sidecar(
         f.result.ok_or_else(|| {
             format!("source plan for `{export_name}` targets a function with no result")
         })?,
+        carrier,
     )
     .ok_or_else(|| format!("source plan for `{export_name}` has unsupported wasm result type"))?;
     let params = frag_params
@@ -179,7 +190,7 @@ pub fn check_sym_fragment_plan_sidecar(
         result,
         body,
     };
-    let plan = sym_plan.to_expr_fragment_plan().ok_or_else(|| {
+    let plan = sym_plan.to_expr_fragment_plan(&host_table).ok_or_else(|| {
         format!("source plan for `{export_name}` cannot be encoded to expr-fragment-v1")
     })?;
     let plan_lean = expr_fragment_plan_lean_value(&plan);
@@ -258,6 +269,7 @@ pub fn check_sym_fragment_plan_sidecar(
         obligation,
         canonical_matches_actual,
         mismatch_reason,
+        runtime_contracts: runtime_contracts_for_certs(std::iter::once(&cert)),
     })
 }
 
@@ -266,13 +278,14 @@ fn check_expr_fragment_plan_object(
     export_name: &str,
     plan: ExprFragmentPlan,
 ) -> Result<(usize, Cert, FragmentPlanSidecar, bool, Option<String>), String> {
-    let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles) = disassemble(wasm_bytes)?;
+    let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles, host_table) =
+        disassemble(wasm_bytes)?;
     let (func_order, f) = user_fns
         .iter()
         .enumerate()
         .find(|(_, f)| f.name == export_name)
         .ok_or_else(|| format!("plan names unknown export `{export_name}`"))?;
-    if f.arity == 0 || !f.calls.is_empty() {
+    if f.arity == 0 || !frag_calls_resolvable(&f.calls, &host_table) {
         return Err(format!(
             "plan for `{export_name}` does not target a non-recursive expr fragment"
         ));
@@ -289,8 +302,25 @@ fn check_expr_fragment_plan_object(
     let result = expr_fragment_ty_from_wasm_result(
         f.result
             .ok_or_else(|| format!("plan for `{export_name}` targets a function with no result"))?,
+        carrier,
     )
     .ok_or_else(|| format!("plan for `{export_name}` has unsupported wasm result type"))?;
+    // Fail-closed host-call discipline: every hostCall node must cite exactly
+    // the byte-derived index for its role. The only fragment shape with a
+    // rendered proof face over the Int carrier is the straight-line
+    // `add(param0, box(k))` integer face — any other carrier-returning plan
+    // (a bare Int passthrough, a host-call chain) has no coherent `Cod`/
+    // `codRepr` and is declined here, mirroring the producer gate.
+    check_plan_host_calls(&plan.body, &host_table)
+        .map_err(|e| format!("plan for `{export_name}`: {e}"))?;
+    if (plan_has_host_calls(&plan.body) || plan.result == FragTy::IntCarrier)
+        && expr_fragment_int_add_face(&plan).is_none()
+    {
+        return Err(format!(
+            "plan for `{export_name}` has no rendered proof face: Int-carrier results \
+             are supported only through the straight-line integer face"
+        ));
+    }
     if plan.params != params {
         return Err(format!(
             "plan for `{export_name}` has params {:?}, but wasm signature requires {:?}",
@@ -346,13 +376,14 @@ fn check_sym_fragment_plan_object(
     export_name: &str,
     sym_plan: SymPlan,
 ) -> Result<(usize, Cert, FragmentPlanSidecar, bool, Option<String>), String> {
-    let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles) = disassemble(wasm_bytes)?;
+    let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles, host_table) =
+        disassemble(wasm_bytes)?;
     let (_func_order, f) = user_fns
         .iter()
         .enumerate()
         .find(|(_, f)| f.name == export_name)
         .ok_or_else(|| format!("source plan names unknown export `{export_name}`"))?;
-    if f.arity == 0 || !f.calls.is_empty() {
+    if f.arity == 0 || !frag_calls_resolvable(&f.calls, &host_table) {
         return Err(format!(
             "source plan for `{export_name}` does not target a non-recursive expr fragment"
         ));
@@ -372,6 +403,7 @@ fn check_sym_fragment_plan_object(
         f.result.ok_or_else(|| {
             format!("source plan for `{export_name}` targets a function with no result")
         })?,
+        carrier,
     )
     .ok_or_else(|| format!("source plan for `{export_name}` has unsupported wasm result type"))?;
     let params = frag_params
@@ -408,7 +440,7 @@ fn check_sym_fragment_plan_object(
             "source plan for `{export_name}` root type does not match function result type"
         ));
     }
-    let plan = sym_plan.to_expr_fragment_plan().ok_or_else(|| {
+    let plan = sym_plan.to_expr_fragment_plan(&host_table).ok_or_else(|| {
         format!("source plan for `{export_name}` cannot be encoded to expr-fragment-v1")
     })?;
     let (func_order, mut cert, _expr_sidecar, canonical_matches_actual, mismatch_reason) =
