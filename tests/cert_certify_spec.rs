@@ -63,6 +63,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             .expect("cert-manifest.json exists"),
     )
     .expect("manifest is valid JSON");
+    let expected_schema_core_sha = aver::codegen::cert::audited_schema_core_sha();
     let expected_plan_check_sha = aver::codegen::cert::audited_plan_check_sha();
     let expected_plan_lower_sha = aver::codegen::cert::audited_plan_lower_sha();
     let expected_plan_bytes_sha = aver::codegen::cert::audited_plan_bytes_sha();
@@ -70,6 +71,13 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     let expected_expr_fragment_accepted_sha =
         aver::codegen::cert::audited_expr_fragment_accepted_sha();
     let expected_accepted_artifact_sha = aver::codegen::cert::audited_accepted_artifact_sha();
+    let expected_accepted_artifact_core_sha =
+        aver::codegen::cert::audited_accepted_artifact_core_sha();
+    assert_eq!(
+        manifest["schema_core_sha256"].as_str(),
+        Some(expected_schema_core_sha.as_str()),
+        "manifest should pin the checker-owned SchemaCore.lean"
+    );
     assert_eq!(
         manifest["plan_check_sha256"].as_str(),
         Some(expected_plan_check_sha.as_str()),
@@ -99,6 +107,11 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         manifest["accepted_artifact_sha256"].as_str(),
         Some(expected_accepted_artifact_sha.as_str()),
         "manifest should pin the checker-owned AcceptedArtifact.lean"
+    );
+    assert_eq!(
+        manifest["accepted_artifact_core_sha256"].as_str(),
+        Some(expected_accepted_artifact_core_sha.as_str()),
+        "manifest should pin the checker-owned AcceptedArtifactCore.lean"
     );
     assert_eq!(
         manifest["artifact_certificate_root"].as_str(),

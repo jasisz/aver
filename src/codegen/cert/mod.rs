@@ -44,16 +44,18 @@ pub const LEAN_TOOLCHAIN: &str = include_str!("../../../tools/certkit/prelude/le
 /// The audited statement schema, single source of truth, embedded so both the
 /// emitter and the `aver cert verify` checker pin the exact same bytes. The
 /// consumer trusts the certificate by checking the final theorem NAME, the
-/// manifest LITERAL, and the hash of THIS file plus the prelude — never Lean
-/// proof syntax. Fixed content (no per-build parts) so its sha256 is known to
-/// the checker at compile time.
+/// manifest LITERAL, and the hashes of the audited core/shim files plus the
+/// prelude — never Lean proof syntax. Fixed content (no per-build parts) so
+/// every sha256 is known to the checker at compile time.
 pub const CERT_SCHEMA: &str = include_str!("Schema.lean");
+pub const CERT_SCHEMA_CORE: &str = include_str!("SchemaCore.lean");
 pub const CERT_PLAN_CHECK: &str = include_str!("PlanCheck.lean");
 pub const CERT_PLAN_LOWER: &str = include_str!("PlanLower.lean");
 pub const CERT_PLAN_BYTES: &str = include_str!("PlanBytes.lean");
 pub const CERT_WASM_SLICE: &str = include_str!("WasmSlice.lean");
 pub const CERT_EXPR_FRAGMENT_ACCEPTED: &str = include_str!("ExprFragmentAccepted.lean");
 pub const CERT_ACCEPTED_ARTIFACT: &str = include_str!("AcceptedArtifact.lean");
+pub const CERT_ACCEPTED_ARTIFACT_CORE: &str = include_str!("AcceptedArtifactCore.lean");
 
 /// Emitted-fragment profile and runtime ABI identifiers recorded in the
 /// manifest. Stable strings the checker echoes; bumped when the certified
@@ -63,7 +65,7 @@ pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
 /// Certification level of a v0 artifact certificate: conditional on the named
 /// runtime contracts (see the consult level naming L0/L1/L2/L3).
 pub const CERT_LEVEL: &str = "L1";
-pub const CERT_SCHEMA_VERSION: u32 = 34;
+pub const CERT_SCHEMA_VERSION: u32 = 35;
 pub const BOX_CONTRACT: &str = "__rt_aint_from_i64 (box i64 -> carrier)";
 pub const INT_ADD_CONTRACT: &str =
     "Int.add (carrier add = exact integer addition on represented values)";
@@ -90,11 +92,13 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex(&h.finalize())
 }
 
-/// The content hashes of the audited schema and semantics prelude as embedded
-/// in THIS binary — the checker's anchor: a cert whose on-disk `Schema.lean` /
-/// `CertPrelude.lean` do not hash to these is not the audited version.
+/// Content hashes of the audited Lean files as embedded in THIS binary — the
+/// checker's anchor for the exact sources emitted with each certificate.
 pub fn audited_schema_sha() -> String {
     sha256_hex(CERT_SCHEMA.as_bytes())
+}
+pub fn audited_schema_core_sha() -> String {
+    sha256_hex(CERT_SCHEMA_CORE.as_bytes())
 }
 pub fn audited_prelude_sha() -> String {
     sha256_hex(CERT_PRELUDE.as_bytes())
@@ -116,6 +120,9 @@ pub fn audited_expr_fragment_accepted_sha() -> String {
 }
 pub fn audited_accepted_artifact_sha() -> String {
     sha256_hex(CERT_ACCEPTED_ARTIFACT.as_bytes())
+}
+pub fn audited_accepted_artifact_core_sha() -> String {
+    sha256_hex(CERT_ACCEPTED_ARTIFACT_CORE.as_bytes())
 }
 
 include!("core_wasm.rs");
