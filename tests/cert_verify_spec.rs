@@ -3023,7 +3023,13 @@ fn cert_verify_declines_tampered_recursion_plan() {
     //     the descent computes `n + 1` instead of `n - 1` (byte `10 0c -> 10 0b`).
     // (b) self-call retargeted at another user function (`backward`, `10 01 -> 10 03`).
     // (c) base literal changed (`i64.const 7 -> 5`).
-    let tampers: [(&str, &str, &str); 3] = [
+    // (d) BYTE-IDENTICAL relabel: the descent's `sub` host call is relabelled as
+    //     a non-tail self-call at the sub helper's index. Lowering emits the
+    //     same `10 0c` either way, so every byte-equality face still holds; only
+    //     the in-kernel context-sensitive grammar (`checkRecursionPlanShape`,
+    //     which pins self-call targets to the export's own byte-derived index
+    //     and host calls to the role table) rejects it.
+    let tampers: [(&str, &str, &str); 4] = [
         (
             "descent role swap",
             ".hostCall .sub 12 [1, 3]",
@@ -3038,6 +3044,11 @@ fn cert_verify_declines_tampered_recursion_plan() {
             "base literal change",
             ".constI64 (7 : Int)",
             ".constI64 (5 : Int)",
+        ),
+        (
+            "byte-identical self-call mislabel",
+            ".hostCall .sub 12 [1, 3]",
+            ".selfCall false 12 [1, 3]",
         ),
     ];
     for (label, from, to) in tampers {

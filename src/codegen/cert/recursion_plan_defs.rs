@@ -293,9 +293,15 @@ fn recursion_plan_accumulator(
 }
 
 /// Build the byte-first `recursion-plan-v1` plan for a fuel-recursion cert.
-/// Returns `None` for any other class.
+/// Returns `None` for any other class, and — fail-closed — for a certified
+/// recursion whose REAL code entry does not equal the canonical plan lowering:
+/// the recognizer normalizes local-alias hops before classification, so a
+/// legitimately certified body can be byte-noisier than the canonical
+/// template. Such exports keep the legacy witness route (byte-derived
+/// obligation, no plan claim); an artifact must never carry a byte-origin
+/// claim its own bytes cannot prove.
 fn recursion_plan_from_cert(c: &Cert) -> Option<ExprFragmentPlan> {
-    match c.inner() {
+    let (plan, carrier, code_entry_bytes) = match c.inner() {
         Cert::Recursive {
             box_idx,
             add_idx,
@@ -304,19 +310,45 @@ fn recursion_plan_from_cert(c: &Cert) -> Option<ExprFragmentPlan> {
             base_k,
             rec_first,
             other,
+            carrier,
+            code_entry_bytes,
             ..
-        } => Some(recursion_plan_recursive(
-            *box_idx, *add_idx, *sub_idx, *self_idx, *base_k, *rec_first, *other,
-        )),
+        } => (
+            recursion_plan_recursive(
+                *box_idx, *add_idx, *sub_idx, *self_idx, *base_k, *rec_first, *other,
+            ),
+            *carrier,
+            code_entry_bytes,
+        ),
         Cert::AccumulatorRecursive {
             box_idx,
             add_idx,
             sub_idx,
             self_idx,
+            carrier,
+            code_entry_bytes,
             ..
-        } => Some(recursion_plan_accumulator(*box_idx, *add_idx, *sub_idx, *self_idx)),
-        _ => None,
+        } => (
+            recursion_plan_accumulator(*box_idx, *add_idx, *sub_idx, *self_idx),
+            *carrier,
+            code_entry_bytes,
+        ),
+        _ => return None,
+    };
+    let lowered = lower_expr_fragment_plan_code_entry_bytes(&plan, carrier).ok()?;
+    if &lowered != code_entry_bytes {
+        return None;
     }
+    Some(plan)
+}
+
+/// The per-export byte-derived host-role table a recursion claim carries: the
+/// box helper, the combinator helper (byte-role `Add`; routed to the `mul`
+/// contract slot when the model combinator is `*`), and the strict `sub`
+/// helper, exactly as the cert's obligation wires them. Rendered identically
+/// by producer and verifier so the artifact data pin stays byte-exact.
+fn recursion_host_table_lean_value(box_idx: u32, add_idx: u32, sub_idx: u32) -> String {
+    format!("[(.box, {box_idx}), (.add, {add_idx}), (.sub, {sub_idx})]")
 }
 
 /// The Lean `RecursionRawPlan` literal for a byte-first recursion plan (profile
@@ -332,4 +364,62 @@ fn recursion_plan_lean_value(plan: &ExprFragmentPlan) -> String {
         plan.result.lean_plan_ctor(),
         expr_fragment_block_lean_value(&plan.body)
     )
+}
+
+#[cfg(test)]
+mod recursion_plan_gate_tests {
+    use super::*;
+
+    /// A canonical single-argument recursion cert whose carried code-entry
+    /// bytes are exactly the canonical plan lowering (the honest case), plus a
+    /// byte-noisy variant simulating a normalized body: the recognizer strips
+    /// local-alias hops before classification, so a body with (say) an extra
+    /// declared local classifies identically while its raw bytes differ.
+    /// No current Aver source shape reaches that emission (there is no
+    /// statement-level binding), so the noisy body is injected directly; the
+    /// gate must fail-close it to the legacy route rather than emit a claim
+    /// the artifact cannot prove.
+    fn recursive_cert(code_entry_bytes: Vec<u8>) -> Cert {
+        Cert::Recursive {
+            name: "sumFrom".to_string(),
+            self_idx: 1,
+            code_idx: 1,
+            type_idx: 4,
+            nlocals: 1,
+            carrier: 2,
+            box_idx: 10,
+            add_idx: 11,
+            sub_idx: 12,
+            base_k: 7,
+            rec_first: false,
+            other: BodyOperand::Input,
+            combinator: Combinator::Add,
+            code_entry_bytes,
+        }
+    }
+
+    #[test]
+    fn recursion_plan_requires_exact_code_entry_bytes() {
+        let plan = recursion_plan_recursive(10, 11, 12, 1, 7, false, BodyOperand::Input);
+        let canonical =
+            lower_expr_fragment_plan_code_entry_bytes(&plan, 2).expect("canonical lowering");
+
+        // Honest body: bytes equal the canonical lowering -> plan emitted.
+        assert!(
+            recursion_plan_from_cert(&recursive_cert(canonical.clone())).is_some(),
+            "byte-exact recursion body must carry a plan claim"
+        );
+
+        // Normalized body: an extra (alias) local classifies identically but
+        // its raw bytes differ -> NO plan claim, legacy route, fail-closed.
+        let mut noisy = canonical.clone();
+        assert_eq!(noisy[1..4], [0x01, 0x01, 0x63], "locals decl prefix moved");
+        noisy[2] = 0x02; // declare two scratch locals instead of one
+        noisy[0] += 1; // keep the size prefix consistent
+        noisy.insert(4, 0x63); // second local group type byte placeholder
+        assert!(
+            recursion_plan_from_cert(&recursive_cert(noisy)).is_none(),
+            "a body the canonical plan cannot reproduce must not carry a claim"
+        );
+    }
 }

@@ -158,6 +158,10 @@ pub struct RederivedObligation {
     /// rendered as a Lean `RecursionRawPlan` term. `aver cert verify` pins
     /// `manifest.recursionPlans` to this checker-rendered term.
     pub recursion_plan_lean: Option<String>,
+    /// For `recursion-plan-v1`, the per-export byte-derived host-role table
+    /// (box/combinator/sub) rendered as the Lean `List (HostRole × Nat)`
+    /// literal the recursion claim carries.
+    pub recursion_host_table_lean: Option<String>,
     /// For `recursion-plan-v1`, the byte-derived defined-function index.
     pub recursion_code_idx: Option<u32>,
     /// For `recursion-plan-v1`, the byte-derived function-section type index.
@@ -769,6 +773,21 @@ fn rederive_certificate_inner(
             },
             recursion_plan_lean: recursion_plan_from_cert(c)
                 .map(|plan| recursion_plan_lean_value(&plan)),
+            recursion_host_table_lean: match c.inner() {
+                Cert::Recursive {
+                    box_idx,
+                    add_idx,
+                    sub_idx,
+                    ..
+                }
+                | Cert::AccumulatorRecursive {
+                    box_idx,
+                    add_idx,
+                    sub_idx,
+                    ..
+                } => Some(recursion_host_table_lean_value(*box_idx, *add_idx, *sub_idx)),
+                _ => None,
+            },
             recursion_code_idx: match c.inner() {
                 Cert::Recursive { code_idx, .. } | Cert::AccumulatorRecursive { code_idx, .. } => {
                     Some(*code_idx)

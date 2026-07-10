@@ -1430,3 +1430,83 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
         let _ = std::fs::remove_dir_all(&out_dir);
     }
 }
+
+/// The s33 heap-type boundary: 62 user variant structs push the Int carrier to
+/// wasm type index 64, the first index whose signed s33 encoding (`c0 00`)
+/// differs from unsigned LEB (`40`). The recursion plan claim binds the
+/// carrier index inside local declarations, the value-if block type and the
+/// declared function type, so a lowerer that emitted unsigned LEB would fail
+/// its own byte-equality examples here.
+#[test]
+fn certify_carrier_at_type_index_64_lake_builds_kernel_clean() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping s33 boundary test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-manytypes");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/manytypes.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let cert_dir = out_dir.join("cert");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    assert_eq!(
+        manifest["carrier_type_index"].as_u64(),
+        Some(64),
+        "fixture must pin the carrier exactly at the s33 boundary index 64; \
+         adjust the fixture's variant count if the emitter's type layout changed"
+    );
+    assert_eq!(
+        manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
+        Some(1),
+        "the boundary recursion export must carry its byte-origin plan claim"
+    );
+
+    let build = Command::new("lake")
+        .current_dir(&cert_dir)
+        .arg("build")
+        .output()
+        .expect("expected `lake build` to run");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(
+        build.status.success(),
+        "lake build of the s33 boundary cert failed:\n{combined}"
+    );
+    assert!(
+        combined.contains(
+            "sumBig_wasm_certified' depends on axioms: [propext, Classical.choice, Quot.sound]"
+        ),
+        "boundary certificate not kernel-clean:\n{combined}"
+    );
+    assert!(
+        !combined.contains("sorryAx"),
+        "boundary certificate leaked sorryAx:\n{combined}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}

@@ -40,6 +40,13 @@ enum Cert {
         other: BodyOperand,
         /// `+` or `*`, read from the model operator (see [`Combinator`]).
         combinator: Combinator,
+        /// Raw code-entry bytes of the export. The recognizer normalizes
+        /// local-alias hops before classification, so a certified body may be
+        /// byte-noisier than the canonical template; the `recursion-plan-v1`
+        /// claim is emitted ONLY when the canonical plan lowering reproduces
+        /// exactly these bytes (otherwise the export stays on the legacy
+        /// witness route — never an unverifiable claim).
+        code_entry_bytes: Vec<u8>,
     },
     /// countDown-shape two-argument accumulator recursion; box/add/sub host helpers.
     AccumulatorRecursive {
@@ -52,6 +59,8 @@ enum Cert {
         box_idx: u32,
         add_idx: u32,
         sub_idx: u32,
+        /// See `Recursive::code_entry_bytes`.
+        code_entry_bytes: Vec<u8>,
     },
     /// Non-recursive constructor: local arguments wrapped by `struct.new`.
     AdtConstructor {

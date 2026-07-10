@@ -1657,11 +1657,12 @@ fn lean_expr_fragment_artifact_claims(
     let mut recursion_proofs = Vec::new();
     for r in rederived {
         if r.recursion_plan_lean.is_some() {
-            let (Some(body), Some(bytes), Some(code_idx), Some(type_idx)) = (
+            let (Some(body), Some(bytes), Some(code_idx), Some(type_idx), Some(host_table)) = (
                 r.recursion_lowered_body_lean.as_ref(),
                 r.recursion_lowered_code_entry_lean.as_ref(),
                 r.recursion_code_idx,
                 r.recursion_type_idx,
+                r.recursion_host_table_lean.as_ref(),
             ) else {
                 continue;
             };
@@ -1672,13 +1673,13 @@ fn lean_expr_fragment_artifact_claims(
             );
             recursion_claims.push(format!(
                 "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
-                 carrier := {carrier}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.RecursionClaim)",
+                 carrier := {carrier}, hostTable := {host_table}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.RecursionClaim)",
                 name = r.name,
                 carrier = r.carrier,
             ));
             recursion_proofs.push(format!(
                 "⟨rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
-                 ⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
+                 ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
             ));
             continue;
         }

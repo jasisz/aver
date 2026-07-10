@@ -479,7 +479,7 @@ fn lower_string_eq_plan_body_bytes(
     out.push(0x6d); // eqref scratch local used before the checked ref.cast.
     push_u32_leb(&mut out, 1);
     out.push(0x63);
-    push_u32_leb(&mut out, carrier);
+    push_s33_heap_idx(&mut out, carrier);
     out.push(0x20);
     push_u32_leb(&mut out, 0);
     out.push(0x21);
@@ -488,13 +488,13 @@ fn lower_string_eq_plan_body_bytes(
     push_u32_leb(&mut out, 1);
     out.push(0xfb);
     push_u32_leb(&mut out, 0x17);
-    push_u32_leb(&mut out, string_ty);
+    push_s33_heap_idx(&mut out, string_ty);
     push_string_eq_chunk_bytes(&mut out, string_ty, &plan.needle)?;
     out.push(0x10);
     push_u32_leb(&mut out, string_eq_idx);
     out.push(0x04);
     out.push(0x63);
-    push_u32_leb(&mut out, string_ty);
+    push_s33_heap_idx(&mut out, string_ty);
     push_string_eq_result_bytes(&mut out, string_ty, &plan.hit)?;
     out.push(0x05);
     push_string_eq_result_bytes(&mut out, string_ty, &plan.default)?;
@@ -558,7 +558,7 @@ fn lower_string_concat_plan_body_bytes(
     push_u32_leb(&mut out, 1);
     push_u32_leb(&mut out, 1);
     out.push(0x63);
-    push_u32_leb(&mut out, carrier);
+    push_s33_heap_idx(&mut out, carrier);
     for chunk in &plan.prefixes {
         push_string_concat_chunk_bytes(&mut out, result_ty, chunk)?;
     }

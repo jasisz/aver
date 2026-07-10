@@ -57,6 +57,14 @@ def sleb32 (value : Int) : Option (List Nat) :=
 def sleb64 (value : Int) : Option (List Nat) :=
   if inI64Range value then slebFuel 10 value else none
 
+/-- Concrete heap-type indices (inside a reftype `0x63/0x64 <ht>`, a block type,
+    or a `ref.cast`/`ref.test`/`ref.null` immediate) are encoded as SIGNED s33
+    LEB128 per the Wasm spec, not unsigned: index 64 is `c0 00`, never `40`.
+    Indices below 64 coincide with the unsigned encoding. Instruction TYPE
+    indices (`struct.get`, `array.new_data`, …) stay unsigned u32. -/
+def s33HeapIdx (idx : Nat) : Option (List Nat) :=
+  if idx < 4294967296 then slebFuel 6 (Int.ofNat idx) else none
+
 def f64Bytes (bits : Nat) : Option (List Nat) :=
   if bits < 18446744073709551616 then
     some [
@@ -80,7 +88,7 @@ def blockTypeBytes (carrier : Nat) : FragTy → Option (List Nat)
   | .rawI32 => some [0x7f]
   | .i64 => some [0x7e]
   | .f64 => some [0x7c]
-  | .intCarrier => (uleb32 carrier).map (fun c => [0x63] ++ c)
+  | .intCarrier => (s33HeapIdx carrier).map (fun c => [0x63] ++ c)
   | .ref => none
   | .adtRef => none
 
@@ -205,7 +213,7 @@ def lowerExprFragmentExprBytes (carrier : Nat) (plan : ExprFragmentRawPlan) :
 
 def lowerExprFragmentBodyBytes (carrier : Nat) (plan : ExprFragmentRawPlan) :
     Option (List Nat) :=
-  match uleb32 1, uleb32 1, uleb32 carrier,
+  match uleb32 1, uleb32 1, s33HeapIdx carrier,
         lowerExprFragmentExprBytes carrier plan with
   | some localDeclCount, some localCount, some carrierBytes, some exprBytes =>
       some (localDeclCount ++ localCount ++ [0x63] ++ carrierBytes ++ exprBytes)
@@ -231,7 +239,7 @@ def lowerRecursionExprBytes (carrier : Nat) (plan : RecursionRawPlan) :
 
 def lowerRecursionBodyBytes (carrier : Nat) (plan : RecursionRawPlan) :
     Option (List Nat) :=
-  match uleb32 1, uleb32 1, uleb32 carrier,
+  match uleb32 1, uleb32 1, s33HeapIdx carrier,
         lowerRecursionExprBytes carrier plan with
   | some localDeclCount, some localCount, some carrierBytes, some exprBytes =>
       some (localDeclCount ++ localCount ++ [0x63] ++ carrierBytes ++ exprBytes)
@@ -299,7 +307,7 @@ def lowerStringConcatExprBytes
 def lowerStringConcatBodyBytes
     (carrier resultTy containerTy concatFuncIdx : Nat)
     (plan : StringConcatRawPlan) : Option (List Nat) :=
-  match uleb32 1, uleb32 1, uleb32 carrier,
+  match uleb32 1, uleb32 1, s33HeapIdx carrier,
         lowerStringConcatExprBytes resultTy containerTy concatFuncIdx plan with
   | some localDeclCount, some localCount, some carrierBytes, some exprBytes =>
       some (localDeclCount ++ localCount ++ [0x63] ++ carrierBytes ++ exprBytes)
@@ -342,8 +350,8 @@ def lowerStringEqExprBytes
     (plan : StringEqRawPlan) : Option (List Nat) :=
   if AverCert.PlanCheck.checkStringEqRawPlan plan then
     match uleb32 0, uleb32 1, uleb32 1, uleb32 0x17,
-          uleb32 stringTy, lowerStringEqChunkBytes stringTy plan.needle,
-          uleb32 stringEqFuncIdx, uleb32 stringTy,
+          s33HeapIdx stringTy, lowerStringEqChunkBytes stringTy plan.needle,
+          uleb32 stringEqFuncIdx, s33HeapIdx stringTy,
           lowerStringEqResultBytes stringTy plan.hit,
           lowerStringEqResultBytes stringTy plan.default with
     | some inputIdxBytes, some scratchIdxBytes, some _localOneBytes,
@@ -370,7 +378,7 @@ def lowerStringEqExprBytes
 def lowerStringEqBodyBytes
     (carrier stringTy stringEqFuncIdx : Nat)
     (plan : StringEqRawPlan) : Option (List Nat) :=
-  match uleb32 2, uleb32 1, uleb32 1, uleb32 carrier,
+  match uleb32 2, uleb32 1, uleb32 1, s33HeapIdx carrier,
         lowerStringEqExprBytes stringTy stringEqFuncIdx plan with
   | some localDeclCount, some localCount, some carrierLocalCount,
     some carrierBytes, some exprBytes =>
@@ -420,7 +428,7 @@ def lowerConstructExprBytes (plan : ConstructRawPlan) : Option (List Nat) :=
 def lowerConstructBodyBytes
     (carrier : Nat)
     (plan : ConstructRawPlan) : Option (List Nat) :=
-  match uleb32 1, uleb32 1, uleb32 carrier,
+  match uleb32 1, uleb32 1, s33HeapIdx carrier,
         lowerConstructExprBytes plan with
   | some localDeclCount, some localCount, some carrierBytes, some exprBytes =>
       some (localDeclCount ++ localCount ++ [0x63] ++ carrierBytes ++ exprBytes)

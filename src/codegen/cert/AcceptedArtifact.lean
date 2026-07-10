@@ -221,14 +221,21 @@ structure ConstructClaim where
 
 /-- One fuel-recursion claim inside an artifact certificate. Its byte-derived
     `RecursionRawPlan` lives in `manifest.recursionPlans` (a byte-origin veneer,
-    no source `SymPlan`): the plan is checked, lowered to the self-recursive
-    body and its exact code-entry bytes, and bound to the exported function. The
-    `obligation` is the unchanged fuel-induction obligation the manifest already
-    pins; this claim only certifies where its body bytes came from. -/
+    no source `SymPlan`): the plan is checked against the fuel-recursion grammar
+    (self-calls pinned to the byte-derived function binding, host calls pinned
+    to the byte-derived role table), lowered to the self-recursive body and its
+    exact code-entry bytes, and bound to the exported function. `hostTable` is
+    representation context like `SymFragmentClaim`'s: byte-derived indices for
+    the box/combinator/sub roles this export's obligation wires — a wrong table
+    describes calls the module bytes cannot reproduce, so the claim fail-closes
+    at the byte gate. The `obligation` is the unchanged fuel-induction
+    obligation the manifest already pins; this claim only certifies where its
+    body bytes came from. -/
 structure RecursionClaim where
   exportNameBytes : AverCert.WasmSlice.ByteSeq
   exportName      : String
   carrier         : Nat
+  hostTable       : List (HostRole × Nat)
   obligation      : Obligation
 
 def stringEqClaimAccepted
@@ -308,15 +315,20 @@ def constructClaimAccepted
   | none => False
 
 /-- Artifact-level acceptance for one fuel-recursion export. The
-    `RecursionRawPlan` is checked, lowered to the self-recursive `WInstr` body
-    and the exact code-entry bytes, and those bytes are bound to the exported
-    function. The self index the plan's `selfCall` targets is bound to the
-    module bytes by the code-entry equality and tied to the obligation through
+    `RecursionRawPlan` is checked (generic block typing AND the
+    context-sensitive fuel-recursion grammar: every `selfCall` must target the
+    byte-derived binding's own function index and every host call must cite the
+    byte-derived role table), lowered to the self-recursive `WInstr` body and
+    the exact code-entry bytes, those bytes are bound to the exported function,
+    and the binding's declared type-section entry must be the canonical
+    certified signature `[(ref null carrier)^arity] → [(ref null carrier)]`.
+    The self index is additionally tied to the obligation through
     `binding.funcIdx = obligation.self`. -/
 def recursionPlanAccepted
     (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
     (carrier : Nat)
+    (hostTable : List (HostRole × Nat))
     (plan : RecursionRawPlan)
     (obligation : Obligation) : Prop :=
   obligation.export_ = exportName ∧
@@ -329,6 +341,9 @@ def recursionPlanAccepted
       AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
+      AverCert.PlanCheck.checkRecursionPlanShape binding.funcIdx hostTable plan = true ∧
+      AverCert.WasmSlice.funcTypeMatches
+        wasmBytes binding.typeIdx plan.params.length carrier = true ∧
       ∃ nlocals,
         obligation.code binding.funcIdx =
           some { arity := plan.params.length, nlocals := nlocals, body := body }
@@ -354,6 +369,7 @@ def recursionClaimAccepted
         claim.exportNameBytes
         claim.exportName
         claim.carrier
+        claim.hostTable
         plan
         claim.obligation
   | none => False

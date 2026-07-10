@@ -707,6 +707,50 @@ fn expr_fragment_dom_repr_list(params: &[FragTy], root: &str, carrier: &str) -> 
 mod expr_fragment_sem_ty_tests {
     use super::*;
 
+    /// Concrete heap-type indices are SIGNED s33 LEB128: 63 is the last index
+    /// whose signed encoding coincides with the unsigned one; 64 has bit 6 set
+    /// in its low group, so signed encoding needs a continuation (`c0 00`).
+    #[test]
+    fn heap_type_indices_use_signed_s33_leb() {
+        let enc = |idx: u32| {
+            let mut out = Vec::new();
+            push_s33_heap_idx(&mut out, idx);
+            out
+        };
+        assert_eq!(enc(0), vec![0x00]);
+        assert_eq!(enc(2), vec![0x02]);
+        assert_eq!(enc(63), vec![0x3f]);
+        assert_eq!(enc(64), vec![0xc0, 0x00]);
+        assert_eq!(enc(127), vec![0xff, 0x00]);
+        assert_eq!(enc(128), vec![0x80, 0x01]);
+    }
+
+    /// The carrier local declaration and the Int-carrier `if` block type both
+    /// carry a concrete heap-type index; at carrier 64 they must use the s33
+    /// continuation encoding, at 63 the single byte.
+    #[test]
+    fn carrier_local_decl_and_blocktype_are_s33_at_boundary() {
+        // Local declaration prefix of the canonical body: `01 01 63 <s33 c>`.
+        let plan = add_two_hostcall_plan();
+        let bytes63 = lower_expr_fragment_plan_code_entry_bytes(&plan, 63).expect("carrier 63");
+        assert_eq!(&bytes63[1..5], &[0x01, 0x01, 0x63, 0x3f]);
+        let bytes64 = lower_expr_fragment_plan_code_entry_bytes(&plan, 64).expect("carrier 64");
+        assert_eq!(&bytes64[1..6], &[0x01, 0x01, 0x63, 0xc0, 0x00]);
+
+        // Value-if block type `04 63 <s33 c>` in a recursion-shaped body.
+        let rec63 = recursion_plan_recursive(10, 11, 12, 1, 7, false, BodyOperand::Input);
+        let rb63 = lower_expr_fragment_plan_code_entry_bytes(&rec63, 63).expect("rec carrier 63");
+        assert!(
+            rb63.windows(3).any(|w| w == [0x04, 0x63, 0x3f]),
+            "carrier-63 value-if block type missing: {rb63:02x?}"
+        );
+        let rb64 = lower_expr_fragment_plan_code_entry_bytes(&rec63, 64).expect("rec carrier 64");
+        assert!(
+            rb64.windows(4).any(|w| w == [0x04, 0x63, 0xc0, 0x00]),
+            "carrier-64 value-if block type missing: {rb64:02x?}"
+        );
+    }
+
     #[test]
     fn frag_ty_keeps_model_face_separate_from_wasm_repr() {
         assert_eq!(FragTy::F64.model_ty(), FragModelTy::Float);

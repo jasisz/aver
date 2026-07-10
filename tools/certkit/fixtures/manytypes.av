@@ -1,0 +1,119 @@
+module ManyTypes
+    intent =
+        "Boundary probe: 62 user variant structs push the Int carrier to wasm"
+        "type index 64, the first index whose s33 heap-type encoding differs"
+        "from unsigned LEB (c0 00, not 40)."
+    exposes [T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, sumBig]
+
+type T0
+  A0(Int)
+  B0(Int)
+  C0(Int)
+
+type T1
+  A1(Int)
+  B1(Int)
+  C1(Int)
+
+type T2
+  A2(Int)
+  B2(Int)
+  C2(Int)
+
+type T3
+  A3(Int)
+  B3(Int)
+  C3(Int)
+
+type T4
+  A4(Int)
+  B4(Int)
+  C4(Int)
+
+type T5
+  A5(Int)
+  B5(Int)
+  C5(Int)
+
+type T6
+  A6(Int)
+  B6(Int)
+  C6(Int)
+
+type T7
+  A7(Int)
+  B7(Int)
+  C7(Int)
+
+type T8
+  A8(Int)
+  B8(Int)
+  C8(Int)
+
+type T9
+  A9(Int)
+  B9(Int)
+  C9(Int)
+
+type T10
+  A10(Int)
+  B10(Int)
+  C10(Int)
+
+type T11
+  A11(Int)
+  B11(Int)
+  C11(Int)
+
+type T12
+  A12(Int)
+  B12(Int)
+  C12(Int)
+
+type T13
+  A13(Int)
+  B13(Int)
+  C13(Int)
+
+type T14
+  A14(Int)
+  B14(Int)
+  C14(Int)
+
+type T15
+  A15(Int)
+  B15(Int)
+  C15(Int)
+
+type T16
+  A16(Int)
+  B16(Int)
+  C16(Int)
+
+type T17
+  A17(Int)
+  B17(Int)
+  C17(Int)
+
+type T18
+  A18(Int)
+  B18(Int)
+  C18(Int)
+
+type T19
+  A19(Int)
+  B19(Int)
+  C19(Int)
+
+type T20
+  A20(Int)
+  B20(Int)
+
+fn sumBig(n: Int) -> Int
+  ? "Sum 1..n, plain recursion, over a big type section."
+  match n <= 0
+    true -> 0
+    false -> n + sumBig(n - 1)
+
+verify sumBig
+    sumBig(3) => 6
