@@ -3497,7 +3497,13 @@ fn cert_verify_declines_tampered_verbatim_plan() {
     // (b) swapped dispatch cascade: `tagName` tests tags 2 <-> 3.
     // (c) wrong `array.new_data` data-segment index: `tagName`'s "alpha" 0 -> 9.
     // (d) wrong `ref.null` result heap type: `wrapItems` 8 -> 18.
-    let tampers: [(&str, &str, &str); 4] = [
+    // (e) equal-length payload collision: `tagName`'s "alpha" -> "alphb" (same
+    //     length, same data index). The code-entry lowering pins only the payload
+    //     LENGTH, so every byte-equality pin stays green; ONLY the acceptance
+    //     predicate's `verbatimPayloadsBound` conjunct (payload bytes vs the
+    //     byte-pinned data segment) declines it. Deleting that conjunct makes this
+    //     verify — the regression this vector guards.
+    let tampers: [(&str, &str, &str); 5] = [
         (
             "ref.test type index",
             ".test 0 (.project 0 0) (.leaf (.refNull))",
@@ -3517,6 +3523,11 @@ fn cert_verify_declines_tampered_verbatim_plan() {
             "ref.null heap type",
             "resultHeapTy := 8",
             "resultHeapTy := 18",
+        ),
+        (
+            "equal-length payload collision",
+            ".arrayNewData 5 0 [97, 108, 112, 104, 97]",
+            ".arrayNewData 5 0 [97, 108, 112, 104, 98]",
         ),
     ];
     for (label, from, to) in tampers {
@@ -3574,6 +3585,121 @@ fn cert_verify_declines_tampered_verbatim_plan() {
     assert!(
         elab.status.success(),
         "verbatim guard-isolation assertions must all hold:\n{}\n{}",
+        String::from_utf8_lossy(&elab.stdout),
+        String::from_utf8_lossy(&elab.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// ACCEPTANCE-LEVEL guard-isolation for the two verbatim binds that the
+/// byte-equality gate does NOT cover, elaborated with `lake env lean` against the
+/// audited cert modules — no `aver cert verify`, no sibling defence in the path.
+/// The verbatim family has no host/self calls, so before these binds the code
+/// entry was the whole binding; but the code entry omits the function SIGNATURE
+/// (a second parameter leaves the locals + body bytes identical) and the
+/// `array.new_data` payload CONTENTS (only the segment index and length are
+/// encoded). Each assertion is constructed so it holds ONLY because its target
+/// guard fires (verified by weakening each guard in a throwaway copy: weakening
+/// `verbatimFuncTypeMatches` to `true` breaks solely the binary-arity reject line;
+/// weakening `verbatimPayloadsBound`/`verbatimLeafPayloadBound` to `true` breaks
+/// solely the equal-length-collision reject line; reverting `checkVerbatimLeaf`'s
+/// `arrayNewData` arm to `true` breaks solely the out-of-range reject line —
+/// nothing else moves).
+///
+/// SIGNATURE guard: two minimal modules identical in every section EXCEPT the
+/// type section (the second appends a second `eqref` parameter). The
+/// func/export/code/data sections — hence the byte-derived `FuncBinding` and code
+/// entry the byte-equality gate reads — are byte-for-byte identical, so the two
+/// sibling conjuncts (`funcBindingForExport`, `codeEntryForExport`) return the
+/// SAME value and only `verbatimFuncTypeMatches` distinguishes unary from binary.
+///
+/// PAYLOAD guard: an equal-length payload substitution (`"alpha"` -> `"alphb"`)
+/// that the structural checker (`checkVerbatimRawPlan`) and the byte lowering
+/// (`lowerVerbatimCodeEntry`) are proven BLIND to (both accept / both lower to the
+/// same bytes); only `verbatimPayloadsBound`, comparing against the byte-pinned
+/// data segment, rejects it. Plus the FIX 2(c) out-of-range payload reject.
+#[test]
+fn verbatim_kernel_guards_are_isolating() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping verbatim-guard isolation test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    let mut lean = String::new();
+    lean.push_str("import Schema\nimport PlanCheck\nimport PlanBytes\nimport WasmSlice\nimport AcceptedArtifact\n\n");
+    lean.push_str("open AverCert\nopen AverCert.Schema\n");
+    lean.push_str("set_option maxRecDepth 100000\n\n");
+    // Minimal modules: header, type section, then a shared func/export/code/data
+    // tail. `f` is func 0 of type 0; code entry `[2, 0, 11]`; data segment 0 is
+    // "alpha" (passive). Only the type section differs between the two.
+    lean.push_str("def hdr : List Nat := [0, 97, 115, 109, 1, 0, 0, 0]\n");
+    lean.push_str("def unaryType : List Nat := [1, 7, 1, 96, 1, 109, 1, 99, 5]\n");
+    lean.push_str("def binaryType : List Nat := [1, 8, 1, 96, 2, 109, 109, 1, 99, 5]\n");
+    lean.push_str("def tailSecs : List Nat := [3, 2, 1, 0, 7, 5, 1, 1, 102, 0, 0, 10, 4, 1, 2, 0, 11, 11, 8, 1, 1, 5, 97, 108, 112, 104, 97]\n");
+    lean.push_str("def unaryMod : List Nat := hdr ++ unaryType ++ tailSecs\n");
+    lean.push_str("def binaryMod : List Nat := hdr ++ binaryType ++ tailSecs\n");
+    lean.push_str("def nameF : List Nat := [102]\n\n");
+    // SIGNATURE isolation: the byte-equality gate's inputs are identical...
+    lean.push_str("example : WasmSlice.funcBindingForExport unaryMod nameF = WasmSlice.funcBindingForExport binaryMod nameF := rfl\n");
+    lean.push_str("example : WasmSlice.codeEntryForExport unaryMod nameF = WasmSlice.codeEntryForExport binaryMod nameF := rfl\n");
+    // ...and only the signature guard tells unary from binary.
+    lean.push_str("example : WasmSlice.verbatimFuncTypeMatches unaryMod 0 5 = true := rfl\n");
+    lean.push_str("example : WasmSlice.verbatimFuncTypeMatches binaryMod 0 5 = false := rfl\n\n");
+    // PAYLOAD isolation: segment 0 is "alpha".
+    lean.push_str(
+        "example : WasmSlice.dataSegmentBytes unaryMod 0 = some [97, 108, 112, 104, 97] := rfl\n",
+    );
+    lean.push_str("def planAlpha : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultHeapTy := 5, body := .leaf (.arrayNewData 5 0 [97, 108, 112, 104, 97]) }\n");
+    lean.push_str("def planAlphB : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultHeapTy := 5, body := .leaf (.arrayNewData 5 0 [97, 108, 112, 104, 98]) }\n");
+    // The structural checker and byte lowering are BLIND to the payload content...
+    lean.push_str("example : PlanCheck.checkVerbatimRawPlan planAlpha = true := rfl\n");
+    lean.push_str("example : PlanCheck.checkVerbatimRawPlan planAlphB = true := rfl\n");
+    lean.push_str("example : PlanBytes.lowerVerbatimCodeEntry 7 planAlpha = PlanBytes.lowerVerbatimCodeEntry 7 planAlphB := rfl\n");
+    // ...so only `verbatimPayloadsBound` rejects the equal-length collision.
+    lean.push_str(
+        "example : AcceptedArtifact.verbatimPayloadsBound unaryMod planAlpha.body = true := rfl\n",
+    );
+    lean.push_str("example : AcceptedArtifact.verbatimPayloadsBound unaryMod planAlphB.body = false := rfl\n\n");
+    // FIX 2(c): an out-of-range payload element is rejected up front.
+    lean.push_str("example : PlanCheck.checkVerbatimRawPlan { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultHeapTy := 5, body := .leaf (.arrayNewData 5 0 [256]) } = false := rfl\n");
+
+    let out_dir = temp_dir("cert-verbatim-guard-iso");
+    let compile = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/verbatimgen.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "verbatimgen compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let cert = out_dir.join("cert");
+    let honest_build = Command::new("lake")
+        .arg("build")
+        .current_dir(&cert)
+        .output()
+        .expect("lake build runs");
+    assert!(honest_build.status.success(), "honest cert must lake-build");
+
+    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
+    let elab = Command::new("lake")
+        .arg("env")
+        .arg("lean")
+        .arg("GuardIso.lean")
+        .current_dir(&cert)
+        .output()
+        .expect("lake env lean runs");
+    assert!(
+        elab.status.success(),
+        "verbatim signature/payload guard-isolation assertions must all hold:\n{}\n{}",
         String::from_utf8_lossy(&elab.stdout),
         String::from_utf8_lossy(&elab.stderr)
     );

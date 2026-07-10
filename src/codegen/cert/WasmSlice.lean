@@ -239,9 +239,11 @@ def checkCanonicalFuncType (arity carrier : Nat) (bytes : ByteSeq) : Bool :=
   | _ => false
 
 /-- Walk the type section's rectype vector to the `target`-th TYPE INDEX
-    (an explicit rec group defines several consecutive indices) and check it
-    with `checkCanonicalFuncType`. -/
-def walkTypeEntriesFuel (arity carrier : Nat) :
+    (an explicit rec group defines several consecutive indices) and validate that
+    entry with the supplied leaf `check`. Generic over the leaf predicate so the
+    canonical carrier-signature check and the verbatim `eqref → ref` signature
+    check share the same rec-group navigation. -/
+def walkTypeEntriesFuel (check : ByteSeq → Bool) :
     Nat → Nat → Nat → ByteSeq → Bool
   | 0, _, _, _ => false
   | _fuel + 1, 0, _target, _bytes => false
@@ -252,20 +254,20 @@ def walkTypeEntriesFuel (arity carrier : Nat) :
           | some (cnt, r1) =>
               if target < cnt then
                 match skipSubTypesFuel (target + 1) target r1 with
-                | some r2 => checkCanonicalFuncType arity carrier r2
+                | some r2 => check r2
                 | none => false
               else
                 match skipSubTypesFuel (cnt + 1) cnt r1 with
                 | some r2 =>
-                    walkTypeEntriesFuel arity carrier fuel remaining (target - cnt) r2
+                    walkTypeEntriesFuel check fuel remaining (target - cnt) r2
                 | none => false
           | none => false
       | _ =>
           if target = 0 then
-            checkCanonicalFuncType arity carrier bytes
+            check bytes
           else
             match skipSubType bytes with
-            | some rest => walkTypeEntriesFuel arity carrier fuel remaining (target - 1) rest
+            | some rest => walkTypeEntriesFuel check fuel remaining (target - 1) rest
             | none => false
 
 /-- Whether the module's type-section entry `typeIdx` is exactly the canonical
@@ -276,9 +278,92 @@ def funcTypeMatches (wasmBytes : ByteSeq) (typeIdx arity carrier : Nat) : Bool :
   match findSectionPayload 0x01 wasmBytes with
   | some payload =>
       match readUleb32 payload with
-      | some (count, rest) => walkTypeEntriesFuel arity carrier (count + 1) count typeIdx rest
+      | some (count, rest) =>
+          walkTypeEntriesFuel (checkCanonicalFuncType arity carrier) (count + 1) count typeIdx rest
       | none => false
   | none => false
+
+/-- Whether the head of `bytes` is EXACTLY the certified verbatim dispatch
+    function type `[eqref] → [(ref null resultHeapTy)]` (or its non-null variant):
+    one abstract `eq` reference parameter (`0x6d`) and one concrete reference
+    result (`0x63`/`0x64` followed by the s33 heap index `resultHeapTy`). Subtype
+    prefixes and every other shape fail-close. This pins a verbatim binding's
+    declared signature to UNARY arity, the `eqref` domain the dispatch reads, and
+    the plan's result heap type — none of which the code-entry bytes encode (a
+    second parameter leaves the code entry byte-identical). -/
+def checkVerbatimFuncType (resultHeapTy : Nat) (bytes : ByteSeq) : Bool :=
+  match bytes with
+  | 0x60 :: 0x01 :: 0x6d :: rest =>
+      match readUleb32 rest with
+      | some (nr, r1) =>
+          if nr = 1 then
+            match r1 with
+            | b :: r2 =>
+                if b = 0x63 ∨ b = 0x64 then
+                  match readS33 r2 with
+                  | some (idx, _) => idx == Int.ofNat resultHeapTy
+                  | none => false
+                else
+                  false
+            | [] => false
+          else
+            false
+      | none => false
+  | _ => false
+
+/-- Whether the module's type-section entry `typeIdx` is exactly the certified
+    verbatim dispatch signature `[eqref] → [(ref null resultHeapTy)]`. Binds a
+    claimed verbatim binding's declared signature to unary arity, the `eqref`
+    domain and the plan's result heap type without trusting any of them. -/
+def verbatimFuncTypeMatches (wasmBytes : ByteSeq) (typeIdx resultHeapTy : Nat) : Bool :=
+  match findSectionPayload 0x01 wasmBytes with
+  | some payload =>
+      match readUleb32 payload with
+      | some (count, rest) =>
+          walkTypeEntriesFuel (checkVerbatimFuncType resultHeapTy) (count + 1) count typeIdx rest
+      | none => false
+  | none => false
+
+/-! ### Passive data-section navigation
+
+`array.new_data` encodes only the referenced segment's INDEX and the copied
+LENGTH into the code entry — never the segment's byte CONTENTS, which live in the
+data section (id 11). The verbatim string-literal leaves therefore need the exact
+segment bytes recovered here to bind a plan's claimed payload to the module. The
+wasm-gc backend emits every data segment passively (`0x01 <vec byte>`); an active
+flag (`0x00`/`0x02`) is a shape this slicer never needs to cross, so it
+fail-closes. -/
+
+/-- Read one passive data segment (`0x01 <vec byte>`), returning its byte
+    contents and the remaining bytes; any other flag fail-closes. -/
+def readPassiveDataSegment : ByteSeq → Option (ByteSeq × ByteSeq)
+  | 0x01 :: rest =>
+      match readUleb32 rest with
+      | some (len, afterLen) => takeN len afterLen
+      | none => none
+  | _ => none
+
+def dataSegmentBytesFuel : Nat → Nat → ByteSeq → Option ByteSeq
+  | 0, _, _ => none
+  | fuel + 1, idx, bytes =>
+      match readPassiveDataSegment bytes with
+      | some (contents, rest) =>
+          if idx = 0 then some contents
+          else dataSegmentBytesFuel fuel (idx - 1) rest
+      | none => none
+
+/-- The exact byte contents of passive data segment `dataIdx`, recovered from the
+    module's data section (id 11). `none` if the section is absent, `dataIdx` is
+    out of range, or any segment on the way is not passive. -/
+def dataSegmentBytes (wasmBytes : ByteSeq) (dataIdx : Nat) : Option ByteSeq :=
+  match findSectionPayload 0x0b wasmBytes with
+  | some payload =>
+      match readUleb32 payload with
+      | some (count, rest) =>
+          if dataIdx < count then dataSegmentBytesFuel (count + 1) dataIdx rest
+          else none
+      | none => none
+  | none => none
 
 def readImportFuncFlag (bytes : ByteSeq) : Option (Bool × ByteSeq) :=
   match readNameBytes bytes with

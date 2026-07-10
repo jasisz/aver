@@ -311,7 +311,10 @@ def dispatchHasProjection : VerbatimDispatch → Bool
 
 def checkVerbatimLeaf : VerbatimLeaf → Bool
   | .project _ _ => true
-  | .arrayNewData _ _ _ => true
+  -- Every payload element must be a real byte: the data-section binding compares
+  -- the claimed payload against recovered `0..255` segment bytes, so an
+  -- out-of-range element could never match and is rejected up front.
+  | .arrayNewData _ _ bytes => bytesAllBytes bytes
   | .refNull => true
   | .f64Bits _ => true
 

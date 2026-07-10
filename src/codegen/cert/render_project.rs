@@ -950,11 +950,13 @@ fn render_artifact_expr_fragment_claims(
                     "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.VerbatimClaim)",
                     export_name = lean_str(name),
                 ));
-                // The byte-equality gate is the whole soundness binding (no
-                // host/self calls), so the witness is anonymous for the code
-                // entry, binding and nlocals — each pinned by `rfl`.
+                // The code entry, signature and payload conjuncts are the binding
+                // (no host/self calls), so the witness is anonymous for the code
+                // entry, binding and nlocals — each pinned by `rfl` (the two extra
+                // `rfl`s discharge the byte-derived signature and payload binds).
                 verbatim_proofs.push(
-                    "⟨rfl, rfl, rfl, ⟨_, _, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩".to_string(),
+                    "⟨rfl, rfl, rfl, ⟨_, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩"
+                        .to_string(),
                 );
             }
             _ => {}

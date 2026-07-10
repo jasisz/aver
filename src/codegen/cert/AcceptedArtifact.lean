@@ -265,7 +265,10 @@ structure MutualRecursionClaim where
     representation to name). The plan is checked structurally, lowered to the
     match body and its exact code-entry bytes, and bound to the exported
     function. Unlike the recursion/mutual families there are NO host/self calls
-    to tie, so the byte-equality gate IS the whole soundness binding; the
+    to tie, so the code entry carries most of the binding — but not the function
+    SIGNATURE nor the `array.new_data` payload CONTENTS, which the acceptance
+    predicate binds separately (`verbatimFuncTypeMatches`, `verbatimPayloadsBound`)
+    so no two distinct plans lower to the same accepted artifact; the
     `obligation` is the unchanged verbatim widened-match / variant-dispatch
     obligation the manifest already pins, and this claim only certifies where its
     body bytes came from. -/
@@ -474,15 +477,44 @@ def mutualRecursionClaimAccepted
         claim.obligation
   | none => False
 
+/-- Whether one dispatch leaf's payload is byte-bound to the module. Only an
+    `arrayNewData` leaf carries a payload; its claimed `bytes` must equal the
+    exact contents of passive data segment `dataIdx` recovered from the module's
+    data section. Every other leaf trivially satisfies the binding. -/
+def verbatimLeafPayloadBound
+    (wasmBytes : AverCert.WasmSlice.ByteSeq) : VerbatimLeaf → Bool
+  | .arrayNewData _ dataIdx bytes =>
+      match AverCert.WasmSlice.dataSegmentBytes wasmBytes dataIdx with
+      | some contents => contents == bytes
+      | none => false
+  | _ => true
+
+/-- Every `arrayNewData` leaf in a verbatim dispatch has a byte-bound payload.
+    The canonical code-entry lowering pins each string literal's data-segment
+    INDEX and copied LENGTH but not its CONTENTS, so without this an equal-length
+    payload substitution keeps the code entry byte-identical while changing what
+    the plan (hence the model) claims. -/
+def verbatimPayloadsBound
+    (wasmBytes : AverCert.WasmSlice.ByteSeq) : VerbatimDispatch → Bool
+  | .leaf l => verbatimLeafPayloadBound wasmBytes l
+  | .test _ hit rest =>
+      verbatimLeafPayloadBound wasmBytes hit && verbatimPayloadsBound wasmBytes rest
+
 /-- Artifact-level acceptance for one verbatim `ref.test`-dispatch export. The
     `VerbatimRawPlan` is checked structurally (`checkVerbatimRawPlan`), lowered to
     the match `WInstr` body and its exact code-entry bytes, and those bytes are
-    bound to the exported function by name. The byte-equality gate (the lowered
-    code entry equals both `codeEntryForExport` and the `funcBinding`'s code
-    entry) is the whole soundness binding — there are no host/self calls to tie —
-    so a body byte-noisier than the canonical dispatch lowering fails closed. The
-    member index is tied to the obligation through `binding.funcIdx =
-    obligation.self`. -/
+    bound to the exported function by name. There are no host/self calls to tie,
+    so the code entry is nearly the whole binding — but the code entry alone does
+    NOT determine the export's meaning: it omits the function SIGNATURE (a second
+    `eqref` parameter leaves the locals + body bytes identical) and the
+    `array.new_data` PAYLOAD CONTENTS (only the segment index and length are
+    encoded). Two further conjuncts close both holes in-kernel:
+    `verbatimFuncTypeMatches` forces the byte-derived type-section entry to be the
+    unary `[eqref] → [(ref null resultHeapTy)]` signature, and `verbatimPayloadsBound`
+    forces every literal's claimed bytes to equal the byte-pinned data segment. A
+    body byte-noisier than the canonical dispatch lowering still fails the
+    byte-equality gate. The member index is tied to the obligation through
+    `binding.funcIdx = obligation.self`. -/
 def verbatimPlanAccepted
     (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
@@ -498,6 +530,9 @@ def verbatimPlanAccepted
       AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
+      AverCert.WasmSlice.verbatimFuncTypeMatches
+        wasmBytes binding.typeIdx plan.resultHeapTy = true ∧
+      verbatimPayloadsBound wasmBytes plan.body = true ∧
       ∃ nlocals,
         obligation.code binding.funcIdx =
           some { arity := 1, nlocals := nlocals,

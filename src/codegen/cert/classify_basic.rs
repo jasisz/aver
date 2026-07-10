@@ -163,7 +163,12 @@ fn nr_ref_dispatch_match(
                 ops: strip_trailing_end(&f.ops).to_vec(),
             });
         }
+        // Typed admission: exactly one user ADT (eqref) value in — a two-parameter
+        // dispatch keeps a byte-identical code entry, so a unary obligation must
+        // not be certified for a binary export. The ref-returning case is pinned
+        // in-kernel to the `[eqref] -> [ref]` signature via the plan path.
         if f.calls.is_empty()
+            && matches!(f.params.as_slice(), [TyKind::Eqref])
             && let Some(default) = verbatim_default_from_ops(&miss_ops)
         {
             return Some(Cert::VerbatimWidenedMatch {

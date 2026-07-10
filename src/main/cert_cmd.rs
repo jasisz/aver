@@ -2027,11 +2027,13 @@ fn lean_expr_fragment_artifact_claims(
                 name = r.name,
                 carrier = r.carrier,
             ));
-            // The byte-equality gate is the whole soundness binding (no host/self
-            // calls), so the witness is anonymous for the code entry, binding and
-            // nlocals — each pinned by `rfl`.
-            verbatim_proofs
-                .push("⟨rfl, rfl, rfl, ⟨_, _, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩".to_string());
+            // The code entry, signature and payload conjuncts are the binding (no
+            // host/self calls), so the witness is anonymous for the code entry,
+            // binding and nlocals — each pinned by `rfl` (the two extra `rfl`s
+            // discharge the byte-derived signature and payload binds).
+            verbatim_proofs.push(
+                "⟨rfl, rfl, rfl, ⟨_, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩".to_string(),
+            );
             continue;
         }
         let (Some(_plan), Some(body), Some(bytes), Some(code_idx), Some(type_idx)) = (

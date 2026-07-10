@@ -34,6 +34,16 @@ fn nr_verbatim_variant_dispatch(
     carrier: Option<u32>,
 ) -> Option<Cert> {
     let carrier = carrier?;
+    // Typed admission: the byte signature must be exactly "one user ADT (eqref)
+    // value in". Without this a two-parameter dispatch keeps a byte-identical code
+    // entry (the extra param is overwritten by `local.set`), so a unary obligation
+    // would be certified for a binary export. The result type is left to the plan
+    // path: a ref-returning dispatch is additionally pinned in-kernel to the
+    // `[eqref] -> [ref]` signature (`verbatimFuncTypeMatches`), while a scalar
+    // (`f64`) default carries no plan and rides the legacy witness route.
+    let [TyKind::Eqref] = f.params.as_slice() else {
+        return None;
+    };
     if !f.calls.is_empty() {
         return None;
     }
