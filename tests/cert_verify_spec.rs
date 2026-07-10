@@ -3470,7 +3470,7 @@ fn cert_verify_declines_tampered_verbatim_plan() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("cert-verbatim-plan");
-    let compile = Command::new(env!("CARGO_BIN_EXE_aver"))
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/verbatimgen.av")
@@ -3712,7 +3712,7 @@ fn verbatim_kernel_guards_are_isolating() {
     lean.push_str("example : WasmSlice.readUleb32 [128, 128, 128, 128, 128, 0] = none := rfl\n");
 
     let out_dir = temp_dir("cert-verbatim-guard-iso");
-    let compile = Command::new(env!("CARGO_BIN_EXE_aver"))
+    let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
         .arg("tools/certkit/fixtures/verbatimgen.av")
