@@ -11,9 +11,17 @@ env:
 
 jobs:
   cert-kernel:
-    name: Cert Kernel (Lean)
+    # One job per certification suite so the long verify suite (each test does a
+    # clean-cache lake kernel build by design) no longer serializes behind the
+    # fast certify/decode suites, and each suite fails independently. Shared
+    # toolchain setup is duplicated per matrix leg but runs in parallel.
+    name: Cert Kernel (${{ matrix.suite }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [cert_certify_spec, cert_verify_spec, cert_decode_spec]
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_INCREMENTAL: '0'
@@ -42,8 +50,9 @@ jobs:
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
       - name: Install wasm-tools
-        # The decode differential test shells out to `wasm-tools print`
-        # (tools/certkit/decode_ref.py); pin the same major line used locally.
+        # Only the decode differential suite shells out to `wasm-tools print`
+        # (tools/certkit/decode_ref.py); harmless to install for the others.
+        if: matrix.suite == 'cert_decode_spec'
         run: |
           curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 -o /tmp/wasm-tools.tar.gz \
             https://github.com/bytecodealliance/wasm-tools/releases/download/v1.246.2/wasm-tools-1.246.2-x86_64-linux.tar.gz
@@ -61,5 +70,5 @@ jobs:
           echo "::error::lake unreachable after 6 attempts (toolchain download)"
           exit 1
 
-      - name: Run certification tests
-        run: cargo test -p aver-lang --features wasm --test cert_certify_spec --test cert_verify_spec --test cert_decode_spec
+      - name: Run certification suite
+        run: cargo test -p aver-lang --features wasm --test ${{ matrix.suite }}
