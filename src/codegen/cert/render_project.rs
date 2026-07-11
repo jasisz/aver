@@ -684,7 +684,7 @@ fn render_expr_fragment_plans(
             } => (name, *self_idx, *carrier),
             _ => continue,
         };
-        let Some(plan) = int_dispatch_plan_from_cert(c) else {
+        let Some(plan) = int_dispatch_plan_from_cert(c, analysis.frag_host_table) else {
             continue;
         };
         let hosts = int_dispatch_host_table_from_cert(c)
@@ -1029,7 +1029,7 @@ fn render_artifact_expr_fragment_claims(
                 // Byte-equality gated: a body byte-noisier than the canonical
                 // Int-face dispatch has no plan reproducing its exact bytes — it
                 // stays on the legacy witness route with no claim, fail-closed.
-                if int_dispatch_plan_from_cert(c).is_none() {
+                if int_dispatch_plan_from_cert(c, analysis.frag_host_table).is_none() {
                     continue;
                 }
                 let hosts = int_dispatch_host_table_from_cert(c)
@@ -1042,11 +1042,13 @@ fn render_artifact_expr_fragment_claims(
                 ));
                 // The code-entry and signature conjuncts plus the role-table
                 // parameterization are the binding, so the witness is anonymous
-                // for the body, code entry, binding and nlocals — each pinned by
-                // `rfl` (the extra leading `rfl` discharges the host-table
-                // distinctness bind, the trailing one the signature bind).
+                // for the body, code entry and binding — each pinned by `rfl`
+                // (the two extra leading `rfl`s discharge the host-table
+                // distinctness and obligation-wiring binds; the final `rfl`
+                // pins the code table with the CANONICAL locals count, no
+                // existential).
                 int_dispatch_proofs.push(
-                    "⟨rfl, rfl, rfl, rfl, ⟨_, _, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩"
+                    "⟨rfl, rfl, rfl, rfl, rfl, ⟨_, _, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
                         .to_string(),
                 );
             }

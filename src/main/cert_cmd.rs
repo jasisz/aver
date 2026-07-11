@@ -2175,11 +2175,12 @@ fn lean_expr_fragment_artifact_claims(
             ));
             // The code-entry and signature conjuncts plus the role-table
             // parameterization are the binding, so the witness is anonymous for
-            // the body, code entry, binding and nlocals — each pinned by `rfl`
-            // (the extra leading `rfl` discharges the host-table distinctness
-            // bind, the trailing one the signature bind).
+            // the body, code entry and binding — each pinned by `rfl` (the two
+            // extra leading `rfl`s discharge the host-table distinctness and
+            // obligation-wiring binds; the final `rfl` pins the code table with
+            // the CANONICAL locals count, no existential).
             int_dispatch_proofs.push(
-                "⟨rfl, rfl, rfl, rfl, ⟨_, _, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩"
+                "⟨rfl, rfl, rfl, rfl, rfl, ⟨_, _, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
                     .to_string(),
             );
             continue;

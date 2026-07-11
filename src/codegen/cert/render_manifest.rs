@@ -418,7 +418,7 @@ fn render_manifest_lean(
         .certs
         .iter()
         .filter_map(|c| {
-            int_dispatch_plan_from_cert(c)
+            int_dispatch_plan_from_cert(c, analysis.frag_host_table)
                 .map(|_| format!("({}, Plans.{}IntDispatchPlan)", lean_str(c.name()), c.name()))
         })
         .collect::<Vec<_>>()
@@ -610,7 +610,7 @@ fn render_manifest(
     let accepted_artifact_exports = analysis
         .certs
         .iter()
-        .filter(|c| artifact_bridge_profile(c, model_info) == "accepted-artifact-v1")
+        .filter(|c| artifact_bridge_profile(c, model_info, analysis.frag_host_table) == "accepted-artifact-v1")
         .count();
     let legacy_witness_exports = analysis.certs.len().saturating_sub(accepted_artifact_exports);
     s.push_str(&format!(
@@ -719,7 +719,7 @@ fn render_manifest(
             }
             _ => String::new(),
         };
-        let artifact_bridge = artifact_bridge_profile(c, model_info);
+        let artifact_bridge = artifact_bridge_profile(c, model_info, analysis.frag_host_table);
         s.push_str(&format!(
             "\n    {{\"name\": {}, \"class\": \"{}\", \"policy\": \"simulatesModel\", \
              \"level\": \"{}\", \"artifact_bridge\": \"{}\", \"dom\": {}, \"cod\": {}, \
@@ -756,7 +756,11 @@ fn render_manifest(
     s
 }
 
-fn artifact_bridge_profile(c: &Cert, model_info: &ModelInfo) -> &'static str {
+fn artifact_bridge_profile(
+    c: &Cert,
+    model_info: &ModelInfo,
+    frag_host_table: FragHostTable,
+) -> &'static str {
     match c.inner() {
         Cert::ExprFragment { .. }
         | Cert::StringEqVerbatimMatch { .. }
@@ -775,7 +779,7 @@ fn artifact_bridge_profile(c: &Cert, model_info: &ModelInfo) -> &'static str {
             "accepted-artifact-v1"
         }
         Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. }
-            if int_dispatch_plan_from_cert(c).is_some() =>
+            if int_dispatch_plan_from_cert(c, frag_host_table).is_some() =>
         {
             "accepted-artifact-v1"
         }

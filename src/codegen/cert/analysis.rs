@@ -4,6 +4,13 @@ pub struct Analysis {
     declined: Vec<(String, String)>,
     carrier: Option<u32>,
     contracts: Vec<String>,
+    /// The strict byte-derived host-role table (S1 criteria: carrier-binop
+    /// signature + strict first-i64-arith + uniqueness, fail-closed to `None`
+    /// per role). The Int-face dispatch plan gate requires every role index a
+    /// plan claim would cite to be confirmed by THIS table; the coarse
+    /// `host_roles` marker map alone would assign a both-ops helper by its
+    /// first arithmetic instead of rejecting it as ambiguous.
+    frag_host_table: FragHostTable,
 }
 
 impl Analysis {
@@ -28,7 +35,7 @@ pub fn analyze_with_fragment_plans(
     model_files: &[(String, String)],
     fragment_plans: &[FragmentPlanArtifact],
 ) -> Result<Analysis, String> {
-    let (user_fns, box_idx, user_idx_set, carrier, host_roles, _frag_host_table, _struct_field_counts) =
+    let (user_fns, box_idx, user_idx_set, carrier, host_roles, frag_host_table, _struct_field_counts) =
         disassemble(wasm_bytes)?;
     let model_ops = model_step_ops(model_files);
 
@@ -106,6 +113,7 @@ pub fn analyze_with_fragment_plans(
         declined,
         carrier,
         contracts,
+        frag_host_table,
     })
 }
 

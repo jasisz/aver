@@ -2728,7 +2728,17 @@ fn variant_dispatch_body_mutation_is_declined() {
         !ok,
         "mutated dispatch witness body must be DECLINED:\n{out}"
     );
-    assert!(out.contains("does not bind"), "wrong reason:\n{out}");
+    // `gauge` now carries an `int-dispatch-v1` claim whose acceptance pins the
+    // code table's locals count to the canonical byte-derived value, so the
+    // mutation is caught one stage earlier — the shipped `Artifact.lean`
+    // acceptance `rfl` fails during the checker's `lake build` ("did not
+    // build") rather than at the later kernel-witness code binding ("does not
+    // bind"). Either is a fail-closed decline; accept both so the assertion
+    // tracks the tamper being rejected, not which in-kernel gate rejects it.
+    assert!(
+        out.contains("does not bind") || out.contains("did not build"),
+        "wrong reason:\n{out}"
+    );
     assert!(
         !out.contains("CERTIFIED"),
         "mutated dispatch witness credited:\n{out}"
@@ -3767,7 +3777,13 @@ fn verbatim_kernel_guards_are_isolating() {
 /// The `GuardIso.lean` block below isolates each byte-reaching vector by
 /// proving in-kernel (`by decide`) that its lowered code entry diverges from
 /// the honest one, and the profile vector by proving the lowering BLIND to it
-/// (`rfl`) while only `checkIntDispatchRawPlan` rejects it.
+/// (`rfl`) while only `checkIntDispatchRawPlan` rejects it. Two further
+/// vectors target the binds the byte gate cannot see: (h) a ZERO-LOCALS code
+/// table (honest bytes/plan/wiring; the vacuity attack the exact
+/// `nlocals := armCount + 2` bind closes) and (i) a coordinated ROLE/TABLE
+/// PERMUTATION across `Plans.lean` and the `Artifact.lean` claim (byte- and
+/// sibling-blind; rejected only by the obligation-wiring bind
+/// `intDispatchHostTableWired`).
 #[test]
 fn cert_verify_declines_tampered_int_dispatch_plan() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -3864,6 +3880,68 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // (h) ZERO-LOCALS vacuity vector: honest bytes, honest plan, honest wiring,
+    // but the obligation's code table claims nlocals := 0 — the body would trap
+    // on its first `local.set`, making the partial-correctness obligation
+    // vacuously true. The acceptance predicate pins the code table's locals
+    // count to the CANONICAL byte-derived value (armCount + 2), so this must be
+    // DECLINED (an existentially-free nlocals accepted it; weaken-confirmed).
+    {
+        let dir = temp_dir("cert-int-dispatch-zero-locals");
+        copy_dir(&out_dir, &dir);
+        let module = dir.join("cert").join("Module.lean");
+        let src = std::fs::read_to_string(&module).unwrap();
+        assert!(
+            src.contains("some ⟨1, 3,"),
+            "boxIntCode locals-count header shape changed; update the test"
+        );
+        std::fs::write(&module, src.replacen("some ⟨1, 3,", "some ⟨1, 0,", 1)).unwrap();
+        let (ok, report) = aver_verify(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
+        assert!(!ok, "zero-locals code table must be DECLINED:\n{report}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (i) ROLE/TABLE PERMUTATION vector: swap the two arm roles in the plan AND
+    // permute the claimed host-role table consistently, in every surface the
+    // artifact ships (Plans.lean pins + the Artifact.lean claim). The pair
+    // lowers byte-identically and the table stays distinct, so the byte gate,
+    // the structural checker and the distinctness guard are all blind — only
+    // the obligation-wiring bind (`intDispatchHostTableWired`) rejects it.
+    {
+        let dir = temp_dir("cert-int-dispatch-role-permutation");
+        copy_dir(&out_dir, &dir);
+        let plans = dir.join("cert").join("Plans.lean");
+        let src = std::fs::read_to_string(&plans).unwrap();
+        assert!(
+            src.contains("(.hostOp .sub (0) true)")
+                && src.contains("(.hostOp .add (9) false)")
+                && src.contains("[(.box, 7), (.add, 8), (.sub, 9)]"),
+            "intdispatchgen Plans.lean gauge shape changed; update the test"
+        );
+        let src = src
+            .replace("(.hostOp .sub (0) true)", "(.hostOp .add (0) true)")
+            .replace("(.hostOp .add (9) false)", "(.hostOp .sub (9) false)")
+            .replace(
+                "[(.box, 7), (.add, 8), (.sub, 9)]",
+                "[(.box, 7), (.add, 9), (.sub, 8)]",
+            );
+        std::fs::write(&plans, src).unwrap();
+        let artifact = dir.join("cert").join("Artifact.lean");
+        let src = std::fs::read_to_string(&artifact).unwrap();
+        assert!(
+            src.contains("hostTable := [(.box, 7), (.add, 8), (.sub, 9)]"),
+            "intdispatchgen Artifact.lean gauge claim shape changed; update the test"
+        );
+        let src = src.replace(
+            "hostTable := [(.box, 7), (.add, 8), (.sub, 9)]",
+            "hostTable := [(.box, 7), (.add, 9), (.sub, 8)]",
+        );
+        std::fs::write(&artifact, src).unwrap();
+        let (ok, report) = aver_verify(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
+        assert!(!ok, "role/table permutation must be DECLINED:\n{report}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     // Guard-isolation: prove in-kernel that each byte-reaching vector diverges
     // the lowered code-entry bytes (so the byte-equality gate catches it), and
     // that the profile vector — which the lowering is provably BLIND to — is
@@ -3944,11 +4022,29 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
 /// (`by decide`). Only `hostTableIndicesDistinct` rejects the duplicated
 /// table, restoring the gate's discrimination.
 ///
+/// HOST-TABLE WIRING guard (`intDispatchHostTableWired`): distinctness alone
+/// leaves the table a free witness — swapping two arm roles in the plan AND
+/// permuting the table consistently cancels out byte-identically, keeps the
+/// table distinct, and passes the structural checker. The wiring bind probes
+/// the obligation's own host builder with per-slot sentinels, so only a table
+/// whose every entry reaches its own contract slot is accepted; the permuted
+/// pair is proven byte-identical (`rfl`), sibling-blind (`rfl`), and rejected
+/// exactly by the wiring guard.
+///
+/// LOCALS-COUNT bind (`nlocals := armCount + 2` in `intDispatchPlanAccepted`):
+/// a code table claiming ZERO locals for the honest body traps on its first
+/// `local.set`, making the partial-correctness obligation vacuously true; the
+/// acceptance pins the count to the canonical byte-derived value, and the
+/// zero-locals table is proven to diverge from it.
+///
 /// Each assertion is constructed so it holds ONLY because its target guard
 /// fires (weaken-confirmed: replacing the `verbatimFuncTypeMatches` conjunct
 /// with `true` in a throwaway copy breaks solely the binary-arity reject line;
 /// replacing `hostTableIndicesDistinct` with `true` breaks solely the
-/// duplicated-table reject line — nothing else moves).
+/// duplicated-table reject line; replacing `intDispatchHostTableWired` with
+/// `true` breaks solely the two wiring reject lines; reverting the locals
+/// count to an existential accepts the zero-locals vacuity obligation that the
+/// exact bind rejects — nothing else moves).
 #[test]
 fn int_dispatch_kernel_guards_are_isolating() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -3959,7 +4055,7 @@ fn int_dispatch_kernel_guards_are_isolating() {
 
     let mut lean = String::new();
     lean.push_str(
-        "import Schema\nimport PlanCheck\nimport PlanBytes\nimport WasmSlice\nimport AcceptedArtifact\n\n",
+        "import Schema\nimport PlanCheck\nimport PlanBytes\nimport WasmSlice\nimport AcceptedArtifact\nimport Manifest\nimport Module\nimport Plans\n\n",
     );
     lean.push_str("open AverCert\nopen AverCert.Schema\n");
     lean.push_str("set_option maxRecDepth 100000\n\n");
@@ -3967,6 +4063,12 @@ fn int_dispatch_kernel_guards_are_isolating() {
     // tail. `f` is func 0 of type 0; code entry `[2, 0, 11]`. Only the type
     // section differs between the two: type 0 is `[eqref] -> [(ref null 5)]`
     // vs `[eqref, eqref] -> [(ref null 5)]` (5 standing for the carrier).
+    // NOTE: these hand-built modules have a result-bearing signature with a
+    // body returning nothing, so they would FAIL the wasmparser `validate_all`
+    // chokepoint — they demonstrate slicer/guard DISCRIMINATION only, not
+    // end-to-end admission; the E2E tamper vectors in
+    // `cert_verify_declines_tampered_int_dispatch_plan` close the end-to-end
+    // gap on a real validated artifact.
     lean.push_str("def hdr : List Nat := [0, 97, 115, 109, 1, 0, 0, 0]\n");
     lean.push_str("def unaryType : List Nat := [1, 7, 1, 96, 1, 109, 1, 99, 5]\n");
     lean.push_str("def binaryType : List Nat := [1, 8, 1, 96, 2, 109, 109, 1, 99, 5]\n");
@@ -4000,7 +4102,38 @@ fn int_dispatch_kernel_guards_are_isolating() {
     lean.push_str("example : PlanCheck.hostTableIndicesDistinct distinctTbl = true := rfl\n\n");
     // A role missing from the table fail-closes the lowering entirely (the
     // plan cannot conjure a callee out of a missing contract).
-    lean.push_str("example : PlanBytes.lowerIntDispatchCodeEntry 5 [(.box, 7), (.add, 8)] planSub = none := rfl\n");
+    lean.push_str("example : PlanBytes.lowerIntDispatchCodeEntry 5 [(.box, 7), (.add, 8)] planSub = none := rfl\n\n");
+
+    // HOST-TABLE WIRING isolation, on the REAL fixture obligation (`gaugeOb`,
+    // role table box 7 / add 8 / sub 9): swap the two arm roles in the plan and
+    // permute the table consistently.
+    lean.push_str("def honestTbl : List (HostRole × Nat) := [(.box, 7), (.add, 8), (.sub, 9)]\n");
+    lean.push_str("def permTbl : List (HostRole × Nat) := [(.box, 7), (.add, 9), (.sub, 8)]\n");
+    lean.push_str("def honestGauge : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 3 (.hostOp .sub (0) true) (.test 4 (.hostOp .add (9) false) (.test 5 (.proj) (.default (7)))) }\n");
+    lean.push_str("def permGauge : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 3 (.hostOp .add (0) true) (.test 4 (.hostOp .sub (9) false) (.test 5 (.proj) (.default (7)))) }\n");
+    // The permuted pair lowers BYTE-IDENTICALLY...
+    lean.push_str("example : PlanBytes.lowerIntDispatchCodeEntry 9 permTbl permGauge = PlanBytes.lowerIntDispatchCodeEntry 9 honestTbl honestGauge := rfl\n");
+    // ...and every sibling guard is blind to the permutation...
+    lean.push_str("example : PlanCheck.checkIntDispatchRawPlan permGauge = true := rfl\n");
+    lean.push_str("example : PlanCheck.hostTableIndicesDistinct permTbl = true := rfl\n");
+    // ...so ONLY the obligation-wiring bind rejects the permuted table.
+    lean.push_str("example : AcceptedArtifact.intDispatchHostTableWired AverCert.gaugeOb honestTbl = true := rfl\n");
+    lean.push_str("example : AcceptedArtifact.intDispatchHostTableWired AverCert.gaugeOb permTbl = false := rfl\n");
+    // The widened match's box-only table is wired; a box entry citing a
+    // non-box index is rejected.
+    lean.push_str(
+        "example : AcceptedArtifact.intDispatchHostTableWired AverCert.boxIntOb [(.box, 7)] = true := rfl\n",
+    );
+    lean.push_str(
+        "example : AcceptedArtifact.intDispatchHostTableWired AverCert.gaugeOb [(.box, 8)] = false := rfl\n\n",
+    );
+
+    // LOCALS-COUNT bind: the acceptance pins the code table's locals count to
+    // the canonical byte-derived value; a zero-locals table (whose body traps
+    // on its first `local.set`) diverges from it.
+    lean.push_str("example : (CertModule.boxIntCode 1).map (fun c => c.nlocals) =\n  some (PlanCheck.intDispatchArmCount Plans.boxIntIntDispatchPlan.body + 2) := rfl\n");
+    lean.push_str("def zeroLocalsBox : CertPrelude.CodeTbl :=\n  fun fn => (CertModule.boxIntCode fn).map (fun c => { c with nlocals := 0 })\n");
+    lean.push_str("example : ¬ ((zeroLocalsBox 1).map (fun c => c.nlocals) =\n  some (PlanCheck.intDispatchArmCount Plans.boxIntIntDispatchPlan.body + 2)) := by decide\n");
 
     let out_dir = temp_dir("cert-int-dispatch-guard-iso");
     let compile = aver_command()

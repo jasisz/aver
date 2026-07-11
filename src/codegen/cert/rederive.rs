@@ -520,7 +520,7 @@ fn rederive_certificate_inner(
     model_files: &[(String, String)],
     plan_covered_exports: &[String],
 ) -> Result<RederivedCertificate, String> {
-    let (user_fns, box_idx, user_idx_set, carrier, host_roles, _frag_host_table, _struct_field_counts) =
+    let (user_fns, box_idx, user_idx_set, carrier, host_roles, frag_host_table, _struct_field_counts) =
         disassemble(wasm_bytes)?;
     let model_ops = model_step_ops(model_files);
     let model_info = ModelInfo::from_files(model_files);
@@ -896,9 +896,9 @@ fn rederive_certificate_inner(
             },
             verbatim_plan_lean: verbatim_plan_from_cert(c)
                 .map(|plan| verbatim_plan_lean_value(&plan)),
-            int_dispatch_plan_lean: int_dispatch_plan_from_cert(c)
+            int_dispatch_plan_lean: int_dispatch_plan_from_cert(c, frag_host_table)
                 .map(|plan| int_dispatch_plan_lean_value(&plan)),
-            int_dispatch_host_table_lean: match int_dispatch_plan_from_cert(c) {
+            int_dispatch_host_table_lean: match int_dispatch_plan_from_cert(c, frag_host_table) {
                 Some(_) => int_dispatch_host_table_from_cert(c)
                     .map(|hosts| int_dispatch_host_table_lean_value(&hosts)),
                 None => None,
