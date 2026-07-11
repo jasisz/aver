@@ -86,6 +86,8 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                                                 ty: wasmparser::AbstractHeapType::Eq,
                                                 ..
                                             } => TyKind::Eqref,
+                                            // Kernel parity: exact references are not plain 0x63 s33 refs.
+                                            wasmparser::HeapType::Exact(_) => TyKind::Other,
                                             _ => TyKind::Other,
                                         },
                                     },
