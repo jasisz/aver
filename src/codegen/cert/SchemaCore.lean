@@ -265,7 +265,18 @@ deriving Repr, DecidableEq
 inductive FieldProjectionResultTy where
   | eqref
   | nullableRef (typeIdx : Nat)
-deriving Repr, DecidableEq
+  deriving Repr, DecidableEq
+
+/-- Exact byte-level value type of a constructor field. Unlike `SymTy`, this
+    is read back from the Wasm type section and therefore cannot be changed by
+    relabelling a source plan. -/
+inductive ConstructValType where
+  | i32
+  | i64
+  | f64
+  | eqref
+  | nullableRef (typeIdx : Nat)
+  deriving Repr, DecidableEq
 
 /-- Raw byte-origin veneer for the bare tuple-destructuring projection family.
     The projected field index is the only plan datum. Struct identity/count,

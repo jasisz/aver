@@ -408,6 +408,74 @@ def projectionFuncTypeMatches
     (resultTy : AverCert.Schema.FieldProjectionResultTy) : Bool :=
   typeSectionMatches (checkProjectionFuncType structIdx resultTy) wasmBytes typeIdx
 
+/-! ### List-constructor type binding -/
+
+def readConstructValType
+    (expected : AverCert.Schema.ConstructValType) : ByteSeq → Option ByteSeq
+  | 0x7f :: rest => if expected = .i32 then some rest else none
+  | 0x7e :: rest => if expected = .i64 then some rest else none
+  | 0x7c :: rest => if expected = .f64 then some rest else none
+  | 0x6d :: rest => if expected = .eqref then some rest else none
+  | 0x63 :: rest =>
+      match expected, readS33 rest with
+      | .nullableRef expectedIdx, some (actualIdx, tail) =>
+          if actualIdx = Int.ofNat expectedIdx then some tail else none
+      | _, _ => none
+  | _ => none
+
+def readImmutableConstructField
+    (expected : AverCert.Schema.ConstructValType) (bytes : ByteSeq) : Option ByteSeq :=
+  match readConstructValType expected bytes with
+  | some (0x00 :: rest) => some rest
+  | _ => none
+
+def checkListConstructStructType
+    (structIdx : Nat) (elemTy : AverCert.Schema.ConstructValType) : ByteSeq → Bool
+  | 0x5f :: rest =>
+      match readUleb32 rest with
+      | some (2, fields) =>
+          match readImmutableConstructField elemTy fields with
+          | some tailField =>
+              (readImmutableConstructField (.nullableRef structIdx) tailField).isSome
+          | none => false
+      | _ => false
+  | _ => false
+
+def listConstructStructTypeMatches
+    (wasmBytes : ByteSeq) (structIdx : Nat)
+    (elemTy : AverCert.Schema.ConstructValType) : Bool :=
+  typeSectionMatches (checkListConstructStructType structIdx elemTy) wasmBytes structIdx
+
+def checkListConstructFuncType
+    (arity structIdx : Nat) (elemTy : AverCert.Schema.ConstructValType) : ByteSeq → Bool
+  | 0x60 :: rest =>
+      match readUleb32 rest with
+      | some (actualArity, params) =>
+          if actualArity = arity then
+            match readConstructValType elemTy params with
+            | some afterHead =>
+                let afterParams? :=
+                  if arity = 1 then some afterHead
+                  else if arity = 2 then
+                    readConstructValType (.nullableRef structIdx) afterHead
+                  else none
+                match afterParams? with
+                | some resultCountBytes =>
+                    match readUleb32 resultCountBytes with
+                    | some (1, resultBytes) =>
+                        (readConstructValType (.nullableRef structIdx) resultBytes).isSome
+                    | _ => false
+                | none => false
+            | none => false
+          else false
+      | none => false
+  | _ => false
+
+def listConstructFuncTypeMatches
+    (wasmBytes : ByteSeq) (typeIdx arity structIdx : Nat)
+    (elemTy : AverCert.Schema.ConstructValType) : Bool :=
+  typeSectionMatches (checkListConstructFuncType arity structIdx elemTy) wasmBytes typeIdx
+
 /-! ### Passive data-section navigation
 
 `array.new_data` encodes only the referenced segment's INDEX and the copied

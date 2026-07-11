@@ -2165,6 +2165,7 @@ fn lean_expr_fragment_artifact_claims(
                 Some(type_idx),
                 Some(struct_idx),
                 Some(field_count),
+                Some(elem_ty),
             ) = (
                 r.construct_sym_plan_lean.as_ref(),
                 r.construct_lowered_body_lean.as_ref(),
@@ -2173,6 +2174,7 @@ fn lean_expr_fragment_artifact_claims(
                 r.construct_type_idx,
                 r.construct_struct_idx,
                 r.construct_field_count,
+                r.construct_elem_ty_lean.as_ref(),
             )
             else {
                 continue;
@@ -2182,9 +2184,17 @@ fn lean_expr_fragment_artifact_claims(
                 "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {} }} : AverCert.WasmSlice.FuncBinding)",
                 r.self_idx, code_idx, type_idx, bytes
             );
+            let (struct_type_proof, func_type_proof) = if r.construct_is_list {
+                (
+                    format!("Or.inr AverCert.Plans.{}ConstructStructTypeMatches", r.name),
+                    format!("Or.inr AverCert.Plans.{}ConstructFuncTypeMatches", r.name),
+                )
+            } else {
+                ("Or.inl rfl".to_string(), "Or.inl rfl".to_string())
+            };
             construct_claims.push(format!(
                 "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
-                 carrier := {carrier}, structIdx := {struct_idx}, fieldCount := {field_count}, \
+                 carrier := {carrier}, structIdx := {struct_idx}, fieldCount := {field_count}, elemTy := {elem_ty}, \
                  symPlan := (({sym_plan}) : AverCert.Schema.SymRawPlan), \
                  obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ConstructClaim)",
                 name = r.name,
@@ -2192,7 +2202,8 @@ fn lean_expr_fragment_artifact_claims(
             ));
             construct_proofs.push(format!(
                 "⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
-                 ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
+                 ⟨rfl, rfl, rfl, rfl, rfl, rfl, {struct_type_proof}, \
+                 {func_type_proof}, rfl⟩⟩⟩"
             ));
             continue;
         }
@@ -2424,12 +2435,21 @@ fn lean_expr_fragment_artifact_claims(
         .fold("trivial".to_string(), |acc, proof| {
             format!("⟨{proof}, {acc}⟩")
         });
-    let construct_proof = construct_proofs
+    let construct_claim_count = construct_proofs.len();
+    let construct_claims_proof = construct_proofs
         .into_iter()
         .rev()
         .fold("trivial".to_string(), |acc, proof| {
             format!("⟨{proof}, {acc}⟩")
         });
+    // `acceptedConstructFragments` also requires the concrete constructor
+    // export-name list to be duplicate-free. Keep each decision local to one
+    // cons cell to avoid reducing the whole artifact-sized claim list at once.
+    let construct_nodup_proof = (0..construct_claim_count)
+        .fold("List.nodup_nil".to_string(), |acc, _| {
+            format!("List.nodup_cons.mpr ⟨by decide, {acc}⟩")
+        });
+    let construct_proof = format!("⟨{construct_claims_proof}, {construct_nodup_proof}⟩");
     let recursion_proof = recursion_proofs
         .into_iter()
         .rev()

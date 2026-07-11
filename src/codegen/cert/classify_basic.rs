@@ -79,6 +79,7 @@ fn nr_adt_constructor(
         carrier: carrier?,
         struct_idx: *struct_idx,
         field_count: *field_count,
+        elem_ty: *f.params.first()?,
         arity: f.arity,
         fields,
         ops: strip_trailing_end(&f.ops).to_vec(),

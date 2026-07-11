@@ -206,6 +206,7 @@ structure ConstructClaim where
   carrier         : Nat
   structIdx       : Nat
   fieldCount      : Nat
+  elemTy          : ConstructValType
   symPlan         : SymRawPlan
   obligation      : Obligation
 
@@ -356,12 +357,22 @@ def stringConcatClaimAccepted
         claim.obligation
   | none => False
 
+/-- Whether a source constructor claim is specifically a `List` constructor.
+    The byte-level two-field cons-cell guards below apply only to this source
+    family; ordinary one-field ADT constructors retain their existing exact
+    code-entry binding. -/
+def isListConstructSymPlan (symPlan : SymRawPlan) : Bool :=
+  match symPlan.result with
+  | .app1 "List" _ => true
+  | _ => false
+
 def constructPlanAccepted
     (wasmBytes : AverCert.WasmSlice.ByteSeq)
     (exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
     (carrier : Nat)
     (structIdx fieldCount : Nat)
+    (elemTy : ConstructValType)
     (symPlan : SymRawPlan)
     (plan : ConstructRawPlan)
     (obligation : Obligation) : Prop :=
@@ -378,6 +389,12 @@ def constructPlanAccepted
       AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
+      (isListConstructSymPlan symPlan = false ∨
+        AverCert.WasmSlice.listConstructStructTypeMatches
+          wasmBytes structIdx elemTy = true) ∧
+      (isListConstructSymPlan symPlan = false ∨
+        AverCert.WasmSlice.listConstructFuncTypeMatches
+          wasmBytes binding.typeIdx plan.arity structIdx elemTy = true) ∧
       obligation.code binding.funcIdx =
         some { arity := plan.arity, nlocals := 1, body := body }
 
@@ -394,6 +411,7 @@ def constructClaimAccepted
         claim.carrier
         claim.structIdx
         claim.fieldCount
+        claim.elemTy
         claim.symPlan
         plan
         claim.obligation
@@ -1365,7 +1383,8 @@ def acceptedConstructFragments (artifact : ArtifactData) : Prop :=
   constructClaimsAccepted
     artifact.wasmBytes
     artifact.manifest
-    artifact.constructClaims
+    artifact.constructClaims ∧
+  (constructClaimExportNames artifact.constructClaims).Nodup
 
 def acceptedRecursionFragments (artifact : ArtifactData) : Prop :=
   recursionClaimsAccepted

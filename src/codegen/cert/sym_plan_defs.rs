@@ -307,6 +307,10 @@ fn adt_constructor_sym_plan_from_cert(c: &Cert, model_info: &ModelInfo) -> Optio
     })
 }
 
+fn sym_plan_is_list_construct(plan: &SymPlan) -> bool {
+    matches!(&plan.result, SymTy::App(name, args) if name == "List" && args.len() == 1)
+}
+
 fn sym_ty_from_source_type_name(ty: &str) -> Option<SymTy> {
     let ty = strip_balanced_outer_parens(ty.trim());
     match ty {
@@ -739,6 +743,7 @@ mod sym_plan_defs_tests {
             carrier: 0,
             struct_idx: 3,
             field_count: 1,
+            elem_ty: TyKind::Ref { nullable: true, idx: 3 },
             arity: 1,
             fields: vec![ConstructorField::Local(0)],
             ops: Vec::new(),
@@ -786,6 +791,7 @@ mod sym_plan_defs_tests {
             carrier: 18,
             struct_idx: 25,
             field_count: 2,
+            elem_ty: TyKind::Ref { nullable: true, idx: 3 },
             arity: 1,
             fields: vec![ConstructorField::Local(0), ConstructorField::Null],
             ops: vec![

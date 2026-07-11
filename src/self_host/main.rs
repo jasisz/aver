@@ -5,6 +5,7 @@
     dead_code,
     unused_imports,
     unused_parens,
+    unused_braces,
     non_snake_case,
     non_camel_case_types,
     unreachable_patterns,

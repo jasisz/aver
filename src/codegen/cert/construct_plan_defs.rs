@@ -100,6 +100,23 @@ fn construct_field_lean_value(field: &ConstructFieldPlan) -> String {
     }
 }
 
+fn construct_val_type_lean_value(ty: TyKind) -> Option<String> {
+    match ty {
+        TyKind::I32 => Some(".i32".to_string()),
+        TyKind::I64 => Some(".i64".to_string()),
+        TyKind::F64 => Some(".f64".to_string()),
+        TyKind::Eqref => Some(".eqref".to_string()),
+        TyKind::Ref {
+            nullable: true,
+            idx,
+        } => Some(format!(".nullableRef {idx}")),
+        TyKind::Ref {
+            nullable: false, ..
+        }
+        | TyKind::Other => None,
+    }
+}
+
 pub fn parse_construct_plan(text: &str) -> Result<ConstructPlan, String> {
     let mut lines = text.lines();
     expect_construct_plan_line(&mut lines, "aver.construct-fragment.plan.v1")?;

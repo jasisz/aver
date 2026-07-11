@@ -72,6 +72,7 @@ enum Cert {
         carrier: u32,
         struct_idx: u32,
         field_count: u32,
+        elem_ty: TyKind,
         arity: usize,
         fields: Vec<ConstructorField>,
         ops: Vec<Op>,
