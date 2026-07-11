@@ -243,10 +243,18 @@ def checkSymBlockFuel : Nat → List SymTy → SymBlock → Bool
             if bytesAllBytes bytes then some .string else none
         | .prim op args => symPrimResultTy? checked op args
         | .construct typeName _ args =>
-            if symArgsExist checked args then
+            if typeName = "List" then
+              match args with
+              | [head, tail] =>
+                  match lookupSymTy checked head, lookupSymTy checked tail with
+                  | some headTy, some (.app1 "List" elemTy) =>
+                      if headTy = elemTy then some (.app1 "List" elemTy) else none
+                  | _, _ => none
+              | _ => none
+            else if symArgsExist checked args then
               some (.named typeName)
-            else
-              none
+            else none
+        | .emptyList elemTy => some (.app1 "List" elemTy)
         -- Field projection is typed by the claimed field type; the claim is
         -- honest because encoding + byte-exact lowering pin the projection to
         -- the module's real struct layout (a lying `fieldTy` encodes to a
@@ -502,10 +510,9 @@ def stringEqPlanMatchesSymRawPlan
 
 def constructFieldOk (arity : Nat) : ConstructField → Bool
   | .local index => index < arity
-  -- `ref.null` byte lowering needs an explicit heap-type binding. The semantic
-  -- constructor exists in the schema, but `construct-v1` accepts only local
-  -- argument fields until that binding is part of the plan.
-  | .null => false
+  -- Null is the canonical empty-list tail. Its heap type is NOT plan data:
+  -- constructor lowering receives the byte-derived target struct index.
+  | .null => true
 
 def constructFieldsOk (arity : Nat) : List ConstructField → Bool
   | [] => true
@@ -537,22 +544,38 @@ def checkConstructRawPlan (plan : ConstructRawPlan) : Bool :=
     constructFieldsOk plan.arity plan.fields &&
     constructUsesAllParams plan.arity plan.fields
 
-def symConstructArgs? (plan : SymRawPlan) : Option (String × String × List Nat) :=
-  if checkSymRawPlan plan then
-    match lookupSymNode plan.body.nodes plan.body.result with
-    | some { ty := .named typeName, kind := .construct _ ctorName args, .. } =>
-        some (typeName, ctorName, args)
-    | _ => none
-  else none
+def symConstructArgs? (plan : SymRawPlan) : Option (List SymNode × String × String × List Nat) :=
+  match lookupSymNode plan.body.nodes plan.body.result with
+  | some { ty := .named typeName, kind := .construct _ ctorName args, .. } =>
+      some (plan.body.nodes, typeName, ctorName, args)
+  | some { ty := .app1 typeName _, kind := .construct _ ctorName args, .. } =>
+      some (plan.body.nodes, typeName, ctorName, args)
+  | some { ty := .app2 typeName _ _, kind := .construct _ ctorName args, .. } =>
+      some (plan.body.nodes, typeName, ctorName, args)
+  | _ => none
+
+def symConstructFieldsMatch
+    (nodes : List SymNode) : List Nat → List ConstructField → Bool
+  | [], [] => true
+  | arg :: args, .local index :: fields =>
+      match lookupSymNode nodes arg with
+      | some { kind := .param actual, .. } =>
+          actual = index && symConstructFieldsMatch nodes args fields
+      | _ => false
+  | arg :: args, .null :: fields =>
+      match lookupSymNode nodes arg with
+      | some { kind := .emptyList _, .. } => symConstructFieldsMatch nodes args fields
+      | _ => false
+  | _, _ => false
 
 def constructPlanMatchesSymRawPlan
     (symPlan : SymRawPlan)
     (plan : ConstructRawPlan) : Bool :=
   if checkConstructRawPlan plan then
     match symConstructArgs? symPlan with
-    | some (_, _, args) =>
-        args = constructLocalFields plan.fields &&
-          args.length = plan.arity
+    | some (nodes, _, _, args) =>
+        symPlan.params.length = plan.arity &&
+          symConstructFieldsMatch nodes args plan.fields
     | none => false
   else false
 
@@ -566,6 +589,8 @@ def encodeSymTy? : SymTy → Option FragTy
   -- values flow verbatim through the field-projection face.
   | .string => some .adtRef
   | .named _ => some .adtRef
+  | .app1 _ _ => some .adtRef
+  | .app2 _ _ _ => some .adtRef
 
 def encodeSymTys? : List SymTy → Option (List FragTy)
   | [] => some []
@@ -715,6 +740,7 @@ def encodeSymBlockFuel :
                   let (st, id) := pushEncodedNode st fragTy (.prim prim fragArgs)
                   some { st with symToFrag := st.symToFrag ++ [id] }
           | .construct _ _ _ => none
+          | .emptyList _ => none
           | .projectField typeName field _fieldTy value =>
               -- Only opaque reference fields encode: the projected value flows
               -- verbatim through the field-projection face. Scalar fields have

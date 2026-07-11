@@ -86,6 +86,7 @@ impl SymToFragEncoder<'_> {
                 )
             }
             SymNodeKind::Construct { .. } => return None,
+            SymNodeKind::EmptyList { .. } => return None,
             SymNodeKind::ProjectField {
                 type_name,
                 field,

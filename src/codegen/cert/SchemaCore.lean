@@ -55,6 +55,8 @@ inductive SymTy where
   | bool
   | string
   | named (name : String)
+  | app1 (name : String) (arg : SymTy)
+  | app2 (name : String) (left right : SymTy)
 deriving Repr, DecidableEq
 
 /-- Projection from representation-level fragment types into the source-level
@@ -104,6 +106,7 @@ mutual
     | constStringBytes (bytes : List Nat)
     | prim (op : SymPrim) (args : List Nat)
     | construct (typeName ctorName : String) (args : List Nat)
+    | emptyList (elemTy : SymTy)
     /-- Source-level record/ADT field projection: read declared field `field`
         (source declaration order) of a value of the named user type. `fieldTy`
         is the field's source type; encoding binds the projection to the exact
@@ -430,7 +433,6 @@ deriving Repr, DecidableEq
 structure ConstructRawPlan where
   profile   : String
   arity     : Nat
-  structIdx : Nat
   fields    : List ConstructField
 deriving Repr
 

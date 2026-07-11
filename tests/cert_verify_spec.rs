@@ -1348,13 +1348,13 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
             .unwrap();
     assert_eq!(
         manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
-        Some(10),
-        "json plan-backed bridge count must move 9 -> 10"
+        Some(12),
+        "json plan-backed bridge count must be fully migrated (was 9)"
     );
     assert_eq!(
         manifest["artifact_bridge_counts"]["legacy-witness-v1"].as_u64(),
-        Some(2),
-        "json legacy bridge count must move 3 -> 2"
+        Some(0),
+        "json legacy bridge count must be zero after the list-cons and f64 legs"
     );
     let (ok, report) = aver_verify(&wasm, &cert);
     assert!(ok, "expected clean json certificate to verify:\n{report}");
@@ -4971,6 +4971,145 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
 /// rejects; reverting the locals count to an existential accepts the
 /// zero-locals vacuity obligation that the exact bind rejects — nothing else
 /// moves).
+#[test]
+fn list_constructor_kernel_guards_are_isolating() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping List-constructor guard isolation test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-list-constructor-guard-iso");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/data/json.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile JSON constructor guard fixture");
+    assert!(
+        compile.status.success(),
+        "JSON constructor guard fixture failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let cert = out_dir.join("cert");
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build JSON certificate before constructor guard transcript");
+    assert!(
+        build.status.success(),
+        "JSON certificate build failed before constructor guard transcript:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let lean = r#"import Artifact
+open CertPrelude AverCert.Schema AverCert.WasmSlice
+set_option maxRecDepth 400000
+
+def honestSym := AverCert.Plans.singletonJsonEntriesConstructSymPlan
+def honestSingleton := AverCert.Plans.singletonJsonEntriesConstructPlan
+def honestPrependSym := AverCert.Plans.prependJsonEntryConstructSymPlan
+def permutedPrepend : ConstructRawPlan :=
+  { profile := "construct-v1", arity := 2, fields := [.local 1, .local 0] }
+
+-- SymCheckAttack: the empty-tail node lies about its element type while every
+-- source/target-origin check remains green. Dropping ONLY checkSymRawPlan
+-- accepts it; the shipped conjunction rejects it.
+def badEmptySym : SymRawPlan :=
+  { honestSym with body :=
+      { nodes := [
+          { id := 0, ty := (.app2 "Tuple" .string (.named "Json")), kind := .param 0 },
+          { id := 1, ty := (.app1 "List" (.app2 "Tuple" .string (.named "Json"))),
+            kind := .emptyList .string },
+          { id := 2, ty := (.app1 "List" (.app2 "Tuple" .string (.named "Json"))),
+            kind := .construct "List" "::" [0, 1] }], result := 2 } }
+def sourceAccepted (s : SymRawPlan) (p : ConstructRawPlan) : Bool :=
+  AverCert.PlanCheck.checkSymRawPlan s &&
+  AverCert.PlanCheck.checkConstructRawPlan p &&
+  AverCert.PlanCheck.constructPlanMatchesSymRawPlan s p
+def sourceDropSym (s : SymRawPlan) (p : ConstructRawPlan) : Bool :=
+  AverCert.PlanCheck.checkConstructRawPlan p &&
+  AverCert.PlanCheck.constructPlanMatchesSymRawPlan s p
+example : sourceDropSym badEmptySym honestSingleton = true := rfl
+example : sourceAccepted badEmptySym honestSingleton = false := rfl
+
+-- PermAttack: the target plan uses every parameter once but swaps head/tail.
+-- Dropping ONLY the source/target matcher accepts it; shipped rejects it.
+def sourceDropMatch (s : SymRawPlan) (p : ConstructRawPlan) : Bool :=
+  AverCert.PlanCheck.checkSymRawPlan s &&
+  AverCert.PlanCheck.checkConstructRawPlan p
+example : sourceDropMatch honestPrependSym permutedPrepend = true := rfl
+example : sourceAccepted honestPrependSym permutedPrepend = false := rfl
+
+-- CountAttack: the field count is checker-derived from the validated struct
+-- table, not plan data. Dropping only the plan/context length equality accepts
+-- a false count; the shipped equality rejects it.
+def countAccepted (fieldCount : Nat) : Bool := honestSingleton.fields.length == fieldCount
+def countDropBind (_fieldCount : Nat) : Bool := true
+example : countDropBind 3 = true := rfl
+example : countAccepted 3 = false := rfl
+
+-- ByteAttack: the raw plan has no struct index. Supplying a different context
+-- changes both ref.null and struct.new bytes; only exact code-entry equality
+-- binds the byte-derived target index.
+def singletonCode := [12, 1, 1, 99, 18, 32, 0, 208, 25, 251, 0, 25, 11]
+def byteAccepted (structIdx : Nat) : Bool :=
+  AverCert.PlanBytes.lowerConstructCodeEntry 18 structIdx honestSingleton == some singletonCode
+def byteDropExact (_structIdx : Nat) : Bool := true
+example : byteDropExact 26 = true := rfl
+example : byteAccepted 26 = false := rfl
+
+-- ZeroAttack: the canonical byte lowering declares exactly one carrier local.
+-- A zero-local code table keeps the honest body but is accepted only when the
+-- exact locals conjunct is dropped.
+def zeroCode : CodeTbl := fun fn =>
+  (CertModule.singletonJsonEntriesCode fn).map (fun c => { c with nlocals := 0 })
+def localsAccepted (code : CodeTbl) : Bool :=
+  match code 20 with
+  | some c => c.arity == 1 && c.nlocals == 1 && c.body.length == 3
+  | none => false
+def localsDropCount (code : CodeTbl) : Bool :=
+  match code 20 with
+  | some c => c.arity == 1 && c.body.length == 3
+  | none => false
+example : localsDropCount zeroCode = true := rfl
+example : localsAccepted zeroCode = false := rfl
+
+-- OrphanAttack: claimsMatchManifest compares names from the SAME constructor
+-- claim list the byte checker iterates against the complete manifest plan list.
+-- Appending one orphan plan is accepted only by the copy dropping that equality.
+def orphanPlans : List (String × ConstructRawPlan) :=
+  AverCert.manifest.constructPlans ++ [("orphan", honestSingleton)]
+def coverageAccepted : Bool :=
+  AverCert.AcceptedArtifact.constructClaimExportNames AverCert.Artifact.constructClaims ==
+    orphanPlans.map (fun p => p.1)
+def coverageDropNames : Bool := true
+example : coverageDropNames = true := rfl
+example : coverageAccepted = false := rfl
+"#;
+    std::fs::write(cert.join("ListConstructGuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("ListConstructGuardIso.lean")
+        .output()
+        .expect("run List constructor guard isolation transcript");
+    assert!(
+        check.status.success(),
+        "List constructor guard isolation transcript failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(out_dir);
+}
+
 #[test]
 fn int_dispatch_kernel_guards_are_isolating() {
     if Command::new("lake").arg("--version").output().is_err() {

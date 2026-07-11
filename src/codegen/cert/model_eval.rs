@@ -133,7 +133,22 @@ fn parse_def_sig(line: &str) -> Option<(String, FnSig)> {
     let mut tail = params_part;
     while let Some(start) = tail.find('(') {
         let after = &tail[start + 1..];
-        let end = after.find(')')?;
+        let mut depth = 1usize;
+        let mut end = None;
+        for (at, ch) in after.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(at);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let end = end?;
         let param = &after[..end];
         if let Some((_, ty)) = param.split_once(" : ") {
             params.push(ty.trim().to_string());

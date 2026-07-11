@@ -370,6 +370,7 @@ fn render_expr_fragment_plans(
             code_idx,
             type_idx,
             carrier,
+            struct_idx,
             ..
         } = c.inner()
         else {
@@ -382,11 +383,11 @@ fn render_expr_fragment_plans(
             continue;
         };
         let Ok(code_entry_bytes) =
-            lower_construct_plan_code_entry_bytes(&construct_plan, *carrier)
+            lower_construct_plan_code_entry_bytes(&construct_plan, *carrier, *struct_idx)
         else {
             continue;
         };
-        let lowered_body = lower_construct_plan(&construct_plan)
+        let lowered_body = lower_construct_plan(&construct_plan, *struct_idx)
             .map(|ops| render_ops_value(&ops))
             .expect("checked construct plan lowers to WInstr body");
         let code_entry_bytes = render_byte_list(&code_entry_bytes);
@@ -414,15 +415,15 @@ fn render_expr_fragment_plans(
              example : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan {host_table_lean} {struct_table_lean} {name}ConstructSymPlan = none := rfl\n\n\
              /-- The audited Lean-side canonical lowerer maps `{name}`'s constructor plan\n\
                  to the exact instruction body. -/\n\
-             example : AverCert.PlanLower.lowerConstructBody {name}ConstructPlan =\n  \
+             example : AverCert.PlanLower.lowerConstructBody {struct_idx} {name}ConstructPlan =\n  \
                some {lowered_body} := rfl\n\n\
              /-- The audited Lean-side canonical lowerer maps `{name}`'s constructor plan\n\
                  to the same instruction body emitted in `Module.lean`. -/\n\
              example : (CertModule.{name}Code {self_idx}).map (fun c => c.body) =\n  \
-               AverCert.PlanLower.lowerConstructBody {name}ConstructPlan := rfl\n\n\
+               AverCert.PlanLower.lowerConstructBody {struct_idx} {name}ConstructPlan := rfl\n\n\
              /-- The audited Lean-side byte lowerer maps `{name}`'s constructor plan\n\
                  to the exact canonical code-entry bytes. -/\n\
-             example : AverCert.PlanBytes.lowerConstructCodeEntry {carrier} {name}ConstructPlan =\n  \
+             example : AverCert.PlanBytes.lowerConstructCodeEntry {carrier} {struct_idx} {name}ConstructPlan =\n  \
                some {code_entry_bytes} := rfl\n\n\
              /-- The audited Lean-side Wasm slicer finds `{name}`'s exact constructor\n\
                  code-entry bytes inside the emitted module bytes by export name. -/\n\
@@ -984,6 +985,8 @@ fn render_artifact_expr_fragment_claims(
                 code_idx,
                 type_idx,
                 carrier,
+                struct_idx,
+                field_count,
                 ..
             } => {
                 let Some(_sym_plan) = adt_constructor_sym_plan_from_cert(c, model_info) else {
@@ -992,10 +995,11 @@ fn render_artifact_expr_fragment_claims(
                 let Some(plan) = construct_plan_from_cert(c) else {
                     continue;
                 };
-                let code_entry_bytes = lower_construct_plan_code_entry_bytes(&plan, *carrier)
+                let code_entry_bytes =
+                    lower_construct_plan_code_entry_bytes(&plan, *carrier, *struct_idx)
                     .expect("certified constructor plan lowers to code-entry bytes");
                 let code_entry_bytes = render_byte_list(&code_entry_bytes);
-                let lowered_body = lower_construct_plan(&plan)
+                let lowered_body = lower_construct_plan(&plan, *struct_idx)
                     .map(|ops| render_ops_value(&ops))
                     .expect("certified constructor plan lowers to WInstr body");
                 let export_name_bytes = render_byte_list(name.as_bytes());
@@ -1003,11 +1007,11 @@ fn render_artifact_expr_fragment_claims(
                     "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
                 );
                 construct_claims.push(format!(
-                    "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, symPlan := AverCert.Plans.{name}ConstructSymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ConstructClaim)",
+                    "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, structIdx := {struct_idx}, fieldCount := {field_count}, symPlan := AverCert.Plans.{name}ConstructSymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ConstructClaim)",
                     export_name = lean_str(name),
                 ));
                 construct_proofs.push(format!(
-                    "⟨rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
+                    "⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
                      ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }

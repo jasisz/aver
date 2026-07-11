@@ -8,6 +8,7 @@ pub enum SymTy {
     Bool,
     String,
     Named(String),
+    App(String, Vec<SymTy>),
 }
 
 impl SymTy {
@@ -30,7 +31,7 @@ impl SymTy {
             // of the Lean `encodeSymTy?`). String OPERATIONS still do not
             // encode; this only lets reference-typed values flow verbatim
             // through the field-projection face.
-            SymTy::String | SymTy::Named(_) => Some(FragTy::AdtRef),
+            SymTy::String | SymTy::Named(_) | SymTy::App(_, _) => Some(FragTy::AdtRef),
         }
     }
 
@@ -41,6 +42,10 @@ impl SymTy {
             SymTy::Bool => "bool".to_string(),
             SymTy::String => "string".to_string(),
             SymTy::Named(name) => format!("named:{name}"),
+            SymTy::App(name, args) => format!(
+                "app:{name}[{}]",
+                args.iter().map(SymTy::plan_tag).collect::<Vec<_>>().join(";")
+            ),
         }
     }
 
@@ -50,10 +55,7 @@ impl SymTy {
             "float" => Some(SymTy::Float),
             "bool" => Some(SymTy::Bool),
             "string" => Some(SymTy::String),
-            _ => tag
-                .strip_prefix("named:")
-                .filter(|name| !name.is_empty() && !name.chars().any(char::is_whitespace))
-                .map(|name| SymTy::Named(name.to_string())),
+            _ => parse_sym_ty_plan_tag(tag),
         }
     }
 }
@@ -95,6 +97,7 @@ pub enum SymNodeKind {
         ctor_name: String,
         args: Vec<SymValueId>,
     },
+    EmptyList { elem_ty: SymTy },
     /// Source-level record/ADT field projection: read declared field `field`
     /// (source declaration order) of a value of the named user type.
     /// `field_ty` is the field's source type; encoding binds the projection to
@@ -207,9 +210,6 @@ fn expr_fragment_source_plan(
 }
 
 fn adt_constructor_sym_plan_from_cert(c: &Cert, model_info: &ModelInfo) -> Option<SymPlan> {
-    if !adt_constructor_uses_model(c, model_info) {
-        return None;
-    }
     let Cert::AdtConstructor {
         name,
         arity,
@@ -223,21 +223,35 @@ fn adt_constructor_sym_plan_from_cert(c: &Cert, model_info: &ModelInfo) -> Optio
     if sig.params.len() != *arity {
         return None;
     }
-    let ind = model_info.inductives.get(&sig.ret)?;
-    let ctor = ind.ctors.first()?;
-    if ctor.fields != sig.params {
-        return None;
-    }
     let params = sig
         .params
         .iter()
         .map(|ty| sym_ty_from_source_type_name(ty))
         .collect::<Option<Vec<_>>>()?;
     let result = sym_ty_from_source_type_name(&sig.ret)?;
-    let SymTy::Named(type_name) = result.clone() else {
-        return None;
+    let (type_name, ctor_name, source_args) = match &result {
+        SymTy::Named(type_name) if adt_constructor_uses_model(c, model_info) => {
+            let ind = model_info.inductives.get(&sig.ret)?;
+            let ctor = ind.ctors.first()?;
+            if ctor.fields != sig.params || !sym_plan_simple_token(&ctor.name) {
+                return None;
+            }
+            (type_name.clone(), ctor.name.clone(), None)
+        }
+        SymTy::App(type_name, type_args) if type_name == "List" && type_args.len() == 1 => {
+            let elem_ty = type_args[0].clone();
+            let source_args = match (params.as_slice(), fields.as_slice()) {
+                ([head], [ConstructorField::Local(0), ConstructorField::Null])
+                    if *head == elem_ty => Some(true),
+                ([head, tail], [ConstructorField::Local(0), ConstructorField::Local(1)])
+                    if *head == elem_ty && *tail == result => Some(false),
+                _ => return None,
+            };
+            ("List".to_string(), "::".to_string(), source_args)
+        }
+        _ => return None,
     };
-    if !sym_plan_simple_token(&type_name) || !sym_plan_simple_token(&ctor.name) {
+    if !sym_plan_simple_token(&type_name) {
         return None;
     }
     let mut nodes = params
@@ -249,22 +263,37 @@ fn adt_constructor_sym_plan_from_cert(c: &Cert, model_info: &ModelInfo) -> Optio
             kind: SymNodeKind::Param { index: i as u32 },
         })
         .collect::<Vec<_>>();
-    let args = fields
-        .iter()
-        .map(|field| match field {
-            ConstructorField::Local(i) if (*i as usize) < params.len() => {
-                Some(SymValueId(*i as usize))
-            }
-            ConstructorField::Local(_) | ConstructorField::Null => None,
-        })
-        .collect::<Option<Vec<_>>>()?;
+    let args = if source_args == Some(true) {
+        let empty_id = SymValueId(nodes.len());
+        nodes.push(SymNode {
+            id: empty_id,
+            ty: result.clone(),
+            kind: SymNodeKind::EmptyList {
+                elem_ty: match &result {
+                    SymTy::App(_, args) => args[0].clone(),
+                    _ => unreachable!(),
+                },
+            },
+        });
+        vec![SymValueId(0), empty_id]
+    } else {
+        fields
+            .iter()
+            .map(|field| match field {
+                ConstructorField::Local(i) if (*i as usize) < params.len() => {
+                    Some(SymValueId(*i as usize))
+                }
+                ConstructorField::Local(_) | ConstructorField::Null => None,
+            })
+            .collect::<Option<Vec<_>>>()?
+    };
     let result_id = SymValueId(nodes.len());
     nodes.push(SymNode {
         id: result_id,
         ty: result,
         kind: SymNodeKind::Construct {
             type_name,
-            ctor_name: ctor.name.clone(),
+            ctor_name,
             args,
         },
     });
@@ -279,15 +308,91 @@ fn adt_constructor_sym_plan_from_cert(c: &Cert, model_info: &ModelInfo) -> Optio
 }
 
 fn sym_ty_from_source_type_name(ty: &str) -> Option<SymTy> {
-    let ty = ty.trim();
+    let ty = strip_balanced_outer_parens(ty.trim());
     match ty {
         "Int" => Some(SymTy::Int),
         "Float" => Some(SymTy::Float),
         "Bool" => Some(SymTy::Bool),
         "String" => Some(SymTy::String),
+        _ if let Some(rest) = ty.strip_prefix("List ") => Some(SymTy::App(
+            "List".to_string(),
+            vec![sym_ty_from_source_type_name(rest)?],
+        )),
+        _ if let Some((left, right)) = split_top_level(ty, '×') => Some(SymTy::App(
+            "Tuple".to_string(),
+            vec![
+                sym_ty_from_source_type_name(left)?,
+                sym_ty_from_source_type_name(right)?,
+            ],
+        )),
         _ if sym_plan_simple_token(ty) => Some(SymTy::Named(ty.to_string())),
         _ => None,
     }
+}
+
+fn strip_balanced_outer_parens(mut value: &str) -> &str {
+    loop {
+        let Some(inner) = value.strip_prefix('(').and_then(|v| v.strip_suffix(')')) else {
+            return value;
+        };
+        let mut depth = 0i32;
+        let balanced = inner.chars().all(|ch| {
+            match ch {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                _ => {}
+            }
+            depth >= 0
+        }) && depth == 0;
+        if !balanced {
+            return value;
+        }
+        value = inner.trim();
+    }
+}
+
+fn split_top_level(value: &str, needle: char) -> Option<(&str, &str)> {
+    let mut depth = 0i32;
+    for (at, ch) in value.char_indices() {
+        match ch {
+            '(' | '<' => depth += 1,
+            ')' | '>' => depth -= 1,
+            _ if ch == needle && depth == 0 => {
+                return Some((value[..at].trim(), value[at + ch.len_utf8()..].trim()));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn parse_sym_ty_plan_tag(tag: &str) -> Option<SymTy> {
+    if let Some(name) = tag.strip_prefix("named:") {
+        return sym_plan_simple_token(name).then(|| SymTy::Named(name.to_string()));
+    }
+    let app = tag.strip_prefix("app:")?;
+    let open = app.find('[')?;
+    let name = &app[..open];
+    let args_text = app.get(open + 1..)?.strip_suffix(']')?;
+    if !sym_plan_simple_token(name) || args_text.is_empty() {
+        return None;
+    }
+    let mut args = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0i32;
+    for (at, ch) in args_text.char_indices() {
+        match ch {
+            '[' => depth += 1,
+            ']' => depth -= 1,
+            ';' if depth == 0 => {
+                args.push(SymTy::from_plan_tag(&args_text[start..at])?);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    args.push(SymTy::from_plan_tag(&args_text[start..])?);
+    Some(SymTy::App(name.to_string(), args))
 }
 
 fn sym_plan_simple_token(value: &str) -> bool {
@@ -667,6 +772,57 @@ mod sym_plan_defs_tests {
                 ctor_name,
                 args,
             } if type_name == "Op" && ctor_name == "Add" && args == &[SymValueId(0)]
+        ));
+    }
+
+    #[test]
+    fn list_cons_constructor_projects_generic_source_types_and_empty_tail() {
+        let cert = Cert::AdtConstructor {
+            name: "singletonEntry".to_string(),
+            self_idx: 1,
+            code_idx: 1,
+            type_idx: 1,
+            nlocals: 1,
+            carrier: 18,
+            struct_idx: 25,
+            field_count: 2,
+            arity: 1,
+            fields: vec![ConstructorField::Local(0), ConstructorField::Null],
+            ops: vec![
+                Op::LocalGet(0),
+                Op::RefNull(Some(25)),
+                Op::StructNew(25, 2),
+            ],
+        };
+        let mut model_info = ModelInfo::default();
+        model_info.fns.insert(
+            "singletonEntry".to_string(),
+            FnSig {
+                params: vec!["(String × Json)".to_string()],
+                ret: "List (String × Json)".to_string(),
+            },
+        );
+
+        let plan = adt_constructor_sym_plan_from_cert(&cert, &model_info)
+            .expect("List cons projects to a generic SymPlan");
+        let elem = SymTy::App(
+            "Tuple".to_string(),
+            vec![SymTy::String, SymTy::Named("Json".to_string())],
+        );
+        assert_eq!(plan.params, vec![elem.clone()]);
+        assert_eq!(
+            plan.result,
+            SymTy::App("List".to_string(), vec![elem.clone()])
+        );
+        assert!(matches!(
+            &plan.body.nodes[1].kind,
+            SymNodeKind::EmptyList { elem_ty } if elem_ty == &elem
+        ));
+        assert!(matches!(
+            &plan.body.nodes[2].kind,
+            SymNodeKind::Construct { type_name, ctor_name, args }
+                if type_name == "List" && ctor_name == "::"
+                    && args == &[SymValueId(0), SymValueId(1)]
         ));
     }
 

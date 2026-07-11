@@ -164,7 +164,13 @@ impl<'a> SymPlanParser<'a> {
                 require_sym_plan_token(id, "type", &type_name)?;
                 require_sym_plan_token(id, "ctor", &ctor_name)?;
                 let args = sym_plan_attr_values(id, &attrs, "args")?;
-                let expected = SymTy::Named(type_name.clone());
+                let expected = if type_name == "List" {
+                    infer_list_construct_ty(nodes, &args).ok_or_else(|| {
+                        format!("source plan node v{} has ill-typed List cons arguments", id.0)
+                    })?
+                } else {
+                    SymTy::Named(type_name.clone())
+                };
                 require_sym_plan_ty(id, &ty, &expected)?;
                 for arg in &args {
                     require_sym_plan_node_exists(nodes, *arg)?;
@@ -174,6 +180,18 @@ impl<'a> SymPlanParser<'a> {
                     ctor_name,
                     args,
                 }
+            }
+            "empty.list" => {
+                let elem_ty = attrs
+                    .get("elem")
+                    .and_then(|tag| SymTy::from_plan_tag(tag))
+                    .ok_or_else(|| format!("source plan node v{} has malformed list element type", id.0))?;
+                require_sym_plan_ty(
+                    id,
+                    &ty,
+                    &SymTy::App("List".to_string(), vec![elem_ty.clone()]),
+                )?;
+                SymNodeKind::EmptyList { elem_ty }
             }
             "project.field" => {
                 let type_name = plan_attr(FragValueId(id.0), &attrs, "type")?.to_string();
@@ -264,6 +282,13 @@ impl<'a> SymPlanParser<'a> {
     }
 }
 
+fn infer_list_construct_ty(nodes: &[SymNode], args: &[SymValueId]) -> Option<SymTy> {
+    let [head, tail] = args else { return None };
+    let head_ty = nodes.get(head.0)?.ty.clone();
+    let tail_ty = nodes.get(tail.0)?.ty.clone();
+    (tail_ty == SymTy::App("List".to_string(), vec![head_ty])).then_some(tail_ty)
+}
+
 impl SymBlock {
     fn result_ty(&self) -> Option<SymTy> {
         self.nodes
@@ -352,6 +377,7 @@ fn reject_extra_sym_plan_attrs(
         "const.string" => &["hex"],
         "prim" => &["op", "args"],
         "construct" => &["type", "ctor", "args"],
+        "empty.list" => &["elem"],
         "project.field" => &["type", "field", "value"],
         "int.const-cmp" => &["op", "value", "constant"],
         "if" => &["cond"],

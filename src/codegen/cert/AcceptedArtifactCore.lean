@@ -204,6 +204,8 @@ structure ConstructClaim where
   exportNameBytes : AverCert.WasmSlice.ByteSeq
   exportName      : String
   carrier         : Nat
+  structIdx       : Nat
+  fieldCount      : Nat
   symPlan         : SymRawPlan
   obligation      : Obligation
 
@@ -359,6 +361,7 @@ def constructPlanAccepted
     (exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
     (carrier : Nat)
+    (structIdx fieldCount : Nat)
     (symPlan : SymRawPlan)
     (plan : ConstructRawPlan)
     (obligation : Obligation) : Prop :=
@@ -367,9 +370,10 @@ def constructPlanAccepted
     AverCert.PlanCheck.checkSymRawPlan symPlan = true ∧
     AverCert.PlanCheck.constructPlanMatchesSymRawPlan symPlan plan = true ∧
     AverCert.PlanCheck.checkConstructRawPlan plan = true ∧
+    plan.fields.length = fieldCount ∧
     ∃ body codeEntry binding,
-      AverCert.PlanLower.lowerConstructBody plan = some body ∧
-      AverCert.PlanBytes.lowerConstructCodeEntry carrier plan = some codeEntry ∧
+      AverCert.PlanLower.lowerConstructBody structIdx plan = some body ∧
+      AverCert.PlanBytes.lowerConstructCodeEntry carrier structIdx plan = some codeEntry ∧
       AverCert.WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
       AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
       binding.funcIdx = obligation.self ∧
@@ -388,6 +392,8 @@ def constructClaimAccepted
         claim.exportNameBytes
         claim.exportName
         claim.carrier
+        claim.structIdx
+        claim.fieldCount
         claim.symPlan
         plan
         claim.obligation

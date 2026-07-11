@@ -258,17 +258,17 @@ def lowerStringEqBody
   else
     none
 
-def lowerConstructField : ConstructField → WInstr
+def lowerConstructField (_structIdx : Nat) : ConstructField → WInstr
   | .local index => .localGet index
   | .null => .refNull
 
-def lowerConstructFields : List ConstructField → List WInstr
+def lowerConstructFields (structIdx : Nat) : List ConstructField → List WInstr
   | [] => []
-  | field :: rest => lowerConstructField field :: lowerConstructFields rest
+  | field :: rest => lowerConstructField structIdx field :: lowerConstructFields structIdx rest
 
-def lowerConstructBody (plan : ConstructRawPlan) : Option (List WInstr) :=
+def lowerConstructBody (structIdx : Nat) (plan : ConstructRawPlan) : Option (List WInstr) :=
   if AverCert.PlanCheck.checkConstructRawPlan plan then
-    some (lowerConstructFields plan.fields ++ [.structNew plan.structIdx plan.fields.length])
+    some (lowerConstructFields structIdx plan.fields ++ [.structNew structIdx plan.fields.length])
   else
     none
 

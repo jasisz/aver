@@ -2157,13 +2157,24 @@ fn lean_expr_fragment_artifact_claims(
             continue;
         }
         if r.construct_plan_lean.is_some() {
-            let (Some(sym_plan), Some(body), Some(bytes), Some(code_idx), Some(type_idx)) = (
+            let (
+                Some(sym_plan),
+                Some(body),
+                Some(bytes),
+                Some(code_idx),
+                Some(type_idx),
+                Some(struct_idx),
+                Some(field_count),
+            ) = (
                 r.construct_sym_plan_lean.as_ref(),
                 r.construct_lowered_body_lean.as_ref(),
                 r.construct_lowered_code_entry_lean.as_ref(),
                 r.construct_code_idx,
                 r.construct_type_idx,
-            ) else {
+                r.construct_struct_idx,
+                r.construct_field_count,
+            )
+            else {
                 continue;
             };
             let export_name_bytes = lean_byte_list(r.name.as_bytes());
@@ -2173,13 +2184,14 @@ fn lean_expr_fragment_artifact_claims(
             );
             construct_claims.push(format!(
                 "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
-                 carrier := {carrier}, symPlan := (({sym_plan}) : AverCert.Schema.SymRawPlan), \
+                 carrier := {carrier}, structIdx := {struct_idx}, fieldCount := {field_count}, \
+                 symPlan := (({sym_plan}) : AverCert.Schema.SymRawPlan), \
                  obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ConstructClaim)",
                 name = r.name,
                 carrier = r.carrier,
             ));
             construct_proofs.push(format!(
-                "⟨rfl, rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
+                "⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
                  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
             ));
             continue;
