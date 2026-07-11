@@ -2002,7 +2002,7 @@ fn lean_expr_fragment_artifact_claims(
             ));
             mutual_proofs.push(format!(
                 "⟨rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
-                 ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
+                 ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
             ));
             continue;
         }
@@ -2029,7 +2029,7 @@ fn lean_expr_fragment_artifact_claims(
             ));
             recursion_proofs.push(format!(
                 "⟨rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
-                 ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
+                 ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
             ));
             continue;
         }
@@ -2113,7 +2113,7 @@ fn lean_expr_fragment_artifact_claims(
             ));
             string_proofs.push(format!(
                 "⟨rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
-                 ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
+                 ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
             ));
             continue;
         }
@@ -2155,10 +2155,11 @@ fn lean_expr_fragment_artifact_claims(
             ));
             // The code entry, signature and payload conjuncts are the binding (no
             // host/self calls), so the witness is anonymous for the code entry,
-            // binding and nlocals — each pinned by `rfl` (the two extra `rfl`s
-            // discharge the byte-derived signature and payload binds).
+            // binding; the final `rfl` pins the canonical locals count (the two
+            // preceding `rfl`s discharge the byte-derived signature and payload
+            // binds).
             verbatim_proofs.push(
-                "⟨rfl, rfl, rfl, ⟨_, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩".to_string(),
+                "⟨rfl, rfl, rfl, ⟨_, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩".to_string(),
             );
             continue;
         }
@@ -2201,7 +2202,7 @@ fn lean_expr_fragment_artifact_claims(
         );
         let proof = format!(
             "⟨rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
-             ⟨⟨rfl, rfl, rfl, rfl, rfl⟩, rfl, ⟨_, rfl⟩⟩⟩⟩"
+             ⟨⟨rfl, rfl, rfl, rfl, rfl⟩, rfl, rfl⟩⟩⟩"
         );
         if let Some(sym_plan) = r.fragment_sym_plan_lean.as_ref() {
             sym_claims.push(format!(

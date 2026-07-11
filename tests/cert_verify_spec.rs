@@ -167,6 +167,36 @@ fn aver_verify_clean_cache(artifact: &Path, cert_dir: &Path) -> (bool, String) {
     (out.status.success(), combined)
 }
 
+fn set_named_code_nlocals_to_zero(
+    module: &Path,
+    export_name: &str,
+    arity: u32,
+    canonical_nlocals: u32,
+) {
+    let src = std::fs::read_to_string(module).unwrap();
+    let def_marker = format!("def {export_name}Code : CodeTbl");
+    let start = src
+        .find(&def_marker)
+        .unwrap_or_else(|| panic!("{export_name} code table should exist"));
+    let end = start
+        + src[start..]
+            .find("\n\n/-- Runtime host wiring")
+            .unwrap_or_else(|| panic!("{export_name} code table should have a bounded definition"));
+    let header = format!("some ⟨{arity}, {canonical_nlocals},");
+    let zero_header = format!("some ⟨{arity}, 0,");
+    let code_def = &src[start..end];
+    assert!(
+        code_def.contains(&header),
+        "{export_name} canonical locals-count header changed; update the test"
+    );
+    let zeroed = code_def.replacen(&header, &zero_header, 1);
+    let mut tampered = String::with_capacity(src.len());
+    tampered.push_str(&src[..start]);
+    tampered.push_str(&zeroed);
+    tampered.push_str(&src[end..]);
+    std::fs::write(module, tampered).unwrap();
+}
+
 fn compile_cert_goals(prefix: &str) -> (PathBuf, PathBuf, PathBuf) {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir(prefix);
@@ -955,12 +985,14 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
             !ok,
             "a body that does not re-derive must be DECLINED:\n{out}"
         );
-        // Caught by the kernel witness (the code binding), AFTER the cert built
-        // green — not by lake build or a hash binding.
-        assert!(out.contains("does not bind"), "wrong reason (p):\n{out}");
+        // The acceptance predicate now pins the locals count exactly, so this
+        // mutation can trip either the shipped artifact's own acceptance `rfl`
+        // during the lake build ("did not build") or the later checker-witness
+        // code binding ("does not bind"). Both are the same fail-closed
+        // decline; the earlier stage is the stronger constraint.
         assert!(
-            !out.contains("did not build"),
-            "case (p) must build green and be caught by the witness:\n{out}"
+            out.contains("does not bind") || out.contains("did not build"),
+            "wrong reason (p):\n{out}"
         );
         assert!(
             !out.contains("CERTIFIED"),
@@ -986,7 +1018,14 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         std::fs::write(&m, planted).unwrap();
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "shadow decoy must be DECLINED:\n{out}");
-        assert!(out.contains("does not bind"), "wrong reason (q):\n{out}");
+        // The locals-count mutation can trip the shipped artifact's own
+        // acceptance `rfl` at lake build ("did not build") or the later
+        // checker-witness code binding ("does not bind") — the shadow decoy
+        // fools neither stage.
+        assert!(
+            out.contains("does not bind") || out.contains("did not build"),
+            "wrong reason (q):\n{out}"
+        );
         assert!(
             !out.contains("CERTIFIED"),
             "shadow decoy credited (q):\n{out}"
@@ -1008,7 +1047,12 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         std::fs::write(&m, planted).unwrap();
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "comment decoy must be DECLINED:\n{out}");
-        assert!(out.contains("does not bind"), "wrong reason (r):\n{out}");
+        // Same stage-agnostic decline as (q): the locals-count pin can trip at
+        // the artifact's own lake build or at the checker witness.
+        assert!(
+            out.contains("does not bind") || out.contains("did not build"),
+            "wrong reason (r):\n{out}"
+        );
         assert!(
             !out.contains("CERTIFIED"),
             "comment decoy credited (r):\n{out}"
@@ -1402,6 +1446,21 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let cert = out_dir.join("cert");
     let (ok, report) = aver_verify(&wasm, &cert);
     assert!(ok, "expected clean goals certificate to verify:\n{report}");
+
+    // Honest bytes and plan, but the standalone obligation code table claims
+    // zero locals. The expr-fragment acceptance path must pin the one carrier
+    // scratch local declared by the canonical byte lowering.
+    {
+        let dir = temp_dir("cert-expr-zero-locals");
+        copy_dir(&out_dir, &dir);
+        set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "addTwo", 1, 1);
+        let (ok, report) = aver_verify(&dir.join("cert_goals.wasm"), &dir.join("cert"));
+        assert!(
+            !ok,
+            "expr-fragment zero-locals code must be DECLINED:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     let artifact_bytes_decoy_dir = temp_dir("cert-expr-artifact-bytes-decoy");
     copy_dir(&out_dir, &artifact_bytes_decoy_dir);
@@ -2248,6 +2307,20 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         ok,
         "expected clean stringconcat certificate to verify:\n{report}"
     );
+
+    // Honest bytes and plan, zero locals in the obligation only: String.concat
+    // canonically declares one carrier scratch local.
+    {
+        let dir = temp_dir("cert-stringconcat-zero-locals");
+        copy_dir(&out_dir, &dir);
+        set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "shout", 1, 1);
+        let (ok, report) = aver_verify(&dir.join("stringconcat.wasm"), &dir.join("cert"));
+        assert!(
+            !ok,
+            "String.concat zero-locals code must be DECLINED:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     assert!(
         report.contains("2 certified exports"),
         "stringconcat should certify shout plus bump:\n{report}"
@@ -2666,10 +2739,14 @@ fn adt_witness_body_mutation_is_declined() {
 
     let (ok, out) = aver_verify(&out_dir.join("user_record.wasm"), &out_dir.join("cert"));
     assert!(!ok, "mutated ADT witness body must be DECLINED:\n{out}");
-    assert!(out.contains("does not bind"), "wrong reason:\n{out}");
+    // The acceptance predicate now pins the locals count exactly, so this
+    // mutation can trip either the shipped artifact's own acceptance `rfl`
+    // during the lake build ("did not build") or the later checker-witness
+    // code binding ("does not bind"). Both are the same fail-closed decline;
+    // the earlier stage is the stronger constraint.
     assert!(
-        !out.contains("did not build"),
-        "must build green and be caught by the witness:\n{out}"
+        out.contains("does not bind") || out.contains("did not build"),
+        "wrong reason:\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),
@@ -3051,6 +3128,20 @@ fn cert_verify_declines_tampered_recursion_plan() {
     let (ok, report) = aver_verify(&wasm, &cert);
     assert!(ok, "honest recursion certificate should verify:\n{report}");
 
+    // Honest bytes and plan, zero locals in the obligation only: recursion
+    // canonically declares one carrier scratch local.
+    {
+        let dir = temp_dir("cert-recursion-zero-locals");
+        copy_dir(&out_dir, &dir);
+        set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "sumFrom", 1, 1);
+        let (ok, report) = aver_verify(&dir.join("recgen.wasm"), &dir.join("cert"));
+        assert!(
+            !ok,
+            "recursion zero-locals code must be DECLINED:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
     // (a) descent role/target swap: `sub(n, box 1)` becomes `add(n, box 1)`, so
     //     the descent computes `n + 1` instead of `n - 1` (byte `10 0c -> 10 0b`).
@@ -3144,6 +3235,17 @@ fn cert_verify_declines_tampered_mutual_plan() {
     let cert = out_dir.join("cert");
     let (ok, report) = aver_verify(&wasm, &cert);
     assert!(ok, "honest mutual certificate should verify:\n{report}");
+
+    // Honest bytes and plan, zero locals in the obligation only: every mutual
+    // member canonically declares one carrier scratch local.
+    {
+        let dir = temp_dir("cert-mutual-zero-locals");
+        copy_dir(&out_dir, &dir);
+        set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "isEven", 1, 1);
+        let (ok, report) = aver_verify(&dir.join("mutual.wasm"), &dir.join("cert"));
+        assert!(!ok, "mutual zero-locals code must be DECLINED:\n{report}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
     // (a) member-call retargeted OUTSIDE the byte-derived SCC set ({1, 2}): the
@@ -3501,6 +3603,17 @@ fn cert_verify_declines_tampered_verbatim_plan() {
     let cert = out_dir.join("cert");
     let (ok, report) = aver_verify(&wasm, &cert);
     assert!(ok, "honest verbatim certificate should verify:\n{report}");
+
+    // Honest bytes and plan, zero locals in the obligation only. `wrapItems`
+    // projects a field, so its canonical verbatim layout has three locals.
+    {
+        let dir = temp_dir("cert-verbatim-zero-locals");
+        copy_dir(&out_dir, &dir);
+        set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "wrapItems", 1, 3);
+        let (ok, report) = aver_verify(&dir.join("verbatimgen.wasm"), &dir.join("cert"));
+        assert!(!ok, "verbatim zero-locals code must be DECLINED:\n{report}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
     // (a) wrong `ref.test` type index: `wrapItems` tests struct type 0 -> 1.
