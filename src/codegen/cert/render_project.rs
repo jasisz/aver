@@ -792,7 +792,7 @@ fn render_artifact_expr_fragment_claims(
                 );
                 let proof = format!(
                     "⟨rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨⟨rfl, rfl, rfl, rfl, rfl⟩, rfl, ⟨_, rfl⟩⟩⟩⟩"
+                     ⟨⟨rfl, rfl, rfl, rfl, rfl⟩, rfl, rfl⟩⟩⟩"
                 );
                 if expr_fragment_source_plan(source_plan, plan).is_some() {
                     sym_claims.push(format!(
@@ -842,7 +842,7 @@ fn render_artifact_expr_fragment_claims(
                 ));
                 string_proofs.push(format!(
                     "⟨rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
+                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }
             Cert::StringEqVerbatimMatch {
@@ -956,7 +956,7 @@ fn render_artifact_expr_fragment_claims(
                 ));
                 recursion_proofs.push(format!(
                     "⟨rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
+                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }
             Cert::MutualRecursion {
@@ -995,7 +995,7 @@ fn render_artifact_expr_fragment_claims(
                 ));
                 mutual_proofs.push(format!(
                     "⟨rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩⟩"
+                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }
             Cert::VerbatimWidenedMatch {
@@ -1017,10 +1017,11 @@ fn render_artifact_expr_fragment_claims(
                 ));
                 // The code entry, signature and payload conjuncts are the binding
                 // (no host/self calls), so the witness is anonymous for the code
-                // entry, binding and nlocals — each pinned by `rfl` (the two extra
-                // `rfl`s discharge the byte-derived signature and payload binds).
+                // entry and binding; the final `rfl` pins the canonical locals
+                // count (the two preceding `rfl`s discharge the byte-derived
+                // signature and payload binds).
                 verbatim_proofs.push(
-                    "⟨rfl, rfl, rfl, ⟨_, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩"
+                    "⟨rfl, rfl, rfl, ⟨_, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
                         .to_string(),
                 );
             }

@@ -17,30 +17,15 @@ namespace AverCert.AcceptedArtifact
 open AverCert.Schema
 open CertPrelude
 
-def exprFragmentObligationAccepted
-    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
-    (exportName : String)
-    (carrier : Nat)
-    (plan : ExprFragmentRawPlan)
-    (body : List WInstr)
-    (codeEntry : List Nat)
-    (binding : AverCert.WasmSlice.FuncBinding)
-    (obligation : Obligation) : Prop :=
-  AverCert.ExprFragmentAccepted.accepted
-      wasmBytes exportNameBytes carrier plan body codeEntry binding ∧
-  obligation.export_ = exportName ∧
-  obligation.carrier = carrier ∧
-  obligation.self = binding.funcIdx ∧
-  ∃ nlocals,
-    obligation.code binding.funcIdx =
-      some { arity := plan.params.length, nlocals := nlocals, body := body }
+/-- Canonical locals count declared by `lowerExprFragmentBodyBytes`: every
+    accepted expression fragment has one carrier scratch local. -/
+def exprFragmentNLocals (_plan : ExprFragmentRawPlan) : Nat := 1
 
-/-- Artifact-level acceptance for one expression-fragment export. Unlike
-    `exprFragmentObligationAccepted`, this does not accept checker-rendered
-    intermediate values as parameters. The body, canonical code-entry bytes, and
-    function binding are witnesses to the audited Lean predicate
-    `ExprFragmentAccepted.accepted`. This is the v2-shaped API: raw artifact
-    bytes + raw plan + schema obligation. -/
+/-- Artifact-level acceptance for one expression-fragment export. The body,
+    canonical code-entry bytes, and function binding are witnesses to the
+    audited Lean predicate `ExprFragmentAccepted.accepted`, existentially
+    quantified rather than accepted as checker-rendered parameters. This is the
+    v2-shaped API: raw artifact bytes + raw plan + schema obligation. -/
 def exprFragmentPlanAccepted
     (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
@@ -53,9 +38,9 @@ def exprFragmentPlanAccepted
     AverCert.ExprFragmentAccepted.accepted
       wasmBytes exportNameBytes carrier plan body codeEntry binding ∧
     obligation.self = binding.funcIdx ∧
-    ∃ nlocals,
-      obligation.code binding.funcIdx =
-        some { arity := plan.params.length, nlocals := nlocals, body := body }
+    obligation.code binding.funcIdx =
+      some { arity := plan.params.length,
+             nlocals := exprFragmentNLocals plan, body := body }
 
 /-- Artifact-level acceptance for one source-level symbolic fragment export.
     The source plan is still untrusted data: the audited checker/encoder must
@@ -105,6 +90,10 @@ def symFragmentClaimAccepted
     claim.plan
     claim.obligation
 
+/-- Canonical locals count declared by `lowerStringConcatBodyBytes`: the
+    concatenation lowering always declares one carrier scratch local. -/
+def stringConcatNLocals (_plan : StringConcatRawPlan) : Nat := 1
+
 /-- Artifact-level acceptance for one String.concat export. The raw plan carries
     source-level chunks plus the encoder's data-index binding; the audited Lean
     lowerers rebuild both the semantic `WInstr` body and exact code-entry bytes,
@@ -129,9 +118,8 @@ def stringConcatPlanAccepted
     AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
     binding.codeEntry = codeEntry ∧
     obligation.self = binding.funcIdx ∧
-    ∃ nlocals,
-      obligation.code binding.funcIdx =
-        some { arity := 1, nlocals := nlocals, body := body }
+    obligation.code binding.funcIdx =
+      some { arity := 1, nlocals := stringConcatNLocals plan, body := body }
 
 def stringEqPlanAccepted
     (wasmBytes : AverCert.WasmSlice.ByteSeq)
@@ -374,6 +362,10 @@ def constructClaimAccepted
         claim.obligation
   | none => False
 
+/-- Canonical locals count declared by `lowerRecursionBodyBytes`: every
+    accepted fuel-recursion shape has one carrier scratch local. -/
+def recursionNLocals (_plan : RecursionRawPlan) : Nat := 1
+
 /-- Artifact-level acceptance for one fuel-recursion export. The
     `RecursionRawPlan` is checked (generic block typing AND the
     context-sensitive fuel-recursion grammar: every `selfCall` must target the
@@ -404,9 +396,9 @@ def recursionPlanAccepted
       AverCert.PlanCheck.checkRecursionPlanShape binding.funcIdx hostTable plan = true ∧
       AverCert.WasmSlice.funcTypeMatches
         wasmBytes binding.typeIdx plan.params.length carrier = true ∧
-      ∃ nlocals,
-        obligation.code binding.funcIdx =
-          some { arity := plan.params.length, nlocals := nlocals, body := body }
+      obligation.code binding.funcIdx =
+        some { arity := plan.params.length,
+               nlocals := recursionNLocals plan, body := body }
 
 def recursionPlanForExport
     (exportName : String) : List (String × RecursionRawPlan) →
@@ -433,6 +425,10 @@ def recursionClaimAccepted
         plan
         claim.obligation
   | none => False
+
+/-- Canonical locals count declared by `lowerMutualBodyBytes`: every accepted
+    mutual-recursion member shape has one carrier scratch local. -/
+def mutualNLocals (_plan : MutualRawPlan) : Nat := 1
 
 /-- Artifact-level acceptance for one mutual-recursion member export. The
     `MutualRawPlan` is checked (generic block typing AND the context-sensitive
@@ -466,9 +462,9 @@ def mutualPlanAccepted
       AverCert.PlanCheck.checkMutualPlanShape memberSet hostTable plan = true ∧
       AverCert.WasmSlice.funcTypeMatches
         wasmBytes binding.typeIdx plan.params.length carrier = true ∧
-      ∃ nlocals,
-        obligation.code binding.funcIdx =
-          some { arity := plan.params.length, nlocals := nlocals, body := body }
+      obligation.code binding.funcIdx =
+        some { arity := plan.params.length,
+               nlocals := mutualNLocals plan, body := body }
 
 def mutualPlanForExport
     (exportName : String) : List (String × MutualRawPlan) →
@@ -520,6 +516,12 @@ def verbatimPayloadsBound
   | .test _ hit rest =>
       verbatimLeafPayloadBound wasmBytes hit && verbatimPayloadsBound wasmBytes rest
 
+/-- Canonical locals count declared by `lowerVerbatimLocalsBytes`: projecting
+    plans declare the field scratch, scrutinee, and carrier locals; all other
+    plans declare only the scrutinee and carrier locals. -/
+def verbatimNLocals (plan : VerbatimRawPlan) : Nat :=
+  if AverCert.PlanCheck.dispatchHasProjection plan.body then 3 else 2
+
 /-- Artifact-level acceptance for one verbatim `ref.test`-dispatch export. The
     `VerbatimRawPlan` is checked structurally (`checkVerbatimRawPlan`), lowered to
     the match `WInstr` body and its exact code-entry bytes, and those bytes are
@@ -553,10 +555,9 @@ def verbatimPlanAccepted
       AverCert.WasmSlice.verbatimFuncTypeMatches
         wasmBytes binding.typeIdx plan.resultHeapTy = true ∧
       verbatimPayloadsBound wasmBytes plan.body = true ∧
-      ∃ nlocals,
-        obligation.code binding.funcIdx =
-          some { arity := 1, nlocals := nlocals,
-                 body := AverCert.PlanLower.lowerVerbatimBody plan }
+      obligation.code binding.funcIdx =
+        some { arity := 1, nlocals := verbatimNLocals plan,
+               body := AverCert.PlanLower.lowerVerbatimBody plan }
 
 def verbatimPlanForExport
     (exportName : String) : List (String × VerbatimRawPlan) →
