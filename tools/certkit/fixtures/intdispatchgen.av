@@ -1,0 +1,40 @@
+module IntDispatchGen
+    intent =
+        "Int-face Cod := Int ADT-match byte-origin plans: a widened Int match with a boxed-0 default and a general variant dispatch exercising every arm leaf (sub const-first, add payload-first, projection, non-zero default)."
+    exposes [Box, Signal, boxInt, gauge]
+
+type Box
+  IntBox(Int)
+  StrBox(String)
+  Empty
+
+type Signal
+  Lo(Int)
+  Hi(Int)
+  Mid(Int)
+  Off
+
+fn boxInt(b: Box) -> Int
+  ? "Widened Int match over a selected payload variant."
+  match b
+    Box.IntBox(n) -> n
+    _ -> 0
+
+fn gauge(s: Signal) -> Int
+  ? "General ADT variant dispatch with mixed arm semantics."
+  match s
+    Signal.Lo(x) -> 0 - x
+    Signal.Hi(x) -> x + 9
+    Signal.Mid(x) -> x
+    Signal.Off -> 7
+
+verify boxInt
+    boxInt(Box.IntBox(42)) => 42
+    boxInt(Box.StrBox("x")) => 0
+    boxInt(Box.Empty) => 0
+
+verify gauge
+    gauge(Signal.Lo(4)) => -4
+    gauge(Signal.Hi(1)) => 10
+    gauge(Signal.Mid(5)) => 5
+    gauge(Signal.Off) => 7

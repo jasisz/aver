@@ -414,6 +414,15 @@ fn render_manifest_lean(
         })
         .collect::<Vec<_>>()
         .join(", ");
+    let int_dispatch_plans = analysis
+        .certs
+        .iter()
+        .filter_map(|c| {
+            int_dispatch_plan_from_cert(c)
+                .map(|_| format!("({}, Plans.{}IntDispatchPlan)", lean_str(c.name()), c.name()))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     s.push_str(&format!(
         "def manifest : Schema.Manifest :=\n  \
          {{ subject :=\n      \
@@ -431,6 +440,7 @@ fn render_manifest_lean(
          recursionPlans := [{recursion_plans}],\n    \
          mutualPlans := [{mutual_plans}],\n    \
          verbatimPlans := [{verbatim_plans}],\n    \
+         intDispatchPlans := [{int_dispatch_plans}],\n    \
          obligations := [{obligations}] }}\n\n\
          end AverCert\n",
     ));
@@ -761,6 +771,11 @@ fn artifact_bridge_profile(c: &Cert, model_info: &ModelInfo) -> &'static str {
         }
         Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. }
             if verbatim_plan_from_cert(c).is_some() =>
+        {
+            "accepted-artifact-v1"
+        }
+        Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. }
+            if int_dispatch_plan_from_cert(c).is_some() =>
         {
             "accepted-artifact-v1"
         }

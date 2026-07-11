@@ -199,6 +199,18 @@ pub struct RederivedObligation {
     /// lowered-body/code-entry companion fields are needed: the byte-equality
     /// gate is the whole soundness binding and the claim's witness is anonymous.
     pub verbatim_plan_lean: Option<String>,
+    /// For `int-dispatch-v1` (a `Cod := Int` ADT-match: general variant
+    /// dispatch or widened Int match), the byte-derived plan rendered as a Lean
+    /// `IntDispatchRawPlan` term. `aver cert verify` pins
+    /// `manifest.intDispatchPlans` to this checker-rendered term. The claim's
+    /// witness is anonymous like the verbatim family's (no code/type index is
+    /// carried); unlike it the arms consume host contracts, so the claim also
+    /// carries the byte-derived role table below.
+    pub int_dispatch_plan_lean: Option<String>,
+    /// For `int-dispatch-v1`, the per-export byte-derived host-role table
+    /// (box, plus add/sub exactly when wired) rendered as the Lean
+    /// `List (HostRole × Nat)` literal the claim carries.
+    pub int_dispatch_host_table_lean: Option<String>,
 }
 
 pub struct RederivedCertificate {
@@ -884,6 +896,13 @@ fn rederive_certificate_inner(
             },
             verbatim_plan_lean: verbatim_plan_from_cert(c)
                 .map(|plan| verbatim_plan_lean_value(&plan)),
+            int_dispatch_plan_lean: int_dispatch_plan_from_cert(c)
+                .map(|plan| int_dispatch_plan_lean_value(&plan)),
+            int_dispatch_host_table_lean: match int_dispatch_plan_from_cert(c) {
+                Some(_) => int_dispatch_host_table_from_cert(c)
+                    .map(|hosts| int_dispatch_host_table_lean_value(&hosts)),
+                None => None,
+            },
         })
         .collect();
     Ok(RederivedCertificate {

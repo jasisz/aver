@@ -164,12 +164,12 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
-        Some(18),
+        Some(21),
         "AcceptedArtifact coverage changed; update this migration counter deliberately"
     );
     assert_eq!(
         manifest["artifact_bridge_counts"]["legacy-witness-v1"].as_u64(),
-        Some((expected.len() - 18) as u64),
+        Some((expected.len() - 21) as u64),
         "legacy witness count changed; update this migration counter deliberately"
     );
     let expected_bridge = |class: &str| match class {
@@ -179,6 +179,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         | "verbatim-string-concat"
         | "verbatim-widened-match"
         | "verbatim-variant-dispatch"
+        | "variant-dispatch"
+        | "widened-int-match"
         | "self-recursive"
         | "multi-argument self-recursive"
         | "mutual-recursive" => "accepted-artifact-v1",

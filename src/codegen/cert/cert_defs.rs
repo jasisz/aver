@@ -98,6 +98,13 @@ enum Cert {
         /// Struct type index of the projected (integer-payload) variant.
         hit_variant_idx: u32,
         box_idx: u32,
+        /// Raw code-entry bytes of the export. The `int-dispatch-v1` claim is
+        /// emitted ONLY when the canonical plan lowering reproduces exactly
+        /// these bytes (otherwise the export stays on the legacy witness
+        /// route), exactly like `Cert::VerbatimWidenedMatch::code_entry_bytes`.
+        /// The claim binds the export by name (anonymous `FuncBinding`
+        /// witness), so no code/type index is carried.
+        code_entry_bytes: Vec<u8>,
         ops: Vec<Op>,
     },
     /// Non-recursive two-branch match projecting one variant's first field
@@ -223,6 +230,9 @@ enum Cert {
         arms: Vec<(u32, ArmLeaf)>,
         /// The terminal else: a boxed integer constant.
         default_k: i64,
+        /// Raw code-entry bytes of the export; see
+        /// `WidenedIntMatch::code_entry_bytes`.
+        code_entry_bytes: Vec<u8>,
         ops: Vec<Op>,
     },
     /// Cross-function composition: a non-recursive `Int -> Int` caller whose body

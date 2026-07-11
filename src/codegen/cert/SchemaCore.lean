@@ -278,6 +278,58 @@ structure VerbatimRawPlan where
   body           : VerbatimDispatch
 deriving Repr
 
+/-- The host-helper role an Int-face dispatch arm combines its projected
+    payload through (`int-dispatch-v1`). Deliberately narrower than `HostRole`:
+    an arm combinator is `add` or `sub`, never `box` (boxing appears only at the
+    fixed positions the lowering emits it), so the illegal state is
+    unrepresentable rather than checked. -/
+inductive IntDispatchRole where
+  | add
+  | sub
+deriving Repr, DecidableEq
+
+/-- One hit arm of an Int-face `ref.test` dispatch (`int-dispatch-v1`,
+    `Cod := Int`). Every arm projects the tested variant's first (Int-carrier)
+    field and spills it through its own scratch local; the leaf then either
+    returns it or combines it with a boxed integer constant through a contracted
+    host helper. The resolved wasm indices of the box/add/sub helpers are NOT
+    plan data: the lowerers take the byte-derived host-role table as a
+    parameter, so the plan can only name roles. -/
+inductive IntDispatchLeaf where
+  /-- Return the projected payload: `… localSet F; localGet F`. -/
+  | proj
+  /-- Combine the projected payload with the boxed constant `k` through the
+      `role` helper. `constFirst` selects the operand order `k ⊕ x` (the spill
+      local defers the payload past the constant) vs `x ⊕ k`. -/
+  | hostOp (role : IntDispatchRole) (k : Int) (constFirst : Bool)
+deriving Repr
+
+/-- A right-nested Int-face `ref.test` dispatch cascade over the spilled
+    scrutinee. Each `test` reads the scrutinee local and branches on
+    `ref.test tyIdx`; the terminal `default` is a boxed integer constant
+    (`i64.const k; call box`). The scrutinee/field scratch locals are NOT plan
+    data: they are a fixed function of the arm count (arm `i` spills to local
+    `i+1`, the scrutinee is local `armCount+1`), exactly what the lowerers
+    compute. -/
+inductive IntDispatchCascade where
+  | default (k : Int)
+  | test (tyIdx : Nat) (hit : IntDispatchLeaf) (rest : IntDispatchCascade)
+deriving Repr
+
+/-- Raw, untrusted Int-face `ref.test`-dispatch plan (`int-dispatch-v1`, the
+    `Cod := Int` ADT-match families: the general variant dispatch and the
+    widened Int match). A byte-origin veneer: the `cases`-spine proof face, the
+    Int-valued model and the emitted `Module.lean` body literal are unchanged,
+    so the plan claim never touches the proof. Like `verbatim-plan-v1` the
+    multi-use scrutinee is spilled to a scratch local (which pure ANF
+    `FragBlock` cannot express); unlike it the arms consume contracted host
+    helpers, whose indices are context (the claim's byte-derived role table) —
+    never plan data. -/
+structure IntDispatchRawPlan where
+  profile : String
+  body    : IntDispatchCascade
+deriving Repr
+
 /-- One String.concat literal chunk. `bytes` is the source-level content; `dataIdx`
     is the target binding needed to lower back to exact `array.new_data` code
     bytes. A later self-checking parser can derive `dataIdx` from the module's
@@ -430,6 +482,7 @@ structure Manifest where
   recursionPlans : List (String × RecursionRawPlan)
   mutualPlans : List (String × MutualRawPlan)
   verbatimPlans : List (String × VerbatimRawPlan)
+  intDispatchPlans : List (String × IntDispatchRawPlan)
   obligations : List Obligation
 
 /-- The artifact-independent part of the audited certificate proposition:

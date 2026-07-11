@@ -1699,6 +1699,23 @@ fn lean_verbatim_plan_pairs(rederived: &[cert::RederivedObligation]) -> String {
     format!("[ {inner} ]")
 }
 
+/// A Lean list literal of `(export name, IntDispatchRawPlan)` pairs for
+/// byte-first Int-face `ref.test`-dispatch plans. These terms are
+/// checker-rendered from the byte-derived match holes, never copied from
+/// attacker Lean text.
+fn lean_int_dispatch_plan_pairs(rederived: &[cert::RederivedObligation]) -> String {
+    let inner = rederived
+        .iter()
+        .filter_map(|r| {
+            r.int_dispatch_plan_lean
+                .as_ref()
+                .map(|plan| format!("(\"{}\", {plan})", r.name))
+        })
+        .collect::<Vec<_>>()
+        .join(",\n   ");
+    format!("[ {inner} ]")
+}
+
 /// A Lean list literal of `(export name, StringConcatRawPlan)` pairs for
 /// source-level `String.concat` witnesses. These terms are checker-rendered
 /// from verified sidecars, never copied from attacker Lean text.
@@ -1919,6 +1936,7 @@ struct LeanExprFragmentArtifactClaims {
     recursion_claims: String,
     mutual_claims: String,
     verbatim_claims: String,
+    int_dispatch_claims: String,
     obligation_proof: String,
     sym_proof: String,
     string_eq_proof: String,
@@ -1927,6 +1945,7 @@ struct LeanExprFragmentArtifactClaims {
     recursion_proof: String,
     mutual_proof: String,
     verbatim_proof: String,
+    int_dispatch_proof: String,
 }
 
 fn lean_expr_fragment_artifact_claims(
@@ -1941,6 +1960,7 @@ fn lean_expr_fragment_artifact_claims(
     let mut recursion_claims = Vec::new();
     let mut mutual_claims = Vec::new();
     let mut verbatim_claims = Vec::new();
+    let mut int_dispatch_claims = Vec::new();
     let mut sym_proofs = Vec::new();
     let mut string_eq_proofs = Vec::new();
     let mut string_proofs = Vec::new();
@@ -1948,6 +1968,7 @@ fn lean_expr_fragment_artifact_claims(
     let mut recursion_proofs = Vec::new();
     let mut mutual_proofs = Vec::new();
     let mut verbatim_proofs = Vec::new();
+    let mut int_dispatch_proofs = Vec::new();
     for r in rederived {
         if r.mutual_plan_lean.is_some() {
             let (
@@ -2141,6 +2162,28 @@ fn lean_expr_fragment_artifact_claims(
             );
             continue;
         }
+        if r.int_dispatch_plan_lean.is_some() {
+            let Some(host_table) = r.int_dispatch_host_table_lean.as_ref() else {
+                continue;
+            };
+            let export_name_bytes = lean_byte_list(r.name.as_bytes());
+            int_dispatch_claims.push(format!(
+                "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", \
+                 carrier := {carrier}, hostTable := {host_table}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.IntDispatchClaim)",
+                name = r.name,
+                carrier = r.carrier,
+            ));
+            // The code-entry and signature conjuncts plus the role-table
+            // parameterization are the binding, so the witness is anonymous for
+            // the body, code entry, binding and nlocals — each pinned by `rfl`
+            // (the extra leading `rfl` discharges the host-table distinctness
+            // bind, the trailing one the signature bind).
+            int_dispatch_proofs.push(
+                "⟨rfl, rfl, rfl, rfl, ⟨_, _, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩⟩⟩"
+                    .to_string(),
+            );
+            continue;
+        }
         let (Some(_plan), Some(body), Some(bytes), Some(code_idx), Some(type_idx)) = (
             r.fragment_plan_lean.as_ref(),
             r.fragment_lowered_body_lean.as_ref(),
@@ -2207,13 +2250,19 @@ fn lean_expr_fragment_artifact_claims(
     } else {
         format!("[\n  {}\n]", verbatim_claims.join(",\n  "))
     };
+    let int_dispatch_claims = if int_dispatch_claims.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[\n  {}\n]", int_dispatch_claims.join(",\n  "))
+    };
     let obligation_proof_count = sym_proofs.len()
         + string_eq_proofs.len()
         + string_proofs.len()
         + construct_proofs.len()
         + recursion_proofs.len()
         + mutual_proofs.len()
-        + verbatim_proofs.len();
+        + verbatim_proofs.len()
+        + int_dispatch_proofs.len();
     let obligation_proof =
         (0..obligation_proof_count).fold("trivial".to_string(), |acc, _| format!("⟨rfl, {acc}⟩"));
     let sym_proof = sym_proofs
@@ -2258,6 +2307,12 @@ fn lean_expr_fragment_artifact_claims(
         .fold("trivial".to_string(), |acc, proof| {
             format!("⟨{proof}, {acc}⟩")
         });
+    let int_dispatch_proof = int_dispatch_proofs
+        .into_iter()
+        .rev()
+        .fold("trivial".to_string(), |acc, proof| {
+            format!("⟨{proof}, {acc}⟩")
+        });
     LeanExprFragmentArtifactClaims {
         sym_claims,
         string_eq_claims,
@@ -2266,6 +2321,7 @@ fn lean_expr_fragment_artifact_claims(
         recursion_claims,
         mutual_claims,
         verbatim_claims,
+        int_dispatch_claims,
         obligation_proof,
         sym_proof,
         string_eq_proof,
@@ -2274,9 +2330,11 @@ fn lean_expr_fragment_artifact_claims(
         recursion_proof,
         mutual_proof,
         verbatim_proof,
+        int_dispatch_proof,
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lean_artifact_data_literal(
     sym_claims: &str,
     string_eq_claims: &str,
@@ -2285,6 +2343,7 @@ fn lean_artifact_data_literal(
     recursion_claims: &str,
     mutual_claims: &str,
     verbatim_claims: &str,
+    int_dispatch_claims: &str,
 ) -> String {
     format!(
         "({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, \
@@ -2294,7 +2353,8 @@ fn lean_artifact_data_literal(
          constructClaims := ({construct_claims} : List AverCert.AcceptedArtifact.ConstructClaim), \
          recursionClaims := ({recursion_claims} : List AverCert.AcceptedArtifact.RecursionClaim), \
          mutualRecursionClaims := ({mutual_claims} : List AverCert.AcceptedArtifact.MutualRecursionClaim), \
-         verbatimClaims := ({verbatim_claims} : List AverCert.AcceptedArtifact.VerbatimClaim) }} : \
+         verbatimClaims := ({verbatim_claims} : List AverCert.AcceptedArtifact.VerbatimClaim), \
+         intDispatchClaims := ({int_dispatch_claims} : List AverCert.AcceptedArtifact.IntDispatchClaim) }} : \
          AverCert.AcceptedArtifact.ArtifactData)"
     )
 }
@@ -2340,9 +2400,13 @@ fn lean_fragment_acceptance_proof_block(
             "{indent}  AverCert.AcceptedArtifact.verbatimClaimAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.verbatimPlanForExport,\n",
             "{indent}  AverCert.AcceptedArtifact.verbatimPlanAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.intDispatchClaimsAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.intDispatchClaimAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.intDispatchPlanForExport,\n",
+            "{indent}  AverCert.AcceptedArtifact.intDispatchPlanAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "{indent}  AverCert.ExprFragmentAccepted.accepted]\n",
-            "{indent}exact ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, {verbatim_proof}⟩⟩⟩⟩⟩⟩\n"
+            "{indent}exact ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, {int_dispatch_proof}⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         indent = indent,
         sym_proof = witness.sym_proof,
@@ -2351,7 +2415,8 @@ fn lean_fragment_acceptance_proof_block(
         construct_proof = witness.construct_proof,
         recursion_proof = witness.recursion_proof,
         mutual_proof = witness.mutual_proof,
-        verbatim_proof = witness.verbatim_proof
+        verbatim_proof = witness.verbatim_proof,
+        int_dispatch_proof = witness.int_dispatch_proof
     )
 }
 
@@ -2370,6 +2435,7 @@ fn lean_expr_fragment_obligation_acceptance_pins(
         &witness.recursion_claims,
         &witness.mutual_claims,
         &witness.verbatim_claims,
+        &witness.int_dispatch_claims,
     );
     format!(
         concat!(
@@ -2398,6 +2464,7 @@ fn lean_accepted_artifact_witness(
         &witness.recursion_claims,
         &witness.mutual_claims,
         &witness.verbatim_claims,
+        &witness.int_dispatch_claims,
     );
     let checker_proof = format!(
         concat!(
@@ -2427,6 +2494,8 @@ fn lean_accepted_artifact_witness(
             "    AverCert.AcceptedArtifact.mutualManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.verbatimClaimExportNames,\n",
             "    AverCert.AcceptedArtifact.verbatimManifestPlanNames,\n",
+            "    AverCert.AcceptedArtifact.intDispatchClaimExportNames,\n",
+            "    AverCert.AcceptedArtifact.intDispatchManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.acceptedFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedSymFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedStringEqFragments,\n",
@@ -2435,6 +2504,7 @@ fn lean_accepted_artifact_witness(
             "    AverCert.AcceptedArtifact.acceptedRecursionFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedMutualRecursionFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedVerbatimFragments,\n",
+            "    AverCert.AcceptedArtifact.acceptedIntDispatchFragments,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
@@ -2462,9 +2532,13 @@ fn lean_accepted_artifact_witness(
             "    AverCert.AcceptedArtifact.verbatimClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.verbatimPlanForExport,\n",
             "    AverCert.AcceptedArtifact.verbatimPlanAccepted,\n",
+            "    AverCert.AcceptedArtifact.intDispatchClaimsAccepted,\n",
+            "    AverCert.AcceptedArtifact.intDispatchClaimAccepted,\n",
+            "    AverCert.AcceptedArtifact.intDispatchPlanForExport,\n",
+            "    AverCert.AcceptedArtifact.intDispatchPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨{final_witness}, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, {verbatim_proof}⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨{final_witness}, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, {int_dispatch_proof}⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         final_witness = FINAL_WITNESS_THEOREM,
         obligation_proof = witness.obligation_proof,
@@ -2474,7 +2548,8 @@ fn lean_accepted_artifact_witness(
         construct_proof = witness.construct_proof,
         recursion_proof = witness.recursion_proof,
         mutual_proof = witness.mutual_proof,
-        verbatim_proof = witness.verbatim_proof
+        verbatim_proof = witness.verbatim_proof,
+        int_dispatch_proof = witness.int_dispatch_proof
     );
     format!(
         concat!(
@@ -2538,6 +2613,7 @@ fn checker_witness(
     let recursion_plans = lean_recursion_plan_pairs(rederived);
     let mutual_plans = lean_mutual_plan_pairs(rederived);
     let verbatim_plans = lean_verbatim_plan_pairs(rederived);
+    let int_dispatch_plans = lean_int_dispatch_plan_pairs(rederived);
     let sym_fragment_encoded_plans = lean_sym_fragment_encoded_plan_pairs(rederived);
     let expr_fragment_lower_pins = lean_expr_fragment_lower_pins(rederived);
     let expr_fragment_code_entry_pins = lean_expr_fragment_code_entry_pins(rederived);
@@ -2645,6 +2721,12 @@ fn checker_witness(
          -- holes, and each passes the audited Lean structural checker.\n\
          example : AverCert.manifest.verbatimPlans = {verbatim_plans} := rfl\n\
          example : AverCert.manifest.verbatimPlans.all (fun p => AverCert.PlanCheck.checkVerbatimRawPlan p.2) = true := rfl\n\n\
+         -- Int-face dispatch byte-origin plans: the manifest's Lean-data\n\
+         -- `int-dispatch-v1` plans are pinned to checker-rendered\n\
+         -- `IntDispatchRawPlan` terms reconstructed from the byte-derived match\n\
+         -- holes, and each passes the audited Lean structural checker.\n\
+         example : AverCert.manifest.intDispatchPlans = {int_dispatch_plans} := rfl\n\
+         example : AverCert.manifest.intDispatchPlans.all (fun p => AverCert.PlanCheck.checkIntDispatchRawPlan p.2) = true := rfl\n\n\
          -- Expr-fragment raw plans: the manifest's Lean-data representation plans\n\
          -- are pinned to checker-rendered `ExprFragmentRawPlan` terms derived\n\
          -- from checked source sidecars, or from representation fallback sidecars\n\

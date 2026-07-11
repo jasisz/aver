@@ -14,9 +14,13 @@ fn nr_variant_dispatch(
     let carrier = carrier?;
     // Typed admission: the byte signature must be exactly "one user ADT value
     // in, one Int carrier out" — the claim-shape as the bytes declare it, not
-    // a bare parameter count.
+    // a bare parameter count. The COMPLETE result vector must be exactly one
+    // NULLABLE carrier reference (the exact `ref null` form the certified
+    // `[eqref] -> [(ref null) carrier]` signature promises; the plan path
+    // additionally pins it in-kernel).
     if f.params.as_slice() != [TyKind::Eqref]
-        || !matches!(f.result, Some(TyKind::Ref { idx, .. }) if idx == carrier)
+        || !matches!(f.results.as_slice(),
+            [TyKind::Ref { nullable: true, idx }] if *idx == carrier)
     {
         return None;
     }
@@ -63,6 +67,7 @@ fn nr_variant_dispatch(
         sub_idx,
         arms,
         default_k,
+        code_entry_bytes: f.code_entry_bytes.clone(),
         ops: strip_trailing_end(&f.ops).to_vec(),
     })
 }

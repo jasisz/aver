@@ -3398,7 +3398,7 @@ fn mutual_scc_kernel_guards_are_isolating() {
     lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3, 4]), (2, 1, [1, 2, 3, 4]), (3, 4, [1, 2, 3, 4]), (4, 3, [1, 2, 3, 4])] = false := rfl\n\n");
     // FIX B: the REAL acceptance conjunct rejects a dangling group; shape passes.
     lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := 2, code := fun _ => none,\n    host := fun _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
-    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], verbatimPlans := [], obligations := [] }\n\n");
+    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], verbatimPlans := [], intDispatchPlans := [], obligations := [] }\n\n");
     lean.push_str("def claimsS : List MutualRecursionClaim :=\n  [ { exportNameBytes := [], exportName := \"a\", carrier := 2, memberSet := [1, 2],\n      hostTable := [(.box, 7), (.sub, 9)], obligation := dummyOb \"a\" 1 } ]\n\n");
     lean.push_str("example : AverCert.PlanCheck.checkMutualPlanShape [1, 2] [(.box, 7), (.sub, 9)] honestPlan = true := rfl\n");
     lean.push_str("example : mutualClaimEdges manifestS claimsS = some [(1, 2, [1, 2])] := rfl\n");
@@ -3747,6 +3747,297 @@ fn verbatim_kernel_guards_are_isolating() {
     assert!(
         elab.status.success(),
         "verbatim signature/payload guard-isolation assertions must all hold:\n{}\n{}",
+        String::from_utf8_lossy(&elab.stdout),
+        String::from_utf8_lossy(&elab.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// A tampered byte-first `int-dispatch-v1` plan is declined, and the tamper
+/// vectors are shown to be guard-isolating. Each vector mutates the Int-face
+/// `ref.test`-dispatch plan for `boxInt`/`gauge` in the shipped `Plans.lean`
+/// while leaving the wasm untouched, so the plan no longer canonically lowers
+/// to the export's real code-entry bytes. The plan names host helpers by ROLE
+/// only (the byte-derived role table parameterizes the lowerers), so every
+/// semantic field of the plan — tags, arm order, roles, constants, operand
+/// order, and the default — reaches the lowered bytes and is caught by the
+/// byte-equality gate: both the shipped `Plans.lean`
+/// `lowerIntDispatchCodeEntry`/`codeEntryForExport` `rfl` pins and the
+/// checker's `manifest.intDispatchPlans` `rfl` pin reject the tampered plan.
+/// The `GuardIso.lean` block below isolates each byte-reaching vector by
+/// proving in-kernel (`by decide`) that its lowered code entry diverges from
+/// the honest one, and the profile vector by proving the lowering BLIND to it
+/// (`rfl`) while only `checkIntDispatchRawPlan` rejects it.
+#[test]
+fn cert_verify_declines_tampered_int_dispatch_plan() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping int-dispatch-plan tamper test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-int-dispatch-plan");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/intdispatchgen.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "intdispatchgen compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("intdispatchgen.wasm");
+    let cert = out_dir.join("cert");
+    let (ok, report) = aver_verify(&wasm, &cert);
+    assert!(
+        ok,
+        "honest int-dispatch certificate should verify:\n{report}"
+    );
+
+    let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    // (a) wrong `ref.test` tag: `boxInt` tests struct type 0 -> 1.
+    // (b) swapped dispatch cascade: `gauge` tests tags 3 <-> 4.
+    // (c) role swap: `gauge`'s Lo arm combinator `sub` -> `add`. The role table
+    //     maps roles to DISTINCT indices, so the swap changes the host call
+    //     byte — the exact discrimination `hostTableIndicesDistinct` protects.
+    // (d) wrong arm constant: `gauge`'s Hi arm `x + 9` -> `x + 8`.
+    // (e) flipped operand order: `gauge`'s Hi arm payload-first -> const-first.
+    // (f) wrong default constant: `gauge`'s Off arm `7` -> `8`.
+    // (g) wrong profile string: rejected by `checkIntDispatchRawPlan` (the
+    //     lowering is blind to the profile, so the byte gate alone would pass).
+    let tampers: [(&str, &str, &str); 7] = [
+        (
+            "ref.test tag",
+            ".test 0 (.proj) (.default (0))",
+            ".test 1 (.proj) (.default (0))",
+        ),
+        (
+            "swapped dispatch cascade",
+            ".test 3 (.hostOp .sub (0) true) (.test 4",
+            ".test 4 (.hostOp .sub (0) true) (.test 3",
+        ),
+        (
+            "host role swap",
+            "(.hostOp .sub (0) true)",
+            "(.hostOp .add (0) true)",
+        ),
+        (
+            "arm constant",
+            "(.hostOp .add (9) false)",
+            "(.hostOp .add (8) false)",
+        ),
+        (
+            "operand order flip",
+            "(.hostOp .add (9) false)",
+            "(.hostOp .add (9) true)",
+        ),
+        ("default constant", "(.default (7))", "(.default (8))"),
+        (
+            "profile string",
+            "def boxIntIntDispatchPlan : IntDispatchRawPlan := { profile := \"int-dispatch-v1\"",
+            "def boxIntIntDispatchPlan : IntDispatchRawPlan := { profile := \"int-dispatch-v2\"",
+        ),
+    ];
+    for (label, from, to) in tampers {
+        assert!(
+            honest.contains(from),
+            "intdispatchgen Plans.lean plan shape changed ({label}); update the test"
+        );
+        let dir = temp_dir("cert-int-dispatch-plan-tamper");
+        copy_dir(&out_dir, &dir);
+        let tampered_plans = dir.join("cert").join("Plans.lean");
+        let src = std::fs::read_to_string(&tampered_plans).unwrap();
+        std::fs::write(&tampered_plans, src.replacen(from, to, 1)).unwrap();
+        let (ok, report) = aver_verify(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
+        assert!(
+            !ok,
+            "{label}: tampered int-dispatch plan must be declined:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Guard-isolation: prove in-kernel that each byte-reaching vector diverges
+    // the lowered code-entry bytes (so the byte-equality gate catches it), and
+    // that the profile vector — which the lowering is provably BLIND to — is
+    // rejected exactly by the structural checker. carrier 9; role table
+    // box 7 / add 8 / sub 9 (the fixture's byte-derived table).
+    let mut lean = String::new();
+    lean.push_str("import Schema\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\n\n");
+    lean.push_str("open AverCert.Schema\nopen AverCert.PlanBytes\n\n");
+    lean.push_str("def tbl : List (HostRole × Nat) := [(.box, 7), (.add, 8), (.sub, 9)]\n");
+    lean.push_str("def honestBox : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 0 (.proj) (.default (0)) }\n");
+    lean.push_str("def honestGauge : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 3 (.hostOp .sub (0) true) (.test 4 (.hostOp .add (9) false) (.test 5 (.proj) (.default (7)))) }\n\n");
+    lean.push_str("example : AverCert.PlanCheck.checkIntDispatchRawPlan honestBox = true := rfl\n");
+    lean.push_str(
+        "example : AverCert.PlanCheck.checkIntDispatchRawPlan honestGauge = true := rfl\n\n",
+    );
+    lean.push_str("def tamper1 : IntDispatchRawPlan := { honestBox with body := .test 1 (.proj) (.default (0)) }\n");
+    lean.push_str("example : lowerIntDispatchCodeEntry 9 tbl tamper1 ≠ lowerIntDispatchCodeEntry 9 tbl honestBox := by decide\n");
+    lean.push_str("def tamper2 : IntDispatchRawPlan := { honestGauge with body := .test 4 (.hostOp .sub (0) true) (.test 3 (.hostOp .add (9) false) (.test 5 (.proj) (.default (7)))) }\n");
+    lean.push_str("example : lowerIntDispatchCodeEntry 9 tbl tamper2 ≠ lowerIntDispatchCodeEntry 9 tbl honestGauge := by decide\n");
+    lean.push_str("def tamper3 : IntDispatchRawPlan := { honestGauge with body := .test 3 (.hostOp .add (0) true) (.test 4 (.hostOp .add (9) false) (.test 5 (.proj) (.default (7)))) }\n");
+    lean.push_str("example : lowerIntDispatchCodeEntry 9 tbl tamper3 ≠ lowerIntDispatchCodeEntry 9 tbl honestGauge := by decide\n");
+    lean.push_str("def tamper4 : IntDispatchRawPlan := { honestGauge with body := .test 3 (.hostOp .sub (0) true) (.test 4 (.hostOp .add (8) false) (.test 5 (.proj) (.default (7)))) }\n");
+    lean.push_str("example : lowerIntDispatchCodeEntry 9 tbl tamper4 ≠ lowerIntDispatchCodeEntry 9 tbl honestGauge := by decide\n");
+    lean.push_str("def tamper5 : IntDispatchRawPlan := { honestGauge with body := .test 3 (.hostOp .sub (0) true) (.test 4 (.hostOp .add (9) true) (.test 5 (.proj) (.default (7)))) }\n");
+    lean.push_str("example : lowerIntDispatchCodeEntry 9 tbl tamper5 ≠ lowerIntDispatchCodeEntry 9 tbl honestGauge := by decide\n");
+    lean.push_str("def tamper6 : IntDispatchRawPlan := { honestGauge with body := .test 3 (.hostOp .sub (0) true) (.test 4 (.hostOp .add (9) false) (.test 5 (.proj) (.default (8)))) }\n");
+    lean.push_str("example : lowerIntDispatchCodeEntry 9 tbl tamper6 ≠ lowerIntDispatchCodeEntry 9 tbl honestGauge := by decide\n");
+    // Profile vector: the lowering is BLIND to the profile string, so the byte
+    // gate alone would accept it — only the structural checker rejects it.
+    lean.push_str(
+        "def tamper7 : IntDispatchRawPlan := { honestBox with profile := \"int-dispatch-v2\" }\n",
+    );
+    lean.push_str("example : lowerIntDispatchCodeEntry 9 tbl tamper7 = lowerIntDispatchCodeEntry 9 tbl honestBox := rfl\n");
+    lean.push_str("example : AverCert.PlanCheck.checkIntDispatchRawPlan tamper7 = false := rfl\n");
+
+    let honest_build = Command::new("lake")
+        .arg("build")
+        .current_dir(&cert)
+        .output()
+        .expect("lake build runs");
+    assert!(honest_build.status.success(), "honest cert must lake-build");
+    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
+    let elab = Command::new("lake")
+        .arg("env")
+        .arg("lean")
+        .arg("GuardIso.lean")
+        .current_dir(&cert)
+        .output()
+        .expect("lake env lean runs");
+    assert!(
+        elab.status.success(),
+        "int-dispatch guard-isolation assertions must all hold:\n{}\n{}",
+        String::from_utf8_lossy(&elab.stdout),
+        String::from_utf8_lossy(&elab.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// ACCEPTANCE-LEVEL guard-isolation for the two Int-face dispatch binds that
+/// the byte-equality gate does NOT cover, elaborated with `lake env lean`
+/// against the audited cert modules — no `aver cert verify`, no sibling
+/// defence in the path.
+///
+/// SIGNATURE guard (`verbatimFuncTypeMatches … carrier`, reused with the Int
+/// carrier as the result heap type): two minimal modules identical in every
+/// section EXCEPT the type section (the second appends a second `eqref`
+/// parameter). The func/export/code sections — hence the byte-derived
+/// `FuncBinding` and code entry the byte-equality gate reads — are
+/// byte-for-byte identical, so the two sibling conjuncts
+/// (`funcBindingForExport`, `codeEntryForExport`) return the SAME value and
+/// only the signature conjunct distinguishes unary from binary.
+///
+/// HOST-TABLE DISTINCTNESS guard (`hostTableIndicesDistinct`): the plan names
+/// helpers by ROLE and the byte lowering substitutes table indices, so under a
+/// DUPLICATED table (add and sub claiming one index) two plans differing only
+/// in an arm's role are proven to lower to IDENTICAL bytes (`rfl` — the byte
+/// gate is blind); under the honest distinct table they are proven to diverge
+/// (`by decide`). Only `hostTableIndicesDistinct` rejects the duplicated
+/// table, restoring the gate's discrimination.
+///
+/// Each assertion is constructed so it holds ONLY because its target guard
+/// fires (weaken-confirmed: replacing the `verbatimFuncTypeMatches` conjunct
+/// with `true` in a throwaway copy breaks solely the binary-arity reject line;
+/// replacing `hostTableIndicesDistinct` with `true` breaks solely the
+/// duplicated-table reject line — nothing else moves).
+#[test]
+fn int_dispatch_kernel_guards_are_isolating() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping int-dispatch guard isolation test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    let mut lean = String::new();
+    lean.push_str(
+        "import Schema\nimport PlanCheck\nimport PlanBytes\nimport WasmSlice\nimport AcceptedArtifact\n\n",
+    );
+    lean.push_str("open AverCert\nopen AverCert.Schema\n");
+    lean.push_str("set_option maxRecDepth 100000\n\n");
+    // Minimal modules: header, type section, then a shared func/export/code
+    // tail. `f` is func 0 of type 0; code entry `[2, 0, 11]`. Only the type
+    // section differs between the two: type 0 is `[eqref] -> [(ref null 5)]`
+    // vs `[eqref, eqref] -> [(ref null 5)]` (5 standing for the carrier).
+    lean.push_str("def hdr : List Nat := [0, 97, 115, 109, 1, 0, 0, 0]\n");
+    lean.push_str("def unaryType : List Nat := [1, 7, 1, 96, 1, 109, 1, 99, 5]\n");
+    lean.push_str("def binaryType : List Nat := [1, 8, 1, 96, 2, 109, 109, 1, 99, 5]\n");
+    lean.push_str(
+        "def tailSecs : List Nat := [3, 2, 1, 0, 7, 5, 1, 1, 102, 0, 0, 10, 4, 1, 2, 0, 11]\n",
+    );
+    lean.push_str("def unaryMod : List Nat := hdr ++ unaryType ++ tailSecs\n");
+    lean.push_str("def binaryMod : List Nat := hdr ++ binaryType ++ tailSecs\n");
+    lean.push_str("def nameF : List Nat := [102]\n\n");
+    // SIGNATURE isolation: the byte-equality gate's inputs are identical...
+    lean.push_str("example : WasmSlice.funcBindingForExport unaryMod nameF = WasmSlice.funcBindingForExport binaryMod nameF := rfl\n");
+    lean.push_str("example : WasmSlice.codeEntryForExport unaryMod nameF = WasmSlice.codeEntryForExport binaryMod nameF := rfl\n");
+    // ...and only the signature guard tells unary from binary.
+    lean.push_str("example : WasmSlice.verbatimFuncTypeMatches unaryMod 0 5 = true := rfl\n");
+    lean.push_str("example : WasmSlice.verbatimFuncTypeMatches binaryMod 0 5 = false := rfl\n\n");
+    // HOST-TABLE DISTINCTNESS isolation: two plans differing ONLY in the arm's
+    // host ROLE.
+    lean.push_str("def planAdd : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 3 (.hostOp .add (2) false) (.default (0)) }\n");
+    lean.push_str("def planSub : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 3 (.hostOp .sub (2) false) (.default (0)) }\n");
+    lean.push_str("def dupTbl : List (HostRole × Nat) := [(.box, 7), (.add, 8), (.sub, 8)]\n");
+    lean.push_str("def distinctTbl : List (HostRole × Nat) := [(.box, 7), (.add, 8), (.sub, 9)]\n");
+    // The structural checker is blind to the role either way...
+    lean.push_str("example : PlanCheck.checkIntDispatchRawPlan planAdd = true := rfl\n");
+    lean.push_str("example : PlanCheck.checkIntDispatchRawPlan planSub = true := rfl\n");
+    // ...under a duplicated table the byte lowering is blind to it too...
+    lean.push_str("example : PlanBytes.lowerIntDispatchCodeEntry 5 dupTbl planAdd = PlanBytes.lowerIntDispatchCodeEntry 5 dupTbl planSub := rfl\n");
+    // ...under the honest distinct table the byte gate discriminates...
+    lean.push_str("example : PlanBytes.lowerIntDispatchCodeEntry 5 distinctTbl planAdd ≠ PlanBytes.lowerIntDispatchCodeEntry 5 distinctTbl planSub := by decide\n");
+    // ...and only the distinctness guard rejects the duplicated table.
+    lean.push_str("example : PlanCheck.hostTableIndicesDistinct dupTbl = false := rfl\n");
+    lean.push_str("example : PlanCheck.hostTableIndicesDistinct distinctTbl = true := rfl\n\n");
+    // A role missing from the table fail-closes the lowering entirely (the
+    // plan cannot conjure a callee out of a missing contract).
+    lean.push_str("example : PlanBytes.lowerIntDispatchCodeEntry 5 [(.box, 7), (.add, 8)] planSub = none := rfl\n");
+
+    let out_dir = temp_dir("cert-int-dispatch-guard-iso");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/intdispatchgen.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "intdispatchgen compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let cert = out_dir.join("cert");
+    let honest_build = Command::new("lake")
+        .arg("build")
+        .current_dir(&cert)
+        .output()
+        .expect("lake build runs");
+    assert!(honest_build.status.success(), "honest cert must lake-build");
+
+    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
+    let elab = Command::new("lake")
+        .arg("env")
+        .arg("lean")
+        .arg("GuardIso.lean")
+        .current_dir(&cert)
+        .output()
+        .expect("lake env lean runs");
+    assert!(
+        elab.status.success(),
+        "int-dispatch signature/host-table guard-isolation assertions must all hold:\n{}\n{}",
         String::from_utf8_lossy(&elab.stdout),
         String::from_utf8_lossy(&elab.stderr)
     );

@@ -952,4 +952,40 @@ def checkMutualPlanShape
         | _ => false)
   | _, _ => false
 
+/-! ### Int-face `ref.test`-dispatch checker (`int-dispatch-v1`)
+
+The `Cod := Int` ADT-match families (general variant dispatch, widened Int
+match). The soundness binding is the byte-equality gate in
+`AcceptedArtifact.intDispatchPlanAccepted` together with the byte-derived
+host-role table the lowerers are parameterized by; the plan carries neither
+locals nor indices (both are derived), so the structural check is the profile
+discipline only. -/
+
+def checkIntDispatchRawPlan (plan : IntDispatchRawPlan) : Bool :=
+  plan.profile == "int-dispatch-v1"
+
+/-- The number of `test` arms in an Int-face dispatch cascade. The scratch-local
+    layout both lowerers compute is a fixed function of this count: arm `i`
+    spills to local `i+1`, the scrutinee is local `armCount + 1`. -/
+def intDispatchArmCount : IntDispatchCascade → Nat
+  | .default _ => 0
+  | .test _ _ rest => intDispatchArmCount rest + 1
+
+/-- The `HostRole` an Int-face arm combinator resolves through in the
+    byte-derived role table. -/
+def intDispatchRoleHostRole : IntDispatchRole → HostRole
+  | .add => .add
+  | .sub => .sub
+
+/-- Whether a byte-derived host-role table maps its roles to pairwise DISTINCT
+    function indices. The Int-face plan names host helpers by ROLE only and the
+    byte lowering substitutes table indices, so with a duplicated table (e.g.
+    `add` and `sub` claiming the same index) two plans differing only in an
+    arm's role would lower to identical bytes — the byte-equality gate would be
+    blind to the role. Requiring distinct indices restores the gate's
+    discrimination; the honest table is byte-derived from the strict role
+    markers, which are unique per role. -/
+def hostTableIndicesDistinct (hostTable : List (HostRole × Nat)) : Bool :=
+  natListNoDup (hostTable.map (fun e => e.2))
+
 end AverCert.PlanCheck

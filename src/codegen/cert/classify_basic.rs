@@ -152,7 +152,18 @@ fn nr_ref_dispatch_match(
             continue;
         }
         let miss_ops = node_ops(miss_arm);
-        if matches!(miss_ops.as_slice(), [Op::I64Const(0), Op::Call(b)] if *b == box_idx) {
+        // Typed admission (belt for the legacy route, mirroring the verbatim
+        // widened match): exactly one user ADT (eqref) value in — a
+        // two-parameter dispatch keeps a byte-identical code entry, so a unary
+        // obligation must not be certified for a binary export — and exactly
+        // one nullable Int-carrier reference out (the plan path additionally
+        // pins the exact `[eqref] -> [(ref null) carrier]` signature
+        // in-kernel).
+        if matches!(miss_ops.as_slice(), [Op::I64Const(0), Op::Call(b)] if *b == box_idx)
+            && matches!(f.params.as_slice(), [TyKind::Eqref])
+            && matches!(f.results.as_slice(),
+                [TyKind::Ref { nullable: true, idx }] if *idx == carrier)
+        {
             return Some(Cert::WidenedIntMatch {
                 name: f.name.clone(),
                 self_idx: f.wasm_idx,
@@ -160,6 +171,7 @@ fn nr_ref_dispatch_match(
                 carrier,
                 hit_variant_idx: *hit,
                 box_idx,
+                code_entry_bytes: f.code_entry_bytes.clone(),
                 ops: strip_trailing_end(&f.ops).to_vec(),
             });
         }

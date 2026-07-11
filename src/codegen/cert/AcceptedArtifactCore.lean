@@ -278,6 +278,26 @@ structure VerbatimClaim where
   carrier         : Nat
   obligation      : Obligation
 
+/-- One Int-face `ref.test`-dispatch claim inside an artifact certificate. Its
+    byte-derived `IntDispatchRawPlan` lives in `manifest.intDispatchPlans` (a
+    byte-origin veneer, no source `SymPlan`: the `Cod := Int` variant-dispatch /
+    widened-Int-match obligation, its `cases`-spine proof face and Int-valued
+    model are unchanged and stay an independent read anchor — the plan claim
+    only certifies where the body bytes came from). `hostTable` is
+    representation context like `RecursionClaim`'s: the byte-derived box (and,
+    when consumed, add/sub) indices this export's obligation wires. The plan
+    names host helpers by ROLE only; the lowerers substitute table indices, so a
+    wrong table describes calls the module bytes cannot reproduce and the claim
+    fail-closes at the byte gate — PROVIDED the table maps roles to distinct
+    indices, which the acceptance predicate checks (`hostTableIndicesDistinct`;
+    a duplicated table would make the byte gate blind to an arm's role). -/
+structure IntDispatchClaim where
+  exportNameBytes : AverCert.WasmSlice.ByteSeq
+  exportName      : String
+  carrier         : Nat
+  hostTable       : List (HostRole × Nat)
+  obligation      : Obligation
+
 def stringEqClaimAccepted
     (wasmBytes : AverCert.WasmSlice.ByteSeq)
     (manifest : AverCert.Schema.Manifest)
@@ -563,6 +583,75 @@ def verbatimClaimAccepted
         claim.obligation
   | none => False
 
+/-- Artifact-level acceptance for one Int-face `ref.test`-dispatch export. The
+    `IntDispatchRawPlan` is checked structurally (`checkIntDispatchRawPlan`),
+    lowered — parameterized by the claim's byte-derived host-role table, whose
+    indices must be pairwise DISTINCT (`hostTableIndicesDistinct`: the plan
+    names helpers by role only, so a duplicated table would let two plans
+    differing in an arm's role lower to identical bytes) — to the match `WInstr`
+    body and its exact code-entry bytes, and those bytes are bound to the
+    exported function by name. The dispatch structure (tags, arm constants,
+    operand order, roles) is pinned entirely by the byte-equality gate: every
+    plan field reaches the lowered bytes. The code entry omits the function
+    SIGNATURE (a second `eqref` parameter leaves the locals + body bytes
+    identical), so `verbatimFuncTypeMatches` additionally forces the
+    byte-derived type-section entry to be the unary
+    `[eqref] → [(ref null carrier)]` signature — the same shape check the
+    verbatim family uses, here with the Int carrier as the result heap type.
+    The function index is tied to the obligation through
+    `binding.funcIdx = obligation.self`, and the obligation's code table must
+    carry exactly the plan-lowered body. -/
+def intDispatchPlanAccepted
+    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (exportName : String)
+    (carrier : Nat)
+    (hostTable : List (HostRole × Nat))
+    (plan : IntDispatchRawPlan)
+    (obligation : Obligation) : Prop :=
+  obligation.export_ = exportName ∧
+    obligation.carrier = carrier ∧
+    AverCert.PlanCheck.checkIntDispatchRawPlan plan = true ∧
+    AverCert.PlanCheck.hostTableIndicesDistinct hostTable = true ∧
+    ∃ body codeEntry binding,
+      AverCert.PlanLower.lowerIntDispatchBody hostTable plan = some body ∧
+      AverCert.PlanBytes.lowerIntDispatchCodeEntry carrier hostTable plan =
+        some codeEntry ∧
+      AverCert.WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
+      AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+      binding.funcIdx = obligation.self ∧
+      binding.codeEntry = codeEntry ∧
+      AverCert.WasmSlice.verbatimFuncTypeMatches
+        wasmBytes binding.typeIdx carrier = true ∧
+      ∃ nlocals,
+        obligation.code binding.funcIdx =
+          some { arity := 1, nlocals := nlocals, body := body }
+
+def intDispatchPlanForExport
+    (exportName : String) : List (String × IntDispatchRawPlan) →
+    Option IntDispatchRawPlan
+  | [] => none
+  | (name, plan) :: rest =>
+      if name == exportName then
+        some plan
+      else
+        intDispatchPlanForExport exportName rest
+
+def intDispatchClaimAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (manifest : AverCert.Schema.Manifest)
+    (claim : IntDispatchClaim) : Prop :=
+  match intDispatchPlanForExport claim.exportName manifest.intDispatchPlans with
+  | some plan =>
+      intDispatchPlanAccepted
+        wasmBytes
+        claim.exportNameBytes
+        claim.exportName
+        claim.carrier
+        claim.hostTable
+        plan
+        claim.obligation
+  | none => False
+
 /-- Aggregate source-level symbolic fragment acceptance for one artifact's
     source claim list. -/
 def symFragmentClaimsAccepted
@@ -638,6 +727,17 @@ def verbatimClaimsAccepted
   | claim :: rest =>
       verbatimClaimAccepted wasmBytes manifest claim ∧
       verbatimClaimsAccepted wasmBytes manifest rest
+
+/-- Aggregate Int-face `ref.test`-dispatch acceptance for one artifact's
+    int-dispatch claim list. -/
+def intDispatchClaimsAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (manifest : AverCert.Schema.Manifest) :
+    List IntDispatchClaim → Prop
+  | [] => True
+  | claim :: rest =>
+      intDispatchClaimAccepted wasmBytes manifest claim ∧
+      intDispatchClaimsAccepted wasmBytes manifest rest
 
 /-! ### Byte-derived SCC closure
 
@@ -835,6 +935,18 @@ def verbatimManifestPlanNames
     (manifest : AverCert.Schema.Manifest) : List String :=
   manifest.verbatimPlans.map (fun p => p.1)
 
+/-- Int-face dispatch claims are pinned to `manifest.intDispatchPlans` by export
+    name, mirroring the recursion/mutual/verbatim families: a self-checking
+    artifact cannot advertise a different int-dispatch-plan list than the claims
+    it proves acceptance for. -/
+def intDispatchClaimExportNames
+    (claims : List IntDispatchClaim) : List String :=
+  claims.map (fun c => c.exportName)
+
+def intDispatchManifestPlanNames
+    (manifest : AverCert.Schema.Manifest) : List String :=
+  manifest.intDispatchPlans.map (fun p => p.1)
+
 /-- The source `SymPlan`s carried by String.concat claims. These live in the
     manifest's common `symFragmentPlans` list; the byte-lowering-specific
     `StringConcatRawPlan` stays in `stringConcatPlans`. -/
@@ -865,6 +977,7 @@ structure ArtifactData where
   recursionClaims    : List RecursionClaim
   mutualRecursionClaims : List MutualRecursionClaim
   verbatimClaims     : List VerbatimClaim
+  intDispatchClaims  : List IntDispatchClaim
 
 def acceptedSymFragments (artifact : ArtifactData) : Prop :=
   symFragmentClaimsAccepted artifact.wasmBytes artifact.symFragmentClaims
@@ -908,6 +1021,12 @@ def acceptedVerbatimFragments (artifact : ArtifactData) : Prop :=
     artifact.manifest
     artifact.verbatimClaims
 
+def acceptedIntDispatchFragments (artifact : ArtifactData) : Prop :=
+  intDispatchClaimsAccepted
+    artifact.wasmBytes
+    artifact.manifest
+    artifact.intDispatchClaims
+
 def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedSymFragments artifact ∧
   acceptedStringEqFragments artifact ∧
@@ -915,7 +1034,8 @@ def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedConstructFragments artifact ∧
   acceptedRecursionFragments artifact ∧
   acceptedMutualRecursionFragments artifact ∧
-  acceptedVerbatimFragments artifact
+  acceptedVerbatimFragments artifact ∧
+  acceptedIntDispatchFragments artifact
 
 def expectedArtifactRoot : String :=
   "AverCert.Artifact.certificate"
@@ -930,7 +1050,8 @@ def claimObligationExports (artifact : ArtifactData) : List String :=
   artifact.constructClaims.map (fun c => c.obligation.export_) ++
   artifact.recursionClaims.map (fun c => c.obligation.export_) ++
   artifact.mutualRecursionClaims.map (fun c => c.obligation.export_) ++
-  artifact.verbatimClaims.map (fun c => c.obligation.export_)
+  artifact.verbatimClaims.map (fun c => c.obligation.export_) ++
+  artifact.intDispatchClaims.map (fun c => c.obligation.export_)
 
 def claimObligations (artifact : ArtifactData) : List Obligation :=
   artifact.symFragmentClaims.map (fun c => c.obligation) ++
@@ -939,7 +1060,8 @@ def claimObligations (artifact : ArtifactData) : List Obligation :=
   artifact.constructClaims.map (fun c => c.obligation) ++
   artifact.recursionClaims.map (fun c => c.obligation) ++
   artifact.mutualRecursionClaims.map (fun c => c.obligation) ++
-  artifact.verbatimClaims.map (fun c => c.obligation)
+  artifact.verbatimClaims.map (fun c => c.obligation) ++
+  artifact.intDispatchClaims.map (fun c => c.obligation)
 
 def claimObligationsInManifest
     (manifestObligations : List Obligation) : List Obligation → Prop
@@ -974,7 +1096,9 @@ def claimsMatchManifest (artifact : ArtifactData) : Prop :=
       mutualRecursionClaimExportNames artifact.mutualRecursionClaims =
           mutualManifestPlanNames artifact.manifest ∧
       verbatimClaimExportNames artifact.verbatimClaims =
-          verbatimManifestPlanNames artifact.manifest
+          verbatimManifestPlanNames artifact.manifest ∧
+      intDispatchClaimExportNames artifact.intDispatchClaims =
+          intDispatchManifestPlanNames artifact.manifest
   | none => False
 
 end AverCert.AcceptedArtifact
