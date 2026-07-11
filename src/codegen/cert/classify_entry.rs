@@ -1,17 +1,28 @@
+struct ClassifierContext<'a> {
+    host_roles: &'a std::collections::HashMap<u32, HostRole>,
+    struct_field_counts: &'a std::collections::HashMap<u32, u32>,
+    model_ops: &'a std::collections::HashMap<String, char>,
+}
+
 fn classify_without_expr_fragment(
     f: &UserFn,
     box_idx: u32,
     carrier: Option<u32>,
     user_idx_set: &std::collections::HashSet<u32>,
     fns: &std::collections::HashMap<u32, &UserFn>,
-    host_roles: &std::collections::HashMap<u32, HostRole>,
-    model_ops: &std::collections::HashMap<String, char>,
+    context: &ClassifierContext<'_>,
 ) -> Result<Cert, String> {
     // Fuel self-recursion (single-argument `n + f(n-1)` / `n * f(n-1)` and
     // two-argument accumulator), recognised structurally from the instruction
     // tree. The base value is data (any literal / the accumulator) and the
     // combinator operation comes from the model, not a pinned constant.
-    if let Some(cert) = recognize_fueled_recursion(f, box_idx, carrier, host_roles, model_ops) {
+    if let Some(cert) = recognize_fueled_recursion(
+        f,
+        box_idx,
+        carrier,
+        context.host_roles,
+        context.model_ops,
+    ) {
         return Ok(cert);
     }
 
@@ -22,7 +33,14 @@ fn classify_without_expr_fragment(
     // probe-artifacts/mutual-fuel-probe/MutualSpike-twodefs.lean). The lowest-
     // `self_idx` member emits the shared code table + bridge + `mutual_sim`;
     // every member emits its own obligation citing the matching conjunct.
-    if let Some(cert) = recognize_mutual_scc(f, box_idx, carrier, user_idx_set, fns, host_roles) {
+    if let Some(cert) = recognize_mutual_scc(
+        f,
+        box_idx,
+        carrier,
+        user_idx_set,
+        fns,
+        context.host_roles,
+    ) {
         return Ok(cert);
     }
 
@@ -31,7 +49,8 @@ fn classify_without_expr_fragment(
         box_idx,
         carrier,
         user_idx_set,
-        host_roles,
+        context.host_roles,
+        context.struct_field_counts,
     ) {
         return Ok(Cert::NonRecursive {
             inner: Box::new(cert),
@@ -98,6 +117,7 @@ fn walk_nonrecursive(
     carrier: Option<u32>,
     user_idx_set: &std::collections::HashSet<u32>,
     host_roles: &std::collections::HashMap<u32, HostRole>,
+    struct_field_counts: &std::collections::HashMap<u32, u32>,
 ) -> Option<Cert> {
     if f.arity == 0 {
         return None;
@@ -106,7 +126,7 @@ fn walk_nonrecursive(
     let cert = nr_straightline(f, &body, box_idx, carrier, host_roles);
     cert
         .or_else(|| nr_adt_constructor(f, &body, box_idx, carrier))
-        .or_else(|| nr_field_projection(f, &body, carrier))
+        .or_else(|| nr_field_projection(f, &body, carrier, struct_field_counts))
         .or_else(|| nr_ref_dispatch_match(f, &body, box_idx, carrier, host_roles))
         .or_else(|| nr_verbatim_variant_dispatch(f, &body, carrier))
         .or_else(|| nr_string_eq_verbatim_match(f, &body, carrier, host_roles))

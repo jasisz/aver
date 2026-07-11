@@ -1343,6 +1343,19 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
 
     let wasm = out_dir.join("json.wasm");
     let cert = out_dir.join("cert");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
+        Some(9),
+        "json plan-backed bridge count must move 7 -> 9"
+    );
+    assert_eq!(
+        manifest["artifact_bridge_counts"]["legacy-witness-v1"].as_u64(),
+        Some(3),
+        "json legacy bridge count must move 5 -> 3"
+    );
     let (ok, report) = aver_verify(&wasm, &cert);
     assert!(ok, "expected clean json certificate to verify:\n{report}");
     assert!(
@@ -3118,6 +3131,254 @@ example : weakCoverage AverCert.Artifact.compositionMembers orphanClaims = true 
     let _ = std::fs::remove_dir_all(out_dir);
 }
 
+/// `field-projection-v1` guard isolation with executed weaken confirmations.
+/// Every negative is rejected by the named fixed guard and accepted by the
+/// adjacent throwaway copy with exactly that guard removed.
+#[test]
+fn field_projection_plan_guards_are_isolated_and_weaken_confirmed() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping field-projection GuardIso test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-field-projection-guard-iso");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/tupleproj.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile tuple projection fixture");
+    assert!(
+        compile.status.success(),
+        "tuple projection fixture compile failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let cert = out_dir.join("cert");
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build tuple projection certificate before GuardIso");
+    assert!(
+        build.status.success(),
+        "tuple projection certificate build failed before GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let lean = r#"import Artifact
+open CertPrelude AverCert.Schema AverCert.WasmSlice
+set_option maxRecDepth 400000
+
+def honest : FieldProjectionRawPlan := AverCert.Plans.pairFstFieldProjectionPlan
+def badProfile : FieldProjectionRawPlan := { profile := "field-projection-v2", fieldIdx := 0 }
+def badField : FieldProjectionRawPlan := { profile := "field-projection-v1", fieldIdx := 1 }
+def nameBytes : List Nat := [112,97,105,114,70,115,116]
+
+-- === PREDICATE-LEVEL weakened copies of `fieldProjectionPlanAccepted` ===
+-- Each drops EXACTLY one security-critical conjunct; the adversarial claim below
+-- is ACCEPTED under the weakened copy but the shipped predicate rejects it at
+-- exactly that conjunct. This replaces the earlier constant-`Bool` weakenings,
+-- which never demonstrated acceptance against all remaining guards.
+
+-- (d) BYTE-EQUALITY GATE dropped (`binding.codeEntry = codeEntry`).
+def fpAccept_dropBytes (wasmBytes exportNameBytes : ByteSeq)
+    (exportName : String) (carrier structIdx fieldCount : Nat)
+    (resultTy : FieldProjectionResultTy)
+    (plan : FieldProjectionRawPlan) (obligation : Obligation) : Prop :=
+  obligation.export_ = exportName ∧ obligation.carrier = carrier ∧
+  AverCert.PlanCheck.checkFieldProjectionRawPlan fieldCount plan = true ∧
+  ∃ body codeEntry binding,
+    AverCert.PlanLower.lowerFieldProjectionBody structIdx fieldCount plan = some body ∧
+    AverCert.PlanBytes.lowerFieldProjectionCodeEntry carrier structIdx fieldCount resultTy plan = some codeEntry ∧
+    funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+    projectionStructTypeMatches wasmBytes structIdx fieldCount plan.fieldIdx resultTy = true ∧
+    projectionFuncTypeMatches wasmBytes binding.typeIdx structIdx resultTy = true ∧
+    obligation.self = binding.funcIdx ∧
+    obligation.code binding.funcIdx = some { arity := 1, nlocals := 3, body := body }
+
+-- (e) STRUCT SELECTED-FIELD-TYPE dropped (`projectionStructTypeMatches`).
+def fpAccept_dropStruct (wasmBytes exportNameBytes : ByteSeq)
+    (exportName : String) (carrier structIdx fieldCount : Nat)
+    (resultTy : FieldProjectionResultTy)
+    (plan : FieldProjectionRawPlan) (obligation : Obligation) : Prop :=
+  obligation.export_ = exportName ∧ obligation.carrier = carrier ∧
+  AverCert.PlanCheck.checkFieldProjectionRawPlan fieldCount plan = true ∧
+  ∃ body codeEntry binding,
+    AverCert.PlanLower.lowerFieldProjectionBody structIdx fieldCount plan = some body ∧
+    AverCert.PlanBytes.lowerFieldProjectionCodeEntry carrier structIdx fieldCount resultTy plan = some codeEntry ∧
+    funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+    binding.codeEntry = codeEntry ∧
+    projectionFuncTypeMatches wasmBytes binding.typeIdx structIdx resultTy = true ∧
+    obligation.self = binding.funcIdx ∧
+    obligation.code binding.funcIdx = some { arity := 1, nlocals := 3, body := body }
+
+-- Complicit obligation whose code table returns the WRONG-field body, so the
+-- code-table conjunct (h) is neutralized and the byte-equality gate (d) is the
+-- SOLE remaining binder of the field index (the sole plan datum).
+def badBodyCode : CodeTbl := fun fn =>
+  if fn = 1 then some ⟨1, 3, [.localGet 0, .localSet 2, .localGet 2, .refCast 3, .structGet 3 1, .localSet 1, .localGet 1]⟩ else none
+def badBodyOb : Obligation := { AverCert.pairFstOb with code := badBodyCode }
+
+-- Struct-mutated module: flip struct 3 field 0 nullable-ref (0x63) -> non-null
+-- (0x64) at module offset 31. The code section and the func-type entry are
+-- byte-unchanged, so (d) and (f) still pass; only (e) reads the mutated struct
+-- field type.
+def structMut : ByteSeq := AverCert.ArtifactBytes.wasmBytes.set 31 100
+
+-- Obligation export-name and carrier binds.
+def weakExport (_ _ : String) : Bool := true
+example : AverCert.pairFstOb.export_ = "pairFst" := rfl
+example : ¬ AverCert.pairFstOb.export_ = "alias" := by decide
+example : weakExport AverCert.pairFstOb.export_ "alias" = true := rfl
+def weakCarrier (_ _ : Nat) : Bool := true
+example : AverCert.pairFstOb.carrier = 2 := rfl
+example : ¬ AverCert.pairFstOb.carrier = 3 := by decide
+example : weakCarrier AverCert.pairFstOb.carrier 3 = true := rfl
+
+-- Profile guard.
+def weakProfile (_ : FieldProjectionRawPlan) : Bool := true
+example : AverCert.PlanCheck.checkFieldProjectionRawPlan 2 badProfile = false := rfl
+example : weakProfile badProfile = true := rfl
+
+-- Byte-derived exact field-count guard.
+def weakFieldCount (_ : Nat) (_ : FieldProjectionRawPlan) : Bool := true
+example : AverCert.PlanCheck.checkFieldProjectionRawPlan 3 honest = false := rfl
+example : weakFieldCount 3 honest = true := rfl
+
+-- Projected-field range guard.
+def outOfRange : FieldProjectionRawPlan := { profile := "field-projection-v1", fieldIdx := 2 }
+def weakFieldRange (_ : Nat) (_ : FieldProjectionRawPlan) : Bool := true
+example : AverCert.PlanCheck.checkFieldProjectionRawPlan 2 outOfRange = false := rfl
+example : weakFieldRange 2 outOfRange = true := rfl
+
+-- Semantic lowerer inherits the structural guard.
+def weakLower (_ : FieldProjectionRawPlan) : Option (List WInstr) :=
+  AverCert.PlanLower.lowerFieldProjectionBody 3 2 honest
+example : AverCert.PlanLower.lowerFieldProjectionBody 3 2 badProfile = none := rfl
+example : weakLower badProfile = AverCert.PlanLower.lowerFieldProjectionBody 3 2 honest := rfl
+
+-- CANONICAL BYTE LOWERING (d) / FIELD-INDEX BINDING — genuine predicate-level
+-- isolation. The field index is the sole plan datum; it reaches the ULEB
+-- immediate of the code entry, so the byte-equality gate binds it. With a
+-- complicit obligation (`badBodyOb`) supplying the wrong-field body, the
+-- code-table conjunct (h) is neutralized, leaving (d) as the sole guard on the
+-- field index: the wrong-field claim is ACCEPTED once (d) is dropped...
+example : fpAccept_dropBytes AverCert.ArtifactBytes.wasmBytes nameBytes "pairFst"
+    2 3 2 (.nullableRef 2) badField badBodyOb :=
+  ⟨rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+-- ...and the shipped predicate rejects it at exactly (d): the honest module
+-- code entry differs from the wrong-field canonical bytes.
+example : (funcBindingForExport AverCert.ArtifactBytes.wasmBytes nameBytes).map (fun b => b.codeEntry) ≠
+  AverCert.PlanBytes.lowerFieldProjectionCodeEntry 2 3 2 (.nullableRef 2) badField := by decide
+-- FIELD-INDEX defense-in-depth: (h) is a redundant-but-defensive sibling. When
+-- the obligation is the HONEST byte-derived one, its code table pins the field-0
+-- body (the honest lowering), so a wrong field index also fails (h) — the field
+-- index is bound by both the byte gate (d) and the code-table body (h). The
+-- honest obligation commits to the field-0 body:
+example : (AverCert.pairFstOb.code 1).map (fun c => c.body) =
+  some ((AverCert.PlanLower.lowerFieldProjectionBody 3 2 honest).getD []) := rfl
+-- and the field index is a real byte-level datum (field 0 vs 1 diverges):
+example : AverCert.PlanBytes.lowerFieldProjectionCodeEntry 2 3 2 (.nullableRef 2) badField ≠
+  AverCert.PlanBytes.lowerFieldProjectionCodeEntry 2 3 2 (.nullableRef 2) honest := by decide
+
+-- Export-name/function-binding guard.
+def weakBinding (_ : List Nat) :=
+  AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes
+    [112,97,105,114,70,115,116]
+example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes
+    [109,105,115,115,105,110,103] = none := rfl
+example : weakBinding [109,105,115,115,105,110,103] =
+  AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes
+    [112,97,105,114,70,115,116] := rfl
+
+-- STRUCT SELECTED-FIELD-TYPE (e) — genuine predicate-level isolation. This guard
+-- cross-checks the module's actual struct field type against the claimed result
+-- type; only a module whose struct field type diverges from its func signature
+-- (an internally inconsistent module, unreachable via claim data alone) exhibits
+-- it. `structMut` mutates struct 3 field 0 to a non-null ref, keeping the code
+-- section and func-type entry byte-identical. The honest claim is ACCEPTED once
+-- (e) is dropped (the byte gate (d) and signature (f) still pass over the
+-- mutated module because neither reads the struct's field types)...
+example : fpAccept_dropStruct structMut nameBytes "pairFst"
+    2 3 2 (.nullableRef 2) honest AverCert.pairFstOb :=
+  ⟨rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+-- ...and the shipped predicate rejects the mutated module at exactly (e):
+example : AverCert.WasmSlice.projectionStructTypeMatches structMut 3 2 0 (.nullableRef 2) = false := rfl
+-- The siblings (d) byte gate and (f) signature are provably BLIND to the struct
+-- field-type mutation (they read the code and func-type sections):
+example : (funcBindingForExport structMut nameBytes).map (fun b => b.codeEntry) =
+  (funcBindingForExport AverCert.ArtifactBytes.wasmBytes nameBytes).map (fun b => b.codeEntry) := rfl
+example : AverCert.WasmSlice.projectionFuncTypeMatches structMut 6 3 (.nullableRef 2) = true := rfl
+-- The prior claim-data struct checks remain (structIdx / count / result ref) —
+-- these are also caught by the byte gate / signature, so this is the guard's
+-- redundant-but-defensive cross-check surface.
+example : AverCert.WasmSlice.projectionStructTypeMatches
+    AverCert.ArtifactBytes.wasmBytes 3 2 0 (.nullableRef 2) = true := rfl
+example : AverCert.WasmSlice.projectionStructTypeMatches
+    AverCert.ArtifactBytes.wasmBytes 4 2 0 (.nullableRef 2) = false := rfl
+example : AverCert.WasmSlice.projectionStructTypeMatches
+    AverCert.ArtifactBytes.wasmBytes 3 3 0 (.nullableRef 2) = false := rfl
+example : AverCert.WasmSlice.projectionStructTypeMatches
+    AverCert.ArtifactBytes.wasmBytes 3 2 0 (.nullableRef 1) = false := rfl
+
+-- The exported function must be unary over the claimed struct and return the
+-- selected byte-derived reference type.
+def weakSignature (_ _ : Nat) (_ : FieldProjectionResultTy) : Bool := true
+example : AverCert.WasmSlice.projectionFuncTypeMatches
+    AverCert.ArtifactBytes.wasmBytes 6 3 (.nullableRef 2) = true := rfl
+example : AverCert.WasmSlice.projectionFuncTypeMatches
+    AverCert.ArtifactBytes.wasmBytes 6 4 (.nullableRef 2) = false := rfl
+example : AverCert.WasmSlice.projectionFuncTypeMatches
+    AverCert.ArtifactBytes.wasmBytes 6 3 (.nullableRef 1) = false := rfl
+example : weakSignature 6 4 (.nullableRef 2) = true := rfl
+example : weakSignature 6 3 (.nullableRef 1) = true := rfl
+
+-- Obligation self and exact canonical locals count.
+def weakSelf (_ _ : Nat) : Bool := true
+example : AverCert.pairFstOb.self = 1 := rfl
+example : ¬ AverCert.pairFstOb.self = 2 := by decide
+example : weakSelf AverCert.pairFstOb.self 2 = true := rfl
+def weakLocals (_ : Option Nat) : Bool := true
+example : (AverCert.pairFstOb.code 1).map (fun c => c.nlocals) = some 3 := rfl
+example : ¬ (AverCert.pairFstOb.code 1).map (fun c => c.nlocals) = some 0 := by decide
+example : weakLocals ((AverCert.pairFstOb.code 1).map (fun c => c.nlocals)) = true := rfl
+
+-- Manifest/claim pairing guard.
+def relabeled : List AverCert.AcceptedArtifact.FieldProjectionClaim :=
+  [{ exportNameBytes := [112,97,105,114,70,115,116], exportName := "alias",
+     carrier := 2, structIdx := 3, fieldCount := 2, resultTy := .nullableRef 2,
+     obligation := AverCert.pairFstOb }]
+example : AverCert.AcceptedArtifact.fieldProjectionClaimExportNames relabeled = ["alias"] := rfl
+example : AverCert.AcceptedArtifact.fieldProjectionClaimExportNames relabeled ≠
+    AverCert.AcceptedArtifact.fieldProjectionManifestPlanNames AverCert.manifest := by decide
+def weakManifest (_ : List String) : Bool := true
+example : weakManifest (AverCert.AcceptedArtifact.fieldProjectionClaimExportNames relabeled) = true := rfl
+"#;
+    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("GuardIso.lean")
+        .output()
+        .expect("run field-projection GuardIso");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(
+        check.status.success(),
+        "field-projection GuardIso failed:\n{combined}"
+    );
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
 /// S2a field-projection tamper: flipping the projected field index 0 -> 1 in
 /// `userName`'s source SymPlan sidecar (with the sidecar sha rebound in the
 /// JSON manifest, so only the plan-vs-bytes gate is in play) lowers to
@@ -3747,7 +4008,7 @@ fn mutual_scc_kernel_guards_are_isolating() {
     lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3, 4]), (2, 1, [1, 2, 3, 4]), (3, 4, [1, 2, 3, 4]), (4, 3, [1, 2, 3, 4])] = false := rfl\n\n");
     // FIX B: the REAL acceptance conjunct rejects a dangling group; shape passes.
     lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := 2, code := fun _ => none,\n    host := fun _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
-    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], obligations := [] }\n\n");
+    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
     lean.push_str("def claimsS : List MutualRecursionClaim :=\n  [ { exportNameBytes := [], exportName := \"a\", carrier := 2, memberSet := [1, 2],\n      hostTable := [(.box, 7), (.sub, 9)], obligation := dummyOb \"a\" 1 } ]\n\n");
     lean.push_str("example : AverCert.PlanCheck.checkMutualPlanShape [1, 2] [(.box, 7), (.sub, 9)] honestPlan = true := rfl\n");
     lean.push_str("example : mutualClaimEdges manifestS claimsS = some [(1, 2, [1, 2])] := rfl\n");

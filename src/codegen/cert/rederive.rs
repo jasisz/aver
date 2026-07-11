@@ -211,6 +211,13 @@ pub struct RederivedObligation {
     /// (box, plus add/sub exactly when wired) rendered as the Lean
     /// `List (HostRole × Nat)` literal the claim carries.
     pub int_dispatch_host_table_lean: Option<String>,
+    /// `field-projection-v1` plan and byte-derived type context. The plan names
+    /// only the field; struct identity/count and selected result type are
+    /// reconstructed from validated module bytes.
+    pub field_projection_plan_lean: Option<String>,
+    pub field_projection_struct_idx: Option<u32>,
+    pub field_projection_field_count: Option<u32>,
+    pub field_projection_result_ty_lean: Option<String>,
     /// Plan-backed composition closure members. Each member carries the
     /// checker-rendered shape/name plan plus byte-derived binding facts.
     pub composition_members: Vec<RederivedCompositionMember>,
@@ -538,7 +545,7 @@ fn rederive_certificate_inner(
     model_files: &[(String, String)],
     plan_covered_exports: &[String],
 ) -> Result<RederivedCertificate, String> {
-    let (user_fns, box_idx, user_idx_set, carrier, host_roles, frag_host_table, _struct_field_counts) =
+    let (user_fns, box_idx, user_idx_set, carrier, host_roles, frag_host_table, struct_field_counts) =
         disassemble(wasm_bytes)?;
     let model_ops = model_step_ops(model_files);
     let model_info = ModelInfo::from_files(model_files);
@@ -555,8 +562,11 @@ fn rederive_certificate_inner(
             carrier,
             &user_idx_set,
             &fns,
-            &host_roles,
-            &model_ops,
+            &ClassifierContext {
+                host_roles: &host_roles,
+                struct_field_counts: &struct_field_counts,
+                model_ops: &model_ops,
+            },
         );
         if let Ok(c) = classified {
             certs.push((func_order, c));
@@ -921,6 +931,20 @@ fn rederive_certificate_inner(
                     .map(|hosts| int_dispatch_host_table_lean_value(&hosts)),
                 None => None,
             },
+            field_projection_plan_lean: field_projection_plan_from_cert(c)
+                .map(|(plan, _)| field_projection_plan_lean_value(&plan)),
+            field_projection_struct_idx: match c.inner() {
+                Cert::FieldProjection { struct_idx, .. }
+                    if field_projection_plan_from_cert(c).is_some() => Some(*struct_idx),
+                _ => None,
+            },
+            field_projection_field_count: match c.inner() {
+                Cert::FieldProjection { field_count, .. }
+                    if field_projection_plan_from_cert(c).is_some() => Some(*field_count),
+                _ => None,
+            },
+            field_projection_result_ty_lean: field_projection_plan_from_cert(c)
+                .map(|(_, ty)| field_projection_result_ty_lean_value(ty)),
             composition_members: match c.inner() {
                 Cert::Composition { carrier, closure, .. } => {
                     let funcs = composition_func_table(closure);

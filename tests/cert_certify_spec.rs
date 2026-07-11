@@ -1437,6 +1437,18 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
                 "expected {name} certified for {input}, got {certified:?}"
             );
         }
+        if input == "tools/certkit/fixtures/tupleproj.av" {
+            assert_eq!(
+                manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
+                Some(2),
+                "tuple projections must both use the plan-backed bridge"
+            );
+            assert_eq!(
+                manifest["artifact_bridge_counts"]["legacy-witness-v1"].as_u64(),
+                Some(0),
+                "no tuple field projection may remain legacy-certified"
+            );
+        }
 
         let build = Command::new("lake")
             .current_dir(&cert_dir)

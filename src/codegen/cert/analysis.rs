@@ -35,7 +35,7 @@ pub fn analyze_with_fragment_plans(
     model_files: &[(String, String)],
     fragment_plans: &[FragmentPlanArtifact],
 ) -> Result<Analysis, String> {
-    let (user_fns, box_idx, user_idx_set, carrier, host_roles, frag_host_table, _struct_field_counts) =
+    let (user_fns, box_idx, user_idx_set, carrier, host_roles, frag_host_table, struct_field_counts) =
         disassemble(wasm_bytes)?;
     let model_ops = model_step_ops(model_files);
 
@@ -97,8 +97,11 @@ pub fn analyze_with_fragment_plans(
             carrier,
             &user_idx_set,
             &fns,
-            &host_roles,
-            &model_ops,
+            &ClassifierContext {
+                host_roles: &host_roles,
+                struct_field_counts: &struct_field_counts,
+                model_ops: &model_ops,
+            },
         ) {
             Ok(c) => certs.push(c),
             Err(reason) => declined.push((f.name.clone(), reason)),

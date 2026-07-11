@@ -286,6 +286,19 @@ structure IntDispatchClaim where
   hostTable       : List (HostRole × Nat)
   obligation      : Obligation
 
+/-- One bare tuple/record projection claim. Only `plan.fieldIdx` is producer
+    plan data. The remaining fields are reconstructed from validated Wasm by
+    the checker and independently re-bound here to the type section and exact
+    code entry. -/
+structure FieldProjectionClaim where
+  exportNameBytes : AverCert.WasmSlice.ByteSeq
+  exportName      : String
+  carrier         : Nat
+  structIdx       : Nat
+  fieldCount      : Nat
+  resultTy        : FieldProjectionResultTy
+  obligation      : Obligation
+
 /-- One byte-bound member of the artifact-wide composition call graph. The plan
     names only callees; `compositionFuncTable` below resolves every name through
     the module's export table before either lowerer can use an index. -/
@@ -721,6 +734,51 @@ def intDispatchClaimAccepted
         claim.obligation
   | none => False
 
+def fieldProjectionPlanForExport
+    (exportName : String) : List (String × FieldProjectionRawPlan) →
+    Option FieldProjectionRawPlan
+  | [] => none
+  | (name, plan) :: rest =>
+      if name == exportName then some plan
+      else fieldProjectionPlanForExport exportName rest
+
+/-- Plan-backed acceptance for the bare bind/cast projection lowering. The
+    exact three-local layout is part of the canonical code-entry encoder and is
+    also pinned in the semantic code table. The type-section guards bind the
+    checker-derived struct index/count/result reference to the selected module
+    field and to the exported unary function signature. -/
+def fieldProjectionPlanAccepted
+    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (exportName : String) (carrier structIdx fieldCount : Nat)
+    (resultTy : FieldProjectionResultTy)
+    (plan : FieldProjectionRawPlan) (obligation : Obligation) : Prop :=
+  obligation.export_ = exportName ∧
+  obligation.carrier = carrier ∧
+  AverCert.PlanCheck.checkFieldProjectionRawPlan fieldCount plan = true ∧
+  ∃ body codeEntry binding,
+    AverCert.PlanLower.lowerFieldProjectionBody structIdx fieldCount plan = some body ∧
+    AverCert.PlanBytes.lowerFieldProjectionCodeEntry
+      carrier structIdx fieldCount resultTy plan = some codeEntry ∧
+    AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+    binding.codeEntry = codeEntry ∧
+    AverCert.WasmSlice.projectionStructTypeMatches
+      wasmBytes structIdx fieldCount plan.fieldIdx resultTy = true ∧
+    AverCert.WasmSlice.projectionFuncTypeMatches
+      wasmBytes binding.typeIdx structIdx resultTy = true ∧
+    obligation.self = binding.funcIdx ∧
+    obligation.code binding.funcIdx =
+      some { arity := 1, nlocals := 3, body := body }
+
+def fieldProjectionClaimAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (manifest : AverCert.Schema.Manifest)
+    (claim : FieldProjectionClaim) : Prop :=
+  match fieldProjectionPlanForExport claim.exportName manifest.fieldProjectionPlans with
+  | some plan =>
+      fieldProjectionPlanAccepted wasmBytes claim.exportNameBytes claim.exportName
+        claim.carrier claim.structIdx claim.fieldCount claim.resultTy plan claim.obligation
+  | none => False
+
 /-! ### Cross-function composition: byte-bound member graph and closure -/
 
 /-- Exact canonical locals count emitted by both composition byte lowerers. -/
@@ -975,6 +1033,15 @@ def intDispatchClaimsAccepted
       intDispatchClaimAccepted wasmBytes manifest claim ∧
       intDispatchClaimsAccepted wasmBytes manifest rest
 
+def fieldProjectionClaimsAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (manifest : AverCert.Schema.Manifest) :
+    List FieldProjectionClaim → Prop
+  | [] => True
+  | claim :: rest =>
+      fieldProjectionClaimAccepted wasmBytes manifest claim ∧
+      fieldProjectionClaimsAccepted wasmBytes manifest rest
+
 /-- Aggregate composition-root acceptance. All roots share the artifact-wide
     unique member table, while each root independently re-derives its reachable
     closure and pins every reachable body into its own shared `CodeTbl`. -/
@@ -1226,6 +1293,14 @@ def intDispatchManifestPlanNames
     (manifest : AverCert.Schema.Manifest) : List String :=
   manifest.intDispatchPlans.map (fun p => p.1)
 
+def fieldProjectionClaimExportNames
+    (claims : List FieldProjectionClaim) : List String :=
+  claims.map (fun c => c.exportName)
+
+def fieldProjectionManifestPlanNames
+    (manifest : AverCert.Schema.Manifest) : List String :=
+  manifest.fieldProjectionPlans.map (fun p => p.1)
+
 def compositionMemberPlanPairs
     (members : List CompositionMemberClaim) : List (String × CompositionRawPlan) :=
   members.map (fun member => (member.exportName, member.plan))
@@ -1261,6 +1336,7 @@ structure ArtifactData where
   mutualRecursionClaims : List MutualRecursionClaim
   verbatimClaims     : List VerbatimClaim
   intDispatchClaims  : List IntDispatchClaim
+  fieldProjectionClaims : List FieldProjectionClaim
   compositionMembers : List CompositionMemberClaim
   compositionClaims  : List CompositionClaim
 
@@ -1312,6 +1388,12 @@ def acceptedIntDispatchFragments (artifact : ArtifactData) : Prop :=
     artifact.manifest
     artifact.intDispatchClaims
 
+def acceptedFieldProjectionFragments (artifact : ArtifactData) : Prop :=
+  fieldProjectionClaimsAccepted
+    artifact.wasmBytes
+    artifact.manifest
+    artifact.fieldProjectionClaims
+
 def acceptedCompositionFragments (artifact : ArtifactData) : Prop :=
   compositionClaimsAccepted
     artifact.wasmBytes artifact.compositionMembers artifact.compositionClaims ∧
@@ -1327,6 +1409,7 @@ def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedMutualRecursionFragments artifact ∧
   acceptedVerbatimFragments artifact ∧
   acceptedIntDispatchFragments artifact ∧
+  acceptedFieldProjectionFragments artifact ∧
   acceptedCompositionFragments artifact
 
 def expectedArtifactRoot : String :=
@@ -1344,6 +1427,7 @@ def claimObligationExports (artifact : ArtifactData) : List String :=
   artifact.mutualRecursionClaims.map (fun c => c.obligation.export_) ++
   artifact.verbatimClaims.map (fun c => c.obligation.export_) ++
   artifact.intDispatchClaims.map (fun c => c.obligation.export_) ++
+  artifact.fieldProjectionClaims.map (fun c => c.obligation.export_) ++
   artifact.compositionClaims.map (fun c => c.obligation.export_)
 
 def claimObligations (artifact : ArtifactData) : List Obligation :=
@@ -1355,6 +1439,7 @@ def claimObligations (artifact : ArtifactData) : List Obligation :=
   artifact.mutualRecursionClaims.map (fun c => c.obligation) ++
   artifact.verbatimClaims.map (fun c => c.obligation) ++
   artifact.intDispatchClaims.map (fun c => c.obligation) ++
+  artifact.fieldProjectionClaims.map (fun c => c.obligation) ++
   artifact.compositionClaims.map (fun c => c.obligation)
 
 def claimObligationsInManifest
@@ -1393,6 +1478,8 @@ def claimsMatchManifest (artifact : ArtifactData) : Prop :=
           verbatimManifestPlanNames artifact.manifest ∧
       intDispatchClaimExportNames artifact.intDispatchClaims =
           intDispatchManifestPlanNames artifact.manifest ∧
+      fieldProjectionClaimExportNames artifact.fieldProjectionClaims =
+          fieldProjectionManifestPlanNames artifact.manifest ∧
       compositionMemberPlanPairs artifact.compositionMembers =
           artifact.manifest.compositionPlans
   | none => False

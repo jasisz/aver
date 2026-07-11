@@ -65,6 +65,28 @@ def sleb64 (value : Int) : Option (List Nat) :=
 def s33HeapIdx (idx : Nat) : Option (List Nat) :=
   if idx < 4294967296 then slebFuel 6 (Int.ofNat idx) else none
 
+def fieldProjectionResultTyBytes : FieldProjectionResultTy → Option (List Nat)
+  | .eqref => some [0x6d]
+  | .nullableRef idx => (s33HeapIdx idx).map (fun b => [0x63] ++ b)
+
+def lowerFieldProjectionCodeEntry
+    (carrier structIdx fieldCount : Nat)
+    (resultTy : FieldProjectionResultTy)
+    (plan : FieldProjectionRawPlan) : Option (List Nat) :=
+  if AverCert.PlanCheck.checkFieldProjectionRawPlan fieldCount plan then
+    match fieldProjectionResultTyBytes resultTy,
+          s33HeapIdx carrier, s33HeapIdx structIdx,
+          uleb32 structIdx, uleb32 plan.fieldIdx with
+    | some resultTyB, some carrierB, some castTy, some getTy, some fieldB =>
+        let body := [0x03, 0x01] ++ resultTyB ++
+          [0x01, 0x6d, 0x01, 0x63] ++ carrierB ++
+          [0x20, 0x00, 0x21, 0x02, 0x20, 0x02, 0xfb, 0x16] ++ castTy ++
+          [0xfb, 0x02] ++ getTy ++ fieldB ++
+          [0x21, 0x01, 0x20, 0x01, 0x0b]
+        (uleb32 body.length).map (fun len => len ++ body)
+    | _, _, _, _, _ => none
+  else none
+
 def f64Bytes (bits : Nat) : Option (List Nat) :=
   if bits < 18446744073709551616 then
     some [

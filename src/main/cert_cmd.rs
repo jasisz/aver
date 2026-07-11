@@ -1716,6 +1716,19 @@ fn lean_int_dispatch_plan_pairs(rederived: &[cert::RederivedObligation]) -> Stri
     format!("[ {inner} ]")
 }
 
+fn lean_field_projection_plan_pairs(rederived: &[cert::RederivedObligation]) -> String {
+    let inner = rederived
+        .iter()
+        .filter_map(|r| {
+            r.field_projection_plan_lean
+                .as_ref()
+                .map(|plan| format!("(\"{}\", {plan})", r.name))
+        })
+        .collect::<Vec<_>>()
+        .join(",\n   ");
+    format!("[ {inner} ]")
+}
+
 fn lean_composition_plan_pairs(rederived: &[cert::RederivedObligation]) -> String {
     let mut members = std::collections::BTreeMap::<String, String>::new();
     for obligation in rederived {
@@ -1954,6 +1967,7 @@ struct LeanExprFragmentArtifactClaims {
     mutual_claims: String,
     verbatim_claims: String,
     int_dispatch_claims: String,
+    field_projection_claims: String,
     composition_members: String,
     composition_claims: String,
     obligation_proof: String,
@@ -1965,6 +1979,7 @@ struct LeanExprFragmentArtifactClaims {
     mutual_proof: String,
     verbatim_proof: String,
     int_dispatch_proof: String,
+    field_projection_proof: String,
     composition_proof: String,
 }
 
@@ -1981,6 +1996,7 @@ fn lean_expr_fragment_artifact_claims(
     let mut mutual_claims = Vec::new();
     let mut verbatim_claims = Vec::new();
     let mut int_dispatch_claims = Vec::new();
+    let mut field_projection_claims = Vec::new();
     let mut composition_claims = Vec::new();
     let mut sym_proofs = Vec::new();
     let mut string_eq_proofs = Vec::new();
@@ -1990,6 +2006,7 @@ fn lean_expr_fragment_artifact_claims(
     let mut mutual_proofs = Vec::new();
     let mut verbatim_proofs = Vec::new();
     let mut int_dispatch_proofs = Vec::new();
+    let mut field_projection_proofs = Vec::new();
     let mut composition_proofs = Vec::new();
     for r in rederived {
         if r.mutual_plan_lean.is_some() {
@@ -2208,6 +2225,25 @@ fn lean_expr_fragment_artifact_claims(
             );
             continue;
         }
+        if r.field_projection_plan_lean.is_some() {
+            let (Some(struct_idx), Some(field_count), Some(result_ty)) = (
+                r.field_projection_struct_idx,
+                r.field_projection_field_count,
+                r.field_projection_result_ty_lean.as_ref(),
+            ) else {
+                continue;
+            };
+            let export_name_bytes = lean_byte_list(r.name.as_bytes());
+            field_projection_claims.push(format!(
+                "({{ exportNameBytes := {export_name_bytes}, exportName := \"{name}\", carrier := {carrier}, structIdx := {struct_idx}, fieldCount := {field_count}, resultTy := {result_ty}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.FieldProjectionClaim)",
+                name = r.name,
+                carrier = r.carrier,
+            ));
+            field_projection_proofs.push(
+                "⟨rfl, rfl, rfl, ⟨_, _, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩".to_string(),
+            );
+            continue;
+        }
         let (Some(_plan), Some(body), Some(bytes), Some(code_idx), Some(type_idx)) = (
             r.fragment_plan_lean.as_ref(),
             r.fragment_lowered_body_lean.as_ref(),
@@ -2331,6 +2367,11 @@ fn lean_expr_fragment_artifact_claims(
     } else {
         format!("[\n  {}\n]", int_dispatch_claims.join(",\n  "))
     };
+    let field_projection_claims = if field_projection_claims.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[\n  {}\n]", field_projection_claims.join(",\n  "))
+    };
     let composition_members = if composition_members.is_empty() {
         "[]".to_string()
     } else {
@@ -2349,6 +2390,7 @@ fn lean_expr_fragment_artifact_claims(
         + mutual_proofs.len()
         + verbatim_proofs.len()
         + int_dispatch_proofs.len()
+        + field_projection_proofs.len()
         + composition_proofs.len();
     let obligation_proof =
         (0..obligation_proof_count).fold("trivial".to_string(), |acc, _| format!("⟨rfl, {acc}⟩"));
@@ -2400,6 +2442,12 @@ fn lean_expr_fragment_artifact_claims(
         .fold("trivial".to_string(), |acc, proof| {
             format!("⟨{proof}, {acc}⟩")
         });
+    let field_projection_proof = field_projection_proofs
+        .into_iter()
+        .rev()
+        .fold("trivial".to_string(), |acc, proof| {
+            format!("⟨{proof}, {acc}⟩")
+        });
     let composition_claims_proof = composition_proofs
         .into_iter()
         .rev()
@@ -2419,6 +2467,7 @@ fn lean_expr_fragment_artifact_claims(
         mutual_claims,
         verbatim_claims,
         int_dispatch_claims,
+        field_projection_claims,
         composition_members,
         composition_claims,
         obligation_proof,
@@ -2430,6 +2479,7 @@ fn lean_expr_fragment_artifact_claims(
         mutual_proof,
         verbatim_proof,
         int_dispatch_proof,
+        field_projection_proof,
         composition_proof,
     }
 }
@@ -2444,6 +2494,7 @@ fn lean_artifact_data_literal(
     mutual_claims: &str,
     verbatim_claims: &str,
     int_dispatch_claims: &str,
+    field_projection_claims: &str,
     composition_members: &str,
     composition_claims: &str,
 ) -> String {
@@ -2457,6 +2508,7 @@ fn lean_artifact_data_literal(
          mutualRecursionClaims := ({mutual_claims} : List AverCert.AcceptedArtifact.MutualRecursionClaim), \
          verbatimClaims := ({verbatim_claims} : List AverCert.AcceptedArtifact.VerbatimClaim), \
          intDispatchClaims := ({int_dispatch_claims} : List AverCert.AcceptedArtifact.IntDispatchClaim), \
+         fieldProjectionClaims := ({field_projection_claims} : List AverCert.AcceptedArtifact.FieldProjectionClaim), \
          compositionMembers := ({composition_members} : List AverCert.AcceptedArtifact.CompositionMemberClaim), \
          compositionClaims := ({composition_claims} : List AverCert.AcceptedArtifact.CompositionClaim) }} : \
          AverCert.AcceptedArtifact.ArtifactData)"
@@ -2478,6 +2530,7 @@ fn lean_fragment_acceptance_proof_block(
             "{indent}  AverCert.AcceptedArtifact.acceptedMutualRecursionFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.acceptedVerbatimFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.acceptedIntDispatchFragments,\n",
+            "{indent}  AverCert.AcceptedArtifact.acceptedFieldProjectionFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.acceptedCompositionFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
@@ -2528,9 +2581,13 @@ fn lean_fragment_acceptance_proof_block(
             "{indent}  AverCert.AcceptedArtifact.intDispatchCanonicalSlots,\n",
             "{indent}  AverCert.AcceptedArtifact.intDispatchPlanForExport,\n",
             "{indent}  AverCert.AcceptedArtifact.intDispatchPlanAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.fieldProjectionClaimsAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.fieldProjectionClaimAccepted,\n",
+            "{indent}  AverCert.AcceptedArtifact.fieldProjectionPlanForExport,\n",
+            "{indent}  AverCert.AcceptedArtifact.fieldProjectionPlanAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "{indent}  AverCert.ExprFragmentAccepted.accepted]\n",
-            "{indent}exact ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, ⟨{int_dispatch_proof}, {composition_proof}⟩⟩⟩⟩⟩⟩⟩⟩\n"
+            "{indent}exact ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, ⟨{int_dispatch_proof}, ⟨{field_projection_proof}, {composition_proof}⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         indent = indent,
         sym_proof = witness.sym_proof,
@@ -2541,6 +2598,7 @@ fn lean_fragment_acceptance_proof_block(
         mutual_proof = witness.mutual_proof,
         verbatim_proof = witness.verbatim_proof,
         int_dispatch_proof = witness.int_dispatch_proof,
+        field_projection_proof = witness.field_projection_proof,
         composition_proof = witness.composition_proof
     )
 }
@@ -2561,6 +2619,7 @@ fn lean_expr_fragment_obligation_acceptance_pins(
         &witness.mutual_claims,
         &witness.verbatim_claims,
         &witness.int_dispatch_claims,
+        &witness.field_projection_claims,
         &witness.composition_members,
         &witness.composition_claims,
     );
@@ -2592,6 +2651,7 @@ fn lean_accepted_artifact_witness(
         &witness.mutual_claims,
         &witness.verbatim_claims,
         &witness.int_dispatch_claims,
+        &witness.field_projection_claims,
         &witness.composition_members,
         &witness.composition_claims,
     );
@@ -2625,6 +2685,8 @@ fn lean_accepted_artifact_witness(
             "    AverCert.AcceptedArtifact.verbatimManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.intDispatchClaimExportNames,\n",
             "    AverCert.AcceptedArtifact.intDispatchManifestPlanNames,\n",
+            "    AverCert.AcceptedArtifact.fieldProjectionClaimExportNames,\n",
+            "    AverCert.AcceptedArtifact.fieldProjectionManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.compositionMemberPlanPairs,\n",
             "    AverCert.AcceptedArtifact.acceptedFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedSymFragments,\n",
@@ -2635,6 +2697,7 @@ fn lean_accepted_artifact_witness(
             "    AverCert.AcceptedArtifact.acceptedMutualRecursionFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedVerbatimFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedIntDispatchFragments,\n",
+            "    AverCert.AcceptedArtifact.acceptedFieldProjectionFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedCompositionFragments,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
@@ -2667,6 +2730,10 @@ fn lean_accepted_artifact_witness(
             "    AverCert.AcceptedArtifact.intDispatchClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.intDispatchPlanForExport,\n",
             "    AverCert.AcceptedArtifact.intDispatchPlanAccepted,\n",
+            "    AverCert.AcceptedArtifact.fieldProjectionClaimsAccepted,\n",
+            "    AverCert.AcceptedArtifact.fieldProjectionClaimAccepted,\n",
+            "    AverCert.AcceptedArtifact.fieldProjectionPlanForExport,\n",
+            "    AverCert.AcceptedArtifact.fieldProjectionPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.compositionClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.compositionClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.compositionFuncTable,\n",
@@ -2687,7 +2754,7 @@ fn lean_accepted_artifact_witness(
             "    AverCert.AcceptedArtifact.intDispatchCanonicalSlots,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨{final_witness}, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, ⟨{int_dispatch_proof}, {composition_proof}⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨{final_witness}, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, ⟨{int_dispatch_proof}, ⟨{field_projection_proof}, {composition_proof}⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         final_witness = FINAL_WITNESS_THEOREM,
         obligation_proof = witness.obligation_proof,
@@ -2699,6 +2766,7 @@ fn lean_accepted_artifact_witness(
         mutual_proof = witness.mutual_proof,
         verbatim_proof = witness.verbatim_proof,
         int_dispatch_proof = witness.int_dispatch_proof,
+        field_projection_proof = witness.field_projection_proof,
         composition_proof = witness.composition_proof
     );
     format!(
@@ -2764,6 +2832,7 @@ fn checker_witness(
     let mutual_plans = lean_mutual_plan_pairs(rederived);
     let verbatim_plans = lean_verbatim_plan_pairs(rederived);
     let int_dispatch_plans = lean_int_dispatch_plan_pairs(rederived);
+    let field_projection_plans = lean_field_projection_plan_pairs(rederived);
     let composition_plans = lean_composition_plan_pairs(rederived);
     let sym_fragment_encoded_plans = lean_sym_fragment_encoded_plan_pairs(rederived);
     let expr_fragment_lower_pins = lean_expr_fragment_lower_pins(rederived);
@@ -2878,6 +2947,9 @@ fn checker_witness(
          -- holes, and each passes the audited Lean structural checker.\n\
          example : AverCert.manifest.intDispatchPlans = {int_dispatch_plans} := rfl\n\
          example : AverCert.manifest.intDispatchPlans.all (fun p => AverCert.PlanCheck.checkIntDispatchRawPlan p.2) = true := rfl\n\n\
+         -- Bare field projections: only the selected field is plan data; the
+         -- checker reconstructs the remaining type context from module bytes.
+         example : AverCert.manifest.fieldProjectionPlans = {field_projection_plans} := rfl\n\n\
          -- Composition plans carry only self-sum/chain shape and callee names;
          -- all numeric bindings are reconstructed from Wasm exports.\n\
          example : AverCert.manifest.compositionPlans = {composition_plans} := rfl\n\
