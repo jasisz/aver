@@ -11,17 +11,28 @@ env:
 
 jobs:
   cert-kernel:
-    # One job per certification suite so the long verify suite (each test does a
-    # fresh checker-owned lake kernel build) no longer serializes behind the
-    # fast certify/decode suites, and each suite fails independently. Shared
-    # toolchain setup is duplicated per matrix leg but runs in parallel.
-    name: Cert Kernel (${{ matrix.suite }})
+    # One job per certification suite, and the long verify suite is further
+    # sharded across four runners (tests are independent; each spawns its own
+    # kernel build), so wall-clock is bounded by the slowest single test rather
+    # than the whole suite. Shared toolchain setup is duplicated per matrix leg
+    # but runs in parallel.
+    name: Cert Kernel (${{ matrix.suite }}${{ matrix.partition && format(' {0}', matrix.partition) || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        suite: [cert_certify_spec, cert_verify_spec, cert_decode_spec]
+        include:
+          - suite: cert_certify_spec
+          - suite: cert_decode_spec
+          - suite: cert_verify_spec
+            partition: 1/4
+          - suite: cert_verify_spec
+            partition: 2/4
+          - suite: cert_verify_spec
+            partition: 3/4
+          - suite: cert_verify_spec
+            partition: 4/4
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_INCREMENTAL: '0'
@@ -70,5 +81,27 @@ jobs:
           echo "::error::lake unreachable after 6 attempts (toolchain download)"
           exit 1
 
+      - name: Cache prebuilt prelude store
+        # The test harness's exact-byte-keyed pristine prelude store: a stale
+        # or mismatching entry is a harmless miss (the key is a content hash of
+        # the staged audited bytes), so caching across runs only saves the
+        # per-job pristine build.
+        uses: actions/cache@v4
+        with:
+          path: /tmp/aver-cert-prelude-store
+          key: prelude-store-${{ runner.os }}-${{ hashFiles('src/codegen/cert/*.lean', 'tools/certkit/prelude/**', 'src/main/cert_cmd.rs') }}
+
+      - name: Install nextest
+        if: matrix.partition != ''
+        uses: taiki-e/install-action@nextest
+
       - name: Run certification suite
+        if: matrix.partition == ''
         run: cargo test -p aver-lang --features wasm --test ${{ matrix.suite }}
+
+      - name: Run certification suite shard
+        # The verify tests are independent (each builds its own temp cert
+        # project), so count-partitioning across runners is safe; every test
+        # runs in exactly one shard.
+        if: matrix.partition != ''
+        run: cargo nextest run -p aver-lang --features wasm --test ${{ matrix.suite }} --partition count:${{ matrix.partition }}
