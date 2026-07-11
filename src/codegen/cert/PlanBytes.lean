@@ -651,4 +651,64 @@ def lowerConstructCodeEntry
       | none => none
   | none => none
 
+/-! ### `composition-plan-v1` exact byte lowering -/
+
+def compositionFuncIdx? (funcTable : List (String × Nat)) (name : String) : Option Nat :=
+  match funcTable.find? (fun entry => entry.1 == name) with
+  | some entry => some entry.2
+  | none => none
+
+def lowerCompositionCallBytes
+    (funcTable : List (String × Nat)) : List String → Option (List Nat)
+  | [] => some []
+  | callee :: rest =>
+      match (compositionFuncIdx? funcTable callee).bind uleb32,
+            lowerCompositionCallBytes funcTable rest with
+      | some idx, some tail => some ([0x10] ++ idx ++ tail)
+      | _, _ => none
+
+def lowerCompositionExprBytes
+    (hostTable : List (HostRole × Nat))
+    (funcTable : List (String × Nat))
+    (plan : CompositionRawPlan) : Option (List Nat) :=
+  if AverCert.PlanCheck.checkCompositionRawPlan plan then
+    match uleb32 0 with
+    | some zero =>
+        match plan.shape with
+        | .selfSum =>
+            match (AverCert.PlanCheck.hostRoleIdx? hostTable .add).bind uleb32 with
+            | some addIdx =>
+                some ([0x20] ++ zero ++ [0x20] ++ zero ++ [0x10] ++ addIdx ++ [0x0b])
+            | none => none
+        | .chain callees =>
+            match lowerCompositionCallBytes funcTable callees with
+            | some calls => some ([0x20] ++ zero ++ calls ++ [0x0b])
+            | none => none
+    | none => none
+  else
+    none
+
+def lowerCompositionBodyBytes
+    (carrier : Nat)
+    (hostTable : List (HostRole × Nat))
+    (funcTable : List (String × Nat))
+    (plan : CompositionRawPlan) : Option (List Nat) :=
+  match uleb32 1, uleb32 1, s33HeapIdx carrier,
+        lowerCompositionExprBytes hostTable funcTable plan with
+  | some decls, some count, some carrierBytes, some exprBytes =>
+      some (decls ++ count ++ [0x63] ++ carrierBytes ++ exprBytes)
+  | _, _, _, _ => none
+
+def lowerCompositionCodeEntry
+    (carrier : Nat)
+    (hostTable : List (HostRole × Nat))
+    (funcTable : List (String × Nat))
+    (plan : CompositionRawPlan) : Option (List Nat) :=
+  match lowerCompositionBodyBytes carrier hostTable funcTable plan with
+  | some body =>
+      match uleb32 body.length with
+      | some lenBytes => some (lenBytes ++ body)
+      | none => none
+  | none => none
+
 end AverCert.PlanBytes

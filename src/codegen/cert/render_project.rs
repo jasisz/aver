@@ -719,6 +719,51 @@ fn render_expr_fragment_plans(
             plan_value = int_dispatch_plan_lean_value(&plan),
         ));
     }
+    for (entry, plan) in composition_member_plans(analysis) {
+        let Cert::Composition { carrier, closure, .. } = analysis
+            .certs
+            .iter()
+            .find(|cert| match cert.inner() {
+                Cert::Composition { closure, .. } => {
+                    closure.iter().any(|candidate| candidate.name == entry.name)
+                }
+                _ => false,
+            })
+            .expect("composition member belongs to a composition cert")
+            .inner()
+        else {
+            unreachable!()
+        };
+        let add_idx = analysis
+            .frag_host_table
+            .add_idx
+            .expect("plan-backed composition has strict add host");
+        let funcs = composition_func_table(closure);
+        let lowered = lower_composition_plan(&plan, add_idx, &funcs)
+            .expect("composition member plan lowers");
+        let code_entry = composition_code_entry_bytes(&plan, *carrier, add_idx, &funcs)
+            .expect("composition member plan byte-lowers");
+        let host_table = composition_host_table_lean_value(add_idx);
+        let func_table = composition_func_table_lean_value(closure);
+        let export_name_bytes = render_byte_list(entry.name.as_bytes());
+        any = true;
+        s.push_str(&format!(
+            "/-- Byte-derived composition shape for `{name}`. Callees are named;\n\
+                 numeric indices come from the byte-derived function table. -/\n\
+             def {name}CompositionPlan : CompositionRawPlan := {plan_value}\n\n\
+             example : AverCert.PlanCheck.checkCompositionRawPlan {name}CompositionPlan = true := rfl\n\n\
+             example : AverCert.PlanLower.lowerCompositionBody {host_table} {func_table} {name}CompositionPlan =\n  \
+               some {body} := rfl\n\n\
+             example : AverCert.PlanBytes.lowerCompositionCodeEntry {carrier} {host_table} {func_table} {name}CompositionPlan =\n  \
+               some {code_entry} := rfl\n\n\
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+               some {code_entry} := rfl\n\n",
+            name = entry.name,
+            plan_value = composition_plan_lean_value(&plan),
+            body = render_ops_value(&lowered),
+            code_entry = render_byte_list(&code_entry),
+        ));
+    }
     if !any {
         s.push_str("-- This artifact contains no source/fragment plans.\n\n");
     }
@@ -735,6 +780,8 @@ struct RenderedArtifactClaims {
     mutual_claims: String,
     verbatim_claims: String,
     int_dispatch_claims: String,
+    composition_members: String,
+    composition_claims: String,
     obligation_proof: String,
     sym_proof: String,
     string_eq_proof: String,
@@ -744,6 +791,7 @@ struct RenderedArtifactClaims {
     mutual_proof: String,
     verbatim_proof: String,
     int_dispatch_proof: String,
+    composition_proof: String,
 }
 
 fn render_artifact_expr_fragment_claims(
@@ -760,6 +808,7 @@ fn render_artifact_expr_fragment_claims(
     let mut mutual_claims = Vec::new();
     let mut verbatim_claims = Vec::new();
     let mut int_dispatch_claims = Vec::new();
+    let mut composition_claims = Vec::new();
     let mut sym_proofs = Vec::new();
     let mut string_eq_proofs = Vec::new();
     let mut string_proofs = Vec::new();
@@ -768,6 +817,7 @@ fn render_artifact_expr_fragment_claims(
     let mut mutual_proofs = Vec::new();
     let mut verbatim_proofs = Vec::new();
     let mut int_dispatch_proofs = Vec::new();
+    let mut composition_proofs = Vec::new();
     for c in &analysis.certs {
         match c.inner() {
             Cert::ExprFragment {
@@ -1056,6 +1106,77 @@ fn render_artifact_expr_fragment_claims(
             _ => {}
         }
     }
+    let composition_members_data = composition_member_plans(analysis);
+    let composition_members = composition_members_data
+        .iter()
+        .map(|(entry, _)| {
+            format!(
+                "({{ exportNameBytes := {bytes}, exportName := {name}, plan := AverCert.Plans.{ident}CompositionPlan }} : AverCert.AcceptedArtifact.CompositionMemberClaim)",
+                bytes = render_byte_list(entry.name.as_bytes()),
+                name = lean_str(&entry.name),
+                ident = entry.name,
+            )
+        })
+        .collect::<Vec<_>>();
+    let global_func_table = composition_members_data
+        .iter()
+        .map(|(entry, _)| (entry.name.clone(), entry.self_idx))
+        .collect::<std::collections::HashMap<_, _>>();
+    for cert in &analysis.certs {
+        let Cert::Composition {
+            name,
+            self_idx,
+            carrier,
+            closure,
+            ..
+        } = cert.inner()
+        else {
+            continue;
+        };
+        let Some(plans) = composition_plans_from_cert(cert, analysis.frag_host_table) else {
+            continue;
+        };
+        let add_idx = analysis
+            .frag_host_table
+            .add_idx
+            .expect("plan-backed composition has strict add host");
+        let host_table = composition_host_table_lean_value(add_idx);
+        let member_names = format!(
+            "[{}]",
+            closure
+                .iter()
+                .map(|entry| lean_str(&entry.name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        composition_claims.push(format!(
+            "({{ exportName := {export_name}, carrier := {carrier}, hostTable := {host_table}, memberNames := {member_names}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.CompositionClaim)",
+            export_name = lean_str(name),
+        ));
+        let mut named_proof = "trivial".to_string();
+        for (entry, plan) in plans.iter().rev() {
+            let body = render_ops_value(
+                &lower_composition_plan(plan, add_idx, &global_func_table)
+                    .expect("composition member lowers against global byte table"),
+            );
+            let code_entry = render_byte_list(
+                &composition_code_entry_bytes(plan, *carrier, add_idx, &global_func_table)
+                    .expect("composition member byte-lowers against global byte table"),
+            );
+            let binding = format!(
+                "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {} }} : AverCert.WasmSlice.FuncBinding)",
+                entry.self_idx, entry.code_idx, entry.type_idx, code_entry
+            );
+            let member_proof = format!(
+                "⟨rfl, ⟨({body}), ({code_entry}), {binding}, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
+            );
+            named_proof = format!("⟨{member_proof}, {named_proof}⟩");
+        }
+        let _ = self_idx;
+        composition_proofs.push(format!(
+            "⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, {named_proof}⟩⟩⟩⟩⟩⟩"
+        ));
+    }
     let sym_claims = if sym_claims.is_empty() {
         "[]".to_string()
     } else {
@@ -1096,6 +1217,16 @@ fn render_artifact_expr_fragment_claims(
     } else {
         format!("[\n  {}\n]", int_dispatch_claims.join(",\n  "))
     };
+    let composition_members = if composition_members.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[\n  {}\n]", composition_members.join(",\n  "))
+    };
+    let composition_claims = if composition_claims.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[\n  {}\n]", composition_claims.join(",\n  "))
+    };
     let obligation_proof_count = sym_proofs.len()
         + string_eq_proofs.len()
         + string_proofs.len()
@@ -1103,7 +1234,8 @@ fn render_artifact_expr_fragment_claims(
         + recursion_proofs.len()
         + mutual_proofs.len()
         + verbatim_proofs.len()
-        + int_dispatch_proofs.len();
+        + int_dispatch_proofs.len()
+        + composition_proofs.len();
     let obligation_proof = (0..obligation_proof_count).fold("trivial".to_string(), |acc, _| {
         format!("⟨rfl, {acc}⟩")
     });
@@ -1159,6 +1291,16 @@ fn render_artifact_expr_fragment_claims(
             .fold("trivial".to_string(), |acc, proof| {
                 format!("⟨{proof}, {acc}⟩")
             });
+    let composition_claims_proof = composition_proofs
+        .into_iter()
+        .rev()
+        .fold("trivial".to_string(), |acc, proof| {
+            format!("⟨{proof}, {acc}⟩")
+        });
+    // `acceptedCompositionFragments` conjoins the per-claim acceptance with the
+    // artifact-wide member-coverage bound (a decidable `Bool = true` over the
+    // concrete member/claim literals, closed by `rfl`).
+    let composition_proof = format!("⟨{composition_claims_proof}, rfl⟩");
     RenderedArtifactClaims {
         sym_claims,
         string_eq_claims,
@@ -1168,6 +1310,8 @@ fn render_artifact_expr_fragment_claims(
         mutual_claims,
         verbatim_claims,
         int_dispatch_claims,
+        composition_members,
+        composition_claims,
         obligation_proof,
         sym_proof,
         string_eq_proof,
@@ -1177,6 +1321,7 @@ fn render_artifact_expr_fragment_claims(
         mutual_proof,
         verbatim_proof,
         int_dispatch_proof,
+        composition_proof,
     }
 }
 
@@ -1194,7 +1339,7 @@ fn render_artifact(
     );
     let fragment_proof = format!(
         concat!(
-            "  dsimp [data, symFragmentClaims, stringEqClaims, stringConcatClaims, constructClaims, recursionClaims, mutualRecursionClaims, verbatimClaims, intDispatchClaims, AverCert.AcceptedArtifact.accepted,\n",
+            "  dsimp [data, symFragmentClaims, stringEqClaims, stringConcatClaims, constructClaims, recursionClaims, mutualRecursionClaims, verbatimClaims, intDispatchClaims, compositionMembers, compositionClaims, AverCert.AcceptedArtifact.accepted,\n",
             "    AverCert.AcceptedArtifact.subjectMatchesArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.expectedArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.fragmentClaimObligationsInManifest,\n",
@@ -1222,6 +1367,7 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.verbatimManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.intDispatchClaimExportNames,\n",
             "    AverCert.AcceptedArtifact.intDispatchManifestPlanNames,\n",
+            "    AverCert.AcceptedArtifact.compositionMemberPlanPairs,\n",
             "    AverCert.AcceptedArtifact.acceptedFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedSymFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedStringEqFragments,\n",
@@ -1231,6 +1377,7 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.acceptedMutualRecursionFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedVerbatimFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedIntDispatchFragments,\n",
+            "    AverCert.AcceptedArtifact.acceptedCompositionFragments,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
@@ -1262,9 +1409,27 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.intDispatchClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.intDispatchPlanForExport,\n",
             "    AverCert.AcceptedArtifact.intDispatchPlanAccepted,\n",
+            "    AverCert.AcceptedArtifact.compositionClaimsAccepted,\n",
+            "    AverCert.AcceptedArtifact.compositionClaimAccepted,\n",
+            "    AverCert.AcceptedArtifact.compositionFuncTable,\n",
+            "    AverCert.AcceptedArtifact.compositionMemberBinding,\n",
+            "    AverCert.AcceptedArtifact.compositionNamedMembersAccepted,\n",
+            "    AverCert.AcceptedArtifact.compositionMemberPlanAccepted,\n",
+            "    AverCert.AcceptedArtifact.compositionMemberForName,\n",
+            "    AverCert.AcceptedArtifact.compositionClosureBound,\n",
+            "    AverCert.AcceptedArtifact.compositionEdges,\n",
+            "    AverCert.AcceptedArtifact.compositionPlanCallees,\n",
+            "    AverCert.AcceptedArtifact.compositionEdgesDescend,\n",
+            "    AverCert.AcceptedArtifact.compositionReachClosure,\n",
+            "    AverCert.AcceptedArtifact.compositionReachStep,\n",
+            "    AverCert.AcceptedArtifact.compositionEdgeLookup,\n",
+            "    AverCert.AcceptedArtifact.stringListNodup,\n",
+            "    AverCert.AcceptedArtifact.stringListSetEq,\n",
+            "    AverCert.AcceptedArtifact.intDispatchCanonicalHost,\n",
+            "    AverCert.AcceptedArtifact.intDispatchCanonicalSlots,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨finalCert, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, {int_dispatch_proof}⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨finalCert, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, ⟨{int_dispatch_proof}, {composition_proof}⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         obligation_proof = claims.obligation_proof,
         sym_proof = claims.sym_proof,
@@ -1275,6 +1440,7 @@ fn render_artifact(
         mutual_proof = claims.mutual_proof,
         verbatim_proof = claims.verbatim_proof,
         int_dispatch_proof = claims.int_dispatch_proof
+        ,composition_proof = claims.composition_proof
     );
     format!(
          "-- Artifact-carried acceptance root.\n\
@@ -1297,9 +1463,11 @@ fn render_artifact(
          def mutualRecursionClaims : List AverCert.AcceptedArtifact.MutualRecursionClaim := {mutual_claims_list}\n\n\
          def verbatimClaims : List AverCert.AcceptedArtifact.VerbatimClaim := {verbatim_claims_list}\n\n\
          def intDispatchClaims : List AverCert.AcceptedArtifact.IntDispatchClaim := {int_dispatch_claims_list}\n\n\
+         def compositionMembers : List AverCert.AcceptedArtifact.CompositionMemberClaim := {composition_members_list}\n\n\
+         def compositionClaims : List AverCert.AcceptedArtifact.CompositionClaim := {composition_claims_list}\n\n\
          {mutual_scc_closure_pins}\
          def data : AverCert.AcceptedArtifact.ArtifactData :=\n  \
-           ({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
+           ({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims, compositionMembers := compositionMembers, compositionClaims := compositionClaims }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
          def acceptedWithFinal\n\
              (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n\
              AverCert.AcceptedArtifact.accepted data := by\n\
@@ -1315,6 +1483,8 @@ fn render_artifact(
         mutual_claims_list = claims.mutual_claims,
         verbatim_claims_list = claims.verbatim_claims,
         int_dispatch_claims_list = claims.int_dispatch_claims,
+        composition_members_list = claims.composition_members,
+        composition_claims_list = claims.composition_claims,
         mutual_scc_closure_pins = render_mutual_scc_closure_pins(analysis),
         fragment_proof = fragment_proof
     )

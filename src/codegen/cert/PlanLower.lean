@@ -264,4 +264,41 @@ def lowerConstructBody (plan : ConstructRawPlan) : Option (List WInstr) :=
   else
     none
 
+/-! ### `composition-plan-v1` lowering
+
+Function indices are resolved through `funcTable`, which the acceptance
+predicate computes from Wasm export bindings. The plan itself names exports.
+-/
+
+def compositionFuncIdx? (funcTable : List (String × Nat)) (name : String) : Option Nat :=
+  match funcTable.find? (fun entry => entry.1 == name) with
+  | some entry => some entry.2
+  | none => none
+
+def lowerCompositionCalls
+    (funcTable : List (String × Nat)) : List String → Option (List WInstr)
+  | [] => some []
+  | callee :: rest =>
+      match compositionFuncIdx? funcTable callee,
+            lowerCompositionCalls funcTable rest with
+      | some idx, some tail => some (.call idx :: tail)
+      | _, _ => none
+
+def lowerCompositionBody
+    (hostTable : List (HostRole × Nat))
+    (funcTable : List (String × Nat))
+    (plan : CompositionRawPlan) : Option (List WInstr) :=
+  if AverCert.PlanCheck.checkCompositionRawPlan plan then
+    match plan.shape with
+    | .selfSum =>
+        match AverCert.PlanCheck.hostRoleIdx? hostTable .add with
+        | some addIdx => some [.localGet 0, .localGet 0, .call addIdx]
+        | none => none
+    | .chain callees =>
+        match lowerCompositionCalls funcTable callees with
+        | some calls => some (.localGet 0 :: calls)
+        | none => none
+  else
+    none
+
 end AverCert.PlanLower

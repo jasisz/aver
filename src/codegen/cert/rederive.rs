@@ -211,6 +211,24 @@ pub struct RederivedObligation {
     /// (box, plus add/sub exactly when wired) rendered as the Lean
     /// `List (HostRole × Nat)` literal the claim carries.
     pub int_dispatch_host_table_lean: Option<String>,
+    /// Plan-backed composition closure members. Each member carries the
+    /// checker-rendered shape/name plan plus byte-derived binding facts.
+    pub composition_members: Vec<RederivedCompositionMember>,
+    /// Strict byte-derived singleton add-role table.
+    pub composition_host_table_lean: Option<String>,
+    /// Exact byte-derived reachable closure names for this root.
+    pub composition_member_names_lean: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct RederivedCompositionMember {
+    pub name: String,
+    pub self_idx: u32,
+    pub code_idx: u32,
+    pub type_idx: u32,
+    pub plan_lean: String,
+    pub lowered_body_lean: String,
+    pub lowered_code_entry_lean: String,
 }
 
 pub struct RederivedCertificate {
@@ -902,6 +920,58 @@ fn rederive_certificate_inner(
                 Some(_) => int_dispatch_host_table_from_cert(c)
                     .map(|hosts| int_dispatch_host_table_lean_value(&hosts)),
                 None => None,
+            },
+            composition_members: match c.inner() {
+                Cert::Composition { carrier, closure, .. } => {
+                    let funcs = composition_func_table(closure);
+                    let add_idx = frag_host_table.add_idx;
+                    composition_plans_from_cert(c, frag_host_table)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|(entry, plan)| {
+                            let add_idx = add_idx?;
+                            Some(RederivedCompositionMember {
+                                name: entry.name,
+                                self_idx: entry.self_idx,
+                                code_idx: entry.code_idx,
+                                type_idx: entry.type_idx,
+                                plan_lean: composition_plan_lean_value(&plan),
+                                lowered_body_lean: render_ops_value(
+                                    &lower_composition_plan(&plan, add_idx, &funcs)?,
+                                ),
+                                lowered_code_entry_lean: render_byte_list(
+                                    &composition_code_entry_bytes(
+                                        &plan, *carrier, add_idx, &funcs,
+                                    )?,
+                                ),
+                            })
+                        })
+                        .collect()
+                }
+                _ => Vec::new(),
+            },
+            composition_host_table_lean: match c.inner() {
+                Cert::Composition { .. }
+                    if composition_plans_from_cert(c, frag_host_table).is_some() =>
+                {
+                    frag_host_table.add_idx.map(composition_host_table_lean_value)
+                }
+                _ => None,
+            },
+            composition_member_names_lean: match c.inner() {
+                Cert::Composition { closure, .. }
+                    if composition_plans_from_cert(c, frag_host_table).is_some() =>
+                {
+                    Some(format!(
+                        "[{}]",
+                        closure
+                            .iter()
+                            .map(|entry| lean_str(&entry.name))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ))
+                }
+                _ => None,
             },
         })
         .collect();
