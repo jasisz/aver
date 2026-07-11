@@ -307,13 +307,17 @@ def funcTypeMatches (wasmBytes : ByteSeq) (typeIdx arity carrier : Nat) : Bool :
     followed by `[(ref null heapTy)]` for a `.refNull heapTy` plan, or `[f64]`
     for `.f64Scalar`. The result
     bytes are parsed from the type section and must match the plan variant
-    exactly; accepting f64 never loosens the nullable-reference branch. -/
+    exactly; accepting f64 never loosens the nullable-reference branch. The
+    parameter's s33 heap type must be non-negative: a negative s33 after `0x63`
+    encodes an abstract heap type (e.g. long-form `eqref` as `0x63 0x6D`), not
+    a concrete nominal root, so it fail-closes. -/
 def checkVerbatimFuncType (resultSig : AverCert.Schema.VerbatimResultSig)
     (bytes : ByteSeq) : Bool :=
   match bytes with
   | 0x60 :: 0x01 :: 0x63 :: rootBytes =>
       match readS33 rootBytes with
-      | some (_, rest) =>
+      | some (rootIdx, rest) =>
+          if rootIdx < 0 then false else
           match readUleb32 rest with
           | some (nr, r1) =>
               if nr = 1 then

@@ -4500,6 +4500,26 @@ fn verbatim_kernel_guards_are_isolating() {
         "example : WasmSlice.verbatimFuncTypeMatches nonNullMod 0 (.refNull 5) = false := rfl\n\n",
     );
 
+    // ABSTRACT-PARAM isolation: after `0x63` a NEGATIVE s33 heap type encodes an
+    // abstract heap type (long-form eqref is `0x63 0x6D`, s33 -19), not a concrete
+    // nominal root, so the signature guard fail-closes. The module differs from
+    // `unaryMod` only in that param byte (`4 -> 109`), so the byte-derived binding
+    // and code entry are IDENTICAL — only `checkVerbatimFuncType` tells them apart.
+    lean.push_str(
+        "example : WasmSlice.checkVerbatimFuncType (.refNull 5) [96, 1, 99, 109, 1, 99, 5] = false := rfl\n",
+    );
+    lean.push_str(
+        "example : WasmSlice.checkVerbatimFuncType .f64Scalar [96, 1, 99, 109, 1, 124] = false := rfl\n",
+    );
+    lean.push_str(
+        "def abstractParamMod : List Nat := hdr ++ [1, 8, 1, 96, 1, 99, 109, 1, 99, 5] ++ tailSecs\n",
+    );
+    lean.push_str("example : WasmSlice.funcBindingForExport abstractParamMod nameF = WasmSlice.funcBindingForExport unaryMod nameF := rfl\n");
+    lean.push_str("example : WasmSlice.codeEntryForExport abstractParamMod nameF = WasmSlice.codeEntryForExport unaryMod nameF := rfl\n");
+    lean.push_str(
+        "example : WasmSlice.verbatimFuncTypeMatches abstractParamMod 0 (.refNull 5) = false := rfl\n\n",
+    );
+
     // PARSER STRICTNESS isolation (re-review FIX 3): the type-section and
     // data-section walkers parse EVERY declared entry/segment and require EXACT
     // payload exhaustion, so a valid entry followed by trailing bytes, or a count
