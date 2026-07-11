@@ -1,31 +1,3 @@
-fn nr_straightline(
-    f: &UserFn,
-    body: &StructuralBody,
-    box_idx: u32,
-    carrier: Option<u32>,
-    host_roles: &std::collections::HashMap<u32, HostRole>,
-) -> Option<Cert> {
-    use Op::*;
-    if has_branch(&body.tree) {
-        return None;
-    }
-    let [LocalGet(0), I64Const(k), Call(b), Call(a)] = body.normalized_ops.as_slice() else {
-        return None;
-    };
-    if *b != box_idx || host_roles.get(a) != Some(&HostRole::Add) {
-        return None;
-    }
-    Some(Cert::StraightLine {
-        name: f.name.clone(),
-        self_idx: f.wasm_idx,
-        nlocals: f.nlocals,
-        carrier: carrier?,
-        k: *k,
-        box_idx,
-        add_idx: *a,
-    })
-}
-
 fn nr_adt_constructor(
     f: &UserFn,
     body: &StructuralBody,

@@ -16,7 +16,6 @@ fn render_certificate(
     );
     for c in &analysis.certs {
         match c.inner() {
-            Cert::StraightLine { .. } => s.push_str(&render_straightline_cert(c)),
             Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. } => {
                 s.push_str(&render_fueled_recursion_cert(c))
             }

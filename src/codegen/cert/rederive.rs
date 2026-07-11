@@ -290,9 +290,8 @@ pub enum ObligationFace {
 
 impl ObligationFace {
     fn of_cert(c: &Cert) -> ObligationFace {
-        // A host-call expr fragment with the straight-line integer face keeps
-        // the full-strength integer simulation face (List Int / ReprAll /
-        // intRepr), exactly like the legacy straight-line class.
+        // A host-call expr fragment with the integer-add face keeps the
+        // full-strength integer simulation face (List Int / ReprAll / intRepr).
         if c.int_add_face().is_some() {
             return ObligationFace::IntList { arity: 1 };
         }
@@ -305,8 +304,7 @@ impl ObligationFace {
             };
         }
         match c.inner() {
-            Cert::StraightLine { .. }
-            | Cert::Recursive { .. }
+            Cert::Recursive { .. }
             | Cert::AccumulatorRecursive { .. }
             | Cert::Composition { .. } => ObligationFace::IntList { arity: c.arity() },
             Cert::FieldProjection { struct_idx, .. } => ObligationFace::Projection {
@@ -531,13 +529,12 @@ pub fn rederive_certificate(
 
 /// Re-derive only non-expression-fragment obligations. The verifier uses this
 /// for plan-first checking: expr fragments are admitted by checked sidecar plans
-/// plus canonical code-entry byte equality, not by the old byte lifter.
+/// plus canonical code-entry byte equality, not by byte-only classification.
 /// `plan_covered_exports` are the export names the manifest routes through
-/// checked plan sidecars; they are excluded from legacy byte classification BY
-/// NAME so a plan-first export that also happens to match a legacy template
-/// (e.g. the straight-line integer shape) does not produce a duplicate
-/// obligation for the same function. This never widens acceptance: an export
-/// claimed as plan-first that fails its sidecar check is declined outright.
+/// checked plan sidecars; they are excluded from byte classification BY NAME so
+/// a plan-first export does not produce a duplicate obligation for the same
+/// function. This never widens acceptance: an export claimed as plan-first that
+/// fails its sidecar check is declined outright.
 pub fn rederive_certificate_without_expr_fragments(
     wasm_bytes: &[u8],
     model_files: &[(String, String)],

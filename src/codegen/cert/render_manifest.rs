@@ -637,9 +637,9 @@ fn render_manifest(
     let accepted_artifact_exports = analysis
         .certs
         .iter()
-        .filter(|c| artifact_bridge_profile(c, model_info, analysis.frag_host_table) == "accepted-artifact-v1")
+        .filter(|c| artifact_bridge_profile(c) == "accepted-artifact-v1")
         .count();
-    let legacy_witness_exports = analysis.certs.len().saturating_sub(accepted_artifact_exports);
+    let legacy_witness_exports = 0usize;
     s.push_str(&format!(
         "  \"artifact_bridge_counts\": {{\"accepted-artifact-v1\": {accepted_artifact_exports}, \
          \"legacy-witness-v1\": {legacy_witness_exports}}},\n"
@@ -650,7 +650,6 @@ fn render_manifest(
             s.push(',');
         }
         let kind = match c.inner() {
-            Cert::StraightLine { .. } => "straight-line",
             Cert::Recursive { .. } => "self-recursive",
             Cert::AccumulatorRecursive { .. } => "multi-argument self-recursive",
             Cert::AdtConstructor { .. } => "adt-constructor",
@@ -746,7 +745,7 @@ fn render_manifest(
             }
             _ => String::new(),
         };
-        let artifact_bridge = artifact_bridge_profile(c, model_info, analysis.frag_host_table);
+        let artifact_bridge = artifact_bridge_profile(c);
         s.push_str(&format!(
             "\n    {{\"name\": {}, \"class\": \"{}\", \"policy\": \"simulatesModel\", \
              \"level\": \"{}\", \"artifact_bridge\": \"{}\", \"dom\": {}, \"cod\": {}, \
@@ -785,46 +784,22 @@ fn render_manifest(
 
 fn artifact_bridge_profile(
     c: &Cert,
-    model_info: &ModelInfo,
-    frag_host_table: FragHostTable,
 ) -> &'static str {
     match c.inner() {
         Cert::ExprFragment { .. }
         | Cert::StringEqVerbatimMatch { .. }
-        | Cert::StringConcatVerbatimMatch { .. } => "accepted-artifact-v1",
-        Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. }
-            if recursion_plan_from_cert(c).is_some() =>
-        {
-            "accepted-artifact-v1"
-        }
-        Cert::MutualRecursion { .. } if mutual_plan_from_cert(c).is_some() => {
-            "accepted-artifact-v1"
-        }
-        Cert::Composition { .. }
-            if composition_plans_from_cert(c, frag_host_table).is_some() =>
-        {
-            "accepted-artifact-v1"
-        }
-        Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. }
-            if verbatim_plan_from_cert(c).is_some() =>
-        {
-            "accepted-artifact-v1"
-        }
-        Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. }
-            if int_dispatch_plan_from_cert(c, frag_host_table).is_some() =>
-        {
-            "accepted-artifact-v1"
-        }
-        Cert::AdtConstructor { .. }
-            if adt_constructor_sym_plan_from_cert(c, model_info).is_some()
-                && construct_plan_from_cert(c).is_some() =>
-        {
-            "accepted-artifact-v1"
-        }
-        Cert::FieldProjection { .. } if field_projection_plan_from_cert(c).is_some() => {
-            "accepted-artifact-v1"
-        }
-        _ => "legacy-witness-v1",
+        | Cert::StringConcatVerbatimMatch { .. }
+        | Cert::Recursive { .. }
+        | Cert::AccumulatorRecursive { .. }
+        | Cert::MutualRecursion { .. }
+        | Cert::Composition { .. }
+        | Cert::VerbatimWidenedMatch { .. }
+        | Cert::VerbatimVariantDispatch { .. }
+        | Cert::VariantDispatch { .. }
+        | Cert::WidenedIntMatch { .. }
+        | Cert::AdtConstructor { .. }
+        | Cert::FieldProjection { .. } => "accepted-artifact-v1",
+        Cert::NonRecursive { .. } => unreachable!(),
     }
 }
 

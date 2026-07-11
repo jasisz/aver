@@ -8,8 +8,8 @@ impl Cert {
 
     /// The straight-line integer face of a host-call expr fragment, when this
     /// cert is an `ExprFragment` whose plan is exactly `add(param0, box(k))`.
-    /// Renderers branch on this to state the same obligation and proof the
-    /// legacy straight-line class shipped (no weakening).
+    /// Renderers branch on this to state the full-strength integer obligation
+    /// and proof (no weakening).
     fn int_add_face(&self) -> Option<FragIntAddFace> {
         match self.inner() {
             Cert::ExprFragment { plan, .. } => expr_fragment_int_add_face(plan),
@@ -31,8 +31,7 @@ impl Cert {
 
     fn name(&self) -> &str {
         match self.inner() {
-            Cert::StraightLine { name, .. }
-            | Cert::Recursive { name, .. }
+            Cert::Recursive { name, .. }
             | Cert::AccumulatorRecursive { name, .. }
             | Cert::AdtConstructor { name, .. }
             | Cert::FieldProjection { name, .. }
@@ -50,8 +49,7 @@ impl Cert {
     }
     fn self_idx(&self) -> u32 {
         match self.inner() {
-            Cert::StraightLine { self_idx, .. }
-            | Cert::Recursive { self_idx, .. }
+            Cert::Recursive { self_idx, .. }
             | Cert::AccumulatorRecursive { self_idx, .. }
             | Cert::AdtConstructor { self_idx, .. }
             | Cert::FieldProjection { self_idx, .. }
@@ -69,8 +67,7 @@ impl Cert {
     }
     fn carrier(&self) -> u32 {
         match self.inner() {
-            Cert::StraightLine { carrier, .. }
-            | Cert::Recursive { carrier, .. }
+            Cert::Recursive { carrier, .. }
             | Cert::AccumulatorRecursive { carrier, .. }
             | Cert::AdtConstructor { carrier, .. }
             | Cert::FieldProjection { carrier, .. }
@@ -88,7 +85,7 @@ impl Cert {
     }
     fn arity(&self) -> usize {
         match self.inner() {
-            Cert::StraightLine { .. } | Cert::Recursive { .. } | Cert::MutualRecursion { .. } => 1,
+            Cert::Recursive { .. } | Cert::MutualRecursion { .. } => 1,
             Cert::AccumulatorRecursive { .. } => 2,
             Cert::ExprFragment { plan, .. } => plan.arity(),
             Cert::AdtConstructor { arity, .. } => *arity,
@@ -109,7 +106,6 @@ impl Cert {
             return format!("fun ns => ns.headD 0 + ({})", face.k);
         }
         match self.inner() {
-            Cert::StraightLine { k, .. } => format!("fun ns => ns.headD 0 + ({k})"),
             Cert::Recursive { name, .. }
             | Cert::Composition { name, .. }
             | Cert::MutualRecursion { name, .. } => {
@@ -139,9 +135,6 @@ impl Cert {
             return format!("fun add _ _ _ _ => CertModule.{name}Host add");
         }
         match self.inner() {
-            Cert::StraightLine { name, .. } => {
-                format!("fun add _ _ _ _ => CertModule.{name}Host add")
-            }
             Cert::Recursive {
                 name, combinator, ..
             } => {
@@ -196,8 +189,7 @@ impl Cert {
             return ("WVal x WVal".to_string(), "WVal".to_string());
         }
         match self.inner() {
-            Cert::StraightLine { .. }
-            | Cert::Recursive { .. }
+            Cert::Recursive { .. }
             | Cert::AccumulatorRecursive { .. }
             | Cert::Composition { .. }
             | Cert::MutualRecursion { .. } => ("List Int".to_string(), "Int".to_string()),
