@@ -634,16 +634,6 @@ fn render_manifest(
         s.push_str("\n  ");
     }
     s.push_str("],\n");
-    let accepted_artifact_exports = analysis
-        .certs
-        .iter()
-        .filter(|c| artifact_bridge_profile(c) == "accepted-artifact-v1")
-        .count();
-    let legacy_witness_exports = 0usize;
-    s.push_str(&format!(
-        "  \"artifact_bridge_counts\": {{\"accepted-artifact-v1\": {accepted_artifact_exports}, \
-         \"legacy-witness-v1\": {legacy_witness_exports}}},\n"
-    ));
     s.push_str("  \"certified\": [");
     for (i, c) in analysis.certs.iter().enumerate() {
         if i > 0 {
@@ -745,15 +735,13 @@ fn render_manifest(
             }
             _ => String::new(),
         };
-        let artifact_bridge = artifact_bridge_profile(c);
         s.push_str(&format!(
             "\n    {{\"name\": {}, \"class\": \"{}\", \"policy\": \"simulatesModel\", \
-             \"level\": \"{}\", \"artifact_bridge\": \"{}\", \"dom\": {}, \"cod\": {}, \
+             \"level\": \"{}\", \"dom\": {}, \"cod\": {}, \
              \"theorem\": \"CertProofs.{}_wasm_certified\"{}}}",
             json_str(c.name()),
             kind,
             CERT_LEVEL,
-            artifact_bridge,
             json_str(&dom),
             json_str(&cod),
             c.name(),
@@ -780,27 +768,6 @@ fn render_manifest(
     }
     s.push_str("]\n}\n");
     s
-}
-
-fn artifact_bridge_profile(
-    c: &Cert,
-) -> &'static str {
-    match c.inner() {
-        Cert::ExprFragment { .. }
-        | Cert::StringEqVerbatimMatch { .. }
-        | Cert::StringConcatVerbatimMatch { .. }
-        | Cert::Recursive { .. }
-        | Cert::AccumulatorRecursive { .. }
-        | Cert::MutualRecursion { .. }
-        | Cert::Composition { .. }
-        | Cert::VerbatimWidenedMatch { .. }
-        | Cert::VerbatimVariantDispatch { .. }
-        | Cert::VariantDispatch { .. }
-        | Cert::WidenedIntMatch { .. }
-        | Cert::AdtConstructor { .. }
-        | Cert::FieldProjection { .. } => "accepted-artifact-v1",
-        Cert::NonRecursive { .. } => unreachable!(),
-    }
 }
 
 /// A Lean string literal (escapes `"` and `\`); contract descriptions never

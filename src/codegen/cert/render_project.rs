@@ -1424,9 +1424,10 @@ fn render_artifact_expr_fragment_claims(
             format!("⟨{proof}, {acc}⟩")
         });
     // `acceptedCompositionFragments` conjoins the per-claim acceptance with the
-    // artifact-wide member-coverage bound (a decidable `Bool = true` over the
-    // concrete member/claim literals, closed by `rfl`).
-    let composition_proof = format!("⟨{composition_claims_proof}, rfl⟩");
+    // artifact-wide member coverage, manifest-obligation coverage, and unique
+    // obligation-export bounds. Each is a decidable `Bool = true` over concrete
+    // artifact literals, closed by `rfl`.
+    let composition_proof = format!("⟨{composition_claims_proof}, rfl, rfl, rfl⟩");
     RenderedArtifactClaims {
         sym_claims,
         string_eq_claims,
@@ -1560,6 +1561,8 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.compositionEdgeLookup,\n",
             "    AverCert.AcceptedArtifact.stringListNodup,\n",
             "    AverCert.AcceptedArtifact.stringListSetEq,\n",
+            "    AverCert.AcceptedArtifact.manifestObligationsClaimed,\n",
+            "    AverCert.AcceptedArtifact.manifestObligationExportsUnique,\n",
             "    AverCert.AcceptedArtifact.intDispatchCanonicalHost,\n",
             "    AverCert.AcceptedArtifact.intDispatchCanonicalSlots,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",

@@ -1343,19 +1343,6 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
 
     let wasm = out_dir.join("json.wasm");
     let cert = out_dir.join("cert");
-    let manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap())
-            .unwrap();
-    assert_eq!(
-        manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
-        Some(12),
-        "json plan-backed bridge count must be fully migrated (was 9)"
-    );
-    assert_eq!(
-        manifest["artifact_bridge_counts"]["legacy-witness-v1"].as_u64(),
-        Some(0),
-        "json legacy bridge count must be zero after the list-cons and f64 legs"
-    );
     let (ok, report) = aver_verify(&wasm, &cert);
     assert!(ok, "expected clean json certificate to verify:\n{report}");
     assert!(
@@ -2956,6 +2943,310 @@ fn composition_orphan_member_is_declined() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
+fn run_manifest_obligation_guard_iso(prefix: &str, lean: &str) {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping manifest-obligation GuardIso test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir(prefix);
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/cert_goals.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile cert_goals fixture for manifest-obligation GuardIso");
+    assert!(
+        compile.status.success(),
+        "cert_goals compile failed for manifest-obligation GuardIso:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let cert = out_dir.join("cert");
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build cert_goals certificate before manifest-obligation GuardIso");
+    assert!(
+        build.status.success(),
+        "cert_goals certificate failed before manifest-obligation GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("GuardIso.lean")
+        .output()
+        .expect("run manifest-obligation GuardIso");
+    assert!(
+        check.status.success(),
+        "manifest-obligation GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(out_dir);
+}
+
+/// An otherwise valid artifact with one extra manifest obligation is rejected
+/// only by `manifestObligationsClaimed`; the literal one-conjunct-weakened copy
+/// accepts it, while every byte-derived binding and code entry stays identical.
+#[test]
+fn manifest_unclaimed_obligation_guard_is_isolating() {
+    let lean = r#"import Artifact
+
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 300000
+
+theorem claimObligationsInManifest_append
+    (manifestObligations extras claims : List Obligation)
+    (h : AcceptedArtifact.claimObligationsInManifest manifestObligations claims) :
+    AcceptedArtifact.claimObligationsInManifest
+      (manifestObligations ++ extras) claims := by
+  induction claims with
+  | nil => trivial
+  | cons obligation rest ih =>
+      rcases h with ⟨hfind, hrest⟩
+      constructor
+      · simpa [List.find?_append, hfind]
+      · exact ih hrest
+
+def acceptedCompositionWithoutClaimCoverage
+    (artifact : AcceptedArtifact.ArtifactData) : Prop :=
+  AcceptedArtifact.compositionClaimsAccepted artifact.wasmBytes
+      artifact.compositionMembers artifact.compositionClaims ∧
+    AcceptedArtifact.compositionMembersCovered artifact.compositionMembers
+      artifact.compositionClaims = true ∧
+    AcceptedArtifact.manifestObligationExportsUnique artifact = true
+
+def acceptedFragmentsWithoutClaimCoverage
+    (artifact : AcceptedArtifact.ArtifactData) : Prop :=
+  AcceptedArtifact.acceptedSymFragments artifact ∧
+  AcceptedArtifact.acceptedStringEqFragments artifact ∧
+  AcceptedArtifact.acceptedStringConcatFragments artifact ∧
+  AcceptedArtifact.acceptedConstructFragments artifact ∧
+  AcceptedArtifact.acceptedRecursionFragments artifact ∧
+  AcceptedArtifact.acceptedMutualRecursionFragments artifact ∧
+  AcceptedArtifact.acceptedVerbatimFragments artifact ∧
+  AcceptedArtifact.acceptedIntDispatchFragments artifact ∧
+  AcceptedArtifact.acceptedFieldProjectionFragments artifact ∧
+  acceptedCompositionWithoutClaimCoverage artifact
+
+def acceptedWithoutClaimCoverage
+    (artifact : AcceptedArtifact.ArtifactData) : Prop :=
+  Schema.Holds artifact.manifest ∧
+  AcceptedArtifact.subjectMatchesArtifactRoot artifact ∧
+  AcceptedArtifact.fragmentClaimObligationsInManifest artifact ∧
+  AcceptedArtifact.claimsMatchManifest artifact ∧
+  acceptedFragmentsWithoutClaimCoverage artifact
+
+def unclaimedOb : Obligation :=
+  { AverCert.addTwoOb with export_ := "unclaimedAddTwo" }
+
+def unclaimedManifest : Manifest :=
+  { AverCert.manifest with
+      obligations := AverCert.manifest.obligations ++ [unclaimedOb] }
+
+def unclaimedArtifact : AcceptedArtifact.ArtifactData :=
+  { Artifact.data with manifest := unclaimedManifest }
+
+theorem unclaimedFinal : Schema.Holds unclaimedManifest := by
+  refine ⟨Final.cert.1, ?_⟩
+  intro o ho
+  have ho' : o ∈ AverCert.manifest.obligations ∨ o = unclaimedOb := by
+    simpa [unclaimedManifest] using ho
+  rcases ho' with ho | rfl
+  · exact Final.cert.2 o ho
+  · have hadd := Final.cert.2 AverCert.addTwoOb (by simp [AverCert.manifest])
+    exact ⟨rfl, by simpa [unclaimedOb, Obligation.holds] using hadd.2⟩
+
+example : AcceptedArtifact.manifestObligationsClaimed unclaimedArtifact = false := rfl
+example : AcceptedArtifact.manifestObligationExportsUnique unclaimedArtifact = true := rfl
+
+example : ∀ nameBytes,
+    WasmSlice.funcBindingForExport unclaimedArtifact.wasmBytes nameBytes =
+      WasmSlice.funcBindingForExport Artifact.data.wasmBytes nameBytes := by
+  intro nameBytes
+  rfl
+
+example : ∀ nameBytes,
+    WasmSlice.codeEntryForExport unclaimedArtifact.wasmBytes nameBytes =
+      WasmSlice.codeEntryForExport Artifact.data.wasmBytes nameBytes := by
+  intro nameBytes
+  rfl
+
+example : ¬ AcceptedArtifact.accepted unclaimedArtifact := by
+  intro h
+  rcases h with ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hclaimed, _⟩
+  change false = true at hclaimed
+  contradiction
+
+example : acceptedWithoutClaimCoverage unclaimedArtifact := by
+  rcases Artifact.certificate with
+    ⟨_, hsubject, hobs, hmatch, hsym, hstringEq, hstringConcat, hconstruct,
+      hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
+      hcomposition, hmembersCovered, _, _⟩
+  refine ⟨unclaimedFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · exact hsubject
+  · simpa [unclaimedArtifact, unclaimedManifest,
+      AcceptedArtifact.fragmentClaimObligationsInManifest,
+      AcceptedArtifact.claimObligations] using
+      claimObligationsInManifest_append AverCert.manifest.obligations
+        [unclaimedOb] (AcceptedArtifact.claimObligations Artifact.data) hobs
+  · exact hmatch
+  · exact hsym
+  · exact hstringEq
+  · exact hstringConcat
+  · exact hconstruct
+  · exact hrecursion
+  · exact hmutual
+  · exact hverbatim
+  · exact hintDispatch
+  · exact hfieldProjection
+  · exact hcomposition
+  · exact hmembersCovered
+  · rfl
+"#;
+    run_manifest_obligation_guard_iso("cert-manifest-unclaimed-guard-iso", lean);
+}
+
+/// A second, mutated obligation behind the honest obligation with the same
+/// export name is rejected only by `manifestObligationExportsUnique`; removing
+/// just that conjunct accepts it without changing any byte-derived surface.
+#[test]
+fn manifest_duplicate_obligation_export_guard_is_isolating() {
+    let lean = r#"import Artifact
+
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 300000
+
+theorem claimObligationsInManifest_append
+    (manifestObligations extras claims : List Obligation)
+    (h : AcceptedArtifact.claimObligationsInManifest manifestObligations claims) :
+    AcceptedArtifact.claimObligationsInManifest
+      (manifestObligations ++ extras) claims := by
+  induction claims with
+  | nil => trivial
+  | cons obligation rest ih =>
+      rcases h with ⟨hfind, hrest⟩
+      constructor
+      · simpa [List.find?_append, hfind]
+      · exact ih hrest
+
+def inertCode : CodeTbl := fun _ => none
+
+def duplicateOb : Obligation :=
+  { AverCert.addTwoOb with code := inertCode, self := 999 }
+
+theorem duplicateObHolds : duplicateOb.holds := by
+  intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq
+    hStringConcat fuel x vs w hdom hrun
+  cases fuel <;> simp [duplicateOb, inertCode, wFuncN] at hrun
+
+def duplicateManifest : Manifest :=
+  { AverCert.manifest with
+      obligations := AverCert.manifest.obligations ++ [duplicateOb] }
+
+def duplicateArtifact : AcceptedArtifact.ArtifactData :=
+  { Artifact.data with manifest := duplicateManifest }
+
+theorem duplicateFinal : Schema.Holds duplicateManifest := by
+  refine ⟨Final.cert.1, ?_⟩
+  intro o ho
+  change o ∈ AverCert.manifest.obligations ++ [duplicateOb] at ho
+  rcases List.mem_append.mp ho with ho | ho
+  · exact Final.cert.2 o ho
+  · simp only [List.mem_singleton] at ho
+    subst o
+    exact ⟨rfl, duplicateObHolds⟩
+
+def acceptedCompositionWithoutUniqueExports
+    (artifact : AcceptedArtifact.ArtifactData) : Prop :=
+  AcceptedArtifact.compositionClaimsAccepted artifact.wasmBytes
+      artifact.compositionMembers artifact.compositionClaims ∧
+    AcceptedArtifact.compositionMembersCovered artifact.compositionMembers
+      artifact.compositionClaims = true ∧
+    AcceptedArtifact.manifestObligationsClaimed artifact = true
+
+def acceptedFragmentsWithoutUniqueExports
+    (artifact : AcceptedArtifact.ArtifactData) : Prop :=
+  AcceptedArtifact.acceptedSymFragments artifact ∧
+  AcceptedArtifact.acceptedStringEqFragments artifact ∧
+  AcceptedArtifact.acceptedStringConcatFragments artifact ∧
+  AcceptedArtifact.acceptedConstructFragments artifact ∧
+  AcceptedArtifact.acceptedRecursionFragments artifact ∧
+  AcceptedArtifact.acceptedMutualRecursionFragments artifact ∧
+  AcceptedArtifact.acceptedVerbatimFragments artifact ∧
+  AcceptedArtifact.acceptedIntDispatchFragments artifact ∧
+  AcceptedArtifact.acceptedFieldProjectionFragments artifact ∧
+  acceptedCompositionWithoutUniqueExports artifact
+
+def acceptedWithoutUniqueExports
+    (artifact : AcceptedArtifact.ArtifactData) : Prop :=
+  Schema.Holds artifact.manifest ∧
+  AcceptedArtifact.subjectMatchesArtifactRoot artifact ∧
+  AcceptedArtifact.fragmentClaimObligationsInManifest artifact ∧
+  AcceptedArtifact.claimsMatchManifest artifact ∧
+  acceptedFragmentsWithoutUniqueExports artifact
+
+example : AcceptedArtifact.manifestObligationsClaimed duplicateArtifact = true := rfl
+example : AcceptedArtifact.manifestObligationExportsUnique duplicateArtifact = false := rfl
+
+example : ∀ nameBytes,
+    WasmSlice.funcBindingForExport duplicateArtifact.wasmBytes nameBytes =
+      WasmSlice.funcBindingForExport Artifact.data.wasmBytes nameBytes := by
+  intro nameBytes
+  rfl
+
+example : ∀ nameBytes,
+    WasmSlice.codeEntryForExport duplicateArtifact.wasmBytes nameBytes =
+      WasmSlice.codeEntryForExport Artifact.data.wasmBytes nameBytes := by
+  intro nameBytes
+  rfl
+
+example : ¬ AcceptedArtifact.accepted duplicateArtifact := by
+  intro h
+  rcases h with ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hunique⟩
+  change false = true at hunique
+  contradiction
+
+example : acceptedWithoutUniqueExports duplicateArtifact := by
+  rcases Artifact.certificate with
+    ⟨_, hsubject, hobs, hmatch, hsym, hstringEq, hstringConcat, hconstruct,
+      hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
+      hcomposition, hmembersCovered, _, _⟩
+  refine ⟨duplicateFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · exact hsubject
+  · simpa [duplicateArtifact, duplicateManifest,
+      AcceptedArtifact.fragmentClaimObligationsInManifest,
+      AcceptedArtifact.claimObligations] using
+      claimObligationsInManifest_append AverCert.manifest.obligations
+        [duplicateOb] (AcceptedArtifact.claimObligations Artifact.data) hobs
+  · exact hmatch
+  · exact hsym
+  · exact hstringEq
+  · exact hstringConcat
+  · exact hconstruct
+  · exact hrecursion
+  · exact hmutual
+  · exact hverbatim
+  · exact hintDispatch
+  · exact hfieldProjection
+  · exact hcomposition
+  · exact hmembersCovered
+  · rfl
+"#;
+    run_manifest_obligation_guard_iso("cert-manifest-duplicate-guard-iso", lean);
+}
+
 /// S5 guard isolation, including executed weaken confirmations. Each negative
 /// is rejected by one named audited guard; the adjacent `weak*` definition is
 /// the throwaway one-guard-removed copy and accepts exactly that negative.
@@ -4250,21 +4541,6 @@ fn cert_verify_scalar_f64_verbatim_fixture_and_tampers() {
     wasmparser::Validator::new()
         .validate_all(&honest_bytes)
         .expect("compiler-produced f64verbatim wasm must validate");
-
-    let manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap())
-            .unwrap();
-    let float_entry = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["name"] == "floatOrZero")
-        .expect("floatOrZero must be certified");
-    assert_eq!(
-        float_entry["artifact_bridge"].as_str(),
-        Some("accepted-artifact-v1"),
-        "scalar-f64 verbatim export must use the plan-backed bridge"
-    );
 
     let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
     assert!(

@@ -169,8 +169,8 @@ fn int_dispatch_plan_from_cert(c: &Cert, strict: FragHostTable) -> Option<IntDis
     // first-i64-arith + uniqueness, fail-closed per role). The classifier's
     // coarse marker map assigns a both-ops helper by its first arithmetic; a
     // role the strict table leaves unbound (ambiguous candidates) or binds to
-    // a different index must not carry a plan claim — the export stays on the
-    // legacy witness route, fail-closed.
+    // a different index must not carry a plan claim — certification declines,
+    // fail-closed.
     if strict.box_idx != Some(hosts.box_idx) {
         return None;
     }
@@ -517,7 +517,7 @@ mod int_dispatch_plan_gate_tests {
             "byte-exact gauge must carry a plan claim"
         );
 
-        // Byte-noisy body: an extra byte -> no claim, legacy route, fail-closed.
+        // Byte-noisy body: an extra byte -> no claim; certification declines, fail-closed.
         let mut noisy = gauge_entry.clone();
         noisy.push(0x00);
         noisy[0] += 1;

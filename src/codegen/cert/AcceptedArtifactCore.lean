@@ -1365,6 +1365,34 @@ structure ArtifactData where
   compositionMembers : List CompositionMemberClaim
   compositionClaims  : List CompositionClaim
 
+def claimObligationExports (artifact : ArtifactData) : List String :=
+  artifact.symFragmentClaims.map (fun c => c.obligation.export_) ++
+  artifact.stringEqClaims.map (fun c => c.obligation.export_) ++
+  artifact.stringConcatClaims.map (fun c => c.obligation.export_) ++
+  artifact.constructClaims.map (fun c => c.obligation.export_) ++
+  artifact.recursionClaims.map (fun c => c.obligation.export_) ++
+  artifact.mutualRecursionClaims.map (fun c => c.obligation.export_) ++
+  artifact.verbatimClaims.map (fun c => c.obligation.export_) ++
+  artifact.intDispatchClaims.map (fun c => c.obligation.export_) ++
+  artifact.fieldProjectionClaims.map (fun c => c.obligation.export_) ++
+  artifact.compositionClaims.map (fun c => c.obligation.export_)
+
+/-- Coverage: every manifest obligation is claimed. The claims ⊆ manifest
+    direction is `fragmentClaimObligationsInManifest`; without THIS conjunct an
+    obligation present in `manifest.obligations` but claimed by no family rides
+    into the accepted artifact with no byte-derived check — the
+    "exists but is not constrained" class at the obligation level. -/
+def manifestObligationsClaimed (artifact : ArtifactData) : Bool :=
+  let claimed := claimObligationExports artifact
+  artifact.manifest.obligations.all (fun o => claimed.contains o.export_)
+
+/-- Manifest obligations bind by export name; a duplicate name would let a
+    second, unclaimed obligation ride behind a claimed one (find? sees only the
+    first). Names must be pairwise distinct. -/
+def manifestObligationExportsUnique (artifact : ArtifactData) : Bool :=
+  let names := artifact.manifest.obligations.map (fun o => o.export_)
+  stringListNodup names
+
 def acceptedSymFragments (artifact : ArtifactData) : Prop :=
   symFragmentClaimsAccepted artifact.wasmBytes artifact.symFragmentClaims
 
@@ -1420,11 +1448,19 @@ def acceptedFieldProjectionFragments (artifact : ArtifactData) : Prop :=
     artifact.manifest
     artifact.fieldProjectionClaims
 
+/-- Besides the composition-claim acceptance this def carries the two
+    ARTIFACT-WIDE manifest-coverage conjuncts (`manifestObligationsClaimed`,
+    `manifestObligationExportsUnique`). Like `compositionMembersCovered` they
+    are cross-claim facts about the whole manifest, not per-family facts, and
+    `acceptedFragments` conjoins this def unconditionally for every artifact —
+    composition claims present or not. -/
 def acceptedCompositionFragments (artifact : ArtifactData) : Prop :=
   compositionClaimsAccepted
     artifact.wasmBytes artifact.compositionMembers artifact.compositionClaims ∧
   compositionMembersCovered
-    artifact.compositionMembers artifact.compositionClaims = true
+    artifact.compositionMembers artifact.compositionClaims = true ∧
+  manifestObligationsClaimed artifact = true ∧
+  manifestObligationExportsUnique artifact = true
 
 def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedSymFragments artifact ∧
@@ -1443,18 +1479,6 @@ def expectedArtifactRoot : String :=
 
 def subjectMatchesArtifactRoot (artifact : ArtifactData) : Prop :=
   artifact.manifest.subject.artifactRoot = expectedArtifactRoot
-
-def claimObligationExports (artifact : ArtifactData) : List String :=
-  artifact.symFragmentClaims.map (fun c => c.obligation.export_) ++
-  artifact.stringEqClaims.map (fun c => c.obligation.export_) ++
-  artifact.stringConcatClaims.map (fun c => c.obligation.export_) ++
-  artifact.constructClaims.map (fun c => c.obligation.export_) ++
-  artifact.recursionClaims.map (fun c => c.obligation.export_) ++
-  artifact.mutualRecursionClaims.map (fun c => c.obligation.export_) ++
-  artifact.verbatimClaims.map (fun c => c.obligation.export_) ++
-  artifact.intDispatchClaims.map (fun c => c.obligation.export_) ++
-  artifact.fieldProjectionClaims.map (fun c => c.obligation.export_) ++
-  artifact.compositionClaims.map (fun c => c.obligation.export_)
 
 def claimObligations (artifact : ArtifactData) : List Obligation :=
   artifact.symFragmentClaims.map (fun c => c.obligation) ++

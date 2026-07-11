@@ -445,7 +445,7 @@ mod verbatim_plan_gate_tests {
             verbatim_plan_from_cert(&wrap_items_cert(wrap_bytes.clone())).is_some(),
             "byte-exact wrapItems must carry a plan claim"
         );
-        // Byte-noisy body: an extra byte -> no claim, legacy route, fail-closed.
+        // Byte-noisy body: an extra byte -> no claim; certification declines, fail-closed.
         let mut noisy = wrap_bytes.clone();
         noisy.push(0x00);
         noisy[0] += 1;

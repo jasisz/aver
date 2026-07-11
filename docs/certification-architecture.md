@@ -676,38 +676,11 @@ The invariants that keep it excluded:
     verify` checks it against the byte-derived concat certificate. This is not
     yet Lean-side artifact acceptance; it is the source data surface that will
     feed that bridge.
-18. Done for `String.concat`: add a Lean-side checked string plan family and
-    artifact-level `StringConcatClaim`, so the source `SymPlan`,
-    manifest-pinned byte-bound `string-concat-v1` plan, canonical
-    body/code-entry lowering and Wasm slice binding are checked inside
-    `AcceptedArtifact` instead of leaving the concat proof as only a `WVal`
-    verbatim model. The claim no longer duplicates the target plan; the
-    audited predicate looks it up in the manifest by export name.
-    The JSON manifest now exposes this migration surface explicitly with
-    `artifact_bridge_counts`; at this point the goal matrix was 8/23 exports on
-    `accepted-artifact-v1`.
-19. Done for `expr-fragment-v1`: delete the old byte-derived expression
-    lifter/recognizer from the verifier admission path. Expression fragments
-    now enter only through producer plan sidecars whose checked canonical
-    lowering matches the exact code-entry bytes.
-20. Done for source-first expr artifact shape: current source-projectable
-    expression fragments no longer emit a duplicate public
-    `expr-fragment-v1.plan` sidecar. The verifier reads the `SymPlan`, derives
-    the representation `ExprFragmentRawPlan`, and uses that derived plan for
-    Lean manifest/witness pins. The target plan sidecar remains only for future
-    representation-only fallback fragments.
-21. Done for `String.eq`: add `string-eq-v1` beside the source-level SymPlan,
-    pin it in `manifest.stringEqPlans`, and accept the exported equality
-    dispatch through `AcceptedArtifact.StringEqClaim`. The bridge counter was
-    9/23 exports on `accepted-artifact-v1` at this point.
-22. Done for `adt-constructor`: add source construct nodes to `SymPlan`, pin the
-    byte-bound `construct-v1` plans in `manifest.constructPlans`, and accept the
-    exported constructor through `AcceptedArtifact.ConstructClaim`
-    (`PlanCheck.checkConstructRawPlan`, looked up by export name). The bridge
-    counter is now 10/23 exports on `accepted-artifact-v1`.
-23. Next: migrate the remaining ADT variant/projection, verbatim, list and
-    recursion families into source-level plan families or deliberately sunset
-    them from the certified surface.
+18. Completed: all certified expression, string, constructor, ADT,
+    field-projection, recursion, mutual-recursion and composition families enter
+    the Lean-side `AcceptedArtifact` predicate through checked plan claims. The
+    manifest now reports the final certified surface directly; the temporary
+    bridge fields and migration counters were removed in schema 45.
 
 The implementation should move slowly, but every step should tighten the
 acceptance path rather than add another permanent recognizer.

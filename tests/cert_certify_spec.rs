@@ -162,41 +162,6 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         actual, expected,
         "certified goal matrix changed; update the numerator deliberately"
     );
-    assert_eq!(
-        manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
-        Some(23),
-        "AcceptedArtifact coverage changed; update this migration counter deliberately"
-    );
-    assert_eq!(
-        manifest["artifact_bridge_counts"]["legacy-witness-v1"].as_u64(),
-        Some(0),
-        "legacy witness count changed; update this migration counter deliberately"
-    );
-    let expected_bridge = |class: &str| match class {
-        "adt-constructor"
-        | "expr-fragment-v1"
-        | "verbatim-string-eq"
-        | "verbatim-string-concat"
-        | "verbatim-widened-match"
-        | "verbatim-variant-dispatch"
-        | "variant-dispatch"
-        | "widened-int-match"
-        | "self-recursive"
-        | "multi-argument self-recursive"
-        | "mutual-recursive"
-        | "cross-function-composition" => "accepted-artifact-v1",
-        _ => "legacy-witness-v1",
-    };
-    for entry in manifest["certified"].as_array().unwrap() {
-        let name = entry["name"].as_str().unwrap();
-        let class = entry["class"].as_str().unwrap();
-        assert_eq!(
-            entry["artifact_bridge"].as_str(),
-            Some(expected_bridge(class)),
-            "{name} artifact bridge profile should track whether it is covered by AcceptedArtifact"
-        );
-    }
-
     let expr_entries = manifest["certified"]
         .as_array()
         .unwrap()
@@ -942,11 +907,6 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
         .find(|c| c["name"].as_str() == Some("quoteOrSelf"))
         .expect("quoteOrSelf manifest entry exists");
     assert_eq!(
-        quote_entry["artifact_bridge"].as_str(),
-        Some("accepted-artifact-v1"),
-        "quoteOrSelf should now be covered by AcceptedArtifact"
-    );
-    assert_eq!(
         quote_entry["source_fragment"]["profile"].as_str(),
         Some("sym-fragment-v1"),
         "quoteOrSelf should expose a source-level SymPlan sidecar"
@@ -1307,20 +1267,6 @@ fn certify_composition_fixture_lake_builds_kernel_clean() {
         .and_then(|c| c["class"].as_str())
         .unwrap_or("");
     assert_eq!(class, "cross-function-composition", "wrong class for quad");
-    for name in ["quad", "hex16"] {
-        let bridge = manifest["certified"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|c| c["name"] == name)
-            .and_then(|c| c["artifact_bridge"].as_str());
-        assert_eq!(
-            bridge,
-            Some("accepted-artifact-v1"),
-            "{name} must use the plan-backed artifact bridge"
-        );
-    }
-
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")
@@ -1442,19 +1388,6 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
                 "expected {name} certified for {input}, got {certified:?}"
             );
         }
-        if input == "tools/certkit/fixtures/tupleproj.av" {
-            assert_eq!(
-                manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
-                Some(2),
-                "tuple projections must both use the plan-backed bridge"
-            );
-            assert_eq!(
-                manifest["artifact_bridge_counts"]["legacy-witness-v1"].as_u64(),
-                Some(0),
-                "no tuple field projection may remain legacy-certified"
-            );
-        }
-
         let build = Command::new("lake")
             .current_dir(&cert_dir)
             .arg("build")
@@ -1524,12 +1457,6 @@ fn certify_carrier_at_type_index_64_lake_builds_kernel_clean() {
         "fixture must pin the carrier exactly at the s33 boundary index 64; \
          adjust the fixture's variant count if the emitter's type layout changed"
     );
-    assert_eq!(
-        manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
-        Some(1),
-        "the boundary recursion export must carry its byte-origin plan claim"
-    );
-
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")

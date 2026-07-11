@@ -411,7 +411,7 @@ mod recursion_plan_gate_tests {
         );
 
         // Normalized body: an extra (alias) local classifies identically but
-        // its raw bytes differ -> NO plan claim, legacy route, fail-closed.
+        // its raw bytes differ -> NO plan claim; certification declines, fail-closed.
         let mut noisy = canonical.clone();
         assert_eq!(noisy[1..4], [0x01, 0x01, 0x63], "locals decl prefix moved");
         noisy[2] = 0x02; // declare two scratch locals instead of one
