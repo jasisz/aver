@@ -1,13 +1,12 @@
 /// The COMPLETE result-kind vector of a verbatim dispatch must be exactly one
 /// result of the kind its fall-through default implies: a scalar `f64` default
-/// returns `f64` (the legacy no-plan route), and every reference-producing
+/// returns `f64`, and every reference-producing
 /// default (`ref.null`, `array.new_data`) — like the field-projection hit of a
 /// widened match — returns a NULLABLE reference (`ref null`, the exact form the
 /// certified `[eqref] -> [(ref null) resultHeapTy]` signature promises). A
 /// zero-result, two-result, non-nullable-reference, or scalar-integer signature
-/// is declined. The plan-backed reference case is additionally pinned in-kernel
-/// to the exact concrete type by `verbatimFuncTypeMatches`; this belt binds the
-/// legacy `f64` route, which never reaches that kernel check.
+/// is declined. The plan-backed path is additionally pinned in-kernel to the
+/// exact disjoint result-signature variant by `verbatimFuncTypeMatches`.
 fn verbatim_results_ok(results: &[TyKind], default: &VerbatimDefault) -> bool {
     match default {
         VerbatimDefault::F64Bits(_) => matches!(results, [TyKind::F64]),
@@ -57,9 +56,8 @@ fn nr_verbatim_variant_dispatch(
     // value in". Without this a two-parameter dispatch keeps a byte-identical code
     // entry (the extra param is overwritten by `local.set`), so a unary obligation
     // would be certified for a binary export. The result type is left to the plan
-    // path: a ref-returning dispatch is additionally pinned in-kernel to the
-    // `[eqref] -> [ref]` signature (`verbatimFuncTypeMatches`), while a scalar
-    // (`f64`) default carries no plan and rides the legacy witness route.
+    // path: the declared ref-null or f64 result variant is additionally pinned
+    // in-kernel by `verbatimFuncTypeMatches`.
     let [TyKind::Eqref] = f.params.as_slice() else {
         return None;
     };
@@ -78,8 +76,8 @@ fn nr_verbatim_variant_dispatch(
     if arms.is_empty() {
         return None;
     }
-    // Exactly one result of the kind the default implies (binds the legacy f64
-    // route's signature, and rejects a forged extra/zero result).
+    // Exactly one result of the kind the default implies (and no forged
+    // extra/zero result).
     if !verbatim_results_ok(&f.results, &default) {
         return None;
     }

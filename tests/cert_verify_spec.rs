@@ -1348,13 +1348,13 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
             .unwrap();
     assert_eq!(
         manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
-        Some(9),
-        "json plan-backed bridge count must move 7 -> 9"
+        Some(10),
+        "json plan-backed bridge count must move 9 -> 10"
     );
     assert_eq!(
         manifest["artifact_bridge_counts"]["legacy-witness-v1"].as_u64(),
-        Some(3),
-        "json legacy bridge count must move 5 -> 3"
+        Some(2),
+        "json legacy bridge count must move 3 -> 2"
     );
     let (ok, report) = aver_verify(&wasm, &cert);
     assert!(ok, "expected clean json certificate to verify:\n{report}");
@@ -4142,8 +4142,8 @@ fn cert_verify_declines_tampered_verbatim_plan() {
         ),
         (
             "ref.null heap type",
-            "resultHeapTy := 8",
-            "resultHeapTy := 18",
+            "resultSig := .refNull 8",
+            "resultSig := .refNull 18",
         ),
         (
             "equal-length payload collision",
@@ -4176,8 +4176,8 @@ fn cert_verify_declines_tampered_verbatim_plan() {
     let mut lean = String::new();
     lean.push_str("import Schema\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\n\n");
     lean.push_str("open AverCert.Schema\nopen AverCert.PlanBytes\n\n");
-    lean.push_str("def honestWrap : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 2, fieldLocal := 1, resultHeapTy := 8, body := .test 0 (.project 0 0) (.leaf (.refNull)) }\n");
-    lean.push_str("def honestTag : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultHeapTy := 5, body := .test 2 (.arrayNewData 5 0 [97, 108, 112, 104, 97]) (.test 3 (.arrayNewData 5 1 [98, 101, 116, 97]) (.leaf (.arrayNewData 5 2 [103, 97, 109, 109, 97]))) }\n\n");
+    lean.push_str("def honestWrap : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 2, fieldLocal := 1, resultSig := .refNull 8, body := .test 0 (.project 0 0) (.leaf (.refNull)) }\n");
+    lean.push_str("def honestTag : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultSig := .refNull 5, body := .test 2 (.arrayNewData 5 0 [97, 108, 112, 104, 97]) (.test 3 (.arrayNewData 5 1 [98, 101, 116, 97]) (.leaf (.arrayNewData 5 2 [103, 97, 109, 109, 97]))) }\n\n");
     lean.push_str("example : AverCert.PlanCheck.checkVerbatimRawPlan honestWrap = true := rfl\n");
     lean.push_str("example : AverCert.PlanCheck.checkVerbatimRawPlan honestTag = true := rfl\n\n");
     lean.push_str("def tamper1 : VerbatimRawPlan := { honestWrap with body := .test 1 (.project 0 0) (.leaf (.refNull)) }\n");
@@ -4186,7 +4186,9 @@ fn cert_verify_declines_tampered_verbatim_plan() {
     lean.push_str("example : lowerVerbatimCodeEntry 7 tamper2 ≠ lowerVerbatimCodeEntry 7 honestTag := by decide\n");
     lean.push_str("def tamper3 : VerbatimRawPlan := { honestTag with body := .test 2 (.arrayNewData 5 9 [97, 108, 112, 104, 97]) (.test 3 (.arrayNewData 5 1 [98, 101, 116, 97]) (.leaf (.arrayNewData 5 2 [103, 97, 109, 109, 97]))) }\n");
     lean.push_str("example : lowerVerbatimCodeEntry 7 tamper3 ≠ lowerVerbatimCodeEntry 7 honestTag := by decide\n");
-    lean.push_str("def tamper4 : VerbatimRawPlan := { honestWrap with resultHeapTy := 18 }\n");
+    lean.push_str(
+        "def tamper4 : VerbatimRawPlan := { honestWrap with resultSig := .refNull 18 }\n",
+    );
     lean.push_str("example : lowerVerbatimCodeEntry 7 tamper4 ≠ lowerVerbatimCodeEntry 7 honestWrap := by decide\n");
 
     let honest_build = Command::new("lake")
@@ -4265,14 +4267,18 @@ fn verbatim_kernel_guards_are_isolating() {
     lean.push_str("example : WasmSlice.funcBindingForExport unaryMod nameF = WasmSlice.funcBindingForExport binaryMod nameF := rfl\n");
     lean.push_str("example : WasmSlice.codeEntryForExport unaryMod nameF = WasmSlice.codeEntryForExport binaryMod nameF := rfl\n");
     // ...and only the signature guard tells unary from binary.
-    lean.push_str("example : WasmSlice.verbatimFuncTypeMatches unaryMod 0 5 = true := rfl\n");
-    lean.push_str("example : WasmSlice.verbatimFuncTypeMatches binaryMod 0 5 = false := rfl\n\n");
+    lean.push_str(
+        "example : WasmSlice.verbatimFuncTypeMatches unaryMod 0 (.refNull 5) = true := rfl\n",
+    );
+    lean.push_str(
+        "example : WasmSlice.verbatimFuncTypeMatches binaryMod 0 (.refNull 5) = false := rfl\n\n",
+    );
     // PAYLOAD isolation: segment 0 is "alpha".
     lean.push_str(
         "example : WasmSlice.dataSegmentBytes unaryMod 0 = some [97, 108, 112, 104, 97] := rfl\n",
     );
-    lean.push_str("def planAlpha : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultHeapTy := 5, body := .leaf (.arrayNewData 5 0 [97, 108, 112, 104, 97]) }\n");
-    lean.push_str("def planAlphB : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultHeapTy := 5, body := .leaf (.arrayNewData 5 0 [97, 108, 112, 104, 98]) }\n");
+    lean.push_str("def planAlpha : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultSig := .refNull 5, body := .leaf (.arrayNewData 5 0 [97, 108, 112, 104, 97]) }\n");
+    lean.push_str("def planAlphB : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultSig := .refNull 5, body := .leaf (.arrayNewData 5 0 [97, 108, 112, 104, 98]) }\n");
     // The structural checker and byte lowering are BLIND to the payload content...
     lean.push_str("example : PlanCheck.checkVerbatimRawPlan planAlpha = true := rfl\n");
     lean.push_str("example : PlanCheck.checkVerbatimRawPlan planAlphB = true := rfl\n");
@@ -4283,7 +4289,7 @@ fn verbatim_kernel_guards_are_isolating() {
     );
     lean.push_str("example : AcceptedArtifact.verbatimPayloadsBound unaryMod planAlphB.body = false := rfl\n\n");
     // FIX 2(c): an out-of-range payload element is rejected up front.
-    lean.push_str("example : PlanCheck.checkVerbatimRawPlan { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultHeapTy := 5, body := .leaf (.arrayNewData 5 0 [256]) } = false := rfl\n\n");
+    lean.push_str("example : PlanCheck.checkVerbatimRawPlan { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultSig := .refNull 5, body := .leaf (.arrayNewData 5 0 [256]) } = false := rfl\n\n");
 
     // NULLABILITY isolation (re-review FIX 2): the certified verbatim signature is
     // `[eqref] -> [(ref null resultHeapTy)]` — the `0x63` nullable form the
@@ -4292,17 +4298,19 @@ fn verbatim_kernel_guards_are_isolating() {
     // byte-derived binding and code entry are IDENTICAL (the reftype is never in
     // the code entry) — only `checkVerbatimFuncType` tells them apart.
     lean.push_str(
-        "example : WasmSlice.checkVerbatimFuncType 5 [96, 1, 109, 1, 99, 5] = true := rfl\n",
+        "example : WasmSlice.checkVerbatimFuncType (.refNull 5) [96, 1, 109, 1, 99, 5] = true := rfl\n",
     );
     lean.push_str(
-        "example : WasmSlice.checkVerbatimFuncType 5 [96, 1, 109, 1, 100, 5] = false := rfl\n",
+        "example : WasmSlice.checkVerbatimFuncType (.refNull 5) [96, 1, 109, 1, 100, 5] = false := rfl\n",
     );
     lean.push_str(
         "def nonNullMod : List Nat := hdr ++ [1, 7, 1, 96, 1, 109, 1, 100, 5] ++ tailSecs\n",
     );
     lean.push_str("example : WasmSlice.funcBindingForExport nonNullMod nameF = WasmSlice.funcBindingForExport unaryMod nameF := rfl\n");
     lean.push_str("example : WasmSlice.codeEntryForExport nonNullMod nameF = WasmSlice.codeEntryForExport unaryMod nameF := rfl\n");
-    lean.push_str("example : WasmSlice.verbatimFuncTypeMatches nonNullMod 0 5 = false := rfl\n\n");
+    lean.push_str(
+        "example : WasmSlice.verbatimFuncTypeMatches nonNullMod 0 (.refNull 5) = false := rfl\n\n",
+    );
 
     // PARSER STRICTNESS isolation (re-review FIX 3): the type-section and
     // data-section walkers parse EVERY declared entry/segment and require EXACT
@@ -4312,12 +4320,12 @@ fn verbatim_kernel_guards_are_isolating() {
     // Type section: a trailing `0xff` after the one valid func type.
     lean.push_str("def trailingTypeMod : List Nat := hdr ++ [1, 8, 1, 96, 1, 109, 1, 99, 5, 255] ++ tailSecs\n");
     lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches trailingTypeMod 0 5 = false := rfl\n",
+        "example : WasmSlice.verbatimFuncTypeMatches trailingTypeMod 0 (.refNull 5) = false := rfl\n",
     );
     // Type section: count claims 2 rectypes but only 1 is present.
     lean.push_str("def countMismatchTypeMod : List Nat := hdr ++ [1, 7, 2, 96, 1, 109, 1, 99, 5] ++ tailSecs\n");
     lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches countMismatchTypeMod 0 5 = false := rfl\n",
+        "example : WasmSlice.verbatimFuncTypeMatches countMismatchTypeMod 0 (.refNull 5) = false := rfl\n",
     );
     // Data section: a trailing `0xff` after the one valid segment.
     lean.push_str(
@@ -4331,6 +4339,92 @@ fn verbatim_kernel_guards_are_isolating() {
     lean.push_str("example : WasmSlice.dataSegmentBytes dataCountMismatchMod 0 = none := rfl\n");
     // Over-wide (6-byte) unsigned LEB32 exceeds the u32 width cap and declines.
     lean.push_str("example : WasmSlice.readUleb32 [128, 128, 128, 128, 128, 0] = none := rfl\n");
+
+    // F64 RESULT-KIND isolation. These two tiny modules have identical
+    // func/export/code sections and differ only in the byte-derived type result:
+    // `[f64]` versus `[(ref null 5)]`. The weakened predicate below is a literal
+    // copy of `verbatimPlanAccepted` with exactly its
+    // `verbatimFuncTypeMatches` conjunct removed. It accepts the f64 plan against
+    // the ref module; the shipped predicate rejects exactly at that conjunct.
+    // Direct checks also prove both cross-kind directions reject.
+    lean.push_str(
+        r#"
+def isoHdr : List Nat := [0, 97, 115, 109, 1, 0, 0, 0]
+def isoF64Type : List Nat := [1, 6, 1, 96, 1, 109, 1, 124]
+def isoRefType : List Nat := [1, 7, 1, 96, 1, 109, 1, 99, 5]
+def isoTail : List Nat :=
+  [3, 2, 1, 0, 7, 5, 1, 1, 102, 0, 0,
+   10, 24, 1, 22, 2, 1, 109, 1, 99, 7, 32, 0, 33, 1, 32, 1,
+   68, 0, 0, 0, 0, 0, 0, 0, 0, 11]
+def isoF64Mod : List Nat := isoHdr ++ isoF64Type ++ isoTail
+def isoRefMod : List Nat := isoHdr ++ isoRefType ++ isoTail
+def isoNameF : List Nat := [102]
+def isoExpectedBinding : WasmSlice.FuncBinding :=
+  { funcIdx := 0, codeIdx := 0, typeIdx := 0,
+    codeEntry := [22, 2, 1, 109, 1, 99, 7, 32, 0, 33, 1, 32, 1,
+                  68, 0, 0, 0, 0, 0, 0, 0, 0, 11] }
+
+def isoF64Plan : VerbatimRawPlan :=
+  { profile := "verbatim-plan-v1", scrutineeLocal := 1, fieldLocal := 0,
+    resultSig := .f64Scalar, body := .leaf (.f64Bits 0) }
+
+def isoCode : CertPrelude.CodeTbl := fun i : Nat =>
+  if i = 0 then
+    some ({ arity := 1, nlocals := 2,
+            body := AverCert.PlanLower.lowerVerbatimBody isoF64Plan } : CertPrelude.WCode)
+  else none
+
+def isoOb : Obligation :=
+  { export_ := "f", policy := .simulatesModel, carrier := 7,
+    code := isoCode, host := fun _ _ _ _ _ => (fun _ : Nat => none), self := 0,
+    Dom := Unit, Cod := Unit,
+    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True,
+    model := fun _ => () }
+
+def weakVerbatimPlanAcceptedWithoutResultSig
+    (wasmBytes exportNameBytes : WasmSlice.ByteSeq) (exportName : String)
+    (carrier : Nat) (plan : VerbatimRawPlan) (obligation : Obligation) : Prop :=
+  obligation.export_ = exportName ∧
+    obligation.carrier = carrier ∧
+    PlanCheck.checkVerbatimRawPlan plan = true ∧
+    ∃ codeEntry binding,
+      PlanBytes.lowerVerbatimCodeEntry carrier plan = some codeEntry ∧
+      WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
+      WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+      binding.funcIdx = obligation.self ∧
+      binding.codeEntry = codeEntry ∧
+      AcceptedArtifact.verbatimPayloadsBound wasmBytes plan.body = true ∧
+      obligation.code binding.funcIdx =
+        some { arity := 1, nlocals := AcceptedArtifact.verbatimNLocals plan,
+               body := PlanLower.lowerVerbatimBody plan }
+
+example : WasmSlice.verbatimFuncTypeMatches isoF64Mod 0 .f64Scalar = true := rfl
+example : WasmSlice.verbatimFuncTypeMatches isoF64Mod 0 (.refNull 5) = false := rfl
+example : WasmSlice.verbatimFuncTypeMatches isoRefMod 0 (.refNull 5) = true := rfl
+example : WasmSlice.verbatimFuncTypeMatches isoRefMod 0 .f64Scalar = false := rfl
+
+example : weakVerbatimPlanAcceptedWithoutResultSig
+    isoRefMod isoNameF "f" 7 isoF64Plan isoOb := by
+  refine ⟨rfl, rfl, rfl, ⟨_, _, rfl, rfl, rfl, rfl, rfl, rfl, ?_⟩⟩
+  simp [isoOb, isoCode, AcceptedArtifact.verbatimNLocals, isoF64Plan,
+    PlanCheck.dispatchHasProjection]
+  rfl
+
+example : ¬ AcceptedArtifact.verbatimPlanAccepted
+    isoRefMod isoNameF "f" 7 isoF64Plan isoOb := by
+  intro h
+  rcases h with ⟨_, _, _, ⟨_, binding, _, _, hbinding, _, _, hsig, _, _⟩⟩
+  have known : WasmSlice.funcBindingForExport isoRefMod isoNameF =
+      some isoExpectedBinding := by rfl
+  rw [known] at hbinding
+  injection hbinding with hb
+  subst binding
+  change WasmSlice.verbatimFuncTypeMatches isoRefMod 0 .f64Scalar = true at hsig
+  have cross : WasmSlice.verbatimFuncTypeMatches isoRefMod 0 .f64Scalar = false := rfl
+  rw [cross] at hsig
+  contradiction
+"#,
+    );
 
     let out_dir = temp_dir("cert-verbatim-guard-iso");
     let compile = aver_command()
@@ -4726,8 +4820,12 @@ fn int_dispatch_kernel_guards_are_isolating() {
     lean.push_str("example : WasmSlice.funcBindingForExport unaryMod nameF = WasmSlice.funcBindingForExport binaryMod nameF := rfl\n");
     lean.push_str("example : WasmSlice.codeEntryForExport unaryMod nameF = WasmSlice.codeEntryForExport binaryMod nameF := rfl\n");
     // ...and only the signature guard tells unary from binary.
-    lean.push_str("example : WasmSlice.verbatimFuncTypeMatches unaryMod 0 5 = true := rfl\n");
-    lean.push_str("example : WasmSlice.verbatimFuncTypeMatches binaryMod 0 5 = false := rfl\n\n");
+    lean.push_str(
+        "example : WasmSlice.verbatimFuncTypeMatches unaryMod 0 (.refNull 5) = true := rfl\n",
+    );
+    lean.push_str(
+        "example : WasmSlice.verbatimFuncTypeMatches binaryMod 0 (.refNull 5) = false := rfl\n\n",
+    );
     // HOST-TABLE DISTINCTNESS isolation: two plans differing ONLY in the arm's
     // host ROLE.
     lean.push_str("def planAdd : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 3 (.hostOp .add (2) false) (.default (0)) }\n");

@@ -40,6 +40,14 @@ enum VerbatimDispatch {
     },
 }
 
+/// Exact result signature claimed by a verbatim plan. The kernel matches this
+/// against the result kind recovered from the module's type-section bytes.
+#[derive(Clone, Copy, PartialEq)]
+enum VerbatimResultSig {
+    RefNull(u32),
+    F64Scalar,
+}
+
 /// Raw, untrusted verbatim `ref.test`-dispatch plan (`verbatim-plan-v1`). Rust
 /// twin of Lean `Schema.VerbatimRawPlan` (the `profile` field is hard-coded by
 /// the Lean renderer, so it is not carried here).
@@ -47,7 +55,7 @@ enum VerbatimDispatch {
 struct VerbatimRawPlan {
     scrutinee_local: u32,
     field_local: u32,
-    result_heap_ty: u32,
+    result_sig: VerbatimResultSig,
     body: VerbatimDispatch,
 }
 
@@ -81,20 +89,19 @@ fn verbatim_leaf_from_default(d: &VerbatimDefault) -> VerbatimLeaf {
     }
 }
 
-/// The dispatch's `if (result <heap>)` block type / `ref.null` heap type, read
-/// from the byte-derived default: an `array.new_data` default names it directly
-/// through its array type index; a null default names it through the threaded
-/// `ref.null` heap type in the body ops. An `f64` default has no ref result
-/// type, so it declines (fail-closed; the grammar's block result is always a
-/// ref). The byte-equality gate re-checks whatever this returns.
-fn verbatim_result_heap_ty(default: &VerbatimDefault, ops: &[Op]) -> Option<u32> {
+/// The dispatch result signature read from the byte-derived default: an
+/// `array.new_data` default names its nullable-ref heap type directly, a null
+/// default names it through the threaded `ref.null` body op, and an `f64`
+/// default selects the disjoint scalar variant. The byte-equality and
+/// type-section gates re-check whatever this returns.
+fn verbatim_result_sig(default: &VerbatimDefault, ops: &[Op]) -> Option<VerbatimResultSig> {
     match default {
-        VerbatimDefault::Array { type_idx, .. } => Some(*type_idx),
+        VerbatimDefault::Array { type_idx, .. } => Some(VerbatimResultSig::RefNull(*type_idx)),
         VerbatimDefault::Null => ops.iter().find_map(|op| match op {
-            Op::RefNull(Some(h)) => Some(*h),
+            Op::RefNull(Some(h)) => Some(VerbatimResultSig::RefNull(*h)),
             _ => None,
         }),
-        VerbatimDefault::F64Bits(_) => None,
+        VerbatimDefault::F64Bits(_) => Some(VerbatimResultSig::F64Scalar),
     }
 }
 
@@ -116,7 +123,7 @@ fn verbatim_plan_from_cert(c: &Cert) -> Option<VerbatimRawPlan> {
             ops,
             ..
         } => {
-            let result_heap_ty = verbatim_result_heap_ty(default, ops)?;
+            let result_sig = verbatim_result_sig(default, ops)?;
             let body = VerbatimDispatch::Test {
                 ty_idx: *hit_variant_idx,
                 hit: VerbatimLeaf::Project {
@@ -128,7 +135,7 @@ fn verbatim_plan_from_cert(c: &Cert) -> Option<VerbatimRawPlan> {
             let plan = VerbatimRawPlan {
                 scrutinee_local: 2,
                 field_local: 1,
-                result_heap_ty,
+                result_sig,
                 body,
             };
             (plan, *carrier, code_entry_bytes)
@@ -141,7 +148,7 @@ fn verbatim_plan_from_cert(c: &Cert) -> Option<VerbatimRawPlan> {
             ops,
             ..
         } => {
-            let result_heap_ty = verbatim_result_heap_ty(default, ops)?;
+            let result_sig = verbatim_result_sig(default, ops)?;
             let mut body = VerbatimDispatch::Leaf(verbatim_leaf_from_default(default));
             for (tag, konst) in arms.iter().rev() {
                 body = VerbatimDispatch::Test {
@@ -153,7 +160,7 @@ fn verbatim_plan_from_cert(c: &Cert) -> Option<VerbatimRawPlan> {
             let plan = VerbatimRawPlan {
                 scrutinee_local: 1,
                 field_local: 0,
-                result_heap_ty,
+                result_sig,
                 body,
             };
             (plan, *carrier, code_entry_bytes)
@@ -182,8 +189,14 @@ fn lower_verbatim_body_bytes(plan: &VerbatimRawPlan, carrier: u32) -> Vec<u8> {
     let mut out = Vec::new();
     // Local declarations.
     if verbatim_dispatch_has_projection(&plan.body) {
-        out.extend_from_slice(&[0x03, 0x01, 0x63]);
-        push_s33_heap_idx(&mut out, plan.result_heap_ty);
+        out.extend_from_slice(&[0x03, 0x01]);
+        match plan.result_sig {
+            VerbatimResultSig::RefNull(heap_ty) => {
+                out.push(0x63);
+                push_s33_heap_idx(&mut out, heap_ty);
+            }
+            VerbatimResultSig::F64Scalar => out.push(0x7c),
+        }
         out.extend_from_slice(&[0x01, 0x6d, 0x01, 0x63]);
         push_s33_heap_idx(&mut out, carrier);
     } else {
@@ -199,7 +212,7 @@ fn lower_verbatim_body_bytes(plan: &VerbatimRawPlan, carrier: u32) -> Vec<u8> {
         &mut out,
         plan.scrutinee_local,
         plan.field_local,
-        plan.result_heap_ty,
+        plan.result_sig,
         true,
         &plan.body,
     );
@@ -211,12 +224,12 @@ fn verbatim_dispatch_bytes(
     out: &mut Vec<u8>,
     s: u32,
     f: u32,
-    rht: u32,
+    result_sig: VerbatimResultSig,
     first: bool,
     disp: &VerbatimDispatch,
 ) {
     match disp {
-        VerbatimDispatch::Leaf(l) => verbatim_leaf_bytes(out, s, f, rht, l),
+        VerbatimDispatch::Leaf(l) => verbatim_leaf_bytes(out, s, f, result_sig, l),
         VerbatimDispatch::Test { ty_idx, hit, rest } => {
             if !first {
                 out.push(0x20);
@@ -224,17 +237,29 @@ fn verbatim_dispatch_bytes(
             }
             out.extend_from_slice(&[0xfb, 0x14]);
             push_s33_heap_idx(out, *ty_idx);
-            out.extend_from_slice(&[0x04, 0x63]);
-            push_s33_heap_idx(out, rht);
-            verbatim_leaf_bytes(out, s, f, rht, hit);
+            out.push(0x04);
+            match result_sig {
+                VerbatimResultSig::RefNull(heap_ty) => {
+                    out.push(0x63);
+                    push_s33_heap_idx(out, heap_ty);
+                }
+                VerbatimResultSig::F64Scalar => out.push(0x7c),
+            }
+            verbatim_leaf_bytes(out, s, f, result_sig, hit);
             out.push(0x05);
-            verbatim_dispatch_bytes(out, s, f, rht, false, rest);
+            verbatim_dispatch_bytes(out, s, f, result_sig, false, rest);
             out.push(0x0b);
         }
     }
 }
 
-fn verbatim_leaf_bytes(out: &mut Vec<u8>, s: u32, f: u32, rht: u32, leaf: &VerbatimLeaf) {
+fn verbatim_leaf_bytes(
+    out: &mut Vec<u8>,
+    s: u32,
+    f: u32,
+    result_sig: VerbatimResultSig,
+    leaf: &VerbatimLeaf,
+) {
     match leaf {
         VerbatimLeaf::Project { ty_idx, field } => {
             out.push(0x20);
@@ -264,7 +289,10 @@ fn verbatim_leaf_bytes(out: &mut Vec<u8>, s: u32, f: u32, rht: u32, leaf: &Verba
         }
         VerbatimLeaf::RefNull => {
             out.push(0xd0);
-            push_s33_heap_idx(out, rht);
+            let VerbatimResultSig::RefNull(heap_ty) = result_sig else {
+                unreachable!("f64 verbatim plan cannot contain ref.null")
+            };
+            push_s33_heap_idx(out, heap_ty);
         }
         VerbatimLeaf::F64Bits(bits) => {
             out.push(0x44);
@@ -302,11 +330,15 @@ fn verbatim_dispatch_lean_value(d: &VerbatimDispatch) -> String {
 /// The Lean `VerbatimRawPlan` literal (profile `verbatim-plan-v1`), rendered on
 /// ONE line (a multi-line anonymous-constructor literal misparses).
 fn verbatim_plan_lean_value(plan: &VerbatimRawPlan) -> String {
+    let result_sig = match plan.result_sig {
+        VerbatimResultSig::RefNull(heap_ty) => format!(".refNull {heap_ty}"),
+        VerbatimResultSig::F64Scalar => ".f64Scalar".to_string(),
+    };
     format!(
-        "{{ profile := \"verbatim-plan-v1\", scrutineeLocal := {}, fieldLocal := {}, resultHeapTy := {}, body := {} }}",
+        "{{ profile := \"verbatim-plan-v1\", scrutineeLocal := {}, fieldLocal := {}, resultSig := {}, body := {} }}",
         plan.scrutinee_local,
         plan.field_local,
-        plan.result_heap_ty,
+        result_sig,
         verbatim_dispatch_lean_value(&plan.body)
     )
 }
@@ -367,6 +399,19 @@ mod verbatim_plan_gate_tests {
         }
     }
 
+    fn json_float_cert(code_entry_bytes: Vec<u8>, bits: u64) -> Cert {
+        Cert::VerbatimWidenedMatch {
+            name: "jsonFloat".to_string(),
+            self_idx: 15,
+            nlocals: 3,
+            carrier: 18,
+            hit_variant_idx: 6,
+            default: VerbatimDefault::F64Bits(bits),
+            code_entry_bytes,
+            ops: vec![Op::F64Const(bits)],
+        }
+    }
+
     #[test]
     fn verbatim_plan_reproduces_stage0_pins() {
         // wrapItems: the pinned code entry (size 0x27) from the spike.
@@ -378,7 +423,7 @@ mod verbatim_plan_gate_tests {
         let wrap_plan = VerbatimRawPlan {
             scrutinee_local: 2,
             field_local: 1,
-            result_heap_ty: 20,
+            result_sig: VerbatimResultSig::RefNull(20),
             body: VerbatimDispatch::Test {
                 ty_idx: 6,
                 hit: VerbatimLeaf::Project {
@@ -413,7 +458,7 @@ mod verbatim_plan_gate_tests {
         let tag_plan = VerbatimRawPlan {
             scrutinee_local: 1,
             field_local: 0,
-            result_heap_ty: 16,
+            result_sig: VerbatimResultSig::RefNull(16),
             body: VerbatimDispatch::Test {
                 ty_idx: 8,
                 hit: VerbatimLeaf::ArrayNewData {
@@ -448,11 +493,48 @@ mod verbatim_plan_gate_tests {
         );
     }
 
+    #[test]
+    fn f64_scalar_plan_binds_locals_block_type_and_constant_bits() {
+        let bits = 0x3ff0_0000_0000_0000;
+        let plan = VerbatimRawPlan {
+            scrutinee_local: 2,
+            field_local: 1,
+            result_sig: VerbatimResultSig::F64Scalar,
+            body: VerbatimDispatch::Test {
+                ty_idx: 6,
+                hit: VerbatimLeaf::Project {
+                    ty_idx: 6,
+                    field: 0,
+                },
+                rest: Box::new(VerbatimDispatch::Leaf(VerbatimLeaf::F64Bits(bits))),
+            },
+        };
+        let bytes = lower_verbatim_code_entry(&plan, 18);
+        assert_eq!(
+            &bytes[1..9],
+            &[0x03, 0x01, 0x7c, 0x01, 0x6d, 0x01, 0x63, 0x12],
+            "projecting f64 plans retain the exact three-local layout"
+        );
+        assert!(bytes.windows(2).any(|w| w == [0x04, 0x7c]));
+        assert!(bytes
+            .windows(9)
+            .any(|w| w[0] == 0x44 && w[1..] == bits.to_le_bytes()));
+        assert!(
+            verbatim_plan_from_cert(&json_float_cert(bytes.clone(), bits)).is_some(),
+            "byte-exact f64 widened match must carry a plan claim"
+        );
+
+        let wrong_bits = bits ^ 1;
+        assert!(
+            verbatim_plan_from_cert(&json_float_cert(bytes, wrong_bits)).is_none(),
+            "the code-entry equality must bind all eight f64 immediate bytes"
+        );
+    }
+
     /// FIX 1 belt: `verbatim_results_ok` requires EXACTLY one result of the kind
-    /// the fall-through default implies. This binds the legacy `f64` route (which
-    /// never reaches the in-kernel signature check) and rejects a forged
-    /// zero/two-result declaration or a non-nullable reference. Each negative
-    /// assertion fails only if the belt itself is weakened.
+    /// the fall-through default implies and rejects a forged zero/two-result
+    /// declaration or a non-nullable reference before the in-kernel signature
+    /// check. Each negative assertion fails only if the belt itself is weakened.
     #[test]
     fn verbatim_results_ok_binds_the_result_signature() {
         use TyKind::*;

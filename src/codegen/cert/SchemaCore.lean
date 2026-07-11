@@ -299,6 +299,14 @@ inductive VerbatimDispatch where
   | test (tyIdx : Nat) (hit : VerbatimLeaf) (rest : VerbatimDispatch)
 deriving Repr
 
+/-- The exact result signature claimed by a verbatim plan. Artifact acceptance
+    checks this variant against the function type recovered from module bytes;
+    it is not evidence for its own result kind. -/
+inductive VerbatimResultSig where
+  | refNull (heapTy : Nat)
+  | f64Scalar
+deriving Repr, DecidableEq
+
 /-- Raw, untrusted verbatim `ref.test`-dispatch plan (`verbatim-plan-v1`). A
     byte-origin veneer: the `Cod := WVal` / `verbatimRepr` proof face and the
     emitted `Module.lean` body literal are unchanged, so the plan claim never
@@ -308,7 +316,7 @@ structure VerbatimRawPlan where
   profile        : String
   scrutineeLocal : Nat
   fieldLocal     : Nat
-  resultHeapTy   : Nat
+  resultSig      : VerbatimResultSig
   body           : VerbatimDispatch
 deriving Repr
 

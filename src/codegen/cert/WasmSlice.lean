@@ -303,38 +303,34 @@ def funcTypeMatches (wasmBytes : ByteSeq) (typeIdx arity carrier : Nat) : Bool :
   typeSectionMatches (checkCanonicalFuncType arity carrier) wasmBytes typeIdx
 
 /-- Whether the head of `bytes` is EXACTLY the certified verbatim dispatch
-    function type `[eqref] → [(ref null resultHeapTy)]`: one abstract `eq`
-    reference parameter (`0x6d`) and one NULLABLE concrete reference result
-    (`0x63` — the exact `ref null` form — followed by the s33 heap index
-    `resultHeapTy`). A non-null result (`0x64`), a subtype prefix, and every other
-    shape fail-close. This pins a verbatim binding's declared signature to UNARY
-    arity, the `eqref` domain the dispatch reads, the `ref null` nullability the
-    `ref.null` default requires, and the plan's result heap type — none of which
-    the code-entry bytes encode (a second parameter leaves the code entry
-    byte-identical, and the result reftype is never in the code entry at all). -/
-def checkVerbatimFuncType (resultHeapTy : Nat) (bytes : ByteSeq) : Bool :=
+    function type for `resultSig`: `[eqref] → [(ref null heapTy)]` for a
+    `.refNull heapTy` plan, or `[eqref] → [f64]` for `.f64Scalar`. The result
+    bytes are parsed from the type section and must match the plan variant
+    exactly; accepting f64 never loosens the nullable-reference branch. -/
+def checkVerbatimFuncType (resultSig : AverCert.Schema.VerbatimResultSig)
+    (bytes : ByteSeq) : Bool :=
   match bytes with
   | 0x60 :: 0x01 :: 0x6d :: rest =>
       match readUleb32 rest with
       | some (nr, r1) =>
           if nr = 1 then
-            match r1 with
-            | 0x63 :: r2 =>
+            match resultSig, r1 with
+            | .refNull resultHeapTy, 0x63 :: r2 =>
                 match readS33 r2 with
                 | some (idx, _) => idx == Int.ofNat resultHeapTy
                 | none => false
-            | _ => false
+            | .f64Scalar, 0x7c :: _ => true
+            | _, _ => false
           else
             false
       | none => false
   | _ => false
 
-/-- Whether the module's type-section entry `typeIdx` is exactly the certified
-    verbatim dispatch signature `[eqref] → [(ref null resultHeapTy)]`. Binds a
-    claimed verbatim binding's declared signature to unary arity, the `eqref`
-    domain and the plan's result heap type without trusting any of them. -/
-def verbatimFuncTypeMatches (wasmBytes : ByteSeq) (typeIdx resultHeapTy : Nat) : Bool :=
-  typeSectionMatches (checkVerbatimFuncType resultHeapTy) wasmBytes typeIdx
+/-- Whether the module's byte-derived type-section entry `typeIdx` exactly
+    matches the verbatim plan's declared result-signature variant. -/
+def verbatimFuncTypeMatches (wasmBytes : ByteSeq) (typeIdx : Nat)
+    (resultSig : AverCert.Schema.VerbatimResultSig) : Bool :=
+  typeSectionMatches (checkVerbatimFuncType resultSig) wasmBytes typeIdx
 
 /-! ### Bare field-projection type binding -/
 
