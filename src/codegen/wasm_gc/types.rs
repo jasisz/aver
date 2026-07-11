@@ -14,10 +14,9 @@
 //!    the right struct.
 //!
 //! Variants (`type Shape = Circle(Float) | Rect(Float, Float)`) get
-//! one struct type per constructor, with the parent-type name as the
-//! abstract carrier. Phase-3 keeps it simple: each constructor stands
-//! alone (no subtyping yet — pattern matching dispatches via tag-by-
-//! struct-type comparison through `ref.test`).
+//! one empty non-final root struct for the sum plus one final struct
+//! subtype per constructor. Pattern matching dispatches through
+//! `ref.test` against those concrete constructor types.
 
 use std::collections::HashMap;
 
@@ -39,6 +38,9 @@ use crate::ast::{TopLevel, TypeDef};
 pub(super) struct TypeRegistry {
     /// `record_name → type_idx` for product (record) types.
     pub(super) records: HashMap<String, u32>,
+    /// `sum_name → type_idx` for the empty, non-final nominal root
+    /// struct shared by every constructor of that sum.
+    pub(super) sum_roots: HashMap<String, u32>,
     /// `variant_constructor_name → (parent_type_name, type_idx, fields)`.
     /// `fields` are the type strings of the constructor's positional
     /// fields (Aver variants use positional fields, not named ones).
@@ -260,6 +262,7 @@ impl TypeRegistry {
         // unchanged.
         let handler_active = _handler_active;
         let mut records = HashMap::new();
+        let mut sum_roots = HashMap::new();
         let mut variants: HashMap<String, Vec<VariantInfo>> = HashMap::new();
         let mut record_fields = HashMap::new();
         let mut next_idx: u32 = 0;
@@ -273,6 +276,12 @@ impl TypeRegistry {
                 TopLevel::TypeDef(TypeDef::Sum {
                     name, variants: vs, ..
                 }) => {
+                    // Reserve the nominal root before every constructor.
+                    // `emit_user_types` preserves these indices inside one
+                    // explicit rec group, so the supertype is declared before
+                    // its subtypes while recursive sum payloads remain legal.
+                    sum_roots.insert(name.clone(), next_idx);
+                    next_idx += 1;
                     for v in vs {
                         variants
                             .entry(v.name.clone())
@@ -998,6 +1007,7 @@ impl TypeRegistry {
 
         Self {
             records,
+            sum_roots,
             variants,
             record_fields,
             vector_types,
@@ -1266,6 +1276,14 @@ impl TypeRegistry {
             return Some(idx);
         }
         None
+    }
+
+    pub(super) fn sum_root_type_idx(&self, name: &str) -> Option<u32> {
+        if let Some(idx) = self.sum_roots.get(name).copied() {
+            return Some(idx);
+        }
+        let bare = name.rsplit_once('.').map_or(name, |(_, b)| b);
+        self.sum_roots.get(bare).copied()
     }
 
     /// Look up a variant by bare name. Returns the first registered
@@ -1876,31 +1894,13 @@ pub(super) fn aver_to_wasm(
         if let Some(idx) = reg.record_type_idx(trimmed) {
             return Ok(Some(struct_ref(idx)));
         }
-        // Sum type by parent name — represented as the abstract `eq`
-        // ref so any variant subtype lands in the same slot. Each
-        // variant constructor's type idx still emits a concrete
-        // struct.new; the parent ref shape is what params/locals
-        // declare.
-        // Variant parent match: tolerate "Types.Tile" coming in from
-        // a canonicalised type stamp when the discovery walker
-        // registered the variants under bare "Tile" (Iron — A3).
-        let trimmed_bare = trimmed.rsplit_once('.').map_or(trimmed, |(_, b)| b);
-        if reg
-            .variants
-            .values()
-            .flat_map(|v| v.iter())
-            .any(|v| v.parent == trimmed || v.parent == trimmed_bare)
-        {
-            // Phase-3a: use `(ref null eq)` as the carrier — every
-            // wasm-gc struct is a subtype of `eq`. Real subtype
-            // hierarchies (where pattern matching tests `ref.test`
-            // against concrete struct types) lands in phase 3b.
+        // Sum type by parent name — use its nominal root struct as the
+        // carrier. Constructors still allocate their concrete variant
+        // structs, all declared as subtypes of this root.
+        if let Some(root_idx) = reg.sum_root_type_idx(trimmed) {
             return Ok(Some(ValType::Ref(RefType {
                 nullable: true,
-                heap_type: HeapType::Abstract {
-                    shared: false,
-                    ty: AbstractHeapType::Eq,
-                },
+                heap_type: HeapType::Concrete(root_idx),
             })));
         }
     }

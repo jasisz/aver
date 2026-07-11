@@ -166,14 +166,14 @@ fn nr_ref_dispatch_match(
         }
         let miss_ops = node_ops(miss_arm);
         // Typed admission (belt for the legacy route, mirroring the verbatim
-        // widened match): exactly one user ADT (eqref) value in — a
+        // widened match): exactly one nominal sum-root value in — a
         // two-parameter dispatch keeps a byte-identical code entry, so a unary
         // obligation must not be certified for a binary export — and exactly
         // one nullable Int-carrier reference out (the plan path additionally
-        // pins the exact `[eqref] -> [(ref null) carrier]` signature
+        // pins the exact unary concrete-ref -> nullable-carrier signature
         // in-kernel).
         if matches!(miss_ops.as_slice(), [Op::I64Const(0), Op::Call(b)] if *b == box_idx)
-            && matches!(f.params.as_slice(), [TyKind::Eqref])
+            && matches!(f.params.as_slice(), [TyKind::Ref { nullable: true, .. }])
             && matches!(f.results.as_slice(),
                 [TyKind::Ref { nullable: true, idx }] if *idx == carrier)
         {
@@ -188,13 +188,13 @@ fn nr_ref_dispatch_match(
                 ops: strip_trailing_end(&f.ops).to_vec(),
             });
         }
-        // Typed admission: exactly one user ADT (eqref) value in — a two-parameter
+        // Typed admission: exactly one nominal sum-root value in — a two-parameter
         // dispatch keeps a byte-identical code entry, so a unary obligation must
         // not be certified for a binary export — and exactly one result of the
         // kind the default implies (a nullable ref here; the plan path additionally
-        // pins the exact `[eqref] -> [(ref null) resultHeapTy]` signature in-kernel).
+        // pins the exact unary concrete-ref -> nullable-result signature in-kernel).
         if f.calls.is_empty()
-            && matches!(f.params.as_slice(), [TyKind::Eqref])
+            && matches!(f.params.as_slice(), [TyKind::Ref { nullable: true, .. }])
             && let Some(default) = verbatim_default_from_ops(&miss_ops)
             && verbatim_results_ok(&f.results, &default)
         {

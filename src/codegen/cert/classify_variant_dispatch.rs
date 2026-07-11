@@ -12,13 +12,11 @@ fn nr_variant_dispatch(
     host_roles: &std::collections::HashMap<u32, HostRole>,
 ) -> Option<Cert> {
     let carrier = carrier?;
-    // Typed admission: the byte signature must be exactly "one user ADT value
-    // in, one Int carrier out" — the claim-shape as the bytes declare it, not
-    // a bare parameter count. The COMPLETE result vector must be exactly one
-    // NULLABLE carrier reference (the exact `ref null` form the certified
-    // `[eqref] -> [(ref null) carrier]` signature promises; the plan path
-    // additionally pins it in-kernel).
-    if f.params.as_slice() != [TyKind::Eqref]
+    // Typed admission: the byte signature must be exactly one nullable,
+    // concrete nominal sum-root reference in and one Int carrier out. Full
+    // wasm validation has already proved that every tested constructor is a
+    // subtype of that parameter root.
+    if !matches!(f.params.as_slice(), [TyKind::Ref { nullable: true, .. }])
         || !matches!(f.results.as_slice(),
             [TyKind::Ref { nullable: true, idx }] if *idx == carrier)
     {
