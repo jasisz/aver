@@ -54,7 +54,7 @@ fn recursive_fuel_pieces(c: &Cert) -> FuelPieces {
     // Per carrier arm: `input` names the model int (`s` small / `n` big) and
     // `input_wval` its byte form; produce the `add [..]` operand list and the
     // `hAdd ..` argument prefix (everything before the trailing `hadd`).
-    let combinator_arm = |input: &str, input_wval: &str| -> (String, String) {
+    let combinator_arm = |input: &str, input_wval: &str| -> (String, String, String) {
         let other_wval = match other {
             BodyOperand::Input => input_wval.to_string(),
             BodyOperand::Const(k) => format!("carrierSmall {carrier} {}", lean_int_lit(k)),
@@ -68,22 +68,112 @@ fn recursive_fuel_pieces(c: &Cert) -> FuelPieces {
             (
                 format!("[vr, {other_wval}]"),
                 format!("{rec_int} {} _ _ wa hrr {other_repr}", other_expr(input)),
+                format!("{rec_int} {} _ _ hrr {other_repr}", other_expr(input)),
             )
         } else {
             (
                 format!("[{other_wval}, vr]"),
                 format!("{} {rec_int} _ _ wa {other_repr} hrr", other_expr(input)),
+                format!("{} {rec_int} _ _ {other_repr} hrr", other_expr(input)),
             )
         }
     };
-    let (add_small, hadd_small) = combinator_arm(
+    let (add_small, hadd_small, hadd_tot_small) = combinator_arm(
         "s",
         &format!(".structv {carrier} [.i64v s, .null, .i32v sg]"),
     );
-    let (add_big, hadd_big) = combinator_arm(
+    let (add_big, hadd_big, hadd_tot_big) = combinator_arm(
         "n",
         &format!(".structv {carrier} [.i64v s, .arr lty les, .i32v sg]"),
     );
+    let total = if combinator == Combinator::Add {
+        let total_repr_hyps = recursion_repr_hyps(*carrier);
+        format!(
+            r#"/-- Fuel-parametric progress from the checked `natAbs` measure and
+    add/sub totality on represented values. -/
+theorem {name}_wasm_total_aux
+{total_repr_hyps}
+    (add sub : List WVal → Option WVal)
+    (hAdd : ∀ a b va vb w, Repr a va → Repr b vb → add [va, vb] = some w → Repr (a + b) w)
+    (hSub : ∀ a b va vb w, Repr a va → Repr b vb → sub [va, vb] = some w → Repr (a - b) w)
+    (hAddTot : ∀ a b va vb, Repr a va → Repr b vb → ∃ w, add [va, vb] = some w)
+    (hSubTot : ∀ a b va vb, Repr a va → Repr b vb → ∃ w, sub [va, vb] = some w) :
+    ∀ (fuel : Nat) (n : Int) (v : WVal), Repr n v → n.natAbs < fuel →
+      ∃ w, wFuncN {name}Code ({name}Host add sub) fuel {self_idx} [v] = some w ∧
+        Repr ({name} n) w := by
+  intro fuel
+  induction fuel with
+  | zero => intro n v hv hlt; omega
+  | succ fuel ih =>
+      intro n v hv hlt
+      rcases hcar n v hv with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
+      · have hs := hsmall_elim n s sg hv
+        subst hs
+        by_cases hle : s ≤ (0 : Int)
+        · refine ⟨carrierSmall {carrier} {base}, ?_, ?_⟩
+          · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32,
+              popArgs, initLocals, hle]
+          · rw [{name}_base s hle]; exact hsmall_intro {base}
+        · obtain ⟨vd, hsub⟩ := hSubTot s 1 _ (carrierSmall {carrier} 1) hv (hsmall_intro 1)
+          have hrd : Repr (s - 1) vd := hSub s 1 _ _ vd hv (hsmall_intro 1) hsub
+          obtain ⟨vr, hrec, hrr⟩ := ih (s - 1) vd hrd (by omega)
+          obtain ⟨wa, hadd⟩ := hAddTot {hadd_tot_small}
+          refine ⟨wa, ?_, ?_⟩
+          · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32,
+              popArgs, initLocals, hle, hsub, hrec, hadd]
+          · rw [{name}_step s hle]; exact hAdd {hadd_small} hadd
+      · obtain ⟨hsign, hne⟩ := hbig n s lty les sg hv
+        by_cases hlt2 : sg < (0 : Int)
+        · have hn0 : n ≤ 0 := by have := hsign.mp hlt2; omega
+          refine ⟨carrierSmall {carrier} {base}, ?_, ?_⟩
+          · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32,
+              popArgs, initLocals, hlt2]
+          · rw [{name}_base n hn0]; exact hsmall_intro {base}
+        · have hn0 : ¬ n ≤ 0 := by
+            intro hle
+            have : ¬ n < 0 := fun h => hlt2 (hsign.mpr h)
+            omega
+          obtain ⟨vd, hsub⟩ := hSubTot n 1 _ (carrierSmall {carrier} 1) hv (hsmall_intro 1)
+          have hrd : Repr (n - 1) vd := hSub n 1 _ _ vd hv (hsmall_intro 1) hsub
+          obtain ⟨vr, hrec, hrr⟩ := ih (n - 1) vd hrd (by omega)
+          obtain ⟨wa, hadd⟩ := hAddTot {hadd_tot_big}
+          refine ⟨wa, ?_, ?_⟩
+          · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32,
+              popArgs, initLocals, hlt2, hsub, hrec, hadd]
+          · rw [{name}_step n hn0]; exact hAdd {hadd_big} hadd
+
+#print axioms {name}_wasm_total_aux
+
+/-- TOTAL correctness at the fuel selected by the checked `intNatAbs` witness. -/
+theorem {name}_wasm_total
+{total_repr_hyps}
+    (add sub : List WVal → Option WVal)
+    (hAdd : ∀ a b va vb w, Repr a va → Repr b vb → add [va, vb] = some w → Repr (a + b) w)
+    (hSub : ∀ a b va vb w, Repr a va → Repr b vb → sub [va, vb] = some w → Repr (a - b) w)
+    (hAddTot : ∀ a b va vb, Repr a va → Repr b vb → ∃ w, add [va, vb] = some w)
+    (hSubTot : ∀ a b va vb, Repr a va → Repr b vb → ∃ w, sub [va, vb] = some w) :
+    ∀ (n : Int) (v : WVal), Repr n v →
+      ∃ w, wFuncN {name}Code ({name}Host add sub) (n.natAbs + 1) {self_idx} [v] = some w ∧
+        Repr ({name} n) w :=
+  fun n v hv =>
+    {name}_wasm_total_aux Repr hcar hsmall_intro hsmall_elim hbig add sub hAdd hSub
+      hAddTot hSubTot (n.natAbs + 1) n v hv (by omega)
+
+#print axioms {name}_wasm_total
+
+theorem {name}_simulates_total : AverCert.Schema.Obligation.holdsTotal {name}Ob := by
+  intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat
+    hAddTot hSubTot n v hv
+  refine ⟨[n], ?_, ?_⟩
+  · exact ⟨ReprAll.cons hv ReprAll.nil, rfl⟩
+  · simpa [{name}Ob, AverCert.Schema.intRepr] using
+      {name}_wasm_total S.Repr S.car S.smallIntro S.smallElim S.bigElim
+        add sub hadd hsub hAddTot hSubTot n v hv
+"#
+        )
+    } else {
+        String::new()
+    };
     FuelPieces {
         doc_kind: "self-recursive",
         cert_kind: "recursive",
@@ -189,6 +279,7 @@ theorem {name}_base (n : Int) (hn : n ≤ 0) : {name} n = {base} := by
                 rw [{name}_step n hn0, ← hrun]
                 exact {chyp} {hadd_big} hadd"#
         ),
+        total,
         faithful_concl: format!(
             r#"    ∀ (fuel : Nat) (n : Int) (v w : WVal), Repr n v →
       wFuncN {name}Code ({name}Host {cparam} sub) fuel {self_idx} [v] = some w →

@@ -25,6 +25,11 @@ pub struct RederivedObligation {
     pub self_idx: u32,
     /// `Obligation.carrier`: the Int carrier struct type index.
     pub carrier: u32,
+    /// Policy and witness independently re-derived from the byte-classified
+    /// recursion family. The checker pins both fields separately from the plan
+    /// hash and rejects producer-supplied promotion labels that disagree.
+    pub policy: CertificationPolicy,
+    pub termination_witness: Option<TerminationWitness>,
     /// The BYTE-derived typed face: which standard `Dom`/`Cod`/`domRepr`/`codRepr`
     /// forms the honest emitter renders for this class. `aver cert verify` pins
     /// these into its witness, so a manifest weakening the semantic face
@@ -585,6 +590,8 @@ fn rederive_certificate_inner(
             host: render_host_value(c),
             self_idx: c.self_idx(),
             carrier: c.carrier(),
+            policy: c.policy(),
+            termination_witness: c.termination_witness(),
             face: ObligationFace::of_cert(c),
             fragment_code_idx: match c.inner() {
                 Cert::ExprFragment { code_idx, .. } => Some(*code_idx),

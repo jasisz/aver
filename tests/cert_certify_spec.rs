@@ -433,6 +433,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             aver::codegen::cert::INT_SUB_CONTRACT,
             aver::codegen::cert::STRING_EQ_CONTRACT,
             aver::codegen::cert::STRING_CONCAT_CONTRACT,
+            aver::codegen::cert::INT_ADD_TOTAL_CONTRACT,
+            aver::codegen::cert::INT_SUB_TOTAL_CONTRACT,
         ],
         "goal matrix runtime contracts changed"
     );
@@ -636,6 +638,39 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
             "expected {name} certified, got {certified:?}"
         );
     }
+    let certified_entries = manifest["certified"].as_array().unwrap();
+    for name in ["sumFrom", "constPlus", "backward"] {
+        let entry = certified_entries
+            .iter()
+            .find(|entry| entry["name"] == name)
+            .unwrap();
+        assert_eq!(entry["policy"], "simulatesModelTotally");
+        assert_eq!(entry["level"], "L3");
+        assert_eq!(entry["theorem"], format!("CertProofs.{name}_wasm_total"));
+        assert_eq!(entry["termination_witness"]["measure"]["kind"], "intNatAbs");
+        assert_eq!(entry["termination_witness"]["measure"]["param_index"], 0);
+        assert_eq!(entry["termination_witness"]["descent"], -1);
+    }
+    for name in ["factorial", "countDown"] {
+        let entry = certified_entries
+            .iter()
+            .find(|entry| entry["name"] == name)
+            .unwrap();
+        assert_eq!(entry["policy"], "simulatesModel");
+        assert_eq!(entry["level"], "L1");
+        assert!(entry.get("termination_witness").is_none());
+    }
+    let contracts = manifest["runtime_contracts"].as_array().unwrap();
+    assert!(
+        contracts
+            .iter()
+            .any(|c| { c == aver::codegen::cert::INT_ADD_TOTAL_CONTRACT })
+    );
+    assert!(
+        contracts
+            .iter()
+            .any(|c| { c == aver::codegen::cert::INT_SUB_TOTAL_CONTRACT })
+    );
 
     let build = Command::new("lake")
         .current_dir(&cert_dir)
@@ -661,6 +696,18 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
             "recursion certificate for {name} not kernel-clean:\n{combined}"
         );
     }
+    for name in ["sumFrom", "constPlus", "backward"] {
+        assert!(
+            combined.contains(&format!(
+                "{name}_wasm_total' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            )),
+            "total recursion certificate for {name} not kernel-clean:\n{combined}"
+        );
+    }
+    assert!(
+        !combined.contains("factorial_wasm_total") && !combined.contains("countDown_wasm_total"),
+        "out-of-scope recursion family was promoted:\n{combined}"
+    );
     assert!(
         !combined.contains("sorryAx"),
         "recursion certificate leaked sorryAx:\n{combined}"

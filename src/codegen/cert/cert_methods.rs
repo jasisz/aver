@@ -6,6 +6,31 @@ impl Cert {
         }
     }
 
+    /// The only v47 total family: unary `n - 1` recursion whose combinator uses
+    /// `Int.add`. Multiplicative recursion would require a frozen `mul`
+    /// totality contract, and accumulator/mutual/budget families are not part
+    /// of this leg, so all of them remain partial.
+    fn termination_witness(&self) -> Option<TerminationWitness> {
+        match self.inner() {
+            Cert::Recursive {
+                combinator: Combinator::Add,
+                ..
+            } => Some(TerminationWitness {
+                measure: TerminationMeasure::IntNatAbs { param_idx: 0 },
+                descent: -1,
+            }),
+            _ => None,
+        }
+    }
+
+    fn policy(&self) -> CertificationPolicy {
+        if self.termination_witness().is_some() {
+            CertificationPolicy::SimulatesModelTotally
+        } else {
+            CertificationPolicy::SimulatesModel
+        }
+    }
+
     /// The straight-line integer face of a host-call expr fragment, when this
     /// cert is an `ExprFragment` whose plan is exactly `add(param0, box(k))`.
     /// Renderers branch on this to state the full-strength integer obligation

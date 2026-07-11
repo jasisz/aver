@@ -36,6 +36,9 @@ struct FuelPieces {
     concl: String,
     zero_body: String,
     succ_body: String,
+    /// Optional L3 theorem block. Empty for every family outside the promoted
+    /// unary add/sub descent-by-one class.
+    total: String,
     faithful_concl: String,
     faithful_body: String,
     guards: String,
@@ -64,6 +67,7 @@ fn render_fueled_recursion_cert(c: &Cert) -> String {
         concl,
         zero_body,
         succ_body,
+        total,
         faithful_concl,
         faithful_body,
         guards,
@@ -88,6 +92,8 @@ theorem {name}_wasm_certified
 {succ_body}
 
 #print axioms {name}_wasm_certified
+
+{total}
 
 /-- Consumer-facing composition: whatever the bytes return represents the model
     value `{name} {vars}` (faithfulness law ∘ simulation). -/

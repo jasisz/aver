@@ -20,10 +20,27 @@ structure Subject where
   exports      : List String
   contracts    : List String
 
-/-- The certification policy attached to a certified export. v0 ships exactly
-    one constructor: the emitted body simulates the generated model. -/
+/-- The certification policy attached to a certified export. Partial simulation
+    remains the default; the total preset additionally promises return at the
+    fuel selected by the checked termination witness. -/
 inductive Policy where
   | simulatesModel
+  | simulatesModelTotally
+
+/-- Closed measure vocabulary for the first total-correctness family. The
+    parameter index is claim data; `checkTerm` below accepts it only when the
+    byte-bound recursion plan descends that integer parameter by one. -/
+inductive Measure where
+  | intNatAbs (paramIdx : Nat)
+deriving Repr, DecidableEq
+
+/-- Non-canonical termination evidence attached to an obligation rather than
+    its byte-origin plan. Multiple measures may justify the same code bytes;
+    the kernel checks the selected measure against the pinned descent. -/
+structure TerminationWitness where
+  measure : Measure
+  descent : Int
+deriving Repr, DecidableEq
 
 /-- Value representation types admitted by the `expr-fragment-v1` plan grammar.
     This is the Lean-data mirror of the Rust `ExprFragmentPlan` sidecar: v1
@@ -226,6 +243,83 @@ structure RecursionRawPlan where
   result  : FragTy
   body    : FragBlock
 deriving Repr
+
+/-! ### Termination-witness checking
+
+`recursion-plan-v1` is separately checked and lowered byte-exactly by artifact
+acceptance. The helpers here inspect the same raw plan and confirm the one L3
+measure currently admitted: `Int.natAbs` of the sole parameter, guarded at
+`n ≤ 0`, with a recursive argument computed as `sub(n, box 1)`. -/
+
+def checkTermSmallFloor (paramIdx : Nat) (block : FragBlock) : Bool :=
+  match block.result, block.nodes with
+  | 3,
+      [{ id := 0, ty := .intCarrier, kind := .local localIdx },
+       { id := 1, ty := .i64, kind := .structGet 0 0 },
+       { id := 2, ty := .i64, kind := .constI64 0 },
+       { id := 3, ty := .boolI32, kind := .prim .i64LeS [1, 2] }] =>
+      localIdx == paramIdx
+  | _, _ => false
+
+def checkTermBigFloor (paramIdx : Nat) (block : FragBlock) : Bool :=
+  match block.result, block.nodes with
+  | 3,
+      [{ id := 0, ty := .intCarrier, kind := .local localIdx },
+       { id := 1, ty := .rawI32, kind := .structGet 2 0 },
+       { id := 2, ty := .boolI32, kind := .constBool false },
+       { id := 3, ty := .boolI32, kind := .prim .i32LtS [1, 2] }] =>
+      localIdx == paramIdx
+  | _, _ => false
+
+/-- The step arm selected by the canonical small/big carrier discriminator and
+    non-positive floor guard. Returning `none` rejects any different guard. -/
+def checkTermStep? (paramIdx : Nat) (body : FragBlock) : Option FragBlock :=
+  match body.result, body.nodes with
+  | 4,
+      [{ id := 0, ty := .intCarrier, kind := .local localIdx },
+       { id := 1, ty := .ref, kind := .structGet 1 0 },
+       { id := 2, ty := .boolI32, kind := .refIsNull 1 },
+       { id := 3, ty := .boolI32, kind := .ifElse 2 small big },
+       { id := 4, ty := .intCarrier, kind := .ifElse 3 _base step }] =>
+      if localIdx == paramIdx && checkTermSmallFloor paramIdx small &&
+          checkTermBigFloor paramIdx big then some step else none
+  | _, _ => none
+
+/-- Does one node in the step arm call self on exactly
+    `sub(local paramIdx, box(1))`? Node ids are followed within the same checked
+    ANF block; host indices and the self index remain byte-bound by the ordinary
+    recursion-plan acceptance predicate. -/
+def checkTermDescent (paramIdx : Nat) (step : FragBlock) : Bool :=
+  step.nodes.any fun node =>
+    match node.kind with
+    | .selfCall false _ [descentId] =>
+        match step.nodes[descentId]? with
+        | some { kind := .hostCall .sub _ [inputId, boxedOneId], .. } =>
+            match step.nodes[inputId]?, step.nodes[boxedOneId]? with
+            | some { kind := .local localIdx, .. },
+              some { kind := .hostCall .box _ [oneId], .. } =>
+                match step.nodes[oneId]? with
+                | some { kind := .constI64 1, .. } => localIdx == paramIdx
+                | _ => false
+            | _, _ => false
+        | _ => false
+    | _ => false
+
+/-- Kernel decision procedure for the promoted unary descent-by-one family.
+    It does not synthesise a measure: it checks the claimed `natAbs` parameter,
+    the `-1` descent, the non-positive floor guard, and the exact recursive
+    argument chain already pinned to the module bytes by the plan gate. -/
+def checkTerm (plan : RecursionRawPlan) (witness : TerminationWitness) : Bool :=
+  match witness.measure with
+  | .intNatAbs paramIdx =>
+      plan.profile == "recursion-plan-v1" &&
+      plan.params == [.intCarrier] &&
+      plan.result == .intCarrier &&
+      paramIdx == 0 &&
+      witness.descent == (-1 : Int) &&
+      match checkTermStep? paramIdx plan.body with
+      | some step => checkTermDescent paramIdx step
+      | none => false
 
 /-- Raw, untrusted mutual-recursion member plan. Like `RecursionRawPlan` it
     reuses the `expr-fragment` ANF grammar with a `selfCall` node and an
@@ -490,6 +584,7 @@ def verbatimRepr (_S : CarrierSpec C) (v : WVal) (w : WVal) : Prop := w = v
 structure Obligation where
   export_ : String
   policy  : Policy
+  termination? : Option TerminationWitness := none
   carrier : Nat
   code    : CodeTbl
   host    :
@@ -527,6 +622,30 @@ def Obligation.holds (o : Obligation) : Prop :=
     wFuncN o.code (o.host add sub mul stringEq stringConcat) fuel o.self vs = some w →
     o.codRepr S (o.model x) w
 
+/-- Denotation of `simulatesModelTotally`. In addition to the five existing
+    partial host laws it assumes that integer add and sub return on represented
+    operands. For every represented integer input, the body must return at
+    fuel `natAbs n + 1`; the domain witness connects that standard integer face
+    to the obligation's independently pinned model and representations. For the
+    promoted unary recursion obligations this unfolds to
+    `∃ w, run (natAbs n + 1) = some w ∧ Repr (f n) w`. -/
+def Obligation.holdsTotal (o : Obligation) : Prop :=
+  ∀ (S : CarrierSpec o.carrier)
+    (add sub mul stringEq : List WVal → Option WVal)
+    (stringConcat : Nat → List WVal → Option WVal)
+    (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
+    (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
+    (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
+    (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
+    (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
+    (_hAddTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
+    (_hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
+    (n : Int) (v : WVal), S.Repr n v →
+    ∃ x : o.Dom, o.domRepr S x [v] ∧
+      ∃ w, wFuncN o.code (o.host add sub mul stringEq stringConcat)
+          (n.natAbs + 1) o.self [v] = some w ∧
+        o.codRepr S (o.model x) w
+
 structure Manifest where
   subject     : Subject
   symFragmentPlans : List (String × SymRawPlan)
@@ -543,9 +662,11 @@ structure Manifest where
   obligations : List Obligation
 
 /-- The artifact-independent part of the audited certificate proposition:
-    every certified export carries `simulatesModel` and genuinely simulates
-    its model. -/
+    each export satisfies the denotation selected by its policy. -/
 def HoldsCore (m : Manifest) : Prop :=
-  ∀ o ∈ m.obligations, o.policy = Policy.simulatesModel ∧ o.holds
+  ∀ o ∈ m.obligations,
+    match o.policy with
+    | .simulatesModel => o.holds
+    | .simulatesModelTotally => o.holdsTotal
 
 end AverCert.Schema

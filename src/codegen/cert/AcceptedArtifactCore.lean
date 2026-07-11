@@ -445,6 +445,10 @@ def recursionPlanAccepted
   obligation.export_ = exportName ∧
     obligation.carrier = carrier ∧
     AverCert.PlanCheck.checkRecursionRawPlan plan = true ∧
+    (match obligation.policy, obligation.termination? with
+     | .simulatesModel, none => true
+     | .simulatesModelTotally, some witness => AverCert.Schema.checkTerm plan witness
+     | _, _ => false) = true ∧
     ∃ body codeEntry binding,
       AverCert.PlanLower.lowerRecursionBody carrier plan = some body ∧
       AverCert.PlanBytes.lowerRecursionCodeEntry carrier plan = some codeEntry ∧

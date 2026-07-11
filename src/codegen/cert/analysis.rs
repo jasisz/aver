@@ -167,7 +167,13 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
     let mut has_sub = false;
     let mut has_string_eq = false;
     let mut has_string_concat = false;
+    let mut has_add_total = false;
+    let mut has_sub_total = false;
     for c in certs {
+        if c.policy() == CertificationPolicy::SimulatesModelTotally {
+            has_add_total = true;
+            has_sub_total = true;
+        }
         if c.int_add_face().is_some() {
             has_box = true;
             has_add = true;
@@ -237,6 +243,12 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
     }
     if has_string_concat {
         contracts.push(STRING_CONCAT_CONTRACT.to_string());
+    }
+    if has_add_total {
+        contracts.push(INT_ADD_TOTAL_CONTRACT.to_string());
+    }
+    if has_sub_total {
+        contracts.push(INT_SUB_TOTAL_CONTRACT.to_string());
     }
     contracts
 }
