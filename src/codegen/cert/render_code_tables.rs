@@ -28,18 +28,6 @@ fn lean_int_lit128(k: i128) -> String {
 /// is unchanged.
 fn render_code_value(c: &Cert) -> String {
     match c.inner() {
-        Cert::StraightLine {
-            self_idx,
-            nlocals,
-            k,
-            box_idx,
-            add_idx,
-            ..
-        } => format!(
-            "fun fn =>\n  \
-             if fn = {self_idx} then some ⟨1, {nlocals}, \
-             [.localGet 0, .i64Const ({k}), .call {box_idx}, .call {add_idx}]⟩ else none",
-        ),
         Cert::Recursive {
             self_idx,
             nlocals,
@@ -219,8 +207,8 @@ fn render_closure_code_value(closure: &[ClosureEntry]) -> String {
 /// `holds` vacuous even with an honest `code`) fails the kernel witness.
 /// Definitionally equal to the honest `render_host_def` builder.
 fn render_host_value(c: &Cert) -> String {
-    // Host-call expr fragments with the straight-line integer face wire the
-    // byte-derived box/add indices exactly like the legacy straight-line class.
+    // Host-call expr fragments with the integer-add face wire the byte-derived
+    // box/add indices directly.
     if let Some(face) = c.int_add_face() {
         return format!(
             "fun add _ _ _ _ => fun fn =>\n    \
@@ -232,16 +220,6 @@ fn render_host_value(c: &Cert) -> String {
         );
     }
     match c.inner() {
-        Cert::StraightLine {
-            carrier,
-            box_idx,
-            add_idx,
-            ..
-        } => format!(
-            "fun add _ _ _ _ => fun fn =>\n    \
-             if fn = {box_idx} then some (1, boxRef {carrier})\n    \
-             else if fn = {add_idx} then some (2, add)\n    else none",
-        ),
         Cert::Recursive {
             carrier,
             box_idx,

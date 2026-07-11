@@ -123,9 +123,7 @@ fn walk_nonrecursive(
         return None;
     }
     let body = structural_body(f, box_idx, user_idx_set, host_roles)?;
-    let cert = nr_straightline(f, &body, box_idx, carrier, host_roles);
-    cert
-        .or_else(|| nr_adt_constructor(f, &body, box_idx, carrier))
+    nr_adt_constructor(f, &body, box_idx, carrier)
         .or_else(|| nr_field_projection(f, &body, carrier, struct_field_counts))
         .or_else(|| nr_ref_dispatch_match(f, &body, box_idx, carrier, host_roles))
         .or_else(|| nr_verbatim_variant_dispatch(f, &body, carrier))

@@ -38,6 +38,7 @@ pub fn analyze_with_fragment_plans(
     let (user_fns, box_idx, user_idx_set, carrier, host_roles, frag_host_table, struct_field_counts) =
         disassemble(wasm_bytes)?;
     let model_ops = model_step_ops(model_files);
+    let model_info = ModelInfo::from_files(model_files);
 
     // Index the user functions so the composition pass can walk the call graph.
     let fns: std::collections::HashMap<u32, &UserFn> =
@@ -103,7 +104,17 @@ pub fn analyze_with_fragment_plans(
                 model_ops: &model_ops,
             },
         ) {
-            Ok(c) => certs.push(c),
+            Ok(c) => {
+                if has_complete_artifact_plan(&c, &model_info, frag_host_table) {
+                    certs.push(c);
+                } else {
+                    declined.push((
+                        f.name.clone(),
+                        "classified certificate has no byte-matching artifact plan; declined before rendering"
+                            .to_string(),
+                    ));
+                }
+            }
             Err(reason) => declined.push((f.name.clone(), reason)),
         }
     }
@@ -120,6 +131,35 @@ pub fn analyze_with_fragment_plans(
     })
 }
 
+fn has_complete_artifact_plan(
+    c: &Cert,
+    model_info: &ModelInfo,
+    frag_host_table: FragHostTable,
+) -> bool {
+    match c.inner() {
+        Cert::ExprFragment { .. } => true,
+        Cert::StringEqVerbatimMatch { .. } => string_eq_plan_from_cert(c).is_some(),
+        Cert::StringConcatVerbatimMatch { .. } => string_concat_plan_from_cert(c).is_some(),
+        Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. } => {
+            recursion_plan_from_cert(c).is_some()
+        }
+        Cert::MutualRecursion { .. } => mutual_plan_from_cert(c).is_some(),
+        Cert::Composition { .. } => composition_plans_from_cert(c, frag_host_table).is_some(),
+        Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. } => {
+            verbatim_plan_from_cert(c).is_some()
+        }
+        Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. } => {
+            int_dispatch_plan_from_cert(c, frag_host_table).is_some()
+        }
+        Cert::AdtConstructor { .. } => {
+            adt_constructor_sym_plan_from_cert(c, model_info).is_some()
+                && construct_plan_from_cert(c).is_some()
+        }
+        Cert::FieldProjection { .. } => field_projection_plan_from_cert(c).is_some(),
+        Cert::NonRecursive { .. } => unreachable!(),
+    }
+}
+
 fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) -> Vec<String> {
     let mut contracts = Vec::new();
     let mut has_box = false;
@@ -134,10 +174,6 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
             continue;
         }
         match c.inner() {
-            Cert::StraightLine { .. } => {
-                has_box = true;
-                has_add = true;
-            }
             Cert::Recursive { .. } => {
                 has_box = true;
                 has_add = true;
@@ -314,6 +350,38 @@ fn floatAddGoal(a: Float, b: Float) -> Float
         assert!(
             reason.contains("producer fragment plan does not match emitted wasm"),
             "decline reason should identify producer-plan mismatch, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn straight_line_without_producer_plan_is_source_level_only() {
+        let bytes = compile_probe_bytes(
+            r#"
+module StraightLineNoPlanProbe
+    intent = "straight-line no-plan fail-close probe"
+    depends []
+    exposes [addTwo]
+
+fn addTwo(x: Int) -> Int
+    ? "Add a fixed integer."
+    x + 2
+"#,
+        );
+        let analysis = analyze(&bytes, &[]).expect("analysis without producer plans");
+
+        assert!(
+            !analysis.certified_names().contains(&"addTwo".to_string()),
+            "a straight-line integer body must not certify without its producer plan"
+        );
+        let reason = analysis
+            .declined()
+            .iter()
+            .find(|(name, _)| name == "addTwo")
+            .map(|(_, reason)| reason.as_str())
+            .expect("addTwo should be listed as source-level-only");
+        assert!(
+            reason.contains("does not match a certified template"),
+            "decline reason should state why the no-plan body is source-level-only, got: {reason}"
         );
     }
 

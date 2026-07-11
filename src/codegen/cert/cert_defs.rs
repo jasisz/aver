@@ -4,16 +4,6 @@ enum Cert {
     /// byte-derived face and proof parameters; the outer class records that the
     /// non-recursive walker admitted it.
     NonRecursive { inner: Box<Cert> },
-    /// `fn(x: Int) -> Int = x + k`; box=`box_idx`, add=`add_idx`.
-    StraightLine {
-        name: String,
-        self_idx: u32,
-        nlocals: usize,
-        carrier: u32,
-        k: i64,
-        box_idx: u32,
-        add_idx: u32,
-    },
     /// Single-argument fuel self-recursion `f n = if n≤0 then BASE else <combine>`;
     /// box/add/sub host helpers. All of the shape below is DATA recovered from the
     /// bytes; only the descent (`n-1`) and the host `add` combinator are pinned:
@@ -128,7 +118,7 @@ enum Cert {
         default: VerbatimDefault,
         /// Raw code-entry bytes of the export. The `verbatim-plan-v1` claim is
         /// emitted ONLY when the canonical plan lowering reproduces exactly
-        /// these bytes (otherwise the export stays on the legacy witness route),
+        /// these bytes (otherwise analysis declines the export before rendering),
         /// exactly like `Cert::Recursive::code_entry_bytes`. The claim binds the
         /// export by name (anonymous `FuncBinding` witness), so no code/type
         /// index is carried.
@@ -303,7 +293,7 @@ struct MutualMember {
     cross_idx: u32,
     /// Raw code-entry bytes of this member's export. The `mutual-plan-v1` claim
     /// is emitted ONLY when the canonical plan lowering reproduces exactly these
-    /// bytes (otherwise the member stays on the legacy witness route — never an
-    /// unverifiable claim), exactly like `Cert::Recursive::code_entry_bytes`.
+    /// bytes (otherwise analysis declines the member before rendering — never
+    /// an unverifiable claim), exactly like `Cert::Recursive::code_entry_bytes`.
     code_entry_bytes: Vec<u8>,
 }

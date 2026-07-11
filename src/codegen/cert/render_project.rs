@@ -1066,9 +1066,9 @@ fn render_artifact_expr_fragment_claims(
                 sub_idx,
                 ..
             } => {
-                // Byte-equality gated: a normalized (alias-hop) body has no
-                // canonical plan that reproduces its exact bytes — it stays on
-                // the legacy witness route with no claim, fail-closed.
+                // Analysis declines a normalized body whose canonical plan
+                // cannot reproduce its exact bytes. Keep this guard as a
+                // fail-closed invariant.
                 let Some(plan) = recursion_plan_from_cert(c) else {
                     continue;
                 };
@@ -1101,9 +1101,9 @@ fn render_artifact_expr_fragment_claims(
                 position,
                 scc,
             } => {
-                // Byte-equality gated per member, exactly like the recursion
-                // route: a member whose canonical plan cannot reproduce its exact
-                // bytes stays on the legacy witness route with no claim.
+                // Analysis declines any member whose canonical plan cannot
+                // reproduce its exact bytes. Keep this guard as a fail-closed
+                // invariant.
                 let Some(plan) = mutual_plan_from_cert(c) else {
                     continue;
                 };
@@ -1137,9 +1137,9 @@ fn render_artifact_expr_fragment_claims(
             | Cert::VerbatimVariantDispatch {
                 name, carrier, ..
             } => {
-                // Byte-equality gated: a body byte-noisier than the canonical
-                // verbatim dispatch has no plan reproducing its exact bytes — it
-                // stays on the legacy witness route with no claim, fail-closed.
+                // Analysis declines a body whose canonical verbatim plan cannot
+                // reproduce its exact bytes. Keep this guard as a fail-closed
+                // invariant.
                 if verbatim_plan_from_cert(c).is_none() {
                     continue;
                 }
@@ -1160,9 +1160,9 @@ fn render_artifact_expr_fragment_claims(
             }
             Cert::VariantDispatch { name, carrier, .. }
             | Cert::WidenedIntMatch { name, carrier, .. } => {
-                // Byte-equality gated: a body byte-noisier than the canonical
-                // Int-face dispatch has no plan reproducing its exact bytes — it
-                // stays on the legacy witness route with no claim, fail-closed.
+                // Analysis declines a body whose canonical Int-face plan cannot
+                // reproduce its exact bytes. Keep this guard as a fail-closed
+                // invariant.
                 if int_dispatch_plan_from_cert(c, analysis.frag_host_table).is_none() {
                     continue;
                 }
@@ -1760,8 +1760,8 @@ fn render_module(analysis: &Analysis, wasm_name: &str, sha: &str) -> String {
 /// `CertModule` so both the certificate proofs and the manifest reference the
 /// one definition.
 fn render_host_def(c: &Cert) -> String {
-    // Host-call expr fragments with the straight-line integer face wire the
-    // byte-derived box/add indices exactly like the legacy straight-line class.
+    // Host-call expr fragments with the integer-add face wire the byte-derived
+    // box/add indices directly.
     if let Some(face) = c.int_add_face() {
         return format!(
             "/-- Runtime host wiring for `{name}` (box + add contracts). -/\n\
@@ -1775,18 +1775,6 @@ fn render_host_def(c: &Cert) -> String {
         );
     }
     match c.inner() {
-        Cert::StraightLine {
-            name,
-            carrier,
-            box_idx,
-            add_idx,
-            ..
-        } => format!(
-            "/-- Runtime host wiring for `{name}` (box + add contracts). -/\n\
-             def {name}Host (add : List WVal → Option WVal) : HostTbl := fun fn =>\n  \
-             if fn = {box_idx} then some (1, boxRef {carrier})\n  \
-             else if fn = {add_idx} then some (2, add)\n  else none\n",
-        ),
         Cert::Recursive {
             name,
             carrier,
@@ -1925,7 +1913,6 @@ fn render_code_def(c: &Cert) -> String {
         );
     }
     let doc = match c.inner() {
-        Cert::StraightLine { .. } => "straight-line add-constant",
         Cert::Recursive { .. } => "self-recursive",
         Cert::AccumulatorRecursive { .. } => "accumulator self-recursive",
         Cert::AdtConstructor { .. } => "ADT constructor",
