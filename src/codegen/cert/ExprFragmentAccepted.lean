@@ -14,7 +14,8 @@ open AverCert.Schema
 open CertPrelude
 
 def accepted
-    (wasmBytes exportName : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
+    (exportName : AverCert.WasmSlice.ByteSeq)
     (carrier : Nat)
     (plan : ExprFragmentRawPlan)
     (body : List WInstr)
@@ -23,7 +24,7 @@ def accepted
   AverCert.PlanCheck.checkExprFragmentRawPlan plan = true ∧
   AverCert.PlanLower.lowerExprFragmentBody carrier plan = some body ∧
   AverCert.PlanBytes.lowerExprFragmentCodeEntry carrier plan = some codeEntry ∧
-  AverCert.WasmSlice.funcBindingForExport wasmBytes exportName = some binding ∧
+  AverCert.WasmSlice.funcBindingForExport modBytes modLen exportName = some binding ∧
   binding.codeEntry = codeEntry
 
 end AverCert.ExprFragmentAccepted
