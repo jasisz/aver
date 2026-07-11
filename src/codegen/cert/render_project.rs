@@ -1291,12 +1291,16 @@ fn render_artifact_expr_fragment_claims(
             .fold("trivial".to_string(), |acc, proof| {
                 format!("⟨{proof}, {acc}⟩")
             });
-    let composition_proof = composition_proofs
+    let composition_claims_proof = composition_proofs
         .into_iter()
         .rev()
         .fold("trivial".to_string(), |acc, proof| {
             format!("⟨{proof}, {acc}⟩")
         });
+    // `acceptedCompositionFragments` conjoins the per-claim acceptance with the
+    // artifact-wide member-coverage bound (a decidable `Bool = true` over the
+    // concrete member/claim literals, closed by `rfl`).
+    let composition_proof = format!("⟨{composition_claims_proof}, rfl⟩");
     RenderedArtifactClaims {
         sym_claims,
         string_eq_claims,

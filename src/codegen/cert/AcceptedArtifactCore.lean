@@ -986,6 +986,38 @@ def compositionClaimsAccepted
       compositionClaimAccepted wasmBytes members claim ∧
       compositionClaimsAccepted wasmBytes members rest
 
+/-- Every name claimed as a reachable member across all composition roots. Each
+    claim's `memberNames` is pinned to its root's byte-derived reachable closure
+    by `compositionClosureBound`, so this is the union of those closures. -/
+def compositionClaimedNames : List CompositionClaim → List String
+  | [] => []
+  | claim :: rest => claim.memberNames ++ compositionClaimedNames rest
+
+/-- Coverage: every artifact-wide composition member is named by (hence
+    reachable from) some composition root. The byte-check
+    (`compositionNamedMembersAccepted`) only inspects members NAMED by a claim's
+    `memberNames`, while `claimsMatchManifest` equates the whole
+    `compositionMembers` list to `manifest.compositionPlans`. Without this
+    conjunct an ORPHAN member — present in `compositionMembers` (and therefore
+    in `manifest.compositionPlans`) but reachable from no claimed root — would
+    ride into the manifest with NO code-entry / signature / code-table /
+    `nlocals` check: the "exists but is not constrained" class at
+    manifest-coverage level. Requiring every member to appear in the union of
+    the roots' `memberNames` — combined with `compositionNamedMembersAccepted`
+    (byte-checks each named member) and `compositionClosureBound`
+    (`memberNames` = the root's byte-derived closure) — makes
+    `compositionMembers` EXACTLY the union of the claimed roots' reachable
+    closures, so every member entry that reaches the manifest is byte-checked.
+    Stated over the whole artifact (not per claim) because the union is a
+    cross-claim fact: `quad` and `hex16` share one member table yet have
+    different closures (`{quad, double}` vs `{hex16, quad, double}`), so no
+    single root's closure equals the member set — only their union does. -/
+def compositionMembersCovered
+    (members : List CompositionMemberClaim)
+    (claims : List CompositionClaim) : Bool :=
+  let claimed := compositionClaimedNames claims
+  members.all (fun member => claimed.contains member.exportName)
+
 /-! ### Byte-derived SCC closure
 
 `mutualRecursionClaimsAccepted` above certifies each member's body byte-origin
@@ -1282,7 +1314,9 @@ def acceptedIntDispatchFragments (artifact : ArtifactData) : Prop :=
 
 def acceptedCompositionFragments (artifact : ArtifactData) : Prop :=
   compositionClaimsAccepted
-    artifact.wasmBytes artifact.compositionMembers artifact.compositionClaims
+    artifact.wasmBytes artifact.compositionMembers artifact.compositionClaims ∧
+  compositionMembersCovered
+    artifact.compositionMembers artifact.compositionClaims = true
 
 def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedSymFragments artifact ∧

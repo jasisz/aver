@@ -2884,6 +2884,65 @@ fn composition_callee_mutation_is_declined() {
     );
 }
 
+/// Orphan-member coverage tamper: drop the `hex16` composition CLAIM from the
+/// emitted certificate while leaving `hex16` in `compositionMembers` (and thus
+/// in `manifest.compositionPlans`). `hex16` is then a member reachable from no
+/// claimed root — an unconstrained entry that `compositionNamedMembersAccepted`
+/// never byte-checks. The `compositionMembersCovered` coverage conjunct in
+/// `acceptedCompositionFragments` requires every member to be named by some
+/// root, so the cert's own `acceptedWithFinal` proof fails to build; DECLINED.
+#[test]
+fn composition_orphan_member_is_declined() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping composition orphan-member test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-compose-orphan");
+
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/compose.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    // Drop only the `hex16` composition claim; `hex16` remains an orphan member
+    // of `compositionMembers`. Every other artifact surface is untouched, so
+    // the ONLY failing conjunct is member coverage.
+    let a = out_dir.join("cert").join("Artifact.lean");
+    let src = std::fs::read_to_string(&a).unwrap();
+    let hex16_claim = ",\n  ({ exportName := \"hex16\", carrier := 2, hostTable := [(.add, 9)], memberNames := [\"double\", \"quad\", \"hex16\"], obligation := AverCert.hex16Ob } : AverCert.AcceptedArtifact.CompositionClaim)";
+    assert!(
+        src.contains(hex16_claim),
+        "emitted compositionClaims shape changed; update the orphan test"
+    );
+    std::fs::write(&a, src.replacen(hex16_claim, "", 1)).unwrap();
+
+    let (ok, out) = aver_verify(&out_dir.join("compose.wasm"), &out_dir.join("cert"));
+    assert!(!ok, "orphan composition member must be DECLINED:\n{out}");
+    assert!(
+        out.contains("does not bind") || out.contains("certificate did not build"),
+        "wrong reason:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "orphan-member composition cert must not verify:\n{out}"
+    );
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
 /// S5 guard isolation, including executed weaken confirmations. Each negative
 /// is rejected by one named audited guard; the adjacent `weak*` definition is
 /// the throwaway one-guard-removed copy and accepts exactly that negative.
@@ -3023,6 +3082,21 @@ example : AverCert.AcceptedArtifact.compositionMemberPlanPairs relabeledMembers 
     [("double", AverCert.Plans.doubleCompositionPlan)] := by decide
 def weakManifest (_ : List (String × CompositionRawPlan)) : Bool := true
 example : weakManifest (AverCert.AcceptedArtifact.compositionMemberPlanPairs relabeledMembers) = true := rfl
+
+-- Member-coverage guard: `compositionMembers` must be the union of the claimed
+-- roots' reachable closures. Honest members are covered; dropping the `hex16`
+-- claim leaves `hex16` an orphan member reachable from no root, so coverage
+-- fails. Weakening only this guard accepts the orphan.
+def orphanClaims : List AverCert.AcceptedArtifact.CompositionClaim :=
+  [{ exportName := "quad", carrier := 2, hostTable := [(.add, 9)],
+     memberNames := ["double", "quad"], obligation := AverCert.quadOb }]
+example : AverCert.AcceptedArtifact.compositionMembersCovered
+    AverCert.Artifact.compositionMembers AverCert.Artifact.compositionClaims = true := rfl
+example : AverCert.AcceptedArtifact.compositionMembersCovered
+    AverCert.Artifact.compositionMembers orphanClaims = false := rfl
+def weakCoverage (_ : List AverCert.AcceptedArtifact.CompositionMemberClaim)
+    (_ : List AverCert.AcceptedArtifact.CompositionClaim) : Bool := true
+example : weakCoverage AverCert.Artifact.compositionMembers orphanClaims = true := rfl
 "#;
     std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
     let check = Command::new("lake")
