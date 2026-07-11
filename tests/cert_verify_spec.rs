@@ -3780,10 +3780,13 @@ fn verbatim_kernel_guards_are_isolating() {
 /// (`rfl`) while only `checkIntDispatchRawPlan` rejects it. Two further
 /// vectors target the binds the byte gate cannot see: (h) a ZERO-LOCALS code
 /// table (honest bytes/plan/wiring; the vacuity attack the exact
-/// `nlocals := armCount + 2` bind closes) and (i) a coordinated ROLE/TABLE
+/// `nlocals := armCount + 2` bind closes), (i) a coordinated ROLE/TABLE
 /// PERMUTATION across `Plans.lean` and the `Artifact.lean` claim (byte- and
-/// sibling-blind; rejected only by the obligation-wiring bind
-/// `intDispatchHostTableWired`).
+/// sibling-blind; rejected only by the host-builder equality bind
+/// `obligation.host = intDispatchCanonicalHost carrier hostTable`), and (j) a
+/// SAMPLED-PROBE ESCAPE: a box slot behaving canonically only at one input and
+/// trapping on every real constant (vacuity via host trap) — extensionally
+/// unequal to the canonical builder, so the equality bind declines it.
 #[test]
 fn cert_verify_declines_tampered_int_dispatch_plan() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -3906,7 +3909,7 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
     // artifact ships (Plans.lean pins + the Artifact.lean claim). The pair
     // lowers byte-identically and the table stays distinct, so the byte gate,
     // the structural checker and the distinctness guard are all blind — only
-    // the obligation-wiring bind (`intDispatchHostTableWired`) rejects it.
+    // the host-builder equality bind rejects it.
     {
         let dir = temp_dir("cert-int-dispatch-role-permutation");
         copy_dir(&out_dir, &dir);
@@ -3939,6 +3942,30 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
         std::fs::write(&artifact, src).unwrap();
         let (ok, report) = aver_verify(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
         assert!(!ok, "role/table permutation must be DECLINED:\n{report}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (j) SAMPLED-PROBE ESCAPE vector (attack (b)): replace the box slot of
+    // `boxIntHost` with a function behaving canonically ONLY at `i64 0` and
+    // trapping (`none`) on every other constant — the honest body's boxed
+    // default would trap at runtime, making partial correctness vacuous. Any
+    // point probe of the slot at `i64 0` accepts it; the EXTENSIONAL
+    // host-builder equality (`obligation.host = intDispatchCanonicalHost …`)
+    // rejects it, so this must be DECLINED.
+    {
+        let dir = temp_dir("cert-int-dispatch-sneaky-box");
+        copy_dir(&out_dir, &dir);
+        let module = dir.join("cert").join("Module.lean");
+        let src = std::fs::read_to_string(&module).unwrap();
+        let from = "def boxIntHost : HostTbl := fun fn =>\n  if fn = 7 then some (1, boxRef 9)\n  else none";
+        let to = "def boxIntHost : HostTbl := fun fn =>\n  if fn = 7 then some (1, fun args => match args with | [WVal.i64v 0] => boxRef 9 args | _ => none)\n  else none";
+        assert!(
+            src.contains(from),
+            "boxIntHost shape changed; update the test"
+        );
+        std::fs::write(&module, src.replacen(from, to, 1)).unwrap();
+        let (ok, report) = aver_verify(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
+        assert!(!ok, "sampled-probe-escape host must be DECLINED:\n{report}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -4022,14 +4049,19 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
 /// (`by decide`). Only `hostTableIndicesDistinct` rejects the duplicated
 /// table, restoring the gate's discrimination.
 ///
-/// HOST-TABLE WIRING guard (`intDispatchHostTableWired`): distinctness alone
-/// leaves the table a free witness — swapping two arm roles in the plan AND
-/// permuting the table consistently cancels out byte-identically, keeps the
-/// table distinct, and passes the structural checker. The wiring bind probes
-/// the obligation's own host builder with per-slot sentinels, so only a table
-/// whose every entry reaches its own contract slot is accepted; the permuted
-/// pair is proven byte-identical (`rfl`), sibling-blind (`rfl`), and rejected
-/// exactly by the wiring guard.
+/// HOST-BUILDER EQUALITY guard
+/// (`obligation.host = intDispatchCanonicalHost carrier hostTable`):
+/// distinctness alone leaves the table a free witness — swapping two arm roles
+/// in the plan AND permuting the table consistently cancels out
+/// byte-identically, keeps the table distinct, and passes the structural
+/// checker. The guard requires the WHOLE obligation host builder to equal the
+/// canonical builder for the claimed table (extensional, mirroring in-kernel
+/// the checker's whole-host `rfl` pin) — a sampled probe would leave unsampled
+/// slot behaviour free (a slot acting as its role only on the probed inputs:
+/// attack (b)). The permuted pair is proven byte-identical (`rfl`),
+/// sibling-blind (`rfl`), the honest tables close the equality by `rfl`, and
+/// the permuted/sneaky builders are rejected exactly by the equality conjunct
+/// (each `≠` exhibited through a distinguishing input).
 ///
 /// LOCALS-COUNT bind (`nlocals := armCount + 2` in `intDispatchPlanAccepted`):
 /// a code table claiming ZERO locals for the honest body traps on its first
@@ -4041,10 +4073,11 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
 /// fires (weaken-confirmed: replacing the `verbatimFuncTypeMatches` conjunct
 /// with `true` in a throwaway copy breaks solely the binary-arity reject line;
 /// replacing `hostTableIndicesDistinct` with `true` breaks solely the
-/// duplicated-table reject line; replacing `intDispatchHostTableWired` with
-/// `true` breaks solely the two wiring reject lines; reverting the locals
-/// count to an existential accepts the zero-locals vacuity obligation that the
-/// exact bind rejects — nothing else moves).
+/// duplicated-table reject line; replacing the host-builder equality conjunct
+/// with `True` accepts the permuted-pair acceptance witness that the equality
+/// rejects; reverting the locals count to an existential accepts the
+/// zero-locals vacuity obligation that the exact bind rejects — nothing else
+/// moves).
 #[test]
 fn int_dispatch_kernel_guards_are_isolating() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -4057,7 +4090,7 @@ fn int_dispatch_kernel_guards_are_isolating() {
     lean.push_str(
         "import Schema\nimport PlanCheck\nimport PlanBytes\nimport WasmSlice\nimport AcceptedArtifact\nimport Manifest\nimport Module\nimport Plans\n\n",
     );
-    lean.push_str("open AverCert\nopen AverCert.Schema\n");
+    lean.push_str("open AverCert\nopen AverCert.Schema\nopen CertPrelude\n");
     lean.push_str("set_option maxRecDepth 100000\n\n");
     // Minimal modules: header, type section, then a shared func/export/code
     // tail. `f` is func 0 of type 0; code entry `[2, 0, 11]`. Only the type
@@ -4104,29 +4137,82 @@ fn int_dispatch_kernel_guards_are_isolating() {
     // plan cannot conjure a callee out of a missing contract).
     lean.push_str("example : PlanBytes.lowerIntDispatchCodeEntry 5 [(.box, 7), (.add, 8)] planSub = none := rfl\n\n");
 
-    // HOST-TABLE WIRING isolation, on the REAL fixture obligation (`gaugeOb`,
-    // role table box 7 / add 8 / sub 9): swap the two arm roles in the plan and
-    // permute the table consistently.
+    // HOST-BUILDER EQUALITY isolation, on the REAL fixture obligations (role
+    // table box 7 / add 8 / sub 9). The acceptance requires the whole
+    // `obligation.host` to EQUAL the canonical builder for the claimed table —
+    // extensionally, so no unsampled slot behaviour is left free.
     lean.push_str("def honestTbl : List (HostRole × Nat) := [(.box, 7), (.add, 8), (.sub, 9)]\n");
     lean.push_str("def permTbl : List (HostRole × Nat) := [(.box, 7), (.add, 9), (.sub, 8)]\n");
     lean.push_str("def honestGauge : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 3 (.hostOp .sub (0) true) (.test 4 (.hostOp .add (9) false) (.test 5 (.proj) (.default (7)))) }\n");
     lean.push_str("def permGauge : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 3 (.hostOp .add (0) true) (.test 4 (.hostOp .sub (9) false) (.test 5 (.proj) (.default (7)))) }\n");
-    // The permuted pair lowers BYTE-IDENTICALLY...
+    // A distinguishing observer for the ≠ proofs (NOT part of the acceptance —
+    // the guard is the whole-builder equality; this only exhibits one input on
+    // which two unequal builders differ).
+    lean.push_str(concat!(
+        "def hostBuilderProbe\n",
+        "    (h : (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
+        "         (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
+        "         (Nat → List WVal → Option WVal) → CertPrelude.HostTbl)\n",
+        "    (idx : Nat) (args : List WVal) : Option Int :=\n",
+        "  match h (fun _ => some (.i64v 1)) (fun _ => some (.i64v 2)) (fun _ => some (.i64v 3)) (fun _ => some (.i64v 4)) (fun _ _ => some (.i64v 5)) idx with\n",
+        "  | some (_, f) =>\n",
+        "      match f args with\n",
+        "      | some (.i64v k) => some k\n",
+        "      | some (.structv _ (.i64v k :: _)) => some (1000 + k)\n",
+        "      | some _ => some 999\n",
+        "      | none => none\n",
+        "  | none => none\n\n",
+    ));
+    // The permuted (plan, table) pair lowers BYTE-IDENTICALLY...
     lean.push_str("example : PlanBytes.lowerIntDispatchCodeEntry 9 permTbl permGauge = PlanBytes.lowerIntDispatchCodeEntry 9 honestTbl honestGauge := rfl\n");
     // ...and every sibling guard is blind to the permutation...
     lean.push_str("example : PlanCheck.checkIntDispatchRawPlan permGauge = true := rfl\n");
     lean.push_str("example : PlanCheck.hostTableIndicesDistinct permTbl = true := rfl\n");
-    // ...so ONLY the obligation-wiring bind rejects the permuted table.
-    lean.push_str("example : AcceptedArtifact.intDispatchHostTableWired AverCert.gaugeOb honestTbl = true := rfl\n");
-    lean.push_str("example : AcceptedArtifact.intDispatchHostTableWired AverCert.gaugeOb permTbl = false := rfl\n");
-    // The widened match's box-only table is wired; a box entry citing a
-    // non-box index is rejected.
-    lean.push_str(
-        "example : AcceptedArtifact.intDispatchHostTableWired AverCert.boxIntOb [(.box, 7)] = true := rfl\n",
-    );
-    lean.push_str(
-        "example : AcceptedArtifact.intDispatchHostTableWired AverCert.gaugeOb [(.box, 8)] = false := rfl\n\n",
-    );
+    // ...the honest tables close the equality by `rfl` (whole-builder defeq,
+    // incl. the box-only widened match)...
+    lean.push_str("example : AverCert.gaugeOb.host = AcceptedArtifact.intDispatchCanonicalHost 9 honestTbl := rfl\n");
+    lean.push_str("example : AverCert.boxIntOb.host = AcceptedArtifact.intDispatchCanonicalHost 9 [(.box, 7)] := rfl\n");
+    // ...and ONLY the equality conjunct rejects the permuted table: the honest
+    // obligation wires index 8 to the add slot, the permuted canonical wires it
+    // to sub, and `hostBuilderProbe` exhibits the divergence.
+    lean.push_str("example : hostBuilderProbe AverCert.gaugeOb.host 8 [] = some 1 := rfl\n");
+    lean.push_str("example : hostBuilderProbe (AcceptedArtifact.intDispatchCanonicalHost 9 permTbl) 8 [] = some 2 := rfl\n");
+    lean.push_str(concat!(
+        "example : AverCert.gaugeOb.host ≠ AcceptedArtifact.intDispatchCanonicalHost 9 permTbl := by\n",
+        "  intro h\n",
+        "  have honest : hostBuilderProbe AverCert.gaugeOb.host 8 [] = some 1 := rfl\n",
+        "  rw [h] at honest\n",
+        "  exact absurd honest (by decide)\n\n",
+    ));
+    // SAMPLED-PROBE ESCAPE (attack (b)): a host builder whose box slot behaves
+    // canonically ONLY at one probed input (`i64 0`) and traps on every real
+    // constant — a point probe accepts it (equal observation at the probe
+    // point), the EXTENSIONAL equality rejects it.
+    lean.push_str(concat!(
+        "def sneakyBoxHost :\n",
+        "    (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
+        "    (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
+        "    (Nat → List WVal → Option WVal) → CertPrelude.HostTbl :=\n",
+        "  fun _ _ _ _ _ => fun fn =>\n",
+        "    if fn = 7 then\n",
+        "      some (1, fun args => match args with\n",
+        "        | [WVal.i64v 0] => CertPrelude.boxRef 9 args\n",
+        "        | _ => none)\n",
+        "    else none\n",
+    ));
+    // At the probe point the sneaky builder is indistinguishable from canonical...
+    lean.push_str("example : hostBuilderProbe sneakyBoxHost 7 [.i64v 0] = hostBuilderProbe (AcceptedArtifact.intDispatchCanonicalHost 9 [(.box, 7)]) 7 [.i64v 0] := rfl\n");
+    // ...but it traps on a real constant where canonical boxes it...
+    lean.push_str("example : hostBuilderProbe sneakyBoxHost 7 [.i64v 7] = none := rfl\n");
+    lean.push_str("example : hostBuilderProbe (AcceptedArtifact.intDispatchCanonicalHost 9 [(.box, 7)]) 7 [.i64v 7] = some 1007 := rfl\n");
+    // ...so the extensional equality rejects it.
+    lean.push_str(concat!(
+        "example : sneakyBoxHost ≠ AcceptedArtifact.intDispatchCanonicalHost 9 [(.box, 7)] := by\n",
+        "  intro h\n",
+        "  have sneaky : hostBuilderProbe sneakyBoxHost 7 [.i64v 7] = none := rfl\n",
+        "  rw [h] at sneaky\n",
+        "  exact absurd sneaky (by decide)\n\n",
+    ));
 
     // LOCALS-COUNT bind: the acceptance pins the code table's locals count to
     // the canonical byte-derived value; a zero-locals table (whose body traps

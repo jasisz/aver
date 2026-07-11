@@ -583,73 +583,56 @@ def verbatimClaimAccepted
         claim.obligation
   | none => False
 
-/-- The obligation's host-contract slot wired to wasm function index `idx`,
-    probed by instantiating the host builder with per-slot SENTINEL functions
-    (add/sub/mul/stringEq/stringConcat in `Obligation.host`'s parameter order).
-    Whatever the obligation's semantics wire to `idx` is thereby made readable:
-    applying the wired function returns the slot's sentinel value (or, for the
-    baked-in box helper, the concrete boxed carrier). -/
-def intDispatchHostSlot (o : Obligation) (idx : Nat) :
-    Option (Nat × (List WVal → Option WVal)) :=
-  o.host
-    (fun _ => some (.i64v 101))
-    (fun _ => some (.i64v 102))
-    (fun _ => some (.i64v 103))
-    (fun _ => some (.i64v 104))
-    (fun _ _ => some (.i64v 105))
-    idx
+/-- The canonical Int-face host slot chain: the byte-derived role table lowered
+    to exactly the `if fn = idx then …` chain (in table order) the emitter's
+    `{name}Host` definitions carry — a `box` entry wires the audited `boxRef`
+    over the carrier, an `add`/`sub` entry wires that contract-slot PARAMETER.
+    This reuses the same contract functions the checker-rendered obligation
+    host is built from (`boxRef` and the abstract add/sub slots of
+    `Obligation.host`); it defines no new semantics. -/
+def intDispatchCanonicalSlots
+    (carrier : Nat) (add sub : List WVal → Option WVal) :
+    List (HostRole × Nat) → HostTbl
+  | [] => fun _ => none
+  | (role, idx) :: rest => fun fn =>
+      if fn = idx then
+        some (match role with
+          | .box => ((1 : Nat), boxRef carrier)
+          | .add => ((2 : Nat), add)
+          | .sub => ((2 : Nat), sub))
+      else intDispatchCanonicalSlots carrier add sub rest fn
 
-/-- Read a sentinel value back out of a probed slot (`WVal` deliberately has no
-    `DecidableEq`, so the discrimination is by explicit shape). -/
-def intDispatchProbeInt : Option WVal → Option Int
-  | some (.i64v k) => some k
-  | _ => none
-
-/-- Whether one claimed `(role, index)` table entry is wired, in the
-    obligation's own host builder, to exactly that role's contract slot: an
-    `add`/`sub` entry must reach the add/sub sentinel (arity 2), and a `box`
-    entry must reach the baked-in box helper (arity 1, boxing `i64 0` to the
-    small carrier of the obligation's carrier type). -/
-def intDispatchRoleWired (o : Obligation) : HostRole × Nat → Bool
-  | (.box, idx) =>
-      match intDispatchHostSlot o idx with
-      | some (arity, f) =>
-          arity == 1 &&
-            (match f [.i64v 0] with
-             | some (.structv c [.i64v k, .null, .i32v sg]) =>
-                 c == o.carrier && k == 0 && sg == 0
-             | _ => false)
-      | none => false
-  | (.add, idx) =>
-      match intDispatchHostSlot o idx with
-      | some (arity, f) => arity == 2 && intDispatchProbeInt (f []) == some 101
-      | none => false
-  | (.sub, idx) =>
-      match intDispatchHostSlot o idx with
-      | some (arity, f) => arity == 2 && intDispatchProbeInt (f []) == some 102
-      | none => false
-
-/-- Every entry of the claimed host-role table is wired to its own contract
-    slot in the obligation's host builder. Without this the table is a free
-    witness: a plan with two arm roles SWAPPED plus a consistently permuted
-    table lowers to byte-identical code (`hostTableIndicesDistinct` and the
-    byte gate are both blind to the permutation), so the claim could describe
-    an `add` where the obligation's semantics wire `sub`. Binding each entry to
-    the obligation's own wiring makes the table a function of the obligation
-    the model semantics actually reference, not a claim-supplied choice. -/
-def intDispatchHostTableWired
-    (o : Obligation) (hostTable : List (HostRole × Nat)) : Bool :=
-  hostTable.all (intDispatchRoleWired o)
+/-- The canonical Int-face host BUILDER for a byte-derived role table: the
+    whole `Obligation.host` value an honest Int-face dispatch obligation
+    carries (mul/stringEq/stringConcat slots unused). The acceptance predicate
+    requires `obligation.host` to EQUAL this builder — one extensional,
+    definitional equality over the whole function, mirroring in-kernel the
+    checker's whole-host `rfl` pin. A sampled probe is NOT enough here: in the
+    standalone-artifact posture the obligation is claim data, so a slot could
+    behave as its role's contract only on the probed inputs (e.g. add on `[]`
+    but sub on every real two-argument list, or a box helper defined only at
+    the probe's constant that traps on every other) — builder equality leaves
+    no unsampled behaviour, so the table is a function of the obligation the
+    model semantics actually reference, not a claim-supplied choice. -/
+def intDispatchCanonicalHost
+    (carrier : Nat) (hostTable : List (HostRole × Nat)) :
+    (List WVal → Option WVal) → (List WVal → Option WVal) →
+    (List WVal → Option WVal) → (List WVal → Option WVal) →
+    (Nat → List WVal → Option WVal) → HostTbl :=
+  fun add sub _mul _stringEq _stringConcat =>
+    intDispatchCanonicalSlots carrier add sub hostTable
 
 /-- Artifact-level acceptance for one Int-face `ref.test`-dispatch export. The
     `IntDispatchRawPlan` is checked structurally (`checkIntDispatchRawPlan`),
     lowered — parameterized by the claim's byte-derived host-role table, whose
     indices must be pairwise DISTINCT (`hostTableIndicesDistinct`: the plan
     names helpers by role only, so a duplicated table would let two plans
-    differing in an arm's role lower to identical bytes) and whose entries must
-    each be WIRED to their own contract slot in the obligation's host builder
-    (`intDispatchHostTableWired`: otherwise a role permutation in the plan plus
-    a consistently permuted table cancels out byte-identically) — to the match
+    differing in an arm's role lower to identical bytes) and which must EQUAL,
+    through the obligation's own host builder, the canonical wiring
+    (`obligation.host = intDispatchCanonicalHost carrier hostTable`: otherwise
+    a role permutation in the plan plus a consistently permuted table cancels
+    out byte-identically, and a sampled check would leave unsampled slot
+    behaviour free) — to the match
     `WInstr` body and its exact code-entry bytes, and those bytes are bound to
     the exported function by name. The dispatch structure (tags, arm constants,
     operand order, roles) is pinned entirely by the byte-equality gate: every
@@ -677,7 +660,7 @@ def intDispatchPlanAccepted
     obligation.carrier = carrier ∧
     AverCert.PlanCheck.checkIntDispatchRawPlan plan = true ∧
     AverCert.PlanCheck.hostTableIndicesDistinct hostTable = true ∧
-    intDispatchHostTableWired obligation hostTable = true ∧
+    obligation.host = intDispatchCanonicalHost carrier hostTable ∧
     ∃ body codeEntry binding,
       AverCert.PlanLower.lowerIntDispatchBody hostTable plan = some body ∧
       AverCert.PlanBytes.lowerIntDispatchCodeEntry carrier hostTable plan =
