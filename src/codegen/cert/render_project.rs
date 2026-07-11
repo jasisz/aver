@@ -668,6 +668,57 @@ fn render_expr_fragment_plans(
             plan_value = verbatim_plan_lean_value(&plan),
         ));
     }
+    for c in &analysis.certs {
+        let (name, self_idx, carrier) = match c.inner() {
+            Cert::VariantDispatch {
+                name,
+                self_idx,
+                carrier,
+                ..
+            }
+            | Cert::WidenedIntMatch {
+                name,
+                self_idx,
+                carrier,
+                ..
+            } => (name, *self_idx, *carrier),
+            _ => continue,
+        };
+        let Some(plan) = int_dispatch_plan_from_cert(c, analysis.frag_host_table) else {
+            continue;
+        };
+        let hosts = int_dispatch_host_table_from_cert(c)
+            .expect("Int-face dispatch cert carries its host table");
+        let code_entry_bytes = render_byte_list(
+            &lower_int_dispatch_code_entry(&plan, carrier, &hosts)
+                .expect("certified Int-face dispatch plan lowers to code-entry bytes"),
+        );
+        let export_name_bytes = render_byte_list(name.as_bytes());
+        let host_table = int_dispatch_host_table_lean_value(&hosts);
+        any = true;
+        s.push_str(&format!(
+            "/-- Byte-derived `int-dispatch-v1` plan for `{name}` (a `Cod := Int`\n\
+                 ADT-match; host helpers are cited by ROLE — the byte-derived role\n\
+                 table below parameterizes the lowerers, so the plan carries no\n\
+                 function index). -/\n\
+             def {name}IntDispatchPlan : IntDispatchRawPlan := {plan_value}\n\n\
+             /-- The audited int-dispatch checker accepts `{name}`'s byte-derived plan. -/\n\
+             example : AverCert.PlanCheck.checkIntDispatchRawPlan {name}IntDispatchPlan = true := rfl\n\n\
+             /-- The byte-derived role table maps roles to pairwise distinct indices\n\
+                 (so the byte-equality gate distinguishes an arm's role). -/\n\
+             example : AverCert.PlanCheck.hostTableIndicesDistinct {host_table} = true := rfl\n\n\
+             /-- The audited int-dispatch lowerer maps `{name}`'s plan to the exact `Module.lean` body. -/\n\
+             example : (CertModule.{name}Code {self_idx}).map (fun c => c.body) =\n  \
+               AverCert.PlanLower.lowerIntDispatchBody {host_table} {name}IntDispatchPlan := rfl\n\n\
+             /-- The audited int-dispatch byte lowerer reproduces `{name}`'s exact code-entry bytes. -/\n\
+             example : AverCert.PlanBytes.lowerIntDispatchCodeEntry {carrier} {host_table} {name}IntDispatchPlan =\n  \
+               some {code_entry_bytes} := rfl\n\n\
+             /-- The Wasm slicer finds `{name}`'s exact code-entry bytes by export name. -/\n\
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+               some {code_entry_bytes} := rfl\n\n",
+            plan_value = int_dispatch_plan_lean_value(&plan),
+        ));
+    }
     if !any {
         s.push_str("-- This artifact contains no source/fragment plans.\n\n");
     }
@@ -683,6 +734,7 @@ struct RenderedArtifactClaims {
     recursion_claims: String,
     mutual_claims: String,
     verbatim_claims: String,
+    int_dispatch_claims: String,
     obligation_proof: String,
     sym_proof: String,
     string_eq_proof: String,
@@ -691,6 +743,7 @@ struct RenderedArtifactClaims {
     recursion_proof: String,
     mutual_proof: String,
     verbatim_proof: String,
+    int_dispatch_proof: String,
 }
 
 fn render_artifact_expr_fragment_claims(
@@ -706,6 +759,7 @@ fn render_artifact_expr_fragment_claims(
     let mut recursion_claims = Vec::new();
     let mut mutual_claims = Vec::new();
     let mut verbatim_claims = Vec::new();
+    let mut int_dispatch_claims = Vec::new();
     let mut sym_proofs = Vec::new();
     let mut string_eq_proofs = Vec::new();
     let mut string_proofs = Vec::new();
@@ -713,6 +767,7 @@ fn render_artifact_expr_fragment_claims(
     let mut recursion_proofs = Vec::new();
     let mut mutual_proofs = Vec::new();
     let mut verbatim_proofs = Vec::new();
+    let mut int_dispatch_proofs = Vec::new();
     for c in &analysis.certs {
         match c.inner() {
             Cert::ExprFragment {
@@ -969,6 +1024,34 @@ fn render_artifact_expr_fragment_claims(
                         .to_string(),
                 );
             }
+            Cert::VariantDispatch { name, carrier, .. }
+            | Cert::WidenedIntMatch { name, carrier, .. } => {
+                // Byte-equality gated: a body byte-noisier than the canonical
+                // Int-face dispatch has no plan reproducing its exact bytes — it
+                // stays on the legacy witness route with no claim, fail-closed.
+                if int_dispatch_plan_from_cert(c, analysis.frag_host_table).is_none() {
+                    continue;
+                }
+                let hosts = int_dispatch_host_table_from_cert(c)
+                    .expect("Int-face dispatch cert carries its host table");
+                let host_table = int_dispatch_host_table_lean_value(&hosts);
+                let export_name_bytes = render_byte_list(name.as_bytes());
+                int_dispatch_claims.push(format!(
+                    "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, hostTable := {host_table}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.IntDispatchClaim)",
+                    export_name = lean_str(name),
+                ));
+                // The code-entry and signature conjuncts plus the role-table
+                // parameterization are the binding, so the witness is anonymous
+                // for the body, code entry and binding — each pinned by `rfl`
+                // (the two extra leading `rfl`s discharge the host-table
+                // distinctness and obligation-wiring binds; the final `rfl`
+                // pins the code table with the CANONICAL locals count, no
+                // existential).
+                int_dispatch_proofs.push(
+                    "⟨rfl, rfl, rfl, rfl, rfl, ⟨_, _, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
+                        .to_string(),
+                );
+            }
             _ => {}
         }
     }
@@ -1007,13 +1090,19 @@ fn render_artifact_expr_fragment_claims(
     } else {
         format!("[\n  {}\n]", verbatim_claims.join(",\n  "))
     };
+    let int_dispatch_claims = if int_dispatch_claims.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[\n  {}\n]", int_dispatch_claims.join(",\n  "))
+    };
     let obligation_proof_count = sym_proofs.len()
         + string_eq_proofs.len()
         + string_proofs.len()
         + construct_proofs.len()
         + recursion_proofs.len()
         + mutual_proofs.len()
-        + verbatim_proofs.len();
+        + verbatim_proofs.len()
+        + int_dispatch_proofs.len();
     let obligation_proof = (0..obligation_proof_count).fold("trivial".to_string(), |acc, _| {
         format!("⟨rfl, {acc}⟩")
     });
@@ -1062,6 +1151,13 @@ fn render_artifact_expr_fragment_claims(
         .fold("trivial".to_string(), |acc, proof| {
             format!("⟨{proof}, {acc}⟩")
         });
+    let int_dispatch_proof =
+        int_dispatch_proofs
+            .into_iter()
+            .rev()
+            .fold("trivial".to_string(), |acc, proof| {
+                format!("⟨{proof}, {acc}⟩")
+            });
     RenderedArtifactClaims {
         sym_claims,
         string_eq_claims,
@@ -1070,6 +1166,7 @@ fn render_artifact_expr_fragment_claims(
         recursion_claims,
         mutual_claims,
         verbatim_claims,
+        int_dispatch_claims,
         obligation_proof,
         sym_proof,
         string_eq_proof,
@@ -1078,6 +1175,7 @@ fn render_artifact_expr_fragment_claims(
         recursion_proof,
         mutual_proof,
         verbatim_proof,
+        int_dispatch_proof,
     }
 }
 
@@ -1095,7 +1193,7 @@ fn render_artifact(
     );
     let fragment_proof = format!(
         concat!(
-            "  dsimp [data, symFragmentClaims, stringEqClaims, stringConcatClaims, constructClaims, recursionClaims, mutualRecursionClaims, verbatimClaims, AverCert.AcceptedArtifact.accepted,\n",
+            "  dsimp [data, symFragmentClaims, stringEqClaims, stringConcatClaims, constructClaims, recursionClaims, mutualRecursionClaims, verbatimClaims, intDispatchClaims, AverCert.AcceptedArtifact.accepted,\n",
             "    AverCert.AcceptedArtifact.subjectMatchesArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.expectedArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.fragmentClaimObligationsInManifest,\n",
@@ -1121,6 +1219,8 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.mutualManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.verbatimClaimExportNames,\n",
             "    AverCert.AcceptedArtifact.verbatimManifestPlanNames,\n",
+            "    AverCert.AcceptedArtifact.intDispatchClaimExportNames,\n",
+            "    AverCert.AcceptedArtifact.intDispatchManifestPlanNames,\n",
             "    AverCert.AcceptedArtifact.acceptedFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedSymFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedStringEqFragments,\n",
@@ -1129,6 +1229,7 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.acceptedRecursionFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedMutualRecursionFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedVerbatimFragments,\n",
+            "    AverCert.AcceptedArtifact.acceptedIntDispatchFragments,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
@@ -1156,9 +1257,13 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.verbatimClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.verbatimPlanForExport,\n",
             "    AverCert.AcceptedArtifact.verbatimPlanAccepted,\n",
+            "    AverCert.AcceptedArtifact.intDispatchClaimsAccepted,\n",
+            "    AverCert.AcceptedArtifact.intDispatchClaimAccepted,\n",
+            "    AverCert.AcceptedArtifact.intDispatchPlanForExport,\n",
+            "    AverCert.AcceptedArtifact.intDispatchPlanAccepted,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨finalCert, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, {verbatim_proof}⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨finalCert, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, {int_dispatch_proof}⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         obligation_proof = claims.obligation_proof,
         sym_proof = claims.sym_proof,
@@ -1167,7 +1272,8 @@ fn render_artifact(
         construct_proof = claims.construct_proof,
         recursion_proof = claims.recursion_proof,
         mutual_proof = claims.mutual_proof,
-        verbatim_proof = claims.verbatim_proof
+        verbatim_proof = claims.verbatim_proof,
+        int_dispatch_proof = claims.int_dispatch_proof
     );
     format!(
          "-- Artifact-carried acceptance root.\n\
@@ -1189,9 +1295,10 @@ fn render_artifact(
          def recursionClaims : List AverCert.AcceptedArtifact.RecursionClaim := {recursion_claims_list}\n\n\
          def mutualRecursionClaims : List AverCert.AcceptedArtifact.MutualRecursionClaim := {mutual_claims_list}\n\n\
          def verbatimClaims : List AverCert.AcceptedArtifact.VerbatimClaim := {verbatim_claims_list}\n\n\
+         def intDispatchClaims : List AverCert.AcceptedArtifact.IntDispatchClaim := {int_dispatch_claims_list}\n\n\
          {mutual_scc_closure_pins}\
          def data : AverCert.AcceptedArtifact.ArtifactData :=\n  \
-           ({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
+           ({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
          def acceptedWithFinal\n\
              (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n\
              AverCert.AcceptedArtifact.accepted data := by\n\
@@ -1206,6 +1313,7 @@ fn render_artifact(
         recursion_claims_list = claims.recursion_claims,
         mutual_claims_list = claims.mutual_claims,
         verbatim_claims_list = claims.verbatim_claims,
+        int_dispatch_claims_list = claims.int_dispatch_claims,
         mutual_scc_closure_pins = render_mutual_scc_closure_pins(analysis),
         fragment_proof = fragment_proof
     )

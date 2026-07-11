@@ -138,6 +138,8 @@ pub fn check_expr_fragment_plan_sidecar(
         mutual_lowered_body_lean: None,
         mutual_lowered_code_entry_lean: None,
         verbatim_plan_lean: None,
+        int_dispatch_plan_lean: None,
+        int_dispatch_host_table_lean: None,
     };
     Ok(FragmentPlanCheck {
         sidecar,
@@ -282,6 +284,8 @@ pub fn check_sym_fragment_plan_sidecar(
         mutual_lowered_body_lean: None,
         mutual_lowered_code_entry_lean: None,
         verbatim_plan_lean: None,
+        int_dispatch_plan_lean: None,
+        int_dispatch_host_table_lean: None,
     };
     Ok(FragmentPlanCheck {
         sidecar,

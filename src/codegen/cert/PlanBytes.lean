@@ -359,6 +359,108 @@ def lowerVerbatimCodeEntry (carrier : Nat) (plan : VerbatimRawPlan) : Option (Li
       | none => none
   | none => none
 
+/-! ### Int-face `ref.test`-dispatch byte lowering (exact code-entry bytes).
+
+`ref.test`/`ref.cast`/block-type heap indices are s33 SIGNED; `struct.get` type
+and field indices are uleb32; arm/default constants are sleb64. The scratch
+locals mirror `PlanLower`: arm `i` spills to local `i+1`, the scrutinee is local
+`armCount + 1`, and one trailing unused carrier scratch local is always
+declared. The box/add/sub call target indices come from the byte-derived
+host-role table PARAMETER — a role the table lacks fail-closes the lowering, so
+the plan cannot name a function index. -/
+
+/-- The shared arm prefix: project the tested variant's field 0 out of the
+    spilled scrutinee and spill it to this arm's scratch local
+    (`local.get S; ref.cast t; struct.get t 0; local.set F`). -/
+def intDispatchProjBytes (S F tyIdx : Nat) : Option (List Nat) :=
+  match uleb32 S, s33HeapIdx tyIdx, uleb32 tyIdx, uleb32 F with
+  | some sB, some castTy, some getTy, some fB =>
+      some ([0x20] ++ sB ++ [0xfb, 0x16] ++ castTy ++
+            [0xfb, 0x02] ++ getTy ++ [0x00] ++ [0x21] ++ fB)
+  | _, _, _, _ => none
+
+def lowerIntDispatchArmBytes
+    (hostTable : List (HostRole × Nat)) (S F tyIdx : Nat) :
+    IntDispatchLeaf → Option (List Nat)
+  | .proj =>
+      match intDispatchProjBytes S F tyIdx, uleb32 F with
+      | some proj, some fB => some (proj ++ [0x20] ++ fB)
+      | _, _ => none
+  | .hostOp role k constFirst =>
+      match intDispatchProjBytes S F tyIdx, uleb32 F, sleb64 k,
+            (AverCert.PlanCheck.hostRoleIdx? hostTable .box).bind uleb32,
+            (AverCert.PlanCheck.hostRoleIdx? hostTable
+              (AverCert.PlanCheck.intDispatchRoleHostRole role)).bind uleb32 with
+      | some proj, some fB, some kB, some boxB, some hostB =>
+          some (proj ++
+            (if constFirst then
+              [0x42] ++ kB ++ [0x10] ++ boxB ++ [0x20] ++ fB ++ [0x10] ++ hostB
+            else
+              [0x20] ++ fB ++ [0x42] ++ kB ++ [0x10] ++ boxB ++ [0x10] ++ hostB))
+      | _, _, _, _, _ => none
+
+def intDispatchDefaultBytes
+    (hostTable : List (HostRole × Nat)) (k : Int) : Option (List Nat) :=
+  match sleb64 k, (AverCert.PlanCheck.hostRoleIdx? hostTable .box).bind uleb32 with
+  | some kB, some boxB => some ([0x42] ++ kB ++ [0x10] ++ boxB)
+  | _, _ => none
+
+def lowerIntDispatchCascadeBytes
+    (hostTable : List (HostRole × Nat)) (carrier S : Nat) :
+    Nat → Bool → IntDispatchCascade → Option (List Nat)
+  | _pos, _first, .default k => intDispatchDefaultBytes hostTable k
+  | pos, first, .test tyIdx hit rest =>
+      match (if first then some ([] : List Nat)
+             else (uleb32 S).map (fun b => [0x20] ++ b)),
+            s33HeapIdx tyIdx, s33HeapIdx carrier,
+            lowerIntDispatchArmBytes hostTable S (pos + 1) tyIdx hit,
+            lowerIntDispatchCascadeBytes hostTable carrier S (pos + 1) false rest with
+      | some reload, some testTy, some blockTy, some hitBytes, some restBytes =>
+          some (reload ++ [0xfb, 0x14] ++ testTy ++ [0x04, 0x63] ++ blockTy ++
+                hitBytes ++ [0x05] ++ restBytes ++ [0x0b])
+      | _, _, _, _, _ => none
+
+def lowerIntDispatchExprBytes
+    (hostTable : List (HostRole × Nat)) (carrier S : Nat)
+    (body : IntDispatchCascade) : Option (List Nat) :=
+  match uleb32 S, lowerIntDispatchCascadeBytes hostTable carrier S 0 true body with
+  | some sB, some cascadeBytes =>
+      some ([0x20, 0x00] ++ [0x21] ++ sB ++ [0x20] ++ sB ++ cascadeBytes ++ [0x0b])
+  | _, _ => none
+
+/-- Local declarations: `armCount` single-local carrier-ref groups (the per-arm
+    payload spills), one eqref group (the scrutinee), and one trailing unused
+    carrier scratch group — `armCount + 2` groups in all. -/
+def intDispatchArmLocalGroups (carrierB : List Nat) : Nat → List Nat
+  | 0 => []
+  | n + 1 => [0x01, 0x63] ++ carrierB ++ intDispatchArmLocalGroups carrierB n
+
+def lowerIntDispatchLocalsBytes (carrier armCount : Nat) : Option (List Nat) :=
+  match uleb32 (armCount + 2), s33HeapIdx carrier with
+  | some countB, some carrierB =>
+      some (countB ++ intDispatchArmLocalGroups carrierB armCount ++
+            [0x01, 0x6d] ++ [0x01, 0x63] ++ carrierB)
+  | _, _ => none
+
+def lowerIntDispatchBodyBytes
+    (carrier : Nat) (hostTable : List (HostRole × Nat))
+    (plan : IntDispatchRawPlan) : Option (List Nat) :=
+  let armCount := AverCert.PlanCheck.intDispatchArmCount plan.body
+  match lowerIntDispatchLocalsBytes carrier armCount,
+        lowerIntDispatchExprBytes hostTable carrier (armCount + 1) plan.body with
+  | some localsBytes, some exprBytes => some (localsBytes ++ exprBytes)
+  | _, _ => none
+
+def lowerIntDispatchCodeEntry
+    (carrier : Nat) (hostTable : List (HostRole × Nat))
+    (plan : IntDispatchRawPlan) : Option (List Nat) :=
+  match lowerIntDispatchBodyBytes carrier hostTable plan with
+  | some body =>
+      match uleb32 body.length with
+      | some lenBytes => some (lenBytes ++ body)
+      | none => none
+  | none => none
+
 def lowerStringConcatChunkBytes
     (resultTy : Nat) (chunk : StringConcatChunk) : Option (List Nat) :=
   match sleb32 0,
