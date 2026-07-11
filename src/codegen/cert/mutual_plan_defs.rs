@@ -203,7 +203,7 @@ mod mutual_plan_gate_tests {
         );
 
         // Byte-noisy member: an extra scratch local classifies identically but
-        // its raw bytes differ -> NO plan claim, legacy route, fail-closed.
+        // its raw bytes differ -> NO plan claim; certification declines, fail-closed.
         let mut noisy = even_bytes.clone();
         noisy.push(0x00);
         noisy[0] += 1;
