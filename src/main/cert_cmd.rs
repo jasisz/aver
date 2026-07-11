@@ -105,7 +105,7 @@ const WITNESS_THEOREM: &str = "AverCertChecker.accepted";
 /// audited trusted computing base (taken from this binary) plus the checker's
 /// own build config and witness. A cert shipping files by these names has them
 /// ignored.
-const CHECKER_OWNED: [&str; 13] = [
+const CHECKER_OWNED: [&str; 14] = [
     "Schema.lean",
     "SchemaCore.lean",
     "PlanCheck.lean",
@@ -116,6 +116,7 @@ const CHECKER_OWNED: [&str; 13] = [
     "AcceptedArtifact.lean",
     "AcceptedArtifactCore.lean",
     "ArtifactBytes.lean",
+    "CertDecode.lean",
     "CertPrelude.lean",
     "lakefile.lean",
     "CheckerWitness.lean",
@@ -123,7 +124,7 @@ const CHECKER_OWNED: [&str; 13] = [
 
 /// Audited modules whose exact bytes are shared by every certificate build.
 /// ArtifactBytes and certificate/model modules are deliberately absent.
-const STATIC_PRELUDE_ROOTS: [&str; 10] = [
+const STATIC_PRELUDE_ROOTS: [&str; 11] = [
     "SchemaCore",
     "Schema",
     "PlanCheck",
@@ -133,12 +134,14 @@ const STATIC_PRELUDE_ROOTS: [&str; 10] = [
     "ExprFragmentAccepted",
     "AcceptedArtifactCore",
     "AcceptedArtifact",
+    "CertDecode",
     "CertPrelude",
 ];
 
 /// Static roots whose complete import graph is artifact-independent.
-const PRISTINE_PRELUDE_ROOTS: [&str; 8] = [
+const PRISTINE_PRELUDE_ROOTS: [&str; 9] = [
     "CertPrelude",
+    "CertDecode",
     "WasmSlice",
     "SchemaCore",
     "PlanCheck",
@@ -457,6 +460,13 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     if prelude_pin != audited_prelude {
         return Err(format!(
             "prelude hash mismatch: certificate pins {prelude_pin}, checker expects {audited_prelude}"
+        ));
+    }
+    let decode_pin = manifest_str(&manifest, "cert_decode_sha256")?;
+    let audited_decode = cert::audited_decode_sha();
+    if decode_pin != audited_decode {
+        return Err(format!(
+            "cert-decode hash mismatch: certificate pins {decode_pin}, checker expects {audited_decode}"
         ));
     }
     let plan_check_pin = manifest_str(&manifest, "plan_check_sha256")?;
@@ -1272,6 +1282,7 @@ fn static_prelude_files() -> Vec<(String, Vec<u8>)> {
             cert::CERT_ACCEPTED_ARTIFACT_CORE.as_bytes().to_vec(),
         ),
         ("CertPrelude.lean", cert::CERT_PRELUDE.as_bytes().to_vec()),
+        ("CertDecode.lean", cert::CERT_DECODE.as_bytes().to_vec()),
         (
             "ExprFragmentAccepted.lean",
             cert::CERT_EXPR_FRAGMENT_ACCEPTED.as_bytes().to_vec(),
@@ -1890,7 +1901,7 @@ fn lean_expr_fragment_wasm_slice_pins(rederived: &[cert::RederivedObligation]) -
         let export_name_bytes = lean_byte_list(r.name.as_bytes());
         out.push_str(&format!(
             "-- `{}`: checker-read module bytes expose this exact code-entry.\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {} = some ({}) := rfl\n",
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {} = some ({}) := rfl\n",
             r.name, export_name_bytes, bytes
         ));
     }
@@ -1918,7 +1929,7 @@ fn lean_expr_fragment_func_binding_pins(rederived: &[cert::RederivedObligation])
         );
         out.push_str(&format!(
             "-- `{}`: checker-read module bytes expose this exact function binding.\n\
-             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes {} = some {} := rfl\n",
+             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {} = some {} := rfl\n",
             r.name, export_name_bytes, binding
         ));
     }
@@ -1946,7 +1957,7 @@ fn lean_expr_fragment_accepted_pins(rederived: &[cert::RederivedObligation]) -> 
         );
         out.push_str(&format!(
             "-- `{}`: one aggregate expr-fragment acceptance check.\n\
-             example : AverCert.ExprFragmentAccepted.accepted AverCert.ArtifactBytes.wasmBytes {} {} ({}) ({}) ({}) {} := by dsimp [AverCert.ExprFragmentAccepted.accepted]; exact ⟨rfl, rfl, rfl, rfl, rfl⟩\n",
+             example : AverCert.ExprFragmentAccepted.accepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {} {} ({}) ({}) ({}) {} := by dsimp [AverCert.ExprFragmentAccepted.accepted]; exact ⟨rfl, rfl, rfl, rfl, rfl⟩\n",
             r.name, export_name_bytes, r.carrier, plan, body, bytes, binding
         ));
     }
@@ -2532,7 +2543,7 @@ fn lean_artifact_data_literal(
     composition_claims: &str,
 ) -> String {
     format!(
-        "({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, \
+        "({{ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest, \
          symFragmentClaims := ({sym_claims} : List AverCert.AcceptedArtifact.SymFragmentClaim), \
          stringEqClaims := ({string_eq_claims} : List AverCert.AcceptedArtifact.StringEqClaim), \
          stringConcatClaims := ({string_claims} : List AverCert.AcceptedArtifact.StringConcatClaim), \

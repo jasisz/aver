@@ -14,6 +14,7 @@ pub fn write_project(
 
     // Copy in the semantics prelude + toolchain (single source of truth).
     write(&cert_dir, "CertPrelude.lean", CERT_PRELUDE)?;
+    write(&cert_dir, "CertDecode.lean", CERT_DECODE)?;
     write(&cert_dir, "lean-toolchain", LEAN_TOOLCHAIN)?;
 
     // Copy the model files (AverCommon + <Module>.lean) verbatim.
@@ -106,6 +107,7 @@ pub fn write_project(
     let schema_sha = sha256_hex(CERT_SCHEMA.as_bytes());
     let schema_core_sha = sha256_hex(CERT_SCHEMA_CORE.as_bytes());
     let prelude_sha = sha256_hex(CERT_PRELUDE.as_bytes());
+    let decode_sha = sha256_hex(CERT_DECODE.as_bytes());
     let plan_check_sha = sha256_hex(CERT_PLAN_CHECK.as_bytes());
     let plan_lower_sha = sha256_hex(CERT_PLAN_LOWER.as_bytes());
     let plan_bytes_sha = sha256_hex(CERT_PLAN_BYTES.as_bytes());
@@ -117,6 +119,7 @@ pub fn write_project(
         schema: &schema_sha,
         schema_core: &schema_core_sha,
         prelude: &prelude_sha,
+        decode: &decode_sha,
         plan_check: &plan_check_sha,
         plan_lower: &plan_lower_sha,
         plan_bytes: &plan_bytes_sha,
@@ -300,15 +303,15 @@ fn render_expr_fragment_plans(
                some {code_entry_bytes} := rfl\n\n\
              /-- The audited Lean-side Wasm slicer finds `{name}`'s exact code-entry bytes\n\
                  inside the emitted module bytes by export name. -/\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
                some {code_entry_bytes} := rfl\n\n\
              /-- The audited Lean-side Wasm slicer binds `{name}` to its function\n\
                  index, defined-code index, type index and code-entry bytes. -/\n\
-             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
                some {func_binding} := rfl\n\n\
              /-- The audited Lean-side expr-fragment acceptance predicate aggregates\n\
                  plan checking, semantic lowering, byte lowering and byte-origin binding. -/\n\
-             example : AverCert.ExprFragmentAccepted.accepted AverCert.ArtifactBytes.wasmBytes\n  \
+             example : AverCert.ExprFragmentAccepted.accepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen\n  \
                {export_name_bytes} {carrier} {name}Plan\n  \
                {lowered_body}\n  \
                {code_entry_bytes}\n  \
@@ -355,10 +358,10 @@ fn render_expr_fragment_plans(
                AverCert.PlanLower.lowerFieldProjectionBody {struct_idx} {field_count} {name}FieldProjectionPlan := rfl\n\n\
              example : AverCert.PlanBytes.lowerFieldProjectionCodeEntry {carrier} {struct_idx} {field_count} {result_ty_lean} {name}FieldProjectionPlan =\n  \
                some {code_entry} := rfl\n\n\
-             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
                some {binding} := rfl\n\n\
-             example : AverCert.WasmSlice.projectionStructTypeMatches AverCert.ArtifactBytes.wasmBytes {struct_idx} {field_count} {field_idx} {result_ty_lean} = true := rfl\n\n\
-             example : AverCert.WasmSlice.projectionFuncTypeMatches AverCert.ArtifactBytes.wasmBytes {type_idx} {struct_idx} {result_ty_lean} = true := rfl\n\n",
+             example : AverCert.WasmSlice.projectionStructTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {struct_idx} {field_count} {field_idx} {result_ty_lean} = true := rfl\n\n\
+             example : AverCert.WasmSlice.projectionFuncTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {type_idx} {struct_idx} {result_ty_lean} = true := rfl\n\n",
             plan_value = field_projection_plan_lean_value(&plan),
             field_idx = plan.field_idx,
         ));
@@ -399,10 +402,10 @@ fn render_expr_fragment_plans(
             format!(
                 "/-- The byte-derived list struct binds `{name}`'s element representation. -/\n\
                  theorem {name}ConstructStructTypeMatches :\n  \
-                   AverCert.WasmSlice.listConstructStructTypeMatches AverCert.ArtifactBytes.wasmBytes {struct_idx} ({elem_ty}) = true := rfl\n\n\
+                   AverCert.WasmSlice.listConstructStructTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {struct_idx} ({elem_ty}) = true := rfl\n\n\
                  /-- The byte-derived exported signature binds `{name}`'s element representation. -/\n\
                  theorem {name}ConstructFuncTypeMatches :\n  \
-                   AverCert.WasmSlice.listConstructFuncTypeMatches AverCert.ArtifactBytes.wasmBytes {type_idx} {name}ConstructPlan.arity {struct_idx} ({elem_ty}) = true := rfl\n\n"
+                   AverCert.WasmSlice.listConstructFuncTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {type_idx} {name}ConstructPlan.arity {struct_idx} ({elem_ty}) = true := rfl\n\n"
             )
         } else {
             String::new()
@@ -442,11 +445,11 @@ fn render_expr_fragment_plans(
                some {code_entry_bytes} := rfl\n\n\
              /-- The audited Lean-side Wasm slicer finds `{name}`'s exact constructor\n\
                  code-entry bytes inside the emitted module bytes by export name. -/\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
                some {code_entry_bytes} := rfl\n\n\
              /-- The audited Lean-side Wasm slicer binds `{name}` to its function\n\
                  index, defined-code index, type index and code-entry bytes. -/\n\
-             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
                some {func_binding} := rfl\n\n\
              {type_match_pins}",
             sym_plan_value = sym_plan_lean_value(&sym_plan),
@@ -509,11 +512,11 @@ fn render_expr_fragment_plans(
                some {code_entry_bytes} := rfl\n\n\
              /-- The audited Lean-side Wasm slicer finds `{name}`'s exact code-entry bytes\n\
                  inside the emitted module bytes by export name. -/\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
                some {code_entry_bytes} := rfl\n\n\
              /-- The audited Lean-side Wasm slicer binds `{name}` to its function\n\
                  index, defined-code index, type index and code-entry bytes. -/\n\
-             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
                some {func_binding} := rfl\n\n\
              \n",
             sym_plan_value = sym_plan_lean_value(&sym_plan),
@@ -570,11 +573,11 @@ fn render_expr_fragment_plans(
                some {code_entry_bytes} := rfl\n\n\
              /-- The audited Lean-side Wasm slicer finds `{name}`'s exact code-entry bytes\n\
                  inside the emitted module bytes by export name. -/\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
                some {code_entry_bytes} := rfl\n\n\
              /-- The audited Lean-side Wasm slicer binds `{name}` to its function\n\
                  index, defined-code index, type index and code-entry bytes. -/\n\
-             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
                some {func_binding} := rfl\n\n\
              \n",
             sym_plan_value = sym_plan_lean_value(&sym_plan),
@@ -626,7 +629,7 @@ fn render_expr_fragment_plans(
              example : AverCert.PlanCheck.checkRecursionPlanShape {self_idx} {host_table} {name}RecursionPlan = true := rfl\n\n\
              /-- The declared function type of `{name}` is the canonical certified\n\
                  signature over the Int carrier. -/\n\
-             example : AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.wasmBytes {type_idx} {arity} {carrier} = true := rfl\n\n\
+             example : AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {type_idx} {arity} {carrier} = true := rfl\n\n\
              /-- The audited recursion lowerer maps `{name}`'s plan to the exact `Module.lean` body. -/\n\
              example : (CertModule.{name}Code {self_idx}).map (fun c => c.body) =\n  \
                AverCert.PlanLower.lowerRecursionBody {carrier} {name}RecursionPlan := rfl\n\n\
@@ -634,7 +637,7 @@ fn render_expr_fragment_plans(
              example : AverCert.PlanBytes.lowerRecursionCodeEntry {carrier} {name}RecursionPlan =\n  \
                some {code_entry_bytes} := rfl\n\n\
              /-- The Wasm slicer finds `{name}`'s exact code-entry bytes by export name. -/\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
                some {code_entry_bytes} := rfl\n\n",
             plan_value = recursion_plan_lean_value(&plan),
         ));
@@ -677,7 +680,7 @@ fn render_expr_fragment_plans(
              example : AverCert.PlanCheck.checkMutualPlanShape {member_set} {host_table} {name}MutualPlan = true := rfl\n\n\
              /-- The declared function type of `{name}` is the canonical certified\n\
                  signature over the Int carrier. -/\n\
-             example : AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.wasmBytes {type_idx} 1 {carrier} = true := rfl\n\n\
+             example : AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {type_idx} 1 {carrier} = true := rfl\n\n\
              /-- The audited mutual lowerer maps `{name}`'s plan to its arm of the shared\n\
                  `{primary}Code` table (the exact `Module.lean` body). -/\n\
              example : (CertModule.{primary}Code {self_idx}).map (fun c => c.body) =\n  \
@@ -686,7 +689,7 @@ fn render_expr_fragment_plans(
              example : AverCert.PlanBytes.lowerMutualCodeEntry {carrier} {name}MutualPlan =\n  \
                some {code_entry_bytes} := rfl\n\n\
              /-- The Wasm slicer finds `{name}`'s exact code-entry bytes by export name. -/\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
                some {code_entry_bytes} := rfl\n\n",
             plan_value = mutual_plan_lean_value(&plan),
         ));
@@ -726,7 +729,7 @@ fn render_expr_fragment_plans(
              example : AverCert.PlanBytes.lowerVerbatimCodeEntry {carrier} {name}VerbatimPlan =\n  \
                some {code_entry_bytes} := rfl\n\n\
              /-- The Wasm slicer finds `{name}`'s exact code-entry bytes by export name. -/\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
                some {code_entry_bytes} := rfl\n\n",
             plan_value = verbatim_plan_lean_value(&plan),
         ));
@@ -777,7 +780,7 @@ fn render_expr_fragment_plans(
              example : AverCert.PlanBytes.lowerIntDispatchCodeEntry {carrier} {host_table} {name}IntDispatchPlan =\n  \
                some {code_entry_bytes} := rfl\n\n\
              /-- The Wasm slicer finds `{name}`'s exact code-entry bytes by export name. -/\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
                some {code_entry_bytes} := rfl\n\n",
             plan_value = int_dispatch_plan_lean_value(&plan),
         ));
@@ -819,7 +822,7 @@ fn render_expr_fragment_plans(
                some {body} := rfl\n\n\
              example : AverCert.PlanBytes.lowerCompositionCodeEntry {carrier} {host_table} {func_table} {name}CompositionPlan =\n  \
                some {code_entry} := rfl\n\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
+             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
                some {code_entry} := rfl\n\n",
             name = entry.name,
             plan_value = composition_plan_lean_value(&plan),
@@ -1607,7 +1610,7 @@ fn render_artifact(
          def compositionClaims : List AverCert.AcceptedArtifact.CompositionClaim := {composition_claims_list}\n\n\
          {mutual_scc_closure_pins}\
          def data : AverCert.AcceptedArtifact.ArtifactData :=\n  \
-           ({{ wasmBytes := AverCert.ArtifactBytes.wasmBytes, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims, fieldProjectionClaims := fieldProjectionClaims, compositionMembers := compositionMembers, compositionClaims := compositionClaims }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
+           ({{ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims, fieldProjectionClaims := fieldProjectionClaims, compositionMembers := compositionMembers, compositionClaims := compositionClaims }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
          def acceptedWithFinal\n\
              (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n\
              AverCert.AcceptedArtifact.accepted data := by\n\
@@ -1680,16 +1683,30 @@ fn render_byte_list(bytes: &[u8]) -> String {
 
 pub fn render_artifact_bytes_lean(wasm_bytes: &[u8]) -> String {
     format!(
-        "-- Exact Wasm module bytes as Lean data.\n\
+        "-- Exact Wasm module as a little-endian Lean Nat plus byte length.\n\
          -- `aver cert verify` regenerates this file from the artifact it reads;\n\
          -- a cert-supplied file with this name is ignored.\n\
          import WasmSlice\n\n\
          set_option maxRecDepth 200000\n\n\
          namespace AverCert.ArtifactBytes\n\n\
-         def wasmBytes : AverCert.WasmSlice.ByteSeq := {}\n\n\
+         def modBytes : Nat := {}\n\n\
+         def modLen : Nat := {}\n\n\
          end AverCert.ArtifactBytes\n",
-        render_byte_list(wasm_bytes)
+        render_byte_nat(wasm_bytes),
+        wasm_bytes.len()
     )
+}
+
+fn render_byte_nat(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return "0".to_string();
+    }
+    let mut numeral = String::with_capacity(2 + bytes.len() * 2);
+    numeral.push_str("0x");
+    for byte in bytes.iter().rev() {
+        numeral.push_str(&format!("{byte:02x}"));
+    }
+    numeral
 }
 
 fn write(dir: &Path, name: &str, content: &str) -> Result<(), String> {

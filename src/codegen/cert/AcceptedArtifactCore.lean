@@ -27,7 +27,8 @@ def exprFragmentNLocals (_plan : ExprFragmentRawPlan) : Nat := 1
     quantified rather than accepted as checker-rendered parameters. This is the
     v2-shaped API: raw artifact bytes + raw plan + schema obligation. -/
 def exprFragmentPlanAccepted
-    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
+    (exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
     (carrier : Nat)
     (plan : ExprFragmentRawPlan)
@@ -36,7 +37,7 @@ def exprFragmentPlanAccepted
   obligation.carrier = carrier ∧
   ∃ body codeEntry binding,
     AverCert.ExprFragmentAccepted.accepted
-      wasmBytes exportNameBytes carrier plan body codeEntry binding ∧
+      modBytes modLen exportNameBytes carrier plan body codeEntry binding ∧
     obligation.self = binding.funcIdx ∧
     obligation.code binding.funcIdx =
       some { arity := plan.params.length,
@@ -47,7 +48,8 @@ def exprFragmentPlanAccepted
     accept it and produce the representation-level expr-fragment plan before
     the existing byte-origin predicate is allowed to run. -/
 def symFragmentPlanAccepted
-    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
+    (exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
     (carrier : Nat)
     (hostTable : List (HostRole × Nat))
@@ -58,7 +60,7 @@ def symFragmentPlanAccepted
       hostTable structTable plan with
   | some exprPlan =>
       exprFragmentPlanAccepted
-        wasmBytes exportNameBytes exportName carrier exprPlan obligation
+        modBytes modLen exportNameBytes exportName carrier exprPlan obligation
   | none => False
 
 /-- One source-level symbolic fragment claim inside an artifact certificate.
@@ -78,10 +80,10 @@ structure SymFragmentClaim where
   obligation      : Obligation
 
 def symFragmentClaimAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (claim : SymFragmentClaim) : Prop :=
   symFragmentPlanAccepted
-    wasmBytes
+    modBytes modLen
     claim.exportNameBytes
     claim.exportName
     claim.carrier
@@ -99,7 +101,8 @@ def stringConcatNLocals (_plan : StringConcatRawPlan) : Nat := 1
     lowerers rebuild both the semantic `WInstr` body and exact code-entry bytes,
     and the Wasm slicer binds those bytes to the exported function. -/
 def stringConcatPlanAccepted
-    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
+    (exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
     (carrier resultTy containerTy concatFuncIdx : Nat)
     (symPlan : SymRawPlan)
@@ -115,14 +118,14 @@ def stringConcatPlanAccepted
       resultTy containerTy concatFuncIdx plan = some body ∧
     AverCert.PlanBytes.lowerStringConcatCodeEntry
       carrier resultTy containerTy concatFuncIdx plan = some codeEntry ∧
-    AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+    AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
     binding.codeEntry = codeEntry ∧
     obligation.self = binding.funcIdx ∧
     obligation.code binding.funcIdx =
       some { arity := 1, nlocals := stringConcatNLocals plan, body := body }
 
 def stringEqPlanAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
     (carrier stringTy stringEqFuncIdx : Nat)
@@ -138,8 +141,8 @@ def stringEqPlanAccepted
       AverCert.PlanLower.lowerStringEqBody stringTy stringEqFuncIdx plan = some body ∧
       AverCert.PlanBytes.lowerStringEqCodeEntry carrier stringTy stringEqFuncIdx plan =
         some codeEntry ∧
-      AverCert.WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
-      AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+      AverCert.WasmSlice.codeEntryForExport modBytes modLen exportNameBytes = some codeEntry ∧
+      AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
       obligation.code binding.funcIdx =
@@ -321,13 +324,13 @@ structure CompositionClaim where
   obligation      : Obligation
 
 def stringEqClaimAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (manifest : AverCert.Schema.Manifest)
     (claim : StringEqClaim) : Prop :=
   match stringEqPlanForExport claim.exportName manifest.stringEqPlans with
   | some plan =>
       stringEqPlanAccepted
-        wasmBytes
+        modBytes modLen
         claim.exportNameBytes
         claim.exportName
         claim.carrier
@@ -339,13 +342,13 @@ def stringEqClaimAccepted
   | none => False
 
 def stringConcatClaimAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (manifest : AverCert.Schema.Manifest)
     (claim : StringConcatClaim) : Prop :=
   match stringConcatPlanForExport claim.exportName manifest.stringConcatPlans with
   | some plan =>
       stringConcatPlanAccepted
-        wasmBytes
+        modBytes modLen
         claim.exportNameBytes
         claim.exportName
         claim.carrier
@@ -367,7 +370,7 @@ def isListConstructSymPlan (symPlan : SymRawPlan) : Bool :=
   | _ => false
 
 def constructPlanAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
     (carrier : Nat)
@@ -385,27 +388,27 @@ def constructPlanAccepted
     ∃ body codeEntry binding,
       AverCert.PlanLower.lowerConstructBody structIdx plan = some body ∧
       AverCert.PlanBytes.lowerConstructCodeEntry carrier structIdx plan = some codeEntry ∧
-      AverCert.WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
-      AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+      AverCert.WasmSlice.codeEntryForExport modBytes modLen exportNameBytes = some codeEntry ∧
+      AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
       (isListConstructSymPlan symPlan = false ∨
         AverCert.WasmSlice.listConstructStructTypeMatches
-          wasmBytes structIdx elemTy = true) ∧
+          modBytes modLen structIdx elemTy = true) ∧
       (isListConstructSymPlan symPlan = false ∨
         AverCert.WasmSlice.listConstructFuncTypeMatches
-          wasmBytes binding.typeIdx plan.arity structIdx elemTy = true) ∧
+          modBytes modLen binding.typeIdx plan.arity structIdx elemTy = true) ∧
       obligation.code binding.funcIdx =
         some { arity := plan.arity, nlocals := 1, body := body }
 
 def constructClaimAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (manifest : AverCert.Schema.Manifest)
     (claim : ConstructClaim) : Prop :=
   match constructPlanForExport claim.exportName manifest.constructPlans with
   | some plan =>
       constructPlanAccepted
-        wasmBytes
+        modBytes modLen
         claim.exportNameBytes
         claim.exportName
         claim.carrier
@@ -432,7 +435,8 @@ def recursionNLocals (_plan : RecursionRawPlan) : Nat := 1
     The self index is additionally tied to the obligation through
     `binding.funcIdx = obligation.self`. -/
 def recursionPlanAccepted
-    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
+    (exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
     (carrier : Nat)
     (hostTable : List (HostRole × Nat))
@@ -444,13 +448,13 @@ def recursionPlanAccepted
     ∃ body codeEntry binding,
       AverCert.PlanLower.lowerRecursionBody carrier plan = some body ∧
       AverCert.PlanBytes.lowerRecursionCodeEntry carrier plan = some codeEntry ∧
-      AverCert.WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
-      AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+      AverCert.WasmSlice.codeEntryForExport modBytes modLen exportNameBytes = some codeEntry ∧
+      AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
       AverCert.PlanCheck.checkRecursionPlanShape binding.funcIdx hostTable plan = true ∧
       AverCert.WasmSlice.funcTypeMatches
-        wasmBytes binding.typeIdx plan.params.length carrier = true ∧
+        modBytes modLen binding.typeIdx plan.params.length carrier = true ∧
       obligation.code binding.funcIdx =
         some { arity := plan.params.length,
                nlocals := recursionNLocals plan, body := body }
@@ -466,13 +470,13 @@ def recursionPlanForExport
         recursionPlanForExport exportName rest
 
 def recursionClaimAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (manifest : AverCert.Schema.Manifest)
     (claim : RecursionClaim) : Prop :=
   match recursionPlanForExport claim.exportName manifest.recursionPlans with
   | some plan =>
       recursionPlanAccepted
-        wasmBytes
+        modBytes modLen
         claim.exportNameBytes
         claim.exportName
         claim.carrier
@@ -497,7 +501,8 @@ def mutualNLocals (_plan : MutualRawPlan) : Nat := 1
     `obligation.code binding.funcIdx` picks this member's arm out of the shared
     multi-arm code table. -/
 def mutualPlanAccepted
-    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
+    (exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
     (carrier : Nat)
     (memberSet : List Nat)
@@ -510,13 +515,13 @@ def mutualPlanAccepted
     ∃ body codeEntry binding,
       AverCert.PlanLower.lowerMutualBody carrier plan = some body ∧
       AverCert.PlanBytes.lowerMutualCodeEntry carrier plan = some codeEntry ∧
-      AverCert.WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
-      AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+      AverCert.WasmSlice.codeEntryForExport modBytes modLen exportNameBytes = some codeEntry ∧
+      AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
       AverCert.PlanCheck.checkMutualPlanShape memberSet hostTable plan = true ∧
       AverCert.WasmSlice.funcTypeMatches
-        wasmBytes binding.typeIdx plan.params.length carrier = true ∧
+        modBytes modLen binding.typeIdx plan.params.length carrier = true ∧
       obligation.code binding.funcIdx =
         some { arity := plan.params.length,
                nlocals := mutualNLocals plan, body := body }
@@ -532,13 +537,13 @@ def mutualPlanForExport
         mutualPlanForExport exportName rest
 
 def mutualRecursionClaimAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (manifest : AverCert.Schema.Manifest)
     (claim : MutualRecursionClaim) : Prop :=
   match mutualPlanForExport claim.exportName manifest.mutualPlans with
   | some plan =>
       mutualPlanAccepted
-        wasmBytes
+        modBytes modLen
         claim.exportNameBytes
         claim.exportName
         claim.carrier
@@ -553,9 +558,9 @@ def mutualRecursionClaimAccepted
     exact contents of passive data segment `dataIdx` recovered from the module's
     data section. Every other leaf trivially satisfies the binding. -/
 def verbatimLeafPayloadBound
-    (wasmBytes : AverCert.WasmSlice.ByteSeq) : VerbatimLeaf → Bool
+    (modBytes modLen : Nat) : VerbatimLeaf → Bool
   | .arrayNewData _ dataIdx bytes =>
-      match AverCert.WasmSlice.dataSegmentBytes wasmBytes dataIdx with
+      match AverCert.WasmSlice.dataSegmentBytes modBytes modLen dataIdx with
       | some contents => contents == bytes
       | none => false
   | _ => true
@@ -566,10 +571,11 @@ def verbatimLeafPayloadBound
     payload substitution keeps the code entry byte-identical while changing what
     the plan (hence the model) claims. -/
 def verbatimPayloadsBound
-    (wasmBytes : AverCert.WasmSlice.ByteSeq) : VerbatimDispatch → Bool
-  | .leaf l => verbatimLeafPayloadBound wasmBytes l
+    (modBytes modLen : Nat) : VerbatimDispatch → Bool
+  | .leaf l => verbatimLeafPayloadBound modBytes modLen l
   | .test _ hit rest =>
-      verbatimLeafPayloadBound wasmBytes hit && verbatimPayloadsBound wasmBytes rest
+      verbatimLeafPayloadBound modBytes modLen hit &&
+        verbatimPayloadsBound modBytes modLen rest
 
 /-- Canonical locals count declared by `lowerVerbatimLocalsBytes`: projecting
     plans declare the field scratch, scrutinee, and carrier locals; all other
@@ -594,7 +600,8 @@ def verbatimNLocals (plan : VerbatimRawPlan) : Nat :=
     byte-equality gate. The member index is tied to the obligation through
     `binding.funcIdx = obligation.self`. -/
 def verbatimPlanAccepted
-    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
+    (exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
     (carrier : Nat)
     (plan : VerbatimRawPlan)
@@ -604,13 +611,13 @@ def verbatimPlanAccepted
     AverCert.PlanCheck.checkVerbatimRawPlan plan = true ∧
     ∃ codeEntry binding,
       AverCert.PlanBytes.lowerVerbatimCodeEntry carrier plan = some codeEntry ∧
-      AverCert.WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
-      AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+      AverCert.WasmSlice.codeEntryForExport modBytes modLen exportNameBytes = some codeEntry ∧
+      AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
       AverCert.WasmSlice.verbatimFuncTypeMatches
-        wasmBytes binding.typeIdx plan.resultSig = true ∧
-      verbatimPayloadsBound wasmBytes plan.body = true ∧
+        modBytes modLen binding.typeIdx plan.resultSig = true ∧
+      verbatimPayloadsBound modBytes modLen plan.body = true ∧
       obligation.code binding.funcIdx =
         some { arity := 1, nlocals := verbatimNLocals plan,
                body := AverCert.PlanLower.lowerVerbatimBody plan }
@@ -626,13 +633,13 @@ def verbatimPlanForExport
         verbatimPlanForExport exportName rest
 
 def verbatimClaimAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (manifest : AverCert.Schema.Manifest)
     (claim : VerbatimClaim) : Prop :=
   match verbatimPlanForExport claim.exportName manifest.verbatimPlans with
   | some plan =>
       verbatimPlanAccepted
-        wasmBytes
+        modBytes modLen
         claim.exportNameBytes
         claim.exportName
         claim.carrier
@@ -707,7 +714,8 @@ def intDispatchCanonicalHost
     artifact claim a 0-locals table whose body traps on its first `local.set`,
     making the partial-correctness obligation vacuously true. -/
 def intDispatchPlanAccepted
-    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
+    (exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
     (carrier : Nat)
     (hostTable : List (HostRole × Nat))
@@ -722,12 +730,12 @@ def intDispatchPlanAccepted
       AverCert.PlanLower.lowerIntDispatchBody hostTable plan = some body ∧
       AverCert.PlanBytes.lowerIntDispatchCodeEntry carrier hostTable plan =
         some codeEntry ∧
-      AverCert.WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
-      AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+      AverCert.WasmSlice.codeEntryForExport modBytes modLen exportNameBytes = some codeEntry ∧
+      AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
       AverCert.WasmSlice.verbatimFuncTypeMatches
-        wasmBytes binding.typeIdx (.refNull carrier) = true ∧
+        modBytes modLen binding.typeIdx (.refNull carrier) = true ∧
       obligation.code binding.funcIdx =
         some { arity := 1,
                nlocals := AverCert.PlanCheck.intDispatchArmCount plan.body + 2,
@@ -744,13 +752,13 @@ def intDispatchPlanForExport
         intDispatchPlanForExport exportName rest
 
 def intDispatchClaimAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (manifest : AverCert.Schema.Manifest)
     (claim : IntDispatchClaim) : Prop :=
   match intDispatchPlanForExport claim.exportName manifest.intDispatchPlans with
   | some plan =>
       intDispatchPlanAccepted
-        wasmBytes
+        modBytes modLen
         claim.exportNameBytes
         claim.exportName
         claim.carrier
@@ -773,7 +781,8 @@ def fieldProjectionPlanForExport
     checker-derived struct index/count/result reference to the selected module
     field and to the exported unary function signature. -/
 def fieldProjectionPlanAccepted
-    (wasmBytes exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
+    (exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String) (carrier structIdx fieldCount : Nat)
     (resultTy : FieldProjectionResultTy)
     (plan : FieldProjectionRawPlan) (obligation : Obligation) : Prop :=
@@ -784,23 +793,23 @@ def fieldProjectionPlanAccepted
     AverCert.PlanLower.lowerFieldProjectionBody structIdx fieldCount plan = some body ∧
     AverCert.PlanBytes.lowerFieldProjectionCodeEntry
       carrier structIdx fieldCount resultTy plan = some codeEntry ∧
-    AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+    AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
     binding.codeEntry = codeEntry ∧
     AverCert.WasmSlice.projectionStructTypeMatches
-      wasmBytes structIdx fieldCount plan.fieldIdx resultTy = true ∧
+      modBytes modLen structIdx fieldCount plan.fieldIdx resultTy = true ∧
     AverCert.WasmSlice.projectionFuncTypeMatches
-      wasmBytes binding.typeIdx structIdx resultTy = true ∧
+      modBytes modLen binding.typeIdx structIdx resultTy = true ∧
     obligation.self = binding.funcIdx ∧
     obligation.code binding.funcIdx =
       some { arity := 1, nlocals := 3, body := body }
 
 def fieldProjectionClaimAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (manifest : AverCert.Schema.Manifest)
     (claim : FieldProjectionClaim) : Prop :=
   match fieldProjectionPlanForExport claim.exportName manifest.fieldProjectionPlans with
   | some plan =>
-      fieldProjectionPlanAccepted wasmBytes claim.exportNameBytes claim.exportName
+      fieldProjectionPlanAccepted modBytes modLen claim.exportNameBytes claim.exportName
         claim.carrier claim.structIdx claim.fieldCount claim.resultTy plan claim.obligation
   | none => False
 
@@ -810,19 +819,19 @@ def fieldProjectionClaimAccepted
 def compositionNLocals (_plan : CompositionRawPlan) : Nat := 1
 
 def compositionMemberBinding
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (member : CompositionMemberClaim) : Option (String × Nat) :=
-  match AverCert.WasmSlice.funcBindingForExport wasmBytes member.exportNameBytes with
+  match AverCert.WasmSlice.funcBindingForExport modBytes modLen member.exportNameBytes with
   | some binding => some (member.exportName, binding.funcIdx)
   | none => none
 
 def compositionFuncTable
-    (wasmBytes : AverCert.WasmSlice.ByteSeq) :
+    (modBytes modLen : Nat) :
     List CompositionMemberClaim → Option (List (String × Nat))
   | [] => some []
   | member :: rest =>
-      match compositionMemberBinding wasmBytes member,
-            compositionFuncTable wasmBytes rest with
+      match compositionMemberBinding modBytes modLen member,
+            compositionFuncTable modBytes modLen rest with
       | some binding, some bindings => some (binding :: bindings)
       | _, _ => none
 
@@ -834,7 +843,7 @@ def compositionMemberForName
       else compositionMemberForName name rest
 
 def compositionMemberPlanAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (carrier : Nat)
     (hostTable : List (HostRole × Nat))
     (funcTable : List (String × Nat))
@@ -845,15 +854,15 @@ def compositionMemberPlanAccepted
     AverCert.PlanLower.lowerCompositionBody hostTable funcTable member.plan = some body ∧
     AverCert.PlanBytes.lowerCompositionCodeEntry carrier hostTable funcTable member.plan =
       some codeEntry ∧
-    AverCert.WasmSlice.codeEntryForExport wasmBytes member.exportNameBytes = some codeEntry ∧
-    AverCert.WasmSlice.funcBindingForExport wasmBytes member.exportNameBytes = some binding ∧
+    AverCert.WasmSlice.codeEntryForExport modBytes modLen member.exportNameBytes = some codeEntry ∧
+    AverCert.WasmSlice.funcBindingForExport modBytes modLen member.exportNameBytes = some binding ∧
     binding.codeEntry = codeEntry ∧
-    AverCert.WasmSlice.funcTypeMatches wasmBytes binding.typeIdx 1 carrier = true ∧
+    AverCert.WasmSlice.funcTypeMatches modBytes modLen binding.typeIdx 1 carrier = true ∧
     obligation.code binding.funcIdx =
       some { arity := 1, nlocals := compositionNLocals member.plan, body := body }
 
 def compositionNamedMembersAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (carrier : Nat)
     (hostTable : List (HostRole × Nat))
     (funcTable : List (String × Nat))
@@ -864,9 +873,9 @@ def compositionNamedMembersAccepted
       match compositionMemberForName name members with
       | some member =>
           compositionMemberPlanAccepted
-            wasmBytes carrier hostTable funcTable obligation member ∧
+            modBytes modLen carrier hostTable funcTable obligation member ∧
           compositionNamedMembersAccepted
-            wasmBytes carrier hostTable funcTable obligation members rest
+            modBytes modLen carrier hostTable funcTable obligation members rest
       | none => False
 
 def compositionPlanCallees (plan : CompositionRawPlan) : List String :=
@@ -954,129 +963,129 @@ def compositionClosureBound
      | none => false)
 
 def compositionClaimAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (members : List CompositionMemberClaim)
     (claim : CompositionClaim) : Prop :=
   claim.obligation.export_ = claim.exportName ∧
   claim.obligation.carrier = claim.carrier ∧
   AverCert.PlanCheck.checkCompositionHostTable claim.hostTable = true ∧
   claim.obligation.host = intDispatchCanonicalHost claim.carrier claim.hostTable ∧
-  match compositionFuncTable wasmBytes members with
+  match compositionFuncTable modBytes modLen members with
   | some funcTable =>
       compositionClosureBound claim.exportName claim.memberNames members funcTable = true ∧
       (match AverCert.PlanLower.compositionFuncIdx? funcTable claim.exportName with
        | some rootIdx => claim.obligation.self = rootIdx
        | none => False) ∧
-      compositionNamedMembersAccepted wasmBytes claim.carrier claim.hostTable
+      compositionNamedMembersAccepted modBytes modLen claim.carrier claim.hostTable
         funcTable claim.obligation members claim.memberNames
   | none => False
 
 /-- Aggregate source-level symbolic fragment acceptance for one artifact's
     source claim list. -/
 def symFragmentClaimsAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq) :
+    (modBytes modLen : Nat) :
     List SymFragmentClaim → Prop
   | [] => True
   | claim :: rest =>
-      symFragmentClaimAccepted wasmBytes claim ∧
-      symFragmentClaimsAccepted wasmBytes rest
+      symFragmentClaimAccepted modBytes modLen claim ∧
+      symFragmentClaimsAccepted modBytes modLen rest
 
 /-- Aggregate source-level String.concat witness acceptance for one artifact's
     string claim list. -/
 def stringConcatClaimsAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (manifest : AverCert.Schema.Manifest) :
     List StringConcatClaim → Prop
   | [] => True
   | claim :: rest =>
-      stringConcatClaimAccepted wasmBytes manifest claim ∧
-      stringConcatClaimsAccepted wasmBytes manifest rest
+      stringConcatClaimAccepted modBytes modLen manifest claim ∧
+      stringConcatClaimsAccepted modBytes modLen manifest rest
 
 /-- Aggregate source-level String.eq witness acceptance for one artifact's
     string equality claim list. -/
 def stringEqClaimsAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (manifest : AverCert.Schema.Manifest) :
     List StringEqClaim → Prop
   | [] => True
   | claim :: rest =>
-      stringEqClaimAccepted wasmBytes manifest claim ∧
-      stringEqClaimsAccepted wasmBytes manifest rest
+      stringEqClaimAccepted modBytes modLen manifest claim ∧
+      stringEqClaimsAccepted modBytes modLen manifest rest
 
 /-- Aggregate source-level constructor witness acceptance for one artifact's
     constructor claim list. -/
 def constructClaimsAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (manifest : AverCert.Schema.Manifest) :
     List ConstructClaim → Prop
   | [] => True
   | claim :: rest =>
-      constructClaimAccepted wasmBytes manifest claim ∧
-      constructClaimsAccepted wasmBytes manifest rest
+      constructClaimAccepted modBytes modLen manifest claim ∧
+      constructClaimsAccepted modBytes modLen manifest rest
 
 /-- Aggregate fuel-recursion witness acceptance for one artifact's recursion
     claim list. -/
 def recursionClaimsAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (manifest : AverCert.Schema.Manifest) :
     List RecursionClaim → Prop
   | [] => True
   | claim :: rest =>
-      recursionClaimAccepted wasmBytes manifest claim ∧
-      recursionClaimsAccepted wasmBytes manifest rest
+      recursionClaimAccepted modBytes modLen manifest claim ∧
+      recursionClaimsAccepted modBytes modLen manifest rest
 
 /-- Aggregate mutual-recursion witness acceptance for one artifact's mutual
     claim list. -/
 def mutualRecursionClaimsAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (manifest : AverCert.Schema.Manifest) :
     List MutualRecursionClaim → Prop
   | [] => True
   | claim :: rest =>
-      mutualRecursionClaimAccepted wasmBytes manifest claim ∧
-      mutualRecursionClaimsAccepted wasmBytes manifest rest
+      mutualRecursionClaimAccepted modBytes modLen manifest claim ∧
+      mutualRecursionClaimsAccepted modBytes modLen manifest rest
 
 /-- Aggregate verbatim `ref.test`-dispatch acceptance for one artifact's verbatim
     claim list. -/
 def verbatimClaimsAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (manifest : AverCert.Schema.Manifest) :
     List VerbatimClaim → Prop
   | [] => True
   | claim :: rest =>
-      verbatimClaimAccepted wasmBytes manifest claim ∧
-      verbatimClaimsAccepted wasmBytes manifest rest
+      verbatimClaimAccepted modBytes modLen manifest claim ∧
+      verbatimClaimsAccepted modBytes modLen manifest rest
 
 /-- Aggregate Int-face `ref.test`-dispatch acceptance for one artifact's
     int-dispatch claim list. -/
 def intDispatchClaimsAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (manifest : AverCert.Schema.Manifest) :
     List IntDispatchClaim → Prop
   | [] => True
   | claim :: rest =>
-      intDispatchClaimAccepted wasmBytes manifest claim ∧
-      intDispatchClaimsAccepted wasmBytes manifest rest
+      intDispatchClaimAccepted modBytes modLen manifest claim ∧
+      intDispatchClaimsAccepted modBytes modLen manifest rest
 
 def fieldProjectionClaimsAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (manifest : AverCert.Schema.Manifest) :
     List FieldProjectionClaim → Prop
   | [] => True
   | claim :: rest =>
-      fieldProjectionClaimAccepted wasmBytes manifest claim ∧
-      fieldProjectionClaimsAccepted wasmBytes manifest rest
+      fieldProjectionClaimAccepted modBytes modLen manifest claim ∧
+      fieldProjectionClaimsAccepted modBytes modLen manifest rest
 
 /-- Aggregate composition-root acceptance. All roots share the artifact-wide
     unique member table, while each root independently re-derives its reachable
     closure and pins every reachable body into its own shared `CodeTbl`. -/
 def compositionClaimsAccepted
-    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (modBytes modLen : Nat)
     (members : List CompositionMemberClaim) : List CompositionClaim → Prop
   | [] => True
   | claim :: rest =>
-      compositionClaimAccepted wasmBytes members claim ∧
-      compositionClaimsAccepted wasmBytes members rest
+      compositionClaimAccepted modBytes modLen members claim ∧
+      compositionClaimsAccepted modBytes modLen members rest
 
 /-- Every name claimed as a reachable member across all composition roots. Each
     claim's `memberNames` is pinned to its root's byte-derived reachable closure
@@ -1351,7 +1360,8 @@ def constructClaimSymPlanPairs
     the audited source encoder. Ordinary legacy obligations are still pinned by
     the verifier witness outside this artifact-level wrapper. -/
 structure ArtifactData where
-  wasmBytes          : AverCert.WasmSlice.ByteSeq
+  modBytes           : Nat
+  modLen             : Nat
   manifest           : AverCert.Schema.Manifest
   symFragmentClaims  : List SymFragmentClaim
   stringEqClaims     : List StringEqClaim
@@ -1394,36 +1404,36 @@ def manifestObligationExportsUnique (artifact : ArtifactData) : Bool :=
   stringListNodup names
 
 def acceptedSymFragments (artifact : ArtifactData) : Prop :=
-  symFragmentClaimsAccepted artifact.wasmBytes artifact.symFragmentClaims
+  symFragmentClaimsAccepted artifact.modBytes artifact.modLen artifact.symFragmentClaims
 
 def acceptedStringConcatFragments (artifact : ArtifactData) : Prop :=
   stringConcatClaimsAccepted
-    artifact.wasmBytes
+    artifact.modBytes artifact.modLen
     artifact.manifest
     artifact.stringConcatClaims
 
 def acceptedStringEqFragments (artifact : ArtifactData) : Prop :=
   stringEqClaimsAccepted
-    artifact.wasmBytes
+    artifact.modBytes artifact.modLen
     artifact.manifest
     artifact.stringEqClaims
 
 def acceptedConstructFragments (artifact : ArtifactData) : Prop :=
   constructClaimsAccepted
-    artifact.wasmBytes
+    artifact.modBytes artifact.modLen
     artifact.manifest
     artifact.constructClaims ∧
   (constructClaimExportNames artifact.constructClaims).Nodup
 
 def acceptedRecursionFragments (artifact : ArtifactData) : Prop :=
   recursionClaimsAccepted
-    artifact.wasmBytes
+    artifact.modBytes artifact.modLen
     artifact.manifest
     artifact.recursionClaims
 
 def acceptedMutualRecursionFragments (artifact : ArtifactData) : Prop :=
   mutualRecursionClaimsAccepted
-    artifact.wasmBytes
+    artifact.modBytes artifact.modLen
     artifact.manifest
     artifact.mutualRecursionClaims ∧
   mutualClaimsFormClosedSccs
@@ -1432,19 +1442,19 @@ def acceptedMutualRecursionFragments (artifact : ArtifactData) : Prop :=
 
 def acceptedVerbatimFragments (artifact : ArtifactData) : Prop :=
   verbatimClaimsAccepted
-    artifact.wasmBytes
+    artifact.modBytes artifact.modLen
     artifact.manifest
     artifact.verbatimClaims
 
 def acceptedIntDispatchFragments (artifact : ArtifactData) : Prop :=
   intDispatchClaimsAccepted
-    artifact.wasmBytes
+    artifact.modBytes artifact.modLen
     artifact.manifest
     artifact.intDispatchClaims
 
 def acceptedFieldProjectionFragments (artifact : ArtifactData) : Prop :=
   fieldProjectionClaimsAccepted
-    artifact.wasmBytes
+    artifact.modBytes artifact.modLen
     artifact.manifest
     artifact.fieldProjectionClaims
 
@@ -1456,7 +1466,8 @@ def acceptedFieldProjectionFragments (artifact : ArtifactData) : Prop :=
     composition claims present or not. -/
 def acceptedCompositionFragments (artifact : ArtifactData) : Prop :=
   compositionClaimsAccepted
-    artifact.wasmBytes artifact.compositionMembers artifact.compositionClaims ∧
+    artifact.modBytes artifact.modLen
+      artifact.compositionMembers artifact.compositionClaims ∧
   compositionMembersCovered
     artifact.compositionMembers artifact.compositionClaims = true ∧
   manifestObligationsClaimed artifact = true ∧

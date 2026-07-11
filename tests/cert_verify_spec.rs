@@ -545,8 +545,8 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
 
     // The artifact-carried data root is useful metadata, not authority. Since
     // the recursion exports carry byte-origin plan claims, an `Artifact.lean`
-    // whose `data` points at empty bytes can no longer even prove its own
-    // claims (`codeEntryForExport [] … = some …` has no `rfl`), so the tamper
+    // whose `data` points at zero module bytes can no longer even prove its own
+    // claims (`codeEntryForExport 0 modLen … = some …` has no `rfl`), so the tamper
     // dies at the cert's own build — before the checker's `AverCert.Artifact.data`
     // reconstruction pin, which remains the authority for claim-free certs.
     {
@@ -555,8 +555,8 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let artifact = dir.join("cert").join("Artifact.lean");
         let src = std::fs::read_to_string(&artifact).unwrap();
         let corrupted = src.replacen(
-            "wasmBytes := AverCert.ArtifactBytes.wasmBytes",
-            "wasmBytes := []",
+            "modBytes := AverCert.ArtifactBytes.modBytes",
+            "modBytes := 0",
             1,
         );
         assert_ne!(src, corrupted, "Artifact.lean data shape changed");
@@ -1239,6 +1239,213 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
+/// A valid custom section pads a real module to the 130,460-byte scale where
+/// the old monolithic `List Nat` pin exhausted default heartbeats. The big-Nat
+/// pin must close, while a one-byte-flipped expected entry must fail `rfl`.
+#[test]
+fn big_nat_code_entry_pin_closes_at_130kb_and_flipped_byte_fails() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping big-Nat scale regression: `lake` not available");
+        return;
+    }
+
+    fn read_uleb(bytes: &[u8], cursor: &mut usize) -> usize {
+        let mut value = 0usize;
+        let mut shift = 0usize;
+        loop {
+            let byte = bytes[*cursor];
+            *cursor += 1;
+            value |= usize::from(byte & 0x7f) << shift;
+            if byte < 0x80 {
+                return value;
+            }
+            shift += 7;
+        }
+    }
+
+    fn write_uleb(mut value: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        loop {
+            let mut byte = (value & 0x7f) as u8;
+            value >>= 7;
+            if value != 0 {
+                byte |= 0x80;
+            }
+            out.push(byte);
+            if value == 0 {
+                return out;
+            }
+        }
+    }
+
+    fn section_start(bytes: &[u8], target: u8) -> usize {
+        let mut cursor = 8usize;
+        while cursor < bytes.len() {
+            let start = cursor;
+            let id = bytes[cursor];
+            cursor += 1;
+            let size = read_uleb(bytes, &mut cursor);
+            if id == target {
+                return start;
+            }
+            cursor += size;
+        }
+        panic!("section {target} not found");
+    }
+
+    fn section_payload(bytes: &[u8], target: u8) -> (usize, usize) {
+        let mut cursor = section_start(bytes, target) + 1;
+        let size = read_uleb(bytes, &mut cursor);
+        (cursor, size)
+    }
+
+    fn render_list(bytes: &[u8]) -> String {
+        format!(
+            "[{}]",
+            bytes
+                .iter()
+                .map(u8::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+
+    let (out_dir, wasm_path, cert) = compile_cert_goals("cert-bignat-scale");
+    let original = std::fs::read(&wasm_path).unwrap();
+    let code_start = section_start(&original, 10);
+
+    const TARGET_LEN: usize = 130_460;
+    let custom_payload_len = TARGET_LEN - original.len() - 4;
+    let mut custom_payload = vec![0u8; custom_payload_len];
+    custom_payload[..4].copy_from_slice(&[3, b'p', b'a', b'd']);
+    let custom_size = write_uleb(custom_payload.len());
+    assert_eq!(custom_size.len(), 3, "scale fixture framing assumption");
+
+    let mut padded = Vec::with_capacity(TARGET_LEN);
+    padded.extend_from_slice(&original[..code_start]);
+    padded.push(0);
+    padded.extend_from_slice(&custom_size);
+    padded.extend_from_slice(&custom_payload);
+    padded.extend_from_slice(&original[code_start..]);
+    assert_eq!(padded.len(), TARGET_LEN);
+    for payload in wasmparser::Parser::new(0).parse_all(&padded) {
+        payload.expect("130KB custom-section-padded artifact must parse");
+    }
+    std::fs::write(out_dir.join("cert_goals_padded.wasm"), &padded).unwrap();
+
+    let mut imported_funcs = 0u32;
+    let mut add_two_func = None;
+    for payload in wasmparser::Parser::new(0).parse_all(&padded) {
+        match payload.expect("padded artifact must parse") {
+            wasmparser::Payload::ImportSection(reader) => {
+                for group in reader {
+                    for import in group.expect("import group must parse") {
+                        let (_, import) = import.expect("import must parse");
+                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                            imported_funcs += 1;
+                        }
+                    }
+                }
+            }
+            wasmparser::Payload::ExportSection(reader) => {
+                for export in reader {
+                    let export = export.expect("export must parse");
+                    if export.name == "addTwo" && export.kind == wasmparser::ExternalKind::Func {
+                        add_two_func = Some(export.index);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let code_idx = add_two_func
+        .expect("addTwo export")
+        .checked_sub(imported_funcs)
+        .expect("addTwo is defined") as usize;
+    let (code_payload, _) = section_payload(&padded, 10);
+    let mut cursor = code_payload;
+    let count = read_uleb(&padded, &mut cursor);
+    assert!(code_idx < count);
+    let mut code_entry = Vec::new();
+    for current in 0..count {
+        let entry_start = cursor;
+        let size = read_uleb(&padded, &mut cursor);
+        let entry_end = cursor + size;
+        if current == code_idx {
+            code_entry.extend_from_slice(&padded[entry_start..entry_end]);
+        }
+        cursor = entry_end;
+    }
+    assert!(!code_entry.is_empty());
+
+    let artifact_defs = aver::codegen::cert::render_artifact_bytes_lean(&padded)
+        .replace("AverCert.ArtifactBytes", "LargeBytes");
+    let positive = format!(
+        "{artifact_defs}\n\
+         theorem largePin : AverCert.WasmSlice.codeEntryForExport LargeBytes.modBytes LargeBytes.modLen [97, 100, 100, 84, 119, 111] = some {} := rfl\n\
+         #print axioms largePin\n",
+        render_list(&code_entry)
+    );
+    std::fs::write(cert.join("LargePin.lean"), positive).unwrap();
+    let prebuild = Command::new("lake")
+        .current_dir(&cert)
+        .args(["build", "WasmSlice"])
+        .output()
+        .expect("build audited WasmSlice dependency");
+    assert!(
+        prebuild.status.success(),
+        "WasmSlice dependency must build:\n{}{}",
+        String::from_utf8_lossy(&prebuild.stdout),
+        String::from_utf8_lossy(&prebuild.stderr)
+    );
+    let started = std::time::Instant::now();
+    let large_pin = Command::new("lake")
+        .current_dir(&cert)
+        .args([
+            "env",
+            "lean",
+            "-o",
+            ".lake/build/lib/lean/LargePin.olean",
+            "LargePin.lean",
+        ])
+        .output()
+        .expect("elaborate 130KB big-Nat pin");
+    let elapsed = started.elapsed();
+    assert!(
+        large_pin.status.success(),
+        "130KB big-Nat code-entry pin must close (elapsed {elapsed:?}):\n{}{}",
+        String::from_utf8_lossy(&large_pin.stdout),
+        String::from_utf8_lossy(&large_pin.stderr)
+    );
+    eprintln!("130KB big-Nat code-entry pin closed in {elapsed:?}");
+
+    let mut flipped = code_entry.clone();
+    flipped[0] ^= 1;
+    let negative = format!(
+        "import LargePin\n\
+         set_option maxRecDepth 200000\n\
+         example : AverCert.WasmSlice.codeEntryForExport LargeBytes.modBytes LargeBytes.modLen [97, 100, 100, 84, 119, 111] = some {} := rfl\n",
+        render_list(&flipped)
+    );
+    std::fs::write(cert.join("LargePinBad.lean"), negative).unwrap();
+    let bad_pin = Command::new("lake")
+        .current_dir(&cert)
+        .args(["env", "lean", "LargePinBad.lean"])
+        .output()
+        .expect("elaborate flipped-byte negative control");
+    let bad_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&bad_pin.stdout),
+        String::from_utf8_lossy(&bad_pin.stderr)
+    );
+    assert!(
+        !bad_pin.status.success() && bad_output.contains("rfl"),
+        "one-byte-flipped expected code entry must fail rfl:\n{bad_output}"
+    );
+
+    let _ = std::fs::remove_dir_all(out_dir);
+}
+
 /// The byte-honest sumTo obligation face emitted for certprobe2 (the standard
 /// integer-class form), and the two panel face-vacuity mutations of it.
 const SUMTO_FACE: &str = "Dom := List Int, Cod := Int,\n    \
@@ -1468,7 +1675,7 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
         artifact_bytes_decoy_dir
             .join("cert")
             .join("ArtifactBytes.lean"),
-        "namespace AverCert.ArtifactBytes\n\ndef wasmBytes : List Nat := []\n\nend AverCert.ArtifactBytes\n",
+        "namespace AverCert.ArtifactBytes\n\ndef modBytes : Nat := 0\ndef modLen : Nat := 0\n\nend AverCert.ArtifactBytes\n",
     )
     .unwrap();
     let (ok, out) = aver_verify(
@@ -1797,7 +2004,7 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
         !ok,
         "tampered Lean WasmSlice byte-origin pin must be DECLINED:\n{out}"
     );
-    // A false `rfl` over the full `ArtifactBytes.wasmBytes` literal can fail
+    // A false `rfl` over the full `ArtifactBytes.modBytes` numeral can fail
     // either as a normal `WasmSlice.codeEntryForExport` type mismatch or as a
     // Lean stack overflow while reducing the huge byte list. Both are
     // fail-closed build failures for this untrusted emitted audit example.
@@ -3021,7 +3228,7 @@ theorem claimObligationsInManifest_append
 
 def acceptedCompositionWithoutClaimCoverage
     (artifact : AcceptedArtifact.ArtifactData) : Prop :=
-  AcceptedArtifact.compositionClaimsAccepted artifact.wasmBytes
+  AcceptedArtifact.compositionClaimsAccepted artifact.modBytes artifact.modLen
       artifact.compositionMembers artifact.compositionClaims ∧
     AcceptedArtifact.compositionMembersCovered artifact.compositionMembers
       artifact.compositionClaims = true ∧
@@ -3072,14 +3279,14 @@ example : AcceptedArtifact.manifestObligationsClaimed unclaimedArtifact = false 
 example : AcceptedArtifact.manifestObligationExportsUnique unclaimedArtifact = true := rfl
 
 example : ∀ nameBytes,
-    WasmSlice.funcBindingForExport unclaimedArtifact.wasmBytes nameBytes =
-      WasmSlice.funcBindingForExport Artifact.data.wasmBytes nameBytes := by
+    WasmSlice.funcBindingForExport unclaimedArtifact.modBytes unclaimedArtifact.modLen nameBytes =
+      WasmSlice.funcBindingForExport Artifact.data.modBytes Artifact.data.modLen nameBytes := by
   intro nameBytes
   rfl
 
 example : ∀ nameBytes,
-    WasmSlice.codeEntryForExport unclaimedArtifact.wasmBytes nameBytes =
-      WasmSlice.codeEntryForExport Artifact.data.wasmBytes nameBytes := by
+    WasmSlice.codeEntryForExport unclaimedArtifact.modBytes unclaimedArtifact.modLen nameBytes =
+      WasmSlice.codeEntryForExport Artifact.data.modBytes Artifact.data.modLen nameBytes := by
   intro nameBytes
   rfl
 
@@ -3170,7 +3377,7 @@ theorem duplicateFinal : Schema.Holds duplicateManifest := by
 
 def acceptedCompositionWithoutUniqueExports
     (artifact : AcceptedArtifact.ArtifactData) : Prop :=
-  AcceptedArtifact.compositionClaimsAccepted artifact.wasmBytes
+  AcceptedArtifact.compositionClaimsAccepted artifact.modBytes artifact.modLen
       artifact.compositionMembers artifact.compositionClaims ∧
     AcceptedArtifact.compositionMembersCovered artifact.compositionMembers
       artifact.compositionClaims = true ∧
@@ -3201,14 +3408,14 @@ example : AcceptedArtifact.manifestObligationsClaimed duplicateArtifact = true :
 example : AcceptedArtifact.manifestObligationExportsUnique duplicateArtifact = false := rfl
 
 example : ∀ nameBytes,
-    WasmSlice.funcBindingForExport duplicateArtifact.wasmBytes nameBytes =
-      WasmSlice.funcBindingForExport Artifact.data.wasmBytes nameBytes := by
+    WasmSlice.funcBindingForExport duplicateArtifact.modBytes duplicateArtifact.modLen nameBytes =
+      WasmSlice.funcBindingForExport Artifact.data.modBytes Artifact.data.modLen nameBytes := by
   intro nameBytes
   rfl
 
 example : ∀ nameBytes,
-    WasmSlice.codeEntryForExport duplicateArtifact.wasmBytes nameBytes =
-      WasmSlice.codeEntryForExport Artifact.data.wasmBytes nameBytes := by
+    WasmSlice.codeEntryForExport duplicateArtifact.modBytes duplicateArtifact.modLen nameBytes =
+      WasmSlice.codeEntryForExport Artifact.data.modBytes Artifact.data.modLen nameBytes := by
   intro nameBytes
   rfl
 
@@ -3321,11 +3528,11 @@ example : weakBytes AverCert.Plans.quadCompositionPlan =
   AverCert.PlanBytes.lowerCompositionCodeEntry 2 hosts funcs AverCert.Plans.quadCompositionPlan := rfl
 
 -- Wasm export binding, code-entry equality, and exact unary carrier signature.
-example : (AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes [113,117,97,100]).map
+example : (AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen [113,117,97,100]).map
     (fun b => (b.funcIdx, b.codeEntry)) = some (2,
       (AverCert.PlanBytes.lowerCompositionCodeEntry 2 hosts funcs AverCert.Plans.quadCompositionPlan).get!) := rfl
-example : AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.wasmBytes 5 1 2 = true := rfl
-example : AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.wasmBytes 5 2 2 = false := rfl
+example : AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 5 1 2 = true := rfl
+example : AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 5 2 2 = false := rfl
 def weakSignature (_ _ _ : Nat) : Bool := true
 example : weakSignature 5 2 2 = true := rfl
 
@@ -3477,7 +3684,7 @@ def nameBytes : List Nat := [112,97,105,114,70,115,116]
 -- which never demonstrated acceptance against all remaining guards.
 
 -- (d) BYTE-EQUALITY GATE dropped (`binding.codeEntry = codeEntry`).
-def fpAccept_dropBytes (wasmBytes exportNameBytes : ByteSeq)
+def fpAccept_dropBytes (modBytes modLen : Nat) (exportNameBytes : ByteSeq)
     (exportName : String) (carrier structIdx fieldCount : Nat)
     (resultTy : FieldProjectionResultTy)
     (plan : FieldProjectionRawPlan) (obligation : Obligation) : Prop :=
@@ -3486,14 +3693,14 @@ def fpAccept_dropBytes (wasmBytes exportNameBytes : ByteSeq)
   ∃ body codeEntry binding,
     AverCert.PlanLower.lowerFieldProjectionBody structIdx fieldCount plan = some body ∧
     AverCert.PlanBytes.lowerFieldProjectionCodeEntry carrier structIdx fieldCount resultTy plan = some codeEntry ∧
-    funcBindingForExport wasmBytes exportNameBytes = some binding ∧
-    projectionStructTypeMatches wasmBytes structIdx fieldCount plan.fieldIdx resultTy = true ∧
-    projectionFuncTypeMatches wasmBytes binding.typeIdx structIdx resultTy = true ∧
+    funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
+    projectionStructTypeMatches modBytes modLen structIdx fieldCount plan.fieldIdx resultTy = true ∧
+    projectionFuncTypeMatches modBytes modLen binding.typeIdx structIdx resultTy = true ∧
     obligation.self = binding.funcIdx ∧
     obligation.code binding.funcIdx = some { arity := 1, nlocals := 3, body := body }
 
 -- (e) STRUCT SELECTED-FIELD-TYPE dropped (`projectionStructTypeMatches`).
-def fpAccept_dropStruct (wasmBytes exportNameBytes : ByteSeq)
+def fpAccept_dropStruct (modBytes modLen : Nat) (exportNameBytes : ByteSeq)
     (exportName : String) (carrier structIdx fieldCount : Nat)
     (resultTy : FieldProjectionResultTy)
     (plan : FieldProjectionRawPlan) (obligation : Obligation) : Prop :=
@@ -3502,9 +3709,9 @@ def fpAccept_dropStruct (wasmBytes exportNameBytes : ByteSeq)
   ∃ body codeEntry binding,
     AverCert.PlanLower.lowerFieldProjectionBody structIdx fieldCount plan = some body ∧
     AverCert.PlanBytes.lowerFieldProjectionCodeEntry carrier structIdx fieldCount resultTy plan = some codeEntry ∧
-    funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+    funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
     binding.codeEntry = codeEntry ∧
-    projectionFuncTypeMatches wasmBytes binding.typeIdx structIdx resultTy = true ∧
+    projectionFuncTypeMatches modBytes modLen binding.typeIdx structIdx resultTy = true ∧
     obligation.self = binding.funcIdx ∧
     obligation.code binding.funcIdx = some { arity := 1, nlocals := 3, body := body }
 
@@ -3519,7 +3726,8 @@ def badBodyOb : Obligation := { AverCert.pairFstOb with code := badBodyCode }
 -- (0x64) at module offset 31. The code section and the func-type entry are
 -- byte-unchanged, so (d) and (f) still pass; only (e) reads the mutated struct
 -- field type.
-def structMut : ByteSeq := AverCert.ArtifactBytes.wasmBytes.set 31 100
+def structMut : Nat :=
+  AverCert.ArtifactBytes.modBytes + (1 <<< (8 * 31))
 
 -- Obligation export-name and carrier binds.
 def weakExport (_ _ : String) : Bool := true
@@ -3559,12 +3767,12 @@ example : weakLower badProfile = AverCert.PlanLower.lowerFieldProjectionBody 3 2
 -- complicit obligation (`badBodyOb`) supplying the wrong-field body, the
 -- code-table conjunct (h) is neutralized, leaving (d) as the sole guard on the
 -- field index: the wrong-field claim is ACCEPTED once (d) is dropped...
-example : fpAccept_dropBytes AverCert.ArtifactBytes.wasmBytes nameBytes "pairFst"
+example : fpAccept_dropBytes AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen nameBytes "pairFst"
     2 3 2 (.nullableRef 2) badField badBodyOb :=
   ⟨rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 -- ...and the shipped predicate rejects it at exactly (d): the honest module
 -- code entry differs from the wrong-field canonical bytes.
-example : (funcBindingForExport AverCert.ArtifactBytes.wasmBytes nameBytes).map (fun b => b.codeEntry) ≠
+example : (funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen nameBytes).map (fun b => b.codeEntry) ≠
   AverCert.PlanBytes.lowerFieldProjectionCodeEntry 2 3 2 (.nullableRef 2) badField := by decide
 -- FIELD-INDEX defense-in-depth: (h) is a redundant-but-defensive sibling. When
 -- the obligation is the HONEST byte-derived one, its code table pins the field-0
@@ -3579,12 +3787,12 @@ example : AverCert.PlanBytes.lowerFieldProjectionCodeEntry 2 3 2 (.nullableRef 2
 
 -- Export-name/function-binding guard.
 def weakBinding (_ : List Nat) :=
-  AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes
+  AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
     [112,97,105,114,70,115,116]
-example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes
+example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
     [109,105,115,115,105,110,103] = none := rfl
 example : weakBinding [109,105,115,115,105,110,103] =
-  AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes
+  AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
     [112,97,105,114,70,115,116] := rfl
 
 -- STRUCT SELECTED-FIELD-TYPE (e) — genuine predicate-level isolation. This guard
@@ -3595,37 +3803,37 @@ example : weakBinding [109,105,115,115,105,110,103] =
 -- section and func-type entry byte-identical. The honest claim is ACCEPTED once
 -- (e) is dropped (the byte gate (d) and signature (f) still pass over the
 -- mutated module because neither reads the struct's field types)...
-example : fpAccept_dropStruct structMut nameBytes "pairFst"
+example : fpAccept_dropStruct structMut AverCert.ArtifactBytes.modLen nameBytes "pairFst"
     2 3 2 (.nullableRef 2) honest AverCert.pairFstOb :=
   ⟨rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 -- ...and the shipped predicate rejects the mutated module at exactly (e):
-example : AverCert.WasmSlice.projectionStructTypeMatches structMut 3 2 0 (.nullableRef 2) = false := rfl
+example : AverCert.WasmSlice.projectionStructTypeMatches structMut AverCert.ArtifactBytes.modLen 3 2 0 (.nullableRef 2) = false := rfl
 -- The siblings (d) byte gate and (f) signature are provably BLIND to the struct
 -- field-type mutation (they read the code and func-type sections):
-example : (funcBindingForExport structMut nameBytes).map (fun b => b.codeEntry) =
-  (funcBindingForExport AverCert.ArtifactBytes.wasmBytes nameBytes).map (fun b => b.codeEntry) := rfl
-example : AverCert.WasmSlice.projectionFuncTypeMatches structMut 6 3 (.nullableRef 2) = true := rfl
+example : (funcBindingForExport structMut AverCert.ArtifactBytes.modLen nameBytes).map (fun b => b.codeEntry) =
+  (funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen nameBytes).map (fun b => b.codeEntry) := rfl
+example : AverCert.WasmSlice.projectionFuncTypeMatches structMut AverCert.ArtifactBytes.modLen 6 3 (.nullableRef 2) = true := rfl
 -- The prior claim-data struct checks remain (structIdx / count / result ref) —
 -- these are also caught by the byte gate / signature, so this is the guard's
 -- redundant-but-defensive cross-check surface.
 example : AverCert.WasmSlice.projectionStructTypeMatches
-    AverCert.ArtifactBytes.wasmBytes 3 2 0 (.nullableRef 2) = true := rfl
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 3 2 0 (.nullableRef 2) = true := rfl
 example : AverCert.WasmSlice.projectionStructTypeMatches
-    AverCert.ArtifactBytes.wasmBytes 4 2 0 (.nullableRef 2) = false := rfl
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 4 2 0 (.nullableRef 2) = false := rfl
 example : AverCert.WasmSlice.projectionStructTypeMatches
-    AverCert.ArtifactBytes.wasmBytes 3 3 0 (.nullableRef 2) = false := rfl
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 3 3 0 (.nullableRef 2) = false := rfl
 example : AverCert.WasmSlice.projectionStructTypeMatches
-    AverCert.ArtifactBytes.wasmBytes 3 2 0 (.nullableRef 1) = false := rfl
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 3 2 0 (.nullableRef 1) = false := rfl
 
 -- The exported function must be unary over the claimed struct and return the
 -- selected byte-derived reference type.
 def weakSignature (_ _ : Nat) (_ : FieldProjectionResultTy) : Bool := true
 example : AverCert.WasmSlice.projectionFuncTypeMatches
-    AverCert.ArtifactBytes.wasmBytes 6 3 (.nullableRef 2) = true := rfl
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 6 3 (.nullableRef 2) = true := rfl
 example : AverCert.WasmSlice.projectionFuncTypeMatches
-    AverCert.ArtifactBytes.wasmBytes 6 4 (.nullableRef 2) = false := rfl
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 6 4 (.nullableRef 2) = false := rfl
 example : AverCert.WasmSlice.projectionFuncTypeMatches
-    AverCert.ArtifactBytes.wasmBytes 6 3 (.nullableRef 1) = false := rfl
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 6 3 (.nullableRef 1) = false := rfl
 example : weakSignature 6 4 (.nullableRef 2) = true := rfl
 example : weakSignature 6 3 (.nullableRef 1) = true := rfl
 
@@ -4717,6 +4925,7 @@ fn verbatim_kernel_guards_are_isolating() {
     lean.push_str("import Schema\nimport PlanCheck\nimport PlanBytes\nimport WasmSlice\nimport AcceptedArtifact\n\n");
     lean.push_str("open AverCert\nopen AverCert.Schema\n");
     lean.push_str("set_option maxRecDepth 100000\n\n");
+    lean.push_str("def packLE : List Nat → Nat | [] => 0 | b :: bs => b + (packLE bs <<< 8)\n\n");
     // Minimal modules: header, type section, then a shared func/export/code/data
     // tail. `f` is func 0 of type 0; code entry `[2, 0, 11]`; data segment 0 is
     // "alpha" (passive). Only the type section differs between the two.
@@ -4728,18 +4937,18 @@ fn verbatim_kernel_guards_are_isolating() {
     lean.push_str("def binaryMod : List Nat := hdr ++ binaryType ++ tailSecs\n");
     lean.push_str("def nameF : List Nat := [102]\n\n");
     // SIGNATURE isolation: the byte-equality gate's inputs are identical...
-    lean.push_str("example : WasmSlice.funcBindingForExport unaryMod nameF = WasmSlice.funcBindingForExport binaryMod nameF := rfl\n");
-    lean.push_str("example : WasmSlice.codeEntryForExport unaryMod nameF = WasmSlice.codeEntryForExport binaryMod nameF := rfl\n");
+    lean.push_str("example : WasmSlice.funcBindingForExport (packLE unaryMod) unaryMod.length nameF = WasmSlice.funcBindingForExport (packLE binaryMod) binaryMod.length nameF := rfl\n");
+    lean.push_str("example : WasmSlice.codeEntryForExport (packLE unaryMod) unaryMod.length nameF = WasmSlice.codeEntryForExport (packLE binaryMod) binaryMod.length nameF := rfl\n");
     // ...and only the signature guard tells unary from binary.
     lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches unaryMod 0 (.refNull 5) = true := rfl\n",
+        "example : WasmSlice.verbatimFuncTypeMatches (packLE unaryMod) unaryMod.length 0 (.refNull 5) = true := rfl\n",
     );
     lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches binaryMod 0 (.refNull 5) = false := rfl\n\n",
+        "example : WasmSlice.verbatimFuncTypeMatches (packLE binaryMod) binaryMod.length 0 (.refNull 5) = false := rfl\n\n",
     );
     // PAYLOAD isolation: segment 0 is "alpha".
     lean.push_str(
-        "example : WasmSlice.dataSegmentBytes unaryMod 0 = some [97, 108, 112, 104, 97] := rfl\n",
+        "example : WasmSlice.dataSegmentBytes (packLE unaryMod) unaryMod.length 0 = some [97, 108, 112, 104, 97] := rfl\n",
     );
     lean.push_str("def planAlpha : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultSig := .refNull 5, body := .leaf (.arrayNewData 5 0 [97, 108, 112, 104, 97]) }\n");
     lean.push_str("def planAlphB : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultSig := .refNull 5, body := .leaf (.arrayNewData 5 0 [97, 108, 112, 104, 98]) }\n");
@@ -4749,9 +4958,9 @@ fn verbatim_kernel_guards_are_isolating() {
     lean.push_str("example : PlanBytes.lowerVerbatimCodeEntry 7 planAlpha = PlanBytes.lowerVerbatimCodeEntry 7 planAlphB := rfl\n");
     // ...so only `verbatimPayloadsBound` rejects the equal-length collision.
     lean.push_str(
-        "example : AcceptedArtifact.verbatimPayloadsBound unaryMod planAlpha.body = true := rfl\n",
+        "example : AcceptedArtifact.verbatimPayloadsBound (packLE unaryMod) unaryMod.length planAlpha.body = true := rfl\n",
     );
-    lean.push_str("example : AcceptedArtifact.verbatimPayloadsBound unaryMod planAlphB.body = false := rfl\n\n");
+    lean.push_str("example : AcceptedArtifact.verbatimPayloadsBound (packLE unaryMod) unaryMod.length planAlphB.body = false := rfl\n\n");
     // FIX 2(c): an out-of-range payload element is rejected up front.
     lean.push_str("example : PlanCheck.checkVerbatimRawPlan { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultSig := .refNull 5, body := .leaf (.arrayNewData 5 0 [256]) } = false := rfl\n\n");
 
@@ -4770,10 +4979,10 @@ fn verbatim_kernel_guards_are_isolating() {
     lean.push_str(
         "def nonNullMod : List Nat := hdr ++ [1, 8, 1, 96, 1, 99, 4, 1, 100, 5] ++ tailSecs\n",
     );
-    lean.push_str("example : WasmSlice.funcBindingForExport nonNullMod nameF = WasmSlice.funcBindingForExport unaryMod nameF := rfl\n");
-    lean.push_str("example : WasmSlice.codeEntryForExport nonNullMod nameF = WasmSlice.codeEntryForExport unaryMod nameF := rfl\n");
+    lean.push_str("example : WasmSlice.funcBindingForExport (packLE nonNullMod) nonNullMod.length nameF = WasmSlice.funcBindingForExport (packLE unaryMod) unaryMod.length nameF := rfl\n");
+    lean.push_str("example : WasmSlice.codeEntryForExport (packLE nonNullMod) nonNullMod.length nameF = WasmSlice.codeEntryForExport (packLE unaryMod) unaryMod.length nameF := rfl\n");
     lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches nonNullMod 0 (.refNull 5) = false := rfl\n\n",
+        "example : WasmSlice.verbatimFuncTypeMatches (packLE nonNullMod) nonNullMod.length 0 (.refNull 5) = false := rfl\n\n",
     );
 
     // ABSTRACT-PARAM isolation: after `0x63` a NEGATIVE s33 heap type encodes an
@@ -4790,10 +4999,10 @@ fn verbatim_kernel_guards_are_isolating() {
     lean.push_str(
         "def abstractParamMod : List Nat := hdr ++ [1, 8, 1, 96, 1, 99, 109, 1, 99, 5] ++ tailSecs\n",
     );
-    lean.push_str("example : WasmSlice.funcBindingForExport abstractParamMod nameF = WasmSlice.funcBindingForExport unaryMod nameF := rfl\n");
-    lean.push_str("example : WasmSlice.codeEntryForExport abstractParamMod nameF = WasmSlice.codeEntryForExport unaryMod nameF := rfl\n");
+    lean.push_str("example : WasmSlice.funcBindingForExport (packLE abstractParamMod) abstractParamMod.length nameF = WasmSlice.funcBindingForExport (packLE unaryMod) unaryMod.length nameF := rfl\n");
+    lean.push_str("example : WasmSlice.codeEntryForExport (packLE abstractParamMod) abstractParamMod.length nameF = WasmSlice.codeEntryForExport (packLE unaryMod) unaryMod.length nameF := rfl\n");
     lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches abstractParamMod 0 (.refNull 5) = false := rfl\n\n",
+        "example : WasmSlice.verbatimFuncTypeMatches (packLE abstractParamMod) abstractParamMod.length 0 (.refNull 5) = false := rfl\n\n",
     );
 
     // PARSER STRICTNESS isolation (re-review FIX 3): the type-section and
@@ -4804,23 +5013,23 @@ fn verbatim_kernel_guards_are_isolating() {
     // Type section: a trailing `0xff` after the one valid func type.
     lean.push_str("def trailingTypeMod : List Nat := hdr ++ [1, 9, 1, 96, 1, 99, 4, 1, 99, 5, 255] ++ tailSecs\n");
     lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches trailingTypeMod 0 (.refNull 5) = false := rfl\n",
+        "example : WasmSlice.verbatimFuncTypeMatches (packLE trailingTypeMod) trailingTypeMod.length 0 (.refNull 5) = false := rfl\n",
     );
     // Type section: count claims 2 rectypes but only 1 is present.
     lean.push_str("def countMismatchTypeMod : List Nat := hdr ++ [1, 8, 2, 96, 1, 99, 4, 1, 99, 5] ++ tailSecs\n");
     lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches countMismatchTypeMod 0 (.refNull 5) = false := rfl\n",
+        "example : WasmSlice.verbatimFuncTypeMatches (packLE countMismatchTypeMod) countMismatchTypeMod.length 0 (.refNull 5) = false := rfl\n",
     );
     // Data section: a trailing `0xff` after the one valid segment.
     lean.push_str(
         "def dataTrailMod : List Nat := hdr ++ [11, 9, 1, 1, 5, 97, 108, 112, 104, 97, 255]\n",
     );
-    lean.push_str("example : WasmSlice.dataSegmentBytes dataTrailMod 0 = none := rfl\n");
+    lean.push_str("example : WasmSlice.dataSegmentBytes (packLE dataTrailMod) dataTrailMod.length 0 = none := rfl\n");
     // Data section: count claims 2 segments but only 1 is present.
     lean.push_str(
         "def dataCountMismatchMod : List Nat := hdr ++ [11, 8, 2, 1, 5, 97, 108, 112, 104, 97]\n",
     );
-    lean.push_str("example : WasmSlice.dataSegmentBytes dataCountMismatchMod 0 = none := rfl\n");
+    lean.push_str("example : WasmSlice.dataSegmentBytes (packLE dataCountMismatchMod) dataCountMismatchMod.length 0 = none := rfl\n");
     // Over-wide (6-byte) unsigned LEB32 exceeds the u32 width cap and declines.
     lean.push_str("example : WasmSlice.readUleb32 [128, 128, 128, 128, 128, 0] = none := rfl\n");
     lean.push_str("example : WasmSlice.readS33 [128, 128, 128, 128, 128, 0] = none := rfl\n");
@@ -4875,45 +5084,46 @@ def isoOb : Obligation :=
     model := fun _ => () }
 
 def weakVerbatimPlanAcceptedWithoutResultSig
-    (wasmBytes exportNameBytes : WasmSlice.ByteSeq) (exportName : String)
+    (modBytes modLen : Nat) (exportNameBytes : WasmSlice.ByteSeq) (exportName : String)
     (carrier : Nat) (plan : VerbatimRawPlan) (obligation : Obligation) : Prop :=
   obligation.export_ = exportName ∧
     obligation.carrier = carrier ∧
     PlanCheck.checkVerbatimRawPlan plan = true ∧
     ∃ codeEntry binding,
       PlanBytes.lowerVerbatimCodeEntry carrier plan = some codeEntry ∧
-      WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
-      WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+      WasmSlice.codeEntryForExport modBytes modLen exportNameBytes = some codeEntry ∧
+      WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
-      AcceptedArtifact.verbatimPayloadsBound wasmBytes plan.body = true ∧
+      AcceptedArtifact.verbatimPayloadsBound modBytes modLen plan.body = true ∧
       obligation.code binding.funcIdx =
         some { arity := 1, nlocals := AcceptedArtifact.verbatimNLocals plan,
                body := PlanLower.lowerVerbatimBody plan }
 
-example : WasmSlice.verbatimFuncTypeMatches isoF64Mod 0 .f64Scalar = true := rfl
-example : WasmSlice.verbatimFuncTypeMatches isoF64Mod 0 (.refNull 5) = false := rfl
-example : WasmSlice.verbatimFuncTypeMatches isoRefMod 0 (.refNull 5) = true := rfl
-example : WasmSlice.verbatimFuncTypeMatches isoRefMod 0 .f64Scalar = false := rfl
+example : WasmSlice.verbatimFuncTypeMatches (packLE isoF64Mod) isoF64Mod.length 0 .f64Scalar = true := rfl
+example : WasmSlice.verbatimFuncTypeMatches (packLE isoF64Mod) isoF64Mod.length 0 (.refNull 5) = false := rfl
+example : WasmSlice.verbatimFuncTypeMatches (packLE isoRefMod) isoRefMod.length 0 (.refNull 5) = true := rfl
+example : WasmSlice.verbatimFuncTypeMatches (packLE isoRefMod) isoRefMod.length 0 .f64Scalar = false := rfl
 
 example : weakVerbatimPlanAcceptedWithoutResultSig
-    isoRefMod isoNameF "f" 7 isoF64Plan isoOb := by
+    (packLE isoRefMod) isoRefMod.length isoNameF "f" 7 isoF64Plan isoOb := by
   refine ⟨rfl, rfl, rfl, ⟨_, _, rfl, rfl, rfl, rfl, rfl, rfl, ?_⟩⟩
-  simp [isoOb, isoCode, AcceptedArtifact.verbatimNLocals, isoF64Plan,
+  simp [packLE, isoRefMod, isoHdr, isoRefType, isoTail, isoOb, isoCode,
+    AcceptedArtifact.verbatimNLocals, isoF64Plan,
     PlanCheck.dispatchHasProjection]
   rfl
 
 example : ¬ AcceptedArtifact.verbatimPlanAccepted
-    isoRefMod isoNameF "f" 7 isoF64Plan isoOb := by
+    (packLE isoRefMod) isoRefMod.length isoNameF "f" 7 isoF64Plan isoOb := by
   intro h
   rcases h with ⟨_, _, _, ⟨_, binding, _, _, hbinding, _, _, hsig, _, _⟩⟩
-  have known : WasmSlice.funcBindingForExport isoRefMod isoNameF =
+  have known : WasmSlice.funcBindingForExport (packLE isoRefMod) isoRefMod.length isoNameF =
       some isoExpectedBinding := by rfl
   rw [known] at hbinding
   injection hbinding with hb
   subst binding
-  change WasmSlice.verbatimFuncTypeMatches isoRefMod 0 .f64Scalar = true at hsig
-  have cross : WasmSlice.verbatimFuncTypeMatches isoRefMod 0 .f64Scalar = false := rfl
+  change WasmSlice.verbatimFuncTypeMatches (packLE isoRefMod) isoRefMod.length 0 .f64Scalar = true at hsig
+  have cross : WasmSlice.verbatimFuncTypeMatches (packLE isoRefMod) isoRefMod.length 0 .f64Scalar = false := rfl
   rw [cross] at hsig
   contradiction
 "#,
@@ -5401,18 +5611,18 @@ example : sourceAccepted honestPrependSym permutedPrepend = false := rfl
 -- struct and the exported signature. A coherent symbolic relabel cannot turn
 -- the fixture's concrete `(ref null 39)` element into another byte type.
 example : AverCert.WasmSlice.listConstructStructTypeMatches
-    AverCert.ArtifactBytes.wasmBytes 28 (.nullableRef 39) = true := rfl
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 28 (.nullableRef 39) = true := rfl
 example : AverCert.WasmSlice.listConstructFuncTypeMatches
-    AverCert.ArtifactBytes.wasmBytes 63 1 28 (.nullableRef 39) = true := rfl
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 63 1 28 (.nullableRef 39) = true := rfl
 example : AverCert.WasmSlice.listConstructStructTypeMatches
-    AverCert.ArtifactBytes.wasmBytes 28 .eqref = false := rfl
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 28 .eqref = false := rfl
 example : AverCert.WasmSlice.listConstructFuncTypeMatches
-    AverCert.ArtifactBytes.wasmBytes 63 1 28 .eqref = false := rfl
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 63 1 28 .eqref = false := rfl
 
 -- CountAttack: predicate-level copy of constructPlanAccepted dropping ONLY
 -- `plan.fields.length = fieldCount`.
 def constructDropCount
-    (wasmBytes exportNameBytes : ByteSeq) (exportName : String)
+    (modBytes modLen : Nat) (exportNameBytes : ByteSeq) (exportName : String)
     (carrier structIdx : Nat) (elemTy : ConstructValType)
     (symPlan : SymRawPlan) (plan : ConstructRawPlan) (obligation : Obligation) : Prop :=
   obligation.export_ = exportName ∧ obligation.carrier = carrier ∧
@@ -5422,21 +5632,21 @@ def constructDropCount
   ∃ body codeEntry binding,
     AverCert.PlanLower.lowerConstructBody structIdx plan = some body ∧
     AverCert.PlanBytes.lowerConstructCodeEntry carrier structIdx plan = some codeEntry ∧
-    AverCert.WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
-    AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+    AverCert.WasmSlice.codeEntryForExport modBytes modLen exportNameBytes = some codeEntry ∧
+    AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
     binding.funcIdx = obligation.self ∧ binding.codeEntry = codeEntry ∧
-    AverCert.WasmSlice.listConstructStructTypeMatches wasmBytes structIdx elemTy = true ∧
+    AverCert.WasmSlice.listConstructStructTypeMatches modBytes modLen structIdx elemTy = true ∧
     AverCert.WasmSlice.listConstructFuncTypeMatches
-      wasmBytes binding.typeIdx plan.arity structIdx elemTy = true ∧
+      modBytes modLen binding.typeIdx plan.arity structIdx elemTy = true ∧
     obligation.code binding.funcIdx = some { arity := plan.arity, nlocals := 1, body := body }
-example : constructDropCount AverCert.ArtifactBytes.wasmBytes honestClaim.exportNameBytes
+example : constructDropCount AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen honestClaim.exportNameBytes
     honestClaim.exportName honestClaim.carrier honestClaim.structIdx honestClaim.elemTy
     honestClaim.symPlan honestSingleton honestClaim.obligation :=
   ⟨rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl,
     AverCert.Plans.singletonJsonEntriesConstructStructTypeMatches,
     AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, rfl⟩
 example : ¬ AverCert.AcceptedArtifact.constructPlanAccepted
-    AverCert.ArtifactBytes.wasmBytes honestClaim.exportNameBytes honestClaim.exportName
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen honestClaim.exportNameBytes honestClaim.exportName
     honestClaim.carrier honestClaim.structIdx 3 honestClaim.elemTy honestClaim.symPlan
     honestSingleton honestClaim.obligation := by
   intro h
@@ -5445,9 +5655,13 @@ example : ¬ AverCert.AcceptedArtifact.constructPlanAccepted
 
 -- ByteAttack: predicate-level copy dropping ONLY the exact code-entry gate
 -- (`codeEntryForExport` plus the same equality repeated in FuncBinding).
-def tamperedBytes := AverCert.ArtifactBytes.wasmBytes.set __BYTE_OFFSET__ 24
+def tamperedBytes :=
+  let shift := 8 * __BYTE_OFFSET__
+  AverCert.ArtifactBytes.modBytes -
+      (((AverCert.ArtifactBytes.modBytes >>> shift) &&& 0xff) <<< shift) +
+    (24 <<< shift)
 def constructDropByteExact
-    (wasmBytes exportNameBytes : ByteSeq) (exportName : String)
+    (modBytes modLen : Nat) (exportNameBytes : ByteSeq) (exportName : String)
     (carrier structIdx fieldCount : Nat) (elemTy : ConstructValType)
     (symPlan : SymRawPlan) (plan : ConstructRawPlan) (obligation : Obligation) : Prop :=
   obligation.export_ = exportName ∧ obligation.carrier = carrier ∧
@@ -5457,26 +5671,26 @@ def constructDropByteExact
   ∃ body codeEntry binding,
     AverCert.PlanLower.lowerConstructBody structIdx plan = some body ∧
     AverCert.PlanBytes.lowerConstructCodeEntry carrier structIdx plan = some codeEntry ∧
-    AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+    AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
     binding.funcIdx = obligation.self ∧
-    AverCert.WasmSlice.listConstructStructTypeMatches wasmBytes structIdx elemTy = true ∧
+    AverCert.WasmSlice.listConstructStructTypeMatches modBytes modLen structIdx elemTy = true ∧
     AverCert.WasmSlice.listConstructFuncTypeMatches
-      wasmBytes binding.typeIdx plan.arity structIdx elemTy = true ∧
+      modBytes modLen binding.typeIdx plan.arity structIdx elemTy = true ∧
     obligation.code binding.funcIdx = some { arity := plan.arity, nlocals := 1, body := body }
-example : constructDropByteExact tamperedBytes honestClaim.exportNameBytes honestClaim.exportName
+example : constructDropByteExact tamperedBytes AverCert.ArtifactBytes.modLen honestClaim.exportNameBytes honestClaim.exportName
     honestClaim.carrier honestClaim.structIdx honestClaim.fieldCount honestClaim.elemTy
     honestClaim.symPlan honestSingleton honestClaim.obligation :=
   ⟨rfl, rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl,
     AverCert.Plans.singletonJsonEntriesConstructStructTypeMatches,
     AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, rfl⟩
-example : ¬ AverCert.AcceptedArtifact.constructPlanAccepted tamperedBytes
+example : ¬ AverCert.AcceptedArtifact.constructPlanAccepted tamperedBytes AverCert.ArtifactBytes.modLen
     honestClaim.exportNameBytes honestClaim.exportName honestClaim.carrier honestClaim.structIdx
     honestClaim.fieldCount honestClaim.elemTy honestClaim.symPlan honestSingleton
     honestClaim.obligation := by
   intro h
   rcases h with ⟨_, _, _, _, _, _, _, _, _, _, hlower, hexact, _⟩
   exact (by decide :
-    AverCert.WasmSlice.codeEntryForExport tamperedBytes honestClaim.exportNameBytes ≠
+    AverCert.WasmSlice.codeEntryForExport tamperedBytes AverCert.ArtifactBytes.modLen honestClaim.exportNameBytes ≠
       AverCert.PlanBytes.lowerConstructCodeEntry honestClaim.carrier honestClaim.structIdx
         honestSingleton) (hexact.trans hlower.symm)
 
@@ -5501,7 +5715,7 @@ example : localsAccepted zeroCode = false := rfl
 def orphanPlans : List (String × ConstructRawPlan) :=
   AverCert.manifest.constructPlans ++ [("orphan", honestSingleton)]
 def constructFamilyDropNames (manifest : Manifest) (claims : List AverCert.AcceptedArtifact.ConstructClaim) : Prop :=
-  AverCert.AcceptedArtifact.constructClaimsAccepted AverCert.ArtifactBytes.wasmBytes manifest claims ∧
+  AverCert.AcceptedArtifact.constructClaimsAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen manifest claims ∧
   (AverCert.AcceptedArtifact.constructClaimExportNames claims).Nodup
 def orphanManifest : Manifest := { AverCert.manifest with constructPlans := orphanPlans }
 example : constructFamilyDropNames orphanManifest AverCert.Artifact.constructClaims := by
@@ -5522,7 +5736,7 @@ def dupPlans := [(honestClaim.exportName, honestSingleton),
   (honestClaim.exportName, permutedPrepend)]
 def dupManifest : Manifest := { AverCert.manifest with constructPlans := dupPlans }
 def constructFamilyDropNodup (manifest : Manifest) (claims : List AverCert.AcceptedArtifact.ConstructClaim) : Prop :=
-  AverCert.AcceptedArtifact.constructClaimsAccepted AverCert.ArtifactBytes.wasmBytes manifest claims ∧
+  AverCert.AcceptedArtifact.constructClaimsAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen manifest claims ∧
   AverCert.AcceptedArtifact.constructClaimExportNames claims =
     AverCert.AcceptedArtifact.constructManifestPlanNames manifest
 example : constructFamilyDropNodup dupManifest dupClaims := by
@@ -5570,6 +5784,7 @@ fn int_dispatch_kernel_guards_are_isolating() {
     );
     lean.push_str("open AverCert\nopen AverCert.Schema\nopen CertPrelude\n");
     lean.push_str("set_option maxRecDepth 100000\n\n");
+    lean.push_str("def packLE : List Nat → Nat | [] => 0 | b :: bs => b + (packLE bs <<< 8)\n\n");
     // Minimal modules: header, type section, then a shared func/export/code
     // tail. `f` is func 0 of type 0; code entry `[2, 0, 11]`. Only the type
     // section differs between the two: type 0 is one nominal-root ref ->
@@ -5590,14 +5805,14 @@ fn int_dispatch_kernel_guards_are_isolating() {
     lean.push_str("def binaryMod : List Nat := hdr ++ binaryType ++ tailSecs\n");
     lean.push_str("def nameF : List Nat := [102]\n\n");
     // SIGNATURE isolation: the byte-equality gate's inputs are identical...
-    lean.push_str("example : WasmSlice.funcBindingForExport unaryMod nameF = WasmSlice.funcBindingForExport binaryMod nameF := rfl\n");
-    lean.push_str("example : WasmSlice.codeEntryForExport unaryMod nameF = WasmSlice.codeEntryForExport binaryMod nameF := rfl\n");
+    lean.push_str("example : WasmSlice.funcBindingForExport (packLE unaryMod) unaryMod.length nameF = WasmSlice.funcBindingForExport (packLE binaryMod) binaryMod.length nameF := rfl\n");
+    lean.push_str("example : WasmSlice.codeEntryForExport (packLE unaryMod) unaryMod.length nameF = WasmSlice.codeEntryForExport (packLE binaryMod) binaryMod.length nameF := rfl\n");
     // ...and only the signature guard tells unary from binary.
     lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches unaryMod 0 (.refNull 5) = true := rfl\n",
+        "example : WasmSlice.verbatimFuncTypeMatches (packLE unaryMod) unaryMod.length 0 (.refNull 5) = true := rfl\n",
     );
     lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches binaryMod 0 (.refNull 5) = false := rfl\n\n",
+        "example : WasmSlice.verbatimFuncTypeMatches (packLE binaryMod) binaryMod.length 0 (.refNull 5) = false := rfl\n\n",
     );
     // HOST-TABLE DISTINCTNESS isolation: two plans differing ONLY in the arm's
     // host ROLE.

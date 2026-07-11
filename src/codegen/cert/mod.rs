@@ -39,6 +39,7 @@ use std::path::Path;
 /// The Stage-A semantics prelude, single source of truth, embedded so the
 /// emitter is self-contained.
 pub const CERT_PRELUDE: &str = include_str!("../../../tools/certkit/prelude/CertPrelude.lean");
+pub const CERT_DECODE: &str = include_str!("../../../tools/certkit/prelude/CertDecode.lean");
 pub const LEAN_TOOLCHAIN: &str = include_str!("../../../tools/certkit/prelude/lean-toolchain");
 
 /// The audited statement schema, single source of truth, embedded so both the
@@ -65,7 +66,7 @@ pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
 /// Certification level of a v0 artifact certificate: conditional on the named
 /// runtime contracts (see the consult level naming L0/L1/L2/L3).
 pub const CERT_LEVEL: &str = "L1";
-pub const CERT_SCHEMA_VERSION: u32 = 45;
+pub const CERT_SCHEMA_VERSION: u32 = 46;
 pub const BOX_CONTRACT: &str = "__rt_aint_from_i64 (box i64 -> carrier)";
 pub const INT_ADD_CONTRACT: &str =
     "Int.add (carrier add = exact integer addition on represented values)";
@@ -102,6 +103,9 @@ pub fn audited_schema_core_sha() -> String {
 }
 pub fn audited_prelude_sha() -> String {
     sha256_hex(CERT_PRELUDE.as_bytes())
+}
+pub fn audited_decode_sha() -> String {
+    sha256_hex(CERT_DECODE.as_bytes())
 }
 pub fn audited_plan_check_sha() -> String {
     sha256_hex(CERT_PLAN_CHECK.as_bytes())

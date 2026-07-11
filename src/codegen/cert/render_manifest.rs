@@ -523,6 +523,7 @@ fn render_final(analysis: &Analysis) -> String {
 
 fn render_lakefile(model_roots: &[String]) -> String {
     let mut roots = vec!["`CertPrelude".to_string(), "`Contracts".to_string()];
+    roots.push("`CertDecode".to_string());
     for r in model_roots {
         roots.push(format!("`{r}"));
     }
@@ -553,6 +554,7 @@ struct ManifestHashes<'a> {
     schema: &'a str,
     schema_core: &'a str,
     prelude: &'a str,
+    decode: &'a str,
     plan_check: &'a str,
     plan_lower: &'a str,
     plan_bytes: &'a str,
@@ -589,6 +591,10 @@ fn render_manifest(
     s.push_str(&format!(
         "  \"prelude_sha256\": \"{}\",\n",
         hashes.prelude
+    ));
+    s.push_str(&format!(
+        "  \"cert_decode_sha256\": \"{}\",\n",
+        hashes.decode
     ));
     s.push_str(&format!(
         "  \"plan_check_sha256\": \"{}\",\n",

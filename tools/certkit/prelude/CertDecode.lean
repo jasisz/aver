@@ -99,8 +99,10 @@ def walkIds : Nat → Nat → Nat → Option (List Nat)
             | none => none
             | some tl => some (id :: tl)
 
-/-- Body suffix `(n, len)` of the first section with id = target, else none. -/
-def findSec (target : Nat) : Nat → Nat → Nat → Option (Nat × Nat)
+/-- First target section as `(payload bytes, payload size, suffix length at the
+    payload start)`. This is the single bounds-checked section-frame walker
+    shared by the format-B decoder and the certificate Wasm slicer. -/
+def findSecFrame (target : Nat) : Nat → Nat → Nat → Option (Nat × Nat × Nat)
   | 0,      _, _   => none
   | fuel+1, n, len =>
       if len == 0 then none else
@@ -109,8 +111,19 @@ def findSec (target : Nat) : Nat → Nat → Nat → Option (Nat × Nat)
         match readU n1 (len-1) with
         | none => none
         | some (size, n2, len2) =>
-            if id == target then some (n2, len2)
-            else findSec target fuel (n2 >>> (8*size)) (len2 - size)
+            if size ≤ len2 then
+              if id == target then some (n2, size, len2)
+              else findSecFrame target fuel (n2 >>> (8*size)) (len2 - size)
+            else none
+
+/-- Body suffix `(n, len)` of the first section with id = target, else none.
+    Kept as the format-B decoder API; framing is delegated to `findSecFrame`. -/
+def findSec (target fuel n len : Nat) : Option (Nat × Nat) :=
+  (findSecFrame target fuel n len).map (fun p => (p.1, p.2.2))
+
+/-- Exact `(payload bytes, payload size)` of the first target section. -/
+def findSecPayload (target fuel n len : Nat) : Option (Nat × Nat) :=
+  (findSecFrame target fuel n len).map (fun p => (p.1, p.2.1))
 
 /- ===================================================================== -/
 /-  Type section (arity per type index, struct field counts, carrier)     -/
