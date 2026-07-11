@@ -1014,8 +1014,9 @@ fn emit_box_key(f: &mut Function, k_aver: &str, registry: &TypeRegistry) {
 /// Heap type used by `Map.remove` for `ref.null` in the keys-array
 /// store-back. Concrete idx for K kinds with their own struct type
 /// (primitive K boxes, String, record, carrier, List, Vector); abstract
-/// Eq for sum K (whose wasm rep is eqref since variants share no
-/// concrete struct type).
+/// Heap type of the `ref.null` written into a cleared key slot, per
+/// K kind. Matches the keys array element type exactly (a sum K uses
+/// its nominal root struct).
 fn key_storage_null_heap(k_aver: &str, registry: &TypeRegistry) -> HeapType {
     if let Some(box_idx) = registry.primitive_key_box_idx(k_aver) {
         return HeapType::Concrete(box_idx);
@@ -1046,8 +1047,11 @@ fn key_storage_null_heap(k_aver: &str, registry: &TypeRegistry) -> HeapType {
     if let Some(slots) = registry.map_slots(k_aver) {
         return HeapType::Concrete(slots.map);
     }
-    // Sum K — eqref. ref.null of abstract Eq is a subtype of every
-    // concrete variant ref, so the array.set typechecks.
+    // Sum K — the nominal root struct the keys array declares as its
+    // element heap type, so the array.set typechecks.
+    if let Some(root) = registry.sum_root_type_idx(k_aver) {
+        return HeapType::Concrete(root);
+    }
     HeapType::Abstract {
         shared: false,
         ty: wasm_encoder::AbstractHeapType::Eq,
@@ -2826,7 +2830,7 @@ fn emit_map_remove(
     // keys[i] = null. Heap type matches the keys array element ref —
     // see `key_storage_null_heap` for the per-K-kind table (primitive
     // box / String / record / carrier / List / Vector concrete idx,
-    // abstract Eq for sum K).
+    // nominal root for sum K).
     let null_heap = key_storage_null_heap(k_aver, registry);
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::LocalGet(7));
