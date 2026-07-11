@@ -1387,6 +1387,11 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             "verbatim-widen",
             vec!["wrapItems"],
         ),
+        (
+            "tools/certkit/fixtures/f64verbatim.av",
+            "f64-verbatim",
+            vec!["floatOrZero"],
+        ),
         // Out-of-template variant dispatch: four constructors, mixed arm
         // semantics (negation, offset addition, identity, non-zero default) —
         // provable only through the structural walker, not a shape template.

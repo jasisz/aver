@@ -563,7 +563,7 @@ def verbatimNLocals (plan : VerbatimRawPlan) : Nat :=
     `array.new_data` PAYLOAD CONTENTS (only the segment index and length are
     encoded). Two further conjuncts close both holes in-kernel:
     `verbatimFuncTypeMatches` forces the byte-derived type-section entry to be the
-    unary `[eqref] → [(ref null resultHeapTy)]` signature, and `verbatimPayloadsBound`
+    unary ref-null or f64 signature declared by `plan.resultSig`, and `verbatimPayloadsBound`
     forces every literal's claimed bytes to equal the byte-pinned data segment. A
     body byte-noisier than the canonical dispatch lowering still fails the
     byte-equality gate. The member index is tied to the obligation through
@@ -584,7 +584,7 @@ def verbatimPlanAccepted
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
       AverCert.WasmSlice.verbatimFuncTypeMatches
-        wasmBytes binding.typeIdx plan.resultHeapTy = true ∧
+        wasmBytes binding.typeIdx plan.resultSig = true ∧
       verbatimPayloadsBound wasmBytes plan.body = true ∧
       obligation.code binding.funcIdx =
         some { arity := 1, nlocals := verbatimNLocals plan,
@@ -702,7 +702,7 @@ def intDispatchPlanAccepted
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
       AverCert.WasmSlice.verbatimFuncTypeMatches
-        wasmBytes binding.typeIdx carrier = true ∧
+        wasmBytes binding.typeIdx (.refNull carrier) = true ∧
       obligation.code binding.funcIdx =
         some { arity := 1,
                nlocals := AverCert.PlanCheck.intDispatchArmCount plan.body + 2,
