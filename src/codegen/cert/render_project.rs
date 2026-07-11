@@ -1041,7 +1041,7 @@ fn render_artifact_expr_fragment_claims(
                 construct_proofs.push(format!(
                     "⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
                      ⟨rfl, rfl, rfl, rfl, rfl, rfl, {struct_type_proof}, \
-                     {func_type_proof}, rfl⟩⟩⟩"
+                     {func_type_proof}, by decide, rfl⟩⟩⟩"
                 ));
             }
             Cert::Recursive {

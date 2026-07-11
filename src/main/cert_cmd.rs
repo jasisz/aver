@@ -2203,7 +2203,7 @@ fn lean_expr_fragment_artifact_claims(
             construct_proofs.push(format!(
                 "⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
                  ⟨rfl, rfl, rfl, rfl, rfl, rfl, {struct_type_proof}, \
-                 {func_type_proof}, rfl⟩⟩⟩"
+                 {func_type_proof}, by decide, rfl⟩⟩⟩"
             ));
             continue;
         }

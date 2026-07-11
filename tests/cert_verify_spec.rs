@@ -5204,11 +5204,11 @@ example : constructFamilyDropNames orphanManifest AverCert.Artifact.constructCla
   · constructor
     · exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl,
         Or.inr AverCert.Plans.singletonJsonEntriesConstructStructTypeMatches,
-        Or.inr AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, rfl⟩
+        Or.inr AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, by decide, rfl⟩
     · constructor
       · exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl,
           Or.inr AverCert.Plans.prependJsonEntryConstructStructTypeMatches,
-          Or.inr AverCert.Plans.prependJsonEntryConstructFuncTypeMatches, rfl⟩
+          Or.inr AverCert.Plans.prependJsonEntryConstructFuncTypeMatches, by decide, rfl⟩
       · trivial
   · decide
 
@@ -5225,11 +5225,11 @@ example : constructFamilyDropNodup dupManifest dupClaims := by
   · constructor
     · exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl,
         Or.inr AverCert.Plans.singletonJsonEntriesConstructStructTypeMatches,
-        Or.inr AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, rfl⟩
+        Or.inr AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, by decide, rfl⟩
     · constructor
       · exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl,
           Or.inr AverCert.Plans.singletonJsonEntriesConstructStructTypeMatches,
-          Or.inr AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, rfl⟩
+          Or.inr AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, by decide, rfl⟩
       · trivial
   · decide
 example : ¬ (AverCert.AcceptedArtifact.constructClaimExportNames dupClaims).Nodup := by decide

@@ -366,6 +366,18 @@ def isListConstructSymPlan (symPlan : SymRawPlan) : Bool :=
   | .app1 "List" _ => true
   | _ => false
 
+/-- A parametrized constructor result may only be certified when it is the
+    recognized `List` cons shape (whose element type is byte-bound below).
+    Any other parametrized result (`.app1 _`/`.app2 _`) is declined
+    fail-closed until a per-shape type binding exists; monomorphic results
+    stay bound by the struct index in the code entry. -/
+def parametrizedConstructIsList (symPlan : SymRawPlan) : Bool :=
+  match symPlan.result with
+  | .app1 "List" _ => true
+  | .app1 _ _ => false
+  | .app2 _ _ _ => false
+  | _ => true
+
 def constructPlanAccepted
     (wasmBytes : AverCert.WasmSlice.ByteSeq)
     (exportNameBytes : AverCert.WasmSlice.ByteSeq)
@@ -395,6 +407,7 @@ def constructPlanAccepted
       (isListConstructSymPlan symPlan = false ∨
         AverCert.WasmSlice.listConstructFuncTypeMatches
           wasmBytes binding.typeIdx plan.arity structIdx elemTy = true) ∧
+      parametrizedConstructIsList symPlan = true ∧
       obligation.code binding.funcIdx =
         some { arity := plan.arity, nlocals := 1, body := body }
 
