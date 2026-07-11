@@ -2487,9 +2487,10 @@ fn lean_expr_fragment_artifact_claims(
             format!("⟨{proof}, {acc}⟩")
         });
     // `acceptedCompositionFragments` conjoins the per-claim acceptance with the
-    // artifact-wide member-coverage bound (a decidable `Bool = true` over the
-    // concrete member/claim literals, closed by `rfl`).
-    let composition_proof = format!("⟨{composition_claims_proof}, rfl⟩");
+    // artifact-wide member-coverage bound plus the manifest obligation-coverage
+    // and export-name-uniqueness bounds (decidable `Bool = true` over the
+    // concrete literals, each closed by `rfl`).
+    let composition_proof = format!("⟨{composition_claims_proof}, rfl, rfl, rfl⟩");
     LeanExprFragmentArtifactClaims {
         sym_claims,
         string_eq_claims,
