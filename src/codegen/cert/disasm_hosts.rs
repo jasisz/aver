@@ -239,9 +239,9 @@ fn resolve_data_ops(ops: Vec<Op>, data_segments: &[Option<Vec<u8>>]) -> Vec<Op> 
 
 fn heap_type_index(hty: wasmparser::HeapType) -> Option<u32> {
     match hty {
-        wasmparser::HeapType::Concrete(idx) | wasmparser::HeapType::Exact(idx) => {
-            idx.as_module_index()
-        }
+        wasmparser::HeapType::Concrete(idx) => idx.as_module_index(),
+        // Kernel parity: exact references are not plain 0x63 s33 refs.
+        wasmparser::HeapType::Exact(_) => None,
         wasmparser::HeapType::Abstract { .. } => None,
     }
 }

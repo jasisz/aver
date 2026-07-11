@@ -4547,6 +4547,15 @@ fn verbatim_kernel_guards_are_isolating() {
     lean.push_str("example : WasmSlice.dataSegmentBytes dataCountMismatchMod 0 = none := rfl\n");
     // Over-wide (6-byte) unsigned LEB32 exceeds the u32 width cap and declines.
     lean.push_str("example : WasmSlice.readUleb32 [128, 128, 128, 128, 128, 0] = none := rfl\n");
+    lean.push_str("example : WasmSlice.readS33 [128, 128, 128, 128, 128, 0] = none := rfl\n");
+    lean.push_str(
+        "example : WasmSlice.readS33 [255, 255, 255, 255, 15] = some (4294967295, []) := rfl\n",
+    );
+    lean.push_str("example : WasmSlice.readS33 [128, 128, 128, 128, 16] = none := rfl\n");
+    lean.push_str(
+        "example : WasmSlice.readS33 [128, 128, 128, 128, 112] = some (-4294967296, []) := rfl\n",
+    );
+    lean.push_str("example : WasmSlice.readS33 [128, 128, 128, 128, 96] = none := rfl\n");
 
     // F64 RESULT-KIND isolation. These two tiny modules have identical
     // func/export/code sections and differ only in the byte-derived type result:

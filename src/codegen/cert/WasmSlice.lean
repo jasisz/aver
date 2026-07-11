@@ -92,8 +92,16 @@ def readSlebFuel : Nat → Nat → Int → ByteSeq → Option (Int × ByteSeq)
       else
         none
 
+/-- Read a spec-bounded s33: at most five bytes and in the signed 33-bit range
+    `-(2^32) ≤ v < 2^32`; the range check closes the final byte's unused bits. -/
 def readS33 (bytes : ByteSeq) : Option (Int × ByteSeq) :=
-  readSlebFuel 6 0 0 bytes
+  match readSlebFuel 5 0 0 bytes with
+  | some (v, rest) =>
+      if -(Int.ofNat (2 ^ 32)) ≤ v ∧ v < Int.ofNat (2 ^ 32) then
+        some (v, rest)
+      else
+        none
+  | none => none
 
 /-! ### Type-section navigation
 
