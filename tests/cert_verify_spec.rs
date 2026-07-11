@@ -4214,6 +4214,194 @@ fn cert_verify_declines_tampered_verbatim_plan() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
+/// A compiler-produced, wasmparser-valid scalar-f64 widened match must travel
+/// through the plan-backed verbatim bridge end to end. Both the f64 immediate
+/// and the declared result kind remain bound to the emitted artifact bytes.
+#[test]
+fn cert_verify_scalar_f64_verbatim_fixture_and_tampers() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping scalar-f64 verbatim test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-f64-verbatim");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/f64verbatim.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "f64verbatim compile --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("f64verbatim.wasm");
+    let cert = out_dir.join("cert");
+    let honest_bytes = std::fs::read(&wasm).unwrap();
+    wasmparser::Validator::new()
+        .validate_all(&honest_bytes)
+        .expect("compiler-produced f64verbatim wasm must validate");
+
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap())
+            .unwrap();
+    let float_entry = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "floatOrZero")
+        .expect("floatOrZero must be certified");
+    assert_eq!(
+        float_entry["artifact_bridge"].as_str(),
+        Some("accepted-artifact-v1"),
+        "scalar-f64 verbatim export must use the plan-backed bridge"
+    );
+
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    assert!(
+        plans.contains(
+            "def floatOrZeroVerbatimPlan : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 2, fieldLocal := 1, resultSig := .f64Scalar, body := .test 0 (.project 0 0) (.leaf (.f64Bits 0)) }"
+        ),
+        "floatOrZero plan must pin the scalar-f64 result and zero default"
+    );
+    let module = std::fs::read_to_string(cert.join("Module.lean")).unwrap();
+    assert!(
+        module.contains("if fn = 1 then some ⟨1, 3,"),
+        "floatOrZero code obligation must bind nlocals = 3"
+    );
+
+    let (ok, report) = aver_verify(&wasm, &cert);
+    assert!(ok, "honest scalar-f64 certificate should verify:\n{report}");
+    assert!(
+        report.contains("CERTIFIED"),
+        "honest scalar-f64 verification must report CERTIFIED:\n{report}"
+    );
+
+    let mut imported_funcs = 0u32;
+    let mut export_func = None;
+    let mut code_ordinal = 0u32;
+    let mut f64_immediate_offsets = Vec::new();
+    let mut type_section_range = None;
+    for payload in wasmparser::Parser::new(0).parse_all(&honest_bytes) {
+        match payload.expect("compiler-produced wasm must parse") {
+            wasmparser::Payload::TypeSection(reader) => {
+                type_section_range = Some(reader.range());
+            }
+            wasmparser::Payload::ImportSection(reader) => {
+                for group in reader {
+                    for import in group.expect("import group must parse") {
+                        let (_, import) = import.expect("import must parse");
+                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                            imported_funcs += 1;
+                        }
+                    }
+                }
+            }
+            wasmparser::Payload::ExportSection(reader) => {
+                for export in reader {
+                    let export = export.expect("export must parse");
+                    if export.name == "floatOrZero" && export.kind == wasmparser::ExternalKind::Func
+                    {
+                        export_func = Some(export.index);
+                    }
+                }
+            }
+            wasmparser::Payload::CodeSectionEntry(body) => {
+                let target_ordinal = export_func
+                    .expect("floatOrZero export must precede the code section")
+                    .checked_sub(imported_funcs)
+                    .expect("floatOrZero must be a defined function");
+                if code_ordinal == target_ordinal {
+                    let mut operators = body.get_operators_reader().unwrap();
+                    while !operators.eof() {
+                        let opcode_offset = operators.original_position();
+                        let operator = operators.read().expect("operator must parse");
+                        if matches!(
+                            operator,
+                            wasmparser::Operator::F64Const { value } if value.bits() == 0
+                        ) {
+                            assert_eq!(honest_bytes[opcode_offset], 0x44, "expected f64.const");
+                            f64_immediate_offsets.push(opcode_offset + 1);
+                        }
+                    }
+                }
+                code_ordinal += 1;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(
+        f64_immediate_offsets.len(),
+        1,
+        "floatOrZero must contain exactly one zero f64.const immediate"
+    );
+
+    // (a) Flip one bit in the body-level f64.const immediate. This remains a
+    // valid wasm module but no longer agrees with the byte-derived plan.
+    {
+        let dir = temp_dir("cert-f64-immediate-tamper");
+        copy_dir(&out_dir, &dir);
+        let tampered_wasm = dir.join("f64verbatim.wasm");
+        let mut bytes = honest_bytes.clone();
+        bytes[f64_immediate_offsets[0]] ^= 1;
+        wasmparser::Validator::new()
+            .validate_all(&bytes)
+            .expect("an f64 immediate bit flip must preserve wasm validity");
+        std::fs::write(&tampered_wasm, bytes).unwrap();
+        let (ok, report) = aver_verify(&tampered_wasm, &dir.join("cert"));
+        assert!(
+            !ok,
+            "tampered f64.const immediate must be DECLINED:\n{report}"
+        );
+        assert!(
+            !report.contains("CERTIFIED"),
+            "tampered f64.const immediate must never be credited:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (b) Change the target signature's f64 result byte to the nullable-ref
+    // prefix while leaving the certificate plan claiming F64Scalar.
+    {
+        let dir = temp_dir("cert-f64-result-type-tamper");
+        copy_dir(&out_dir, &dir);
+        let tampered_wasm = dir.join("f64verbatim.wasm");
+        let range = type_section_range.expect("type section must exist");
+        let signature = [0x60, 0x01, 0x6d, 0x01, 0x7c];
+        let matches = honest_bytes[range.clone()]
+            .windows(signature.len())
+            .enumerate()
+            .filter_map(|(offset, bytes)| (bytes == signature).then_some(range.start + offset))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matches.len(),
+            1,
+            "floatOrZero's eqref -> f64 signature must be unique"
+        );
+        let mut bytes = honest_bytes.clone();
+        bytes[matches[0] + signature.len() - 1] = 0x63;
+        std::fs::write(&tampered_wasm, bytes).unwrap();
+        let (ok, report) = aver_verify(&tampered_wasm, &dir.join("cert"));
+        assert!(!ok, "tampered f64 result type must be DECLINED:\n{report}");
+        assert!(
+            !report.contains("CERTIFIED"),
+            "ref-typed artifact with an F64Scalar plan must never be credited:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
 /// ACCEPTANCE-LEVEL guard-isolation for the two verbatim binds that the
 /// byte-equality gate does NOT cover, elaborated with `lake env lean` against the
 /// audited cert modules — no `aver cert verify`, no sibling defence in the path.

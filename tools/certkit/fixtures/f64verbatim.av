@@ -1,0 +1,22 @@
+module F64Verbatim
+    intent =
+        "Compiler-produced scalar-f64 verbatim widened-match certificate fixture."
+    exposes [FloatBox, floatOrZero]
+
+type FloatBox
+  Value(Float)
+  Missing
+
+fn floatOrZero(x: FloatBox) -> Float
+  ? "Project a Float payload, defaulting to scalar zero."
+  match x
+    FloatBox.Value(f) -> f
+    _ -> 0.0
+
+verify floatOrZero
+    floatOrZero(FloatBox.Value(3.5)) => 3.5
+    floatOrZero(FloatBox.Missing) => 0.0
+
+fn keepCarrier(n: Int) -> Int
+  ? "Keep the standard certification carrier ABI in this focused fixture."
+  n
