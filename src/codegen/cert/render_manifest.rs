@@ -405,6 +405,17 @@ fn render_manifest_lean(
         })
         .collect::<Vec<_>>()
         .join(", ");
+    let composition_plans = composition_member_plans(analysis)
+        .iter()
+        .map(|(entry, _)| {
+            format!(
+                "({}, Plans.{}CompositionPlan)",
+                lean_str(&entry.name),
+                entry.name
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     let verbatim_plans = analysis
         .certs
         .iter()
@@ -439,6 +450,7 @@ fn render_manifest_lean(
          exprFragmentPlans := [{expr_fragment_plans}],\n    \
          recursionPlans := [{recursion_plans}],\n    \
          mutualPlans := [{mutual_plans}],\n    \
+         compositionPlans := [{composition_plans}],\n    \
          verbatimPlans := [{verbatim_plans}],\n    \
          intDispatchPlans := [{int_dispatch_plans}],\n    \
          obligations := [{obligations}] }}\n\n\
@@ -771,6 +783,11 @@ fn artifact_bridge_profile(
             "accepted-artifact-v1"
         }
         Cert::MutualRecursion { .. } if mutual_plan_from_cert(c).is_some() => {
+            "accepted-artifact-v1"
+        }
+        Cert::Composition { .. }
+            if composition_plans_from_cert(c, frag_host_table).is_some() =>
+        {
             "accepted-artifact-v1"
         }
         Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. }

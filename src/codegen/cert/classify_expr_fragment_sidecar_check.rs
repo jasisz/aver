@@ -140,6 +140,9 @@ pub fn check_expr_fragment_plan_sidecar(
         verbatim_plan_lean: None,
         int_dispatch_plan_lean: None,
         int_dispatch_host_table_lean: None,
+        composition_members: Vec::new(),
+        composition_host_table_lean: None,
+        composition_member_names_lean: None,
     };
     Ok(FragmentPlanCheck {
         sidecar,
@@ -286,6 +289,9 @@ pub fn check_sym_fragment_plan_sidecar(
         verbatim_plan_lean: None,
         int_dispatch_plan_lean: None,
         int_dispatch_host_table_lean: None,
+        composition_members: Vec::new(),
+        composition_host_table_lean: None,
+        composition_member_names_lean: None,
     };
     Ok(FragmentPlanCheck {
         sidecar,

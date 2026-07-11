@@ -164,12 +164,12 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
-        Some(21),
+        Some(23),
         "AcceptedArtifact coverage changed; update this migration counter deliberately"
     );
     assert_eq!(
         manifest["artifact_bridge_counts"]["legacy-witness-v1"].as_u64(),
-        Some((expected.len() - 21) as u64),
+        Some(0),
         "legacy witness count changed; update this migration counter deliberately"
     );
     let expected_bridge = |class: &str| match class {
@@ -183,7 +183,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         | "widened-int-match"
         | "self-recursive"
         | "multi-argument self-recursive"
-        | "mutual-recursive" => "accepted-artifact-v1",
+        | "mutual-recursive"
+        | "cross-function-composition" => "accepted-artifact-v1",
         _ => "legacy-witness-v1",
     };
     for entry in manifest["certified"].as_array().unwrap() {
@@ -1306,6 +1307,19 @@ fn certify_composition_fixture_lake_builds_kernel_clean() {
         .and_then(|c| c["class"].as_str())
         .unwrap_or("");
     assert_eq!(class, "cross-function-composition", "wrong class for quad");
+    for name in ["quad", "hex16"] {
+        let bridge = manifest["certified"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == name)
+            .and_then(|c| c["artifact_bridge"].as_str());
+        assert_eq!(
+            bridge,
+            Some("accepted-artifact-v1"),
+            "{name} must use the plan-backed artifact bridge"
+        );
+    }
 
     let build = Command::new("lake")
         .current_dir(&cert_dir)

@@ -292,6 +292,23 @@ def checkMutualRawPlan (plan : MutualRawPlan) : Bool :=
     | some n => sameTy n.ty plan.result
     | none => false
 
+/-- Generic composition-plan discipline. A chain must contain at least one
+    call; context-sensitive target/closure checks live in AcceptedArtifactCore,
+    after names have been resolved from byte-derived export bindings. -/
+def checkCompositionRawPlan (plan : CompositionRawPlan) : Bool :=
+  plan.profile = "composition-plan-v1" &&
+    match plan.shape with
+    | .selfSum => true
+    | .chain callees => !callees.isEmpty
+
+/-- Composition v1 consumes exactly one strict `add` role. Requiring the whole
+    table shape (not merely a successful lookup) makes the canonical host
+    builder extensional and unambiguous. -/
+def checkCompositionHostTable (hostTable : List (HostRole × Nat)) : Bool :=
+  match hostTable with
+  | [(.add, _)] => true
+  | _ => false
+
 /-! ### Verbatim `ref.test`-dispatch checker
 
 The `verbatim-plan-v1` grammar has its own dedicated types (the multi-use

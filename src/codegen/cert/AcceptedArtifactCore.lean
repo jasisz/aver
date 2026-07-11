@@ -286,6 +286,24 @@ structure IntDispatchClaim where
   hostTable       : List (HostRole × Nat)
   obligation      : Obligation
 
+/-- One byte-bound member of the artifact-wide composition call graph. The plan
+    names only callees; `compositionFuncTable` below resolves every name through
+    the module's export table before either lowerer can use an index. -/
+structure CompositionMemberClaim where
+  exportNameBytes : AverCert.WasmSlice.ByteSeq
+  exportName      : String
+  plan            : CompositionRawPlan
+
+/-- One certified composition root. `memberNames` is not trusted closure data:
+    `compositionClaimAccepted` requires it to equal the transitive closure
+    reached from `exportName` in the byte-bound member call graph. -/
+structure CompositionClaim where
+  exportName      : String
+  carrier         : Nat
+  hostTable       : List (HostRole × Nat)
+  memberNames     : List String
+  obligation      : Obligation
+
 def stringEqClaimAccepted
     (wasmBytes : AverCert.WasmSlice.ByteSeq)
     (manifest : AverCert.Schema.Manifest)
@@ -703,6 +721,173 @@ def intDispatchClaimAccepted
         claim.obligation
   | none => False
 
+/-! ### Cross-function composition: byte-bound member graph and closure -/
+
+/-- Exact canonical locals count emitted by both composition byte lowerers. -/
+def compositionNLocals (_plan : CompositionRawPlan) : Nat := 1
+
+def compositionMemberBinding
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (member : CompositionMemberClaim) : Option (String × Nat) :=
+  match AverCert.WasmSlice.funcBindingForExport wasmBytes member.exportNameBytes with
+  | some binding => some (member.exportName, binding.funcIdx)
+  | none => none
+
+def compositionFuncTable
+    (wasmBytes : AverCert.WasmSlice.ByteSeq) :
+    List CompositionMemberClaim → Option (List (String × Nat))
+  | [] => some []
+  | member :: rest =>
+      match compositionMemberBinding wasmBytes member,
+            compositionFuncTable wasmBytes rest with
+      | some binding, some bindings => some (binding :: bindings)
+      | _, _ => none
+
+def compositionMemberForName
+    (name : String) : List CompositionMemberClaim → Option CompositionMemberClaim
+  | [] => none
+  | member :: rest =>
+      if member.exportName == name then some member
+      else compositionMemberForName name rest
+
+def compositionMemberPlanAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (carrier : Nat)
+    (hostTable : List (HostRole × Nat))
+    (funcTable : List (String × Nat))
+    (obligation : Obligation)
+    (member : CompositionMemberClaim) : Prop :=
+  AverCert.PlanCheck.checkCompositionRawPlan member.plan = true ∧
+  ∃ body codeEntry binding,
+    AverCert.PlanLower.lowerCompositionBody hostTable funcTable member.plan = some body ∧
+    AverCert.PlanBytes.lowerCompositionCodeEntry carrier hostTable funcTable member.plan =
+      some codeEntry ∧
+    AverCert.WasmSlice.codeEntryForExport wasmBytes member.exportNameBytes = some codeEntry ∧
+    AverCert.WasmSlice.funcBindingForExport wasmBytes member.exportNameBytes = some binding ∧
+    binding.codeEntry = codeEntry ∧
+    AverCert.WasmSlice.funcTypeMatches wasmBytes binding.typeIdx 1 carrier = true ∧
+    obligation.code binding.funcIdx =
+      some { arity := 1, nlocals := compositionNLocals member.plan, body := body }
+
+def compositionNamedMembersAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (carrier : Nat)
+    (hostTable : List (HostRole × Nat))
+    (funcTable : List (String × Nat))
+    (obligation : Obligation)
+    (members : List CompositionMemberClaim) : List String → Prop
+  | [] => True
+  | name :: rest =>
+      match compositionMemberForName name members with
+      | some member =>
+          compositionMemberPlanAccepted
+            wasmBytes carrier hostTable funcTable obligation member ∧
+          compositionNamedMembersAccepted
+            wasmBytes carrier hostTable funcTable obligation members rest
+      | none => False
+
+def compositionPlanCallees (plan : CompositionRawPlan) : List String :=
+  match plan.shape with
+  | .selfSum => []
+  | .chain callees => callees
+
+def stringListNodup : List String → Bool
+  | [] => true
+  | x :: rest => !rest.contains x && stringListNodup rest
+
+def stringListSetEq (xs ys : List String) : Bool :=
+  xs.length == ys.length && xs.all (fun x => ys.contains x) &&
+    ys.all (fun y => xs.contains y)
+
+def compositionEdges
+    (members : List CompositionMemberClaim) : List (String × List String) :=
+  members.map (fun member => (member.exportName, compositionPlanCallees member.plan))
+
+def compositionEdgeLookup
+    (edges : List (String × List String)) (name : String) : Option (List String) :=
+  match edges.find? (fun edge => edge.1 == name) with
+  | some edge => some edge.2
+  | none => none
+
+/-- One breadth-expansion step of the byte-bound call graph. Missing targets
+    fail closed; repeated vertices are set-like and do not enlarge the result. -/
+def compositionReachStep
+    (edges : List (String × List String)) :
+    List String → List String → Option (List String)
+  | reached, [] => some reached
+  | reached, name :: rest =>
+      match compositionEdgeLookup edges name with
+      | some callees =>
+          if callees.all (fun callee => (edges.map (fun edge => edge.1)).contains callee) then
+            let next := callees.foldl
+              (fun acc callee => if acc.contains callee then acc else acc ++ [callee]) reached
+            compositionReachStep edges next rest
+          else none
+      | none => none
+
+def compositionReachClosure
+    (edges : List (String × List String)) : Nat → List String → Option (List String)
+  | 0, reached => some reached
+  | fuel + 1, reached =>
+      match compositionReachStep edges reached reached with
+      | some next => compositionReachClosure edges fuel next
+      | none => none
+
+/-- Numeric target indices strictly descend along every edge. Both endpoints
+    come from byte-derived export bindings, so this rejects cycles without
+    trusting a plan-supplied ordering or membership set. -/
+def compositionEdgesDescend
+    (funcTable : List (String × Nat))
+    (edges : List (String × List String)) : Bool :=
+  edges.all (fun edge =>
+    match AverCert.PlanLower.compositionFuncIdx? funcTable edge.1 with
+    | some self => edge.2.all (fun callee =>
+        match AverCert.PlanLower.compositionFuncIdx? funcTable callee with
+        | some target => target < self
+        | none => false)
+    | none => false)
+
+/-- Closure membership is recomputed by following the call graph extracted
+    from byte-bound plans. `memberNames` must equal that closure exactly; extra,
+    omitted, duplicate, dangling, or cyclic members are rejected. -/
+def compositionClosureBound
+    (root : String)
+    (memberNames : List String)
+    (members : List CompositionMemberClaim)
+    (funcTable : List (String × Nat)) : Bool :=
+  let edges := compositionEdges members
+  stringListNodup (members.map (fun member => member.exportName)) &&
+    stringListNodup memberNames &&
+    AverCert.PlanCheck.hostTableIndicesDistinct (funcTable.map (fun entry => (.add, entry.2))) &&
+    compositionEdgesDescend funcTable edges &&
+    (match compositionMemberForName root members with
+     | some rootMember =>
+         (match rootMember.plan.shape with
+          | .chain _ => true
+          | .selfSum => false) &&
+         (match compositionReachClosure edges (members.length + 1) [root] with
+          | some reached => stringListSetEq memberNames reached
+          | none => false)
+     | none => false)
+
+def compositionClaimAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (members : List CompositionMemberClaim)
+    (claim : CompositionClaim) : Prop :=
+  claim.obligation.export_ = claim.exportName ∧
+  claim.obligation.carrier = claim.carrier ∧
+  AverCert.PlanCheck.checkCompositionHostTable claim.hostTable = true ∧
+  claim.obligation.host = intDispatchCanonicalHost claim.carrier claim.hostTable ∧
+  match compositionFuncTable wasmBytes members with
+  | some funcTable =>
+      compositionClosureBound claim.exportName claim.memberNames members funcTable = true ∧
+      (match AverCert.PlanLower.compositionFuncIdx? funcTable claim.exportName with
+       | some rootIdx => claim.obligation.self = rootIdx
+       | none => False) ∧
+      compositionNamedMembersAccepted wasmBytes claim.carrier claim.hostTable
+        funcTable claim.obligation members claim.memberNames
+  | none => False
+
 /-- Aggregate source-level symbolic fragment acceptance for one artifact's
     source claim list. -/
 def symFragmentClaimsAccepted
@@ -789,6 +974,17 @@ def intDispatchClaimsAccepted
   | claim :: rest =>
       intDispatchClaimAccepted wasmBytes manifest claim ∧
       intDispatchClaimsAccepted wasmBytes manifest rest
+
+/-- Aggregate composition-root acceptance. All roots share the artifact-wide
+    unique member table, while each root independently re-derives its reachable
+    closure and pins every reachable body into its own shared `CodeTbl`. -/
+def compositionClaimsAccepted
+    (wasmBytes : AverCert.WasmSlice.ByteSeq)
+    (members : List CompositionMemberClaim) : List CompositionClaim → Prop
+  | [] => True
+  | claim :: rest =>
+      compositionClaimAccepted wasmBytes members claim ∧
+      compositionClaimsAccepted wasmBytes members rest
 
 /-! ### Byte-derived SCC closure
 
@@ -998,6 +1194,10 @@ def intDispatchManifestPlanNames
     (manifest : AverCert.Schema.Manifest) : List String :=
   manifest.intDispatchPlans.map (fun p => p.1)
 
+def compositionMemberPlanPairs
+    (members : List CompositionMemberClaim) : List (String × CompositionRawPlan) :=
+  members.map (fun member => (member.exportName, member.plan))
+
 /-- The source `SymPlan`s carried by String.concat claims. These live in the
     manifest's common `symFragmentPlans` list; the byte-lowering-specific
     `StringConcatRawPlan` stays in `stringConcatPlans`. -/
@@ -1029,6 +1229,8 @@ structure ArtifactData where
   mutualRecursionClaims : List MutualRecursionClaim
   verbatimClaims     : List VerbatimClaim
   intDispatchClaims  : List IntDispatchClaim
+  compositionMembers : List CompositionMemberClaim
+  compositionClaims  : List CompositionClaim
 
 def acceptedSymFragments (artifact : ArtifactData) : Prop :=
   symFragmentClaimsAccepted artifact.wasmBytes artifact.symFragmentClaims
@@ -1078,6 +1280,10 @@ def acceptedIntDispatchFragments (artifact : ArtifactData) : Prop :=
     artifact.manifest
     artifact.intDispatchClaims
 
+def acceptedCompositionFragments (artifact : ArtifactData) : Prop :=
+  compositionClaimsAccepted
+    artifact.wasmBytes artifact.compositionMembers artifact.compositionClaims
+
 def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedSymFragments artifact ∧
   acceptedStringEqFragments artifact ∧
@@ -1086,7 +1292,8 @@ def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedRecursionFragments artifact ∧
   acceptedMutualRecursionFragments artifact ∧
   acceptedVerbatimFragments artifact ∧
-  acceptedIntDispatchFragments artifact
+  acceptedIntDispatchFragments artifact ∧
+  acceptedCompositionFragments artifact
 
 def expectedArtifactRoot : String :=
   "AverCert.Artifact.certificate"
@@ -1102,7 +1309,8 @@ def claimObligationExports (artifact : ArtifactData) : List String :=
   artifact.recursionClaims.map (fun c => c.obligation.export_) ++
   artifact.mutualRecursionClaims.map (fun c => c.obligation.export_) ++
   artifact.verbatimClaims.map (fun c => c.obligation.export_) ++
-  artifact.intDispatchClaims.map (fun c => c.obligation.export_)
+  artifact.intDispatchClaims.map (fun c => c.obligation.export_) ++
+  artifact.compositionClaims.map (fun c => c.obligation.export_)
 
 def claimObligations (artifact : ArtifactData) : List Obligation :=
   artifact.symFragmentClaims.map (fun c => c.obligation) ++
@@ -1112,7 +1320,8 @@ def claimObligations (artifact : ArtifactData) : List Obligation :=
   artifact.recursionClaims.map (fun c => c.obligation) ++
   artifact.mutualRecursionClaims.map (fun c => c.obligation) ++
   artifact.verbatimClaims.map (fun c => c.obligation) ++
-  artifact.intDispatchClaims.map (fun c => c.obligation)
+  artifact.intDispatchClaims.map (fun c => c.obligation) ++
+  artifact.compositionClaims.map (fun c => c.obligation)
 
 def claimObligationsInManifest
     (manifestObligations : List Obligation) : List Obligation → Prop
@@ -1149,7 +1358,9 @@ def claimsMatchManifest (artifact : ArtifactData) : Prop :=
       verbatimClaimExportNames artifact.verbatimClaims =
           verbatimManifestPlanNames artifact.manifest ∧
       intDispatchClaimExportNames artifact.intDispatchClaims =
-          intDispatchManifestPlanNames artifact.manifest
+          intDispatchManifestPlanNames artifact.manifest ∧
+      compositionMemberPlanPairs artifact.compositionMembers =
+          artifact.manifest.compositionPlans
   | none => False
 
 end AverCert.AcceptedArtifact

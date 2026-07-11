@@ -239,6 +239,23 @@ structure MutualRawPlan where
   body    : FragBlock
 deriving Repr
 
+/-- A composition member carries only its semantic-free byte SHAPE. A chain
+    names callee exports; numeric Wasm indices are resolved from those exports'
+    byte-derived `FuncBinding`s by the acceptance predicate and are never plan
+    data. -/
+inductive CompositionShape where
+  | selfSum
+  | chain (callees : List String)
+deriving Repr, DecidableEq
+
+/-- Raw, untrusted cross-function composition plan. This is solely a
+    byte-origin veneer over the existing independently-read model and the
+    existing callee-composition simulation proof. -/
+structure CompositionRawPlan where
+  profile : String
+  shape   : CompositionShape
+deriving Repr, DecidableEq
+
 /-- One terminal leaf of a verbatim `ref.test`-dispatch arm (`verbatim-plan-v1`).
     `Cod := WVal`; each leaf is a byte-derived constant or a single-variant
     projection. The concrete wasm type/data indices are node data bound to the
@@ -481,6 +498,7 @@ structure Manifest where
   exprFragmentPlans : List (String × ExprFragmentRawPlan)
   recursionPlans : List (String × RecursionRawPlan)
   mutualPlans : List (String × MutualRawPlan)
+  compositionPlans : List (String × CompositionRawPlan)
   verbatimPlans : List (String × VerbatimRawPlan)
   intDispatchPlans : List (String × IntDispatchRawPlan)
   obligations : List Obligation

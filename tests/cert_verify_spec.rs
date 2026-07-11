@@ -2874,11 +2874,174 @@ fn composition_callee_mutation_is_declined() {
         !ok,
         "mutated composition callee entry must be DECLINED:\n{out}"
     );
-    assert!(out.contains("does not bind"), "wrong reason:\n{out}");
+    assert!(
+        out.contains("does not bind") || out.contains("certificate did not build"),
+        "wrong reason:\n{out}"
+    );
     assert!(
         !out.contains("CERTIFIED"),
         "tampered composition cert must not verify:\n{out}"
     );
+}
+
+/// S5 guard isolation, including executed weaken confirmations. Each negative
+/// is rejected by one named audited guard; the adjacent `weak*` definition is
+/// the throwaway one-guard-removed copy and accepts exactly that negative.
+#[test]
+fn composition_plan_guards_are_isolated_and_weaken_confirmed() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping composition GuardIso test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-compose-guard-iso");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/compose.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile composition fixture");
+    assert!(
+        compile.status.success(),
+        "composition fixture compile failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let cert = out_dir.join("cert");
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build composition certificate before GuardIso");
+    assert!(
+        build.status.success(),
+        "composition certificate build failed before GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let lean = r#"import Artifact
+open CertPrelude AverCert.Schema
+set_option maxRecDepth 200000
+
+def funcs : List (String × Nat) := [("double", 1), ("hex16", 3), ("quad", 2)]
+def hosts : List (HostRole × Nat) := [(.add, 9)]
+def badProfile : CompositionRawPlan := { profile := "composition-plan-v2", shape := .selfSum }
+def missingTarget : CompositionRawPlan := { profile := "composition-plan-v1", shape := .chain ["missing"] }
+def wrongFuncs : List (String × Nat) := [("double", 8), ("hex16", 3), ("quad", 2)]
+
+-- PlanCheck profile guard: fixed rejects; one-guard-weakened copy accepts.
+def weakRawCheck (_ : CompositionRawPlan) : Bool := true
+example : AverCert.PlanCheck.checkCompositionRawPlan badProfile = false := rfl
+example : weakRawCheck badProfile = true := rfl
+
+-- Strict singleton-add host-table guard.
+def weakHostCheck (_ : List (HostRole × Nat)) : Bool := true
+example : AverCert.PlanCheck.checkCompositionHostTable [(.sub, 9)] = false := rfl
+example : weakHostCheck [(.sub, 9)] = true := rfl
+
+-- Semantic lowerer target-resolution guard.
+def weakLower (_ : CompositionRawPlan) : Option (List WInstr) := some [.localGet 0]
+example : AverCert.PlanLower.lowerCompositionBody hosts funcs missingTarget = none := rfl
+example : weakLower missingTarget = some [.localGet 0] := rfl
+
+-- Exact byte lowering: a wrong byte-derived name→index binding changes bytes;
+-- the weakened copy deliberately returns the honest lowering.
+def weakBytes (p : CompositionRawPlan) :=
+  AverCert.PlanBytes.lowerCompositionCodeEntry 2 hosts funcs p
+example : AverCert.PlanBytes.lowerCompositionCodeEntry 2 hosts wrongFuncs AverCert.Plans.quadCompositionPlan ≠
+  AverCert.PlanBytes.lowerCompositionCodeEntry 2 hosts funcs AverCert.Plans.quadCompositionPlan := by decide
+example : weakBytes AverCert.Plans.quadCompositionPlan =
+  AverCert.PlanBytes.lowerCompositionCodeEntry 2 hosts funcs AverCert.Plans.quadCompositionPlan := rfl
+
+-- Wasm export binding, code-entry equality, and exact unary carrier signature.
+example : (AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes [113,117,97,100]).map
+    (fun b => (b.funcIdx, b.codeEntry)) = some (2,
+      (AverCert.PlanBytes.lowerCompositionCodeEntry 2 hosts funcs AverCert.Plans.quadCompositionPlan).get!) := rfl
+example : AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.wasmBytes 5 1 2 = true := rfl
+example : AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.wasmBytes 5 2 2 = false := rfl
+def weakSignature (_ _ _ : Nat) : Bool := true
+example : weakSignature 5 2 2 = true := rfl
+
+-- Byte-derived transitive closure: omission, extra membership, and a cycle all
+-- fail; weakening only this closure guard accepts each negative.
+def weakClosure (_ : String) (_ : List String)
+    (_ : List AverCert.AcceptedArtifact.CompositionMemberClaim)
+    (_ : List (String × Nat)) : Bool := true
+example : AverCert.AcceptedArtifact.compositionClosureBound "hex16" ["quad", "hex16"]
+    AverCert.Artifact.compositionMembers funcs = false := rfl
+example : AverCert.AcceptedArtifact.compositionClosureBound "quad" ["double", "quad", "hex16"]
+    AverCert.Artifact.compositionMembers funcs = false := rfl
+def cycleMembers : List AverCert.AcceptedArtifact.CompositionMemberClaim := [
+  { exportNameBytes := [100,111,117,98,108,101], exportName := "double",
+    plan := { profile := "composition-plan-v1", shape := .chain ["quad"] } },
+  { exportNameBytes := [113,117,97,100], exportName := "quad", plan := AverCert.Plans.quadCompositionPlan }]
+example : AverCert.AcceptedArtifact.compositionClosureBound "quad" ["double", "quad"]
+    cycleMembers [("double", 1), ("quad", 2)] = false := rfl
+example : weakClosure "hex16" ["quad", "hex16"] AverCert.Artifact.compositionMembers funcs = true := rfl
+example : weakClosure "quad" ["double", "quad", "hex16"] AverCert.Artifact.compositionMembers funcs = true := rfl
+example : weakClosure "quad" ["double", "quad"] cycleMembers [("double", 1), ("quad", 2)] = true := rfl
+
+-- Root binding and exact canonical locals count in the shared CodeTbl.
+example : AverCert.quadOb.self = 2 := rfl
+example : ¬ AverCert.quadOb.self = 99 := by decide
+def weakRoot (_ _ : Nat) : Bool := true
+example : weakRoot AverCert.quadOb.self 99 = true := rfl
+example : (AverCert.quadOb.code 1).map (fun c => c.nlocals) = some 1 := rfl
+example : ¬ (AverCert.quadOb.code 1).map (fun c => c.nlocals) = some 0 := by decide
+def weakLocals (_ : Option Nat) : Bool := true
+example : weakLocals ((AverCert.quadOb.code 1).map (fun c => c.nlocals)) = true := rfl
+
+-- Extensional canonical-host guard: the honest builder is definitionally
+-- equal; a nowhere-defined builder differs at the byte-derived add slot.
+example : AverCert.quadOb.host = AverCert.AcceptedArtifact.intDispatchCanonicalHost 2 hosts := rfl
+def badHost : (List WVal → Option WVal) → (List WVal → Option WVal) →
+    (List WVal → Option WVal) → (List WVal → Option WVal) →
+    (Nat → List WVal → Option WVal) → HostTbl := fun _ _ _ _ _ _ => none
+def addProbe : List WVal → Option WVal := fun _ => some .null
+example : (badHost addProbe addProbe addProbe addProbe (fun _ _ => none)) 9 ≠
+    (AverCert.AcceptedArtifact.intDispatchCanonicalHost 2 hosts
+      addProbe addProbe addProbe addProbe (fun _ _ => none)) 9 := by
+  simp [badHost, addProbe, hosts, AverCert.AcceptedArtifact.intDispatchCanonicalHost,
+    AverCert.AcceptedArtifact.intDispatchCanonicalSlots]
+def weakHostEquality (_ _ : HostTbl) : Bool := true
+example : weakHostEquality
+    ((badHost addProbe addProbe addProbe addProbe (fun _ _ => none)))
+    ((AverCert.AcceptedArtifact.intDispatchCanonicalHost 2 hosts
+      addProbe addProbe addProbe addProbe (fun _ _ => none))) = true := rfl
+
+-- Manifest/claim plan-pair equality guard.
+def relabeledMembers : List AverCert.AcceptedArtifact.CompositionMemberClaim :=
+  [{ exportNameBytes := [100,111,117,98,108,101], exportName := "alias",
+     plan := AverCert.Plans.doubleCompositionPlan }]
+example : AverCert.AcceptedArtifact.compositionMemberPlanPairs relabeledMembers =
+    [("alias", AverCert.Plans.doubleCompositionPlan)] := rfl
+example : AverCert.AcceptedArtifact.compositionMemberPlanPairs relabeledMembers ≠
+    [("double", AverCert.Plans.doubleCompositionPlan)] := by decide
+def weakManifest (_ : List (String × CompositionRawPlan)) : Bool := true
+example : weakManifest (AverCert.AcceptedArtifact.compositionMemberPlanPairs relabeledMembers) = true := rfl
+"#;
+    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("GuardIso.lean")
+        .output()
+        .expect("run composition GuardIso");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(
+        check.status.success(),
+        "composition GuardIso failed:\n{combined}"
+    );
+    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// S2a field-projection tamper: flipping the projected field index 0 -> 1 in
@@ -3510,7 +3673,7 @@ fn mutual_scc_kernel_guards_are_isolating() {
     lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3, 4]), (2, 1, [1, 2, 3, 4]), (3, 4, [1, 2, 3, 4]), (4, 3, [1, 2, 3, 4])] = false := rfl\n\n");
     // FIX B: the REAL acceptance conjunct rejects a dangling group; shape passes.
     lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := 2, code := fun _ => none,\n    host := fun _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
-    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], verbatimPlans := [], intDispatchPlans := [], obligations := [] }\n\n");
+    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], obligations := [] }\n\n");
     lean.push_str("def claimsS : List MutualRecursionClaim :=\n  [ { exportNameBytes := [], exportName := \"a\", carrier := 2, memberSet := [1, 2],\n      hostTable := [(.box, 7), (.sub, 9)], obligation := dummyOb \"a\" 1 } ]\n\n");
     lean.push_str("example : AverCert.PlanCheck.checkMutualPlanShape [1, 2] [(.box, 7), (.sub, 9)] honestPlan = true := rfl\n");
     lean.push_str("example : mutualClaimEdges manifestS claimsS = some [(1, 2, [1, 2])] := rfl\n");
