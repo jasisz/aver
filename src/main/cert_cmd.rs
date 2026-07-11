@@ -229,6 +229,10 @@ struct Candidates {
     /// binding (`obligations.length`, verified by `rfl`); the export NAMES the
     /// obligations are pinned to come from the bytes, not from here.
     names: Vec<String>,
+    /// Policy/witness claim axis decoded from JSON. The checker separately
+    /// pins these candidates to the Lean manifest and to byte re-derivation.
+    policies: Vec<cert::CertificationPolicy>,
+    termination_witnesses: Vec<Option<cert::TerminationWitness>>,
     /// Runtime contracts as CLAIMED by the JSON. Used only for the witness
     /// binding against the proven manifest; the final byte-binding and report
     /// use the byte-derived list.
@@ -348,21 +352,97 @@ fn read_candidates(m: &Value) -> Result<Candidates, String> {
     // obligations are actually pinned to are re-derived from the module's
     // export section (see the witness), so a producer cannot relabel a
     // byte-bound body under a different export name.
-    let names = m
+    let certified = m
         .get("certified")
         .and_then(Value::as_array)
-        .ok_or_else(|| "cert-manifest.json is missing array field `certified`".to_string())?
-        .iter()
-        .map(|c| {
-            c.get("name")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .ok_or_else(|| {
-                    "cert-manifest.json `certified[]` entry is missing string field `name`"
-                        .to_string()
+        .ok_or_else(|| "cert-manifest.json is missing array field `certified`".to_string())?;
+    let mut names = Vec::with_capacity(certified.len());
+    let mut policies = Vec::with_capacity(certified.len());
+    let mut termination_witnesses = Vec::with_capacity(certified.len());
+    for c in certified {
+        let name = c
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                "cert-manifest.json `certified[]` entry is missing string field `name`".to_string()
+            })?
+            .to_string();
+        let policy = match c.get("policy").and_then(Value::as_str) {
+            Some("simulatesModel") => cert::CertificationPolicy::SimulatesModel,
+            Some("simulatesModelTotally") => cert::CertificationPolicy::SimulatesModelTotally,
+            Some(other) => {
+                return Err(format!(
+                    "cert-manifest.json certified export `{name}` uses unsupported policy `{other}`"
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "cert-manifest.json certified export `{name}` is missing string field `policy`"
+                ));
+            }
+        };
+        let termination_witness = match c.get("termination_witness") {
+            None => None,
+            Some(witness) => {
+                let measure = witness
+                    .get("measure")
+                    .and_then(Value::as_object)
+                    .ok_or_else(|| {
+                        format!(
+                            "cert-manifest.json certified export `{name}` has malformed termination witness measure"
+                        )
+                    })?;
+                let kind = measure.get("kind").and_then(Value::as_str).ok_or_else(|| {
+                    format!(
+                        "cert-manifest.json certified export `{name}` has no termination measure kind"
+                    )
+                })?;
+                if kind != "intNatAbs" {
+                    return Err(format!(
+                        "cert-manifest.json certified export `{name}` uses unsupported termination measure `{kind}`; schema 47 admits only `intNatAbs`"
+                    ));
+                }
+                let param_idx = measure
+                    .get("param_index")
+                    .and_then(Value::as_u64)
+                    .and_then(|n| u32::try_from(n).ok())
+                    .ok_or_else(|| {
+                        format!(
+                            "cert-manifest.json certified export `{name}` has invalid intNatAbs parameter index"
+                        )
+                    })?;
+                let descent = witness
+                    .get("descent")
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| {
+                        format!(
+                            "cert-manifest.json certified export `{name}` has invalid termination descent"
+                        )
+                    })?;
+                Some(cert::TerminationWitness {
+                    measure: cert::TerminationMeasure::IntNatAbs { param_idx },
+                    descent,
                 })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+            }
+        };
+        match (policy, termination_witness) {
+            (cert::CertificationPolicy::SimulatesModel, None)
+            | (cert::CertificationPolicy::SimulatesModelTotally, Some(_)) => {}
+            (cert::CertificationPolicy::SimulatesModel, Some(_)) => {
+                return Err(format!(
+                    "cert-manifest.json partial export `{name}` must not carry a termination witness"
+                ));
+            }
+            (cert::CertificationPolicy::SimulatesModelTotally, None) => {
+                return Err(format!(
+                    "cert-manifest.json total export `{name}` is missing `termination_witness`"
+                ));
+            }
+        }
+        names.push(name);
+        policies.push(policy);
+        termination_witnesses.push(termination_witness);
+    }
 
     let contracts = m
         .get("runtime_contracts")
@@ -378,6 +458,8 @@ fn read_candidates(m: &Value) -> Result<Candidates, String> {
 
     let cands = Candidates {
         names,
+        policies,
+        termination_witnesses,
         contracts,
         profile,
         abi,
@@ -396,12 +478,22 @@ fn read_candidates(m: &Value) -> Result<Candidates, String> {
 fn verify(artifact: &Path, cert_dir: &Path) -> Result<Verdict, String> {
     let report = trusted_check(artifact, cert_dir)?;
     let n = report.exports.len();
+    let has_total = report
+        .exports
+        .iter()
+        .any(|e| e.policy == "simulatesModelTotally");
+    let has_partial = report.exports.iter().any(|e| e.policy == "simulatesModel");
+    let level = match (has_partial, has_total) {
+        (true, true) => "mixed L1/L3",
+        (false, true) => "L3",
+        _ => "L1",
+    };
     let summary = format!(
         "{} ({} certified export{}, level {})",
         artifact.display(),
         n,
         if n == 1 { "" } else { "s" },
-        cert::CERT_LEVEL,
+        level,
     );
     if n == 0 {
         Ok(Verdict::NoExports(summary))
@@ -409,7 +501,7 @@ fn verify(artifact: &Path, cert_dir: &Path) -> Result<Verdict, String> {
         let faces = report
             .exports
             .iter()
-            .map(|e| format!("{}  {}", e.name, e.face))
+            .map(|e| format!("{}  policy: {}  {}", e.name, e.policy, e.face))
             .collect();
         Ok(Verdict::Certified { summary, faces })
     }
@@ -674,7 +766,7 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
                 .map(display_safe);
             CertifiedExport {
                 name: r.name.clone(),
-                policy: "simulatesModel".to_string(),
+                policy: r.policy.manifest_name().to_string(),
                 face: if r.string_eq_plan_lean.is_some() {
                     "class: verbatim string equality match  |  Dom: WVal  Cod: WVal  codRepr: verbatimRepr  (model is a read declaration; behaviour pinned by an interpreter tripwire)"
                         .to_string()
@@ -722,6 +814,8 @@ fn merge_runtime_contracts(legacy: Vec<String>, sidecar: Vec<String>) -> Vec<Str
         cert::INT_SUB_CONTRACT,
         cert::STRING_EQ_CONTRACT,
         cert::STRING_CONCAT_CONTRACT,
+        cert::INT_ADD_TOTAL_CONTRACT,
+        cert::INT_SUB_TOTAL_CONTRACT,
     ];
     canonical
         .iter()
@@ -2078,7 +2172,7 @@ fn lean_expr_fragment_artifact_claims(
                 carrier = r.carrier,
             ));
             recursion_proofs.push(format!(
-                "⟨rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
+                "⟨rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
                  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
             ));
             continue;
@@ -2867,6 +2961,45 @@ fn checker_witness(
     let hosts = lean_expr_list(rederived.iter().map(|r| r.host.as_str()));
     let selfs = lean_nat_list(rederived.iter().map(|r| r.self_idx));
     let carriers = lean_nat_list(rederived.iter().map(|r| r.carrier));
+    let json_policies = format!(
+        "[{}]",
+        cands
+            .policies
+            .iter()
+            .map(|p| p.lean_value())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let byte_policies = format!(
+        "[{}]",
+        rederived
+            .iter()
+            .map(|r| r.policy.lean_value())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let render_termination = |witness: Option<cert::TerminationWitness>| match witness {
+        Some(w) => format!("some {}", w.lean_value()),
+        None => "none".to_string(),
+    };
+    let json_terminations = format!(
+        "[{}]",
+        cands
+            .termination_witnesses
+            .iter()
+            .copied()
+            .map(render_termination)
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let byte_terminations = format!(
+        "[{}]",
+        rederived
+            .iter()
+            .map(|r| render_termination(r.termination_witness))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     let expr_fragment_plans = lean_expr_fragment_plan_pairs(rederived);
     let sym_fragment_plans = lean_sym_fragment_plan_pairs(rederived);
     let string_eq_plans = lean_string_eq_plan_pairs(rederived);
@@ -2937,6 +3070,14 @@ fn checker_witness(
          -- declined; the final report uses only the byte-derived list.\n\
          example : AverCert.manifest.subject.contracts = {json_contracts} := rfl\n\
          example : AverCert.manifest.subject.contracts = {byte_contracts} := rfl\n\
+         -- Policy/witness axis: JSON is only a candidate; both lists must also
+         -- equal the policy and termination witness independently re-derived
+         -- from the byte-classified family. The witness remains outside every
+         -- plan hash.
+         example : AverCert.manifest.obligations.map (fun o => o.policy) = {json_policies} := rfl\n\
+         example : AverCert.manifest.obligations.map (fun o => o.policy) = {byte_policies} := rfl\n\
+         example : AverCert.manifest.obligations.map (fun o => o.termination?) = {json_terminations} := rfl\n\
+         example : AverCert.manifest.obligations.map (fun o => o.termination?) = {byte_terminations} := rfl\n\
          example : AverCert.manifest.subject.profile = \"{profile}\" := rfl\n\
          example : AverCert.manifest.subject.abi = \"{abi}\" := rfl\n\
          example : AverCert.manifest.subject.artifactRoot = \"{artifact_root}\" := rfl\n\n\
@@ -3230,12 +3371,19 @@ fn explain(artifact: &Path, cert_dir: &Path) -> Result<(), String> {
         println!("  {ARTIFACT_DECODE_LINE}");
     }
     for e in &report.exports {
-        println!("  {}  [{}]", e.name.cyan().bold(), cert::CERT_LEVEL);
+        let level = if e.policy == "simulatesModelTotally" {
+            "L3"
+        } else {
+            "L1"
+        };
+        println!("  {}  [{}]", e.name.cyan().bold(), level);
         println!("    {}", e.face);
-        println!(
-            "    policy: {} (emitted body simulates its model under the named contracts)",
-            e.policy
-        );
+        let policy_note = if e.policy == "simulatesModelTotally" {
+            "emitted body returns a represented model result at checked measure fuel, conditional on the named contracts"
+        } else {
+            "emitted body partially simulates its model under the named contracts"
+        };
+        println!("    policy: {} ({policy_note})", e.policy);
         if report.contracts.is_empty() {
             println!("    runtime-contracts: (none)");
         } else {

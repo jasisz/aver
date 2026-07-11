@@ -119,6 +119,7 @@ theorem {name}_base (n acc : Int) (hn : n ≤ 0) : {name} n acc = acc := by
                 rw [{name}_step n acc hn0, ← hrun]
                 exact ih (n - 1) (acc + n) vd va vr hrd hra hrec"#
         ),
+        total: String::new(),
         faithful_concl: format!(
             r#"    ∀ (fuel : Nat) (n acc : Int) (vn vacc w : WVal), Repr n vn → Repr acc vacc →
       wFuncN {name}Code ({name}Host add sub) fuel {self_idx} [vn, vacc] = some w →

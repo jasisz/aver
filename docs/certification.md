@@ -161,11 +161,21 @@ Parameterized List construction uses the same plan-backed constructor bridge as 
 | level | meaning |
 |---|---|
 | L0 | source-level verification only; no artifact claim |
-| **L1 (current)** | artifact claim, conditional on the named runtime contracts in the manifest |
+| L1 | partial-correctness artifact claim, conditional on the named runtime contracts in the manifest |
 | L2 | runtime contracts themselves proven against the shipped helper bodies |
-| L3 | additionally totality/resource bounds ("bounded total correctness on valid inputs") |
+| **L3 (current for promoted exports)** | total correctness: a represented valid input returns a represented model result at the fuel selected by a checked measure witness |
+| Future | resource bounds (not claimed by L3) |
 
 The manifest always declares its level. A certificate never silently claims more than its level supports.
+
+For the current L3 descent-by-one family, the checked witness is `Int.natAbs`
+of the recursive input and the total theorem runs the byte-pinned body with
+`n.natAbs + 1` fuel. “Total” here means that this run returns a value related to
+the source model, rather than only describing a value if execution happens to
+return. The statement remains conditional on the named `hAddTot` and `hSubTot`
+host contracts: `Int.add` and `Int.sub` must themselves be total on represented
+values. Those helper bodies are still assumed at L3; proving them is the L2
+ratchet. L3 makes no time, memory, or other resource-bound claim.
 
 ## Honest limits (v0)
 

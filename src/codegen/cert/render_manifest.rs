@@ -211,7 +211,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
         ),
         _ => format!(
             "abbrev {name}Ob : Schema.Obligation :=\n  \
-             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             {{ export_ := \"{name}\", policy := {policy}, termination? := {termination}, carrier := {carrier},\n    \
              code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
              Dom := List Int, Cod := Int,\n    \
              domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = {arity},\n    \
@@ -222,6 +222,11 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
             self_idx = c.self_idx(),
             model = c.model_expr(),
             arity = c.arity(),
+            policy = c.policy().lean_value(),
+            termination = c
+                .termination_witness()
+                .map(|w| format!("some {}", w.lean_value()))
+                .unwrap_or_else(|| "none".to_string()),
         ),
     }
 }
@@ -512,7 +517,14 @@ fn render_final(analysis: &Analysis) -> String {
         let arms = analysis
             .certs
             .iter()
-            .map(|c| format!("exact ⟨rfl, CertProofs.{}_simulates⟩", c.name()))
+            .map(|c| {
+                let theorem = if c.policy() == CertificationPolicy::SimulatesModelTotally {
+                    "simulates_total"
+                } else {
+                    "simulates"
+                };
+                format!("exact CertProofs.{}_{theorem}", c.name())
+            })
             .collect::<Vec<_>>()
             .join("\n    | ");
         s.push_str(&format!("  all_goals\n    first\n    | {arms}\n"));
@@ -572,11 +584,24 @@ fn render_manifest(
     hashes: &ManifestHashes<'_>,
 ) -> String {
     let mut s = String::new();
+    let has_total = analysis
+        .certs
+        .iter()
+        .any(|c| c.policy() == CertificationPolicy::SimulatesModelTotally);
+    let has_partial = analysis
+        .certs
+        .iter()
+        .any(|c| c.policy() == CertificationPolicy::SimulatesModel);
+    let artifact_level = match (has_partial, has_total) {
+        (true, true) => "mixed L1/L3",
+        (false, true) => "L3",
+        _ => CERT_LEVEL,
+    };
     s.push_str("{\n");
     s.push_str(&format!("  \"schema_version\": {CERT_SCHEMA_VERSION},\n"));
     s.push_str(&format!("  \"wasm\": \"{wasm_name}.wasm\",\n"));
     s.push_str(&format!("  \"wasm_sha256\": \"{sha}\",\n"));
-    s.push_str(&format!("  \"level\": \"{CERT_LEVEL}\",\n"));
+    s.push_str(&format!("  \"level\": \"{artifact_level}\",\n"));
     s.push_str(&format!("  \"profile\": \"{PROFILE_ID}\",\n"));
     s.push_str(&format!("  \"abi\": \"{RUNTIME_ABI}\",\n"));
     s.push_str(&format!("  \"final_theorem\": \"{FINAL_THEOREM}\",\n"));
@@ -741,17 +766,34 @@ fn render_manifest(
             }
             _ => String::new(),
         };
+        let policy = c.policy();
+        let termination_json = match c.termination_witness() {
+            Some(TerminationWitness {
+                measure: TerminationMeasure::IntNatAbs { param_idx },
+                descent,
+            }) => format!(
+                ", \"termination_witness\": {{\"measure\": {{\"kind\": \"intNatAbs\", \"param_index\": {param_idx}}}, \"descent\": {descent}}}"
+            ),
+            None => String::new(),
+        };
+        let theorem_suffix = if policy == CertificationPolicy::SimulatesModelTotally {
+            "wasm_total"
+        } else {
+            "wasm_certified"
+        };
         s.push_str(&format!(
-            "\n    {{\"name\": {}, \"class\": \"{}\", \"policy\": \"simulatesModel\", \
+            "\n    {{\"name\": {}, \"class\": \"{}\", \"policy\": \"{}\", \
              \"level\": \"{}\", \"dom\": {}, \"cod\": {}, \
-             \"theorem\": \"CertProofs.{}_wasm_certified\"{}}}",
+             \"theorem\": \"CertProofs.{}_{theorem_suffix}\"{}{}}}",
             json_str(c.name()),
             kind,
-            CERT_LEVEL,
+            policy.manifest_name(),
+            policy.level(),
             json_str(&dom),
             json_str(&cod),
             c.name(),
-            fragment_json
+            termination_json,
+            fragment_json,
         ));
     }
     if !analysis.certs.is_empty() {

@@ -10,8 +10,8 @@ import SchemaCore
 namespace AverCert.Schema
 
 /-- The single audited certificate proposition: the manifest's pinned hash is
-    the module hash, and every certified export carries `simulatesModel` and
-    genuinely simulates its model. -/
+    the module hash, and every certified export satisfies the partial or total
+    model-simulation denotation selected by its policy. -/
 def Holds (m : Manifest) : Prop :=
   m.subject.artifactHash = CertModule.wasmSha256 ∧ HoldsCore m
 

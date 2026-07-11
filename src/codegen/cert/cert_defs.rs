@@ -1,3 +1,62 @@
+/// Policy presets carried by the Rust manifest schema and independently
+/// re-derived by `aver cert verify` from the classified artifact bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CertificationPolicy {
+    SimulatesModel,
+    SimulatesModelTotally,
+}
+
+impl CertificationPolicy {
+    pub fn manifest_name(self) -> &'static str {
+        match self {
+            Self::SimulatesModel => "simulatesModel",
+            Self::SimulatesModelTotally => "simulatesModelTotally",
+        }
+    }
+
+    pub fn lean_value(self) -> &'static str {
+        match self {
+            Self::SimulatesModel => ".simulatesModel",
+            Self::SimulatesModelTotally => ".simulatesModelTotally",
+        }
+    }
+
+    pub fn level(self) -> &'static str {
+        match self {
+            Self::SimulatesModel => "L1",
+            Self::SimulatesModelTotally => "L3",
+        }
+    }
+}
+
+/// Closed v47 measure vocabulary. New variants require a schema bump and a
+/// corresponding in-kernel `checkTerm` branch; unknown JSON measures never
+/// fall back to this one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminationMeasure {
+    IntNatAbs { param_idx: u32 },
+}
+
+/// Claim-axis termination data. It is deliberately absent from recursion
+/// plans and their hashes: the verifier re-derives this value from the admitted
+/// recursion family and pins it separately on the obligation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminationWitness {
+    pub measure: TerminationMeasure,
+    pub descent: i64,
+}
+
+impl TerminationWitness {
+    pub fn lean_value(self) -> String {
+        match self.measure {
+            TerminationMeasure::IntNatAbs { param_idx } => format!(
+                "({{ measure := .intNatAbs {param_idx}, descent := ({}) }} : AverCert.Schema.TerminationWitness)",
+                self.descent
+            ),
+        }
+    }
+}
+
 /// A certified function and the template holes extracted from its body.
 enum Cert {
     /// Generic non-recursive certificate. The inner shape still carries the

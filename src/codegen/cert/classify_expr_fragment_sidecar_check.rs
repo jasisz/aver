@@ -65,6 +65,8 @@ pub fn check_expr_fragment_plan_sidecar(
         host: render_host_value(&cert),
         self_idx: cert.self_idx(),
         carrier: cert.carrier(),
+        policy: CertificationPolicy::SimulatesModel,
+        termination_witness: None,
         face: ObligationFace::of_cert(&cert),
         fragment_code_idx: match cert.inner() {
             Cert::ExprFragment { code_idx, .. } => Some(*code_idx),
@@ -222,6 +224,8 @@ pub fn check_sym_fragment_plan_sidecar(
         host: render_host_value(&cert),
         self_idx: cert.self_idx(),
         carrier: cert.carrier(),
+        policy: CertificationPolicy::SimulatesModel,
+        termination_witness: None,
         face: ObligationFace::of_cert(&cert),
         fragment_code_idx: match cert.inner() {
             Cert::ExprFragment { code_idx, .. } => Some(*code_idx),

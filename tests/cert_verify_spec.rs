@@ -1171,7 +1171,8 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         assert!(!out.contains("CERTIFIED"), "relabel credited (u):\n{out}");
     }
 
-    // (v) M1 semantic-face vacuity — `Dom := Empty`. Empty the sumTo obligation's
+    // (v) M1 semantic-face vacuity — `Dom := Empty`. Empty the still-partial
+    //     countDown obligation's
     //     domain so `holds` quantifies over no inhabitant, and swap in a vacuous
     //     `ns.elim` proof. It builds green AND passes the code/host/self/carrier
     //     bindings, but the witness proves `Nonempty o.Dom` over every obligation
@@ -1181,12 +1182,15 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         copy_dir(&out_dir, &dir);
         let man = dir.join("cert").join("Manifest.lean");
         let msrc = std::fs::read_to_string(&man).unwrap();
-        let edited = msrc.replacen(SUMTO_FACE, SUMTO_FACE_EMPTY_DOM, 1);
-        assert_ne!(msrc, edited, "sumToOb face shape changed; update the test");
+        let edited = msrc.replacen(COUNTDOWN_FACE, COUNTDOWN_FACE_EMPTY_DOM, 1);
+        assert_ne!(
+            msrc, edited,
+            "countDownOb face shape changed; update the test"
+        );
         std::fs::write(&man, edited).unwrap();
-        replace_simulates(
+        replace_countdown_simulates(
             &dir.join("cert"),
-            "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
+            "theorem countDown_simulates : AverCert.Schema.Obligation.holds countDownOb := by\n  \
              intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun\n  \
              exact ns.elim",
         );
@@ -1214,12 +1218,15 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         copy_dir(&out_dir, &dir);
         let man = dir.join("cert").join("Manifest.lean");
         let msrc = std::fs::read_to_string(&man).unwrap();
-        let edited = msrc.replacen(SUMTO_FACE, SUMTO_FACE_TRUE_CODREPR, 1);
-        assert_ne!(msrc, edited, "sumToOb face shape changed; update the test");
+        let edited = msrc.replacen(COUNTDOWN_FACE, COUNTDOWN_FACE_TRUE_CODREPR, 1);
+        assert_ne!(
+            msrc, edited,
+            "countDownOb face shape changed; update the test"
+        );
         std::fs::write(&man, edited).unwrap();
-        replace_simulates(
+        replace_countdown_simulates(
             &dir.join("cert"),
-            "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
+            "theorem countDown_simulates : AverCert.Schema.Obligation.holds countDownOb := by\n  \
              intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun\n  \
              trivial",
         );
@@ -1446,18 +1453,19 @@ fn big_nat_code_entry_pin_closes_at_130kb_and_flipped_byte_fails() {
     let _ = std::fs::remove_dir_all(out_dir);
 }
 
-/// The byte-honest sumTo obligation face emitted for certprobe2 (the standard
+/// The byte-honest, still-partial countDown obligation face emitted for
+/// certprobe2 (the standard
 /// integer-class form), and the two panel face-vacuity mutations of it.
-const SUMTO_FACE: &str = "Dom := List Int, Cod := Int,\n    \
-    domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = 1,\n    \
+const COUNTDOWN_FACE: &str = "Dom := List Int, Cod := Int,\n    \
+    domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = 2,\n    \
     codRepr := fun S n w => intRepr S n w,\n    \
-    model := fun ns => sumTo (ns.headD 0) }";
-const SUMTO_FACE_EMPTY_DOM: &str = "Dom := Empty, Cod := Int,\n    \
+    model := fun ns => countDown (ns.headD 0) ((ns.drop 1).headD 0) }";
+const COUNTDOWN_FACE_EMPTY_DOM: &str = "Dom := Empty, Cod := Int,\n    \
     domRepr := fun _ (e : Empty) _ => e.elim,\n    \
     codRepr := fun S n w => intRepr S n w,\n    \
     model := fun (e : Empty) => e.elim }";
-const SUMTO_FACE_TRUE_CODREPR: &str = "Dom := List Int, Cod := Int,\n    \
-    domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = 1,\n    \
+const COUNTDOWN_FACE_TRUE_CODREPR: &str = "Dom := List Int, Cod := Int,\n    \
+    domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = 2,\n    \
     codRepr := fun _ _ _ => True,\n    \
     model := fun _ => 999 }";
 
@@ -1507,6 +1515,39 @@ fn replace_simulates(cert_dir: &Path, replacement: &str) {
     assert!(
         src.contains(old),
         "emitted sumTo_simulates block shape changed; update the test"
+    );
+    std::fs::write(&c, src.replacen(old, replacement, 1)).unwrap();
+}
+
+/// Partial-obligation counterpart used by the semantic-face isolation probes.
+/// `sumTo` is L3 now, so vacuity probes stay on `countDown` to reach the
+/// verifier's typed-face pins rather than failing the total denotation earlier.
+fn replace_countdown_simulates(cert_dir: &Path, replacement: &str) {
+    let c = cert_dir.join("Certificate.lean");
+    let src = std::fs::read_to_string(&c).unwrap();
+    let old = "theorem countDown_simulates : AverCert.Schema.Obligation.holds countDownOb := by\n  \
+        intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun\n  \
+        simp only [countDownOb, AverCert.Schema.Obligation.holds] at hrun ⊢\n  \
+        obtain ⟨hrepr, harity⟩ := hrepr\n  \
+        cases hrepr with\n  \
+        | nil =>\n      \
+        simp at harity\n  \
+        | cons hvn htail =>\n      \
+        rename_i n vn ns1 vs1\n      \
+        cases htail with\n      \
+        | nil =>\n          \
+        simp at harity\n      \
+        | cons hvacc htail2 =>\n          \
+        rename_i acc vacc ns2 vs2\n          \
+        cases htail2 with\n          \
+        | nil =>\n              \
+        simpa [AverCert.Schema.intRepr] using countDown_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim\n                \
+        add sub hadd hsub fuel n acc vn vacc w hvn hvacc hrun\n          \
+        | cons _ _ =>\n              \
+        simp at harity";
+    assert!(
+        src.contains(old),
+        "emitted countDown_simulates block shape changed; update the test"
     );
     std::fs::write(&c, src.replacen(old, replacement, 1)).unwrap();
 }
@@ -2351,7 +2392,8 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
         "stringeq should certify quoteOrSelf plus bump:\n{report}"
     );
     assert!(
-        report.contains("quoteOrSelf  class: verbatim string equality match"),
+        report
+            .contains("quoteOrSelf  policy: simulatesModel  class: verbatim string equality match"),
         "quoteOrSelf should report the byte-derived String.eq class:\n{report}"
     );
     let manifest: serde_json::Value = serde_json::from_str(
@@ -3273,7 +3315,7 @@ theorem unclaimedFinal : Schema.Holds unclaimedManifest := by
   rcases ho' with ho | rfl
   · exact Final.cert.2 o ho
   · have hadd := Final.cert.2 AverCert.addTwoOb (by simp [AverCert.manifest])
-    exact ⟨rfl, by simpa [unclaimedOb, Obligation.holds] using hadd.2⟩
+    simpa [unclaimedOb, Obligation.holds] using hadd
 
 example : AcceptedArtifact.manifestObligationsClaimed unclaimedArtifact = false := rfl
 example : AcceptedArtifact.manifestObligationExportsUnique unclaimedArtifact = true := rfl
@@ -3373,7 +3415,7 @@ theorem duplicateFinal : Schema.Holds duplicateManifest := by
   · exact Final.cert.2 o ho
   · simp only [List.mem_singleton] at ho
     subst o
-    exact ⟨rfl, duplicateObHolds⟩
+    exact duplicateObHolds
 
 def acceptedCompositionWithoutUniqueExports
     (artifact : AcceptedArtifact.ArtifactData) : Prop :=
@@ -4191,6 +4233,136 @@ fn cert_verify_declines_tampered_recursion_plan() {
     }
 
     let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// GuardIso for the L3 witness: hostile measure/descent claims keep the honest
+/// bytes and obligation bindings, fail exactly at `checkTerm`, and are accepted
+/// by a literal one-conjunct-weakened copy. Total policy without a witness also
+/// fails closed.
+#[test]
+fn recursion_termination_witness_guard_is_isolating() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping termination-witness GuardIso test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-recursion-termination-guard-iso");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/recgen.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile recgen fixture for termination-witness GuardIso");
+    assert!(
+        compile.status.success(),
+        "recgen compile failed for termination-witness GuardIso:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let cert = out_dir.join("cert");
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build recgen certificate before termination-witness GuardIso");
+    assert!(
+        build.status.success(),
+        "recgen certificate failed before termination-witness GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    std::fs::write(
+        cert.join("GuardIso.lean"),
+        include_str!("fixtures/cert_termination_guard_iso.lean"),
+    )
+    .unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("GuardIso.lean")
+        .output()
+        .expect("run termination-witness GuardIso");
+    assert!(
+        check.status.success(),
+        "termination-witness GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// The JSON policy/witness is only a candidate: supported-but-wrong data must
+/// disagree with verifier byte re-derivation in the checker-authored Lean
+/// witness, while an unknown measure or missing total witness declines during
+/// strict manifest decoding.
+#[test]
+fn cert_verify_declines_tampered_termination_manifest() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping termination manifest round-trip test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-termination-manifest-roundtrip");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/recgen.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile recgen fixture for termination manifest round-trip");
+    assert!(compile.status.success());
+    let wasm = out_dir.join("recgen.wasm");
+    let cert = out_dir.join("cert");
+    let (ok, report) = aver_verify(&wasm, &cert);
+    assert!(ok, "honest totality manifest should verify:\n{report}");
+
+    for (label, mutate, expected) in [
+        ("wrong descent", 0_u8, "does not bind"),
+        ("unknown measure", 1_u8, "unsupported termination measure"),
+        ("missing witness", 2_u8, "is missing `termination_witness`"),
+    ] {
+        let dir = temp_dir("cert-termination-manifest-tamper");
+        copy_dir(&out_dir, &dir);
+        let path = dir.join("cert/cert-manifest.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let entry = manifest["certified"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|entry| entry["name"] == "sumFrom")
+            .unwrap();
+        match mutate {
+            0 => entry["termination_witness"]["descent"] = serde_json::json!(1),
+            1 => entry["termination_witness"]["measure"]["kind"] = serde_json::json!("lex"),
+            2 => {
+                entry.as_object_mut().unwrap().remove("termination_witness");
+            }
+            _ => unreachable!(),
+        }
+        std::fs::write(&path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+        let (ok, report) = aver_verify(&dir.join("recgen.wasm"), &dir.join("cert"));
+        assert!(
+            !ok,
+            "{label}: hostile totality manifest verified:\n{report}"
+        );
+        assert!(
+            report.contains(expected),
+            "{label}: wrong decline reason, expected `{expected}`:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// A tampered byte-first `mutual-plan-v1` plan is declined. Each vector mutates
