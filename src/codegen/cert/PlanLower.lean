@@ -11,6 +11,14 @@ namespace AverCert.PlanLower
 open AverCert.Schema
 open CertPrelude
 
+def lowerFieldProjectionBody
+    (structIdx fieldCount : Nat) (plan : FieldProjectionRawPlan) :
+    Option (List WInstr) :=
+  if AverCert.PlanCheck.checkFieldProjectionRawPlan fieldCount plan then
+    some [.localGet 0, .localSet 2, .localGet 2, .refCast structIdx,
+          .structGet structIdx plan.fieldIdx, .localSet 1, .localGet 1]
+  else none
+
 def primInstr : FragPrim → WInstr
   | .f64Add => .f64Add
   | .f64Mul => .f64Mul

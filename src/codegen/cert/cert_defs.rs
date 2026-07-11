@@ -80,10 +80,15 @@ enum Cert {
     FieldProjection {
         name: String,
         self_idx: u32,
+        code_idx: u32,
+        type_idx: u32,
         nlocals: usize,
         carrier: u32,
         struct_idx: u32,
+        field_count: u32,
         field_idx: u32,
+        result_ty: TyKind,
+        code_entry_bytes: Vec<u8>,
         ops: Vec<Op>,
     },
     /// Non-recursive two-branch "widened" match projecting one integer-payload

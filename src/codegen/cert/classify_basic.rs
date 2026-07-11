@@ -85,7 +85,12 @@ fn nr_adt_constructor(
     })
 }
 
-fn nr_field_projection(f: &UserFn, body: &StructuralBody, carrier: Option<u32>) -> Option<Cert> {
+fn nr_field_projection(
+    f: &UserFn,
+    body: &StructuralBody,
+    carrier: Option<u32>,
+    struct_field_counts: &std::collections::HashMap<u32, u32>,
+) -> Option<Cert> {
     use Op::*;
     if has_branch(&body.tree) || !f.calls.is_empty() {
         return None;
@@ -106,13 +111,20 @@ fn nr_field_projection(f: &UserFn, body: &StructuralBody, carrier: Option<u32>) 
     if struct_idx == carrier || field_idx > 1 {
         return None;
     }
+    let field_count = *struct_field_counts.get(&struct_idx)?;
+    let result_ty = f.result?;
     Some(Cert::FieldProjection {
         name: f.name.clone(),
         self_idx: f.wasm_idx,
+        code_idx: f.code_idx,
+        type_idx: f.type_idx,
         nlocals: f.nlocals,
         carrier,
         struct_idx,
+        field_count,
         field_idx,
+        result_ty,
+        code_entry_bytes: f.code_entry_bytes.clone(),
         ops: strip_trailing_end(&f.ops).to_vec(),
     })
 }

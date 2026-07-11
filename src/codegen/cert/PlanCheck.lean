@@ -9,6 +9,15 @@ import SchemaCore
 namespace AverCert.PlanCheck
 open AverCert.Schema
 
+/-- Dedicated bare-projection structural guard. The byte-derived field count is
+    an argument rather than plan data, so the only plan claim (`fieldIdx`) must
+    be in range for the module's actual struct. -/
+def checkFieldProjectionRawPlan
+    (fieldCount : Nat) (plan : FieldProjectionRawPlan) : Bool :=
+  plan.profile = "field-projection-v1" &&
+    fieldCount = 2 &&
+    plan.fieldIdx < fieldCount
+
 def sameTy (a b : FragTy) : Bool :=
   if a = b then true else false
 

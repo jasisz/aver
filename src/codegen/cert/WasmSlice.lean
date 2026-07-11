@@ -5,6 +5,7 @@
 -- binding: header, import function count, function section type index, export
 -- section and code section.
 -- Unsupported import kinds decline.
+import SchemaCore
 
 namespace AverCert.WasmSlice
 
@@ -334,6 +335,82 @@ def checkVerbatimFuncType (resultHeapTy : Nat) (bytes : ByteSeq) : Bool :=
     domain and the plan's result heap type without trusting any of them. -/
 def verbatimFuncTypeMatches (wasmBytes : ByteSeq) (typeIdx resultHeapTy : Nat) : Bool :=
   typeSectionMatches (checkVerbatimFuncType resultHeapTy) wasmBytes typeIdx
+
+/-! ### Bare field-projection type binding -/
+
+def readProjectionResultTy
+    (expected : AverCert.Schema.FieldProjectionResultTy) : ByteSeq → Option ByteSeq
+  | 0x6d :: rest =>
+      if expected = .eqref then some rest else none
+  | 0x63 :: rest =>
+      match expected, readS33 rest with
+      | .nullableRef expectedIdx, some (actualIdx, tail) =>
+          if actualIdx = Int.ofNat expectedIdx then some tail else none
+      | _, _ => none
+  | _ => none
+
+def readProjectionField
+    (selected current : Nat)
+    (expected : AverCert.Schema.FieldProjectionResultTy)
+    (bytes : ByteSeq) : Option ByteSeq :=
+  let storage? :=
+    if current = selected then readProjectionResultTy expected bytes
+    else skipValType bytes
+  match storage? with
+  | some (mutability :: rest) =>
+      if mutability = 0x00 ∨ mutability = 0x01 then some rest else none
+  | _ => none
+
+def readProjectionFieldsFuel
+    (selected : Nat) (expected : AverCert.Schema.FieldProjectionResultTy) :
+    Nat → Nat → Nat → ByteSeq → Option ByteSeq
+  | 0, _, _, _ => none
+  | _fuel + 1, 0, _current, bytes => some bytes
+  | fuel + 1, remaining + 1, current, bytes =>
+      match readProjectionField selected current expected bytes with
+      | some rest => readProjectionFieldsFuel selected expected fuel remaining (current + 1) rest
+      | none => none
+
+def checkProjectionStructType
+    (fieldCount fieldIdx : Nat)
+    (resultTy : AverCert.Schema.FieldProjectionResultTy) : ByteSeq → Bool
+  | 0x5f :: rest =>
+      match readUleb32 rest with
+      | some (actualCount, fields) =>
+          actualCount = fieldCount && fieldIdx < actualCount &&
+            (readProjectionFieldsFuel fieldIdx resultTy
+              (actualCount + 1) actualCount 0 fields).isSome
+      | none => false
+  | _ => false
+
+def projectionStructTypeMatches
+    (wasmBytes : ByteSeq) (structIdx fieldCount fieldIdx : Nat)
+    (resultTy : AverCert.Schema.FieldProjectionResultTy) : Bool :=
+  typeSectionMatches
+    (checkProjectionStructType fieldCount fieldIdx resultTy)
+    wasmBytes structIdx
+
+def checkProjectionFuncType
+    (structIdx : Nat)
+    (resultTy : AverCert.Schema.FieldProjectionResultTy) : ByteSeq → Bool
+  | 0x60 :: rest =>
+      match readUleb32 rest with
+      | some (1, 0x63 :: paramTail) =>
+          match readS33 paramTail with
+          | some (paramIdx, resultCountBytes) =>
+              if paramIdx = Int.ofNat structIdx then
+                match readUleb32 resultCountBytes with
+                | some (1, resultBytes) => (readProjectionResultTy resultTy resultBytes).isSome
+                | _ => false
+              else false
+          | none => false
+      | _ => false
+  | _ => false
+
+def projectionFuncTypeMatches
+    (wasmBytes : ByteSeq) (typeIdx structIdx : Nat)
+    (resultTy : AverCert.Schema.FieldProjectionResultTy) : Bool :=
+  typeSectionMatches (checkProjectionFuncType structIdx resultTy) wasmBytes typeIdx
 
 /-! ### Passive data-section navigation
 

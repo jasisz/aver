@@ -434,6 +434,20 @@ fn render_manifest_lean(
         })
         .collect::<Vec<_>>()
         .join(", ");
+    let field_projection_plans = analysis
+        .certs
+        .iter()
+        .filter_map(|c| {
+            field_projection_plan_from_cert(c).map(|_| {
+                format!(
+                    "({}, Plans.{}FieldProjectionPlan)",
+                    lean_str(c.name()),
+                    c.name()
+                )
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     s.push_str(&format!(
         "def manifest : Schema.Manifest :=\n  \
          {{ subject :=\n      \
@@ -453,6 +467,7 @@ fn render_manifest_lean(
          compositionPlans := [{composition_plans}],\n    \
          verbatimPlans := [{verbatim_plans}],\n    \
          intDispatchPlans := [{int_dispatch_plans}],\n    \
+         fieldProjectionPlans := [{field_projection_plans}],\n    \
          obligations := [{obligations}] }}\n\n\
          end AverCert\n",
     ));
@@ -804,6 +819,9 @@ fn artifact_bridge_profile(
             if adt_constructor_sym_plan_from_cert(c, model_info).is_some()
                 && construct_plan_from_cert(c).is_some() =>
         {
+            "accepted-artifact-v1"
+        }
+        Cert::FieldProjection { .. } if field_projection_plan_from_cert(c).is_some() => {
             "accepted-artifact-v1"
         }
         _ => "legacy-witness-v1",

@@ -256,6 +256,23 @@ structure CompositionRawPlan where
   shape   : CompositionShape
 deriving Repr, DecidableEq
 
+/-- Selected result-reference shape for a bare tuple/record field projection.
+    This is claim context recovered from the module's function signature and
+    checked against the selected struct field; it is never plan-selected. -/
+inductive FieldProjectionResultTy where
+  | eqref
+  | nullableRef (typeIdx : Nat)
+deriving Repr, DecidableEq
+
+/-- Raw byte-origin veneer for the bare tuple-destructuring projection family.
+    The projected field index is the only plan datum. Struct identity/count,
+    selected result-reference type, carrier and function binding are supplied
+    separately from validated module bytes and checked by artifact acceptance. -/
+structure FieldProjectionRawPlan where
+  profile  : String
+  fieldIdx : Nat
+deriving Repr, DecidableEq
+
 /-- One terminal leaf of a verbatim `ref.test`-dispatch arm (`verbatim-plan-v1`).
     `Cod := WVal`; each leaf is a byte-derived constant or a single-variant
     projection. The concrete wasm type/data indices are node data bound to the
@@ -501,6 +518,7 @@ structure Manifest where
   compositionPlans : List (String × CompositionRawPlan)
   verbatimPlans : List (String × VerbatimRawPlan)
   intDispatchPlans : List (String × IntDispatchRawPlan)
+  fieldProjectionPlans : List (String × FieldProjectionRawPlan)
   obligations : List Obligation
 
 /-- The artifact-independent part of the audited certificate proposition:
