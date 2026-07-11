@@ -7,15 +7,17 @@ pub enum ConstructFieldPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConstructPlan {
     pub arity: usize,
-    pub struct_idx: u32,
     pub fields: Vec<ConstructFieldPlan>,
 }
 
 fn construct_plan_from_cert(c: &Cert) -> Option<ConstructPlan> {
     let Cert::AdtConstructor {
         arity,
+        nlocals,
         struct_idx,
+        field_count,
         fields,
+        ops,
         ..
     } = c.inner()
     else {
@@ -28,11 +30,24 @@ fn construct_plan_from_cert(c: &Cert) -> Option<ConstructPlan> {
             ConstructorField::Null => Some(ConstructFieldPlan::Null),
         })
         .collect::<Option<Vec<_>>>()?;
-    Some(ConstructPlan {
+    let plan = ConstructPlan {
         arity: *arity,
-        struct_idx: *struct_idx,
         fields,
-    })
+    };
+    if *nlocals != construct_plan_nlocals(&plan)
+        || *field_count as usize != plan.fields.len()
+        || check_construct_plan(&plan).is_err()
+        || lower_construct_plan(&plan, *struct_idx).ok().as_ref() != Some(ops)
+    {
+        return None;
+    }
+    Some(plan)
+}
+
+fn construct_plan_nlocals(_plan: &ConstructPlan) -> usize {
+    // `lower_construct_plan_body_bytes` declares one nullable carrier scratch
+    // local, independently of constructor arity/field count.
+    1
 }
 
 fn construct_plan_path(name: &str) -> String {
@@ -53,7 +68,6 @@ fn construct_plan_text(plan: &ConstructPlan) -> String {
     out.push_str("aver.construct-fragment.plan.v1\n");
     out.push_str("profile construct-v1\n");
     out.push_str(&format!("arity {}\n", plan.arity));
-    out.push_str(&format!("struct {}\n", plan.struct_idx));
     out.push_str("fields\n");
     for field in &plan.fields {
         match field {
@@ -69,9 +83,8 @@ fn construct_plan_text(plan: &ConstructPlan) -> String {
 
 fn construct_plan_lean_value(plan: &ConstructPlan) -> String {
     format!(
-        "({{ profile := \"construct-v1\", arity := {}, structIdx := {}, fields := [{}] }} : ConstructRawPlan)",
+        "({{ profile := \"construct-v1\", arity := {}, fields := [{}] }} : ConstructRawPlan)",
         plan.arity,
-        plan.struct_idx,
         plan.fields
             .iter()
             .map(construct_field_lean_value)
@@ -87,12 +100,28 @@ fn construct_field_lean_value(field: &ConstructFieldPlan) -> String {
     }
 }
 
+fn construct_val_type_lean_value(ty: TyKind) -> Option<String> {
+    match ty {
+        TyKind::I32 => Some(".i32".to_string()),
+        TyKind::I64 => Some(".i64".to_string()),
+        TyKind::F64 => Some(".f64".to_string()),
+        TyKind::Eqref => Some(".eqref".to_string()),
+        TyKind::Ref {
+            nullable: true,
+            idx,
+        } => Some(format!(".nullableRef {idx}")),
+        TyKind::Ref {
+            nullable: false, ..
+        }
+        | TyKind::Other => None,
+    }
+}
+
 pub fn parse_construct_plan(text: &str) -> Result<ConstructPlan, String> {
     let mut lines = text.lines();
     expect_construct_plan_line(&mut lines, "aver.construct-fragment.plan.v1")?;
     expect_construct_plan_line(&mut lines, "profile construct-v1")?;
     let arity = parse_construct_nat_line(&mut lines, "arity")? as usize;
-    let struct_idx = parse_construct_nat_line(&mut lines, "struct")?;
     expect_construct_plan_line(&mut lines, "fields")?;
     let mut fields = Vec::new();
     let mut seen_end = false;
@@ -123,35 +152,31 @@ pub fn parse_construct_plan(text: &str) -> Result<ConstructPlan, String> {
     }
     Ok(ConstructPlan {
         arity,
-        struct_idx,
         fields,
     })
 }
 
-fn lower_construct_plan(plan: &ConstructPlan) -> Result<Vec<Op>, String> {
+fn lower_construct_plan(plan: &ConstructPlan, struct_idx: u32) -> Result<Vec<Op>, String> {
     check_construct_plan(plan)?;
     let mut ops = Vec::new();
     for field in &plan.fields {
         match field {
             ConstructFieldPlan::Local(index) => ops.push(Op::LocalGet(*index)),
-            ConstructFieldPlan::Null => {
-                return Err(
-                    "construct-v1 byte lowering needs an explicit ref.null heap type".to_string(),
-                );
-            }
+            ConstructFieldPlan::Null => ops.push(Op::RefNull(Some(struct_idx))),
         }
     }
     let field_count = u32::try_from(plan.fields.len())
         .map_err(|_| "construct plan has too many fields".to_string())?;
-    ops.push(Op::StructNew(plan.struct_idx, field_count));
+    ops.push(Op::StructNew(struct_idx, field_count));
     Ok(ops)
 }
 
 fn lower_construct_plan_code_entry_bytes(
     plan: &ConstructPlan,
     carrier: u32,
+    struct_idx: u32,
 ) -> Result<Vec<u8>, String> {
-    let body = lower_construct_plan_body_bytes(plan, carrier)?;
+    let body = lower_construct_plan_body_bytes(plan, carrier, struct_idx)?;
     let body_len = u32::try_from(body.len())
         .map_err(|_| "construct body is too large to encode".to_string())?;
     let mut out = Vec::new();
@@ -163,6 +188,7 @@ fn lower_construct_plan_code_entry_bytes(
 fn lower_construct_plan_body_bytes(
     plan: &ConstructPlan,
     carrier: u32,
+    struct_idx: u32,
 ) -> Result<Vec<u8>, String> {
     check_construct_plan(plan)?;
     let mut out = Vec::new();
@@ -177,15 +203,14 @@ fn lower_construct_plan_body_bytes(
                 push_u32_leb(&mut out, *index);
             }
             ConstructFieldPlan::Null => {
-                return Err(
-                    "construct-v1 byte lowering needs an explicit ref.null heap type".to_string(),
-                );
+                out.push(0xd0);
+                push_s33_heap_idx(&mut out, struct_idx);
             }
         }
     }
     out.push(0xfb);
     push_u32_leb(&mut out, 0x00);
-    push_u32_leb(&mut out, plan.struct_idx);
+    push_u32_leb(&mut out, struct_idx);
     out.push(0x0b);
     Ok(out)
 }
@@ -210,11 +235,7 @@ fn check_construct_plan(plan: &ConstructPlan) -> Result<(), String> {
                 }
                 locals.push(index_usize);
             }
-            ConstructFieldPlan::Null => {
-                return Err(
-                    "construct-v1 byte lowering needs an explicit ref.null heap type".to_string(),
-                );
-            }
+            ConstructFieldPlan::Null => {}
         }
     }
     locals.sort_unstable();
@@ -270,18 +291,34 @@ mod construct_plan_tests {
     fn construct_plan_roundtrips_and_lowers() {
         let plan = ConstructPlan {
             arity: 1,
-            struct_idx: 7,
             fields: vec![ConstructFieldPlan::Local(0)],
         };
         let text = construct_plan_text(&plan);
         assert_eq!(parse_construct_plan(&text).unwrap(), plan);
         assert_eq!(
-            lower_construct_plan(&plan).unwrap(),
+            lower_construct_plan(&plan, 7).unwrap(),
             vec![Op::LocalGet(0), Op::StructNew(7, 1)]
         );
         assert_eq!(
-            lower_construct_plan_code_entry_bytes(&plan, 18).unwrap(),
+            lower_construct_plan_code_entry_bytes(&plan, 18, 7).unwrap(),
             vec![10, 1, 1, 99, 18, 32, 0, 251, 0, 7, 11]
         );
+    }
+
+    #[test]
+    fn list_singleton_null_tail_uses_byte_derived_struct_index() {
+        let plan = ConstructPlan {
+            arity: 1,
+            fields: vec![ConstructFieldPlan::Local(0), ConstructFieldPlan::Null],
+        };
+        assert_eq!(
+            lower_construct_plan(&plan, 25).unwrap(),
+            vec![
+                Op::LocalGet(0),
+                Op::RefNull(Some(25)),
+                Op::StructNew(25, 2),
+            ]
+        );
+        assert!(!construct_plan_text(&plan).contains("struct "));
     }
 }

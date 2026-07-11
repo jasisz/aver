@@ -646,25 +646,28 @@ def lowerStringEqCodeEntry
       | none => none
   | none => none
 
-def lowerConstructFieldBytes : ConstructField → Option (List Nat)
+def lowerConstructFieldBytes (structIdx : Nat) : ConstructField → Option (List Nat)
   | .local index =>
       match uleb32 index with
       | some indexBytes => some ([0x20] ++ indexBytes)
       | none => none
-  | .null => none
+  | .null =>
+      match s33HeapIdx structIdx with
+      | some idxBytes => some ([0xd0] ++ idxBytes)
+      | none => none
 
-def lowerConstructFieldsBytes : List ConstructField → Option (List Nat)
+def lowerConstructFieldsBytes (structIdx : Nat) : List ConstructField → Option (List Nat)
   | [] => some []
   | field :: rest =>
-      match lowerConstructFieldBytes field, lowerConstructFieldsBytes rest with
+      match lowerConstructFieldBytes structIdx field, lowerConstructFieldsBytes structIdx rest with
       | some fieldBytes, some restBytes => some (fieldBytes ++ restBytes)
       | _, _ => none
 
-def lowerConstructExprBytes (plan : ConstructRawPlan) : Option (List Nat) :=
+def lowerConstructExprBytes (structIdx : Nat) (plan : ConstructRawPlan) : Option (List Nat) :=
   if AverCert.PlanCheck.checkConstructRawPlan plan then
-    match lowerConstructFieldsBytes plan.fields,
+    match lowerConstructFieldsBytes structIdx plan.fields,
           uleb32 0x00,
-          uleb32 plan.structIdx with
+          uleb32 structIdx with
     | some fieldBytes, some structNewOpBytes, some structIdxBytes =>
         some (fieldBytes ++ [0xfb] ++ structNewOpBytes ++ structIdxBytes ++ [0x0b])
     | _, _, _ => none
@@ -673,17 +676,19 @@ def lowerConstructExprBytes (plan : ConstructRawPlan) : Option (List Nat) :=
 
 def lowerConstructBodyBytes
     (carrier : Nat)
+    (structIdx : Nat)
     (plan : ConstructRawPlan) : Option (List Nat) :=
   match uleb32 1, uleb32 1, s33HeapIdx carrier,
-        lowerConstructExprBytes plan with
+        lowerConstructExprBytes structIdx plan with
   | some localDeclCount, some localCount, some carrierBytes, some exprBytes =>
       some (localDeclCount ++ localCount ++ [0x63] ++ carrierBytes ++ exprBytes)
   | _, _, _, _ => none
 
 def lowerConstructCodeEntry
     (carrier : Nat)
+    (structIdx : Nat)
     (plan : ConstructRawPlan) : Option (List Nat) :=
-  match lowerConstructBodyBytes carrier plan with
+  match lowerConstructBodyBytes carrier structIdx plan with
   | some body =>
       match uleb32 body.length with
       | some lenBytes => some (lenBytes ++ body)

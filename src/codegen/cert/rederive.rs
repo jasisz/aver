@@ -148,6 +148,12 @@ pub struct RederivedObligation {
     pub construct_code_idx: Option<u32>,
     /// For `construct-v1`, the byte-derived function-section type index.
     pub construct_type_idx: Option<u32>,
+    pub construct_struct_idx: Option<u32>,
+    pub construct_field_count: Option<u32>,
+    pub construct_elem_ty_lean: Option<String>,
+    /// True only when the checker-reconstructed source result is `List<T>`;
+    /// only those claims require the cons-cell-specific type-section guards.
+    pub construct_is_list: bool,
     /// For `construct-v1`, the verifier-rendered `List WInstr` body that the
     /// checked constructor plan canonically lowers to.
     pub construct_lowered_body_lean: Option<String>,
@@ -826,15 +832,32 @@ fn rederive_certificate_inner(
                 Cert::AdtConstructor { type_idx, .. } => Some(*type_idx),
                 _ => None,
             },
+            construct_struct_idx: match c.inner() {
+                Cert::AdtConstructor { struct_idx, .. } => Some(*struct_idx),
+                _ => None,
+            },
+            construct_field_count: match c.inner() {
+                Cert::AdtConstructor { field_count, .. } => Some(*field_count),
+                _ => None,
+            },
+            construct_elem_ty_lean: match c.inner() {
+                Cert::AdtConstructor { elem_ty, .. } => construct_val_type_lean_value(*elem_ty),
+                _ => None,
+            },
+            construct_is_list: match c.inner() {
+                Cert::AdtConstructor { .. } => adt_constructor_sym_plan_from_cert(c, &model_info)
+                    .is_some_and(|plan| sym_plan_is_list_construct(&plan)),
+                _ => false,
+            },
             construct_lowered_body_lean: match c.inner() {
-                Cert::AdtConstructor { .. } => construct_plan_from_cert(c)
-                    .and_then(|plan| lower_construct_plan(&plan).ok())
+                Cert::AdtConstructor { struct_idx, .. } => construct_plan_from_cert(c)
+                    .and_then(|plan| lower_construct_plan(&plan, *struct_idx).ok())
                     .map(|ops| render_ops_value(&ops)),
                 _ => None,
             },
             construct_lowered_code_entry_lean: match c.inner() {
-                Cert::AdtConstructor { carrier, .. } => construct_plan_from_cert(c)
-                    .and_then(|plan| lower_construct_plan_code_entry_bytes(&plan, *carrier).ok())
+                Cert::AdtConstructor { carrier, struct_idx, .. } => construct_plan_from_cert(c)
+                    .and_then(|plan| lower_construct_plan_code_entry_bytes(&plan, *carrier, *struct_idx).ok())
                     .map(|bytes| render_byte_list(&bytes)),
                 _ => None,
             },

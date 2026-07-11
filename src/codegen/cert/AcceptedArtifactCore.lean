@@ -204,6 +204,9 @@ structure ConstructClaim where
   exportNameBytes : AverCert.WasmSlice.ByteSeq
   exportName      : String
   carrier         : Nat
+  structIdx       : Nat
+  fieldCount      : Nat
+  elemTy          : ConstructValType
   symPlan         : SymRawPlan
   obligation      : Obligation
 
@@ -354,11 +357,22 @@ def stringConcatClaimAccepted
         claim.obligation
   | none => False
 
+/-- Whether a source constructor claim is specifically a `List` constructor.
+    The byte-level two-field cons-cell guards below apply only to this source
+    family; ordinary one-field ADT constructors retain their existing exact
+    code-entry binding. -/
+def isListConstructSymPlan (symPlan : SymRawPlan) : Bool :=
+  match symPlan.result with
+  | .app1 "List" _ => true
+  | _ => false
+
 def constructPlanAccepted
     (wasmBytes : AverCert.WasmSlice.ByteSeq)
     (exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
     (carrier : Nat)
+    (structIdx fieldCount : Nat)
+    (elemTy : ConstructValType)
     (symPlan : SymRawPlan)
     (plan : ConstructRawPlan)
     (obligation : Obligation) : Prop :=
@@ -367,13 +381,20 @@ def constructPlanAccepted
     AverCert.PlanCheck.checkSymRawPlan symPlan = true ∧
     AverCert.PlanCheck.constructPlanMatchesSymRawPlan symPlan plan = true ∧
     AverCert.PlanCheck.checkConstructRawPlan plan = true ∧
+    plan.fields.length = fieldCount ∧
     ∃ body codeEntry binding,
-      AverCert.PlanLower.lowerConstructBody plan = some body ∧
-      AverCert.PlanBytes.lowerConstructCodeEntry carrier plan = some codeEntry ∧
+      AverCert.PlanLower.lowerConstructBody structIdx plan = some body ∧
+      AverCert.PlanBytes.lowerConstructCodeEntry carrier structIdx plan = some codeEntry ∧
       AverCert.WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
       AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
+      (isListConstructSymPlan symPlan = false ∨
+        AverCert.WasmSlice.listConstructStructTypeMatches
+          wasmBytes structIdx elemTy = true) ∧
+      (isListConstructSymPlan symPlan = false ∨
+        AverCert.WasmSlice.listConstructFuncTypeMatches
+          wasmBytes binding.typeIdx plan.arity structIdx elemTy = true) ∧
       obligation.code binding.funcIdx =
         some { arity := plan.arity, nlocals := 1, body := body }
 
@@ -388,6 +409,9 @@ def constructClaimAccepted
         claim.exportNameBytes
         claim.exportName
         claim.carrier
+        claim.structIdx
+        claim.fieldCount
+        claim.elemTy
         claim.symPlan
         plan
         claim.obligation
@@ -1359,7 +1383,8 @@ def acceptedConstructFragments (artifact : ArtifactData) : Prop :=
   constructClaimsAccepted
     artifact.wasmBytes
     artifact.manifest
-    artifact.constructClaims
+    artifact.constructClaims ∧
+  (constructClaimExportNames artifact.constructClaims).Nodup
 
 def acceptedRecursionFragments (artifact : ArtifactData) : Prop :=
   recursionClaimsAccepted

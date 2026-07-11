@@ -332,7 +332,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "construct SymPlan should remain outside the expr-fragment encoder:\n{plans_lean}"
     );
     assert!(
-        plans_lean.contains("lowerConstructCodeEntry 18 mkOpConstructPlan =\n  some [10, 1, 1, 99, 18, 32, 0, 251, 0, 0, 11] := rfl"),
+        plans_lean.contains("lowerConstructCodeEntry 18 0 mkOpConstructPlan =\n  some [10, 1, 1, 99, 18, 32, 0, 251, 0, 0, 11] := rfl"),
         "mkOp construct plan should lower to the exact code-entry bytes:\n{plans_lean}"
     );
     let mkop_entry = manifest["certified"]
@@ -361,7 +361,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             .expect("mkOp target-bound construct sidecar exists");
     assert!(
         mkop_target_plan.contains("profile construct-v1")
-            && mkop_target_plan.contains("struct 0")
+            && !mkop_target_plan.contains("struct ")
             && mkop_target_plan.contains("local index=0"),
         "mkOp target sidecar should carry the struct.new binding:\n{mkop_target_plan}"
     );

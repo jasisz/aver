@@ -48,6 +48,18 @@ impl SymTy {
             SymTy::Bool => ".bool".to_string(),
             SymTy::String => ".string".to_string(),
             SymTy::Named(name) => format!("(.named {})", lean_str(name)),
+            SymTy::App(name, args) if args.len() == 1 => format!(
+                "(.app1 {} {})",
+                lean_str(name),
+                args[0].lean_plan_ctor()
+            ),
+            SymTy::App(name, args) if args.len() == 2 => format!(
+                "(.app2 {} {} {})",
+                lean_str(name),
+                args[0].lean_plan_ctor(),
+                args[1].lean_plan_ctor()
+            ),
+            SymTy::App(_, _) => unreachable!("source type parser emits unary/binary apps only"),
         }
     }
 }
@@ -183,6 +195,9 @@ fn sym_node_kind_lean_value(kind: &SymNodeKind) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        SymNodeKind::EmptyList { elem_ty } => {
+            format!(".emptyList {}", elem_ty.lean_plan_ctor())
+        }
         SymNodeKind::ProjectField {
             type_name,
             field,
@@ -251,6 +266,9 @@ fn render_sym_node_plan(node: &SymNode, indent: usize, out: &mut String) {
                 op.plan_tag(),
                 render_sym_plan_ids(args)
             ));
+        }
+        SymNodeKind::EmptyList { elem_ty } => {
+            out.push_str(&format!("empty.list elem={}\n", elem_ty.plan_tag()));
         }
         SymNodeKind::Construct {
             type_name,

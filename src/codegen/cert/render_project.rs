@@ -370,6 +370,8 @@ fn render_expr_fragment_plans(
             code_idx,
             type_idx,
             carrier,
+            struct_idx,
+            elem_ty,
             ..
         } = c.inner()
         else {
@@ -382,15 +384,29 @@ fn render_expr_fragment_plans(
             continue;
         };
         let Ok(code_entry_bytes) =
-            lower_construct_plan_code_entry_bytes(&construct_plan, *carrier)
+            lower_construct_plan_code_entry_bytes(&construct_plan, *carrier, *struct_idx)
         else {
             continue;
         };
-        let lowered_body = lower_construct_plan(&construct_plan)
+        let lowered_body = lower_construct_plan(&construct_plan, *struct_idx)
             .map(|ops| render_ops_value(&ops))
             .expect("checked construct plan lowers to WInstr body");
         let code_entry_bytes = render_byte_list(&code_entry_bytes);
         let export_name_bytes = render_byte_list(name.as_bytes());
+        let elem_ty = construct_val_type_lean_value(*elem_ty)
+            .expect("certified constructor has a supported byte-level element type");
+        let type_match_pins = if sym_plan_is_list_construct(&sym_plan) {
+            format!(
+                "/-- The byte-derived list struct binds `{name}`'s element representation. -/\n\
+                 theorem {name}ConstructStructTypeMatches :\n  \
+                   AverCert.WasmSlice.listConstructStructTypeMatches AverCert.ArtifactBytes.wasmBytes {struct_idx} ({elem_ty}) = true := rfl\n\n\
+                 /-- The byte-derived exported signature binds `{name}`'s element representation. -/\n\
+                 theorem {name}ConstructFuncTypeMatches :\n  \
+                   AverCert.WasmSlice.listConstructFuncTypeMatches AverCert.ArtifactBytes.wasmBytes {type_idx} {name}ConstructPlan.arity {struct_idx} ({elem_ty}) = true := rfl\n\n"
+            )
+        } else {
+            String::new()
+        };
         let func_binding = format!(
             "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
         );
@@ -414,15 +430,15 @@ fn render_expr_fragment_plans(
              example : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan {host_table_lean} {struct_table_lean} {name}ConstructSymPlan = none := rfl\n\n\
              /-- The audited Lean-side canonical lowerer maps `{name}`'s constructor plan\n\
                  to the exact instruction body. -/\n\
-             example : AverCert.PlanLower.lowerConstructBody {name}ConstructPlan =\n  \
+             example : AverCert.PlanLower.lowerConstructBody {struct_idx} {name}ConstructPlan =\n  \
                some {lowered_body} := rfl\n\n\
              /-- The audited Lean-side canonical lowerer maps `{name}`'s constructor plan\n\
                  to the same instruction body emitted in `Module.lean`. -/\n\
              example : (CertModule.{name}Code {self_idx}).map (fun c => c.body) =\n  \
-               AverCert.PlanLower.lowerConstructBody {name}ConstructPlan := rfl\n\n\
+               AverCert.PlanLower.lowerConstructBody {struct_idx} {name}ConstructPlan := rfl\n\n\
              /-- The audited Lean-side byte lowerer maps `{name}`'s constructor plan\n\
                  to the exact canonical code-entry bytes. -/\n\
-             example : AverCert.PlanBytes.lowerConstructCodeEntry {carrier} {name}ConstructPlan =\n  \
+             example : AverCert.PlanBytes.lowerConstructCodeEntry {carrier} {struct_idx} {name}ConstructPlan =\n  \
                some {code_entry_bytes} := rfl\n\n\
              /-- The audited Lean-side Wasm slicer finds `{name}`'s exact constructor\n\
                  code-entry bytes inside the emitted module bytes by export name. -/\n\
@@ -431,7 +447,8 @@ fn render_expr_fragment_plans(
              /-- The audited Lean-side Wasm slicer binds `{name}` to its function\n\
                  index, defined-code index, type index and code-entry bytes. -/\n\
              example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.wasmBytes {export_name_bytes} =\n  \
-               some {func_binding} := rfl\n\n",
+               some {func_binding} := rfl\n\n\
+             {type_match_pins}",
             sym_plan_value = sym_plan_lean_value(&sym_plan),
             construct_plan_value = construct_plan_lean_value(&construct_plan),
             lowered_body = lowered_body,
@@ -984,31 +1001,47 @@ fn render_artifact_expr_fragment_claims(
                 code_idx,
                 type_idx,
                 carrier,
+                struct_idx,
+                field_count,
+                elem_ty,
                 ..
             } => {
-                let Some(_sym_plan) = adt_constructor_sym_plan_from_cert(c, model_info) else {
+                let Some(sym_plan) = adt_constructor_sym_plan_from_cert(c, model_info) else {
                     continue;
                 };
                 let Some(plan) = construct_plan_from_cert(c) else {
                     continue;
                 };
-                let code_entry_bytes = lower_construct_plan_code_entry_bytes(&plan, *carrier)
+                let code_entry_bytes =
+                    lower_construct_plan_code_entry_bytes(&plan, *carrier, *struct_idx)
                     .expect("certified constructor plan lowers to code-entry bytes");
                 let code_entry_bytes = render_byte_list(&code_entry_bytes);
-                let lowered_body = lower_construct_plan(&plan)
+                let lowered_body = lower_construct_plan(&plan, *struct_idx)
                     .map(|ops| render_ops_value(&ops))
                     .expect("certified constructor plan lowers to WInstr body");
                 let export_name_bytes = render_byte_list(name.as_bytes());
+                let elem_ty = construct_val_type_lean_value(*elem_ty)
+                    .expect("certified constructor has a supported byte-level element type");
                 let func_binding = format!(
                     "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
                 );
+                let (struct_type_proof, func_type_proof) =
+                    if sym_plan_is_list_construct(&sym_plan) {
+                        (
+                            format!("Or.inr AverCert.Plans.{name}ConstructStructTypeMatches"),
+                            format!("Or.inr AverCert.Plans.{name}ConstructFuncTypeMatches"),
+                        )
+                    } else {
+                        ("Or.inl rfl".to_string(), "Or.inl rfl".to_string())
+                    };
                 construct_claims.push(format!(
-                    "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, symPlan := AverCert.Plans.{name}ConstructSymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ConstructClaim)",
+                    "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, structIdx := {struct_idx}, fieldCount := {field_count}, elemTy := {elem_ty}, symPlan := AverCert.Plans.{name}ConstructSymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ConstructClaim)",
                     export_name = lean_str(name),
                 ));
                 construct_proofs.push(format!(
-                    "⟨rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
+                    "⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
+                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, {struct_type_proof}, \
+                     {func_type_proof}, rfl⟩⟩⟩"
                 ));
             }
             Cert::Recursive {
@@ -1335,13 +1368,23 @@ fn render_artifact_expr_fragment_claims(
             .fold("trivial".to_string(), |acc, proof| {
                 format!("⟨{proof}, {acc}⟩")
             });
-    let construct_proof =
+    let construct_claim_count = construct_proofs.len();
+    let construct_claims_proof =
         construct_proofs
             .into_iter()
             .rev()
             .fold("trivial".to_string(), |acc, proof| {
                 format!("⟨{proof}, {acc}⟩")
             });
+    // `acceptedConstructFragments` conjoins per-claim acceptance with unique
+    // export-name coverage. Build the `Nodup` proof one list cell at a time so
+    // Lean never runs a whole-list decision procedure inside the already deep
+    // artifact acceptance term.
+    let construct_nodup_proof = (0..construct_claim_count).fold(
+        "List.nodup_nil".to_string(),
+        |acc, _| format!("List.nodup_cons.mpr ⟨by decide, {acc}⟩"),
+    );
+    let construct_proof = format!("⟨{construct_claims_proof}, {construct_nodup_proof}⟩");
     let recursion_proof =
         recursion_proofs
             .into_iter()

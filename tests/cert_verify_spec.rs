@@ -1348,13 +1348,13 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
             .unwrap();
     assert_eq!(
         manifest["artifact_bridge_counts"]["accepted-artifact-v1"].as_u64(),
-        Some(10),
-        "json plan-backed bridge count must move 9 -> 10"
+        Some(12),
+        "json plan-backed bridge count must be fully migrated (was 9)"
     );
     assert_eq!(
         manifest["artifact_bridge_counts"]["legacy-witness-v1"].as_u64(),
-        Some(2),
-        "json legacy bridge count must move 3 -> 2"
+        Some(0),
+        "json legacy bridge count must be zero after the list-cons and f64 legs"
     );
     let (ok, report) = aver_verify(&wasm, &cert);
     assert!(ok, "expected clean json certificate to verify:\n{report}");
@@ -4971,6 +4971,286 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
 /// rejects; reverting the locals count to an existential accepts the
 /// zero-locals vacuity obligation that the exact bind rejects — nothing else
 /// moves).
+#[test]
+fn list_constructor_kernel_guards_are_isolating() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping List-constructor guard isolation test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-list-constructor-guard-iso");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/data/json.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile JSON constructor guard fixture");
+    assert!(
+        compile.status.success(),
+        "JSON constructor guard fixture failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let cert = out_dir.join("cert");
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build JSON certificate before constructor guard transcript");
+    assert!(
+        build.status.success(),
+        "JSON certificate build failed before constructor guard transcript:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let wasm = std::fs::read(out_dir.join("json.wasm")).unwrap();
+    let mut imported_func_count = 0;
+    let mut singleton_func_idx = None;
+    let mut code_idx = 0;
+    let mut tamper_offset = None;
+    for payload in wasmparser::Parser::new(0).parse_all(&wasm) {
+        match payload.expect("parse JSON constructor guard fixture") {
+            wasmparser::Payload::ImportSection(reader) => {
+                for group in reader {
+                    for import in group.expect("read import group") {
+                        let (_, import) = import.expect("read import");
+                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                            imported_func_count += 1;
+                        }
+                    }
+                }
+            }
+            wasmparser::Payload::ExportSection(reader) => {
+                for export in reader {
+                    let export = export.expect("read export");
+                    if export.name == "singletonJsonEntries"
+                        && export.kind == wasmparser::ExternalKind::Func
+                    {
+                        singleton_func_idx = Some(export.index);
+                    }
+                }
+            }
+            wasmparser::Payload::CodeSectionEntry(body) => {
+                if Some(imported_func_count + code_idx) == singleton_func_idx {
+                    let range = body.range();
+                    let offset = range.start + 1;
+                    assert!(
+                        offset < range.end,
+                        "code entry must contain an interior byte"
+                    );
+                    tamper_offset = Some(offset);
+                }
+                code_idx += 1;
+            }
+            _ => {}
+        }
+    }
+    let tamper_offset = tamper_offset.expect("code entry for singletonJsonEntries export");
+    assert_ne!(wasm[tamper_offset], 24, "tamper must change the code byte");
+    let lean = r#"import Artifact
+open CertPrelude AverCert.Schema AverCert.WasmSlice
+set_option maxRecDepth 400000
+
+def honestSym := AverCert.Plans.singletonJsonEntriesConstructSymPlan
+def honestSingleton := AverCert.Plans.singletonJsonEntriesConstructPlan
+def honestPrependSym := AverCert.Plans.prependJsonEntryConstructSymPlan
+def honestClaim := AverCert.Artifact.constructClaims[0]
+def permutedPrepend : ConstructRawPlan :=
+  { profile := "construct-v1", arity := 2, fields := [.local 1, .local 0] }
+
+-- SymCheckAttack: the empty-tail node lies about its element type while every
+-- source/target-origin check remains green. Dropping ONLY checkSymRawPlan
+-- accepts it; the shipped conjunction rejects it.
+def badEmptySym : SymRawPlan :=
+  { honestSym with body :=
+      { nodes := [
+          { id := 0, ty := (.app2 "Tuple" .string (.named "Json")), kind := .param 0 },
+          { id := 1, ty := (.app1 "List" (.app2 "Tuple" .string (.named "Json"))),
+            kind := .emptyList .string },
+          { id := 2, ty := (.app1 "List" (.app2 "Tuple" .string (.named "Json"))),
+            kind := .construct "List" "::" [0, 1] }], result := 2 } }
+def sourceAccepted (s : SymRawPlan) (p : ConstructRawPlan) : Bool :=
+  AverCert.PlanCheck.checkSymRawPlan s &&
+  AverCert.PlanCheck.checkConstructRawPlan p &&
+  AverCert.PlanCheck.constructPlanMatchesSymRawPlan s p
+def sourceDropSym (s : SymRawPlan) (p : ConstructRawPlan) : Bool :=
+  AverCert.PlanCheck.checkConstructRawPlan p &&
+  AverCert.PlanCheck.constructPlanMatchesSymRawPlan s p
+example : sourceDropSym badEmptySym honestSingleton = true := rfl
+example : sourceAccepted badEmptySym honestSingleton = false := rfl
+
+-- PermAttack: the target plan uses every parameter once but swaps head/tail.
+-- Dropping ONLY the source/target matcher accepts it; shipped rejects it.
+def sourceDropMatch (s : SymRawPlan) (p : ConstructRawPlan) : Bool :=
+  AverCert.PlanCheck.checkSymRawPlan s &&
+  AverCert.PlanCheck.checkConstructRawPlan p
+example : sourceDropMatch honestPrependSym permutedPrepend = true := rfl
+example : sourceAccepted honestPrependSym permutedPrepend = false := rfl
+
+-- TypeAttack: the claimed element representation is read from both the list
+-- struct and the exported signature. A coherent symbolic relabel cannot turn
+-- the fixture's concrete `(ref null 36)` element into another byte type.
+example : AverCert.WasmSlice.listConstructStructTypeMatches
+    AverCert.ArtifactBytes.wasmBytes 25 (.nullableRef 36) = true := rfl
+example : AverCert.WasmSlice.listConstructFuncTypeMatches
+    AverCert.ArtifactBytes.wasmBytes 60 1 25 (.nullableRef 36) = true := rfl
+example : AverCert.WasmSlice.listConstructStructTypeMatches
+    AverCert.ArtifactBytes.wasmBytes 25 .eqref = false := rfl
+example : AverCert.WasmSlice.listConstructFuncTypeMatches
+    AverCert.ArtifactBytes.wasmBytes 60 1 25 .eqref = false := rfl
+
+-- CountAttack: predicate-level copy of constructPlanAccepted dropping ONLY
+-- `plan.fields.length = fieldCount`.
+def constructDropCount
+    (wasmBytes exportNameBytes : ByteSeq) (exportName : String)
+    (carrier structIdx : Nat) (elemTy : ConstructValType)
+    (symPlan : SymRawPlan) (plan : ConstructRawPlan) (obligation : Obligation) : Prop :=
+  obligation.export_ = exportName ∧ obligation.carrier = carrier ∧
+  AverCert.PlanCheck.checkSymRawPlan symPlan = true ∧
+  AverCert.PlanCheck.constructPlanMatchesSymRawPlan symPlan plan = true ∧
+  AverCert.PlanCheck.checkConstructRawPlan plan = true ∧
+  ∃ body codeEntry binding,
+    AverCert.PlanLower.lowerConstructBody structIdx plan = some body ∧
+    AverCert.PlanBytes.lowerConstructCodeEntry carrier structIdx plan = some codeEntry ∧
+    AverCert.WasmSlice.codeEntryForExport wasmBytes exportNameBytes = some codeEntry ∧
+    AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+    binding.funcIdx = obligation.self ∧ binding.codeEntry = codeEntry ∧
+    AverCert.WasmSlice.listConstructStructTypeMatches wasmBytes structIdx elemTy = true ∧
+    AverCert.WasmSlice.listConstructFuncTypeMatches
+      wasmBytes binding.typeIdx plan.arity structIdx elemTy = true ∧
+    obligation.code binding.funcIdx = some { arity := plan.arity, nlocals := 1, body := body }
+example : constructDropCount AverCert.ArtifactBytes.wasmBytes honestClaim.exportNameBytes
+    honestClaim.exportName honestClaim.carrier honestClaim.structIdx honestClaim.elemTy
+    honestClaim.symPlan honestSingleton honestClaim.obligation :=
+  ⟨rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl,
+    AverCert.Plans.singletonJsonEntriesConstructStructTypeMatches,
+    AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, rfl⟩
+example : ¬ AverCert.AcceptedArtifact.constructPlanAccepted
+    AverCert.ArtifactBytes.wasmBytes honestClaim.exportNameBytes honestClaim.exportName
+    honestClaim.carrier honestClaim.structIdx 3 honestClaim.elemTy honestClaim.symPlan
+    honestSingleton honestClaim.obligation := by
+  intro h
+  rcases h with ⟨_, _, _, _, _, hcount, _⟩
+  exact (by decide : honestSingleton.fields.length ≠ 3) hcount
+
+-- ByteAttack: predicate-level copy dropping ONLY the exact code-entry gate
+-- (`codeEntryForExport` plus the same equality repeated in FuncBinding).
+def tamperedBytes := AverCert.ArtifactBytes.wasmBytes.set __BYTE_OFFSET__ 24
+def constructDropByteExact
+    (wasmBytes exportNameBytes : ByteSeq) (exportName : String)
+    (carrier structIdx fieldCount : Nat) (elemTy : ConstructValType)
+    (symPlan : SymRawPlan) (plan : ConstructRawPlan) (obligation : Obligation) : Prop :=
+  obligation.export_ = exportName ∧ obligation.carrier = carrier ∧
+  AverCert.PlanCheck.checkSymRawPlan symPlan = true ∧
+  AverCert.PlanCheck.constructPlanMatchesSymRawPlan symPlan plan = true ∧
+  AverCert.PlanCheck.checkConstructRawPlan plan = true ∧ plan.fields.length = fieldCount ∧
+  ∃ body codeEntry binding,
+    AverCert.PlanLower.lowerConstructBody structIdx plan = some body ∧
+    AverCert.PlanBytes.lowerConstructCodeEntry carrier structIdx plan = some codeEntry ∧
+    AverCert.WasmSlice.funcBindingForExport wasmBytes exportNameBytes = some binding ∧
+    binding.funcIdx = obligation.self ∧
+    AverCert.WasmSlice.listConstructStructTypeMatches wasmBytes structIdx elemTy = true ∧
+    AverCert.WasmSlice.listConstructFuncTypeMatches
+      wasmBytes binding.typeIdx plan.arity structIdx elemTy = true ∧
+    obligation.code binding.funcIdx = some { arity := plan.arity, nlocals := 1, body := body }
+example : constructDropByteExact tamperedBytes honestClaim.exportNameBytes honestClaim.exportName
+    honestClaim.carrier honestClaim.structIdx honestClaim.fieldCount honestClaim.elemTy
+    honestClaim.symPlan honestSingleton honestClaim.obligation :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl,
+    AverCert.Plans.singletonJsonEntriesConstructStructTypeMatches,
+    AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, rfl⟩
+example : ¬ AverCert.AcceptedArtifact.constructPlanAccepted tamperedBytes
+    honestClaim.exportNameBytes honestClaim.exportName honestClaim.carrier honestClaim.structIdx
+    honestClaim.fieldCount honestClaim.elemTy honestClaim.symPlan honestSingleton
+    honestClaim.obligation := by
+  intro h
+  rcases h with ⟨_, _, _, _, _, _, _, _, _, _, hlower, hexact, _⟩
+  exact (by decide :
+    AverCert.WasmSlice.codeEntryForExport tamperedBytes honestClaim.exportNameBytes ≠
+      AverCert.PlanBytes.lowerConstructCodeEntry honestClaim.carrier honestClaim.structIdx
+        honestSingleton) (hexact.trans hlower.symm)
+
+-- ZeroAttack: the canonical byte lowering declares exactly one carrier local.
+-- A zero-local code table keeps the honest body but is accepted only when the
+-- exact locals conjunct is dropped.
+def zeroCode : CodeTbl := fun fn =>
+  (CertModule.singletonJsonEntriesCode fn).map (fun c => { c with nlocals := 0 })
+def localsAccepted (code : CodeTbl) : Bool :=
+  match code 20 with
+  | some c => c.arity == 1 && c.nlocals == 1 && c.body.length == 3
+  | none => false
+def localsDropCount (code : CodeTbl) : Bool :=
+  match code 20 with
+  | some c => c.arity == 1 && c.body.length == 3
+  | none => false
+example : localsDropCount zeroCode = true := rfl
+example : localsAccepted zeroCode = false := rfl
+
+-- OrphanAttack: family-local predicate copies. Each weakens exactly one of the
+-- two coverage guards while retaining per-claim constructPlanAccepted checks.
+def orphanPlans : List (String × ConstructRawPlan) :=
+  AverCert.manifest.constructPlans ++ [("orphan", honestSingleton)]
+def constructFamilyDropNames (manifest : Manifest) (claims : List AverCert.AcceptedArtifact.ConstructClaim) : Prop :=
+  AverCert.AcceptedArtifact.constructClaimsAccepted AverCert.ArtifactBytes.wasmBytes manifest claims ∧
+  (AverCert.AcceptedArtifact.constructClaimExportNames claims).Nodup
+def orphanManifest : Manifest := { AverCert.manifest with constructPlans := orphanPlans }
+example : constructFamilyDropNames orphanManifest AverCert.Artifact.constructClaims := by
+  constructor
+  · constructor
+    · exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl,
+        Or.inr AverCert.Plans.singletonJsonEntriesConstructStructTypeMatches,
+        Or.inr AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, rfl⟩
+    · constructor
+      · exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl,
+          Or.inr AverCert.Plans.prependJsonEntryConstructStructTypeMatches,
+          Or.inr AverCert.Plans.prependJsonEntryConstructFuncTypeMatches, rfl⟩
+      · trivial
+  · decide
+
+def dupClaims := [honestClaim, honestClaim]
+def dupPlans := [(honestClaim.exportName, honestSingleton),
+  (honestClaim.exportName, permutedPrepend)]
+def dupManifest : Manifest := { AverCert.manifest with constructPlans := dupPlans }
+def constructFamilyDropNodup (manifest : Manifest) (claims : List AverCert.AcceptedArtifact.ConstructClaim) : Prop :=
+  AverCert.AcceptedArtifact.constructClaimsAccepted AverCert.ArtifactBytes.wasmBytes manifest claims ∧
+  AverCert.AcceptedArtifact.constructClaimExportNames claims =
+    AverCert.AcceptedArtifact.constructManifestPlanNames manifest
+example : constructFamilyDropNodup dupManifest dupClaims := by
+  constructor
+  · constructor
+    · exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl,
+        Or.inr AverCert.Plans.singletonJsonEntriesConstructStructTypeMatches,
+        Or.inr AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, rfl⟩
+    · constructor
+      · exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl,
+          Or.inr AverCert.Plans.singletonJsonEntriesConstructStructTypeMatches,
+          Or.inr AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, rfl⟩
+      · trivial
+  · decide
+example : ¬ (AverCert.AcceptedArtifact.constructClaimExportNames dupClaims).Nodup := by decide
+"#.replace("__BYTE_OFFSET__", &tamper_offset.to_string());
+    std::fs::write(cert.join("ListConstructGuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("ListConstructGuardIso.lean")
+        .output()
+        .expect("run List constructor guard isolation transcript");
+    assert!(
+        check.status.success(),
+        "List constructor guard isolation transcript failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(out_dir);
+}
+
 #[test]
 fn int_dispatch_kernel_guards_are_isolating() {
     if Command::new("lake").arg("--version").output().is_err() {
