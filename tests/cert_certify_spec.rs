@@ -332,7 +332,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "construct SymPlan should remain outside the expr-fragment encoder:\n{plans_lean}"
     );
     assert!(
-        plans_lean.contains("lowerConstructCodeEntry 18 0 mkOpConstructPlan =\n  some [10, 1, 1, 99, 18, 32, 0, 251, 0, 0, 11] := rfl"),
+        plans_lean.contains("lowerConstructCodeEntry 23 1 mkOpConstructPlan =\n  some [10, 1, 1, 99, 23, 32, 0, 251, 0, 1, 11] := rfl"),
         "mkOp construct plan should lower to the exact code-entry bytes:\n{plans_lean}"
     );
     let mkop_entry = manifest["certified"]
@@ -1478,8 +1478,9 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
     }
 }
 
-/// The s33 heap-type boundary: 62 user variant structs push the Int carrier to
-/// wasm type index 64, the first index whose signed s33 encoding (`c0 00`)
+/// The s33 heap-type boundary: 16 nominal sum roots plus 46 user variant
+/// structs push the Int carrier to wasm type index 64, the first index whose
+/// signed s33 encoding (`c0 00`)
 /// differs from unsigned LEB (`40`). The recursion plan claim binds the
 /// carrier index inside local declarations, the value-if block type and the
 /// declared function type, so a lowerer that emitted unsigned LEB would fail

@@ -1367,10 +1367,10 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     copy_dir(&out_dir, &dir);
     let w = dir.join("json.wasm");
     let mut bytes = std::fs::read(&w).unwrap();
-    // i32.const 0; i32.const 0; array.new_data type16 seg11 (the empty string
+    // i32.const 0; i32.const 0; array.new_data type19 seg11 (the empty string
     // literal). Changing the length operand to 1 violates the decoder's
     // fail-closed data-segment guard while keeping the module parseable.
-    let pat = [0x41, 0x00, 0x41, 0x00, 0xfb, 0x09, 0x10, 0x0b];
+    let pat = [0x41, 0x00, 0x41, 0x00, 0xfb, 0x09, 0x13, 0x0b];
     let mut hits = 0usize;
     for i in 0..bytes.len().saturating_sub(pat.len()) {
         if bytes[i..].starts_with(&pat) {
@@ -1761,8 +1761,8 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let lean_bytes_tamper_cert = lean_bytes_tamper_dir.join("cert");
     let plans_lean = lean_bytes_tamper_cert.join("Plans.lean");
     let plans_text = std::fs::read_to_string(&plans_lean).unwrap();
-    let honest_bytes = "some [10, 1, 1, 99, 18, 32, 0, 32, 1, 160, 11]";
-    let tampered_bytes = "some [10, 1, 1, 99, 18, 32, 0, 32, 1, 161, 11]";
+    let honest_bytes = "some [10, 1, 1, 99, 23, 32, 0, 32, 1, 160, 11]";
+    let tampered_bytes = "some [10, 1, 1, 99, 23, 32, 0, 32, 1, 161, 11]";
     assert!(
         plans_text.contains(honest_bytes),
         "Plans.lean floatAddGoal byte pin changed"
@@ -4114,10 +4114,10 @@ fn cert_verify_declines_tampered_verbatim_plan() {
     }
 
     let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
-    // (a) wrong `ref.test` type index: `wrapItems` tests struct type 0 -> 1.
-    // (b) swapped dispatch cascade: `tagName` tests tags 2 <-> 3.
+    // (a) wrong `ref.test` type index: `wrapItems` tests struct type 1 -> 2.
+    // (b) swapped dispatch cascade: `tagName` tests tags 4 <-> 5.
     // (c) wrong `array.new_data` data-segment index: `tagName`'s "alpha" 0 -> 9.
-    // (d) wrong `ref.null` result heap type: `wrapItems` 8 -> 18.
+    // (d) wrong `ref.null` result heap type: `wrapItems` 10 -> 18.
     // (e) equal-length payload collision: `tagName`'s "alpha" -> "alphb" (same
     //     length, same data index). The code-entry lowering pins only the payload
     //     LENGTH, so every byte-equality pin stays green; ONLY the acceptance
@@ -4127,28 +4127,28 @@ fn cert_verify_declines_tampered_verbatim_plan() {
     let tampers: [(&str, &str, &str); 5] = [
         (
             "ref.test type index",
-            ".test 0 (.project 0 0) (.leaf (.refNull))",
-            ".test 1 (.project 0 0) (.leaf (.refNull))",
+            ".test 1 (.project 1 0) (.leaf (.refNull))",
+            ".test 2 (.project 1 0) (.leaf (.refNull))",
         ),
         (
             "swapped dispatch cascade",
-            ".test 2 (.arrayNewData 5 0 [97, 108, 112, 104, 97]) (.test 3",
-            ".test 3 (.arrayNewData 5 0 [97, 108, 112, 104, 97]) (.test 2",
+            ".test 4 (.arrayNewData 7 0 [97, 108, 112, 104, 97]) (.test 5",
+            ".test 5 (.arrayNewData 7 0 [97, 108, 112, 104, 97]) (.test 4",
         ),
         (
             "array.new_data data index",
-            ".arrayNewData 5 0 [97, 108, 112, 104, 97]",
-            ".arrayNewData 5 9 [97, 108, 112, 104, 97]",
+            ".arrayNewData 7 0 [97, 108, 112, 104, 97]",
+            ".arrayNewData 7 9 [97, 108, 112, 104, 97]",
         ),
         (
             "ref.null heap type",
-            "resultSig := .refNull 8",
+            "resultSig := .refNull 10",
             "resultSig := .refNull 18",
         ),
         (
             "equal-length payload collision",
-            ".arrayNewData 5 0 [97, 108, 112, 104, 97]",
-            ".arrayNewData 5 0 [97, 108, 112, 104, 98]",
+            ".arrayNewData 7 0 [97, 108, 112, 104, 97]",
+            ".arrayNewData 7 0 [97, 108, 112, 104, 98]",
         ),
     ];
     for (label, from, to) in tampers {
@@ -4172,24 +4172,24 @@ fn cert_verify_declines_tampered_verbatim_plan() {
     // Guard-isolation: prove in-kernel that each vector diverges the lowered
     // code-entry bytes (so the byte-equality gate — the whole binding — catches
     // it), mirroring the spike's four `by decide` vectors on the real plans.
-    // carrier 7; `wrapItems` result heap 8, `tagName` string-array type 5.
+    // carrier 9; `wrapItems` result heap 10, `tagName` string-array type 7.
     let mut lean = String::new();
     lean.push_str("import Schema\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\n\n");
     lean.push_str("open AverCert.Schema\nopen AverCert.PlanBytes\n\n");
-    lean.push_str("def honestWrap : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 2, fieldLocal := 1, resultSig := .refNull 8, body := .test 0 (.project 0 0) (.leaf (.refNull)) }\n");
-    lean.push_str("def honestTag : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultSig := .refNull 5, body := .test 2 (.arrayNewData 5 0 [97, 108, 112, 104, 97]) (.test 3 (.arrayNewData 5 1 [98, 101, 116, 97]) (.leaf (.arrayNewData 5 2 [103, 97, 109, 109, 97]))) }\n\n");
+    lean.push_str("def honestWrap : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 2, fieldLocal := 1, resultSig := .refNull 10, body := .test 1 (.project 1 0) (.leaf (.refNull)) }\n");
+    lean.push_str("def honestTag : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultSig := .refNull 7, body := .test 4 (.arrayNewData 7 0 [97, 108, 112, 104, 97]) (.test 5 (.arrayNewData 7 1 [98, 101, 116, 97]) (.leaf (.arrayNewData 7 2 [103, 97, 109, 109, 97]))) }\n\n");
     lean.push_str("example : AverCert.PlanCheck.checkVerbatimRawPlan honestWrap = true := rfl\n");
     lean.push_str("example : AverCert.PlanCheck.checkVerbatimRawPlan honestTag = true := rfl\n\n");
-    lean.push_str("def tamper1 : VerbatimRawPlan := { honestWrap with body := .test 1 (.project 0 0) (.leaf (.refNull)) }\n");
-    lean.push_str("example : lowerVerbatimCodeEntry 7 tamper1 ≠ lowerVerbatimCodeEntry 7 honestWrap := by decide\n");
-    lean.push_str("def tamper2 : VerbatimRawPlan := { honestTag with body := .test 3 (.arrayNewData 5 0 [97, 108, 112, 104, 97]) (.test 2 (.arrayNewData 5 1 [98, 101, 116, 97]) (.leaf (.arrayNewData 5 2 [103, 97, 109, 109, 97]))) }\n");
-    lean.push_str("example : lowerVerbatimCodeEntry 7 tamper2 ≠ lowerVerbatimCodeEntry 7 honestTag := by decide\n");
-    lean.push_str("def tamper3 : VerbatimRawPlan := { honestTag with body := .test 2 (.arrayNewData 5 9 [97, 108, 112, 104, 97]) (.test 3 (.arrayNewData 5 1 [98, 101, 116, 97]) (.leaf (.arrayNewData 5 2 [103, 97, 109, 109, 97]))) }\n");
-    lean.push_str("example : lowerVerbatimCodeEntry 7 tamper3 ≠ lowerVerbatimCodeEntry 7 honestTag := by decide\n");
+    lean.push_str("def tamper1 : VerbatimRawPlan := { honestWrap with body := .test 2 (.project 1 0) (.leaf (.refNull)) }\n");
+    lean.push_str("example : lowerVerbatimCodeEntry 9 tamper1 ≠ lowerVerbatimCodeEntry 9 honestWrap := by decide\n");
+    lean.push_str("def tamper2 : VerbatimRawPlan := { honestTag with body := .test 5 (.arrayNewData 7 0 [97, 108, 112, 104, 97]) (.test 4 (.arrayNewData 7 1 [98, 101, 116, 97]) (.leaf (.arrayNewData 7 2 [103, 97, 109, 109, 97]))) }\n");
+    lean.push_str("example : lowerVerbatimCodeEntry 9 tamper2 ≠ lowerVerbatimCodeEntry 9 honestTag := by decide\n");
+    lean.push_str("def tamper3 : VerbatimRawPlan := { honestTag with body := .test 4 (.arrayNewData 7 9 [97, 108, 112, 104, 97]) (.test 5 (.arrayNewData 7 1 [98, 101, 116, 97]) (.leaf (.arrayNewData 7 2 [103, 97, 109, 109, 97]))) }\n");
+    lean.push_str("example : lowerVerbatimCodeEntry 9 tamper3 ≠ lowerVerbatimCodeEntry 9 honestTag := by decide\n");
     lean.push_str(
         "def tamper4 : VerbatimRawPlan := { honestWrap with resultSig := .refNull 18 }\n",
     );
-    lean.push_str("example : lowerVerbatimCodeEntry 7 tamper4 ≠ lowerVerbatimCodeEntry 7 honestWrap := by decide\n");
+    lean.push_str("example : lowerVerbatimCodeEntry 9 tamper4 ≠ lowerVerbatimCodeEntry 9 honestWrap := by decide\n");
 
     let honest_build = Command::new("lake")
         .arg("build")
@@ -4269,7 +4269,7 @@ fn cert_verify_scalar_f64_verbatim_fixture_and_tampers() {
     let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
     assert!(
         plans.contains(
-            "def floatOrZeroVerbatimPlan : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 2, fieldLocal := 1, resultSig := .f64Scalar, body := .test 0 (.project 0 0) (.leaf (.f64Bits 0)) }"
+            "def floatOrZeroVerbatimPlan : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 2, fieldLocal := 1, resultSig := .f64Scalar, body := .test 1 (.project 1 0) (.leaf (.f64Bits 0)) }"
         ),
         "floatOrZero plan must pin the scalar-f64 result and zero default"
     );
@@ -4376,7 +4376,7 @@ fn cert_verify_scalar_f64_verbatim_fixture_and_tampers() {
         copy_dir(&out_dir, &dir);
         let tampered_wasm = dir.join("f64verbatim.wasm");
         let range = type_section_range.expect("type section must exist");
-        let signature = [0x60, 0x01, 0x6d, 0x01, 0x7c];
+        let signature = [0x60, 0x01, 0x63, 0x00, 0x01, 0x7c];
         let matches = honest_bytes[range.clone()]
             .windows(signature.len())
             .enumerate()
@@ -4385,7 +4385,7 @@ fn cert_verify_scalar_f64_verbatim_fixture_and_tampers() {
         assert_eq!(
             matches.len(),
             1,
-            "floatOrZero's eqref -> f64 signature must be unique"
+            "floatOrZero's nominal-root-ref -> f64 signature must be unique"
         );
         let mut bytes = honest_bytes.clone();
         bytes[matches[0] + signature.len() - 1] = 0x63;
@@ -4418,7 +4418,7 @@ fn cert_verify_scalar_f64_verbatim_fixture_and_tampers() {
 /// nothing else moves).
 ///
 /// SIGNATURE guard: two minimal modules identical in every section EXCEPT the
-/// type section (the second appends a second `eqref` parameter). The
+/// type section (the second appends a second nominal-root parameter). The
 /// func/export/code/data sections — hence the byte-derived `FuncBinding` and code
 /// entry the byte-equality gate reads — are byte-for-byte identical, so the two
 /// sibling conjuncts (`funcBindingForExport`, `codeEntryForExport`) return the
@@ -4445,8 +4445,8 @@ fn verbatim_kernel_guards_are_isolating() {
     // tail. `f` is func 0 of type 0; code entry `[2, 0, 11]`; data segment 0 is
     // "alpha" (passive). Only the type section differs between the two.
     lean.push_str("def hdr : List Nat := [0, 97, 115, 109, 1, 0, 0, 0]\n");
-    lean.push_str("def unaryType : List Nat := [1, 7, 1, 96, 1, 109, 1, 99, 5]\n");
-    lean.push_str("def binaryType : List Nat := [1, 8, 1, 96, 2, 109, 109, 1, 99, 5]\n");
+    lean.push_str("def unaryType : List Nat := [1, 8, 1, 96, 1, 99, 4, 1, 99, 5]\n");
+    lean.push_str("def binaryType : List Nat := [1, 10, 1, 96, 2, 99, 4, 99, 4, 1, 99, 5]\n");
     lean.push_str("def tailSecs : List Nat := [3, 2, 1, 0, 7, 5, 1, 1, 102, 0, 0, 10, 4, 1, 2, 0, 11, 11, 8, 1, 1, 5, 97, 108, 112, 104, 97]\n");
     lean.push_str("def unaryMod : List Nat := hdr ++ unaryType ++ tailSecs\n");
     lean.push_str("def binaryMod : List Nat := hdr ++ binaryType ++ tailSecs\n");
@@ -4480,24 +4480,44 @@ fn verbatim_kernel_guards_are_isolating() {
     lean.push_str("example : PlanCheck.checkVerbatimRawPlan { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultSig := .refNull 5, body := .leaf (.arrayNewData 5 0 [256]) } = false := rfl\n\n");
 
     // NULLABILITY isolation (re-review FIX 2): the certified verbatim signature is
-    // `[eqref] -> [(ref null resultHeapTy)]` — the `0x63` nullable form the
+    // one nominal-root ref -> `[(ref null resultHeapTy)]` — the `0x63` nullable form the
     // `ref.null` default requires. A non-null `0x64` result is rejected. The only
     // byte differing between `unaryMod` and `nonNullMod` is `0x63 -> 0x64`, so the
     // byte-derived binding and code entry are IDENTICAL (the reftype is never in
     // the code entry) — only `checkVerbatimFuncType` tells them apart.
     lean.push_str(
-        "example : WasmSlice.checkVerbatimFuncType (.refNull 5) [96, 1, 109, 1, 99, 5] = true := rfl\n",
+        "example : WasmSlice.checkVerbatimFuncType (.refNull 5) [96, 1, 99, 4, 1, 99, 5] = true := rfl\n",
     );
     lean.push_str(
-        "example : WasmSlice.checkVerbatimFuncType (.refNull 5) [96, 1, 109, 1, 100, 5] = false := rfl\n",
+        "example : WasmSlice.checkVerbatimFuncType (.refNull 5) [96, 1, 99, 4, 1, 100, 5] = false := rfl\n",
     );
     lean.push_str(
-        "def nonNullMod : List Nat := hdr ++ [1, 7, 1, 96, 1, 109, 1, 100, 5] ++ tailSecs\n",
+        "def nonNullMod : List Nat := hdr ++ [1, 8, 1, 96, 1, 99, 4, 1, 100, 5] ++ tailSecs\n",
     );
     lean.push_str("example : WasmSlice.funcBindingForExport nonNullMod nameF = WasmSlice.funcBindingForExport unaryMod nameF := rfl\n");
     lean.push_str("example : WasmSlice.codeEntryForExport nonNullMod nameF = WasmSlice.codeEntryForExport unaryMod nameF := rfl\n");
     lean.push_str(
         "example : WasmSlice.verbatimFuncTypeMatches nonNullMod 0 (.refNull 5) = false := rfl\n\n",
+    );
+
+    // ABSTRACT-PARAM isolation: after `0x63` a NEGATIVE s33 heap type encodes an
+    // abstract heap type (long-form eqref is `0x63 0x6D`, s33 -19), not a concrete
+    // nominal root, so the signature guard fail-closes. The module differs from
+    // `unaryMod` only in that param byte (`4 -> 109`), so the byte-derived binding
+    // and code entry are IDENTICAL — only `checkVerbatimFuncType` tells them apart.
+    lean.push_str(
+        "example : WasmSlice.checkVerbatimFuncType (.refNull 5) [96, 1, 99, 109, 1, 99, 5] = false := rfl\n",
+    );
+    lean.push_str(
+        "example : WasmSlice.checkVerbatimFuncType .f64Scalar [96, 1, 99, 109, 1, 124] = false := rfl\n",
+    );
+    lean.push_str(
+        "def abstractParamMod : List Nat := hdr ++ [1, 8, 1, 96, 1, 99, 109, 1, 99, 5] ++ tailSecs\n",
+    );
+    lean.push_str("example : WasmSlice.funcBindingForExport abstractParamMod nameF = WasmSlice.funcBindingForExport unaryMod nameF := rfl\n");
+    lean.push_str("example : WasmSlice.codeEntryForExport abstractParamMod nameF = WasmSlice.codeEntryForExport unaryMod nameF := rfl\n");
+    lean.push_str(
+        "example : WasmSlice.verbatimFuncTypeMatches abstractParamMod 0 (.refNull 5) = false := rfl\n\n",
     );
 
     // PARSER STRICTNESS isolation (re-review FIX 3): the type-section and
@@ -4506,12 +4526,12 @@ fn verbatim_kernel_guards_are_isolating() {
     // that does not match the bytes, declines — and an over-wide LEB is rejected
     // by the width cap. The honest single-entry sections still match.
     // Type section: a trailing `0xff` after the one valid func type.
-    lean.push_str("def trailingTypeMod : List Nat := hdr ++ [1, 8, 1, 96, 1, 109, 1, 99, 5, 255] ++ tailSecs\n");
+    lean.push_str("def trailingTypeMod : List Nat := hdr ++ [1, 9, 1, 96, 1, 99, 4, 1, 99, 5, 255] ++ tailSecs\n");
     lean.push_str(
         "example : WasmSlice.verbatimFuncTypeMatches trailingTypeMod 0 (.refNull 5) = false := rfl\n",
     );
     // Type section: count claims 2 rectypes but only 1 is present.
-    lean.push_str("def countMismatchTypeMod : List Nat := hdr ++ [1, 7, 2, 96, 1, 109, 1, 99, 5] ++ tailSecs\n");
+    lean.push_str("def countMismatchTypeMod : List Nat := hdr ++ [1, 8, 2, 96, 1, 99, 4, 1, 99, 5] ++ tailSecs\n");
     lean.push_str(
         "example : WasmSlice.verbatimFuncTypeMatches countMismatchTypeMod 0 (.refNull 5) = false := rfl\n",
     );
@@ -4538,8 +4558,8 @@ fn verbatim_kernel_guards_are_isolating() {
     lean.push_str(
         r#"
 def isoHdr : List Nat := [0, 97, 115, 109, 1, 0, 0, 0]
-def isoF64Type : List Nat := [1, 6, 1, 96, 1, 109, 1, 124]
-def isoRefType : List Nat := [1, 7, 1, 96, 1, 109, 1, 99, 5]
+def isoF64Type : List Nat := [1, 7, 1, 96, 1, 99, 4, 1, 124]
+def isoRefType : List Nat := [1, 8, 1, 96, 1, 99, 4, 1, 99, 5]
 def isoTail : List Nat :=
   [3, 2, 1, 0, 7, 5, 1, 1, 102, 0, 0,
    10, 24, 1, 22, 2, 1, 109, 1, 99, 7, 32, 0, 33, 1, 32, 1,
@@ -4715,8 +4735,8 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
     );
 
     let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
-    // (a) wrong `ref.test` tag: `boxInt` tests struct type 0 -> 1.
-    // (b) swapped dispatch cascade: `gauge` tests tags 3 <-> 4.
+    // (a) wrong `ref.test` tag: `boxInt` tests struct type 1 -> 2.
+    // (b) swapped dispatch cascade: `gauge` tests tags 5 <-> 6.
     // (c) role swap: `gauge`'s Lo arm combinator `sub` -> `add`. The role table
     //     maps roles to DISTINCT indices, so the swap changes the host call
     //     byte — the exact discrimination `hostTableIndicesDistinct` protects.
@@ -4728,13 +4748,13 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
     let tampers: [(&str, &str, &str); 7] = [
         (
             "ref.test tag",
-            ".test 0 (.proj) (.default (0))",
             ".test 1 (.proj) (.default (0))",
+            ".test 2 (.proj) (.default (0))",
         ),
         (
             "swapped dispatch cascade",
-            ".test 3 (.hostOp .sub (0) true) (.test 4",
-            ".test 4 (.hostOp .sub (0) true) (.test 3",
+            ".test 5 (.hostOp .sub (0) true) (.test 6",
+            ".test 6 (.hostOp .sub (0) true) (.test 5",
         ),
         (
             "host role swap",
@@ -4850,8 +4870,8 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
         copy_dir(&out_dir, &dir);
         let module = dir.join("cert").join("Module.lean");
         let src = std::fs::read_to_string(&module).unwrap();
-        let from = "def boxIntHost : HostTbl := fun fn =>\n  if fn = 7 then some (1, boxRef 9)\n  else none";
-        let to = "def boxIntHost : HostTbl := fun fn =>\n  if fn = 7 then some (1, fun args => match args with | [WVal.i64v 0] => boxRef 9 args | _ => none)\n  else none";
+        let from = "def boxIntHost : HostTbl := fun fn =>\n  if fn = 7 then some (1, boxRef 11)\n  else none";
+        let to = "def boxIntHost : HostTbl := fun fn =>\n  if fn = 7 then some (1, fun args => match args with | [WVal.i64v 0] => boxRef 11 args | _ => none)\n  else none";
         assert!(
             src.contains(from),
             "boxIntHost shape changed; update the test"
@@ -4865,36 +4885,36 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
     // Guard-isolation: prove in-kernel that each byte-reaching vector diverges
     // the lowered code-entry bytes (so the byte-equality gate catches it), and
     // that the profile vector — which the lowering is provably BLIND to — is
-    // rejected exactly by the structural checker. carrier 9; role table
+    // rejected exactly by the structural checker. carrier 11; role table
     // box 7 / add 8 / sub 9 (the fixture's byte-derived table).
     let mut lean = String::new();
     lean.push_str("import Schema\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\n\n");
     lean.push_str("open AverCert.Schema\nopen AverCert.PlanBytes\n\n");
     lean.push_str("def tbl : List (HostRole × Nat) := [(.box, 7), (.add, 8), (.sub, 9)]\n");
-    lean.push_str("def honestBox : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 0 (.proj) (.default (0)) }\n");
-    lean.push_str("def honestGauge : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 3 (.hostOp .sub (0) true) (.test 4 (.hostOp .add (9) false) (.test 5 (.proj) (.default (7)))) }\n\n");
+    lean.push_str("def honestBox : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 1 (.proj) (.default (0)) }\n");
+    lean.push_str("def honestGauge : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 5 (.hostOp .sub (0) true) (.test 6 (.hostOp .add (9) false) (.test 7 (.proj) (.default (7)))) }\n\n");
     lean.push_str("example : AverCert.PlanCheck.checkIntDispatchRawPlan honestBox = true := rfl\n");
     lean.push_str(
         "example : AverCert.PlanCheck.checkIntDispatchRawPlan honestGauge = true := rfl\n\n",
     );
-    lean.push_str("def tamper1 : IntDispatchRawPlan := { honestBox with body := .test 1 (.proj) (.default (0)) }\n");
-    lean.push_str("example : lowerIntDispatchCodeEntry 9 tbl tamper1 ≠ lowerIntDispatchCodeEntry 9 tbl honestBox := by decide\n");
-    lean.push_str("def tamper2 : IntDispatchRawPlan := { honestGauge with body := .test 4 (.hostOp .sub (0) true) (.test 3 (.hostOp .add (9) false) (.test 5 (.proj) (.default (7)))) }\n");
-    lean.push_str("example : lowerIntDispatchCodeEntry 9 tbl tamper2 ≠ lowerIntDispatchCodeEntry 9 tbl honestGauge := by decide\n");
-    lean.push_str("def tamper3 : IntDispatchRawPlan := { honestGauge with body := .test 3 (.hostOp .add (0) true) (.test 4 (.hostOp .add (9) false) (.test 5 (.proj) (.default (7)))) }\n");
-    lean.push_str("example : lowerIntDispatchCodeEntry 9 tbl tamper3 ≠ lowerIntDispatchCodeEntry 9 tbl honestGauge := by decide\n");
-    lean.push_str("def tamper4 : IntDispatchRawPlan := { honestGauge with body := .test 3 (.hostOp .sub (0) true) (.test 4 (.hostOp .add (8) false) (.test 5 (.proj) (.default (7)))) }\n");
-    lean.push_str("example : lowerIntDispatchCodeEntry 9 tbl tamper4 ≠ lowerIntDispatchCodeEntry 9 tbl honestGauge := by decide\n");
-    lean.push_str("def tamper5 : IntDispatchRawPlan := { honestGauge with body := .test 3 (.hostOp .sub (0) true) (.test 4 (.hostOp .add (9) true) (.test 5 (.proj) (.default (7)))) }\n");
-    lean.push_str("example : lowerIntDispatchCodeEntry 9 tbl tamper5 ≠ lowerIntDispatchCodeEntry 9 tbl honestGauge := by decide\n");
-    lean.push_str("def tamper6 : IntDispatchRawPlan := { honestGauge with body := .test 3 (.hostOp .sub (0) true) (.test 4 (.hostOp .add (9) false) (.test 5 (.proj) (.default (8)))) }\n");
-    lean.push_str("example : lowerIntDispatchCodeEntry 9 tbl tamper6 ≠ lowerIntDispatchCodeEntry 9 tbl honestGauge := by decide\n");
+    lean.push_str("def tamper1 : IntDispatchRawPlan := { honestBox with body := .test 2 (.proj) (.default (0)) }\n");
+    lean.push_str("example : lowerIntDispatchCodeEntry 11 tbl tamper1 ≠ lowerIntDispatchCodeEntry 11 tbl honestBox := by decide\n");
+    lean.push_str("def tamper2 : IntDispatchRawPlan := { honestGauge with body := .test 6 (.hostOp .sub (0) true) (.test 5 (.hostOp .add (9) false) (.test 7 (.proj) (.default (7)))) }\n");
+    lean.push_str("example : lowerIntDispatchCodeEntry 11 tbl tamper2 ≠ lowerIntDispatchCodeEntry 11 tbl honestGauge := by decide\n");
+    lean.push_str("def tamper3 : IntDispatchRawPlan := { honestGauge with body := .test 5 (.hostOp .add (0) true) (.test 6 (.hostOp .add (9) false) (.test 7 (.proj) (.default (7)))) }\n");
+    lean.push_str("example : lowerIntDispatchCodeEntry 11 tbl tamper3 ≠ lowerIntDispatchCodeEntry 11 tbl honestGauge := by decide\n");
+    lean.push_str("def tamper4 : IntDispatchRawPlan := { honestGauge with body := .test 5 (.hostOp .sub (0) true) (.test 6 (.hostOp .add (8) false) (.test 7 (.proj) (.default (7)))) }\n");
+    lean.push_str("example : lowerIntDispatchCodeEntry 11 tbl tamper4 ≠ lowerIntDispatchCodeEntry 11 tbl honestGauge := by decide\n");
+    lean.push_str("def tamper5 : IntDispatchRawPlan := { honestGauge with body := .test 5 (.hostOp .sub (0) true) (.test 6 (.hostOp .add (9) true) (.test 7 (.proj) (.default (7)))) }\n");
+    lean.push_str("example : lowerIntDispatchCodeEntry 11 tbl tamper5 ≠ lowerIntDispatchCodeEntry 11 tbl honestGauge := by decide\n");
+    lean.push_str("def tamper6 : IntDispatchRawPlan := { honestGauge with body := .test 5 (.hostOp .sub (0) true) (.test 6 (.hostOp .add (9) false) (.test 7 (.proj) (.default (8)))) }\n");
+    lean.push_str("example : lowerIntDispatchCodeEntry 11 tbl tamper6 ≠ lowerIntDispatchCodeEntry 11 tbl honestGauge := by decide\n");
     // Profile vector: the lowering is BLIND to the profile string, so the byte
     // gate alone would accept it — only the structural checker rejects it.
     lean.push_str(
         "def tamper7 : IntDispatchRawPlan := { honestBox with profile := \"int-dispatch-v2\" }\n",
     );
-    lean.push_str("example : lowerIntDispatchCodeEntry 9 tbl tamper7 = lowerIntDispatchCodeEntry 9 tbl honestBox := rfl\n");
+    lean.push_str("example : lowerIntDispatchCodeEntry 11 tbl tamper7 = lowerIntDispatchCodeEntry 11 tbl honestBox := rfl\n");
     lean.push_str("example : AverCert.PlanCheck.checkIntDispatchRawPlan tamper7 = false := rfl\n");
 
     let honest_build = Command::new("lake")
@@ -4927,7 +4947,7 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
 ///
 /// SIGNATURE guard (`verbatimFuncTypeMatches … carrier`, reused with the Int
 /// carrier as the result heap type): two minimal modules identical in every
-/// section EXCEPT the type section (the second appends a second `eqref`
+/// section EXCEPT the type section (the second appends a second nominal-root
 /// parameter). The func/export/code sections — hence the byte-derived
 /// `FuncBinding` and code entry the byte-equality gate reads — are
 /// byte-for-byte identical, so the two sibling conjuncts
@@ -5094,15 +5114,15 @@ example : sourceAccepted honestPrependSym permutedPrepend = false := rfl
 
 -- TypeAttack: the claimed element representation is read from both the list
 -- struct and the exported signature. A coherent symbolic relabel cannot turn
--- the fixture's concrete `(ref null 36)` element into another byte type.
+-- the fixture's concrete `(ref null 39)` element into another byte type.
 example : AverCert.WasmSlice.listConstructStructTypeMatches
-    AverCert.ArtifactBytes.wasmBytes 25 (.nullableRef 36) = true := rfl
+    AverCert.ArtifactBytes.wasmBytes 28 (.nullableRef 39) = true := rfl
 example : AverCert.WasmSlice.listConstructFuncTypeMatches
-    AverCert.ArtifactBytes.wasmBytes 60 1 25 (.nullableRef 36) = true := rfl
+    AverCert.ArtifactBytes.wasmBytes 63 1 28 (.nullableRef 39) = true := rfl
 example : AverCert.WasmSlice.listConstructStructTypeMatches
-    AverCert.ArtifactBytes.wasmBytes 25 .eqref = false := rfl
+    AverCert.ArtifactBytes.wasmBytes 28 .eqref = false := rfl
 example : AverCert.WasmSlice.listConstructFuncTypeMatches
-    AverCert.ArtifactBytes.wasmBytes 60 1 25 .eqref = false := rfl
+    AverCert.ArtifactBytes.wasmBytes 63 1 28 .eqref = false := rfl
 
 -- CountAttack: predicate-level copy of constructPlanAccepted dropping ONLY
 -- `plan.fields.length = fieldCount`.
@@ -5267,8 +5287,8 @@ fn int_dispatch_kernel_guards_are_isolating() {
     lean.push_str("set_option maxRecDepth 100000\n\n");
     // Minimal modules: header, type section, then a shared func/export/code
     // tail. `f` is func 0 of type 0; code entry `[2, 0, 11]`. Only the type
-    // section differs between the two: type 0 is `[eqref] -> [(ref null 5)]`
-    // vs `[eqref, eqref] -> [(ref null 5)]` (5 standing for the carrier).
+    // section differs between the two: type 0 is one nominal-root ref ->
+    // `[(ref null 5)]` vs two nominal-root refs -> `[(ref null 5)]`.
     // NOTE: these hand-built modules have a result-bearing signature with a
     // body returning nothing, so they would FAIL the wasmparser `validate_all`
     // chokepoint — they demonstrate slicer/guard DISCRIMINATION only, not
@@ -5276,8 +5296,8 @@ fn int_dispatch_kernel_guards_are_isolating() {
     // `cert_verify_declines_tampered_int_dispatch_plan` close the end-to-end
     // gap on a real validated artifact.
     lean.push_str("def hdr : List Nat := [0, 97, 115, 109, 1, 0, 0, 0]\n");
-    lean.push_str("def unaryType : List Nat := [1, 7, 1, 96, 1, 109, 1, 99, 5]\n");
-    lean.push_str("def binaryType : List Nat := [1, 8, 1, 96, 2, 109, 109, 1, 99, 5]\n");
+    lean.push_str("def unaryType : List Nat := [1, 8, 1, 96, 1, 99, 4, 1, 99, 5]\n");
+    lean.push_str("def binaryType : List Nat := [1, 10, 1, 96, 2, 99, 4, 99, 4, 1, 99, 5]\n");
     lean.push_str(
         "def tailSecs : List Nat := [3, 2, 1, 0, 7, 5, 1, 1, 102, 0, 0, 10, 4, 1, 2, 0, 11]\n",
     );
@@ -5341,21 +5361,21 @@ fn int_dispatch_kernel_guards_are_isolating() {
         "  | none => none\n\n",
     ));
     // The permuted (plan, table) pair lowers BYTE-IDENTICALLY...
-    lean.push_str("example : PlanBytes.lowerIntDispatchCodeEntry 9 permTbl permGauge = PlanBytes.lowerIntDispatchCodeEntry 9 honestTbl honestGauge := rfl\n");
+    lean.push_str("example : PlanBytes.lowerIntDispatchCodeEntry 11 permTbl permGauge = PlanBytes.lowerIntDispatchCodeEntry 11 honestTbl honestGauge := rfl\n");
     // ...and every sibling guard is blind to the permutation...
     lean.push_str("example : PlanCheck.checkIntDispatchRawPlan permGauge = true := rfl\n");
     lean.push_str("example : PlanCheck.hostTableIndicesDistinct permTbl = true := rfl\n");
     // ...the honest tables close the equality by `rfl` (whole-builder defeq,
     // incl. the box-only widened match)...
-    lean.push_str("example : AverCert.gaugeOb.host = AcceptedArtifact.intDispatchCanonicalHost 9 honestTbl := rfl\n");
-    lean.push_str("example : AverCert.boxIntOb.host = AcceptedArtifact.intDispatchCanonicalHost 9 [(.box, 7)] := rfl\n");
+    lean.push_str("example : AverCert.gaugeOb.host = AcceptedArtifact.intDispatchCanonicalHost 11 honestTbl := rfl\n");
+    lean.push_str("example : AverCert.boxIntOb.host = AcceptedArtifact.intDispatchCanonicalHost 11 [(.box, 7)] := rfl\n");
     // ...and ONLY the equality conjunct rejects the permuted table: the honest
     // obligation wires index 8 to the add slot, the permuted canonical wires it
     // to sub, and `hostBuilderProbe` exhibits the divergence.
     lean.push_str("example : hostBuilderProbe AverCert.gaugeOb.host 8 [] = some 1 := rfl\n");
-    lean.push_str("example : hostBuilderProbe (AcceptedArtifact.intDispatchCanonicalHost 9 permTbl) 8 [] = some 2 := rfl\n");
+    lean.push_str("example : hostBuilderProbe (AcceptedArtifact.intDispatchCanonicalHost 11 permTbl) 8 [] = some 2 := rfl\n");
     lean.push_str(concat!(
-        "example : AverCert.gaugeOb.host ≠ AcceptedArtifact.intDispatchCanonicalHost 9 permTbl := by\n",
+        "example : AverCert.gaugeOb.host ≠ AcceptedArtifact.intDispatchCanonicalHost 11 permTbl := by\n",
         "  intro h\n",
         "  have honest : hostBuilderProbe AverCert.gaugeOb.host 8 [] = some 1 := rfl\n",
         "  rw [h] at honest\n",
@@ -5373,18 +5393,18 @@ fn int_dispatch_kernel_guards_are_isolating() {
         "  fun _ _ _ _ _ => fun fn =>\n",
         "    if fn = 7 then\n",
         "      some (1, fun args => match args with\n",
-        "        | [WVal.i64v 0] => CertPrelude.boxRef 9 args\n",
+        "        | [WVal.i64v 0] => CertPrelude.boxRef 11 args\n",
         "        | _ => none)\n",
         "    else none\n",
     ));
     // At the probe point the sneaky builder is indistinguishable from canonical...
-    lean.push_str("example : hostBuilderProbe sneakyBoxHost 7 [.i64v 0] = hostBuilderProbe (AcceptedArtifact.intDispatchCanonicalHost 9 [(.box, 7)]) 7 [.i64v 0] := rfl\n");
+    lean.push_str("example : hostBuilderProbe sneakyBoxHost 7 [.i64v 0] = hostBuilderProbe (AcceptedArtifact.intDispatchCanonicalHost 11 [(.box, 7)]) 7 [.i64v 0] := rfl\n");
     // ...but it traps on a real constant where canonical boxes it...
     lean.push_str("example : hostBuilderProbe sneakyBoxHost 7 [.i64v 7] = none := rfl\n");
-    lean.push_str("example : hostBuilderProbe (AcceptedArtifact.intDispatchCanonicalHost 9 [(.box, 7)]) 7 [.i64v 7] = some 1007 := rfl\n");
+    lean.push_str("example : hostBuilderProbe (AcceptedArtifact.intDispatchCanonicalHost 11 [(.box, 7)]) 7 [.i64v 7] = some 1007 := rfl\n");
     // ...so the extensional equality rejects it.
     lean.push_str(concat!(
-        "example : sneakyBoxHost ≠ AcceptedArtifact.intDispatchCanonicalHost 9 [(.box, 7)] := by\n",
+        "example : sneakyBoxHost ≠ AcceptedArtifact.intDispatchCanonicalHost 11 [(.box, 7)] := by\n",
         "  intro h\n",
         "  have sneaky : hostBuilderProbe sneakyBoxHost 7 [.i64v 7] = none := rfl\n",
         "  rw [h] at sneaky\n",

@@ -4649,6 +4649,20 @@ fn emit_user_types(
     // per-collection iteration order no longer matches insertion
     // order.
     let mut entries: Vec<(u32, SubType)> = Vec::new();
+    let mk_sub_struct = |fields: Vec<wasm_encoder::FieldType>,
+                         is_final: bool,
+                         supertype_idx: Option<u32>| SubType {
+        is_final,
+        supertype_idx,
+        composite_type: CompositeType {
+            inner: CompositeInnerType::Struct(StructType {
+                fields: fields.into_boxed_slice(),
+            }),
+            shared: false,
+            descriptor: None,
+            describes: None,
+        },
+    };
     let mk_struct = |fields: Vec<wasm_encoder::FieldType>| SubType {
         is_final: true,
         supertype_idx: None,
@@ -4689,6 +4703,16 @@ fn emit_user_types(
                 variants,
                 ..
             }) => {
+                let root_idx =
+                    registry
+                        .sum_root_type_idx(parent)
+                        .ok_or(WasmGcError::Validation(format!(
+                            "sum `{parent}` root not registered"
+                        )))?;
+                // Empty, non-final nominal carrier. It precedes all variants
+                // by registry construction and shares this rec group with all
+                // user types, so recursive payload graphs remain valid.
+                entries.push((root_idx, mk_sub_struct(Vec::new(), false, None)));
                 for v in variants {
                     let mut fields = Vec::new();
                     for ty in &v.fields {
@@ -4717,7 +4741,7 @@ fn emit_user_types(
                                 "variant `{parent}.{}` not registered",
                                 v.name
                             )))?;
-                    entries.push((info.type_idx, mk_struct(fields)));
+                    entries.push((info.type_idx, mk_sub_struct(fields, true, Some(root_idx))));
                 }
             }
             _ => {}

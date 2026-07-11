@@ -583,11 +583,12 @@ def verbatimNLocals (plan : VerbatimRawPlan) : Nat :=
     bound to the exported function by name. There are no host/self calls to tie,
     so the code entry is nearly the whole binding — but the code entry alone does
     NOT determine the export's meaning: it omits the function SIGNATURE (a second
-    `eqref` parameter leaves the locals + body bytes identical) and the
+    nominal-root parameter leaves the locals + body bytes identical) and the
     `array.new_data` PAYLOAD CONTENTS (only the segment index and length are
     encoded). Two further conjuncts close both holes in-kernel:
-    `verbatimFuncTypeMatches` forces the byte-derived type-section entry to be the
-    unary ref-null or f64 signature declared by `plan.resultSig`, and `verbatimPayloadsBound`
+    `verbatimFuncTypeMatches` forces the byte-derived type-section entry to have
+    one nullable concrete root parameter and the ref-null or f64 result declared
+    by `plan.resultSig`, and `verbatimPayloadsBound`
     forces every literal's claimed bytes to equal the byte-pinned data segment. A
     body byte-noisier than the canonical dispatch lowering still fails the
     byte-equality gate. The member index is tied to the obligation through
@@ -693,10 +694,10 @@ def intDispatchCanonicalHost
     the exported function by name. The dispatch structure (tags, arm constants,
     operand order, roles) is pinned entirely by the byte-equality gate: every
     plan field reaches the lowered bytes. The code entry omits the function
-    SIGNATURE (a second `eqref` parameter leaves the locals + body bytes
+    SIGNATURE (a second nominal-root parameter leaves the locals + body bytes
     identical), so `verbatimFuncTypeMatches` additionally forces the
-    byte-derived type-section entry to be the unary
-    `[eqref] → [(ref null carrier)]` signature — the same shape check the
+    byte-derived type-section entry to be the unary nominal-ref →
+    `[(ref null carrier)]` signature — the same shape check the
     verbatim family uses, here with the Int carrier as the result heap type.
     The function index is tied to the obligation through
     `binding.funcIdx = obligation.self`, and the obligation's code table must

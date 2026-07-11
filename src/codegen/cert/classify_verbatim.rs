@@ -3,7 +3,7 @@
 /// returns `f64`, and every reference-producing
 /// default (`ref.null`, `array.new_data`) — like the field-projection hit of a
 /// widened match — returns a NULLABLE reference (`ref null`, the exact form the
-/// certified `[eqref] -> [(ref null) resultHeapTy]` signature promises). A
+/// certified unary nominal-ref -> nullable-result signature promises). A
 /// zero-result, two-result, non-nullable-reference, or scalar-integer signature
 /// is declined. The plan-backed path is additionally pinned in-kernel to the
 /// exact disjoint result-signature variant by `verbatimFuncTypeMatches`.
@@ -52,13 +52,13 @@ fn nr_verbatim_variant_dispatch(
     carrier: Option<u32>,
 ) -> Option<Cert> {
     let carrier = carrier?;
-    // Typed admission: the byte signature must be exactly "one user ADT (eqref)
-    // value in". Without this a two-parameter dispatch keeps a byte-identical code
+    // Typed admission: the byte signature must be exactly one nullable concrete
+    // nominal sum-root value in. Without this a two-parameter dispatch keeps a byte-identical code
     // entry (the extra param is overwritten by `local.set`), so a unary obligation
     // would be certified for a binary export. The result type is left to the plan
     // path: the declared ref-null or f64 result variant is additionally pinned
     // in-kernel by `verbatimFuncTypeMatches`.
-    let [TyKind::Eqref] = f.params.as_slice() else {
+    let [TyKind::Ref { nullable: true, .. }] = f.params.as_slice() else {
         return None;
     };
     if !f.calls.is_empty() {

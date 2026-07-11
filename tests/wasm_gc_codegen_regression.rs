@@ -167,3 +167,89 @@ fn wasm_gc_codegen_emits_valid_module_for_every_single_file_example() {
         compiled
     );
 }
+
+#[test]
+fn json_sum_uses_nominal_root_in_variants_tuple_and_dispatch() {
+    use wasmparser::{CompositeInnerType, Operator, Parser as WasmParser, Payload, StorageType};
+
+    let source = fs::read_to_string(examples_dir().join("data/json.av")).unwrap();
+    let items = parse_pipeline(&source).unwrap();
+    let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc(&items, None).unwrap();
+    wasmparser::Validator::new().validate_all(&bytes).unwrap();
+
+    let mut types = Vec::new();
+    let mut dispatch_targets = Vec::new();
+    for payload in WasmParser::new(0).parse_all(&bytes) {
+        match payload.unwrap() {
+            Payload::TypeSection(reader) => {
+                for group in reader {
+                    types.extend(group.unwrap().into_types());
+                }
+            }
+            Payload::CodeSectionEntry(body) => {
+                let mut ops = body.get_operators_reader().unwrap();
+                while !ops.eof() {
+                    match ops.read().unwrap() {
+                        Operator::RefTestNonNull { hty }
+                        | Operator::RefTestNullable { hty }
+                        | Operator::RefCastNonNull { hty }
+                        | Operator::RefCastNullable { hty } => {
+                            if let wasmparser::HeapType::Concrete(idx)
+                            | wasmparser::HeapType::Exact(idx) = hty
+                                && let Some(idx) = idx.as_module_index()
+                            {
+                                dispatch_targets.push(idx);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let root = &types[0];
+    assert!(!root.is_final, "Json root must be non-final");
+    assert!(
+        root.supertype_idx.is_none(),
+        "Json root must have no parent"
+    );
+    assert!(matches!(
+        &root.composite_type.inner,
+        CompositeInnerType::Struct(st) if st.fields.is_empty()
+    ));
+    for variant in &types[1..=6] {
+        assert!(variant.is_final, "Json variants remain final");
+        assert_eq!(
+            variant.supertype_idx.and_then(|idx| idx.as_module_index()),
+            Some(0),
+            "every Json variant must subtype the Json root"
+        );
+    }
+
+    let tuple_holds_json_root = types.iter().any(|sub| {
+        let CompositeInnerType::Struct(st) = &sub.composite_type.inner else {
+            return false;
+        };
+        if st.fields.len() != 2 {
+            return false;
+        }
+        matches!(
+            st.fields[1].element_type,
+            StorageType::Val(wasmparser::ValType::Ref(rt))
+                if rt.is_nullable()
+                    && matches!(rt.heap_type(), wasmparser::HeapType::Concrete(idx)
+                        if idx.as_module_index() == Some(0))
+        )
+    });
+    assert!(
+        tuple_holds_json_root,
+        "Tuple<String, Json> field 1 must be `(ref null $Json)`, not eqref"
+    );
+    assert!(!dispatch_targets.is_empty());
+    assert!(
+        dispatch_targets.iter().all(|idx| *idx != 0),
+        "specific pattern tests/casts must target concrete variants, not the sum root"
+    );
+}
