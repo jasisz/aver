@@ -25,6 +25,7 @@ jobs:
         include:
           - suite: cert_certify_spec
           - suite: cert_decode_spec
+          - suite: cert_whole_module_guard_iso
           - suite: cert_verify_spec
             partition: 1/4
           - suite: cert_verify_spec
