@@ -9,9 +9,10 @@
 //! `AcceptedArtifactCore.lean` / `AcceptedArtifact.lean` / `CertPrelude.lean`
 //! this binary embeds, regenerates
 //! `ArtifactBytes.lean` from the artifact bytes it read, copies the cert's
-//! DATA-only Lean files, authors its own `lakefile.lean`, and builds with a
-//! clean cache. It then writes a `CheckerWitness.lean` — which the checker, not
-//! the cert, authors — that:
+//! DATA-only Lean files, and authors its own `lakefile.lean`. Artifact-specific
+//! Lake outputs may come from the content-addressed user cache, but sources are
+//! always staged afresh and `lake build` still runs. It then writes a
+//! `CheckerWitness.lean` — which the checker, not the cert, authors — that:
 //!   * binds the sha256 the checker computed from the artifact bytes to the
 //!     hashes the kernel-checked theorems talk about (`rfl`);
 //!   * binds the certified-export names, contracts, profile and ABI the
@@ -86,6 +87,8 @@ use colored::Colorize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::cert_data_cache::{ArtifactBuildCache, KeyMaterial as ArtifactCacheKeyMaterial};
+
 /// Kernel axioms a certificate is allowed to depend on. Anything else — most
 /// importantly `sorryAx` (an admitted goal) or `ofReduceBool` (native-code
 /// trust) — fails the check. Spliced into the witness as `Name` literals and
@@ -97,6 +100,15 @@ const AXIOM_WHITELIST: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"]
 /// artifact-carried acceptance root used for the axiom audit.
 const FINAL_WITNESS_THEOREM: &str = "AverCertChecker.final";
 const WITNESS_THEOREM: &str = "AverCertChecker.accepted";
+
+/// The normal verifier authors only the trust-bearing witness. If that witness
+/// declines, verification automatically authors the diagnostic superset, whose
+/// two expensive mirror proofs localize the failing accepted-artifact conjunct.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WitnessMode {
+    Fast,
+    Diagnostic,
+}
 
 /// Lean source files the checker owns and never copies from the cert: the
 /// audited trusted computing base (taken from this binary) plus the checker's
@@ -877,38 +889,97 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     //    / srcDir / `.lake` cache are never read.
     let build = assemble_build(cert_dir, &bytes)?;
 
-    // Test harness opt-in only. Production verification remains a fresh build
-    // with no `.lake`; cache failures silently retain that clean-cache path.
-    reuse_prebuilt_prelude(&build.path);
+    // The artifact DATA cache is content-addressed by the complete manifest hash
+    // wall, schema version, toolchain, and exact staged build sources. It stores
+    // only Lake outputs. A hit is therefore a build hint, never a verdict: Lake
+    // still checks the freshly staged source dependency traces, and the checker
+    // re-authors/runs the witness (including the Artifact.data rfl pin,
+    // Artifact.certificate type ascription, and axiom audit) below. Accidental
+    // stale or poisoned output either fails integrity, makes Lake rebuild/fail,
+    // or makes that fresh witness fail; none of those paths can report certified.
+    let cache_pins = [
+        ("wasm_sha256", pinned),
+        ("schema_sha256", schema_pin),
+        ("schema_core_sha256", schema_core_pin),
+        ("prelude_sha256", prelude_pin),
+        ("cert_decode_sha256", decode_pin),
+        ("plan_check_sha256", plan_check_pin),
+        ("plan_lower_sha256", plan_lower_pin),
+        ("plan_bytes_sha256", plan_bytes_pin),
+        ("wasm_slice_sha256", wasm_slice_pin),
+        ("expr_fragment_accepted_sha256", expr_fragment_accepted_pin),
+        ("accepted_artifact_sha256", accepted_artifact_pin),
+        ("accepted_artifact_core_sha256", accepted_artifact_core_pin),
+    ];
+    let mut artifact_cache = ArtifactBuildCache::prepare(
+        &build.path,
+        &ArtifactCacheKeyMaterial {
+            schema_version,
+            pinned_sha256: &cache_pins,
+            toolchain_version: cert::LEAN_TOOLCHAIN.trim(),
+        },
+    );
 
-    // 4. The assembled project must build under the pinned toolchain, from a
-    //    clean cache (the fresh dir has no `.lake`).
-    let b = run_lake(&build.path, &["build"])?;
+    // A whole DATA-cache hit already contains the pristine prelude. On a miss,
+    // retain the existing env-gated prelude seed before building the DATA roots.
+    if !artifact_cache.was_hit() {
+        reuse_prebuilt_prelude(&build.path);
+    }
+
+    // Byte-derived inputs used by both witness variants. They are computed
+    // before Lake so even a build decline can be followed by the required
+    // diagnostic-witness attempt.
+    let host_table_lean = cert::byte_derived_frag_host_table_lean(&bytes)?;
+    let struct_table_lean = cert::frag_struct_table_lean_from_entries(
+        rederived
+            .iter()
+            .flat_map(|r| r.fragment_struct_entries.iter()),
+    )?;
+
+    // 4. The assembled project must build under the pinned toolchain. If a
+    //    validated cache entry nevertheless breaks Lake, discard it and retry
+    //    once from freshly staged sources (optionally with only the pristine
+    //    prelude seed). The clean retry is authoritative.
+    let mut b = run_lake(&build.path, &["build"])?;
+    if !b.status.success() && artifact_cache.was_hit() {
+        artifact_cache.invalidate(&build.path);
+        reuse_prebuilt_prelude(&build.path);
+        b = run_lake(&build.path, &["build"])?;
+    }
     if !b.status.success() {
+        let diagnostic = author_and_run_checker_witness(
+            &build.path,
+            &actual,
+            &cands,
+            &rederived,
+            &derived_contracts,
+            &host_table_lean,
+            &struct_table_lean,
+            &module_envelope,
+            WitnessMode::Diagnostic,
+        )?;
+        if diagnostic.status.success() {
+            return Err(
+                "internal verifier error: lake build failed but the diagnostic checker witness \
+                 succeeded; verification failed closed"
+                    .to_string(),
+            );
+        }
         return Err(format!(
-            "certificate did not build (lake build failed):\n{}",
-            tail(&b.combined, 20)
+            "certificate did not build (lake build failed); the diagnostic checker witness \
+             also declined:\n{}",
+            tail(&diagnostic.combined, 30)
         ));
     }
+    artifact_cache.publish(&build.path);
 
     // 5. Kernel witness authored BY THE CHECKER (never shipped in the cert):
     //    the sha binding, the report-candidate bindings, the artifact-decode /
     //    checked-plan bindings (kernel-decoded non-expression code/carrier/struct,
     //    canonical expression plans, and Rust-derived host/self), the final-theorem type
     //    ascription, and the axiom-whitelist check (see `checker_witness`).
-    // Byte-derived host-role table: source-plan encoding in the witness and
-    // artifact claims always runs against these indices, never plan-supplied
-    // ones.
-    let host_table_lean = cert::byte_derived_frag_host_table_lean(&bytes)?;
-    // Byte-derived struct table: the consistent union of every checked
-    // projection sidecar's per-export entries (each pinned by canonical
-    // code-entry byte equality against this module's bytes).
-    let struct_table_lean = cert::frag_struct_table_lean_from_entries(
-        rederived
-            .iter()
-            .flat_map(|r| r.fragment_struct_entries.iter()),
-    )?;
-    let witness = checker_witness(
+    let w = author_and_run_checker_witness(
+        &build.path,
         &actual,
         &cands,
         &rederived,
@@ -916,24 +987,46 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
         &host_table_lean,
         &struct_table_lean,
         &module_envelope,
-    );
-    std::fs::write(build.path.join("CheckerWitness.lean"), &witness)
-        .map_err(|e| format!("cannot write checker witness: {e}"))?;
-    let w = run_lake(&build.path, &["env", "lean", "CheckerWitness.lean"])?;
+        WitnessMode::Fast,
+    )?;
     if !w.status.success() {
+        // The fast witness deliberately omits two redundant but useful mirror
+        // proofs. Re-author the diagnostic superset on every decline so callers
+        // retain the existing per-conjunct Lean errors. The diagnostic result is
+        // never allowed to upgrade the verdict: if the superset unexpectedly
+        // succeeds after the fast witness failed, the checker reports an internal
+        // inconsistency and fails closed.
+        let diagnostic = author_and_run_checker_witness(
+            &build.path,
+            &actual,
+            &cands,
+            &rederived,
+            &derived_contracts,
+            &host_table_lean,
+            &struct_table_lean,
+            &module_envelope,
+            WitnessMode::Diagnostic,
+        )?;
+        if diagnostic.status.success() {
+            return Err(
+                "internal verifier error: the fast checker witness failed but its diagnostic \
+                 superset succeeded; verification failed closed"
+                    .to_string(),
+            );
+        }
         // The verdict is this exit code, not any parsed line. The lake output is
         // shown to the human to name which face failed (hash, a report binding,
         // an artifact-decode / checked-plan binding, the `Holds manifest` type,
         // or a non-whitelisted axiom).
         return Err(format!(
-            "certificate does not bind to this artifact: the checker's kernel witness \
+            "certificate does not bind to this artifact: the checker's diagnostic kernel witness \
              (hash binding, certified-export/contract/profile/abi bindings against the \
              proven manifest, the artifact-root binding, the artifact-decode / checked-plan bindings for \
              kernel-decoded code/carrier/struct facts plus pinned host/self, the semantic-face \
              bindings that pin each obligation's Dom/Cod/domRepr/codRepr to the standard \
              form of its class and prove every domain is inhabited, the final-theorem type \
              `Holds manifest`, and the axiom whitelist) did not check:\n{}",
-            tail(&w.combined, 30)
+            tail(&diagnostic.combined, 30)
         ));
     }
 
@@ -2985,6 +3078,7 @@ fn lean_accepted_artifact_witness(
     host_table_lean: &str,
     struct_table_lean: &str,
     module_envelope: &cert::ModuleEnvelopeFacts,
+    mode: WitnessMode,
 ) -> String {
     let witness = lean_expr_fragment_artifact_claims(rederived, host_table_lean, struct_table_lean);
     let artifact = lean_artifact_data_literal(
@@ -3001,7 +3095,7 @@ fn lean_accepted_artifact_witness(
         &witness.composition_claims,
         module_envelope,
     );
-    let checker_proof = format!(
+    let checker_proof = (mode == WitnessMode::Diagnostic).then(|| format!(
         concat!(
             "  dsimp [AverCert.AcceptedArtifact.accepted,\n",
             "    AverCert.AcceptedArtifact.subjectMatchesArtifactRoot,\n",
@@ -3128,17 +3222,26 @@ fn lean_accepted_artifact_witness(
         int_dispatch_proof = witness.int_dispatch_proof,
         field_projection_proof = witness.field_projection_proof,
         composition_proof = witness.composition_proof
-    );
+    ));
+    let diagnostic_mirror = checker_proof.map_or_else(String::new, |checker_proof| {
+        format!(
+            concat!(
+                "-- Checker-owned mirror proof kept as a narrow diagnostic. The axiom\n",
+                "-- audit below is rooted at the artifact-carried proof, after the data\n",
+                "-- pin above has checked.\n",
+                "example : AverCert.AcceptedArtifact.accepted {artifact} := by\n",
+                "{checker_proof}\n\n"
+            ),
+            artifact = artifact,
+            checker_proof = checker_proof
+        )
+    });
     format!(
         concat!(
             "-- Artifact-carried data pin: the cert-supplied `Artifact.lean` data\n",
             "-- must be exactly the checker-reconstructed artifact literal.\n",
             "example : AverCert.Artifact.data = {artifact} := rfl\n\n",
-            "-- Checker-owned mirror proof kept as a narrow diagnostic. The axiom\n",
-            "-- audit below is rooted at the artifact-carried proof, after the data\n",
-            "-- pin above has checked.\n",
-            "example : AverCert.AcceptedArtifact.accepted {artifact} := by\n",
-            "{checker_proof}\n\n",
+            "{diagnostic_mirror}",
             "-- Whole-artifact acceptance root carried by the artifact itself. The\n",
             "-- checker only accepts it after the data pin and final-theorem\n",
             "-- ascription above have checked.\n",
@@ -3147,7 +3250,7 @@ fn lean_accepted_artifact_witness(
         ),
         witness_theorem = WITNESS_THEOREM,
         artifact = artifact,
-        checker_proof = checker_proof
+        diagnostic_mirror = diagnostic_mirror
     )
 }
 
@@ -3157,6 +3260,7 @@ fn lean_accepted_artifact_witness(
 /// theorem's type / the kernel axiom collector), so a lying JSON, a rebound
 /// hash, a weakened theorem, or a smuggled axiom all make this file fail to
 /// check — and THAT (the process exit code) is the only verdict channel.
+#[allow(clippy::too_many_arguments)]
 fn checker_witness(
     sha: &str,
     cands: &Candidates,
@@ -3165,6 +3269,7 @@ fn checker_witness(
     host_table_lean: &str,
     struct_table_lean: &str,
     module_envelope: &cert::ModuleEnvelopeFacts,
+    mode: WitnessMode,
 ) -> String {
     // Count is the JSON-claimed number of certified exports, verified by `rfl`
     // against `obligations.length` (so a JSON claiming more or fewer than the
@@ -3283,17 +3388,22 @@ fn checker_witness(
     let expr_fragment_wasm_slice_pins = lean_expr_fragment_wasm_slice_pins(rederived);
     let expr_fragment_func_binding_pins = lean_expr_fragment_func_binding_pins(rederived);
     let expr_fragment_accepted_pins = lean_expr_fragment_accepted_pins(rederived);
-    let expr_fragment_obligation_acceptance_pins = lean_expr_fragment_obligation_acceptance_pins(
-        rederived,
-        host_table_lean,
-        struct_table_lean,
-        module_envelope,
-    );
+    let expr_fragment_obligation_acceptance_pins = if mode == WitnessMode::Diagnostic {
+        lean_expr_fragment_obligation_acceptance_pins(
+            rederived,
+            host_table_lean,
+            struct_table_lean,
+            module_envelope,
+        )
+    } else {
+        String::new()
+    };
     let accepted_artifact_witness = lean_accepted_artifact_witness(
         rederived,
         host_table_lean,
         struct_table_lean,
         module_envelope,
+        mode,
     );
     // Semantic-face bindings: pin each obligation's typed `Dom`/`Cod`/`domRepr`/
     // `codRepr` to the STANDARD form its BYTE-derived class implies, and prove
@@ -3530,6 +3640,41 @@ fn checker_witness(
 /// is indexed into `manifest.obligations` so the block is robust to an
 /// obligation count that diverges from the manifest. Empty when there are no
 /// certified obligations.
+#[allow(clippy::too_many_arguments)]
+fn author_and_run_checker_witness(
+    build_dir: &Path,
+    sha: &str,
+    cands: &Candidates,
+    rederived: &[cert::RederivedObligation],
+    derived_contracts: &[String],
+    host_table_lean: &str,
+    struct_table_lean: &str,
+    module_envelope: &cert::ModuleEnvelopeFacts,
+    mode: WitnessMode,
+) -> Result<LakeOut, String> {
+    let witness = checker_witness(
+        sha,
+        cands,
+        rederived,
+        derived_contracts,
+        host_table_lean,
+        struct_table_lean,
+        module_envelope,
+        mode,
+    );
+    std::fs::write(build_dir.join("CheckerWitness.lean"), witness).map_err(|e| {
+        format!(
+            "cannot write {} checker witness: {e}",
+            if mode == WitnessMode::Diagnostic {
+                "diagnostic"
+            } else {
+                "fast"
+            }
+        )
+    })?;
+    run_lake(build_dir, &["env", "lean", "CheckerWitness.lean"])
+}
+
 fn face_bindings(rederived: &[cert::RederivedObligation]) -> String {
     let mut s = String::new();
     for (i, r) in rederived.iter().enumerate() {
