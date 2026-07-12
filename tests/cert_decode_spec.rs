@@ -487,6 +487,18 @@ fn s1_rust_splices_equal_kernel_decodes_on_full_corpus() {
                 carrier = obligation.carrier,
             ));
 
+            // F6: the export section maps this obligation's name to the Rust
+            // `self_idx`. The production witness pins `self` through the
+            // whole-module `exportsAccounted` conjunct (`WasmSlice.enumExports`);
+            // this corpus-wide differential confirms the byte-derived export
+            // table agrees with the Rust self index, so removing the Rust
+            // `self` splice loses no constraint.
+            src.push_str(&format!(
+                "example : (match CertDecode.decodeExports bytesN bytesLen with | some es => (es.find? (fun e => e.1 == {name})).map Prod.snd | none => none) = some {self_idx} := rfl\n",
+                name = lean_str(&obligation.name),
+                self_idx = obligation.self_idx,
+            ));
+
             let code_indices = rust_code_indices(&obligation.code);
             assert!(
                 code_indices.contains(&obligation.self_idx),

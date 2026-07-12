@@ -3121,7 +3121,6 @@ fn checker_witness(
     let abi = &cands.abi;
     let artifact_root = cert::ARTIFACT_CERTIFICATE_ROOT;
     let hosts = lean_expr_list(rederived.iter().map(|r| r.host.as_str()));
-    let selfs = lean_nat_list(rederived.iter().map(|r| r.self_idx));
     let json_policies = format!(
         "[{}]",
         cands
@@ -3367,17 +3366,20 @@ fn checker_witness(
          -- CARRIER (plus consumed struct-field counts) are computed from raw\n\
          -- ArtifactBytes by `CertDecode` inside the accepted-artifact conjunct.\n\
          -- Expression-fragment code/carrier retains its checked plan plus\n\
-         -- canonical code-entry byte equality. HOST and SELF remain checker-\n\
-         -- spliced in this S1 leg (later F4/F5/F6 work). These\n\
-         -- are EXACTLY the fields `Obligation.holds` reasons about\n\
+         -- canonical code-entry byte equality. SELF (F6) is no longer spliced:\n\
+         -- the accepted-artifact `exportsAccounted` conjunct already pins every\n\
+         -- obligation's `(export name, func kind, self index)` into the byte-\n\
+         -- decoded export section (`WasmSlice.enumExports`), so `self` is a\n\
+         -- kernel computation over the module bytes, not a Rust-rendered literal.\n\
+         -- Only HOST remains checker-spliced in this leg (later F4/F5 work).\n\
+         -- `host`/`self` are among the fields `Obligation.holds` reasons about\n\
          -- (`wFuncN o.code (o.host add sub mul stringEq) fuel o.self`), so a fabricated body,\n\
          -- a decoupled `code`/`self`/`carrier`, or a nerfed `host` that would\n\
-         -- make `holds` vacuous all diverge from byte-bound checker values and\n\
-         -- fail a load-bearing kernel binding. The remaining host/self splices\n\
-         -- come from the checker's audited renderer and never reference the\n\
+         -- make `holds` vacuous all diverge from byte-bound kernel values and\n\
+         -- fail a load-bearing kernel binding. The remaining host splice comes\n\
+         -- from the checker's audited renderer and never references the\n\
          -- attacker's `CertModule.*` definitions.\n\
-         example : AverCert.manifest.obligations.map (fun o => o.host) =\n  {hosts} := rfl\n\
-         example : AverCert.manifest.obligations.map (fun o => o.self) = {selfs} := rfl\n\n\
+         example : AverCert.manifest.obligations.map (fun o => o.host) =\n  {hosts} := rfl\n\n\
          -- Semantic-face bindings: the typed `Dom`/`Cod`/`domRepr`/`codRepr` of\n\
          -- every obligation, pinned to the standard form of its byte-bound\n\
          -- class/checked plan, plus a `Nonempty Dom` proof. A manifest that weakens the face\n\

@@ -442,3 +442,86 @@ example : ¬ mutualDecodeWitness hostileManifest := by
     );
     let _ = std::fs::remove_dir_all(out_dir);
 }
+
+/// F6 self retirement: the checker no longer splices a Rust `self` list into the
+/// witness. This is sound because `exportsAccounted` already pins every
+/// obligation's `(export name, function kind, self index)` triple into the
+/// byte-decoded export section (`WasmSlice.enumExports`). This test confirms the
+/// binding is load-bearing: the honest artifact passes `exportsAccounted`, and
+/// decoupling one obligation's `self` from the index its export name resolves to
+/// in the bytes fails it (so a manifest cannot claim a fabricated self index).
+#[test]
+fn self_index_is_kernel_bound_by_exports_accounted() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping F6 self-binding GuardIso test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-self-index-binding");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/data/json.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile json fixture for F6 self-binding GuardIso");
+    assert!(
+        compile.status.success(),
+        "json compile failed for F6 self-binding GuardIso:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let cert = out_dir.join("cert");
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build json certificate before F6 self-binding GuardIso");
+    assert!(
+        build.status.success(),
+        "json certificate failed before F6 self-binding GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let lean = r#"import Artifact
+
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 300000
+
+-- Honest artifact: every obligation's self index is the byte-derived export
+-- index for its name, so the export accounting holds.
+example : AcceptedArtifact.exportsAccounted Artifact.data = true := rfl
+
+-- Decouple the first obligation's self index from its export name. The
+-- (name, func-kind, self) triple is no longer a member of the byte-decoded
+-- export section, so the accounting fails: `self` cannot be fabricated even
+-- though the Rust checker no longer pins it with a separate `rfl` splice.
+def hostileSelfManifest : Manifest :=
+  match manifest.obligations with
+  | o :: rest => { manifest with obligations := { o with self := o.self + 1 } :: rest }
+  | [] => manifest
+def hostileSelfArtifact : AcceptedArtifact.ArtifactData :=
+  { Artifact.data with manifest := hostileSelfManifest }
+example : AcceptedArtifact.exportsAccounted hostileSelfArtifact = false := rfl
+"#;
+    std::fs::write(cert.join("SelfBindingGuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("SelfBindingGuardIso.lean")
+        .output()
+        .expect("run F6 self-binding GuardIso");
+    assert!(
+        check.status.success(),
+        "F6 self-binding GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(out_dir);
+}
