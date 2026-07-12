@@ -5460,7 +5460,7 @@ example : weakVerbatimPlanAcceptedWithoutResultSig
   simp [packLE, isoRefMod, isoHdr, isoRefType, isoTail, isoOb, isoCode,
     AcceptedArtifact.verbatimNLocals, isoF64Plan,
     PlanCheck.dispatchHasProjection]
-  rfl
+  decide
 
 example : ¬ AcceptedArtifact.verbatimPlanAccepted
     (packLE isoRefMod) isoRefMod.length isoNameF "f" 7 isoF64Plan isoOb := by

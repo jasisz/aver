@@ -849,6 +849,7 @@ struct RenderedArtifactClaims {
     field_projection_claims: String,
     composition_members: String,
     composition_claims: String,
+    claim_proof_bundles: String,
     obligation_proof: String,
     sym_proof: String,
     string_eq_proof: String,
@@ -860,6 +861,36 @@ struct RenderedArtifactClaims {
     int_dispatch_proof: String,
     field_projection_proof: String,
     composition_proof: String,
+}
+
+/// Render one opaque theorem per concrete claim plus the small constructor
+/// spine used by the corresponding per-family theorem.  Indexing the already
+/// defined family list avoids repeating the large claim literals in theorem
+/// statements; reduction proves that each indexed claim is definitionally the
+/// same value consumed by the aggregate predicate.
+fn render_per_claim_bundles(
+    family: &str,
+    predicate: &str,
+    claims_def: &str,
+    unfolds: &str,
+    proofs: &[String],
+) -> (String, String) {
+    let mut theorems = String::new();
+    let mut names = Vec::with_capacity(proofs.len());
+    for (index, proof) in proofs.iter().enumerate() {
+        let theorem = format!("{family}Claim{index}Accepted");
+        theorems.push_str(&format!(
+            "theorem {theorem} :\n  {predicate} ({claims_def}.get ⟨{index}, by decide⟩) := by\n  dsimp [{claims_def}, {unfolds}]\n  exact {proof}\n\n"
+        ));
+        names.push(theorem);
+    }
+    let aggregate = names
+        .into_iter()
+        .rev()
+        .fold("trivial".to_string(), |rest, theorem| {
+            format!("⟨{theorem}, {rest}⟩")
+        });
+    (theorems, aggregate)
 }
 
 fn render_artifact_expr_fragment_claims(
@@ -1352,33 +1383,35 @@ fn render_artifact_expr_fragment_claims(
     let obligation_proof = (0..obligation_proof_count).fold("trivial".to_string(), |acc, _| {
         format!("⟨rfl, {acc}⟩")
     });
-    let sym_proof = sym_proofs
-        .into_iter()
-        .rev()
-        .fold("trivial".to_string(), |acc, proof| {
-            format!("⟨{proof}, {acc}⟩")
-        });
-    let string_proof = string_proofs
-        .into_iter()
-        .rev()
-        .fold("trivial".to_string(), |acc, proof| {
-            format!("⟨{proof}, {acc}⟩")
-        });
-    let string_eq_proof =
-        string_eq_proofs
-            .into_iter()
-            .rev()
-            .fold("trivial".to_string(), |acc, proof| {
-                format!("⟨{proof}, {acc}⟩")
-            });
+    let (sym_bundles, sym_proof) = render_per_claim_bundles(
+        "symFragment",
+        "AverCert.AcceptedArtifact.symFragmentClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen",
+        "symFragmentClaims",
+        "AverCert.AcceptedArtifact.symFragmentClaimAccepted, AverCert.AcceptedArtifact.symFragmentPlanAccepted, AverCert.AcceptedArtifact.exprFragmentPlanAccepted, AverCert.ExprFragmentAccepted.accepted",
+        &sym_proofs,
+    );
+    let (string_bundles, string_proof) = render_per_claim_bundles(
+        "stringConcat",
+        "AverCert.AcceptedArtifact.stringConcatClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
+        "stringConcatClaims",
+        "AverCert.AcceptedArtifact.stringConcatClaimAccepted, AverCert.AcceptedArtifact.stringConcatPlanForExport, AverCert.AcceptedArtifact.stringConcatPlanAccepted, AverCert.AcceptedArtifact.stringConcatCanonicalHost",
+        &string_proofs,
+    );
+    let (string_eq_bundles, string_eq_proof) = render_per_claim_bundles(
+        "stringEq",
+        "AverCert.AcceptedArtifact.stringEqClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
+        "stringEqClaims",
+        "AverCert.AcceptedArtifact.stringEqClaimAccepted, AverCert.AcceptedArtifact.stringEqPlanForExport, AverCert.AcceptedArtifact.stringEqPlanAccepted, AverCert.AcceptedArtifact.stringEqCanonicalHost",
+        &string_eq_proofs,
+    );
     let construct_claim_count = construct_proofs.len();
-    let construct_claims_proof =
-        construct_proofs
-            .into_iter()
-            .rev()
-            .fold("trivial".to_string(), |acc, proof| {
-                format!("⟨{proof}, {acc}⟩")
-            });
+    let (construct_bundles, construct_claims_proof) = render_per_claim_bundles(
+        "construct",
+        "AverCert.AcceptedArtifact.constructClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
+        "constructClaims",
+        "AverCert.AcceptedArtifact.constructClaimAccepted, AverCert.AcceptedArtifact.constructPlanForExport, AverCert.AcceptedArtifact.constructPlanAccepted, AverCert.AcceptedArtifact.exprFragmentPlanAccepted, AverCert.ExprFragmentAccepted.accepted",
+        &construct_proofs,
+    );
     // `acceptedConstructFragments` conjoins per-claim acceptance with unique
     // export-name coverage. Build the `Nodup` proof one list cell at a time so
     // Lean never runs a whole-list decision procedure inside the already deep
@@ -1388,49 +1421,66 @@ fn render_artifact_expr_fragment_claims(
         |acc, _| format!("List.nodup_cons.mpr ⟨by decide, {acc}⟩"),
     );
     let construct_proof = format!("⟨{construct_claims_proof}, {construct_nodup_proof}⟩");
-    let recursion_proof =
-        recursion_proofs
-            .into_iter()
-            .rev()
-            .fold("trivial".to_string(), |acc, proof| {
-                format!("⟨{proof}, {acc}⟩")
-            });
-    let mutual_proof = mutual_proofs
-        .into_iter()
-        .rev()
-        .fold("trivial".to_string(), |acc, proof| {
-            format!("⟨{proof}, {acc}⟩")
-        });
-    let verbatim_proof = verbatim_proofs
-        .into_iter()
-        .rev()
-        .fold("trivial".to_string(), |acc, proof| {
-            format!("⟨{proof}, {acc}⟩")
-        });
-    let int_dispatch_proof =
-        int_dispatch_proofs
-            .into_iter()
-            .rev()
-            .fold("trivial".to_string(), |acc, proof| {
-                format!("⟨{proof}, {acc}⟩")
-            });
-    let field_projection_proof = field_projection_proofs
-        .into_iter()
-        .rev()
-        .fold("trivial".to_string(), |acc, proof| {
-            format!("⟨{proof}, {acc}⟩")
-        });
-    let composition_claims_proof = composition_proofs
-        .into_iter()
-        .rev()
-        .fold("trivial".to_string(), |acc, proof| {
-            format!("⟨{proof}, {acc}⟩")
-        });
+    let (recursion_bundles, recursion_proof) = render_per_claim_bundles(
+        "recursion",
+        "AverCert.AcceptedArtifact.recursionClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
+        "recursionClaims",
+        "AverCert.AcceptedArtifact.recursionClaimAccepted, AverCert.AcceptedArtifact.recursionPlanForExport, AverCert.AcceptedArtifact.recursionPlanAccepted",
+        &recursion_proofs,
+    );
+    let (mutual_bundles, mutual_proof) = render_per_claim_bundles(
+        "mutual",
+        "AverCert.AcceptedArtifact.mutualRecursionClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
+        "mutualRecursionClaims",
+        "AverCert.AcceptedArtifact.mutualRecursionClaimAccepted, AverCert.AcceptedArtifact.mutualPlanForExport, AverCert.AcceptedArtifact.mutualPlanAccepted",
+        &mutual_proofs,
+    );
+    let (verbatim_bundles, verbatim_proof) = render_per_claim_bundles(
+        "verbatim",
+        "AverCert.AcceptedArtifact.verbatimClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
+        "verbatimClaims",
+        "AverCert.AcceptedArtifact.verbatimClaimAccepted, AverCert.AcceptedArtifact.verbatimPlanForExport, AverCert.AcceptedArtifact.verbatimPlanAccepted",
+        &verbatim_proofs,
+    );
+    let (int_dispatch_bundles, int_dispatch_proof) = render_per_claim_bundles(
+        "intDispatch",
+        "AverCert.AcceptedArtifact.intDispatchClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
+        "intDispatchClaims",
+        "AverCert.AcceptedArtifact.intDispatchClaimAccepted, AverCert.AcceptedArtifact.intDispatchPlanForExport, AverCert.AcceptedArtifact.intDispatchPlanAccepted, AverCert.AcceptedArtifact.intDispatchCanonicalHost, AverCert.AcceptedArtifact.intDispatchCanonicalSlots",
+        &int_dispatch_proofs,
+    );
+    let (field_projection_bundles, field_projection_proof) = render_per_claim_bundles(
+        "fieldProjection",
+        "AverCert.AcceptedArtifact.fieldProjectionClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
+        "fieldProjectionClaims",
+        "AverCert.AcceptedArtifact.fieldProjectionClaimAccepted, AverCert.AcceptedArtifact.fieldProjectionPlanForExport, AverCert.AcceptedArtifact.fieldProjectionPlanAccepted",
+        &field_projection_proofs,
+    );
+    let (composition_bundles, composition_claims_proof) = render_per_claim_bundles(
+        "composition",
+        "AverCert.AcceptedArtifact.compositionClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen compositionMembers",
+        "compositionClaims",
+        "AverCert.AcceptedArtifact.compositionClaimAccepted, AverCert.AcceptedArtifact.compositionFuncTable, AverCert.AcceptedArtifact.compositionMemberBinding, AverCert.AcceptedArtifact.compositionNamedMembersAccepted, AverCert.AcceptedArtifact.compositionMemberPlanAccepted, AverCert.AcceptedArtifact.compositionMemberForName, AverCert.AcceptedArtifact.compositionClosureBound, AverCert.AcceptedArtifact.compositionEdges, AverCert.AcceptedArtifact.compositionPlanCallees, AverCert.AcceptedArtifact.compositionEdgesDescend, AverCert.AcceptedArtifact.compositionReachClosure, AverCert.AcceptedArtifact.compositionReachStep, AverCert.AcceptedArtifact.compositionEdgeLookup, AverCert.AcceptedArtifact.stringListNodup, AverCert.AcceptedArtifact.stringListSetEq",
+        &composition_proofs,
+    );
     // `acceptedCompositionFragments` conjoins the per-claim acceptance with the
     // artifact-wide member coverage, manifest-obligation coverage, and unique
     // obligation-export bounds. Each is a decidable `Bool = true` over concrete
     // artifact literals, closed by `rfl`.
     let composition_proof = format!("⟨{composition_claims_proof}, rfl, rfl, rfl⟩");
+    let claim_proof_bundles = [
+        sym_bundles,
+        string_eq_bundles,
+        string_bundles,
+        construct_bundles,
+        recursion_bundles,
+        mutual_bundles,
+        verbatim_bundles,
+        int_dispatch_bundles,
+        field_projection_bundles,
+        composition_bundles,
+    ]
+    .concat();
     RenderedArtifactClaims {
         sym_claims,
         string_eq_claims,
@@ -1443,6 +1493,7 @@ fn render_artifact_expr_fragment_claims(
         field_projection_claims,
         composition_members,
         composition_claims,
+        claim_proof_bundles,
         obligation_proof,
         sym_proof,
         string_eq_proof,
@@ -1485,8 +1536,12 @@ fn render_artifact(
         nat_list(&analysis.module_envelope.closure.helpers),
         nat_list(&analysis.module_envelope.closure.admitted),
     );
-    let fragment_proof = format!(
-        concat!(
+    // Shared source-side rendering for the few cross-family reductions. Each
+    // proof family below gets its own opaque theorem instead of contributing
+    // an inline branch to one enormous `acceptedWithFinal` proof term. The
+    // expansion deliberately contains no Lean `macro`: Artifact.lean is data
+    // from the verifier's perspective and must pass the elaboration-code wall.
+    let artifact_dsimp = concat!(
             "  dsimp [data, closureClaim, symFragmentClaims, stringEqClaims, stringConcatClaims, constructClaims, recursionClaims, mutualRecursionClaims, verbatimClaims, intDispatchClaims, fieldProjectionClaims, compositionMembers, compositionClaims, AverCert.AcceptedArtifact.accepted,\n",
             "    AverCert.AcceptedArtifact.subjectMatchesArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.expectedArtifactRoot,\n",
@@ -1543,6 +1598,7 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.acceptedFieldProjectionFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedCompositionFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedWholeModule,\n",
+            "    AverCert.AcceptedArtifact.allClaims,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
@@ -1599,20 +1655,86 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.intDispatchCanonicalHost,\n",
             "    AverCert.AcceptedArtifact.intDispatchCanonicalSlots,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
-            "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨finalCert, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩, ⟨⟨decodedHostRoles, ⟨decodedStringHostRoles, by repeat' constructor⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, ⟨{int_dispatch_proof}, ⟨{field_projection_proof}, ⟨{composition_proof}, ⟨rfl, rfl, rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
+            "    AverCert.ExprFragmentAccepted.accepted]\n"
+    );
+    // `dsimp` closes a reduced `True` goal immediately.  Do not emit a
+    // trailing `exact trivial` for an empty family: Lean correctly reports a
+    // tactic after goal closure as an error.
+    let family_exact = |proof: &str| {
+        if proof == "trivial" {
+            String::new()
+        } else {
+            format!("  exact {proof}\n")
+        }
+    };
+    let proof_bundles = format!(
+        concat!(
+            "theorem claimObligationsBound : AverCert.AcceptedArtifact.fragmentClaimObligationsInManifest data := by\n",
+            "{artifact_dsimp}",
+            "{obligation_proof_step}\n",
+            "theorem claimsMatchManifest : AverCert.AcceptedArtifact.claimsMatchManifest data := by\n",
+            "{artifact_dsimp}",
+            "  exact ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n\n",
+            "theorem decodedNonExprClaimFacts : AverCert.AcceptedArtifact.decodedNonExprClaimFacts data := by\n",
+            "{artifact_dsimp}",
+            "  repeat' constructor\n\n",
+            "theorem decodedNonExprFacts : AverCert.AcceptedArtifact.decodedNonExprFacts data := by\n",
+            "  dsimp [AverCert.AcceptedArtifact.decodedNonExprFacts]\n",
+            "  exact ⟨decodedHostRoles, decodedStringHostRoles, decodedNonExprClaimFacts⟩\n\n",
+            "theorem symFragmentsAccepted : AverCert.AcceptedArtifact.acceptedSymFragments data := by\n",
+            "  dsimp [AverCert.AcceptedArtifact.acceptedSymFragments, AverCert.AcceptedArtifact.symFragmentClaimsAccepted, AverCert.AcceptedArtifact.allClaims, data, symFragmentClaims]\n",
+            "{sym_proof_step}\n",
+            "theorem stringEqFragmentsAccepted : AverCert.AcceptedArtifact.acceptedStringEqFragments data := by\n",
+            "  dsimp [AverCert.AcceptedArtifact.acceptedStringEqFragments, AverCert.AcceptedArtifact.stringEqClaimsAccepted, AverCert.AcceptedArtifact.allClaims, data, stringEqClaims]\n",
+            "{string_eq_proof_step}\n",
+            "theorem stringConcatFragmentsAccepted : AverCert.AcceptedArtifact.acceptedStringConcatFragments data := by\n",
+            "  dsimp [AverCert.AcceptedArtifact.acceptedStringConcatFragments, AverCert.AcceptedArtifact.stringConcatClaimsAccepted, AverCert.AcceptedArtifact.allClaims, data, stringConcatClaims]\n",
+            "{string_proof_step}\n",
+            "theorem constructFragmentsAccepted : AverCert.AcceptedArtifact.acceptedConstructFragments data := by\n",
+            "  dsimp [AverCert.AcceptedArtifact.acceptedConstructFragments, AverCert.AcceptedArtifact.constructClaimsAccepted, AverCert.AcceptedArtifact.allClaims, AverCert.AcceptedArtifact.constructClaimExportNames, data, constructClaims]\n",
+            "  exact {construct_proof}\n\n",
+            "theorem recursionFragmentsAccepted : AverCert.AcceptedArtifact.acceptedRecursionFragments data := by\n",
+            "  dsimp [AverCert.AcceptedArtifact.acceptedRecursionFragments, AverCert.AcceptedArtifact.recursionClaimsAccepted, AverCert.AcceptedArtifact.allClaims, data, recursionClaims]\n",
+            "{recursion_proof_step}\n",
+            "theorem mutualFragmentsAccepted : AverCert.AcceptedArtifact.acceptedMutualRecursionFragments data := by\n",
+            "  dsimp [AverCert.AcceptedArtifact.acceptedMutualRecursionFragments, AverCert.AcceptedArtifact.mutualRecursionClaimsAccepted, AverCert.AcceptedArtifact.allClaims, AverCert.AcceptedArtifact.mutualClaimsFormClosedSccs, AverCert.AcceptedArtifact.mutualClaimEdges, AverCert.AcceptedArtifact.mutualClaimEdge, AverCert.AcceptedArtifact.mutualPlanForExport, AverCert.AcceptedArtifact.mutualPlanTarget, AverCert.AcceptedArtifact.mutualMembersFormClosedSccs, AverCert.AcceptedArtifact.followSccCycle, AverCert.AcceptedArtifact.natEdgeLookup, AverCert.AcceptedArtifact.natListNodup, AverCert.AcceptedArtifact.natListSetEq, data, mutualRecursionClaims]\n",
+            "  exact ⟨{mutual_proof}, rfl⟩\n\n",
+            "theorem verbatimFragmentsAccepted : AverCert.AcceptedArtifact.acceptedVerbatimFragments data := by\n",
+            "  dsimp [AverCert.AcceptedArtifact.acceptedVerbatimFragments, AverCert.AcceptedArtifact.verbatimClaimsAccepted, AverCert.AcceptedArtifact.allClaims, data, verbatimClaims]\n",
+            "{verbatim_proof_step}\n",
+            "theorem intDispatchFragmentsAccepted : AverCert.AcceptedArtifact.acceptedIntDispatchFragments data := by\n",
+            "  dsimp [AverCert.AcceptedArtifact.acceptedIntDispatchFragments, AverCert.AcceptedArtifact.intDispatchClaimsAccepted, AverCert.AcceptedArtifact.allClaims, data, intDispatchClaims]\n",
+            "{int_dispatch_proof_step}\n",
+            "theorem fieldProjectionFragmentsAccepted : AverCert.AcceptedArtifact.acceptedFieldProjectionFragments data := by\n",
+            "  dsimp [AverCert.AcceptedArtifact.acceptedFieldProjectionFragments, AverCert.AcceptedArtifact.fieldProjectionClaimsAccepted, AverCert.AcceptedArtifact.allClaims, data, fieldProjectionClaims]\n",
+            "{field_projection_proof_step}\n",
+            "theorem compositionFragmentsAccepted : AverCert.AcceptedArtifact.acceptedCompositionFragments data := by\n",
+            "  dsimp [AverCert.AcceptedArtifact.acceptedCompositionFragments, AverCert.AcceptedArtifact.compositionClaimsAccepted, AverCert.AcceptedArtifact.allClaims, AverCert.AcceptedArtifact.compositionMembersCovered, AverCert.AcceptedArtifact.compositionClaimedNames, AverCert.AcceptedArtifact.manifestObligationsClaimed, AverCert.AcceptedArtifact.claimObligationExports, AverCert.AcceptedArtifact.manifestObligationExportsUnique, AverCert.AcceptedArtifact.stringListNodup, data, compositionMembers, compositionClaims]\n",
+            "  exact {composition_proof}\n\n",
+            "theorem wholeModuleAccepted : AverCert.AcceptedArtifact.acceptedWholeModule data := by\n",
+            "{artifact_dsimp}",
+            "  exact ⟨rfl, rfl, rfl, rfl⟩\n\n",
+            "theorem fragmentsAccepted : AverCert.AcceptedArtifact.acceptedFragments data := by\n",
+            "  dsimp [AverCert.AcceptedArtifact.acceptedFragments]\n",
+            "  exact ⟨symFragmentsAccepted, stringEqFragmentsAccepted, stringConcatFragmentsAccepted, constructFragmentsAccepted, recursionFragmentsAccepted, mutualFragmentsAccepted, verbatimFragmentsAccepted, intDispatchFragmentsAccepted, fieldProjectionFragmentsAccepted, compositionFragmentsAccepted, wholeModuleAccepted⟩\n\n",
+            "def acceptedWithFinal\n",
+            "    (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n",
+            "    AverCert.AcceptedArtifact.accepted data := by\n",
+            "  dsimp [AverCert.AcceptedArtifact.accepted, AverCert.AcceptedArtifact.subjectMatchesArtifactRoot, AverCert.AcceptedArtifact.expectedArtifactRoot]\n",
+            "  exact ⟨finalCert, rfl, claimObligationsBound, claimsMatchManifest, decodedNonExprFacts, fragmentsAccepted⟩\n"
         ),
-        obligation_proof = claims.obligation_proof,
-        sym_proof = claims.sym_proof,
-        string_eq_proof = claims.string_eq_proof,
-        string_proof = claims.string_proof,
+        obligation_proof_step = family_exact(&claims.obligation_proof),
+        sym_proof_step = family_exact(&claims.sym_proof),
+        string_eq_proof_step = family_exact(&claims.string_eq_proof),
+        string_proof_step = family_exact(&claims.string_proof),
         construct_proof = claims.construct_proof,
-        recursion_proof = claims.recursion_proof,
+        recursion_proof_step = family_exact(&claims.recursion_proof),
         mutual_proof = claims.mutual_proof,
-        verbatim_proof = claims.verbatim_proof,
-        int_dispatch_proof = claims.int_dispatch_proof
-        ,field_projection_proof = claims.field_projection_proof
-        ,composition_proof = claims.composition_proof
+        verbatim_proof_step = family_exact(&claims.verbatim_proof),
+        int_dispatch_proof_step = family_exact(&claims.int_dispatch_proof),
+        field_projection_proof_step = family_exact(&claims.field_projection_proof),
+        composition_proof = claims.composition_proof,
+        artifact_dsimp = artifact_dsimp,
     );
     format!(
          "-- Artifact-carried acceptance root.\n\
@@ -1646,10 +1768,8 @@ fn render_artifact(
            ({{ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims, fieldProjectionClaims := fieldProjectionClaims, compositionMembers := compositionMembers, compositionClaims := compositionClaims, closureFuel := {closure_fuel}, closureClaim := closureClaim }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
          theorem decodedHostRoles : CertDecode.AddSub.roleTable AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen = some AverCert.manifest.subject.hostRoleTable := by change AverCert.AcceptedArtifact.decodedHostRoleTable data; dsimp [AverCert.AcceptedArtifact.decodedHostRoleTable, data]; rfl\n\n\
          theorem decodedStringHostRoles : CertDecode.StringHost.roleTable AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen = some AverCert.manifest.subject.stringHostRoles := by change AverCert.AcceptedArtifact.decodedStringHostRoles data; dsimp [AverCert.AcceptedArtifact.decodedStringHostRoles, data]; rfl\n\n\
-         def acceptedWithFinal\n\
-             (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n\
-             AverCert.AcceptedArtifact.accepted data := by\n\
-         {fragment_proof}\n\
+         {claim_proof_bundles}\
+         {proof_bundles}\n\n\
          theorem certificate : AverCert.AcceptedArtifact.accepted data :=\n  \
            acceptedWithFinal AverCert.Final.cert\n\n\
          end AverCert.Artifact\n",
@@ -1667,7 +1787,8 @@ fn render_artifact(
         closure_claim = closure_claim,
         closure_fuel = analysis.module_envelope.closure_fuel,
         mutual_scc_closure_pins = render_mutual_scc_closure_pins(analysis),
-        fragment_proof = fragment_proof
+        claim_proof_bundles = claims.claim_proof_bundles,
+        proof_bundles = proof_bundles
     )
 }
 

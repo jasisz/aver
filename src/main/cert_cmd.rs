@@ -2969,6 +2969,7 @@ fn lean_fragment_acceptance_proof_block(
             "{indent}  AverCert.AcceptedArtifact.acceptedFieldProjectionFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.acceptedCompositionFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.acceptedWholeModule,\n",
+            "{indent}  AverCert.AcceptedArtifact.allClaims,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
@@ -3155,6 +3156,7 @@ fn lean_accepted_artifact_witness(
             "    AverCert.AcceptedArtifact.acceptedFieldProjectionFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedCompositionFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedWholeModule,\n",
+            "    AverCert.AcceptedArtifact.allClaims,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
@@ -3385,11 +3387,31 @@ fn checker_witness(
     let field_projection_plans = lean_field_projection_plan_pairs(rederived);
     let composition_plans = lean_composition_plan_pairs(rederived);
     let sym_fragment_encoded_plans = lean_sym_fragment_encoded_plan_pairs(rederived);
-    let expr_fragment_lower_pins = lean_expr_fragment_lower_pins(rederived);
-    let expr_fragment_code_entry_pins = lean_expr_fragment_code_entry_pins(rederived);
-    let expr_fragment_wasm_slice_pins = lean_expr_fragment_wasm_slice_pins(rederived);
-    let expr_fragment_func_binding_pins = lean_expr_fragment_func_binding_pins(rederived);
-    let expr_fragment_accepted_pins = lean_expr_fragment_accepted_pins(rederived);
+    let expr_fragment_lower_pins = if mode == WitnessMode::Diagnostic {
+        lean_expr_fragment_lower_pins(rederived)
+    } else {
+        String::new()
+    };
+    let expr_fragment_code_entry_pins = if mode == WitnessMode::Diagnostic {
+        lean_expr_fragment_code_entry_pins(rederived)
+    } else {
+        String::new()
+    };
+    let expr_fragment_wasm_slice_pins = if mode == WitnessMode::Diagnostic {
+        lean_expr_fragment_wasm_slice_pins(rederived)
+    } else {
+        String::new()
+    };
+    let expr_fragment_func_binding_pins = if mode == WitnessMode::Diagnostic {
+        lean_expr_fragment_func_binding_pins(rederived)
+    } else {
+        String::new()
+    };
+    let expr_fragment_accepted_pins = if mode == WitnessMode::Diagnostic {
+        lean_expr_fragment_accepted_pins(rederived)
+    } else {
+        String::new()
+    };
     let expr_fragment_obligation_acceptance_pins = if mode == WitnessMode::Diagnostic {
         lean_expr_fragment_obligation_acceptance_pins(
             rederived,
@@ -3588,8 +3610,8 @@ fn checker_witness(
          -- Decode-once host-role equality: this separate declaration keeps the\n\
          -- module scan out of every obligation fold and gives it an independent\n\
          -- heartbeat budget before the artifact conjunction reuses the result.\n\
-         theorem AverCertChecker.decodedHostRoles : CertDecode.AddSub.roleTable AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen = some AverCert.manifest.subject.hostRoleTable := by change AverCert.AcceptedArtifact.decodedHostRoleTable AverCert.Artifact.data; dsimp [AverCert.AcceptedArtifact.decodedHostRoleTable, AverCert.Artifact.data]; rfl\n\n\
-         theorem AverCertChecker.decodedStringHostRoles : CertDecode.StringHost.roleTable AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen = some AverCert.manifest.subject.stringHostRoles := by change AverCert.AcceptedArtifact.decodedStringHostRoles AverCert.Artifact.data; dsimp [AverCert.AcceptedArtifact.decodedStringHostRoles, AverCert.Artifact.data]; rfl\n\n\
+         theorem AverCertChecker.decodedHostRoles : CertDecode.AddSub.roleTable AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen = some AverCert.manifest.subject.hostRoleTable := by change AverCert.AcceptedArtifact.decodedHostRoleTable AverCert.Artifact.data; exact AverCert.Artifact.certificate.2.2.2.2.1.1\n\n\
+         theorem AverCertChecker.decodedStringHostRoles : CertDecode.StringHost.roleTable AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen = some AverCert.manifest.subject.stringHostRoles := by change AverCert.AcceptedArtifact.decodedStringHostRoles AverCert.Artifact.data; exact AverCert.Artifact.certificate.2.2.2.2.1.2.1\n\n\
          -- Artifact-decode / checked-plan bindings: non-expression CODE and\n\
          -- CARRIER (plus consumed struct-field counts) are computed from raw\n\
          -- ArtifactBytes by `CertDecode` inside the accepted-artifact conjunct.\n\

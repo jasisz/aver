@@ -116,14 +116,58 @@ def findSecFrame (target : Nat) : Nat → Nat → Nat → Option (Nat × Nat × 
               else findSecFrame target fuel (n2 >>> (8*size)) (len2 - size)
             else none
 
-/-- Body suffix `(n, len)` of the first section with id = target, else none.
-    Kept as the format-B decoder API; framing is delegated to `findSecFrame`. -/
+/-- Isolate exactly `len` low bytes. Besides enforcing the declared section
+    boundary, this keeps every subsequent byte shift proportional to the
+    payload being decoded instead of to the remaining module suffix. -/
+def isolateBytes (n len : Nat) : Nat :=
+  n &&& ((1 <<< (8 * len)) - 1)
+
+/-- A bounded section table. Payloads are stored as exact low-byte slices, so
+    no consumer retains or shifts the enclosing module suffix. -/
+structure ModuleView where
+  sections : List (Nat × Nat × Nat)
+
+def sectionTable : Nat → Nat → Nat → Option (List (Nat × Nat × Nat))
+  | 0,      _, _   => none
+  | fuel+1, n, len =>
+      if len == 0 then some [] else
+        let id := n &&& 0xff
+        let n1 := n >>> 8
+        match readU n1 (len - 1) with
+        | none => some []
+        | some (size, n2, len2) =>
+            if size ≤ len2 then
+              match sectionTable fuel (n2 >>> (8 * size)) (len2 - size) with
+              | none => none
+              | some rest => some ((id, isolateBytes n2 size, size) :: rest)
+            else some []
+
+def ModuleView.payload (view : ModuleView) (target : Nat) : Option (Nat × Nat) :=
+  (view.sections.find? (fun entry => entry.1 == target)).map
+    (fun entry => (entry.2.1, entry.2.2))
+
+/-- Validate the header and materialize the bounded section-table prefix in one
+    pass. A malformed frame terminates the table: already-complete earlier
+    sections remain independently decodable, while that section and every
+    later section are absent. The separate whole-module framing guard still
+    rejects malformed modules globally. -/
+def moduleView (modBytes modLen : Nat) : Option ModuleView :=
+  if 8 ≤ modLen ∧ (modBytes &&& 0xffffffffffffffff) = 0x000000016d736100 then
+    (sectionTable 64 (modBytes >>> 64) (modLen - 8)).map (fun sections => ⟨sections⟩)
+  else none
+
+/-- Exact bounded body `(n, len)` of the first section with id = target, else
+    none. Historically this returned the entire module-suffix length; callers
+    could therefore consume a malformed short section into its successor.
+    The compatibility wrapper retains target-specific navigation; consumers
+    that need several sections use `moduleView` once. -/
 def findSec (target fuel n len : Nat) : Option (Nat × Nat) :=
-  (findSecFrame target fuel n len).map (fun p => (p.1, p.2.2))
+  (findSecFrame target fuel n len).map
+    (fun p => (isolateBytes p.1 p.2.1, p.2.1))
 
 /-- Exact `(payload bytes, payload size)` of the first target section. -/
 def findSecPayload (target fuel n len : Nat) : Option (Nat × Nat) :=
-  (findSecFrame target fuel n len).map (fun p => (p.1, p.2.1))
+  findSec target fuel n len
 
 /- ===================================================================== -/
 /-  Type section (arity per type index, struct field counts, carrier)     -/
@@ -134,6 +178,8 @@ def findSecPayload (target fuel n len : Nat) : Option (Nat × Nat) :=
 structure TypeInfo where
   arities : List Nat
   nfields : List Nat
+  arityIndex : Array Nat
+  nfieldIndex : Array Nat
   carrier : Option Nat
 
 /-- Consume one valtype, returning its leading byte (for carrier detection). -/
@@ -289,7 +335,8 @@ def decodeTypes (n len : Nat) : Option TypeInfo :=
       | some (cnt, n1, len1) =>
           match decRecVec cnt 0 n1 len1 with
           | none => none
-          | some (ars, nfs, car, _, _) => some ⟨ars, nfs, car⟩
+          | some (ars, nfs, car, _, _) =>
+              some ⟨ars, nfs, ars.toArray, nfs.toArray, car⟩
 
 /-- The Int carrier struct type index. -/
 def decodeCarrier (n len : Nat) : Option Nat :=
@@ -302,7 +349,7 @@ def decodeCarrier (n len : Nat) : Option Nat :=
     table; an out-of-range index or malformed type section is rejected. -/
 def decodeStructFieldCount (n len typeidx : Nat) : Option Nat :=
   match decodeTypes n len with
-  | some ti => ti.nfields[typeidx]?
+  | some ti => ti.nfieldIndex[typeidx]?
   | none => none
 
 /- ===================================================================== -/
@@ -615,13 +662,41 @@ def decodeBodyBytes (nfields : List Nat) (segs : List (List Nat)) (fuel n len : 
 /-  Per-function obligation decode                                        -/
 /- ===================================================================== -/
 
-/-- Skip `k` code-section entries (each: size prefix + `size` body bytes). -/
-def skipEntries : Nat → Nat → Nat → Option (Nat × Nat)
-  | 0,   n, len => some (n, len)
+structure CodeLoc where
+  nlocals : Nat
+  bodyN : Nat
+  bodyLen : Nat
+
+/-- One bounded code-section pass. Every body is isolated from both the next
+    code entry and the enclosing section, and its final list position is its
+    defined-function index. -/
+def decCodeLocs : Nat → Nat → Nat → Option (List CodeLoc)
+  | 0,   _, _   => some []
   | k+1, n, len =>
       match readU n len with
       | none => none
-      | some (sz, n1, len1) => skipEntries k (n1 >>> (8*sz)) (len1 - sz)
+      | some (esz, bN, bLen) =>
+          if esz ≤ bLen then
+            let entryN := isolateBytes bN esz
+            match readU entryN esz with
+            | none => none
+            | some (ng, gN, gLen) =>
+                match decLocals ng gN gLen with
+                | none => none
+                | some (nloc, bodyN, bodyLen) =>
+                    match decCodeLocs k (bN >>> (8 * esz)) (bLen - esz) with
+                    | none => none
+                    | some rest =>
+                        some (⟨nloc, isolateBytes bodyN bodyLen, bodyLen⟩ :: rest)
+          else none
+
+def codeLocs (n len : Nat) : Option (Array CodeLoc) :=
+  match findSec 10 64 (n >>> 64) (len - 8) with
+  | none => none
+  | some (codeN, codeLen) =>
+      match readU codeN codeLen with
+      | none => none
+      | some (nf, r0, l0) => (decCodeLocs nf r0 l0).map List.toArray
 
 /-- Full `WCode` (arity from the type section, nlocals from the locals decl,
     body from the code section) for the module function `funcidx`. -/
@@ -641,31 +716,19 @@ def decodeCode (n len funcidx : Nat) : Option WCode :=
           match ftys[funcidx - nimp]? with
           | none => none
           | some tyidx =>
-            match ti.arities[tyidx]? with
+            match ti.arityIndex[tyidx]? with
             | none => none
             | some ar =>
-              match findSec 10 64 (n >>> 64) (len - 8) with
+              match codeLocs n len with
               | none => none
-              | some (codeN, codeLen) =>
-                match readU codeN codeLen with          -- nfuncs
+              | some locs =>
+                match locs[funcidx - nimp]? with
                 | none => none
-                | some (_nf, r0, l0) =>
-                  match skipEntries (funcidx - nimp) r0 l0 with
+                | some loc =>
+                  match decBlock ti.nfields segs loc.bodyLen [] loc.bodyN loc.bodyLen with
                   | none => none
-                  | some (eN, eLen) =>
-                    match readU eN eLen with            -- this entry's size
-                    | none => none
-                    | some (esz, bN, bLen) =>
-                      match readU bN bLen with          -- nloc groups
-                      | none => none
-                      | some (ng, gN, gLen) =>
-                        match decLocals ng gN gLen with
-                        | none => none
-                        | some (nloc, bodyN, bodyLen) =>
-                          match decBlock ti.nfields segs esz [] bodyN bodyLen with
-                          | none => none
-                          | some (instrs, _, _, _, term) =>
-                              if term == 0 then some ⟨ar, nloc, instrs⟩ else none
+                  | some (instrs, _, _, _, term) =>
+                      if term == 0 then some ⟨ar, loc.nlocals, instrs⟩ else none
 
 /-- The decoded body (`List WInstr`) of `funcidx`. -/
 def decodeBody (n len funcidx : Nat) : Option (List WInstr) :=
@@ -802,7 +865,7 @@ def decRecVecSigC : Nat → Nat → Nat → Nat →
                   some (s :: ss2, car.orElse (fun _ => car2), n2, len2)
 
 /-- Function signatures and carrier index from one type-section pass. -/
-def decodeTypeSigsC (n len : Nat) : Option (List (Option Sig) × Option Nat) :=
+def decodeTypeSigsC (n len : Nat) : Option (Array (Option Sig) × Option Nat) :=
   match findSec 1 64 (n >>> 64) (len - 8) with
   | none => none
   | some (tN, tLen) =>
@@ -811,7 +874,7 @@ def decodeTypeSigsC (n len : Nat) : Option (List (Option Sig) × Option Nat) :=
       | some (cnt, n1, len1) =>
           match decRecVecSigC cnt 0 n1 len1 with
           | none => none
-          | some (ss, car, _, _) => some (ss, car)
+          | some (ss, car, _, _) => some (ss.toArray, car)
 
 def isCarrierBinop (carrier : Nat) : Option Sig → Bool
   | some (ptgts, rtgts) =>
@@ -902,53 +965,26 @@ def firstArithScan : Nat → Nat → Nat → Option (Option Arith)
               else none
         else none
 
-/-- One code-section pass collecting each defined function body's instruction
-    suffix and exact byte length after local declarations. -/
-def decBodyLocs : Nat → Nat → Nat → Option (List (Nat × Nat))
-  | 0,   _, _   => some []
-  | k+1, n, len =>
-      match readU n len with
-      | none => none
-      | some (esz, bN, bLen) =>
-          match readU bN bLen with
-          | none => none
-          | some (ng, gN, gLen) =>
-              match decLocals ng gN gLen with
-              | none => none
-              | some (_, bodyN, bodyLen) =>
-                  let localsBytes := bLen - bodyLen
-                  let bodyByteLen := esz - localsBytes
-                  match decBodyLocs k (bN >>> (8*esz)) (bLen - esz) with
-                  | none => none
-                  | some rest => some ((bodyN, bodyByteLen) :: rest)
-
 def bodyLocs (n len : Nat) : Option (List (Nat × Nat)) :=
-  match findSec 10 64 (n >>> 64) (len - 8) with
-  | none => none
-  | some (codeN, codeLen) =>
-      match readU codeN codeLen with
-      | none => none
-      | some (nf, r0, l0) => decBodyLocs nf r0 l0
+  (CertDecode.codeLocs n len).map (fun locs =>
+    locs.toList.map (fun loc => (loc.bodyN, loc.bodyLen)))
 
 /-- Scan defined functions in index order, retaining the first arithmetic
     marker only for functions with the exact carrier-binop signature. -/
-def scanFns (carrier : Nat) (tsigs : List (Option Sig))
-    (locs : List (Nat × Nat)) (nimp : Nat) :
-    Nat → List Nat → Option (List (Nat × Option Arith))
-  | _,       []         => some []
-  | def_idx, ty :: rest =>
+def scanFns (carrier : Nat) (tsigs : Array (Option Sig)) (nimp : Nat) :
+    Nat → List Nat → List (Nat × Nat) → Option (List (Nat × Option Arith))
+  | _,       [],         [] => some []
+  | def_idx, ty :: rest, (bodyN, bodyByteLen) :: locs =>
       let sig := (tsigs[ty]?).getD none
       if isCarrierBinop carrier sig then
-        match locs[def_idx]? with
+        match firstArithScan (bodyByteLen + 1) bodyN bodyByteLen with
         | none => none
-        | some (bodyN, bodyByteLen) =>
-            match firstArithScan (bodyByteLen + 1) bodyN bodyByteLen with
+        | some fa =>
+            match scanFns carrier tsigs nimp (def_idx+1) rest locs with
             | none => none
-            | some fa =>
-                match scanFns carrier tsigs locs nimp (def_idx+1) rest with
-                | none => none
-                | some tl => some ((nimp + def_idx, fa) :: tl)
-      else scanFns carrier tsigs locs nimp (def_idx+1) rest
+            | some tl => some ((nimp + def_idx, fa) :: tl)
+      else scanFns carrier tsigs nimp (def_idx+1) rest locs
+  | _, _, _ => none
 
 def candFor (a : Arith) (l : List (Nat × Option Arith)) : List Nat :=
   (l.filter (fun p => p.2 == some a)).map Prod.fst
@@ -974,7 +1010,7 @@ def carrierBinopFns (n len : Nat) : Option (List (Nat × Option Arith)) :=
   match decodeTypeSigsC n len, decodeFuncTypes n len,
         funcImportBase n len, bodyLocs n len with
   | some (tsigs, some carrier), some ftys, some nimp, some locs =>
-      scanFns carrier tsigs locs nimp 0 ftys
+      scanFns carrier tsigs nimp 0 ftys locs
   | _, _, _, _ => none
 
 def addCands (n len : Nat) : Option (List Nat) :=
@@ -1132,7 +1168,7 @@ def decRecVec : Nat → Nat → Nat → Nat →
 
 /-- Function signatures and string-byte-array indices from one type pass. -/
 def decodeTypeSigs (n len : Nat) :
-    Option (List (Option Sig) × List Nat) :=
+    Option (Array (Option Sig) × List Nat) :=
   match CertDecode.findSec 1 64 (n >>> 64) (len - 8) with
   | none => none
   | some (tN, tLen) =>
@@ -1141,7 +1177,7 @@ def decodeTypeSigs (n len : Nat) :
       | some (cnt, n1, len1) =>
           match decRecVec cnt 0 n1 len1 with
           | none => none
-          | some (ss, sbat, _, _) => some (ss, sbat)
+          | some (ss, sbat, _, _) => some (ss.toArray, sbat)
 
 /-- Exact Rust `HostOp` vocabulary. Non-mapped but boundary-known opcodes are
     `other`, making the exact template comparison decline. -/
@@ -1322,36 +1358,13 @@ def classifyOne (sbat : List Nat) (sig : Option Sig)
           else none
       | none => none
 
-/-- One code pass collecting `(nlocals, body suffix, exact body byte length)`. -/
-def decBodyLocs : Nat → Nat → Nat → Option (List (Nat × Nat × Nat))
-  | 0,   _, _   => some []
-  | k+1, n, len =>
-      match CertDecode.readU n len with
-      | none => none
-      | some (esz, bN, bLen) =>
-          match CertDecode.readU bN bLen with
-          | none => none
-          | some (ng, gN, gLen) =>
-              match CertDecode.decLocals ng gN gLen with
-              | none => none
-              | some (nloc, bodyN, bodyLen) =>
-                  let localsBytes := bLen - bodyLen
-                  let bodyByteLen := esz - localsBytes
-                  match decBodyLocs k (bN >>> (8*esz)) (bLen - esz) with
-                  | none => none
-                  | some rest => some ((nloc, bodyN, bodyByteLen) :: rest)
-
 def bodyLocs (n len : Nat) : Option (List (Nat × Nat × Nat)) :=
-  match CertDecode.findSec 10 64 (n >>> 64) (len - 8) with
-  | none => none
-  | some (codeN, codeLen) =>
-      match CertDecode.readU codeN codeLen with
-      | none => none
-      | some (nf, r0, l0) => decBodyLocs nf r0 l0
+  (CertDecode.codeLocs n len).map (fun locs =>
+    locs.toList.map (fun loc => (loc.nlocals, loc.bodyN, loc.bodyLen)))
 
 /-- Classify each function independently. This intentionally has no uniqueness
     or cross-function decline: two exact eq helpers produce two entries. -/
-def classify (nimp : Nat) (sbat : List Nat) (tsigs : List (Option Sig)) :
+def classify (nimp : Nat) (sbat : List Nat) (tsigs : Array (Option Sig)) :
     Nat → List Nat → List (Nat × Nat × Nat) → List (Nat × Role)
   | _,       [],        _  => []
   | _,       _ :: _,    [] => []
