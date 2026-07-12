@@ -36,21 +36,18 @@
 //! bytes, so a hostile producer could ship `WInstr` data unrelated to the real
 //! bytes with a vacuously-true `holds`. To close that, non-expression
 //! `code`/`carrier` and consumed struct counts come from the audited in-kernel
-//! `CertDecode`; its module-wide add/sub/box host-role table is likewise
-//! decoded in-kernel, while the obligation `host` function still retains the
-//! Rust-supplied string-helper components. `expr-fragment-v1` code/face comes from a checked source plan sidecar
+//! `CertDecode`; its module-wide add/sub/box table and complete ordered
+//! String.eq/String.concat role list are likewise decoded in-kernel.
+//! `expr-fragment-v1` code/face comes from a checked source plan sidecar
 //! or, only for representation-only fallbacks, a checked representation plan
 //! sidecar whose canonical code-entry bytes must equal the real bytes. The
-//! accepted-artifact decoder equalities bind code/carrier/struct facts to the
-//! manifest obligations; the checker splices only the remaining host/self facts.
+//! accepted-artifact decoder equalities bind code/carrier/struct/host facts to
+//! the manifest obligations; neither host nor self is Rust-spliced.
 //! Those are EXACTLY the fields `Obligation.holds` reasons about
-//! (`wFuncN o.code (o.host add sub mul stringEq) fuel o.self`), so a fabricated body, a
+//! (`wFuncN o.code (o.host add sub mul stringEq stringConcat) fuel o.self`), so a fabricated body, a
 //! decoupled `code`/`self`/`carrier`, or a nerfed `host` (which would make
 //! `holds` vacuous) all diverge from the bytes and fail a `rfl` — the file does
-//! not check and verify declines. The spliced terms are the checker's own
-//! rendering over byte-bound data, never attacker text, and are fully expanded
-//! so they do not reference the cert's `CertModule.*` defs (which an attacker
-//! edits).
+//! not check and verify declines.
 //! Expression-fragment sidecars are useful emitted metadata, never authority.
 //! The preferred sidecar is now a source-level `SymPlan`; the checker parses it
 //! as untrusted data, typechecks it against byte-derived function facts, derives
@@ -62,9 +59,9 @@
 //! code-entry bytes from the checker-regenerated `ArtifactBytes.lean`, so the
 //! plan's canonical bytes are tied to a narrow Lean-side slice of the actual
 //! module bytes.
-//! `Module.lean` is never read as text for comparison. Rust remains trusted for
-//! the later role/routing facts; the complete disassembler is not retired by
-//! this step, and `model` remains a read declaration.
+//! `Module.lean` is never read as text for comparison. Rust rederivation and
+//! `validate_all` remain non-trust-bearing fail-fast checks; model/domRepr stay
+//! explicit read declarations.
 //!
 //! Two input gates run before anything is elaborated:
 //!   * A cert data file whose name is not a plain `Foo.lean` Lean-module
@@ -156,10 +153,9 @@ const MAX_CANDIDATE_LEN: usize = 200;
 
 /// Emitted on a CERTIFIED verdict: non-expression code/carrier/struct facts
 /// were decoded from ArtifactBytes in-kernel, including the module-wide
-/// add/sub/box role table; the remaining obligation-host splice is for string
-/// helpers, while expression code comes from its checked plan and canonical
-/// code-entry equality.
-const ARTIFACT_DECODE_LINE: &str = "artifact-decode: non-expression code/carrier/struct facts and the add/sub/box host-role table are kernel-decoded from ArtifactBytes; string-helper host routing remains checker-pinned; expression code uses checked-plan canonical byte equality";
+/// add/sub/box table and all string roles; expression code comes from its
+/// checked plan and canonical code-entry equality.
+const ARTIFACT_DECODE_LINE: &str = "artifact-decode: every byte fact is kernel-computed from ArtifactBytes, including code/carrier/struct facts and all host roles; expression code uses checked-plan canonical byte equality";
 
 /// Tokens that make Lean ELABORATION execute code. The scan is a substring
 /// match on raw cert data-file text (see the module doc: a deliberately brittle
@@ -241,6 +237,7 @@ struct Candidates {
     capabilities: Vec<(String, String)>,
     start: Option<u32>,
     host_role_table: (Option<u32>, Option<u32>, Option<u32>),
+    string_host_roles: cert::StringHostRoles,
     profile: String,
     abi: String,
 }
@@ -285,6 +282,26 @@ pub(super) fn cmd_cert_explain(artifact: &str, cert_dir: &str) {
 /// to extract the model recursion operator (`+`/`*`); the content is untrusted and
 /// never executed.
 fn read_lean_files(cert_dir: &Path) -> Vec<(String, String)> {
+    // Checker-owned audited files are staged into the cert dir but are kernel
+    // infrastructure, never source models; feeding them to the line-level model
+    // parser lets an audited-file type name (e.g. the decoder's `Op`) shadow a
+    // same-named model inductive, with the winner decided by filesystem
+    // iteration order. Exclude them, and sort what remains so extraction is
+    // deterministic across platforms.
+    const CHECKER_OWNED: &[&str] = &[
+        "AcceptedArtifact.lean",
+        "AcceptedArtifactCore.lean",
+        "CertPrelude.lean",
+        "CertDecode.lean",
+        "ExprFragmentAccepted.lean",
+        "PlanBytes.lean",
+        "PlanCheck.lean",
+        "PlanLower.lean",
+        "Schema.lean",
+        "SchemaCore.lean",
+        "WasmSlice.lean",
+        "lakefile.lean",
+    ];
     let mut out = Vec::new();
     if let Ok(entries) = std::fs::read_dir(cert_dir) {
         for entry in entries.flatten() {
@@ -295,12 +312,16 @@ fn read_lean_files(cert_dir: &Path) -> Vec<(String, String)> {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string();
+                if CHECKER_OWNED.contains(&name.as_str()) {
+                    continue;
+                }
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     out.push((name, content));
                 }
             }
         }
     }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
     out
 }
 
@@ -427,7 +448,7 @@ fn read_candidates(m: &Value) -> Result<Candidates, String> {
                 })?;
                 if kind != "intNatAbs" {
                     return Err(format!(
-                        "cert-manifest.json certified export `{name}` uses unsupported termination measure `{kind}`; schema 51 admits only `intNatAbs`"
+                        "cert-manifest.json certified export `{name}` uses unsupported termination measure `{kind}`; schema 52 admits only `intNatAbs`"
                     ));
                 }
                 let param_idx = measure
@@ -565,6 +586,41 @@ fn read_candidates(m: &Value) -> Result<Candidates, String> {
         manifest_optional_u32(&host_role_table_value["add"], "hostRoleTable.add")?,
         manifest_optional_u32(&host_role_table_value["sub"], "hostRoleTable.sub")?,
     );
+    let string_host_roles = m
+        .get("stringHostRoles")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            "cert-manifest.json is missing array field `stringHostRoles`".to_string()
+        })?
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            exact_object_fields(
+                entry,
+                &format!("stringHostRoles[{index}]"),
+                &["function_index", "role"],
+            )?;
+            let function_index = entry
+                .get("function_index")
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| {
+                    format!(
+                        "cert-manifest.json `stringHostRoles[{index}].function_index` is not a u32"
+                    )
+                })?;
+            let role = match entry.get("role").and_then(Value::as_str) {
+                Some("stringEq") => cert::StringHostRole::Eq,
+                Some("stringConcat") => cert::StringHostRole::Concat,
+                _ => {
+                    return Err(format!(
+                        "cert-manifest.json `stringHostRoles[{index}].role` must be stringEq or stringConcat"
+                    ));
+                }
+            };
+            Ok((function_index, role))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
 
     let cands = Candidates {
         names,
@@ -575,6 +631,7 @@ fn read_candidates(m: &Value) -> Result<Candidates, String> {
         capabilities,
         start,
         host_role_table,
+        string_host_roles,
         profile,
         abi,
     };
@@ -1778,14 +1835,6 @@ fn lean_string_pair_list(items: &[(String, String)]) -> String {
     format!("[{inner}]")
 }
 
-/// A Lean list literal of raw (possibly multi-line) expression terms. Each item
-/// is a term the checker itself rendered from the hash-verified bytes (a code or
-/// host value), never attacker text, so splicing it verbatim is safe.
-fn lean_expr_list<'a>(items: impl Iterator<Item = &'a str>) -> String {
-    let inner = items.collect::<Vec<_>>().join(",\n   ");
-    format!("[ {inner} ]")
-}
-
 /// A Lean list literal of `Nat` literals (obligation self / carrier indices).
 fn lean_nat_list(items: impl Iterator<Item = u32>) -> String {
     let inner = items.map(|n| n.to_string()).collect::<Vec<_>>().join(", ");
@@ -2358,7 +2407,7 @@ fn lean_expr_fragment_artifact_claims(
                 carrier = r.carrier,
             ));
             string_eq_proofs.push(format!(
-                "⟨rfl, rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
+                "⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
                  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
             ));
             continue;
@@ -2401,7 +2450,7 @@ fn lean_expr_fragment_artifact_claims(
                 carrier = r.carrier,
             ));
             string_proofs.push(format!(
-                "⟨rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
+                "⟨rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
                  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
             ));
             continue;
@@ -2964,6 +3013,9 @@ fn lean_accepted_artifact_witness(
             "    AverCert.AcceptedArtifact.claimsMatchManifest,\n",
             "    AverCert.AcceptedArtifact.decodedNonExprFacts,\n",
             "    AverCert.AcceptedArtifact.decodedNonExprClaimFacts,\n",
+            "    AverCert.AcceptedArtifact.decodedStringHostRoles,\n",
+            "    AverCert.AcceptedArtifact.stringEqCanonicalHost,\n",
+            "    AverCert.AcceptedArtifact.stringConcatCanonicalHost,\n",
             "    AverCert.AcceptedArtifact.decodedClaims,\n",
             "    AverCert.AcceptedArtifact.decodedObligationFacts,\n",
             "    AverCert.AcceptedArtifact.decodedCodeAtAll,\n",
@@ -3062,7 +3114,7 @@ fn lean_accepted_artifact_witness(
             "    AverCert.AcceptedArtifact.intDispatchCanonicalSlots,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨{final_witness}, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩, ⟨⟨AverCertChecker.decodedHostRoles, by repeat' constructor⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, ⟨{int_dispatch_proof}, ⟨{field_projection_proof}, ⟨{composition_proof}, ⟨rfl, rfl, rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨{final_witness}, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩, ⟨⟨AverCertChecker.decodedHostRoles, ⟨AverCertChecker.decodedStringHostRoles, by repeat' constructor⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, ⟨{int_dispatch_proof}, ⟨{field_projection_proof}, ⟨{composition_proof}, ⟨rfl, rfl, rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         final_witness = FINAL_WITNESS_THEOREM,
         obligation_proof = witness.obligation_proof,
@@ -3157,10 +3209,24 @@ fn checker_witness(
         option_nat(cands.host_role_table.1),
         option_nat(cands.host_role_table.2),
     );
+    let json_string_host_roles = format!(
+        "[{}]",
+        cands
+            .string_host_roles
+            .iter()
+            .map(|(index, role)| {
+                let role = match role {
+                    cert::StringHostRole::Eq => ".eq",
+                    cert::StringHostRole::Concat => ".concat",
+                };
+                format!("({index}, {role})")
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     let profile = &cands.profile;
     let abi = &cands.abi;
     let artifact_root = cert::ARTIFACT_CERTIFICATE_ROOT;
-    let hosts = lean_expr_list(rederived.iter().map(|r| r.host.as_str()));
     let json_policies = format!(
         "[{}]",
         cands
@@ -3285,6 +3351,7 @@ fn checker_witness(
          -- accepted-artifact independently recomputes box/add/sub from the\n\
          -- checker-regenerated module bytes inside the Lean kernel.\n\
          example : AverCert.manifest.subject.hostRoleTable = {json_host_role_table} := rfl\n\
+         example : AverCert.manifest.subject.stringHostRoles = {json_string_host_roles} := rfl\n\
          -- Contracts: the JSON candidate must match the proven manifest, and\n\
          -- the proven manifest must also match the BYTE-DERIVED contract list.\n\
          -- JSON-only padding and manifest+JSON deletion are therefore both\n\
@@ -3410,24 +3477,25 @@ fn checker_witness(
          -- module scan out of every obligation fold and gives it an independent\n\
          -- heartbeat budget before the artifact conjunction reuses the result.\n\
          theorem AverCertChecker.decodedHostRoles : CertDecode.AddSub.roleTable AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen = some AverCert.manifest.subject.hostRoleTable := by change AverCert.AcceptedArtifact.decodedHostRoleTable AverCert.Artifact.data; dsimp [AverCert.AcceptedArtifact.decodedHostRoleTable, AverCert.Artifact.data]; rfl\n\n\
+         theorem AverCertChecker.decodedStringHostRoles : CertDecode.StringHost.roleTable AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen = some AverCert.manifest.subject.stringHostRoles := by change AverCert.AcceptedArtifact.decodedStringHostRoles AverCert.Artifact.data; dsimp [AverCert.AcceptedArtifact.decodedStringHostRoles, AverCert.Artifact.data]; rfl\n\n\
          -- Artifact-decode / checked-plan bindings: non-expression CODE and\n\
          -- CARRIER (plus consumed struct-field counts) are computed from raw\n\
          -- ArtifactBytes by `CertDecode` inside the accepted-artifact conjunct.\n\
          -- Expression-fragment code/carrier retains its checked plan plus\n\
-         -- canonical code-entry byte equality. SELF (F6) is no longer spliced:\n\
+         -- canonical code-entry byte equality. SELF and HOST are no longer\n\
+         -- checker-spliced: self is covered by `exportsAccounted`; box/add/sub\n\
+         -- and both string roles are decoded from `ArtifactBytes`, while string\n\
+         -- claims bind their complete host builders to classified role indices.\n\
          -- the accepted-artifact `exportsAccounted` conjunct already pins every\n\
          -- obligation's `(export name, func kind, self index)` into the byte-\n\
          -- decoded export section (`WasmSlice.enumExports`), so `self` is a\n\
          -- kernel computation over the module bytes, not a Rust-rendered literal.\n\
-         -- Only HOST remains checker-spliced in this leg (later F4/F5 work).\n\
          -- `host`/`self` are among the fields `Obligation.holds` reasons about\n\
-         -- (`wFuncN o.code (o.host add sub mul stringEq) fuel o.self`), so a fabricated body,\n\
+         -- (`wFuncN o.code (o.host add sub mul stringEq stringConcat) fuel o.self`), so a fabricated body,\n\
          -- a decoupled `code`/`self`/`carrier`, or a nerfed `host` that would\n\
          -- make `holds` vacuous all diverge from byte-bound kernel values and\n\
-         -- fail a load-bearing kernel binding. The remaining host splice comes\n\
-         -- from the checker's audited renderer and never references the\n\
-         -- attacker's `CertModule.*` definitions.\n\
-         example : AverCert.manifest.obligations.map (fun o => o.host) =\n  {hosts} := rfl\n\n\
+         -- fail a load-bearing kernel binding. There is no Rust-rendered\n\
+         -- byte-fact equality left in this witness.\n\n\
          -- Semantic-face bindings: the typed `Dom`/`Cod`/`domRepr`/`codRepr` of\n\
          -- every obligation, pinned to the standard form of its byte-bound\n\
          -- class/checked plan, plus a `Nonempty Dom` proof. A manifest that weakens the face\n\

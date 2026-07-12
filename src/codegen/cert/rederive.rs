@@ -1,11 +1,9 @@
 /// A certified obligation re-derived straight from the module bytes: the
-/// `CodeTbl` body value, the fully-expanded host-builder value, the self
-/// function index and the carrier type index — every one a pure function of the
+/// `CodeTbl` body value, self function index and carrier type index — each a pure function of the
 /// hash-verified bytes, via the SAME audited `disassemble` → `classify` pipeline
 /// the emitter uses. `aver cert verify` keeps this rederivation as a fail-fast
-/// pre-check and still pins later-sub-leg host/self/class facts from it. F1/F2/F3
-/// code/carrier/struct equalities are independently recomputed from ArtifactBytes
-/// by `CertDecode` inside the kernel acceptance witness.
+/// pre-check. All trust-bearing byte facts are independently recomputed from
+/// ArtifactBytes by the audited Lean decoders inside the kernel witness.
 pub struct RederivedObligation {
     pub name: String,
     /// Position of the export's user function in the module's byte-derived user
@@ -15,8 +13,6 @@ pub struct RederivedObligation {
     pub func_order: usize,
     /// The `fun fn => ...` `CodeTbl` value (`render_code_value`).
     pub code: String,
-    /// The fully-expanded host builder value (`render_host_value`).
-    pub host: String,
     /// `Obligation.self`: the self function index in the module.
     pub self_idx: u32,
     /// `Obligation.carrier`: the Int carrier struct type index.
@@ -583,7 +579,6 @@ fn rederive_certificate_inner(
             name: c.name().to_string(),
             func_order: *func_order,
             code: render_code_value(c),
-            host: render_host_value(c),
             self_idx: c.self_idx(),
             carrier: c.carrier(),
             policy: c.policy(),

@@ -97,7 +97,7 @@ enum Op {
     Other,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HostRole {
     Add,
     Sub,
@@ -105,6 +105,44 @@ enum HostRole {
     /// The byte-array concatenation helper (`String.concat` lowering): takes a
     /// container array of string-arrays, returns the byte-concatenated array.
     StringConcat,
+}
+
+/// Public differential surface for the two byte-exact string helper roles.
+/// The production trust path is the audited `CertDecode.StringHost.roleTable`
+/// equality; Rust keeps classifying independently as a fail-fast oracle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StringHostRole {
+    Eq,
+    Concat,
+}
+
+pub type StringHostRoles = Vec<(u32, StringHostRole)>;
+
+impl StringHostRole {
+    fn lean_value(self) -> &'static str {
+        match self {
+            StringHostRole::Eq => ".eq",
+            StringHostRole::Concat => ".concat",
+        }
+    }
+
+    fn manifest_value(self) -> &'static str {
+        match self {
+            StringHostRole::Eq => "stringEq",
+            StringHostRole::Concat => "stringConcat",
+        }
+    }
+}
+
+fn string_host_roles_lean_value(roles: &StringHostRoles) -> String {
+    format!(
+        "[{}]",
+        roles
+            .iter()
+            .map(|(idx, role)| format!("({idx}, {})", role.lean_value()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

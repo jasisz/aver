@@ -243,6 +243,26 @@ fn whole_module_guards_are_isolated_and_weaken_confirmed() {
         &cert,
         "must contain exactly fields box, add, sub",
     );
+    let mut malformed = honest_manifest.clone();
+    malformed.as_object_mut().unwrap().remove("stringHostRoles");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&malformed).unwrap(),
+    )
+    .unwrap();
+    assert_manifest_decode_declines(&wasm_path, &cert, "missing array field `stringHostRoles`");
+    let mut malformed = honest_manifest.clone();
+    malformed["stringHostRoles"][0]["extra"] = serde_json::json!(true);
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&malformed).unwrap(),
+    )
+    .unwrap();
+    assert_manifest_decode_declines(
+        &wasm_path,
+        &cert,
+        "must contain exactly fields function_index, role",
+    );
     std::fs::write(
         &manifest_path,
         serde_json::to_vec_pretty(&honest_manifest).unwrap(),
@@ -422,11 +442,13 @@ def hostileArtifact : AcceptedArtifact.ArtifactData :=
 
 -- Literal one-conjunct-weakened copy: only the roleTable equality is absent.
 def withoutHostRoleTable (artifact : AcceptedArtifact.ArtifactData) : Prop :=
+  AcceptedArtifact.decodedStringHostRoles artifact ∧
   AcceptedArtifact.decodedNonExprClaimFacts artifact
 
 -- Every sibling decoded fact accepts the hostile manifest with identical bytes.
 example : withoutHostRoleTable hostileArtifact := by
-  change AcceptedArtifact.decodedNonExprClaimFacts Artifact.data
+  change AcceptedArtifact.decodedStringHostRoles Artifact.data ∧
+    AcceptedArtifact.decodedNonExprClaimFacts Artifact.data
   exact honestDecoded.2
 
 -- The full predicate fails exactly at the omitted module-wide equality.
@@ -455,6 +477,138 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts hostileArtifact := by
     assert!(
         check.status.success(),
         "S3 host-role GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(out_dir);
+}
+
+/// F5 GuardIso: bytes and every sibling binding are identical, while only the
+/// claimed String.eq index changes. Full acceptance fails at the decode-once
+/// string-role equality and its literal one-conjunct-weakened copy accepts.
+#[test]
+fn inkernel_string_host_roles_guard_is_isolated_and_weaken_confirmed() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping F5 string-role GuardIso test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-inkernel-string-role-guard-iso");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/stringeq.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile stringeq fixture for F5 GuardIso");
+    assert!(
+        compile.status.success(),
+        "stringeq compile failed for F5 GuardIso:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let wasm = std::fs::read(out_dir.join("stringeq.wasm")).unwrap();
+    let roles = aver::codegen::cert::byte_derived_string_host_roles(&wasm).unwrap();
+    assert_eq!(roles.len(), 1);
+    assert_eq!(roles[0].1, aver::codegen::cert::StringHostRole::Eq);
+    let eq_idx = roles[0].0;
+    let wrong_eq_idx = eq_idx + 1;
+
+    let cert = out_dir.join("cert");
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build stringeq certificate before F5 GuardIso");
+    assert!(
+        build.status.success(),
+        "stringeq certificate failed before F5 GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let lean = format!(
+        r#"import Artifact
+
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 300000
+
+def honestDecoded : AcceptedArtifact.decodedNonExprFacts Artifact.data := by
+  have accepted : AcceptedArtifact.accepted Artifact.data := Artifact.certificate
+  exact accepted.2.2.2.2.1
+
+def hostileStringRoles : List (Nat × CertDecode.StringHost.Role) :=
+  [({wrong_eq_idx}, .eq)]
+def hostileManifest : Manifest :=
+  {{ manifest with subject :=
+      {{ manifest.subject with stringHostRoles := hostileStringRoles }} }}
+def hostileArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with manifest := hostileManifest }}
+
+def withoutStringHostRoles (artifact : AcceptedArtifact.ArtifactData) : Prop :=
+  AcceptedArtifact.decodedHostRoleTable artifact ∧
+  AcceptedArtifact.decodedNonExprClaimFacts artifact
+
+-- Mutation is manifest-only: the exact module byte fact is unchanged.
+example : hostileArtifact.modBytes = Artifact.data.modBytes := rfl
+example : hostileArtifact.modLen = Artifact.data.modLen := rfl
+
+-- The retained claim binding covers the complete host builder, not merely the
+-- classified index: the honest obligation is canonical and a vacuous host is
+-- extensionally distinct at the real String.eq slot.
+def deadHost : List WVal → Option WVal := fun _ => none
+def deadConcat : Nat → List WVal → Option WVal := fun _ _ => none
+def nerfedStringHost :
+    (List WVal → Option WVal) → (List WVal → Option WVal) →
+    (List WVal → Option WVal) → (List WVal → Option WVal) →
+    (Nat → List WVal → Option WVal) → HostTbl :=
+  fun _ _ _ _ _ _ => none
+example : quoteOrSelfOb.host =
+    AcceptedArtifact.stringEqCanonicalHost {eq_idx} := rfl
+example : nerfedStringHost ≠
+    AcceptedArtifact.stringEqCanonicalHost {eq_idx} := by
+  intro h
+  have bad := congrFun (congrFun (congrFun (congrFun (congrFun (congrFun h
+    deadHost) deadHost) deadHost) deadHost) deadConcat) {eq_idx}
+  simp [nerfedStringHost, AcceptedArtifact.stringEqCanonicalHost] at bad
+
+-- Every sibling decode accepts the hostile manifest.
+example : withoutStringHostRoles hostileArtifact := by
+  exact ⟨honestDecoded.1, honestDecoded.2.2⟩
+
+-- Full acceptance fails exactly at the omitted string-role equality.
+example : ¬ AcceptedArtifact.decodedNonExprFacts hostileArtifact := by
+  intro h
+  have bad := h.2.1
+  change CertDecode.StringHost.roleTable ArtifactBytes.modBytes ArtifactBytes.modLen =
+      some hostileStringRoles at bad
+  rw [Artifact.decodedStringHostRoles] at bad
+  have badRoles : manifest.subject.stringHostRoles = hostileStringRoles :=
+    Option.some.inj bad
+  change [({eq_idx}, CertDecode.StringHost.Role.eq)] =
+      [({wrong_eq_idx}, CertDecode.StringHost.Role.eq)] at badRoles
+  have distinct :
+      ([({eq_idx}, CertDecode.StringHost.Role.eq)] :
+        List (Nat × CertDecode.StringHost.Role)) ≠
+      [({wrong_eq_idx}, CertDecode.StringHost.Role.eq)] := by decide
+  exact distinct badRoles
+"#
+    );
+    std::fs::write(cert.join("StringHostRoleGuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("StringHostRoleGuardIso.lean")
+        .output()
+        .expect("run F5 string-role GuardIso");
+    assert!(
+        check.status.success(),
+        "F5 string-role GuardIso failed:\n{}{}",
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );

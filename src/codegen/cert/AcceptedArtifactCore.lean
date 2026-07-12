@@ -97,6 +97,21 @@ def symFragmentClaimAccepted
     concatenation lowering always declares one carrier scratch local. -/
 def stringConcatNLocals (_plan : StringConcatRawPlan) : Nat := 1
 
+/-- Canonical whole-host builders for the two byte-exact string roles. -/
+def stringEqCanonicalHost (funcIdx : Nat) :
+    (List WVal → Option WVal) → (List WVal → Option WVal) →
+    (List WVal → Option WVal) → (List WVal → Option WVal) →
+    (Nat → List WVal → Option WVal) → HostTbl :=
+  fun _add _sub _mul stringEq _stringConcat fn =>
+    if fn = funcIdx then some (2, stringEq) else none
+
+def stringConcatCanonicalHost (funcIdx resultTy : Nat) :
+    (List WVal → Option WVal) → (List WVal → Option WVal) →
+    (List WVal → Option WVal) → (List WVal → Option WVal) →
+    (Nat → List WVal → Option WVal) → HostTbl :=
+  fun _add _sub _mul _stringEq stringConcat fn =>
+    if fn = funcIdx then some (1, stringConcat resultTy) else none
+
 /-- Artifact-level acceptance for one String.concat export. The raw plan carries
     source-level chunks plus the encoder's data-index binding; the audited Lean
     lowerers rebuild both the semantic `WInstr` body and exact code-entry bytes,
@@ -106,11 +121,14 @@ def stringConcatPlanAccepted
     (exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
     (carrier resultTy containerTy concatFuncIdx : Nat)
+    (stringHostRoles : List (Nat × CertDecode.StringHost.Role))
     (symPlan : SymRawPlan)
     (plan : StringConcatRawPlan)
     (obligation : Obligation) : Prop :=
   obligation.export_ = exportName ∧
   obligation.carrier = carrier ∧
+  stringHostRoles.contains (concatFuncIdx, .concat) = true ∧
+  obligation.host = stringConcatCanonicalHost concatFuncIdx resultTy ∧
   ∃ body codeEntry binding,
     AverCert.PlanCheck.checkSymRawPlan symPlan = true ∧
     AverCert.PlanCheck.stringConcatPlanMatchesSymRawPlan symPlan plan = true ∧
@@ -130,11 +148,14 @@ def stringEqPlanAccepted
     (exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
     (carrier stringTy stringEqFuncIdx : Nat)
+    (stringHostRoles : List (Nat × CertDecode.StringHost.Role))
     (symPlan : SymRawPlan)
     (plan : StringEqRawPlan)
     (obligation : Obligation) : Prop :=
   obligation.export_ = exportName ∧
     obligation.carrier = carrier ∧
+    stringHostRoles.contains (stringEqFuncIdx, .eq) = true ∧
+    obligation.host = stringEqCanonicalHost stringEqFuncIdx ∧
     AverCert.PlanCheck.checkSymRawPlan symPlan = true ∧
     AverCert.PlanCheck.stringEqPlanMatchesSymRawPlan symPlan plan = true ∧
     AverCert.PlanCheck.checkStringEqRawPlan plan = true ∧
@@ -337,6 +358,7 @@ def stringEqClaimAccepted
         claim.carrier
         claim.stringTy
         claim.stringEqFuncIdx
+        manifest.subject.stringHostRoles
         claim.symPlan
         plan
         claim.obligation
@@ -356,6 +378,7 @@ def stringConcatClaimAccepted
         claim.resultTy
         claim.containerTy
         claim.concatFuncIdx
+        manifest.subject.stringHostRoles
         claim.symPlan
         plan
         claim.obligation
@@ -1520,11 +1543,19 @@ def decodedHostRoleTable (artifact : ArtifactData) : Prop :=
   CertDecode.AddSub.roleTable artifact.modBytes artifact.modLen =
     some artifact.manifest.subject.hostRoleTable
 
+/-- Decode every String.eq/String.concat role exactly once for the whole module.
+    Unlike add/sub, the result is a list because every matching function is
+    classified independently; duplicate roles at distinct indices are retained. -/
+def decodedStringHostRoles (artifact : ArtifactData) : Prop :=
+  CertDecode.StringHost.roleTable artifact.modBytes artifact.modLen =
+    some artifact.manifest.subject.stringHostRoles
+
 /-- All in-kernel non-expression byte facts. Keeping `decodedHostRoleTable`
     outside every per-obligation fold is load-bearing for the
     200000-heartbeat budget. -/
 def decodedNonExprFacts (artifact : ArtifactData) : Prop :=
   decodedHostRoleTable artifact ∧
+  decodedStringHostRoles artifact ∧
   decodedNonExprClaimFacts artifact
 
 def claimObligationExports (artifact : ArtifactData) : List String :=

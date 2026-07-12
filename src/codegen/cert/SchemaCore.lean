@@ -93,6 +93,7 @@ structure Subject where
   capabilities : List (String × String)
   start        : Option Nat
   hostRoleTable : CertDecode.AddSub.Roles
+  stringHostRoles : List (Nat × CertDecode.StringHost.Role)
   contracts    : List String
 
 /-- The certification policy attached to a certified export. Partial simulation

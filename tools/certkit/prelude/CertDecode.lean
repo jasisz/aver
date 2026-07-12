@@ -996,4 +996,390 @@ def roleTable (n len : Nat) : Option Roles :=
 
 end AddSub
 
+/- ===================================================================== -/
+/-  Byte-exact String.eq/String.concat host-role table                    -/
+/- ===================================================================== -/
+
+namespace StringHost
+
+/-- F5-relevant value-type detail: i32, a concrete reference target, or a
+    lumped kind that cannot satisfy either string-helper signature. -/
+inductive Ty
+  | i32
+  | scalar
+  | ref (idx : Nat)
+  | abstractHeap
+  deriving DecidableEq, Repr, BEq
+
+abbrev Sig := List Ty × List Ty
+
+def readVal (n len : Nat) : Option (Ty × Nat × Nat) :=
+  if len == 0 then none else
+    let v := n &&& 0xff
+    let n1 := n >>> 8
+    let len1 := len - 1
+    if v == 0x7f then some (Ty.i32, n1, len1)
+    else if v == 0x7e || v == 0x7d || v == 0x7c || v == 0x7b then
+      some (Ty.scalar, n1, len1)
+    else if v == 0x63 || v == 0x64 then
+      match CertDecode.readS n1 len1 with
+      | none => none
+      | some (h, n2, len2) =>
+          some ((if h ≥ 0 then Ty.ref h.toNat else Ty.abstractHeap), n2, len2)
+    else if decide (0x6a ≤ v ∧ v ≤ 0x73) then
+      some (Ty.abstractHeap, n1, len1)
+    else none
+
+def readVals : Nat → Nat → Nat → Option (List Ty × Nat × Nat)
+  | 0,   n, len => some ([], n, len)
+  | p+1, n, len =>
+      match readVal n len with
+      | none => none
+      | some (t, n1, len1) =>
+          match readVals p n1 len1 with
+          | none => none
+          | some (ts, n2, len2) => some (t :: ts, n2, len2)
+
+/-- One composite type at absolute `tidx`: its function signature, plus
+    `some tidx` exactly for `(array (mut i8))`, the runtime String carrier. -/
+def decComptype (tidx n len : Nat) :
+    Option (Option Sig × Option Nat × Nat × Nat) :=
+  if len == 0 then none else
+    let c := n &&& 0xff
+    let n1 := n >>> 8
+    let len1 := len - 1
+    if c == 0x60 then
+      match CertDecode.readU n1 len1 with
+      | none => none
+      | some (np, n2, len2) =>
+          match readVals np n2 len2 with
+          | none => none
+          | some (ptys, n3, len3) =>
+              match CertDecode.readU n3 len3 with
+              | none => none
+              | some (nr, n4, len4) =>
+                  match readVals nr n4 len4 with
+                  | none => none
+                  | some (rtys, n5, len5) =>
+                      some (some (ptys, rtys), none, n5, len5)
+    else if c == 0x5f then
+      match CertDecode.readU n1 len1 with
+      | none => none
+      | some (nf, n2, len2) =>
+          match CertDecode.readFields nf n2 len2 with
+          | none => none
+          | some (_, n3, len3) => some (none, none, n3, len3)
+    else if c == 0x5e then
+      match CertDecode.readField n1 len1 with
+      | none => none
+      | some (sfb, n2, len2) =>
+          some (none, (if sfb == 0x78 then some tidx else none), n2, len2)
+    else none
+
+def decOneSubtype (tidx n len : Nat) :
+    Option (Option Sig × Option Nat × Nat × Nat) :=
+  if len == 0 then none else
+    let b0 := n &&& 0xff
+    if b0 == 0x50 || b0 == 0x4f then
+      match CertDecode.readU (n >>> 8) (len - 1) with
+      | none => none
+      | some (nsup, n1, len1) =>
+          match CertDecode.skipUlebs nsup n1 len1 with
+          | none => none
+          | some (n2, len2) => decComptype tidx n2 len2
+    else decComptype tidx n len
+
+@[inline] def consOpt (o : Option Nat) (l : List Nat) : List Nat :=
+  match o with | some x => x :: l | none => l
+
+def decSubtypes : Nat → Nat → Nat → Nat →
+    Option (List (Option Sig) × List Nat × Nat × Nat)
+  | 0,   _,    n, len => some ([], [], n, len)
+  | k+1, tidx, n, len =>
+      match decOneSubtype tidx n len with
+      | none => none
+      | some (s, sb, n1, len1) =>
+          match decSubtypes k (tidx+1) n1 len1 with
+          | none => none
+          | some (ss, sbs, n2, len2) =>
+              some (s :: ss, consOpt sb sbs, n2, len2)
+
+def decRecVec : Nat → Nat → Nat → Nat →
+    Option (List (Option Sig) × List Nat × Nat × Nat)
+  | 0,   _,    n, len => some ([], [], n, len)
+  | e+1, tidx, n, len =>
+      if len == 0 then none else
+        let b0 := n &&& 0xff
+        if b0 == 0x4e then
+          match CertDecode.readU (n >>> 8) (len - 1) with
+          | none => none
+          | some (sc, n1, len1) =>
+              match decSubtypes sc tidx n1 len1 with
+              | none => none
+              | some (ss, sbs, n2, len2) =>
+                  match decRecVec e (tidx+sc) n2 len2 with
+                  | none => none
+                  | some (ss2, sbs2, n3, len3) =>
+                      some (ss ++ ss2, sbs ++ sbs2, n3, len3)
+        else
+          match decOneSubtype tidx n len with
+          | none => none
+          | some (s, sb, n1, len1) =>
+              match decRecVec e (tidx+1) n1 len1 with
+              | none => none
+              | some (ss2, sbs2, n2, len2) =>
+                  some (s :: ss2, consOpt sb sbs2, n2, len2)
+
+/-- Function signatures and string-byte-array indices from one type pass. -/
+def decodeTypeSigs (n len : Nat) :
+    Option (List (Option Sig) × List Nat) :=
+  match CertDecode.findSec 1 64 (n >>> 64) (len - 8) with
+  | none => none
+  | some (tN, tLen) =>
+      match CertDecode.readU tN tLen with
+      | none => none
+      | some (cnt, n1, len1) =>
+          match decRecVec cnt 0 n1 len1 with
+          | none => none
+          | some (ss, sbat, _, _) => some (ss, sbat)
+
+/-- Exact Rust `HostOp` vocabulary. Non-mapped but boundary-known opcodes are
+    `other`, making the exact template comparison decline. -/
+inductive Op
+  | localGet (i : Nat)
+  | localSet (i : Nat)
+  | i32Const (v : Int)
+  | arrayLen
+  | arrayGetU (t : Nat)
+  | arrayGet (t : Nat)
+  | arrayNewDefault (t : Nat)
+  | arrayCopy (dst src : Nat)
+  | i32Ne
+  | i32GeU
+  | i32Add
+  | hIf
+  | hBlock
+  | hLoop
+  | br (d : Nat)
+  | brIf (d : Nat)
+  | hReturn
+  | hEnd
+  | other
+  deriving DecidableEq, Repr, BEq
+
+/-- Decode one instruction and skip every immediate exactly. Unknown encodings
+    fail closed; known non-template instructions become `other`. -/
+def decodeOne (n len : Nat) : Option (Op × Nat × Nat) :=
+  let op := n &&& 0xff
+  let n1 := n >>> 8
+  let len1 := len - 1
+  if op == 0x20 then
+    (CertDecode.readU n1 len1).map (fun p => (Op.localGet p.1, p.2.1, p.2.2))
+  else if op == 0x21 then
+    (CertDecode.readU n1 len1).map (fun p => (Op.localSet p.1, p.2.1, p.2.2))
+  else if op == 0x41 then
+    (CertDecode.readS n1 len1).map (fun p => (Op.i32Const p.1, p.2.1, p.2.2))
+  else if op == 0x47 then some (Op.i32Ne, n1, len1)
+  else if op == 0x4f then some (Op.i32GeU, n1, len1)
+  else if op == 0x6a then some (Op.i32Add, n1, len1)
+  else if op == 0x02 then
+    (CertDecode.skipBlockType n1 len1).map (fun p => (Op.hBlock, p.1, p.2))
+  else if op == 0x03 then
+    (CertDecode.skipBlockType n1 len1).map (fun p => (Op.hLoop, p.1, p.2))
+  else if op == 0x04 then
+    (CertDecode.skipBlockType n1 len1).map (fun p => (Op.hIf, p.1, p.2))
+  else if op == 0x0c then
+    (CertDecode.readU n1 len1).map (fun p => (Op.br p.1, p.2.1, p.2.2))
+  else if op == 0x0d then
+    (CertDecode.readU n1 len1).map (fun p => (Op.brIf p.1, p.2.1, p.2.2))
+  else if op == 0x0f then some (Op.hReturn, n1, len1)
+  else if op == 0x0b then some (Op.hEnd, n1, len1)
+  else if op == 0x00 || op == 0x01 || op == 0x05 || op == 0x1a ||
+          op == 0x1b || op == 0xd1 then some (Op.other, n1, len1)
+  else if decide (0x45 ≤ op ∧ op ≤ 0xc4) then some (Op.other, n1, len1)
+  else if op == 0x22 || op == 0x23 || op == 0x24 || op == 0x10 || op == 0x12 then
+    (CertDecode.readU n1 len1).map (fun p => (Op.other, p.2.1, p.2.2))
+  else if op == 0x0e then
+    match CertDecode.readU n1 len1 with
+    | none => none
+    | some (cnt, n2, len2) =>
+        (CertDecode.skipUlebs (cnt+1) n2 len2).map (fun p => (Op.other, p.1, p.2))
+  else if op == 0x11 then
+    match CertDecode.readU n1 len1 with
+    | none => none
+    | some (_, n2, len2) =>
+        (CertDecode.readU n2 len2).map (fun p => (Op.other, p.2.1, p.2.2))
+  else if op == 0x42 then
+    (CertDecode.readS n1 len1).map (fun p => (Op.other, p.2.1, p.2.2))
+  else if op == 0x43 then
+    if len1 < 4 then none else some (Op.other, n1 >>> 32, len1 - 4)
+  else if op == 0x44 then
+    if len1 < 8 then none else some (Op.other, n1 >>> 64, len1 - 8)
+  else if op == 0xd0 then
+    (CertDecode.readS n1 len1).map (fun p => (Op.other, p.2.1, p.2.2))
+  else if op == 0xd2 then
+    (CertDecode.readU n1 len1).map (fun p => (Op.other, p.2.1, p.2.2))
+  else if op == 0xfb then
+    match CertDecode.readU n1 len1 with
+    | none => none
+    | some (sub, n2, len2) =>
+        if sub == 0x0f then some (Op.arrayLen, n2, len2)
+        else if sub == 0x0b then
+          (CertDecode.readU n2 len2).map (fun p => (Op.arrayGet p.1, p.2.1, p.2.2))
+        else if sub == 0x0d then
+          (CertDecode.readU n2 len2).map (fun p => (Op.arrayGetU p.1, p.2.1, p.2.2))
+        else if sub == 0x07 then
+          (CertDecode.readU n2 len2).map
+            (fun p => (Op.arrayNewDefault p.1, p.2.1, p.2.2))
+        else if sub == 0x11 then
+          match CertDecode.readU n2 len2 with
+          | none => none
+          | some (dst, n3, len3) =>
+              (CertDecode.readU n3 len3).map
+                (fun p => (Op.arrayCopy dst p.1, p.2.1, p.2.2))
+        else if sub == 0x00 || sub == 0x01 || sub == 0x06 ||
+                sub == 0x0c || sub == 0x0e then
+          (CertDecode.readU n2 len2).map (fun p => (Op.other, p.2.1, p.2.2))
+        else if sub == 0x02 || sub == 0x05 || sub == 0x08 || sub == 0x09 then
+          match CertDecode.readU n2 len2 with
+          | none => none
+          | some (_, n3, len3) =>
+              (CertDecode.readU n3 len3).map (fun p => (Op.other, p.2.1, p.2.2))
+        else if sub == 0x14 || sub == 0x15 || sub == 0x16 || sub == 0x17 then
+          (CertDecode.readS n2 len2).map (fun p => (Op.other, p.2.1, p.2.2))
+        else none
+  else none
+
+def scan : Nat → Nat → Nat → Option (List Op)
+  | 0,      _, _   => none
+  | fuel+1, n, len =>
+      if len == 0 then some [] else
+        match decodeOne n len with
+        | none => none
+        | some (op, n1, len1) =>
+            match scan fuel n1 len1 with
+            | none => none
+            | some rest => some (op :: rest)
+
+def eqTemplate (t : Nat) : List Op :=
+  [.localGet 0, .arrayLen, .localGet 1, .arrayLen, .i32Ne, .hIf,
+   .i32Const 0, .hReturn, .hEnd, .localGet 0, .arrayLen, .localSet 2,
+   .i32Const 0, .localSet 3, .hBlock, .hLoop, .localGet 3, .localGet 2,
+   .i32GeU, .brIf 1, .localGet 0, .localGet 3, .arrayGetU t, .localGet 1,
+   .localGet 3, .arrayGetU t, .i32Ne, .hIf, .i32Const 0, .hReturn, .hEnd,
+   .localGet 3, .i32Const 1, .i32Add, .localSet 3, .br 0, .hEnd, .hEnd,
+   .i32Const 1, .hEnd]
+
+def concatTemplate (c b : Nat) : List Op :=
+  [.localGet 0, .arrayLen, .localSet 3, .i32Const 0, .localSet 1,
+   .i32Const 0, .localSet 2, .hBlock, .hLoop, .localGet 2, .localGet 3,
+   .i32GeU, .brIf 1, .localGet 1, .localGet 0, .localGet 2, .arrayGet c,
+   .arrayLen, .i32Add, .localSet 1, .localGet 2, .i32Const 1, .i32Add,
+   .localSet 2, .br 0, .hEnd, .hEnd, .localGet 1, .arrayNewDefault b,
+   .localSet 6, .i32Const 0, .localSet 7, .i32Const 0, .localSet 2,
+   .hBlock, .hLoop, .localGet 2, .localGet 3, .i32GeU, .brIf 1,
+   .localGet 0, .localGet 2, .arrayGet c, .localSet 4, .localGet 4,
+   .arrayLen, .localSet 5, .localGet 6, .localGet 7, .localGet 4,
+   .i32Const 0, .localGet 5, .arrayCopy b b, .localGet 7, .localGet 5,
+   .i32Add, .localSet 7, .localGet 2, .i32Const 1, .i32Add, .localSet 2,
+   .br 0, .hEnd, .hEnd, .localGet 6, .hEnd]
+
+inductive Role | eq | concat
+  deriving DecidableEq, Repr, BEq
+
+def eqCandidate : Option Sig → Nat → Option Nat
+  | some (params, results), nloc =>
+      match params, results with
+      | [Ty.ref lhs, Ty.ref rhs], (Ty.i32 :: _) =>
+          if lhs == rhs && nloc == 2 then some lhs else none
+      | _, _ => none
+  | none, _ => none
+
+def concatCandidate : Option Sig → Nat → Option (Nat × Nat)
+  | some (params, results), nloc =>
+      match params, results with
+      | [Ty.ref c], (Ty.ref b :: _) =>
+          if nloc == 7 then some (c, b) else none
+      | _, _ => none
+  | none, _ => none
+
+def classifyOne (sbat : List Nat) (sig : Option Sig)
+    (nloc bodyN bodyLen : Nat) : Option Role :=
+  match eqCandidate sig nloc with
+  | some lhs =>
+      if sbat.contains lhs then
+        match scan (bodyLen+1) bodyN bodyLen with
+        | some ops => if ops == eqTemplate lhs then some Role.eq else none
+        | none => none
+      else none
+  | none =>
+      match concatCandidate sig nloc with
+      | some (c, b) =>
+          if sbat.contains b then
+            match scan (bodyLen+1) bodyN bodyLen with
+            | some ops => if ops == concatTemplate c b then some Role.concat else none
+            | none => none
+          else none
+      | none => none
+
+/-- One code pass collecting `(nlocals, body suffix, exact body byte length)`. -/
+def decBodyLocs : Nat → Nat → Nat → Option (List (Nat × Nat × Nat))
+  | 0,   _, _   => some []
+  | k+1, n, len =>
+      match CertDecode.readU n len with
+      | none => none
+      | some (esz, bN, bLen) =>
+          match CertDecode.readU bN bLen with
+          | none => none
+          | some (ng, gN, gLen) =>
+              match CertDecode.decLocals ng gN gLen with
+              | none => none
+              | some (nloc, bodyN, bodyLen) =>
+                  let localsBytes := bLen - bodyLen
+                  let bodyByteLen := esz - localsBytes
+                  match decBodyLocs k (bN >>> (8*esz)) (bLen - esz) with
+                  | none => none
+                  | some rest => some ((nloc, bodyN, bodyByteLen) :: rest)
+
+def bodyLocs (n len : Nat) : Option (List (Nat × Nat × Nat)) :=
+  match CertDecode.findSec 10 64 (n >>> 64) (len - 8) with
+  | none => none
+  | some (codeN, codeLen) =>
+      match CertDecode.readU codeN codeLen with
+      | none => none
+      | some (nf, r0, l0) => decBodyLocs nf r0 l0
+
+/-- Classify each function independently. This intentionally has no uniqueness
+    or cross-function decline: two exact eq helpers produce two entries. -/
+def classify (nimp : Nat) (sbat : List Nat) (tsigs : List (Option Sig)) :
+    Nat → List Nat → List (Nat × Nat × Nat) → List (Nat × Role)
+  | _,       [],        _  => []
+  | _,       _ :: _,    [] => []
+  | def_idx, ty :: tys, (nloc, bodyN, bodyLen) :: locs =>
+      let sig := (tsigs[ty]?).getD none
+      match classifyOne sbat sig nloc bodyN bodyLen with
+      | some role =>
+          (nimp + def_idx, role) :: classify nimp sbat tsigs (def_idx+1) tys locs
+      | none => classify nimp sbat tsigs (def_idx+1) tys locs
+
+/-- Decode-once F5 result: every String.eq/String.concat `(funcIdx, role)` in
+    defined-function order. -/
+def roleTable (n len : Nat) : Option (List (Nat × Role)) :=
+  match decodeTypeSigs n len, CertDecode.decodeFuncTypes n len,
+        CertDecode.funcImportBase n len, bodyLocs n len with
+  | some (tsigs, sbat), some ftys, some nimp, some locs =>
+      some (classify nimp sbat tsigs 0 ftys locs)
+  | _, _, _, _ => none
+
+/-- Raw body scan used by negative controls. `defIdx` excludes imports. -/
+def scanDefined (n len defIdx : Nat) : Option (List Op) :=
+  match bodyLocs n len with
+  | none => none
+  | some locs =>
+      match locs[defIdx]? with
+      | none => none
+      | some (_, bodyN, bodyLen) => scan (bodyLen+1) bodyN bodyLen
+
+end StringHost
+
 end CertDecode

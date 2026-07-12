@@ -961,7 +961,7 @@ fn render_artifact_expr_fragment_claims(
                     export_name = lean_str(name),
                 ));
                 string_proofs.push(format!(
-                    "⟨rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
+                    "⟨rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
                      ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }
@@ -994,7 +994,7 @@ fn render_artifact_expr_fragment_claims(
                     export_name = lean_str(name),
                 ));
                 string_eq_proofs.push(format!(
-                    "⟨rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
+                    "⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
                      ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }
@@ -1497,6 +1497,9 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.claimsMatchManifest,\n",
             "    AverCert.AcceptedArtifact.decodedNonExprFacts,\n",
             "    AverCert.AcceptedArtifact.decodedNonExprClaimFacts,\n",
+            "    AverCert.AcceptedArtifact.decodedStringHostRoles,\n",
+            "    AverCert.AcceptedArtifact.stringEqCanonicalHost,\n",
+            "    AverCert.AcceptedArtifact.stringConcatCanonicalHost,\n",
             "    AverCert.AcceptedArtifact.decodedClaims,\n",
             "    AverCert.AcceptedArtifact.decodedObligationFacts,\n",
             "    AverCert.AcceptedArtifact.decodedCodeAtAll,\n",
@@ -1597,7 +1600,7 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.intDispatchCanonicalSlots,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨finalCert, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩, ⟨⟨decodedHostRoles, by repeat' constructor⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, ⟨{int_dispatch_proof}, ⟨{field_projection_proof}, ⟨{composition_proof}, ⟨rfl, rfl, rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨finalCert, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩, ⟨⟨decodedHostRoles, ⟨decodedStringHostRoles, by repeat' constructor⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, ⟨{int_dispatch_proof}, ⟨{field_projection_proof}, ⟨{composition_proof}, ⟨rfl, rfl, rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         obligation_proof = claims.obligation_proof,
         sym_proof = claims.sym_proof,
@@ -1642,6 +1645,7 @@ fn render_artifact(
          def data : AverCert.AcceptedArtifact.ArtifactData :=\n  \
            ({{ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims, fieldProjectionClaims := fieldProjectionClaims, compositionMembers := compositionMembers, compositionClaims := compositionClaims, closureFuel := {closure_fuel}, closureClaim := closureClaim }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
          theorem decodedHostRoles : CertDecode.AddSub.roleTable AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen = some AverCert.manifest.subject.hostRoleTable := by change AverCert.AcceptedArtifact.decodedHostRoleTable data; dsimp [AverCert.AcceptedArtifact.decodedHostRoleTable, data]; rfl\n\n\
+         theorem decodedStringHostRoles : CertDecode.StringHost.roleTable AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen = some AverCert.manifest.subject.stringHostRoles := by change AverCert.AcceptedArtifact.decodedStringHostRoles data; dsimp [AverCert.AcceptedArtifact.decodedStringHostRoles, data]; rfl\n\n\
          def acceptedWithFinal\n\
              (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n\
              AverCert.AcceptedArtifact.accepted data := by\n\

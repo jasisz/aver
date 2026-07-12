@@ -56,6 +56,24 @@ pub fn byte_derived_frag_host_role_indices(
     ))
 }
 
+/// Raw Rust F5-classifier result used by the permanent kernel differential.
+/// Entries are sorted by function index and include every independent match;
+/// there is deliberately no uniqueness filter for string roles.
+pub fn byte_derived_string_host_roles(
+    wasm_bytes: &[u8],
+) -> Result<StringHostRoles, String> {
+    let (
+        _user_fns,
+        _box_idx,
+        _user_idx_set,
+        _carrier,
+        host_roles,
+        _host_table,
+        _struct_field_counts,
+    ) = disassemble(wasm_bytes)?;
+    Ok(string_host_roles(&host_roles))
+}
+
 /// Every `call` in a candidate expr-fragment body must resolve through the
 /// byte-derived host-role table; any other callee fail-closes the sidecar
 /// gate (recursion, user calls, unknown helpers).
