@@ -1362,6 +1362,15 @@ def constructClaimSymPlanPairs
     (claims : List ConstructClaim) : List (String × SymRawPlan) :=
   claims.map (fun c => (c.exportName, c.symPlan))
 
+/-- Exact whole-module direct-call closure claimed by the producer and
+    independently recomputed from the artifact bytes. `roots` are precisely the
+    certified obligation function indices; every other admitted member is
+    explicitly classified as a helper. -/
+structure ClosureClaim where
+  roots    : List Nat
+  helpers  : List Nat
+  admitted : List Nat
+
 /-- The checker-facing artifact data currently accepted by the Lean bridge.
     `symFragmentClaims` is the source-level expression surface. There is no
     artifact-level raw `ExprFragmentClaim`; representation plans are derived by
@@ -1382,6 +1391,8 @@ structure ArtifactData where
   fieldProjectionClaims : List FieldProjectionClaim
   compositionMembers : List CompositionMemberClaim
   compositionClaims  : List CompositionClaim
+  closureFuel        : Nat
+  closureClaim       : ClosureClaim
 
 def claimObligationExports (artifact : ArtifactData) : List String :=
   artifact.symFragmentClaims.map (fun c => c.obligation.export_) ++
@@ -1410,6 +1421,109 @@ def manifestObligationsClaimed (artifact : ArtifactData) : Bool :=
 def manifestObligationExportsUnique (artifact : ArtifactData) : Bool :=
   let names := artifact.manifest.obligations.map (fun o => o.export_)
   stringListNodup names
+
+/-! ### Whole-module interface accounting and certified-closure isolation -/
+
+def stringBytes (s : String) : AverCert.WasmSlice.ByteSeq :=
+  s.toList.map Char.toNat
+
+def byteSeqMem (needle : AverCert.WasmSlice.ByteSeq) :
+    List AverCert.WasmSlice.ByteSeq → Bool
+  | [] => false
+  | x :: xs => needle == x || byteSeqMem needle xs
+
+def byteSeqListNodup : List AverCert.WasmSlice.ByteSeq → Bool
+  | [] => true
+  | x :: xs => !byteSeqMem x xs && byteSeqListNodup xs
+
+def certifiedExportEntries
+    (manifest : AverCert.Schema.Manifest) : List AverCert.WasmSlice.ExportEntry :=
+  manifest.obligations.map (fun obligation =>
+    { name := stringBytes obligation.export_, kind := 0, idx := obligation.self })
+
+def declaredUncertifiedNames
+    (manifest : AverCert.Schema.Manifest) : List AverCert.WasmSlice.ByteSeq :=
+  manifest.subject.declaredUncertified.map (fun entry => stringBytes entry.1)
+
+def exportEntryMem (needle : AverCert.WasmSlice.ExportEntry) :
+    List AverCert.WasmSlice.ExportEntry → Bool
+  | [] => false
+  | entry :: rest =>
+      (needle.name == entry.name && needle.kind == entry.kind && needle.idx == entry.idx) ||
+        exportEntryMem needle rest
+
+def exportAccounted
+    (certified : List AverCert.WasmSlice.ExportEntry)
+    (declared : List AverCert.WasmSlice.ByteSeq)
+    (entry : AverCert.WasmSlice.ExportEntry) : Bool :=
+  exportEntryMem entry certified || byteSeqMem entry.name declared
+
+/-- Every byte-derived module export is classified exactly once: either the
+    function/name/index of a claimed obligation or an explicit uncertified
+    declaration. Both declaration lists are duplicate-free, disjoint and have
+    no phantom names absent from the export section. -/
+def exportsAccounted (artifact : ArtifactData) : Bool :=
+  match AverCert.WasmSlice.enumExports artifact.modBytes artifact.modLen with
+  | none => false
+  | some actual =>
+      let certified := certifiedExportEntries artifact.manifest
+      let declared := declaredUncertifiedNames artifact.manifest
+      let actualNames := actual.map (fun entry => entry.name)
+      let certifiedNames := certified.map (fun entry => entry.name)
+      byteSeqListNodup actualNames &&
+      byteSeqListNodup certifiedNames &&
+      byteSeqListNodup declared &&
+      certifiedNames.all (fun name => !byteSeqMem name declared) &&
+      actual.all (exportAccounted certified declared) &&
+      certified.all (fun entry => exportEntryMem entry actual) &&
+      declared.all (fun name => byteSeqMem name actualNames)
+
+def capabilityBytes (capability : String × String) :
+    AverCert.WasmSlice.ByteSeq × AverCert.WasmSlice.ByteSeq :=
+  (stringBytes capability.1, stringBytes capability.2)
+
+/-- The manifest capability list is exact (including import order), contains no
+    duplicates, and is a subset of the kernel registry minted from the wasm-gc
+    effect import mapping. Non-effect and forged imports therefore fail here. -/
+def importsWithinCapabilities (artifact : ArtifactData) : Bool :=
+  let declared := artifact.manifest.subject.capabilities
+  stringListNodup (declared.map (fun capability => capability.1 ++ "." ++ capability.2)) &&
+  declared.all (fun capability => AverCert.Schema.CAPABILITY_REGISTRY.contains capability) &&
+  match AverCert.WasmSlice.enumImportNames artifact.modBytes artifact.modLen with
+  | some actual => actual == declared.map capabilityBytes
+  | none => false
+
+/-- The manifest declares absence/presence and, when present, the exact start
+    function index read from section 8. -/
+def startAccounted (artifact : ArtifactData) : Bool :=
+  AverCert.WasmSlice.startFuncIndex artifact.modBytes artifact.modLen ==
+    some artifact.manifest.subject.start
+
+/-- One union closure over all certified roots. Closure of a union is the union
+    of each root's closure, while scanning shared helpers only once. The exact
+    admitted set is partitioned into certified roots and helpers; imports and
+    rejected opcodes make `closureFold` return `none`. Shared memory is rejected
+    as a declaration-level hidden channel. -/
+def closureIsolation (artifact : ArtifactData) : Bool :=
+  let claim := artifact.closureClaim
+  let certified := artifact.manifest.obligations.map (fun obligation => obligation.self)
+  AverCert.WasmSlice.natListNodup claim.roots &&
+  AverCert.WasmSlice.natListNodup claim.helpers &&
+  AverCert.WasmSlice.natListNodup claim.admitted &&
+  AverCert.WasmSlice.natSetEq claim.roots certified &&
+  claim.roots.all (fun root => !AverCert.WasmSlice.natMem root claim.helpers) &&
+  AverCert.WasmSlice.natSetEq claim.admitted (claim.roots ++ claim.helpers) &&
+  AverCert.WasmSlice.noSharedMemory artifact.modBytes artifact.modLen &&
+  match AverCert.WasmSlice.closureFold artifact.modBytes artifact.modLen
+      artifact.closureFuel claim.roots [] with
+  | some actual => AverCert.WasmSlice.natSetEq actual claim.admitted
+  | none => false
+
+def acceptedWholeModule (artifact : ArtifactData) : Prop :=
+  exportsAccounted artifact = true ∧
+  importsWithinCapabilities artifact = true ∧
+  startAccounted artifact = true ∧
+  closureIsolation artifact = true
 
 def acceptedSymFragments (artifact : ArtifactData) : Prop :=
   symFragmentClaimsAccepted artifact.modBytes artifact.modLen artifact.symFragmentClaims
@@ -1491,7 +1605,8 @@ def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedVerbatimFragments artifact ∧
   acceptedIntDispatchFragments artifact ∧
   acceptedFieldProjectionFragments artifact ∧
-  acceptedCompositionFragments artifact
+  acceptedCompositionFragments artifact ∧
+  acceptedWholeModule artifact
 
 def expectedArtifactRoot : String :=
   "AverCert.Artifact.certificate"

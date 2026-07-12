@@ -3334,7 +3334,9 @@ example : ∀ nameBytes,
 
 example : ¬ AcceptedArtifact.accepted unclaimedArtifact := by
   intro h
-  rcases h with ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hclaimed, _⟩
+  rcases h with ⟨_, _, _, _, hfragments⟩
+  rcases hfragments with ⟨_, _, _, _, _, _, _, _, _, hcomposition, _⟩
+  have hclaimed := hcomposition.2.2.1
   change false = true at hclaimed
   contradiction
 
@@ -3342,7 +3344,8 @@ example : acceptedWithoutClaimCoverage unclaimedArtifact := by
   rcases Artifact.certificate with
     ⟨_, hsubject, hobs, hmatch, hsym, hstringEq, hstringConcat, hconstruct,
       hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
-      hcomposition, hmembersCovered, _, _⟩
+      hcompositionAccepted, _⟩
+  rcases hcompositionAccepted with ⟨hcomposition, hmembersCovered, _, _⟩
   refine ⟨unclaimedFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact hsubject
   · simpa [unclaimedArtifact, unclaimedManifest,
@@ -3463,7 +3466,9 @@ example : ∀ nameBytes,
 
 example : ¬ AcceptedArtifact.accepted duplicateArtifact := by
   intro h
-  rcases h with ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hunique⟩
+  rcases h with ⟨_, _, _, _, hfragments⟩
+  rcases hfragments with ⟨_, _, _, _, _, _, _, _, _, hcomposition, _⟩
+  have hunique := hcomposition.2.2.2
   change false = true at hunique
   contradiction
 
@@ -3471,7 +3476,8 @@ example : acceptedWithoutUniqueExports duplicateArtifact := by
   rcases Artifact.certificate with
     ⟨_, hsubject, hobs, hmatch, hsym, hstringEq, hstringConcat, hconstruct,
       hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
-      hcomposition, hmembersCovered, _, _⟩
+      hcompositionAccepted, _⟩
+  rcases hcompositionAccepted with ⟨hcomposition, hmembersCovered, _, _⟩
   refine ⟨duplicateFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact hsubject
   · simpa [duplicateArtifact, duplicateManifest,

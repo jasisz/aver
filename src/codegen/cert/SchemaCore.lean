@@ -8,16 +8,89 @@ import CertPrelude
 namespace AverCert.Schema
 open CertPrelude
 
-/-- What the artifact is: its pinned hash, the emitted-fragment profile, the
-    runtime ABI, the artifact-level theorem root, the certified export names,
-    and the named runtime contracts every certificate is conditional on. Pure
-    data, mirrored in `cert-manifest.json`. -/
+/-- The finite host-capability registry, minted from wasm-gc's exhaustive
+    `EffectName.import_pair` mapping.  Artifact manifests may declare only
+    pairs in this kernel-owned list; the Wasm import section is independently
+    enumerated and must match the declaration exactly. -/
+def CAPABILITY_REGISTRY : List (String × String) := [
+  ("aver", "console_print"),
+  ("aver", "console_error"),
+  ("aver", "console_warn"),
+  ("aver", "time_unix_ms"),
+  ("aver", "request_method"),
+  ("aver", "request_url"),
+  ("aver", "request_query"),
+  ("aver", "request_body"),
+  ("aver", "request_headers_load"),
+  ("aver", "response_text"),
+  ("aver", "response_set_header"),
+  ("aver", "http_send"),
+  ("aver", "http_add_request_header"),
+  ("aver", "http_clear_request_headers"),
+  ("aver", "env_get"),
+  ("aver", "env_set"),
+  ("aver", "console_read_line"),
+  ("aver", "args_len"),
+  ("aver", "args_get"),
+  ("aver", "random_float"),
+  ("aver", "random_int"),
+  ("aver", "time_sleep"),
+  ("aver", "time_now"),
+  ("aver", "float_sin"),
+  ("aver", "float_cos"),
+  ("aver", "float_atan2"),
+  ("aver", "float_pow"),
+  ("aver", "terminal_enable_raw_mode"),
+  ("aver", "terminal_disable_raw_mode"),
+  ("aver", "terminal_clear"),
+  ("aver", "terminal_move_to"),
+  ("aver", "terminal_print"),
+  ("aver", "terminal_set_color"),
+  ("aver", "terminal_reset_color"),
+  ("aver", "terminal_read_key"),
+  ("aver", "terminal_size"),
+  ("aver", "terminal_hide_cursor"),
+  ("aver", "terminal_show_cursor"),
+  ("aver", "terminal_flush"),
+  ("aver", "disk_read_text"),
+  ("aver", "disk_write_text"),
+  ("aver", "disk_append_text"),
+  ("aver", "disk_exists"),
+  ("aver", "disk_delete"),
+  ("aver", "disk_delete_dir"),
+  ("aver", "disk_list_dir"),
+  ("aver", "disk_make_dir"),
+  ("aver", "tcp_connect"),
+  ("aver", "tcp_write_line"),
+  ("aver", "tcp_read_line"),
+  ("aver", "tcp_close"),
+  ("aver", "tcp_send"),
+  ("aver", "tcp_ping"),
+  ("aver", "http_get"),
+  ("aver", "http_head"),
+  ("aver", "http_delete"),
+  ("aver", "http_post"),
+  ("aver", "http_put"),
+  ("aver", "http_patch"),
+  ("aver", "record_enter_group"),
+  ("aver", "record_set_branch"),
+  ("aver", "record_exit_group")
+]
+
+/-- What the artifact is: its pinned hash, emitted-fragment profile, runtime
+    ABI, artifact theorem root, the certified and explicitly uncertified export
+    names, the exact effect-import capability surface, byte-derived start
+    status, and the runtime contracts every certificate is conditional on.
+    Pure data, mirrored in `cert-manifest.json`. -/
 structure Subject where
   artifactHash : String
   profile      : String
   abi          : String
   artifactRoot : String
   exports      : List String
+  declaredUncertified : List (String × String)
+  capabilities : List (String × String)
+  start        : Option Nat
   contracts    : List String
 
 /-- The certification policy attached to a certified export. Partial simulation

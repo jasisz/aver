@@ -182,6 +182,71 @@ pub(super) enum EffectName {
 }
 
 impl EffectName {
+    const ALL: &[Self] = &[
+        Self::ConsolePrint,
+        Self::ConsoleError,
+        Self::ConsoleWarn,
+        Self::TimeUnixMs,
+        Self::RequestMethod,
+        Self::RequestUrl,
+        Self::RequestQuery,
+        Self::RequestBody,
+        Self::RequestHeadersLoad,
+        Self::ResponseText,
+        Self::ResponseSetHeader,
+        Self::HttpSend,
+        Self::HttpAddRequestHeader,
+        Self::HttpClearRequestHeaders,
+        Self::EnvGet,
+        Self::EnvSet,
+        Self::ConsoleReadLine,
+        Self::ArgsLen,
+        Self::ArgsGet,
+        Self::RandomFloat,
+        Self::RandomInt,
+        Self::TimeSleep,
+        Self::TimeNow,
+        Self::FloatSin,
+        Self::FloatCos,
+        Self::FloatAtan2,
+        Self::FloatPow,
+        Self::TerminalEnableRawMode,
+        Self::TerminalDisableRawMode,
+        Self::TerminalClear,
+        Self::TerminalMoveTo,
+        Self::TerminalPrint,
+        Self::TerminalSetColor,
+        Self::TerminalResetColor,
+        Self::TerminalReadKey,
+        Self::TerminalSize,
+        Self::TerminalHideCursor,
+        Self::TerminalShowCursor,
+        Self::TerminalFlush,
+        Self::DiskReadText,
+        Self::DiskWriteText,
+        Self::DiskAppendText,
+        Self::DiskExists,
+        Self::DiskDelete,
+        Self::DiskDeleteDir,
+        Self::DiskListDir,
+        Self::DiskMakeDir,
+        Self::TcpConnect,
+        Self::TcpWriteLine,
+        Self::TcpReadLine,
+        Self::TcpClose,
+        Self::TcpSend,
+        Self::TcpPing,
+        Self::HttpGet,
+        Self::HttpHead,
+        Self::HttpDelete,
+        Self::HttpPost,
+        Self::HttpPut,
+        Self::HttpPatch,
+        Self::RecordEnterGroup,
+        Self::RecordSetBranch,
+        Self::RecordExitGroup,
+    ];
+
     pub(super) fn from_dotted(s: &str) -> Option<Self> {
         match s {
             "Console.print" => Some(Self::ConsolePrint),
@@ -614,6 +679,17 @@ impl EffectName {
             Self::RecordEnterGroup | Self::RecordSetBranch | Self::RecordExitGroup => Ok(vec![]),
         }
     }
+}
+
+/// The certification capability registry is minted from the same exhaustive
+/// effect-name list and `import_pair` mapping used by wasm-gc emission.  This
+/// keeps certificate interface accounting synchronized with the actual host
+/// import ABI instead of maintaining a second Rust-side registry.
+pub(crate) fn capability_registry() -> Vec<(&'static str, &'static str)> {
+    EffectName::ALL
+        .iter()
+        .map(|effect| effect.import_pair())
+        .collect()
 }
 
 fn result_ref_ty(registry: &TypeRegistry, canonical: &str) -> Result<ValType, WasmGcError> {

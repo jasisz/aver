@@ -34,6 +34,24 @@ exactly one canonical local, and binds the whole host builder extensionally to
 the strict byte-derived singleton `add` table. The independently read Int model
 and the existing callee-by-callee simulation proof remain unchanged.
 
+## Whole-module coverage
+
+Artifact acceptance now accounts for the module's complete byte-derived
+interface. Every export of every kind is either a claimed obligation export or
+appears in `declaredUncertified`; every import is listed exactly in
+`capabilities` and must belong to the kernel's wasm-gc effect capability
+registry; and `start` records whether section 8 exists and, when it does, its
+function index. The audited closure fold starts from all certified exports,
+walks every transitive direct call (including runtime helper bodies and nested
+control flow), rejects reachable imports and dynamic calls, and rejects global,
+table, linear-memory, atomic, `data.drop`, and `elem.drop` operations in that
+closure. Shared-memory declarations are rejected as a module-level channel.
+
+This is an isolation claim about certified closures, not a behavioral claim
+about `declaredUncertified` exports. Their names and reasons make the remaining
+surface explicit; the certificate does not say that those exports are correct,
+safe, effect-free, or otherwise certified.
+
 > Architecture direction: new certificate work should follow
 > [plan-first canonical lowering](certification-architecture.md). Expression
 > fragments no longer emit or accept trace sidecars; their plan sidecars are
@@ -132,7 +150,7 @@ Per certified export, the certificate proves, from the schema's fixed statement 
 - **Simulation**: for every input tuple in the class, running the body read back from the module bytes under the fragment semantics — with the named runtime contracts as hypotheses — returns exactly the encoding of the function's Lean model applied to those inputs. This is partial correctness: the theorem is conditional on the run returning a value, so a trap or fuel exhaustion makes no claim — the executable anti-vacuity guards below are what witness that certified bodies actually run. Recursive bodies, including two-argument accumulator recursion, are handled by a fuel-indexed interpreter plus a fuel-stability companion theorem.
 - **Law transfer**: laws proven about the model compose with simulation into statements about the bytes themselves.
 
-All of it is bundled behind **one final theorem** per certificate, `AverCert.Final.cert : Schema.Holds manifest`. The fixed, audited `SchemaCore.lean` contains the dependency-closed statement schema, while the thin `Schema.lean` shim adds the artifact-specific module-hash conjunct; `manifest` is a literal describing this artifact (hash, exports, contracts, profile, ABI, and artifact-level certificate root). The schema states each obligation over a typed source **domain** and **codomain** with explicit representation relations (`Dom`, `Cod`, `domRepr`, `codRepr`, `model`), so the same schema covers integer, projection and ADT classes. Certificates are bound to their schema version (`schema_version` in the manifest, currently 40): a checker refuses a certificate from a different schema generation with an explicit unsupported-version message rather than a misleading downstream error, so regenerate certificates with the toolchain that will verify them. A consumer never reads proof scripts; they check the final theorem's name and type, the artifact certificate root, the manifest literal, and the schema-core/schema/prelude/plan-check/plan-lower/plan-bytes/wasm-slice/expr-fragment-accepted/accepted-artifact-core/accepted-artifact hashes. If statement approval required inspecting arbitrary Lean syntax, the compiler bug would just move into a certificate-auditor bug — the schema exists so that it can't.
+All of it is bundled behind **one final theorem** per certificate, `AverCert.Final.cert : Schema.Holds manifest`. The fixed, audited `SchemaCore.lean` contains the dependency-closed statement schema, while the thin `Schema.lean` shim adds the artifact-specific module-hash conjunct; `manifest` is a literal describing this artifact (hash, exports, contracts, profile, ABI, and artifact-level certificate root). The schema states each obligation over a typed source **domain** and **codomain** with explicit representation relations (`Dom`, `Cod`, `domRepr`, `codRepr`, `model`), so the same schema covers integer, projection and ADT classes. Certificates are bound to their schema version (`schema_version` in the manifest, currently 49): a checker refuses a certificate from a different schema generation with an explicit unsupported-version message rather than a misleading downstream error, so regenerate certificates with the toolchain that will verify them. A consumer never reads proof scripts; they check the final theorem's name and type, the artifact certificate root, the manifest literal, and the schema-core/schema/prelude/plan-check/plan-lower/plan-bytes/wasm-slice/expr-fragment-accepted/accepted-artifact-core/accepted-artifact hashes. If statement approval required inspecting arbitrary Lean syntax, the compiler bug would just move into a certificate-auditor bug — the schema exists so that it can't.
 
 Anti-vacuity is enforced separately: executable guard `example`s must compute each certified function on at least one concrete input (these use `native_decide` and are deliberately **outside** the proof credit). The final theorems' axioms are collected by the kernel and must be exactly the whitelist `[propext, Classical.choice, Quot.sound]` — a smuggled `axiom`, `sorryAx` (an admitted goal) or `ofReduceBool` (native-code trust) fails verification.
 
@@ -195,7 +213,7 @@ declined fail-closed and appear only in `source_level_only`.
 - The elaboration-executes-code token scan on cert data files is a raised bar, not a proof; the structural fix is the in-kernel decode path.
 - `--certify` conflicts with `--optimize`: the certificate binds the exact emitted bytes.
 
-As of schema 45, the `cert_goals` matrix has **23 certified exports and 0
+As of schema 49, the `cert_goals` matrix has **23 certified exports and 0
 plan-less certified exports**. The JSON fixture has **12 certified exports and
 0 plan-less certified exports**.
 

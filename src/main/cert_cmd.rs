@@ -237,6 +237,9 @@ struct Candidates {
     /// binding against the proven manifest; the final byte-binding and report
     /// use the byte-derived list.
     contracts: Vec<String>,
+    declared_uncertified: Vec<(String, String)>,
+    capabilities: Vec<(String, String)>,
+    start: Option<u32>,
     profile: String,
     abi: String,
 }
@@ -340,6 +343,19 @@ fn gate_candidate(kind: &str, s: &str) -> Result<(), String> {
     }
 }
 
+fn exact_object_fields(value: &Value, context: &str, expected: &[&str]) -> Result<(), String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("cert-manifest.json `{context}` is not an object"))?;
+    if object.len() != expected.len() || expected.iter().any(|key| !object.contains_key(*key)) {
+        return Err(format!(
+            "cert-manifest.json `{context}` must contain exactly fields {}",
+            expected.join(", ")
+        ));
+    }
+    Ok(())
+}
+
 /// Pull the report candidates from the untrusted JSON and charset-gate each one
 /// on its decoded value. Nothing here is trusted yet — the witness `rfl`s below
 /// are what bind these to the kernel-proven manifest.
@@ -399,7 +415,7 @@ fn read_candidates(m: &Value) -> Result<Candidates, String> {
                 })?;
                 if kind != "intNatAbs" {
                     return Err(format!(
-                        "cert-manifest.json certified export `{name}` uses unsupported termination measure `{kind}`; schema 48 admits only `intNatAbs`"
+                        "cert-manifest.json certified export `{name}` uses unsupported termination measure `{kind}`; schema 49 admits only `intNatAbs`"
                     ));
                 }
                 let param_idx = measure
@@ -456,11 +472,83 @@ fn read_candidates(m: &Value) -> Result<Candidates, String> {
         })
         .collect::<Result<Vec<_>, _>>()?;
 
+    let declared_uncertified = m
+        .get("declaredUncertified")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            "cert-manifest.json is missing array field `declaredUncertified`".to_string()
+        })?
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            exact_object_fields(
+                entry,
+                &format!("declaredUncertified[{index}]"),
+                &["name", "reason"],
+            )?;
+            let name = entry.get("name").and_then(Value::as_str).ok_or_else(|| {
+                format!("cert-manifest.json `declaredUncertified[{index}].name` is not a string")
+            })?;
+            let reason = entry.get("reason").and_then(Value::as_str).ok_or_else(|| {
+                format!("cert-manifest.json `declaredUncertified[{index}].reason` is not a string")
+            })?;
+            Ok((name.to_string(), reason.to_string()))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let capabilities = m
+        .get("capabilities")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "cert-manifest.json is missing array field `capabilities`".to_string())?
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            exact_object_fields(
+                entry,
+                &format!("capabilities[{index}]"),
+                &["module", "name"],
+            )?;
+            let module = entry.get("module").and_then(Value::as_str).ok_or_else(|| {
+                format!("cert-manifest.json `capabilities[{index}].module` is not a string")
+            })?;
+            let name = entry.get("name").and_then(Value::as_str).ok_or_else(|| {
+                format!("cert-manifest.json `capabilities[{index}].name` is not a string")
+            })?;
+            Ok((module.to_string(), name.to_string()))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let start_value = m
+        .get("start")
+        .ok_or_else(|| "cert-manifest.json is missing object field `start`".to_string())?;
+    exact_object_fields(start_value, "start", &["present", "function_index"])?;
+    let present = start_value
+        .get("present")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "cert-manifest.json `start.present` is not a boolean".to_string())?;
+    let start = match (present, start_value.get("function_index")) {
+        (false, Some(Value::Null)) => None,
+        (true, Some(value)) => value
+            .as_u64()
+            .and_then(|index| u32::try_from(index).ok())
+            .map(Some)
+            .ok_or_else(|| {
+                "cert-manifest.json present `start.function_index` is not a u32".to_string()
+            })?,
+        (false, _) => {
+            return Err(
+                "cert-manifest.json absent start must use null `function_index`".to_string(),
+            );
+        }
+        (true, None) => unreachable!("exact_object_fields checked function_index"),
+    };
+
     let cands = Candidates {
         names,
         policies,
         termination_witnesses,
         contracts,
+        declared_uncertified,
+        capabilities,
+        start,
         profile,
         abi,
     };
@@ -469,6 +557,14 @@ fn read_candidates(m: &Value) -> Result<Candidates, String> {
     }
     for c in &cands.contracts {
         gate_candidate("runtime contract", c)?;
+    }
+    for (name, reason) in &cands.declared_uncertified {
+        gate_candidate("declared-uncertified export name", name)?;
+        gate_candidate("declared-uncertified reason", reason)?;
+    }
+    for (module, name) in &cands.capabilities {
+        gate_candidate("capability module", module)?;
+        gate_candidate("capability name", name)?;
     }
     gate_candidate("profile", &cands.profile)?;
     gate_candidate("abi", &cands.abi)?;
@@ -676,6 +772,18 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     for r in &rederived {
         gate_candidate("re-derived export name", &r.name)?;
     }
+    let certified_bindings = rederived
+        .iter()
+        .map(|obligation| (obligation.name.clone(), obligation.self_idx))
+        .collect::<Vec<_>>();
+    let module_envelope = cert::collect_module_envelope_facts(&bytes, &certified_bindings)?;
+    for export in &module_envelope.exports {
+        gate_candidate("byte-derived module export name", &export.name)?;
+    }
+    for (module, name) in &module_envelope.capabilities {
+        gate_candidate("byte-derived capability module", module)?;
+        gate_candidate("byte-derived capability name", name)?;
+    }
 
     // 3. Assemble a checker-owned build. The audited schema + prelude come from
     //    THIS binary, never from the cert; the cert supplies only per-artifact
@@ -723,6 +831,7 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
         &derived_contracts,
         &host_table_lean,
         &struct_table_lean,
+        &module_envelope,
     );
     std::fs::write(build.path.join("CheckerWitness.lean"), &witness)
         .map_err(|e| format!("cannot write checker witness: {e}"))?;
@@ -1628,6 +1737,15 @@ fn lean_str_list(items: &[String]) -> String {
     let inner = items
         .iter()
         .map(|s| format!("\"{s}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{inner}]")
+}
+
+fn lean_string_pair_list(items: &[(String, String)]) -> String {
+    let inner = items
+        .iter()
+        .map(|(left, right)| format!("(\"{left}\", \"{right}\")"))
         .collect::<Vec<_>>()
         .join(", ");
     format!("[{inner}]")
@@ -2635,7 +2753,14 @@ fn lean_artifact_data_literal(
     field_projection_claims: &str,
     composition_members: &str,
     composition_claims: &str,
+    module_envelope: &cert::ModuleEnvelopeFacts,
 ) -> String {
+    let roots = lean_nat_list(module_envelope.closure.roots.iter().copied());
+    let helpers = lean_nat_list(module_envelope.closure.helpers.iter().copied());
+    let admitted = lean_nat_list(module_envelope.closure.admitted.iter().copied());
+    let closure_claim = format!(
+        "({{ roots := {roots}, helpers := {helpers}, admitted := {admitted} }} : AverCert.AcceptedArtifact.ClosureClaim)"
+    );
     format!(
         "({{ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest, \
          symFragmentClaims := ({sym_claims} : List AverCert.AcceptedArtifact.SymFragmentClaim), \
@@ -2648,8 +2773,10 @@ fn lean_artifact_data_literal(
          intDispatchClaims := ({int_dispatch_claims} : List AverCert.AcceptedArtifact.IntDispatchClaim), \
          fieldProjectionClaims := ({field_projection_claims} : List AverCert.AcceptedArtifact.FieldProjectionClaim), \
          compositionMembers := ({composition_members} : List AverCert.AcceptedArtifact.CompositionMemberClaim), \
-         compositionClaims := ({composition_claims} : List AverCert.AcceptedArtifact.CompositionClaim) }} : \
-         AverCert.AcceptedArtifact.ArtifactData)"
+         compositionClaims := ({composition_claims} : List AverCert.AcceptedArtifact.CompositionClaim), \
+         closureFuel := {closure_fuel}, closureClaim := {closure_claim} }} : \
+         AverCert.AcceptedArtifact.ArtifactData)",
+        closure_fuel = module_envelope.closure_fuel
     )
 }
 
@@ -2670,6 +2797,7 @@ fn lean_fragment_acceptance_proof_block(
             "{indent}  AverCert.AcceptedArtifact.acceptedIntDispatchFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.acceptedFieldProjectionFragments,\n",
             "{indent}  AverCert.AcceptedArtifact.acceptedCompositionFragments,\n",
+            "{indent}  AverCert.AcceptedArtifact.acceptedWholeModule,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
@@ -2725,7 +2853,7 @@ fn lean_fragment_acceptance_proof_block(
             "{indent}  AverCert.AcceptedArtifact.fieldProjectionPlanAccepted,\n",
             "{indent}  AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "{indent}  AverCert.ExprFragmentAccepted.accepted]\n",
-            "{indent}exact ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, ⟨{int_dispatch_proof}, ⟨{field_projection_proof}, {composition_proof}⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
+            "{indent}exact ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, ⟨{int_dispatch_proof}, ⟨{field_projection_proof}, ⟨{composition_proof}, ⟨rfl, rfl, rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         indent = indent,
         sym_proof = witness.sym_proof,
@@ -2745,6 +2873,7 @@ fn lean_expr_fragment_obligation_acceptance_pins(
     rederived: &[cert::RederivedObligation],
     host_table_lean: &str,
     struct_table_lean: &str,
+    module_envelope: &cert::ModuleEnvelopeFacts,
 ) -> String {
     let witness = lean_expr_fragment_artifact_claims(rederived, host_table_lean, struct_table_lean);
     let proof_block = lean_fragment_acceptance_proof_block(&witness, "  ");
@@ -2760,6 +2889,7 @@ fn lean_expr_fragment_obligation_acceptance_pins(
         &witness.field_projection_claims,
         &witness.composition_members,
         &witness.composition_claims,
+        module_envelope,
     );
     format!(
         concat!(
@@ -2778,6 +2908,7 @@ fn lean_accepted_artifact_witness(
     rederived: &[cert::RederivedObligation],
     host_table_lean: &str,
     struct_table_lean: &str,
+    module_envelope: &cert::ModuleEnvelopeFacts,
 ) -> String {
     let witness = lean_expr_fragment_artifact_claims(rederived, host_table_lean, struct_table_lean);
     let artifact = lean_artifact_data_literal(
@@ -2792,6 +2923,7 @@ fn lean_accepted_artifact_witness(
         &witness.field_projection_claims,
         &witness.composition_members,
         &witness.composition_claims,
+        module_envelope,
     );
     let checker_proof = format!(
         concat!(
@@ -2837,6 +2969,7 @@ fn lean_accepted_artifact_witness(
             "    AverCert.AcceptedArtifact.acceptedIntDispatchFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedFieldProjectionFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedCompositionFragments,\n",
+            "    AverCert.AcceptedArtifact.acceptedWholeModule,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
@@ -2892,7 +3025,7 @@ fn lean_accepted_artifact_witness(
             "    AverCert.AcceptedArtifact.intDispatchCanonicalSlots,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨{final_witness}, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, ⟨{int_dispatch_proof}, ⟨{field_projection_proof}, {composition_proof}⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨{final_witness}, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, ⟨{int_dispatch_proof}, ⟨{field_projection_proof}, ⟨{composition_proof}, ⟨rfl, rfl, rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         final_witness = FINAL_WITNESS_THEOREM,
         obligation_proof = witness.obligation_proof,
@@ -2942,6 +3075,7 @@ fn checker_witness(
     derived_contracts: &[String],
     host_table_lean: &str,
     struct_table_lean: &str,
+    module_envelope: &cert::ModuleEnvelopeFacts,
 ) -> String {
     // Count is the JSON-claimed number of certified exports, verified by `rfl`
     // against `obligations.length` (so a JSON claiming more or fewer than the
@@ -2954,6 +3088,27 @@ fn checker_witness(
     let names = lean_str_list(&rederived_names);
     let json_contracts = lean_str_list(&cands.contracts);
     let byte_contracts = lean_str_list(derived_contracts);
+    let json_declared_uncertified = lean_string_pair_list(&cands.declared_uncertified);
+    let certified_name_set = rederived_names
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    let byte_declared_names = module_envelope
+        .exports
+        .iter()
+        .filter(|export| !certified_name_set.contains(&export.name))
+        .map(|export| export.name.clone())
+        .collect::<Vec<_>>();
+    let byte_declared_names = lean_str_list(&byte_declared_names);
+    let json_capabilities = lean_string_pair_list(&cands.capabilities);
+    let byte_capabilities = lean_string_pair_list(&module_envelope.capabilities);
+    let json_start = cands
+        .start
+        .map(|index| format!("some {index}"))
+        .unwrap_or_else(|| "none".to_string());
+    let byte_start = module_envelope
+        .start
+        .map(|index| format!("some {index}"))
+        .unwrap_or_else(|| "none".to_string());
     let profile = &cands.profile;
     let abi = &cands.abi;
     let artifact_root = cert::ARTIFACT_CERTIFICATE_ROOT;
@@ -3021,9 +3176,14 @@ fn checker_witness(
         rederived,
         host_table_lean,
         struct_table_lean,
+        module_envelope,
     );
-    let accepted_artifact_witness =
-        lean_accepted_artifact_witness(rederived, host_table_lean, struct_table_lean);
+    let accepted_artifact_witness = lean_accepted_artifact_witness(
+        rederived,
+        host_table_lean,
+        struct_table_lean,
+        module_envelope,
+    );
     // Semantic-face bindings: pin each obligation's typed `Dom`/`Cod`/`domRepr`/
     // `codRepr` to the STANDARD form its BYTE-derived class implies, and prove
     // every domain is inhabited. These are the faces the schema-v3 checker did
@@ -3052,6 +3212,8 @@ fn checker_witness(
          import Final\n\
          import Artifact\n\
          open CertPrelude AverCert.Schema\n\
+         -- Whole-module closure checking reduces the embedded big-Nat bytes.\n\
+         -- This explicit depth budget changes only kernel reduction limits.\n\
          set_option maxRecDepth 200000\n\
          set_option linter.unusedSimpArgs false\n\
          set_option linter.unusedVariables false\n\n\
@@ -3064,6 +3226,16 @@ fn checker_witness(
          -- byte-bound body cannot be relabelled under a different export name.\n\
          example : AverCert.manifest.obligations.map (fun o => o.export_) = {names} := rfl\n\
          example : AverCert.manifest.subject.exports = {names} := rfl\n\
+         -- Whole-module interface declarations: JSON is pinned to the Lean\n\
+         -- manifest, while names/import pairs/start status are independently\n\
+         -- re-derived from the exact artifact bytes. Reasons are display-only;\n\
+         -- the security-relevant uncertified name set is byte-bound below.\n\
+         example : AverCert.manifest.subject.declaredUncertified = {json_declared_uncertified} := rfl\n\
+         example : AverCert.manifest.subject.declaredUncertified.map (fun entry => entry.1) = {byte_declared_names} := rfl\n\
+         example : AverCert.manifest.subject.capabilities = {json_capabilities} := rfl\n\
+         example : AverCert.manifest.subject.capabilities = {byte_capabilities} := rfl\n\
+         example : AverCert.manifest.subject.start = {json_start} := rfl\n\
+         example : AverCert.manifest.subject.start = {byte_start} := rfl\n\
          -- Contracts: the JSON candidate must match the proven manifest, and\n\
          -- the proven manifest must also match the BYTE-DERIVED contract list.\n\
          -- JSON-only padding and manifest+JSON deletion are therefore both\n\

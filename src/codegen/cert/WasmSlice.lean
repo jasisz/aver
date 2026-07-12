@@ -726,6 +726,112 @@ def importedFuncCount (modBytes modLen : Nat) : Option Nat :=
           countFuncImportsNatFuel (count + 1) count rest restLen 0
       | none => none
 
+/-! ### Whole-module interface enumeration
+
+These folds retain the names that the older binding slicer intentionally
+discarded.  They consume each section exactly and return `none` on malformed or
+unsupported descriptors, so the artifact envelope fails closed. -/
+
+structure ExportEntry where
+  name : ByteSeq
+  kind : Nat
+  idx  : Nat
+deriving Repr, DecidableEq
+
+def readNatName (bytes len : Nat) : Option (ByteSeq × Nat × Nat) :=
+  match readNatUleb32 bytes len with
+  | some (nameLen, nameBytes, nameAndRestLen) =>
+      if nameLen ≤ nameAndRestLen then
+        some (takeNatBytes nameLen nameBytes,
+          nameBytes >>> (8 * nameLen), nameAndRestLen - nameLen)
+      else none
+  | none => none
+
+def skipLimitsNat (bytes len : Nat) : Option (Nat × Nat) :=
+  match readNatUleb32 bytes len with
+  | some (flags, afterFlags, afterFlagsLen) =>
+      if flags < 16 then
+        match readNatUleb32 afterFlags afterFlagsLen with
+        | some (_, afterMin, afterMinLen) =>
+            let afterMax? :=
+              if (flags &&& 0x01) != 0 then readNatUleb32 afterMin afterMinLen
+              else some (0, afterMin, afterMinLen)
+            match afterMax? with
+            | some (_, afterMax, afterMaxLen) =>
+                if (flags &&& 0x08) != 0 then
+                  match readNatUleb32 afterMax afterMaxLen with
+                  | some (_, rest, restLen) => some (rest, restLen)
+                  | none => none
+                else some (afterMax, afterMaxLen)
+            | none => none
+        | none => none
+      else none
+  | none => none
+
+def skipImportDescNat (bytes len : Nat) : Option (Nat × Nat) :=
+  if len = 0 then none else
+    let kind := bytes &&& 0xff
+    let rest := bytes >>> 8
+    let restLen := len - 1
+    if kind = 0x00 then
+      match readNatUleb32 rest restLen with
+      | some (_, tail, tailLen) => some (tail, tailLen)
+      | none => none
+    else if kind = 0x01 then
+      match skipValTypeNat rest restLen with
+      | some (limits, limitsLen) => skipLimitsNat limits limitsLen
+      | none => none
+    else if kind = 0x02 then
+      skipLimitsNat rest restLen
+    else if kind = 0x03 then
+      match skipValTypeNat rest restLen with
+      | some (mutability, mutabilityLen) =>
+          if mutabilityLen = 0 then none else
+            let m := mutability &&& 0xff
+            if m = 0 ∨ m = 1 then some (mutability >>> 8, mutabilityLen - 1)
+            else none
+      | none => none
+    else if kind = 0x04 then
+      if restLen = 0 ∨ (rest &&& 0xff) != 0 then none else
+        match readNatUleb32 (rest >>> 8) (restLen - 1) with
+        | some (_, tail, tailLen) => some (tail, tailLen)
+        | none => none
+    else none
+
+def readImportNamePairNat (bytes len : Nat) :
+    Option ((ByteSeq × ByteSeq) × Nat × Nat) :=
+  match readNatName bytes len with
+  | some (moduleName, afterModule, afterModuleLen) =>
+      match readNatName afterModule afterModuleLen with
+      | some (fieldName, descriptor, descriptorLen) =>
+          match skipImportDescNat descriptor descriptorLen with
+          | some (rest, restLen) => some ((moduleName, fieldName), rest, restLen)
+          | none => none
+      | none => none
+  | none => none
+
+def enumImportNamesNatFuel :
+    Nat → Nat → Nat → Nat → List (ByteSeq × ByteSeq) →
+      Option (List (ByteSeq × ByteSeq))
+  | 0, _, _, _, _ => none
+  | _fuel + 1, 0, _bytes, len, acc =>
+      if len = 0 then some acc.reverse else none
+  | fuel + 1, remaining + 1, bytes, len, acc =>
+      match readImportNamePairNat bytes len with
+      | some (pair, rest, restLen) =>
+          enumImportNamesNatFuel fuel remaining rest restLen (pair :: acc)
+      | none => none
+
+def enumImportNames (modBytes modLen : Nat) :
+    Option (List (ByteSeq × ByteSeq)) :=
+  match findSectionPayload 0x02 modBytes modLen with
+  | none => some []
+  | some (payload, payloadLen) =>
+      match readNatUleb32 payload payloadLen with
+      | some (count, rest, restLen) =>
+          enumImportNamesNatFuel (count + 1) count rest restLen []
+      | none => none
+
 def readExportEntryNat (bytes len : Nat) :
     Option (ByteSeq × Nat × Nat × Nat × Nat) :=
   match readNatUleb32 bytes len with
@@ -742,6 +848,38 @@ def readExportEntryNat (bytes len : Nat) :
       else
         none
   | none => none
+
+def enumExportsNatFuel :
+    Nat → Nat → Nat → Nat → List ExportEntry → Option (List ExportEntry)
+  | 0, _, _, _, _ => none
+  | _fuel + 1, 0, _bytes, len, acc =>
+      if len = 0 then some acc.reverse else none
+  | fuel + 1, remaining + 1, bytes, len, acc =>
+      match readExportEntryNat bytes len with
+      | some (name, kind, idx, rest, restLen) =>
+          enumExportsNatFuel fuel remaining rest restLen
+            ({ name := name, kind := kind, idx := idx } :: acc)
+      | none => none
+
+def enumExports (modBytes modLen : Nat) : Option (List ExportEntry) :=
+  match findSectionPayload 0x07 modBytes modLen with
+  | some (payload, payloadLen) =>
+      match readNatUleb32 payload payloadLen with
+      | some (count, rest, restLen) =>
+          enumExportsNatFuel (count + 1) count rest restLen []
+      | none => none
+  | none => none
+
+/-- `some none` means no start section; `some (some idx)` is the exact function
+    index encoded by section 8.  A present payload must contain one u32 and no
+    trailing bytes. -/
+def startFuncIndex (modBytes modLen : Nat) : Option (Option Nat) :=
+  match findSectionPayload 0x08 modBytes modLen with
+  | none => some none
+  | some (payload, payloadLen) =>
+      match readNatUleb32 payload payloadLen with
+      | some (idx, _, 0) => some (some idx)
+      | _ => none
 
 def findExportFuncIndexNatFuel (targetName : ByteSeq) :
     Nat → Nat → Nat → Nat → Option Nat → Option Nat
@@ -853,5 +991,221 @@ def funcBindingForExport (modBytes modLen : Nat) (targetName : ByteSeq) : Option
   match exportFuncIndex modBytes modLen targetName with
   | some funcIdx => funcBindingByFuncIndex modBytes modLen funcIdx
   | none => none
+
+/-! ### Certified direct-call closure and rejected-channel scan
+
+The scanner deliberately recognizes only immediate layouts needed by the
+validated wasm-gc certified profile.  Structured control is linear in the code
+bytes (`block`/`loop`/`if`, branches, `else`, `end`), so instructions in every
+nested body are visited.  Direct `call`/`return_call` targets are collected;
+dynamic calls, globals, tables, linear memory, atomics, SIMD, segment drops and
+every unknown prefix fail closed.  Generated witnesses disclose a raised
+`maxRecDepth`; this is an elaborator reduction limit only and does not change
+the proposition or admitted axioms. -/
+
+def skipSignedLebBytes : Nat → ByteSeq → Option ByteSeq
+  | 0, _ => none
+  | _fuel + 1, [] => none
+  | fuel + 1, b :: rest =>
+      if b < 256 then
+        if b < 128 then some rest else skipSignedLebBytes fuel rest
+      else none
+
+def skipBlockType : ByteSeq → Option ByteSeq
+  | [] => none
+  | b :: rest =>
+      if b = 0x40 ∨ (0x7b ≤ b ∧ b ≤ 0x7f) then some rest
+      else if b = 0x63 ∨ b = 0x64 then skipSignedLebBytes 5 rest
+      else skipSignedLebBytes 5 (b :: rest)
+
+def skipLocalGroups : Nat → ByteSeq → Option ByteSeq
+  | 0, bytes => some bytes
+  | groups + 1, bytes =>
+      match readUleb32 bytes with
+      | some (_, afterCount) =>
+          match skipValType afterCount with
+          | some rest => skipLocalGroups groups rest
+          | none => none
+      | none => none
+
+def skipTwoUlebs (bytes : ByteSeq) : Option ByteSeq :=
+  match readUleb32 bytes with
+  | some (_, rest) =>
+      match readUleb32 rest with
+      | some (_, tail) => some tail
+      | none => none
+  | none => none
+
+def skipGcImmediate (sub : Nat) (bytes : ByteSeq) : Option ByteSeq :=
+  if sub = 0x00 ∨ sub = 0x01 ∨ sub = 0x06 ∨ sub = 0x07 ∨
+      sub = 0x0b ∨ sub = 0x0c ∨ sub = 0x0d ∨ sub = 0x0e ∨ sub = 0x10 then
+    match readUleb32 bytes with
+    | some (_, rest) => some rest
+    | none => none
+  else if sub = 0x02 ∨ sub = 0x03 ∨ sub = 0x04 ∨ sub = 0x05 ∨
+      sub = 0x08 ∨ sub = 0x09 ∨ sub = 0x0a ∨ sub = 0x11 ∨
+      sub = 0x12 ∨ sub = 0x13 then
+    skipTwoUlebs bytes
+  else if sub = 0x0f ∨ sub = 0x1a ∨ sub = 0x1b ∨
+      sub = 0x1c ∨ sub = 0x1d ∨ sub = 0x1e then
+    some bytes
+  else if sub = 0x14 ∨ sub = 0x15 ∨ sub = 0x16 ∨ sub = 0x17 then
+    skipSignedLebBytes 5 bytes
+  else none
+
+/-- Full-body instruction scan for direct callees.  Rejected opcodes return
+    `none`, which also makes reachable imports fail when closure expansion asks
+    `codeEntryByFuncIndex` for a body that does not exist. -/
+def scanClosureInstrs : Nat → ByteSeq → Option (List Nat)
+  | 0, _ => none
+  | _fuel + 1, [] => some []
+  | fuel + 1, op :: bytes =>
+      let next (rest : ByteSeq) := scanClosureInstrs fuel rest
+      let oneUleb := fun () =>
+        match readUleb32 bytes with
+        | some (_, rest) => next rest
+        | none => none
+      if op = 0x10 ∨ op = 0x12 then
+        match readUleb32 bytes with
+        | some (callee, rest) =>
+            (next rest).map (fun calls => callee :: calls)
+        | none => none
+      else if op = 0x02 ∨ op = 0x03 ∨ op = 0x04 then
+        match skipBlockType bytes with
+        | some rest => next rest
+        | none => none
+      else if op = 0x0c ∨ op = 0x0d ∨ op = 0x20 ∨ op = 0x21 ∨ op = 0x22 then
+        oneUleb ()
+      else if op = 0x0e then
+        match readUleb32 bytes with
+        | some (count, rest) =>
+            match skipUlebsFuel (count + 2) (count + 1) rest with
+            | some tail => next tail
+            | none => none
+        | none => none
+      else if op = 0x1c then
+        match readUleb32 bytes with
+        | some (count, rest) =>
+            match skipValTypesFuel (count + 1) count rest with
+            | some tail => next tail
+            | none => none
+        | none => none
+      else if op = 0x41 ∨ op = 0xd0 then
+        match skipSignedLebBytes 5 bytes with
+        | some rest => next rest
+        | none => none
+      else if op = 0x42 then
+        match skipSignedLebBytes 10 bytes with
+        | some rest => next rest
+        | none => none
+      else if op = 0x43 then
+        match takeN 4 bytes with
+        | some (_, rest) => next rest
+        | none => none
+      else if op = 0x44 then
+        match takeN 8 bytes with
+        | some (_, rest) => next rest
+        | none => none
+      else if op = 0xfb then
+        match readUleb32 bytes with
+        | some (sub, rest) =>
+            match skipGcImmediate sub rest with
+            | some tail => next tail
+            | none => none
+        | none => none
+      else if op = 0xfc then
+        match readUleb32 bytes with
+        | some (sub, rest) => if sub ≤ 7 then next rest else none
+        | none => none
+      else if op = 0x00 ∨ op = 0x01 ∨ op = 0x05 ∨ op = 0x0b ∨
+          op = 0x0f ∨ op = 0x1a ∨ op = 0x1b ∨ op = 0xd1 ∨ op = 0xd3 ∨
+          (0x45 ≤ op ∧ op ≤ 0xc4) then
+        next bytes
+      else none
+
+def scanClosureCodeEntry (entry : ByteSeq) : Option (List Nat) :=
+  match readUleb32 entry with
+  | some (_, body) =>
+      match readUleb32 body with
+      | some (localGroups, afterGroupCount) =>
+          match skipLocalGroups localGroups afterGroupCount with
+          | some instrs => scanClosureInstrs (instrs.length + 1) instrs
+          | none => none
+      | none => none
+  | none => none
+
+def scanClosureBody (modBytes modLen funcIdx : Nat) : Option (List Nat) :=
+  match codeEntryByFuncIndex modBytes modLen funcIdx with
+  | some entry => scanClosureCodeEntry entry
+  | none => none
+
+def natMem (x : Nat) : List Nat → Bool
+  | [] => false
+  | y :: ys => x == y || natMem x ys
+
+def natSubset : List Nat → List Nat → Bool
+  | [], _ => true
+  | x :: xs, ys => natMem x ys && natSubset xs ys
+
+def natSetEq (xs ys : List Nat) : Bool :=
+  natSubset xs ys && natSubset ys xs
+
+def natListNodup : List Nat → Bool
+  | [] => true
+  | x :: xs => !natMem x xs && natListNodup xs
+
+/-- Fuel-bounded transitive direct-call closure, using the spike-proven
+    worklist/seen fold over the big-Nat module representation. -/
+def closureFold (modBytes modLen : Nat) :
+    Nat → List Nat → List Nat → Option (List Nat)
+  | 0, [], seen => some seen
+  | 0, _ :: _, _ => none
+  | _fuel + 1, [], seen => some seen
+  | fuel + 1, func :: work, seen =>
+      if natMem func seen then
+        closureFold modBytes modLen fuel work seen
+      else
+        match scanClosureBody modBytes modLen func with
+        | some callees =>
+            closureFold modBytes modLen fuel (callees ++ work) (func :: seen)
+        | none => none
+
+def memoryLimitsUnshared : Nat → Nat → Nat → Option (Nat × Nat)
+  | 0, bytes, len => some (bytes, len)
+  | count + 1, bytes, len =>
+      match readNatUleb32 bytes len with
+      | some (flags, afterFlags, afterFlagsLen) =>
+          if flags < 16 ∧ (flags &&& 0x02) = 0 then
+            match readNatUleb32 afterFlags afterFlagsLen with
+            | some (_, afterMin, afterMinLen) =>
+                let afterMax? :=
+                  if (flags &&& 0x01) != 0 then readNatUleb32 afterMin afterMinLen
+                  else some (0, afterMin, afterMinLen)
+                match afterMax? with
+                | some (_, afterMax, afterMaxLen) =>
+                    if (flags &&& 0x08) != 0 then
+                      match readNatUleb32 afterMax afterMaxLen with
+                      | some (_, tail, tailLen) =>
+                          memoryLimitsUnshared count tail tailLen
+                      | none => none
+                    else memoryLimitsUnshared count afterMax afterMaxLen
+                | none => none
+            | none => none
+          else none
+      | none => none
+
+/-- Shared linear memory is a module-level hidden channel even if the current
+    bodies contain no atomic opcode, so the strict profile rejects the
+    declaration itself. -/
+def noSharedMemory (modBytes modLen : Nat) : Bool :=
+  match findSectionPayload 0x05 modBytes modLen with
+  | none => true
+  | some (payload, payloadLen) =>
+      match readNatUleb32 payload payloadLen with
+      | some (count, rest, restLen) =>
+          match memoryLimitsUnshared count rest restLen with
+          | some (_, 0) => true
+          | _ => false
+      | none => false
 
 end AverCert.WasmSlice
