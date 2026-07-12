@@ -915,13 +915,13 @@ def compositionPlanCallees (plan : CompositionRawPlan) : List String :=
   | .selfSum => []
   | .chain callees => callees
 
-def stringListNodup : List String → Bool
-  | [] => true
-  | x :: rest => !rest.contains x && stringListNodup rest
+def stringListNodup (xs : List String) : Bool :=
+  AverCert.WasmSlice.indexedNodup xs
 
 def stringListSetEq (xs ys : List String) : Bool :=
-  xs.length == ys.length && xs.all (fun x => ys.contains x) &&
-    ys.all (fun y => xs.contains y)
+  AverCert.WasmSlice.indexedNodup xs &&
+    AverCert.WasmSlice.indexedNodup ys &&
+    AverCert.WasmSlice.indexedSetEq xs ys
 
 def compositionEdges
     (members : List CompositionMemberClaim) : List (String × List String) :=
@@ -1012,112 +1012,69 @@ def compositionClaimAccepted
         funcTable claim.obligation members claim.memberNames
   | none => False
 
-/-- Aggregate source-level symbolic fragment acceptance for one artifact's
-    source claim list. -/
-def symFragmentClaimsAccepted
-    (modBytes modLen : Nat) :
-    List SymFragmentClaim → Prop
+/-- Shared acceptance spine for every claim family. Family-specific views
+    choose the checked predicate; the conjunction shape seen by consumers is
+    unchanged. -/
+def allClaims (accept : Claim → Prop) : List Claim → Prop
   | [] => True
-  | claim :: rest =>
-      symFragmentClaimAccepted modBytes modLen claim ∧
-      symFragmentClaimsAccepted modBytes modLen rest
+  | claim :: rest => accept claim ∧ allClaims accept rest
+
+def symFragmentClaimsAccepted (modBytes modLen : Nat)
+    (claims : List SymFragmentClaim) : Prop :=
+  allClaims (symFragmentClaimAccepted modBytes modLen) claims
 
 /-- Aggregate source-level String.concat witness acceptance for one artifact's
     string claim list. -/
-def stringConcatClaimsAccepted
-    (modBytes modLen : Nat)
-    (manifest : AverCert.Schema.Manifest) :
-    List StringConcatClaim → Prop
-  | [] => True
-  | claim :: rest =>
-      stringConcatClaimAccepted modBytes modLen manifest claim ∧
-      stringConcatClaimsAccepted modBytes modLen manifest rest
+def stringConcatClaimsAccepted (modBytes modLen : Nat)
+    (manifest : AverCert.Schema.Manifest) (claims : List StringConcatClaim) : Prop :=
+  allClaims (stringConcatClaimAccepted modBytes modLen manifest) claims
 
 /-- Aggregate source-level String.eq witness acceptance for one artifact's
     string equality claim list. -/
-def stringEqClaimsAccepted
-    (modBytes modLen : Nat)
-    (manifest : AverCert.Schema.Manifest) :
-    List StringEqClaim → Prop
-  | [] => True
-  | claim :: rest =>
-      stringEqClaimAccepted modBytes modLen manifest claim ∧
-      stringEqClaimsAccepted modBytes modLen manifest rest
+def stringEqClaimsAccepted (modBytes modLen : Nat)
+    (manifest : AverCert.Schema.Manifest) (claims : List StringEqClaim) : Prop :=
+  allClaims (stringEqClaimAccepted modBytes modLen manifest) claims
 
 /-- Aggregate source-level constructor witness acceptance for one artifact's
     constructor claim list. -/
-def constructClaimsAccepted
-    (modBytes modLen : Nat)
-    (manifest : AverCert.Schema.Manifest) :
-    List ConstructClaim → Prop
-  | [] => True
-  | claim :: rest =>
-      constructClaimAccepted modBytes modLen manifest claim ∧
-      constructClaimsAccepted modBytes modLen manifest rest
+def constructClaimsAccepted (modBytes modLen : Nat)
+    (manifest : AverCert.Schema.Manifest) (claims : List ConstructClaim) : Prop :=
+  allClaims (constructClaimAccepted modBytes modLen manifest) claims
 
 /-- Aggregate fuel-recursion witness acceptance for one artifact's recursion
     claim list. -/
-def recursionClaimsAccepted
-    (modBytes modLen : Nat)
-    (manifest : AverCert.Schema.Manifest) :
-    List RecursionClaim → Prop
-  | [] => True
-  | claim :: rest =>
-      recursionClaimAccepted modBytes modLen manifest claim ∧
-      recursionClaimsAccepted modBytes modLen manifest rest
+def recursionClaimsAccepted (modBytes modLen : Nat)
+    (manifest : AverCert.Schema.Manifest) (claims : List RecursionClaim) : Prop :=
+  allClaims (recursionClaimAccepted modBytes modLen manifest) claims
 
 /-- Aggregate mutual-recursion witness acceptance for one artifact's mutual
     claim list. -/
-def mutualRecursionClaimsAccepted
-    (modBytes modLen : Nat)
-    (manifest : AverCert.Schema.Manifest) :
-    List MutualRecursionClaim → Prop
-  | [] => True
-  | claim :: rest =>
-      mutualRecursionClaimAccepted modBytes modLen manifest claim ∧
-      mutualRecursionClaimsAccepted modBytes modLen manifest rest
+def mutualRecursionClaimsAccepted (modBytes modLen : Nat)
+    (manifest : AverCert.Schema.Manifest) (claims : List MutualRecursionClaim) : Prop :=
+  allClaims (mutualRecursionClaimAccepted modBytes modLen manifest) claims
 
 /-- Aggregate verbatim `ref.test`-dispatch acceptance for one artifact's verbatim
     claim list. -/
-def verbatimClaimsAccepted
-    (modBytes modLen : Nat)
-    (manifest : AverCert.Schema.Manifest) :
-    List VerbatimClaim → Prop
-  | [] => True
-  | claim :: rest =>
-      verbatimClaimAccepted modBytes modLen manifest claim ∧
-      verbatimClaimsAccepted modBytes modLen manifest rest
+def verbatimClaimsAccepted (modBytes modLen : Nat)
+    (manifest : AverCert.Schema.Manifest) (claims : List VerbatimClaim) : Prop :=
+  allClaims (verbatimClaimAccepted modBytes modLen manifest) claims
 
 /-- Aggregate Int-face `ref.test`-dispatch acceptance for one artifact's
     int-dispatch claim list. -/
-def intDispatchClaimsAccepted
-    (modBytes modLen : Nat)
-    (manifest : AverCert.Schema.Manifest) :
-    List IntDispatchClaim → Prop
-  | [] => True
-  | claim :: rest =>
-      intDispatchClaimAccepted modBytes modLen manifest claim ∧
-      intDispatchClaimsAccepted modBytes modLen manifest rest
+def intDispatchClaimsAccepted (modBytes modLen : Nat)
+    (manifest : AverCert.Schema.Manifest) (claims : List IntDispatchClaim) : Prop :=
+  allClaims (intDispatchClaimAccepted modBytes modLen manifest) claims
 
-def fieldProjectionClaimsAccepted
-    (modBytes modLen : Nat)
-    (manifest : AverCert.Schema.Manifest) :
-    List FieldProjectionClaim → Prop
-  | [] => True
-  | claim :: rest =>
-      fieldProjectionClaimAccepted modBytes modLen manifest claim ∧
-      fieldProjectionClaimsAccepted modBytes modLen manifest rest
+def fieldProjectionClaimsAccepted (modBytes modLen : Nat)
+    (manifest : AverCert.Schema.Manifest) (claims : List FieldProjectionClaim) : Prop :=
+  allClaims (fieldProjectionClaimAccepted modBytes modLen manifest) claims
 
 /-- Aggregate composition-root acceptance. All roots share the artifact-wide
     unique member table, while each root independently re-derives its reachable
     closure and pins every reachable body into its own shared `CodeTbl`. -/
-def compositionClaimsAccepted
-    (modBytes modLen : Nat)
-    (members : List CompositionMemberClaim) : List CompositionClaim → Prop
-  | [] => True
-  | claim :: rest =>
-      compositionClaimAccepted modBytes modLen members claim ∧
-      compositionClaimsAccepted modBytes modLen members rest
+def compositionClaimsAccepted (modBytes modLen : Nat)
+    (members : List CompositionMemberClaim) (claims : List CompositionClaim) : Prop :=
+  allClaims (compositionClaimAccepted modBytes modLen members) claims
 
 /-- Every name claimed as a reachable member across all composition roots. Each
     claim's `memberNames` is pinned to its root's byte-derived reachable closure
@@ -1203,15 +1160,15 @@ def mutualClaimEdges
       | _, _ => none
 
 /-- No repeated element (no two claims for the same byte-derived member index). -/
-def natListNodup : List Nat → Bool
-  | [] => true
-  | x :: rest => !rest.contains x && natListNodup rest
+def natListNodup (xs : List Nat) : Bool :=
+  AverCert.WasmSlice.indexedNodup xs
 
 /-- Set equality via mutual containment plus equal length: rejects extras,
     omissions AND duplicates (a duplicate makes the lengths differ). -/
 def natListSetEq (xs ys : List Nat) : Bool :=
-  xs.length == ys.length && xs.all (fun x => ys.contains x) &&
-    ys.all (fun y => xs.contains y)
+  AverCert.WasmSlice.indexedNodup xs &&
+    AverCert.WasmSlice.indexedNodup ys &&
+    AverCert.WasmSlice.indexedSetEq xs ys
 
 def natEdgeLookup : List (Nat × Nat) → Nat → Option Nat
   | [], _ => none
@@ -1577,28 +1534,24 @@ def claimObligationExports (artifact : ArtifactData) : List String :=
     "exists but is not constrained" class at the obligation level. -/
 def manifestObligationsClaimed (artifact : ArtifactData) : Bool :=
   let claimed := claimObligationExports artifact
-  artifact.manifest.obligations.all (fun o => claimed.contains o.export_)
+  let claimedIndex := AverCert.WasmSlice.orderedSet claimed
+  artifact.manifest.obligations.all (fun o => claimedIndex.contains o.export_)
 
 /-- Manifest obligations bind by export name; a duplicate name would let a
     second, unclaimed obligation ride behind a claimed one (find? sees only the
     first). Names must be pairwise distinct. -/
 def manifestObligationExportsUnique (artifact : ArtifactData) : Bool :=
-  let names := artifact.manifest.obligations.map (fun o => o.export_)
-  stringListNodup names
+  (AverCert.WasmSlice.uniqueMap
+    (artifact.manifest.obligations.map (fun obligation =>
+      (obligation.export_, obligation)))).isSome
 
 /-! ### Whole-module interface accounting and certified-closure isolation -/
 
 def stringBytes (s : String) : AverCert.WasmSlice.ByteSeq :=
   s.toList.map Char.toNat
 
-def byteSeqMem (needle : AverCert.WasmSlice.ByteSeq) :
-    List AverCert.WasmSlice.ByteSeq → Bool
-  | [] => false
-  | x :: xs => needle == x || byteSeqMem needle xs
-
-def byteSeqListNodup : List AverCert.WasmSlice.ByteSeq → Bool
-  | [] => true
-  | x :: xs => !byteSeqMem x xs && byteSeqListNodup xs
+def byteSeqListNodup (xs : List AverCert.WasmSlice.ByteSeq) : Bool :=
+  AverCert.WasmSlice.indexedNodup xs
 
 def certifiedExportEntries
     (manifest : AverCert.Schema.Manifest) : List AverCert.WasmSlice.ExportEntry :=
@@ -1609,18 +1562,14 @@ def declaredUncertifiedNames
     (manifest : AverCert.Schema.Manifest) : List AverCert.WasmSlice.ByteSeq :=
   manifest.subject.declaredUncertified.map (fun entry => stringBytes entry.1)
 
-def exportEntryMem (needle : AverCert.WasmSlice.ExportEntry) :
-    List AverCert.WasmSlice.ExportEntry → Bool
-  | [] => false
-  | entry :: rest =>
-      (needle.name == entry.name && needle.kind == entry.kind && needle.idx == entry.idx) ||
-        exportEntryMem needle rest
+structure ExportKey where
+  name : AverCert.WasmSlice.ByteSeq
+  kind : Nat
+  idx : Nat
+deriving Ord
 
-def exportAccounted
-    (certified : List AverCert.WasmSlice.ExportEntry)
-    (declared : List AverCert.WasmSlice.ByteSeq)
-    (entry : AverCert.WasmSlice.ExportEntry) : Bool :=
-  exportEntryMem entry certified || byteSeqMem entry.name declared
+def exportEntryKey (entry : AverCert.WasmSlice.ExportEntry) : ExportKey :=
+  ⟨entry.name, entry.kind, entry.idx⟩
 
 /-- Every byte-derived module export is classified exactly once: either the
     function/name/index of a claimed obligation or an explicit uncertified
@@ -1634,13 +1583,19 @@ def exportsAccounted (artifact : ArtifactData) : Bool :=
       let declared := declaredUncertifiedNames artifact.manifest
       let actualNames := actual.map (fun entry => entry.name)
       let certifiedNames := certified.map (fun entry => entry.name)
+      let actualNameIndex := AverCert.WasmSlice.orderedSet actualNames
+      let declaredIndex := AverCert.WasmSlice.orderedSet declared
+      let actualEntryIndex := AverCert.WasmSlice.orderedSet (actual.map exportEntryKey)
+      let certifiedEntryIndex := AverCert.WasmSlice.orderedSet (certified.map exportEntryKey)
       byteSeqListNodup actualNames &&
       byteSeqListNodup certifiedNames &&
       byteSeqListNodup declared &&
-      certifiedNames.all (fun name => !byteSeqMem name declared) &&
-      actual.all (exportAccounted certified declared) &&
-      certified.all (fun entry => exportEntryMem entry actual) &&
-      declared.all (fun name => byteSeqMem name actualNames)
+      certifiedNames.all (fun name => !declaredIndex.contains name) &&
+      actual.all (fun entry =>
+        certifiedEntryIndex.contains (exportEntryKey entry) ||
+          declaredIndex.contains entry.name) &&
+      certified.all (fun entry => actualEntryIndex.contains (exportEntryKey entry)) &&
+      declared.all actualNameIndex.contains
 
 def capabilityBytes (capability : String × String) :
     AverCert.WasmSlice.ByteSeq × AverCert.WasmSlice.ByteSeq :=

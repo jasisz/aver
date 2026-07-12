@@ -170,6 +170,14 @@ parts reusable across artifacts; their shims contain the Module-dependent
 conjunctions. `ArtifactBytes.lean` is also
 checker-owned: it is regenerated from the actual wasm bytes read by the
 verifier, not trusted from the certificate directory.
+
+The schema-53 decoder materializes a bounded section table and a shared
+defined-code location table. Section payloads and individual bodies are
+isolated to their declared `(Nat, len)` before bytewise decoding, and
+signature/type lookups use indexed tables. A malformed short section therefore
+cannot borrow bytes from its successor. Per-claim acceptance is checked behind
+opaque claim and family theorems; the public `Artifact.certificate` statement
+is unchanged.
 `Plans.lean` carries the same expression-fragment plans as Lean data and pins
 their Lean-side lowering and byte-origin slice:
 

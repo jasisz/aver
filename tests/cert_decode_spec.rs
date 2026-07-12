@@ -1242,7 +1242,7 @@ fn cert_decode_three_way_differential_and_coverage() {
     let _ = std::fs::remove_dir_all(&prelude);
 }
 
-// ---- mutation suite M1–M6 ------------------------------------------------
+// ---- mutation suite M1–M7 ------------------------------------------------
 
 /// Minimal section walk: returns (id, body_start, size) for each section.
 fn walk_sections(b: &[u8]) -> Vec<(u8, usize, usize)> {
@@ -1271,6 +1271,21 @@ fn read_uleb(b: &[u8], mut i: usize) -> (usize, usize) {
         s += 7;
     }
     (r, i)
+}
+
+fn encode_uleb(mut value: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        out.push(byte);
+        if value == 0 {
+            return out;
+        }
+    }
 }
 
 /// Offset of the funcidx byte of the export named `name` (single-byte index).
@@ -1471,6 +1486,45 @@ fn cert_decode_mutations_fail_closed() {
         assert!(
             ok,
             "M6: an out-of-function-space index must decode to none:\n{report}"
+        );
+    }
+
+    // M7 (bounded-section GuardIso): keep every byte but declare the code
+    // section one byte shorter. The old suffix cursor could borrow that byte
+    // from the following module suffix; the bounded payload/body view must
+    // decline the code and the whole-file framing walk.
+    {
+        let secs = walk_sections(&bytes);
+        let (_, cstart, csize) = *secs.iter().find(|s| s.0 == 10).unwrap();
+        let size_start = secs
+            .iter()
+            .find(|s| s.0 == 10)
+            .map(|_| {
+                let mut i = cstart - 1;
+                while bytes[i] & 0x80 != 0 {
+                    i -= 1;
+                }
+                // Walk backwards across continuation bytes to the section-id
+                // successor. For this fixture the code size uses two bytes.
+                while i > 8 && bytes[i - 1] & 0x80 != 0 {
+                    i -= 1;
+                }
+                i
+            })
+            .unwrap();
+        let (_old, size_end) = read_uleb(&bytes, size_start);
+        assert_eq!(size_end, cstart);
+        let encoded = encode_uleb(csize - 1);
+        assert_eq!(encoded.len(), cstart - size_start);
+        let mut m = bytes.clone();
+        m[size_start..cstart].copy_from_slice(&encoded);
+        let example = "example : CertDecode.codeLocs bytesN bytesLen = none := rfl\n\
+             example : CertDecode.walkIds 64 (bytesN >>> 64) (bytesLen - 8) = none := rfl"
+            .to_string();
+        let (ok, report) = run_lean(&prelude, &witness(&m, &example));
+        assert!(
+            ok,
+            "M7: a declared-size/content mismatch must decline at the bounded section wall:\n{report}"
         );
     }
 

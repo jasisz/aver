@@ -7,6 +7,7 @@
 -- Unsupported import kinds decline.
 import SchemaCore
 import CertDecode
+import Std.Data.TreeSet
 
 namespace AverCert.WasmSlice
 
@@ -52,9 +53,8 @@ def stripHeader (modBytes modLen : Nat) : Option (Nat × Nat) :=
     none
 
 def findSectionPayload (target modBytes modLen : Nat) : Option (Nat × Nat) :=
-  match stripHeader modBytes modLen with
-  | some (sections, sectionsLen) =>
-      CertDecode.findSecPayload target 64 sections sectionsLen
+  match CertDecode.moduleView modBytes modLen with
+  | some view => view.payload target
   | none => none
 
 def takeN : Nat → ByteSeq → Option (ByteSeq × ByteSeq)
@@ -1143,16 +1143,36 @@ def natMem (x : Nat) : List Nat → Bool
   | [] => false
   | y :: ys => x == y || natMem x ys
 
+/-- Shared balanced index layer for audited set-shaped checks. -/
+def orderedSet [Ord α] (xs : List α) : Std.TreeSet α :=
+  xs.foldl (fun set value => set.insert value) Std.TreeSet.empty
+
+def indexedNodup [Ord α] (xs : List α) : Bool :=
+  let set := orderedSet xs
+  set.size == xs.length
+
+def indexedSubset [Ord α] (xs ys : List α) : Bool :=
+  let set := orderedSet ys
+  xs.all set.contains
+
+def indexedSetEq [Ord α] (xs ys : List α) : Bool :=
+  indexedSubset xs ys && indexedSubset ys xs
+
+def uniqueMap [Ord Key] : List (Key × Value) → Option (Std.TreeMap Key Value)
+  | [] => some Std.TreeMap.empty
+  | (key, value) :: rest =>
+      match uniqueMap rest with
+      | none => none
+      | some index =>
+          if index.contains key then none else some (index.insert key value)
+
 def natSubset : List Nat → List Nat → Bool
-  | [], _ => true
-  | x :: xs, ys => natMem x ys && natSubset xs ys
+  | xs, ys => indexedSubset xs ys
 
 def natSetEq (xs ys : List Nat) : Bool :=
-  natSubset xs ys && natSubset ys xs
+  indexedSetEq xs ys
 
-def natListNodup : List Nat → Bool
-  | [] => true
-  | x :: xs => !natMem x xs && natListNodup xs
+def natListNodup (xs : List Nat) : Bool := indexedNodup xs
 
 /-- Fuel-bounded transitive direct-call closure, using the spike-proven
     worklist/seen fold over the big-Nat module representation. -/
