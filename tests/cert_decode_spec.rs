@@ -422,6 +422,23 @@ fn option_nat(value: Option<u32>) -> String {
         .unwrap_or_else(|| "none".to_string())
 }
 
+fn string_host_roles_lit(roles: &aver::codegen::cert::StringHostRoles) -> String {
+    format!(
+        "[{}]",
+        roles
+            .iter()
+            .map(|(index, role)| {
+                let role = match role {
+                    aver::codegen::cert::StringHostRole::Eq => ".eq",
+                    aver::codegen::cert::StringHostRole::Concat => ".concat",
+                };
+                format!("({index}, {role})")
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 // ---- S3 host-role differential transition ------------------------------
 
 /// Before the production witness relies on the in-kernel table, pin its result
@@ -500,6 +517,77 @@ fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
 
     let _ = std::fs::remove_dir_all(&out);
     let _ = std::fs::remove_dir_all(&prelude);
+}
+
+/// F5 transition differential: one decode-once equality per module pins the
+/// entire ordered string-role list to the independent Rust classifier on every
+/// certkit fixture plus json.av (the explicit stringeq fixture is in that set).
+#[test]
+fn f5_kernel_string_roles_match_rust_classifier_on_full_corpus() {
+    if !lake_available() {
+        eprintln!("skipping F5 string-role differential: `lake` not available");
+        return;
+    }
+
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let prelude = build_prelude();
+    let out = temp_dir("cdec-f5-role-differential");
+    std::fs::create_dir_all(&out).unwrap();
+    let mut corpus = S1_FIXTURES
+        .iter()
+        .map(|name| {
+            (
+                (*name).to_string(),
+                repo.join(format!("tools/certkit/fixtures/{name}.av")),
+            )
+        })
+        .collect::<Vec<_>>();
+    corpus.push(("json".to_string(), repo.join("examples/data/json.av")));
+
+    let actual_fixture_names = std::fs::read_dir(repo.join("tools/certkit/fixtures"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            (path.extension().and_then(|ext| ext.to_str()) == Some("av"))
+                .then(|| path.file_stem().unwrap().to_string_lossy().to_string())
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let declared_fixture_names = S1_FIXTURES
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(declared_fixture_names, actual_fixture_names);
+    assert!(declared_fixture_names.contains("stringeq"));
+
+    let mut checked = 0usize;
+    for (name, av_path) in corpus {
+        let bytes = compile_wasm_at(&repo, &av_path, &name, &out);
+        let roles = aver::codegen::cert::byte_derived_string_host_roles(&bytes)
+            .unwrap_or_else(|error| panic!("{name}: Rust F5 classifier failed: {error}"));
+        let src = format!(
+            "import CertDecode\nopen CertPrelude\nset_option maxRecDepth 200000\n\n\
+             def bytesN : Nat := 0x{}\n\
+             def bytesLen : Nat := {}\n\n\
+             example : CertDecode.StringHost.roleTable bytesN bytesLen = some {} := rfl\n",
+            hex_le(&bytes),
+            bytes.len(),
+            string_host_roles_lit(&roles),
+        );
+        let (ok, report) = run_lean(&prelude, &src);
+        assert!(
+            ok,
+            "F5 Rust/kernel string-role differential DIVERGED on `{name}`:\n{report}"
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, S1_FIXTURES.len() + 1);
+    eprintln!(
+        "F5 string-role differential PASS: {checked} modules (all certkit fixtures, including stringeq.av, + json.av)"
+    );
+
+    let _ = std::fs::remove_dir_all(out);
+    let _ = std::fs::remove_dir_all(prelude);
 }
 
 fn first_i64_arith_offsets(bytes: &[u8], targets: &[u32]) -> Vec<(u32, usize, u8)> {
@@ -616,6 +704,171 @@ fn s3_role_table_negative_controls_decline_empty_and_ambiguous_candidates() {
     assert!(ok, "S3 kernel negative controls failed:\n{report}");
 
     let _ = std::fs::remove_dir_all(out);
+    let _ = std::fs::remove_dir_all(prelude);
+}
+
+fn function_opcode_offsets(bytes: &[u8], target: u32) -> (u32, Vec<(usize, u8)>) {
+    let mut imported = 0u32;
+    let mut defined = 0u32;
+    let mut found = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        match payload.expect("compiler-produced wasm must parse") {
+            wasmparser::Payload::ImportSection(reader) => {
+                for group in reader {
+                    for import in group.expect("import group must parse") {
+                        let (_, import) = import.expect("import must parse");
+                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                            imported += 1;
+                        }
+                    }
+                }
+            }
+            wasmparser::Payload::CodeSectionEntry(body) => {
+                if imported + defined == target {
+                    let mut operators = body.get_operators_reader().unwrap();
+                    while !operators.eof() {
+                        let offset = operators.original_position();
+                        let operator = operators.read().expect("operator must parse");
+                        let opcode = match operator {
+                            wasmparser::Operator::I32Ne => Some(0x47),
+                            _ => None,
+                        };
+                        if let Some(opcode) = opcode {
+                            found.push((offset, opcode));
+                        }
+                    }
+                }
+                defined += 1;
+            }
+            _ => {}
+        }
+    }
+    (imported, found)
+}
+
+/// F5 negative control: a valid i32.ne→i32.eq mutation in the loop body makes
+/// the exact template comparison decline, in both Rust and the kernel scan.
+#[test]
+fn f5_mutated_string_eq_loop_opcode_changes_kernel_classification() {
+    if !lake_available() {
+        eprintln!("skipping F5 mutation control: `lake` not available");
+        return;
+    }
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let prelude = build_prelude();
+    let out = temp_dir("cdec-f5-mutation");
+    std::fs::create_dir_all(&out).unwrap();
+    let bytes = compile_wasm_at(
+        &repo,
+        &repo.join("tools/certkit/fixtures/stringeq.av"),
+        "stringeq",
+        &out,
+    );
+    let roles = aver::codegen::cert::byte_derived_string_host_roles(&bytes).unwrap();
+    assert_eq!(roles, vec![(3, aver::codegen::cert::StringHostRole::Eq)]);
+    let eq_idx = roles[0].0;
+    let (imported, offsets) = function_opcode_offsets(&bytes, eq_idx);
+    let mutation_offset = offsets
+        .get(1)
+        .expect("String.eq template has a second i32.ne in its loop")
+        .0;
+    let mut mutated = bytes.clone();
+    assert_eq!(mutated[mutation_offset], 0x47);
+    mutated[mutation_offset] = 0x46;
+    wasmparser::Validator::new()
+        .validate_all(&mutated)
+        .expect("i32.eq mutation remains valid wasm");
+    assert!(
+        aver::codegen::cert::byte_derived_string_host_roles(&mutated)
+            .unwrap()
+            .is_empty(),
+        "Rust F5 classifier must decline the mutated exact template"
+    );
+
+    let def_idx = eq_idx - imported;
+    let src = format!(
+        "import CertDecode\nopen CertPrelude\nset_option maxRecDepth 200000\n\n\
+         def original : Nat := 0x{}\n\
+         def mutated : Nat := 0x{}\n\
+         def bytesLen : Nat := {}\n\n\
+         example : CertDecode.StringHost.roleTable original bytesLen = some [(3, .eq)] := rfl\n\
+         example : CertDecode.StringHost.roleTable mutated bytesLen = some [] := rfl\n\
+         example : (CertDecode.StringHost.scanDefined original bytesLen {def_idx}).bind (fun ops => ops[26]?) = some .i32Ne := rfl\n\
+         example : (CertDecode.StringHost.scanDefined mutated bytesLen {def_idx}).bind (fun ops => ops[26]?) = some .other := rfl\n",
+        hex_le(&bytes),
+        hex_le(&mutated),
+        bytes.len(),
+    );
+    let (ok, report) = run_lean(&prelude, &src);
+    assert!(ok, "F5 kernel mutation control failed:\n{report}");
+
+    let _ = std::fs::remove_dir_all(out);
+    let _ = std::fs::remove_dir_all(prelude);
+}
+
+const TWO_EQ_WAT: &str = r#"
+(module
+  (type $string (array (mut i8)))
+  (type $eqsig (func (param (ref null $string)) (param (ref null $string)) (result i32)))
+  (func $eq0 (type $eqsig) (local i32 i32)
+    local.get 0 array.len local.get 1 array.len i32.ne
+    if i32.const 0 return end
+    local.get 0 array.len local.set 2 i32.const 0 local.set 3
+    block loop
+      local.get 3 local.get 2 i32.ge_u br_if 1
+      local.get 0 local.get 3 array.get_u $string
+      local.get 1 local.get 3 array.get_u $string i32.ne
+      if i32.const 0 return end
+      local.get 3 i32.const 1 i32.add local.set 3 br 0
+    end end
+    i32.const 1)
+  (func $eq1 (type $eqsig) (local i32 i32)
+    local.get 0 array.len local.get 1 array.len i32.ne
+    if i32.const 0 return end
+    local.get 0 array.len local.set 2 i32.const 0 local.set 3
+    block loop
+      local.get 3 local.get 2 i32.ge_u br_if 1
+      local.get 0 local.get 3 array.get_u $string
+      local.get 1 local.get 3 array.get_u $string i32.ne
+      if i32.const 0 return end
+      local.get 3 i32.const 1 i32.add local.set 3 br 0
+    end end
+    i32.const 1)
+  (export "__rt_aint_from_i64" (func $eq0)))
+"#;
+
+/// Positive no-uniqueness control: two exact String.eq helpers are both kept.
+#[test]
+fn f5_two_eq_helpers_are_both_classified_without_uniqueness_decline() {
+    if !lake_available() {
+        eprintln!("skipping F5 two-eq control: `lake` not available");
+        return;
+    }
+    let bytes = wat::parse_str(TWO_EQ_WAT).expect("two-eq GC WAT must compile");
+    wasmparser::Validator::new()
+        .validate_all(&bytes)
+        .expect("two-eq module must validate");
+    let expected = vec![
+        (0, aver::codegen::cert::StringHostRole::Eq),
+        (1, aver::codegen::cert::StringHostRole::Eq),
+    ];
+    assert_eq!(
+        aver::codegen::cert::byte_derived_string_host_roles(&bytes).unwrap(),
+        expected,
+        "Rust F5 classifier must retain both independent matches"
+    );
+
+    let prelude = build_prelude();
+    let src = format!(
+        "import CertDecode\nopen CertPrelude\nset_option maxRecDepth 200000\n\n\
+         def bytesN : Nat := 0x{}\n\
+         def bytesLen : Nat := {}\n\n\
+         example : CertDecode.StringHost.roleTable bytesN bytesLen = some [(0, .eq), (1, .eq)] := rfl\n",
+        hex_le(&bytes),
+        bytes.len(),
+    );
+    let (ok, report) = run_lean(&prelude, &src);
+    assert!(ok, "F5 kernel two-eq control failed:\n{report}");
     let _ = std::fs::remove_dir_all(prelude);
 }
 

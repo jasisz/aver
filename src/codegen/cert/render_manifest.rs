@@ -293,6 +293,7 @@ fn render_manifest_lean(
         .map(|idx| format!("some {idx}"))
         .unwrap_or_else(|| "none".to_string());
     let host_role_table = analysis.frag_host_table.roles_lean_value();
+    let string_host_roles = string_host_roles_lean_value(&analysis.string_host_roles);
     let obligations = analysis
         .certs
         .iter()
@@ -489,6 +490,7 @@ fn render_manifest_lean(
          capabilities := [{capabilities}],\n        \
          start := {start},\n        \
          hostRoleTable := {host_role_table},\n        \
+         stringHostRoles := {string_host_roles},\n        \
          contracts := [{contracts}] }},\n    \
          symFragmentPlans := [{sym_fragment_plans}],\n    \
          stringEqPlans := [{string_eq_plans}],\n    \
@@ -745,6 +747,17 @@ fn render_manifest(
         json_role(analysis.frag_host_table.add_idx),
         json_role(analysis.frag_host_table.sub_idx),
     ));
+    s.push_str("  \"stringHostRoles\": [");
+    for (index, (function_index, role)) in analysis.string_host_roles.iter().enumerate() {
+        if index > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!(
+            "{{\"function_index\": {function_index}, \"role\": {}}}",
+            json_str(role.manifest_value())
+        ));
+    }
+    s.push_str("],\n");
     s.push_str("  \"certified\": [");
     for (i, c) in analysis.certs.iter().enumerate() {
         if i > 0 {

@@ -160,6 +160,22 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         serde_json::json!({"box": box_idx, "add": add_idx, "sub": sub_idx}),
         "manifest hostRoleTable must come from the Rust classifier over the emitted bytes"
     );
+    let string_roles = aver::codegen::cert::byte_derived_string_host_roles(&wasm).unwrap();
+    let string_roles_json = string_roles
+        .iter()
+        .map(|(function_index, role)| {
+            let role = match role {
+                aver::codegen::cert::StringHostRole::Eq => "stringEq",
+                aver::codegen::cert::StringHostRole::Concat => "stringConcat",
+            };
+            serde_json::json!({"function_index": function_index, "role": role})
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        manifest["stringHostRoles"],
+        serde_json::json!(string_roles_json),
+        "manifest stringHostRoles must preserve the Rust classifier's full ordered list"
+    );
 
     let actual: BTreeMap<String, String> = manifest["certified"]
         .as_array()

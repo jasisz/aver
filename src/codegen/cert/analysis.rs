@@ -12,6 +12,10 @@ pub struct Analysis {
     /// `host_roles` marker map alone would assign a both-ops helper by its
     /// first arithmetic instead of rejecting it as ambiguous.
     frag_host_table: FragHostTable,
+    /// String.eq/String.concat helpers, ordered by wasm function index. Unlike
+    /// add/sub, each matching helper is retained independently (no uniqueness
+    /// decline), exactly as the Rust classifier and audited kernel classifier do.
+    string_host_roles: StringHostRoles,
 }
 
 impl Analysis {
@@ -38,6 +42,7 @@ pub fn analyze_with_fragment_plans(
 ) -> Result<Analysis, String> {
     let (user_fns, box_idx, user_idx_set, carrier, host_roles, frag_host_table, struct_field_counts) =
         disassemble(wasm_bytes)?;
+    let string_host_roles = string_host_roles(&host_roles);
     let model_ops = model_step_ops(model_files);
     let model_info = ModelInfo::from_files(model_files);
 
@@ -135,6 +140,7 @@ pub fn analyze_with_fragment_plans(
         carrier,
         contracts,
         frag_host_table,
+        string_host_roles,
     })
 }
 

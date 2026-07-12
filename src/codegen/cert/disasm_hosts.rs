@@ -29,6 +29,21 @@ fn host_op(op: &wasmparser::Operator<'_>) -> HostOp {
     }
 }
 
+fn string_host_roles(
+    host_roles: &std::collections::HashMap<u32, HostRole>,
+) -> StringHostRoles {
+    let mut roles = host_roles
+        .iter()
+        .filter_map(|(idx, role)| match role {
+            HostRole::StringEq => Some((*idx, StringHostRole::Eq)),
+            HostRole::StringConcat => Some((*idx, StringHostRole::Concat)),
+            HostRole::Add | HostRole::Sub => None,
+        })
+        .collect::<Vec<_>>();
+    roles.sort_by_key(|entry| entry.0);
+    roles
+}
+
 fn is_string_eq_host(
     entry: &CodeEntry,
     params: &[TyKind],
