@@ -325,3 +325,120 @@ example : withoutClosure globalReadArtifact := ⟨rfl, rfl, rfl⟩
     );
     let _ = std::fs::remove_dir_all(out_dir);
 }
+
+/// S1 GuardIso: keep the mutual module bytes fixed and corrupt only the second
+/// arm of `isEven`'s manifest-claimed shared code table. The strong witness
+/// fails at `decodeCode bytes 2 = obligation.code 2`; a literal copy with that
+/// one equality omitted accepts the same hostile manifest.
+#[test]
+fn inkernel_code_table_guard_is_isolated_and_weaken_confirmed() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping S1 decode GuardIso test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-inkernel-code-guard-iso");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/mutual.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile mutual fixture for S1 GuardIso");
+    assert!(
+        compile.status.success(),
+        "mutual compile failed for S1 GuardIso:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let cert = out_dir.join("cert");
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build mutual certificate before S1 GuardIso");
+    assert!(
+        build.status.success(),
+        "mutual certificate failed before S1 GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let lean = r#"import Artifact
+
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 200000
+
+-- Same module bytes; only the manifest obligation's code table is hostile.
+def hostileEvenCode : CodeTbl := fun fn =>
+  if fn = 2 then none else AverCert.isEvenOb.code fn
+def hostileEvenOb : Obligation :=
+  { AverCert.isEvenOb with code := hostileEvenCode }
+def hostileManifest : Manifest :=
+  { AverCert.manifest with
+    obligations := hostileEvenOb :: AverCert.manifest.obligations.tail }
+
+def evenObligation (m : Manifest) : Option Obligation :=
+  m.obligations.find? (fun o => o.export_ = "isEven")
+
+-- Exact S1 witness for isEven's shared SCC table: carrier plus both members.
+def mutualDecodeWitness (m : Manifest) : Prop :=
+  match evenObligation m with
+  | some obligation =>
+      AverCert.AcceptedArtifact.decodedObligationFacts
+        AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
+        obligation [1, 2]
+  | none => False
+
+-- Deliberately weakened copy: the cross-member equality at index 2 is absent.
+def mutualDecodeWitnessWithoutCrossCode (m : Manifest) : Prop :=
+  match evenObligation m with
+  | some obligation =>
+      AverCert.AcceptedArtifact.decodedObligationFacts
+        AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
+        obligation [1]
+  | none => False
+
+example : mutualDecodeWitness AverCert.manifest := by
+  repeat' constructor
+
+-- All retained byte equalities hold for the hostile manifest.
+example : mutualDecodeWitnessWithoutCrossCode hostileManifest := by
+  repeat' constructor
+
+-- The omitted equality is the only difference, and it is load-bearing.
+example : ¬ mutualDecodeWitness hostileManifest := by
+  intro h
+  change AverCert.AcceptedArtifact.decodedObligationFacts
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
+    hostileEvenOb [1, 2] at h
+  have bad := h.2.2.1
+  change CertDecode.decodeCode AverCert.ArtifactBytes.modBytes
+    AverCert.ArtifactBytes.modLen 2 = hostileEvenOb.code 2 at bad
+  have honestAtTwo :
+      CertDecode.decodeCode AverCert.ArtifactBytes.modBytes
+        AverCert.ArtifactBytes.modLen 2 = AverCert.isEvenOb.code 2 := rfl
+  have hostileAtTwo : hostileEvenOb.code 2 = none := rfl
+  rw [honestAtTwo, hostileAtTwo] at bad
+  cases bad
+"#;
+    std::fs::write(cert.join("DecodeGuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("DecodeGuardIso.lean")
+        .output()
+        .expect("run S1 decode GuardIso");
+    assert!(
+        check.status.success(),
+        "S1 decode GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(out_dir);
+}

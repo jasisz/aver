@@ -13,6 +13,7 @@ def accepted (artifact : ArtifactData) : Prop :=
   subjectMatchesArtifactRoot artifact ∧
   fragmentClaimObligationsInManifest artifact ∧
   claimsMatchManifest artifact ∧
+  decodedNonExprFacts artifact ∧
   acceptedFragments artifact
 
 end AverCert.AcceptedArtifact
