@@ -282,6 +282,26 @@ pub(super) fn cmd_cert_explain(artifact: &str, cert_dir: &str) {
 /// to extract the model recursion operator (`+`/`*`); the content is untrusted and
 /// never executed.
 fn read_lean_files(cert_dir: &Path) -> Vec<(String, String)> {
+    // Checker-owned audited files are staged into the cert dir but are kernel
+    // infrastructure, never source models; feeding them to the line-level model
+    // parser lets an audited-file type name (e.g. the decoder's `Op`) shadow a
+    // same-named model inductive, with the winner decided by filesystem
+    // iteration order. Exclude them, and sort what remains so extraction is
+    // deterministic across platforms.
+    const CHECKER_OWNED: &[&str] = &[
+        "AcceptedArtifact.lean",
+        "AcceptedArtifactCore.lean",
+        "CertPrelude.lean",
+        "CertDecode.lean",
+        "ExprFragmentAccepted.lean",
+        "PlanBytes.lean",
+        "PlanCheck.lean",
+        "PlanLower.lean",
+        "Schema.lean",
+        "SchemaCore.lean",
+        "WasmSlice.lean",
+        "lakefile.lean",
+    ];
     let mut out = Vec::new();
     if let Ok(entries) = std::fs::read_dir(cert_dir) {
         for entry in entries.flatten() {
@@ -292,12 +312,16 @@ fn read_lean_files(cert_dir: &Path) -> Vec<(String, String)> {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string();
+                if CHECKER_OWNED.contains(&name.as_str()) {
+                    continue;
+                }
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     out.push((name, content));
                 }
             }
         }
     }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
     out
 }
 
