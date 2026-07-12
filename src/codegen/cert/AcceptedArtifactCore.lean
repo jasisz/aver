@@ -516,6 +516,10 @@ def mutualPlanAccepted
   obligation.export_ = exportName ∧
     obligation.carrier = carrier ∧
     AverCert.PlanCheck.checkMutualRawPlan plan = true ∧
+    (match obligation.policy, obligation.termination? with
+     | .simulatesModel, none => true
+     | .simulatesModelTotally, some witness => AverCert.Schema.checkTermMutual plan witness
+     | _, _ => false) = true ∧
     ∃ body codeEntry binding,
       AverCert.PlanLower.lowerMutualBody carrier plan = some body ∧
       AverCert.PlanBytes.lowerMutualCodeEntry carrier plan = some codeEntry ∧

@@ -781,6 +781,14 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
                 "expected {name} certified for {fixture}, got {certified:?}"
             );
         }
+        for entry in manifest["certified"].as_array().unwrap() {
+            if exports.contains(&entry["name"].as_str().unwrap()) {
+                assert_eq!(entry["policy"], "simulatesModelTotally");
+                assert_eq!(entry["level"], "L3");
+                assert_eq!(entry["termination_witness"]["measure"]["kind"], "intNatAbs");
+                assert_eq!(entry["termination_witness"]["descent"], -1);
+            }
+        }
 
         let build = Command::new("lake")
             .current_dir(&cert_dir)
@@ -803,6 +811,12 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
                 "{primary}_mutual_sim' depends on axioms: [propext, Classical.choice, Quot.sound]"
             )),
             "mutual certificate for {fixture} not kernel-clean:\n{combined}"
+        );
+        assert!(
+            combined.contains(&format!(
+                "{primary}_mutual_total' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            )),
+            "mutual total certificate for {fixture} not kernel-clean:\n{combined}"
         );
         assert!(
             !combined.contains("sorryAx"),

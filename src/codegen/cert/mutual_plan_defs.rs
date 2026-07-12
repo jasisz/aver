@@ -212,4 +212,20 @@ mod mutual_plan_gate_tests {
             "a member the canonical plan cannot reproduce must not carry a claim"
         );
     }
+
+    #[test]
+    fn mutual_total_promotion_is_atomic_per_scc() {
+        for position in 0..2 {
+            let mut cert = mutual_cert(position, vec![Vec::new(), Vec::new()]);
+            let Cert::MutualRecursion { scc, .. } = &mut cert else {
+                unreachable!()
+            };
+            // One member no longer belongs to the closed descent cycle. Even
+            // when inspecting the untouched sibling export, the shared SCC
+            // fails eligibility and no per-member witness can be attached.
+            scc[0].cross_idx = 99;
+            assert_eq!(cert.termination_witness(), None);
+            assert_eq!(cert.policy(), CertificationPolicy::SimulatesModel);
+        }
+    }
 }

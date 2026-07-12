@@ -336,6 +336,37 @@ structure MutualRawPlan where
   body    : FragBlock
 deriving Repr
 
+/-- Kernel decision procedure for one member of a promoted integer-countdown
+    mutual SCC. The floor/measure checks are identical to `checkTerm`; the only
+    intentional shape difference is that the byte-pinned recursive edge is a
+    tail call to another member rather than a non-tail self call. SCC closure
+    and target membership remain separate artifact-acceptance guards. -/
+def checkTermMutual (plan : MutualRawPlan) (witness : TerminationWitness) : Bool :=
+  match witness.measure with
+  | .intNatAbs paramIdx =>
+      plan.profile == "mutual-plan-v1" &&
+      plan.params == [.intCarrier] &&
+      plan.result == .intCarrier &&
+      paramIdx == 0 &&
+      witness.descent == (-1 : Int) &&
+      match checkTermStep? paramIdx plan.body with
+      | some step =>
+          step.nodes.any fun node =>
+            match node.kind with
+            | .selfCall true _ [descentId] =>
+                match step.nodes[descentId]? with
+                | some { kind := .hostCall .sub _ [inputId, boxedOneId], .. } =>
+                    match step.nodes[inputId]?, step.nodes[boxedOneId]? with
+                    | some { kind := .local localIdx, .. },
+                      some { kind := .hostCall .box _ [oneId], .. } =>
+                        match step.nodes[oneId]? with
+                        | some { kind := .constI64 1, .. } => localIdx == paramIdx
+                        | _ => false
+                    | _, _ => false
+                | _ => false
+            | _ => false
+      | none => false
+
 /-- A composition member carries only its semantic-free byte SHAPE. A chain
     names callee exports; numeric Wasm indices are resolved from those exports'
     byte-derived `FuncBinding`s by the acceptance predicate and are never plan

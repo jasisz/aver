@@ -29,7 +29,7 @@ impl CertificationPolicy {
     }
 }
 
-/// Closed v47 measure vocabulary. New variants require a schema bump and a
+/// Closed v48 measure vocabulary. New variants require a schema bump and a
 /// corresponding in-kernel `checkTerm` branch; unknown JSON measures never
 /// fall back to this one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

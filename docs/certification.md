@@ -168,11 +168,15 @@ Parameterized List construction uses the same plan-backed constructor bridge as 
 
 The manifest always declares its level. A certificate never silently claims more than its level supports.
 
-For the current L3 descent-by-one family, the checked witness is `Int.natAbs`
-of the recursive input and the total theorem runs the byte-pinned body with
-`n.natAbs + 1` fuel. “Total” here means that this run returns a value related to
-the source model, rather than only describing a value if execution happens to
-return. The statement remains conditional on the named `hAddTot` and `hSubTot`
+For the current L3 descent-by-one families (single additive recursion and
+integer-countdown mutual SCCs), the checked witness is `Int.natAbs` of the
+recursive input and the total theorem runs the byte-pinned body with
+`n.natAbs + 1` fuel. A mutual SCC gets one conjunction theorem over all members
+and promotion is atomic: if any member leaves the closed countdown vocabulary,
+no member is promoted. Budget-heuristic mutual groups remain partial. “Total”
+here means that this run returns a value related to the source model, rather
+than only describing a value if execution happens to return. The statement
+remains conditional on the named `hAddTot` and `hSubTot`
 host contracts: `Int.add` and `Int.sub` must themselves be total on represented
 values. Those helper bodies are still assumed at L3; proving them is the L2
 ratchet. L3 makes no time, memory, or other resource-bound claim.

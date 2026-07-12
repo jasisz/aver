@@ -399,7 +399,7 @@ fn read_candidates(m: &Value) -> Result<Candidates, String> {
                 })?;
                 if kind != "intNatAbs" {
                     return Err(format!(
-                        "cert-manifest.json certified export `{name}` uses unsupported termination measure `{kind}`; schema 47 admits only `intNatAbs`"
+                        "cert-manifest.json certified export `{name}` uses unsupported termination measure `{kind}`; schema 48 admits only `intNatAbs`"
                     ));
                 }
                 let param_idx = measure
@@ -2145,7 +2145,7 @@ fn lean_expr_fragment_artifact_claims(
                 carrier = r.carrier,
             ));
             mutual_proofs.push(format!(
-                "⟨rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
+                "⟨rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
                  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
             ));
             continue;

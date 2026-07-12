@@ -4297,6 +4297,65 @@ fn recursion_termination_witness_guard_is_isolating() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
+/// Mutual L3 GuardIso: changing the witness on only one SCC obligation reaches
+/// the mutual termination conjunct, and deleting just that conjunct accepts the
+/// otherwise byte-identical hostile claim.
+#[test]
+fn mutual_termination_witness_guard_is_isolating() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping mutual termination-witness GuardIso: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-mutual-termination-guard-iso");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/mutual.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile mutual fixture for termination GuardIso");
+    assert!(
+        compile.status.success(),
+        "mutual compile failed for termination GuardIso:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let cert = out_dir.join("cert");
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build mutual certificate before termination GuardIso");
+    assert!(
+        build.status.success(),
+        "honest mutual certificate must build"
+    );
+    std::fs::write(
+        cert.join("GuardIso.lean"),
+        include_str!("fixtures/cert_mutual_termination_guard_iso.lean"),
+    )
+    .unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("GuardIso.lean")
+        .output()
+        .expect("run mutual termination GuardIso");
+    assert!(
+        check.status.success(),
+        "mutual termination GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
 /// The JSON policy/witness is only a candidate: supported-but-wrong data must
 /// disagree with verifier byte re-derivation in the checker-authored Lean
 /// witness, while an unknown measure or missing total witness declines during
