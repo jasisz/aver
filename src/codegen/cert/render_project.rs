@@ -1130,7 +1130,7 @@ fn render_artifact_expr_fragment_claims(
                     export_name = lean_str(name),
                 ));
                 mutual_proofs.push(format!(
-                    "⟨rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
+                    "⟨rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
                      ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }

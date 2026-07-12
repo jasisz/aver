@@ -198,7 +198,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
         // primary member (`scc[0]`); the model is this member's own function.
         Cert::MutualRecursion { scc, .. } => format!(
             "abbrev {name}Ob : Schema.Obligation :=\n  \
-             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             {{ export_ := \"{name}\", policy := {policy}, termination? := {termination}, carrier := {carrier},\n    \
              code := CertModule.{primary}Code, host := {host}, self := {self_idx},\n    \
              Dom := List Int, Cod := Int,\n    \
              domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = 1,\n    \
@@ -208,6 +208,10 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
             carrier = c.carrier(),
             host = c.host_expr(),
             self_idx = c.self_idx(),
+            policy = c.policy().lean_value(),
+            termination = c
+                .termination_witness()
+                .map_or_else(|| "none".to_string(), |w| format!("some {}", w.lean_value())),
         ),
         _ => format!(
             "abbrev {name}Ob : Schema.Obligation :=\n  \

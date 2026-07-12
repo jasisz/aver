@@ -1,3 +1,31 @@
+/// Promotion is an SCC property, never a per-export guess. The classifier only
+/// constructs `MutualRecursion` for the exact `n ≤ 0` / `g (n - 1)` grammar;
+/// this final fail-closed check additionally requires one closed simple cycle
+/// in the shared SCC value carried by every member. Thus a malformed or mixed
+/// group yields no witness for any of its obligations.
+fn mutual_scc_total_eligible(scc: &[MutualMember]) -> bool {
+    if scc.len() < 2
+        || scc
+            .iter()
+            .any(|member| scc.iter().filter(|m| m.self_idx == member.self_idx).count() != 1)
+    {
+        return false;
+    }
+    let start = scc[0].self_idx;
+    let mut current = start;
+    let mut visited = std::collections::HashSet::with_capacity(scc.len());
+    for _ in 0..scc.len() {
+        if !visited.insert(current) {
+            return false;
+        }
+        let Some(member) = scc.iter().find(|m| m.self_idx == current) else {
+            return false;
+        };
+        current = member.cross_idx;
+    }
+    current == start && visited.len() == scc.len()
+}
+
 impl Cert {
     fn inner(&self) -> &Cert {
         match self {
@@ -6,10 +34,10 @@ impl Cert {
         }
     }
 
-    /// The only v47 total family: unary `n - 1` recursion whose combinator uses
-    /// `Int.add`. Multiplicative recursion would require a frozen `mul`
-    /// totality contract, and accumulator/mutual/budget families are not part
-    /// of this leg, so all of them remain partial.
+    /// The v48 total families: unary `n - 1` recursion whose combinator uses
+    /// `Int.add`, and complete integer-countdown mutual SCCs. Multiplicative
+    /// recursion would require a frozen `mul` totality contract; accumulator
+    /// and budget-heuristic families remain partial.
     fn termination_witness(&self) -> Option<TerminationWitness> {
         match self.inner() {
             Cert::Recursive {
@@ -19,6 +47,12 @@ impl Cert {
                 measure: TerminationMeasure::IntNatAbs { param_idx: 0 },
                 descent: -1,
             }),
+            Cert::MutualRecursion { scc, .. } if mutual_scc_total_eligible(scc) => {
+                Some(TerminationWitness {
+                    measure: TerminationMeasure::IntNatAbs { param_idx: 0 },
+                    descent: -1,
+                })
+            }
             _ => None,
         }
     }
