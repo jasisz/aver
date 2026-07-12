@@ -933,28 +933,47 @@ def compositionEdgeLookup
   | some edge => some edge.2
   | none => none
 
-/-- One breadth-expansion step of the byte-bound call graph. Missing targets
-    fail closed; repeated vertices are set-like and do not enlarge the result. -/
+/-- One worklist step on an already-indexed composition graph. Missing targets
+    fail closed; undiscovered callee edges are discovered exactly once. -/
 def compositionReachStep
-    (edges : List (String × List String)) :
-    List String → List String → Option (List String)
-  | reached, [] => some reached
-  | reached, name :: rest =>
-      match compositionEdgeLookup edges name with
-      | some callees =>
-          if callees.all (fun callee => (edges.map (fun edge => edge.1)).contains callee) then
-            let next := callees.foldl
-              (fun acc callee => if acc.contains callee then acc else acc ++ [callee]) reached
-            compositionReachStep edges next rest
-          else none
-      | none => none
+    (edgeIndex : Std.TreeMap String (List String))
+    (memberNames : Std.TreeSet String) :
+    Nat → List String → Std.TreeSet String → Std.TreeSet String → List String →
+      Option (List String)
+  | 0, _, _, _, _ => none
+  | _fuel + 1, seen, seenSet, queuedSet, [] => some seen
+  | fuel + 1, seen, seenSet, queuedSet, name :: work =>
+      if seenSet.contains name then
+        compositionReachStep edgeIndex memberNames fuel seen seenSet queuedSet work
+      else
+        match edgeIndex.get? name with
+        | none => none
+        | some callees =>
+            if List.all callees (fun callee => memberNames.contains callee) then
+              let (nextWork, nextQueuedSet) :=
+                List.foldl
+                  (fun state callee =>
+                    let work := state.1
+                    let discovered := state.2
+                    if seenSet.contains callee || discovered.contains callee then
+                      state
+                      else
+                        (callee :: work, discovered.insert callee))
+                  (work, queuedSet) callees
+              compositionReachStep edgeIndex memberNames fuel
+                (name :: seen) (seenSet.insert name) nextQueuedSet nextWork
+            else none
 
 def compositionReachClosure
     (edges : List (String × List String)) : Nat → List String → Option (List String)
   | 0, reached => some reached
-  | fuel + 1, reached =>
-      match compositionReachStep edges reached reached with
-      | some next => compositionReachClosure edges fuel next
+  | fuel, reached =>
+      let edgeIndex := edges.foldl (fun index edge =>
+        index.insert edge.1 edge.2) Std.TreeMap.empty
+      let memberNameSet := AverCert.WasmSlice.orderedSet (edges.map (fun edge => edge.1))
+      let queuedSet := AverCert.WasmSlice.orderedSet reached
+      match compositionReachStep edgeIndex memberNameSet fuel [] Std.TreeSet.empty queuedSet reached with
+      | some reachedSet => some (reachedSet.reverse)
       | none => none
 
 /-- Numeric target indices strictly descend along every edge. Both endpoints
