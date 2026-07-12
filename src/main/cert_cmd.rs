@@ -965,10 +965,12 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
                     .to_string(),
             );
         }
+        // The data project itself failed to build, so the diagnostic witness
+        // cannot even import its modules — the real reason lives in the BUILD
+        // output, which is what the decline must carry.
         return Err(format!(
-            "certificate did not build (lake build failed); the diagnostic checker witness \
-             also declined:\n{}",
-            tail(&diagnostic.combined, 30)
+            "certificate did not build (lake build failed):\n{}",
+            tail(&b.combined, 30)
         ));
     }
     artifact_cache.publish(&build.path);
