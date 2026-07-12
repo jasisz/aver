@@ -20,18 +20,16 @@
 //! a template is declined — so the `WInstr` data in `Module.lean` is exactly
 //! the shape present in the hashed bytes.
 //!
-//! `aver cert verify` re-runs the audited byte pipeline on the hash-verified
-//! bytes (`rederive_certificate`) and pins the checker-derived
-//! `code`/`host`/`self`/`carrier` values plus consumed runtime contracts into
-//! its checker-authored witness with `rfl` against the proven manifest — so the
-//! `WInstr` data and contracts the kernel theorem actually reasons about are
-//! forced to equal byte-bound checker values, not merely trusted. Expression
+//! `aver cert verify` re-runs the audited Rust byte pipeline as a fail-fast,
+//! then the accepted-artifact witness uses `CertDecode` to compute
+//! non-expression code/carrier/struct facts from `ArtifactBytes` in-kernel.
+//! Host/self values and consumed runtime contracts retain their later-sub-leg
+//! Rust bindings. Expression
 //! fragments emit a canonical plan sidecar under `cert/fragments/`; verify
 //! parses that untrusted plan, typechecks it against byte-derived function facts,
 //! canonically lowers it to raw code-entry bytes, and only then uses the checked
-//! plan to render the witness code/face. This is trusted via inspection of the
-//! disassembler/checker/lowerer, not by an in-kernel wasm decode proof (a full
-//! kernel decoder is a deferred residual).
+//! plan to render the witness code/face. The complete disassembler and role
+//! classifier are not retired by this S1 step.
 
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -66,7 +64,7 @@ pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
 /// Certification level of a v0 artifact certificate: conditional on the named
 /// runtime contracts (see the consult level naming L0/L1/L2/L3).
 pub const CERT_LEVEL: &str = "L1";
-pub const CERT_SCHEMA_VERSION: u32 = 49;
+pub const CERT_SCHEMA_VERSION: u32 = 50;
 pub const BOX_CONTRACT: &str = "__rt_aint_from_i64 (box i64 -> carrier)";
 pub const INT_ADD_CONTRACT: &str =
     "Int.add (carrier add = exact integer addition on represented values)";

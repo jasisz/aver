@@ -297,6 +297,14 @@ def decodeCarrier (n len : Nat) : Option Nat :=
   | some ti => ti.carrier
   | none => none
 
+/-- The decoded struct-field count at one type index. Non-struct type entries
+    have count zero, matching the Rust disassembler's `struct_field_counts`
+    table; an out-of-range index or malformed type section is rejected. -/
+def decodeStructFieldCount (n len typeidx : Nat) : Option Nat :=
+  match decodeTypes n len with
+  | some ti => ti.nfields[typeidx]?
+  | none => none
+
 /- ===================================================================== -/
 /-  Function / import / export / data sections                            -/
 /- ===================================================================== -/

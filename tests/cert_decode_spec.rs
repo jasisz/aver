@@ -42,6 +42,36 @@ const FIXTURES: &[&str] = &[
     "certempty",
 ];
 
+/// Full S1 transition corpus. Keep this explicit so adding a certkit fixture
+/// requires consciously extending the Rust-splice ↔ kernel-decode regression.
+const S1_FIXTURES: &[&str] = &[
+    "cert_goals",
+    "certempty",
+    "certkit_ops",
+    "certkit_zoo",
+    "certprobe",
+    "certprobe2",
+    "compose",
+    "f64verbatim",
+    "intdispatchgen",
+    "manytypes",
+    "meter",
+    "mutual",
+    "mutual3",
+    "opteval",
+    "rangepred",
+    "recdecline",
+    "recgen",
+    "signalgauge",
+    "strdispatch",
+    "stringconcat",
+    "stringeq",
+    "tupleproj",
+    "verbatimgen",
+    "verbatimwiden",
+    "widenedmatch",
+];
+
 /// The 39 measured user-code opcode mnemonics (mirrors `diff_harness.py`).
 const ALL_OPCODES: &[&str] = &[
     "array.new_data",
@@ -316,6 +346,54 @@ fn wcode_from_rederive(code: &str) -> String {
     code[start..end].trim().to_string()
 }
 
+/// Function indices on which a Rust-rendered sparse `CodeTbl` is populated.
+/// The production renderer always emits one `fn = N then some ...` arm per
+/// semantic table entry (one for ordinary families, several for mutual and
+/// composition). The transition differential checks every arm, not merely the
+/// obligation's `self` entry.
+fn rust_code_indices(code: &str) -> Vec<u32> {
+    let mut indices = code
+        .split("fn = ")
+        .skip(1)
+        .map(|tail| {
+            tail.chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+                .parse::<u32>()
+                .expect("Rust CodeTbl arm has a decimal function index")
+        })
+        .collect::<Vec<_>>();
+    indices.sort_unstable();
+    indices.dedup();
+    indices
+}
+
+fn s1_family(o: &aver::codegen::cert::RederivedObligation) -> Option<&'static str> {
+    if o.fragment_plan_lean.is_some() {
+        return None;
+    }
+    if o.string_eq_plan_lean.is_some()
+        || o.string_concat_plan_lean.is_some()
+        || o.verbatim_plan_lean.is_some()
+    {
+        Some("verbatim-style")
+    } else if o.int_dispatch_plan_lean.is_some() {
+        Some("dispatch")
+    } else if o.recursion_plan_lean.is_some() {
+        Some("recursion")
+    } else if o.mutual_plan_lean.is_some() {
+        Some("mutual")
+    } else if !o.composition_members.is_empty() {
+        Some("composition")
+    } else if o.field_projection_plan_lean.is_some() {
+        Some("field-projection")
+    } else if o.construct_plan_lean.is_some() {
+        Some("construct")
+    } else {
+        None
+    }
+}
+
 /// Run `lake env lean` on a witness source in the prebuilt prelude dir. Returns
 /// (clean, combined-output). A divergence surfaces as a kernel error here.
 fn run_lean(prelude: &Path, src: &str) -> (bool, String) {
@@ -336,6 +414,145 @@ fn run_lean(prelude: &Path, src: &str) -> (bool, String) {
     let _ = std::fs::remove_file(&file);
     let clean = o.status.success() && !combined.contains("error");
     (clean, combined)
+}
+
+// ---- S1 differential transition -----------------------------------------
+
+#[test]
+fn s1_rust_splices_equal_kernel_decodes_on_full_corpus() {
+    if !lake_available() {
+        eprintln!("skipping S1 differential: `lake` not available");
+        return;
+    }
+
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let prelude = build_prelude();
+    let out = temp_dir("cdec-s1-differential");
+    std::fs::create_dir_all(&out).unwrap();
+    let mut corpus = S1_FIXTURES
+        .iter()
+        .map(|name| {
+            (
+                (*name).to_string(),
+                repo.join(format!("tools/certkit/fixtures/{name}.av")),
+            )
+        })
+        .collect::<Vec<_>>();
+    corpus.push(("json".to_string(), repo.join("examples/data/json.av")));
+
+    let actual_fixture_names = std::fs::read_dir(repo.join("tools/certkit/fixtures"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            (path.extension().and_then(|ext| ext.to_str()) == Some("av"))
+                .then(|| path.file_stem().unwrap().to_string_lossy().to_string())
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let declared_fixture_names = S1_FIXTURES
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        declared_fixture_names, actual_fixture_names,
+        "S1 differential corpus must contain every certkit .av fixture"
+    );
+
+    let mut covered_families = std::collections::BTreeSet::new();
+    let mut checked_obligations = 0usize;
+    let mut checked_code_arms = 0usize;
+    let mut checked_struct_facts = 0usize;
+
+    for (name, av_path) in corpus {
+        let bytes = compile_wasm_at(&repo, &av_path, &name, &out);
+        let models = model_lean_files(&repo, &av_path, &out);
+        let obligations = aver::codegen::cert::rederive_obligations(&bytes, &models)
+            .unwrap_or_else(|error| panic!("{name}: Rust rederive failed: {error}"));
+
+        let mut src = String::new();
+        src.push_str("import CertDecode\nopen CertPrelude\nset_option maxRecDepth 200000\n\n");
+        src.push_str(&format!("def bytesN : Nat := 0x{}\n", hex_le(&bytes)));
+        src.push_str(&format!("def bytesLen : Nat := {}\n\n", bytes.len()));
+
+        let mut module_obligations = 0usize;
+        for obligation in obligations.iter().filter(|o| s1_family(o).is_some()) {
+            let family = s1_family(obligation).unwrap();
+            covered_families.insert(family);
+            checked_obligations += 1;
+            module_obligations += 1;
+
+            src.push_str(&format!(
+                "-- {family}: {export}\nexample : CertDecode.decodeCarrier bytesN bytesLen = some {carrier} := rfl\n",
+                export = obligation.name,
+                carrier = obligation.carrier,
+            ));
+
+            let code_indices = rust_code_indices(&obligation.code);
+            assert!(
+                code_indices.contains(&obligation.self_idx),
+                "{name}/{}: Rust CodeTbl does not contain its self index {}",
+                obligation.name,
+                obligation.self_idx
+            );
+            for index in code_indices {
+                checked_code_arms += 1;
+                src.push_str(&format!(
+                    "example : CertDecode.decodeCode bytesN bytesLen {index} = ({code}) {index} := rfl\n",
+                    code = obligation.code,
+                ));
+            }
+
+            if let (Some(struct_idx), Some(field_count)) = (
+                obligation.construct_struct_idx,
+                obligation.construct_field_count,
+            ) {
+                checked_struct_facts += 1;
+                src.push_str(&format!(
+                    "example : CertDecode.decodeStructFieldCount bytesN bytesLen {struct_idx} = some {field_count} := rfl\n"
+                ));
+            }
+            if let (Some(struct_idx), Some(field_count)) = (
+                obligation.field_projection_struct_idx,
+                obligation.field_projection_field_count,
+            ) {
+                checked_struct_facts += 1;
+                src.push_str(&format!(
+                    "example : CertDecode.decodeStructFieldCount bytesN bytesLen {struct_idx} = some {field_count} := rfl\n"
+                ));
+            }
+        }
+
+        let (ok, report) = run_lean(&prelude, &src);
+        assert!(
+            ok,
+            "S1 Rust-splice/kernel-decode differential DIVERGED on `{name}` ({module_obligations} obligations):\n{report}"
+        );
+    }
+
+    let expected_families = [
+        "composition",
+        "construct",
+        "dispatch",
+        "field-projection",
+        "mutual",
+        "recursion",
+        "verbatim-style",
+    ]
+    .into_iter()
+    .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        covered_families, expected_families,
+        "S1 differential did not exercise every in-scope family"
+    );
+    assert!(checked_obligations > 0);
+    assert!(checked_code_arms >= checked_obligations);
+    assert!(checked_struct_facts > 0);
+    eprintln!(
+        "S1 differential PASS: {checked_obligations} obligations, {checked_code_arms} CodeTbl arms, {checked_struct_facts} struct facts"
+    );
+
+    let _ = std::fs::remove_dir_all(&out);
+    let _ = std::fs::remove_dir_all(&prelude);
 }
 
 // ---- main differential + coverage ---------------------------------------

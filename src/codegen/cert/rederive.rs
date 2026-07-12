@@ -2,14 +2,10 @@
 /// `CodeTbl` body value, the fully-expanded host-builder value, the self
 /// function index and the carrier type index — every one a pure function of the
 /// hash-verified bytes, via the SAME audited `disassemble` → `classify` pipeline
-/// the emitter uses. `aver cert verify` splices these into its checker-authored
-/// witness and pins each with `rfl` against the matching `manifest.obligations`
-/// projection, so an obligation whose `code`/`host`/`self`/`carrier` diverge
-/// from the bytes (a fabricated or vacuous body) fails the kernel witness.
-///
-/// Trusted by inspection of the Aver disassembler (the consumer's own binary),
-/// not by an in-kernel wasm decode proof; a full kernel decoder is a deferred
-/// residual.
+/// the emitter uses. `aver cert verify` keeps this rederivation as a fail-fast
+/// pre-check and still pins later-sub-leg host/self/class facts from it. F1/F2/F3
+/// code/carrier/struct equalities are independently recomputed from ArtifactBytes
+/// by `CertDecode` inside the kernel acceptance witness.
 pub struct RederivedObligation {
     pub name: String,
     /// Position of the export's user function in the module's byte-derived user

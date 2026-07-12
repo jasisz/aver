@@ -12,6 +12,7 @@ import PlanLower
 import PlanBytes
 import ExprFragmentAccepted
 import WasmSlice
+import CertDecode
 
 namespace AverCert.AcceptedArtifact
 open AverCert.Schema
@@ -1374,8 +1375,7 @@ structure ClosureClaim where
 /-- The checker-facing artifact data currently accepted by the Lean bridge.
     `symFragmentClaims` is the source-level expression surface. There is no
     artifact-level raw `ExprFragmentClaim`; representation plans are derived by
-    the audited source encoder. Ordinary legacy obligations are still pinned by
-    the verifier witness outside this artifact-level wrapper. -/
+    the audited source encoder. -/
 structure ArtifactData where
   modBytes           : Nat
   modLen             : Nat
@@ -1393,6 +1393,124 @@ structure ArtifactData where
   compositionClaims  : List CompositionClaim
   closureFuel        : Nat
   closureClaim       : ClosureClaim
+
+/-! ### In-kernel F1/F2/F3 byte-fact binding
+
+The source expression-fragment family retains its canonical plan-to-code-entry
+byte equality. Every other accepted family is additionally tied to the full
+profile decoder here: F1 code-table entries, F2 carrier index, and (where the
+family consumes them) F3 struct-field counts are computed from `modBytes` by
+`CertDecode`, then equated to the claim obligation already pinned into the
+manifest. Rust re-derivation remains a fail-fast producer/checker diagnostic,
+but none of these equalities takes a Rust-rendered code/carrier/field literal. -/
+
+def decodedCodeAt
+    (modBytes modLen : Nat) (obligation : Obligation) (funcIdx : Nat) : Prop :=
+  CertDecode.decodeCode modBytes modLen funcIdx = obligation.code funcIdx
+
+def decodedCodeAtAll
+    (modBytes modLen : Nat) (obligation : Obligation) : List Nat → Prop
+  | [] => True
+  | funcIdx :: rest =>
+      decodedCodeAt modBytes modLen obligation funcIdx ∧
+      decodedCodeAtAll modBytes modLen obligation rest
+
+def decodedObligationFacts
+    (modBytes modLen : Nat) (obligation : Obligation) (funcIndices : List Nat) : Prop :=
+  CertDecode.decodeCarrier modBytes modLen = some obligation.carrier ∧
+  decodedCodeAtAll modBytes modLen obligation funcIndices
+
+def decodedClaims
+    {Claim : Type u}
+    (modBytes modLen : Nat)
+    (obligation : Claim → Obligation)
+    (funcIndices : Claim → List Nat) : List Claim → Prop
+  | [] => True
+  | claim :: rest =>
+      decodedObligationFacts modBytes modLen (obligation claim) (funcIndices claim) ∧
+      decodedClaims modBytes modLen obligation funcIndices rest
+
+def decodedConstructStructFields
+    (modBytes modLen : Nat) : List ConstructClaim → Prop
+  | [] => True
+  | claim :: rest =>
+      CertDecode.decodeStructFieldCount modBytes modLen claim.structIdx =
+        some claim.fieldCount ∧
+      decodedConstructStructFields modBytes modLen rest
+
+def decodedProjectionStructFields
+    (modBytes modLen : Nat) : List FieldProjectionClaim → Prop
+  | [] => True
+  | claim :: rest =>
+      CertDecode.decodeStructFieldCount modBytes modLen claim.structIdx =
+        some claim.fieldCount ∧
+      decodedProjectionStructFields modBytes modLen rest
+
+def decodedCompositionNames
+    (modBytes modLen : Nat)
+    (members : List CompositionMemberClaim)
+    (obligation : Obligation) : List String → Prop
+  | [] => True
+  | name :: rest =>
+      match compositionMemberForName name members with
+      | some member =>
+          match compositionMemberBinding modBytes modLen member with
+          | some (_, funcIdx) =>
+              decodedCodeAt modBytes modLen obligation funcIdx ∧
+              decodedCompositionNames modBytes modLen members obligation rest
+          | none => False
+      | none => False
+
+def decodedCompositionClaims
+    (modBytes modLen : Nat)
+    (members : List CompositionMemberClaim) : List CompositionClaim → Prop
+  | [] => True
+  | claim :: rest =>
+      CertDecode.decodeCarrier modBytes modLen = some claim.obligation.carrier ∧
+      decodedCompositionNames modBytes modLen members claim.obligation claim.memberNames ∧
+      decodedCompositionClaims modBytes modLen members rest
+
+/-- Kernel-computed F1/F2/F3 facts for every non-expression-fragment family.
+    Mutual obligations bind every member of their shared SCC `CodeTbl`;
+    composition obligations bind every name in their byte-checked transitive
+    closure. The source expression-fragment claim list is deliberately absent. -/
+def decodedNonExprFacts (artifact : ArtifactData) : Prop :=
+  decodedClaims artifact.modBytes artifact.modLen
+      (fun c : StringEqClaim => c.obligation)
+      (fun c : StringEqClaim => [c.obligation.self])
+      artifact.stringEqClaims ∧
+  decodedClaims artifact.modBytes artifact.modLen
+      (fun c : StringConcatClaim => c.obligation)
+      (fun c : StringConcatClaim => [c.obligation.self])
+      artifact.stringConcatClaims ∧
+  decodedClaims artifact.modBytes artifact.modLen
+      (fun c : ConstructClaim => c.obligation)
+      (fun c : ConstructClaim => [c.obligation.self])
+      artifact.constructClaims ∧
+  decodedConstructStructFields artifact.modBytes artifact.modLen artifact.constructClaims ∧
+  decodedClaims artifact.modBytes artifact.modLen
+      (fun c : RecursionClaim => c.obligation)
+      (fun c : RecursionClaim => [c.obligation.self])
+      artifact.recursionClaims ∧
+  decodedClaims artifact.modBytes artifact.modLen
+      (fun c : MutualRecursionClaim => c.obligation)
+      (fun c : MutualRecursionClaim => c.memberSet)
+      artifact.mutualRecursionClaims ∧
+  decodedClaims artifact.modBytes artifact.modLen
+      (fun c : VerbatimClaim => c.obligation)
+      (fun c : VerbatimClaim => [c.obligation.self])
+      artifact.verbatimClaims ∧
+  decodedClaims artifact.modBytes artifact.modLen
+      (fun c : IntDispatchClaim => c.obligation)
+      (fun c : IntDispatchClaim => [c.obligation.self])
+      artifact.intDispatchClaims ∧
+  decodedClaims artifact.modBytes artifact.modLen
+      (fun c : FieldProjectionClaim => c.obligation)
+      (fun c : FieldProjectionClaim => [c.obligation.self])
+      artifact.fieldProjectionClaims ∧
+  decodedProjectionStructFields artifact.modBytes artifact.modLen artifact.fieldProjectionClaims ∧
+  decodedCompositionClaims artifact.modBytes artifact.modLen
+      artifact.compositionMembers artifact.compositionClaims
 
 def claimObligationExports (artifact : ArtifactData) : List String :=
   artifact.symFragmentClaims.map (fun c => c.obligation.export_) ++

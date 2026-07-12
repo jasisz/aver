@@ -3297,6 +3297,7 @@ def acceptedWithoutClaimCoverage
   AcceptedArtifact.subjectMatchesArtifactRoot artifact ∧
   AcceptedArtifact.fragmentClaimObligationsInManifest artifact ∧
   AcceptedArtifact.claimsMatchManifest artifact ∧
+  AcceptedArtifact.decodedNonExprFacts artifact ∧
   acceptedFragmentsWithoutClaimCoverage artifact
 
 def unclaimedOb : Obligation :=
@@ -3336,7 +3337,7 @@ example : ∀ nameBytes,
 
 example : ¬ AcceptedArtifact.accepted unclaimedArtifact := by
   intro h
-  rcases h with ⟨_, _, _, _, hfragments⟩
+  rcases h with ⟨_, _, _, _, _, hfragments⟩
   rcases hfragments with ⟨_, _, _, _, _, _, _, _, _, hcomposition, _⟩
   have hclaimed := hcomposition.2.2.1
   change false = true at hclaimed
@@ -3344,11 +3345,11 @@ example : ¬ AcceptedArtifact.accepted unclaimedArtifact := by
 
 example : acceptedWithoutClaimCoverage unclaimedArtifact := by
   rcases Artifact.certificate with
-    ⟨_, hsubject, hobs, hmatch, hsym, hstringEq, hstringConcat, hconstruct,
+    ⟨_, hsubject, hobs, hmatch, hdecoded, hsym, hstringEq, hstringConcat, hconstruct,
       hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
       hcompositionAccepted, _⟩
   rcases hcompositionAccepted with ⟨hcomposition, hmembersCovered, _, _⟩
-  refine ⟨unclaimedFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨unclaimedFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact hsubject
   · simpa [unclaimedArtifact, unclaimedManifest,
       AcceptedArtifact.fragmentClaimObligationsInManifest,
@@ -3356,6 +3357,7 @@ example : acceptedWithoutClaimCoverage unclaimedArtifact := by
       claimObligationsInManifest_append AverCert.manifest.obligations
         [unclaimedOb] (AcceptedArtifact.claimObligations Artifact.data) hobs
   · exact hmatch
+  · exact hdecoded
   · exact hsym
   · exact hstringEq
   · exact hstringConcat
@@ -3449,6 +3451,7 @@ def acceptedWithoutUniqueExports
   AcceptedArtifact.subjectMatchesArtifactRoot artifact ∧
   AcceptedArtifact.fragmentClaimObligationsInManifest artifact ∧
   AcceptedArtifact.claimsMatchManifest artifact ∧
+  AcceptedArtifact.decodedNonExprFacts artifact ∧
   acceptedFragmentsWithoutUniqueExports artifact
 
 example : AcceptedArtifact.manifestObligationsClaimed duplicateArtifact = true := rfl
@@ -3468,7 +3471,7 @@ example : ∀ nameBytes,
 
 example : ¬ AcceptedArtifact.accepted duplicateArtifact := by
   intro h
-  rcases h with ⟨_, _, _, _, hfragments⟩
+  rcases h with ⟨_, _, _, _, _, hfragments⟩
   rcases hfragments with ⟨_, _, _, _, _, _, _, _, _, hcomposition, _⟩
   have hunique := hcomposition.2.2.2
   change false = true at hunique
@@ -3476,11 +3479,11 @@ example : ¬ AcceptedArtifact.accepted duplicateArtifact := by
 
 example : acceptedWithoutUniqueExports duplicateArtifact := by
   rcases Artifact.certificate with
-    ⟨_, hsubject, hobs, hmatch, hsym, hstringEq, hstringConcat, hconstruct,
+    ⟨_, hsubject, hobs, hmatch, hdecoded, hsym, hstringEq, hstringConcat, hconstruct,
       hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
       hcompositionAccepted, _⟩
   rcases hcompositionAccepted with ⟨hcomposition, hmembersCovered, _, _⟩
-  refine ⟨duplicateFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨duplicateFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact hsubject
   · simpa [duplicateArtifact, duplicateManifest,
       AcceptedArtifact.fragmentClaimObligationsInManifest,
@@ -3488,6 +3491,7 @@ example : acceptedWithoutUniqueExports duplicateArtifact := by
       claimObligationsInManifest_append AverCert.manifest.obligations
         [duplicateOb] (AcceptedArtifact.claimObligations Artifact.data) hobs
   · exact hmatch
+  · exact hdecoded
   · exact hsym
   · exact hstringEq
   · exact hstringConcat
