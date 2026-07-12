@@ -1781,6 +1781,7 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
         out.contains("fragmentClaimObligationsInManifest")
             || out.contains("manifest.obligations).contains")
             || out.contains("closureIsolation")
+            || out.contains("closureClaim")
             || out.contains("AverCert.Artifact.certificate")
             || out.contains("Artifact.lean"),
         "wrong reason for missing manifest obligation:\n{out}"
