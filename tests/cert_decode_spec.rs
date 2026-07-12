@@ -416,6 +416,209 @@ fn run_lean(prelude: &Path, src: &str) -> (bool, String) {
     (clean, combined)
 }
 
+fn option_nat(value: Option<u32>) -> String {
+    value
+        .map(|value| format!("some {value}"))
+        .unwrap_or_else(|| "none".to_string())
+}
+
+// ---- S3 host-role differential transition ------------------------------
+
+/// Before the production witness relies on the in-kernel table, pin its result
+/// to the independent Rust classifier on every certkit fixture plus json.av.
+/// Kept permanently so either implementation changing requires an explicit,
+/// corpus-wide parity decision.
+#[test]
+fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
+    if !lake_available() {
+        eprintln!("skipping S3 role-table differential: `lake` not available");
+        return;
+    }
+
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let prelude = build_prelude();
+    let out = temp_dir("cdec-s3-role-differential");
+    std::fs::create_dir_all(&out).unwrap();
+    let mut corpus = S1_FIXTURES
+        .iter()
+        .map(|name| {
+            (
+                (*name).to_string(),
+                repo.join(format!("tools/certkit/fixtures/{name}.av")),
+            )
+        })
+        .collect::<Vec<_>>();
+    corpus.push(("json".to_string(), repo.join("examples/data/json.av")));
+
+    let actual_fixture_names = std::fs::read_dir(repo.join("tools/certkit/fixtures"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            (path.extension().and_then(|ext| ext.to_str()) == Some("av"))
+                .then(|| path.file_stem().unwrap().to_string_lossy().to_string())
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let declared_fixture_names = S1_FIXTURES
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        declared_fixture_names, actual_fixture_names,
+        "S3 differential corpus must contain every certkit .av fixture"
+    );
+
+    let mut checked = 0usize;
+    for (name, av_path) in corpus {
+        let bytes = compile_wasm_at(&repo, &av_path, &name, &out);
+        let (box_idx, add_idx, sub_idx) =
+            aver::codegen::cert::byte_derived_frag_host_role_indices(&bytes)
+                .unwrap_or_else(|error| panic!("{name}: Rust role classifier failed: {error}"));
+        let src = format!(
+            "import CertDecode\nopen CertPrelude\nset_option maxRecDepth 200000\n\n\
+             def bytesN : Nat := 0x{}\n\
+             def bytesLen : Nat := {}\n\n\
+             example : CertDecode.AddSub.roleTable bytesN bytesLen =\n\
+                 some {{ box := {}, add := {}, sub := {} }} := rfl\n",
+            hex_le(&bytes),
+            bytes.len(),
+            option_nat(box_idx),
+            option_nat(add_idx),
+            option_nat(sub_idx),
+        );
+        let (ok, report) = run_lean(&prelude, &src);
+        assert!(
+            ok,
+            "S3 Rust/kernel role-table differential DIVERGED on `{name}`:\n{report}"
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, S1_FIXTURES.len() + 1);
+    eprintln!(
+        "S3 role-table differential PASS: {checked} modules (all certkit fixtures + json.av)"
+    );
+
+    let _ = std::fs::remove_dir_all(&out);
+    let _ = std::fs::remove_dir_all(&prelude);
+}
+
+fn first_i64_arith_offsets(bytes: &[u8], targets: &[u32]) -> Vec<(u32, usize, u8)> {
+    let mut imported_funcs = 0u32;
+    let mut defined = 0u32;
+    let mut found = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        match payload.expect("compiler-produced wasm must parse") {
+            wasmparser::Payload::ImportSection(reader) => {
+                for group in reader {
+                    for import in group.expect("import group must parse") {
+                        let (_, import) = import.expect("import must parse");
+                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                            imported_funcs += 1;
+                        }
+                    }
+                }
+            }
+            wasmparser::Payload::CodeSectionEntry(body) => {
+                let func_idx = imported_funcs + defined;
+                if targets.contains(&func_idx) {
+                    let mut operators = body.get_operators_reader().unwrap();
+                    while !operators.eof() {
+                        let offset = operators.original_position();
+                        let opcode = match operators.read().expect("operator must parse") {
+                            wasmparser::Operator::I64Add => Some(0x7c),
+                            wasmparser::Operator::I64Sub => Some(0x7d),
+                            wasmparser::Operator::I64Mul => Some(0x7e),
+                            _ => None,
+                        };
+                        if let Some(opcode) = opcode {
+                            found.push((func_idx, offset, opcode));
+                            break;
+                        }
+                    }
+                }
+                defined += 1;
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+/// Spike controls ported to the audited kernel path: changing add's first
+/// arithmetic byte to sub removes add and makes sub ambiguous; changing sub's
+/// byte to add creates two add candidates. Both classifiers must decline.
+#[test]
+fn s3_role_table_negative_controls_decline_empty_and_ambiguous_candidates() {
+    if !lake_available() {
+        eprintln!("skipping S3 role-table controls: `lake` not available");
+        return;
+    }
+
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let prelude = build_prelude();
+    let out = temp_dir("cdec-s3-role-controls");
+    std::fs::create_dir_all(&out).unwrap();
+    let bytes = compile_wasm_at(&repo, &repo.join("examples/data/json.av"), "json", &out);
+    let (box_idx, add_idx, sub_idx) =
+        aver::codegen::cert::byte_derived_frag_host_role_indices(&bytes).unwrap();
+    let (box_idx, add_idx, sub_idx) = (
+        box_idx.expect("json box role"),
+        add_idx.expect("json unique add role"),
+        sub_idx.expect("json unique sub role"),
+    );
+    let offsets = first_i64_arith_offsets(&bytes, &[add_idx, sub_idx]);
+    let (_, add_offset, add_opcode) = offsets
+        .iter()
+        .copied()
+        .find(|entry| entry.0 == add_idx)
+        .expect("add helper first arithmetic");
+    let (_, sub_offset, sub_opcode) = offsets
+        .iter()
+        .copied()
+        .find(|entry| entry.0 == sub_idx)
+        .expect("sub helper first arithmetic");
+    assert_eq!(add_opcode, 0x7c);
+    assert_eq!(sub_opcode, 0x7d);
+
+    let mut changed_add = bytes.clone();
+    changed_add[add_offset] = 0x7d;
+    let mut ambiguous_add = bytes.clone();
+    ambiguous_add[sub_offset] = 0x7c;
+    assert_eq!(
+        aver::codegen::cert::byte_derived_frag_host_role_indices(&changed_add).unwrap(),
+        (Some(box_idx), None, None),
+        "Rust negative control A must lose add and decline ambiguous sub"
+    );
+    assert_eq!(
+        aver::codegen::cert::byte_derived_frag_host_role_indices(&ambiguous_add).unwrap(),
+        (Some(box_idx), None, None),
+        "Rust negative control B must decline two add candidates"
+    );
+
+    let src = format!(
+        "import CertDecode\nopen CertPrelude\nset_option maxRecDepth 200000\n\n\
+         def changedAdd : Nat := 0x{}\n\
+         def ambiguousAdd : Nat := 0x{}\n\
+         def bytesLen : Nat := {}\n\n\
+         example : CertDecode.AddSub.roleTable changedAdd bytesLen =\n\
+             some {{ box := some {box_idx}, add := none, sub := none }} := rfl\n\
+         example : CertDecode.AddSub.addCands changedAdd bytesLen = some [] := rfl\n\
+         example : CertDecode.AddSub.subCands changedAdd bytesLen = some [{add_idx}, {sub_idx}] := rfl\n\n\
+         example : CertDecode.AddSub.roleTable ambiguousAdd bytesLen =\n\
+             some {{ box := some {box_idx}, add := none, sub := none }} := rfl\n\
+         example : CertDecode.AddSub.addCands ambiguousAdd bytesLen = some [{add_idx}, {sub_idx}] := rfl\n\
+         example : CertDecode.AddSub.subCands ambiguousAdd bytesLen = some [] := rfl\n",
+        hex_le(&changed_add),
+        hex_le(&ambiguous_add),
+        bytes.len(),
+    );
+    let (ok, report) = run_lean(&prelude, &src);
+    assert!(ok, "S3 kernel negative controls failed:\n{report}");
+
+    let _ = std::fs::remove_dir_all(out);
+    let _ = std::fs::remove_dir_all(prelude);
+}
+
 // ---- S1 differential transition -----------------------------------------
 
 #[test]

@@ -4,6 +4,7 @@
 -- This file contains every artifact-independent schema definition. The thin
 -- `Schema.lean` shim adds only the artifact-hash equality from `Module.lean`.
 import CertPrelude
+import CertDecode
 
 namespace AverCert.Schema
 open CertPrelude
@@ -91,6 +92,7 @@ structure Subject where
   declaredUncertified : List (String × String)
   capabilities : List (String × String)
   start        : Option Nat
+  hostRoleTable : CertDecode.AddSub.Roles
   contracts    : List String
 
 /-- The certification policy attached to a certified export. Partial simulation

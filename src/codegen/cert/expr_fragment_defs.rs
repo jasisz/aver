@@ -180,6 +180,10 @@ pub(crate) struct FragHostTable {
     pub(crate) sub_idx: Option<u32>,
 }
 
+/// Public differential surface for the three strict module-level roles, in
+/// fixed `(box, add, sub)` order.
+pub type FragHostRoleIndices = (Option<u32>, Option<u32>, Option<u32>);
+
 impl FragHostTable {
     pub(crate) fn lookup(&self, role: FragHostRole) -> Option<u32> {
         match role {
@@ -204,6 +208,22 @@ impl FragHostTable {
         // change the audited artifact/claim surface, so `sub` stays invisible
         // to Lean even though it is derived and carried Rust-side.
         format!("[{}]", entries.join(", "))
+    }
+
+    /// Module-level manifest value. Unlike `lean_value`, which renders the
+    /// plan grammar's present entries, this preserves all three classifier
+    /// outcomes (including `none`) for the in-kernel whole-module equality.
+    pub(crate) fn roles_lean_value(&self) -> String {
+        let option = |index: Option<u32>| match index {
+            Some(index) => format!("some {index}"),
+            None => "none".to_string(),
+        };
+        format!(
+            "({{ box := {}, add := {}, sub := {} }} : CertDecode.AddSub.Roles)",
+            option(self.box_idx),
+            option(self.add_idx),
+            option(self.sub_idx),
+        )
     }
 
     /// A placeholder table for producer-side encodability gating at MIR time,

@@ -292,6 +292,7 @@ fn render_manifest_lean(
         .start
         .map(|idx| format!("some {idx}"))
         .unwrap_or_else(|| "none".to_string());
+    let host_role_table = analysis.frag_host_table.roles_lean_value();
     let obligations = analysis
         .certs
         .iter()
@@ -487,6 +488,7 @@ fn render_manifest_lean(
          declaredUncertified := [{declared_uncertified}],\n        \
          capabilities := [{capabilities}],\n        \
          start := {start},\n        \
+         hostRoleTable := {host_role_table},\n        \
          contracts := [{contracts}] }},\n    \
          symFragmentPlans := [{sym_fragment_plans}],\n    \
          stringEqPlans := [{string_eq_plans}],\n    \
@@ -732,6 +734,17 @@ fn render_manifest(
             "  \"start\": {\"present\": false, \"function_index\": null},\n",
         ),
     }
+    let json_role = |index: Option<u32>| {
+        index
+            .map(|index| index.to_string())
+            .unwrap_or_else(|| "null".to_string())
+    };
+    s.push_str(&format!(
+        "  \"hostRoleTable\": {{\"box\": {}, \"add\": {}, \"sub\": {}}},\n",
+        json_role(analysis.frag_host_table.box_idx),
+        json_role(analysis.frag_host_table.add_idx),
+        json_role(analysis.frag_host_table.sub_idx),
+    ));
     s.push_str("  \"certified\": [");
     for (i, c) in analysis.certs.iter().enumerate() {
         if i > 0 {

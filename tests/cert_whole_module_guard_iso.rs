@@ -221,6 +221,28 @@ fn whole_module_guards_are_isolated_and_weaken_confirmed() {
     )
     .unwrap();
     assert_manifest_decode_declines(&wasm_path, &cert, "absent start must use null");
+
+    let mut malformed = honest_manifest.clone();
+    malformed.as_object_mut().unwrap().remove("hostRoleTable");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&malformed).unwrap(),
+    )
+    .unwrap();
+    assert_manifest_decode_declines(&wasm_path, &cert, "missing object field `hostRoleTable`");
+
+    let mut malformed = honest_manifest.clone();
+    malformed["hostRoleTable"]["extra"] = serde_json::json!(0);
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&malformed).unwrap(),
+    )
+    .unwrap();
+    assert_manifest_decode_declines(
+        &wasm_path,
+        &cert,
+        "must contain exactly fields box, add, sub",
+    );
     std::fs::write(
         &manifest_path,
         serde_json::to_vec_pretty(&honest_manifest).unwrap(),
@@ -320,6 +342,119 @@ example : withoutClosure globalReadArtifact := ⟨rfl, rfl, rfl⟩
     assert!(
         check.status.success(),
         "whole-module GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(out_dir);
+}
+
+/// S3 GuardIso: module bytes and every per-claim decode stay identical, while
+/// only the manifest's add role is changed. Full acceptance fails at the
+/// module-wide role-table equality; deleting exactly that conjunct accepts the
+/// same hostile manifest.
+#[test]
+fn inkernel_host_role_table_guard_is_isolated_and_weaken_confirmed() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping S3 host-role GuardIso test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-inkernel-host-role-guard-iso");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/data/json.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile json fixture for S3 GuardIso");
+    assert!(
+        compile.status.success(),
+        "json compile failed for S3 GuardIso:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let wasm = std::fs::read(out_dir.join("json.wasm")).unwrap();
+    let (box_idx, add_idx, sub_idx) =
+        aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
+    let (box_idx, add_idx, sub_idx) = (
+        box_idx.expect("json box role"),
+        add_idx.expect("json add role"),
+        sub_idx.expect("json sub role"),
+    );
+    let wrong_add_idx = add_idx + 1;
+    assert_ne!(wrong_add_idx, add_idx);
+
+    let cert = out_dir.join("cert");
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build json certificate before S3 GuardIso");
+    assert!(
+        build.status.success(),
+        "json certificate failed before S3 GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let lean = format!(
+        r#"import Artifact
+
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 300000
+
+def honestDecoded : AcceptedArtifact.decodedNonExprFacts Artifact.data := by
+  have accepted : AcceptedArtifact.accepted Artifact.data := Artifact.certificate
+  exact accepted.2.2.2.2.1
+
+-- Same bytes and claims; only the manifest's add index is hostile.
+def hostileRoleTable : CertDecode.AddSub.Roles :=
+  {{ box := some {box_idx}, add := some {wrong_add_idx}, sub := some {sub_idx} }}
+def hostileManifest : Manifest :=
+  {{ manifest with subject :=
+      {{ manifest.subject with hostRoleTable := hostileRoleTable }} }}
+def hostileArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with manifest := hostileManifest }}
+
+-- Literal one-conjunct-weakened copy: only the roleTable equality is absent.
+def withoutHostRoleTable (artifact : AcceptedArtifact.ArtifactData) : Prop :=
+  AcceptedArtifact.decodedNonExprClaimFacts artifact
+
+-- Every sibling decoded fact accepts the hostile manifest with identical bytes.
+example : withoutHostRoleTable hostileArtifact := by
+  change AcceptedArtifact.decodedNonExprClaimFacts Artifact.data
+  exact honestDecoded.2
+
+-- The full predicate fails exactly at the omitted module-wide equality.
+example : ¬ AcceptedArtifact.decodedNonExprFacts hostileArtifact := by
+  intro h
+  have bad := h.1
+  change CertDecode.AddSub.roleTable ArtifactBytes.modBytes ArtifactBytes.modLen =
+      some hostileRoleTable at bad
+  rw [Artifact.decodedHostRoles] at bad
+  have badTable : manifest.subject.hostRoleTable = hostileRoleTable :=
+    Option.some.inj bad
+  have badAdd := congrArg CertDecode.AddSub.Roles.add badTable
+  change some {add_idx} = some {wrong_add_idx} at badAdd
+  have distinct : (some {add_idx} : Option Nat) ≠ some {wrong_add_idx} := by decide
+  exact distinct badAdd
+"#
+    );
+    std::fs::write(cert.join("HostRoleGuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("HostRoleGuardIso.lean")
+        .output()
+        .expect("run S3 host-role GuardIso");
+    assert!(
+        check.status.success(),
+        "S3 host-role GuardIso failed:\n{}{}",
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
