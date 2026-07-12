@@ -3,6 +3,9 @@ use clap::Parser as ClapParser;
 #[cfg(feature = "wasm-compile")]
 #[path = "main/cert_cmd.rs"]
 mod cert_cmd;
+#[cfg(feature = "wasm-compile")]
+#[path = "main/cert_data_cache.rs"]
+mod cert_data_cache;
 #[path = "main/cli.rs"]
 mod cli;
 #[path = "main/commands.rs"]

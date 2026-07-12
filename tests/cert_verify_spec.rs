@@ -125,6 +125,10 @@ fn aver_command() -> Command {
         "AVER_CERT_PRELUDE_CACHE",
         std::env::temp_dir().join("aver-cert-prelude-store"),
     );
+    command.env(
+        "AVER_CERT_DATA_CACHE",
+        std::env::temp_dir().join("aver-cert-data-store"),
+    );
     command
 }
 
@@ -153,6 +157,7 @@ fn aver_verify_clean_cache(artifact: &Path, cert_dir: &Path) -> (bool, String) {
     // positive end-to-end verification independent of the test-only store.
     let out = aver_command()
         .env_remove("AVER_CERT_PRELUDE_CACHE")
+        .env("AVER_CERT_DATA_CACHE", "0")
         .arg("cert")
         .arg("verify")
         .arg(artifact)
@@ -165,6 +170,101 @@ fn aver_verify_clean_cache(artifact: &Path, cert_dir: &Path) -> (bool, String) {
         String::from_utf8_lossy(&out.stderr)
     );
     (out.status.success(), combined)
+}
+
+fn find_named_file(root: &Path, name: &str) -> Option<PathBuf> {
+    for entry in std::fs::read_dir(root).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        if entry.file_type().ok()?.is_dir() {
+            if let Some(found) = find_named_file(&path, name) {
+                return Some(found);
+            }
+        } else if entry.file_name() == name {
+            return Some(path);
+        }
+    }
+    None
+}
+
+#[test]
+fn cert_verify_rebuilds_after_cached_olean_corruption() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping cert DATA-cache corruption test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-data-cache-corruption-artifact");
+    let cache_dir = temp_dir("cert-data-cache-corruption-store");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/mutual.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile mutual fixture for DATA-cache corruption test");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let verify = || {
+        Command::new(env!("CARGO_BIN_EXE_aver"))
+            .env(
+                "AVER_CERT_PRELUDE_CACHE",
+                std::env::temp_dir().join("aver-cert-prelude-store"),
+            )
+            .env("AVER_CERT_DATA_CACHE", &cache_dir)
+            .arg("cert")
+            .arg("verify")
+            .arg(out_dir.join("mutual.wasm"))
+            .arg(out_dir.join("cert"))
+            .output()
+            .expect("verify mutual fixture with isolated DATA cache")
+    };
+    let first = verify();
+    assert!(
+        first.status.success(),
+        "initial cached verify failed:\n{}{}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let artifact_olean = find_named_file(&cache_dir, "Artifact.olean")
+        .expect("successful verify should publish cached Artifact.olean");
+    let mut corrupted = std::fs::read(&artifact_olean).unwrap();
+    assert!(!corrupted.is_empty(), "Artifact.olean must not be empty");
+    corrupted[0] ^= 0xff;
+    std::fs::write(&artifact_olean, &corrupted).unwrap();
+
+    let second = verify();
+    let second_report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&second.stdout),
+        String::from_utf8_lossy(&second.stderr)
+    );
+    assert!(
+        second.status.success(),
+        "corrupt cached olean must be rejected and rebuilt (or fail closed):\n{second_report}"
+    );
+    assert!(
+        second_report.contains("CERTIFIED"),
+        "rebuilt verification did not produce the normal verdict:\n{second_report}"
+    );
+    assert_ne!(
+        std::fs::read(&artifact_olean).unwrap(),
+        corrupted,
+        "corrupted Artifact.olean survived integrity validation"
+    );
+
+    let _ = std::fs::remove_dir_all(out_dir);
+    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 fn set_named_code_nlocals_to_zero(
@@ -4431,6 +4531,12 @@ fn cert_verify_declines_tampered_termination_manifest() {
             report.contains(expected),
             "{label}: wrong decline reason, expected `{expected}`:\n{report}"
         );
+        if label == "wrong descent" {
+            assert!(
+                report.contains("diagnostic kernel witness"),
+                "witness decline must surface the diagnostic rerun:\n{report}"
+            );
+        }
         let _ = std::fs::remove_dir_all(dir);
     }
     let _ = std::fs::remove_dir_all(out_dir);

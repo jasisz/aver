@@ -160,6 +160,10 @@ fn aver_command() -> Command {
         "AVER_CERT_PRELUDE_CACHE",
         std::env::temp_dir().join("aver-cert-prelude-store"),
     );
+    command.env(
+        "AVER_CERT_DATA_CACHE",
+        std::env::temp_dir().join("aver-cert-data-store"),
+    );
     command
 }
 
