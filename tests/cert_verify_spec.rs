@@ -360,7 +360,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     // values by `rfl` inside the kernel witness: the CERTIFIED report names that
     // guarantee (artifact-decode).
     assert!(
-        report.contains("artifact-decode:") && report.contains("kernel-pinned"),
+        report.contains("artifact-decode:") && report.contains("kernel-decoded"),
         "missing artifact-decode line on the happy path:\n{report}"
     );
 
