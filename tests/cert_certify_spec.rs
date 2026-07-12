@@ -152,6 +152,14 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         manifest["start"],
         serde_json::json!({"present": false, "function_index": null})
     );
+    let wasm = std::fs::read(out_dir.join("cert_goals.wasm")).unwrap();
+    let (box_idx, add_idx, sub_idx) =
+        aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
+    assert_eq!(
+        manifest["hostRoleTable"],
+        serde_json::json!({"box": box_idx, "add": add_idx, "sub": sub_idx}),
+        "manifest hostRoleTable must come from the Rust classifier over the emitted bytes"
+    );
 
     let actual: BTreeMap<String, String> = manifest["certified"]
         .as_array()

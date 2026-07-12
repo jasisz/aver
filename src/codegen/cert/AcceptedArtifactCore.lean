@@ -1473,8 +1473,10 @@ def decodedCompositionClaims
 /-- Kernel-computed F1/F2/F3 facts for every non-expression-fragment family.
     Mutual obligations bind every member of their shared SCC `CodeTbl`;
     composition obligations bind every name in their byte-checked transitive
-    closure. The source expression-fragment claim list is deliberately absent. -/
-def decodedNonExprFacts (artifact : ArtifactData) : Prop :=
+    closure. The source expression-fragment claim list is deliberately absent.
+    Kept separate so the module-wide host-role guard has a literal
+    one-conjunct-weakened GuardIso counterpart. -/
+def decodedNonExprClaimFacts (artifact : ArtifactData) : Prop :=
   decodedClaims artifact.modBytes artifact.modLen
       (fun c : StringEqClaim => c.obligation)
       (fun c : StringEqClaim => [c.obligation.self])
@@ -1511,6 +1513,19 @@ def decodedNonExprFacts (artifact : ArtifactData) : Prop :=
   decodedProjectionStructFields artifact.modBytes artifact.modLen artifact.fieldProjectionClaims ∧
   decodedCompositionClaims artifact.modBytes artifact.modLen
       artifact.compositionMembers artifact.compositionClaims
+
+/-- Decode the plan-first box/add/sub host-role table exactly once for the
+    whole module, then bind it to the manifest. -/
+def decodedHostRoleTable (artifact : ArtifactData) : Prop :=
+  CertDecode.AddSub.roleTable artifact.modBytes artifact.modLen =
+    some artifact.manifest.subject.hostRoleTable
+
+/-- All in-kernel non-expression byte facts. Keeping `decodedHostRoleTable`
+    outside every per-obligation fold is load-bearing for the
+    200000-heartbeat budget. -/
+def decodedNonExprFacts (artifact : ArtifactData) : Prop :=
+  decodedHostRoleTable artifact ∧
+  decodedNonExprClaimFacts artifact
 
 def claimObligationExports (artifact : ArtifactData) : List String :=
   artifact.symFragmentClaims.map (fun c => c.obligation.export_) ++

@@ -33,6 +33,29 @@ pub fn byte_derived_frag_host_table_lean(wasm_bytes: &[u8]) -> Result<String, St
     Ok(host_table.lean_value())
 }
 
+/// Raw Rust-classifier result used by the permanent kernel differential. The
+/// production trust path is the `CertDecode.AddSub.roleTable` equality; this
+/// helper keeps the pre-existing Rust classifier available as an independent
+/// transition oracle over the full fixture corpus.
+pub fn byte_derived_frag_host_role_indices(
+    wasm_bytes: &[u8],
+) -> Result<FragHostRoleIndices, String> {
+    let (
+        _user_fns,
+        _box_idx,
+        _user_idx_set,
+        _carrier,
+        _host_roles,
+        host_table,
+        _struct_field_counts,
+    ) = disassemble(wasm_bytes)?;
+    Ok((
+        host_table.box_idx,
+        host_table.add_idx,
+        host_table.sub_idx,
+    ))
+}
+
 /// Every `call` in a candidate expr-fragment body must resolve through the
 /// byte-derived host-role table; any other callee fail-closes the sidecar
 /// gate (recursion, user calls, unknown helpers).
