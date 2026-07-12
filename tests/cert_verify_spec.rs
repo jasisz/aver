@@ -1780,6 +1780,8 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     assert!(
         out.contains("fragmentClaimObligationsInManifest")
             || out.contains("manifest.obligations).contains")
+            || out.contains("closureIsolation")
+            || out.contains("closureClaim")
             || out.contains("AverCert.Artifact.certificate")
             || out.contains("Artifact.lean"),
         "wrong reason for missing manifest obligation:\n{out}"
@@ -3334,7 +3336,9 @@ example : ∀ nameBytes,
 
 example : ¬ AcceptedArtifact.accepted unclaimedArtifact := by
   intro h
-  rcases h with ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hclaimed, _⟩
+  rcases h with ⟨_, _, _, _, hfragments⟩
+  rcases hfragments with ⟨_, _, _, _, _, _, _, _, _, hcomposition, _⟩
+  have hclaimed := hcomposition.2.2.1
   change false = true at hclaimed
   contradiction
 
@@ -3342,7 +3346,8 @@ example : acceptedWithoutClaimCoverage unclaimedArtifact := by
   rcases Artifact.certificate with
     ⟨_, hsubject, hobs, hmatch, hsym, hstringEq, hstringConcat, hconstruct,
       hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
-      hcomposition, hmembersCovered, _, _⟩
+      hcompositionAccepted, _⟩
+  rcases hcompositionAccepted with ⟨hcomposition, hmembersCovered, _, _⟩
   refine ⟨unclaimedFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact hsubject
   · simpa [unclaimedArtifact, unclaimedManifest,
@@ -3463,7 +3468,9 @@ example : ∀ nameBytes,
 
 example : ¬ AcceptedArtifact.accepted duplicateArtifact := by
   intro h
-  rcases h with ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hunique⟩
+  rcases h with ⟨_, _, _, _, hfragments⟩
+  rcases hfragments with ⟨_, _, _, _, _, _, _, _, _, hcomposition, _⟩
+  have hunique := hcomposition.2.2.2
   change false = true at hunique
   contradiction
 
@@ -3471,7 +3478,8 @@ example : acceptedWithoutUniqueExports duplicateArtifact := by
   rcases Artifact.certificate with
     ⟨_, hsubject, hobs, hmatch, hsym, hstringEq, hstringConcat, hconstruct,
       hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
-      hcomposition, hmembersCovered, _, _⟩
+      hcompositionAccepted, _⟩
+  rcases hcompositionAccepted with ⟨hcomposition, hmembersCovered, _, _⟩
   refine ⟨duplicateFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact hsubject
   · simpa [duplicateArtifact, duplicateManifest,
@@ -4738,7 +4746,7 @@ fn mutual_scc_kernel_guards_are_isolating() {
     lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3, 4]), (2, 1, [1, 2, 3, 4]), (3, 4, [1, 2, 3, 4]), (4, 3, [1, 2, 3, 4])] = false := rfl\n\n");
     // FIX B: the REAL acceptance conjunct rejects a dangling group; shape passes.
     lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := 2, code := fun _ => none,\n    host := fun _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
-    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
+    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], declaredUncertified := [], capabilities := [], start := none, contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
     lean.push_str("def claimsS : List MutualRecursionClaim :=\n  [ { exportNameBytes := [], exportName := \"a\", carrier := 2, memberSet := [1, 2],\n      hostTable := [(.box, 7), (.sub, 9)], obligation := dummyOb \"a\" 1 } ]\n\n");
     lean.push_str("example : AverCert.PlanCheck.checkMutualPlanShape [1, 2] [(.box, 7), (.sub, 9)] honestPlan = true := rfl\n");
     lean.push_str("example : mutualClaimEdges manifestS claimsS = some [(1, 2, [1, 2])] := rfl\n");

@@ -57,7 +57,7 @@ use crate::ir::AnalysisResult;
 
 mod body;
 mod builtins;
-mod effects;
+pub(crate) mod effects;
 mod flatten;
 mod lists;
 mod maps;

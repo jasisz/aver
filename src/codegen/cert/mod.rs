@@ -66,7 +66,7 @@ pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
 /// Certification level of a v0 artifact certificate: conditional on the named
 /// runtime contracts (see the consult level naming L0/L1/L2/L3).
 pub const CERT_LEVEL: &str = "L1";
-pub const CERT_SCHEMA_VERSION: u32 = 48;
+pub const CERT_SCHEMA_VERSION: u32 = 49;
 pub const BOX_CONTRACT: &str = "__rt_aint_from_i64 (box i64 -> carrier)";
 pub const INT_ADD_CONTRACT: &str =
     "Int.add (carrier add = exact integer addition on represented values)";
@@ -149,6 +149,7 @@ include!("construct_plan_defs.rs");
 include!("field_projection_plan_defs.rs");
 include!("cert_methods.rs");
 include!("analysis.rs");
+include!("module_envelope.rs");
 include!("rederive.rs");
 include!("disasm.rs");
 include!("classification.rs");

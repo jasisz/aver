@@ -124,6 +124,34 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         Some(aver::codegen::cert::ARTIFACT_CERTIFICATE_ROOT),
         "manifest should expose the artifact-level certificate root"
     );
+    assert_eq!(
+        manifest["schema_version"].as_u64(),
+        Some(u64::from(aver::codegen::cert::CERT_SCHEMA_VERSION))
+    );
+    let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
+    assert_eq!(
+        declared_uncertified.len(),
+        13,
+        "all 36 module exports must be certified or explicitly declared"
+    );
+    assert!(declared_uncertified.iter().all(|entry| {
+        entry.as_object().is_some_and(|object| {
+            object.len() == 2
+                && object
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some()
+                && object
+                    .get("reason")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some()
+        })
+    }));
+    assert_eq!(manifest["capabilities"], serde_json::json!([]));
+    assert_eq!(
+        manifest["start"],
+        serde_json::json!({"present": false, "function_index": null})
+    );
 
     let actual: BTreeMap<String, String> = manifest["certified"]
         .as_array()

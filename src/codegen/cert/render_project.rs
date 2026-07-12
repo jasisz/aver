@@ -1469,9 +1469,25 @@ fn render_artifact(
         host_table_lean,
         struct_table_lean,
     );
+    let nat_list = |values: &[u32]| {
+        format!(
+            "[{}]",
+            values
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let closure_claim = format!(
+        "({{ roots := {}, helpers := {}, admitted := {} }} : AverCert.AcceptedArtifact.ClosureClaim)",
+        nat_list(&analysis.module_envelope.closure.roots),
+        nat_list(&analysis.module_envelope.closure.helpers),
+        nat_list(&analysis.module_envelope.closure.admitted),
+    );
     let fragment_proof = format!(
         concat!(
-            "  dsimp [data, symFragmentClaims, stringEqClaims, stringConcatClaims, constructClaims, recursionClaims, mutualRecursionClaims, verbatimClaims, intDispatchClaims, fieldProjectionClaims, compositionMembers, compositionClaims, AverCert.AcceptedArtifact.accepted,\n",
+            "  dsimp [data, closureClaim, symFragmentClaims, stringEqClaims, stringConcatClaims, constructClaims, recursionClaims, mutualRecursionClaims, verbatimClaims, intDispatchClaims, fieldProjectionClaims, compositionMembers, compositionClaims, AverCert.AcceptedArtifact.accepted,\n",
             "    AverCert.AcceptedArtifact.subjectMatchesArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.expectedArtifactRoot,\n",
             "    AverCert.AcceptedArtifact.fragmentClaimObligationsInManifest,\n",
@@ -1513,6 +1529,7 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.acceptedIntDispatchFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedFieldProjectionFragments,\n",
             "    AverCert.AcceptedArtifact.acceptedCompositionFragments,\n",
+            "    AverCert.AcceptedArtifact.acceptedWholeModule,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimsAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentClaimAccepted,\n",
             "    AverCert.AcceptedArtifact.symFragmentPlanAccepted,\n",
@@ -1570,7 +1587,7 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.intDispatchCanonicalSlots,\n",
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n",
-            "  exact ⟨finalCert, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, ⟨{int_dispatch_proof}, ⟨{field_projection_proof}, {composition_proof}⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
+            "  exact ⟨finalCert, ⟨rfl, ⟨{obligation_proof}, ⟨⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩, ⟨{sym_proof}, ⟨{string_eq_proof}, ⟨{string_proof}, ⟨{construct_proof}, ⟨{recursion_proof}, ⟨⟨{mutual_proof}, rfl⟩, ⟨{verbatim_proof}, ⟨{int_dispatch_proof}, ⟨{field_projection_proof}, ⟨{composition_proof}, ⟨rfl, rfl, rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n"
         ),
         obligation_proof = claims.obligation_proof,
         sym_proof = claims.sym_proof,
@@ -1594,6 +1611,8 @@ fn render_artifact(
          import Final\n\
          import Manifest\n\
          import Plans\n\n\
+         -- The whole-module big-Nat closure fold is kernel reduction. This\n\
+         -- explicit depth budget affects kernel reduction limits only, not soundness or axioms.\n\
          set_option maxRecDepth 200000\n\
          set_option linter.unusedSimpArgs false\n\n\
          namespace AverCert.Artifact\n\n\
@@ -1608,9 +1627,10 @@ fn render_artifact(
          def fieldProjectionClaims : List AverCert.AcceptedArtifact.FieldProjectionClaim := {field_projection_claims_list}\n\n\
          def compositionMembers : List AverCert.AcceptedArtifact.CompositionMemberClaim := {composition_members_list}\n\n\
          def compositionClaims : List AverCert.AcceptedArtifact.CompositionClaim := {composition_claims_list}\n\n\
+         def closureClaim : AverCert.AcceptedArtifact.ClosureClaim := {closure_claim}\n\n\
          {mutual_scc_closure_pins}\
          def data : AverCert.AcceptedArtifact.ArtifactData :=\n  \
-           ({{ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims, fieldProjectionClaims := fieldProjectionClaims, compositionMembers := compositionMembers, compositionClaims := compositionClaims }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
+           ({{ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims, fieldProjectionClaims := fieldProjectionClaims, compositionMembers := compositionMembers, compositionClaims := compositionClaims, closureFuel := {closure_fuel}, closureClaim := closureClaim }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
          def acceptedWithFinal\n\
              (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n\
              AverCert.AcceptedArtifact.accepted data := by\n\
@@ -1629,6 +1649,8 @@ fn render_artifact(
         field_projection_claims_list = claims.field_projection_claims,
         composition_members_list = claims.composition_members,
         composition_claims_list = claims.composition_claims,
+        closure_claim = closure_claim,
+        closure_fuel = analysis.module_envelope.closure_fuel,
         mutual_scc_closure_pins = render_mutual_scc_closure_pins(analysis),
         fragment_proof = fragment_proof
     )

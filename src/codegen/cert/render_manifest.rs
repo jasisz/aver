@@ -273,6 +273,25 @@ fn render_manifest_lean(
         .map(|c| lean_str(c))
         .collect::<Vec<_>>()
         .join(", ");
+    let declared_uncertified = analysis
+        .module_envelope
+        .declared_uncertified(analysis.certified_names(), &analysis.declined)
+        .iter()
+        .map(|(name, reason)| format!("({}, {})", lean_str(name), lean_str(reason)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let capabilities = analysis
+        .module_envelope
+        .capabilities
+        .iter()
+        .map(|(module, field)| format!("({}, {})", lean_str(module), lean_str(field)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let start = analysis
+        .module_envelope
+        .start
+        .map(|idx| format!("some {idx}"))
+        .unwrap_or_else(|| "none".to_string());
     let obligations = analysis
         .certs
         .iter()
@@ -465,6 +484,9 @@ fn render_manifest_lean(
          abi := \"{RUNTIME_ABI}\",\n        \
          artifactRoot := \"{ARTIFACT_CERTIFICATE_ROOT}\",\n        \
          exports := [{exports}],\n        \
+         declaredUncertified := [{declared_uncertified}],\n        \
+         capabilities := [{capabilities}],\n        \
+         start := {start},\n        \
          contracts := [{contracts}] }},\n    \
          symFragmentPlans := [{sym_fragment_plans}],\n    \
          stringEqPlans := [{string_eq_plans}],\n    \
@@ -669,6 +691,47 @@ fn render_manifest(
         s.push_str("\n  ");
     }
     s.push_str("],\n");
+    let declared_uncertified = analysis
+        .module_envelope
+        .declared_uncertified(analysis.certified_names(), &analysis.declined);
+    s.push_str("  \"declaredUncertified\": [");
+    for (i, (name, reason)) in declared_uncertified.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!(
+            "\n    {{\"name\": {}, \"reason\": {}}}",
+            json_str(name),
+            json_str(reason)
+        ));
+    }
+    if !declared_uncertified.is_empty() {
+        s.push_str("\n  ");
+    }
+    s.push_str("],\n");
+    s.push_str("  \"capabilities\": [");
+    for (i, (module, field)) in analysis.module_envelope.capabilities.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!(
+            "\n    {{\"module\": {}, \"name\": {}}}",
+            json_str(module),
+            json_str(field)
+        ));
+    }
+    if !analysis.module_envelope.capabilities.is_empty() {
+        s.push_str("\n  ");
+    }
+    s.push_str("],\n");
+    match analysis.module_envelope.start {
+        Some(index) => s.push_str(&format!(
+            "  \"start\": {{\"present\": true, \"function_index\": {index}}},\n"
+        )),
+        None => s.push_str(
+            "  \"start\": {\"present\": false, \"function_index\": null},\n",
+        ),
+    }
     s.push_str("  \"certified\": [");
     for (i, c) in analysis.certs.iter().enumerate() {
         if i > 0 {

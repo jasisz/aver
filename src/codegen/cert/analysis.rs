@@ -2,6 +2,7 @@
 pub struct Analysis {
     certs: Vec<Cert>,
     declined: Vec<(String, String)>,
+    module_envelope: ModuleEnvelopeFacts,
     carrier: Option<u32>,
     contracts: Vec<String>,
     /// The strict byte-derived host-role table (S1 criteria: carrier-binop
@@ -121,10 +122,16 @@ pub fn analyze_with_fragment_plans(
 
     // Named runtime contracts actually consumed by the certified functions.
     let contracts = runtime_contracts_for_certs(&certs);
+    let certified = certs
+        .iter()
+        .map(|cert| (cert.name().to_string(), cert.self_idx()))
+        .collect::<Vec<_>>();
+    let module_envelope = collect_module_envelope_facts(wasm_bytes, &certified)?;
 
     Ok(Analysis {
         certs,
         declined,
+        module_envelope,
         carrier,
         contracts,
         frag_host_table,
