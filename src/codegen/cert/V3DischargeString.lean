@@ -178,6 +178,98 @@ theorem stringConcat_accepted_call
         claim.obligation.self stringConcat hStringConcat hCheck body hLow
         hCodeSelf hHostSlot fuel v w hRun
 
+/-- Canonical option-(c) leaf bridge for a String.eq obligation.  The model,
+helper index, checked plan, lowering, and code binding are all explicit. -/
+theorem stringEq_canonical_discharges
+    (exportName : String)
+    (carrier stringTy stringEqFuncIdx self : Nat)
+    (plan : StringEqRawPlan) (code : CodeTbl)
+    (host :
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (Nat → List WVal → Option WVal) → HostTbl)
+    (hCheck : AverCert.PlanCheck.checkStringEqRawPlan plan = true)
+    {body : List WInstr}
+    (hLow : AverCert.PlanLower.lowerStringEqBody
+      stringTy stringEqFuncIdx plan = some body)
+    (hCode : code self = some ⟨1, 2, body⟩)
+    (hHost : ∀ add sub mul stringEq stringConcat,
+      host add sub mul stringEq stringConcat stringEqFuncIdx =
+        some (2, stringEq)) :
+    Obligation.holds
+      ({ export_ := exportName
+         policy := .simulatesModel
+         carrier := carrier
+         code := code
+         host := host
+         self := self
+         Dom := WVal
+         Cod := WVal
+         domRepr := fun _ v vs => vs = [v]
+         codRepr := fun S v w => verbatimRepr S v w
+         model := fun v => V3String.evalStringEq stringTy plan v } :
+        Obligation) := by
+  intro S add sub mul stringEq stringConcat
+    _hAdd _hSub _hMul hStringEq _hStringConcat fuel v vs w hDom hRun
+  subst vs
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      have hCall := V3String.generic_string_eq_certified
+        stringTy stringEqFuncIdx plan code
+        (host add sub mul stringEq stringConcat) self stringEq hStringEq
+        hCheck body hLow hCode (hHost add sub mul stringEq stringConcat)
+        fuel v w hRun
+      simpa [verbatimRepr] using hCall
+
+/-- Canonical option-(c) leaf bridge for a String.concat obligation. -/
+theorem stringConcat_canonical_discharges
+    (exportName : String)
+    (carrier resultTy containerTy concatFuncIdx self : Nat)
+    (plan : StringConcatRawPlan) (code : CodeTbl)
+    (host :
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (Nat → List WVal → Option WVal) → HostTbl)
+    (hCheck : AverCert.PlanCheck.checkStringConcatRawPlan plan = true)
+    {body : List WInstr}
+    (hLow : AverCert.PlanLower.lowerStringConcatBody
+      resultTy containerTy concatFuncIdx plan = some body)
+    (hCode : code self = some ⟨1, 1, body⟩)
+    (hHost : ∀ add sub mul stringEq stringConcat,
+      host add sub mul stringEq stringConcat concatFuncIdx =
+        some (1, stringConcat resultTy)) :
+    Obligation.holds
+      ({ export_ := exportName
+         policy := .simulatesModel
+         carrier := carrier
+         code := code
+         host := host
+         self := self
+         Dom := WVal
+         Cod := WVal
+         domRepr := fun _ v vs => vs = [v]
+         codRepr := fun S v w => verbatimRepr S v w
+         model := fun v =>
+           V3String.evalStringConcat resultTy containerTy plan v } :
+        Obligation) := by
+  intro S add sub mul stringEq stringConcat
+    _hAdd _hSub _hMul _hStringEq hStringConcat fuel v vs w hDom hRun
+  subst vs
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      have hCall := V3String.generic_string_concat_certified
+        resultTy containerTy concatFuncIdx plan code
+        (host add sub mul stringEq stringConcat) self stringConcat hStringConcat
+        hCheck body hLow hCode (hHost add sub mul stringEq stringConcat)
+        fuel v w hRun
+      simpa [verbatimRepr] using hCall
+
 theorem stringEq_claim_discharges
     (artifact : ArtifactData)
     (hAcc : acceptedStringEqFragments artifact)
@@ -325,6 +417,8 @@ end V3Master
 
 #print axioms V3Master.stringEq_accepted_call
 #print axioms V3Master.stringConcat_accepted_call
+#print axioms V3Master.stringEq_canonical_discharges
+#print axioms V3Master.stringConcat_canonical_discharges
 #print axioms V3Master.stringEq_claim_discharges
 #print axioms V3Master.stringConcat_claim_discharges
 #print axioms V3Master.stringEq_discharges

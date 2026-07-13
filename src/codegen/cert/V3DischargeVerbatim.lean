@@ -137,6 +137,46 @@ theorem verbatim_accepted_call
         plan claim.obligation.code host claim.obligation.self
         (verbatimNLocals plan) (hGuards plan hPlan) hCodeSelf fuel v w hRun
 
+/-- Canonical option-(c) leaf bridge for a byte-derived verbatim dispatch.
+The obligation model is the audited plan evaluator itself, so artifact-specific
+callers supply only the reducible plan guard and code-table binding. -/
+theorem verbatim_canonical_discharges
+    (exportName : String) (carrier self : Nat)
+    (plan : VerbatimRawPlan) (code : CodeTbl)
+    (host :
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (Nat → List WVal → Option WVal) → HostTbl)
+    (hGuards : verbatimGenericGuards plan)
+    (hCode : code self = some
+      ⟨1, verbatimNLocals plan,
+        AverCert.PlanLower.lowerVerbatimBody plan⟩) :
+    Obligation.holds
+      ({ export_ := exportName
+         policy := .simulatesModel
+         carrier := carrier
+         code := code
+         host := host
+         self := self
+         Dom := WVal
+         Cod := WVal
+         domRepr := fun _ v vs => vs = [v]
+         codRepr := fun S v w => verbatimRepr S v w
+         model := fun v => V3ConstructVerbatim.verbatimModel plan v } :
+        Obligation) := by
+  intro S add sub mul stringEq stringConcat
+    _hAdd _hSub _hMul _hStringEq _hStringConcat fuel v vs w hDom hRun
+  subst vs
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      have hCall := V3ConstructVerbatim.generic_verbatim_certified
+        plan code (host add sub mul stringEq stringConcat) self
+        (verbatimNLocals plan) hGuards hCode fuel v w hRun
+      simpa [verbatimRepr] using hCall
+
 theorem verbatim_claim_discharges
     (artifact : ArtifactData)
     (hAcc : acceptedVerbatimFragments artifact)
@@ -202,5 +242,6 @@ end V3Master
 #print axioms V3Master.verbatim_raw_allows_oob_locals
 #print axioms V3Master.verbatim_generic_rejects_oob_locals
 #print axioms V3Master.verbatim_accepted_call
+#print axioms V3Master.verbatim_canonical_discharges
 #print axioms V3Master.verbatim_claim_discharges
 #print axioms V3Master.verbatim_discharges

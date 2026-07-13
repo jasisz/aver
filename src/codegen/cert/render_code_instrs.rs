@@ -129,23 +129,6 @@ fn render_array_elements(bytes: &[u8]) -> String {
     format!("[{parts}]")
 }
 
-fn render_default_guard(default: &VerbatimDefault) -> String {
-    match default {
-        VerbatimDefault::Null => {
-            "(fun w => match w with | .null => some 0 | _ => none) = some 0".to_string()
-        }
-        VerbatimDefault::F64Bits(bits) => format!(
-            "(fun w => match w with | .f64v bits => some bits | _ => none) = some (0x{bits:016x} : UInt64)"
-        ),
-        VerbatimDefault::Array {
-            type_idx, bytes, ..
-        } => format!(
-            "(fun w => match w with | .arr t es => if t = {type_idx} ∧ es.length = {} then some 0 else none | _ => none) = some 0",
-            bytes.len()
-        ),
-    }
-}
-
 fn render_lean_instr_list(instrs: &[LeanInstr]) -> String {
     let parts = instrs
         .iter()

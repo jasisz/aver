@@ -5,27 +5,12 @@ fn render_adt_constructor_cert(c: &Cert, model_info: &ModelInfo) -> String {
         self_idx,
         carrier,
         struct_idx,
-        field_count,
-        arity,
-        fields,
         ..
     } = c
     else {
         unreachable!()
     };
-    if !adt_constructor_uses_model(c, model_info) {
-        let _ = field_count;
-        return render_struct_verbatim_cert(
-            name,
-            *self_idx,
-            *carrier,
-            *struct_idx,
-            StructVerbatimShape::Pack {
-                arity: *arity,
-                fields,
-            },
-        );
-    }
+    debug_assert!(adt_constructor_uses_model(c, model_info));
     let sig = model_info.fns.get(name);
     let _ = sig
         .and_then(|s| model_info.inductives.get(&s.ret))
@@ -62,108 +47,6 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
       exact ⟨v, rfl, by simpa [AverCert.Schema.intRepr] using hv⟩
 "#
     )
-}
-
-/// The `struct.new`/verbatim shape proved by the constructor certificate.
-enum StructVerbatimShape<'a> {
-    /// Verbatim constructor: wrap `arity` arguments into variant `struct_idx`.
-    Pack {
-        arity: usize,
-        fields: &'a [ConstructorField],
-    },
-}
-
-/// The `struct.new`/verbatim constructor certificate: a single one-step
-/// `cases fuel` proof over `WVal`/`verbatimRepr` with no host.
-fn render_struct_verbatim_cert(
-    name: &str,
-    self_idx: u32,
-    carrier: u32,
-    struct_idx: u32,
-    shape: StructVerbatimShape,
-) -> String {
-    let (title, binders, input, rhs, intro, destructure, tripwire) = match shape {
-        StructVerbatimShape::Pack { arity, fields } => {
-            let built = render_constructor_fields(fields);
-            let (binders, input, intro, destructure) = if arity == 1 {
-                (
-                    "(a : WVal)".to_string(),
-                    "[a]".to_string(),
-                    "intro a".to_string(),
-                    String::new(),
-                )
-            } else {
-                (
-                    "(a b : WVal)".to_string(),
-                    "[a, b]".to_string(),
-                    "intro a b".to_string(),
-                    "  rcases p with ⟨a, b⟩\n".to_string(),
-                )
-            };
-            let concrete = if arity == 1 {
-                format!("[carrierSmall {carrier} 7]")
-            } else {
-                format!("[carrierSmall {carrier} 7, carrierSmall {carrier} 9]")
-            };
-            let tripwire = format!(
-                r#"-- Executable tripwire: pack concrete carriers and decode field 0 back to
--- `some 7`. A trapping body yields `none`, so this forces a real struct build.
-example :
-    ((wFuncN {name}Code {name}Host 1 {self_idx} {concrete}).bind
-      (fun r => match r with
-        | .structv _ (f :: _) => carrierToInt f
-        | _ => none))
-      = some 7 := by native_decide"#
-            );
-            (
-                "verbatim constructor certificate".to_string(),
-                binders,
-                input,
-                format!("(.structv {struct_idx} {built})"),
-                intro,
-                destructure,
-                tripwire,
-            )
-        }
-    };
-    format!(
-        r#"/-! ### {name} — {title} -/
-
-theorem {name}_wasm_certified (host : HostTbl) :
-    ∀ {binders}, wFuncN {name}Code host 1 {self_idx} {input} = some {rhs} := by
-  {intro}
-  simp [wFuncN, {name}Code, wRunF, popArgs, initLocals]
-
-#print axioms {name}_wasm_certified
-
-{tripwire}
-
-theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel p vs w hrepr hrun
-  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
-{destructure}  subst hrepr
-  cases fuel with
-  | zero => simp [wFuncN] at hrun
-  | succ f =>
-      simp [wFuncN, wRunF, {name}Code, popArgs, initLocals] at hrun
-      subst hrun
-      rfl
-"#
-    )
-}
-
-fn render_constructor_fields(fields: &[ConstructorField]) -> String {
-    let parts = fields
-        .iter()
-        .map(|field| match field {
-            ConstructorField::Local(0) => "a".to_string(),
-            ConstructorField::Local(1) => "b".to_string(),
-            ConstructorField::Local(i) => format!("x{i}"),
-            ConstructorField::Null => ".null".to_string(),
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("[{parts}]")
 }
 
 /// The per-class ingredients of one ADT-match certificate: the pieces that
@@ -465,5 +348,3 @@ fn adt_match_widened_plan(c: &Cert, model_info: &ModelInfo) -> Result<AdtMatchPl
         sim_cite: format!("{name}_wasm_certified S fuel o v w hv hrun"),
     })
 }
-
-// Verbatim WVal rendering lives in render_verbatim.rs.

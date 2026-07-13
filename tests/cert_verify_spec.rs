@@ -2494,8 +2494,7 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
         "stringeq should certify quoteOrSelf plus bump:\n{report}"
     );
     assert!(
-        report
-            .contains("quoteOrSelf  policy: simulatesModel  class: verbatim string equality match"),
+        report.contains("quoteOrSelf  policy: simulatesModel  class: String.eq leaf"),
         "quoteOrSelf should report the byte-derived String.eq class:\n{report}"
     );
     let manifest: serde_json::Value = serde_json::from_str(

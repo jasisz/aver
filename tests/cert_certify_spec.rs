@@ -36,6 +36,37 @@ fn aver_command() -> Command {
     command
 }
 
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let target = dst.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir_all(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+fn verify_certificate(wasm: &std::path::Path, cert_dir: &std::path::Path) -> (bool, String) {
+    let output = aver_command()
+        .arg("cert")
+        .arg("verify")
+        .arg(wasm)
+        .arg(cert_dir)
+        .output()
+        .expect("expected `aver cert verify` to run");
+    (
+        output.status.success(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )
+}
+
 #[test]
 fn certify_goal_matrix_manifest_tracks_current_surface() {
     // This fixture is the dashboard for "how much do we certify now?". Larger
@@ -698,6 +729,17 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
         final_lean.contains("V3Master.fieldProjection_direct_canonical_discharges \"userName\""),
         "coexistence projection arm must use the audited generic:\n{final_lean}"
     );
+    for (name, theorem) in [
+        ("wrapItems", "verbatim_canonical_discharges"),
+        ("tagName", "verbatim_canonical_discharges"),
+        ("quoteOrSelf", "stringEq_canonical_discharges"),
+        ("shout", "stringConcat_canonical_discharges"),
+    ] {
+        assert!(
+            final_lean.contains(&format!("V3Master.{theorem} \"{name}\"")),
+            "migrated leaf arm must use the audited generic: {name}\n{final_lean}"
+        );
+    }
     for bespoke_name in ["addTwo", "sumFrom", "countDown", "mkOp", "evalOp"] {
         assert!(
             final_lean.contains(&format!("CertProofs.{bespoke_name}_")),
@@ -708,8 +750,16 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
         .expect("Certificate.lean exists");
     assert!(
         !certificate.contains("userName_wasm_certified")
-            && !certificate.contains("userName_simulates"),
-        "projection-faced fragment must not emit bespoke proofs:\n{certificate}"
+            && !certificate.contains("userName_simulates")
+            && !certificate.contains("wrapItems_wasm_certified")
+            && !certificate.contains("wrapItems_simulates")
+            && !certificate.contains("tagName_wasm_certified")
+            && !certificate.contains("tagName_simulates")
+            && !certificate.contains("quoteOrSelf_wasm_certified")
+            && !certificate.contains("quoteOrSelf_simulates")
+            && !certificate.contains("shout_wasm_certified")
+            && !certificate.contains("shout_simulates"),
+        "migrated leaf families must not emit bespoke proofs:\n{certificate}"
     );
     let user_name = manifest["certified"]
         .as_array()
@@ -721,6 +771,20 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
         user_name["theorem"],
         "V3Master.fieldProjection_direct_canonical_discharges"
     );
+    for (name, theorem) in [
+        ("wrapItems", "V3Master.verbatim_canonical_discharges"),
+        ("tagName", "V3Master.verbatim_canonical_discharges"),
+        ("quoteOrSelf", "V3Master.stringEq_canonical_discharges"),
+        ("shout", "V3Master.stringConcat_canonical_discharges"),
+    ] {
+        let entry = manifest["certified"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == name)
+            .unwrap();
+        assert_eq!(entry["theorem"], theorem);
+    }
 
     let started = std::time::Instant::now();
     let build = Command::new("lake")
@@ -738,6 +802,12 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
     assert!(
         build.status.success(),
         "lake build of emitted v3 wall cert failed after {elapsed:.2?}:\n{combined}"
+    );
+    assert!(
+        combined.contains(
+            "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
+        ),
+        "mixed generic/bespoke Final.cert changed axiom surface:\n{combined}"
     );
 
     let typecheck = cert_dir.join("V3AcceptRealTypecheck.lean");
@@ -778,6 +848,76 @@ example :
         !combined.contains("sorryAx") && !typecheck_combined.contains("sorryAx"),
         "emitted v3 wall leaked sorryAx:\n{combined}\n{typecheck_combined}"
     );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
+fn cert_verify_declines_hostile_verbatim_and_string_models() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping hostile leaf-model test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-hostile-leaf-models");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/cert_goals.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile cert_goals for hostile model checks");
+    assert!(
+        compile.status.success(),
+        "hostile-model baseline compile failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("cert_goals.wasm");
+    let cert = out_dir.join("cert");
+    let (clean_ok, clean_report) = verify_certificate(&wasm, &cert);
+    assert!(
+        clean_ok,
+        "hostile-model baseline must first certify:\n{clean_report}"
+    );
+
+    for (label, honest, hostile) in [
+        (
+            "verbatim",
+            "model := tagNameModel }",
+            "model := wrapItemsModel }",
+        ),
+        (
+            "string",
+            "model := quoteOrSelfModel }",
+            "model := shoutModel }",
+        ),
+    ] {
+        let tampered = temp_dir(&format!("certify-hostile-{label}-model"));
+        copy_dir_all(&out_dir, &tampered);
+        let manifest = tampered.join("cert/Manifest.lean");
+        let source = std::fs::read_to_string(&manifest).unwrap();
+        let edited = source.replacen(honest, hostile, 1);
+        assert_ne!(
+            source, edited,
+            "{label} obligation model shape changed; update the hostile-model regression"
+        );
+        std::fs::write(&manifest, edited).unwrap();
+
+        let (ok, report) =
+            verify_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+        assert!(
+            !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+            "wrong canonical {label} model must be DECLINED:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&tampered);
+    }
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }
@@ -1194,6 +1334,29 @@ fn certify_verbatim_variant_dispatch_lake_builds_kernel_clean() {
         certified.contains(&"tagName"),
         "expected tagName certified, got {certified:?}"
     );
+    let tag_name = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "tagName")
+        .unwrap();
+    assert_eq!(
+        tag_name["theorem"],
+        "V3Master.verbatim_canonical_discharges"
+    );
+    let final_lean =
+        std::fs::read_to_string(cert_dir.join("Final.lean")).expect("Final.lean exists");
+    assert!(
+        final_lean.contains("V3Master.verbatim_canonical_discharges \"tagName\""),
+        "verbatim Final.cert arm must use the audited generic:\n{final_lean}"
+    );
+    let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
+        .expect("Certificate.lean exists");
+    assert!(
+        !certificate.contains("tagName_wasm_certified")
+            && !certificate.contains("tagName_simulates"),
+        "verbatim dispatch must not emit bespoke proofs:\n{certificate}"
+    );
 
     let build = Command::new("lake")
         .current_dir(&cert_dir)
@@ -1211,9 +1374,9 @@ fn certify_verbatim_variant_dispatch_lake_builds_kernel_clean() {
     );
     assert!(
         combined.contains(
-            "tagName_wasm_certified' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ),
-        "verbatim variant dispatch certificate not kernel-clean:\n{combined}"
+        "generic verbatim certificate not kernel-clean:\n{combined}"
     );
     assert!(
         !combined.contains("sorryAx"),
@@ -1295,6 +1458,10 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
         .find(|c| c["name"].as_str() == Some("quoteOrSelf"))
         .expect("quoteOrSelf manifest entry exists");
     assert_eq!(
+        quote_entry["theorem"],
+        "V3Master.stringEq_canonical_discharges"
+    );
+    assert_eq!(
         quote_entry["source_fragment"]["profile"].as_str(),
         Some("sym-fragment-v1"),
         "quoteOrSelf should expose a source-level SymPlan sidecar"
@@ -1349,6 +1516,19 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
         artifact_lean.contains("stringEqFuncIdx :=") && artifact_lean.contains("stringTy :="),
         "String.eq artifact claim should carry lowering indices:\n{artifact_lean}"
     );
+    let final_lean =
+        std::fs::read_to_string(cert_dir.join("Final.lean")).expect("Final.lean exists");
+    assert!(
+        final_lean.contains("V3Master.stringEq_canonical_discharges \"quoteOrSelf\""),
+        "String.eq Final.cert arm must use the audited generic:\n{final_lean}"
+    );
+    let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
+        .expect("Certificate.lean exists");
+    assert!(
+        !certificate.contains("quoteOrSelf_wasm_certified")
+            && !certificate.contains("quoteOrSelf_simulates"),
+        "String.eq must not emit bespoke proofs:\n{certificate}"
+    );
 
     let build = Command::new("lake")
         .current_dir(&cert_dir)
@@ -1366,9 +1546,9 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
     );
     assert!(
         combined.contains(
-            "quoteOrSelf_wasm_certified' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ),
-        "String.eq host-contract certificate not kernel-clean:\n{combined}"
+        "generic String.eq host-contract certificate not kernel-clean:\n{combined}"
     );
     assert!(
         !combined.contains("sorryAx"),
@@ -1438,6 +1618,10 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         .iter()
         .find(|c| c["name"].as_str() == Some("shout"))
         .expect("shout manifest entry");
+    assert_eq!(
+        shout_entry["theorem"],
+        "V3Master.stringConcat_canonical_discharges"
+    );
     let shout_class = shout_entry["class"].as_str().unwrap_or("<missing>");
     assert_eq!(
         shout_class, "verbatim-string-concat",
@@ -1566,6 +1750,18 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         artifact_lean.contains("concatFuncIdx :=") && artifact_lean.contains("resultTy :="),
         "String.concat artifact claim should carry lowering indices:\n{artifact_lean}"
     );
+    let final_lean =
+        std::fs::read_to_string(cert_dir.join("Final.lean")).expect("Final.lean exists");
+    assert!(
+        final_lean.contains("V3Master.stringConcat_canonical_discharges \"shout\""),
+        "String.concat Final.cert arm must use the audited generic:\n{final_lean}"
+    );
+    let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
+        .expect("Certificate.lean exists");
+    assert!(
+        !certificate.contains("shout_wasm_certified") && !certificate.contains("shout_simulates"),
+        "String.concat must not emit bespoke proofs:\n{certificate}"
+    );
 
     let build = Command::new("lake")
         .current_dir(&cert_dir)
@@ -1583,9 +1779,9 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
     );
     assert!(
         combined.contains(
-            "shout_wasm_certified' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ),
-        "String.concat host-contract certificate not kernel-clean:\n{combined}"
+        "generic String.concat host-contract certificate not kernel-clean:\n{combined}"
     );
     assert!(
         !combined.contains("sorryAx"),

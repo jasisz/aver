@@ -127,7 +127,11 @@ pub fn write_project(
         "Certificate.lean",
         &render_certificate(analysis, &model_roots, &model_info),
     )?;
-    write(&cert_dir, "Final.lean", &render_final(analysis))?;
+    write(
+        &cert_dir,
+        "Final.lean",
+        &render_final(analysis, &model_info),
+    )?;
     write(
         &cert_dir,
         "Artifact.lean",

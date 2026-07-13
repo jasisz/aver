@@ -4,8 +4,6 @@ include!("render_certificate.rs");
 include!("render_integer.rs");
 include!("render_composition.rs");
 include!("render_adt.rs");
-include!("render_verbatim.rs");
-include!("render_scalar.rs");
 include!("render_expr_fragment.rs");
 include!("render_model_support.rs");
 include!("render_mutual.rs");

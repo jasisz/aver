@@ -70,50 +70,22 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
         }
         out.push('\n');
     }
-    // Shared model definitions for verbatim widened matches: a single named
-    // function referenced by both the obligation `model` and the certificate
-    // proof, so the two match on the SAME compiled term (an inline match would
-    // elaborate to two distinct, non-defeq auxiliaries).
+    // Canonical model definitions for both verbatim dispatch shapes. The model
+    // is the audited evaluator applied to the plan emitted from recognized wasm
+    // structure/data segments; the checker independently re-renders that plan
+    // literal and pins this face with `HEq.rfl`.
     for c in &analysis.certs {
         let c = c.inner();
-        let Cert::VerbatimWidenedMatch {
-            hit_variant_idx, ..
-        } = c
-        else {
+        if !matches!(
+            c,
+            Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. }
+        ) {
             continue;
-        };
-        out.push_str(&format!(
-            "def {name}Model : CertPrelude.WVal → CertPrelude.WVal\n  \
-             | .structv {hit_variant_idx} (x :: _) => x\n  \
-             | _ => {default}\n\n",
-            name = c.name(),
-            default = match c {
-                Cert::VerbatimWidenedMatch { default, .. } => render_wval(default),
-                _ => unreachable!(),
-            },
-        ));
-    }
-    // Model for a verbatim variant dispatch: each tag maps to its byte-derived
-    // constant. The body's `ref.test i` matches the WVal type index for BOTH
-    // `.structv i` and `.arr i`, and constant arms never fail on `.arr` (unlike a
-    // field projection), so the model must dispatch on the type index for both
-    // carriers; anything else falls to the terminal default.
-    for c in &analysis.certs {
-        let c = c.inner();
-        let Cert::VerbatimVariantDispatch { arms, default, .. } = c else {
-            continue;
-        };
-        let mut body = String::new();
-        for (tag, konst) in arms {
-            body.push_str(&format!("  | .structv {tag} _ => {}\n", render_wval(konst)));
-        }
-        for (tag, konst) in arms {
-            body.push_str(&format!("  | .arr {tag} _ => {}\n", render_wval(konst)));
         }
         out.push_str(&format!(
-            "def {name}Model : CertPrelude.WVal → CertPrelude.WVal\n{body}  | _ => {default}\n\n",
+            "def {name}Model (v : CertPrelude.WVal) : CertPrelude.WVal :=\n  \
+             V3ConstructVerbatim.verbatimModel Plans.{name}VerbatimPlan v\n\n",
             name = c.name(),
-            default = render_wval(default),
         ));
     }
     // Model for String-literal dispatch: the String.eq helper is a host
@@ -163,7 +135,7 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
             container_parts.push_str(&format!(", {s}"));
         }
         let body = format!(
-            "  match stringConcatW {result_ty} (WVal.arr {container_ty} [{container_parts}]) with\n  | some w => w\n  | none => WVal.null\n"
+            "  (stringConcatW {result_ty} (WVal.arr {container_ty} [{container_parts}])).getD WVal.null\n"
         );
         out.push_str(&format!(
             "def {name}Model (v : CertPrelude.WVal) : CertPrelude.WVal :=\n{body}\n",
