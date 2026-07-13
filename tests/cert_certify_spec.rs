@@ -67,6 +67,23 @@ fn verify_certificate(wasm: &std::path::Path, cert_dir: &std::path::Path) -> (bo
     )
 }
 
+fn assert_certificate_target_builds(cert_dir: &std::path::Path, case: &str) {
+    let output = Command::new("lake")
+        .current_dir(cert_dir)
+        .args(["build", "Certificate"])
+        .output()
+        .expect("lake builds the isolated Certificate target");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.status.success(),
+        "honest Certificate target must build before the hostile edit ({case}):\n{combined}"
+    );
+}
+
 fn lean_obligation_def<'a>(manifest_lean: &'a str, name: &str) -> &'a str {
     let marker = format!("abbrev {name}Ob : Schema.Obligation :=");
     let start = manifest_lean
@@ -171,10 +188,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["schema_version"].as_u64(),
-        Some(60),
-        "multiplicative/accumulator recursion migration is certificate schema 60"
+        Some(61),
+        "mutual option-(b) migration is certificate schema 61"
     );
-    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 60);
+    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 61);
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
@@ -784,6 +801,13 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             "recursion arm must use the audited discharge and emitted bridge: {recursion_name}\n{final_lean}"
         );
     }
+    for mutual_name in ["isEven", "isOdd"] {
+        assert!(
+            final_lean.contains("V3Master.mutual_claim_discharges")
+                && final_lean.contains(&format!("CertProofs.{mutual_name}_mutualSemanticBridge")),
+            "mutual arm must use the audited discharge and emitted bridge: {mutual_name}\n{final_lean}"
+        );
+    }
     for bespoke_name in ["addTwo"] {
         assert!(
             final_lean.contains(&format!("CertProofs.{bespoke_name}_")),
@@ -818,8 +842,15 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             && !certificate.contains("countDown_wasm_certified")
             && !certificate.contains("countDown_wasm_total")
             && !certificate.contains("countDown_simulates")
-            && !certificate.contains("countDownHostRef"),
-        "migrated leaf/dispatch/construct/recursion families must not emit bespoke simulations or tripwires:\n{certificate}"
+            && !certificate.contains("countDownHostRef")
+            && !certificate.contains("isEven_simulates")
+            && !certificate.contains("isOdd_simulates")
+            && !certificate.contains("isEven_wasm")
+            && !certificate.contains("isOdd_wasm")
+            && !certificate.contains("isEven_mutual_sim")
+            && !certificate.contains("isEven_mutual_total")
+            && !certificate.contains("isEvenHostRef"),
+        "migrated leaf/dispatch/construct/recursion/mutual families must not emit bespoke simulations or tripwires:\n{certificate}"
     );
     for dispatch_name in ["evalOp", "boxInt", "gauge"] {
         assert!(
@@ -852,6 +883,16 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             && certificate.contains("ReprAll.cons hvn (ReprAll.cons hvacc ReprAll.nil)"),
         "accumulator recursion must emit both arity-two option-(b) model directions:\n{certificate}"
     );
+    for mutual_name in ["isEven", "isOdd"] {
+        assert!(
+            certificate.contains(&format!("theorem {mutual_name}_mutualSemanticBridge"))
+                && certificate.contains("V3Mutual.evalMutualUFuel")
+                && certificate.contains("have hModelFuel")
+                && certificate.contains("refine ⟨n, v, rfl, hv")
+                && certificate.contains("⟨[n], ⟨ReprAll.cons hv ReprAll.nil, rfl⟩"),
+            "mutual export must emit both option-(b) model directions: {mutual_name}\n{certificate}"
+        );
+    }
     let user_name = manifest["certified"]
         .as_array()
         .unwrap()
@@ -883,6 +924,15 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
         .find(|entry| entry["name"] == "countDown")
         .unwrap();
     assert_eq!(count_down["theorem"], "V3Master.recursion_claim_discharges");
+    for name in ["isEven", "isOdd"] {
+        let entry = manifest["certified"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == name)
+            .unwrap();
+        assert_eq!(entry["theorem"], "V3Master.mutual_claim_discharges");
+    }
     for (name, theorem) in [
         ("wrapItems", "V3Master.verbatim_canonical_discharges"),
         ("tagName", "V3Master.verbatim_canonical_discharges"),
@@ -943,6 +993,16 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
         ),
         "recursion bridge/discharge changed axiom surface:\n{combined}"
     );
+    assert!(
+        combined.contains(
+            "'CertProofs.isEven_mutualSemanticBridge' depends on axioms: [propext, Classical.choice, Quot.sound]"
+        ) && combined.contains(
+            "'CertProofs.isOdd_mutualSemanticBridge' depends on axioms: [propext, Classical.choice, Quot.sound]"
+        ) && combined.contains(
+            "'V3Master.mutual_claim_discharges' depends on axioms: [propext, Classical.choice, Quot.sound]"
+        ),
+        "mutual bridge/discharge changed axiom surface:\n{combined}"
+    );
 
     let typecheck = cert_dir.join("V3AcceptRealTypecheck.lean");
     std::fs::write(
@@ -987,7 +1047,7 @@ example :
 }
 
 #[test]
-fn cert_verify_declines_hostile_leaf_dispatch_construct_and_recursion_models() {
+fn cert_verify_declines_hostile_leaf_dispatch_construct_recursion_and_mutual_models() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping hostile leaf-model test: `lake` not available");
         return;
@@ -1020,6 +1080,10 @@ fn cert_verify_declines_hostile_leaf_dispatch_construct_and_recursion_models() {
         clean_ok,
         "hostile-model baseline must first certify:\n{clean_report}"
     );
+    let build_green = temp_dir("certify-hostile-mutual-build-green");
+    copy_dir_all(&out_dir, &build_green);
+    assert_certificate_target_builds(&build_green.join("cert"), "mutual hostile-model baseline");
+    let _ = std::fs::remove_dir_all(&build_green);
 
     for (label, honest, hostile) in [
         (
@@ -1079,6 +1143,43 @@ fn cert_verify_declines_hostile_leaf_dispatch_construct_and_recursion_models() {
         "wrong generated construct model definition must fail its emitted bridge and be DECLINED:\n{report}"
     );
     let _ = std::fs::remove_dir_all(&tampered);
+
+    for (name, honest, hostile) in [
+        (
+            "isEven",
+            "else isOdd__fuel fuel' (n - 1))",
+            "else isOdd__fuel fuel' (n - 2))",
+        ),
+        (
+            "isOdd",
+            "else isEven__fuel fuel' (n - 1))",
+            "else isEven__fuel fuel' (n - 2))",
+        ),
+    ] {
+        let tampered = temp_dir(&format!("certify-hostile-{name}-model-definition"));
+        copy_dir_all(&out_dir, &tampered);
+        let model = tampered.join("cert/CertGoals.lean");
+        let source = std::fs::read_to_string(&model).unwrap();
+        let edited = source.replacen(honest, hostile, 1);
+        assert_ne!(
+            source, edited,
+            "{name} model definition changed; update the hostile-model regression"
+        );
+        std::fs::write(&model, edited).unwrap();
+        let manifest = std::fs::read_to_string(tampered.join("cert/Manifest.lean")).unwrap();
+        assert!(
+            manifest.contains(&format!("model := fun ns => {name} (ns.headD 0)")),
+            "{name} hostile regression must leave the manifest model reference untouched"
+        );
+
+        let (ok, report) =
+            verify_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+        assert!(
+            !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+            "wrong generated {name} definition must fail the mutual semantic bridge and be DECLINED:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&tampered);
+    }
 
     let tampered = temp_dir("certify-hostile-recursion-model-definition");
     copy_dir_all(&out_dir, &tampered);
@@ -1497,24 +1598,17 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     // A two-member SCC (`isEven`/`isOdd`) and a three-member cycle
-    // (`rotA -> rotB -> rotC -> rotA`), so the ONE shared conjunction proof — its
-    // `induction fuel`, its k-way destructuring and its `.2.….1` conjunct
-    // projection — is exercised at both k = 2 and k = 3. `primary` is the
-    // lowest-`self_idx` member whose `{primary}_mutual_sim` carries the proof.
-    let cases: [(&str, &[&str], &str); 2] = [
-        (
-            "tools/certkit/fixtures/mutual.av",
-            &["isEven", "isOdd"],
-            "isEven",
-        ),
+    // (`rotA -> rotB -> rotC -> rotA`) exercise the plan-derived `AdmittedScc`
+    // and simultaneous source-fuel bridge at k = 2 and k = 3.
+    let cases: [(&str, &[&str]); 2] = [
+        ("tools/certkit/fixtures/mutual.av", &["isEven", "isOdd"]),
         (
             "tools/certkit/fixtures/mutual3.av",
             &["rotA", "rotB", "rotC"],
-            "rotA",
         ),
     ];
 
-    for (fixture, exports, primary) in cases {
+    for (fixture, exports) in cases {
         let out_dir = temp_dir("certify-mutual");
         let compile = aver_command()
             .current_dir(&repo_root)
@@ -1545,7 +1639,8 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
             .iter()
             .map(|c| c["name"].as_str().unwrap())
             .collect();
-        // Every member of the SCC is a certified export sharing one proof.
+        // Every member of the SCC is a certified export using the same audited
+        // SCC package and its own source-model bridge.
         for name in exports {
             assert!(
                 certified.contains(name),
@@ -1558,6 +1653,7 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
                 assert_eq!(entry["level"], "L3");
                 assert_eq!(entry["termination_witness"]["measure"]["kind"], "intNatAbs");
                 assert_eq!(entry["termination_witness"]["descent"], -1);
+                assert_eq!(entry["theorem"], "V3Master.mutual_claim_discharges");
             }
         }
 
@@ -1575,19 +1671,33 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
             build.status.success(),
             "lake build of emitted mutual cert {fixture} failed:\n{combined}"
         );
-        // The whole SCC shares ONE simulation proof, `{primary}_mutual_sim`,
-        // kernel-clean on the core whitelist.
+        let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean")).unwrap();
+        let final_lean = std::fs::read_to_string(cert_dir.join("Final.lean")).unwrap();
+        for name in exports {
+            assert!(
+                combined.contains(&format!(
+                    "'CertProofs.{name}_mutualSemanticBridge' depends on axioms: [propext, Classical.choice, Quot.sound]"
+                )),
+                "mutual bridge for {name} in {fixture} not kernel-clean:\n{combined}"
+            );
+            assert!(
+                certificate.contains(&format!("theorem {name}_mutualSemanticBridge"))
+                    && !certificate.contains(&format!("{name}_simulates"))
+                    && !certificate.contains(&format!("{name}_wasm"))
+                    && final_lean.contains("V3Master.mutual_claim_discharges")
+                    && final_lean.contains(&format!("CertProofs.{name}_mutualSemanticBridge")),
+                "migrated mutual export retained bespoke proof/tripwire emission: {name}\n{certificate}\n{final_lean}"
+            );
+        }
         assert!(
-            combined.contains(&format!(
-                "{primary}_mutual_sim' depends on axioms: [propext, Classical.choice, Quot.sound]"
-            )),
-            "mutual certificate for {fixture} not kernel-clean:\n{combined}"
+            !certificate.contains("native_decide"),
+            "generic mutual discharge must not emit a native-decide tripwire:\n{certificate}"
         );
         assert!(
-            combined.contains(&format!(
-                "{primary}_mutual_total' depends on axioms: [propext, Classical.choice, Quot.sound]"
-            )),
-            "mutual total certificate for {fixture} not kernel-clean:\n{combined}"
+            combined.contains(
+                "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            ),
+            "mutual Final.cert changed axiom surface for {fixture}:\n{combined}"
         );
         assert!(
             !combined.contains("sorryAx"),
