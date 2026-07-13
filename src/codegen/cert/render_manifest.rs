@@ -607,6 +607,9 @@ fn render_final(analysis: &Analysis, model_info: &ModelInfo) -> String {
                 if recursion_uses_audited_generic(c) {
                     return render_recursion_final_arm(c);
                 }
+                if matches!(c.inner(), Cert::MutualRecursion { .. }) {
+                    return render_mutual_final_arm(c);
+                }
                 if let Cert::AdtConstructor {
                     name,
                     self_idx,
@@ -1173,6 +1176,8 @@ fn render_manifest(
             "V3Master.intDispatch_canonical_discharges".to_string()
         } else if recursion_uses_audited_generic(c) {
             "V3Master.recursion_claim_discharges".to_string()
+        } else if matches!(c.inner(), Cert::MutualRecursion { .. }) {
+            "V3Master.mutual_claim_discharges".to_string()
         } else {
             let theorem_suffix = if policy == CertificationPolicy::SimulatesModelTotally {
                 "wasm_total"

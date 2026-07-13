@@ -4457,6 +4457,16 @@ fn cert_verify_declines_tampered_mutual_plan() {
     let cert = out_dir.join("cert");
     let (ok, report) = aver_verify(&wasm, &cert);
     assert!(ok, "honest mutual certificate should verify:\n{report}");
+    let certificate = std::fs::read_to_string(cert.join("Certificate.lean")).unwrap();
+    assert!(
+        certificate.contains("theorem isEven_mutualSemanticBridge")
+            && certificate.contains("theorem isOdd_mutualSemanticBridge")
+            && !certificate.contains("isEven_simulates")
+            && !certificate.contains("isOdd_simulates")
+            && !certificate.contains("isEven_wasm")
+            && !certificate.contains("isOdd_wasm"),
+        "migrated mutual family must expose only option-(b) bridges:\n{certificate}"
+    );
 
     // Honest bytes and plan, zero locals in the obligation only: every mutual
     // member canonically declares one carrier scratch local.
@@ -4466,6 +4476,62 @@ fn cert_verify_declines_tampered_mutual_plan() {
         set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "isEven", 1, 1);
         let (ok, report) = aver_verify(&dir.join("mutual.wasm"), &dir.join("cert"));
         assert!(!ok, "mutual zero-locals code must be DECLINED:\n{report}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The migrated family has no bespoke simulation theorem to replace with a
+    // vacuous proof. Pointing the obligation at a trapping decoy must now fail
+    // directly in the generic mutual claim's byte/plan acceptance.
+    {
+        let dir = temp_dir("cert-mutual-code-decouple");
+        copy_dir(&out_dir, &dir);
+        let module = dir.join("cert/Module.lean");
+        let source = std::fs::read_to_string(&module).unwrap();
+        let edited = source.replacen(
+            "end CertModule",
+            "/-- decoy: always traps, so an unbound simulation would be vacuous. -/\n\
+             def wrongCode : CodeTbl := fun _ => none\nend CertModule",
+            1,
+        );
+        assert_ne!(source, edited, "mutual Module.lean end marker changed");
+        std::fs::write(&module, edited).unwrap();
+
+        let manifest = dir.join("cert/Manifest.lean");
+        let source = std::fs::read_to_string(&manifest).unwrap();
+        let edited = source.replacen(
+            "code := CertModule.isEvenCode",
+            "code := CertModule.wrongCode",
+            1,
+        );
+        assert_ne!(source, edited, "isEven obligation code field changed");
+        std::fs::write(&manifest, edited).unwrap();
+
+        let (ok, report) = aver_verify(&dir.join("mutual.wasm"), &dir.join("cert"));
+        assert!(
+            !ok && !report.contains("CERTIFIED"),
+            "mutual code decouple must be DECLINED by generic acceptance:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Likewise the obligation's selected member is part of the generic claim;
+    // a wrong self index cannot be hidden behind a bespoke mutual proof.
+    {
+        let dir = temp_dir("cert-mutual-self-decouple");
+        copy_dir(&out_dir, &dir);
+        let manifest = dir.join("cert/Manifest.lean");
+        let source = std::fs::read_to_string(&manifest).unwrap();
+        let honest = "code := CertModule.isEvenCode, host := fun _ sub _ _ _ => CertModule.isEvenHost sub, self := 1,";
+        let hostile = "code := CertModule.isEvenCode, host := fun _ sub _ _ _ => CertModule.isEvenHost sub, self := 5,";
+        let edited = source.replacen(honest, hostile, 1);
+        assert_ne!(source, edited, "isEven obligation self field changed");
+        std::fs::write(&manifest, edited).unwrap();
+
+        let (ok, report) = aver_verify(&dir.join("mutual.wasm"), &dir.join("cert"));
+        assert!(
+            !ok && !report.contains("CERTIFIED"),
+            "mutual self decouple must be DECLINED by generic acceptance:\n{report}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

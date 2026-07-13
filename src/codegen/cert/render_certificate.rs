@@ -18,6 +18,14 @@ fn render_certificate(
     );
     let struct_table_lean = emit_frag_struct_table_lean(analysis)
         .expect("certified fragment struct table remains consistent");
+    // Mutual option-(b) bridges share one concrete SCC/acceptance package.
+    // Emit those packages first so source/export order cannot create a forward
+    // reference when a non-primary member appears before its primary.
+    for c in &analysis.certs {
+        if matches!(c.inner(), Cert::MutualRecursion { .. }) {
+            s.push_str(&render_mutual_shared_bridge_data(c));
+        }
+    }
     for c in &analysis.certs {
         match c.inner() {
             Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. }
@@ -63,7 +71,7 @@ fn render_certificate(
             Cert::Composition { .. } => {
                 s.push_str(&render_composition_semantic_bridge(c, analysis))
             }
-            Cert::MutualRecursion { .. } => s.push_str(&render_mutual_recursion_cert(c)),
+            Cert::MutualRecursion { .. } => s.push_str(&render_mutual_semantic_bridge(c)),
             Cert::NonRecursive { .. } => unreachable!(),
         }
         s.push('\n');
