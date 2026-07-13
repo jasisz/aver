@@ -64,27 +64,17 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
     )
 }
 
-/// Which end of the `struct.new`/verbatim spine a certificate proves: packing
-/// arguments INTO a variant struct (the dual of) reading a field OUT of one.
-/// Both are one-step `cases fuel` proofs over `WVal`/`verbatimRepr` with no host,
-/// so [`render_struct_verbatim_cert`] emits them through one skeleton.
+/// The `struct.new`/verbatim shape proved by the constructor certificate.
 enum StructVerbatimShape<'a> {
     /// Verbatim constructor: wrap `arity` arguments into variant `struct_idx`.
     Pack {
         arity: usize,
         fields: &'a [ConstructorField],
     },
-    /// Field projection: read field `field_idx` (0 or 1) out of a two-field struct.
-    Project { field_idx: u32 },
 }
 
-/// The `struct.new`/verbatim certificate arm: a single one-step `cases fuel`
-/// proof over `WVal`/`verbatimRepr` (no host), shared by the verbatim
-/// constructor (packs its arguments into variant `struct_idx`) and the field
-/// projection (reads a field back out) — structural duals that pop the raw
-/// arguments, reduce the interpreter and close by `rfl`. The two ends differ
-/// only in the statement's argument shape, the executable tripwire and the
-/// obligation's argument destructuring.
+/// The `struct.new`/verbatim constructor certificate: a single one-step
+/// `cases fuel` proof over `WVal`/`verbatimRepr` with no host.
 fn render_struct_verbatim_cert(
     name: &str,
     self_idx: u32,
@@ -132,27 +122,6 @@ example :
                 format!("(.structv {struct_idx} {built})"),
                 intro,
                 destructure,
-                tripwire,
-            )
-        }
-        StructVerbatimShape::Project { field_idx } => {
-            let expected = if field_idx == 0 { "a" } else { "b" };
-            let forced = if field_idx == 0 { 7 } else { 9 };
-            let tripwire = format!(
-                r#"-- Executable tripwire: project the field from a concrete two-carrier struct and
--- decode it back. A trapping body yields `none`, so this forces a real read.
-example :
-    ((wFuncN {name}Code {name}Host 1 {self_idx}
-        [.structv {struct_idx} [carrierSmall {carrier} 7, carrierSmall {carrier} 9]]).bind carrierToInt)
-      = some {forced} := by native_decide"#
-            );
-            (
-                "field projection certificate".to_string(),
-                "(a b : WVal)".to_string(),
-                format!("[.structv {struct_idx} [a, b]]"),
-                expected.to_string(),
-                "intro a b".to_string(),
-                "  rcases p with ⟨a, b⟩\n".to_string(),
                 tripwire,
             )
         }
