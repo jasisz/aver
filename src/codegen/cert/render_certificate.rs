@@ -5,7 +5,7 @@ fn render_certificate(
 ) -> String {
     let mut s = String::new();
     s.push_str(
-        "import CertPrelude\nimport Module\nimport Schema\nimport Manifest\nimport V3DispatchCore\nimport V3DischargeRecursion\n",
+        "import CertPrelude\nimport Module\nimport Schema\nimport Manifest\nimport V3DispatchCore\nimport V3DischargeComposition\nimport V3DischargeExprFragment\nimport V3DischargeRecursion\n",
     );
     for r in model_roots {
         s.push_str(&format!("import {r}\n"));
@@ -16,6 +16,8 @@ fn render_certificate(
          set_option maxRecDepth 1000000\n\n\
          namespace CertProofs\nopen CertPrelude CertModule AverCert AverCert.Schema\n\n",
     );
+    let struct_table_lean = emit_frag_struct_table_lean(analysis)
+        .expect("certified fragment struct table remains consistent");
     for c in &analysis.certs {
         match c.inner() {
             Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. }
@@ -44,6 +46,13 @@ fn render_certificate(
                     analysis.frag_host_table,
                 ))
             }
+            Cert::ExprFragment { .. } if expr_fragment_uses_audited_generic(c) => {
+                s.push_str(&render_expr_fragment_semantic_bridge(
+                    c,
+                    analysis.frag_host_table,
+                    &struct_table_lean,
+                ))
+            }
             Cert::ExprFragment { .. } => s.push_str(&render_expr_fragment_cert(c)),
             // Verbatim and String families are discharged by their audited
             // canonical leaf bridges. Their plans/claims/data remain emitted.
@@ -51,7 +60,9 @@ fn render_certificate(
             | Cert::VerbatimVariantDispatch { .. }
             | Cert::StringEqVerbatimMatch { .. }
             | Cert::StringConcatVerbatimMatch { .. } => {}
-            Cert::Composition { .. } => s.push_str(&render_composition_cert(c)),
+            Cert::Composition { .. } => {
+                s.push_str(&render_composition_semantic_bridge(c, analysis))
+            }
             Cert::MutualRecursion { .. } => s.push_str(&render_mutual_recursion_cert(c)),
             Cert::NonRecursive { .. } => unreachable!(),
         }

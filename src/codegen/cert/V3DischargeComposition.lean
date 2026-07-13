@@ -194,9 +194,10 @@ private theorem compositionNamedMemberAccepted_of_mem
           · exact ⟨member, hLookup, hHead⟩
           · exact ih hTail hMem
 
-/-- Function-table lookup agrees with the byte-derived binding of a selected
-member. -/
-private theorem compositionFuncIdx_eq_binding
+/-- A member's function-table target is exactly its byte-derived export
+    binding.  Generated option-(b) bridges use this instead of re-evaluating
+    the whole artifact byte parser or pinning a second function table. -/
+theorem compositionFuncIdx_eq_binding
     (modBytes modLen : Nat) (members : List CompositionMemberClaim)
     (funcTable : List (String × Nat)) (name : String)
     (member : CompositionMemberClaim)
@@ -277,6 +278,46 @@ def compositionMemberDischarges (artifact : ArtifactData) : Prop :=
           (claim.obligation.host add sub mul stringEq stringConcat)
           models name)
 
+/-- Option-(b) per-obligation bridge. Unlike the artifact-wide legacy split
+    above, the source model selection and the member facts are existentially
+    tied in one bridge, so a generated bridge cannot prove facts for one model
+    function and discharge a root using another. -/
+def compositionClaimSemanticBridge
+    (artifact : ArtifactData) (claim : CompositionClaim)
+    (callees : List String) : Prop :=
+  claim.obligation.policy = .simulatesModel ∧
+  ∀ (S : CarrierSpec claim.obligation.carrier)
+    (add sub mul stringEq : List WVal → Option WVal)
+    (stringConcat : Nat → List WVal → Option WVal)
+    (hAdd : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      add [va, vb] = some w → S.Repr (a + b) w)
+    (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      sub [va, vb] = some w → S.Repr (a - b) w)
+    (hMul : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      mul [va, vb] = some w → S.Repr (a * b) w)
+    (hStringEq : ∀ a b w, stringEq [a, b] = some w →
+      w = b32 (stringEqW a b))
+    (hStringConcat : ∀ resultTy parts c,
+      stringConcat resultTy [parts] = some c →
+        stringConcatW resultTy parts = some c)
+    (x : claim.obligation.Dom) (vs : List WVal),
+    claim.obligation.domRepr S x vs →
+    ∃ (n : Int) (v : WVal) (models : String → Int → Int)
+      (rootModel : Int → Int),
+      vs = [v] ∧ S.Repr n v ∧
+      (∀ input, rootModel input =
+        V3Composition.evalCompositionCalls models callees input) ∧
+      (∀ w, S.Repr (rootModel n) w →
+        claim.obligation.codRepr S (claim.obligation.model x) w) ∧
+      ∀ funcTable,
+        compositionFuncTable artifact.modBytes artifact.modLen
+            artifact.compositionMembers = some funcTable →
+        ∀ name ∈ callees,
+          Nonempty (V3Composition.MemberFact S artifact.compositionMembers
+            funcTable claim.obligation.code
+            (claim.obligation.host add sub mul stringEq stringConcat)
+            models name)
+
 theorem composition_claim_discharges
     (artifact : ArtifactData)
     (hAcc : acceptedCompositionFragments artifact)
@@ -348,6 +389,77 @@ theorem composition_claim_discharges
           apply hCod
           exact hCertified fuel n v w hv hRun
 
+/-- Per-obligation option-(b) composition discharge. Acceptance supplies the
+    byte-derived root and member table; the single semantic bridge supplies a
+    source model and member facts tied to that same model selection. -/
+theorem composition_claim_discharges_with_bridge
+    (artifact : ArtifactData)
+    (claim : CompositionClaim)
+    (hClaim : compositionClaimAccepted artifact.modBytes artifact.modLen
+      artifact.compositionMembers claim)
+    (hBridge : ∀ rootMember,
+      compositionMemberForName claim.exportName artifact.compositionMembers =
+          some rootMember →
+      ∀ callees, rootMember.plan.shape = .chain callees →
+        compositionClaimSemanticBridge artifact claim callees) :
+    obligationHolds claim.obligation := by
+  rcases hClaim with ⟨_hExport, hCarrier, _hHostCheck, hHost, hClaim⟩
+  cases hTable : compositionFuncTable artifact.modBytes artifact.modLen
+      artifact.compositionMembers with
+  | none => simp [hTable] at hClaim
+  | some funcTable =>
+      simp only [hTable] at hClaim
+      rcases hClaim with ⟨hClosure, hRootIdx, hNamed⟩
+      obtain ⟨rootMember, callees, hRootLookup, hShape, hRootMem⟩ :=
+        compositionClosureBound_root claim.exportName claim.memberNames
+          artifact.compositionMembers funcTable hClosure
+      obtain ⟨acceptedRoot, hAcceptedLookup, hRootAccepted⟩ :=
+        compositionNamedMemberAccepted_of_mem artifact.modBytes artifact.modLen
+          claim.carrier claim.hostTable funcTable claim.obligation
+          artifact.compositionMembers claim.memberNames hNamed
+          claim.exportName hRootMem
+      rw [hRootLookup] at hAcceptedLookup
+      have hRootEq : acceptedRoot = rootMember :=
+        (Option.some.inj hAcceptedLookup).symm
+      subst acceptedRoot
+      clear hClosure
+      rcases hRootAccepted with
+        ⟨hCheck, body, codeEntry, binding, hLower, _hCodeEntry,
+          _hExportCode, hBinding, _hBindingCode, _hType, hCode⟩
+      cases hTarget : AverCert.PlanLower.compositionFuncIdx?
+              funcTable claim.exportName with
+      | none => simp [hTarget] at hRootIdx
+      | some rootIdx =>
+          have hSelf : claim.obligation.self = rootIdx := by
+            simpa [hTarget] using hRootIdx
+          have hBindingIdx : binding.funcIdx = rootIdx := by
+            have hResolved := compositionFuncIdx_eq_binding
+              artifact.modBytes artifact.modLen artifact.compositionMembers
+              funcTable claim.exportName rootMember binding hTable
+              hRootLookup hBinding
+            rw [hTarget] at hResolved
+            exact (Option.some.inj hResolved).symm
+          have hCodeSelf : claim.obligation.code claim.obligation.self =
+              some ⟨1, compositionNLocals rootMember.plan, body⟩ := by
+            simpa [hSelf, ← hBindingIdx] using hCode
+          rcases hBridge rootMember hRootLookup callees hShape with
+            ⟨hPolicy, hModel⟩
+          rw [obligationHolds, hPolicy]
+          intro S add sub mul stringEq stringConcat
+            hAdd hSub hMul hStringEq hStringConcat fuel x vs w hDom hRun
+          rcases hModel S add sub mul stringEq stringConcat
+              hAdd hSub hMul hStringEq hStringConcat x vs hDom with
+            ⟨n, v, models, rootModel, rfl, hv, hRootModel, hCod, hMembers⟩
+          have hCertified := V3Composition.generic_composition_certified
+            S artifact.compositionMembers funcTable claim.obligation.code
+            (claim.obligation.host add sub mul stringEq stringConcat)
+            models rootModel claim.obligation.self claim.hostTable
+            rootMember.plan callees hShape hCheck body hLower hCodeSelf
+            (fun name hName => Classical.choice
+              (hMembers funcTable hTable name hName)) hRootModel
+          apply hCod
+          exact hCertified fuel n v w hv hRun
+
 theorem composition_discharges
     (artifact : ArtifactData)
     (hAcc : acceptedCompositionFragments artifact)
@@ -361,4 +473,5 @@ theorem composition_discharges
 end V3Master
 
 #print axioms V3Master.composition_claim_discharges
+#print axioms V3Master.composition_claim_discharges_with_bridge
 #print axioms V3Master.composition_discharges

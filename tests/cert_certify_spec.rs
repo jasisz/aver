@@ -171,10 +171,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["schema_version"].as_u64(),
-        Some(60),
-        "multiplicative/accumulator recursion migration is certificate schema 60"
+        Some(61),
+        "integer expr-fragment generic migration is certificate schema 61"
     );
-    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 60);
+    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 61);
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
@@ -784,10 +784,34 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             "recursion arm must use the audited discharge and emitted bridge: {recursion_name}\n{final_lean}"
         );
     }
-    for bespoke_name in ["addTwo"] {
+    for expr_fragment_name in [
+        "addTwo",
+        "inAsciiDigit",
+        "intLessZero",
+        "intEqZero",
+        "boolAndGoal",
+    ] {
         assert!(
-            final_lean.contains(&format!("CertProofs.{bespoke_name}_")),
-            "unmigrated arm changed during coexistence migration: {bespoke_name}\n{final_lean}"
+            final_lean.contains("V3Master.exprFragment_claim_discharges artifact")
+                && final_lean.contains(&format!(
+                    "CertProofs.{expr_fragment_name}_exprFragmentSemanticBridge"
+                )),
+            "integer/Bool expr-fragment arm must use the audited generic and its option-(b) bridge: {expr_fragment_name}\n{final_lean}"
+        );
+    }
+    for composition_name in ["quad", "hex16"] {
+        assert!(
+            final_lean.contains("V3Master.composition_claim_discharges_with_bridge artifact")
+                && final_lean.contains(&format!(
+                    "CertProofs.{composition_name}_compositionSemanticBridge"
+                )),
+            "integer composition export must use the audited generic and its option-(b) bridge: {composition_name}\n{final_lean}"
+        );
+    }
+    for float_name in ["floatAddGoal", "floatMulAddGoal", "floatLeGoal"] {
+        assert!(
+            final_lean.contains(&format!("CertProofs.{float_name}_simulates")),
+            "float expr-fragment must remain bespoke because floats are outside the audited model: {float_name}\n{final_lean}"
         );
     }
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
@@ -818,9 +842,63 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             && !certificate.contains("countDown_wasm_certified")
             && !certificate.contains("countDown_wasm_total")
             && !certificate.contains("countDown_simulates")
-            && !certificate.contains("countDownHostRef"),
-        "migrated leaf/dispatch/construct/recursion families must not emit bespoke simulations or tripwires:\n{certificate}"
+            && !certificate.contains("countDownHostRef")
+            && !certificate.contains("addTwo_wasm_certified")
+            && !certificate.contains("addTwo_simulates")
+            && !certificate.contains("addTwoHostRef")
+            && !certificate.contains("quad_wasm_certified")
+            && !certificate.contains("quad_simulates")
+            && !certificate.contains("quadHostRef")
+            && !certificate.contains("hex16_wasm_certified")
+            && !certificate.contains("hex16_simulates")
+            && !certificate.contains("hex16HostRef")
+            && !certificate.contains("inAsciiDigit_wasm_certified")
+            && !certificate.contains("inAsciiDigit_simulates")
+            && !certificate.contains("inAsciiDigitHostRef")
+            && !certificate.contains("intLessZero_wasm_certified")
+            && !certificate.contains("intLessZero_simulates")
+            && !certificate.contains("intLessZeroHostRef")
+            && !certificate.contains("intEqZero_wasm_certified")
+            && !certificate.contains("intEqZero_simulates")
+            && !certificate.contains("intEqZeroHostRef")
+            && !certificate.contains("boolAndGoal_wasm_certified")
+            && !certificate.contains("boolAndGoal_simulates")
+            && !certificate.contains("boolAndGoalHostRef"),
+        "migrated leaf/dispatch/construct/recursion/integer expression families must not emit bespoke simulations or tripwires:\n{certificate}"
     );
+    for expr_fragment_name in [
+        "addTwo",
+        "inAsciiDigit",
+        "intLessZero",
+        "intEqZero",
+        "boolAndGoal",
+    ] {
+        assert!(
+            certificate.contains(&format!(
+                "theorem {expr_fragment_name}_exprFragmentClaimAccepted"
+            )) && certificate.contains(&format!(
+                "theorem {expr_fragment_name}_exprFragmentSemanticBridge"
+            )),
+            "integer/Bool expr-fragment must emit claim acceptance plus its small semantic bridge: {expr_fragment_name}\n{certificate}"
+        );
+    }
+    for composition_name in ["quad", "hex16"] {
+        assert!(
+            certificate.contains(&format!(
+                "theorem {composition_name}_compositionClaimAccepted"
+            )) && certificate.contains(&format!(
+                "theorem {composition_name}_compositionSemanticBridge"
+            )),
+            "integer composition must emit claim acceptance plus its small semantic bridge: {composition_name}\n{certificate}"
+        );
+    }
+    for float_name in ["floatAddGoal", "floatMulAddGoal", "floatLeGoal"] {
+        assert!(
+            certificate.contains(&format!("theorem {float_name}_wasm_certified"))
+                && certificate.contains(&format!("theorem {float_name}_simulates")),
+            "float proof must remain on the bespoke surface: {float_name}\n{certificate}"
+        );
+    }
     for dispatch_name in ["evalOp", "boxInt", "gauge"] {
         assert!(
             certificate.contains(&format!(
@@ -883,6 +961,33 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
         .find(|entry| entry["name"] == "countDown")
         .unwrap();
     assert_eq!(count_down["theorem"], "V3Master.recursion_claim_discharges");
+    for name in [
+        "addTwo",
+        "inAsciiDigit",
+        "intLessZero",
+        "intEqZero",
+        "boolAndGoal",
+    ] {
+        let entry = manifest["certified"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == name)
+            .unwrap();
+        assert_eq!(entry["theorem"], "V3Master.exprFragment_claim_discharges");
+    }
+    for name in ["quad", "hex16"] {
+        let entry = manifest["certified"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == name)
+            .unwrap();
+        assert_eq!(
+            entry["theorem"],
+            "V3Master.composition_claim_discharges_with_bridge"
+        );
+    }
     for (name, theorem) in [
         ("wrapItems", "V3Master.verbatim_canonical_discharges"),
         ("tagName", "V3Master.verbatim_canonical_discharges"),
@@ -943,6 +1048,22 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
         ),
         "recursion bridge/discharge changed axiom surface:\n{combined}"
     );
+    for bridge in [
+        "addTwo_exprFragmentSemanticBridge",
+        "inAsciiDigit_exprFragmentSemanticBridge",
+        "intLessZero_exprFragmentSemanticBridge",
+        "intEqZero_exprFragmentSemanticBridge",
+        "boolAndGoal_exprFragmentSemanticBridge",
+        "quad_compositionSemanticBridge",
+        "hex16_compositionSemanticBridge",
+    ] {
+        assert!(
+            combined.contains(&format!(
+                "'CertProofs.{bridge}' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            )),
+            "migrated integer/Bool bridge changed axiom surface: {bridge}\n{combined}"
+        );
+    }
 
     let typecheck = cert_dir.join("V3AcceptRealTypecheck.lean");
     std::fs::write(
@@ -987,7 +1108,7 @@ example :
 }
 
 #[test]
-fn cert_verify_declines_hostile_leaf_dispatch_construct_and_recursion_models() {
+fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_and_recursion_models() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping hostile leaf-model test: `lake` not available");
         return;
@@ -1020,6 +1141,37 @@ fn cert_verify_declines_hostile_leaf_dispatch_construct_and_recursion_models() {
         clean_ok,
         "hostile-model baseline must first certify:\n{clean_report}"
     );
+
+    let tampered = temp_dir("certify-hostile-expr-fragment-model-definition");
+    copy_dir_all(&out_dir, &tampered);
+    let model = tampered.join("cert/CertGoals.lean");
+    let source = std::fs::read_to_string(&model).unwrap();
+    let honest = "def addTwo (x : Int) : Int :=\n  (x + 2)";
+    let hostile = "def addTwo (x : Int) : Int :=\n  (x + 3)";
+    let edited = source.replacen(honest, hostile, 1);
+    assert_ne!(
+        source, edited,
+        "expr-fragment model definition changed; update the hostile-model regression"
+    );
+    std::fs::write(&model, edited).unwrap();
+    assert_eq!(
+        std::fs::read(tampered.join("cert_goals.wasm")).unwrap(),
+        std::fs::read(&wasm).unwrap(),
+        "hostile expr-fragment check must isolate the mutation to generated source data"
+    );
+    let manifest = std::fs::read_to_string(tampered.join("cert/Manifest.lean")).unwrap();
+    assert!(
+        manifest.contains("model := fun ns => addTwo (ns.headD 0)"),
+        "expr-fragment hostile regression must leave the manifest model reference untouched"
+    );
+
+    let (ok, report) =
+        verify_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+    assert!(
+        !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+        "wrong generated expr-fragment model definition must fail its emitted bridge and be DECLINED:\n{report}"
+    );
+    let _ = std::fs::remove_dir_all(&tampered);
 
     for (label, honest, hostile) in [
         (
@@ -1171,7 +1323,7 @@ fn certify_straight_line_fixture_lake_builds_kernel_clean() {
     // core whitelist and never `sorryAx`.
     assert!(
         combined.contains(
-            "addTwo_wasm_certified' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            "addTwo_exprFragmentSemanticBridge' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ),
         "certificate theorem not kernel-clean:\n{combined}"
     );
@@ -2179,7 +2331,7 @@ fn certify_composition_fixture_lake_builds_kernel_clean() {
     // stays on the core whitelist; no `sorryAx` leaks through the composition.
     assert!(
         combined.contains(
-            "quad_wasm_certified' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            "quad_compositionSemanticBridge' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ),
         "composition certificate theorem not kernel-clean:\n{combined}"
     );

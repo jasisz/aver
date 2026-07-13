@@ -1,4 +1,9 @@
 fn render_expr_fragment_cert(c: &Cert) -> String {
+    // Audited integer/Bool source fragments emit only their option-(b)
+    // semantic bridge in `Certificate.lean`.
+    if expr_fragment_uses_audited_generic(c) {
+        return String::new();
+    }
     if let Some(face) = c.int_add_face() {
         return render_expr_fragment_int_add_cert(c, face);
     }

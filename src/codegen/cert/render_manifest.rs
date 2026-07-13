@@ -4,6 +4,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
     // SAME full-strength obligation the legacy straight-line class shipped:
     // any representation in, represented `n + k` out, under the add contract.
     if c.int_add_face().is_some() {
+        let host = c.host_expr();
         return format!(
             "abbrev {name}Ob : Schema.Obligation :=\n  \
              {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
@@ -11,11 +12,9 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
              Dom := List Int, Cod := Int,\n    \
              domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = {arity},\n    \
              codRepr := fun S n w => intRepr S n w,\n    \
-             model := {model} }}\n\n",
+             model := fun ns => {name} (ns.headD 0) }}\n\n",
             carrier = c.carrier(),
-            host = c.host_expr(),
             self_idx = c.self_idx(),
-            model = c.model_expr(),
             arity = c.arity(),
         );
     }
@@ -152,10 +151,15 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
                 | FragTy::Ref
                 | FragTy::AdtRef => "fun S v w => verbatimRepr S v w",
             };
-            let model =
+            let plan_model =
                 expr_fragment_value_expr(&plan.body, plan.body.result, &|idx, _ty| {
                     expr_fragment_dom_accessor("p", idx as usize, plan.params.len())
                 });
+            let model = if expr_fragment_uses_audited_generic(c) {
+                expr_fragment_source_model(c)
+            } else {
+                format!("fun p => {plan_model}")
+            };
             format!(
                 "abbrev {name}Ob : Schema.Obligation :=\n  \
                  {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
@@ -163,7 +167,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
                  Dom := {dom}, Cod := {cod},\n    \
                  domRepr := fun _S p vs => vs = {dom_repr},\n    \
                  codRepr := {cod_repr},\n    \
-                 model := fun p => {model} }}\n\n",
+                 model := {model} }}\n\n",
                 host = c.host_expr(),
                 self_idx = c.self_idx(),
             )
@@ -510,7 +514,7 @@ fn render_manifest_lean(
 fn render_final(analysis: &Analysis, model_info: &ModelInfo) -> String {
     let mut s = String::new();
     s.push_str(
-        "import Certificate\nimport Manifest\nimport Schema\nimport V3DischargeFieldProj\nimport V3DischargeConstruct\nimport V3DischargeVerbatim\nimport V3DischargeString\nimport V3DischargeIntDispatch\nimport V3DischargeRecursion\n\n\
+        "import Certificate\nimport Manifest\nimport Schema\nimport V3DischargeComposition\nimport V3DischargeExprFragment\nimport V3DischargeFieldProj\nimport V3DischargeConstruct\nimport V3DischargeVerbatim\nimport V3DischargeString\nimport V3DischargeIntDispatch\nimport V3DischargeRecursion\n\n\
          set_option maxRecDepth 1000000\n\
          set_option linter.unusedSimpArgs false\n\n\
          open AverCert AverCert.Schema\n\n",
@@ -539,10 +543,22 @@ fn render_final(analysis: &Analysis, model_info: &ModelInfo) -> String {
             .join(" | ");
         s.push_str(&format!("  rcases ho with {pattern}\n"));
         // Every resulting goal is closed by exactly one export's obligation.
+        let struct_table_lean = emit_frag_struct_table_lean(analysis)
+            .expect("certified fragment struct table remains consistent");
         let arms = analysis
             .certs
             .iter()
             .map(|c| {
+                if expr_fragment_uses_audited_generic(c) {
+                    return render_expr_fragment_final_arm(
+                        c,
+                        analysis.frag_host_table,
+                        &struct_table_lean,
+                    );
+                }
+                if matches!(c.inner(), Cert::Composition { .. }) {
+                    return render_composition_final_arm(c);
+                }
                 if let Some(face) = c.project_face() {
                     return format!(
                         "exact V3Master.fieldProjection_direct_canonical_discharges \
@@ -1121,7 +1137,11 @@ fn render_manifest(
             ),
             None => String::new(),
         };
-        let theorem = if c.project_face().is_some() {
+        let theorem = if matches!(c.inner(), Cert::Composition { .. }) {
+            "V3Master.composition_claim_discharges_with_bridge".to_string()
+        } else if expr_fragment_uses_audited_generic(c) {
+            "V3Master.exprFragment_claim_discharges".to_string()
+        } else if c.project_face().is_some() {
             "V3Master.fieldProjection_direct_canonical_discharges".to_string()
         } else if matches!(c.inner(), Cert::FieldProjection { .. }) {
             "V3Master.fieldProjection_canonical_discharges".to_string()
