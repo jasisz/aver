@@ -332,27 +332,3 @@ theorem {name}_mutualSemanticBridge :
 "#,
     )
 }
-
-/// Per-obligation `Final.cert` arm.  The SCC artifact supplies byte acceptance
-/// and closure; this export contributes only its option-(b) semantic bridge.
-fn render_mutual_final_arm(c: &Cert) -> String {
-    let Cert::MutualRecursion { name, scc, .. } = c.inner() else {
-        unreachable!()
-    };
-    let primary = &scc[0].name;
-    format!(
-        r#"exact V3Master.mutual_claim_discharges
-        CertProofs.{primary}_mutualArtifact
-        CertProofs.{primary}_mutualFragmentsAccepted
-        CertProofs.{name}_mutualClaim
-        (by simp [CertProofs.{primary}_mutualArtifact,
-          CertProofs.{primary}_mutualClaims])
-        (by
-          intro plan hPlan
-          dsimp [CertProofs.{primary}_mutualArtifact,
-            AverCert.AcceptedArtifact.mutualPlanForExport] at hPlan
-          injection hPlan with hPlan
-          subst plan
-          exact CertProofs.{name}_mutualSemanticBridge)"#,
-    )
-}

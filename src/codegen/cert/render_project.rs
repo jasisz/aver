@@ -130,12 +130,17 @@ pub fn write_project(
     write(
         &cert_dir,
         "Final.lean",
-        &render_final(analysis, &model_info),
+        &render_final(),
     )?;
     write(
         &cert_dir,
         "Artifact.lean",
         &render_artifact(analysis, &model_info, &host_table_lean, &struct_table_lean),
+    )?;
+    write(
+        &cert_dir,
+        "ArtifactCertificate.lean",
+        &render_artifact_certificate(),
     )?;
     write(
         &cert_dir,
@@ -1825,9 +1830,10 @@ fn render_artifact(
          -- audits `AverCert.Artifact.certificate` through the Lean axiom collector.\n\
          import AcceptedArtifact\n\
          import ArtifactBytes\n\
-         import Final\n\
+         import Certificate\n\
          import Manifest\n\
-         import Plans\n\n\
+         import Plans\n\
+         import V3AcceptSound\n\n\
          -- The whole-module big-Nat closure fold is kernel reduction. This\n\
          -- explicit depth budget affects kernel reduction limits only, not soundness or axioms.\n\
          set_option maxRecDepth 200000\n\
@@ -1852,8 +1858,7 @@ fn render_artifact(
          theorem decodedStringHostRoles : CertDecode.StringHost.roleTable AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen = some AverCert.manifest.subject.stringHostRoles := by change AverCert.AcceptedArtifact.decodedStringHostRoles data; dsimp [AverCert.AcceptedArtifact.decodedStringHostRoles, data]; rfl\n\n\
          {claim_proof_bundles}\
          {proof_bundles}\n\n\
-         theorem certificate : AverCert.AcceptedArtifact.accepted data :=\n  \
-           acceptedWithFinal AverCert.Final.cert\n\n\
+         {side_conditions}\n\
          end AverCert.Artifact\n",
         sym_claims_list = claims.sym_claims,
         string_eq_claims_list = claims.string_eq_claims,
@@ -1870,8 +1875,27 @@ fn render_artifact(
         closure_fuel = analysis.module_envelope.closure_fuel,
         mutual_scc_closure_pins = render_mutual_scc_closure_pins(analysis),
         claim_proof_bundles = claims.claim_proof_bundles,
-        proof_bundles = proof_bundles
+        proof_bundles = proof_bundles,
+        side_conditions = render_discharge_side_conditions(analysis, model_info)
     )
+}
+
+/// Final acceptance wrapper kept separate from artifact data so `Final.lean`
+/// can consume the byte/plan acceptance facts without an import cycle.
+fn render_artifact_certificate() -> String {
+    r#"import Artifact
+import Final
+
+namespace AverCert.Artifact
+
+theorem certificate : AverCert.AcceptedArtifact.accepted data :=
+  acceptedWithFinal AverCert.Final.cert
+
+#print axioms AverCert.Artifact.certificate
+
+end AverCert.Artifact
+"#
+    .to_string()
 }
 
 /// Per-artifact glue from the hash-parametric audited wall to the real schema.

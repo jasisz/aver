@@ -9,4 +9,5 @@ include!("render_expr_fragment.rs");
 include!("render_expr_fragment_bridge.rs");
 include!("render_model_support.rs");
 include!("render_mutual.rs");
+include!("render_side_conditions.rs");
 include!("render_manifest.rs");

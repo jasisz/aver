@@ -3788,6 +3788,7 @@ fn checker_witness(
          import Manifest\n\
          import Final\n\
          import Artifact\n\
+         import ArtifactCertificate\n\
          open CertPrelude AverCert.Schema\n\
          -- Whole-module closure checking reduces the embedded big-Nat bytes.\n\
          -- This explicit depth budget changes only kernel reduction limits.\n\

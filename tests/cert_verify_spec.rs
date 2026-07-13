@@ -1815,19 +1815,17 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let def_start = artifact_text
         .find("def acceptedWithFinal")
         .expect("Artifact.lean should define acceptedWithFinal");
-    let end_marker = "end AverCert.Artifact\n";
+    let end_marker =
+        "\n\n/-! ### Artifact semantic side conditions consumed by V3Master.accept_sound -/";
     let def_end = artifact_text
         .find(end_marker)
-        .expect("Artifact.lean should close namespace");
+        .expect("Artifact.lean should render accept-sound side conditions after acceptedWithFinal");
     let evil_bridge = concat!(
         "axiom artifactEvil : ∀ (finalCert : AverCert.Schema.Holds AverCert.manifest), ",
         "AverCert.AcceptedArtifact.accepted data\n\n",
         "def acceptedWithFinal\n",
         "    (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n",
         "    AverCert.AcceptedArtifact.accepted data := artifactEvil finalCert\n\n",
-        "theorem certificate : AverCert.AcceptedArtifact.accepted data := ",
-        "acceptedWithFinal AverCert.Final.cert\n\n",
-        "#print axioms AverCert.Artifact.certificate\n\n",
     );
     let mut tampered_artifact = String::new();
     tampered_artifact.push_str(&artifact_text[..def_start]);

@@ -78,14 +78,43 @@ def exprFragmentSemanticBridge
           some (.ok modelLocals [result]) ∧
       claim.obligation.codRepr S (claim.obligation.model x) result
 
-def exprFragmentSemanticBridges (artifact : ArtifactData) : Prop :=
-  ∀ claim ∈ artifact.symFragmentClaims,
+/-- The audited expression-fragment generic currently owns exactly the
+integer/Bool boundary used by the Rust classifier. -/
+def exprFragmentUsesAuditedGeneric (claim : SymFragmentClaim) : Bool :=
+  claim.plan.params.all (fun ty => ty = .int || ty = .bool) &&
+  (claim.plan.result = .int || claim.plan.result = .bool)
+
+/-- Float semantics are deliberately outside the v3 integer/Bool model.  A
+float at the source boundary is the only bespoke residual admitted below. -/
+def exprFragmentHasFloatBoundary (claim : SymFragmentClaim) : Bool :=
+  claim.plan.params.any (· = .float) || claim.plan.result = .float
+
+/-- Projection-faced expression fragments are migrated, but their canonical
+discharge lives in the audited field-projection wall. -/
+def exprFragmentHasFieldProjection (claim : SymFragmentClaim) : Bool :=
+  claim.plan.body.nodes.any (fun node =>
+    match node.kind with
+    | .projectField _ _ _ _ => true
+    | _ => false)
+
+/-- Side condition for one source expression claim.  In-model claims must use
+the symbolic generic. Projection claims may use the audited projection
+generic. Only float-boundary claims may use a bespoke direct discharge. -/
+def exprFragmentSideCondition (claim : SymFragmentClaim) : Prop :=
+  (exprFragmentUsesAuditedGeneric claim = true ∧
     ∀ plan,
       AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
           claim.hostTable claim.structTable claim.plan = some plan →
-        exprFragmentSemanticBridge claim plan
+        exprFragmentSemanticBridge claim plan) ∨
+  (exprFragmentHasFieldProjection claim = true ∧
+    obligationHolds claim.obligation) ∨
+  (exprFragmentHasFloatBoundary claim = true ∧
+    obligationHolds claim.obligation)
 
-theorem exprFragment_claim_discharges
+def exprFragmentSemanticBridges (artifact : ArtifactData) : Prop :=
+  ∀ claim ∈ artifact.symFragmentClaims, exprFragmentSideCondition claim
+
+theorem exprFragment_claim_discharges_generic
     (artifact : ArtifactData)
     (hAcc : acceptedSymFragments artifact)
     (claim : SymFragmentClaim)
@@ -140,6 +169,18 @@ theorem exprFragment_claim_discharges
           rw [hGeneric] at hRun
           have hResult : result = w := Option.some.inj hRun
           simpa [hResult] using hCod
+
+theorem exprFragment_claim_discharges
+    (artifact : ArtifactData)
+    (hAcc : acceptedSymFragments artifact)
+    (claim : SymFragmentClaim)
+    (hMem : claim ∈ artifact.symFragmentClaims)
+    (hSide : exprFragmentSideCondition claim) :
+    obligationHolds claim.obligation := by
+  rcases hSide with hGeneric | hProjection | hFloat
+  · exact exprFragment_claim_discharges_generic artifact hAcc claim hMem hGeneric.2
+  · exact hProjection.2
+  · exact hFloat.2
 
 theorem exprFragment_discharges
     (artifact : ArtifactData)

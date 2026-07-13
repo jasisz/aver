@@ -256,37 +256,3 @@ fn render_recursion_semantic_bridge(c: &Cert) -> String {
         _ => unreachable!(),
     }
 }
-
-/// Per-obligation `Final.cert` arm. A singleton artifact view supplies the
-/// already byte-derived claim to `recursion_claim_discharges`; the only
-/// semantic premise is the generated option-(b) bridge above.
-fn render_recursion_final_arm(c: &Cert) -> String {
-    debug_assert!(recursion_uses_audited_generic(c));
-    let name = c.name();
-    let claim = recursion_claim_lean_value(c);
-    format!(
-        r#"let claim : AverCert.AcceptedArtifact.RecursionClaim := {claim}
-      let artifact : AverCert.AcceptedArtifact.ArtifactData :=
-        {{ modBytes := AverCert.ArtifactBytes.modBytes,
-          modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest,
-          symFragmentClaims := [], stringEqClaims := [], stringConcatClaims := [],
-          constructClaims := [], recursionClaims := [claim],
-          mutualRecursionClaims := [], verbatimClaims := [], intDispatchClaims := [],
-          fieldProjectionClaims := [], compositionMembers := [], compositionClaims := [],
-          closureFuel := 0,
-          closureClaim := {{ roots := [], helpers := [], admitted := [] }} }}
-      exact V3Master.recursion_claim_discharges artifact
-        (by
-          dsimp [AverCert.AcceptedArtifact.acceptedRecursionFragments,
-            AverCert.AcceptedArtifact.recursionClaimsAccepted,
-            AverCert.AcceptedArtifact.allClaims, artifact]
-          exact ⟨CertProofs.{name}_recursionClaimAccepted, trivial⟩)
-        claim (by simp [artifact])
-        (by
-          intro plan hPlan
-          dsimp [artifact, AverCert.AcceptedArtifact.recursionPlanForExport] at hPlan
-          injection hPlan with hPlan
-          subst plan
-          exact CertProofs.{name}_recursionSemanticBridge)"#
-    )
-}

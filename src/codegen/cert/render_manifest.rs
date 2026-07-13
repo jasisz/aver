@@ -511,199 +511,19 @@ fn render_manifest_lean(
 /// The single final theorem: `AverCert.Final.cert : Holds manifest`, proved by
 /// composing audited generic discharges with the residual bespoke families.
 /// No other final theorem is emitted; the checker pins this exact statement.
-fn render_final(analysis: &Analysis, model_info: &ModelInfo) -> String {
-    let mut s = String::new();
-    s.push_str(
-        "import Certificate\nimport Manifest\nimport Schema\nimport V3DischargeComposition\nimport V3DischargeExprFragment\nimport V3DischargeFieldProj\nimport V3DischargeConstruct\nimport V3DischargeVerbatim\nimport V3DischargeString\nimport V3DischargeIntDispatch\nimport V3DischargeRecursion\n\n\
-         set_option maxRecDepth 1000000\n\
-         set_option linter.unusedSimpArgs false\n\n\
-         open AverCert AverCert.Schema\n\n",
-    );
-    s.push_str(
-        "/-- THE single artifact certificate: the pinned module hash is this module's\n\
-        hash, and every certified export simulates its model under the named runtime\n\
-        contracts. Proof composes the per-export obligations; nothing else. -/\n",
-    );
-    s.push_str(&format!("{FINAL_STATEMENT_LINE} := by\n"));
-    if analysis.certs.is_empty() {
-        s.push_str(
-            "  refine ⟨rfl, ?_⟩\n  \
-             intro o ho\n  \
-             simp only [manifest, List.mem_nil_iff, List.not_mem_nil] at ho\n",
-        );
-    } else {
-        s.push_str("  refine ⟨rfl, ?_⟩\n  intro o ho\n");
-        s.push_str(
-            "  simp only [manifest, List.mem_cons, List.mem_singleton, List.mem_nil_iff,\n    \
-             List.not_mem_nil, or_false] at ho\n",
-        );
-        // `rcases` with one `rfl` per obligation, split on the disjunction.
-        let pattern = std::iter::repeat_n("rfl", analysis.certs.len())
-            .collect::<Vec<_>>()
-            .join(" | ");
-        s.push_str(&format!("  rcases ho with {pattern}\n"));
-        // Every resulting goal is closed by exactly one export's obligation.
-        let struct_table_lean = emit_frag_struct_table_lean(analysis)
-            .expect("certified fragment struct table remains consistent");
-        let arms = analysis
-            .certs
-            .iter()
-            .map(|c| {
-                if expr_fragment_uses_audited_generic(c) {
-                    return render_expr_fragment_final_arm(
-                        c,
-                        analysis.frag_host_table,
-                        &struct_table_lean,
-                    );
-                }
-                if matches!(c.inner(), Cert::Composition { .. }) {
-                    return render_composition_final_arm(c);
-                }
-                if let Some(face) = c.project_face() {
-                    return format!(
-                        "exact V3Master.fieldProjection_direct_canonical_discharges \
-                         \"{}\" {} {} {} {} CertModule.{}Code \
-                         (fun _ _ _ _ _ => CertModule.{}Host) (by decide) (by rfl)",
-                        c.name(),
-                        c.carrier(),
-                        face.struct_idx,
-                        c.self_idx(),
-                        face.field_idx,
-                        c.name(),
-                        c.name(),
-                    );
-                }
-                if let Cert::FieldProjection {
-                    name,
-                    self_idx,
-                    carrier,
-                    struct_idx,
-                    ..
-                } = c.inner()
-                {
-                    return format!(
-                        "exact V3Master.fieldProjection_canonical_discharges \
-                         \"{name}\" {carrier} {struct_idx} {self_idx} \
-                         AverCert.Plans.{name}FieldProjectionPlan \
-                        CertModule.{name}Code \
-                         (fun _ _ _ _ _ => CertModule.{name}Host) (by rfl) (by rfl)"
-                    );
-                }
-                if matches!(
-                    c.inner(),
-                    Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. }
-                ) {
-                    return render_int_dispatch_final_arm(
-                        c,
-                        model_info,
-                        analysis.frag_host_table,
-                    );
-                }
-                if matches!(c.inner(), Cert::AdtConstructor { .. })
-                    && adt_constructor_uses_model(c, model_info)
-                {
-                    return render_adt_constructor_final_arm(c, model_info);
-                }
-                if recursion_uses_audited_generic(c) {
-                    return render_recursion_final_arm(c);
-                }
-                if matches!(c.inner(), Cert::MutualRecursion { .. }) {
-                    return render_mutual_final_arm(c);
-                }
-                if let Cert::AdtConstructor {
-                    name,
-                    self_idx,
-                    carrier,
-                    struct_idx,
-                    arity,
-                    ..
-                } = c.inner()
-                    && !adt_constructor_uses_model(c, model_info)
-                {
-                    let theorem = if *arity == 1 {
-                        "constructUnary_canonical_discharges"
-                    } else {
-                        "constructBinary_canonical_discharges"
-                    };
-                    return format!(
-                        "exact V3Master.{theorem} \
-                         \"{name}\" {carrier} {struct_idx} {self_idx} \
-                         AverCert.Plans.{name}ConstructPlan CertModule.{name}Code \
-                         (fun _ _ _ _ _ => CertModule.{name}Host) \
-                         (by rfl) (by rfl) (by rfl) (by rfl)"
-                    );
-                }
-                if let Cert::VerbatimWidenedMatch {
-                    name,
-                    self_idx,
-                    carrier,
-                    ..
-                }
-                | Cert::VerbatimVariantDispatch {
-                    name,
-                    self_idx,
-                    carrier,
-                    ..
-                } = c.inner()
-                {
-                    return format!(
-                        "exact V3Master.verbatim_canonical_discharges \
-                         \"{name}\" {carrier} {self_idx} \
-                         AverCert.Plans.{name}VerbatimPlan CertModule.{name}Code \
-                         (fun _ _ _ _ _ => CertModule.{name}Host) \
-                         (by rfl) (by rfl)"
-                    );
-                }
-                if let Cert::StringEqVerbatimMatch {
-                    name,
-                    self_idx,
-                    carrier,
-                    string_eq_idx,
-                    ..
-                } = c.inner()
-                {
-                    let string_ty = string_eq_string_ty_from_cert(c)
-                        .expect("certified String.eq must have a byte-derived string type");
-                    return format!(
-                        "exact V3Master.stringEq_canonical_discharges \
-                         \"{name}\" {carrier} {string_ty} {string_eq_idx} {self_idx} \
-                         AverCert.Plans.{name}StringEqPlan CertModule.{name}Code \
-                         (fun _ _ _ stringEq _ => CertModule.{name}Host stringEq) \
-                         (by rfl) (by rfl) (by rfl) (by intros; rfl)"
-                    );
-                }
-                if let Cert::StringConcatVerbatimMatch {
-                    name,
-                    self_idx,
-                    carrier,
-                    string_concat_idx,
-                    container_ty,
-                    result_ty,
-                    ..
-                } = c.inner()
-                {
-                    return format!(
-                        "exact V3Master.stringConcat_canonical_discharges \
-                         \"{name}\" {carrier} {result_ty} {container_ty} \
-                         {string_concat_idx} {self_idx} \
-                         AverCert.Plans.{name}StringConcatPlan CertModule.{name}Code \
-                         (fun _ _ _ _ stringConcat => CertModule.{name}Host stringConcat) \
-                         (by rfl) (by rfl) (by rfl) (by intros; rfl)"
-                    );
-                }
-                let theorem = if c.policy() == CertificationPolicy::SimulatesModelTotally {
-                    "simulates_total"
-                } else {
-                    "simulates"
-                };
-                format!("exact CertProofs.{}_{theorem}", c.name())
-            })
-            .collect::<Vec<_>>()
-            .join("\n    | ");
-        s.push_str(&format!("  all_goals\n    first\n    | {arms}\n"));
-    }
-    s.push_str(&format!("\n#print axioms {FINAL_THEOREM}\n"));
-    s
+fn render_final() -> String {
+    format!(
+        "import Manifest\nimport V3AcceptReal\n\n\
+         set_option maxRecDepth 1000000\n\n\
+         open AverCert AverCert.Schema\n\n\
+         /-- THE single artifact certificate. All migrated families flow through\n\
+         the audited accept-sound capstone; Artifact.dischargeSideConditions\n\
+         isolates the float-only bespoke residual. -/\n\
+         {FINAL_STATEMENT_LINE} :=\n  \
+         AverCert.V3AcceptReal.accept_sound_holds\n    \
+         AverCert.Artifact.dischargeSideConditions\n\n\
+         #print axioms {FINAL_THEOREM}\n"
+    )
 }
 
 fn render_lakefile(model_roots: &[String]) -> String {
@@ -750,6 +570,7 @@ fn render_lakefile(model_roots: &[String]) -> String {
     roots.push("`Final".to_string());
     roots.push("`Artifact".to_string());
     roots.push("`V3AcceptReal".to_string());
+    roots.push("`ArtifactCertificate".to_string());
     format!(
         "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
          @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  roots := #[{}]\n",

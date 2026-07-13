@@ -24,8 +24,9 @@ open AverCert.AcceptedArtifact
 namespace V3Master
 
 /-- Semantic premises still exposed by the ten kernel-clean family discharge
-theorems.  String equality and concatenation share `stringSemanticBridges`;
-composition additionally needs semantic facts for each called member. -/
+theorems. String equality and concatenation share `stringSemanticBridges`.
+Composition uses the tied root/member bridge so a root's selected source
+models cannot be separated from the member facts that discharge its calls. -/
 def dischargeSideConditions (artifact : ArtifactData) : Prop :=
   exprFragmentSemanticBridges artifact ∧
   stringSemanticBridges artifact ∧
@@ -35,8 +36,7 @@ def dischargeSideConditions (artifact : ArtifactData) : Prop :=
   verbatimSemanticBridges artifact ∧
   intDispatchSemanticBridges artifact ∧
   fieldProjectionSemanticBridges artifact ∧
-  compositionSemanticBridges artifact ∧
-  compositionMemberDischarges artifact
+  compositionClaimSemanticBridges artifact
 
 /-- Every claimed obligation holds.  Membership in the audited concatenation
 is split into its ten family slices, then discharged by the matching generic
@@ -52,7 +52,7 @@ theorem hClaims_of_accepted
   rcases hSide with
     ⟨hExprSemantic, hStringSemantic, hConstructSemantic, hRecursionSemantic,
       hMutualSemantic, hVerbatimSemantic, hIntDispatchSemantic,
-      hFieldProjectionSemantic, hCompositionSemantic, hCompositionMembers⟩
+      hFieldProjectionSemantic, hCompositionSemantic⟩
   intro o ho
   simp only [claimObligations, List.mem_append] at ho
   rcases ho with ho | ho
@@ -77,8 +77,8 @@ theorem hClaims_of_accepted
           hIntDispatchSemantic o ho
     · exact fieldProjection_discharges artifact hFieldProjection
         hFieldProjectionSemantic o ho
-  · exact composition_discharges artifact hComposition hCompositionSemantic
-      hCompositionMembers o ho
+  · exact composition_discharges_with_bridges artifact hComposition hCompositionSemantic
+      o ho
 
 /-- The faithful accept-sound capstone.  Manifest coverage and export
 uniqueness are recovered from `acceptedCompositionFragments`, which is an
