@@ -133,6 +133,11 @@ pub fn write_project(
         "Artifact.lean",
         &render_artifact(analysis, &model_info, &host_table_lean, &struct_table_lean),
     )?;
+    write(
+        &cert_dir,
+        "V3AcceptReal.lean",
+        &render_v3_accept_real(),
+    )?;
     write(&cert_dir, "lakefile.lean", &render_lakefile(&model_roots))?;
 
     // Content hashes the checker re-verifies: the audited schema and the
@@ -1867,6 +1872,30 @@ fn render_artifact(
         claim_proof_bundles = claims.claim_proof_bundles,
         proof_bundles = proof_bundles
     )
+}
+
+/// Per-artifact glue from the hash-parametric audited wall to the real schema.
+/// This module deliberately remains outside the sha-pinned wall because its
+/// conclusion mentions the generated `CertModule.wasmSha256` through
+/// `AverCert.Schema.Holds`.
+fn render_v3_accept_real() -> String {
+    r#"import Artifact
+import V3AcceptSound
+
+namespace AverCert.V3AcceptReal
+
+/-- Instantiate the artifact-independent v3 wall at this artifact's real
+wasm hash.  The remaining semantic bridge assumptions are still explicit. -/
+theorem accept_sound_holds
+    (hSide : V3Master.dischargeSideConditions AverCert.Artifact.data) :
+    AverCert.Schema.Holds AverCert.Artifact.data.manifest := by
+  exact V3Master.accept_sound CertModule.wasmSha256 AverCert.Artifact.data rfl
+    AverCert.Artifact.claimObligationsBound
+    AverCert.Artifact.fragmentsAccepted hSide
+
+end AverCert.V3AcceptReal
+"#
+    .to_string()
 }
 
 /// One redundant-but-honest closure pin per mutual-recursion SCC (emitted for the

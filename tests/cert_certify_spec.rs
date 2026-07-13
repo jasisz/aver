@@ -709,15 +709,44 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
         build.status.success(),
         "lake build of emitted v3 wall cert failed after {elapsed:.2?}:\n{combined}"
     );
-    assert!(
-        combined.contains(
-            "'V3Master.accept_sound' depends on axioms: [propext, Classical.choice, Quot.sound]"
-        ),
-        "V3Master.accept_sound did not reduce to the exact audited axiom set:\n{combined}"
+
+    let typecheck = cert_dir.join("V3AcceptRealTypecheck.lean");
+    std::fs::write(
+        &typecheck,
+        r#"import V3AcceptReal
+
+example :
+    V3Master.dischargeSideConditions AverCert.Artifact.data →
+    AverCert.Schema.Holds AverCert.Artifact.data.manifest :=
+  AverCert.V3AcceptReal.accept_sound_holds
+
+#print axioms AverCert.V3AcceptReal.accept_sound_holds
+"#,
+    )
+    .expect("write V3AcceptReal typecheck");
+    let typecheck_output = Command::new("lake")
+        .current_dir(&cert_dir)
+        .args(["env", "lean", "V3AcceptRealTypecheck.lean"])
+        .output()
+        .expect("expected V3AcceptReal typecheck to run");
+    let typecheck_combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&typecheck_output.stdout),
+        String::from_utf8_lossy(&typecheck_output.stderr)
     );
     assert!(
-        !combined.contains("sorryAx"),
-        "emitted v3 wall leaked sorryAx:\n{combined}"
+        typecheck_output.status.success(),
+        "V3AcceptReal Schema.Holds typecheck failed:\n{typecheck_combined}"
+    );
+    assert!(
+        typecheck_combined.contains(
+            "'AverCert.V3AcceptReal.accept_sound_holds' depends on axioms: [propext, Classical.choice, Quot.sound]"
+        ),
+        "V3AcceptReal.accept_sound_holds did not reduce to the exact audited axiom set:\n{typecheck_combined}"
+    );
+    assert!(
+        !combined.contains("sorryAx") && !typecheck_combined.contains("sorryAx"),
+        "emitted v3 wall leaked sorryAx:\n{combined}\n{typecheck_combined}"
     );
 
     let _ = std::fs::remove_dir_all(&out_dir);
