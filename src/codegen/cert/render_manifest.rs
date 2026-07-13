@@ -246,7 +246,7 @@ fn render_manifest_lean(
 ) -> String {
     let mut s = String::new();
     s.push_str(
-        "import Schema\nimport Module\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\nimport WasmSlice\nimport ExprFragmentAccepted\nimport ArtifactBytes\nimport Plans\n",
+        "import Schema\nimport Module\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\nimport WasmSlice\nimport ExprFragmentAccepted\nimport ArtifactBytes\nimport Plans\nimport V3ConstructVerbatim\n",
     );
     for r in model_roots {
         s.push_str(&format!("import {r}\n"));
@@ -512,10 +512,10 @@ fn render_manifest_lean(
 /// The single final theorem: `AverCert.Final.cert : Holds manifest`, proved by
 /// composing the per-export `_simulates` obligations. No other final theorem is
 /// emitted; the checker pins this exact statement line.
-fn render_final(analysis: &Analysis) -> String {
+fn render_final(analysis: &Analysis, model_info: &ModelInfo) -> String {
     let mut s = String::new();
     s.push_str(
-        "import Certificate\nimport Manifest\nimport Schema\nimport V3DischargeFieldProj\n\n\
+        "import Certificate\nimport Manifest\nimport Schema\nimport V3DischargeFieldProj\nimport V3DischargeConstruct\nimport V3DischargeVerbatim\nimport V3DischargeString\n\n\
          set_option maxRecDepth 1000000\n\
          set_option linter.unusedSimpArgs false\n\n\
          open AverCert AverCert.Schema\n\n",
@@ -574,8 +574,89 @@ fn render_final(analysis: &Analysis) -> String {
                         "exact V3Master.fieldProjection_canonical_discharges \
                          \"{name}\" {carrier} {struct_idx} {self_idx} \
                          AverCert.Plans.{name}FieldProjectionPlan \
-                         CertModule.{name}Code \
+                        CertModule.{name}Code \
                          (fun _ _ _ _ _ => CertModule.{name}Host) (by rfl) (by rfl)"
+                    );
+                }
+                if let Cert::AdtConstructor {
+                    name,
+                    self_idx,
+                    carrier,
+                    struct_idx,
+                    arity,
+                    ..
+                } = c.inner()
+                    && !adt_constructor_uses_model(c, model_info)
+                {
+                    let theorem = if *arity == 1 {
+                        "constructUnary_canonical_discharges"
+                    } else {
+                        "constructBinary_canonical_discharges"
+                    };
+                    return format!(
+                        "exact V3Master.{theorem} \
+                         \"{name}\" {carrier} {struct_idx} {self_idx} \
+                         AverCert.Plans.{name}ConstructPlan CertModule.{name}Code \
+                         (fun _ _ _ _ _ => CertModule.{name}Host) \
+                         (by rfl) (by rfl) (by rfl) (by rfl)"
+                    );
+                }
+                if let Cert::VerbatimWidenedMatch {
+                    name,
+                    self_idx,
+                    carrier,
+                    ..
+                }
+                | Cert::VerbatimVariantDispatch {
+                    name,
+                    self_idx,
+                    carrier,
+                    ..
+                } = c.inner()
+                {
+                    return format!(
+                        "exact V3Master.verbatim_canonical_discharges \
+                         \"{name}\" {carrier} {self_idx} \
+                         AverCert.Plans.{name}VerbatimPlan CertModule.{name}Code \
+                         (fun _ _ _ _ _ => CertModule.{name}Host) \
+                         (by rfl) (by rfl)"
+                    );
+                }
+                if let Cert::StringEqVerbatimMatch {
+                    name,
+                    self_idx,
+                    carrier,
+                    string_eq_idx,
+                    ..
+                } = c.inner()
+                {
+                    let string_ty = string_eq_string_ty_from_cert(c)
+                        .expect("certified String.eq must have a byte-derived string type");
+                    return format!(
+                        "exact V3Master.stringEq_canonical_discharges \
+                         \"{name}\" {carrier} {string_ty} {string_eq_idx} {self_idx} \
+                         AverCert.Plans.{name}StringEqPlan CertModule.{name}Code \
+                         (fun _ _ _ stringEq _ => CertModule.{name}Host stringEq) \
+                         (by rfl) (by rfl) (by rfl) (by intros; rfl)"
+                    );
+                }
+                if let Cert::StringConcatVerbatimMatch {
+                    name,
+                    self_idx,
+                    carrier,
+                    string_concat_idx,
+                    container_ty,
+                    result_ty,
+                    ..
+                } = c.inner()
+                {
+                    return format!(
+                        "exact V3Master.stringConcat_canonical_discharges \
+                         \"{name}\" {carrier} {result_ty} {container_ty} \
+                         {string_concat_idx} {self_idx} \
+                         AverCert.Plans.{name}StringConcatPlan CertModule.{name}Code \
+                         (fun _ _ _ _ stringConcat => CertModule.{name}Host stringConcat) \
+                         (by rfl) (by rfl) (by rfl) (by intros; rfl)"
                     );
                 }
                 let theorem = if c.policy() == CertificationPolicy::SimulatesModelTotally {
@@ -1030,6 +1111,23 @@ fn render_manifest(
             "V3Master.fieldProjection_direct_canonical_discharges".to_string()
         } else if matches!(c.inner(), Cert::FieldProjection { .. }) {
             "V3Master.fieldProjection_canonical_discharges".to_string()
+        } else if let Cert::AdtConstructor { arity, .. } = c.inner()
+            && !adt_constructor_uses_model(c, model_info)
+        {
+            if *arity == 1 {
+                "V3Master.constructUnary_canonical_discharges".to_string()
+            } else {
+                "V3Master.constructBinary_canonical_discharges".to_string()
+            }
+        } else if matches!(
+            c.inner(),
+            Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. }
+        ) {
+            "V3Master.verbatim_canonical_discharges".to_string()
+        } else if matches!(c.inner(), Cert::StringEqVerbatimMatch { .. }) {
+            "V3Master.stringEq_canonical_discharges".to_string()
+        } else if matches!(c.inner(), Cert::StringConcatVerbatimMatch { .. }) {
+            "V3Master.stringConcat_canonical_discharges".to_string()
         } else {
             let theorem_suffix = if policy == CertificationPolicy::SimulatesModelTotally {
                 "wasm_total"

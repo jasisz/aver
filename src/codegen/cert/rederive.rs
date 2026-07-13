@@ -272,11 +272,34 @@ pub enum ObligationFace {
         params: Vec<FragTy>,
         result: FragTy,
     },
-    /// Verbatim widened match: `Dom := WVal`, `Cod := WVal`,
-    /// `codRepr := verbatimRepr`, `domRepr := fun _ v vs => vs = [v]`. The model
-    /// (a raw projection with a null default) is a read declaration; behaviour is
-    /// pinned by executable interpreter tripwires.
-    VerbatimWidened,
+    /// Verbatim widened match / constant dispatch: `Dom := WVal`, `Cod := WVal`,
+    /// `codRepr := verbatimRepr`, `domRepr := fun _ v vs => vs = [v]`, and the
+    /// model is the audited evaluator applied to the byte-derived raw plan.
+    Verbatim { plan_lean: String },
+    /// String.eq leaf: the model is the audited equality evaluator over the
+    /// byte-derived string type and plan, and the named helper slot is fixed by
+    /// the recognized helper index.
+    StringEq {
+        string_ty: u32,
+        helper_idx: u32,
+        plan_lean: String,
+    },
+    /// String.concat leaf: the model is the audited concat evaluator over the
+    /// byte-derived result/container types and plan, with its helper slot fixed.
+    StringConcat {
+        result_ty: u32,
+        container_ty: u32,
+        helper_idx: u32,
+        plan_lean: String,
+    },
+    /// Verbatim constructor pack: raw WVal arguments are packed into the
+    /// byte-derived struct through the audited construct evaluator. User-model
+    /// constructors deliberately stay on the independent read face below.
+    VerbatimConstructor {
+        arity: usize,
+        struct_idx: u32,
+        plan_lean: String,
+    },
     /// ADT variant match: `Cod := Int`, `codRepr := intRepr`. `Dom` and
     /// `domRepr` are stated over a user-inductive `Repr` the checker cannot
     /// re-derive from bytes — a read declaration (only `Nonempty Dom` is pinned).
@@ -288,8 +311,33 @@ pub enum ObligationFace {
     AdtConstructor,
 }
 
+fn verbatim_string_face_pins(idx: usize) -> String {
+    let reduce = "simp only [AverCert.manifest, List.getElem?_cons_zero, \
+                  List.getElem?_cons_succ, Option.some.injEq] at h";
+    let obl = "AverCert.manifest.obligations";
+    format!(
+        "example : ({obl}[{idx}]?).map (fun o => o.Dom) = some CertPrelude.WVal := rfl\n\
+         example : ({obl}[{idx}]?).map (fun o => o.Cod) = some CertPrelude.WVal := rfl\n\
+         example : ∀ o, {obl}[{idx}]? = some o → \
+         HEq o.codRepr (@AverCert.Schema.verbatimRepr o.carrier) := by\n  \
+         intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n\
+         example : ∀ o, {obl}[{idx}]? = some o →\n    \
+         HEq o.domRepr (fun (_S : AverCert.Schema.CarrierSpec o.carrier) \
+         (v : CertPrelude.WVal) (vs : List CertPrelude.WVal) =>\n      \
+         vs = [v]) := by\n  \
+         intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+    )
+}
+
 impl ObligationFace {
     fn of_cert(c: &Cert) -> ObligationFace {
+        Self::of_cert_with_model_info(c, None)
+    }
+
+    fn of_cert_with_model_info(
+        c: &Cert,
+        model_info: Option<&ModelInfo>,
+    ) -> ObligationFace {
         // A host-call expr fragment with the integer-add face keeps the
         // full-strength integer simulation face (List Int / ReprAll / intRepr).
         if c.int_add_face().is_some() {
@@ -320,11 +368,51 @@ impl ObligationFace {
                 params: plan.params.clone(),
                 result: plan.result,
             },
-            Cert::VerbatimWidenedMatch { .. }
-            | Cert::VerbatimVariantDispatch { .. }
-            | Cert::StringEqVerbatimMatch { .. }
-            | Cert::StringConcatVerbatimMatch { .. } => ObligationFace::VerbatimWidened,
+            Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. } => {
+                let plan = verbatim_plan_from_cert(c)
+                    .expect("certified verbatim family must have a byte-derived plan");
+                ObligationFace::Verbatim {
+                    plan_lean: verbatim_plan_lean_value(&plan),
+                }
+            }
+            Cert::StringEqVerbatimMatch { string_eq_idx, .. } => {
+                let plan = string_eq_plan_from_cert(c)
+                    .expect("certified String.eq family must have a byte-derived plan");
+                let string_ty = string_eq_string_ty_from_cert(c)
+                    .expect("certified String.eq family must have one byte-derived string type");
+                ObligationFace::StringEq {
+                    string_ty,
+                    helper_idx: *string_eq_idx,
+                    plan_lean: string_eq_plan_lean_value(&plan),
+                }
+            }
+            Cert::StringConcatVerbatimMatch {
+                result_ty,
+                container_ty,
+                string_concat_idx,
+                ..
+            } => {
+                let plan = string_concat_plan_from_cert(c)
+                    .expect("certified String.concat family must have a byte-derived plan");
+                ObligationFace::StringConcat {
+                    result_ty: *result_ty,
+                    container_ty: *container_ty,
+                    helper_idx: *string_concat_idx,
+                    plan_lean: string_concat_plan_lean_value(&plan),
+                }
+            }
             Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. } => ObligationFace::AdtMatch,
+            Cert::AdtConstructor {
+                arity, struct_idx, ..
+            } if model_info.is_some_and(|info| !adt_constructor_uses_model(c, info)) => {
+                let plan = construct_plan_from_cert(c)
+                    .expect("certified verbatim constructor must have a byte-derived plan");
+                ObligationFace::VerbatimConstructor {
+                    arity: *arity,
+                    struct_idx: *struct_idx,
+                    plan_lean: construct_plan_lean_value(&plan),
+                }
+            }
             Cert::AdtConstructor { .. } => ObligationFace::AdtConstructor,
             // Each SCC member is an ordinary integer simulation face (arity 1);
             // the shared proof is what differs, not the typed obligation shape.
@@ -362,10 +450,19 @@ impl ObligationFace {
                     result.lean_dom_type()
                 )
             }
-            ObligationFace::VerbatimWidened => {
-                "class: verbatim widened match  |  Dom: WVal  Cod: WVal  codRepr: verbatimRepr  (model is a read declaration; behaviour pinned by an interpreter tripwire)"
+            ObligationFace::Verbatim { .. } => {
+                "class: verbatim dispatch  |  Dom: WVal  Cod: WVal  codRepr: verbatimRepr  model: byte-derived audited evaluator"
                     .to_string()
             }
+            ObligationFace::StringEq { helper_idx, .. } => format!(
+                "class: String.eq leaf  |  Dom: WVal  Cod: WVal  codRepr: verbatimRepr  helper: byte-derived slot {helper_idx}"
+            ),
+            ObligationFace::StringConcat { helper_idx, .. } => format!(
+                "class: String.concat leaf  |  Dom: WVal  Cod: WVal  codRepr: verbatimRepr  helper: byte-derived slot {helper_idx}"
+            ),
+            ObligationFace::VerbatimConstructor { arity, .. } => format!(
+                "class: verbatim constructor  |  Dom: raw WVal product (arity {arity})  Cod: WVal  codRepr: verbatimRepr  model: byte-derived audited evaluator"
+            ),
             ObligationFace::AdtMatch => {
                 let d = dom.unwrap_or("<user type>");
                 format!(
@@ -487,7 +584,7 @@ impl ObligationFace {
                      intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
                 ));
             }
-            ObligationFace::VerbatimWidened => {
+            ObligationFace::Verbatim { plan_lean } => {
                 s.push_str(&format!(
                     "example : ({obl}[{idx}]?).map (fun o => o.Dom) = some CertPrelude.WVal := rfl\n"
                 ));
@@ -504,6 +601,93 @@ impl ObligationFace {
                      HEq o.domRepr (fun (_S : AverCert.Schema.CarrierSpec o.carrier) \
                      (v : CertPrelude.WVal) (vs : List CertPrelude.WVal) =>\n      \
                      vs = [v]) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o →\n    \
+                     HEq o.model (fun (v : CertPrelude.WVal) =>\n      \
+                     V3ConstructVerbatim.verbatimModel ({plan_lean}) v) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+            }
+            ObligationFace::StringEq {
+                string_ty,
+                helper_idx,
+                plan_lean,
+            } => {
+                s.push_str(&verbatim_string_face_pins(idx));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o →\n    \
+                     HEq o.model (fun (v : CertPrelude.WVal) =>\n      \
+                     V3String.evalStringEq {string_ty} ({plan_lean}) v) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o →\n    \
+                     ∀ add sub mul stringEq stringConcat,\n      \
+                     o.host add sub mul stringEq stringConcat {helper_idx} =\n        \
+                     some (2, stringEq) := by\n  \
+                     intro o h add sub mul stringEq stringConcat\n  {reduce}\n  \
+                     subst h; rfl\n"
+                ));
+            }
+            ObligationFace::StringConcat {
+                result_ty,
+                container_ty,
+                helper_idx,
+                plan_lean,
+            } => {
+                s.push_str(&verbatim_string_face_pins(idx));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o →\n    \
+                     HEq o.model (fun (v : CertPrelude.WVal) =>\n      \
+                     V3String.evalStringConcat {result_ty} {container_ty} \
+                     ({plan_lean}) v) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o →\n    \
+                     ∀ add sub mul stringEq stringConcat,\n      \
+                     o.host add sub mul stringEq stringConcat {helper_idx} =\n        \
+                     some (1, stringConcat {result_ty}) := by\n  \
+                     intro o h add sub mul stringEq stringConcat\n  {reduce}\n  \
+                     subst h; rfl\n"
+                ));
+            }
+            ObligationFace::VerbatimConstructor {
+                arity,
+                struct_idx,
+                plan_lean,
+            } => {
+                let (dom, args) = if *arity == 1 {
+                    ("CertPrelude.WVal", "[p]")
+                } else {
+                    ("CertPrelude.WVal × CertPrelude.WVal", "[p.1, p.2]")
+                };
+                s.push_str(&format!(
+                    "example : ({obl}[{idx}]?).map (fun o => o.Dom) = some ({dom}) := rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ({obl}[{idx}]?).map (fun o => o.Cod) = some CertPrelude.WVal := rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o → \
+                     HEq o.codRepr (@AverCert.Schema.verbatimRepr o.carrier) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o →\n    \
+                     HEq o.domRepr (fun (_S : AverCert.Schema.CarrierSpec o.carrier) \
+                     (p : {dom}) (vs : List CertPrelude.WVal) =>\n      \
+                     vs = {args}) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o →\n    \
+                     HEq o.model (fun (p : {dom}) => CertPrelude.WVal.structv \
+                     {struct_idx} (V3ConstructVerbatim.constructModelFields\n        \
+                     ({args} ++ List.replicate 1 CertPrelude.WVal.null) \
+                     ({plan_lean}).fields)) := by\n  \
                      intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
                 ));
             }
@@ -602,7 +786,7 @@ fn rederive_certificate_inner(
             carrier: c.carrier(),
             policy: c.policy(),
             termination_witness: c.termination_witness(),
-            face: ObligationFace::of_cert(c),
+            face: ObligationFace::of_cert_with_model_info(c, Some(&model_info)),
             fragment_code_idx: match c.inner() {
                 Cert::ExprFragment { code_idx, .. } => Some(*code_idx),
                 _ => None,

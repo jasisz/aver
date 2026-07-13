@@ -19,7 +19,12 @@ fn render_certificate(
             Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. } => {
                 s.push_str(&render_fueled_recursion_cert(c))
             }
-            Cert::AdtConstructor { .. } => s.push_str(&render_adt_constructor_cert(c, model_info)),
+            Cert::AdtConstructor { .. } if adt_constructor_uses_model(c, model_info) => {
+                s.push_str(&render_adt_constructor_cert(c, model_info))
+            }
+            // Verbatim constructor packs are option-(c) leaves discharged in
+            // `Final.cert`; model-bearing constructors keep their bespoke arm.
+            Cert::AdtConstructor { .. } => {}
             // The field-projection family is discharged in `Final.cert` by the
             // audited v3 generic plus its canonical option-(c) leaf bridge.
             // Its plan, obligation and claim data remain emitted unchanged.
@@ -28,15 +33,12 @@ fn render_certificate(
                 s.push_str(&render_adt_match_cert(c, model_info))
             }
             Cert::ExprFragment { .. } => s.push_str(&render_expr_fragment_cert(c)),
-            Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. } => {
-                s.push_str(&render_verbatim_wval_match_cert(c))
-            }
-            Cert::StringEqVerbatimMatch { .. } => {
-                s.push_str(&render_string_eq_verbatim_match_cert(c))
-            }
-            Cert::StringConcatVerbatimMatch { .. } => {
-                s.push_str(&render_string_concat_verbatim_match_cert(c))
-            }
+            // Verbatim and String families are discharged by their audited
+            // canonical leaf bridges. Their plans/claims/data remain emitted.
+            Cert::VerbatimWidenedMatch { .. }
+            | Cert::VerbatimVariantDispatch { .. }
+            | Cert::StringEqVerbatimMatch { .. }
+            | Cert::StringConcatVerbatimMatch { .. } => {}
             Cert::Composition { .. } => s.push_str(&render_composition_cert(c)),
             Cert::MutualRecursion { .. } => s.push_str(&render_mutual_recursion_cert(c)),
             Cert::NonRecursive { .. } => unreachable!(),

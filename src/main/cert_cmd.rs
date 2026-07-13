@@ -1313,12 +1313,7 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
             CertifiedExport {
                 name: r.name.clone(),
                 policy: r.policy.manifest_name().to_string(),
-                face: if r.string_eq_plan_lean.is_some() {
-                    "class: verbatim string equality match  |  Dom: WVal  Cod: WVal  codRepr: verbatimRepr  (model is a read declaration; behaviour pinned by an interpreter tripwire)"
-                        .to_string()
-                } else {
-                    r.face.describe(dom.as_deref(), cod.as_deref())
-                },
+                face: r.face.describe(dom.as_deref(), cod.as_deref()),
             }
         })
         .collect();

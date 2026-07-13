@@ -136,6 +136,98 @@ private theorem construct_run_succ_eq_one
   rw [hFuel, hOne]
   simp [wRunF]
 
+/-- Canonical option-(c) leaf bridge for a unary verbatim constructor pack. -/
+theorem constructUnary_canonical_discharges
+    (exportName : String) (carrier structIdx self : Nat)
+    (plan : ConstructRawPlan) (code : CodeTbl)
+    (host :
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (Nat → List WVal → Option WVal) → HostTbl)
+    (hArity : plan.arity = 1)
+    (hCheck : AverCert.PlanCheck.checkConstructRawPlan plan = true)
+    {body : List WInstr}
+    (hLow : AverCert.PlanLower.lowerConstructBody structIdx plan = some body)
+    (hCode : code self = some
+      { arity := plan.arity, nlocals := 1, body := body }) :
+    Obligation.holds
+      ({ export_ := exportName
+         policy := .simulatesModel
+         carrier := carrier
+         code := code
+         host := host
+         self := self
+         Dom := WVal
+         Cod := WVal
+         domRepr := fun _ p vs => vs = [p]
+         codRepr := fun S v w => verbatimRepr S v w
+         model := fun p => .structv structIdx
+           (V3ConstructVerbatim.constructModelFields
+             ([p] ++ List.replicate 1 .null) plan.fields) } : Obligation) := by
+  intro S add sub mul stringEq stringConcat
+    _hAdd _hSub _hMul _hStringEq _hStringConcat fuel p args w hDom hRun
+  subst args
+  have hLen : [p].length = plan.arity := by simp [hArity]
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      have hCall := V3ConstructVerbatim.generic_construct_certified
+        structIdx plan code (host add sub mul stringEq stringConcat) self 1
+        hCheck body hLow hCode [p] hLen
+      have hFuel := construct_run_succ_eq_one
+        structIdx plan code (host add sub mul stringEq stringConcat) self
+        hCheck body hLow hCode fuel [p] hLen
+      rw [hFuel, hCall] at hRun
+      exact (Option.some.inj hRun).symm
+
+/-- Canonical option-(c) leaf bridge for a binary verbatim constructor pack. -/
+theorem constructBinary_canonical_discharges
+    (exportName : String) (carrier structIdx self : Nat)
+    (plan : ConstructRawPlan) (code : CodeTbl)
+    (host :
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (Nat → List WVal → Option WVal) → HostTbl)
+    (hArity : plan.arity = 2)
+    (hCheck : AverCert.PlanCheck.checkConstructRawPlan plan = true)
+    {body : List WInstr}
+    (hLow : AverCert.PlanLower.lowerConstructBody structIdx plan = some body)
+    (hCode : code self = some
+      { arity := plan.arity, nlocals := 1, body := body }) :
+    Obligation.holds
+      ({ export_ := exportName
+         policy := .simulatesModel
+         carrier := carrier
+         code := code
+         host := host
+         self := self
+         Dom := WVal × WVal
+         Cod := WVal
+         domRepr := fun _ p vs => vs = [p.1, p.2]
+         codRepr := fun S v w => verbatimRepr S v w
+         model := fun p => .structv structIdx
+           (V3ConstructVerbatim.constructModelFields
+             ([p.1, p.2] ++ List.replicate 1 .null) plan.fields) } : Obligation) := by
+  intro S add sub mul stringEq stringConcat
+    _hAdd _hSub _hMul _hStringEq _hStringConcat fuel p args w hDom hRun
+  subst args
+  have hLen : [p.1, p.2].length = plan.arity := by simp [hArity]
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      have hCall := V3ConstructVerbatim.generic_construct_certified
+        structIdx plan code (host add sub mul stringEq stringConcat) self 1
+        hCheck body hLow hCode [p.1, p.2] hLen
+      have hFuel := construct_run_succ_eq_one
+        structIdx plan code (host add sub mul stringEq stringConcat) self
+        hCheck body hLow hCode fuel [p.1, p.2] hLen
+      rw [hFuel, hCall] at hRun
+      exact (Option.some.inj hRun).symm
+
 theorem construct_claim_discharges
     (artifact : ArtifactData)
     (hAcc : acceptedConstructFragments artifact)
@@ -205,5 +297,7 @@ theorem construct_discharges
 end V3Master
 
 #print axioms V3Master.construct_accepted_call
+#print axioms V3Master.constructUnary_canonical_discharges
+#print axioms V3Master.constructBinary_canonical_discharges
 #print axioms V3Master.construct_claim_discharges
 #print axioms V3Master.construct_discharges
