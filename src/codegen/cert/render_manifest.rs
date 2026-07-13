@@ -579,12 +579,34 @@ fn render_lakefile(model_roots: &[String]) -> String {
     roots.push("`ExprFragmentAccepted".to_string());
     roots.push("`AcceptedArtifactCore".to_string());
     roots.push("`AcceptedArtifact".to_string());
+    roots.push("`V3ExprFragmentFull".to_string());
+    roots.push("`V3StrongFuel".to_string());
+    roots.push("`V3IfElse".to_string());
+    roots.push("`V3GenericCertified".to_string());
+    roots.push("`V3FieldProj".to_string());
+    roots.push("`V3ConstructVerbatim".to_string());
+    roots.push("`V3DispatchCore".to_string());
+    roots.push("`V3String".to_string());
+    roots.push("`V3RecSpike".to_string());
+    roots.push("`V3MutualGeneric".to_string());
+    roots.push("`V3Composition".to_string());
+    roots.push("`V3Master".to_string());
+    roots.push("`V3DischargeExprFragment".to_string());
+    roots.push("`V3DischargeFieldProj".to_string());
+    roots.push("`V3DischargeConstruct".to_string());
+    roots.push("`V3DischargeVerbatim".to_string());
+    roots.push("`V3DischargeString".to_string());
+    roots.push("`V3DischargeIntDispatch".to_string());
+    roots.push("`V3DischargeRecursion".to_string());
+    roots.push("`V3DischargeComposition".to_string());
+    roots.push("`V3AcceptSound".to_string());
     roots.push("`ArtifactBytes".to_string());
     roots.push("`Plans".to_string());
     roots.push("`Manifest".to_string());
     roots.push("`Certificate".to_string());
     roots.push("`Final".to_string());
     roots.push("`Artifact".to_string());
+    roots.push("`V3AcceptReal".to_string());
     format!(
         "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
          @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  roots := #[{}]\n",
@@ -604,6 +626,27 @@ struct ManifestHashes<'a> {
     expr_fragment_accepted: &'a str,
     accepted_artifact: &'a str,
     accepted_artifact_core: &'a str,
+    v3_expr_fragment_full: &'a str,
+    v3_strong_fuel: &'a str,
+    v3_if_else: &'a str,
+    v3_generic_certified: &'a str,
+    v3_field_proj: &'a str,
+    v3_construct_verbatim: &'a str,
+    v3_dispatch_core: &'a str,
+    v3_string: &'a str,
+    v3_rec_spike: &'a str,
+    v3_mutual_generic: &'a str,
+    v3_composition: &'a str,
+    v3_master: &'a str,
+    v3_discharge_expr_fragment: &'a str,
+    v3_discharge_field_proj: &'a str,
+    v3_discharge_construct: &'a str,
+    v3_discharge_verbatim: &'a str,
+    v3_discharge_string: &'a str,
+    v3_discharge_int_dispatch: &'a str,
+    v3_discharge_recursion: &'a str,
+    v3_discharge_composition: &'a str,
+    v3_accept_sound: &'a str,
 }
 
 fn render_manifest(
@@ -678,6 +721,90 @@ fn render_manifest(
     s.push_str(&format!(
         "  \"accepted_artifact_core_sha256\": \"{}\",\n",
         hashes.accepted_artifact_core
+    ));
+    s.push_str(&format!(
+        "  \"v3_expr_fragment_full_sha256\": \"{}\",\n",
+        hashes.v3_expr_fragment_full
+    ));
+    s.push_str(&format!(
+        "  \"v3_strong_fuel_sha256\": \"{}\",\n",
+        hashes.v3_strong_fuel
+    ));
+    s.push_str(&format!(
+        "  \"v3_if_else_sha256\": \"{}\",\n",
+        hashes.v3_if_else
+    ));
+    s.push_str(&format!(
+        "  \"v3_generic_certified_sha256\": \"{}\",\n",
+        hashes.v3_generic_certified
+    ));
+    s.push_str(&format!(
+        "  \"v3_field_proj_sha256\": \"{}\",\n",
+        hashes.v3_field_proj
+    ));
+    s.push_str(&format!(
+        "  \"v3_construct_verbatim_sha256\": \"{}\",\n",
+        hashes.v3_construct_verbatim
+    ));
+    s.push_str(&format!(
+        "  \"v3_dispatch_core_sha256\": \"{}\",\n",
+        hashes.v3_dispatch_core
+    ));
+    s.push_str(&format!(
+        "  \"v3_string_sha256\": \"{}\",\n",
+        hashes.v3_string
+    ));
+    s.push_str(&format!(
+        "  \"v3_rec_spike_sha256\": \"{}\",\n",
+        hashes.v3_rec_spike
+    ));
+    s.push_str(&format!(
+        "  \"v3_mutual_generic_sha256\": \"{}\",\n",
+        hashes.v3_mutual_generic
+    ));
+    s.push_str(&format!(
+        "  \"v3_composition_sha256\": \"{}\",\n",
+        hashes.v3_composition
+    ));
+    s.push_str(&format!(
+        "  \"v3_master_sha256\": \"{}\",\n",
+        hashes.v3_master
+    ));
+    s.push_str(&format!(
+        "  \"v3_discharge_expr_fragment_sha256\": \"{}\",\n",
+        hashes.v3_discharge_expr_fragment
+    ));
+    s.push_str(&format!(
+        "  \"v3_discharge_field_proj_sha256\": \"{}\",\n",
+        hashes.v3_discharge_field_proj
+    ));
+    s.push_str(&format!(
+        "  \"v3_discharge_construct_sha256\": \"{}\",\n",
+        hashes.v3_discharge_construct
+    ));
+    s.push_str(&format!(
+        "  \"v3_discharge_verbatim_sha256\": \"{}\",\n",
+        hashes.v3_discharge_verbatim
+    ));
+    s.push_str(&format!(
+        "  \"v3_discharge_string_sha256\": \"{}\",\n",
+        hashes.v3_discharge_string
+    ));
+    s.push_str(&format!(
+        "  \"v3_discharge_int_dispatch_sha256\": \"{}\",\n",
+        hashes.v3_discharge_int_dispatch
+    ));
+    s.push_str(&format!(
+        "  \"v3_discharge_recursion_sha256\": \"{}\",\n",
+        hashes.v3_discharge_recursion
+    ));
+    s.push_str(&format!(
+        "  \"v3_discharge_composition_sha256\": \"{}\",\n",
+        hashes.v3_discharge_composition
+    ));
+    s.push_str(&format!(
+        "  \"v3_accept_sound_sha256\": \"{}\",\n",
+        hashes.v3_accept_sound
     ));
     if let Some(c) = analysis.carrier {
         s.push_str(&format!("  \"carrier_type_index\": {c},\n"));
