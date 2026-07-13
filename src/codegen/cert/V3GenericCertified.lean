@@ -444,10 +444,11 @@ theorem mutualCorrect (fuel : Nat) : NodesCorrect fuel /\ BlockCorrect fuel := b
 
 /-! ## Audited-plan generic certificate
 
-The source inputs are deliberately materialised with `carrierSmall`; this is
-the domain exported range/comparison obligations quantify over.  No claim is
-made for an arbitrary `S.Repr` at a comparison boundary (the big-carrier
-eliminator intentionally does not provide enough information for that).
+The input values are supplied by the per-obligation semantic bridge.  This
+keeps the lowering theorem representation-polymorphic: comparison obligations
+may still choose the honest `carrierSmall` domain, while contracted integer
+operations may retain their stronger arbitrary-`S.Repr` domain and Bool
+fragments may use their canonical `b32` inputs.
 
 `evalSymRawPlan` begins at the checked source `SymRawPlan`, invokes the audited
 encoder, and evaluates the resulting structured plan.  Thus the theorem is
@@ -466,8 +467,8 @@ theorem exprfragment_generic_certified {C : Nat} (S : CarrierSpec C)
     (hlower : lowerBlock C plan.body = some instrs)
     (self nlocals fuel : Nat)
     (hself : code self = some ⟨plan.params.length, nlocals, instrs⟩)
-    (sourceArgs : List Int)
-    (hsourceArity : sourceArgs.length = plan.params.length)
+    (inputs : List WVal)
+    (hinputArity : inputs.length = plan.params.length)
     (hcalls : blockCallsOK host (fun g => (code g).map (fun c => c.arity))
       plan.body)
     (modelLocals : List WVal) (result : WVal)
@@ -475,17 +476,14 @@ theorem exprfragment_generic_certified {C : Nat} (S : CarrierSpec C)
       (fun g => (code g).map (fun c => c.arity))
       (fun g args => wFuncN code host fuel g args)
       C symPlan
-      (initLocals ⟨plan.params.length, nlocals, instrs⟩
-        (sourceArgs.map (carrierSmall C))) =
+      (initLocals ⟨plan.params.length, nlocals, instrs⟩ inputs) =
       some (.ok modelLocals [result])) :
-    wFuncN code host (fuel + 1) self
-      (sourceArgs.map (carrierSmall C)) = some result := by
+    wFuncN code host (fuel + 1) self inputs = some result := by
   have hevalBlock : runBlock host
       (fun g => (code g).map (fun c => c.arity))
       (fun g args => wFuncN code host fuel g args)
       C plan.body
-      (initLocals ⟨plan.params.length, nlocals, instrs⟩
-        (sourceArgs.map (carrierSmall C))) =
+      (initLocals ⟨plan.params.length, nlocals, instrs⟩ inputs) =
       some (.ok modelLocals [result]) := by
     simp only [evalSymRawPlan, hencode] at heval
     exact heval
@@ -493,15 +491,13 @@ theorem exprfragment_generic_certified {C : Nat} (S : CarrierSpec C)
       (fun g => (code g).map (fun (c : WCode) => c.arity))
       (fun g args => wFuncN code host fuel g args)
       maxFuel C plan.body
-      (initLocals ⟨plan.params.length, nlocals, instrs⟩
-        (sourceArgs.map (carrierSmall C))) =
+      (initLocals ⟨plan.params.length, nlocals, instrs⟩ inputs) =
       some (.ok modelLocals [result]) at hevalBlock
   have hwrun := (mutualCorrect maxFuel).2 host
     (fun g => (code g).map (fun (c : WCode) => c.arity))
     (fun g args => wFuncN code host fuel g args)
     C plan.body instrs hcalls hlower
-    (initLocals ⟨plan.params.length, nlocals, instrs⟩
-      (sourceArgs.map (carrierSmall C)))
+    (initLocals ⟨plan.params.length, nlocals, instrs⟩ inputs)
     (.ok modelLocals [result]) hevalBlock
   simp [wFuncN, hself, hwrun]
 

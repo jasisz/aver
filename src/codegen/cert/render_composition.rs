@@ -28,62 +28,122 @@ fn compose_topo_order(caller_idx: u32, closure: &[ClosureEntry]) -> Vec<u32> {
     order
 }
 
-/// Evaluate a closure entry's integer model on a concrete input (for the
-/// anti-vacuity `native_decide` guard values). Mirrors the leaf models exactly.
-fn compose_eval(idx: u32, x: i64, by_idx: &std::collections::HashMap<u32, &ClosureEntry>) -> i64 {
-    match by_idx.get(&idx).map(|e| &e.shape) {
-        Some(LeafShape::SelfSum { .. }) => x + x,
-        Some(LeafShape::Chain { calls }) => {
-            let mut acc = x;
-            for c in calls {
-                acc = compose_eval(*c, acc, by_idx);
-            }
-            acc
-        }
-        None => x,
-    }
+fn composition_member_claim_lean_value(entry: &ClosureEntry) -> String {
+    format!(
+        "({{ exportNameBytes := {}, exportName := {}, \
+         plan := AverCert.Plans.{}CompositionPlan }} : \
+         AverCert.AcceptedArtifact.CompositionMemberClaim)",
+        render_byte_list(entry.name.as_bytes()),
+        lean_str(&entry.name),
+        entry.name,
+    )
 }
 
-/// Longest chain of code-calls from `idx` down to a leaf (fuel budget for the
-/// `native_decide` guards: each level burns one unit in `wFuncN`).
-fn compose_depth(idx: u32, by_idx: &std::collections::HashMap<u32, &ClosureEntry>) -> usize {
-    match by_idx.get(&idx).map(|e| &e.shape) {
-        Some(LeafShape::Chain { calls }) => {
-            1 + calls
-                .iter()
-                .map(|c| compose_depth(*c, by_idx))
-                .max()
-                .unwrap_or(0)
-        }
-        _ => 1,
-    }
+fn composition_members_lean_value(closure: &[ClosureEntry]) -> String {
+    format!(
+        "[{}]",
+        closure
+            .iter()
+            .map(composition_member_claim_lean_value)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
-/// The cross-function composition certificate: a simulation lemma per closure
-/// entry over the caller's SHARED code table (callee lemmas first, the caller's
-/// `_wasm_certified` last), the anti-vacuity guards, and the schema obligation.
-/// Content-blind: the only per-function inputs are DATA (the closure entries,
-/// their call indices and model names), never a hand-tuned proof.
-fn render_composition_cert(c: &Cert) -> String {
+fn composition_claim_lean_value(c: &Cert, add_idx: u32) -> String {
+    let Cert::Composition {
+        name,
+        carrier,
+        closure,
+        ..
+    } = c.inner()
+    else {
+        unreachable!()
+    };
+    let member_names = closure
+        .iter()
+        .map(|entry| lean_str(&entry.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "({{ exportName := {}, carrier := {carrier}, hostTable := {}, \
+         memberNames := [{member_names}], obligation := AverCert.{name}Ob }} : \
+         AverCert.AcceptedArtifact.CompositionClaim)",
+        lean_str(name),
+        composition_host_table_lean_value(add_idx),
+    )
+}
+
+fn composition_claim_acceptance_proof(
+    c: &Cert,
+    strict: FragHostTable,
+) -> String {
+    let Cert::Composition {
+        carrier, closure, ..
+    } = c.inner()
+    else {
+        unreachable!()
+    };
+    let plans = composition_plans_from_cert(c, strict)
+        .expect("audited composition has byte-derived member plans");
+    let add_idx = strict
+        .add_idx
+        .expect("plan-backed composition has strict add host");
+    let funcs = composition_func_table(closure);
+    let mut named_proof = "trivial".to_string();
+    for (entry, plan) in plans.iter().rev() {
+        let body = render_ops_value(
+            &lower_composition_plan(plan, add_idx, &funcs)
+                .expect("composition member lowers against closure table"),
+        );
+        let code_entry = render_byte_list(
+            &composition_code_entry_bytes(plan, *carrier, add_idx, &funcs)
+                .expect("composition member byte-lowers against closure table"),
+        );
+        let binding = format!(
+            "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {} }} : \
+             AverCert.WasmSlice.FuncBinding)",
+            entry.self_idx, entry.code_idx, entry.type_idx, code_entry
+        );
+        let member_proof = format!(
+            "⟨rfl, ⟨({body}), ({code_entry}), {binding}, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
+        );
+        named_proof = format!("⟨{member_proof}, {named_proof}⟩");
+    }
+    format!("⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, {named_proof}⟩⟩⟩⟩⟩⟩")
+}
+
+/// Option-(b) composition bridge. Root glue is discharged by the audited
+/// generic; generated lemmas remain only for the non-root member semantics
+/// that the generic deliberately consumes through `MemberFact`.
+fn render_composition_semantic_bridge(c: &Cert, analysis: &Analysis) -> String {
     let Cert::Composition {
         name,
         self_idx,
         carrier,
         closure,
         ..
-    } = c
+    } = c.inner()
     else {
         unreachable!()
     };
+    let add_idx = analysis
+        .frag_host_table
+        .add_idx
+        .expect("composition bridge has strict add host");
     let by_idx: std::collections::HashMap<u32, &ClosureEntry> =
         closure.iter().map(|e| (e.self_idx, e)).collect();
-    let lemma_name = |idx: u32| -> String {
-        if idx == *self_idx {
-            format!("{name}_wasm_certified")
-        } else {
-            format!("{name}__sim_{idx}")
-        }
+    let root = by_idx[self_idx];
+    let LeafShape::Chain { calls: root_calls } = &root.shape else {
+        unreachable!("composition root is a chain")
     };
+    let callees = root_calls
+        .iter()
+        .map(|idx| lean_str(&by_idx[idx].name))
+        .collect::<Vec<_>>();
+    let callees_lean = format!("[{}]", callees.join(", "));
+    let lemma_name = |idx: u32| -> String { format!("{name}__compositionMember_{idx}") };
+    let model_name = format!("{name}CompositionModel");
     let sig = |concl_model: &str| -> String {
         format!(
             "    (S : CarrierSpec {carrier}) (add sub : List WVal → Option WVal)\n\
@@ -95,15 +155,36 @@ fn render_composition_cert(c: &Cert) -> String {
     };
 
     let mut s = format!(
-        "/-! ### {name} — cross-function composition certificate (carrier type {carrier}) -/\n\n"
+        "/-! ### {name} — option-(b) composition semantic bridge (carrier type {carrier}) -/\n\n"
     );
+    s.push_str(&format!(
+        "def {model_name} (member : String) (x : Int) : Int :=\n  {}\n\n",
+        closure
+            .iter()
+            .map(|entry| format!(
+                "if member = {} then {} x else",
+                lean_str(&entry.name),
+                entry.name
+            ))
+            .chain(std::iter::once("x".to_string()))
+            .collect::<Vec<_>>()
+            .join(" ")
+    ));
+    let model_simp = closure
+        .iter()
+        .map(|entry| entry.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
 
     for idx in compose_topo_order(*self_idx, closure) {
+        if idx == *self_idx {
+            continue;
+        }
         let e = by_idx[&idx];
         let head = format!(
             "theorem {}\n{}",
             lemma_name(idx),
-            sig(&format!("{} x", e.name))
+            sig(&format!("{model_name} {} x", lean_str(&e.name)))
         )
         .replace("{IDX}", &idx.to_string());
         match &e.shape {
@@ -117,7 +198,7 @@ fn render_composition_cert(c: &Cert) -> String {
                      rcases hc : add [v, v] with _ | r <;>\n        \
                      simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, popArgs, initLocals, hc] at hrun\n      \
                      subst hrun\n      \
-                     exact hadd x x v v r hv hv hc\n\n",
+                     simpa [{model_name}, {model_simp}] using hadd x x v v r hv hv hc\n\n",
                     ename = e.name,
                 ));
             }
@@ -150,57 +231,169 @@ fn render_composition_cert(c: &Cert) -> String {
                         h = i + 1,
                         lem = lemma_name(*c_idx),
                     ));
-                    model_arg = format!("{} ({})", by_idx[c_idx].name, model_arg);
+                    model_arg = format!(
+                        "{model_name} {} ({model_arg})",
+                        lean_str(&by_idx[c_idx].name)
+                    );
                 }
-                body.push_str(&format!("      exact r{}\n\n", calls.len()));
+                body.push_str(&format!(
+                    "      simpa [{model_name}, {model_simp}] using r{}\n\n",
+                    calls.len()
+                ));
                 s.push_str(&format!(
-                    "-- {label} `{ename}`: unary user-call chain; cites each callee lemma.\n{head} := by\n  \
+                    "-- callee `{ename}`: unary user-call chain; cites each member lemma.\n{head} := by\n  \
                      intro fuel x v w hv hrun\n  \
                      cases fuel with\n  \
                      | zero => simp only [wFuncN, reduceCtorEq] at hrun\n  \
                      | succ f =>\n{body}",
                     ename = e.name,
-                    label = if idx == *self_idx { "caller" } else { "callee" },
                 ));
             }
         }
     }
 
-    s.push_str(&format!("#print axioms {name}_wasm_certified\n\n"));
-
-    // anti-vacuity guards: run the whole closure on concrete inputs.
-    let g_fuel = compose_depth(*self_idx, &by_idx) + 2;
-    let g3 = compose_eval(*self_idx, 3, &by_idx);
-    let gm5 = compose_eval(*self_idx, -5, &by_idx);
+    let members = composition_members_lean_value(closure);
+    let claim = composition_claim_lean_value(c, add_idx);
+    let acceptance = composition_claim_acceptance_proof(c, analysis.frag_host_table);
     s.push_str(&format!(
-        "-- anti-vacuity: the emitted closure actually RUNS on concrete inputs.\n\
-         def {name}HostRef : HostTbl := {name}Host (addRef {carrier}) (subRef {carrier})\n\
-         example :\n    \
-         ((wFuncN {name}Code {name}HostRef {g_fuel} {self_idx} [carrierSmall {carrier} 3]).bind carrierToInt) = some ({g3}) := by\n  \
-         native_decide\n\
-         example :\n    \
-         ((wFuncN {name}Code {name}HostRef {g_fuel} {self_idx} [carrierSmall {carrier} (-5)]).bind carrierToInt) = some ({gm5}) := by\n  \
-         native_decide\n\n"
+        "def {name}CompositionMembers : List AverCert.AcceptedArtifact.CompositionMemberClaim :=\n  \
+         {members}\n\n\
+         def {name}CompositionClaim : AverCert.AcceptedArtifact.CompositionClaim :=\n  \
+         {claim}\n\n\
+         theorem {name}_compositionClaimAccepted :\n    \
+         AverCert.AcceptedArtifact.compositionClaimAccepted\n      \
+         AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen\n      \
+         {name}CompositionMembers {name}CompositionClaim := by\n  \
+         dsimp [{name}CompositionMembers, {name}CompositionClaim,\n    \
+         AverCert.AcceptedArtifact.compositionClaimAccepted,\n    \
+         AverCert.AcceptedArtifact.compositionFuncTable,\n    \
+         AverCert.AcceptedArtifact.compositionMemberBinding,\n    \
+         AverCert.AcceptedArtifact.compositionNamedMembersAccepted,\n    \
+         AverCert.AcceptedArtifact.compositionMemberPlanAccepted,\n    \
+         AverCert.AcceptedArtifact.compositionMemberForName,\n    \
+         AverCert.AcceptedArtifact.compositionClosureBound,\n    \
+         AverCert.AcceptedArtifact.compositionEdges,\n    \
+         AverCert.AcceptedArtifact.compositionPlanCallees,\n    \
+         AverCert.AcceptedArtifact.compositionEdgesDescend,\n    \
+         AverCert.AcceptedArtifact.compositionReachClosure,\n    \
+         AverCert.AcceptedArtifact.compositionReachStep,\n    \
+         AverCert.AcceptedArtifact.compositionEdgeLookup,\n    \
+         AverCert.AcceptedArtifact.stringListNodup,\n    \
+         AverCert.AcceptedArtifact.stringListSetEq]\n  \
+         exact {acceptance}\n\n"
     ));
 
-    // the schema obligation: bridge the caller lemma to `Obligation.holds`.
+    let direct_callee = by_idx[root_calls
+        .first()
+        .expect("composition root has a direct callee")];
+    let direct_member = composition_member_claim_lean_value(direct_callee);
+    let direct_plan = composition_plan_for_entry(
+        direct_callee,
+        &closure
+            .iter()
+            .map(|entry| (entry.self_idx, entry.name.clone()))
+            .collect(),
+    )
+    .expect("direct composition member has a plan");
+    let funcs = composition_func_table(closure);
+    let direct_body = render_ops_value(
+        &lower_composition_plan(&direct_plan, add_idx, &funcs)
+            .expect("direct composition member lowers"),
+    );
+    let direct_code_entry = render_byte_list(
+        &composition_code_entry_bytes(&direct_plan, *carrier, add_idx, &funcs)
+            .expect("direct composition member byte-lowers"),
+    );
+    let direct_binding = format!(
+        "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {} }} : \
+         AverCert.WasmSlice.FuncBinding)",
+        direct_callee.self_idx,
+        direct_callee.code_idx,
+        direct_callee.type_idx,
+        direct_code_entry,
+    );
     s.push_str(&format!(
-        "/-- Schema-shaped simulation obligation for `{name}` (composed by the single\n\
-        \x20   final theorem): the emitted body simulates `{name}` by citing its callees. -/\n\
-         theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by\n  \
-         intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun\n  \
-         simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢\n  \
-         obtain ⟨hrepr, harity⟩ := hrepr\n  \
-         cases hrepr with\n  \
-         | nil => simp at harity\n  \
-         | cons hv htail =>\n    \
-         rename_i n v ns vs\n    \
-         cases htail with\n    \
-         | nil =>\n      \
-         simpa [AverCert.Schema.intRepr] using\n        \
-         {name}_wasm_certified S add sub hadd hsub fuel n v w hv hrun\n    \
-         | cons _ _ => simp at harity\n"
+        "theorem {name}_compositionSemanticBridge :\n    \
+         V3Master.compositionClaimSemanticBridge\n      \
+         ({{ modBytes := AverCert.ArtifactBytes.modBytes,\n         \
+         modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest,\n         \
+         symFragmentClaims := [], stringEqClaims := [], stringConcatClaims := [],\n         \
+         constructClaims := [], recursionClaims := [], mutualRecursionClaims := [],\n         \
+         verbatimClaims := [], intDispatchClaims := [], fieldProjectionClaims := [],\n         \
+         compositionMembers := {name}CompositionMembers,\n         \
+         compositionClaims := [{name}CompositionClaim], closureFuel := 0,\n         \
+         closureClaim := {{ roots := [], helpers := [], admitted := [] }} }} :\n        \
+         AverCert.AcceptedArtifact.ArtifactData)\n      \
+         {name}CompositionClaim {callees_lean} := by\n  \
+         refine ⟨rfl, ?_⟩\n  \
+         intro S add sub mul stringEq stringConcat\n    \
+         hAdd hSub hMul hStringEq hStringConcat ns vs hDom\n  \
+         dsimp [{name}CompositionClaim, AverCert.{name}Ob] at ns vs hDom ⊢\n  \
+         rcases hDom with ⟨hRepr, hLen⟩\n  \
+         cases hRepr with\n  \
+         | nil => simp at hLen\n  \
+         | cons hv htail =>\n      \
+         rename_i n v ns' vs'\n      \
+         cases htail with\n      \
+         | cons _ _ => simp at hLen\n      \
+         | nil =>\n          \
+         refine ⟨n, v, {model_name}, {name}, rfl, hv, ?_, ?_, ?_⟩\n          \
+         · intro input\n            \
+         simp [{model_name}, V3Composition.evalCompositionCalls, {model_simp}]\n          \
+         · intro w hw\n            \
+         simpa [AverCert.Schema.intRepr] using hw\n          \
+         · intro funcTable hTable member hMember\n            \
+         have hMember' : member = {} := by simpa using hMember\n            \
+         subst member\n            \
+         exact ⟨⟨\n              \
+         {direct_member},\n              \
+         by rfl,\n              \
+         {},\n              \
+         V3Master.compositionFuncIdx_eq_binding\n                \
+         AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen\n                \
+         {name}CompositionMembers funcTable {} {direct_member}\n                \
+         {direct_binding} hTable (by rfl) (by rfl),\n              \
+         by simp [CertModule.{name}Host],\n              \
+         {direct_body},\n              \
+         by rfl,\n              \
+         {} S add sub hAdd hSub\n            \
+         ⟩⟩\n\n\
+         #print axioms {name}_compositionSemanticBridge\n",
+        lean_str(&direct_callee.name),
+        direct_callee.self_idx,
+        lean_str(&direct_callee.name),
+        lemma_name(direct_callee.self_idx),
     ));
 
     s
+}
+
+fn render_composition_final_arm(c: &Cert) -> String {
+    let name = c.name();
+    format!(
+        r#"change AverCert.{name}Ob.holds
+      let claim : AverCert.AcceptedArtifact.CompositionClaim :=
+        CertProofs.{name}CompositionClaim
+      let artifact : AverCert.AcceptedArtifact.ArtifactData :=
+        {{ modBytes := AverCert.ArtifactBytes.modBytes,
+          modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest,
+          symFragmentClaims := [], stringEqClaims := [], stringConcatClaims := [],
+          constructClaims := [], recursionClaims := [], mutualRecursionClaims := [],
+          verbatimClaims := [], intDispatchClaims := [], fieldProjectionClaims := [],
+          compositionMembers := CertProofs.{name}CompositionMembers,
+          compositionClaims := [claim], closureFuel := 0,
+          closureClaim := {{ roots := [], helpers := [], admitted := [] }} }}
+      exact V3Master.composition_claim_discharges_with_bridge artifact
+        claim (by simpa [artifact] using
+          CertProofs.{name}_compositionClaimAccepted)
+        (by
+          intro rootMember hRoot callees hShape
+          dsimp [artifact, claim, CertProofs.{name}CompositionClaim,
+            CertProofs.{name}CompositionMembers] at hRoot hShape
+          simp [AverCert.AcceptedArtifact.compositionMemberForName] at hRoot
+          subst rootMember
+          injection hShape with hShape
+          subst callees
+          exact CertProofs.{name}_compositionSemanticBridge)"#
+    )
 }

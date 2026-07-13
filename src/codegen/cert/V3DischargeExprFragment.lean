@@ -4,9 +4,12 @@ v3 master wiring — source expression-fragment discharge.
 Acceptance pins the audited SymRawPlan encoder, checked representation plan,
 canonical lowering, and exact code entry.  The independent obligation
 domain/model face and the plan-evaluator result stay explicit, following the
-established family-discharge pattern.  In particular, source integer inputs
-are materialised with `carrierSmall`, which is the exact comparison domain of
-`exprfragment_generic_certified`.
+established family-discharge pattern.  The bridge chooses the exact input
+values: comparison fragments use `carrierSmall`, Bool fragments use `b32`,
+and contracted integer fragments preserve arbitrary represented inputs.  For
+partial host contracts, the successful byte run is exposed only to rule out a
+missing host result; the audited generic still identifies the evaluator result
+with the byte result.
 -/
 import V3Master
 
@@ -32,19 +35,33 @@ private theorem allClaims_of_mem {Claim : Type u} (accept : Claim → Prop)
 
 /-- The semantic face not carried by `symFragmentPlanAccepted`.  It relates an
 arbitrary obligation-domain representation to the generic theorem's honest
-`carrierSmall` source arguments and pins the SymRawPlan-derived evaluator's
-result to the obligation's independently declared model/codomain relation. -/
+input values and pins the SymRawPlan-derived evaluator's result to the
+obligation's independently declared model/codomain relation. -/
 def exprFragmentSemanticBridge
     (claim : SymFragmentClaim) (plan : ExprFragmentRawPlan) : Prop :=
   claim.obligation.policy = .simulatesModel ∧
   ∀ (S : CarrierSpec claim.obligation.carrier)
     (add sub mul stringEq : List WVal → Option WVal)
     (stringConcat : Nat → List WVal → Option WVal)
-    (fuel : Nat) (x : claim.obligation.Dom) (vs : List WVal),
+    (hAdd : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      add [va, vb] = some w → S.Repr (a + b) w)
+    (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      sub [va, vb] = some w → S.Repr (a - b) w)
+    (hMul : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      mul [va, vb] = some w → S.Repr (a * b) w)
+    (hStringEq : ∀ a b w, stringEq [a, b] = some w →
+      w = b32 (stringEqW a b))
+    (hStringConcat : ∀ resultTy parts c,
+      stringConcat resultTy [parts] = some c →
+        stringConcatW resultTy parts = some c)
+    (fuel : Nat) (x : claim.obligation.Dom) (vs : List WVal) (w : WVal),
     claim.obligation.domRepr S x vs →
-    ∃ (sourceArgs : List Int) (modelLocals : List WVal) (result : WVal),
-      vs = sourceArgs.map (carrierSmall claim.obligation.carrier) ∧
-      sourceArgs.length = plan.params.length ∧
+    wFuncN claim.obligation.code
+      (claim.obligation.host add sub mul stringEq stringConcat)
+      (fuel + 1) claim.obligation.self vs = some w →
+    ∃ (inputs : List WVal) (modelLocals : List WVal) (result : WVal),
+      vs = inputs ∧
+      inputs.length = plan.params.length ∧
       V3ExprFragmentGeneric.blockCallsOK
         (claim.obligation.host add sub mul stringEq stringConcat)
         (fun g => (claim.obligation.code g).map (fun c => c.arity))
@@ -57,7 +74,7 @@ def exprFragmentSemanticBridge
           (claim.obligation.host add sub mul stringEq stringConcat) fuel g args)
         claim.obligation.carrier claim.plan
         (initLocals ⟨plan.params.length, exprFragmentNLocals plan, []⟩
-          (sourceArgs.map (carrierSmall claim.obligation.carrier))) =
+          inputs) =
           some (.ok modelLocals [result]) ∧
       claim.obligation.codRepr S (claim.obligation.model x) result
 
@@ -107,17 +124,18 @@ theorem exprFragment_claim_discharges
         simpa [← hSelf] using hCode
       rw [obligationHolds, hPolicy]
       intro S add sub mul stringEq stringConcat
-        _hAdd _hSub _hMul _hStringEq _hStringConcat fuel x vs w hDom hRun
+        hAdd hSub hMul hStringEq hStringConcat fuel x vs w hDom hRun
       cases fuel with
       | zero => simp [wFuncN] at hRun
       | succ fuel =>
-          rcases hSemantic S add sub mul stringEq stringConcat fuel x vs hDom with
-            ⟨sourceArgs, modelLocals, result, rfl, hArity, hCalls, hEval, hCod⟩
+          rcases hSemantic S add sub mul stringEq stringConcat
+              hAdd hSub hMul hStringEq hStringConcat fuel x vs w hDom hRun with
+            ⟨inputs, modelLocals, result, rfl, hArity, hCalls, hEval, hCod⟩
           have hGeneric := V3ExprFragmentGeneric.exprfragment_generic_certified
             S claim.hostTable claim.structTable claim.obligation.code
             (claim.obligation.host add sub mul stringEq stringConcat)
             claim.plan plan hEncode hCheck body hLower claim.obligation.self
-            (exprFragmentNLocals plan) fuel hCodeSelf sourceArgs hArity hCalls
+            (exprFragmentNLocals plan) fuel hCodeSelf vs hArity hCalls
             modelLocals result hEval
           rw [hGeneric] at hRun
           have hResult : result = w := Option.some.inj hRun
