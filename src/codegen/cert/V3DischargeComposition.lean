@@ -316,7 +316,18 @@ def compositionClaimSemanticBridge
           Nonempty (V3Composition.MemberFact S artifact.compositionMembers
             funcTable claim.obligation.code
             (claim.obligation.host add sub mul stringEq stringConcat)
-            models name)
+          models name)
+
+/-- Artifact-wide form of the tied composition bridge.  Unlike the legacy
+split pair `compositionSemanticBridges` / `compositionMemberDischarges`, this
+keeps each root's selected source models and member facts in one proposition. -/
+def compositionClaimSemanticBridges (artifact : ArtifactData) : Prop :=
+  ∀ claim ∈ artifact.compositionClaims,
+    ∀ rootMember,
+      compositionMemberForName claim.exportName artifact.compositionMembers =
+          some rootMember →
+      ∀ callees, rootMember.plan.shape = .chain callees →
+        compositionClaimSemanticBridge artifact claim callees
 
 theorem composition_claim_discharges
     (artifact : ArtifactData)
@@ -460,6 +471,24 @@ theorem composition_claim_discharges_with_bridge
           apply hCod
           exact hCertified fuel n v w hv hRun
 
+/-- Family slice discharge through the tied root/member bridge consumed by the
+production accept-sound capstone. -/
+theorem composition_discharges_with_bridges
+    (artifact : ArtifactData)
+    (hAcc : acceptedCompositionFragments artifact)
+    (hBridges : compositionClaimSemanticBridges artifact) :
+    ∀ o ∈ artifact.compositionClaims.map (·.obligation), obligationHolds o := by
+  intro o hObligation
+  rcases List.mem_map.mp hObligation with ⟨claim, hMem, rfl⟩
+  have hClaim : compositionClaimAccepted artifact.modBytes artifact.modLen
+      artifact.compositionMembers claim :=
+    allClaims_of_mem
+      (compositionClaimAccepted artifact.modBytes artifact.modLen
+        artifact.compositionMembers)
+      artifact.compositionClaims hAcc.1 claim hMem
+  exact composition_claim_discharges_with_bridge artifact claim hClaim
+    (hBridges claim hMem)
+
 theorem composition_discharges
     (artifact : ArtifactData)
     (hAcc : acceptedCompositionFragments artifact)
@@ -474,4 +503,5 @@ end V3Master
 
 #print axioms V3Master.composition_claim_discharges
 #print axioms V3Master.composition_claim_discharges_with_bridge
+#print axioms V3Master.composition_discharges_with_bridges
 #print axioms V3Master.composition_discharges

@@ -1,4 +1,4 @@
-import Artifact
+import ArtifactCertificate
 
 open CertPrelude AverCert AverCert.Schema
 set_option linter.unnecessarySimpa false

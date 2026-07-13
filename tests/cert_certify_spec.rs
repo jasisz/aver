@@ -188,10 +188,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["schema_version"].as_u64(),
-        Some(62),
-        "combined expr-fragment, composition, and mutual option-(b) migration is certificate schema 62"
+        Some(63),
+        "accept-sound Final.cert flip with a guarded float residual is certificate schema 63"
     );
-    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 62);
+    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 63);
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
@@ -479,9 +479,13 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         artifact_lean.contains("plan := AverCert.Plans.intLessZeroSymPlan"),
         "source-level int fragment should be claimed through SymPlan:\n{artifact_lean}"
     );
+    let artifact_certificate =
+        std::fs::read_to_string(out_dir.join("cert").join("ArtifactCertificate.lean"))
+            .expect("ArtifactCertificate.lean exists");
     assert!(
-        artifact_lean.contains("theorem certificate : AverCert.AcceptedArtifact.accepted data :="),
-        "artifact root should be a theorem with the exact AcceptedArtifact target:\n{artifact_lean}"
+        artifact_certificate
+            .contains("theorem certificate : AverCert.AcceptedArtifact.accepted data :="),
+        "artifact root should be a theorem with the exact AcceptedArtifact target:\n{artifact_certificate}"
     );
     assert!(
         !artifact_lean.contains("plan := AverCert.Plans.intLessZeroPlan"),
@@ -764,80 +768,77 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
     let final_lean =
         std::fs::read_to_string(cert_dir.join("Final.lean")).expect("Final.lean exists");
     assert!(
-        final_lean.contains("V3Master.fieldProjection_direct_canonical_discharges \"userName\""),
-        "coexistence projection arm must use the audited generic:\n{final_lean}"
+        final_lean.contains("AverCert.V3AcceptReal.accept_sound_holds")
+            && final_lean.contains("AverCert.Artifact.dischargeSideConditions"),
+        "Final.cert must be the single accept-sound capstone application:\n{final_lean}"
     );
-    for (name, theorem) in [
-        ("wrapItems", "verbatim_canonical_discharges"),
-        ("tagName", "verbatim_canonical_discharges"),
-        ("quoteOrSelf", "stringEq_canonical_discharges"),
-        ("shout", "stringConcat_canonical_discharges"),
+    assert!(
+        !final_lean.contains("all_goals")
+            && !final_lean.contains("first |")
+            && !final_lean.contains("_claim_discharges")
+            && !final_lean.contains("_canonical_discharges")
+            && !final_lean.contains("CertProofs."),
+        "Final.cert must not retain generated per-obligation coexistence routing:\n{final_lean}"
+    );
+    let artifact_lean =
+        std::fs::read_to_string(cert_dir.join("Artifact.lean")).expect("Artifact.lean exists");
+    for side_condition in [
+        "exprFragmentSideConditions",
+        "stringSideConditions",
+        "constructSideConditions",
+        "recursionSideConditions",
+        "mutualSideConditions",
+        "verbatimSideConditions",
+        "intDispatchSideConditions",
+        "fieldProjectionSideConditions",
+        "compositionSideConditions",
     ] {
         assert!(
-            final_lean.contains(&format!("V3Master.{theorem} \"{name}\"")),
-            "migrated leaf arm must use the audited generic: {name}\n{final_lean}"
-        );
-    }
-    for dispatch_name in ["evalOp", "boxInt", "gauge"] {
-        assert!(
-            final_lean.contains(&format!(
-                "V3Master.intDispatch_canonical_discharges (exportName := \"{dispatch_name}\")"
-            )),
-            "dispatch arm must use the audited generic: {dispatch_name}\n{final_lean}"
+            artifact_lean.contains(side_condition),
+            "accept-sound side condition missing from Artifact.lean: {side_condition}\n{artifact_lean}"
         );
     }
     assert!(
-        final_lean.contains("V3Master.construct_canonical_discharges (exportName := \"mkOp\")")
-            && final_lean.contains("(hSemantic := CertProofs.mkOp_constructSemanticBridge)"),
-        "construct-with-model arm must use the audited discharge and emitted bridge:\n{final_lean}"
+        artifact_lean.contains("V3Master.fieldProjection_direct_canonical_discharges \"userName\""),
+        "field-projection-faced expr claim must use its audited generic:\n{artifact_lean}"
     );
-    for recursion_name in ["sumFrom", "countDown"] {
-        assert!(
-            final_lean.contains(&format!("exportName := \"{recursion_name}\""))
-                && final_lean.contains("V3Master.recursion_claim_discharges artifact")
-                && final_lean.contains(&format!(
-                    "CertProofs.{recursion_name}_recursionSemanticBridge"
-                )),
-            "recursion arm must use the audited discharge and emitted bridge: {recursion_name}\n{final_lean}"
-        );
-    }
-    for mutual_name in ["isEven", "isOdd"] {
-        assert!(
-            final_lean.contains("V3Master.mutual_claim_discharges")
-                && final_lean.contains(&format!("CertProofs.{mutual_name}_mutualSemanticBridge")),
-            "mutual arm must use the audited discharge and emitted bridge: {mutual_name}\n{final_lean}"
-        );
-    }
-    for expr_fragment_name in [
-        "addTwo",
-        "inAsciiDigit",
-        "intLessZero",
-        "intEqZero",
-        "boolAndGoal",
+    for (name, bridge_kind) in [
+        ("addTwo", "exprFragmentSemanticBridge"),
+        ("inAsciiDigit", "exprFragmentSemanticBridge"),
+        ("intLessZero", "exprFragmentSemanticBridge"),
+        ("intEqZero", "exprFragmentSemanticBridge"),
+        ("boolAndGoal", "exprFragmentSemanticBridge"),
+        ("mkOp", "constructSemanticBridge"),
+        ("sumFrom", "recursionSemanticBridge"),
+        ("countDown", "recursionSemanticBridge"),
+        ("isEven", "mutualSemanticBridge"),
+        ("isOdd", "mutualSemanticBridge"),
+        ("evalOp", "intDispatchSemanticBridge"),
+        ("boxInt", "intDispatchSemanticBridge"),
+        ("gauge", "intDispatchSemanticBridge"),
+        ("quad", "compositionSemanticBridge"),
+        ("hex16", "compositionSemanticBridge"),
     ] {
         assert!(
-            final_lean.contains("V3Master.exprFragment_claim_discharges artifact")
-                && final_lean.contains(&format!(
-                    "CertProofs.{expr_fragment_name}_exprFragmentSemanticBridge"
-                )),
-            "integer/Bool expr-fragment arm must use the audited generic and its option-(b) bridge: {expr_fragment_name}\n{final_lean}"
-        );
-    }
-    for composition_name in ["quad", "hex16"] {
-        assert!(
-            final_lean.contains("V3Master.composition_claim_discharges_with_bridge artifact")
-                && final_lean.contains(&format!(
-                    "CertProofs.{composition_name}_compositionSemanticBridge"
-                )),
-            "integer composition export must use the audited generic and its option-(b) bridge: {composition_name}\n{final_lean}"
+            artifact_lean.contains(&format!("CertProofs.{name}_{bridge_kind}")),
+            "migrated family bridge must feed accept_sound: {name}\n{artifact_lean}"
         );
     }
     for float_name in ["floatAddGoal", "floatMulAddGoal", "floatLeGoal"] {
         assert!(
-            final_lean.contains(&format!("CertProofs.{float_name}_simulates")),
-            "float expr-fragment must remain bespoke because floats are outside the audited model: {float_name}\n{final_lean}"
+            artifact_lean.contains(&format!(
+                "Or.inr (Or.inr ⟨rfl, CertProofs.{float_name}_simulates⟩)"
+            )),
+            "float expr-fragment must be the only bespoke accept-sound residual: {float_name}\n{artifact_lean}"
         );
     }
+    let artifact_certificate = std::fs::read_to_string(cert_dir.join("ArtifactCertificate.lean"))
+        .expect("ArtifactCertificate.lean exists");
+    assert!(
+        artifact_certificate.contains("acceptedWithFinal AverCert.Final.cert")
+            && artifact_certificate.contains("#print axioms AverCert.Artifact.certificate"),
+        "accepted-artifact wrapper must remain outside the acyclic Artifact -> V3AcceptReal -> Final path:\n{artifact_certificate}"
+    );
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
         .expect("Certificate.lean exists");
     assert!(
@@ -1623,7 +1624,7 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
     // bridge. The evaluator, lowering, and totality proofs stay in the audited
     // wall.
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean")).unwrap();
-    let final_lean = std::fs::read_to_string(cert_dir.join("Final.lean")).unwrap();
+    let artifact_lean = std::fs::read_to_string(cert_dir.join("Artifact.lean")).unwrap();
     for name in ["sumFrom", "constPlus", "backward", "factorial", "countDown"] {
         assert!(
             combined.contains(&format!(
@@ -1637,9 +1638,9 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
                 && !certificate.contains(&format!("{name}_wasm_total"))
                 && !certificate.contains(&format!("{name}_simulates"))
                 && !certificate.contains(&format!("{name}HostRef"))
-                && final_lean.contains("V3Master.recursion_claim_discharges artifact")
-                && final_lean.contains(&format!("CertProofs.{name}_recursionSemanticBridge")),
-            "migrated recursion emitted a bespoke proof/tripwire or missed the generic arm for {name}:\n{certificate}\n{final_lean}"
+                && artifact_lean.contains("V3Master.recursionSemanticBridges data")
+                && artifact_lean.contains(&format!("CertProofs.{name}_recursionSemanticBridge")),
+            "migrated recursion emitted a bespoke proof/tripwire or missed the accept-sound side condition for {name}:\n{certificate}\n{artifact_lean}"
         );
     }
     assert!(
@@ -1824,7 +1825,7 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
             "lake build of emitted mutual cert {fixture} failed:\n{combined}"
         );
         let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean")).unwrap();
-        let final_lean = std::fs::read_to_string(cert_dir.join("Final.lean")).unwrap();
+        let artifact_lean = std::fs::read_to_string(cert_dir.join("Artifact.lean")).unwrap();
         for name in exports {
             assert!(
                 combined.contains(&format!(
@@ -1836,9 +1837,9 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
                 certificate.contains(&format!("theorem {name}_mutualSemanticBridge"))
                     && !certificate.contains(&format!("{name}_simulates"))
                     && !certificate.contains(&format!("{name}_wasm"))
-                    && final_lean.contains("V3Master.mutual_claim_discharges")
-                    && final_lean.contains(&format!("CertProofs.{name}_mutualSemanticBridge")),
-                "migrated mutual export retained bespoke proof/tripwire emission: {name}\n{certificate}\n{final_lean}"
+                    && artifact_lean.contains("V3Master.mutualSemanticBridges data")
+                    && artifact_lean.contains(&format!("CertProofs.{name}_mutualSemanticBridge")),
+                "migrated mutual export retained bespoke proof/tripwire emission or missed the accept-sound side condition: {name}\n{certificate}\n{artifact_lean}"
             );
         }
         assert!(
@@ -1916,11 +1917,12 @@ fn certify_verbatim_variant_dispatch_lake_builds_kernel_clean() {
         tag_name["theorem"],
         "V3Master.verbatim_canonical_discharges"
     );
-    let final_lean =
-        std::fs::read_to_string(cert_dir.join("Final.lean")).expect("Final.lean exists");
+    let artifact_lean =
+        std::fs::read_to_string(cert_dir.join("Artifact.lean")).expect("Artifact.lean exists");
     assert!(
-        final_lean.contains("V3Master.verbatim_canonical_discharges \"tagName\""),
-        "verbatim Final.cert arm must use the audited generic:\n{final_lean}"
+        artifact_lean.contains("theorem verbatimSideConditions")
+            && artifact_lean.contains("V3Master.verbatimSemanticBridges data"),
+        "verbatim bridge must feed the accept-sound aggregate:\n{artifact_lean}"
     );
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
         .expect("Certificate.lean exists");
@@ -2088,11 +2090,10 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
         artifact_lean.contains("stringEqFuncIdx :=") && artifact_lean.contains("stringTy :="),
         "String.eq artifact claim should carry lowering indices:\n{artifact_lean}"
     );
-    let final_lean =
-        std::fs::read_to_string(cert_dir.join("Final.lean")).expect("Final.lean exists");
     assert!(
-        final_lean.contains("V3Master.stringEq_canonical_discharges \"quoteOrSelf\""),
-        "String.eq Final.cert arm must use the audited generic:\n{final_lean}"
+        artifact_lean.contains("theorem stringSideConditions")
+            && artifact_lean.contains("V3Master.stringSemanticBridges data"),
+        "String.eq bridge must feed the accept-sound aggregate:\n{artifact_lean}"
     );
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
         .expect("Certificate.lean exists");
@@ -2322,11 +2323,10 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         artifact_lean.contains("concatFuncIdx :=") && artifact_lean.contains("resultTy :="),
         "String.concat artifact claim should carry lowering indices:\n{artifact_lean}"
     );
-    let final_lean =
-        std::fs::read_to_string(cert_dir.join("Final.lean")).expect("Final.lean exists");
     assert!(
-        final_lean.contains("V3Master.stringConcat_canonical_discharges \"shout\""),
-        "String.concat Final.cert arm must use the audited generic:\n{final_lean}"
+        artifact_lean.contains("theorem stringSideConditions")
+            && artifact_lean.contains("V3Master.stringSemanticBridges data"),
+        "String.concat bridge must feed the accept-sound aggregate:\n{artifact_lean}"
     );
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
         .expect("Certificate.lean exists");
@@ -2570,19 +2570,17 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             })
             .collect::<Vec<_>>();
         if !model_construct_entries.is_empty() {
-            let final_lean =
-                std::fs::read_to_string(cert_dir.join("Final.lean")).expect("Final.lean exists");
+            let artifact_lean = std::fs::read_to_string(cert_dir.join("Artifact.lean"))
+                .expect("Artifact.lean exists");
             let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
                 .expect("Certificate.lean exists");
             for entry in &model_construct_entries {
                 let name = entry["name"].as_str().unwrap();
                 assert!(
-                    final_lean.contains(&format!(
-                        "V3Master.construct_canonical_discharges (exportName := \"{name}\")"
-                    )) && final_lean.contains(&format!(
-                        "(hSemantic := CertProofs.{name}_constructSemanticBridge)"
-                    )),
-                    "construct-with-model Final.cert arm must pass the audited discharge and bridge for {name}:\n{final_lean}"
+                    artifact_lean.contains("V3Master.constructSemanticBridges data")
+                        && artifact_lean
+                            .contains(&format!("CertProofs.{name}_constructSemanticBridge")),
+                    "construct-with-model bridge must feed the accept-sound aggregate for {name}:\n{artifact_lean}"
                 );
                 assert!(
                     certificate.contains(&format!("theorem {name}_constructSemanticBridge"))
@@ -2593,8 +2591,8 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             }
         }
         if !dispatch_entries.is_empty() {
-            let final_lean =
-                std::fs::read_to_string(cert_dir.join("Final.lean")).expect("Final.lean exists");
+            let artifact_lean = std::fs::read_to_string(cert_dir.join("Artifact.lean"))
+                .expect("Artifact.lean exists");
             let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
                 .expect("Certificate.lean exists");
             for entry in &dispatch_entries {
@@ -2604,10 +2602,10 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
                     "V3Master.intDispatch_canonical_discharges"
                 );
                 assert!(
-                    final_lean.contains(&format!(
-                        "V3Master.intDispatch_canonical_discharges (exportName := \"{name}\")"
-                    )) && final_lean.contains("(hRoot := by exact ⟨"),
-                    "dispatch Final.cert arm must pass the audited discharge and root witness for {name}:\n{final_lean}"
+                    artifact_lean.contains("V3Master.intDispatchSemanticBridges data")
+                        && artifact_lean
+                            .contains(&format!("CertProofs.{name}_intDispatchSemanticBridge")),
+                    "dispatch bridge must feed the accept-sound aggregate for {name}:\n{artifact_lean}"
                 );
                 assert!(
                     certificate.contains(&format!("theorem {name}_intDispatchSemanticBridge"))
@@ -2635,14 +2633,13 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
                     && !certificate.contains("pairSnd_simulates"),
                 "field projections must not emit bespoke proofs:\n{certificate}"
             );
-            let final_lean =
-                std::fs::read_to_string(cert_dir.join("Final.lean")).expect("Final.lean exists");
+            let artifact_lean = std::fs::read_to_string(cert_dir.join("Artifact.lean"))
+                .expect("Artifact.lean exists");
             for name in ["pairFst", "pairSnd"] {
                 assert!(
-                    final_lean.contains(&format!(
-                        "V3Master.fieldProjection_canonical_discharges \"{name}\""
-                    )),
-                    "Final.cert must use the audited generic for {name}:\n{final_lean}"
+                    artifact_lean.contains("V3Master.fieldProjectionSemanticBridges data")
+                        && artifact_lean.contains(&format!("exportName := \"{name}\"")),
+                    "field projection must feed the audited accept-sound side condition for {name}:\n{artifact_lean}"
                 );
             }
         }

@@ -427,7 +427,7 @@ fn inkernel_host_role_table_guard_is_isolated_and_weaken_confirmed() {
     );
 
     let lean = format!(
-        r#"import Artifact
+        r#"import ArtifactCertificate
 
 open CertPrelude AverCert AverCert.Schema
 set_option maxRecDepth 300000
@@ -537,7 +537,7 @@ fn inkernel_string_host_roles_guard_is_isolated_and_weaken_confirmed() {
     );
 
     let lean = format!(
-        r#"import Artifact
+        r#"import ArtifactCertificate
 
 open CertPrelude AverCert AverCert.Schema
 set_option maxRecDepth 300000

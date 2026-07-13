@@ -316,39 +316,3 @@ theorem {name}_exprFragmentSemanticBridge :
 "#
     )
 }
-
-/// Per-obligation `Final.cert` arm. A singleton artifact view supplies the
-/// byte-derived source-plan claim; the generated theorem supplies only the
-/// source-model semantic residual.
-fn render_expr_fragment_final_arm(
-    c: &Cert,
-    host_table: FragHostTable,
-    struct_table_lean: &str,
-) -> String {
-    debug_assert!(expr_fragment_uses_audited_generic(c));
-    let name = c.name();
-    let claim = expr_fragment_claim_lean_value(c, host_table, struct_table_lean);
-    format!(
-        r#"let claim : AverCert.AcceptedArtifact.SymFragmentClaim := {claim}
-      let artifact : AverCert.AcceptedArtifact.ArtifactData :=
-        {{ modBytes := AverCert.ArtifactBytes.modBytes,
-          modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest,
-          symFragmentClaims := [claim], stringEqClaims := [], stringConcatClaims := [],
-          constructClaims := [], recursionClaims := [], mutualRecursionClaims := [],
-          verbatimClaims := [], intDispatchClaims := [], fieldProjectionClaims := [],
-          compositionMembers := [], compositionClaims := [], closureFuel := 0,
-          closureClaim := {{ roots := [], helpers := [], admitted := [] }} }}
-      exact V3Master.exprFragment_claim_discharges artifact
-        (by
-          dsimp [AverCert.AcceptedArtifact.acceptedSymFragments,
-            AverCert.AcceptedArtifact.symFragmentClaimsAccepted,
-            AverCert.AcceptedArtifact.allClaims, artifact]
-          exact ⟨CertProofs.{name}_exprFragmentClaimAccepted, trivial⟩)
-        claim (by simp [artifact])
-        (by
-          intro plan hPlan
-          injection hPlan with hPlan
-          subst plan
-          exact CertProofs.{name}_exprFragmentSemanticBridge)"#
-    )
-}

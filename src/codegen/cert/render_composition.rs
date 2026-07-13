@@ -253,6 +253,14 @@ fn render_composition_semantic_bridge(c: &Cert, analysis: &Analysis) -> String {
     }
 
     let members = composition_members_lean_value(closure);
+    let all_members = format!(
+        "[{}]",
+        composition_member_plans(analysis)
+            .iter()
+            .map(|(entry, _)| composition_member_claim_lean_value(entry))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     let claim = composition_claim_lean_value(c, add_idx);
     let acceptance = composition_claim_acceptance_proof(c, analysis.frag_host_table);
     s.push_str(&format!(
@@ -320,7 +328,7 @@ fn render_composition_semantic_bridge(c: &Cert, analysis: &Analysis) -> String {
          symFragmentClaims := [], stringEqClaims := [], stringConcatClaims := [],\n         \
          constructClaims := [], recursionClaims := [], mutualRecursionClaims := [],\n         \
          verbatimClaims := [], intDispatchClaims := [], fieldProjectionClaims := [],\n         \
-         compositionMembers := {name}CompositionMembers,\n         \
+         compositionMembers := {all_members},\n         \
          compositionClaims := [{name}CompositionClaim], closureFuel := 0,\n         \
          closureClaim := {{ roots := [], helpers := [], admitted := [] }} }} :\n        \
          AverCert.AcceptedArtifact.ArtifactData)\n      \
@@ -351,7 +359,7 @@ fn render_composition_semantic_bridge(c: &Cert, analysis: &Analysis) -> String {
          {},\n              \
          V3Master.compositionFuncIdx_eq_binding\n                \
          AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen\n                \
-         {name}CompositionMembers funcTable {} {direct_member}\n                \
+         {all_members} funcTable {} {direct_member}\n                \
          {direct_binding} hTable (by rfl) (by rfl),\n              \
          by simp [CertModule.{name}Host],\n              \
          {direct_body},\n              \
@@ -366,34 +374,4 @@ fn render_composition_semantic_bridge(c: &Cert, analysis: &Analysis) -> String {
     ));
 
     s
-}
-
-fn render_composition_final_arm(c: &Cert) -> String {
-    let name = c.name();
-    format!(
-        r#"change AverCert.{name}Ob.holds
-      let claim : AverCert.AcceptedArtifact.CompositionClaim :=
-        CertProofs.{name}CompositionClaim
-      let artifact : AverCert.AcceptedArtifact.ArtifactData :=
-        {{ modBytes := AverCert.ArtifactBytes.modBytes,
-          modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest,
-          symFragmentClaims := [], stringEqClaims := [], stringConcatClaims := [],
-          constructClaims := [], recursionClaims := [], mutualRecursionClaims := [],
-          verbatimClaims := [], intDispatchClaims := [], fieldProjectionClaims := [],
-          compositionMembers := CertProofs.{name}CompositionMembers,
-          compositionClaims := [claim], closureFuel := 0,
-          closureClaim := {{ roots := [], helpers := [], admitted := [] }} }}
-      exact V3Master.composition_claim_discharges_with_bridge artifact
-        claim (by simpa [artifact] using
-          CertProofs.{name}_compositionClaimAccepted)
-        (by
-          intro rootMember hRoot callees hShape
-          dsimp [artifact, claim, CertProofs.{name}CompositionClaim,
-            CertProofs.{name}CompositionMembers] at hRoot hShape
-          simp [AverCert.AcceptedArtifact.compositionMemberForName] at hRoot
-          subst rootMember
-          injection hShape with hShape
-          subst callees
-          exact CertProofs.{name}_compositionSemanticBridge)"#
-    )
 }
