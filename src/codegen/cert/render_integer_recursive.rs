@@ -163,12 +163,20 @@ theorem {name}_wasm_total
 
 theorem {name}_simulates_total : AverCert.Schema.Obligation.holdsTotal {name}Ob := by
   intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat
-    hAddTot hSubTot n v hv
-  refine ⟨[n], ?_, ?_⟩
-  · exact ⟨ReprAll.cons hv ReprAll.nil, rfl⟩
-  · simpa [{name}Ob, AverCert.Schema.intRepr] using
-      {name}_wasm_total S.Repr S.car S.smallIntro S.smallElim S.bigElim
-        add sub hadd hsub hAddTot hSubTot n v hv
+    hAddTot hSubTot hMulTot x vs hDom
+  simp only [{name}Ob] at hDom ⊢
+  obtain ⟨hrepr, harity⟩ := hDom
+  cases hrepr with
+  | nil => simp at harity
+  | cons hv htail =>
+      rename_i n v ns vs
+      cases htail with
+      | nil =>
+          refine ⟨n, v, [], rfl, hv, ?_⟩
+          simpa [{name}Ob, AverCert.Schema.intRepr] using
+            {name}_wasm_total S.Repr S.car S.smallIntro S.smallElim S.bigElim
+              add sub hadd hsub hAddTot hSubTot n v hv
+      | cons _ _ => simp at harity
 "#
         )
     } else {

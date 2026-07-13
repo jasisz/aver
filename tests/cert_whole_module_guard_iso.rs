@@ -245,7 +245,7 @@ fn whole_module_guards_are_isolated_and_weaken_confirmed() {
     assert_manifest_decode_declines(
         &wasm_path,
         &cert,
-        "must contain exactly fields box, add, sub",
+        "must contain exactly fields box, add, mul, sub",
     );
     let mut malformed = honest_manifest.clone();
     malformed.as_object_mut().unwrap().remove("stringHostRoles");
@@ -402,11 +402,12 @@ fn inkernel_host_role_table_guard_is_isolated_and_weaken_confirmed() {
         String::from_utf8_lossy(&compile.stderr)
     );
     let wasm = std::fs::read(out_dir.join("json.wasm")).unwrap();
-    let (box_idx, add_idx, sub_idx) =
+    let (box_idx, add_idx, mul_idx, sub_idx) =
         aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
-    let (box_idx, add_idx, sub_idx) = (
+    let (box_idx, add_idx, mul_idx, sub_idx) = (
         box_idx.expect("json box role"),
         add_idx.expect("json add role"),
+        mul_idx.expect("json mul role"),
         sub_idx.expect("json sub role"),
     );
     let wrong_add_idx = add_idx + 1;
@@ -437,7 +438,7 @@ def honestDecoded : AcceptedArtifact.decodedNonExprFacts Artifact.data := by
 
 -- Same bytes and claims; only the manifest's add index is hostile.
 def hostileRoleTable : CertDecode.AddSub.Roles :=
-  {{ box := some {box_idx}, add := some {wrong_add_idx}, sub := some {sub_idx} }}
+  {{ box := some {box_idx}, add := some {wrong_add_idx}, mul := some {mul_idx}, sub := some {sub_idx} }}
 def hostileManifest : Manifest :=
   {{ manifest with subject :=
       {{ manifest.subject with hostRoleTable := hostileRoleTable }} }}

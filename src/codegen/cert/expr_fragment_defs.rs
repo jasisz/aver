@@ -122,6 +122,7 @@ impl FragTy {
 pub(crate) enum FragHostRole {
     Box,
     Add,
+    Mul,
     /// The strict integer-subtraction contract (`carrier sub`). Admitted by the
     /// Lean `HostRole` grammar for the fuel-recursion descent `sub(n, box(1))`.
     Sub,
@@ -132,6 +133,7 @@ impl FragHostRole {
         match self {
             FragHostRole::Box => "box",
             FragHostRole::Add => "add",
+            FragHostRole::Mul => "mul",
             FragHostRole::Sub => "sub",
         }
     }
@@ -140,6 +142,7 @@ impl FragHostRole {
         match self {
             FragHostRole::Box => ".box",
             FragHostRole::Add => ".add",
+            FragHostRole::Mul => ".mul",
             FragHostRole::Sub => ".sub",
         }
     }
@@ -148,6 +151,7 @@ impl FragHostRole {
         match tag {
             "box" => Some(FragHostRole::Box),
             "add" => Some(FragHostRole::Add),
+            "mul" => Some(FragHostRole::Mul),
             "sub" => Some(FragHostRole::Sub),
             _ => None,
         }
@@ -159,6 +163,7 @@ impl FragHostRole {
         match self {
             FragHostRole::Box => (&[FragTy::I64], FragTy::IntCarrier),
             FragHostRole::Add => (&[FragTy::IntCarrier, FragTy::IntCarrier], FragTy::IntCarrier),
+            FragHostRole::Mul => (&[FragTy::IntCarrier, FragTy::IntCarrier], FragTy::IntCarrier),
             FragHostRole::Sub => (&[FragTy::IntCarrier, FragTy::IntCarrier], FragTy::IntCarrier),
         }
     }
@@ -166,35 +171,34 @@ impl FragHostRole {
 
 /// The byte-derived host-role table: which wasm function index realises each
 /// admitted host role in THIS module. Derived from the audited disassembler
-/// (`box` = the exported `__rt_aint_from_i64`; `add` = the body-shape role),
+/// (`box` = the exported `__rt_aint_from_i64`; arithmetic = body-shape roles),
 /// never from a plan or sidecar. Plans must cite exactly these indices.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FragHostTable {
     pub(crate) box_idx: Option<u32>,
     pub(crate) add_idx: Option<u32>,
-    /// The strict `sub` binding (byte-derived exactly like `add`: carrier-binop
-    /// signature + `i64.sub`-first + uniqueness, fail-closed to `None`).
-    /// Carried Rust-side as an S2 prerequisite but NOT yet part of the Lean
-    /// grammar: it is deliberately absent from `lean_value()` and `lookup()`
-    /// until the S2 control-flow leg extends the `HostRole` enum.
+    pub(crate) mul_idx: Option<u32>,
+    /// The strict `sub` binding (byte-derived exactly like add/mul:
+    /// carrier-binop signature + first arithmetic operator + uniqueness).
     pub(crate) sub_idx: Option<u32>,
 }
 
-/// Public differential surface for the three strict module-level roles, in
-/// fixed `(box, add, sub)` order.
-pub type FragHostRoleIndices = (Option<u32>, Option<u32>, Option<u32>);
+/// Public differential surface for the four strict module-level roles, in
+/// fixed `(box, add, mul, sub)` order.
+pub type FragHostRoleIndices = (Option<u32>, Option<u32>, Option<u32>, Option<u32>);
 
 impl FragHostTable {
     pub(crate) fn lookup(&self, role: FragHostRole) -> Option<u32> {
         match role {
             FragHostRole::Box => self.box_idx,
             FragHostRole::Add => self.add_idx,
+            FragHostRole::Mul => self.mul_idx,
             FragHostRole::Sub => self.sub_idx,
         }
     }
 
     /// The `List (HostRole × Nat)` literal the Lean encoder and artifact claims
-    /// consume, in fixed role order (box, add) for deterministic rendering.
+    /// consume, in fixed role order (box, add, mul, sub).
     pub(crate) fn lean_value(&self) -> String {
         let mut entries = Vec::new();
         if let Some(idx) = self.box_idx {
@@ -203,15 +207,17 @@ impl FragHostTable {
         if let Some(idx) = self.add_idx {
             entries.push(format!("(.add, {idx})"));
         }
-        // `sub_idx` is deliberately NOT rendered: the Lean `HostRole` grammar
-        // gains `.sub` only in the S2 control-flow leg. Emitting it now would
-        // change the audited artifact/claim surface, so `sub` stays invisible
-        // to Lean even though it is derived and carried Rust-side.
+        if let Some(idx) = self.mul_idx {
+            entries.push(format!("(.mul, {idx})"));
+        }
+        if let Some(idx) = self.sub_idx {
+            entries.push(format!("(.sub, {idx})"));
+        }
         format!("[{}]", entries.join(", "))
     }
 
     /// Module-level manifest value. Unlike `lean_value`, which renders the
-    /// plan grammar's present entries, this preserves all three classifier
+    /// plan grammar's present entries, this preserves all four classifier
     /// outcomes (including `none`) for the in-kernel whole-module equality.
     pub(crate) fn roles_lean_value(&self) -> String {
         let option = |index: Option<u32>| match index {
@@ -219,9 +225,10 @@ impl FragHostTable {
             None => "none".to_string(),
         };
         format!(
-            "({{ box := {}, add := {}, sub := {} }} : CertDecode.AddSub.Roles)",
+            "({{ box := {}, add := {}, mul := {}, sub := {} }} : CertDecode.AddSub.Roles)",
             option(self.box_idx),
             option(self.add_idx),
+            option(self.mul_idx),
             option(self.sub_idx),
         )
     }
@@ -234,6 +241,7 @@ impl FragHostTable {
         FragHostTable {
             box_idx: Some(0),
             add_idx: Some(0),
+            mul_idx: Some(0),
             sub_idx: Some(0),
         }
     }
@@ -758,7 +766,15 @@ mod expr_fragment_sem_ty_tests {
         assert_eq!(&bytes64[1..6], &[0x01, 0x01, 0x63, 0xc0, 0x00]);
 
         // Value-if block type `04 63 <s33 c>` in a recursion-shaped body.
-        let rec63 = recursion_plan_recursive(10, 11, 12, 1, 7, false, BodyOperand::Input);
+        let rec63 = recursion_plan_recursive(
+            10,
+            (FragHostRole::Add, 11),
+            12,
+            1,
+            7,
+            false,
+            BodyOperand::Input,
+        );
         let rb63 = lower_expr_fragment_plan_code_entry_bytes(&rec63, 63).expect("rec carrier 63");
         assert!(
             rb63.windows(3).any(|w| w == [0x04, 0x63, 0x3f]),

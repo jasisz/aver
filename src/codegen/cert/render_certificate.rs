@@ -18,7 +18,9 @@ fn render_certificate(
     );
     for c in &analysis.certs {
         match c.inner() {
-            Cert::Recursive { .. } if recursion_uses_audited_generic(c) => {
+            Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. }
+                if recursion_uses_audited_generic(c) =>
+            {
                 s.push_str(&render_recursion_semantic_bridge(c))
             }
             Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. } => {

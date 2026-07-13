@@ -739,7 +739,7 @@ def decodeArity (n len funcidx : Nat) : Option Nat :=
   (decodeCode n len funcidx).map (·.arity)
 
 /- ===================================================================== -/
-/-  Plan-first add/sub/box host-role table                               -/
+/-  Plan-first add/mul/sub/box host-role table                           -/
 /- ===================================================================== -/
 
 namespace AddSub
@@ -1001,6 +1001,7 @@ def boxIdx (n len : Nat) : Option Nat :=
 structure Roles where
   box : Option Nat
   add : Option Nat
+  mul : Option Nat
   sub : Option Nat
   deriving DecidableEq, Repr
 
@@ -1019,7 +1020,10 @@ def addCands (n len : Nat) : Option (List Nat) :=
 def subCands (n len : Nat) : Option (List Nat) :=
   (carrierBinopFns n len).map (candFor Arith.sub)
 
-/-- The module-wide plan-first host-role table. `add` and `sub` are admitted
+def mulCands (n len : Nat) : Option (List Nat) :=
+  (carrierBinopFns n len).map (candFor Arith.mul)
+
+/-- The module-wide plan-first host-role table. `add`, `mul`, and `sub` are admitted
     only for unique carrier-binop candidates; ambiguity or absence declines the
     individual role to `none`. `box` is the named runtime export. -/
 def roleTable (n len : Nat) : Option Roles :=
@@ -1028,6 +1032,7 @@ def roleTable (n len : Nat) : Option Roles :=
   | some fns =>
       some { box := boxIdx n len
            , add := uniqueC (candFor Arith.add fns)
+           , mul := uniqueC (candFor Arith.mul fns)
            , sub := uniqueC (candFor Arith.sub fns) }
 
 end AddSub

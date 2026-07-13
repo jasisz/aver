@@ -91,20 +91,21 @@ private theorem hostRoleIdx_mem_pair
         simp [ih hLookup]
 
 private def intDispatchExpectedSlot
-    (C : Nat) (add sub : List WVal → Option WVal) :
+    (C : Nat) (add sub mul : List WVal → Option WVal) :
     HostRole → Nat × (List WVal → Option WVal)
   | .box => (1, boxRef C)
   | .add => (2, add)
+  | .mul => (2, mul)
   | .sub => (2, sub)
 
 private theorem canonicalSlot_of_lookup
-    (C : Nat) (add sub : List WVal → Option WVal)
+    (C : Nat) (add sub mul : List WVal → Option WVal)
     (hostTable : List (HostRole × Nat))
     (hDistinct : AverCert.PlanCheck.hostTableIndicesDistinct hostTable = true)
     (role : HostRole) (idx : Nat)
     (hLookup : AverCert.PlanCheck.hostRoleIdx? hostTable role = some idx) :
-    intDispatchCanonicalSlots C add sub hostTable idx =
-      some (intDispatchExpectedSlot C add sub role) := by
+    intDispatchCanonicalSlots C add sub mul hostTable idx =
+      some (intDispatchExpectedSlot C add sub mul role) := by
   induction hostTable generalizing role idx with
   | nil => simp [AverCert.PlanCheck.hostRoleIdx?] at hLookup
   | cons head rest ih =>
@@ -129,27 +130,27 @@ private theorem canonicalSlot_of_lookup
           simp at hHeadFresh
           exact hHeadFresh role hPairMem
         change (if idx = headIdx then _ else
-          intDispatchCanonicalSlots C add sub rest idx) = _
+          intDispatchCanonicalSlots C add sub mul rest idx) = _
         rw [if_neg hNe]
         exact ih hRestDistinct role idx hTailLookup
 
 private theorem canonicalHostSlots
-    (C : Nat) (add sub : List WVal → Option WVal)
+    (C : Nat) (add sub mul : List WVal → Option WVal)
     (hostTable : List (HostRole × Nat))
     (hDistinct : AverCert.PlanCheck.hostTableIndicesDistinct hostTable = true) :
     V3Dispatch.HostSlots C
-      (intDispatchCanonicalSlots C add sub hostTable) hostTable add sub := by
+      (intDispatchCanonicalSlots C add sub mul hostTable) hostTable add sub := by
   constructor
   · intro idx hLookup
     simpa [intDispatchExpectedSlot] using
-      canonicalSlot_of_lookup C add sub hostTable hDistinct .box idx hLookup
+      canonicalSlot_of_lookup C add sub mul hostTable hDistinct .box idx hLookup
   · constructor
     · intro idx hLookup
       simpa [intDispatchExpectedSlot] using
-        canonicalSlot_of_lookup C add sub hostTable hDistinct .add idx hLookup
+        canonicalSlot_of_lookup C add sub mul hostTable hDistinct .add idx hLookup
     · intro idx hLookup
       simpa [intDispatchExpectedSlot] using
-        canonicalSlot_of_lookup C add sub hostTable hDistinct .sub idx hLookup
+        canonicalSlot_of_lookup C add sub mul hostTable hDistinct .sub idx hLookup
 
 /-- The semantic and generic-admission face absent from
 `intDispatchPlanAccepted`.  A represented source input must expose one runtime
@@ -235,7 +236,7 @@ theorem intDispatch_accepted_call
           (claim.obligation.host add sub mul stringEq stringConcat)
           claim.hostTable add sub := by
         rw [hHost']
-        exact canonicalHostSlots claim.obligation.carrier add sub
+        exact canonicalHostSlots claim.obligation.carrier add sub mul
           claim.hostTable hDistinct
       exact V3Dispatch.generic_int_dispatch_certified
         S plan claim.obligation.code
@@ -335,7 +336,7 @@ theorem intDispatch_canonical_discharges
       have hSlots : V3Dispatch.HostSlots carrier
           (host add sub mul stringEq stringConcat) hostTable add sub := by
         rw [hHost]
-        exact canonicalHostSlots carrier add sub hostTable hDistinct
+        exact canonicalHostSlots carrier add sub mul hostTable hDistinct
       have hGeneric := V3Dispatch.generic_int_dispatch_certified
         S plan code (host add sub mul stringEq stringConcat) self
         hostTable add sub hSlots hAdd hSub

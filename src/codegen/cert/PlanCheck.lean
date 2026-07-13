@@ -120,16 +120,18 @@ def primResultTy? (nodes : List FragNode) (op : FragPrim) (args : List Nat) :
       | _ => none
 
 /-- Static registry of host-helper role type signatures. `box` takes one raw
-    `i64` and returns the Int carrier; `add` takes two Int carriers and returns
-    the Int carrier. The resolved wasm function index is not checked here (it is
-    bound to the module bytes by the byte-exact gate and to the byte-derived
-    role table by the Rust checker); this is purely the representation-level
-    type discipline. -/
+    `i64` and returns the Int carrier; each arithmetic role takes two Int
+    carriers and returns the Int carrier. The resolved wasm function index is
+    not checked here (it is bound to the module bytes by the byte-exact gate
+    and to the in-kernel decoded role table); this is purely the
+    representation-level type discipline. -/
 def hostCallResultTy? (nodes : List FragNode) (role : HostRole) (args : List Nat) :
     Option FragTy :=
   match role with
   | .box => if argsHaveTys nodes args [.i64] then some .intCarrier else none
   | .add =>
+      if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .intCarrier else none
+  | .mul =>
       if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .intCarrier else none
   | .sub =>
       if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .intCarrier else none
@@ -851,9 +853,10 @@ def recBaseAcc (b : FragBlock) : Bool :=
 /-- Unary step arm, all four byte-derived variants: the descent
     `sub(n, box 1)` feeding a NON-TAIL self-call, combined with the other
     operand (the input `n`, or a boxed constant) on either side by the
-    role-`add` combinator helper. Every host index must cite the table and the
+    role-`add` or role-`mul` combinator helper. Every host index must cite the table and the
     self-call must target `self`. -/
-def recStepUnary (self boxIdx addIdx subIdx : Nat) (b : FragBlock) : Bool :=
+def recStepUnary (combineRole : HostRole) (self boxIdx combineIdx subIdx : Nat)
+    (b : FragBlock) : Bool :=
   match b.nodes, b.result with
   -- other = input, recursive result second: `n + f(n-1)`
   | [{ id := 0, ty := .intCarrier, kind := .local 0 },
@@ -862,8 +865,9 @@ def recStepUnary (self boxIdx addIdx subIdx : Nat) (b : FragBlock) : Bool :=
      { id := 3, ty := .intCarrier, kind := .hostCall .box bi [2] },
      { id := 4, ty := .intCarrier, kind := .hostCall .sub si [1, 3] },
      { id := 5, ty := .intCarrier, kind := .selfCall false sc [4] },
-     { id := 6, ty := .intCarrier, kind := .hostCall .add ai [0, 5] }], 6 =>
-      one = 1 && bi = boxIdx && si = subIdx && sc = self && ai = addIdx
+     { id := 6, ty := .intCarrier, kind := .hostCall role ci [0, 5] }], 6 =>
+      one = 1 && bi = boxIdx && si = subIdx && sc = self &&
+        role = combineRole && ci = combineIdx
   -- other = boxed constant, recursive result second: `k + f(n-1)`
   | [{ id := 0, ty := .i64, kind := .constI64 _ },
      { id := 1, ty := .intCarrier, kind := .hostCall .box bk [0] },
@@ -872,8 +876,9 @@ def recStepUnary (self boxIdx addIdx subIdx : Nat) (b : FragBlock) : Bool :=
      { id := 4, ty := .intCarrier, kind := .hostCall .box bi [3] },
      { id := 5, ty := .intCarrier, kind := .hostCall .sub si [2, 4] },
      { id := 6, ty := .intCarrier, kind := .selfCall false sc [5] },
-     { id := 7, ty := .intCarrier, kind := .hostCall .add ai [1, 6] }], 7 =>
-      one = 1 && bk = boxIdx && bi = boxIdx && si = subIdx && sc = self && ai = addIdx
+     { id := 7, ty := .intCarrier, kind := .hostCall role ci [1, 6] }], 7 =>
+      one = 1 && bk = boxIdx && bi = boxIdx && si = subIdx && sc = self &&
+        role = combineRole && ci = combineIdx
   -- other = input, recursive result first: `f(n-1) + n`
   | [{ id := 0, ty := .intCarrier, kind := .local 0 },
      { id := 1, ty := .i64, kind := .constI64 one },
@@ -881,8 +886,9 @@ def recStepUnary (self boxIdx addIdx subIdx : Nat) (b : FragBlock) : Bool :=
      { id := 3, ty := .intCarrier, kind := .hostCall .sub si [0, 2] },
      { id := 4, ty := .intCarrier, kind := .selfCall false sc [3] },
      { id := 5, ty := .intCarrier, kind := .local 0 },
-     { id := 6, ty := .intCarrier, kind := .hostCall .add ai [4, 5] }], 6 =>
-      one = 1 && bi = boxIdx && si = subIdx && sc = self && ai = addIdx
+     { id := 6, ty := .intCarrier, kind := .hostCall role ci [4, 5] }], 6 =>
+      one = 1 && bi = boxIdx && si = subIdx && sc = self &&
+        role = combineRole && ci = combineIdx
   -- other = boxed constant, recursive result first: `f(n-1) + k`
   | [{ id := 0, ty := .intCarrier, kind := .local 0 },
      { id := 1, ty := .i64, kind := .constI64 one },
@@ -891,8 +897,9 @@ def recStepUnary (self boxIdx addIdx subIdx : Nat) (b : FragBlock) : Bool :=
      { id := 4, ty := .intCarrier, kind := .selfCall false sc [3] },
      { id := 5, ty := .i64, kind := .constI64 _ },
      { id := 6, ty := .intCarrier, kind := .hostCall .box bk [5] },
-     { id := 7, ty := .intCarrier, kind := .hostCall .add ai [4, 6] }], 7 =>
-      one = 1 && bi = boxIdx && bk = boxIdx && si = subIdx && sc = self && ai = addIdx
+     { id := 7, ty := .intCarrier, kind := .hostCall role ci [4, 6] }], 7 =>
+      one = 1 && bi = boxIdx && bk = boxIdx && si = subIdx && sc = self &&
+        role = combineRole && ci = combineIdx
   | _, _ => false
 
 /-- Accumulator step arm: descent `sub(n, box 1)`, next accumulator
@@ -912,7 +919,8 @@ def recStepAcc (self boxIdx addIdx subIdx : Nat) (b : FragBlock) : Bool :=
 
 /-- The whole recursion body: the carrier discriminator, the sign-predicate
     `if`, and the value `if` over base/step. -/
-def recTopBlock (isAcc : Bool) (self boxIdx addIdx subIdx : Nat) (b : FragBlock) : Bool :=
+def recTopBlock (isAcc : Bool) (combineRole : HostRole)
+    (self boxIdx combineIdx subIdx : Nat) (b : FragBlock) : Bool :=
   match b.nodes, b.result with
   | [{ id := 0, ty := .intCarrier, kind := .local 0 },
      { id := 1, ty := .ref, kind := .structGet 1 0 },
@@ -921,9 +929,10 @@ def recTopBlock (isAcc : Bool) (self boxIdx addIdx subIdx : Nat) (b : FragBlock)
      { id := 4, ty := .intCarrier, kind := .ifElse 3 base step }], 4 =>
       recSignSmall signS && recSignBig signB &&
         (if isAcc then
-          recBaseAcc base && recStepAcc self boxIdx addIdx subIdx step
+          recBaseAcc base && recStepAcc self boxIdx combineIdx subIdx step
         else
-          recBaseUnary boxIdx base && recStepUnary self boxIdx addIdx subIdx step)
+          recBaseUnary boxIdx base &&
+            recStepUnary combineRole self boxIdx combineIdx subIdx step)
   | _, _ => false
 
 /-- Context-sensitive `recursion-plan-v1` checking: the plan must be one of the
@@ -935,17 +944,24 @@ def checkRecursionPlanShape
     (self : Nat)
     (hostTable : List (HostRole × Nat))
     (plan : RecursionRawPlan) : Bool :=
-  match hostRoleIdx? hostTable .box,
-        hostRoleIdx? hostTable .add,
-        hostRoleIdx? hostTable .sub with
-  | some boxIdx, some addIdx, some subIdx =>
+  match hostRoleIdx? hostTable .box, hostRoleIdx? hostTable .sub with
+  | some boxIdx, some subIdx =>
       plan.profile = "recursion-plan-v1" &&
         sameTy plan.result .intCarrier &&
         (match plan.params with
-        | [.intCarrier] => recTopBlock false self boxIdx addIdx subIdx plan.body
-        | [.intCarrier, .intCarrier] => recTopBlock true self boxIdx addIdx subIdx plan.body
+        | [.intCarrier] =>
+            (match hostRoleIdx? hostTable .add with
+             | some addIdx => recTopBlock false .add self boxIdx addIdx subIdx plan.body
+             | none => false) ||
+            (match hostRoleIdx? hostTable .mul with
+             | some mulIdx => recTopBlock false .mul self boxIdx mulIdx subIdx plan.body
+             | none => false)
+        | [.intCarrier, .intCarrier] =>
+            match hostRoleIdx? hostTable .add with
+            | some addIdx => recTopBlock true .add self boxIdx addIdx subIdx plan.body
+            | none => false
         | _ => false)
-  | _, _, _ => false
+  | _, _ => false
 
 /-! ### `mutual-plan-v1` shape checking
 

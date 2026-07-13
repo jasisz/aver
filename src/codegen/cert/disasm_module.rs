@@ -11,10 +11,8 @@ type DisasmResult = (
 );
 
 /// The first `i64` arithmetic operator in a helper body. Strictly narrower
-/// than `HostRole`'s arithmetic marker (which deliberately covers the whole
-/// add/mul combinator family for the fueled-recursion classes, where the
-/// model text disambiguates `+` vs `*`): the plan-first host-role TABLE must
-/// bind the behavioural `add` exactly, so `mul`-first bodies are excluded.
+/// than the other host-shape evidence: the plan-first host-role table binds
+/// behavioural add, subtract, and multiply to distinct byte-derived helpers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FirstI64Arith {
     Add,
@@ -187,8 +185,9 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                 let mut ops = Vec::new();
                 let mut calls = Vec::new();
                 let mut has_loop_or_branch = false;
-                let mut saw_i64_add = false;
-                let mut saw_i64_sub = false;
+        let mut saw_i64_add = false;
+        let mut saw_i64_mul = false;
+        let mut saw_i64_sub = false;
                 let mut first_i64_arith = None;
                 let mut first_arith_strict = None;
                 let mut host_ops = Vec::new();
@@ -263,6 +262,8 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                             Op::Other
                         }
                         Operator::I64Mul => {
+                            saw_i64_mul = true;
+                            first_i64_arith.get_or_insert(HostRole::Mul);
                             first_arith_strict.get_or_insert(FirstI64Arith::Mul);
                             Op::Other
                         }
@@ -295,9 +296,10 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                     };
                     ops.push(mapped);
                 }
-                let host_role = match (saw_i64_add, saw_i64_sub) {
-                    (true, false) => Some(HostRole::Add),
-                    (false, true) => Some(HostRole::Sub),
+                let host_role = match (saw_i64_add, saw_i64_mul, saw_i64_sub) {
+                    (true, false, false) => Some(HostRole::Add),
+                    (false, true, false) => Some(HostRole::Mul),
+                    (false, false, true) => Some(HostRole::Sub),
                     _ => first_i64_arith,
                 };
                 code_entries.push(CodeEntry {
@@ -370,19 +372,16 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
         })
         .collect::<std::collections::HashMap<_, _>>();
 
-    // The plan-first host-role TABLE, strictly narrower than `host_roles`
-    // above (which deliberately keeps the coarse add/mul combinator family for
-    // the fueled-recursion classes). A table entry binds the behavioural role,
-    // so a candidate must have the exact carrier-binop signature
-    // (`[ref carrier, ref carrier] -> ref carrier`) AND `i64.add` as the FIRST
-    // i64 arithmetic operator in its body (the `mul` helper's umag loops also
-    // contain `i64.add`, but its fast path multiplies first). If the module
+    // A table entry binds the behavioural role, so a candidate must have the
+    // exact carrier-binop signature (`[ref carrier, ref carrier] -> ref carrier`)
+    // AND the corresponding i64 operator as the FIRST arithmetic operator in
+    // its body. The `mul` helper's umag loops also contain `i64.add`, but its
+    // fast path multiplies first. If the module
     // does not determine a UNIQUE candidate, the role stays unbound (`None`)
     // and every plan citing it declines fail-closed — never guess by index
     // order. `box` is the exported `__rt_aint_from_i64`, exact by name. `sub`
-    // is derived exactly like `add` (same carrier-binop signature, but
-    // `i64.sub`-first with its own uniqueness check); it is carried here as an
-    // S2 prerequisite and NOT yet surfaced to Lean (see `FragHostTable::lean_value`).
+    // is derived exactly like `add` and `mul`, each with its own uniqueness
+    // check. All four roles are surfaced to Lean and bound in the artifact.
     let frag_host_table = {
         let is_carrier_binop = |def_idx: usize| -> bool {
             let Some(c) = carrier else {
@@ -417,6 +416,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
         FragHostTable {
             box_idx: Some(box_idx),
             add_idx: unique(strict_binop_candidates(FirstI64Arith::Add)),
+            mul_idx: unique(strict_binop_candidates(FirstI64Arith::Mul)),
             sub_idx: unique(strict_binop_candidates(FirstI64Arith::Sub)),
         }
     };

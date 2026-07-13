@@ -311,7 +311,7 @@ struct Candidates {
     declared_uncertified: Vec<(String, String)>,
     capabilities: Vec<(String, String)>,
     start: Option<u32>,
-    host_role_table: (Option<u32>, Option<u32>, Option<u32>),
+    host_role_table: (Option<u32>, Option<u32>, Option<u32>, Option<u32>),
     string_host_roles: cert::StringHostRoles,
     profile: String,
     abi: String,
@@ -690,11 +690,12 @@ fn read_candidates(m: &Value) -> Result<Candidates, String> {
     exact_object_fields(
         host_role_table_value,
         "hostRoleTable",
-        &["box", "add", "sub"],
+        &["box", "add", "mul", "sub"],
     )?;
     let host_role_table = (
         manifest_optional_u32(&host_role_table_value["box"], "hostRoleTable.box")?,
         manifest_optional_u32(&host_role_table_value["add"], "hostRoleTable.add")?,
+        manifest_optional_u32(&host_role_table_value["mul"], "hostRoleTable.mul")?,
         manifest_optional_u32(&host_role_table_value["sub"], "hostRoleTable.sub")?,
     );
     let string_host_roles = m
@@ -1353,10 +1354,12 @@ fn merge_runtime_contracts(legacy: Vec<String>, sidecar: Vec<String>) -> Vec<Str
         cert::BOX_CONTRACT,
         cert::INT_ADD_CONTRACT,
         cert::INT_SUB_CONTRACT,
+        cert::INT_MUL_CONTRACT,
         cert::STRING_EQ_CONTRACT,
         cert::STRING_CONCAT_CONTRACT,
         cert::INT_ADD_TOTAL_CONTRACT,
         cert::INT_SUB_TOTAL_CONTRACT,
+        cert::INT_MUL_TOTAL_CONTRACT,
     ];
     canonical
         .iter()
@@ -3641,10 +3644,11 @@ fn checker_witness(
             .unwrap_or_else(|| "none".to_string())
     };
     let json_host_role_table = format!(
-        "({{ box := {}, add := {}, sub := {} }} : CertDecode.AddSub.Roles)",
+        "({{ box := {}, add := {}, mul := {}, sub := {} }} : CertDecode.AddSub.Roles)",
         option_nat(cands.host_role_table.0),
         option_nat(cands.host_role_table.1),
         option_nat(cands.host_role_table.2),
+        option_nat(cands.host_role_table.3),
     );
     let json_string_host_roles = format!(
         "[{}]",

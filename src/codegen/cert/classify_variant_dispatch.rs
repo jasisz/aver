@@ -51,7 +51,9 @@ fn nr_variant_dispatch(
                 }
                 sub_idx = Some(*idx);
             }
-            Some(HostRole::StringEq) | Some(HostRole::StringConcat) => return None,
+            Some(HostRole::Mul)
+            | Some(HostRole::StringEq)
+            | Some(HostRole::StringConcat) => return None,
             None => {}
         }
     }

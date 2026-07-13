@@ -988,9 +988,10 @@ fn render_manifest(
             .unwrap_or_else(|| "null".to_string())
     };
     s.push_str(&format!(
-        "  \"hostRoleTable\": {{\"box\": {}, \"add\": {}, \"sub\": {}}},\n",
+        "  \"hostRoleTable\": {{\"box\": {}, \"add\": {}, \"mul\": {}, \"sub\": {}}},\n",
         json_role(analysis.frag_host_table.box_idx),
         json_role(analysis.frag_host_table.add_idx),
+        json_role(analysis.frag_host_table.mul_idx),
         json_role(analysis.frag_host_table.sub_idx),
     ));
     s.push_str("  \"stringHostRoles\": [");

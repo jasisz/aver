@@ -251,6 +251,7 @@ deriving Repr, DecidableEq
 inductive HostRole where
   | box
   | add
+  | mul
   | sub
 deriving Repr, DecidableEq
 
@@ -361,15 +362,11 @@ def checkTermStep? (paramIdx : Nat) (body : FragBlock) : Option FragBlock :=
           checkTermBigFloor paramIdx big then some step else none
   | _, _ => none
 
-/-- Does one node in the step arm call self on exactly
-    `sub(local paramIdx, box(1))`? Node ids are followed within the same checked
-    ANF block; host indices and the self index remain byte-bound by the ordinary
-    recursion-plan acceptance predicate. -/
-def checkTermDescent (paramIdx : Nat) (step : FragBlock) : Bool :=
-  step.nodes.any fun node =>
-    match node.kind with
-    | .selfCall false _ [descentId] =>
-        match step.nodes[descentId]? with
+/-- Check that one selected self-call argument is exactly
+    `sub(local paramIdx, box(1))`. -/
+def checkTermDescentArg (paramIdx : Nat) (step : FragBlock)
+    (descentId : Nat) : Bool :=
+  match step.nodes[descentId]? with
         | some { kind := .hostCall .sub _ [inputId, boxedOneId], .. } =>
             match step.nodes[inputId]?, step.nodes[boxedOneId]? with
             | some { kind := .local localIdx, .. },
@@ -379,9 +376,21 @@ def checkTermDescent (paramIdx : Nat) (step : FragBlock) : Bool :=
                 | _ => false
             | _, _ => false
         | _ => false
+
+/-- Does one node in the step arm call self with a checked first-parameter
+    descent? Unary recursion uses a non-tail one-argument call; accumulator
+    recursion uses a tail two-argument call whose second argument is pinned by
+    the independently checked recursion grammar. -/
+def checkTermDescent (paramIdx : Nat) (step : FragBlock) : Bool :=
+  step.nodes.any fun node =>
+    match node.kind with
+    | .selfCall false _ [descentId] =>
+        checkTermDescentArg paramIdx step descentId
+    | .selfCall true _ [descentId, _accId] =>
+        checkTermDescentArg paramIdx step descentId
     | _ => false
 
-/-- Kernel decision procedure for the promoted unary descent-by-one family.
+/-- Kernel decision procedure for promoted descent-by-one recursion.
     It does not synthesise a measure: it checks the claimed `natAbs` parameter,
     the `-1` descent, the non-positive floor guard, and the exact recursive
     argument chain already pinned to the module bytes by the plan gate. -/
@@ -389,7 +398,8 @@ def checkTerm (plan : RecursionRawPlan) (witness : TerminationWitness) : Bool :=
   match witness.measure with
   | .intNatAbs paramIdx =>
       plan.profile == "recursion-plan-v1" &&
-      plan.params == [.intCarrier] &&
+      (plan.params == [.intCarrier] ||
+       plan.params == [.intCarrier, .intCarrier]) &&
       plan.result == .intCarrier &&
       paramIdx == 0 &&
       witness.descent == (-1 : Int) &&
@@ -730,12 +740,12 @@ def Obligation.holds (o : Obligation) : Prop :=
     o.codRepr S (o.model x) w
 
 /-- Denotation of `simulatesModelTotally`. In addition to the five existing
-    partial host laws it assumes that integer add and sub return on represented
-    operands. For every represented integer input, the body must return at
-    fuel `natAbs n + 1`; the domain witness connects that standard integer face
-    to the obligation's independently pinned model and representations. For the
-    promoted unary recursion obligations this unfolds to
-    `∃ w, run (natAbs n + 1) = some w ∧ Repr (f n) w`. -/
+    partial host laws it assumes that integer add, sub, and mul return on
+    represented operands. For every represented obligation-domain input, the
+    first argument is exposed as the checked `Int.natAbs` counter and the body
+    must return at fuel `natAbs n + 1`. The tail permits audited recursion
+    families to carry additional represented arguments without weakening the
+    counter/fuel binding. -/
 def Obligation.holdsTotal (o : Obligation) : Prop :=
   ∀ (S : CarrierSpec o.carrier)
     (add sub mul stringEq : List WVal → Option WVal)
@@ -747,10 +757,11 @@ def Obligation.holdsTotal (o : Obligation) : Prop :=
     (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
     (_hAddTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
     (_hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
-    (n : Int) (v : WVal), S.Repr n v →
-    ∃ x : o.Dom, o.domRepr S x [v] ∧
+    (_hMulTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, mul [va, vb] = some w)
+    (x : o.Dom) (vs : List WVal), o.domRepr S x vs →
+    ∃ n v tail, vs = v :: tail ∧ S.Repr n v ∧
       ∃ w, wFuncN o.code (o.host add sub mul stringEq stringConcat)
-          (n.natAbs + 1) o.self [v] = some w ∧
+          (n.natAbs + 1) o.self vs = some w ∧
         o.codRepr S (o.model x) w
 
 structure Manifest where

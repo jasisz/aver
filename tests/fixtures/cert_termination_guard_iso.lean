@@ -54,11 +54,19 @@ abbrev nameBytes : AverCert.WasmSlice.ByteSeq :=
 abbrev hostTable : List (HostRole × Nat) :=
   [(.box, 10), (.add, 11), (.sub, 12)]
 abbrev plan := AverCert.Plans.sumFromRecursionPlan
+abbrev accumulatorPlan := AverCert.Plans.countDownRecursionPlan
 
 -- The honest witness passes; each hostile witness fails at `checkTerm` itself.
 example : checkTerm plan honestWitness = true := rfl
 example : checkTerm plan wrongMeasureWitness = false := rfl
 example : checkTerm plan wrongDescentWitness = false := rfl
+
+-- The generalized checker reads the counter from argument zero while allowing
+-- the accumulator in argument one to be threaded through the recursive call.
+-- Swapping the measure to the accumulator or reversing descent still fails.
+example : checkTerm accumulatorPlan honestWitness = true := rfl
+example : checkTerm accumulatorPlan wrongMeasureWitness = false := rfl
+example : checkTerm accumulatorPlan wrongDescentWitness = false := rfl
 
 theorem honestAccepted : AverCert.AcceptedArtifact.recursionPlanAccepted
     modBytes modLen nameBytes "sumFrom" 2 hostTable plan AverCert.sumFromOb := by

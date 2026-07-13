@@ -671,15 +671,12 @@ fn render_expr_fragment_plans(
         ));
     }
     for c in &analysis.certs {
-        let (name, self_idx, type_idx, carrier, box_idx, add_idx, sub_idx) = match c.inner() {
+        let (name, self_idx, type_idx, carrier) = match c.inner() {
             Cert::Recursive {
                 name,
                 self_idx,
                 type_idx,
                 carrier,
-                box_idx,
-                add_idx,
-                sub_idx,
                 ..
             }
             | Cert::AccumulatorRecursive {
@@ -687,11 +684,8 @@ fn render_expr_fragment_plans(
                 self_idx,
                 type_idx,
                 carrier,
-                box_idx,
-                add_idx,
-                sub_idx,
                 ..
-            } => (name, *self_idx, *type_idx, *carrier, *box_idx, *add_idx, *sub_idx),
+            } => (name, *self_idx, *type_idx, *carrier),
             _ => continue,
         };
         let Some(plan) = recursion_plan_from_cert(c) else {
@@ -701,7 +695,7 @@ fn render_expr_fragment_plans(
             .expect("certified recursion plan lowers to code-entry bytes");
         let code_entry_bytes = render_byte_list(&code_entry_bytes);
         let export_name_bytes = render_byte_list(name.as_bytes());
-        let host_table = recursion_host_table_lean_value(box_idx, add_idx, sub_idx);
+        let host_table = recursion_host_table_lean_value(c);
         let arity = plan.params.len();
         any = true;
         s.push_str(&format!(
@@ -1170,9 +1164,6 @@ fn render_artifact_expr_fragment_claims(
                 code_idx,
                 type_idx,
                 carrier,
-                box_idx,
-                add_idx,
-                sub_idx,
                 ..
             }
             | Cert::AccumulatorRecursive {
@@ -1181,9 +1172,6 @@ fn render_artifact_expr_fragment_claims(
                 code_idx,
                 type_idx,
                 carrier,
-                box_idx,
-                add_idx,
-                sub_idx,
                 ..
             } => {
                 // Analysis declines a normalized body whose canonical plan
@@ -1199,7 +1187,7 @@ fn render_artifact_expr_fragment_claims(
                     .map(|ops| render_ops_value(&ops))
                     .expect("certified recursion plan lowers to WInstr body");
                 let export_name_bytes = render_byte_list(name.as_bytes());
-                let host_table = recursion_host_table_lean_value(*box_idx, *add_idx, *sub_idx);
+                let host_table = recursion_host_table_lean_value(c);
                 let func_binding = format!(
                     "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
                 );

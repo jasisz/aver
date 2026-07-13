@@ -142,7 +142,9 @@ fn int_dispatch_plan_from_cert(c: &Cert, strict: FragHostTable) -> Option<IntDis
                         role: match role {
                             HostRole::Add => IntDispatchRole::Add,
                             HostRole::Sub => IntDispatchRole::Sub,
-                            HostRole::StringEq | HostRole::StringConcat => return None,
+                            HostRole::Mul | HostRole::StringEq | HostRole::StringConcat => {
+                                return None;
+                            }
                         },
                         k: *k,
                         const_first: *const_first,
@@ -476,6 +478,7 @@ mod int_dispatch_plan_gate_tests {
         FragHostTable {
             box_idx: Some(34),
             add_idx: Some(35),
+            mul_idx: Some(37),
             sub_idx: Some(36),
         }
     }
@@ -563,6 +566,7 @@ mod int_dispatch_plan_gate_tests {
                 FragHostTable {
                     box_idx: Some(34),
                     add_idx: Some(35),
+                    mul_idx: Some(37),
                     sub_idx: None,
                 }
             )
@@ -576,6 +580,7 @@ mod int_dispatch_plan_gate_tests {
                 FragHostTable {
                     box_idx: Some(34),
                     add_idx: Some(99),
+                    mul_idx: Some(37),
                     sub_idx: Some(36),
                 }
             )
@@ -589,6 +594,7 @@ mod int_dispatch_plan_gate_tests {
                 FragHostTable {
                     box_idx: Some(1),
                     add_idx: Some(35),
+                    mul_idx: Some(37),
                     sub_idx: Some(36),
                 }
             )

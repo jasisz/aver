@@ -2,7 +2,7 @@
 ///   f n     = if n≤0 then BASE else n + f (n-1)        (body-consumed, arity 1)
 ///   f n acc = if n≤0 then acc  else f (n-1) (acc + n)   (tail accumulator, arity 2)
 /// The carrier-sign predicate preamble, the descent (`n-1`) and the combinator
-/// (host `add`) are pinned; the BASE literal of the arity-1 shape is DATA (any
+/// (host `add` or `mul`) are pinned; the BASE literal of the arity-1 shape is DATA (any
 /// value, recovered from the bytes, not the fixed `0`). Recognition keys on the
 /// parsed tree and a symbolic step evaluator; no full opcode sequence is pinned.
 fn recognize_fueled_recursion(
@@ -83,13 +83,20 @@ fn recognize_fueled_recursion(
         // symbolically executing the straight-line step (descent pinned to n-1).
         let (sub_idx, add_idx, rec_first, other) =
             parse_body_step(&node_ops(step_arm), box_idx, f.wasm_idx, host_roles)?;
-        // Whether the combinator is `+` or `*` is not byte-distinguishable; read
-        // it from the model operator, and decline fail-closed on anything else.
+        // The source model chooses the semantic operator; the byte-derived host
+        // role must independently agree with that choice.
         let combinator = match model_ops.get(&f.name) {
             Some('+') => Combinator::Add,
             Some('*') => Combinator::Mul,
             _ => return None,
         };
+        let expected_role = match combinator {
+            Combinator::Add => HostRole::Add,
+            Combinator::Mul => HostRole::Mul,
+        };
+        if host_roles.get(&add_idx) != Some(&expected_role) {
+            return None;
+        }
         // The anti-vacuity guards evaluate the model at fixed samples; a large
         // multiplier or base can exceed i128 — decline fail-closed rather than
         // overflow-panic in the emitter.

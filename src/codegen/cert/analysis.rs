@@ -178,14 +178,17 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
     let mut has_box = false;
     let mut has_add = false;
     let mut has_sub = false;
+    let mut has_mul = false;
     let mut has_string_eq = false;
     let mut has_string_concat = false;
     let mut has_add_total = false;
     let mut has_sub_total = false;
+    let mut has_mul_total = false;
     for c in certs {
         if c.policy() == CertificationPolicy::SimulatesModelTotally {
             has_add_total = true;
             has_sub_total = true;
+            has_mul_total = true;
         }
         if c.int_add_face().is_some() {
             has_box = true;
@@ -193,9 +196,20 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
             continue;
         }
         match c.inner() {
-            Cert::Recursive { .. } => {
+            Cert::Recursive {
+                combinator: Combinator::Add,
+                ..
+            } => {
                 has_box = true;
                 has_add = true;
+                has_sub = true;
+            }
+            Cert::Recursive {
+                combinator: Combinator::Mul,
+                ..
+            } => {
+                has_box = true;
+                has_mul = true;
                 has_sub = true;
             }
             Cert::AccumulatorRecursive { .. } => {
@@ -251,6 +265,9 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
     if has_sub {
         contracts.push(INT_SUB_CONTRACT.to_string());
     }
+    if has_mul {
+        contracts.push(INT_MUL_CONTRACT.to_string());
+    }
     if has_string_eq {
         contracts.push(STRING_EQ_CONTRACT.to_string());
     }
@@ -262,6 +279,9 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
     }
     if has_sub_total {
         contracts.push(INT_SUB_TOTAL_CONTRACT.to_string());
+    }
+    if has_mul_total {
+        contracts.push(INT_MUL_TOTAL_CONTRACT.to_string());
     }
     contracts
 }
@@ -410,13 +430,12 @@ fn addTwo(x: Int) -> Int
         );
     }
 
-    #[test]
     /// The plan-first host-role table must bind `add` to EXACTLY the callee a
-    /// straight-line body actually cites. In a real bignum module the coarse
-    /// `host_roles` map carries the whole add/mul combinator family (the mul
-    /// helper's umag loops also contain `i64.add`), so this pins that the
-    /// strict table (signature + first-i64-arith + uniqueness) never rides on
-    /// index order the way the removed `min()` derivation did.
+    /// straight-line body actually cites. In a real bignum module the multiply
+    /// helper's umag loops also contain `i64.add`; the first-arithmetic rule
+    /// must nevertheless classify it as `Mul`, distinct from the cited `Add`.
+    /// This pins that the strict table never rides on index order the way the
+    /// removed `min()` derivation did.
     #[test]
     fn frag_host_table_binds_add_to_the_cited_callee() {
         let mut items = crate::source::parse_source(
@@ -459,18 +478,13 @@ fn addTwo(x: Int) -> Int
         let [cited_box, cited_add] = add_two.calls.as_slice() else {
             panic!("addTwo should cite exactly box + add, got {:?}", add_two.calls);
         };
-        // The coarse role family really is ambiguous in a bignum module: more
-        // than one helper carries the Add marker (genuine add + mul at least).
-        let coarse_add_count = host_roles
-            .values()
-            .filter(|role| **role == HostRole::Add)
-            .count();
-        assert!(
-            coarse_add_count >= 2,
-            "expected the coarse role map to be ambiguous (add + mul family), \
-             got {coarse_add_count} Add-marked helpers"
-        );
-        // The strict table still binds box/add to exactly the cited callees.
+        let mul_idx = host_table
+            .mul_idx
+            .expect("the module must expose the canonical multiply helper");
+        assert_eq!(host_roles.get(cited_add), Some(&HostRole::Add));
+        assert_eq!(host_roles.get(&mul_idx), Some(&HostRole::Mul));
+        assert_ne!(*cited_add, mul_idx, "add and mul roles must stay distinct");
+        // The strict table binds box/add to exactly the cited callees.
         assert_eq!(host_table.box_idx, Some(box_idx));
         assert_eq!(host_table.box_idx, Some(*cited_box));
         assert_eq!(

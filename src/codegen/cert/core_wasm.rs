@@ -100,6 +100,7 @@ enum Op {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HostRole {
     Add,
+    Mul,
     Sub,
     StringEq,
     /// The byte-array concatenation helper (`String.concat` lowering): takes a
@@ -185,11 +186,9 @@ enum BodyOperand {
     Const(i64),
 }
 
-/// Which arithmetic contract the body-recursion combinator obeys. The bignum
-/// `add` and `mul` helpers are not byte-distinguishable (both use i64 add/sub/mul
-/// internally), so this is read from the MODEL operator — the trusted source of
-/// what the function computes, the same spec the whole certificate is stated
-/// against. The checker re-derives it from the model too, so the host still pins.
+/// Which arithmetic contract the body-recursion combinator obeys. The model
+/// operator selects the semantic evaluator; the distinct byte-derived host role
+/// independently pins that selection to the corresponding runtime helper.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Combinator {
     /// `f(n-1)` combined with the other operand by integer `+` (host `add`).

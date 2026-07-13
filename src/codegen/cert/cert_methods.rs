@@ -34,19 +34,17 @@ impl Cert {
         }
     }
 
-    /// The v48 total families: unary `n - 1` recursion whose combinator uses
-    /// `Int.add`, and complete integer-countdown mutual SCCs. Multiplicative
-    /// recursion would require a frozen `mul` totality contract; accumulator
-    /// and budget-heuristic families remain partial.
+    /// The total families: unary `n - 1` recursion whose combinator uses a
+    /// frozen Int.add/Int.mul totality contract, and complete integer-countdown
+    /// mutual SCCs. Accumulator and budget-heuristic families remain partial.
     fn termination_witness(&self) -> Option<TerminationWitness> {
         match self.inner() {
-            Cert::Recursive {
-                combinator: Combinator::Add,
-                ..
-            } => Some(TerminationWitness {
+            Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. } => {
+                Some(TerminationWitness {
                 measure: TerminationMeasure::IntNatAbs { param_idx: 0 },
                 descent: -1,
-            }),
+                })
+            }
             Cert::MutualRecursion { scc, .. } if mutual_scc_total_eligible(scc) => {
                 Some(TerminationWitness {
                     measure: TerminationMeasure::IntNatAbs { param_idx: 0 },

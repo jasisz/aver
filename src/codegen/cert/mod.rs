@@ -85,14 +85,17 @@ pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
 /// Certification level of a v0 artifact certificate: conditional on the named
 /// runtime contracts (see the consult level naming L0/L1/L2/L3).
 pub const CERT_LEVEL: &str = "L1";
-pub const CERT_SCHEMA_VERSION: u32 = 59;
+pub const CERT_SCHEMA_VERSION: u32 = 60;
 pub const BOX_CONTRACT: &str = "__rt_aint_from_i64 (box i64 -> carrier)";
 pub const INT_ADD_CONTRACT: &str =
     "Int.add (carrier add = exact integer addition on represented values)";
 pub const INT_SUB_CONTRACT: &str =
     "Int.sub (carrier sub = exact integer subtraction on represented values)";
+pub const INT_MUL_CONTRACT: &str =
+    "Int.mul (carrier mul = exact integer multiplication on represented values)";
 pub const INT_ADD_TOTAL_CONTRACT: &str = "Int.add (carrier add = exact integer addition on represented values); total on represented values";
 pub const INT_SUB_TOTAL_CONTRACT: &str = "Int.sub (carrier sub = exact integer subtraction on represented values); total on represented values";
+pub const INT_MUL_TOTAL_CONTRACT: &str = "Int.mul (carrier mul = exact integer multiplication on represented values); total on represented values";
 pub const STRING_EQ_CONTRACT: &str =
     "String.eq (WVal byte-array equality; non-arrays compare false)";
 pub const STRING_CONCAT_CONTRACT: &str =
