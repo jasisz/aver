@@ -480,7 +480,8 @@ def recursionPlanAccepted
       AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
-      AverCert.PlanCheck.checkRecursionPlanShape binding.funcIdx hostTable plan = true ∧
+      AverCert.PlanCheck.checkRecursionPlanShape binding.funcIdx hostTable
+        obligation.totalityRole plan = true ∧
       AverCert.WasmSlice.funcTypeMatches
         modBytes modLen binding.typeIdx plan.params.length carrier = true ∧
       obligation.code binding.funcIdx =
@@ -539,6 +540,7 @@ def mutualPlanAccepted
     (obligation : Obligation) : Prop :=
   obligation.export_ = exportName ∧
     obligation.carrier = carrier ∧
+    obligation.totalityRole = .addSub ∧
     AverCert.PlanCheck.checkMutualRawPlan plan = true ∧
     (match obligation.policy, obligation.termination? with
      | .simulatesModel, none => true

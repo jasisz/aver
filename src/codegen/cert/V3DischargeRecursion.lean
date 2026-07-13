@@ -44,6 +44,8 @@ def unaryRecursionSemanticBridge
       (V3Rec.combineHostRole combineOp) = some combineIdx ∧
     AverCert.PlanCheck.hostRoleIdx? claim.hostTable .sub = some subIdx ∧
     V3Rec.parseRecShapeU combineOp claim.obligation.self boxIdx combineIdx subIdx plan = some sh ∧
+    claim.obligation.totalityRole =
+      (match combineOp with | .add => .addSub | .mul => .mul) ∧
     (∀ add sub mul stringEq stringConcat,
       let host := claim.obligation.host add sub mul stringEq stringConcat
       host boxIdx = some (1, boxRef claim.obligation.carrier) ∧
@@ -74,6 +76,7 @@ def accumulatorRecursionSemanticBridge
     AverCert.PlanCheck.hostRoleIdx? claim.hostTable .add = some addIdx ∧
     AverCert.PlanCheck.hostRoleIdx? claim.hostTable .sub = some subIdx ∧
     V3Rec.parseRecShapeA claim.obligation.self boxIdx addIdx subIdx plan = some sh ∧
+    claim.obligation.totalityRole = .addSub ∧
     (∀ add sub mul stringEq stringConcat,
       let host := claim.obligation.host add sub mul stringEq stringConcat
       host boxIdx = some (1, boxRef claim.obligation.carrier) ∧
@@ -138,7 +141,7 @@ theorem unary_recursion_claim_discharges
       rcases hBridge plan hPlan with
         ⟨combineOp, boxIdx, combineIdx, subIdx, sh,
           _hBoxLookup, _hCombineLookup, _hSubLookup,
-          hParse, hHost, hPartialModel, hTotalModel⟩
+          hParse, hTotalityRole, hHost, hPartialModel, hTotalModel⟩
       have hParams : plan.params = [.intCarrier] := by
         unfold V3Rec.parseRecShapeU at hParse
         split at hParse
@@ -186,16 +189,17 @@ theorem unary_recursion_claim_discharges
           | some witness =>
               have _hCheckedTermination : checkTerm plan witness = true := by
                 simpa [hPolicy, hWitness] using hTermination
-              rw [obligationHolds, hPolicy]
-              intro S add sub mul stringEq stringConcat
-                hAdd hSub hMul _hStringEq _hStringConcat
-                hAddTot hSubTot hMulTot x vs hDom
-              rcases hPartialModel S x vs hDom with
-                ⟨n, v, rfl, hv, hCod⟩
-              rcases hTotalModel S n v hv with
-                ⟨_sourceWitness, _hWitnessDom, _hWitnessCod⟩
               cases combineOp with
               | add =>
+                  rw [obligationHolds, hPolicy]
+                  simp only [Obligation.holdsTotal, hTotalityRole]
+                  intro S add sub mul stringEq stringConcat
+                    hAdd hSub _hMul _hStringEq _hStringConcat
+                    hAddTot hSubTot x vs hDom
+                  rcases hPartialModel S x vs hDom with
+                    ⟨n, v, rfl, hv, hCod⟩
+                  rcases hTotalModel S n v hv with
+                    ⟨_sourceWitness, _hWitnessDom, _hWitnessCod⟩
                   rcases hHost add sub mul stringEq stringConcat with
                     ⟨hBox, hCombineHost, hSubHost, hSelfHost⟩
                   obtain ⟨w, hRun, hRepr⟩ :=
@@ -208,6 +212,15 @@ theorem unary_recursion_claim_discharges
                       hAddTot hSubTot plan sh hParse body hLower hCodeSelf n v hv
                   exact ⟨n, v, [], rfl, hv, w, hRun, hCod w hRepr⟩
               | mul =>
+                  rw [obligationHolds, hPolicy]
+                  simp only [Obligation.holdsTotal, hTotalityRole]
+                  intro S add sub mul stringEq stringConcat
+                    _hAdd hSub hMul _hStringEq _hStringConcat
+                    _hAddTot hSubTot hMulTot x vs hDom
+                  rcases hPartialModel S x vs hDom with
+                    ⟨n, v, rfl, hv, hCod⟩
+                  rcases hTotalModel S n v hv with
+                    ⟨_sourceWitness, _hWitnessDom, _hWitnessCod⟩
                   rcases hHost add sub mul stringEq stringConcat with
                     ⟨hBox, hCombineHost, hSubHost, hSelfHost⟩
                   obtain ⟨w, hRun, hRepr⟩ :=
@@ -251,7 +264,7 @@ theorem accumulator_recursion_claim_discharges
       rcases hBridge plan hPlan with
         ⟨boxIdx, addIdx, subIdx, sh,
           _hBoxLookup, _hAddLookup, _hSubLookup,
-          hParse, hHost, hPartialModel, hTotalModel⟩
+          hParse, hTotalityRole, hHost, hPartialModel, hTotalModel⟩
       have hParams : plan.params = [.intCarrier, .intCarrier] := by
         unfold V3Rec.parseRecShapeA at hParse
         split at hParse
@@ -290,9 +303,10 @@ theorem accumulator_recursion_claim_discharges
               have _hCheckedTermination : checkTerm plan witness = true := by
                 simpa [hPolicy, hWitness] using hTermination
               rw [obligationHolds, hPolicy]
+              simp only [Obligation.holdsTotal, hTotalityRole]
               intro S add sub mul stringEq stringConcat
                 hAdd hSub _hMul _hStringEq _hStringConcat
-                hAddTot hSubTot _hMulTot x vs hDom
+                hAddTot hSubTot x vs hDom
               rcases hPartialModel S x vs hDom with
                 ⟨n, acc, vn, vacc, rfl, hvn, hvacc, hCod⟩
               rcases hTotalModel S n acc vn vacc hvn hvacc with
@@ -431,7 +445,7 @@ theorem mutual_claim_discharges
           claim.carrier claim.memberSet claim.hostTable plan claim.obligation := by
         simpa [hPlan] using hClaim
       rcases hAccepted with
-        ⟨_hExport, hCarrier, hRaw, hTermination,
+        ⟨_hExport, hCarrier, hTotalityRole, hRaw, hTermination,
           body, codeEntry, binding, hLow, _hCodeEntry, _hExportCode,
           _hBinding, hSelf, _hBindingCode, _hShape, _hType, hCode⟩
       rcases hBridge plan hPlan with
@@ -494,9 +508,10 @@ theorem mutual_claim_discharges
               have _hCheckedTermination : checkTermMutual plan witness = true := by
                 simpa [hPolicy, hWitness] using hTermination
               rw [obligationHolds, hPolicy]
+              simp only [Obligation.holdsTotal, hTotalityRole]
               intro S add sub mul stringEq stringConcat
                 _hAdd hSub _hMul _hStringEq _hStringConcat
-                _hAddTot hSubTot _hMulTot x vs hDom
+                _hAddTot hSubTot x vs hDom
               rcases hPartialModel S x vs hDom with
                 ⟨n, v, rfl, hv, hCod⟩
               rcases hHost add sub mul stringEq stringConcat with

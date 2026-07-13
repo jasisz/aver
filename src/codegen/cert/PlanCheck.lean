@@ -938,29 +938,33 @@ def recTopBlock (isAcc : Bool) (combineRole : HostRole)
 /-- Context-sensitive `recursion-plan-v1` checking: the plan must be one of the
     two recognised fuel-recursion grammars, every self-call must target `self`
     (the byte-derived function binding of the claimed export), and every host
-    call must cite the byte-derived role table. A table missing any of the
-    box/add/sub roles fail-closes. -/
+    call must cite the byte-derived role table.  `totalityRole` is checked in
+    the same byte-pinned grammar: only the unary `.mul` combine shape accepts a
+    `.mul` totality premise; unary additive and accumulator shapes accept only
+    the shipped `.addSub` premise surface. -/
 def checkRecursionPlanShape
     (self : Nat)
     (hostTable : List (HostRole × Nat))
+    (totalityRole : TotalityRole)
     (plan : RecursionRawPlan) : Bool :=
   match hostRoleIdx? hostTable .box, hostRoleIdx? hostTable .sub with
   | some boxIdx, some subIdx =>
       plan.profile = "recursion-plan-v1" &&
         sameTy plan.result .intCarrier &&
-        (match plan.params with
-        | [.intCarrier] =>
+        (match plan.params, totalityRole with
+        | [.intCarrier], .addSub =>
             (match hostRoleIdx? hostTable .add with
              | some addIdx => recTopBlock false .add self boxIdx addIdx subIdx plan.body
-             | none => false) ||
+             | none => false)
+        | [.intCarrier], .mul =>
             (match hostRoleIdx? hostTable .mul with
              | some mulIdx => recTopBlock false .mul self boxIdx mulIdx subIdx plan.body
              | none => false)
-        | [.intCarrier, .intCarrier] =>
+        | [.intCarrier, .intCarrier], .addSub =>
             match hostRoleIdx? hostTable .add with
             | some addIdx => recTopBlock true .add self boxIdx addIdx subIdx plan.body
             | none => false
-        | _ => false)
+        | _, _ => false)
   | _, _ => false
 
 /-! ### `mutual-plan-v1` shape checking

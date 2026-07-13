@@ -696,6 +696,12 @@ fn render_expr_fragment_plans(
         let code_entry_bytes = render_byte_list(&code_entry_bytes);
         let export_name_bytes = render_byte_list(name.as_bytes());
         let host_table = recursion_host_table_lean_value(c);
+        let totality_role = c.totality_role_lean_value();
+        let wrong_totality_role = if c.requires_mul_totality() {
+            ".addSub"
+        } else {
+            ".mul"
+        };
         let arity = plan.params.len();
         any = true;
         s.push_str(&format!(
@@ -706,7 +712,9 @@ fn render_expr_fragment_plans(
              /-- The context-sensitive recursion grammar accepts `{name}`'s plan: the\n\
                  self-call targets the export's own byte-derived function index and every\n\
                  host call cites the byte-derived role table. -/\n\
-             example : AverCert.PlanCheck.checkRecursionPlanShape {self_idx} {host_table} {name}RecursionPlan = true := rfl\n\n\
+             example : AverCert.PlanCheck.checkRecursionPlanShape {self_idx} {host_table} {totality_role} {name}RecursionPlan = true := rfl\n\n\
+             /-- The opposite totality role is rejected by the same byte-pinned grammar. -/\n\
+             example : AverCert.PlanCheck.checkRecursionPlanShape {self_idx} {host_table} {wrong_totality_role} {name}RecursionPlan = false := rfl\n\n\
              /-- The declared function type of `{name}` is the canonical certified\n\
                  signature over the Int carrier. -/\n\
              example : AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {type_idx} {arity} {carrier} = true := rfl\n\n\
@@ -1235,7 +1243,7 @@ fn render_artifact_expr_fragment_claims(
                     export_name = lean_str(name),
                 ));
                 mutual_proofs.push(format!(
-                    "⟨rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
+                    "⟨rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
                      ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }

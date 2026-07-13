@@ -163,7 +163,7 @@ theorem {name}_wasm_total
 
 theorem {name}_simulates_total : AverCert.Schema.Obligation.holdsTotal {name}Ob := by
   intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat
-    hAddTot hSubTot hMulTot x vs hDom
+    hAddTot hSubTot x vs hDom
   simp only [{name}Ob] at hDom ⊢
   obtain ⟨hrepr, harity⟩ := hDom
   cases hrepr with

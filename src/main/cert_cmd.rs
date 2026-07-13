@@ -2765,7 +2765,7 @@ fn lean_expr_fragment_artifact_claims(
                 carrier = r.carrier,
             ));
             mutual_proofs.push(format!(
-                "⟨rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
+                "⟨rfl, rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
                  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
             ));
             continue;

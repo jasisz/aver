@@ -188,7 +188,7 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
         if c.policy() == CertificationPolicy::SimulatesModelTotally {
             has_add_total = true;
             has_sub_total = true;
-            has_mul_total = true;
+            has_mul_total |= c.requires_mul_totality();
         }
         if c.int_add_face().is_some() {
             has_box = true;

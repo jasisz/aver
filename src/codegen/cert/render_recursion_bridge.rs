@@ -148,7 +148,7 @@ theorem {name}_recursionSemanticBridge :
     simpa [V3Rec.evalRecU, {name}] using hModelFuel (n.natAbs + 1) n
   refine Or.inl ?_
   refine ⟨{combine}, {box_idx}, {add_idx}, {sub_idx}, {shape},
-    rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
+    rfl, rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
   · intro add sub mul stringEq stringConcat
     simpa [AverCert.{name}Ob, CertModule.{name}Host]
   · intro S ns vs hDom
@@ -217,7 +217,7 @@ theorem {name}_recursionSemanticBridge :
     simpa [V3Rec.evalRecA, {name}] using hModelFuel (n.natAbs + 1) n acc
   refine Or.inr ?_
   refine ⟨{box_idx}, {add_idx}, {sub_idx}, .accumulator,
-    rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
+    rfl, rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
   · intro add sub mul stringEq stringConcat
     simpa [AverCert.{name}Ob, CertModule.{name}Host]
   · intro S ns vs hDom

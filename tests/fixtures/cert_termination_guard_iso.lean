@@ -40,7 +40,8 @@ def recursionPlanAcceptedWithoutCheckTerm
       AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
-      AverCert.PlanCheck.checkRecursionPlanShape binding.funcIdx hostTable plan = true ∧
+      AverCert.PlanCheck.checkRecursionPlanShape binding.funcIdx hostTable
+        obligation.totalityRole plan = true ∧
       AverCert.WasmSlice.funcTypeMatches
         modBytes modLen binding.typeIdx plan.params.length carrier = true ∧
       obligation.code binding.funcIdx =
@@ -84,24 +85,25 @@ theorem honestAccepted : AverCert.AcceptedArtifact.recursionPlanAccepted
 theorem weakenedAccepts (obligation : Obligation)
     (hfields : obligation.export_ = AverCert.sumFromOb.export_ ∧
       obligation.carrier = AverCert.sumFromOb.carrier ∧
+      obligation.totalityRole = AverCert.sumFromOb.totalityRole ∧
       obligation.self = AverCert.sumFromOb.self ∧
       obligation.code = AverCert.sumFromOb.code) :
     recursionPlanAcceptedWithoutCheckTerm
       modBytes modLen nameBytes "sumFrom" 2 hostTable plan obligation := by
   rcases honestAccepted with ⟨hexport, hcarrier, hraw, _hterm, hrest⟩
-  rcases hfields with ⟨hexport', hcarrier', hself', hcode'⟩
+  rcases hfields with ⟨hexport', hcarrier', htotality', hself', hcode'⟩
   refine ⟨?_, ?_, hraw, ?_⟩
   · simpa [hexport'] using hexport
   · simpa [hcarrier'] using hcarrier
-  · simpa [hself', hcode'] using hrest
+  · simpa [htotality', hself', hcode'] using hrest
 
 -- The one-conjunct-weakened copy accepts both hostile obligations.
 example : recursionPlanAcceptedWithoutCheckTerm
     modBytes modLen nameBytes "sumFrom" 2 hostTable plan wrongMeasureOb :=
-  weakenedAccepts wrongMeasureOb ⟨rfl, rfl, rfl, rfl⟩
+  weakenedAccepts wrongMeasureOb ⟨rfl, rfl, rfl, rfl, rfl⟩
 example : recursionPlanAcceptedWithoutCheckTerm
     modBytes modLen nameBytes "sumFrom" 2 hostTable plan wrongDescentOb :=
-  weakenedAccepts wrongDescentOb ⟨rfl, rfl, rfl, rfl⟩
+  weakenedAccepts wrongDescentOb ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 -- The real predicate rejects exactly where the weakened copy differs.
 example : ¬ AverCert.AcceptedArtifact.recursionPlanAccepted

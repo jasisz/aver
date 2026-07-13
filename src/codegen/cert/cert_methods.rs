@@ -34,9 +34,9 @@ impl Cert {
         }
     }
 
-    /// The total families: unary `n - 1` recursion whose combinator uses a
-    /// frozen Int.add/Int.mul totality contract, and complete integer-countdown
-    /// mutual SCCs. Accumulator and budget-heuristic families remain partial.
+    /// The total families: unary `n - 1` recursion, the exact two-argument
+    /// accumulator, and complete integer-countdown mutual SCCs.  Only unary
+    /// multiplication selects the additional Int.mul totality premise.
     fn termination_witness(&self) -> Option<TerminationWitness> {
         match self.inner() {
             Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. } => {
@@ -60,6 +60,27 @@ impl Cert {
             CertificationPolicy::SimulatesModelTotally
         } else {
             CertificationPolicy::SimulatesModel
+        }
+    }
+
+    /// Whether this total obligation genuinely executes a byte-pinned
+    /// `Int.mul` combine and therefore needs multiplication to be total.
+    fn requires_mul_totality(&self) -> bool {
+        self.policy() == CertificationPolicy::SimulatesModelTotally
+            && matches!(
+                self.inner(),
+                Cert::Recursive {
+                    combinator: Combinator::Mul,
+                    ..
+                }
+            )
+    }
+
+    fn totality_role_lean_value(&self) -> &'static str {
+        if self.requires_mul_totality() {
+            ".mul"
+        } else {
+            ".addSub"
         }
     }
 

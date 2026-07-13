@@ -22,6 +22,7 @@ def mutualPlanAcceptedWithoutCheckTerm
     (obligation : Obligation) : Prop :=
   obligation.export_ = exportName ∧
     obligation.carrier = carrier ∧
+    obligation.totalityRole = .addSub ∧
     AverCert.PlanCheck.checkMutualRawPlan plan = true ∧
     ∃ body codeEntry binding,
       AverCert.PlanLower.lowerMutualBody carrier plan = some body ∧
@@ -69,15 +70,17 @@ theorem honestMutualAccepted : AverCert.AcceptedArtifact.mutualPlanAccepted
 theorem weakenedMutualAccepts : mutualPlanAcceptedWithoutCheckTerm
     mutualModBytes mutualModLen evenNameBytes "isEven" 2 mutualMemberSet
     mutualHostTable evenPlan wrongEvenOb := by
-  rcases honestMutualAccepted with ⟨hexport, hcarrier, hraw, _hterm, hrest⟩
-  exact ⟨hexport, hcarrier, hraw, by simpa [wrongEvenOb] using hrest⟩
+  rcases honestMutualAccepted with
+    ⟨hexport, hcarrier, htotality, hraw, _hterm, hrest⟩
+  exact ⟨hexport, hcarrier, by simpa [wrongEvenOb] using htotality,
+    hraw, by simpa [wrongEvenOb] using hrest⟩
 
 -- The shipped predicate rejects exactly at the one conjunct omitted above.
 example : ¬ AverCert.AcceptedArtifact.mutualPlanAccepted
     mutualModBytes mutualModLen evenNameBytes "isEven" 2 mutualMemberSet
     mutualHostTable evenPlan wrongEvenOb := by
   intro h
-  rcases h with ⟨_, _, _, hterm, _⟩
+  rcases h with ⟨_, _, _, _, hterm, _⟩
   contradiction
 
 -- Witness mutation cannot alter byte-derived bindings, and only one member was

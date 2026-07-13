@@ -205,7 +205,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
         ),
         _ => format!(
             "abbrev {name}Ob : Schema.Obligation :=\n  \
-             {{ export_ := \"{name}\", policy := {policy}, termination? := {termination}, carrier := {carrier},\n    \
+             {{ export_ := \"{name}\", policy := {policy}, termination? := {termination}, {totality_role}carrier := {carrier},\n    \
              code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
              Dom := List Int, Cod := Int,\n    \
              domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = {arity},\n    \
@@ -221,6 +221,11 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
                 .termination_witness()
                 .map(|w| format!("some {}", w.lean_value()))
                 .unwrap_or_else(|| "none".to_string()),
+            totality_role = if c.requires_mul_totality() {
+                "totalityRole := .mul, "
+            } else {
+                ""
+            },
         ),
     }
 }

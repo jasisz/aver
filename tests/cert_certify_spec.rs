@@ -67,6 +67,16 @@ fn verify_certificate(wasm: &std::path::Path, cert_dir: &std::path::Path) -> (bo
     )
 }
 
+fn lean_obligation_def<'a>(manifest_lean: &'a str, name: &str) -> &'a str {
+    let marker = format!("abbrev {name}Ob : Schema.Obligation :=");
+    let start = manifest_lean
+        .find(&marker)
+        .unwrap_or_else(|| panic!("missing {name} obligation in emitted Manifest.lean"));
+    manifest_lean[start..]
+        .split_once("\n\n")
+        .map_or(&manifest_lean[start..], |(definition, _)| definition)
+}
+
 #[test]
 fn certify_goal_matrix_manifest_tracks_current_surface() {
     // This fixture is the dashboard for "how much do we certify now?". Larger
@@ -524,10 +534,18 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             aver::codegen::cert::STRING_CONCAT_CONTRACT,
             aver::codegen::cert::INT_ADD_TOTAL_CONTRACT,
             aver::codegen::cert::INT_SUB_TOTAL_CONTRACT,
-            aver::codegen::cert::INT_MUL_TOTAL_CONTRACT,
         ],
-        "goal matrix runtime contracts changed"
+        "additive/accumulator/mutual L3 must not declare Int.mul totality"
     );
+    let manifest_lean =
+        std::fs::read_to_string(out_dir.join("cert/Manifest.lean")).expect("Manifest.lean");
+    for name in ["sumFrom", "countDown", "isEven", "isOdd"] {
+        let obligation = lean_obligation_def(&manifest_lean, name);
+        assert!(
+            !obligation.contains("totalityRole := .mul") && !obligation.contains("Int.mul"),
+            "non-multiplicative L3 obligation {name} gained mul totality:\n{obligation}"
+        );
+    }
 
     let declined_names: BTreeSet<String> = manifest["source_level_only"]
         .as_array()
@@ -1299,6 +1317,39 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
         contracts
             .iter()
             .any(|c| { c == aver::codegen::cert::INT_MUL_TOTAL_CONTRACT })
+    );
+
+    // Load-bearing contract check: the emitted obligation selects the extra
+    // premise only for the byte-pinned multiplicative recursion.  The schema's
+    // add/sub branch itself contains no multiplication-totality binder.
+    let manifest_lean = std::fs::read_to_string(cert_dir.join("Manifest.lean")).unwrap();
+    for name in ["sumFrom", "constPlus", "backward", "countDown"] {
+        let obligation = lean_obligation_def(&manifest_lean, name);
+        assert!(
+            !obligation.contains("totalityRole := .mul") && !obligation.contains("Int.mul"),
+            "{name} must retain the add/sub-only total premise surface:\n{obligation}"
+        );
+    }
+    let factorial_obligation = lean_obligation_def(&manifest_lean, "factorial");
+    assert!(
+        factorial_obligation.contains("totalityRole := .mul"),
+        "factorial must select the byte-checked mul-totality role:\n{factorial_obligation}"
+    );
+    let schema_core = std::fs::read_to_string(cert_dir.join("SchemaCore.lean")).unwrap();
+    let totality = schema_core
+        .split_once("def Obligation.holdsTotal")
+        .expect("holdsTotal definition")
+        .1;
+    let (add_sub_branch, mul_and_rest) = totality
+        .split_once("| .mul =>")
+        .expect("role-sensitive mul branch");
+    assert!(
+        add_sub_branch.contains("| .addSub =>") && !add_sub_branch.contains("_hMulTot"),
+        "add/sub holdsTotal branch must have no mul-totality premise:\n{add_sub_branch}"
+    );
+    assert!(
+        mul_and_rest.contains("_hMulTot"),
+        "mul holdsTotal branch must carry the premise it consumes"
     );
 
     let build = Command::new("lake")
