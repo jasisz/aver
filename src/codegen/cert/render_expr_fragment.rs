@@ -2,20 +2,10 @@ fn render_expr_fragment_cert(c: &Cert) -> String {
     if let Some(face) = c.int_add_face() {
         return render_expr_fragment_int_add_cert(c, face);
     }
-    // The verbatim Project face over the plan-lowered body: the SAME theorem
-    // and closer the legacy field-projection class ships (`wFuncN` plays the
-    // identical `WInstr` body), so migrating the class changes recognition,
-    // not the proof shape.
-    if let Some(face) = c.project_face() {
-        return render_struct_verbatim_cert(
-            c.name(),
-            c.self_idx(),
-            c.carrier(),
-            face.struct_idx,
-            StructVerbatimShape::Project {
-                field_idx: face.field_idx,
-            },
-        );
+    // Projection-faced fragments are discharged in `Final.cert` through the
+    // audited direct-projection generic and emit no bespoke proof declarations.
+    if c.project_face().is_some() {
+        return String::new();
     }
     let c = c.inner();
     let Cert::ExprFragment {

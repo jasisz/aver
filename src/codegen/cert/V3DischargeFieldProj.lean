@@ -140,6 +140,116 @@ private theorem fieldProjection_run_succ_eq_one
       subst body
       simp [wFuncN, hCode, initLocals, wRunF]
 
+/-- Canonical option-(c) leaf bridge for one field projection.  The obligation
+face is fully canonical: a represented pair is lowered to a two-field struct,
+the result is represented verbatim, and the model is the checked plan's pair
+projection.  Artifact-specific callers supply only the reducible plan check and
+code-table binding; no per-obligation semantic proof remains. -/
+theorem fieldProjection_canonical_discharges
+    (exportName : String)
+    (carrier structIdx self : Nat)
+    (plan : FieldProjectionRawPlan)
+    (code : CodeTbl)
+    (host :
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (Nat → List WVal → Option WVal) → HostTbl)
+    (hCheck : AverCert.PlanCheck.checkFieldProjectionRawPlan 2 plan = true)
+    (hCode : code self = some {
+      arity := 1
+      nlocals := 3
+      body := [.localGet 0, .localSet 2, .localGet 2, .refCast structIdx,
+        .structGet structIdx plan.fieldIdx, .localSet 1, .localGet 1] }) :
+    Obligation.holds
+      ({ export_ := exportName
+         policy := .simulatesModel
+         carrier := carrier
+         code := code
+         host := host
+         self := self
+         Dom := WVal × WVal
+         Cod := WVal
+         domRepr := fun _ p vs => vs = [.structv structIdx [p.1, p.2]]
+         codRepr := fun S v w => verbatimRepr S v w
+         model := fun p => V3FieldProj.pairProjection plan.fieldIdx p.1 p.2 } :
+        Obligation) := by
+  intro S add sub mul stringEq stringConcat
+    _hAdd _hSub _hMul _hStringEq _hStringConcat fuel p vs w hDom hRun
+  rcases p with ⟨a, b⟩
+  subst vs
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      let body : List WInstr :=
+        [.localGet 0, .localSet 2, .localGet 2, .refCast structIdx,
+          .structGet structIdx plan.fieldIdx, .localSet 1, .localGet 1]
+      have hLow : AverCert.PlanLower.lowerFieldProjectionBody structIdx 2 plan =
+          some body := by
+        simp [body, AverCert.PlanLower.lowerFieldProjectionBody, hCheck]
+      have hCall := V3FieldProj.generic_field_projection_certified
+        structIdx plan code (host add sub mul stringEq stringConcat) self
+        hCheck body hLow hCode a b
+      have hFuel := fieldProjection_run_succ_eq_one
+        structIdx plan code (host add sub mul stringEq stringConcat) self
+        hCheck body hLow hCode fuel a b
+      rw [hFuel, hCall] at hRun
+      exact (Option.some.inj hRun).symm
+
+/-- Canonical option-(c) leaf bridge for the projection-faced expression
+fragment lowering.  This is the direct two-instruction sibling of
+`fieldProjection_canonical_discharges`: the checked fragment loads its sole
+struct argument and projects field zero or one without the legacy spill/cast
+spine. -/
+theorem fieldProjection_direct_canonical_discharges
+    (exportName : String)
+    (carrier structIdx self fieldIdx : Nat)
+    (code : CodeTbl)
+    (host :
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (Nat → List WVal → Option WVal) → HostTbl)
+    (hField : fieldIdx < 2)
+    (hCode : code self = some {
+      arity := 1
+      nlocals := 1
+      body := [.localGet 0, .structGet structIdx fieldIdx] }) :
+    Obligation.holds
+      ({ export_ := exportName
+         policy := .simulatesModel
+         carrier := carrier
+         code := code
+         host := host
+         self := self
+         Dom := WVal × WVal
+         Cod := WVal
+         domRepr := fun _ p vs => vs = [.structv structIdx [p.1, p.2]]
+         codRepr := fun S v w => verbatimRepr S v w
+         model := fun p => V3FieldProj.pairProjection fieldIdx p.1 p.2 } :
+        Obligation) := by
+  intro S add sub mul stringEq stringConcat
+    _hAdd _hSub _hMul _hStringEq _hStringConcat fuel p vs w hDom hRun
+  rcases p with ⟨a, b⟩
+  subst vs
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      cases fieldIdx with
+      | zero =>
+          simpa [V3FieldProj.pairProjection, verbatimRepr] using
+            (Option.some.inj (by
+              simpa [wFuncN, hCode, initLocals, wRunF] using hRun)).symm
+      | succ fieldIdx =>
+          cases fieldIdx with
+          | zero =>
+              simpa [V3FieldProj.pairProjection, verbatimRepr] using
+                (Option.some.inj (by
+                  simpa [wFuncN, hCode, initLocals, wRunF] using hRun)).symm
+          | succ fieldIdx => omega
+
 /-- One accepted claim discharges once its semantic face is tied to the checked
 projection plan.  This is the complete reusable per-claim proof shape. -/
 theorem fieldProjection_claim_discharges
@@ -221,4 +331,6 @@ end V3Master
 #print axioms V3Master.fieldProjection_accepted_call
 #print axioms V3Master.fieldProjection_claim_discharges
 #print axioms V3Master.fieldProjection_discharges
+#print axioms V3Master.fieldProjection_canonical_discharges
+#print axioms V3Master.fieldProjection_direct_canonical_discharges
 #print axioms V3Master.reprSpecOfCarrierSpec

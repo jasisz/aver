@@ -20,22 +20,10 @@ fn render_certificate(
                 s.push_str(&render_fueled_recursion_cert(c))
             }
             Cert::AdtConstructor { .. } => s.push_str(&render_adt_constructor_cert(c, model_info)),
-            Cert::FieldProjection {
-                name,
-                self_idx,
-                carrier,
-                struct_idx,
-                field_idx,
-                ..
-            } => s.push_str(&render_struct_verbatim_cert(
-                name,
-                *self_idx,
-                *carrier,
-                *struct_idx,
-                StructVerbatimShape::Project {
-                    field_idx: *field_idx,
-                },
-            )),
+            // The field-projection family is discharged in `Final.cert` by the
+            // audited v3 generic plus its canonical option-(c) leaf bridge.
+            // Its plan, obligation and claim data remain emitted unchanged.
+            Cert::FieldProjection { .. } => {}
             Cert::WidenedIntMatch { .. } | Cert::VariantDispatch { .. } => {
                 s.push_str(&render_adt_match_cert(c, model_info))
             }

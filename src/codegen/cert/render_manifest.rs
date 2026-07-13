@@ -515,7 +515,7 @@ fn render_manifest_lean(
 fn render_final(analysis: &Analysis) -> String {
     let mut s = String::new();
     s.push_str(
-        "import Certificate\nimport Manifest\nimport Schema\n\n\
+        "import Certificate\nimport Manifest\nimport Schema\nimport V3DischargeFieldProj\n\n\
          set_option maxRecDepth 1000000\n\
          set_option linter.unusedSimpArgs false\n\n\
          open AverCert AverCert.Schema\n\n",
@@ -548,6 +548,36 @@ fn render_final(analysis: &Analysis) -> String {
             .certs
             .iter()
             .map(|c| {
+                if let Some(face) = c.project_face() {
+                    return format!(
+                        "exact V3Master.fieldProjection_direct_canonical_discharges \
+                         \"{}\" {} {} {} {} CertModule.{}Code \
+                         (fun _ _ _ _ _ => CertModule.{}Host) (by decide) (by rfl)",
+                        c.name(),
+                        c.carrier(),
+                        face.struct_idx,
+                        c.self_idx(),
+                        face.field_idx,
+                        c.name(),
+                        c.name(),
+                    );
+                }
+                if let Cert::FieldProjection {
+                    name,
+                    self_idx,
+                    carrier,
+                    struct_idx,
+                    ..
+                } = c.inner()
+                {
+                    return format!(
+                        "exact V3Master.fieldProjection_canonical_discharges \
+                         \"{name}\" {carrier} {struct_idx} {self_idx} \
+                         AverCert.Plans.{name}FieldProjectionPlan \
+                         CertModule.{name}Code \
+                         (fun _ _ _ _ _ => CertModule.{name}Host) (by rfl) (by rfl)"
+                    );
+                }
                 let theorem = if c.policy() == CertificationPolicy::SimulatesModelTotally {
                     "simulates_total"
                 } else {
@@ -996,22 +1026,29 @@ fn render_manifest(
             ),
             None => String::new(),
         };
-        let theorem_suffix = if policy == CertificationPolicy::SimulatesModelTotally {
-            "wasm_total"
+        let theorem = if c.project_face().is_some() {
+            "V3Master.fieldProjection_direct_canonical_discharges".to_string()
+        } else if matches!(c.inner(), Cert::FieldProjection { .. }) {
+            "V3Master.fieldProjection_canonical_discharges".to_string()
         } else {
-            "wasm_certified"
+            let theorem_suffix = if policy == CertificationPolicy::SimulatesModelTotally {
+                "wasm_total"
+            } else {
+                "wasm_certified"
+            };
+            format!("CertProofs.{}_{theorem_suffix}", c.name())
         };
         s.push_str(&format!(
             "\n    {{\"name\": {}, \"class\": \"{}\", \"policy\": \"{}\", \
              \"level\": \"{}\", \"dom\": {}, \"cod\": {}, \
-             \"theorem\": \"CertProofs.{}_{theorem_suffix}\"{}{}}}",
+             \"theorem\": {}{}{}}}",
             json_str(c.name()),
             kind,
             policy.manifest_name(),
             policy.level(),
             json_str(&dom),
             json_str(&cod),
-            c.name(),
+            json_str(&theorem),
             termination_json,
             fragment_json,
         ));

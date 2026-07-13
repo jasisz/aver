@@ -261,7 +261,10 @@ pub enum ObligationFace {
     /// Field projection: `Dom := WVal × WVal`, `Cod := WVal`,
     /// `codRepr := verbatimRepr`,
     /// `domRepr := fun _ p vs => vs = [.structv struct_idx [p.1, p.2]]`.
-    Projection { struct_idx: u32 },
+    Projection {
+        struct_idx: u32,
+        field_idx: u32,
+    },
     /// Typed expression fragment: `Dom` is the product of all lifted wasm
     /// parameters, `Cod` is the lifted root type, and `domRepr` is the exact
     /// wasm argument vector reconstructed from the byte-derived parameter types.
@@ -298,14 +301,20 @@ impl ObligationFace {
         if let Some(face) = c.project_face() {
             return ObligationFace::Projection {
                 struct_idx: face.struct_idx,
+                field_idx: face.field_idx,
             };
         }
         match c.inner() {
             Cert::Recursive { .. }
             | Cert::AccumulatorRecursive { .. }
             | Cert::Composition { .. } => ObligationFace::IntList { arity: c.arity() },
-            Cert::FieldProjection { struct_idx, .. } => ObligationFace::Projection {
+            Cert::FieldProjection {
+                struct_idx,
+                field_idx,
+                ..
+            } => ObligationFace::Projection {
                 struct_idx: *struct_idx,
+                field_idx: *field_idx,
             },
             Cert::ExprFragment { plan, .. } => ObligationFace::ExprFragment {
                 params: plan.params.clone(),
@@ -415,7 +424,11 @@ impl ObligationFace {
                      intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
                 ));
             }
-            ObligationFace::Projection { struct_idx } => {
+            ObligationFace::Projection {
+                struct_idx,
+                field_idx,
+            } => {
+                let projection = if *field_idx == 0 { "p.1" } else { "p.2" };
                 s.push_str(&format!(
                     "example : ({obl}[{idx}]?).map (fun o => o.Dom) = \
                      some (CertPrelude.WVal × CertPrelude.WVal) := rfl\n"
@@ -433,6 +446,12 @@ impl ObligationFace {
                      HEq o.domRepr (fun (_S : AverCert.Schema.CarrierSpec o.carrier) \
                      (p : CertPrelude.WVal × CertPrelude.WVal) (vs : List CertPrelude.WVal) =>\n      \
                      vs = [.structv {struct_idx} [p.1, p.2]]) := by\n  \
+                     intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
+                ));
+                s.push_str(&format!(
+                    "example : ∀ o, {obl}[{idx}]? = some o →\n    \
+                     HEq o.model (fun (p : CertPrelude.WVal × CertPrelude.WVal) => \
+                     {projection}) := by\n  \
                      intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
                 ));
             }

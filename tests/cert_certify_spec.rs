@@ -692,6 +692,36 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
         );
     }
 
+    let final_lean =
+        std::fs::read_to_string(cert_dir.join("Final.lean")).expect("Final.lean exists");
+    assert!(
+        final_lean.contains("V3Master.fieldProjection_direct_canonical_discharges \"userName\""),
+        "coexistence projection arm must use the audited generic:\n{final_lean}"
+    );
+    for bespoke_name in ["addTwo", "sumFrom", "countDown", "mkOp", "evalOp"] {
+        assert!(
+            final_lean.contains(&format!("CertProofs.{bespoke_name}_")),
+            "non-projection arm changed during coexistence migration: {bespoke_name}\n{final_lean}"
+        );
+    }
+    let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
+        .expect("Certificate.lean exists");
+    assert!(
+        !certificate.contains("userName_wasm_certified")
+            && !certificate.contains("userName_simulates"),
+        "projection-faced fragment must not emit bespoke proofs:\n{certificate}"
+    );
+    let user_name = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "userName")
+        .unwrap();
+    assert_eq!(
+        user_name["theorem"],
+        "V3Master.fieldProjection_direct_canonical_discharges"
+    );
+
     let started = std::time::Instant::now();
     let build = Command::new("lake")
         .current_dir(&cert_dir)
@@ -1740,11 +1770,40 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             .iter()
             .map(|c| c["name"].as_str().unwrap())
             .collect();
-        for name in expected {
+        for &name in &expected {
             assert!(
                 certified.contains(&name),
                 "expected {name} certified for {input}, got {certified:?}"
             );
+        }
+        if prefix == "tuple-proj" {
+            let entries = manifest["certified"].as_array().unwrap();
+            for name in ["pairFst", "pairSnd"] {
+                let entry = entries.iter().find(|entry| entry["name"] == name).unwrap();
+                assert_eq!(
+                    entry["theorem"], "V3Master.fieldProjection_canonical_discharges",
+                    "projection metadata must name the audited generic leaf theorem"
+                );
+            }
+            let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
+                .expect("Certificate.lean exists");
+            assert!(
+                !certificate.contains("pairFst_wasm_certified")
+                    && !certificate.contains("pairFst_simulates")
+                    && !certificate.contains("pairSnd_wasm_certified")
+                    && !certificate.contains("pairSnd_simulates"),
+                "field projections must not emit bespoke proofs:\n{certificate}"
+            );
+            let final_lean =
+                std::fs::read_to_string(cert_dir.join("Final.lean")).expect("Final.lean exists");
+            for name in ["pairFst", "pairSnd"] {
+                assert!(
+                    final_lean.contains(&format!(
+                        "V3Master.fieldProjection_canonical_discharges \"{name}\""
+                    )),
+                    "Final.cert must use the audited generic for {name}:\n{final_lean}"
+                );
+            }
         }
         let build = Command::new("lake")
             .current_dir(&cert_dir)
@@ -1764,6 +1823,14 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             !combined.contains("sorryAx"),
             "ADT certificate leaked sorryAx for {input}:\n{combined}"
         );
+        if prefix == "tuple-proj" {
+            assert!(
+                combined.contains(
+                    "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
+                ),
+                "generic field-projection holds proofs changed axiom surface:\n{combined}"
+            );
+        }
 
         let _ = std::fs::remove_dir_all(&out_dir);
     }
