@@ -505,7 +505,7 @@ fn render_manifest_lean(
 fn render_final(analysis: &Analysis, model_info: &ModelInfo) -> String {
     let mut s = String::new();
     s.push_str(
-        "import Certificate\nimport Manifest\nimport Schema\nimport V3DischargeFieldProj\nimport V3DischargeConstruct\nimport V3DischargeVerbatim\nimport V3DischargeString\nimport V3DischargeIntDispatch\n\n\
+        "import Certificate\nimport Manifest\nimport Schema\nimport V3DischargeFieldProj\nimport V3DischargeConstruct\nimport V3DischargeVerbatim\nimport V3DischargeString\nimport V3DischargeIntDispatch\nimport V3DischargeRecursion\n\n\
          set_option maxRecDepth 1000000\n\
          set_option linter.unusedSimpArgs false\n\n\
          open AverCert AverCert.Schema\n\n",
@@ -582,6 +582,9 @@ fn render_final(analysis: &Analysis, model_info: &ModelInfo) -> String {
                     && adt_constructor_uses_model(c, model_info)
                 {
                     return render_adt_constructor_final_arm(c, model_info);
+                }
+                if recursion_uses_audited_generic(c) {
+                    return render_recursion_final_arm(c);
                 }
                 if let Cert::AdtConstructor {
                     name,
@@ -1142,6 +1145,8 @@ fn render_manifest(
             Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. }
         ) {
             "V3Master.intDispatch_canonical_discharges".to_string()
+        } else if recursion_uses_audited_generic(c) {
+            "V3Master.recursion_claim_discharges".to_string()
         } else {
             let theorem_suffix = if policy == CertificationPolicy::SimulatesModelTotally {
                 "wasm_total"

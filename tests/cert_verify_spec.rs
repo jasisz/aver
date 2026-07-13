@@ -42,13 +42,12 @@
 //!       change `o.code`, so the code `rfl` still fails → DECLINED
 //!   (r) comment decoy: the active `sumToCode` mutated PLUS a full honest body in
 //!       a `/- … -/` block comment. Dead text; the code `rfl` fails → DECLINED
-//!   (s) code decouple: `manifest` points `code` at a decoy `wrongCode` that
-//!       always traps (making `holds` vacuous and trivially provable) while the
-//!       honest `sumToCode` is dead. Builds green; the code `rfl` binds `o.code`
-//!       to the bytes, not `wrongCode`, so it fails → DECLINED
-//!   (t) self decouple (vacuity): `manifest` sets `self` to a wrong index, so the
-//!       code-table lookup misses and `wFuncN` traps (vacuous, provable `holds`).
-//!       Builds green; the self `rfl` binds `o.self` to the byte index → DECLINED
+//!   (s) migrated-recursion code decouple: `sumTo`'s obligation points at a
+//!       decoy `wrongCode`; the generic `recursionClaimAccepted` byte binding
+//!       rejects it without any bespoke simulation-proof swap → DECLINED
+//!   (t) migrated-recursion self decouple: `sumTo`'s obligation uses a wrong
+//!       function index; the generic recursion claim binds it to the byte index
+//!       and fails closed without a bespoke proof → DECLINED
 //!   (u) String.eq helper shape: a byte-level mutation inside the exact
 //!       compiler-generated helper, with the wasm hash rebound, makes the
 //!       checker re-derive a different host table and the kernel witness fails
@@ -134,6 +133,23 @@ fn aver_command() -> Command {
 
 fn aver_verify(artifact: &Path, cert_dir: &Path) -> (bool, String) {
     aver_cert(&["verify"], artifact, cert_dir)
+}
+
+fn assert_certificate_target_builds(cert_dir: &Path, case: &str) {
+    let out = Command::new("lake")
+        .current_dir(cert_dir)
+        .args(["build", "Certificate"])
+        .output()
+        .expect("lake builds the isolated Certificate target");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.status.success(),
+        "vacuous proof must compile before the byte-binding tripwire ({case}):\n{combined}"
+    );
 }
 
 fn aver_cert(sub: &[&str], artifact: &Path, cert_dir: &Path) -> (bool, String) {
@@ -1159,13 +1175,11 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         );
     }
 
-    // (s) Code decouple: point the obligation's `code` at a decoy `wrongCode` that
-    //     always traps, so `holds` is vacuous and trivially provable, while the
-    //     honest `sumToCode` is left dead. The artifact-carried recursion claim
-    //     pins `obligation.code` to the plan-lowered body, so the decoupled
-    //     obligation now fails the cert's OWN build — an even earlier fail-closed
-    //     decline than the checker witness's code `rfl` (which remains exercised
-    //     by cases (p)/(q)/(r), whose nlocals-only mutations build green).
+    // (s) Migrated-recursion code decouple: point `sumTo`'s obligation at a
+    //     decoy `wrongCode`, leaving the byte-honest `sumToCode` dead. `sumTo`
+    //     deliberately has no bespoke `sumTo_simulates` proof now: the generic
+    //     recursion bridge's `recursionClaimAccepted` must bind the obligation's
+    //     code directly to the byte-derived plan and fail closed.
     {
         let dir = temp_dir("neg-s");
         copy_dir(&out_dir, &dir);
@@ -1188,11 +1202,6 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         );
         assert_ne!(msrc, decoupled, "manifest code field shape changed");
         std::fs::write(&man, decoupled).unwrap();
-        let vac = VACUOUS_SIMULATES.replace(
-            "@BODY@",
-            "simp only [sumToOb, CertModule.wrongCode, wFuncN, reduceCtorEq] at hrun",
-        );
-        replace_simulates(&cert, &vac);
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &cert);
         assert!(!ok, "code decouple must be DECLINED:\n{out}");
         assert!(
@@ -1205,12 +1214,10 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         );
     }
 
-    // (t) Self decouple (vacuity): set the obligation's `self` to a wrong index so
-    //     `code self` misses the table and `wFuncN` traps — `holds` is vacuous and
-    //     provable. The artifact-carried recursion claim pins
-    //     `binding.funcIdx = obligation.self` to the byte-derived function
-    //     binding, so the decoupled `self` now fails the cert's OWN build — an
-    //     even earlier fail-closed decline than the checker witness's self `rfl`.
+    // (t) Migrated-recursion self decouple: set `sumTo`'s obligation `self` to a
+    //     wrong index. The generic recursion bridge's `recursionClaimAccepted`
+    //     binds `obligation.self` to the byte-derived function index, so this
+    //     must fail closed without any bespoke simulation-proof replacement.
     {
         let dir = temp_dir("neg-t");
         copy_dir(&out_dir, &dir);
@@ -1220,12 +1227,6 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let decoupled = msrc.replacen("self := 1,", "self := 999,", 1);
         assert_ne!(msrc, decoupled, "manifest self field shape changed");
         std::fs::write(&man, decoupled).unwrap();
-        let vac = VACUOUS_SIMULATES.replace(
-            "@BODY@",
-            "simp only [sumToOb, CertModule.sumToCode, wFuncN,\n      \
-             show (999 = 1) = False by decide, if_false, reduceCtorEq] at hrun",
-        );
-        replace_simulates(&cert, &vac);
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &cert);
         assert!(!ok, "self decouple must be DECLINED:\n{out}");
         assert!(
@@ -1340,6 +1341,60 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         assert!(
             !out.contains("CERTIFIED"),
             "true-codRepr cert credited (w):\n{out}"
+        );
+    }
+
+    // (x) Bespoke-recursion code decouple: unlike migrated `sumTo`, `countDown`
+    //     still has a schema-shaped simulation theorem. Point its obligation at
+    //     an always-trapping decoy and replace that theorem with a valid vacuous
+    //     proof. Build the `Certificate` target alone first, proving the swapped
+    //     theorem elaborates; then require full verification to fail only once
+    //     the artifact/checker byte binding is present.
+    {
+        let dir = temp_dir("neg-x-countdown-code");
+        copy_dir(&out_dir, &dir);
+        let cert = dir.join("cert");
+        let module = cert.join("Module.lean");
+        let src = std::fs::read_to_string(&module).unwrap();
+        let with_decoy = src.replacen(
+            "end CertModule",
+            "/-- decoy: always traps, so `holds` is vacuous. -/\n\
+             def wrongCode : CodeTbl := fun _ => none\nend CertModule",
+            1,
+        );
+        assert_ne!(src, with_decoy, "module end marker shape changed");
+        std::fs::write(&module, with_decoy).unwrap();
+
+        let manifest = cert.join("Manifest.lean");
+        let msrc = std::fs::read_to_string(&manifest).unwrap();
+        let decoupled = msrc.replacen(
+            "code := CertModule.countDownCode",
+            "code := CertModule.wrongCode",
+            1,
+        );
+        assert_ne!(msrc, decoupled, "countDown code field shape changed");
+        std::fs::write(&manifest, decoupled).unwrap();
+        replace_countdown_simulates(
+            &cert,
+            "theorem countDown_simulates : AverCert.Schema.Obligation.holds countDownOb := by\n  \
+             intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun\n  \
+             exfalso\n  \
+             cases fuel with\n  \
+             | zero => simp only [wFuncN, reduceCtorEq] at hrun\n  \
+             | succ f =>\n      \
+               simp only [countDownOb, CertModule.wrongCode, wFuncN, reduceCtorEq] at hrun",
+        );
+        assert_certificate_target_builds(&cert, "x");
+
+        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &cert);
+        assert!(!ok, "countDown code decouple must be DECLINED (x):\n{out}");
+        assert!(
+            out.contains("did not build") || out.contains("does not bind"),
+            "wrong reason (x):\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "countDown code decouple credited (x):\n{out}"
         );
     }
 
@@ -1580,44 +1635,6 @@ const HONEST_SUMTO_CODE: &str = "/-- Verbatim emitted body of `sumTo` (self-recu
     .ifElse [.i64Const 0, .call 7]\n              \
     [.localGet 0, .localGet 0, .i64Const 1, .call 7, .call 9, .call 1, .call 8] ]⟩\n  \
     else none";
-
-/// A vacuous replacement proof of `sumTo_simulates` (the emitted honest proof
-/// references the honest `sumToCode`/`self`, so a decoupled obligation needs its
-/// own proof to build green). `@BODY@` is filled with the `simp` that discharges
-/// the trapped `wFuncN`.
-const VACUOUS_SIMULATES: &str = "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-    intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun\n  \
-    exfalso\n  \
-    cases fuel with\n  \
-    | zero => simp only [wFuncN, reduceCtorEq] at hrun\n  \
-    | succ f =>\n      @BODY@";
-
-/// Swap the emitted `sumTo_simulates` proof in `Certificate.lean` for a
-/// (vacuous) replacement, matching the exact emitted block.
-fn replace_simulates(cert_dir: &Path, replacement: &str) {
-    let c = cert_dir.join("Certificate.lean");
-    let src = std::fs::read_to_string(&c).unwrap();
-    let old = "theorem sumTo_simulates : AverCert.Schema.Obligation.holds sumToOb := by\n  \
-        intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun\n  \
-        simp only [sumToOb, AverCert.Schema.Obligation.holds] at hrun ⊢\n  \
-        obtain ⟨hrepr, harity⟩ := hrepr\n  \
-        cases hrepr with\n  \
-        | nil =>\n      \
-        simp at harity\n  \
-        | cons hv htail =>\n      \
-        rename_i n v ns vs\n      \
-        cases htail with\n      \
-        | nil =>\n          \
-        simpa [AverCert.Schema.intRepr] using sumTo_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim\n            \
-        add sub hadd hsub fuel n v w hv hrun\n      \
-        | cons _ _ =>\n          \
-        simp at harity";
-    assert!(
-        src.contains(old),
-        "emitted sumTo_simulates block shape changed; update the test"
-    );
-    std::fs::write(&c, src.replacen(old, replacement, 1)).unwrap();
-}
 
 /// Partial-obligation counterpart used by the semantic-face isolation probes.
 /// `sumTo` is L3 now, so vacuity probes stay on `countDown` to reach the
