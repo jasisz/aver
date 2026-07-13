@@ -5,7 +5,7 @@ fn render_certificate(
 ) -> String {
     let mut s = String::new();
     s.push_str(
-        "import CertPrelude\nimport Module\nimport Schema\nimport Manifest\nimport V3DispatchCore\n",
+        "import CertPrelude\nimport Module\nimport Schema\nimport Manifest\nimport V3DispatchCore\nimport V3DischargeRecursion\n",
     );
     for r in model_roots {
         s.push_str(&format!("import {r}\n"));
@@ -18,6 +18,9 @@ fn render_certificate(
     );
     for c in &analysis.certs {
         match c.inner() {
+            Cert::Recursive { .. } if recursion_uses_audited_generic(c) => {
+                s.push_str(&render_recursion_semantic_bridge(c))
+            }
             Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. } => {
                 s.push_str(&render_fueled_recursion_cert(c))
             }
