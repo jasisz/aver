@@ -22,10 +22,11 @@ fn render_certificate(
                 s.push_str(&render_fueled_recursion_cert(c))
             }
             Cert::AdtConstructor { .. } if adt_constructor_uses_model(c, model_info) => {
-                s.push_str(&render_adt_constructor_cert(c, model_info))
+                s.push_str(&render_adt_constructor_semantic_bridge(c, model_info))
             }
             // Verbatim constructor packs are option-(c) leaves discharged in
-            // `Final.cert`; model-bearing constructors keep their bespoke arm.
+            // `Final.cert`; model-bearing constructors emit only their option-(b)
+            // source-model bridge above.
             Cert::AdtConstructor { .. } => {}
             // The field-projection family is discharged in `Final.cert` by the
             // audited v3 generic plus its canonical option-(c) leaf bridge.
