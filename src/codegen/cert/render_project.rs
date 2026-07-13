@@ -63,6 +63,40 @@ pub fn write_project(
         "AcceptedArtifactCore.lean",
         CERT_ACCEPTED_ARTIFACT_CORE,
     )?;
+    for (name, contents) in [
+        ("V3ExprFragmentFull.lean", CERT_V3_EXPR_FRAGMENT_FULL),
+        ("V3StrongFuel.lean", CERT_V3_STRONG_FUEL),
+        ("V3IfElse.lean", CERT_V3_IF_ELSE),
+        ("V3GenericCertified.lean", CERT_V3_GENERIC_CERTIFIED),
+        ("V3FieldProj.lean", CERT_V3_FIELD_PROJ),
+        ("V3ConstructVerbatim.lean", CERT_V3_CONSTRUCT_VERBATIM),
+        ("V3DispatchCore.lean", CERT_V3_DISPATCH_CORE),
+        ("V3String.lean", CERT_V3_STRING),
+        ("V3RecSpike.lean", CERT_V3_REC_SPIKE),
+        ("V3MutualGeneric.lean", CERT_V3_MUTUAL_GENERIC),
+        ("V3Composition.lean", CERT_V3_COMPOSITION),
+        ("V3Master.lean", CERT_V3_MASTER),
+        (
+            "V3DischargeExprFragment.lean",
+            CERT_V3_DISCHARGE_EXPR_FRAGMENT,
+        ),
+        ("V3DischargeFieldProj.lean", CERT_V3_DISCHARGE_FIELD_PROJ),
+        ("V3DischargeConstruct.lean", CERT_V3_DISCHARGE_CONSTRUCT),
+        ("V3DischargeVerbatim.lean", CERT_V3_DISCHARGE_VERBATIM),
+        ("V3DischargeString.lean", CERT_V3_DISCHARGE_STRING),
+        (
+            "V3DischargeIntDispatch.lean",
+            CERT_V3_DISCHARGE_INT_DISPATCH,
+        ),
+        ("V3DischargeRecursion.lean", CERT_V3_DISCHARGE_RECURSION),
+        (
+            "V3DischargeComposition.lean",
+            CERT_V3_DISCHARGE_COMPOSITION,
+        ),
+        ("V3AcceptSound.lean", CERT_V3_ACCEPT_SOUND),
+    ] {
+        write(&cert_dir, name, contents)?;
+    }
     write(
         &cert_dir,
         "ArtifactBytes.lean",
@@ -115,6 +149,28 @@ pub fn write_project(
     let expr_fragment_accepted_sha = sha256_hex(CERT_EXPR_FRAGMENT_ACCEPTED.as_bytes());
     let accepted_artifact_sha = sha256_hex(CERT_ACCEPTED_ARTIFACT.as_bytes());
     let accepted_artifact_core_sha = sha256_hex(CERT_ACCEPTED_ARTIFACT_CORE.as_bytes());
+    let v3_expr_fragment_full_sha = sha256_hex(CERT_V3_EXPR_FRAGMENT_FULL.as_bytes());
+    let v3_strong_fuel_sha = sha256_hex(CERT_V3_STRONG_FUEL.as_bytes());
+    let v3_if_else_sha = sha256_hex(CERT_V3_IF_ELSE.as_bytes());
+    let v3_generic_certified_sha = sha256_hex(CERT_V3_GENERIC_CERTIFIED.as_bytes());
+    let v3_field_proj_sha = sha256_hex(CERT_V3_FIELD_PROJ.as_bytes());
+    let v3_construct_verbatim_sha = sha256_hex(CERT_V3_CONSTRUCT_VERBATIM.as_bytes());
+    let v3_dispatch_core_sha = sha256_hex(CERT_V3_DISPATCH_CORE.as_bytes());
+    let v3_string_sha = sha256_hex(CERT_V3_STRING.as_bytes());
+    let v3_rec_spike_sha = sha256_hex(CERT_V3_REC_SPIKE.as_bytes());
+    let v3_mutual_generic_sha = sha256_hex(CERT_V3_MUTUAL_GENERIC.as_bytes());
+    let v3_composition_sha = sha256_hex(CERT_V3_COMPOSITION.as_bytes());
+    let v3_master_sha = sha256_hex(CERT_V3_MASTER.as_bytes());
+    let v3_discharge_expr_fragment_sha =
+        sha256_hex(CERT_V3_DISCHARGE_EXPR_FRAGMENT.as_bytes());
+    let v3_discharge_field_proj_sha = sha256_hex(CERT_V3_DISCHARGE_FIELD_PROJ.as_bytes());
+    let v3_discharge_construct_sha = sha256_hex(CERT_V3_DISCHARGE_CONSTRUCT.as_bytes());
+    let v3_discharge_verbatim_sha = sha256_hex(CERT_V3_DISCHARGE_VERBATIM.as_bytes());
+    let v3_discharge_string_sha = sha256_hex(CERT_V3_DISCHARGE_STRING.as_bytes());
+    let v3_discharge_int_dispatch_sha = sha256_hex(CERT_V3_DISCHARGE_INT_DISPATCH.as_bytes());
+    let v3_discharge_recursion_sha = sha256_hex(CERT_V3_DISCHARGE_RECURSION.as_bytes());
+    let v3_discharge_composition_sha = sha256_hex(CERT_V3_DISCHARGE_COMPOSITION.as_bytes());
+    let v3_accept_sound_sha = sha256_hex(CERT_V3_ACCEPT_SOUND.as_bytes());
     let manifest_hashes = ManifestHashes {
         schema: &schema_sha,
         schema_core: &schema_core_sha,
@@ -127,6 +183,27 @@ pub fn write_project(
         expr_fragment_accepted: &expr_fragment_accepted_sha,
         accepted_artifact: &accepted_artifact_sha,
         accepted_artifact_core: &accepted_artifact_core_sha,
+        v3_expr_fragment_full: &v3_expr_fragment_full_sha,
+        v3_strong_fuel: &v3_strong_fuel_sha,
+        v3_if_else: &v3_if_else_sha,
+        v3_generic_certified: &v3_generic_certified_sha,
+        v3_field_proj: &v3_field_proj_sha,
+        v3_construct_verbatim: &v3_construct_verbatim_sha,
+        v3_dispatch_core: &v3_dispatch_core_sha,
+        v3_string: &v3_string_sha,
+        v3_rec_spike: &v3_rec_spike_sha,
+        v3_mutual_generic: &v3_mutual_generic_sha,
+        v3_composition: &v3_composition_sha,
+        v3_master: &v3_master_sha,
+        v3_discharge_expr_fragment: &v3_discharge_expr_fragment_sha,
+        v3_discharge_field_proj: &v3_discharge_field_proj_sha,
+        v3_discharge_construct: &v3_discharge_construct_sha,
+        v3_discharge_verbatim: &v3_discharge_verbatim_sha,
+        v3_discharge_string: &v3_discharge_string_sha,
+        v3_discharge_int_dispatch: &v3_discharge_int_dispatch_sha,
+        v3_discharge_recursion: &v3_discharge_recursion_sha,
+        v3_discharge_composition: &v3_discharge_composition_sha,
+        v3_accept_sound: &v3_accept_sound_sha,
     };
     std::fs::write(
         cert_dir.join("cert-manifest.json"),

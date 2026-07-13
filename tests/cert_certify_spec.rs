@@ -518,6 +518,212 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
 }
 
 #[test]
+fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping certify test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-v3-wall");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/cert_goals.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    assert!(
+        compile.status.success(),
+        "compile --certify goals failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let cert_dir = out_dir.join("cert");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    let audited_modules = [
+        (
+            "V3ExprFragmentFull.lean",
+            aver::codegen::cert::CERT_V3_EXPR_FRAGMENT_FULL,
+            "v3_expr_fragment_full_sha256",
+            aver::codegen::cert::audited_v3_expr_fragment_full_sha(),
+        ),
+        (
+            "V3StrongFuel.lean",
+            aver::codegen::cert::CERT_V3_STRONG_FUEL,
+            "v3_strong_fuel_sha256",
+            aver::codegen::cert::audited_v3_strong_fuel_sha(),
+        ),
+        (
+            "V3IfElse.lean",
+            aver::codegen::cert::CERT_V3_IF_ELSE,
+            "v3_if_else_sha256",
+            aver::codegen::cert::audited_v3_if_else_sha(),
+        ),
+        (
+            "V3GenericCertified.lean",
+            aver::codegen::cert::CERT_V3_GENERIC_CERTIFIED,
+            "v3_generic_certified_sha256",
+            aver::codegen::cert::audited_v3_generic_certified_sha(),
+        ),
+        (
+            "V3FieldProj.lean",
+            aver::codegen::cert::CERT_V3_FIELD_PROJ,
+            "v3_field_proj_sha256",
+            aver::codegen::cert::audited_v3_field_proj_sha(),
+        ),
+        (
+            "V3ConstructVerbatim.lean",
+            aver::codegen::cert::CERT_V3_CONSTRUCT_VERBATIM,
+            "v3_construct_verbatim_sha256",
+            aver::codegen::cert::audited_v3_construct_verbatim_sha(),
+        ),
+        (
+            "V3DispatchCore.lean",
+            aver::codegen::cert::CERT_V3_DISPATCH_CORE,
+            "v3_dispatch_core_sha256",
+            aver::codegen::cert::audited_v3_dispatch_core_sha(),
+        ),
+        (
+            "V3String.lean",
+            aver::codegen::cert::CERT_V3_STRING,
+            "v3_string_sha256",
+            aver::codegen::cert::audited_v3_string_sha(),
+        ),
+        (
+            "V3RecSpike.lean",
+            aver::codegen::cert::CERT_V3_REC_SPIKE,
+            "v3_rec_spike_sha256",
+            aver::codegen::cert::audited_v3_rec_spike_sha(),
+        ),
+        (
+            "V3MutualGeneric.lean",
+            aver::codegen::cert::CERT_V3_MUTUAL_GENERIC,
+            "v3_mutual_generic_sha256",
+            aver::codegen::cert::audited_v3_mutual_generic_sha(),
+        ),
+        (
+            "V3Composition.lean",
+            aver::codegen::cert::CERT_V3_COMPOSITION,
+            "v3_composition_sha256",
+            aver::codegen::cert::audited_v3_composition_sha(),
+        ),
+        (
+            "V3Master.lean",
+            aver::codegen::cert::CERT_V3_MASTER,
+            "v3_master_sha256",
+            aver::codegen::cert::audited_v3_master_sha(),
+        ),
+        (
+            "V3DischargeExprFragment.lean",
+            aver::codegen::cert::CERT_V3_DISCHARGE_EXPR_FRAGMENT,
+            "v3_discharge_expr_fragment_sha256",
+            aver::codegen::cert::audited_v3_discharge_expr_fragment_sha(),
+        ),
+        (
+            "V3DischargeFieldProj.lean",
+            aver::codegen::cert::CERT_V3_DISCHARGE_FIELD_PROJ,
+            "v3_discharge_field_proj_sha256",
+            aver::codegen::cert::audited_v3_discharge_field_proj_sha(),
+        ),
+        (
+            "V3DischargeConstruct.lean",
+            aver::codegen::cert::CERT_V3_DISCHARGE_CONSTRUCT,
+            "v3_discharge_construct_sha256",
+            aver::codegen::cert::audited_v3_discharge_construct_sha(),
+        ),
+        (
+            "V3DischargeVerbatim.lean",
+            aver::codegen::cert::CERT_V3_DISCHARGE_VERBATIM,
+            "v3_discharge_verbatim_sha256",
+            aver::codegen::cert::audited_v3_discharge_verbatim_sha(),
+        ),
+        (
+            "V3DischargeString.lean",
+            aver::codegen::cert::CERT_V3_DISCHARGE_STRING,
+            "v3_discharge_string_sha256",
+            aver::codegen::cert::audited_v3_discharge_string_sha(),
+        ),
+        (
+            "V3DischargeIntDispatch.lean",
+            aver::codegen::cert::CERT_V3_DISCHARGE_INT_DISPATCH,
+            "v3_discharge_int_dispatch_sha256",
+            aver::codegen::cert::audited_v3_discharge_int_dispatch_sha(),
+        ),
+        (
+            "V3DischargeRecursion.lean",
+            aver::codegen::cert::CERT_V3_DISCHARGE_RECURSION,
+            "v3_discharge_recursion_sha256",
+            aver::codegen::cert::audited_v3_discharge_recursion_sha(),
+        ),
+        (
+            "V3DischargeComposition.lean",
+            aver::codegen::cert::CERT_V3_DISCHARGE_COMPOSITION,
+            "v3_discharge_composition_sha256",
+            aver::codegen::cert::audited_v3_discharge_composition_sha(),
+        ),
+        (
+            "V3AcceptSound.lean",
+            aver::codegen::cert::CERT_V3_ACCEPT_SOUND,
+            "v3_accept_sound_sha256",
+            aver::codegen::cert::audited_v3_accept_sound_sha(),
+        ),
+    ];
+    for (file, embedded, manifest_key, expected_sha) in audited_modules {
+        let emitted = std::fs::read_to_string(cert_dir.join(file))
+            .unwrap_or_else(|e| panic!("emitted {file} exists: {e}"));
+        assert_eq!(
+            emitted, embedded,
+            "emitted {file} must be byte-identical to its embedded audited source"
+        );
+        assert_eq!(
+            manifest[manifest_key].as_str(),
+            Some(expected_sha.as_str()),
+            "manifest must pin checker-owned {file}"
+        );
+    }
+
+    let started = std::time::Instant::now();
+    let build = Command::new("lake")
+        .current_dir(&cert_dir)
+        .arg("build")
+        .output()
+        .expect("expected `lake build` to run");
+    let elapsed = started.elapsed();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    eprintln!("emitted v3 wall lake build: {:.2?}", elapsed);
+    assert!(
+        build.status.success(),
+        "lake build of emitted v3 wall cert failed after {elapsed:.2?}:\n{combined}"
+    );
+    assert!(
+        combined.contains(
+            "'V3Master.accept_sound' depends on axioms: [propext, Classical.choice, Quot.sound]"
+        ),
+        "V3Master.accept_sound did not reduce to the exact audited axiom set:\n{combined}"
+    );
+    assert!(
+        !combined.contains("sorryAx"),
+        "emitted v3 wall leaked sorryAx:\n{combined}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
 fn certify_straight_line_fixture_lake_builds_kernel_clean() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping certify test: `lake` not available");

@@ -114,7 +114,7 @@ enum WitnessMode {
 /// audited trusted computing base (taken from this binary) plus the checker's
 /// own build config and witness. A cert shipping files by these names has them
 /// ignored.
-const CHECKER_OWNED: [&str; 14] = [
+const CHECKER_OWNED: [&str; 35] = [
     "Schema.lean",
     "SchemaCore.lean",
     "PlanCheck.lean",
@@ -124,6 +124,27 @@ const CHECKER_OWNED: [&str; 14] = [
     "ExprFragmentAccepted.lean",
     "AcceptedArtifact.lean",
     "AcceptedArtifactCore.lean",
+    "V3ExprFragmentFull.lean",
+    "V3StrongFuel.lean",
+    "V3IfElse.lean",
+    "V3GenericCertified.lean",
+    "V3FieldProj.lean",
+    "V3ConstructVerbatim.lean",
+    "V3DispatchCore.lean",
+    "V3String.lean",
+    "V3RecSpike.lean",
+    "V3MutualGeneric.lean",
+    "V3Composition.lean",
+    "V3Master.lean",
+    "V3DischargeExprFragment.lean",
+    "V3DischargeFieldProj.lean",
+    "V3DischargeConstruct.lean",
+    "V3DischargeVerbatim.lean",
+    "V3DischargeString.lean",
+    "V3DischargeIntDispatch.lean",
+    "V3DischargeRecursion.lean",
+    "V3DischargeComposition.lean",
+    "V3AcceptSound.lean",
     "ArtifactBytes.lean",
     "CertDecode.lean",
     "CertPrelude.lean",
@@ -133,7 +154,7 @@ const CHECKER_OWNED: [&str; 14] = [
 
 /// Audited modules whose exact bytes are shared by every certificate build.
 /// ArtifactBytes and certificate/model modules are deliberately absent.
-const STATIC_PRELUDE_ROOTS: [&str; 11] = [
+const STATIC_PRELUDE_ROOTS: [&str; 32] = [
     "SchemaCore",
     "Schema",
     "PlanCheck",
@@ -143,12 +164,33 @@ const STATIC_PRELUDE_ROOTS: [&str; 11] = [
     "ExprFragmentAccepted",
     "AcceptedArtifactCore",
     "AcceptedArtifact",
+    "V3ExprFragmentFull",
+    "V3StrongFuel",
+    "V3IfElse",
+    "V3GenericCertified",
+    "V3FieldProj",
+    "V3ConstructVerbatim",
+    "V3DispatchCore",
+    "V3String",
+    "V3RecSpike",
+    "V3MutualGeneric",
+    "V3Composition",
+    "V3Master",
+    "V3DischargeExprFragment",
+    "V3DischargeFieldProj",
+    "V3DischargeConstruct",
+    "V3DischargeVerbatim",
+    "V3DischargeString",
+    "V3DischargeIntDispatch",
+    "V3DischargeRecursion",
+    "V3DischargeComposition",
+    "V3AcceptSound",
     "CertDecode",
     "CertPrelude",
 ];
 
 /// Static roots whose complete import graph is artifact-independent.
-const PRISTINE_PRELUDE_ROOTS: [&str; 9] = [
+const PRISTINE_PRELUDE_ROOTS: [&str; 30] = [
     "CertPrelude",
     "CertDecode",
     "WasmSlice",
@@ -158,6 +200,27 @@ const PRISTINE_PRELUDE_ROOTS: [&str; 9] = [
     "PlanBytes",
     "ExprFragmentAccepted",
     "AcceptedArtifactCore",
+    "V3ExprFragmentFull",
+    "V3StrongFuel",
+    "V3IfElse",
+    "V3GenericCertified",
+    "V3FieldProj",
+    "V3ConstructVerbatim",
+    "V3DispatchCore",
+    "V3String",
+    "V3RecSpike",
+    "V3MutualGeneric",
+    "V3Composition",
+    "V3Master",
+    "V3DischargeExprFragment",
+    "V3DischargeFieldProj",
+    "V3DischargeConstruct",
+    "V3DischargeVerbatim",
+    "V3DischargeString",
+    "V3DischargeIntDispatch",
+    "V3DischargeRecursion",
+    "V3DischargeComposition",
+    "V3AcceptSound",
 ];
 
 /// Maximum length (bytes) of a JSON-supplied string spliced into the witness.
@@ -312,6 +375,27 @@ fn read_lean_files(cert_dir: &Path) -> Vec<(String, String)> {
         "Schema.lean",
         "SchemaCore.lean",
         "WasmSlice.lean",
+        "V3ExprFragmentFull.lean",
+        "V3StrongFuel.lean",
+        "V3IfElse.lean",
+        "V3GenericCertified.lean",
+        "V3FieldProj.lean",
+        "V3ConstructVerbatim.lean",
+        "V3DispatchCore.lean",
+        "V3String.lean",
+        "V3RecSpike.lean",
+        "V3MutualGeneric.lean",
+        "V3Composition.lean",
+        "V3Master.lean",
+        "V3DischargeExprFragment.lean",
+        "V3DischargeFieldProj.lean",
+        "V3DischargeConstruct.lean",
+        "V3DischargeVerbatim.lean",
+        "V3DischargeString.lean",
+        "V3DischargeIntDispatch.lean",
+        "V3DischargeRecursion.lean",
+        "V3DischargeComposition.lean",
+        "V3AcceptSound.lean",
         "lakefile.lean",
     ];
     let mut out = Vec::new();
@@ -348,6 +432,21 @@ fn manifest_str<'a>(m: &'a Value, key: &str) -> Result<&'a str, String> {
     m.get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| format!("cert-manifest.json is missing string field `{key}`"))
+}
+
+fn audited_manifest_pin<'a>(
+    manifest: &'a Value,
+    key: &str,
+    label: &str,
+    audited: &str,
+) -> Result<&'a str, String> {
+    let pin = manifest_str(manifest, key)?;
+    if pin != audited {
+        return Err(format!(
+            "{label} hash mismatch: certificate pins {pin}, checker expects {audited}"
+        ));
+    }
+    Ok(pin)
 }
 
 fn manifest_u64(m: &Value, key: &str) -> Result<u64, String> {
@@ -801,6 +900,132 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
             "accepted-artifact-core hash mismatch: certificate pins {accepted_artifact_core_pin}, checker expects {audited_accepted_artifact_core}"
         ));
     }
+    let v3_expr_fragment_full_pin = audited_manifest_pin(
+        &manifest,
+        "v3_expr_fragment_full_sha256",
+        "v3-expr-fragment-full",
+        &cert::audited_v3_expr_fragment_full_sha(),
+    )?;
+    let v3_strong_fuel_pin = audited_manifest_pin(
+        &manifest,
+        "v3_strong_fuel_sha256",
+        "v3-strong-fuel",
+        &cert::audited_v3_strong_fuel_sha(),
+    )?;
+    let v3_if_else_pin = audited_manifest_pin(
+        &manifest,
+        "v3_if_else_sha256",
+        "v3-if-else",
+        &cert::audited_v3_if_else_sha(),
+    )?;
+    let v3_generic_certified_pin = audited_manifest_pin(
+        &manifest,
+        "v3_generic_certified_sha256",
+        "v3-generic-certified",
+        &cert::audited_v3_generic_certified_sha(),
+    )?;
+    let v3_field_proj_pin = audited_manifest_pin(
+        &manifest,
+        "v3_field_proj_sha256",
+        "v3-field-proj",
+        &cert::audited_v3_field_proj_sha(),
+    )?;
+    let v3_construct_verbatim_pin = audited_manifest_pin(
+        &manifest,
+        "v3_construct_verbatim_sha256",
+        "v3-construct-verbatim",
+        &cert::audited_v3_construct_verbatim_sha(),
+    )?;
+    let v3_dispatch_core_pin = audited_manifest_pin(
+        &manifest,
+        "v3_dispatch_core_sha256",
+        "v3-dispatch-core",
+        &cert::audited_v3_dispatch_core_sha(),
+    )?;
+    let v3_string_pin = audited_manifest_pin(
+        &manifest,
+        "v3_string_sha256",
+        "v3-string",
+        &cert::audited_v3_string_sha(),
+    )?;
+    let v3_rec_spike_pin = audited_manifest_pin(
+        &manifest,
+        "v3_rec_spike_sha256",
+        "v3-rec-spike",
+        &cert::audited_v3_rec_spike_sha(),
+    )?;
+    let v3_mutual_generic_pin = audited_manifest_pin(
+        &manifest,
+        "v3_mutual_generic_sha256",
+        "v3-mutual-generic",
+        &cert::audited_v3_mutual_generic_sha(),
+    )?;
+    let v3_composition_pin = audited_manifest_pin(
+        &manifest,
+        "v3_composition_sha256",
+        "v3-composition",
+        &cert::audited_v3_composition_sha(),
+    )?;
+    let v3_master_pin = audited_manifest_pin(
+        &manifest,
+        "v3_master_sha256",
+        "v3-master",
+        &cert::audited_v3_master_sha(),
+    )?;
+    let v3_discharge_expr_fragment_pin = audited_manifest_pin(
+        &manifest,
+        "v3_discharge_expr_fragment_sha256",
+        "v3-discharge-expr-fragment",
+        &cert::audited_v3_discharge_expr_fragment_sha(),
+    )?;
+    let v3_discharge_field_proj_pin = audited_manifest_pin(
+        &manifest,
+        "v3_discharge_field_proj_sha256",
+        "v3-discharge-field-proj",
+        &cert::audited_v3_discharge_field_proj_sha(),
+    )?;
+    let v3_discharge_construct_pin = audited_manifest_pin(
+        &manifest,
+        "v3_discharge_construct_sha256",
+        "v3-discharge-construct",
+        &cert::audited_v3_discharge_construct_sha(),
+    )?;
+    let v3_discharge_verbatim_pin = audited_manifest_pin(
+        &manifest,
+        "v3_discharge_verbatim_sha256",
+        "v3-discharge-verbatim",
+        &cert::audited_v3_discharge_verbatim_sha(),
+    )?;
+    let v3_discharge_string_pin = audited_manifest_pin(
+        &manifest,
+        "v3_discharge_string_sha256",
+        "v3-discharge-string",
+        &cert::audited_v3_discharge_string_sha(),
+    )?;
+    let v3_discharge_int_dispatch_pin = audited_manifest_pin(
+        &manifest,
+        "v3_discharge_int_dispatch_sha256",
+        "v3-discharge-int-dispatch",
+        &cert::audited_v3_discharge_int_dispatch_sha(),
+    )?;
+    let v3_discharge_recursion_pin = audited_manifest_pin(
+        &manifest,
+        "v3_discharge_recursion_sha256",
+        "v3-discharge-recursion",
+        &cert::audited_v3_discharge_recursion_sha(),
+    )?;
+    let v3_discharge_composition_pin = audited_manifest_pin(
+        &manifest,
+        "v3_discharge_composition_sha256",
+        "v3-discharge-composition",
+        &cert::audited_v3_discharge_composition_sha(),
+    )?;
+    let v3_accept_sound_pin = audited_manifest_pin(
+        &manifest,
+        "v3_accept_sound_sha256",
+        "v3-accept-sound",
+        &cert::audited_v3_accept_sound_sha(),
+    )?;
     let artifact_root = manifest_str(&manifest, "artifact_certificate_root")?;
     if artifact_root != cert::ARTIFACT_CERTIFICATE_ROOT {
         return Err(format!(
@@ -910,6 +1135,39 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
         ("expr_fragment_accepted_sha256", expr_fragment_accepted_pin),
         ("accepted_artifact_sha256", accepted_artifact_pin),
         ("accepted_artifact_core_sha256", accepted_artifact_core_pin),
+        ("v3_expr_fragment_full_sha256", v3_expr_fragment_full_pin),
+        ("v3_strong_fuel_sha256", v3_strong_fuel_pin),
+        ("v3_if_else_sha256", v3_if_else_pin),
+        ("v3_generic_certified_sha256", v3_generic_certified_pin),
+        ("v3_field_proj_sha256", v3_field_proj_pin),
+        ("v3_construct_verbatim_sha256", v3_construct_verbatim_pin),
+        ("v3_dispatch_core_sha256", v3_dispatch_core_pin),
+        ("v3_string_sha256", v3_string_pin),
+        ("v3_rec_spike_sha256", v3_rec_spike_pin),
+        ("v3_mutual_generic_sha256", v3_mutual_generic_pin),
+        ("v3_composition_sha256", v3_composition_pin),
+        ("v3_master_sha256", v3_master_pin),
+        (
+            "v3_discharge_expr_fragment_sha256",
+            v3_discharge_expr_fragment_pin,
+        ),
+        (
+            "v3_discharge_field_proj_sha256",
+            v3_discharge_field_proj_pin,
+        ),
+        ("v3_discharge_construct_sha256", v3_discharge_construct_pin),
+        ("v3_discharge_verbatim_sha256", v3_discharge_verbatim_pin),
+        ("v3_discharge_string_sha256", v3_discharge_string_pin),
+        (
+            "v3_discharge_int_dispatch_sha256",
+            v3_discharge_int_dispatch_pin,
+        ),
+        ("v3_discharge_recursion_sha256", v3_discharge_recursion_pin),
+        (
+            "v3_discharge_composition_sha256",
+            v3_discharge_composition_pin,
+        ),
+        ("v3_accept_sound_sha256", v3_accept_sound_pin),
     ];
     let mut artifact_cache = ArtifactBuildCache::prepare(
         &build.path,
@@ -1678,6 +1936,81 @@ fn static_prelude_files() -> Vec<(String, Vec<u8>)> {
             cert::CERT_SCHEMA_CORE.as_bytes().to_vec(),
         ),
         ("WasmSlice.lean", cert::CERT_WASM_SLICE.as_bytes().to_vec()),
+        (
+            "V3ExprFragmentFull.lean",
+            cert::CERT_V3_EXPR_FRAGMENT_FULL.as_bytes().to_vec(),
+        ),
+        (
+            "V3StrongFuel.lean",
+            cert::CERT_V3_STRONG_FUEL.as_bytes().to_vec(),
+        ),
+        ("V3IfElse.lean", cert::CERT_V3_IF_ELSE.as_bytes().to_vec()),
+        (
+            "V3GenericCertified.lean",
+            cert::CERT_V3_GENERIC_CERTIFIED.as_bytes().to_vec(),
+        ),
+        (
+            "V3FieldProj.lean",
+            cert::CERT_V3_FIELD_PROJ.as_bytes().to_vec(),
+        ),
+        (
+            "V3ConstructVerbatim.lean",
+            cert::CERT_V3_CONSTRUCT_VERBATIM.as_bytes().to_vec(),
+        ),
+        (
+            "V3DispatchCore.lean",
+            cert::CERT_V3_DISPATCH_CORE.as_bytes().to_vec(),
+        ),
+        ("V3String.lean", cert::CERT_V3_STRING.as_bytes().to_vec()),
+        (
+            "V3RecSpike.lean",
+            cert::CERT_V3_REC_SPIKE.as_bytes().to_vec(),
+        ),
+        (
+            "V3MutualGeneric.lean",
+            cert::CERT_V3_MUTUAL_GENERIC.as_bytes().to_vec(),
+        ),
+        (
+            "V3Composition.lean",
+            cert::CERT_V3_COMPOSITION.as_bytes().to_vec(),
+        ),
+        ("V3Master.lean", cert::CERT_V3_MASTER.as_bytes().to_vec()),
+        (
+            "V3DischargeExprFragment.lean",
+            cert::CERT_V3_DISCHARGE_EXPR_FRAGMENT.as_bytes().to_vec(),
+        ),
+        (
+            "V3DischargeFieldProj.lean",
+            cert::CERT_V3_DISCHARGE_FIELD_PROJ.as_bytes().to_vec(),
+        ),
+        (
+            "V3DischargeConstruct.lean",
+            cert::CERT_V3_DISCHARGE_CONSTRUCT.as_bytes().to_vec(),
+        ),
+        (
+            "V3DischargeVerbatim.lean",
+            cert::CERT_V3_DISCHARGE_VERBATIM.as_bytes().to_vec(),
+        ),
+        (
+            "V3DischargeString.lean",
+            cert::CERT_V3_DISCHARGE_STRING.as_bytes().to_vec(),
+        ),
+        (
+            "V3DischargeIntDispatch.lean",
+            cert::CERT_V3_DISCHARGE_INT_DISPATCH.as_bytes().to_vec(),
+        ),
+        (
+            "V3DischargeRecursion.lean",
+            cert::CERT_V3_DISCHARGE_RECURSION.as_bytes().to_vec(),
+        ),
+        (
+            "V3DischargeComposition.lean",
+            cert::CERT_V3_DISCHARGE_COMPOSITION.as_bytes().to_vec(),
+        ),
+        (
+            "V3AcceptSound.lean",
+            cert::CERT_V3_ACCEPT_SOUND.as_bytes().to_vec(),
+        ),
         ("lakefile.lean", static_lakefile.into_bytes()),
         ("lean-toolchain", cert::LEAN_TOOLCHAIN.as_bytes().to_vec()),
     ]
