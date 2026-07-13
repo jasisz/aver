@@ -3215,7 +3215,7 @@ fn run_manifest_obligation_guard_iso(prefix: &str, lean: &str) {
 /// accepts it, while every byte-derived binding and code entry stays identical.
 #[test]
 fn manifest_unclaimed_obligation_guard_is_isolating() {
-    let lean = r#"import Artifact
+    let lean = r#"import ArtifactCertificate
 
 open CertPrelude AverCert AverCert.Schema
 set_option maxRecDepth 300000
@@ -3342,7 +3342,7 @@ example : acceptedWithoutClaimCoverage unclaimedArtifact := by
 /// just that conjunct accepts it without changing any byte-derived surface.
 #[test]
 fn manifest_duplicate_obligation_export_guard_is_isolating() {
-    let lean = r#"import Artifact
+    let lean = r#"import ArtifactCertificate
 
 open CertPrelude AverCert AverCert.Schema
 set_option maxRecDepth 300000
