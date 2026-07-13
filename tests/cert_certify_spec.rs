@@ -161,8 +161,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["schema_version"].as_u64(),
-        Some(u64::from(aver::codegen::cert::CERT_SCHEMA_VERSION))
+        Some(57),
+        "dispatch option-(b) migration is certificate schema 57"
     );
+    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 57);
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
@@ -740,10 +742,18 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             "migrated leaf arm must use the audited generic: {name}\n{final_lean}"
         );
     }
-    for bespoke_name in ["addTwo", "sumFrom", "countDown", "mkOp", "evalOp"] {
+    for dispatch_name in ["evalOp", "boxInt", "gauge"] {
+        assert!(
+            final_lean.contains(&format!(
+                "V3Master.intDispatch_canonical_discharges (exportName := \"{dispatch_name}\")"
+            )),
+            "dispatch arm must use the audited generic: {dispatch_name}\n{final_lean}"
+        );
+    }
+    for bespoke_name in ["addTwo", "sumFrom", "countDown", "mkOp"] {
         assert!(
             final_lean.contains(&format!("CertProofs.{bespoke_name}_")),
-            "non-projection arm changed during coexistence migration: {bespoke_name}\n{final_lean}"
+            "unmigrated arm changed during coexistence migration: {bespoke_name}\n{final_lean}"
         );
     }
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
@@ -758,9 +768,23 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             && !certificate.contains("quoteOrSelf_wasm_certified")
             && !certificate.contains("quoteOrSelf_simulates")
             && !certificate.contains("shout_wasm_certified")
-            && !certificate.contains("shout_simulates"),
-        "migrated leaf families must not emit bespoke proofs:\n{certificate}"
+            && !certificate.contains("shout_simulates")
+            && !certificate.contains("evalOp_wasm_certified")
+            && !certificate.contains("evalOp_simulates")
+            && !certificate.contains("boxInt_wasm_certified")
+            && !certificate.contains("boxInt_simulates")
+            && !certificate.contains("gauge_wasm_certified")
+            && !certificate.contains("gauge_simulates"),
+        "migrated leaf/dispatch families must not emit bespoke simulations:\n{certificate}"
     );
+    for dispatch_name in ["evalOp", "boxInt", "gauge"] {
+        assert!(
+            certificate.contains(&format!(
+                "theorem {dispatch_name}_intDispatchSemanticBridge"
+            )),
+            "dispatch must emit its option-(b) source-model bridge: {dispatch_name}\n{certificate}"
+        );
+    }
     let user_name = manifest["certified"]
         .as_array()
         .unwrap()
@@ -784,6 +808,18 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             .find(|entry| entry["name"] == name)
             .unwrap();
         assert_eq!(entry["theorem"], theorem);
+    }
+    for name in ["evalOp", "boxInt", "gauge"] {
+        let entry = manifest["certified"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == name)
+            .unwrap();
+        assert_eq!(
+            entry["theorem"],
+            "V3Master.intDispatch_canonical_discharges"
+        );
     }
 
     let started = std::time::Instant::now();
@@ -853,7 +889,7 @@ example :
 }
 
 #[test]
-fn cert_verify_declines_hostile_verbatim_and_string_models() {
+fn cert_verify_declines_hostile_leaf_and_dispatch_models() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping hostile leaf-model test: `lake` not available");
         return;
@@ -898,6 +934,7 @@ fn cert_verify_declines_hostile_verbatim_and_string_models() {
             "model := quoteOrSelfModel }",
             "model := shoutModel }",
         ),
+        ("dispatch", "model := gauge }", "model := fun _ => 0 }"),
     ] {
         let tampered = temp_dir(&format!("certify-hostile-{label}-model"));
         copy_dir_all(&out_dir, &tampered);
@@ -914,7 +951,7 @@ fn cert_verify_declines_hostile_verbatim_and_string_models() {
             verify_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
         assert!(
             !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
-            "wrong canonical {label} model must be DECLINED:\n{report}"
+            "wrong {label} model must make its emitted bridge fail and be DECLINED:\n{report}"
         );
         let _ = std::fs::remove_dir_all(&tampered);
     }
@@ -1930,6 +1967,11 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             "signal-gauge",
             vec!["gauge"],
         ),
+        (
+            "tools/certkit/fixtures/intdispatchgen.av",
+            "int-dispatch-gen",
+            vec!["boxInt", "gauge"],
+        ),
         // Payload-first subtraction, constant-first addition, and payload
         // variants elided into the wildcard default.
         ("tools/certkit/fixtures/meter.av", "meter", vec!["readout"]),
@@ -1971,6 +2013,42 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
                 certified.contains(&name),
                 "expected {name} certified for {input}, got {certified:?}"
             );
+        }
+        let dispatch_entries = manifest["certified"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry["class"].as_str(),
+                    Some("variant-dispatch" | "widened-int-match")
+                )
+            })
+            .collect::<Vec<_>>();
+        if !dispatch_entries.is_empty() {
+            let final_lean =
+                std::fs::read_to_string(cert_dir.join("Final.lean")).expect("Final.lean exists");
+            let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
+                .expect("Certificate.lean exists");
+            for entry in &dispatch_entries {
+                let name = entry["name"].as_str().unwrap();
+                assert_eq!(
+                    entry["theorem"],
+                    "V3Master.intDispatch_canonical_discharges"
+                );
+                assert!(
+                    final_lean.contains(&format!(
+                        "V3Master.intDispatch_canonical_discharges (exportName := \"{name}\")"
+                    )) && final_lean.contains("(hRoot := by exact ⟨"),
+                    "dispatch Final.cert arm must pass the audited discharge and root witness for {name}:\n{final_lean}"
+                );
+                assert!(
+                    certificate.contains(&format!("theorem {name}_intDispatchSemanticBridge"))
+                        && !certificate.contains(&format!("{name}_wasm_certified"))
+                        && !certificate.contains(&format!("{name}_simulates")),
+                    "dispatch must emit only its option-(b) bridge for {name}:\n{certificate}"
+                );
+            }
         }
         if prefix == "tuple-proj" {
             let entries = manifest["certified"].as_array().unwrap();
@@ -2019,12 +2097,12 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             !combined.contains("sorryAx"),
             "ADT certificate leaked sorryAx for {input}:\n{combined}"
         );
-        if prefix == "tuple-proj" {
+        if prefix == "tuple-proj" || !dispatch_entries.is_empty() {
             assert!(
                 combined.contains(
                     "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
                 ),
-                "generic field-projection holds proofs changed axiom surface:\n{combined}"
+                "generic field-projection/dispatch holds proofs changed axiom surface:\n{combined}"
             );
         }
 
