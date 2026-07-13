@@ -264,18 +264,4 @@ fn conjunct_proj(pos: usize, k: usize) -> String {
     s
 }
 
-/// Evaluate the mutual model at `scc[pos]` on input `n` under partial-correctness
-/// semantics (`f n = if n ≤ 0 then base else cross (n-1)`) to obtain the
-/// anti-vacuity guard values. Terminates: `n` strictly descends to the base.
-fn eval_mutual(scc: &[MutualMember], pos: usize, n: i64) -> i64 {
-    if n <= 0 {
-        return scc[pos].base_k;
-    }
-    let cross_pos = scc
-        .iter()
-        .position(|m| m.self_idx == scc[pos].cross_idx)
-        .expect("mutual SCC cross target is a member");
-    eval_mutual(scc, cross_pos, n - 1)
-}
-
 // Mutual-recursion proof rendering lives in render_mutual.rs.
