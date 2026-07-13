@@ -272,6 +272,78 @@ theorem intDispatch_claim_discharges
       exact hCod w (hGeneric S add sub mul stringEq stringConcat hAdd hSub
         fuel tag fields n w hCascade hRun)
 
+/-- Per-obligation option-(b) discharge for a concrete Int-dispatch export.
+The checked plan, canonical host table, lowering, and code binding are data;
+`hSemantic` is the intentionally residual source-model bridge emitted for the
+user function.  Unlike the option-(c) leaf theorems, the model is not replaced
+by a canonical evaluator: the bridge proves that the user's model agrees with
+the byte-derived `EvalCascade` on every represented source constructor. -/
+theorem intDispatch_canonical_discharges
+    (exportName : String)
+    (carrier self : Nat)
+    (plan : IntDispatchRawPlan)
+    (hostTable : List (HostRole × Nat))
+    (code : CodeTbl)
+    (host :
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (Nat → List WVal → Option WVal) → HostTbl)
+    (Dom : Type)
+    (domRepr : CarrierSpec carrier → Dom → List WVal → Prop)
+    (model : Dom → Int)
+    (hRaw : AverCert.PlanCheck.checkIntDispatchRawPlan plan = true)
+    (hDistinct : AverCert.PlanCheck.hostTableIndicesDistinct hostTable = true)
+    (hHost : ∀ add sub mul stringEq stringConcat,
+      host add sub mul stringEq stringConcat =
+        intDispatchCanonicalHost carrier hostTable
+          add sub mul stringEq stringConcat)
+    (hRoot : ∃ tyIdx leaf rest, plan.body = .test tyIdx leaf rest)
+    (body : List WInstr)
+    (hLow : AverCert.PlanLower.lowerIntDispatchBody hostTable plan = some body)
+    (hCode : code self = some {
+      arity := 1,
+      nlocals := AverCert.PlanCheck.intDispatchArmCount plan.body + 2,
+      body := body })
+    (hSemantic : ∀ (S : CarrierSpec carrier) (x : Dom) (vs : List WVal),
+      domRepr S x vs →
+      ∃ tag fields n,
+        vs = [.structv tag fields] ∧
+        V3Dispatch.EvalCascade S plan.body tag fields n ∧
+        ∀ w, S.Repr n w → intRepr S (model x) w) :
+    Obligation.holds
+      ({ export_ := exportName
+         policy := .simulatesModel
+         carrier := carrier
+         code := code
+         host := host
+         self := self
+         Dom := Dom
+         Cod := Int
+         domRepr := domRepr
+         codRepr := fun S n w => intRepr S n w
+         model := model } : Obligation) := by
+  intro S add sub mul stringEq stringConcat
+    hAdd hSub _hMul _hStringEq _hStringConcat fuel x vs w hDom hRun
+  rcases hSemantic S x vs hDom with
+    ⟨tag, fields, n, hVs, hCascade, hCod⟩
+  subst vs
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      have hSlots : V3Dispatch.HostSlots carrier
+          (host add sub mul stringEq stringConcat) hostTable add sub := by
+        rw [hHost]
+        exact canonicalHostSlots carrier add sub hostTable hDistinct
+      have hGeneric := V3Dispatch.generic_int_dispatch_certified
+        S plan code (host add sub mul stringEq stringConcat) self
+        hostTable add sub hSlots hAdd hSub
+        (intDispatchPinnedTypes plan.body)
+        (checkIntDispatchFamily_of_raw plan hRaw)
+        hRoot body hLow hCode
+      exact hCod w (hGeneric fuel tag fields n w hCascade hRun)
+
 /-- Complete family slice under the semantic/root bridge missing from current
 artifact acceptance. -/
 theorem intDispatch_discharges
@@ -290,4 +362,5 @@ end V3Master
 #print axioms V3Master.intDispatch_default_root_has_no_test
 #print axioms V3Master.intDispatch_accepted_call
 #print axioms V3Master.intDispatch_claim_discharges
+#print axioms V3Master.intDispatch_canonical_discharges
 #print axioms V3Master.intDispatch_discharges

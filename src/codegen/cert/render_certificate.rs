@@ -4,7 +4,9 @@ fn render_certificate(
     model_info: &ModelInfo,
 ) -> String {
     let mut s = String::new();
-    s.push_str("import CertPrelude\nimport Module\nimport Schema\nimport Manifest\n");
+    s.push_str(
+        "import CertPrelude\nimport Module\nimport Schema\nimport Manifest\nimport V3DispatchCore\n",
+    );
     for r in model_roots {
         s.push_str(&format!("import {r}\n"));
     }
@@ -30,7 +32,11 @@ fn render_certificate(
             // Its plan, obligation and claim data remain emitted unchanged.
             Cert::FieldProjection { .. } => {}
             Cert::WidenedIntMatch { .. } | Cert::VariantDispatch { .. } => {
-                s.push_str(&render_adt_match_cert(c, model_info))
+                s.push_str(&render_int_dispatch_semantic_bridge(
+                    c,
+                    model_info,
+                    analysis.frag_host_table,
+                ))
             }
             Cert::ExprFragment { .. } => s.push_str(&render_expr_fragment_cert(c)),
             // Verbatim and String families are discharged by their audited

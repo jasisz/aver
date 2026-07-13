@@ -1,350 +1,378 @@
-fn render_adt_constructor_cert(c: &Cert, model_info: &ModelInfo) -> String {
-    let c = c.inner();
-    let Cert::AdtConstructor {
-        name,
-        self_idx,
-        carrier,
-        struct_idx,
-        ..
-    } = c
-    else {
-        unreachable!()
+/// Option-(b) residual for one model-bearing Int dispatch.  The generated
+/// theorem performs only source-ADT case analysis and builds the matching
+/// `EvalCascade`; byte lowering, host simulation and fuel reasoning live in
+/// the audited `V3DispatchCore` / `V3DischargeIntDispatch` wall.
+fn render_int_dispatch_semantic_bridge(
+    c: &Cert,
+    model_info: &ModelInfo,
+    strict: FragHostTable,
+) -> String {
+    let Some(plan) = int_dispatch_plan_from_cert(c, strict) else {
+        return format!(
+            "-- {}: no byte-matching int-dispatch plan\nexample : False := by decide\n",
+            c.name()
+        );
     };
-    debug_assert!(adt_constructor_uses_model(c, model_info));
-    let sig = model_info.fns.get(name);
-    let _ = sig
-        .and_then(|s| model_info.inductives.get(&s.ret))
-        .and_then(|i| i.ctors.first());
-    format!(
-        r#"/-! ### {name} — ADT constructor certificate (carrier type {carrier}) -/
-
-theorem {name}_wasm_certified (host : HostTbl) :
-    ∀ (v : WVal), wFuncN {name}Code host 1 {self_idx} [v] = some (.structv {struct_idx} [v]) := by
-  intro v
-  simp [wFuncN, {name}Code, wRunF, popArgs, initLocals]
-
-#print axioms {name}_wasm_certified
-
--- Executable tripwire: run the constructor on an Int 7 and decode field 0 of the
--- built struct back to `some 7`. Unlike a bare `= none` (which a TRAP also
--- satisfies), this forces the emitted body to genuinely pack its argument.
-example :
-    ((wFuncN {name}Code {name}Host 1 {self_idx} [carrierSmall {carrier} 7]).bind
-      (fun r => match r with
-        | .structv _ (f :: _) => carrierToInt f
-        | _ => none))
-      = some 7 := by native_decide
-
-theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel n vs w hrepr hrun
-  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
-  obtain ⟨v, rfl, hv⟩ := hrepr
-  cases fuel with
-  | zero => simp [wFuncN] at hrun
-  | succ f =>
-      simp [wFuncN, wRunF, {name}Code, popArgs, initLocals] at hrun
-      subst hrun
-      exact ⟨v, rfl, by simpa [AverCert.Schema.intRepr] using hv⟩
-"#
-    )
-}
-
-/// The per-class ingredients of one ADT-match certificate: the pieces that
-/// differ between the fully-modelled variant dispatch and the widened Int match,
-/// spliced into ONE shared `cases o` skeleton by [`render_adt_match_cert`].
-struct AdtMatchPlan {
-    doc_title: String,
-    /// The theorem header up to (not including) the trailing ` :` — the binder
-    /// block differs (variant carries the add/sub host contracts, widened none).
-    header: String,
-    ty: String,
-    /// The domain-representation relation: the shared, faithful `{ty}Repr` when
-    /// every constructor is modelled, the per-function weak `{name}DomRepr` when
-    /// only one integer-payload variant is projected.
-    repr: String,
-    host_term: String,
-    host_ref_def: String,
-    /// The explicit per-constructor `cases o` arms, already joined.
-    cases: String,
-    guards: String,
-    /// The `_simulates` citation of `{name}_wasm_certified` (its argument list
-    /// differs by the host contracts).
-    sim_cite: String,
-}
-
-/// Leaf-polymorphic ADT variant-match certificate: ONE explicit `cases o` proof
-/// spine shared by the fully-modelled variant dispatch (every constructor
-/// faithfully represented, closing through the runtime add/sub contracts) and
-/// the widened Int match (one integer-payload constructor projected faithfully,
-/// every other constructor opaque and boxing the default). The walker emits the
-/// spine; each constructor closes with its OWN honest closer against its OWN
-/// honest domain representation, so neither faithfulness level is weakened to fit
-/// the other (the exact fold that a single shared `Repr` would have banned).
-fn render_adt_match_cert(c: &Cert, model_info: &ModelInfo) -> String {
-    let inner = c.inner();
-    let name = inner.name();
-    let self_idx = inner.self_idx();
-    let plan = match inner {
-        Cert::VariantDispatch { .. } => adt_match_variant_plan(inner, model_info),
-        Cert::WidenedIntMatch { .. } => adt_match_widened_plan(inner, model_info),
+    match c.inner() {
+        Cert::VariantDispatch { .. } => render_variant_dispatch_semantic_bridge(c, model_info, &plan),
+        Cert::WidenedIntMatch { .. } => render_widened_int_semantic_bridge(c, model_info, &plan),
         _ => unreachable!(),
-    };
-    let AdtMatchPlan {
-        doc_title,
-        header,
-        ty,
-        repr,
-        host_term,
-        host_ref_def,
-        cases,
-        guards,
-        sim_cite,
-    } = match plan {
-        Ok(p) => p,
-        Err(early) => return early,
-    };
-    format!(
-        r#"{doc_title}
-
-{header} :
-    ∀ (fuel : Nat) (o : {ty}) (v w : WVal), {repr} S o v →
-      wFuncN {name}Code {host_term} fuel {self_idx} [v] = some w →
-      S.Repr ({name} o) w := by
-  intro fuel
-  cases fuel with
-  | zero => intro o v w hv hrun; simp [wFuncN] at hrun
-  | succ f =>
-      intro o v w hv hrun
-      cases o with
-{cases}
-
-#print axioms {name}_wasm_certified
-
-{host_ref_def}
-{guards}
-
-theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel o vs w hrepr hrun
-  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
-  obtain ⟨v, rfl, hv⟩ := hrepr
-  simpa [AverCert.Schema.intRepr] using {sim_cite}
-"#
-    )
+    }
 }
 
-/// The variant-dispatch plan: every constructor of a fully-modelled inductive is
-/// faithful (`{ty}Repr`); its arm is a payload projection, a payload/const host
-/// combination, or the terminal default. Closes through the add/sub contracts.
-fn adt_match_variant_plan(c: &Cert, model_info: &ModelInfo) -> Result<AdtMatchPlan, String> {
+fn render_variant_dispatch_semantic_bridge(
+    c: &Cert,
+    model_info: &ModelInfo,
+    plan: &IntDispatchRawPlan,
+) -> String {
     let Cert::VariantDispatch {
         name,
-        self_idx,
         carrier,
-        add_idx,
-        sub_idx,
         arms,
-        default_k,
         ..
-    } = c
+    } = c.inner()
     else {
         unreachable!()
     };
-    let ty = model_info
+    let Some(ty) = model_info
         .fns
         .get(name)
-        .and_then(|s| s.params.first())
-        .map(|s| s.as_str())
-        .unwrap_or("Op");
-    let repr = format!("{ty}Repr");
-    let host_ref = format!("{name}HostRef");
-    let Some(ind) = model_info.inductives.get(ty) else {
-        return Err(format!(
-            "-- {name}: no source inductive for {ty}\nexample : False := by decide\n"
-        ));
+        .and_then(|sig| sig.params.first())
+    else {
+        return format!(
+            "-- {name}: source model parameter type unavailable\nexample : False := by decide\n"
+        );
     };
-    let base = arms.iter().map(|(t, _)| *t).min().unwrap_or(0);
-    let arm_of_tag =
-        |tag: u32| -> Option<&ArmLeaf> { arms.iter().find(|(t, _)| *t == tag).map(|(_, l)| l) };
-    let simp_run = format!(
-        "simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32, popArgs, initLocals] at hrun"
-    );
+    let Some(ind) = model_info.inductives.get(ty) else {
+        return format!(
+            "-- {name}: source inductive `{ty}` unavailable\nexample : False := by decide\n"
+        );
+    };
+    let Some(base) = arms.iter().map(|(tag, _)| *tag).min() else {
+        return format!("-- {name}: empty dispatch\nexample : False := by decide\n");
+    };
 
     let mut cases = Vec::new();
-    let mut guards = Vec::new();
-    for (i, ctor) in ind.ctors.iter().enumerate() {
-        let tag = base + i as u32;
-        let cn = &ctor.name;
-        let payload = !ctor.fields.is_empty();
-        if arm_of_tag(tag).is_some() && !payload {
-            return Err(format!(
-                "-- {name}: variant tag mapping mismatch ({cn} is nullary but tag {tag} is dispatched)\nexample : False := by decide\n"
+    for (position, ctor) in ind.ctors.iter().enumerate() {
+        let tag = base + position as u32;
+        let binders = constructor_binders(ctor.fields.len());
+        if ctor.fields.is_empty() {
+            let source_value = format!("{name} (.{})", ctor.name);
+            let term = match render_eval_cascade_term(
+                &plan.body,
+                tag,
+                "[]",
+                &source_value,
+                None,
+            ) {
+                Ok(term) => term,
+                Err(error) => return render_dispatch_bridge_failure(name, &error),
+            };
+            cases.push(format!(
+                "  | {ctor} =>\n      subst v\n      refine ⟨{tag}, [], {source_value}, rfl, ?_, ?_⟩\n      · simpa [AverCert.Plans.{name}IntDispatchPlan, {name}, V3Dispatch.evalLeaf] using\n          ({term})\n      · intro w hw\n        simpa [AverCert.Schema.intRepr] using hw",
+                ctor = ctor.name,
+            ));
+        } else if ctor.fields.as_slice() == ["Int"] {
+            let source_value = format!("{name} (.{ctor} x)", ctor = ctor.name);
+            let term = match render_eval_cascade_term(
+                &plan.body,
+                tag,
+                "[cx]",
+                &source_value,
+                Some(("x", "cx", "hcx")),
+            ) {
+                Ok(term) => term,
+                Err(error) => return render_dispatch_bridge_failure(name, &error),
+            };
+            cases.push(format!(
+                "  | {ctor} x =>\n      obtain ⟨cx, rfl, hcx⟩ := hv\n      refine ⟨{tag}, [cx], {source_value}, rfl, ?_, ?_⟩\n      · simpa [AverCert.Plans.{name}IntDispatchPlan, {name}, V3Dispatch.evalLeaf] using\n          ({term})\n      · intro w hw\n        simpa [AverCert.Schema.intRepr] using hw",
+                ctor = ctor.name,
+            ));
+        } else {
+            cases.push(format!(
+                "  | {ctor}{binders} => simp [{ty}Repr] at hv",
+                ctor = ctor.name,
             ));
         }
-        match arm_of_tag(tag) {
-            Some(ArmLeaf::Proj) => {
-                cases.push(format!(
-                    "      | {cn} x =>\n          obtain ⟨cx, rfl, hcx⟩ := hv\n          {simp_run}\n          subst hrun\n          simpa [{name}] using hcx"
-                ));
-                guards.push(format!(
-                    "example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv {tag} [carrierSmall {carrier} 5]]).bind carrierToInt)\n    = some 5 := by native_decide"
-                ));
-            }
-            Some(ArmLeaf::HostOp {
-                role,
-                k,
-                const_first,
-            }) => {
-                let (hostfn, hyp) = match role {
-                    HostRole::Add => ("add", "hadd"),
-                    HostRole::Sub => ("sub", "hsub"),
-                    HostRole::StringEq | HostRole::StringConcat => unreachable!(),
-                };
-                let (operands, cite) = if *const_first {
-                    (
-                        format!("[carrierSmall {carrier} ({k}), cx]"),
-                        format!(
-                            "{hyp} ({k}) x (carrierSmall {carrier} ({k})) cx w' (S.smallIntro ({k})) hcx hs"
-                        ),
-                    )
-                } else {
-                    (
-                        format!("[cx, carrierSmall {carrier} ({k})]"),
-                        format!(
-                            "{hyp} x ({k}) cx (carrierSmall {carrier} ({k})) w' hcx (S.smallIntro ({k})) hs"
-                        ),
-                    )
-                };
-                cases.push(format!(
-                    "      | {cn} x =>\n          obtain ⟨cx, rfl, hcx⟩ := hv\n          {simp_run}\n          rcases hs : {hostfn} {operands} with _ | w' <;> simp [hs] at hrun\n          subst hrun\n          have := {cite}\n          simpa [{name}] using this"
-                ));
-                let sample = 5i64;
-                let expected = if *const_first {
-                    match role {
-                        HostRole::Add => k + sample,
-                        HostRole::Sub => k - sample,
-                        HostRole::StringEq | HostRole::StringConcat => unreachable!(),
-                    }
-                } else {
-                    match role {
-                        HostRole::Add => sample + k,
-                        HostRole::Sub => sample - k,
-                        HostRole::StringEq | HostRole::StringConcat => unreachable!(),
-                    }
-                };
-                guards.push(format!(
-                    "example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv {tag} [carrierSmall {carrier} {sample}]]).bind carrierToInt)\n    = some ({expected}) := by native_decide"
-                ));
-            }
-            None => {
-                if payload {
-                    cases.push(format!(
-                        "      | {cn} x =>\n          obtain ⟨cx, rfl, hcx⟩ := hv\n          {simp_run}\n          subst hrun\n          simpa [{name}] using S.smallIntro ({default_k})"
-                    ));
-                    guards.push(format!(
-                        "example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv {tag} [carrierSmall {carrier} 5]]).bind carrierToInt)\n    = some ({default_k}) := by native_decide"
-                    ));
-                } else {
-                    cases.push(format!(
-                        "      | {cn} =>\n          subst hv\n          {simp_run}\n          subst hrun\n          simpa [{name}] using S.smallIntro ({default_k})"
-                    ));
-                    guards.push(format!(
-                        "example : ((wFuncN {name}Code {host_ref} 4 {self_idx} [.structv {tag} []]).bind carrierToInt)\n    = some ({default_k}) := by native_decide"
-                    ));
-                }
-            }
-        }
     }
-    let add_ref = if add_idx.is_some() {
-        format!("(addRef {carrier})")
-    } else {
-        "(fun _ => none)".to_string()
-    };
-    let sub_ref = if sub_idx.is_some() {
-        format!("(subRef {carrier})")
-    } else {
-        "(fun _ => none)".to_string()
-    };
-    Ok(AdtMatchPlan {
-        doc_title: format!(
-            "/-! ### {name} — general variant dispatch certificate (carrier type {carrier}) -/"
-        ),
-        header: format!(
-            "theorem {name}_wasm_certified\n    (S : CarrierSpec {carrier})\n    (add sub : List WVal → Option WVal)\n    (hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)\n    (hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)"
-        ),
-        ty: ty.to_string(),
-        repr,
-        host_term: format!("({name}Host add sub)"),
-        host_ref_def: format!("def {host_ref} : HostTbl := {name}Host {add_ref} {sub_ref}"),
-        cases: cases.join("\n"),
-        guards: guards.join("\n"),
-        sim_cite: format!("{name}_wasm_certified S add sub hadd hsub fuel o v w hv hrun"),
-    })
+
+    format!(
+        r#"/-! ### {name} — option-(b) Int-dispatch semantic bridge -/
+
+theorem {name}_intDispatchSemanticBridge :
+    ∀ (S : CarrierSpec {carrier}) (x : {ty}) (vs : List WVal),
+      (∃ v, vs = [v] ∧ {ty}Repr S x v) →
+      ∃ tag fields n,
+        vs = [.structv tag fields] ∧
+        V3Dispatch.EvalCascade S
+          AverCert.Plans.{name}IntDispatchPlan.body tag fields n ∧
+        ∀ w, S.Repr n w → AverCert.Schema.intRepr S ({name} x) w := by
+  intro S x vs hDom
+  obtain ⟨v, rfl, hv⟩ := hDom
+  cases x with
+{cases}
+
+#print axioms {name}_intDispatchSemanticBridge
+"#,
+        cases = cases.join("\n"),
+    )
 }
 
-/// The widened-match plan: the single integer-payload constructor is faithful
-/// (projects its carrier), every other constructor is opaque — represented only
-/// as "some struct of a different type" and boxing the default `0`. The honest
-/// per-function `{name}DomRepr` keeps the heterogeneous variants opaque instead
-/// of forcing them into an integer carrier they cannot inhabit.
-fn adt_match_widened_plan(c: &Cert, model_info: &ModelInfo) -> Result<AdtMatchPlan, String> {
+fn render_widened_int_semantic_bridge(
+    c: &Cert,
+    model_info: &ModelInfo,
+    plan: &IntDispatchRawPlan,
+) -> String {
     let Cert::WidenedIntMatch {
         name,
-        self_idx,
         carrier,
         hit_variant_idx,
         ..
-    } = c
+    } = c.inner()
     else {
         unreachable!()
     };
-    let Some((_ty, ind, hit_ctor)) = widened_match_info(c, model_info) else {
-        return Err(format!(
-            "-- {name}: widened match info unavailable\nexample : False := by decide\n"
-        ));
+    let Some((ty, ind, hit_ctor)) = widened_match_info(c, model_info) else {
+        return format!(
+            "-- {name}: widened source model information unavailable\nexample : False := by decide\n"
+        );
     };
-    let ty = model_info
-        .fns
-        .get(name)
-        .and_then(|s| s.params.first())
-        .cloned()
-        .unwrap_or_else(|| "Op".to_string());
-    let other_idx = if *hit_variant_idx == 0 { 1 } else { 0 };
 
     let mut cases = Vec::new();
     for ctor in &ind.ctors {
+        let binders = constructor_binders(ctor.fields.len());
+        let source_ctor = constructor_application(&ctor.name, ctor.fields.len());
+        let source_value = format!("{name} ({source_ctor})");
         if ctor.name == hit_ctor {
-            cases.push(format!(
-                "      | {cn} x =>\n          simp only [{name}DomRepr] at hv\n          obtain ⟨cx, rfl, hcx⟩ := hv\n          simp [wFuncN, wRunF, {name}Code, {name}Host, b32, popArgs, initLocals] at hrun\n          subst hrun\n          simpa [{name}] using hcx",
-                cn = ctor.name,
-            ));
-        } else {
-            let binders = match ctor.fields.len() {
-                0 => String::new(),
-                1 => " x".to_string(),
-                n => " _".repeat(n),
+            let term = match render_eval_cascade_term(
+                &plan.body,
+                *hit_variant_idx,
+                "[cx]",
+                &source_value,
+                Some(("x", "cx", "hcx")),
+            ) {
+                Ok(term) => term,
+                Err(error) => return render_dispatch_bridge_failure(name, &error),
             };
             cases.push(format!(
-                "      | {cn}{binders} =>\n          simp only [{name}DomRepr] at hv\n          obtain ⟨t, fs, rfl, hne⟩ := hv\n          simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, b32, popArgs, initLocals, hne] at hrun\n          subst hrun\n          simpa [{name}] using S.smallIntro 0",
-                cn = ctor.name,
+                "  | {ctor} x =>\n      obtain ⟨cx, rfl, hcx⟩ := hv\n      refine ⟨{hit_variant_idx}, [cx], {source_value}, rfl, ?_, ?_⟩\n      · simpa [AverCert.Plans.{name}IntDispatchPlan, {name}, V3Dispatch.evalLeaf] using\n          ({term})\n      · intro w hw\n        simpa [AverCert.Schema.intRepr] using hw",
+                ctor = ctor.name,
+            ));
+        } else {
+            let term = match render_widened_miss_term(
+                &plan.body,
+                *hit_variant_idx,
+                "tag",
+                "fields",
+                &source_value,
+            ) {
+                Ok(term) => term,
+                Err(error) => return render_dispatch_bridge_failure(name, &error),
+            };
+            cases.push(format!(
+                "  | {ctor}{binders} =>\n      obtain ⟨tag, fields, rfl, hne⟩ := hv\n      refine ⟨tag, fields, {source_value}, rfl, ?_, ?_⟩\n      · simpa [AverCert.Plans.{name}IntDispatchPlan, {name}, V3Dispatch.evalLeaf] using\n          ({term})\n      · intro w hw\n        simpa [AverCert.Schema.intRepr] using hw",
+                ctor = ctor.name,
             ));
         }
     }
-    let guards = format!(
-        "example :\n    ((wFuncN {name}Code {name}HostRef 4 {self_idx}\n        [.structv {hit_variant_idx} [carrierSmall {carrier} 42]]).bind carrierToInt)\n      = some 42 := by native_decide\nexample :\n    ((wFuncN {name}Code {name}HostRef 4 {self_idx}\n        [.structv {other_idx} []]).bind carrierToInt)\n      = some 0 := by native_decide"
+
+    format!(
+        r#"/-! ### {name} — option-(b) widened-Int semantic bridge -/
+
+theorem {name}_intDispatchSemanticBridge :
+    ∀ (S : CarrierSpec {carrier}) (x : {ty}) (vs : List WVal),
+      (∃ v, vs = [v] ∧ {name}DomRepr S x v) →
+      ∃ tag fields n,
+        vs = [.structv tag fields] ∧
+        V3Dispatch.EvalCascade S
+          AverCert.Plans.{name}IntDispatchPlan.body tag fields n ∧
+        ∀ w, S.Repr n w → AverCert.Schema.intRepr S ({name} x) w := by
+  intro S x vs hDom
+  obtain ⟨v, rfl, hv⟩ := hDom
+  cases x with
+{cases}
+
+#print axioms {name}_intDispatchSemanticBridge
+"#,
+        cases = cases.join("\n"),
+    )
+}
+
+fn render_eval_cascade_term(
+    cascade: &IntDispatchCascade,
+    tag: u32,
+    fields: &str,
+    result: &str,
+    payload: Option<(&str, &str, &str)>,
+) -> Result<String, String> {
+    match cascade {
+        IntDispatchCascade::Default(k) => Ok(format!(
+            "V3Dispatch.EvalCascade.default ({k}) {tag} {fields}"
+        )),
+        IntDispatchCascade::Test {
+            ty_idx,
+            hit,
+            rest,
+        } if *ty_idx == tag => {
+            let Some((x, cx, hcx)) = payload else {
+                return Err(format!(
+                    "dispatch tag {tag} selects a payload leaf for a non-payload constructor"
+                ));
+            };
+            Ok(format!(
+                "V3Dispatch.EvalCascade.hit {ty_idx} ({leaf}) ({rest}) {fields} {x} {cx} rfl {hcx}",
+                leaf = int_dispatch_leaf_lean_value(hit),
+                rest = int_dispatch_cascade_lean_value(rest),
+            ))
+        }
+        IntDispatchCascade::Test {
+            ty_idx,
+            hit,
+            rest,
+        } => {
+            let tail = render_eval_cascade_term(rest, tag, fields, result, payload)?;
+            Ok(format!(
+                "V3Dispatch.EvalCascade.miss {ty_idx} {tag} ({leaf}) ({rest}) {fields} ({result}) (by decide) ({tail})",
+                leaf = int_dispatch_leaf_lean_value(hit),
+                rest = int_dispatch_cascade_lean_value(rest),
+            ))
+        }
+    }
+}
+
+fn render_widened_miss_term(
+    cascade: &IntDispatchCascade,
+    hit_tag: u32,
+    tag: &str,
+    fields: &str,
+    result: &str,
+) -> Result<String, String> {
+    let IntDispatchCascade::Test {
+        ty_idx,
+        hit,
+        rest,
+    } = cascade
+    else {
+        return Err("widened plan has no test root".to_string());
+    };
+    if *ty_idx != hit_tag || !matches!(rest.as_ref(), IntDispatchCascade::Default(0)) {
+        return Err("widened plan is not one projected hit plus default zero".to_string());
+    }
+    Ok(format!(
+        "V3Dispatch.EvalCascade.miss {ty_idx} {tag} ({leaf}) ({rest}) {fields} ({result}) hne (V3Dispatch.EvalCascade.default (0) {tag} {fields})",
+        leaf = int_dispatch_leaf_lean_value(hit),
+        rest = int_dispatch_cascade_lean_value(rest),
+    ))
+}
+
+fn constructor_binders(field_count: usize) -> String {
+    match field_count {
+        0 => String::new(),
+        1 => " x".to_string(),
+        count => (0..count).map(|i| format!(" x{i}")).collect::<String>(),
+    }
+}
+
+fn constructor_application(name: &str, field_count: usize) -> String {
+    match field_count {
+        0 => format!(".{name}"),
+        1 => format!(".{name} x"),
+        count => format!(
+            ".{name} {}",
+            (0..count)
+                .map(|i| format!("x{i}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+    }
+}
+
+fn render_dispatch_bridge_failure(name: &str, error: &str) -> String {
+    format!("-- {name}: {error}\nexample : False := by decide\n")
+}
+
+/// The option-(b) final arm for one model-bearing Int dispatch.  All byte and
+/// host facts reduce from emitted data; the only non-canonical argument is the
+/// generated source-model semantic bridge in `Certificate.lean`.
+fn render_int_dispatch_final_arm(
+    c: &Cert,
+    model_info: &ModelInfo,
+    strict: FragHostTable,
+) -> String {
+    let plan = int_dispatch_plan_from_cert(c, strict)
+        .expect("certified Int dispatch must carry a byte-matching plan");
+    let hosts = int_dispatch_host_table_from_cert(c)
+        .expect("certified Int dispatch must carry a host-role table");
+    let IntDispatchCascade::Test {
+        ty_idx,
+        hit,
+        rest,
+    } = &plan.body
+    else {
+        unreachable!("classified Int dispatch always has a test root")
+    };
+    let root = format!(
+        "⟨{ty_idx}, ({}), ({}), rfl⟩",
+        int_dispatch_leaf_lean_value(hit),
+        int_dispatch_cascade_lean_value(rest),
     );
-    Ok(AdtMatchPlan {
-        doc_title: format!(
-            "/-! ### {name} — widened Int match certificate (carrier type {carrier}) -/"
-        ),
-        header: format!("theorem {name}_wasm_certified (S : CarrierSpec {carrier})"),
-        ty,
-        repr: format!("{name}DomRepr"),
-        host_term: format!("{name}Host"),
-        host_ref_def: format!(
-            "-- Executable tripwires: the projected variant reads its carrier, every other\n-- variant boxes the default `0`. A trapping body yields `none`, forcing a run.\ndef {name}HostRef : HostTbl := {name}Host"
-        ),
-        cases: cases.join("\n"),
-        guards,
-        sim_cite: format!("{name}_wasm_certified S fuel o v w hv hrun"),
-    })
+    let (name, carrier, self_idx, ops, dom, dom_repr) = match c.inner() {
+        Cert::VariantDispatch {
+            name,
+            carrier,
+            self_idx,
+            ops,
+            ..
+        } => {
+            let ty = model_info
+                .fns
+                .get(name)
+                .and_then(|sig| sig.params.first())
+                .expect("variant dispatch model parameter type");
+            (
+                name,
+                *carrier,
+                *self_idx,
+                ops,
+                ty.clone(),
+                format!("fun S o vs => ∃ v, vs = [v] ∧ {ty}Repr S o v"),
+            )
+        }
+        Cert::WidenedIntMatch {
+            name,
+            carrier,
+            self_idx,
+            ops,
+            ..
+        } => {
+            let ty = model_info
+                .fns
+                .get(name)
+                .and_then(|sig| sig.params.first())
+                .expect("widened dispatch model parameter type");
+            (
+                name,
+                *carrier,
+                *self_idx,
+                ops,
+                ty.clone(),
+                format!("fun S o vs => ∃ v, vs = [v] ∧ {name}DomRepr S o v"),
+            )
+        }
+        _ => unreachable!(),
+    };
+    let host_table = int_dispatch_host_table_lean_value(&hosts);
+    let host = c.host_expr();
+    let body = render_ops_value(ops);
+    format!(
+        "exact V3Master.intDispatch_canonical_discharges \
+         (exportName := \"{name}\") (carrier := {carrier}) (self := {self_idx}) \
+         (plan := AverCert.Plans.{name}IntDispatchPlan) \
+         (hostTable := {host_table}) (code := CertModule.{name}Code) \
+         (host := {host}) (Dom := {dom}) (domRepr := {dom_repr}) (model := {name}) \
+         (hRaw := by rfl) (hDistinct := by rfl) (hHost := by intros; rfl) \
+         (hRoot := by exact {root}) (body := {body}) \
+         (hLow := by rfl) (hCode := by rfl) \
+         (hSemantic := CertProofs.{name}_intDispatchSemanticBridge)"
+    )
 }

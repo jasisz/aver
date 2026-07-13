@@ -510,12 +510,12 @@ fn render_manifest_lean(
 }
 
 /// The single final theorem: `AverCert.Final.cert : Holds manifest`, proved by
-/// composing the per-export `_simulates` obligations. No other final theorem is
-/// emitted; the checker pins this exact statement line.
+/// composing audited generic discharges with the residual bespoke families.
+/// No other final theorem is emitted; the checker pins this exact statement.
 fn render_final(analysis: &Analysis, model_info: &ModelInfo) -> String {
     let mut s = String::new();
     s.push_str(
-        "import Certificate\nimport Manifest\nimport Schema\nimport V3DischargeFieldProj\nimport V3DischargeConstruct\nimport V3DischargeVerbatim\nimport V3DischargeString\n\n\
+        "import Certificate\nimport Manifest\nimport Schema\nimport V3DischargeFieldProj\nimport V3DischargeConstruct\nimport V3DischargeVerbatim\nimport V3DischargeString\nimport V3DischargeIntDispatch\n\n\
          set_option maxRecDepth 1000000\n\
          set_option linter.unusedSimpArgs false\n\n\
          open AverCert AverCert.Schema\n\n",
@@ -576,6 +576,16 @@ fn render_final(analysis: &Analysis, model_info: &ModelInfo) -> String {
                          AverCert.Plans.{name}FieldProjectionPlan \
                         CertModule.{name}Code \
                          (fun _ _ _ _ _ => CertModule.{name}Host) (by rfl) (by rfl)"
+                    );
+                }
+                if matches!(
+                    c.inner(),
+                    Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. }
+                ) {
+                    return render_int_dispatch_final_arm(
+                        c,
+                        model_info,
+                        analysis.frag_host_table,
                     );
                 }
                 if let Cert::AdtConstructor {
@@ -1128,6 +1138,11 @@ fn render_manifest(
             "V3Master.stringEq_canonical_discharges".to_string()
         } else if matches!(c.inner(), Cert::StringConcatVerbatimMatch { .. }) {
             "V3Master.stringConcat_canonical_discharges".to_string()
+        } else if matches!(
+            c.inner(),
+            Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. }
+        ) {
+            "V3Master.intDispatch_canonical_discharges".to_string()
         } else {
             let theorem_suffix = if policy == CertificationPolicy::SimulatesModelTotally {
                 "wasm_total"
