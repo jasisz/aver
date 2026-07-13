@@ -39,19 +39,9 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
         );
     }
     match c.inner() {
-        Cert::AdtConstructor {
-            struct_idx,
-            field_count,
-            ..
-        } if adt_constructor_uses_model(c, model_info) => {
+        Cert::AdtConstructor { .. } if adt_constructor_uses_model(c, model_info) => {
             let sig = model_info.fns.get(name);
             let ret = sig.map(|s| s.ret.as_str()).unwrap_or("Unit");
-            let ctor = sig
-                .and_then(|s| model_info.inductives.get(&s.ret))
-                .and_then(|i| i.ctors.first())
-                .map(|c| c.name.as_str())
-                .unwrap_or("mk");
-            let _ = (struct_idx, field_count);
             format!(
                 "abbrev {name}Ob : Schema.Obligation :=\n  \
                  {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
@@ -59,7 +49,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
                  Dom := Int, Cod := {ret},\n    \
                  domRepr := fun S n vs => ∃ v, vs = [v] ∧ intRepr S n v,\n    \
                  codRepr := fun S x w => {ret}Repr S x w,\n    \
-                 model := fun n => {ret}.{ctor} n }}\n\n",
+                 model := {name} }}\n\n",
                 carrier = c.carrier(),
                 host = c.host_expr(),
                 self_idx = c.self_idx(),
@@ -587,6 +577,11 @@ fn render_final(analysis: &Analysis, model_info: &ModelInfo) -> String {
                         model_info,
                         analysis.frag_host_table,
                     );
+                }
+                if matches!(c.inner(), Cert::AdtConstructor { .. })
+                    && adt_constructor_uses_model(c, model_info)
+                {
+                    return render_adt_constructor_final_arm(c, model_info);
                 }
                 if let Cert::AdtConstructor {
                     name,
@@ -1121,6 +1116,10 @@ fn render_manifest(
             "V3Master.fieldProjection_direct_canonical_discharges".to_string()
         } else if matches!(c.inner(), Cert::FieldProjection { .. }) {
             "V3Master.fieldProjection_canonical_discharges".to_string()
+        } else if matches!(c.inner(), Cert::AdtConstructor { .. })
+            && adt_constructor_uses_model(c, model_info)
+        {
+            "V3Master.construct_canonical_discharges".to_string()
         } else if let Cert::AdtConstructor { arity, .. } = c.inner()
             && !adt_constructor_uses_model(c, model_info)
         {

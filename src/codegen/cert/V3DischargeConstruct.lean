@@ -136,6 +136,67 @@ private theorem construct_run_succ_eq_one
   rw [hFuel, hOne]
   simp [wRunF]
 
+/-- Per-obligation option-(b) discharge for a concrete model-bearing
+constructor export. The checked plan, canonical lowering, and code binding are
+data; `hSemantic` is the intentionally residual bridge from the named source
+model to the exact plan-derived constructed value. -/
+theorem construct_canonical_discharges
+    (exportName : String) (carrier structIdx self : Nat)
+    (plan : ConstructRawPlan) (code : CodeTbl)
+    (host :
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (Nat → List WVal → Option WVal) → HostTbl)
+    (Dom Cod : Type)
+    (domRepr : CarrierSpec carrier → Dom → List WVal → Prop)
+    (codRepr : CarrierSpec carrier → Cod → WVal → Prop)
+    (model : Dom → Cod)
+    (hCheck : AverCert.PlanCheck.checkConstructRawPlan plan = true)
+    (body : List WInstr)
+    (hLow : AverCert.PlanLower.lowerConstructBody structIdx plan = some body)
+    (hCode : code self = some
+      { arity := plan.arity, nlocals := 1, body := body })
+    (hSemantic : ∀ (S : CarrierSpec carrier) (x : Dom) (args : List WVal),
+      domRepr S x args →
+      args.length = plan.arity ∧
+      codRepr S (model x)
+        (.structv structIdx
+          (V3ConstructVerbatim.constructModelFields
+            (args ++ List.replicate 1 .null) plan.fields))) :
+    Obligation.holds
+      ({ export_ := exportName
+         policy := .simulatesModel
+         carrier := carrier
+         code := code
+         host := host
+         self := self
+         Dom := Dom
+         Cod := Cod
+         domRepr := domRepr
+         codRepr := codRepr
+         model := model } : Obligation) := by
+  intro S add sub mul stringEq stringConcat
+    _hAdd _hSub _hMul _hStringEq _hStringConcat fuel x args w hDom hRun
+  rcases hSemantic S x args hDom with ⟨hLen, hCod⟩
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      have hCall := V3ConstructVerbatim.generic_construct_certified
+        structIdx plan code (host add sub mul stringEq stringConcat) self 1
+        hCheck body hLow hCode args hLen
+      have hFuel := construct_run_succ_eq_one
+        structIdx plan code (host add sub mul stringEq stringConcat) self
+        hCheck body hLow hCode fuel args hLen
+      rw [hFuel, hCall] at hRun
+      have hw :
+          .structv structIdx
+            (V3ConstructVerbatim.constructModelFields
+              (args ++ List.replicate 1 .null) plan.fields) = w :=
+        Option.some.inj hRun
+      simpa [← hw] using hCod
+
 /-- Canonical option-(c) leaf bridge for a unary verbatim constructor pack. -/
 theorem constructUnary_canonical_discharges
     (exportName : String) (carrier structIdx self : Nat)
@@ -297,6 +358,7 @@ theorem construct_discharges
 end V3Master
 
 #print axioms V3Master.construct_accepted_call
+#print axioms V3Master.construct_canonical_discharges
 #print axioms V3Master.constructUnary_canonical_discharges
 #print axioms V3Master.constructBinary_canonical_discharges
 #print axioms V3Master.construct_claim_discharges
