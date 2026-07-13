@@ -24,7 +24,10 @@ fn parse_body_step(
     // combines the top two stack values.
     let (last, init) = ops.split_last()?;
     let Call(add_idx) = last else { return None };
-    if host_roles.get(add_idx) != Some(&HostRole::Add) {
+    if !matches!(
+        host_roles.get(add_idx),
+        Some(HostRole::Add) | Some(HostRole::Mul)
+    ) {
         return None;
     }
     let mut st: Vec<V> = Vec::new();

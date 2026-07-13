@@ -1,14 +1,10 @@
-/// The audited `V3Rec` generic covers the four unary descent-by-one shapes
-/// whose byte-role combinator is `Int.add`. Multiplication and the two-argument
-/// accumulator have different semantics/arity and deliberately retain their
-/// residual bespoke proofs until matching audited generics exist.
+/// The audited `V3Rec` generic covers the four unary descent-by-one operand
+/// shapes with either the `Int.add` or `Int.mul` semantic combinator. The
+/// two-argument accumulator has its own arity-pinned audited shape.
 fn recursion_uses_audited_generic(c: &Cert) -> bool {
     matches!(
         c.inner(),
-        Cert::Recursive {
-            combinator: Combinator::Add,
-            ..
-        }
+        Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. }
     )
 }
 
@@ -17,11 +13,10 @@ fn recursion_shape_lean_value(c: &Cert) -> String {
         base_k,
         rec_first,
         other,
-        combinator: Combinator::Add,
         ..
     } = c.inner()
     else {
-        unreachable!("only unary additive recursion has a V3Rec shape")
+        unreachable!("only unary recursion has a V3Rec shape")
     };
     let step = match (*rec_first, *other) {
         (false, BodyOperand::Input) => ".inputSecond".to_string(),
@@ -39,17 +34,21 @@ fn recursion_shape_lean_value(c: &Cert) -> String {
     )
 }
 
+fn recursion_combine_lean_value(c: &Cert) -> &'static str {
+    let Cert::Recursive { combinator, .. } = c.inner() else {
+        unreachable!("only unary recursion has a V3Rec combinator")
+    };
+    match combinator {
+        Combinator::Add => ".add",
+        Combinator::Mul => ".mul",
+    }
+}
+
 fn recursion_claim_lean_value(c: &Cert) -> String {
-    let Cert::Recursive {
-        name,
-        carrier,
-        box_idx,
-        add_idx,
-        sub_idx,
-        ..
-    } = c.inner()
-    else {
-        unreachable!("audited recursion claim is unary")
+    let (name, carrier) = match c.inner() {
+        Cert::Recursive { name, carrier, .. }
+        | Cert::AccumulatorRecursive { name, carrier, .. } => (name, carrier),
+        _ => unreachable!("audited recursion claim has a recursion shape"),
     };
     format!(
         "({{ exportNameBytes := {}, exportName := {}, carrier := {carrier}, \
@@ -57,7 +56,7 @@ fn recursion_claim_lean_value(c: &Cert) -> String {
          AverCert.AcceptedArtifact.RecursionClaim)",
         render_byte_list(name.as_bytes()),
         lean_str(name),
-        recursion_host_table_lean_value(*box_idx, *add_idx, *sub_idx),
+        recursion_host_table_lean_value(c),
     )
 }
 
@@ -65,15 +64,22 @@ fn recursion_claim_lean_value(c: &Cert) -> String {
 /// audited discharge from `Final.lean`. This is data reconstruction only: the
 /// source-model residual lives exclusively in the semantic bridge below.
 fn recursion_claim_acceptance_proof(c: &Cert) -> String {
-    let Cert::Recursive {
-        self_idx,
-        code_idx,
-        type_idx,
-        carrier,
-        ..
-    } = c.inner()
-    else {
-        unreachable!("audited recursion acceptance is unary")
+    let (self_idx, code_idx, type_idx, carrier) = match c.inner() {
+        Cert::Recursive {
+            self_idx,
+            code_idx,
+            type_idx,
+            carrier,
+            ..
+        }
+        | Cert::AccumulatorRecursive {
+            self_idx,
+            code_idx,
+            type_idx,
+            carrier,
+            ..
+        } => (self_idx, code_idx, type_idx, carrier),
+        _ => unreachable!("audited recursion acceptance has a recursion shape"),
     };
     let plan = recursion_plan_from_cert(c).expect("audited recursion has a canonical plan");
     let body = lower_expr_fragment_plan(&plan, *carrier)
@@ -92,12 +98,12 @@ fn recursion_claim_acceptance_proof(c: &Cert) -> String {
     )
 }
 
-/// Option-(b) residual for one unary additive recursion obligation. The
+/// Option-(b) residual for one unary additive or multiplicative recursion obligation. The
 /// generated proof identifies the byte-derived parsed shape and relates the
 /// generated source model to the independent `V3Rec.evalRecU` evaluator in
 /// both domain directions. Fuel induction and Wasm execution stay in the
 /// sha-pinned `V3RecSpike` / `V3DischargeRecursion` wall.
-fn render_recursion_semantic_bridge(c: &Cert) -> String {
+fn render_unary_recursion_semantic_bridge(c: &Cert) -> String {
     let Cert::Recursive {
         name,
         box_idx,
@@ -110,6 +116,7 @@ fn render_recursion_semantic_bridge(c: &Cert) -> String {
     };
     debug_assert!(recursion_uses_audited_generic(c));
     let shape = recursion_shape_lean_value(c);
+    let combine = recursion_combine_lean_value(c);
     let claim = recursion_claim_lean_value(c);
     let acceptance = recursion_claim_acceptance_proof(c);
     format!(
@@ -128,19 +135,20 @@ theorem {name}_recursionSemanticBridge :
     V3Master.recursionSemanticBridge {claim}
       AverCert.Plans.{name}RecursionPlan := by
   have hModelFuel : ∀ fuel n,
-      V3Rec.evalRecUFuel {shape} fuel n = {name}__fuel fuel n := by
+      V3Rec.evalRecUFuel {combine} {shape} fuel n = {name}__fuel fuel n := by
     intro fuel
     induction fuel with
     | zero => intro n; rfl
     | succ fuel ih =>
         intro n
         simp only [V3Rec.evalRecUFuel, {name}__fuel]
-        split <;> simp_all [V3Rec.stepEval]
-  have hModel : ∀ n, V3Rec.evalRecU {shape} n = {name} n := by
+        split <;> simp_all [V3Rec.stepEval, V3Rec.combineEval]
+  have hModel : ∀ n, V3Rec.evalRecU {combine} {shape} n = {name} n := by
     intro n
     simpa [V3Rec.evalRecU, {name}] using hModelFuel (n.natAbs + 1) n
-  refine ⟨{box_idx}, {add_idx}, {sub_idx}, {shape},
-    rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
+  refine Or.inl ?_
+  refine ⟨{combine}, {box_idx}, {add_idx}, {sub_idx}, {shape},
+    rfl, rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
   · intro add sub mul stringEq stringConcat
     simpa [AverCert.{name}Ob, CertModule.{name}Host]
   · intro S ns vs hDom
@@ -165,6 +173,88 @@ theorem {name}_recursionSemanticBridge :
 #print axioms {name}_recursionSemanticBridge
 "#
     )
+}
+
+fn render_accumulator_recursion_semantic_bridge(c: &Cert) -> String {
+    let Cert::AccumulatorRecursive {
+        name,
+        box_idx,
+        add_idx,
+        sub_idx,
+        ..
+    } = c.inner()
+    else {
+        unreachable!()
+    };
+    let claim = recursion_claim_lean_value(c);
+    let acceptance = recursion_claim_acceptance_proof(c);
+    format!(
+        r#"/-! ### {name} — option-(b) accumulator recursion semantic bridge -/
+
+theorem {name}_recursionClaimAccepted :
+    AverCert.AcceptedArtifact.recursionClaimAccepted
+      AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
+      AverCert.manifest {claim} := by
+  dsimp [AverCert.AcceptedArtifact.recursionClaimAccepted,
+    AverCert.AcceptedArtifact.recursionPlanForExport,
+    AverCert.AcceptedArtifact.recursionPlanAccepted]
+  exact {acceptance}
+
+theorem {name}_recursionSemanticBridge :
+    V3Master.recursionSemanticBridge {claim}
+      AverCert.Plans.{name}RecursionPlan := by
+  have hModelFuel : ∀ fuel n acc,
+      V3Rec.evalRecAFuel fuel n acc = {name}__fuel fuel n acc := by
+    intro fuel
+    induction fuel with
+    | zero => intro n acc; rfl
+    | succ fuel ih =>
+        intro n acc
+        simp only [V3Rec.evalRecAFuel, {name}__fuel]
+        split <;> simp_all
+  have hModel : ∀ n acc, V3Rec.evalRecA n acc = {name} n acc := by
+    intro n acc
+    simpa [V3Rec.evalRecA, {name}] using hModelFuel (n.natAbs + 1) n acc
+  refine Or.inr ?_
+  refine ⟨{box_idx}, {add_idx}, {sub_idx}, .accumulator,
+    rfl, rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
+  · intro add sub mul stringEq stringConcat
+    simpa [AverCert.{name}Ob, CertModule.{name}Host]
+  · intro S ns vs hDom
+    rcases hDom with ⟨hRepr, hLen⟩
+    cases hRepr with
+    | nil => simp at hLen
+    | cons hvn htail =>
+        rename_i n vn ns1 vs1
+        cases htail with
+        | nil => simp at hLen
+        | cons hvacc htail2 =>
+            rename_i acc vacc ns2 vs2
+            cases htail2 with
+            | nil =>
+                refine ⟨n, acc, vn, vacc, rfl, hvn, hvacc, ?_⟩
+                intro w hw
+                simpa [AverCert.Schema.intRepr, hModel n acc] using hw
+            | cons _ _ => simp at hLen
+  · intro S n acc vn vacc hvn hvacc
+    refine ⟨[n, acc],
+      ⟨ReprAll.cons hvn (ReprAll.cons hvacc ReprAll.nil), rfl⟩, ?_⟩
+    intro w hw
+    simpa [AverCert.Schema.intRepr, hModel n acc] using hw
+
+#print axioms {name}_recursionSemanticBridge
+"#
+    )
+}
+
+fn render_recursion_semantic_bridge(c: &Cert) -> String {
+    match c.inner() {
+        Cert::Recursive { .. } => render_unary_recursion_semantic_bridge(c),
+        Cert::AccumulatorRecursive { .. } => {
+            render_accumulator_recursion_semantic_bridge(c)
+        }
+        _ => unreachable!(),
+    }
 }
 
 /// Per-obligation `Final.cert` arm. A singleton artifact view supplies the

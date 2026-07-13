@@ -156,11 +156,12 @@ fn rec_base_const_block(base_k: i64, box_idx: u32) -> FragBlock {
 }
 
 /// The step arm of single-argument recursion: descent + self-call combined with
-/// the other operand by the (byte-role `Add`) combinator helper. `rec_first`
+/// the other operand by the byte-derived combinator helper. `rec_first`
 /// selects the operand order `f(n-1) + other` vs `other + f(n-1)`.
 fn rec_step_block(
     box_idx: u32,
-    add_idx: u32,
+    combine_role: FragHostRole,
+    combine_idx: u32,
     sub_idx: u32,
     self_idx: u32,
     rec_first: bool,
@@ -173,8 +174,8 @@ fn rec_step_block(
         b.push(
             FragTy::IntCarrier,
             FragNodeKind::HostCall {
-                role: FragHostRole::Add,
-                func_idx: add_idx,
+                role: combine_role,
+                func_idx: combine_idx,
                 args: vec![self_id, other_id],
             },
         )
@@ -184,8 +185,8 @@ fn rec_step_block(
         b.push(
             FragTy::IntCarrier,
             FragNodeKind::HostCall {
-                role: FragHostRole::Add,
-                func_idx: add_idx,
+                role: combine_role,
+                func_idx: combine_idx,
                 args: vec![other_id, self_id],
             },
         )
@@ -196,13 +197,14 @@ fn rec_step_block(
 /// Full plan for `Cert::Recursive` (single-argument fuel self-recursion).
 fn recursion_plan_recursive(
     box_idx: u32,
-    add_idx: u32,
+    combine: (FragHostRole, u32),
     sub_idx: u32,
     self_idx: u32,
     base_k: i64,
     rec_first: bool,
     other: BodyOperand,
 ) -> ExprFragmentPlan {
+    let (combine_role, combine_idx) = combine;
     let mut top = RecBlockBuilder::new();
     let sign = rec_push_sign_predicate(&mut top);
     let value = top.push(
@@ -211,7 +213,13 @@ fn recursion_plan_recursive(
             cond: sign,
             then_block: Box::new(rec_base_const_block(base_k, box_idx)),
             else_block: Box::new(rec_step_block(
-                box_idx, add_idx, sub_idx, self_idx, rec_first, other,
+                box_idx,
+                combine_role,
+                combine_idx,
+                sub_idx,
+                self_idx,
+                rec_first,
+                other,
             )),
         },
     );
@@ -310,12 +318,25 @@ fn recursion_plan_from_cert(c: &Cert) -> Option<ExprFragmentPlan> {
             base_k,
             rec_first,
             other,
+            combinator,
             carrier,
             code_entry_bytes,
             ..
         } => (
             recursion_plan_recursive(
-                *box_idx, *add_idx, *sub_idx, *self_idx, *base_k, *rec_first, *other,
+                *box_idx,
+                (
+                    match combinator {
+                        Combinator::Add => FragHostRole::Add,
+                        Combinator::Mul => FragHostRole::Mul,
+                    },
+                    *add_idx,
+                ),
+                *sub_idx,
+                *self_idx,
+                *base_k,
+                *rec_first,
+                *other,
             ),
             *carrier,
             code_entry_bytes,
@@ -343,12 +364,31 @@ fn recursion_plan_from_cert(c: &Cert) -> Option<ExprFragmentPlan> {
 }
 
 /// The per-export byte-derived host-role table a recursion claim carries: the
-/// box helper, the combinator helper (byte-role `Add`; routed to the `mul`
-/// contract slot when the model combinator is `*`), and the strict `sub`
-/// helper, exactly as the cert's obligation wires them. Rendered identically
-/// by producer and verifier so the artifact data pin stays byte-exact.
-fn recursion_host_table_lean_value(box_idx: u32, add_idx: u32, sub_idx: u32) -> String {
-    format!("[(.box, {box_idx}), (.add, {add_idx}), (.sub, {sub_idx})]")
+/// Per-export byte-derived host roles, rendered identically by producer and
+/// verifier. Multiplicative recursion carries `.mul`, never an `.add` alias.
+fn recursion_host_table_lean_value(c: &Cert) -> String {
+    match c.inner() {
+        Cert::Recursive {
+            box_idx,
+            add_idx,
+            sub_idx,
+            combinator,
+            ..
+        } => {
+            let role = match combinator {
+                Combinator::Add => ".add",
+                Combinator::Mul => ".mul",
+            };
+            format!("[(.box, {box_idx}), ({role}, {add_idx}), (.sub, {sub_idx})]")
+        }
+        Cert::AccumulatorRecursive {
+            box_idx,
+            add_idx,
+            sub_idx,
+            ..
+        } => format!("[(.box, {box_idx}), (.add, {add_idx}), (.sub, {sub_idx})]"),
+        _ => unreachable!("recursion host table requires a recursion certificate"),
+    }
 }
 
 /// The Lean `RecursionRawPlan` literal for a byte-first recursion plan (profile
@@ -400,7 +440,15 @@ mod recursion_plan_gate_tests {
 
     #[test]
     fn recursion_plan_requires_exact_code_entry_bytes() {
-        let plan = recursion_plan_recursive(10, 11, 12, 1, 7, false, BodyOperand::Input);
+        let plan = recursion_plan_recursive(
+            10,
+            (FragHostRole::Add, 11),
+            12,
+            1,
+            7,
+            false,
+            BodyOperand::Input,
+        );
         let canonical =
             lower_expr_fragment_plan_code_entry_bytes(&plan, 2).expect("canonical lowering");
 

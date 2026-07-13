@@ -34,19 +34,17 @@ impl Cert {
         }
     }
 
-    /// The v48 total families: unary `n - 1` recursion whose combinator uses
-    /// `Int.add`, and complete integer-countdown mutual SCCs. Multiplicative
-    /// recursion would require a frozen `mul` totality contract; accumulator
-    /// and budget-heuristic families remain partial.
+    /// The total families: unary `n - 1` recursion, the exact two-argument
+    /// accumulator, and complete integer-countdown mutual SCCs.  Only unary
+    /// multiplication selects the additional Int.mul totality premise.
     fn termination_witness(&self) -> Option<TerminationWitness> {
         match self.inner() {
-            Cert::Recursive {
-                combinator: Combinator::Add,
-                ..
-            } => Some(TerminationWitness {
+            Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. } => {
+                Some(TerminationWitness {
                 measure: TerminationMeasure::IntNatAbs { param_idx: 0 },
                 descent: -1,
-            }),
+                })
+            }
             Cert::MutualRecursion { scc, .. } if mutual_scc_total_eligible(scc) => {
                 Some(TerminationWitness {
                     measure: TerminationMeasure::IntNatAbs { param_idx: 0 },
@@ -62,6 +60,27 @@ impl Cert {
             CertificationPolicy::SimulatesModelTotally
         } else {
             CertificationPolicy::SimulatesModel
+        }
+    }
+
+    /// Whether this total obligation genuinely executes a byte-pinned
+    /// `Int.mul` combine and therefore needs multiplication to be total.
+    fn requires_mul_totality(&self) -> bool {
+        self.policy() == CertificationPolicy::SimulatesModelTotally
+            && matches!(
+                self.inner(),
+                Cert::Recursive {
+                    combinator: Combinator::Mul,
+                    ..
+                }
+            )
+    }
+
+    fn totality_role_lean_value(&self) -> &'static str {
+        if self.requires_mul_totality() {
+            ".mul"
+        } else {
+            ".addSub"
         }
     }
 

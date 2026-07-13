@@ -52,6 +52,7 @@ pub fn byte_derived_frag_host_role_indices(
     Ok((
         host_table.box_idx,
         host_table.add_idx,
+        host_table.mul_idx,
         host_table.sub_idx,
     ))
 }
@@ -80,7 +81,12 @@ pub fn byte_derived_string_host_roles(
 fn frag_calls_resolvable(calls: &[u32], table: &FragHostTable) -> bool {
     calls
         .iter()
-        .all(|idx| Some(*idx) == table.box_idx || Some(*idx) == table.add_idx)
+        .all(|idx| {
+            Some(*idx) == table.box_idx
+                || Some(*idx) == table.add_idx
+                || Some(*idx) == table.mul_idx
+                || Some(*idx) == table.sub_idx
+        })
 }
 
 /// Fail-closed validation that every `hostCall` node in a checked plan cites

@@ -480,7 +480,8 @@ def recursionPlanAccepted
       AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
-      AverCert.PlanCheck.checkRecursionPlanShape binding.funcIdx hostTable plan = true ∧
+      AverCert.PlanCheck.checkRecursionPlanShape binding.funcIdx hostTable
+        obligation.totalityRole plan = true ∧
       AverCert.WasmSlice.funcTypeMatches
         modBytes modLen binding.typeIdx plan.params.length carrier = true ∧
       obligation.code binding.funcIdx =
@@ -539,6 +540,7 @@ def mutualPlanAccepted
     (obligation : Obligation) : Prop :=
   obligation.export_ = exportName ∧
     obligation.carrier = carrier ∧
+    obligation.totalityRole = .addSub ∧
     AverCert.PlanCheck.checkMutualRawPlan plan = true ∧
     (match obligation.policy, obligation.termination? with
      | .simulatesModel, none => true
@@ -687,7 +689,7 @@ def verbatimClaimAccepted
     host is built from (`boxRef` and the abstract add/sub slots of
     `Obligation.host`); it defines no new semantics. -/
 def intDispatchCanonicalSlots
-    (carrier : Nat) (add sub : List WVal → Option WVal) :
+    (carrier : Nat) (add sub mul : List WVal → Option WVal) :
     List (HostRole × Nat) → HostTbl
   | [] => fun _ => none
   | (role, idx) :: rest => fun fn =>
@@ -695,8 +697,9 @@ def intDispatchCanonicalSlots
         some (match role with
           | .box => ((1 : Nat), boxRef carrier)
           | .add => ((2 : Nat), add)
+          | .mul => ((2 : Nat), mul)
           | .sub => ((2 : Nat), sub))
-      else intDispatchCanonicalSlots carrier add sub rest fn
+      else intDispatchCanonicalSlots carrier add sub mul rest fn
 
 /-- The canonical Int-face host BUILDER for a byte-derived role table: the
     whole `Obligation.host` value an honest Int-face dispatch obligation
@@ -715,8 +718,8 @@ def intDispatchCanonicalHost
     (List WVal → Option WVal) → (List WVal → Option WVal) →
     (List WVal → Option WVal) → (List WVal → Option WVal) →
     (Nat → List WVal → Option WVal) → HostTbl :=
-  fun add sub _mul _stringEq _stringConcat =>
-    intDispatchCanonicalSlots carrier add sub hostTable
+  fun add sub mul _stringEq _stringConcat =>
+    intDispatchCanonicalSlots carrier add sub mul hostTable
 
 /-- Artifact-level acceptance for one Int-face `ref.test`-dispatch export. The
     `IntDispatchRawPlan` is checked structurally (`checkIntDispatchRawPlan`),

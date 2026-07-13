@@ -135,23 +135,6 @@ fn aver_verify(artifact: &Path, cert_dir: &Path) -> (bool, String) {
     aver_cert(&["verify"], artifact, cert_dir)
 }
 
-fn assert_certificate_target_builds(cert_dir: &Path, case: &str) {
-    let out = Command::new("lake")
-        .current_dir(cert_dir)
-        .args(["build", "Certificate"])
-        .output()
-        .expect("lake builds the isolated Certificate target");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        out.status.success(),
-        "vacuous proof must compile before the byte-binding tripwire ({case}):\n{combined}"
-    );
-}
-
 fn aver_cert(sub: &[&str], artifact: &Path, cert_dir: &Path) -> (bool, String) {
     let out = aver_command()
         .arg("cert")
@@ -1272,86 +1255,12 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         assert!(!out.contains("CERTIFIED"), "relabel credited (u):\n{out}");
     }
 
-    // (v) M1 semantic-face vacuity — `Dom := Empty`. Empty the still-partial
-    //     countDown obligation's
-    //     domain so `holds` quantifies over no inhabitant, and swap in a vacuous
-    //     `ns.elim` proof. It builds green AND passes the code/host/self/carrier
-    //     bindings, but the witness proves `Nonempty o.Dom` over every obligation
-    //     and `Empty` has no such instance → DECLINED (the panel's M1 attack).
+    // (v) Migrated accumulator-recursion code decouple: point `countDown` at an
+    //     always-trapping code table. There is no bespoke simulation theorem to
+    //     swap after the migration; the audited generic claim/bridge must bind
+    //     the arity-two obligation directly to the byte-derived plan.
     {
-        let dir = temp_dir("neg-v-empty-dom");
-        copy_dir(&out_dir, &dir);
-        let man = dir.join("cert").join("Manifest.lean");
-        let msrc = std::fs::read_to_string(&man).unwrap();
-        let edited = msrc.replacen(COUNTDOWN_FACE, COUNTDOWN_FACE_EMPTY_DOM, 1);
-        assert_ne!(
-            msrc, edited,
-            "countDownOb face shape changed; update the test"
-        );
-        std::fs::write(&man, edited).unwrap();
-        replace_countdown_simulates(
-            &dir.join("cert"),
-            "theorem countDown_simulates : AverCert.Schema.Obligation.holds countDownOb := by\n  \
-             intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun\n  \
-             exact ns.elim",
-        );
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "Dom := Empty vacuity must be DECLINED (v):\n{out}");
-        assert!(out.contains("does not bind"), "wrong reason (v):\n{out}");
-        assert!(
-            !out.contains("did not build"),
-            "case (v) must build green and be caught by the witness:\n{out}"
-        );
-        assert!(
-            !out.contains("CERTIFIED"),
-            "empty-domain cert credited (v):\n{out}"
-        );
-    }
-
-    // (w) M2 semantic-face vacuity — `codRepr := fun _ _ _ => True` plus a wrong
-    //     model. The codomain representation is trivialised, so `holds` is
-    //     provable by `trivial` regardless of what the body computes; the model
-    //     is changed to a wrong constant to show the false green. It builds green,
-    //     but the witness pins `codRepr` to `intRepr` by `HEq.rfl` → DECLINED
-    //     (the panel's M2 attack).
-    {
-        let dir = temp_dir("neg-w-true-codrepr");
-        copy_dir(&out_dir, &dir);
-        let man = dir.join("cert").join("Manifest.lean");
-        let msrc = std::fs::read_to_string(&man).unwrap();
-        let edited = msrc.replacen(COUNTDOWN_FACE, COUNTDOWN_FACE_TRUE_CODREPR, 1);
-        assert_ne!(
-            msrc, edited,
-            "countDownOb face shape changed; update the test"
-        );
-        std::fs::write(&man, edited).unwrap();
-        replace_countdown_simulates(
-            &dir.join("cert"),
-            "theorem countDown_simulates : AverCert.Schema.Obligation.holds countDownOb := by\n  \
-             intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun\n  \
-             trivial",
-        );
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "codRepr := True vacuity must be DECLINED (w):\n{out}");
-        assert!(out.contains("does not bind"), "wrong reason (w):\n{out}");
-        assert!(
-            !out.contains("did not build"),
-            "case (w) must build green and be caught by the witness:\n{out}"
-        );
-        assert!(
-            !out.contains("CERTIFIED"),
-            "true-codRepr cert credited (w):\n{out}"
-        );
-    }
-
-    // (x) Bespoke-recursion code decouple: unlike migrated `sumTo`, `countDown`
-    //     still has a schema-shaped simulation theorem. Point its obligation at
-    //     an always-trapping decoy and replace that theorem with a valid vacuous
-    //     proof. Build the `Certificate` target alone first, proving the swapped
-    //     theorem elaborates; then require full verification to fail only once
-    //     the artifact/checker byte binding is present.
-    {
-        let dir = temp_dir("neg-x-countdown-code");
+        let dir = temp_dir("neg-v-countdown-code");
         copy_dir(&out_dir, &dir);
         let cert = dir.join("cert");
         let module = cert.join("Module.lean");
@@ -1374,27 +1283,16 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         );
         assert_ne!(msrc, decoupled, "countDown code field shape changed");
         std::fs::write(&manifest, decoupled).unwrap();
-        replace_countdown_simulates(
-            &cert,
-            "theorem countDown_simulates : AverCert.Schema.Obligation.holds countDownOb := by\n  \
-             intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun\n  \
-             exfalso\n  \
-             cases fuel with\n  \
-             | zero => simp only [wFuncN, reduceCtorEq] at hrun\n  \
-             | succ f =>\n      \
-               simp only [countDownOb, CertModule.wrongCode, wFuncN, reduceCtorEq] at hrun",
-        );
-        assert_certificate_target_builds(&cert, "x");
 
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &cert);
-        assert!(!ok, "countDown code decouple must be DECLINED (x):\n{out}");
+        assert!(!ok, "countDown code decouple must be DECLINED (v):\n{out}");
         assert!(
             out.contains("did not build") || out.contains("does not bind"),
-            "wrong reason (x):\n{out}"
+            "wrong reason (v):\n{out}"
         );
         assert!(
             !out.contains("CERTIFIED"),
-            "countDown code decouple credited (x):\n{out}"
+            "countDown code decouple credited (v):\n{out}"
         );
     }
 
@@ -1608,22 +1506,6 @@ fn big_nat_code_entry_pin_closes_at_130kb_and_flipped_byte_fails() {
     let _ = std::fs::remove_dir_all(out_dir);
 }
 
-/// The byte-honest, still-partial countDown obligation face emitted for
-/// certprobe2 (the standard
-/// integer-class form), and the two panel face-vacuity mutations of it.
-const COUNTDOWN_FACE: &str = "Dom := List Int, Cod := Int,\n    \
-    domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = 2,\n    \
-    codRepr := fun S n w => intRepr S n w,\n    \
-    model := fun ns => countDown (ns.headD 0) ((ns.drop 1).headD 0) }";
-const COUNTDOWN_FACE_EMPTY_DOM: &str = "Dom := Empty, Cod := Int,\n    \
-    domRepr := fun _ (e : Empty) _ => e.elim,\n    \
-    codRepr := fun S n w => intRepr S n w,\n    \
-    model := fun (e : Empty) => e.elim }";
-const COUNTDOWN_FACE_TRUE_CODREPR: &str = "Dom := List Int, Cod := Int,\n    \
-    domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = 2,\n    \
-    codRepr := fun _ _ _ => True,\n    \
-    model := fun _ => 999 }";
-
 /// The byte-honest `sumToCode` body for certprobe2, used verbatim as a decoy in
 /// the shadow/comment cases (planting the honest TEXT must not change `o.code`).
 const HONEST_SUMTO_CODE: &str = "/-- Verbatim emitted body of `sumTo` (self-recursive). -/\n\
@@ -1635,39 +1517,6 @@ const HONEST_SUMTO_CODE: &str = "/-- Verbatim emitted body of `sumTo` (self-recu
     .ifElse [.i64Const 0, .call 7]\n              \
     [.localGet 0, .localGet 0, .i64Const 1, .call 7, .call 9, .call 1, .call 8] ]⟩\n  \
     else none";
-
-/// Partial-obligation counterpart used by the semantic-face isolation probes.
-/// `sumTo` is L3 now, so vacuity probes stay on `countDown` to reach the
-/// verifier's typed-face pins rather than failing the total denotation earlier.
-fn replace_countdown_simulates(cert_dir: &Path, replacement: &str) {
-    let c = cert_dir.join("Certificate.lean");
-    let src = std::fs::read_to_string(&c).unwrap();
-    let old = "theorem countDown_simulates : AverCert.Schema.Obligation.holds countDownOb := by\n  \
-        intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun\n  \
-        simp only [countDownOb, AverCert.Schema.Obligation.holds] at hrun ⊢\n  \
-        obtain ⟨hrepr, harity⟩ := hrepr\n  \
-        cases hrepr with\n  \
-        | nil =>\n      \
-        simp at harity\n  \
-        | cons hvn htail =>\n      \
-        rename_i n vn ns1 vs1\n      \
-        cases htail with\n      \
-        | nil =>\n          \
-        simp at harity\n      \
-        | cons hvacc htail2 =>\n          \
-        rename_i acc vacc ns2 vs2\n          \
-        cases htail2 with\n          \
-        | nil =>\n              \
-        simpa [AverCert.Schema.intRepr] using countDown_wasm_certified S.Repr S.car S.smallIntro S.smallElim S.bigElim\n                \
-        add sub hadd hsub fuel n acc vn vacc w hvn hvacc hrun\n          \
-        | cons _ _ =>\n              \
-        simp at harity";
-    assert!(
-        src.contains(old),
-        "emitted countDown_simulates block shape changed; update the test"
-    );
-    std::fs::write(&c, src.replacen(old, replacement, 1)).unwrap();
-}
 
 #[test]
 fn cert_verify_declines_tampered_array_new_data_operands() {
@@ -4258,12 +4107,13 @@ fn cert_verify_declines_relabeled_projection_source_types() {
     let _ = std::fs::remove_dir_all(&tamper_dir);
 }
 
-/// A tampered byte-first `recursion-plan-v1` plan is declined. Each vector
-/// mutates the fuel-recursion plan for `sumFrom` in the shipped `Plans.lean`
-/// while leaving the wasm untouched, so the plan no longer canonically lowers to
-/// `sumFrom`'s real code-entry bytes. The checker rebuilds the shipped plan (its
-/// `rfl` chain is pinned to the honest bytes) and its kernel witness proves
-/// `accepted` over `manifest.recursionPlans`, so either gate rejects the plan.
+/// A tampered byte-first `recursion-plan-v1` plan is declined. The vectors
+/// exercise additive, multiplicative, and accumulator plans in the shipped
+/// `Plans.lean` while leaving the wasm untouched. The checker rebuilds the
+/// shipped plan (its `rfl` chain is pinned to the honest bytes) and its kernel
+/// witness proves `accepted` over `manifest.recursionPlans`, so either gate
+/// rejects the plan. The factorial vector deliberately preserves the lowered
+/// bytes: its multiply call is assigned the wrong role at the same index.
 #[test]
 fn cert_verify_declines_tampered_recursion_plan() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -4320,7 +4170,7 @@ fn cert_verify_declines_tampered_recursion_plan() {
     //     the in-kernel context-sensitive grammar (`checkRecursionPlanShape`,
     //     which pins self-call targets to the export's own byte-derived index
     //     and host calls to the role table) rejects it.
-    let tampers: [(&str, &str, &str); 4] = [
+    let tampers: [(&str, &str, &str); 6] = [
         (
             "descent role swap",
             ".hostCall .sub 12 [1, 3]",
@@ -4340,6 +4190,16 @@ fn cert_verify_declines_tampered_recursion_plan() {
             "byte-identical self-call mislabel",
             ".hostCall .sub 12 [1, 3]",
             ".selfCall false 12 [1, 3]",
+        ),
+        (
+            "byte-identical multiply role mislabel",
+            ".hostCall .mul 13 [0, 5]",
+            ".hostCall .add 13 [0, 5]",
+        ),
+        (
+            "accumulator threading swap",
+            ".selfCall true 5 [3, 6]",
+            ".selfCall true 5 [3, 4]",
         ),
     ];
     for (label, from, to) in tampers {
@@ -4872,7 +4732,7 @@ fn mutual_scc_kernel_guards_are_isolating() {
     lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3, 4]), (2, 1, [1, 2, 3, 4]), (3, 4, [1, 2, 3, 4]), (4, 3, [1, 2, 3, 4])] = false := rfl\n\n");
     // FIX B: the REAL acceptance conjunct rejects a dangling group; shape passes.
     lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := 2, code := fun _ => none,\n    host := fun _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
-    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], declaredUncertified := [], capabilities := [], start := none, hostRoleTable := { box := none, add := none, sub := none }, stringHostRoles := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
+    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], declaredUncertified := [], capabilities := [], start := none, hostRoleTable := { box := none, add := none, mul := none, sub := none }, stringHostRoles := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
     lean.push_str("def claimsS : List MutualRecursionClaim :=\n  [ { exportNameBytes := [], exportName := \"a\", carrier := 2, memberSet := [1, 2],\n      hostTable := [(.box, 7), (.sub, 9)], obligation := dummyOb \"a\" 1 } ]\n\n");
     lean.push_str("example : AverCert.PlanCheck.checkMutualPlanShape [1, 2] [(.box, 7), (.sub, 9)] honestPlan = true := rfl\n");
     lean.push_str("example : mutualClaimEdges manifestS claimsS = some [(1, 2, [1, 2])] := rfl\n");

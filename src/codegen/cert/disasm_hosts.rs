@@ -37,7 +37,7 @@ fn string_host_roles(
         .filter_map(|(idx, role)| match role {
             HostRole::StringEq => Some((*idx, StringHostRole::Eq)),
             HostRole::StringConcat => Some((*idx, StringHostRole::Concat)),
-            HostRole::Add | HostRole::Sub => None,
+            HostRole::Add | HostRole::Mul | HostRole::Sub => None,
         })
         .collect::<Vec<_>>();
     roles.sort_by_key(|entry| entry.0);

@@ -1062,18 +1062,9 @@ fn rederive_certificate_inner(
             recursion_plan_lean: recursion_plan_from_cert(c)
                 .map(|plan| recursion_plan_lean_value(&plan)),
             recursion_host_table_lean: match c.inner() {
-                Cert::Recursive {
-                    box_idx,
-                    add_idx,
-                    sub_idx,
-                    ..
+                Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. } => {
+                    Some(recursion_host_table_lean_value(c))
                 }
-                | Cert::AccumulatorRecursive {
-                    box_idx,
-                    add_idx,
-                    sub_idx,
-                    ..
-                } => Some(recursion_host_table_lean_value(*box_idx, *add_idx, *sub_idx)),
                 _ => None,
             },
             recursion_code_idx: match c.inner() {

@@ -103,6 +103,15 @@ inductive Policy where
   | simulatesModel
   | simulatesModelTotally
 
+/-- Extra totality premise selected for one total obligation.  The default
+    preserves the shipped L3 contract: add/sub are total, while the partial mul
+    law remains available but mul need not return.  The `.mul` role is reserved
+    for a byte-checked unary recursion whose combine call is `Int.mul`. -/
+inductive TotalityRole where
+  | addSub
+  | mul
+deriving Repr, DecidableEq
+
 /-- Closed measure vocabulary for the first total-correctness family. The
     parameter index is claim data; `checkTerm` below accepts it only when the
     byte-bound recursion plan descends that integer parameter by one. -/
@@ -251,6 +260,7 @@ deriving Repr, DecidableEq
 inductive HostRole where
   | box
   | add
+  | mul
   | sub
 deriving Repr, DecidableEq
 
@@ -361,15 +371,11 @@ def checkTermStep? (paramIdx : Nat) (body : FragBlock) : Option FragBlock :=
           checkTermBigFloor paramIdx big then some step else none
   | _, _ => none
 
-/-- Does one node in the step arm call self on exactly
-    `sub(local paramIdx, box(1))`? Node ids are followed within the same checked
-    ANF block; host indices and the self index remain byte-bound by the ordinary
-    recursion-plan acceptance predicate. -/
-def checkTermDescent (paramIdx : Nat) (step : FragBlock) : Bool :=
-  step.nodes.any fun node =>
-    match node.kind with
-    | .selfCall false _ [descentId] =>
-        match step.nodes[descentId]? with
+/-- Check that one selected self-call argument is exactly
+    `sub(local paramIdx, box(1))`. -/
+def checkTermDescentArg (paramIdx : Nat) (step : FragBlock)
+    (descentId : Nat) : Bool :=
+  match step.nodes[descentId]? with
         | some { kind := .hostCall .sub _ [inputId, boxedOneId], .. } =>
             match step.nodes[inputId]?, step.nodes[boxedOneId]? with
             | some { kind := .local localIdx, .. },
@@ -379,9 +385,21 @@ def checkTermDescent (paramIdx : Nat) (step : FragBlock) : Bool :=
                 | _ => false
             | _, _ => false
         | _ => false
+
+/-- Does one node in the step arm call self with a checked first-parameter
+    descent? Unary recursion uses a non-tail one-argument call; accumulator
+    recursion uses a tail two-argument call whose second argument is pinned by
+    the independently checked recursion grammar. -/
+def checkTermDescent (paramIdx : Nat) (step : FragBlock) : Bool :=
+  step.nodes.any fun node =>
+    match node.kind with
+    | .selfCall false _ [descentId] =>
+        checkTermDescentArg paramIdx step descentId
+    | .selfCall true _ [descentId, _accId] =>
+        checkTermDescentArg paramIdx step descentId
     | _ => false
 
-/-- Kernel decision procedure for the promoted unary descent-by-one family.
+/-- Kernel decision procedure for promoted descent-by-one recursion.
     It does not synthesise a measure: it checks the claimed `natAbs` parameter,
     the `-1` descent, the non-positive floor guard, and the exact recursive
     argument chain already pinned to the module bytes by the plan gate. -/
@@ -389,7 +407,8 @@ def checkTerm (plan : RecursionRawPlan) (witness : TerminationWitness) : Bool :=
   match witness.measure with
   | .intNatAbs paramIdx =>
       plan.profile == "recursion-plan-v1" &&
-      plan.params == [.intCarrier] &&
+      (plan.params == [.intCarrier] ||
+       plan.params == [.intCarrier, .intCarrier]) &&
       plan.result == .intCarrier &&
       paramIdx == 0 &&
       witness.descent == (-1 : Int) &&
@@ -692,6 +711,7 @@ structure Obligation where
   export_ : String
   policy  : Policy
   termination? : Option TerminationWitness := none
+  totalityRole : TotalityRole := .addSub
   carrier : Nat
   code    : CodeTbl
   host    :
@@ -729,29 +749,49 @@ def Obligation.holds (o : Obligation) : Prop :=
     wFuncN o.code (o.host add sub mul stringEq stringConcat) fuel o.self vs = some w →
     o.codRepr S (o.model x) w
 
-/-- Denotation of `simulatesModelTotally`. In addition to the five existing
-    partial host laws it assumes that integer add and sub return on represented
-    operands. For every represented integer input, the body must return at
-    fuel `natAbs n + 1`; the domain witness connects that standard integer face
-    to the obligation's independently pinned model and representations. For the
-    promoted unary recursion obligations this unfolds to
-    `∃ w, run (natAbs n + 1) = some w ∧ Repr (f n) w`. -/
+/-- Denotation of `simulatesModelTotally`, with its totality assumptions selected
+    by the obligation's byte-checked role.  The ordinary `.addSub` branch has
+    exactly the pre-schema-60 premise surface: only integer add and sub must
+    return on represented operands.  The `.mul` branch additionally assumes
+    multiplication totality and is admitted only for a byte-pinned unary
+    recursion whose combine role is `.mul`.  In either branch the first domain
+    argument is the checked `Int.natAbs` counter and the body must return at fuel
+    `natAbs n + 1`; the tail carries any additional represented arguments. -/
 def Obligation.holdsTotal (o : Obligation) : Prop :=
-  ∀ (S : CarrierSpec o.carrier)
-    (add sub mul stringEq : List WVal → Option WVal)
-    (stringConcat : Nat → List WVal → Option WVal)
-    (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
-    (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
-    (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
-    (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
-    (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
-    (_hAddTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
-    (_hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
-    (n : Int) (v : WVal), S.Repr n v →
-    ∃ x : o.Dom, o.domRepr S x [v] ∧
-      ∃ w, wFuncN o.code (o.host add sub mul stringEq stringConcat)
-          (n.natAbs + 1) o.self [v] = some w ∧
-        o.codRepr S (o.model x) w
+  match o.totalityRole with
+  | .addSub =>
+      ∀ (S : CarrierSpec o.carrier)
+        (add sub mul stringEq : List WVal → Option WVal)
+        (stringConcat : Nat → List WVal → Option WVal)
+        (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
+        (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
+        (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
+        (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
+        (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
+        (_hAddTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
+        (_hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
+        (x : o.Dom) (vs : List WVal), o.domRepr S x vs →
+        ∃ n v tail, vs = v :: tail ∧ S.Repr n v ∧
+          ∃ w, wFuncN o.code (o.host add sub mul stringEq stringConcat)
+              (n.natAbs + 1) o.self vs = some w ∧
+            o.codRepr S (o.model x) w
+  | .mul =>
+      ∀ (S : CarrierSpec o.carrier)
+        (add sub mul stringEq : List WVal → Option WVal)
+        (stringConcat : Nat → List WVal → Option WVal)
+        (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
+        (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
+        (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
+        (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
+        (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
+        (_hAddTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
+        (_hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
+        (_hMulTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, mul [va, vb] = some w)
+        (x : o.Dom) (vs : List WVal), o.domRepr S x vs →
+        ∃ n v tail, vs = v :: tail ∧ S.Repr n v ∧
+          ∃ w, wFuncN o.code (o.host add sub mul stringEq stringConcat)
+              (n.natAbs + 1) o.self vs = some w ∧
+            o.codRepr S (o.model x) w
 
 structure Manifest where
   subject     : Subject

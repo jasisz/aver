@@ -40,7 +40,8 @@ def recursionPlanAcceptedWithoutCheckTerm
       AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
       binding.funcIdx = obligation.self ∧
       binding.codeEntry = codeEntry ∧
-      AverCert.PlanCheck.checkRecursionPlanShape binding.funcIdx hostTable plan = true ∧
+      AverCert.PlanCheck.checkRecursionPlanShape binding.funcIdx hostTable
+        obligation.totalityRole plan = true ∧
       AverCert.WasmSlice.funcTypeMatches
         modBytes modLen binding.typeIdx plan.params.length carrier = true ∧
       obligation.code binding.funcIdx =
@@ -54,11 +55,19 @@ abbrev nameBytes : AverCert.WasmSlice.ByteSeq :=
 abbrev hostTable : List (HostRole × Nat) :=
   [(.box, 10), (.add, 11), (.sub, 12)]
 abbrev plan := AverCert.Plans.sumFromRecursionPlan
+abbrev accumulatorPlan := AverCert.Plans.countDownRecursionPlan
 
 -- The honest witness passes; each hostile witness fails at `checkTerm` itself.
 example : checkTerm plan honestWitness = true := rfl
 example : checkTerm plan wrongMeasureWitness = false := rfl
 example : checkTerm plan wrongDescentWitness = false := rfl
+
+-- The generalized checker reads the counter from argument zero while allowing
+-- the accumulator in argument one to be threaded through the recursive call.
+-- Swapping the measure to the accumulator or reversing descent still fails.
+example : checkTerm accumulatorPlan honestWitness = true := rfl
+example : checkTerm accumulatorPlan wrongMeasureWitness = false := rfl
+example : checkTerm accumulatorPlan wrongDescentWitness = false := rfl
 
 theorem honestAccepted : AverCert.AcceptedArtifact.recursionPlanAccepted
     modBytes modLen nameBytes "sumFrom" 2 hostTable plan AverCert.sumFromOb := by
@@ -76,24 +85,25 @@ theorem honestAccepted : AverCert.AcceptedArtifact.recursionPlanAccepted
 theorem weakenedAccepts (obligation : Obligation)
     (hfields : obligation.export_ = AverCert.sumFromOb.export_ ∧
       obligation.carrier = AverCert.sumFromOb.carrier ∧
+      obligation.totalityRole = AverCert.sumFromOb.totalityRole ∧
       obligation.self = AverCert.sumFromOb.self ∧
       obligation.code = AverCert.sumFromOb.code) :
     recursionPlanAcceptedWithoutCheckTerm
       modBytes modLen nameBytes "sumFrom" 2 hostTable plan obligation := by
   rcases honestAccepted with ⟨hexport, hcarrier, hraw, _hterm, hrest⟩
-  rcases hfields with ⟨hexport', hcarrier', hself', hcode'⟩
+  rcases hfields with ⟨hexport', hcarrier', htotality', hself', hcode'⟩
   refine ⟨?_, ?_, hraw, ?_⟩
   · simpa [hexport'] using hexport
   · simpa [hcarrier'] using hcarrier
-  · simpa [hself', hcode'] using hrest
+  · simpa [htotality', hself', hcode'] using hrest
 
 -- The one-conjunct-weakened copy accepts both hostile obligations.
 example : recursionPlanAcceptedWithoutCheckTerm
     modBytes modLen nameBytes "sumFrom" 2 hostTable plan wrongMeasureOb :=
-  weakenedAccepts wrongMeasureOb ⟨rfl, rfl, rfl, rfl⟩
+  weakenedAccepts wrongMeasureOb ⟨rfl, rfl, rfl, rfl, rfl⟩
 example : recursionPlanAcceptedWithoutCheckTerm
     modBytes modLen nameBytes "sumFrom" 2 hostTable plan wrongDescentOb :=
-  weakenedAccepts wrongDescentOb ⟨rfl, rfl, rfl, rfl⟩
+  weakenedAccepts wrongDescentOb ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 -- The real predicate rejects exactly where the weakened copy differs.
 example : ¬ AverCert.AcceptedArtifact.recursionPlanAccepted

@@ -1,5 +1,5 @@
 /-
-v3 master wiring — unary and mutual recursion-family discharges.
+v3 master wiring — unary, accumulator, and mutual recursion-family discharges.
 
 The accepted-plan predicates supply policy/termination admission and the exact
 selected code entry.  The independent obligation host/domain/model faces stay
@@ -32,17 +32,51 @@ private theorem allClaims_of_mem {Claim : Type u} (accept : Claim → Prop)
       · exact ih hTail hMem
 
 /-- Host, unary-domain, and source-model faces not pinned by
-`recursionPlanAccepted`.  Both domain directions are needed because `holds`
-starts with an arbitrary represented obligation input, whereas `holdsTotal`
-starts with an arbitrary represented integer and asks the obligation to
-provide its domain witness. -/
-def recursionSemanticBridge
+`recursionPlanAccepted`. Both domain directions are explicit trust faces: the
+forward direction decomposes arbitrary represented obligation inputs, while the
+reverse direction proves that every represented generic input has a matching
+source-domain witness. The total discharges consume both. -/
+def unaryRecursionSemanticBridge
+    (claim : RecursionClaim) (plan : RecursionRawPlan) : Prop :=
+  ∃ combineOp boxIdx combineIdx subIdx sh,
+    AverCert.PlanCheck.hostRoleIdx? claim.hostTable .box = some boxIdx ∧
+    AverCert.PlanCheck.hostRoleIdx? claim.hostTable
+      (V3Rec.combineHostRole combineOp) = some combineIdx ∧
+    AverCert.PlanCheck.hostRoleIdx? claim.hostTable .sub = some subIdx ∧
+    V3Rec.parseRecShapeU combineOp claim.obligation.self boxIdx combineIdx subIdx plan = some sh ∧
+    claim.obligation.totalityRole =
+      (match combineOp with | .add => .addSub | .mul => .mul) ∧
+    (∀ add sub mul stringEq stringConcat,
+      let host := claim.obligation.host add sub mul stringEq stringConcat
+      host boxIdx = some (1, boxRef claim.obligation.carrier) ∧
+      (match combineOp with
+       | .add => host combineIdx = some (2, add)
+       | .mul => host combineIdx = some (2, mul)) ∧
+      host subIdx = some (2, sub) ∧
+      host claim.obligation.self = none) ∧
+    (∀ (S : CarrierSpec claim.obligation.carrier)
+      (x : claim.obligation.Dom) (vs : List WVal),
+      claim.obligation.domRepr S x vs →
+      ∃ n v, vs = [v] ∧ S.Repr n v ∧
+        ∀ w, S.Repr (V3Rec.evalRecU combineOp sh n) w →
+          claim.obligation.codRepr S (claim.obligation.model x) w) ∧
+    (∀ (S : CarrierSpec claim.obligation.carrier) (n : Int) (v : WVal),
+      S.Repr n v →
+      ∃ x : claim.obligation.Dom,
+        claim.obligation.domRepr S x [v] ∧
+        ∀ w, S.Repr (V3Rec.evalRecU combineOp sh n) w →
+        claim.obligation.codRepr S (claim.obligation.model x) w)
+
+/-- Host, arity-two domain, and source-model faces for the accumulator shape.
+    Both directions pin the exact `[counter, accumulator]` domain ordering. -/
+def accumulatorRecursionSemanticBridge
     (claim : RecursionClaim) (plan : RecursionRawPlan) : Prop :=
   ∃ boxIdx addIdx subIdx sh,
     AverCert.PlanCheck.hostRoleIdx? claim.hostTable .box = some boxIdx ∧
     AverCert.PlanCheck.hostRoleIdx? claim.hostTable .add = some addIdx ∧
     AverCert.PlanCheck.hostRoleIdx? claim.hostTable .sub = some subIdx ∧
-    V3Rec.parseRecShapeU claim.obligation.self boxIdx addIdx subIdx plan = some sh ∧
+    V3Rec.parseRecShapeA claim.obligation.self boxIdx addIdx subIdx plan = some sh ∧
+    claim.obligation.totalityRole = .addSub ∧
     (∀ add sub mul stringEq stringConcat,
       let host := claim.obligation.host add sub mul stringEq stringConcat
       host boxIdx = some (1, boxRef claim.obligation.carrier) ∧
@@ -52,15 +86,22 @@ def recursionSemanticBridge
     (∀ (S : CarrierSpec claim.obligation.carrier)
       (x : claim.obligation.Dom) (vs : List WVal),
       claim.obligation.domRepr S x vs →
-      ∃ n v, vs = [v] ∧ S.Repr n v ∧
-        ∀ w, S.Repr (V3Rec.evalRecU sh n) w →
+      ∃ n acc vn vacc,
+        vs = [vn, vacc] ∧ S.Repr n vn ∧ S.Repr acc vacc ∧
+        ∀ w, S.Repr (V3Rec.evalRecA n acc) w →
           claim.obligation.codRepr S (claim.obligation.model x) w) ∧
-    (∀ (S : CarrierSpec claim.obligation.carrier) (n : Int) (v : WVal),
-      S.Repr n v →
+    (∀ (S : CarrierSpec claim.obligation.carrier)
+      (n acc : Int) (vn vacc : WVal),
+      S.Repr n vn → S.Repr acc vacc →
       ∃ x : claim.obligation.Dom,
-        claim.obligation.domRepr S x [v] ∧
-        ∀ w, S.Repr (V3Rec.evalRecU sh n) w →
+        claim.obligation.domRepr S x [vn, vacc] ∧
+        ∀ w, S.Repr (V3Rec.evalRecA n acc) w →
           claim.obligation.codRepr S (claim.obligation.model x) w)
+
+def recursionSemanticBridge
+    (claim : RecursionClaim) (plan : RecursionRawPlan) : Prop :=
+  unaryRecursionSemanticBridge claim plan ∨
+  accumulatorRecursionSemanticBridge claim plan
 
 def recursionSemanticBridges (artifact : ArtifactData) : Prop :=
   ∀ claim ∈ artifact.recursionClaims,
@@ -69,7 +110,7 @@ def recursionSemanticBridges (artifact : ArtifactData) : Prop :=
           artifact.manifest.recursionPlans = some plan →
         recursionSemanticBridge claim plan
 
-theorem recursion_claim_discharges
+theorem unary_recursion_claim_discharges
     (artifact : ArtifactData)
     (hAcc : acceptedRecursionFragments artifact)
     (claim : RecursionClaim)
@@ -77,7 +118,7 @@ theorem recursion_claim_discharges
     (hBridge : ∀ plan,
       recursionPlanForExport claim.exportName
           artifact.manifest.recursionPlans = some plan →
-        recursionSemanticBridge claim plan) :
+        unaryRecursionSemanticBridge claim plan) :
     obligationHolds claim.obligation := by
   have hClaim : recursionClaimAccepted artifact.modBytes artifact.modLen
       artifact.manifest claim :=
@@ -98,8 +139,9 @@ theorem recursion_claim_discharges
           body, codeEntry, binding, hLow, _hCodeEntry, _hExportCode,
           _hBinding, hSelf, _hBindingCode, _hShape, _hType, hCode⟩
       rcases hBridge plan hPlan with
-        ⟨boxIdx, addIdx, subIdx, sh, _hBoxLookup, _hAddLookup, _hSubLookup,
-          hParse, hHost, hPartialModel, hTotalModel⟩
+        ⟨combineOp, boxIdx, combineIdx, subIdx, sh,
+          _hBoxLookup, _hCombineLookup, _hSubLookup,
+          hParse, hTotalityRole, hHost, hPartialModel, hTotalModel⟩
       have hParams : plan.params = [.intCarrier] := by
         unfold V3Rec.parseRecShapeU at hParse
         split at hParse
@@ -122,15 +164,138 @@ theorem recursion_claim_discharges
               rcases hPartialModel S x vs hDom with
                 ⟨n, v, rfl, hv, hCod⟩
               rcases hHost add sub mul stringEq stringConcat with
+                ⟨hBox, hCombineHost, hSubHost, hSelfHost⟩
+              apply hCod w
+              cases combineOp with
+              | add =>
+                  exact V3Rec.recursion_generic_certified
+                    claim.obligation.carrier .add claim.obligation.self boxIdx
+                    combineIdx subIdx 1 S.Repr S.car S.smallIntro S.smallElim
+                    S.bigElim claim.obligation.code
+                    (claim.obligation.host add sub mul stringEq stringConcat)
+                    add sub hBox hCombineHost hSubHost hSelfHost hAdd hSub plan sh
+                    hParse body hLower hCodeSelf fuel n v w hv hRun
+              | mul =>
+                  exact V3Rec.recursion_generic_certified
+                    claim.obligation.carrier .mul claim.obligation.self boxIdx
+                    combineIdx subIdx 1 S.Repr S.car S.smallIntro S.smallElim
+                    S.bigElim claim.obligation.code
+                    (claim.obligation.host add sub mul stringEq stringConcat)
+                    mul sub hBox hCombineHost hSubHost hSelfHost _hMul hSub plan sh
+                    hParse body hLower hCodeSelf fuel n v w hv hRun
+      | simulatesModelTotally =>
+          cases hWitness : claim.obligation.termination? with
+          | none => simp [hPolicy, hWitness] at hTermination
+          | some witness =>
+              have _hCheckedTermination : checkTerm plan witness = true := by
+                simpa [hPolicy, hWitness] using hTermination
+              cases combineOp with
+              | add =>
+                  rw [obligationHolds, hPolicy]
+                  simp only [Obligation.holdsTotal, hTotalityRole]
+                  intro S add sub mul stringEq stringConcat
+                    hAdd hSub _hMul _hStringEq _hStringConcat
+                    hAddTot hSubTot x vs hDom
+                  rcases hPartialModel S x vs hDom with
+                    ⟨n, v, rfl, hv, hCod⟩
+                  rcases hTotalModel S n v hv with
+                    ⟨_sourceWitness, _hWitnessDom, _hWitnessCod⟩
+                  rcases hHost add sub mul stringEq stringConcat with
+                    ⟨hBox, hCombineHost, hSubHost, hSelfHost⟩
+                  obtain ⟨w, hRun, hRepr⟩ :=
+                    V3Rec.recursion_generic_certified_total
+                      claim.obligation.carrier .add claim.obligation.self boxIdx
+                      combineIdx subIdx 1 S.Repr S.car S.smallIntro S.smallElim
+                      S.bigElim claim.obligation.code
+                      (claim.obligation.host add sub mul stringEq stringConcat)
+                      add sub hBox hCombineHost hSubHost hSelfHost hAdd hSub
+                      hAddTot hSubTot plan sh hParse body hLower hCodeSelf n v hv
+                  exact ⟨n, v, [], rfl, hv, w, hRun, hCod w hRepr⟩
+              | mul =>
+                  rw [obligationHolds, hPolicy]
+                  simp only [Obligation.holdsTotal, hTotalityRole]
+                  intro S add sub mul stringEq stringConcat
+                    _hAdd hSub hMul _hStringEq _hStringConcat
+                    _hAddTot hSubTot hMulTot x vs hDom
+                  rcases hPartialModel S x vs hDom with
+                    ⟨n, v, rfl, hv, hCod⟩
+                  rcases hTotalModel S n v hv with
+                    ⟨_sourceWitness, _hWitnessDom, _hWitnessCod⟩
+                  rcases hHost add sub mul stringEq stringConcat with
+                    ⟨hBox, hCombineHost, hSubHost, hSelfHost⟩
+                  obtain ⟨w, hRun, hRepr⟩ :=
+                    V3Rec.recursion_generic_certified_total
+                      claim.obligation.carrier .mul claim.obligation.self boxIdx
+                      combineIdx subIdx 1 S.Repr S.car S.smallIntro S.smallElim
+                      S.bigElim claim.obligation.code
+                      (claim.obligation.host add sub mul stringEq stringConcat)
+                      mul sub hBox hCombineHost hSubHost hSelfHost hMul hSub
+                      hMulTot hSubTot plan sh hParse body hLower hCodeSelf n v hv
+                  exact ⟨n, v, [], rfl, hv, w, hRun, hCod w hRepr⟩
+
+theorem accumulator_recursion_claim_discharges
+    (artifact : ArtifactData)
+    (hAcc : acceptedRecursionFragments artifact)
+    (claim : RecursionClaim)
+    (hMem : claim ∈ artifact.recursionClaims)
+    (hBridge : ∀ plan,
+      recursionPlanForExport claim.exportName
+          artifact.manifest.recursionPlans = some plan →
+        accumulatorRecursionSemanticBridge claim plan) :
+    obligationHolds claim.obligation := by
+  have hClaim : recursionClaimAccepted artifact.modBytes artifact.modLen
+      artifact.manifest claim :=
+    allClaims_of_mem
+      (recursionClaimAccepted artifact.modBytes artifact.modLen artifact.manifest)
+      artifact.recursionClaims hAcc claim hMem
+  unfold recursionClaimAccepted at hClaim
+  cases hPlan : recursionPlanForExport claim.exportName
+      artifact.manifest.recursionPlans with
+  | none => simp [hPlan] at hClaim
+  | some plan =>
+      have hAccepted : recursionPlanAccepted
+          artifact.modBytes artifact.modLen claim.exportNameBytes claim.exportName
+          claim.carrier claim.hostTable plan claim.obligation := by
+        simpa [hPlan] using hClaim
+      rcases hAccepted with
+        ⟨_hExport, hCarrier, hRaw, hTermination,
+          body, codeEntry, binding, hLow, _hCodeEntry, _hExportCode,
+          _hBinding, hSelf, _hBindingCode, _hShape, _hType, hCode⟩
+      rcases hBridge plan hPlan with
+        ⟨boxIdx, addIdx, subIdx, sh,
+          _hBoxLookup, _hAddLookup, _hSubLookup,
+          hParse, hTotalityRole, hHost, hPartialModel, hTotalModel⟩
+      have hParams : plan.params = [.intCarrier, .intCarrier] := by
+        unfold V3Rec.parseRecShapeA at hParse
+        split at hParse
+        next h => exact h.2.1
+        next => simp at hParse
+      have hLower : AverCert.PlanLower.lowerBlock claim.obligation.carrier
+          plan.body = some body := by
+        simpa [hCarrier, AverCert.PlanLower.lowerRecursionBody, hRaw] using hLow
+      have hCodeSelf : claim.obligation.code claim.obligation.self =
+          some ⟨2, 1, body⟩ := by
+        simpa [hParams, recursionNLocals, ← hSelf] using hCode
+      cases hPolicy : claim.obligation.policy with
+      | simulatesModel =>
+          cases hWitness : claim.obligation.termination? with
+          | some witness => simp [hPolicy, hWitness] at hTermination
+          | none =>
+              rw [obligationHolds, hPolicy]
+              intro S add sub mul stringEq stringConcat
+                hAdd hSub _hMul _hStringEq _hStringConcat fuel x vs w hDom hRun
+              rcases hPartialModel S x vs hDom with
+                ⟨n, acc, vn, vacc, rfl, hvn, hvacc, hCod⟩
+              rcases hHost add sub mul stringEq stringConcat with
                 ⟨hBox, hAddHost, hSubHost, hSelfHost⟩
               apply hCod w
-              exact V3Rec.recursion_generic_certified
+              exact V3Rec.recursion_accumulator_generic_certified
                 claim.obligation.carrier claim.obligation.self boxIdx addIdx
                 subIdx 1 S.Repr S.car S.smallIntro S.smallElim S.bigElim
                 claim.obligation.code
                 (claim.obligation.host add sub mul stringEq stringConcat)
                 add sub hBox hAddHost hSubHost hSelfHost hAdd hSub plan sh
-                hParse body hLower hCodeSelf fuel n v w hv hRun
+                hParse body hLower hCodeSelf fuel n acc vn vacc w hvn hvacc hRun
       | simulatesModelTotally =>
           cases hWitness : claim.obligation.termination? with
           | none => simp [hPolicy, hWitness] at hTermination
@@ -138,19 +303,68 @@ theorem recursion_claim_discharges
               have _hCheckedTermination : checkTerm plan witness = true := by
                 simpa [hPolicy, hWitness] using hTermination
               rw [obligationHolds, hPolicy]
+              simp only [Obligation.holdsTotal, hTotalityRole]
               intro S add sub mul stringEq stringConcat
-                hAdd hSub _hMul _hStringEq _hStringConcat hAddTot hSubTot n v hv
-              rcases hTotalModel S n v hv with ⟨x, hDom, hCod⟩
+                hAdd hSub _hMul _hStringEq _hStringConcat
+                hAddTot hSubTot x vs hDom
+              rcases hPartialModel S x vs hDom with
+                ⟨n, acc, vn, vacc, rfl, hvn, hvacc, hCod⟩
+              rcases hTotalModel S n acc vn vacc hvn hvacc with
+                ⟨_sourceWitness, _hWitnessDom, _hWitnessCod⟩
               rcases hHost add sub mul stringEq stringConcat with
                 ⟨hBox, hAddHost, hSubHost, hSelfHost⟩
-              obtain ⟨w, hRun, hRepr⟩ := V3Rec.recursion_generic_certified_total
-                claim.obligation.carrier claim.obligation.self boxIdx addIdx
-                subIdx 1 S.Repr S.car S.smallIntro S.smallElim S.bigElim
-                claim.obligation.code
-                (claim.obligation.host add sub mul stringEq stringConcat)
-                add sub hBox hAddHost hSubHost hSelfHost hAdd hSub
-                hAddTot hSubTot plan sh hParse body hLower hCodeSelf n v hv
-              exact ⟨x, hDom, w, hRun, hCod w hRepr⟩
+              obtain ⟨w, hRun, hRepr⟩ :=
+                V3Rec.recursion_accumulator_generic_certified_total
+                  claim.obligation.carrier claim.obligation.self boxIdx addIdx
+                  subIdx 1 S.Repr S.car S.smallIntro S.smallElim S.bigElim
+                  claim.obligation.code
+                  (claim.obligation.host add sub mul stringEq stringConcat)
+                  add sub hBox hAddHost hSubHost hSelfHost hAdd hSub
+                  hAddTot hSubTot plan sh hParse body hLower hCodeSelf
+                  n acc vn vacc hvn hvacc
+              exact ⟨n, vn, [vacc], rfl, hvn, w, hRun, hCod w hRepr⟩
+
+theorem recursion_claim_discharges
+    (artifact : ArtifactData)
+    (hAcc : acceptedRecursionFragments artifact)
+    (claim : RecursionClaim)
+    (hMem : claim ∈ artifact.recursionClaims)
+    (hBridge : ∀ plan,
+      recursionPlanForExport claim.exportName
+          artifact.manifest.recursionPlans = some plan →
+        recursionSemanticBridge claim plan) :
+    obligationHolds claim.obligation := by
+  by_cases hPlan : ∃ plan,
+      recursionPlanForExport claim.exportName
+        artifact.manifest.recursionPlans = some plan
+  · obtain ⟨plan, hSelected⟩ := hPlan
+    rcases hBridge plan hSelected with hUnary | hAccumulator
+    · exact unary_recursion_claim_discharges artifact hAcc claim hMem
+        (by
+          intro selected hEq
+          have : selected = plan := by
+            rw [hSelected] at hEq
+            exact (Option.some.inj hEq).symm
+          subst selected
+          exact hUnary)
+    · exact accumulator_recursion_claim_discharges artifact hAcc claim hMem
+        (by
+          intro selected hEq
+          have : selected = plan := by
+            rw [hSelected] at hEq
+            exact (Option.some.inj hEq).symm
+          subst selected
+          exact hAccumulator)
+  · have hClaim : recursionClaimAccepted artifact.modBytes artifact.modLen
+        artifact.manifest claim :=
+      allClaims_of_mem
+        (recursionClaimAccepted artifact.modBytes artifact.modLen artifact.manifest)
+        artifact.recursionClaims hAcc claim hMem
+    unfold recursionClaimAccepted at hClaim
+    cases hSelected : recursionPlanForExport claim.exportName
+        artifact.manifest.recursionPlans with
+    | none => simp [hSelected] at hClaim
+    | some plan => exact absurd ⟨plan, hSelected⟩ hPlan
 
 theorem recursion_discharges
     (artifact : ArtifactData)
@@ -231,7 +445,7 @@ theorem mutual_claim_discharges
           claim.carrier claim.memberSet claim.hostTable plan claim.obligation := by
         simpa [hPlan] using hClaim
       rcases hAccepted with
-        ⟨_hExport, hCarrier, hRaw, hTermination,
+        ⟨_hExport, hCarrier, hTotalityRole, hRaw, hTermination,
           body, codeEntry, binding, hLow, _hCodeEntry, _hExportCode,
           _hBinding, hSelf, _hBindingCode, _hShape, _hType, hCode⟩
       rcases hBridge plan hPlan with
@@ -294,9 +508,12 @@ theorem mutual_claim_discharges
               have _hCheckedTermination : checkTermMutual plan witness = true := by
                 simpa [hPolicy, hWitness] using hTermination
               rw [obligationHolds, hPolicy]
+              simp only [Obligation.holdsTotal, hTotalityRole]
               intro S add sub mul stringEq stringConcat
-                _hAdd hSub _hMul _hStringEq _hStringConcat _hAddTot hSubTot n v hv
-              rcases hTotalModel S n v hv with ⟨x, hDom, hCod⟩
+                _hAdd hSub _hMul _hStringEq _hStringConcat
+                _hAddTot hSubTot x vs hDom
+              rcases hPartialModel S x vs hDom with
+                ⟨n, v, rfl, hv, hCod⟩
               rcases hHost add sub mul stringEq stringConcat with
                 ⟨hBox, hSubHost, hMemberHost⟩
               obtain ⟨w, hRun, hRepr⟩ :=
@@ -305,7 +522,8 @@ theorem mutual_claim_discharges
                   S.smallIntro S.smallElim S.bigElim claim.obligation.code
                   (claim.obligation.host add sub mul stringEq stringConcat)
                   sub hBox hSubHost hMemberHost hCodeAll hSub hSubTot i n v hv
-              exact ⟨x, hDom, w, by simpa [hSccSelf] using hRun, hCod w hRepr⟩
+              exact ⟨n, v, [], rfl, hv, w,
+                by simpa [hSccSelf] using hRun, hCod w hRepr⟩
 
 theorem mutual_discharges
     (artifact : ArtifactData)
@@ -320,6 +538,8 @@ theorem mutual_discharges
 
 end V3Master
 
+#print axioms V3Master.unary_recursion_claim_discharges
+#print axioms V3Master.accumulator_recursion_claim_discharges
 #print axioms V3Master.recursion_claim_discharges
 #print axioms V3Master.recursion_discharges
 #print axioms V3Master.mutual_claim_discharges

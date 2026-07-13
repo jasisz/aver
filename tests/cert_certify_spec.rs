@@ -67,6 +67,16 @@ fn verify_certificate(wasm: &std::path::Path, cert_dir: &std::path::Path) -> (bo
     )
 }
 
+fn lean_obligation_def<'a>(manifest_lean: &'a str, name: &str) -> &'a str {
+    let marker = format!("abbrev {name}Ob : Schema.Obligation :=");
+    let start = manifest_lean
+        .find(&marker)
+        .unwrap_or_else(|| panic!("missing {name} obligation in emitted Manifest.lean"));
+    manifest_lean[start..]
+        .split_once("\n\n")
+        .map_or(&manifest_lean[start..], |(definition, _)| definition)
+}
+
 #[test]
 fn certify_goal_matrix_manifest_tracks_current_surface() {
     // This fixture is the dashboard for "how much do we certify now?". Larger
@@ -161,10 +171,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["schema_version"].as_u64(),
-        Some(59),
-        "recursion option-(b) migration is certificate schema 59"
+        Some(60),
+        "multiplicative/accumulator recursion migration is certificate schema 60"
     );
-    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 59);
+    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 60);
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
@@ -190,11 +200,11 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         serde_json::json!({"present": false, "function_index": null})
     );
     let wasm = std::fs::read(out_dir.join("cert_goals.wasm")).unwrap();
-    let (box_idx, add_idx, sub_idx) =
+    let (box_idx, add_idx, mul_idx, sub_idx) =
         aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
     assert_eq!(
         manifest["hostRoleTable"],
-        serde_json::json!({"box": box_idx, "add": add_idx, "sub": sub_idx}),
+        serde_json::json!({"box": box_idx, "add": add_idx, "mul": mul_idx, "sub": sub_idx}),
         "manifest hostRoleTable must come from the Rust classifier over the emitted bytes"
     );
     let string_roles = aver::codegen::cert::byte_derived_string_host_roles(&wasm).unwrap();
@@ -525,8 +535,17 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             aver::codegen::cert::INT_ADD_TOTAL_CONTRACT,
             aver::codegen::cert::INT_SUB_TOTAL_CONTRACT,
         ],
-        "goal matrix runtime contracts changed"
+        "additive/accumulator/mutual L3 must not declare Int.mul totality"
     );
+    let manifest_lean =
+        std::fs::read_to_string(out_dir.join("cert/Manifest.lean")).expect("Manifest.lean");
+    for name in ["sumFrom", "countDown", "isEven", "isOdd"] {
+        let obligation = lean_obligation_def(&manifest_lean, name);
+        assert!(
+            !obligation.contains("totalityRole := .mul") && !obligation.contains("Int.mul"),
+            "non-multiplicative L3 obligation {name} gained mul totality:\n{obligation}"
+        );
+    }
 
     let declined_names: BTreeSet<String> = manifest["source_level_only"]
         .as_array()
@@ -755,13 +774,17 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             && final_lean.contains("(hSemantic := CertProofs.mkOp_constructSemanticBridge)"),
         "construct-with-model arm must use the audited discharge and emitted bridge:\n{final_lean}"
     );
-    assert!(
-        final_lean.contains("exportName := \"sumFrom\"")
-            && final_lean.contains("V3Master.recursion_claim_discharges artifact")
-            && final_lean.contains("CertProofs.sumFrom_recursionSemanticBridge"),
-        "unary additive recursion arm must use the audited discharge and emitted bridge:\n{final_lean}"
-    );
-    for bespoke_name in ["addTwo", "countDown"] {
+    for recursion_name in ["sumFrom", "countDown"] {
+        assert!(
+            final_lean.contains(&format!("exportName := \"{recursion_name}\""))
+                && final_lean.contains("V3Master.recursion_claim_discharges artifact")
+                && final_lean.contains(&format!(
+                    "CertProofs.{recursion_name}_recursionSemanticBridge"
+                )),
+            "recursion arm must use the audited discharge and emitted bridge: {recursion_name}\n{final_lean}"
+        );
+    }
+    for bespoke_name in ["addTwo"] {
         assert!(
             final_lean.contains(&format!("CertProofs.{bespoke_name}_")),
             "unmigrated arm changed during coexistence migration: {bespoke_name}\n{final_lean}"
@@ -791,7 +814,11 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             && !certificate.contains("sumFrom_wasm_certified")
             && !certificate.contains("sumFrom_wasm_total")
             && !certificate.contains("sumFrom_simulates")
-            && !certificate.contains("sumFromHostRef"),
+            && !certificate.contains("sumFromHostRef")
+            && !certificate.contains("countDown_wasm_certified")
+            && !certificate.contains("countDown_wasm_total")
+            && !certificate.contains("countDown_simulates")
+            && !certificate.contains("countDownHostRef"),
         "migrated leaf/dispatch/construct/recursion families must not emit bespoke simulations or tripwires:\n{certificate}"
     );
     for dispatch_name in ["evalOp", "boxInt", "gauge"] {
@@ -815,6 +842,15 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             && certificate.contains("⟨n, _, rfl, hv")
             && certificate.contains("⟨[n], ⟨ReprAll.cons hv ReprAll.nil, rfl⟩"),
         "recursion must emit both option-(b) model directions and no evaluator proof:\n{certificate}"
+    );
+    assert!(
+        certificate.contains("theorem countDown_recursionSemanticBridge")
+            && certificate.contains("V3Rec.evalRecAFuel")
+            && certificate.contains("refine Or.inr")
+            && certificate.contains("⟨n, acc, vn, vacc, rfl, hvn, hvacc")
+            && certificate.contains("⟨[n, acc],")
+            && certificate.contains("ReprAll.cons hvn (ReprAll.cons hvacc ReprAll.nil)"),
+        "accumulator recursion must emit both arity-two option-(b) model directions:\n{certificate}"
     );
     let user_name = manifest["certified"]
         .as_array()
@@ -840,6 +876,13 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
         .find(|entry| entry["name"] == "sumFrom")
         .unwrap();
     assert_eq!(sum_from["theorem"], "V3Master.recursion_claim_discharges");
+    let count_down = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "countDown")
+        .unwrap();
+    assert_eq!(count_down["theorem"], "V3Master.recursion_claim_discharges");
     for (name, theorem) in [
         ("wrapItems", "V3Master.verbatim_canonical_discharges"),
         ("tagName", "V3Master.verbatim_canonical_discharges"),
@@ -893,6 +936,8 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
     assert!(
         combined.contains(
             "'CertProofs.sumFrom_recursionSemanticBridge' depends on axioms: [propext, Classical.choice, Quot.sound]"
+        ) && combined.contains(
+            "'CertProofs.countDown_recursionSemanticBridge' depends on axioms: [propext]"
         ) && combined.contains(
             "'V3Master.recursion_claim_discharges' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ),
@@ -1231,10 +1276,8 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
         .iter()
         .map(|c| c["name"].as_str().unwrap())
         .collect();
-    // One fuel-induction arm covers: a non-zero base (`sumFrom`), a constant
-    // combinator operand (`constPlus`), a reversed operand order (`backward`),
-    // and the two-argument tail accumulator (`countDown`) — none of which the
-    // old fixed-shape recursion templates admitted.
+    // The audited recursion generics cover unary addition/multiplication and
+    // the exact two-argument tail-accumulator shape.
     for name in ["sumFrom", "constPlus", "backward", "factorial", "countDown"] {
         assert!(
             certified.contains(&name),
@@ -1242,7 +1285,7 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
         );
     }
     let certified_entries = manifest["certified"].as_array().unwrap();
-    for name in ["sumFrom", "constPlus", "backward"] {
+    for name in ["sumFrom", "constPlus", "backward", "factorial", "countDown"] {
         let entry = certified_entries
             .iter()
             .find(|entry| entry["name"] == name)
@@ -1254,15 +1297,6 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
         assert_eq!(entry["termination_witness"]["measure"]["param_index"], 0);
         assert_eq!(entry["termination_witness"]["descent"], -1);
     }
-    for name in ["factorial", "countDown"] {
-        let entry = certified_entries
-            .iter()
-            .find(|entry| entry["name"] == name)
-            .unwrap();
-        assert_eq!(entry["policy"], "simulatesModel");
-        assert_eq!(entry["level"], "L1");
-        assert!(entry.get("termination_witness").is_none());
-    }
     let contracts = manifest["runtime_contracts"].as_array().unwrap();
     assert!(
         contracts
@@ -1273,6 +1307,49 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
         contracts
             .iter()
             .any(|c| { c == aver::codegen::cert::INT_SUB_TOTAL_CONTRACT })
+    );
+    assert!(
+        contracts
+            .iter()
+            .any(|c| { c == aver::codegen::cert::INT_MUL_CONTRACT })
+    );
+    assert!(
+        contracts
+            .iter()
+            .any(|c| { c == aver::codegen::cert::INT_MUL_TOTAL_CONTRACT })
+    );
+
+    // Load-bearing contract check: the emitted obligation selects the extra
+    // premise only for the byte-pinned multiplicative recursion.  The schema's
+    // add/sub branch itself contains no multiplication-totality binder.
+    let manifest_lean = std::fs::read_to_string(cert_dir.join("Manifest.lean")).unwrap();
+    for name in ["sumFrom", "constPlus", "backward", "countDown"] {
+        let obligation = lean_obligation_def(&manifest_lean, name);
+        assert!(
+            !obligation.contains("totalityRole := .mul") && !obligation.contains("Int.mul"),
+            "{name} must retain the add/sub-only total premise surface:\n{obligation}"
+        );
+    }
+    let factorial_obligation = lean_obligation_def(&manifest_lean, "factorial");
+    assert!(
+        factorial_obligation.contains("totalityRole := .mul"),
+        "factorial must select the byte-checked mul-totality role:\n{factorial_obligation}"
+    );
+    let schema_core = std::fs::read_to_string(cert_dir.join("SchemaCore.lean")).unwrap();
+    let totality = schema_core
+        .split_once("def Obligation.holdsTotal")
+        .expect("holdsTotal definition")
+        .1;
+    let (add_sub_branch, mul_and_rest) = totality
+        .split_once("| .mul =>")
+        .expect("role-sensitive mul branch");
+    assert!(
+        add_sub_branch.contains("| .addSub =>") && !add_sub_branch.contains("_hMulTot"),
+        "add/sub holdsTotal branch must have no mul-totality premise:\n{add_sub_branch}"
+    );
+    assert!(
+        mul_and_rest.contains("_hMulTot"),
+        "mul holdsTotal branch must carry the premise it consumes"
     );
 
     let build = Command::new("lake")
@@ -1289,17 +1366,17 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
         build.status.success(),
         "lake build of emitted recursion cert failed:\n{combined}"
     );
-    // The additive unary family now emits only the model bridge. Multiplication
-    // and the two-argument accumulator remain explicit L1 residuals because the
-    // audited generic intentionally has neither semantic shape.
+    // Every supported recursion family emits only its small source-model
+    // bridge. The evaluator, lowering, and totality proofs stay in the audited
+    // wall.
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean")).unwrap();
     let final_lean = std::fs::read_to_string(cert_dir.join("Final.lean")).unwrap();
-    for name in ["sumFrom", "constPlus", "backward"] {
+    for name in ["sumFrom", "constPlus", "backward", "factorial", "countDown"] {
         assert!(
             combined.contains(&format!(
-                "'CertProofs.{name}_recursionSemanticBridge' depends on axioms: [propext, Classical.choice, Quot.sound]"
+                "'CertProofs.{name}_recursionSemanticBridge' depends on axioms:"
             )),
-            "recursion bridge for {name} not kernel-clean:\n{combined}"
+            "recursion bridge for {name} was not axiom-audited:\n{combined}"
         );
         assert!(
             certificate.contains(&format!("theorem {name}_recursionSemanticBridge"))
@@ -1312,17 +1389,24 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
             "migrated recursion emitted a bespoke proof/tripwire or missed the generic arm for {name}:\n{certificate}\n{final_lean}"
         );
     }
-    for name in ["factorial", "countDown"] {
-        assert!(
-            combined.contains(&format!(
-                "{name}_wasm_certified' depends on axioms: [propext, Classical.choice, Quot.sound]"
-            )),
-            "residual recursion certificate for {name} not kernel-clean:\n{combined}"
-        );
-    }
     assert!(
-        !combined.contains("factorial_wasm_total") && !combined.contains("countDown_wasm_total"),
-        "out-of-scope recursion family was promoted:\n{combined}"
+        !certificate.contains("factorial_wasm_certified")
+            && !certificate.contains("factorial_wasm_total")
+            && !certificate.contains("factorial_simulates")
+            && !certificate.contains("factorialHostRef")
+            && !certificate.contains("countDown_wasm_certified")
+            && !certificate.contains("countDown_wasm_total")
+            && !certificate.contains("countDown_simulates")
+            && !certificate.contains("countDownHostRef"),
+        "migrated multiplication/accumulator recursions retained bespoke proof emission:\n{certificate}"
+    );
+    assert!(
+        combined.contains(
+            "'CertProofs.factorial_recursionSemanticBridge' depends on axioms: [propext, Classical.choice, Quot.sound]"
+        ) && combined.contains(
+            "'CertProofs.countDown_recursionSemanticBridge' depends on axioms: [propext]"
+        ),
+        "multiplication/accumulator bridges changed axiom surface:\n{combined}"
     );
     assert!(
         combined.contains(
@@ -1336,6 +1420,69 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
         !combined.contains("sorryAx"),
         "recursion certificate leaked sorryAx:\n{combined}"
     );
+
+    for (name, honest, hostile) in [
+        (
+            "factorial",
+            "else (n * factorial__fuel fuel' (n - 1)))",
+            "else (2 * factorial__fuel fuel' (n - 1)))",
+        ),
+        (
+            "countDown",
+            "else countDown__fuel fuel' (n - 1) (acc + n))",
+            "else countDown__fuel fuel' (n - 1) (acc + 2))",
+        ),
+    ] {
+        let tampered = temp_dir(&format!("certify-hostile-{name}-definition"));
+        copy_dir_all(&out_dir, &tampered);
+        let model = tampered.join("cert/RecGen.lean");
+        let source = std::fs::read_to_string(&model).unwrap();
+        let edited = source.replacen(honest, hostile, 1);
+        assert_ne!(
+            source, edited,
+            "{name} source model changed; update the hostile-model regression"
+        );
+        std::fs::write(&model, edited).unwrap();
+
+        let (ok, report) =
+            verify_certificate(&tampered.join("recgen.wasm"), &tampered.join("cert"));
+        assert!(
+            !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+            "wrong generated {name} definition must be caught by its semantic bridge:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&tampered);
+    }
+
+    // GuardIso: the bridges are not decorative. A unary bridge claiming the
+    // wrong parsed base and an accumulator bridge claiming the unary family
+    // must each stop the certificate from building.
+    for (name, honest, hostile) in [
+        (
+            "factorial-shape",
+            "({ base := 1, step := .inputSecond } : V3Rec.RecShapeU)",
+            "({ base := 2, step := .inputSecond } : V3Rec.RecShapeU)",
+        ),
+        ("countDown-shape", "refine Or.inr ?_", "refine Or.inl ?_"),
+    ] {
+        let tampered = temp_dir(&format!("certify-guardiso-{name}"));
+        copy_dir_all(&out_dir, &tampered);
+        let certificate = tampered.join("cert/Certificate.lean");
+        let source = std::fs::read_to_string(&certificate).unwrap();
+        let edited = source.replace(honest, hostile);
+        assert_ne!(
+            source, edited,
+            "{name} bridge shape changed; update the GuardIso regression"
+        );
+        std::fs::write(&certificate, edited).unwrap();
+
+        let (ok, report) =
+            verify_certificate(&tampered.join("recgen.wasm"), &tampered.join("cert"));
+        assert!(
+            !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+            "wrong {name} must be constrained by the bridge/parsed byte shape:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&tampered);
+    }
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }

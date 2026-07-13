@@ -453,12 +453,20 @@ theorem {mn}_simulates : AverCert.Schema.Obligation.holds {mn}Ob := by
             r#"
 theorem {mn}_simulates_total : AverCert.Schema.Obligation.holdsTotal {mn}Ob := by
   intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat
-    hAddTot hSubTot n v hv
-  refine ⟨[n], ?_, ?_⟩
-  · exact ⟨ReprAll.cons hv ReprAll.nil, rfl⟩
-  · simpa [{mn}Ob, AverCert.Schema.intRepr] using
-      {mn}_wasm_total S.Repr S.car S.smallIntro S.smallElim S.bigElim
-        sub hsub hSubTot n v hv
+    hAddTot hSubTot x vs hDom
+  simp only [{mn}Ob] at hDom ⊢
+  obtain ⟨hrepr, harity⟩ := hDom
+  cases hrepr with
+  | nil => simp at harity
+  | cons hv htail =>
+      rename_i n v ns vs
+      cases htail with
+      | nil =>
+          refine ⟨n, v, [], rfl, hv, ?_⟩
+          simpa [{mn}Ob, AverCert.Schema.intRepr] using
+            {mn}_wasm_total S.Repr S.car S.smallIntro S.smallElim S.bigElim
+              sub hsub hSubTot n v hv
+      | cons _ _ => simp at harity
 "#,
         ));
     }
