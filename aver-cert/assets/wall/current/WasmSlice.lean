@@ -156,6 +156,103 @@ def typeSectionMatches (check : CertDecode.TypeEntry → Bool)
 def funcTypeMatches (modBytes modLen typeIdx arity carrier : Nat) : Bool :=
   typeSectionMatches (checkCanonicalFuncType arity carrier) modBytes modLen typeIdx
 
+def fragValTypeMatches (carrier : Nat) :
+    AverCert.Schema.FragTy → CertDecode.ValType → Bool
+  | .f64, .numeric 0x7c => true
+  | .boolI32, .numeric 0x7f => true
+  | .i64, .numeric 0x7e => true
+  | .rawI32, .numeric 0x7f => true
+  | .intCarrier, actual => actual == nullableRefType carrier
+  | .ref, .ref 0x63 heap => decide (0 ≤ heap)
+  | .adtRef, .ref 0x63 heap =>
+      decide (0 ≤ heap) && decide (heap ≠ Int.ofNat carrier)
+  | _, _ => false
+
+def fragParamsMatch (carrier : Nat) :
+    List AverCert.Schema.FragTy → List CertDecode.ValType → Bool
+  | [], [] => true
+  | expected :: expectedRest, actual :: actualRest =>
+      fragValTypeMatches carrier expected actual &&
+        fragParamsMatch carrier expectedRest actualRest
+  | _, _ => false
+
+/-- Exact scalar/reference shape of an expression-fragment function. Unlike a
+    code entry, the type-section binding distinguishes e.g. `f64 → i32` from
+    `i32 → f64`; reference-shaped ADT projections are tightened nominally by
+    `exprFragmentNominalTypesMatch` below. -/
+def checkExprFragmentFuncType
+    (carrier : Nat)
+    (params : List AverCert.Schema.FragTy)
+    (result : AverCert.Schema.FragTy)
+    (entry : CertDecode.TypeEntry) : Bool :=
+  match entry.form, entry.composite with
+  | .plain, .funcType actualParams [actualResult] =>
+      fragParamsMatch carrier params actualParams &&
+        fragValTypeMatches carrier result actualResult
+  | _, _ => false
+
+def exprFragmentFuncTypeMatches
+    (modBytes modLen typeIdx carrier : Nat)
+    (params : List AverCert.Schema.FragTy)
+    (result : AverCert.Schema.FragTy) : Bool :=
+  typeSectionMatches (checkExprFragmentFuncType carrier params result)
+    modBytes modLen typeIdx
+
+/-- The only admitted opaque-ADT fragment is a direct field projection. Its
+    function parameter must name that exact struct, and its result must equal
+    the selected field's decoded storage type. This simultaneously proves that
+    the struct and field exist in the artifact's type section. -/
+def checkExprProjectionTypes
+    (carrier structIdx fieldIdx : Nat)
+    (funcEntry structEntry : CertDecode.TypeEntry) : Bool :=
+  if structIdx == carrier then false else
+    match funcEntry.form, funcEntry.composite,
+        structEntry.form, structEntry.composite with
+    | .plain, .funcType [param] [result], .plain, .structType fields =>
+        fields.length == 2 && decide (param = nullableRefType structIdx) &&
+          match fields[fieldIdx]? with
+          | some { storage := .val fieldType, .. } => decide (result = fieldType)
+          | _ => false
+    | _, _, _, _ => false
+
+def exprProjectionTypesMatch
+    (modBytes modLen typeIdx carrier structIdx fieldIdx : Nat) : Bool :=
+  match CertDecode.decodeTypes modBytes modLen with
+  | some info =>
+      match info.entryIndex[typeIdx]?, info.entryIndex[structIdx]? with
+      | some funcEntry, some structEntry =>
+          checkExprProjectionTypes carrier structIdx fieldIdx funcEntry structEntry
+      | _, _ => false
+  | none => false
+
+def exprProjectionFace? (plan : AverCert.Schema.ExprFragmentRawPlan) :
+    Option (Nat × Nat) :=
+  if plan.params = [.adtRef] && plan.result = .adtRef &&
+      plan.body.result = 1 then
+    match plan.body.nodes with
+    | [n0, n1] =>
+        match n0.kind, n1.kind with
+        | .local 0, .structGetUser structIdx fieldIdx 0 =>
+            if n0.ty = .adtRef && n1.ty = .adtRef then
+              some (structIdx, fieldIdx)
+            else none
+        | _, _ => none
+    | _ => none
+  else none
+
+/-- Opaque references fail closed unless the plan has the exact projection
+    face whose nominal signature and field type can be decoded above. -/
+def exprFragmentNominalTypesMatch
+    (modBytes modLen typeIdx carrier : Nat)
+    (plan : AverCert.Schema.ExprFragmentRawPlan) : Bool :=
+  if plan.params.contains .adtRef || plan.result = .adtRef then
+    match exprProjectionFace? plan with
+    | some (structIdx, fieldIdx) =>
+        exprProjectionTypesMatch
+          modBytes modLen typeIdx carrier structIdx fieldIdx
+    | none => false
+  else true
+
 def isNonnegativeNullableRef : CertDecode.ValType → Bool
   | .ref 0x63 heap => decide (0 ≤ heap)
   | _ => false

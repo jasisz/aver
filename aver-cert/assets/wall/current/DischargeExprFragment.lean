@@ -126,7 +126,7 @@ theorem exprFragment_claim_discharges_generic
         simpa [hEncode] using hClaim
       rcases hAccepted with
         ⟨_hExport, hCarrier, body, codeEntry, binding, hPlanAccepted,
-          hSelf, hCode⟩
+          _hFuncType, _hNominalTypes, hSelf, hCode⟩
       rcases hPlanAccepted with
         ⟨hCheck, hLowerExpr, _hCodeEntry, _hExactBinding⟩
       rcases hBridge plan hEncode with ⟨hPolicy, hSemantic⟩

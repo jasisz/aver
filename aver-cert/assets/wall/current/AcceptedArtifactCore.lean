@@ -49,6 +49,10 @@ def exprFragmentPlanAccepted
   ∃ body codeEntry binding,
     AverCert.ExprFragmentAccepted.accepted
       modBytes modLen exportNameBytes carrier plan body codeEntry binding ∧
+    AverCert.WasmSlice.exprFragmentFuncTypeMatches
+      modBytes modLen binding.typeIdx carrier plan.params plan.result = true ∧
+    AverCert.WasmSlice.exprFragmentNominalTypesMatch
+      modBytes modLen binding.typeIdx carrier plan = true ∧
     obligation.self = binding.funcIdx ∧
     obligation.code binding.funcIdx =
       some { arity := plan.params.length,

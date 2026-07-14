@@ -39,6 +39,7 @@ pub const CERT_CONSTRUCT_VERBATIM_SOUNDNESS: &str =
 pub const CERT_INT_DISPATCH_SOUNDNESS: &str =
     include_str!("../assets/wall/current/IntDispatchSoundness.lean");
 pub const CERT_STRING_SOUNDNESS: &str = include_str!("../assets/wall/current/StringSoundness.lean");
+pub const CERT_STANDARD_FACE: &str = include_str!("../assets/wall/current/StandardFace.lean");
 pub const CERT_RECURSION_SOUNDNESS: &str =
     include_str!("../assets/wall/current/RecursionSoundness.lean");
 pub const CERT_MUTUAL_RECURSION_SOUNDNESS: &str =
@@ -73,7 +74,7 @@ pub struct Source {
 
 /// Exact checker-owned source set. Ordering is not part of the identity:
 /// [`compute_id`] sorts by filename before hashing.
-pub const SOURCES: [Source; 32] = [
+pub const SOURCES: [Source; 33] = [
     Source {
         name: "AcceptedArtifact.lean",
         contents: CERT_ACCEPTED_ARTIFACT,
@@ -195,6 +196,10 @@ pub const SOURCES: [Source; 32] = [
         contents: CERT_SCHEMA_CORE,
     },
     Source {
+        name: "StandardFace.lean",
+        contents: CERT_STANDARD_FACE,
+    },
+    Source {
         name: "StringSoundness.lean",
         contents: CERT_STRING_SOUNDNESS,
     },
@@ -206,7 +211,7 @@ pub const SOURCES: [Source; 32] = [
 
 /// Roots whose complete import graph is artifact-independent and can therefore
 /// be cached before a certificate is seen.
-pub const PRISTINE_ROOTS: [&str; 30] = [
+pub const PRISTINE_ROOTS: [&str; 31] = [
     "CertPrelude",
     "CertDecode",
     "WasmSlice",
@@ -224,6 +229,7 @@ pub const PRISTINE_ROOTS: [&str; 30] = [
     "ConstructVerbatimSoundness",
     "IntDispatchSoundness",
     "StringSoundness",
+    "StandardFace",
     "RecursionSoundness",
     "MutualRecursionSoundness",
     "CompositionSoundness",

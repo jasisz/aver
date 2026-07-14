@@ -75,7 +75,7 @@ fn expr_fragment_claim_acceptance_proof(c: &Cert) -> String {
     );
     format!(
         "⟨rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {binding}, \
-         ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl⟩⟩⟩"
+         ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩⟩"
     )
 }
 

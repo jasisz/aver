@@ -5,6 +5,7 @@
 -- the Module-dependent `Schema.Holds` proposition.
 import Schema
 import AcceptedArtifactCore
+import StandardFace
 
 namespace AverCert.AcceptedArtifact
 
@@ -13,6 +14,7 @@ def accepted (artifact : ArtifactData) : Prop :=
   subjectMatchesArtifactRoot artifact ∧
   fragmentClaimObligationsInManifest artifact ∧
   claimsMatchManifest artifact ∧
+  AverCert.StandardFace.checkedFaces artifact ∧
   decodedNonExprFacts artifact ∧
   acceptedFragments artifact
 

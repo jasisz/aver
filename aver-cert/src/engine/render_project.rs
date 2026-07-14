@@ -840,7 +840,7 @@ fn render_artifact_expr_fragment_claims(
                 );
                 let proof = format!(
                     "⟨rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl⟩⟩⟩"
+                     ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩⟩"
                 );
                 if expr_fragment_source_plan(source_plan, plan).is_some() {
                     sym_claims.push(format!(
@@ -1541,6 +1541,40 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.exprFragmentPlanAccepted,\n",
             "    AverCert.ExprFragmentAccepted.accepted]\n"
     );
+    let face_dsimp = concat!(
+        "  dsimp [AverCert.StandardFace.checkedFaces,\n",
+        "    AverCert.StandardFace.claimExportsUnique,\n",
+        "    AverCert.StandardFace.hostTableBound,\n",
+        "    AverCert.StandardFace.decodedRoleIdx,\n",
+        "    AverCert.StandardFace.symFragmentMatches,\n",
+        "    AverCert.StandardFace.symFragmentFace,\n",
+        "    AverCert.StandardFace.stringEqMatches,\n",
+        "    AverCert.StandardFace.stringConcatMatches,\n",
+        "    AverCert.StandardFace.constructMatches,\n",
+        "    AverCert.StandardFace.recursionMatches,\n",
+        "    AverCert.StandardFace.mutualMatches,\n",
+        "    AverCert.StandardFace.verbatimMatches,\n",
+        "    AverCert.StandardFace.intDispatchMatches,\n",
+        "    AverCert.StandardFace.fieldProjectionMatches,\n",
+        "    AverCert.StandardFace.compositionMatches,\n",
+        "    AverCert.StandardFace.StandardFace.Matches,\n",
+        "    AverCert.AcceptedArtifact.claimObligationExports,\n",
+        "    AverCert.AcceptedArtifact.allClaims,\n",
+        "    AverCert.AcceptedArtifact.namedPlanForExport,\n",
+        "    AverCert.AcceptedArtifact.stringEqPlanForExport,\n",
+        "    AverCert.AcceptedArtifact.stringConcatPlanForExport,\n",
+        "    AverCert.AcceptedArtifact.constructPlanForExport,\n",
+        "    AverCert.AcceptedArtifact.recursionPlanForExport,\n",
+        "    AverCert.AcceptedArtifact.mutualPlanForExport,\n",
+        "    AverCert.AcceptedArtifact.verbatimPlanForExport,\n",
+        "    AverCert.AcceptedArtifact.intDispatchPlanForExport,\n",
+        "    AverCert.AcceptedArtifact.fieldProjectionPlanForExport,\n",
+        "    AverCert.AcceptedArtifact.compositionMemberForName,\n",
+        "    data, symFragmentClaims, stringEqClaims, stringConcatClaims,\n",
+        "    constructClaims, recursionClaims, mutualRecursionClaims,\n",
+        "    verbatimClaims, intDispatchClaims, fieldProjectionClaims,\n",
+        "    compositionMembers, compositionClaims]\n"
+    );
     // `dsimp` closes a reduced `True` goal immediately.  Do not emit a
     // trailing `exact trivial` for an empty family: Lean correctly reports a
     // tactic after goal closure as an error.
@@ -1559,6 +1593,9 @@ fn render_artifact(
             "theorem claimsMatchManifest : AverCert.AcceptedArtifact.claimsMatchManifest data := by\n",
             "{artifact_dsimp}",
             "  exact ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n\n",
+            "theorem standardFacesChecked : AverCert.StandardFace.checkedFaces data := by\n",
+            "{face_dsimp}",
+            "  repeat' constructor\n\n",
             "theorem decodedNonExprClaimFacts : AverCert.AcceptedArtifact.decodedNonExprClaimFacts data := by\n",
             "{artifact_dsimp}",
             "  repeat' constructor\n\n",
@@ -1605,7 +1642,7 @@ fn render_artifact(
             "    (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n",
             "    AverCert.AcceptedArtifact.accepted data := by\n",
             "  dsimp [AverCert.AcceptedArtifact.accepted, AverCert.AcceptedArtifact.subjectMatchesArtifactRoot, AverCert.AcceptedArtifact.expectedArtifactRoot]\n",
-            "  exact ⟨finalCert, rfl, claimObligationsBound, claimsMatchManifest, decodedNonExprFacts, fragmentsAccepted⟩\n"
+            "  exact ⟨finalCert, rfl, claimObligationsBound, claimsMatchManifest, standardFacesChecked, decodedNonExprFacts, fragmentsAccepted⟩\n"
         ),
         obligation_proof_step = family_exact(&claims.obligation_proof),
         sym_proof_step = family_exact(&claims.sym_proof),
@@ -1619,6 +1656,7 @@ fn render_artifact(
         field_projection_proof_step = family_exact(&claims.field_projection_proof),
         composition_proof = claims.composition_proof,
         artifact_dsimp = artifact_dsimp,
+        face_dsimp = face_dsimp,
     );
     format!(
          "-- Artifact-carried acceptance root.\n\
