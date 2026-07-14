@@ -799,7 +799,9 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
                 "class": "straight-line",
                 "policy": "simulatesModel",
                 "level": "L1",
-                "theorem": "CertProofs.withdrawAll_wasm_certified"
+                "theorem": "CertProofs.withdrawAll_wasm_certified",
+                "dom": "List Int",
+                "cod": "Int"
             }));
         m["runtime_contracts"]
             .as_array_mut()
@@ -2527,7 +2529,12 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
         .as_array_mut()
         .unwrap()
         .push(serde_json::json!({
-            "name": "withdrawAll", "policy": "simulatesModel", "level": "L1"
+            "name": "withdrawAll",
+            "class": "straight-line",
+            "policy": "simulatesModel",
+            "level": "L1",
+            "dom": "List Int",
+            "cod": "Int"
         }));
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
     let (ok, out) = aver_verify(&out_dir.join("certempty.wasm"), &out_dir.join("cert"));
