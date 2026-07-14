@@ -582,8 +582,11 @@ The historical migration path was:
    expression fragments.
 3. Lean checks the full relevant Wasm profile used by each accepted family.
 
-The promoted certificate families have completed these stages; the numbered
-prototype labels are no longer part of the format.
+The numbered prototype labels are no longer part of the format. That naming
+cleanup does not imply that stages 2 and 3 are complete: the checker still
+uses audited Rust for sidecar parsing/checking/lowering and for parts of
+module-level validation and non-expression obligation derivation. Moving
+those remaining gates behind the kernel boundary is still roadmap work.
 
 ## Trace-Guided Replay Is Excluded
 
