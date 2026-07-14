@@ -680,7 +680,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     //      over any staged bytes. Appending an inert custom section changes the
     //      artifact hash without perturbing any byte-derived fact, and the JSON
     //      pin is rebound to match — so ONLY the kernel witness's hash faces can
-    //      catch the swap: the theorems (and `CertModule.wasmSha256`) talk about
+    //      catch the swap: the theorems (and the manifest artifact-hash face) talk about
     //      the ORIGINAL hash, not the checker-computed one. This keeps the
     //      witness hash face exercised now that claim-covered certs die earlier.
     {
@@ -714,7 +714,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         assert!(out.contains("does not bind"), "wrong reason (e2):\n{out}");
         // The witness names the exact face the kernel rejected.
         assert!(
-            out.contains("CertModule.wasmSha256"),
+            out.contains("AverCert.manifest.subject.artifactHash"),
             "witness not exercised (e2):\n{out}"
         );
     }
@@ -898,7 +898,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "control char in a candidate must fail (l):\n{out}");
-        assert!(out.contains("charset"), "wrong reason (l):\n{out}");
+        assert!(out.contains("printable ASCII"), "wrong reason (l):\n{out}");
     }
 
     // (m) Evil axiom: prove `Final.cert` from a smuggled `axiom evil`. The build
@@ -2482,10 +2482,10 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
         let (ok, out) = aver_verify(&dir.join("certempty.wasm"), &dir.join("cert"));
         assert!(!ok, "A5 injection payload must fail:\n{out}");
         assert!(
-            out.contains("charset"),
+            out.contains("printable ASCII"),
             "wrong reason (A5 manifest):\n{out}"
         );
-        // The charset diagnostic echoes the rejected value; the property is that
+        // The character-set diagnostic echoes the rejected value; the property is that
         // the payload is never CERTIFIED.
         assert!(
             !out.contains("CERTIFIED"),
@@ -2507,7 +2507,10 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
         let (ok, out) = aver_verify(&dir.join("certempty.wasm"), &dir.join("cert"));
         assert!(!ok, "A5 JSON-only payload must fail:\n{out}");
-        assert!(out.contains("charset"), "wrong reason (A5 json):\n{out}");
+        assert!(
+            out.contains("printable ASCII"),
+            "wrong reason (A5 json):\n{out}"
+        );
         assert!(
             !out.contains("CERTIFIED"),
             "A5 JSON-only payload credited an export:\n{out}"
@@ -2717,7 +2720,7 @@ fn composition_callee_mutation_is_declined() {
         "mutated composition callee entry must be DECLINED:\n{out}"
     );
     assert!(
-        out.contains("does not bind") || out.contains("certificate did not build"),
+        out.contains("does not bind") || out.contains("did not build"),
         "wrong reason:\n{out}"
     );
     assert!(
@@ -2775,7 +2778,7 @@ fn composition_orphan_member_is_declined() {
     let (ok, out) = aver_verify(&out_dir.join("compose.wasm"), &out_dir.join("cert"));
     assert!(!ok, "orphan composition member must be DECLINED:\n{out}");
     assert!(
-        out.contains("does not bind") || out.contains("certificate did not build"),
+        out.contains("does not bind") || out.contains("did not build"),
         "wrong reason:\n{out}"
     );
     assert!(

@@ -511,7 +511,7 @@ fn read_candidates(manifest: &Value) -> Result<Candidates, String> {
 
     let host_roles = manifest
         .get("hostRoleTable")
-        .ok_or_else(|| "cert-manifest.json is missing `hostRoleTable`".to_string())?;
+        .ok_or_else(|| "cert-manifest.json is missing object field `hostRoleTable`".to_string())?;
     exact_object_fields(host_roles, "hostRoleTable", &["box", "add", "mul", "sub"])?;
     let optional_index = |key: &str| -> Result<Option<u32>, String> {
         match &host_roles[key] {
@@ -529,7 +529,7 @@ fn read_candidates(manifest: &Value) -> Result<Candidates, String> {
     let string_roles_json = manifest
         .get("stringHostRoles")
         .and_then(Value::as_array)
-        .ok_or_else(|| "cert-manifest.json is missing array `stringHostRoles`".to_string())?;
+        .ok_or_else(|| "cert-manifest.json is missing array field `stringHostRoles`".to_string())?;
     let mut string_host_roles = Vec::with_capacity(string_roles_json.len());
     for (index, entry) in string_roles_json.iter().enumerate() {
         exact_object_fields(
