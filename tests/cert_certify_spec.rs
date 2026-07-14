@@ -9,6 +9,10 @@
 //! backend) and skipped when `lake` is unavailable, mirroring `proof_spec.rs`.
 #![cfg(feature = "wasm")]
 
+#[path = "support/cert_wall.rs"]
+mod cert_wall;
+
+use cert_wall::materialize as materialize_wall;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::Command;
@@ -68,6 +72,7 @@ fn verify_certificate(wasm: &std::path::Path, cert_dir: &std::path::Path) -> (bo
 }
 
 fn assert_certificate_target_builds(cert_dir: &std::path::Path, case: &str) {
+    materialize_wall(cert_dir);
     let output = Command::new("lake")
         .current_dir(cert_dir)
         .args(["build", "Certificate"])
@@ -151,61 +156,21 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             .expect("cert-manifest.json exists"),
     )
     .expect("manifest is valid JSON");
-    let expected_schema_core_sha = aver::codegen::cert::audited_schema_core_sha();
-    let expected_decode_sha = aver::codegen::cert::audited_decode_sha();
-    let expected_plan_check_sha = aver::codegen::cert::audited_plan_check_sha();
-    let expected_plan_lower_sha = aver::codegen::cert::audited_plan_lower_sha();
-    let expected_plan_bytes_sha = aver::codegen::cert::audited_plan_bytes_sha();
-    let expected_wasm_slice_sha = aver::codegen::cert::audited_wasm_slice_sha();
-    let expected_expr_fragment_accepted_sha =
-        aver::codegen::cert::audited_expr_fragment_accepted_sha();
-    let expected_accepted_artifact_sha = aver::codegen::cert::audited_accepted_artifact_sha();
-    let expected_accepted_artifact_core_sha =
-        aver::codegen::cert::audited_accepted_artifact_core_sha();
     assert_eq!(
-        manifest["schema_core_sha256"].as_str(),
-        Some(expected_schema_core_sha.as_str()),
-        "manifest should pin the checker-owned SchemaCore.lean"
+        manifest["format"],
+        serde_json::json!({
+            "version": aver::codegen::cert::wall::FORMAT_VERSION,
+            "wall_id": aver::codegen::cert::wall::current_id(),
+        }),
+        "manifest should identify the one byte-exact wall resolved by the checker"
     );
-    assert_eq!(
-        manifest["cert_decode_sha256"].as_str(),
-        Some(expected_decode_sha.as_str()),
-        "manifest should pin the checker-owned CertDecode.lean"
-    );
-    assert_eq!(
-        manifest["plan_check_sha256"].as_str(),
-        Some(expected_plan_check_sha.as_str()),
-        "manifest should pin the checker-owned PlanCheck.lean"
-    );
-    assert_eq!(
-        manifest["plan_lower_sha256"].as_str(),
-        Some(expected_plan_lower_sha.as_str()),
-        "manifest should pin the checker-owned PlanLower.lean"
-    );
-    assert_eq!(
-        manifest["plan_bytes_sha256"].as_str(),
-        Some(expected_plan_bytes_sha.as_str()),
-        "manifest should pin the checker-owned PlanBytes.lean"
-    );
-    assert_eq!(
-        manifest["wasm_slice_sha256"].as_str(),
-        Some(expected_wasm_slice_sha.as_str()),
-        "manifest should pin the checker-owned WasmSlice.lean"
-    );
-    assert_eq!(
-        manifest["expr_fragment_accepted_sha256"].as_str(),
-        Some(expected_expr_fragment_accepted_sha.as_str()),
-        "manifest should pin the checker-owned ExprFragmentAccepted.lean"
-    );
-    assert_eq!(
-        manifest["accepted_artifact_sha256"].as_str(),
-        Some(expected_accepted_artifact_sha.as_str()),
-        "manifest should pin the checker-owned AcceptedArtifact.lean"
-    );
-    assert_eq!(
-        manifest["accepted_artifact_core_sha256"].as_str(),
-        Some(expected_accepted_artifact_core_sha.as_str()),
-        "manifest should pin the checker-owned AcceptedArtifactCore.lean"
+    assert!(
+        manifest
+            .as_object()
+            .unwrap()
+            .keys()
+            .all(|key| { !key.ends_with("_sha256") || matches!(key.as_str(), "wasm_sha256") }),
+        "the wall id replaces per-module checker hash pins"
     );
     assert_eq!(
         manifest["artifact_certificate_root"].as_str(),
@@ -715,128 +680,7 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
             .expect("cert-manifest.json exists"),
     )
     .expect("manifest is valid JSON");
-    let audited_modules = [
-        (
-            "ExprFragmentSemantics.lean",
-            aver::codegen::cert::CERT_EXPR_FRAGMENT_SEMANTICS,
-            "expr_fragment_semantics_sha256",
-            aver::codegen::cert::audited_expr_fragment_semantics_sha(),
-        ),
-        (
-            "InterpreterSequencing.lean",
-            aver::codegen::cert::CERT_INTERPRETER_SEQUENCING,
-            "interpreter_sequencing_sha256",
-            aver::codegen::cert::audited_interpreter_sequencing_sha(),
-        ),
-        (
-            "ExprFragmentSoundness.lean",
-            aver::codegen::cert::CERT_EXPR_FRAGMENT_SOUNDNESS,
-            "expr_fragment_soundness_sha256",
-            aver::codegen::cert::audited_expr_fragment_soundness_sha(),
-        ),
-        (
-            "FieldProjectionSoundness.lean",
-            aver::codegen::cert::CERT_FIELD_PROJECTION_SOUNDNESS,
-            "field_projection_soundness_sha256",
-            aver::codegen::cert::audited_field_projection_soundness_sha(),
-        ),
-        (
-            "ConstructVerbatimSoundness.lean",
-            aver::codegen::cert::CERT_CONSTRUCT_VERBATIM_SOUNDNESS,
-            "construct_verbatim_soundness_sha256",
-            aver::codegen::cert::audited_construct_verbatim_soundness_sha(),
-        ),
-        (
-            "IntDispatchSoundness.lean",
-            aver::codegen::cert::CERT_INT_DISPATCH_SOUNDNESS,
-            "int_dispatch_soundness_sha256",
-            aver::codegen::cert::audited_int_dispatch_soundness_sha(),
-        ),
-        (
-            "StringSoundness.lean",
-            aver::codegen::cert::CERT_STRING_SOUNDNESS,
-            "string_soundness_sha256",
-            aver::codegen::cert::audited_string_soundness_sha(),
-        ),
-        (
-            "RecursionSoundness.lean",
-            aver::codegen::cert::CERT_RECURSION_SOUNDNESS,
-            "recursion_soundness_sha256",
-            aver::codegen::cert::audited_recursion_soundness_sha(),
-        ),
-        (
-            "MutualRecursionSoundness.lean",
-            aver::codegen::cert::CERT_MUTUAL_RECURSION_SOUNDNESS,
-            "mutual_recursion_soundness_sha256",
-            aver::codegen::cert::audited_mutual_recursion_soundness_sha(),
-        ),
-        (
-            "CompositionSoundness.lean",
-            aver::codegen::cert::CERT_COMPOSITION_SOUNDNESS,
-            "composition_soundness_sha256",
-            aver::codegen::cert::audited_composition_soundness_sha(),
-        ),
-        (
-            "AcceptanceSoundnessCore.lean",
-            aver::codegen::cert::CERT_ACCEPTANCE_SOUNDNESS_CORE,
-            "acceptance_soundness_core_sha256",
-            aver::codegen::cert::audited_acceptance_soundness_core_sha(),
-        ),
-        (
-            "DischargeExprFragment.lean",
-            aver::codegen::cert::CERT_DISCHARGE_EXPR_FRAGMENT,
-            "discharge_expr_fragment_sha256",
-            aver::codegen::cert::audited_discharge_expr_fragment_sha(),
-        ),
-        (
-            "DischargeFieldProjection.lean",
-            aver::codegen::cert::CERT_DISCHARGE_FIELD_PROJECTION,
-            "discharge_field_projection_sha256",
-            aver::codegen::cert::audited_discharge_field_projection_sha(),
-        ),
-        (
-            "DischargeConstruct.lean",
-            aver::codegen::cert::CERT_DISCHARGE_CONSTRUCT,
-            "discharge_construct_sha256",
-            aver::codegen::cert::audited_discharge_construct_sha(),
-        ),
-        (
-            "DischargeVerbatim.lean",
-            aver::codegen::cert::CERT_DISCHARGE_VERBATIM,
-            "discharge_verbatim_sha256",
-            aver::codegen::cert::audited_discharge_verbatim_sha(),
-        ),
-        (
-            "DischargeString.lean",
-            aver::codegen::cert::CERT_DISCHARGE_STRING,
-            "discharge_string_sha256",
-            aver::codegen::cert::audited_discharge_string_sha(),
-        ),
-        (
-            "DischargeIntDispatch.lean",
-            aver::codegen::cert::CERT_DISCHARGE_INT_DISPATCH,
-            "discharge_int_dispatch_sha256",
-            aver::codegen::cert::audited_discharge_int_dispatch_sha(),
-        ),
-        (
-            "DischargeRecursion.lean",
-            aver::codegen::cert::CERT_DISCHARGE_RECURSION,
-            "discharge_recursion_sha256",
-            aver::codegen::cert::audited_discharge_recursion_sha(),
-        ),
-        (
-            "DischargeComposition.lean",
-            aver::codegen::cert::CERT_DISCHARGE_COMPOSITION,
-            "discharge_composition_sha256",
-            aver::codegen::cert::audited_discharge_composition_sha(),
-        ),
-        (
-            "AcceptanceSoundness.lean",
-            aver::codegen::cert::CERT_ACCEPTANCE_SOUNDNESS,
-            "acceptance_soundness_sha256",
-            aver::codegen::cert::audited_acceptance_soundness_sha(),
-        ),
-    ];
+    let audited_modules = aver::codegen::cert::wall::SOURCES;
     for entry in std::fs::read_dir(&cert_dir).expect("read emitted certificate directory") {
         let name = entry
             .expect("read emitted certificate entry")
@@ -856,19 +700,24 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
             .all(|key| !key.starts_with("v3_")),
         "certificate manifest must not expose historical v3 keys: {manifest}"
     );
-    for (file, embedded, manifest_key, expected_sha) in audited_modules {
-        let emitted = std::fs::read_to_string(cert_dir.join(file))
-            .unwrap_or_else(|e| panic!("emitted {file} exists: {e}"));
-        assert_eq!(
-            emitted, embedded,
-            "emitted {file} must be byte-identical to its embedded audited source"
-        );
-        assert_eq!(
-            manifest[manifest_key].as_str(),
-            Some(expected_sha.as_str()),
-            "manifest must pin checker-owned {file}"
+    for source in audited_modules {
+        assert!(
+            !cert_dir.join(source.name).exists(),
+            "checker-owned wall source {} must be resolved by wall_id, not copied",
+            source.name,
         );
     }
+    for checker_owned in ["lean-toolchain", "lakefile.lean"] {
+        assert!(
+            !cert_dir.join(checker_owned).exists(),
+            "checker-owned {checker_owned} must not be copied into the certificate package"
+        );
+    }
+    assert_eq!(
+        manifest["format"]["wall_id"].as_str(),
+        Some(aver::codegen::cert::wall::current_id()),
+        "one aggregate identity replaces the audited module hash fields"
+    );
 
     let final_lean =
         std::fs::read_to_string(cert_dir.join("Final.lean")).expect("Final.lean exists");
@@ -1212,6 +1061,7 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
     }
 
     let started = std::time::Instant::now();
+    materialize_wall(&cert_dir);
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")
@@ -1552,6 +1402,7 @@ fn certify_straight_line_fixture_lake_builds_kernel_clean() {
         "expected addTwo certified, got {certified:?}"
     );
 
+    materialize_wall(&cert_dir);
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")
@@ -1737,6 +1588,7 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
         factorial_obligation.contains("totalityRole := .mul"),
         "factorial must select the byte-checked mul-totality role:\n{factorial_obligation}"
     );
+    materialize_wall(&cert_dir);
     let schema_core = std::fs::read_to_string(cert_dir.join("SchemaCore.lean")).unwrap();
     let totality = schema_core
         .split_once("def Obligation.holdsTotal")
@@ -1961,6 +1813,7 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
             }
         }
 
+        materialize_wall(&cert_dir);
         let build = Command::new("lake")
             .current_dir(&cert_dir)
             .arg("build")
@@ -2083,6 +1936,7 @@ fn certify_verbatim_variant_dispatch_lake_builds_kernel_clean() {
         "verbatim dispatch must not emit bespoke proofs:\n{certificate}"
     );
 
+    materialize_wall(&cert_dir);
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")
@@ -2254,6 +2108,7 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
         "String.eq must not emit bespoke proofs:\n{certificate}"
     );
 
+    materialize_wall(&cert_dir);
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")
@@ -2486,6 +2341,7 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         "String.concat must not emit bespoke proofs:\n{certificate}"
     );
 
+    materialize_wall(&cert_dir);
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")
@@ -2574,6 +2430,7 @@ fn certify_composition_fixture_lake_builds_kernel_clean() {
         .and_then(|c| c["class"].as_str())
         .unwrap_or("");
     assert_eq!(class, "cross-function-composition", "wrong class for quad");
+    materialize_wall(&cert_dir);
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")
@@ -2795,6 +2652,7 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
                 );
             }
         }
+        materialize_wall(&cert_dir);
         let build = Command::new("lake")
             .current_dir(&cert_dir)
             .arg("build")
@@ -2904,6 +2762,7 @@ fn certify_carrier_at_type_index_64_lake_builds_kernel_clean() {
         sum_big["theorem"],
         "AcceptanceSoundness.recursion_claim_discharges"
     );
+    materialize_wall(&cert_dir);
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")

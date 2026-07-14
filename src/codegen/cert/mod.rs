@@ -1,24 +1,17 @@
 //! Stage B artifact-certificate emitter: `aver compile --target wasm-gc --certify`.
 //!
-//! Emits, next to `<name>.wasm`, a self-contained Lean `cert/` project that
-//! `lake build`s green with kernel-clean theorems for the user functions that
-//! fall into the three measured classes:
-//!
-//! * straight-line `Int -> Int` add-a-constant (the `addTwo` kill-fast shape),
-//! * single-argument self-recursion of the `sumTo` shape
-//!   (`match n <= 0 { true -> 0; false -> n + f(n - 1) }`),
-//! * two-argument accumulator self-recursion of the `countDown` shape
-//!   (`match n <= 0 { true -> acc; false -> f(n - 1, acc + n) }`).
+//! Emits, next to `<name>.wasm`, an artifact-specific `cert/` package. The
+//! package names its checker-owned Lean soundness wall by `format.wall_id`;
+//! `aver cert verify` resolves the exact embedded wall and authors a fresh
+//! build instead of trusting or duplicating build infrastructure in the cert.
 //!
 //! Everything else is FAIL-CLOSED: listed in `cert-manifest.json` as
 //! `source-level-only` with a reason. No weaker theorem is ever emitted.
 //!
-//! The certified-function bodies are read back from the module bytes the
-//! compiler just emitted (the same bytes whose sha256 the certificate pins),
-//! matched against the two structural templates, and re-rendered as
-//! `CertPrelude.WInstr` data. A function whose real emitted body does not match
-//! a template is declined — so the `WInstr` data in `Module.lean` is exactly
-//! the shape present in the hashed bytes.
+//! Certified-function bodies are read back from the module bytes the compiler
+//! just emitted, checked against the admitted profiles, and re-rendered as
+//! `CertPrelude.WInstr` data. Any body that cannot be bound to an admitted
+//! obligation is declined rather than assigned a weaker theorem.
 //!
 //! `aver cert verify` re-runs the audited Rust byte pipeline as a fail-fast,
 //! then the accepted-artifact witness uses `CertDecode` to compute
@@ -34,47 +27,8 @@
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-/// The Stage-A semantics prelude, single source of truth, embedded so the
-/// emitter is self-contained.
-pub const CERT_PRELUDE: &str = include_str!("../../../tools/certkit/prelude/CertPrelude.lean");
-pub const CERT_DECODE: &str = include_str!("../../../tools/certkit/prelude/CertDecode.lean");
-pub const LEAN_TOOLCHAIN: &str = include_str!("../../../tools/certkit/prelude/lean-toolchain");
-
-/// The audited statement schema, single source of truth, embedded so both the
-/// emitter and the `aver cert verify` checker pin the exact same bytes. The
-/// consumer trusts the certificate by checking the final theorem NAME, the
-/// manifest LITERAL, and the hashes of the audited core/shim files plus the
-/// prelude — never Lean proof syntax. Fixed content (no per-build parts) so
-/// every sha256 is known to the checker at compile time.
-pub const CERT_SCHEMA: &str = include_str!("Schema.lean");
-pub const CERT_SCHEMA_CORE: &str = include_str!("SchemaCore.lean");
-pub const CERT_PLAN_CHECK: &str = include_str!("PlanCheck.lean");
-pub const CERT_PLAN_LOWER: &str = include_str!("PlanLower.lean");
-pub const CERT_PLAN_BYTES: &str = include_str!("PlanBytes.lean");
-pub const CERT_WASM_SLICE: &str = include_str!("WasmSlice.lean");
-pub const CERT_EXPR_FRAGMENT_ACCEPTED: &str = include_str!("ExprFragmentAccepted.lean");
-pub const CERT_ACCEPTED_ARTIFACT: &str = include_str!("AcceptedArtifact.lean");
-pub const CERT_ACCEPTED_ARTIFACT_CORE: &str = include_str!("AcceptedArtifactCore.lean");
-pub const CERT_EXPR_FRAGMENT_SEMANTICS: &str = include_str!("ExprFragmentSemantics.lean");
-pub const CERT_INTERPRETER_SEQUENCING: &str = include_str!("InterpreterSequencing.lean");
-pub const CERT_EXPR_FRAGMENT_SOUNDNESS: &str = include_str!("ExprFragmentSoundness.lean");
-pub const CERT_FIELD_PROJECTION_SOUNDNESS: &str = include_str!("FieldProjectionSoundness.lean");
-pub const CERT_CONSTRUCT_VERBATIM_SOUNDNESS: &str = include_str!("ConstructVerbatimSoundness.lean");
-pub const CERT_INT_DISPATCH_SOUNDNESS: &str = include_str!("IntDispatchSoundness.lean");
-pub const CERT_STRING_SOUNDNESS: &str = include_str!("StringSoundness.lean");
-pub const CERT_RECURSION_SOUNDNESS: &str = include_str!("RecursionSoundness.lean");
-pub const CERT_MUTUAL_RECURSION_SOUNDNESS: &str = include_str!("MutualRecursionSoundness.lean");
-pub const CERT_COMPOSITION_SOUNDNESS: &str = include_str!("CompositionSoundness.lean");
-pub const CERT_ACCEPTANCE_SOUNDNESS_CORE: &str = include_str!("AcceptanceSoundnessCore.lean");
-pub const CERT_DISCHARGE_EXPR_FRAGMENT: &str = include_str!("DischargeExprFragment.lean");
-pub const CERT_DISCHARGE_FIELD_PROJECTION: &str = include_str!("DischargeFieldProjection.lean");
-pub const CERT_DISCHARGE_CONSTRUCT: &str = include_str!("DischargeConstruct.lean");
-pub const CERT_DISCHARGE_VERBATIM: &str = include_str!("DischargeVerbatim.lean");
-pub const CERT_DISCHARGE_STRING: &str = include_str!("DischargeString.lean");
-pub const CERT_DISCHARGE_INT_DISPATCH: &str = include_str!("DischargeIntDispatch.lean");
-pub const CERT_DISCHARGE_RECURSION: &str = include_str!("DischargeRecursion.lean");
-pub const CERT_DISCHARGE_COMPOSITION: &str = include_str!("DischargeComposition.lean");
-pub const CERT_ACCEPTANCE_SOUNDNESS: &str = include_str!("AcceptanceSoundness.lean");
+pub mod wall;
+pub use wall::*;
 
 /// Emitted-fragment profile and runtime ABI identifiers recorded in the
 /// manifest. Stable strings the checker echoes; bumped when the certified
@@ -114,102 +68,6 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
     hex(&h.finalize())
-}
-
-/// Content hashes of the audited Lean files as embedded in THIS binary — the
-/// checker's anchor for the exact sources emitted with each certificate.
-pub fn audited_schema_sha() -> String {
-    sha256_hex(CERT_SCHEMA.as_bytes())
-}
-pub fn audited_schema_core_sha() -> String {
-    sha256_hex(CERT_SCHEMA_CORE.as_bytes())
-}
-pub fn audited_prelude_sha() -> String {
-    sha256_hex(CERT_PRELUDE.as_bytes())
-}
-pub fn audited_decode_sha() -> String {
-    sha256_hex(CERT_DECODE.as_bytes())
-}
-pub fn audited_plan_check_sha() -> String {
-    sha256_hex(CERT_PLAN_CHECK.as_bytes())
-}
-pub fn audited_plan_lower_sha() -> String {
-    sha256_hex(CERT_PLAN_LOWER.as_bytes())
-}
-pub fn audited_plan_bytes_sha() -> String {
-    sha256_hex(CERT_PLAN_BYTES.as_bytes())
-}
-pub fn audited_wasm_slice_sha() -> String {
-    sha256_hex(CERT_WASM_SLICE.as_bytes())
-}
-pub fn audited_expr_fragment_accepted_sha() -> String {
-    sha256_hex(CERT_EXPR_FRAGMENT_ACCEPTED.as_bytes())
-}
-pub fn audited_accepted_artifact_sha() -> String {
-    sha256_hex(CERT_ACCEPTED_ARTIFACT.as_bytes())
-}
-pub fn audited_accepted_artifact_core_sha() -> String {
-    sha256_hex(CERT_ACCEPTED_ARTIFACT_CORE.as_bytes())
-}
-pub fn audited_expr_fragment_semantics_sha() -> String {
-    sha256_hex(CERT_EXPR_FRAGMENT_SEMANTICS.as_bytes())
-}
-pub fn audited_interpreter_sequencing_sha() -> String {
-    sha256_hex(CERT_INTERPRETER_SEQUENCING.as_bytes())
-}
-pub fn audited_expr_fragment_soundness_sha() -> String {
-    sha256_hex(CERT_EXPR_FRAGMENT_SOUNDNESS.as_bytes())
-}
-pub fn audited_field_projection_soundness_sha() -> String {
-    sha256_hex(CERT_FIELD_PROJECTION_SOUNDNESS.as_bytes())
-}
-pub fn audited_construct_verbatim_soundness_sha() -> String {
-    sha256_hex(CERT_CONSTRUCT_VERBATIM_SOUNDNESS.as_bytes())
-}
-pub fn audited_int_dispatch_soundness_sha() -> String {
-    sha256_hex(CERT_INT_DISPATCH_SOUNDNESS.as_bytes())
-}
-pub fn audited_string_soundness_sha() -> String {
-    sha256_hex(CERT_STRING_SOUNDNESS.as_bytes())
-}
-pub fn audited_recursion_soundness_sha() -> String {
-    sha256_hex(CERT_RECURSION_SOUNDNESS.as_bytes())
-}
-pub fn audited_mutual_recursion_soundness_sha() -> String {
-    sha256_hex(CERT_MUTUAL_RECURSION_SOUNDNESS.as_bytes())
-}
-pub fn audited_composition_soundness_sha() -> String {
-    sha256_hex(CERT_COMPOSITION_SOUNDNESS.as_bytes())
-}
-pub fn audited_acceptance_soundness_core_sha() -> String {
-    sha256_hex(CERT_ACCEPTANCE_SOUNDNESS_CORE.as_bytes())
-}
-pub fn audited_discharge_expr_fragment_sha() -> String {
-    sha256_hex(CERT_DISCHARGE_EXPR_FRAGMENT.as_bytes())
-}
-pub fn audited_discharge_field_projection_sha() -> String {
-    sha256_hex(CERT_DISCHARGE_FIELD_PROJECTION.as_bytes())
-}
-pub fn audited_discharge_construct_sha() -> String {
-    sha256_hex(CERT_DISCHARGE_CONSTRUCT.as_bytes())
-}
-pub fn audited_discharge_verbatim_sha() -> String {
-    sha256_hex(CERT_DISCHARGE_VERBATIM.as_bytes())
-}
-pub fn audited_discharge_string_sha() -> String {
-    sha256_hex(CERT_DISCHARGE_STRING.as_bytes())
-}
-pub fn audited_discharge_int_dispatch_sha() -> String {
-    sha256_hex(CERT_DISCHARGE_INT_DISPATCH.as_bytes())
-}
-pub fn audited_discharge_recursion_sha() -> String {
-    sha256_hex(CERT_DISCHARGE_RECURSION.as_bytes())
-}
-pub fn audited_discharge_composition_sha() -> String {
-    sha256_hex(CERT_DISCHARGE_COMPOSITION.as_bytes())
-}
-pub fn audited_acceptance_soundness_sha() -> String {
-    sha256_hex(CERT_ACCEPTANCE_SOUNDNESS.as_bytes())
 }
 
 include!("core_wasm.rs");

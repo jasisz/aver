@@ -1,7 +1,8 @@
 // ---- rendering -----------------------------------------------------------
 
-/// Write the full `cert/` project. `model_files` are the (path, content) pairs
-/// from the reused `aver proof` Lean emission (AverCommon + model modules).
+/// Write the artifact-specific `cert/` package. `model_files` are the
+/// `(path, content)` pairs from the reused `aver proof` Lean emission. The
+/// checker-owned wall and build configuration are resolved from `wall_id`.
 pub fn write_project(
     out_dir: &Path,
     wasm_name: &str,
@@ -11,11 +12,6 @@ pub fn write_project(
 ) -> Result<(), String> {
     let cert_dir = out_dir.join("cert");
     std::fs::create_dir_all(&cert_dir).map_err(|e| format!("create cert dir: {e}"))?;
-
-    // Copy in the semantics prelude + toolchain (single source of truth).
-    write(&cert_dir, "CertPrelude.lean", CERT_PRELUDE)?;
-    write(&cert_dir, "CertDecode.lean", CERT_DECODE)?;
-    write(&cert_dir, "lean-toolchain", LEAN_TOOLCHAIN)?;
 
     // Copy the model files (AverCommon + <Module>.lean) verbatim.
     let mut model_roots: Vec<String> = Vec::new();
@@ -44,58 +40,8 @@ pub fn write_project(
         "Module.lean",
         &render_module(analysis, wasm_name, &sha),
     )?;
-    // Audited statement schema (fixed) + generated manifest literal + the one
-    // final theorem that composes the per-export obligations.
-    write(&cert_dir, "Schema.lean", CERT_SCHEMA)?;
-    write(&cert_dir, "SchemaCore.lean", CERT_SCHEMA_CORE)?;
-    write(&cert_dir, "PlanCheck.lean", CERT_PLAN_CHECK)?;
-    write(&cert_dir, "PlanLower.lean", CERT_PLAN_LOWER)?;
-    write(&cert_dir, "PlanBytes.lean", CERT_PLAN_BYTES)?;
-    write(&cert_dir, "WasmSlice.lean", CERT_WASM_SLICE)?;
-    write(
-        &cert_dir,
-        "ExprFragmentAccepted.lean",
-        CERT_EXPR_FRAGMENT_ACCEPTED,
-    )?;
-    write(&cert_dir, "AcceptedArtifact.lean", CERT_ACCEPTED_ARTIFACT)?;
-    write(
-        &cert_dir,
-        "AcceptedArtifactCore.lean",
-        CERT_ACCEPTED_ARTIFACT_CORE,
-    )?;
-    for (name, contents) in [
-        ("ExprFragmentSemantics.lean", CERT_EXPR_FRAGMENT_SEMANTICS),
-        ("InterpreterSequencing.lean", CERT_INTERPRETER_SEQUENCING),
-        ("ExprFragmentSoundness.lean", CERT_EXPR_FRAGMENT_SOUNDNESS),
-        ("FieldProjectionSoundness.lean", CERT_FIELD_PROJECTION_SOUNDNESS),
-        ("ConstructVerbatimSoundness.lean", CERT_CONSTRUCT_VERBATIM_SOUNDNESS),
-        ("IntDispatchSoundness.lean", CERT_INT_DISPATCH_SOUNDNESS),
-        ("StringSoundness.lean", CERT_STRING_SOUNDNESS),
-        ("RecursionSoundness.lean", CERT_RECURSION_SOUNDNESS),
-        ("MutualRecursionSoundness.lean", CERT_MUTUAL_RECURSION_SOUNDNESS),
-        ("CompositionSoundness.lean", CERT_COMPOSITION_SOUNDNESS),
-        ("AcceptanceSoundnessCore.lean", CERT_ACCEPTANCE_SOUNDNESS_CORE),
-        (
-            "DischargeExprFragment.lean",
-            CERT_DISCHARGE_EXPR_FRAGMENT,
-        ),
-        ("DischargeFieldProjection.lean", CERT_DISCHARGE_FIELD_PROJECTION),
-        ("DischargeConstruct.lean", CERT_DISCHARGE_CONSTRUCT),
-        ("DischargeVerbatim.lean", CERT_DISCHARGE_VERBATIM),
-        ("DischargeString.lean", CERT_DISCHARGE_STRING),
-        (
-            "DischargeIntDispatch.lean",
-            CERT_DISCHARGE_INT_DISPATCH,
-        ),
-        ("DischargeRecursion.lean", CERT_DISCHARGE_RECURSION),
-        (
-            "DischargeComposition.lean",
-            CERT_DISCHARGE_COMPOSITION,
-        ),
-        ("AcceptanceSoundness.lean", CERT_ACCEPTANCE_SOUNDNESS),
-    ] {
-        write(&cert_dir, name, contents)?;
-    }
+    // Checker-owned Lean sources are identified by `format.wall_id` and are
+    // materialized by the verifier. They are not duplicated in the package.
     write(
         &cert_dir,
         "ArtifactBytes.lean",
@@ -146,79 +92,9 @@ pub fn write_project(
         "ArtifactSoundness.lean",
         &render_artifact_soundness(),
     )?;
-    write(&cert_dir, "lakefile.lean", &render_lakefile(&model_roots))?;
-
-    // Content hashes the checker re-verifies: the audited schema and the
-    // semantics prelude. Pinning these plus the final theorem name and the
-    // manifest literal is the whole trust story.
-    let schema_sha = sha256_hex(CERT_SCHEMA.as_bytes());
-    let schema_core_sha = sha256_hex(CERT_SCHEMA_CORE.as_bytes());
-    let prelude_sha = sha256_hex(CERT_PRELUDE.as_bytes());
-    let decode_sha = sha256_hex(CERT_DECODE.as_bytes());
-    let plan_check_sha = sha256_hex(CERT_PLAN_CHECK.as_bytes());
-    let plan_lower_sha = sha256_hex(CERT_PLAN_LOWER.as_bytes());
-    let plan_bytes_sha = sha256_hex(CERT_PLAN_BYTES.as_bytes());
-    let wasm_slice_sha = sha256_hex(CERT_WASM_SLICE.as_bytes());
-    let expr_fragment_accepted_sha = sha256_hex(CERT_EXPR_FRAGMENT_ACCEPTED.as_bytes());
-    let accepted_artifact_sha = sha256_hex(CERT_ACCEPTED_ARTIFACT.as_bytes());
-    let accepted_artifact_core_sha = sha256_hex(CERT_ACCEPTED_ARTIFACT_CORE.as_bytes());
-    let expr_fragment_semantics_sha = sha256_hex(CERT_EXPR_FRAGMENT_SEMANTICS.as_bytes());
-    let interpreter_sequencing_sha = sha256_hex(CERT_INTERPRETER_SEQUENCING.as_bytes());
-    let expr_fragment_soundness_sha = sha256_hex(CERT_EXPR_FRAGMENT_SOUNDNESS.as_bytes());
-    let field_projection_soundness_sha = sha256_hex(CERT_FIELD_PROJECTION_SOUNDNESS.as_bytes());
-    let construct_verbatim_soundness_sha = sha256_hex(CERT_CONSTRUCT_VERBATIM_SOUNDNESS.as_bytes());
-    let int_dispatch_soundness_sha = sha256_hex(CERT_INT_DISPATCH_SOUNDNESS.as_bytes());
-    let string_soundness_sha = sha256_hex(CERT_STRING_SOUNDNESS.as_bytes());
-    let recursion_soundness_sha = sha256_hex(CERT_RECURSION_SOUNDNESS.as_bytes());
-    let mutual_recursion_soundness_sha = sha256_hex(CERT_MUTUAL_RECURSION_SOUNDNESS.as_bytes());
-    let composition_soundness_sha = sha256_hex(CERT_COMPOSITION_SOUNDNESS.as_bytes());
-    let acceptance_soundness_core_sha = sha256_hex(CERT_ACCEPTANCE_SOUNDNESS_CORE.as_bytes());
-    let discharge_expr_fragment_sha =
-        sha256_hex(CERT_DISCHARGE_EXPR_FRAGMENT.as_bytes());
-    let discharge_field_projection_sha = sha256_hex(CERT_DISCHARGE_FIELD_PROJECTION.as_bytes());
-    let discharge_construct_sha = sha256_hex(CERT_DISCHARGE_CONSTRUCT.as_bytes());
-    let discharge_verbatim_sha = sha256_hex(CERT_DISCHARGE_VERBATIM.as_bytes());
-    let discharge_string_sha = sha256_hex(CERT_DISCHARGE_STRING.as_bytes());
-    let discharge_int_dispatch_sha = sha256_hex(CERT_DISCHARGE_INT_DISPATCH.as_bytes());
-    let discharge_recursion_sha = sha256_hex(CERT_DISCHARGE_RECURSION.as_bytes());
-    let discharge_composition_sha = sha256_hex(CERT_DISCHARGE_COMPOSITION.as_bytes());
-    let acceptance_soundness_sha = sha256_hex(CERT_ACCEPTANCE_SOUNDNESS.as_bytes());
-    let manifest_hashes = ManifestHashes {
-        schema: &schema_sha,
-        schema_core: &schema_core_sha,
-        prelude: &prelude_sha,
-        decode: &decode_sha,
-        plan_check: &plan_check_sha,
-        plan_lower: &plan_lower_sha,
-        plan_bytes: &plan_bytes_sha,
-        wasm_slice: &wasm_slice_sha,
-        expr_fragment_accepted: &expr_fragment_accepted_sha,
-        accepted_artifact: &accepted_artifact_sha,
-        accepted_artifact_core: &accepted_artifact_core_sha,
-        expr_fragment_semantics: &expr_fragment_semantics_sha,
-        interpreter_sequencing: &interpreter_sequencing_sha,
-        expr_fragment_soundness: &expr_fragment_soundness_sha,
-        field_projection_soundness: &field_projection_soundness_sha,
-        construct_verbatim_soundness: &construct_verbatim_soundness_sha,
-        int_dispatch_soundness: &int_dispatch_soundness_sha,
-        string_soundness: &string_soundness_sha,
-        recursion_soundness: &recursion_soundness_sha,
-        mutual_recursion_soundness: &mutual_recursion_soundness_sha,
-        composition_soundness: &composition_soundness_sha,
-        acceptance_soundness_core: &acceptance_soundness_core_sha,
-        discharge_expr_fragment: &discharge_expr_fragment_sha,
-        discharge_field_projection: &discharge_field_projection_sha,
-        discharge_construct: &discharge_construct_sha,
-        discharge_verbatim: &discharge_verbatim_sha,
-        discharge_string: &discharge_string_sha,
-        discharge_int_dispatch: &discharge_int_dispatch_sha,
-        discharge_recursion: &discharge_recursion_sha,
-        discharge_composition: &discharge_composition_sha,
-        acceptance_soundness: &acceptance_soundness_sha,
-    };
     std::fs::write(
         cert_dir.join("cert-manifest.json"),
-        render_manifest(analysis, &model_info, wasm_name, &sha, &manifest_hashes),
+        render_manifest(analysis, &model_info, wasm_name, &sha),
     )
     .map_err(|e| format!("write manifest: {e}"))?;
     Ok(())
