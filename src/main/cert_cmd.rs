@@ -110,115 +110,15 @@ enum WitnessMode {
     Diagnostic,
 }
 
-/// Lean source files the checker owns and never copies from the cert: the
-/// audited trusted computing base (taken from this binary) plus the checker's
-/// own build config and witness. A cert shipping files by these names has them
-/// ignored.
-const CHECKER_OWNED: [&str; 34] = [
-    "Schema.lean",
-    "SchemaCore.lean",
-    "PlanCheck.lean",
-    "PlanLower.lean",
-    "PlanBytes.lean",
-    "WasmSlice.lean",
-    "ExprFragmentAccepted.lean",
-    "AcceptedArtifact.lean",
-    "AcceptedArtifactCore.lean",
-    "ExprFragmentSemantics.lean",
-    "InterpreterSequencing.lean",
-    "ExprFragmentSoundness.lean",
-    "FieldProjectionSoundness.lean",
-    "ConstructVerbatimSoundness.lean",
-    "IntDispatchSoundness.lean",
-    "StringSoundness.lean",
-    "RecursionSoundness.lean",
-    "MutualRecursionSoundness.lean",
-    "CompositionSoundness.lean",
-    "AcceptanceSoundnessCore.lean",
-    "DischargeExprFragment.lean",
-    "DischargeFieldProjection.lean",
-    "DischargeConstruct.lean",
-    "DischargeVerbatim.lean",
-    "DischargeString.lean",
-    "DischargeIntDispatch.lean",
-    "DischargeRecursion.lean",
-    "DischargeComposition.lean",
-    "AcceptanceSoundness.lean",
-    "ArtifactBytes.lean",
-    "CertDecode.lean",
-    "CertPrelude.lean",
-    "lakefile.lean",
-    "CheckerWitness.lean",
-];
-
-/// Audited modules whose exact bytes are shared by every certificate build.
-/// ArtifactBytes and certificate/model modules are deliberately absent.
-const STATIC_PRELUDE_ROOTS: [&str; 31] = [
-    "SchemaCore",
-    "Schema",
-    "PlanCheck",
-    "PlanLower",
-    "PlanBytes",
-    "WasmSlice",
-    "ExprFragmentAccepted",
-    "AcceptedArtifactCore",
-    "AcceptedArtifact",
-    "ExprFragmentSemantics",
-    "InterpreterSequencing",
-    "ExprFragmentSoundness",
-    "FieldProjectionSoundness",
-    "ConstructVerbatimSoundness",
-    "IntDispatchSoundness",
-    "StringSoundness",
-    "RecursionSoundness",
-    "MutualRecursionSoundness",
-    "CompositionSoundness",
-    "AcceptanceSoundnessCore",
-    "DischargeExprFragment",
-    "DischargeFieldProjection",
-    "DischargeConstruct",
-    "DischargeVerbatim",
-    "DischargeString",
-    "DischargeIntDispatch",
-    "DischargeRecursion",
-    "DischargeComposition",
-    "AcceptanceSoundness",
-    "CertDecode",
-    "CertPrelude",
-];
-
-/// Static roots whose complete import graph is artifact-independent.
-const PRISTINE_PRELUDE_ROOTS: [&str; 29] = [
-    "CertPrelude",
-    "CertDecode",
-    "WasmSlice",
-    "SchemaCore",
-    "PlanCheck",
-    "PlanLower",
-    "PlanBytes",
-    "ExprFragmentAccepted",
-    "AcceptedArtifactCore",
-    "ExprFragmentSemantics",
-    "InterpreterSequencing",
-    "ExprFragmentSoundness",
-    "FieldProjectionSoundness",
-    "ConstructVerbatimSoundness",
-    "IntDispatchSoundness",
-    "StringSoundness",
-    "RecursionSoundness",
-    "MutualRecursionSoundness",
-    "CompositionSoundness",
-    "AcceptanceSoundnessCore",
-    "DischargeExprFragment",
-    "DischargeFieldProjection",
-    "DischargeConstruct",
-    "DischargeVerbatim",
-    "DischargeString",
-    "DischargeIntDispatch",
-    "DischargeRecursion",
-    "DischargeComposition",
-    "AcceptanceSoundness",
-];
+/// True for source files authored by the checker rather than accepted from a
+/// certificate package.
+fn is_checker_owned(name: &str) -> bool {
+    cert::wall::SOURCES.iter().any(|source| source.name == name)
+        || matches!(
+            name,
+            "ArtifactBytes.lean" | "lakefile.lean" | "CheckerWitness.lean"
+        )
+}
 
 /// Maximum length (bytes) of a JSON-supplied string spliced into the witness.
 const MAX_CANDIDATE_LEN: usize = 200;
@@ -360,40 +260,6 @@ fn read_lean_files(cert_dir: &Path) -> Vec<(String, String)> {
     // same-named model inductive, with the winner decided by filesystem
     // iteration order. Exclude them, and sort what remains so extraction is
     // deterministic across platforms.
-    const CHECKER_OWNED: &[&str] = &[
-        "AcceptedArtifact.lean",
-        "AcceptedArtifactCore.lean",
-        "CertPrelude.lean",
-        "CertDecode.lean",
-        "ExprFragmentAccepted.lean",
-        "PlanBytes.lean",
-        "PlanCheck.lean",
-        "PlanLower.lean",
-        "Schema.lean",
-        "SchemaCore.lean",
-        "WasmSlice.lean",
-        "ExprFragmentSemantics.lean",
-        "InterpreterSequencing.lean",
-        "ExprFragmentSoundness.lean",
-        "FieldProjectionSoundness.lean",
-        "ConstructVerbatimSoundness.lean",
-        "IntDispatchSoundness.lean",
-        "StringSoundness.lean",
-        "RecursionSoundness.lean",
-        "MutualRecursionSoundness.lean",
-        "CompositionSoundness.lean",
-        "AcceptanceSoundnessCore.lean",
-        "DischargeExprFragment.lean",
-        "DischargeFieldProjection.lean",
-        "DischargeConstruct.lean",
-        "DischargeVerbatim.lean",
-        "DischargeString.lean",
-        "DischargeIntDispatch.lean",
-        "DischargeRecursion.lean",
-        "DischargeComposition.lean",
-        "AcceptanceSoundness.lean",
-        "lakefile.lean",
-    ];
     let mut out = Vec::new();
     if let Ok(entries) = std::fs::read_dir(cert_dir) {
         for entry in entries.flatten() {
@@ -404,7 +270,7 @@ fn read_lean_files(cert_dir: &Path) -> Vec<(String, String)> {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string();
-                if CHECKER_OWNED.contains(&name.as_str()) {
+                if is_checker_owned(&name) {
                     continue;
                 }
                 if let Ok(content) = std::fs::read_to_string(&path) {
@@ -1859,7 +1725,7 @@ fn assemble_build(cert_dir: &Path, wasm_bytes: &[u8]) -> Result<BuildDir, String
             continue; // skip `.lake/` and any other subdirectory
         }
         let name = entry.file_name().to_string_lossy().into_owned();
-        if !name.ends_with(".lean") || CHECKER_OWNED.contains(&name.as_str()) {
+        if !name.ends_with(".lean") || is_checker_owned(&name) {
             continue;
         }
         // Gate the file NAME: it must be a plain `Foo.lean` module identifier,
@@ -1889,7 +1755,7 @@ fn assemble_build(cert_dir: &Path, wasm_bytes: &[u8]) -> Result<BuildDir, String
     )?;
     // Preserve the production lakefile's historical root order exactly.
     roots.extend(
-        STATIC_PRELUDE_ROOTS[..STATIC_PRELUDE_ROOTS.len() - 1]
+        cert::wall::BUILD_ROOTS[..cert::wall::BUILD_ROOTS.len() - 1]
             .iter()
             .map(|root| (*root).to_string()),
     );
@@ -1906,121 +1772,20 @@ fn assemble_build(cert_dir: &Path, wasm_bytes: &[u8]) -> Result<BuildDir, String
 /// returned sequence is filename-sorted so both staging and keying are stable.
 fn static_prelude_files() -> Vec<(String, Vec<u8>)> {
     let static_lakefile = checker_lakefile(
-        &PRISTINE_PRELUDE_ROOTS
+        &cert::wall::PRISTINE_ROOTS
             .iter()
             .map(|root| (*root).to_string())
             .collect::<Vec<_>>(),
     );
-    let mut files = vec![
-        (
-            "AcceptedArtifact.lean",
-            cert::CERT_ACCEPTED_ARTIFACT.as_bytes().to_vec(),
-        ),
-        (
-            "AcceptedArtifactCore.lean",
-            cert::CERT_ACCEPTED_ARTIFACT_CORE.as_bytes().to_vec(),
-        ),
-        ("CertPrelude.lean", cert::CERT_PRELUDE.as_bytes().to_vec()),
-        ("CertDecode.lean", cert::CERT_DECODE.as_bytes().to_vec()),
-        (
-            "ExprFragmentAccepted.lean",
-            cert::CERT_EXPR_FRAGMENT_ACCEPTED.as_bytes().to_vec(),
-        ),
-        ("PlanBytes.lean", cert::CERT_PLAN_BYTES.as_bytes().to_vec()),
-        ("PlanCheck.lean", cert::CERT_PLAN_CHECK.as_bytes().to_vec()),
-        ("PlanLower.lean", cert::CERT_PLAN_LOWER.as_bytes().to_vec()),
-        ("Schema.lean", cert::CERT_SCHEMA.as_bytes().to_vec()),
-        (
-            "SchemaCore.lean",
-            cert::CERT_SCHEMA_CORE.as_bytes().to_vec(),
-        ),
-        ("WasmSlice.lean", cert::CERT_WASM_SLICE.as_bytes().to_vec()),
-        (
-            "ExprFragmentSemantics.lean",
-            cert::CERT_EXPR_FRAGMENT_SEMANTICS.as_bytes().to_vec(),
-        ),
-        (
-            "InterpreterSequencing.lean",
-            cert::CERT_INTERPRETER_SEQUENCING.as_bytes().to_vec(),
-        ),
-        (
-            "ExprFragmentSoundness.lean",
-            cert::CERT_EXPR_FRAGMENT_SOUNDNESS.as_bytes().to_vec(),
-        ),
-        (
-            "FieldProjectionSoundness.lean",
-            cert::CERT_FIELD_PROJECTION_SOUNDNESS.as_bytes().to_vec(),
-        ),
-        (
-            "ConstructVerbatimSoundness.lean",
-            cert::CERT_CONSTRUCT_VERBATIM_SOUNDNESS.as_bytes().to_vec(),
-        ),
-        (
-            "IntDispatchSoundness.lean",
-            cert::CERT_INT_DISPATCH_SOUNDNESS.as_bytes().to_vec(),
-        ),
-        (
-            "StringSoundness.lean",
-            cert::CERT_STRING_SOUNDNESS.as_bytes().to_vec(),
-        ),
-        (
-            "RecursionSoundness.lean",
-            cert::CERT_RECURSION_SOUNDNESS.as_bytes().to_vec(),
-        ),
-        (
-            "MutualRecursionSoundness.lean",
-            cert::CERT_MUTUAL_RECURSION_SOUNDNESS.as_bytes().to_vec(),
-        ),
-        (
-            "CompositionSoundness.lean",
-            cert::CERT_COMPOSITION_SOUNDNESS.as_bytes().to_vec(),
-        ),
-        (
-            "AcceptanceSoundnessCore.lean",
-            cert::CERT_ACCEPTANCE_SOUNDNESS_CORE.as_bytes().to_vec(),
-        ),
-        (
-            "DischargeExprFragment.lean",
-            cert::CERT_DISCHARGE_EXPR_FRAGMENT.as_bytes().to_vec(),
-        ),
-        (
-            "DischargeFieldProjection.lean",
-            cert::CERT_DISCHARGE_FIELD_PROJECTION.as_bytes().to_vec(),
-        ),
-        (
-            "DischargeConstruct.lean",
-            cert::CERT_DISCHARGE_CONSTRUCT.as_bytes().to_vec(),
-        ),
-        (
-            "DischargeVerbatim.lean",
-            cert::CERT_DISCHARGE_VERBATIM.as_bytes().to_vec(),
-        ),
-        (
-            "DischargeString.lean",
-            cert::CERT_DISCHARGE_STRING.as_bytes().to_vec(),
-        ),
-        (
-            "DischargeIntDispatch.lean",
-            cert::CERT_DISCHARGE_INT_DISPATCH.as_bytes().to_vec(),
-        ),
-        (
-            "DischargeRecursion.lean",
-            cert::CERT_DISCHARGE_RECURSION.as_bytes().to_vec(),
-        ),
-        (
-            "DischargeComposition.lean",
-            cert::CERT_DISCHARGE_COMPOSITION.as_bytes().to_vec(),
-        ),
-        (
-            "AcceptanceSoundness.lean",
-            cert::CERT_ACCEPTANCE_SOUNDNESS.as_bytes().to_vec(),
-        ),
-        ("lakefile.lean", static_lakefile.into_bytes()),
-        ("lean-toolchain", cert::LEAN_TOOLCHAIN.as_bytes().to_vec()),
-    ]
-    .into_iter()
-    .map(|(name, bytes)| (name.to_string(), bytes))
-    .collect::<Vec<_>>();
+    let mut files = cert::wall::SOURCES
+        .iter()
+        .map(|source| (source.name.to_string(), source.contents.as_bytes().to_vec()))
+        .collect::<Vec<_>>();
+    files.push(("lakefile.lean".to_string(), static_lakefile.into_bytes()));
+    files.push((
+        "lean-toolchain".to_string(),
+        cert::wall::LEAN_TOOLCHAIN.as_bytes().to_vec(),
+    ));
     files.sort_by(|a, b| a.0.cmp(&b.0));
     files
 }
