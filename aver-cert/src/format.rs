@@ -7,6 +7,12 @@
 /// Public certificate-package layout understood by this verifier.
 pub const FORMAT_VERSION: u32 = 1;
 
+/// First public schema accepted by the standalone verifier.
+pub const CERT_SCHEMA_VERSION: u32 = 1;
+
+/// Named theorem audited by the checker-owned witness.
+pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
+
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
     "sha256:4d5d1b61e1d6e2544fd0aed769349bd9d98dcc54fd9c27bb8591caa0f4f0dddb";

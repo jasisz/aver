@@ -1,3 +1,4 @@
+-- Test-only executable examples; this file is not part of the embedded wall.
 import ClaimAxes
 
 namespace AverCert.ClaimAxesSanity

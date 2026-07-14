@@ -27,8 +27,8 @@
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub mod wall;
-pub use wall::*;
+pub use crate::wall;
+pub use crate::wall::*;
 
 /// Emitted-fragment profile and runtime ABI identifiers recorded in the
 /// manifest. Stable strings the checker echoes; bumped when the certified

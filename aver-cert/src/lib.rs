@@ -7,6 +7,8 @@
 #![forbid(unsafe_code)]
 
 pub mod format;
+#[cfg(any(feature = "engine", feature = "verify"))]
+pub mod wall;
 
 #[cfg(feature = "engine")]
 mod engine;

@@ -9,62 +9,61 @@ use std::sync::OnceLock;
 
 pub use crate::format::{CURRENT_WALL_ID as CURRENT_ID, FORMAT_VERSION};
 
-pub const LEAN_TOOLCHAIN: &str = include_str!("../../assets/wall/current/lean-toolchain");
+pub const LEAN_TOOLCHAIN: &str = include_str!("../assets/wall/current/lean-toolchain");
 
-pub const CERT_PRELUDE: &str = include_str!("../../assets/wall/current/CertPrelude.lean");
-pub const CERT_DECODE: &str = include_str!("../../assets/wall/current/CertDecode.lean");
-pub const CERT_SCHEMA: &str = include_str!("../../assets/wall/current/Schema.lean");
-pub const CERT_SCHEMA_CORE: &str = include_str!("../../assets/wall/current/SchemaCore.lean");
-pub const CERT_PLAN_CHECK: &str = include_str!("../../assets/wall/current/PlanCheck.lean");
-pub const CERT_PLAN_LOWER: &str = include_str!("../../assets/wall/current/PlanLower.lean");
-pub const CERT_PLAN_BYTES: &str = include_str!("../../assets/wall/current/PlanBytes.lean");
-pub const CERT_WASM_SLICE: &str = include_str!("../../assets/wall/current/WasmSlice.lean");
+pub const CERT_PRELUDE: &str = include_str!("../assets/wall/current/CertPrelude.lean");
+pub const CERT_DECODE: &str = include_str!("../assets/wall/current/CertDecode.lean");
+pub const CERT_SCHEMA: &str = include_str!("../assets/wall/current/Schema.lean");
+pub const CERT_SCHEMA_CORE: &str = include_str!("../assets/wall/current/SchemaCore.lean");
+pub const CERT_PLAN_CHECK: &str = include_str!("../assets/wall/current/PlanCheck.lean");
+pub const CERT_PLAN_LOWER: &str = include_str!("../assets/wall/current/PlanLower.lean");
+pub const CERT_PLAN_BYTES: &str = include_str!("../assets/wall/current/PlanBytes.lean");
+pub const CERT_WASM_SLICE: &str = include_str!("../assets/wall/current/WasmSlice.lean");
 pub const CERT_EXPR_FRAGMENT_ACCEPTED: &str =
-    include_str!("../../assets/wall/current/ExprFragmentAccepted.lean");
+    include_str!("../assets/wall/current/ExprFragmentAccepted.lean");
 pub const CERT_ACCEPTED_ARTIFACT: &str =
-    include_str!("../../assets/wall/current/AcceptedArtifact.lean");
+    include_str!("../assets/wall/current/AcceptedArtifact.lean");
 pub const CERT_ACCEPTED_ARTIFACT_CORE: &str =
-    include_str!("../../assets/wall/current/AcceptedArtifactCore.lean");
+    include_str!("../assets/wall/current/AcceptedArtifactCore.lean");
+pub const CERT_CLAIM_AXES: &str = include_str!("../assets/wall/current/ClaimAxes.lean");
 pub const CERT_EXPR_FRAGMENT_SEMANTICS: &str =
-    include_str!("../../assets/wall/current/ExprFragmentSemantics.lean");
+    include_str!("../assets/wall/current/ExprFragmentSemantics.lean");
 pub const CERT_INTERPRETER_SEQUENCING: &str =
-    include_str!("../../assets/wall/current/InterpreterSequencing.lean");
+    include_str!("../assets/wall/current/InterpreterSequencing.lean");
 pub const CERT_EXPR_FRAGMENT_SOUNDNESS: &str =
-    include_str!("../../assets/wall/current/ExprFragmentSoundness.lean");
+    include_str!("../assets/wall/current/ExprFragmentSoundness.lean");
 pub const CERT_FIELD_PROJECTION_SOUNDNESS: &str =
-    include_str!("../../assets/wall/current/FieldProjectionSoundness.lean");
+    include_str!("../assets/wall/current/FieldProjectionSoundness.lean");
 pub const CERT_CONSTRUCT_VERBATIM_SOUNDNESS: &str =
-    include_str!("../../assets/wall/current/ConstructVerbatimSoundness.lean");
+    include_str!("../assets/wall/current/ConstructVerbatimSoundness.lean");
 pub const CERT_INT_DISPATCH_SOUNDNESS: &str =
-    include_str!("../../assets/wall/current/IntDispatchSoundness.lean");
-pub const CERT_STRING_SOUNDNESS: &str =
-    include_str!("../../assets/wall/current/StringSoundness.lean");
+    include_str!("../assets/wall/current/IntDispatchSoundness.lean");
+pub const CERT_STRING_SOUNDNESS: &str = include_str!("../assets/wall/current/StringSoundness.lean");
 pub const CERT_RECURSION_SOUNDNESS: &str =
-    include_str!("../../assets/wall/current/RecursionSoundness.lean");
+    include_str!("../assets/wall/current/RecursionSoundness.lean");
 pub const CERT_MUTUAL_RECURSION_SOUNDNESS: &str =
-    include_str!("../../assets/wall/current/MutualRecursionSoundness.lean");
+    include_str!("../assets/wall/current/MutualRecursionSoundness.lean");
 pub const CERT_COMPOSITION_SOUNDNESS: &str =
-    include_str!("../../assets/wall/current/CompositionSoundness.lean");
+    include_str!("../assets/wall/current/CompositionSoundness.lean");
 pub const CERT_ACCEPTANCE_SOUNDNESS_CORE: &str =
-    include_str!("../../assets/wall/current/AcceptanceSoundnessCore.lean");
+    include_str!("../assets/wall/current/AcceptanceSoundnessCore.lean");
 pub const CERT_DISCHARGE_EXPR_FRAGMENT: &str =
-    include_str!("../../assets/wall/current/DischargeExprFragment.lean");
+    include_str!("../assets/wall/current/DischargeExprFragment.lean");
 pub const CERT_DISCHARGE_FIELD_PROJECTION: &str =
-    include_str!("../../assets/wall/current/DischargeFieldProjection.lean");
+    include_str!("../assets/wall/current/DischargeFieldProjection.lean");
 pub const CERT_DISCHARGE_CONSTRUCT: &str =
-    include_str!("../../assets/wall/current/DischargeConstruct.lean");
+    include_str!("../assets/wall/current/DischargeConstruct.lean");
 pub const CERT_DISCHARGE_VERBATIM: &str =
-    include_str!("../../assets/wall/current/DischargeVerbatim.lean");
-pub const CERT_DISCHARGE_STRING: &str =
-    include_str!("../../assets/wall/current/DischargeString.lean");
+    include_str!("../assets/wall/current/DischargeVerbatim.lean");
+pub const CERT_DISCHARGE_STRING: &str = include_str!("../assets/wall/current/DischargeString.lean");
 pub const CERT_DISCHARGE_INT_DISPATCH: &str =
-    include_str!("../../assets/wall/current/DischargeIntDispatch.lean");
+    include_str!("../assets/wall/current/DischargeIntDispatch.lean");
 pub const CERT_DISCHARGE_RECURSION: &str =
-    include_str!("../../assets/wall/current/DischargeRecursion.lean");
+    include_str!("../assets/wall/current/DischargeRecursion.lean");
 pub const CERT_DISCHARGE_COMPOSITION: &str =
-    include_str!("../../assets/wall/current/DischargeComposition.lean");
+    include_str!("../assets/wall/current/DischargeComposition.lean");
 pub const CERT_ACCEPTANCE_SOUNDNESS: &str =
-    include_str!("../../assets/wall/current/AcceptanceSoundness.lean");
+    include_str!("../assets/wall/current/AcceptanceSoundness.lean");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Source {
@@ -74,7 +73,7 @@ pub struct Source {
 
 /// Exact checker-owned source set. Ordering is not part of the identity:
 /// [`compute_id`] sorts by filename before hashing.
-pub const SOURCES: [Source; 31] = [
+pub const SOURCES: [Source; 32] = [
     Source {
         name: "AcceptedArtifact.lean",
         contents: CERT_ACCEPTED_ARTIFACT,
@@ -98,6 +97,10 @@ pub const SOURCES: [Source; 31] = [
     Source {
         name: "CertPrelude.lean",
         contents: CERT_PRELUDE,
+    },
+    Source {
+        name: "ClaimAxes.lean",
+        contents: CERT_CLAIM_AXES,
     },
     Source {
         name: "CompositionSoundness.lean",
@@ -203,7 +206,7 @@ pub const SOURCES: [Source; 31] = [
 
 /// Roots whose complete import graph is artifact-independent and can therefore
 /// be cached before a certificate is seen.
-pub const PRISTINE_ROOTS: [&str; 29] = [
+pub const PRISTINE_ROOTS: [&str; 30] = [
     "CertPrelude",
     "CertDecode",
     "WasmSlice",
@@ -213,6 +216,7 @@ pub const PRISTINE_ROOTS: [&str; 29] = [
     "PlanBytes",
     "ExprFragmentAccepted",
     "AcceptedArtifactCore",
+    "ClaimAxes",
     "ExprFragmentSemantics",
     "InterpreterSequencing",
     "ExprFragmentSoundness",
