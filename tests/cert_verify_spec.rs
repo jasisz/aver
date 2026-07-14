@@ -3184,6 +3184,18 @@ fn run_manifest_obligation_guard_iso(prefix: &str, lean: &str) {
     let _ = std::fs::remove_dir_all(out_dir);
 }
 
+/// The old acceptance surface did not constrain the whole host builder. An
+/// obligation could therefore trap at its first host call and satisfy partial
+/// correctness vacuously. The standard face must be the single guard that
+/// rejects that otherwise accepted artifact.
+#[test]
+fn standard_face_host_guard_is_isolating() {
+    run_manifest_obligation_guard_iso(
+        "cert-standard-face-host-guard-iso",
+        include_str!("fixtures/cert_standard_face_guard_iso.lean"),
+    );
+}
+
 /// An otherwise valid artifact with one extra manifest obligation is rejected
 /// only by `manifestObligationsClaimed`; the literal one-conjunct-weakened copy
 /// accepts it, while every byte-derived binding and code entry stays identical.
@@ -3234,6 +3246,7 @@ def acceptedWithoutClaimCoverage
   AcceptedArtifact.subjectMatchesArtifactRoot artifact ∧
   AcceptedArtifact.fragmentClaimObligationsInManifest artifact ∧
   AcceptedArtifact.claimsMatchManifest artifact ∧
+  AverCert.StandardFace.checkedFaces artifact ∧
   AcceptedArtifact.decodedNonExprFacts artifact ∧
   acceptedFragmentsWithoutClaimCoverage artifact
 
@@ -3274,7 +3287,7 @@ example : ∀ nameBytes,
 
 example : ¬ AcceptedArtifact.accepted unclaimedArtifact := by
   intro h
-  rcases h with ⟨_, _, _, _, _, hfragments⟩
+  rcases h with ⟨_, _, _, _, _, _, hfragments⟩
   rcases hfragments with ⟨_, _, _, _, _, _, _, _, _, hcomposition, _⟩
   have hclaimed := hcomposition.2.2.1
   change false = true at hclaimed
@@ -3282,11 +3295,11 @@ example : ¬ AcceptedArtifact.accepted unclaimedArtifact := by
 
 example : acceptedWithoutClaimCoverage unclaimedArtifact := by
   rcases Artifact.certificate with
-    ⟨_, hsubject, hobs, hmatch, hdecoded, hsym, hstringEq, hstringConcat, hconstruct,
+    ⟨_, hsubject, hobs, hmatch, hfaces, hdecoded, hsym, hstringEq, hstringConcat, hconstruct,
       hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
       hcompositionAccepted, _⟩
   rcases hcompositionAccepted with ⟨hcomposition, hmembersCovered, _, _⟩
-  refine ⟨unclaimedFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨unclaimedFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact hsubject
   · simpa [unclaimedArtifact, unclaimedManifest,
       AcceptedArtifact.fragmentClaimObligationsInManifest,
@@ -3294,6 +3307,8 @@ example : acceptedWithoutClaimCoverage unclaimedArtifact := by
       claimObligationsInManifest_append AverCert.manifest.obligations
         [unclaimedOb] (AcceptedArtifact.claimObligations Artifact.data) hobs
   · exact hmatch
+  · change AverCert.StandardFace.checkedFaces Artifact.data
+    exact hfaces
   · exact hdecoded
   · exact hsym
   · exact hstringEq
@@ -3388,6 +3403,7 @@ def acceptedWithoutUniqueExports
   AcceptedArtifact.subjectMatchesArtifactRoot artifact ∧
   AcceptedArtifact.fragmentClaimObligationsInManifest artifact ∧
   AcceptedArtifact.claimsMatchManifest artifact ∧
+  AverCert.StandardFace.checkedFaces artifact ∧
   AcceptedArtifact.decodedNonExprFacts artifact ∧
   acceptedFragmentsWithoutUniqueExports artifact
 
@@ -3408,7 +3424,7 @@ example : ∀ nameBytes,
 
 example : ¬ AcceptedArtifact.accepted duplicateArtifact := by
   intro h
-  rcases h with ⟨_, _, _, _, _, hfragments⟩
+  rcases h with ⟨_, _, _, _, _, _, hfragments⟩
   rcases hfragments with ⟨_, _, _, _, _, _, _, _, _, hcomposition, _⟩
   have hunique := hcomposition.2.2.2
   change false = true at hunique
@@ -3416,11 +3432,11 @@ example : ¬ AcceptedArtifact.accepted duplicateArtifact := by
 
 example : acceptedWithoutUniqueExports duplicateArtifact := by
   rcases Artifact.certificate with
-    ⟨_, hsubject, hobs, hmatch, hdecoded, hsym, hstringEq, hstringConcat, hconstruct,
+    ⟨_, hsubject, hobs, hmatch, hfaces, hdecoded, hsym, hstringEq, hstringConcat, hconstruct,
       hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
       hcompositionAccepted, _⟩
   rcases hcompositionAccepted with ⟨hcomposition, hmembersCovered, _, _⟩
-  refine ⟨duplicateFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨duplicateFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact hsubject
   · simpa [duplicateArtifact, duplicateManifest,
       AcceptedArtifact.fragmentClaimObligationsInManifest,
@@ -3428,6 +3444,8 @@ example : acceptedWithoutUniqueExports duplicateArtifact := by
       claimObligationsInManifest_append AverCert.manifest.obligations
         [duplicateOb] (AcceptedArtifact.claimObligations Artifact.data) hobs
   · exact hmatch
+  · change AverCert.StandardFace.checkedFaces Artifact.data
+    exact hfaces
   · exact hdecoded
   · exact hsym
   · exact hstringEq

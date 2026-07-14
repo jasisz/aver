@@ -440,7 +440,7 @@ set_option maxRecDepth 300000
 
 def honestDecoded : AcceptedArtifact.decodedNonExprFacts Artifact.data := by
   have accepted : AcceptedArtifact.accepted Artifact.data := Artifact.certificate
-  exact accepted.2.2.2.2.1
+  exact accepted.2.2.2.2.2.1
 
 -- Same bytes and claims; only the manifest's add index is hostile.
 def hostileRoleTable : CertDecode.AddSub.Roles :=
@@ -551,7 +551,7 @@ set_option maxRecDepth 300000
 
 def honestDecoded : AcceptedArtifact.decodedNonExprFacts Artifact.data := by
   have accepted : AcceptedArtifact.accepted Artifact.data := Artifact.certificate
-  exact accepted.2.2.2.2.1
+  exact accepted.2.2.2.2.2.1
 
 def hostileStringRoles : List (Nat × CertDecode.StringHost.Role) :=
   [({wrong_eq_idx}, .eq)]
