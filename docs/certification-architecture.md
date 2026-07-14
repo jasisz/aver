@@ -40,7 +40,7 @@ cert/
 
 The directory contains artifact-specific, untrusted certificate data. The
 audited wall, Lean toolchain, and build configuration are not copied into the
-package. `aver cert verify` resolves and authors them independently:
+package. `aver-cert verify` resolves and authors them independently:
 
 | Input | Treatment during verification |
 |---|---|
@@ -139,7 +139,8 @@ and ABI role.
 
 ## Verifier Algorithm
 
-`aver cert verify` performs the following acceptance path:
+`aver-cert verify` performs the following acceptance path (`aver cert verify`
+forwards to this executable without linking another verifier):
 
 1. Read the actual Wasm bytes, compute their SHA-256, parse
    `cert-manifest.json`, and require schema and format version `1`.

@@ -115,7 +115,7 @@ aver compile app.av --target wasm-gc --certify -o out/
 
 emits the module (`app.wasm`) and, next to it, an artifact-specific `cert/` package whose theorems are about **those exact bytes**. The package pins `sha256(app.wasm)`, embeds certified function bodies as data read back from the module, and names the exact audited Lean wall with `format.wall_id`. The verifier supplies that wall and its toolchain; they are not copied into the package. The proof shows that running those bodies under the semantics of the emitted fragment computes the function's Lean model. Behavioral laws proven about the model then transfer to statements about the bytes — the behavioral half of the ABC, and the part no signature or reproducible-build attestation can give you.
 
-The consumer story is deliberately narrow: **checking a certificate means running the Lean kernel, not trusting Aver.** `aver cert verify` is a convenience orchestrator; the trust anchor is the kernel plus the exact audited wall embedded in the verifier and selected by one aggregate hash.
+The consumer story is deliberately narrow: **checking a certificate means running the Lean kernel, not trusting Aver.** The independent `aver-cert verify` executable owns verification; `aver cert verify` is only a subprocess shortcut to it. The trust anchor is the kernel plus the exact audited wall embedded in the verifier and selected by one aggregate hash.
 
 ## Why this is possible: the certified fragment is small by construction
 
@@ -141,7 +141,7 @@ No `loop`. No `br`/`br_if`. No linear-memory instructions. No `call_indirect`. N
 
 The consequence is the load-bearing fact of the whole feature: the operational semantics of everything a certified function can do fits in **one auditable Lean file** ([`aver-cert/assets/wall/current/CertPrelude.lean`](../aver-cert/assets/wall/current/CertPrelude.lean), about 400 lines) — small enough to read in a sitting, which is the audit budget an independent reviewer actually has.
 
-Runtime helpers a body calls (integer boxing, bignum arithmetic, `String.eq` over the `WVal` byte-array representation, …) are **not interpreted** at L1. They enter the theorems as named contracts — explicit hypotheses listed in the manifest, re-derived from the wasm bytes by `aver cert verify`, and priced into the certification level. The fragment semantics itself is validated by a three-way differential harness (bytecode VM ↔ wasm engine ↔ the Lean interpreter, [`tools/certkit/`](../tools/certkit/)) with a fail-closed opcode coverage gate; it is tested against reality, not proven against the W3C spec, and it is published precisely so it can be audited.
+Runtime helpers a body calls (integer boxing, bignum arithmetic, `String.eq` over the `WVal` byte-array representation, …) are **not interpreted** at L1. They enter the theorems as named contracts — explicit hypotheses listed in the manifest, re-derived from the wasm bytes by `aver-cert verify`, and priced into the certification level. The fragment semantics itself is validated by a three-way differential harness (bytecode VM ↔ wasm engine ↔ the Lean interpreter, [`tools/certkit/`](../tools/certkit/)) with a fail-closed opcode coverage gate; it is tested against reality, not proven against the W3C spec, and it is published precisely so it can be audited.
 
 ## What the theorems say
 
@@ -156,7 +156,7 @@ Anti-vacuity is enforced separately: executable guard `example`s must compute ea
 
 ## Trust model
 
-`aver cert verify app.wasm out/cert` (exit 0 = certified, anything else = 1):
+`aver-cert verify app.wasm out/cert` (exit 0 = certified, anything else = 1):
 
 1. hashes the artifact and declines on mismatch with the pinned value;
 2. resolves `format.wall_id` only against exact walls embedded in the checker, then assembles a **checker-owned build**: audited Lean sources and the pinned toolchain come from that wall, `ArtifactBytes.lean` is regenerated from the actual artifact bytes, and the cert contributes data files only — each name-gated and scanned for elaboration-executing tokens; package-provided wall sources, lakefiles, toolchains, witnesses, and caches are never trusted;
@@ -248,8 +248,12 @@ plan-less certified exports**. The JSON fixture has **12 certified exports and
 
 ```
 aver compile app.av --target wasm-gc --certify -o out/
-aver cert verify  out/app.wasm out/cert    # full check; exit 0 iff CERTIFIED
-aver cert explain out/app.wasm out/cert    # same full check + human-readable report
+aver-cert verify  out/app.wasm out/cert    # full check; exit 0 iff CERTIFIED
+aver-cert explain out/app.wasm out/cert    # same full check + human-readable report
+
+# Exact subprocess shortcuts; require aver-cert beside aver or on PATH.
+aver cert verify  out/app.wasm out/cert
+aver cert explain out/app.wasm out/cert
 ```
 
 `explain` prints the kernel-confirmed CERTIFIED exports with their policies and runtime contracts, then the DECLINED list with reasons (the DECLINED side is informational and carries no claim). A certificate with zero certified exports reports `NO CERTIFIED EXPORTS` and exits 1 — a trust tool does not exit green for a certificate that claims nothing.

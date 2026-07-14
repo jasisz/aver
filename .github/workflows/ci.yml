@@ -154,6 +154,7 @@ jobs:
           PROPTEST_CASES: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '2000' || '64' }}
         run: |
           set -euo pipefail
+          cargo build -p aver-cert --bin aver-cert
           for test in \
             bigint_literals_differential \
             cert_certify_spec \

@@ -4,6 +4,14 @@
 checker-embedded Lean soundness wall. It is deliberately independent from the
 Aver compiler and runtime crates.
 
-The standalone verifier CLI will live in this package. Until that command is
-extracted, `aver cert` continues to use the compatibility API re-exported by
-`aver-lang`.
+Verify an emitted package directly:
+
+```text
+aver-cert verify app.wasm out/cert
+aver-cert explain app.wasm out/cert
+```
+
+The library exposes the same fail-closed check as `aver_cert::verify`. The
+`aver cert ...` command is only a process-level shortcut: it forwards its raw
+arguments and standard streams to a sibling `aver-cert` executable, falling
+back to `PATH`. It contains no linked verifier or alternate acceptance path.
