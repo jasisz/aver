@@ -25,11 +25,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Cargo.toml files and the version keys to bump in each.
 # (file, [(key_pattern, replacement_template)])
-CRATE_ORDER = ["aver-rt", "aver-memory", "aver-lang", "aver-lsp"]
+CRATE_ORDER = ["aver-rt", "aver-memory", "aver-cert", "aver-lang", "aver-lsp"]
 
 VERSION_FILES = {
     "aver-rt": REPO_ROOT / "aver-rt" / "Cargo.toml",
     "aver-memory": REPO_ROOT / "aver-memory" / "Cargo.toml",
+    "aver-cert": REPO_ROOT / "aver-cert" / "Cargo.toml",
     "aver-lang": REPO_ROOT / "Cargo.toml",
     "aver-lsp": REPO_ROOT / "aver-lsp" / "Cargo.toml",
 }
@@ -86,6 +87,17 @@ def bump_patch(version: str) -> str:
 PUBLISH_BLOCKERS = {
     "aver-rt": ["aver-memory"],
 }
+
+# `aver-cert` has its own public version line. Its first published package is
+# 0.1.0 even when it ships alongside aver-lang 0.27; subsequent source changes
+# patch-bump it independently.
+FIRST_PUBLIC_VERSIONS = {
+    "aver-cert": "0.1.0",
+}
+
+
+def is_unpublished_first_version(crate: str, version: str) -> bool:
+    return FIRST_PUBLIC_VERSIONS.get(crate) == version and version not in published_versions(crate)
 
 
 def crate_source_changed_since_version_set(crate: str, version: str) -> bool:
@@ -150,7 +162,7 @@ def _cascade(new: dict[str, str], old_versions: dict[str, str]) -> bool:
 def compute_new_versions(old_versions: dict[str, str], new_main: str) -> dict[str, str]:
     """Compute new versions for every crate.
 
-    aver-lang gets the requested version. Other crates patch-bump if either
+    aver-lang gets the requested version. Other crates patch-bump independently if either
     (a) their source changed since their version was last set, or (b) skipping
     their bump would create a publish-time resolution conflict for aver-lang
     (see PUBLISH_BLOCKERS). Finally, any computed version that is already on
@@ -164,6 +176,8 @@ def compute_new_versions(old_versions: dict[str, str], new_main: str) -> dict[st
     # was last set (not merely since the last tag).
     for crate in CRATE_ORDER:
         if crate == "aver-lang":
+            continue
+        if is_unpublished_first_version(crate, old_versions[crate]):
             continue
         if crate_source_changed_since_version_set(crate, old_versions[crate]):
             new[crate] = bump_patch(old_versions[crate])
@@ -209,6 +223,7 @@ def bump_all_versions(old_versions: dict[str, str], new_versions: dict[str, str]
     if not dry_run:
         # Cross-references (dep pins)
         main_toml = VERSION_FILES["aver-lang"]
+        bump_dep_pin(main_toml, "aver-cert", old_versions["aver-cert"], new_versions["aver-cert"])
         bump_dep_pin(main_toml, "aver-rt", old_versions["aver-rt"], new_versions["aver-rt"])
         bump_dep_pin(main_toml, "aver-memory", old_versions["aver-memory"], new_versions["aver-memory"])
         mem_toml = VERSION_FILES["aver-memory"]
@@ -382,7 +397,8 @@ def verify(dry_run: bool) -> None:
 def publish(new_versions: dict[str, str], old_versions: dict[str, str], dry_run: bool) -> None:
     print("Publishing to crates.io...")
     for crate in CRATE_ORDER:
-        if new_versions[crate] == old_versions[crate]:
+        first_public = is_unpublished_first_version(crate, new_versions[crate])
+        if new_versions[crate] == old_versions[crate] and not first_public:
             print(f"  {crate}: skipped (unchanged)")
             continue
         cmd = ["cargo", "publish", "-p", crate, "--allow-dirty"]
