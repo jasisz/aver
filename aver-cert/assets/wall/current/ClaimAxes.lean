@@ -230,4 +230,9 @@ def requiredContracts (artifact : ArtifactData) : Option (List String) := do
 def contractsMatch (artifact : ArtifactData) : Prop :=
   requiredContracts artifact = some artifact.manifest.subject.contracts
 
+/-- All producer-selectable claim metadata that is instead canonicalized by
+    the checked family and plan. -/
+def checked (artifact : ArtifactData) : Prop :=
+  checkedAxes artifact ∧ contractsMatch artifact
+
 end AverCert.ClaimAxes

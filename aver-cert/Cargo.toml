@@ -21,7 +21,13 @@ include = [
 default = ["verify"]
 engine = ["dep:sha2", "dep:wasm-encoder", "dep:wasmparser"]
 producer = ["engine"]
-verify = ["dep:sha2", "dep:clap", "dep:colored", "dep:serde_json"]
+verify = [
+    "dep:sha2",
+    "dep:clap",
+    "dep:colored",
+    "dep:serde_json",
+    "dep:wasmparser",
+]
 
 [[bin]]
 name = "aver-cert"

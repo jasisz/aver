@@ -17,6 +17,7 @@ use std::process::Command;
 const AXIOM_WHITELIST: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"];
 const CHECKED_ROOT: &str = "AverCertChecker.checked";
 const MAX_CANDIDATE_LEN: usize = 200;
+const TOOLCHAIN_ROOTS: [&str; 4] = ["Init", "Lake", "Lean", "Std"];
 
 /// Emitted on a green verdict. All trust-bearing byte facts and claim metadata
 /// are checked by the embedded Lean wall; Rust performs no parallel verdict
@@ -146,6 +147,14 @@ pub fn verify(artifact: &Path, cert_dir: &Path) -> Result<Verdict, String> {
 fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, String> {
     let bytes = std::fs::read(artifact)
         .map_err(|error| format!("cannot read artifact {}: {error}", artifact.display()))?;
+    // Artifact acceptance reasons about a valid WebAssembly module. The Lean
+    // wall decodes every trust-bearing section and instruction, but it is not
+    // yet a complete Wasm validation algorithm (stack/control typing included).
+    // Keep this one standard validator gate; none of the producer classifier or
+    // obligation reconstruction is linked into the verifier.
+    wasmparser::Validator::new()
+        .validate_all(&bytes)
+        .map_err(|error| format!("artifact is not valid WebAssembly: {error}"))?;
     let actual_hash = sha256_hex(&bytes);
     let manifest = read_manifest(cert_dir)?;
 
@@ -287,11 +296,11 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
             .map(|candidate| candidate.name.clone())
             .collect::<Vec<_>>(),
     );
-    let classes = lean_str_list(
+    let report_entries = lean_string_pair_list(
         &candidates
             .certified
             .iter()
-            .map(|candidate| candidate.class.clone())
+            .map(|candidate| (candidate.name.clone(), candidate.class.clone()))
             .collect::<Vec<_>>(),
     );
     let policies = format!(
@@ -350,6 +359,7 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
          import ArtifactBytes\n\
          import Manifest\n\
          import Artifact\n\n\
+         import ArtifactCertificate\n\n\
          set_option maxRecDepth 200000\n\n\
          namespace AverCertChecker\n\n\
          example : AverCert.Artifact.data.modBytes = AverCert.ArtifactBytes.modBytes := rfl\n\
@@ -359,7 +369,7 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
          example : AverCert.manifest.subject.artifactRoot = \"{}\" := rfl\n\
          example : AverCert.manifest.obligations.map (fun o => o.export_) = {names} := rfl\n\
          example : AverCert.manifest.subject.exports = {names} := rfl\n\
-         example : AverCert.StandardFace.reportClasses AverCert.Artifact.data = {classes} := rfl\n\
+         example : AverCert.StandardFace.reportEntries AverCert.Artifact.data = some {report_entries} := rfl\n\
          example : AverCert.manifest.obligations.map (fun o => o.policy) = {policies} := rfl\n\
          example : AverCert.manifest.obligations.map (fun o => o.termination?) = {terminations} := rfl\n\
          example : AverCert.manifest.subject.contracts = {contracts} := rfl\n\
@@ -367,7 +377,7 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
          example : AverCert.manifest.subject.capabilities = {capabilities} := rfl\n\
          example : AverCert.manifest.subject.start = {start} := rfl\n\
          example : AverCert.manifest.subject.hostRoleTable = {roles} := rfl\n\
-         example : AverCert.manifest.subject.stringHostRoles = {string_roles} := rfl\
+         example : AverCert.manifest.subject.stringHostRoles = {string_roles} := rfl\n\
          example : AverCert.manifest.subject.profile = \"{}\" := rfl\n\
          example : AverCert.manifest.subject.abi = \"{}\" := rfl\n\n\
          def checked : AverCert.AcceptedArtifact.accepted AverCert.Artifact.data :=\n\
@@ -697,6 +707,22 @@ fn assemble_build(
             continue;
         }
         let root = lean_module_root(&name)?;
+        let shadows_toolchain = TOOLCHAIN_ROOTS
+            .iter()
+            .any(|reserved| reserved.eq_ignore_ascii_case(&root));
+        let shadows_checker = selected_wall.sources.iter().any(|source| {
+            source
+                .name
+                .strip_suffix(".lean")
+                .is_some_and(|reserved| reserved.eq_ignore_ascii_case(&root))
+        }) || ["ArtifactBytes", "CheckerWitness", "lakefile"]
+            .iter()
+            .any(|reserved| reserved.eq_ignore_ascii_case(&root));
+        if shadows_toolchain || shadows_checker {
+            return Err(format!(
+                "cert data module `{root}` shadows a checker/toolchain import"
+            ));
+        }
         let contents = std::fs::read(entry.path())
             .map_err(|error| format!("cannot read cert file {name}: {error}"))?;
         scan_for_code_exec(&name, &contents)?;
