@@ -171,7 +171,7 @@ conjunctions. `ArtifactBytes.lean` is also
 checker-owned: it is regenerated from the actual wasm bytes read by the
 verifier, not trusted from the certificate directory.
 
-The schema-53 decoder materializes a bounded section table and a shared
+The schema-1 decoder materializes a bounded section table and a shared
 defined-code location table. Section payloads and individual bodies are
 isolated to their declared `(Nat, len)` before bytewise decoding, and
 signature/type lookups use indexed tables. A malformed short section therefore
@@ -318,10 +318,11 @@ sidecars (`SymPlan` first, representation fallback only when needed), checks
 each sidecar against byte-derived function facts, and only then
 merges the two lists by the actual byte-derived function order before
 generating `CheckerWitness.lean`. The old expr-fragment byte classifier is no
-longer part of verifier-side admission or ordering. The remaining v1 residual
-is that the Rust-side plan checker/lowerer and the non-expression byte
-classifiers are still verifier TCB until the v2/v3 Lean `AverCert` path moves
-checking/lowering into kernel-checked definitions.
+longer part of verifier-side admission or ordering. The current acceptance
+path moves plan checking, canonical lowering and relevant Wasm slicing into
+checker-owned, kernel-checked Lean definitions. Rust reconstructs artifact
+data and stages the audited wall; certificate input does not supply theorem
+statements or proof-wall source.
 
 Lean-side implementation status: `PlanCheck.lean` now structurally validates
 the emitted `ExprFragmentRawPlan`, `PlanLower.lean` canonically lowers that
@@ -571,16 +572,18 @@ that node, composed from child spans. This is trace-like data only in the
 benign sense: it proves canonical lowering of an already-checked plan. It must
 not become trace-guided lifting from arbitrary Wasm.
 
-The staged path is:
+The historical migration path was:
 
-1. v2.0: Lean checks `RawPlan -> CheckedPlan`, lowering to actual bytes, and
+1. Lean checks `RawPlan -> CheckedPlan`, lowering to actual bytes, and
    plan-level spec; external code still supplies most byte-origin facts.
-2. v2.5: Lean checks the relevant module slicing that produced
+2. Lean checks the relevant module slicing that produced
    `ModuleBinding` and `actualCodeEntryBytes`. The current `WasmSlice.lean`
    export/code-entry pin is the first narrow piece of this stage for
    expression fragments.
-3. v3: Lean checks the full relevant Wasm profile if the assurance tradeoff
-   justifies the cost.
+3. Lean checks the full relevant Wasm profile used by each accepted family.
+
+The promoted certificate families have completed these stages; the numbered
+prototype labels are no longer part of the format.
 
 ## Trace-Guided Replay Is Excluded
 
