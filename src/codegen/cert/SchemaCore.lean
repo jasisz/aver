@@ -692,9 +692,6 @@ def intRepr (S : CarrierSpec C) : Int → WVal → Prop := S.Repr
 /-- Standard representation of a boolean result. -/
 def boolRepr (_S : CarrierSpec C) (b : Bool) (w : WVal) : Prop := w = b32 b
 
-/-- Standard bit-exact representation of a floating-point result. -/
-def floatRepr (_S : CarrierSpec C) (x : Float) (w : WVal) : Prop := w = .f64v x.toBits
-
 /-- Standard representation of a floating-point bit-pattern result. -/
 def floatBitsRepr (_S : CarrierSpec C) (bits : UInt64) (w : WVal) : Prop := w = .f64v bits
 

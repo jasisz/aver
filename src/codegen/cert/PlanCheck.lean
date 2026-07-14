@@ -386,9 +386,6 @@ def checkStringConcatRawPlan (plan : StringConcatRawPlan) : Bool :=
 def stringConcatChunkBytes : StringConcatChunk → List Nat
   | { bytes, .. } => bytes
 
-def stringEqChunkBytes : StringEqChunk → List Nat
-  | { bytes, .. } => bytes
-
 inductive SymStringConcatPart where
   | literal (bytes : List Nat)
   | input

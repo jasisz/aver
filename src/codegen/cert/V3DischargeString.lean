@@ -51,10 +51,6 @@ def stringSemanticBridges (artifact : ArtifactData) : Prop :=
         stringConcatSemanticBridge claim plan)
 
 /-- The string family's two adjacent slices in `claimObligations`. -/
-def stringClaimObligations (artifact : ArtifactData) : List Obligation :=
-  artifact.stringEqClaims.map (·.obligation) ++
-  artifact.stringConcatClaims.map (·.obligation)
-
 theorem stringEq_accepted_call
     (artifact : ArtifactData)
     (hAcc : acceptedStringEqFragments artifact)
@@ -326,18 +322,5 @@ theorem stringConcat_discharges
   rcases List.mem_map.mp hObligation with ⟨claim, hMem, rfl⟩
   exact stringConcat_claim_discharges artifact hAcc claim hMem
     (hSemantic.2 claim hMem)
-
-/-- Combined string-family slice.  This is the small extension to the standard
-pattern: string has two accepted claim lists and two generic theorems. -/
-theorem string_discharges
-    (artifact : ArtifactData)
-    (hEqAcc : acceptedStringEqFragments artifact)
-    (hConcatAcc : acceptedStringConcatFragments artifact)
-    (hSemantic : stringSemanticBridges artifact) :
-    ∀ o ∈ stringClaimObligations artifact, obligationHolds o := by
-  intro o hObligation
-  rcases List.mem_append.mp hObligation with hEq | hConcat
-  · exact stringEq_discharges artifact hEqAcc hSemantic o hEq
-  · exact stringConcat_discharges artifact hConcatAcc hSemantic o hConcat
 
 end V3Master

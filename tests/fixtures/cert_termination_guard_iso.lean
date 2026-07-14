@@ -79,6 +79,7 @@ theorem honestAccepted : AverCert.AcceptedArtifact.recursionPlanAccepted
     AverCert.AcceptedArtifact.recursionClaimsAccepted,
     AverCert.AcceptedArtifact.recursionClaimAccepted,
     AverCert.AcceptedArtifact.recursionPlanForExport,
+    AverCert.AcceptedArtifact.namedPlanForExport,
     AverCert.Artifact.data, AverCert.Artifact.recursionClaims,
     AverCert.manifest, plan, modBytes, modLen, nameBytes, hostTable] using hrec.1
 
