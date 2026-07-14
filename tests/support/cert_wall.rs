@@ -6,14 +6,16 @@ use std::path::Path;
 /// `format.wall_id`. Production verification performs the equivalent staging
 /// in a fresh directory; certificate packages do not carry these files.
 pub fn materialize(cert_dir: &Path) {
-    for source in aver::codegen::cert::wall::SOURCES {
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(cert_dir.join("cert-manifest.json")).unwrap())
+            .unwrap();
+    let wall_id = manifest["format"]["wall_id"].as_str().unwrap();
+    let wall = aver::codegen::cert::wall::resolve(wall_id).unwrap();
+
+    for source in wall.sources {
         std::fs::write(cert_dir.join(source.name), source.contents).unwrap();
     }
-    std::fs::write(
-        cert_dir.join("lean-toolchain"),
-        aver::codegen::cert::wall::LEAN_TOOLCHAIN,
-    )
-    .unwrap();
+    std::fs::write(cert_dir.join("lean-toolchain"), wall.toolchain).unwrap();
 
     fn collect_roots(base: &Path, dir: &Path, roots: &mut Vec<String>) {
         for entry in std::fs::read_dir(dir).unwrap() {
