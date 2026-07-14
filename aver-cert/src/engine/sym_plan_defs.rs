@@ -164,7 +164,7 @@ impl SymPlan {
     /// literals box; `intAdd` calls the carrier `add`); a role the table
     /// lacks fail-closes the encoding. Twin of the audited Lean
     /// `PlanCheck.encodeSymRawPlanToExprFragmentRawPlan`.
-    pub(crate) fn to_expr_fragment_plan(
+    pub fn to_expr_fragment_plan(
         &self,
         host_table: &FragHostTable,
         struct_table: &FragStructTable,
@@ -188,7 +188,7 @@ pub enum FragmentPlan {
 }
 
 impl FragmentPlan {
-    pub(crate) fn to_expr_fragment_plan(
+    pub fn to_expr_fragment_plan(
         &self,
         host_table: &FragHostTable,
         struct_table: &FragStructTable,
@@ -484,7 +484,7 @@ fn expr_fragment_struct_table_entries(
 /// Resolve the struct table a producer fragment plan needs at emit time, from
 /// the emitter's own type registry (`resolve`: record type name -> wasm struct
 /// type index). Fail-closed on any unknown name.
-pub(crate) fn frag_struct_table_for_plan(
+pub fn frag_struct_table_for_plan(
     plan: &FragmentPlan,
     resolve: &dyn Fn(&str) -> Option<u32>,
 ) -> Option<FragStructTable> {

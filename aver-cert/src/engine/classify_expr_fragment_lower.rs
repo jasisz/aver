@@ -2,7 +2,7 @@ fn lower_expr_fragment_plan(plan: &ExprFragmentPlan, carrier: u32) -> Result<Vec
     lower_expr_fragment_block(&plan.body, carrier)
 }
 
-pub(crate) fn lower_expr_fragment_plan_function(
+pub fn lower_expr_fragment_plan_function(
     plan: &ExprFragmentPlan,
     carrier: u32,
 ) -> Result<wasm_encoder::Function, String> {
@@ -41,7 +41,7 @@ fn lower_expr_fragment_plan_body_bytes(
     Ok(out)
 }
 
-fn lower_expr_fragment_plan_code_entry_bytes(
+pub fn lower_expr_fragment_plan_code_entry_bytes(
     plan: &ExprFragmentPlan,
     carrier: u32,
 ) -> Result<Vec<u8>, String> {

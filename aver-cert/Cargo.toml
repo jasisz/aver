@@ -1,0 +1,34 @@
+[package]
+name = "aver-cert"
+version = "0.1.0"
+edition = "2024"
+description = "Independent artifact certificate engine and verifier for Aver WebAssembly"
+license = "MIT"
+repository = "https://github.com/jasisz/aver"
+homepage = "https://github.com/jasisz/aver"
+documentation = "https://docs.rs/aver-cert"
+readme = "README.md"
+keywords = ["aver", "lean", "verification", "webassembly"]
+categories = ["development-tools", "wasm"]
+include = [
+    "/src/**",
+    "/assets/wall/**",
+    "/README.md",
+]
+
+[features]
+default = ["verify"]
+# Both frontends currently share the byte-level certification engine. Keeping
+# the feature names separate lets the verifier orchestration gain its own
+# dependencies without pulling them into aver-lang in the next extraction step.
+engine = ["dep:sha2", "dep:wasm-encoder", "dep:wasmparser"]
+producer = ["engine"]
+verify = ["engine"]
+
+[dependencies]
+sha2 = { version = "0.10", optional = true }
+wasm-encoder = { version = "0.248", optional = true }
+wasmparser = { version = "0.248", optional = true }
+
+[dev-dependencies]
+wat = "1"

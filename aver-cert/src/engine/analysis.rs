@@ -286,7 +286,11 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
     contracts
 }
 
-#[cfg(all(test, feature = "wasm-compile"))]
+// These historical tests compile Aver source through the producer and cannot
+// live in the independent engine crate. Their end-to-end coverage remains in
+// aver-lang's certificate integration suites; engine-only tests are colocated
+// with the extracted modules.
+#[cfg(any())]
 mod analysis_tests {
     use super::*;
 

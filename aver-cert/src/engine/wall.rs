@@ -7,44 +7,64 @@
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 
-/// Public certificate-package format understood by this verifier.
-pub const FORMAT_VERSION: u32 = 1;
-pub const CURRENT_ID: &str =
-    "sha256:4d5d1b61e1d6e2544fd0aed769349bd9d98dcc54fd9c27bb8591caa0f4f0dddb";
+pub use crate::format::{CURRENT_WALL_ID as CURRENT_ID, FORMAT_VERSION};
 
-pub const LEAN_TOOLCHAIN: &str = include_str!("../../../tools/certkit/prelude/lean-toolchain");
+pub const LEAN_TOOLCHAIN: &str = include_str!("../../assets/wall/current/lean-toolchain");
 
-pub const CERT_PRELUDE: &str = include_str!("../../../tools/certkit/prelude/CertPrelude.lean");
-pub const CERT_DECODE: &str = include_str!("../../../tools/certkit/prelude/CertDecode.lean");
-pub const CERT_SCHEMA: &str = include_str!("Schema.lean");
-pub const CERT_SCHEMA_CORE: &str = include_str!("SchemaCore.lean");
-pub const CERT_PLAN_CHECK: &str = include_str!("PlanCheck.lean");
-pub const CERT_PLAN_LOWER: &str = include_str!("PlanLower.lean");
-pub const CERT_PLAN_BYTES: &str = include_str!("PlanBytes.lean");
-pub const CERT_WASM_SLICE: &str = include_str!("WasmSlice.lean");
-pub const CERT_EXPR_FRAGMENT_ACCEPTED: &str = include_str!("ExprFragmentAccepted.lean");
-pub const CERT_ACCEPTED_ARTIFACT: &str = include_str!("AcceptedArtifact.lean");
-pub const CERT_ACCEPTED_ARTIFACT_CORE: &str = include_str!("AcceptedArtifactCore.lean");
-pub const CERT_EXPR_FRAGMENT_SEMANTICS: &str = include_str!("ExprFragmentSemantics.lean");
-pub const CERT_INTERPRETER_SEQUENCING: &str = include_str!("InterpreterSequencing.lean");
-pub const CERT_EXPR_FRAGMENT_SOUNDNESS: &str = include_str!("ExprFragmentSoundness.lean");
-pub const CERT_FIELD_PROJECTION_SOUNDNESS: &str = include_str!("FieldProjectionSoundness.lean");
-pub const CERT_CONSTRUCT_VERBATIM_SOUNDNESS: &str = include_str!("ConstructVerbatimSoundness.lean");
-pub const CERT_INT_DISPATCH_SOUNDNESS: &str = include_str!("IntDispatchSoundness.lean");
-pub const CERT_STRING_SOUNDNESS: &str = include_str!("StringSoundness.lean");
-pub const CERT_RECURSION_SOUNDNESS: &str = include_str!("RecursionSoundness.lean");
-pub const CERT_MUTUAL_RECURSION_SOUNDNESS: &str = include_str!("MutualRecursionSoundness.lean");
-pub const CERT_COMPOSITION_SOUNDNESS: &str = include_str!("CompositionSoundness.lean");
-pub const CERT_ACCEPTANCE_SOUNDNESS_CORE: &str = include_str!("AcceptanceSoundnessCore.lean");
-pub const CERT_DISCHARGE_EXPR_FRAGMENT: &str = include_str!("DischargeExprFragment.lean");
-pub const CERT_DISCHARGE_FIELD_PROJECTION: &str = include_str!("DischargeFieldProjection.lean");
-pub const CERT_DISCHARGE_CONSTRUCT: &str = include_str!("DischargeConstruct.lean");
-pub const CERT_DISCHARGE_VERBATIM: &str = include_str!("DischargeVerbatim.lean");
-pub const CERT_DISCHARGE_STRING: &str = include_str!("DischargeString.lean");
-pub const CERT_DISCHARGE_INT_DISPATCH: &str = include_str!("DischargeIntDispatch.lean");
-pub const CERT_DISCHARGE_RECURSION: &str = include_str!("DischargeRecursion.lean");
-pub const CERT_DISCHARGE_COMPOSITION: &str = include_str!("DischargeComposition.lean");
-pub const CERT_ACCEPTANCE_SOUNDNESS: &str = include_str!("AcceptanceSoundness.lean");
+pub const CERT_PRELUDE: &str = include_str!("../../assets/wall/current/CertPrelude.lean");
+pub const CERT_DECODE: &str = include_str!("../../assets/wall/current/CertDecode.lean");
+pub const CERT_SCHEMA: &str = include_str!("../../assets/wall/current/Schema.lean");
+pub const CERT_SCHEMA_CORE: &str = include_str!("../../assets/wall/current/SchemaCore.lean");
+pub const CERT_PLAN_CHECK: &str = include_str!("../../assets/wall/current/PlanCheck.lean");
+pub const CERT_PLAN_LOWER: &str = include_str!("../../assets/wall/current/PlanLower.lean");
+pub const CERT_PLAN_BYTES: &str = include_str!("../../assets/wall/current/PlanBytes.lean");
+pub const CERT_WASM_SLICE: &str = include_str!("../../assets/wall/current/WasmSlice.lean");
+pub const CERT_EXPR_FRAGMENT_ACCEPTED: &str =
+    include_str!("../../assets/wall/current/ExprFragmentAccepted.lean");
+pub const CERT_ACCEPTED_ARTIFACT: &str =
+    include_str!("../../assets/wall/current/AcceptedArtifact.lean");
+pub const CERT_ACCEPTED_ARTIFACT_CORE: &str =
+    include_str!("../../assets/wall/current/AcceptedArtifactCore.lean");
+pub const CERT_EXPR_FRAGMENT_SEMANTICS: &str =
+    include_str!("../../assets/wall/current/ExprFragmentSemantics.lean");
+pub const CERT_INTERPRETER_SEQUENCING: &str =
+    include_str!("../../assets/wall/current/InterpreterSequencing.lean");
+pub const CERT_EXPR_FRAGMENT_SOUNDNESS: &str =
+    include_str!("../../assets/wall/current/ExprFragmentSoundness.lean");
+pub const CERT_FIELD_PROJECTION_SOUNDNESS: &str =
+    include_str!("../../assets/wall/current/FieldProjectionSoundness.lean");
+pub const CERT_CONSTRUCT_VERBATIM_SOUNDNESS: &str =
+    include_str!("../../assets/wall/current/ConstructVerbatimSoundness.lean");
+pub const CERT_INT_DISPATCH_SOUNDNESS: &str =
+    include_str!("../../assets/wall/current/IntDispatchSoundness.lean");
+pub const CERT_STRING_SOUNDNESS: &str =
+    include_str!("../../assets/wall/current/StringSoundness.lean");
+pub const CERT_RECURSION_SOUNDNESS: &str =
+    include_str!("../../assets/wall/current/RecursionSoundness.lean");
+pub const CERT_MUTUAL_RECURSION_SOUNDNESS: &str =
+    include_str!("../../assets/wall/current/MutualRecursionSoundness.lean");
+pub const CERT_COMPOSITION_SOUNDNESS: &str =
+    include_str!("../../assets/wall/current/CompositionSoundness.lean");
+pub const CERT_ACCEPTANCE_SOUNDNESS_CORE: &str =
+    include_str!("../../assets/wall/current/AcceptanceSoundnessCore.lean");
+pub const CERT_DISCHARGE_EXPR_FRAGMENT: &str =
+    include_str!("../../assets/wall/current/DischargeExprFragment.lean");
+pub const CERT_DISCHARGE_FIELD_PROJECTION: &str =
+    include_str!("../../assets/wall/current/DischargeFieldProjection.lean");
+pub const CERT_DISCHARGE_CONSTRUCT: &str =
+    include_str!("../../assets/wall/current/DischargeConstruct.lean");
+pub const CERT_DISCHARGE_VERBATIM: &str =
+    include_str!("../../assets/wall/current/DischargeVerbatim.lean");
+pub const CERT_DISCHARGE_STRING: &str =
+    include_str!("../../assets/wall/current/DischargeString.lean");
+pub const CERT_DISCHARGE_INT_DISPATCH: &str =
+    include_str!("../../assets/wall/current/DischargeIntDispatch.lean");
+pub const CERT_DISCHARGE_RECURSION: &str =
+    include_str!("../../assets/wall/current/DischargeRecursion.lean");
+pub const CERT_DISCHARGE_COMPOSITION: &str =
+    include_str!("../../assets/wall/current/DischargeComposition.lean");
+pub const CERT_ACCEPTANCE_SOUNDNESS: &str =
+    include_str!("../../assets/wall/current/AcceptanceSoundness.lean");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Source {

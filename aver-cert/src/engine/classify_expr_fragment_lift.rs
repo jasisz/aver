@@ -139,13 +139,13 @@ fn plan_has_host_calls(block: &FragBlock) -> bool {
 /// fragment shape with a rendered proof face today; any other host-call plan
 /// fail-closes classification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct FragIntAddFace {
-    pub(crate) k: i64,
-    pub(crate) box_idx: u32,
-    pub(crate) add_idx: u32,
+pub struct FragIntAddFace {
+    pub k: i64,
+    pub box_idx: u32,
+    pub add_idx: u32,
 }
 
-fn expr_fragment_int_add_face(plan: &ExprFragmentPlan) -> Option<FragIntAddFace> {
+pub fn expr_fragment_int_add_face(plan: &ExprFragmentPlan) -> Option<FragIntAddFace> {
     if plan.params.as_slice() != [FragTy::IntCarrier] || plan.result != FragTy::IntCarrier {
         return None;
     }
@@ -200,12 +200,12 @@ fn expr_fragment_int_add_face(plan: &ExprFragmentPlan) -> Option<FragIntAddFace>
 /// unchanged. This is the only fragment shape admitting `AdtRef` values today;
 /// any other ADT-ref plan fail-closes on producer and verifier alike.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct FragProjectFace {
-    pub(crate) struct_idx: u32,
-    pub(crate) field_idx: u32,
+pub struct FragProjectFace {
+    pub struct_idx: u32,
+    pub field_idx: u32,
 }
 
-fn expr_fragment_project_face(plan: &ExprFragmentPlan) -> Option<FragProjectFace> {
+pub fn expr_fragment_project_face(plan: &ExprFragmentPlan) -> Option<FragProjectFace> {
     if plan.params.as_slice() != [FragTy::AdtRef] || plan.result != FragTy::AdtRef {
         return None;
     }
@@ -255,7 +255,7 @@ fn frag_block_touches_adt_ref(block: &FragBlock) -> bool {
 
 /// Whether a plan involves opaque user-ADT references anywhere (params, result
 /// or body). Such plans are admitted ONLY through the field-projection face.
-fn expr_fragment_plan_touches_adt_ref(plan: &ExprFragmentPlan) -> bool {
+pub fn expr_fragment_plan_touches_adt_ref(plan: &ExprFragmentPlan) -> bool {
     plan.params.contains(&FragTy::AdtRef)
         || plan.result == FragTy::AdtRef
         || frag_block_touches_adt_ref(&plan.body)

@@ -119,7 +119,7 @@ impl FragTy {
 /// carried on the node (variant B) and bound to the module bytes by the
 /// byte-exact gate, and to the byte-derived role table by the Rust checker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum FragHostRole {
+pub enum FragHostRole {
     Box,
     Add,
     Mul,
@@ -147,7 +147,7 @@ impl FragHostRole {
         }
     }
 
-    pub(crate) fn from_plan_tag(tag: &str) -> Option<Self> {
+    pub fn from_plan_tag(tag: &str) -> Option<Self> {
         match tag {
             "box" => Some(FragHostRole::Box),
             "add" => Some(FragHostRole::Add),
@@ -159,7 +159,7 @@ impl FragHostRole {
 
     /// Static registry of representation-level role signatures: argument types
     /// and result type. Twin of `PlanCheck.hostCallResultTy?`.
-    pub(crate) fn signature(self) -> (&'static [FragTy], FragTy) {
+    pub fn signature(self) -> (&'static [FragTy], FragTy) {
         match self {
             FragHostRole::Box => (&[FragTy::I64], FragTy::IntCarrier),
             FragHostRole::Add => (&[FragTy::IntCarrier, FragTy::IntCarrier], FragTy::IntCarrier),
@@ -174,13 +174,13 @@ impl FragHostRole {
 /// (`box` = the exported `__rt_aint_from_i64`; arithmetic = body-shape roles),
 /// never from a plan or sidecar. Plans must cite exactly these indices.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct FragHostTable {
-    pub(crate) box_idx: Option<u32>,
-    pub(crate) add_idx: Option<u32>,
-    pub(crate) mul_idx: Option<u32>,
+pub struct FragHostTable {
+    pub box_idx: Option<u32>,
+    pub add_idx: Option<u32>,
+    pub mul_idx: Option<u32>,
     /// The strict `sub` binding (byte-derived exactly like add/mul:
     /// carrier-binop signature + first arithmetic operator + uniqueness).
-    pub(crate) sub_idx: Option<u32>,
+    pub sub_idx: Option<u32>,
 }
 
 /// Public differential surface for the four strict module-level roles, in
@@ -188,7 +188,7 @@ pub(crate) struct FragHostTable {
 pub type FragHostRoleIndices = (Option<u32>, Option<u32>, Option<u32>, Option<u32>);
 
 impl FragHostTable {
-    pub(crate) fn lookup(&self, role: FragHostRole) -> Option<u32> {
+    pub fn lookup(&self, role: FragHostRole) -> Option<u32> {
         match role {
             FragHostRole::Box => self.box_idx,
             FragHostRole::Add => self.add_idx,
@@ -199,7 +199,7 @@ impl FragHostTable {
 
     /// The `List (HostRole × Nat)` literal the Lean encoder and artifact claims
     /// consume, in fixed role order (box, add, mul, sub).
-    pub(crate) fn lean_value(&self) -> String {
+    pub fn lean_value(&self) -> String {
         let mut entries = Vec::new();
         if let Some(idx) = self.box_idx {
             entries.push(format!("(.box, {idx})"));
@@ -219,7 +219,7 @@ impl FragHostTable {
     /// Module-level manifest value. Unlike `lean_value`, which renders the
     /// plan grammar's present entries, this preserves all four classifier
     /// outcomes (including `none`) for the in-kernel whole-module equality.
-    pub(crate) fn roles_lean_value(&self) -> String {
+    pub fn roles_lean_value(&self) -> String {
         let option = |index: Option<u32>| match index {
             Some(index) => format!("some {index}"),
             None => "none".to_string(),
@@ -237,7 +237,7 @@ impl FragHostTable {
     /// before any wasm indices exist. Encoding shape does not depend on the
     /// index values, so gating with placeholders is exact; real byte-derived
     /// indices are always used wherever bytes are available.
-    pub(crate) fn placeholder() -> Self {
+    pub fn placeholder() -> Self {
         FragHostTable {
             box_idx: Some(0),
             add_idx: Some(0),
@@ -255,14 +255,14 @@ impl FragHostTable {
 /// trusted data: a wrong table encodes to canonical bytes that cannot match
 /// the module, so the claim fail-closes at the byte-exact gate.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct FragStructTable {
+pub struct FragStructTable {
     /// `(source type name, wasm struct type index)`, sorted by name for
     /// deterministic rendering.
-    pub(crate) entries: Vec<(String, u32)>,
+    pub entries: Vec<(String, u32)>,
 }
 
 impl FragStructTable {
-    pub(crate) fn lookup(&self, name: &str) -> Option<u32> {
+    pub fn lookup(&self, name: &str) -> Option<u32> {
         self.entries
             .iter()
             .find(|(entry, _)| entry == name)
@@ -271,7 +271,7 @@ impl FragStructTable {
 
     /// Insert one binding; `false` when the name is already bound to a
     /// DIFFERENT index (an inconsistent table must fail-close).
-    pub(crate) fn insert(&mut self, name: &str, idx: u32) -> bool {
+    pub fn insert(&mut self, name: &str, idx: u32) -> bool {
         match self.lookup(name) {
             Some(existing) => existing == idx,
             None => {
@@ -283,7 +283,7 @@ impl FragStructTable {
     }
 
     /// The Lean `List (String × Nat)` literal claims and witnesses consume.
-    pub(crate) fn lean_value(&self) -> String {
+    pub fn lean_value(&self) -> String {
         format!(
             "[{}]",
             self.entries
@@ -297,7 +297,7 @@ impl FragStructTable {
     /// A placeholder table for producer-side encodability gating at MIR time,
     /// before any wasm type indices exist: every projected type name maps to 0.
     /// Encoding shape does not depend on the index values.
-    pub(crate) fn placeholder_for(plan: &SymPlan) -> Self {
+    pub fn placeholder_for(plan: &SymPlan) -> Self {
         let mut names = sym_plan_project_type_names(plan);
         names.sort();
         FragStructTable {
@@ -325,10 +325,10 @@ pub fn frag_struct_table_lean_from_entries<'a>(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct FragValueId(pub(crate) usize);
+pub struct FragValueId(pub usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum FragPrim {
+pub enum FragPrim {
     F64Add,
     F64Mul,
     F64Le,
@@ -371,7 +371,7 @@ impl FragPrim {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum FragNodeKind {
+pub enum FragNodeKind {
     Local { index: u32 },
     ConstBool(bool),
     ConstI64(i64),
@@ -418,16 +418,16 @@ pub(crate) enum FragNodeKind {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct FragNode {
-    pub(crate) id: FragValueId,
-    pub(crate) ty: FragTy,
-    pub(crate) kind: FragNodeKind,
+pub struct FragNode {
+    pub id: FragValueId,
+    pub ty: FragTy,
+    pub kind: FragNodeKind,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct FragBlock {
-    pub(crate) nodes: Vec<FragNode>,
-    pub(crate) result: FragValueId,
+pub struct FragBlock {
+    pub nodes: Vec<FragNode>,
+    pub result: FragValueId,
 }
 
 impl FragBlock {
@@ -435,16 +435,16 @@ impl FragBlock {
         self.nodes.get(id.0).filter(|node| node.id == id)
     }
 
-    fn result_ty(&self) -> Option<FragTy> {
+    pub fn result_ty(&self) -> Option<FragTy> {
         self.node(self.result).map(|node| node.ty)
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct ExprFragmentPlan {
-    pub(crate) params: Vec<FragTy>,
-    pub(crate) result: FragTy,
-    pub(crate) body: FragBlock,
+    pub params: Vec<FragTy>,
+    pub result: FragTy,
+    pub body: FragBlock,
 }
 
 impl ExprFragmentPlan {

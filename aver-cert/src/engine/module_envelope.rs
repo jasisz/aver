@@ -72,8 +72,9 @@ pub fn collect_module_envelope_facts(
         .validate_all(wasm_bytes)
         .map_err(|e| format!("wasm module failed validation: {e}"))?;
 
-    let registry = crate::codegen::wasm_gc::effects::capability_registry()
-        .into_iter()
+    let registry = crate::format::WASM_GC_CAPABILITIES
+        .iter()
+        .copied()
         .collect::<BTreeSet<_>>();
     let mut exports = Vec::new();
     let mut capabilities = Vec::new();
@@ -198,10 +199,10 @@ pub fn collect_module_envelope_facts(
 mod module_envelope_tests {
     #[test]
     fn audited_kernel_capability_registry_tracks_effect_import_pairs() {
-        let registry = crate::codegen::wasm_gc::effects::capability_registry();
+        let registry = crate::format::WASM_GC_CAPABILITIES;
         let unique = registry.iter().copied().collect::<std::collections::BTreeSet<_>>();
         assert_eq!(registry.len(), unique.len(), "effect import pairs must be unique");
-        for (module, field) in registry {
+        for (module, field) in registry.iter().copied() {
             let lean_entry = format!("(\"{module}\", \"{field}\")");
             assert!(
                 super::CERT_SCHEMA_CORE.contains(&lean_entry),

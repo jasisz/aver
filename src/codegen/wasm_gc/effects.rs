@@ -182,6 +182,7 @@ pub(super) enum EffectName {
 }
 
 impl EffectName {
+    #[cfg(test)]
     const ALL: &[Self] = &[
         Self::ConsolePrint,
         Self::ConsoleError,
@@ -685,11 +686,26 @@ impl EffectName {
 /// effect-name list and `import_pair` mapping used by wasm-gc emission.  This
 /// keeps certificate interface accounting synchronized with the actual host
 /// import ABI instead of maintaining a second Rust-side registry.
-pub(crate) fn capability_registry() -> Vec<(&'static str, &'static str)> {
+#[cfg(test)]
+fn capability_registry() -> Vec<(&'static str, &'static str)> {
     EffectName::ALL
         .iter()
         .map(|effect| effect.import_pair())
         .collect()
+}
+
+#[cfg(test)]
+mod certificate_format_tests {
+    use super::*;
+
+    #[test]
+    fn emitted_import_registry_matches_the_verifier_owned_format() {
+        assert_eq!(
+            capability_registry().as_slice(),
+            aver_cert::format::WASM_GC_CAPABILITIES,
+            "compiler effect imports and the independent certificate verifier must stay in lockstep"
+        );
+    }
 }
 
 fn result_ref_ty(registry: &TypeRegistry, canonical: &str) -> Result<ValType, WasmGcError> {

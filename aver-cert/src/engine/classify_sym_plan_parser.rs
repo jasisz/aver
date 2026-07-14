@@ -290,7 +290,7 @@ fn infer_list_construct_ty(nodes: &[SymNode], args: &[SymValueId]) -> Option<Sym
 }
 
 impl SymBlock {
-    fn result_ty(&self) -> Option<SymTy> {
+    pub fn result_ty(&self) -> Option<SymTy> {
         self.nodes
             .get(self.result.0)
             .filter(|node| node.id == self.result)
