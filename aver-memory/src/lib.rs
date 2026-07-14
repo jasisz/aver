@@ -94,6 +94,7 @@ pub trait MapLike: Sized {
 
 const QNAN: u64 = 0x7FFC_0000_0000_0000;
 const QNAN_MASK: u64 = 0xFFFC_0000_0000_0000;
+const QNAN_MARKER_BIT: u64 = 1u64 << 50;
 const TAG_SHIFT: u32 = 46;
 const TAG_MASK: u64 = 0xF;
 const PAYLOAD_MASK: u64 = (1u64 << 46) - 1;
@@ -291,7 +292,10 @@ impl NanValue {
     pub fn new_float(f: f64) -> Self {
         let bits = f.to_bits();
         if (bits & QNAN_MASK) == QNAN {
-            NanValue(bits ^ 1)
+            // A colliding pattern is already a quiet NaN. Clear only Aver's
+            // marker bit: the result remains a quiet NaN, retains its sign and
+            // remaining payload, and can no longer be mistaken for a box.
+            NanValue(bits & !QNAN_MARKER_BIT)
         } else {
             NanValue(bits)
         }
