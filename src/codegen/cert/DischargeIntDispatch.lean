@@ -1,20 +1,20 @@
 /-
-v3 master wiring — Int-dispatch-family discharge.
+Acceptance-soundness wiring for integer dispatch.
 
 Acceptance supplies the checked plan, canonical host wiring, lowering, and
 exact code entry. The audited raw checker supplies the generic theorem's
 non-default-root premise; only the independent domain/model face remains in
 the semantic bridge.
 -/
-import V3Master
-import V3DispatchCore
+import AcceptanceSoundnessCore
+import IntDispatchSoundness
 
 open AverCert
 open AverCert.Schema
 open AverCert.AcceptedArtifact
 open CertPrelude
 
-namespace V3Master
+namespace AcceptanceSoundness
 
 private theorem intDispatchRoot_of_raw (plan : IntDispatchRawPlan)
     (hRaw : AverCert.PlanCheck.checkIntDispatchRawPlan plan = true) :
@@ -89,7 +89,7 @@ private theorem canonicalHostSlots
     (C : Nat) (add sub mul : List WVal → Option WVal)
     (hostTable : List (HostRole × Nat))
     (hDistinct : AverCert.PlanCheck.hostTableIndicesDistinct hostTable = true) :
-    V3Dispatch.HostSlots C
+    IntDispatchSoundness.HostSlots C
       (intDispatchCanonicalSlots C add sub mul hostTable) hostTable add sub := by
   constructor
   · intro idx hLookup
@@ -115,7 +115,7 @@ def intDispatchSemanticBridge
     claim.obligation.domRepr S x vs →
     ∃ tag fields n,
       vs = [.structv tag fields] ∧
-      V3Dispatch.EvalCascade S plan.body tag fields n ∧
+      IntDispatchSoundness.EvalCascade S plan.body tag fields n ∧
       ∀ w, S.Repr n w →
         claim.obligation.codRepr S (claim.obligation.model x) w
 
@@ -143,7 +143,7 @@ theorem intDispatch_accepted_call
         (∀ a b va vb w, S.Repr a va → S.Repr b vb →
           sub [va, vb] = some w → S.Repr (a - b) w) →
         ∀ fuel tag fields n w,
-          V3Dispatch.EvalCascade S plan.body tag fields n →
+          IntDispatchSoundness.EvalCascade S plan.body tag fields n →
           wFuncN claim.obligation.code
               (claim.obligation.host add sub mul stringEq stringConcat)
               (fuel + 1) claim.obligation.self [.structv tag fields] = some w →
@@ -176,13 +176,13 @@ theorem intDispatch_accepted_call
       refine ⟨plan, rfl, ?_⟩
       intro S add sub mul stringEq stringConcat hAdd hSub
         fuel tag fields n w hSem hRun
-      have hSlots : V3Dispatch.HostSlots claim.obligation.carrier
+      have hSlots : IntDispatchSoundness.HostSlots claim.obligation.carrier
           (claim.obligation.host add sub mul stringEq stringConcat)
           claim.hostTable add sub := by
         rw [hHost']
         exact canonicalHostSlots claim.obligation.carrier add sub mul
           claim.hostTable hDistinct
-      exact V3Dispatch.generic_int_dispatch_certified
+      exact IntDispatchSoundness.generic_int_dispatch_certified
         S plan claim.obligation.code
         (claim.obligation.host add sub mul stringEq stringConcat)
         claim.obligation.self claim.hostTable add sub hSlots hAdd hSub
@@ -251,7 +251,7 @@ theorem intDispatch_canonical_discharges
       domRepr S x vs →
       ∃ tag fields n,
         vs = [.structv tag fields] ∧
-        V3Dispatch.EvalCascade S plan.body tag fields n ∧
+        IntDispatchSoundness.EvalCascade S plan.body tag fields n ∧
         ∀ w, S.Repr n w → intRepr S (model x) w) :
     Obligation.holds
       ({ export_ := exportName
@@ -273,11 +273,11 @@ theorem intDispatch_canonical_discharges
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
-      have hSlots : V3Dispatch.HostSlots carrier
+      have hSlots : IntDispatchSoundness.HostSlots carrier
           (host add sub mul stringEq stringConcat) hostTable add sub := by
         rw [hHost]
         exact canonicalHostSlots carrier add sub mul hostTable hDistinct
-      have hGeneric := V3Dispatch.generic_int_dispatch_certified
+      have hGeneric := IntDispatchSoundness.generic_int_dispatch_certified
         S plan code (host add sub mul stringEq stringConcat) self
         hostTable add sub hSlots hAdd hSub
         (intDispatchRoot_of_raw plan hRaw) body hLow hCode
@@ -294,4 +294,4 @@ theorem intDispatch_discharges
   exact intDispatch_claim_discharges artifact hAcc claim hMem
     (hSemantic claim hMem)
 
-end V3Master
+end AcceptanceSoundness

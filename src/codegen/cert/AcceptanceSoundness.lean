@@ -1,5 +1,5 @@
 /-
-v3 ACCEPT-SOUND ASSEMBLY.
+ACCEPTANCE-SOUNDNESS ASSEMBLY.
 
 The audited byte predicates do not constrain the semantic faces of an
 `Obligation` (`policy`, `Dom`, `Cod`, representations, and `model`).  The
@@ -8,20 +8,20 @@ predicates.  Composition also exposes the facts for its called members.
 `dischargeSideConditions` collects precisely those remaining assumptions;
 everything else in this file is the mechanical ten-family assembly.
 -/
-import V3DischargeExprFragment
-import V3DischargeFieldProj
-import V3DischargeConstruct
-import V3DischargeVerbatim
-import V3DischargeString
-import V3DischargeIntDispatch
-import V3DischargeRecursion
-import V3DischargeComposition
+import DischargeExprFragment
+import DischargeFieldProjection
+import DischargeConstruct
+import DischargeVerbatim
+import DischargeString
+import DischargeIntDispatch
+import DischargeRecursion
+import DischargeComposition
 
 open AverCert
 open AverCert.Schema
 open AverCert.AcceptedArtifact
 
-namespace V3Master
+namespace AcceptanceSoundness
 
 /-- Semantic premises still exposed by the ten kernel-clean family discharge
 theorems. String equality and concatenation share `stringSemanticBridges`.
@@ -100,4 +100,4 @@ theorem accept_sound
   exact ⟨hHash, holdsCore_of_claims artifact hCover hInManifest hUnique
     (hClaims_of_accepted artifact hAccepted hSide)⟩
 
-end V3Master
+end AcceptanceSoundness

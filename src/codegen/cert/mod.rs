@@ -55,26 +55,26 @@ pub const CERT_WASM_SLICE: &str = include_str!("WasmSlice.lean");
 pub const CERT_EXPR_FRAGMENT_ACCEPTED: &str = include_str!("ExprFragmentAccepted.lean");
 pub const CERT_ACCEPTED_ARTIFACT: &str = include_str!("AcceptedArtifact.lean");
 pub const CERT_ACCEPTED_ARTIFACT_CORE: &str = include_str!("AcceptedArtifactCore.lean");
-pub const CERT_V3_EXPR_FRAGMENT_FULL: &str = include_str!("V3ExprFragmentFull.lean");
-pub const CERT_V3_STRONG_FUEL: &str = include_str!("V3StrongFuel.lean");
-pub const CERT_V3_GENERIC_CERTIFIED: &str = include_str!("V3GenericCertified.lean");
-pub const CERT_V3_FIELD_PROJ: &str = include_str!("V3FieldProj.lean");
-pub const CERT_V3_CONSTRUCT_VERBATIM: &str = include_str!("V3ConstructVerbatim.lean");
-pub const CERT_V3_DISPATCH_CORE: &str = include_str!("V3DispatchCore.lean");
-pub const CERT_V3_STRING: &str = include_str!("V3String.lean");
-pub const CERT_V3_REC_SPIKE: &str = include_str!("V3RecSpike.lean");
-pub const CERT_V3_MUTUAL_GENERIC: &str = include_str!("V3MutualGeneric.lean");
-pub const CERT_V3_COMPOSITION: &str = include_str!("V3Composition.lean");
-pub const CERT_V3_MASTER: &str = include_str!("V3Master.lean");
-pub const CERT_V3_DISCHARGE_EXPR_FRAGMENT: &str = include_str!("V3DischargeExprFragment.lean");
-pub const CERT_V3_DISCHARGE_FIELD_PROJ: &str = include_str!("V3DischargeFieldProj.lean");
-pub const CERT_V3_DISCHARGE_CONSTRUCT: &str = include_str!("V3DischargeConstruct.lean");
-pub const CERT_V3_DISCHARGE_VERBATIM: &str = include_str!("V3DischargeVerbatim.lean");
-pub const CERT_V3_DISCHARGE_STRING: &str = include_str!("V3DischargeString.lean");
-pub const CERT_V3_DISCHARGE_INT_DISPATCH: &str = include_str!("V3DischargeIntDispatch.lean");
-pub const CERT_V3_DISCHARGE_RECURSION: &str = include_str!("V3DischargeRecursion.lean");
-pub const CERT_V3_DISCHARGE_COMPOSITION: &str = include_str!("V3DischargeComposition.lean");
-pub const CERT_V3_ACCEPT_SOUND: &str = include_str!("V3AcceptSound.lean");
+pub const CERT_EXPR_FRAGMENT_SEMANTICS: &str = include_str!("ExprFragmentSemantics.lean");
+pub const CERT_INTERPRETER_SEQUENCING: &str = include_str!("InterpreterSequencing.lean");
+pub const CERT_EXPR_FRAGMENT_SOUNDNESS: &str = include_str!("ExprFragmentSoundness.lean");
+pub const CERT_FIELD_PROJECTION_SOUNDNESS: &str = include_str!("FieldProjectionSoundness.lean");
+pub const CERT_CONSTRUCT_VERBATIM_SOUNDNESS: &str = include_str!("ConstructVerbatimSoundness.lean");
+pub const CERT_INT_DISPATCH_SOUNDNESS: &str = include_str!("IntDispatchSoundness.lean");
+pub const CERT_STRING_SOUNDNESS: &str = include_str!("StringSoundness.lean");
+pub const CERT_RECURSION_SOUNDNESS: &str = include_str!("RecursionSoundness.lean");
+pub const CERT_MUTUAL_RECURSION_SOUNDNESS: &str = include_str!("MutualRecursionSoundness.lean");
+pub const CERT_COMPOSITION_SOUNDNESS: &str = include_str!("CompositionSoundness.lean");
+pub const CERT_ACCEPTANCE_SOUNDNESS_CORE: &str = include_str!("AcceptanceSoundnessCore.lean");
+pub const CERT_DISCHARGE_EXPR_FRAGMENT: &str = include_str!("DischargeExprFragment.lean");
+pub const CERT_DISCHARGE_FIELD_PROJECTION: &str = include_str!("DischargeFieldProjection.lean");
+pub const CERT_DISCHARGE_CONSTRUCT: &str = include_str!("DischargeConstruct.lean");
+pub const CERT_DISCHARGE_VERBATIM: &str = include_str!("DischargeVerbatim.lean");
+pub const CERT_DISCHARGE_STRING: &str = include_str!("DischargeString.lean");
+pub const CERT_DISCHARGE_INT_DISPATCH: &str = include_str!("DischargeIntDispatch.lean");
+pub const CERT_DISCHARGE_RECURSION: &str = include_str!("DischargeRecursion.lean");
+pub const CERT_DISCHARGE_COMPOSITION: &str = include_str!("DischargeComposition.lean");
+pub const CERT_ACCEPTANCE_SOUNDNESS: &str = include_str!("AcceptanceSoundness.lean");
 
 /// Emitted-fragment profile and runtime ABI identifiers recorded in the
 /// manifest. Stable strings the checker echoes; bumped when the certified
@@ -84,7 +84,7 @@ pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
 /// Certification level of a v0 artifact certificate: conditional on the named
 /// runtime contracts (see the consult level naming L0/L1/L2/L3).
 pub const CERT_LEVEL: &str = "L1";
-pub const CERT_SCHEMA_VERSION: u32 = 63;
+pub const CERT_SCHEMA_VERSION: u32 = 1;
 pub const BOX_CONTRACT: &str = "__rt_aint_from_i64 (box i64 -> carrier)";
 pub const INT_ADD_CONTRACT: &str =
     "Int.add (carrier add = exact integer addition on represented values)";
@@ -151,65 +151,65 @@ pub fn audited_accepted_artifact_sha() -> String {
 pub fn audited_accepted_artifact_core_sha() -> String {
     sha256_hex(CERT_ACCEPTED_ARTIFACT_CORE.as_bytes())
 }
-pub fn audited_v3_expr_fragment_full_sha() -> String {
-    sha256_hex(CERT_V3_EXPR_FRAGMENT_FULL.as_bytes())
+pub fn audited_expr_fragment_semantics_sha() -> String {
+    sha256_hex(CERT_EXPR_FRAGMENT_SEMANTICS.as_bytes())
 }
-pub fn audited_v3_strong_fuel_sha() -> String {
-    sha256_hex(CERT_V3_STRONG_FUEL.as_bytes())
+pub fn audited_interpreter_sequencing_sha() -> String {
+    sha256_hex(CERT_INTERPRETER_SEQUENCING.as_bytes())
 }
-pub fn audited_v3_generic_certified_sha() -> String {
-    sha256_hex(CERT_V3_GENERIC_CERTIFIED.as_bytes())
+pub fn audited_expr_fragment_soundness_sha() -> String {
+    sha256_hex(CERT_EXPR_FRAGMENT_SOUNDNESS.as_bytes())
 }
-pub fn audited_v3_field_proj_sha() -> String {
-    sha256_hex(CERT_V3_FIELD_PROJ.as_bytes())
+pub fn audited_field_projection_soundness_sha() -> String {
+    sha256_hex(CERT_FIELD_PROJECTION_SOUNDNESS.as_bytes())
 }
-pub fn audited_v3_construct_verbatim_sha() -> String {
-    sha256_hex(CERT_V3_CONSTRUCT_VERBATIM.as_bytes())
+pub fn audited_construct_verbatim_soundness_sha() -> String {
+    sha256_hex(CERT_CONSTRUCT_VERBATIM_SOUNDNESS.as_bytes())
 }
-pub fn audited_v3_dispatch_core_sha() -> String {
-    sha256_hex(CERT_V3_DISPATCH_CORE.as_bytes())
+pub fn audited_int_dispatch_soundness_sha() -> String {
+    sha256_hex(CERT_INT_DISPATCH_SOUNDNESS.as_bytes())
 }
-pub fn audited_v3_string_sha() -> String {
-    sha256_hex(CERT_V3_STRING.as_bytes())
+pub fn audited_string_soundness_sha() -> String {
+    sha256_hex(CERT_STRING_SOUNDNESS.as_bytes())
 }
-pub fn audited_v3_rec_spike_sha() -> String {
-    sha256_hex(CERT_V3_REC_SPIKE.as_bytes())
+pub fn audited_recursion_soundness_sha() -> String {
+    sha256_hex(CERT_RECURSION_SOUNDNESS.as_bytes())
 }
-pub fn audited_v3_mutual_generic_sha() -> String {
-    sha256_hex(CERT_V3_MUTUAL_GENERIC.as_bytes())
+pub fn audited_mutual_recursion_soundness_sha() -> String {
+    sha256_hex(CERT_MUTUAL_RECURSION_SOUNDNESS.as_bytes())
 }
-pub fn audited_v3_composition_sha() -> String {
-    sha256_hex(CERT_V3_COMPOSITION.as_bytes())
+pub fn audited_composition_soundness_sha() -> String {
+    sha256_hex(CERT_COMPOSITION_SOUNDNESS.as_bytes())
 }
-pub fn audited_v3_master_sha() -> String {
-    sha256_hex(CERT_V3_MASTER.as_bytes())
+pub fn audited_acceptance_soundness_core_sha() -> String {
+    sha256_hex(CERT_ACCEPTANCE_SOUNDNESS_CORE.as_bytes())
 }
-pub fn audited_v3_discharge_expr_fragment_sha() -> String {
-    sha256_hex(CERT_V3_DISCHARGE_EXPR_FRAGMENT.as_bytes())
+pub fn audited_discharge_expr_fragment_sha() -> String {
+    sha256_hex(CERT_DISCHARGE_EXPR_FRAGMENT.as_bytes())
 }
-pub fn audited_v3_discharge_field_proj_sha() -> String {
-    sha256_hex(CERT_V3_DISCHARGE_FIELD_PROJ.as_bytes())
+pub fn audited_discharge_field_projection_sha() -> String {
+    sha256_hex(CERT_DISCHARGE_FIELD_PROJECTION.as_bytes())
 }
-pub fn audited_v3_discharge_construct_sha() -> String {
-    sha256_hex(CERT_V3_DISCHARGE_CONSTRUCT.as_bytes())
+pub fn audited_discharge_construct_sha() -> String {
+    sha256_hex(CERT_DISCHARGE_CONSTRUCT.as_bytes())
 }
-pub fn audited_v3_discharge_verbatim_sha() -> String {
-    sha256_hex(CERT_V3_DISCHARGE_VERBATIM.as_bytes())
+pub fn audited_discharge_verbatim_sha() -> String {
+    sha256_hex(CERT_DISCHARGE_VERBATIM.as_bytes())
 }
-pub fn audited_v3_discharge_string_sha() -> String {
-    sha256_hex(CERT_V3_DISCHARGE_STRING.as_bytes())
+pub fn audited_discharge_string_sha() -> String {
+    sha256_hex(CERT_DISCHARGE_STRING.as_bytes())
 }
-pub fn audited_v3_discharge_int_dispatch_sha() -> String {
-    sha256_hex(CERT_V3_DISCHARGE_INT_DISPATCH.as_bytes())
+pub fn audited_discharge_int_dispatch_sha() -> String {
+    sha256_hex(CERT_DISCHARGE_INT_DISPATCH.as_bytes())
 }
-pub fn audited_v3_discharge_recursion_sha() -> String {
-    sha256_hex(CERT_V3_DISCHARGE_RECURSION.as_bytes())
+pub fn audited_discharge_recursion_sha() -> String {
+    sha256_hex(CERT_DISCHARGE_RECURSION.as_bytes())
 }
-pub fn audited_v3_discharge_composition_sha() -> String {
-    sha256_hex(CERT_V3_DISCHARGE_COMPOSITION.as_bytes())
+pub fn audited_discharge_composition_sha() -> String {
+    sha256_hex(CERT_DISCHARGE_COMPOSITION.as_bytes())
 }
-pub fn audited_v3_accept_sound_sha() -> String {
-    sha256_hex(CERT_V3_ACCEPT_SOUND.as_bytes())
+pub fn audited_acceptance_soundness_sha() -> String {
+    sha256_hex(CERT_ACCEPTANCE_SOUNDNESS.as_bytes())
 }
 
 include!("core_wasm.rs");

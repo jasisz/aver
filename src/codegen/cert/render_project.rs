@@ -64,35 +64,35 @@ pub fn write_project(
         CERT_ACCEPTED_ARTIFACT_CORE,
     )?;
     for (name, contents) in [
-        ("V3ExprFragmentFull.lean", CERT_V3_EXPR_FRAGMENT_FULL),
-        ("V3StrongFuel.lean", CERT_V3_STRONG_FUEL),
-        ("V3GenericCertified.lean", CERT_V3_GENERIC_CERTIFIED),
-        ("V3FieldProj.lean", CERT_V3_FIELD_PROJ),
-        ("V3ConstructVerbatim.lean", CERT_V3_CONSTRUCT_VERBATIM),
-        ("V3DispatchCore.lean", CERT_V3_DISPATCH_CORE),
-        ("V3String.lean", CERT_V3_STRING),
-        ("V3RecSpike.lean", CERT_V3_REC_SPIKE),
-        ("V3MutualGeneric.lean", CERT_V3_MUTUAL_GENERIC),
-        ("V3Composition.lean", CERT_V3_COMPOSITION),
-        ("V3Master.lean", CERT_V3_MASTER),
+        ("ExprFragmentSemantics.lean", CERT_EXPR_FRAGMENT_SEMANTICS),
+        ("InterpreterSequencing.lean", CERT_INTERPRETER_SEQUENCING),
+        ("ExprFragmentSoundness.lean", CERT_EXPR_FRAGMENT_SOUNDNESS),
+        ("FieldProjectionSoundness.lean", CERT_FIELD_PROJECTION_SOUNDNESS),
+        ("ConstructVerbatimSoundness.lean", CERT_CONSTRUCT_VERBATIM_SOUNDNESS),
+        ("IntDispatchSoundness.lean", CERT_INT_DISPATCH_SOUNDNESS),
+        ("StringSoundness.lean", CERT_STRING_SOUNDNESS),
+        ("RecursionSoundness.lean", CERT_RECURSION_SOUNDNESS),
+        ("MutualRecursionSoundness.lean", CERT_MUTUAL_RECURSION_SOUNDNESS),
+        ("CompositionSoundness.lean", CERT_COMPOSITION_SOUNDNESS),
+        ("AcceptanceSoundnessCore.lean", CERT_ACCEPTANCE_SOUNDNESS_CORE),
         (
-            "V3DischargeExprFragment.lean",
-            CERT_V3_DISCHARGE_EXPR_FRAGMENT,
+            "DischargeExprFragment.lean",
+            CERT_DISCHARGE_EXPR_FRAGMENT,
         ),
-        ("V3DischargeFieldProj.lean", CERT_V3_DISCHARGE_FIELD_PROJ),
-        ("V3DischargeConstruct.lean", CERT_V3_DISCHARGE_CONSTRUCT),
-        ("V3DischargeVerbatim.lean", CERT_V3_DISCHARGE_VERBATIM),
-        ("V3DischargeString.lean", CERT_V3_DISCHARGE_STRING),
+        ("DischargeFieldProjection.lean", CERT_DISCHARGE_FIELD_PROJECTION),
+        ("DischargeConstruct.lean", CERT_DISCHARGE_CONSTRUCT),
+        ("DischargeVerbatim.lean", CERT_DISCHARGE_VERBATIM),
+        ("DischargeString.lean", CERT_DISCHARGE_STRING),
         (
-            "V3DischargeIntDispatch.lean",
-            CERT_V3_DISCHARGE_INT_DISPATCH,
+            "DischargeIntDispatch.lean",
+            CERT_DISCHARGE_INT_DISPATCH,
         ),
-        ("V3DischargeRecursion.lean", CERT_V3_DISCHARGE_RECURSION),
+        ("DischargeRecursion.lean", CERT_DISCHARGE_RECURSION),
         (
-            "V3DischargeComposition.lean",
-            CERT_V3_DISCHARGE_COMPOSITION,
+            "DischargeComposition.lean",
+            CERT_DISCHARGE_COMPOSITION,
         ),
-        ("V3AcceptSound.lean", CERT_V3_ACCEPT_SOUND),
+        ("AcceptanceSoundness.lean", CERT_ACCEPTANCE_SOUNDNESS),
     ] {
         write(&cert_dir, name, contents)?;
     }
@@ -143,8 +143,8 @@ pub fn write_project(
     )?;
     write(
         &cert_dir,
-        "V3AcceptReal.lean",
-        &render_v3_accept_real(),
+        "ArtifactSoundness.lean",
+        &render_artifact_soundness(),
     )?;
     write(&cert_dir, "lakefile.lean", &render_lakefile(&model_roots))?;
 
@@ -162,27 +162,27 @@ pub fn write_project(
     let expr_fragment_accepted_sha = sha256_hex(CERT_EXPR_FRAGMENT_ACCEPTED.as_bytes());
     let accepted_artifact_sha = sha256_hex(CERT_ACCEPTED_ARTIFACT.as_bytes());
     let accepted_artifact_core_sha = sha256_hex(CERT_ACCEPTED_ARTIFACT_CORE.as_bytes());
-    let v3_expr_fragment_full_sha = sha256_hex(CERT_V3_EXPR_FRAGMENT_FULL.as_bytes());
-    let v3_strong_fuel_sha = sha256_hex(CERT_V3_STRONG_FUEL.as_bytes());
-    let v3_generic_certified_sha = sha256_hex(CERT_V3_GENERIC_CERTIFIED.as_bytes());
-    let v3_field_proj_sha = sha256_hex(CERT_V3_FIELD_PROJ.as_bytes());
-    let v3_construct_verbatim_sha = sha256_hex(CERT_V3_CONSTRUCT_VERBATIM.as_bytes());
-    let v3_dispatch_core_sha = sha256_hex(CERT_V3_DISPATCH_CORE.as_bytes());
-    let v3_string_sha = sha256_hex(CERT_V3_STRING.as_bytes());
-    let v3_rec_spike_sha = sha256_hex(CERT_V3_REC_SPIKE.as_bytes());
-    let v3_mutual_generic_sha = sha256_hex(CERT_V3_MUTUAL_GENERIC.as_bytes());
-    let v3_composition_sha = sha256_hex(CERT_V3_COMPOSITION.as_bytes());
-    let v3_master_sha = sha256_hex(CERT_V3_MASTER.as_bytes());
-    let v3_discharge_expr_fragment_sha =
-        sha256_hex(CERT_V3_DISCHARGE_EXPR_FRAGMENT.as_bytes());
-    let v3_discharge_field_proj_sha = sha256_hex(CERT_V3_DISCHARGE_FIELD_PROJ.as_bytes());
-    let v3_discharge_construct_sha = sha256_hex(CERT_V3_DISCHARGE_CONSTRUCT.as_bytes());
-    let v3_discharge_verbatim_sha = sha256_hex(CERT_V3_DISCHARGE_VERBATIM.as_bytes());
-    let v3_discharge_string_sha = sha256_hex(CERT_V3_DISCHARGE_STRING.as_bytes());
-    let v3_discharge_int_dispatch_sha = sha256_hex(CERT_V3_DISCHARGE_INT_DISPATCH.as_bytes());
-    let v3_discharge_recursion_sha = sha256_hex(CERT_V3_DISCHARGE_RECURSION.as_bytes());
-    let v3_discharge_composition_sha = sha256_hex(CERT_V3_DISCHARGE_COMPOSITION.as_bytes());
-    let v3_accept_sound_sha = sha256_hex(CERT_V3_ACCEPT_SOUND.as_bytes());
+    let expr_fragment_semantics_sha = sha256_hex(CERT_EXPR_FRAGMENT_SEMANTICS.as_bytes());
+    let interpreter_sequencing_sha = sha256_hex(CERT_INTERPRETER_SEQUENCING.as_bytes());
+    let expr_fragment_soundness_sha = sha256_hex(CERT_EXPR_FRAGMENT_SOUNDNESS.as_bytes());
+    let field_projection_soundness_sha = sha256_hex(CERT_FIELD_PROJECTION_SOUNDNESS.as_bytes());
+    let construct_verbatim_soundness_sha = sha256_hex(CERT_CONSTRUCT_VERBATIM_SOUNDNESS.as_bytes());
+    let int_dispatch_soundness_sha = sha256_hex(CERT_INT_DISPATCH_SOUNDNESS.as_bytes());
+    let string_soundness_sha = sha256_hex(CERT_STRING_SOUNDNESS.as_bytes());
+    let recursion_soundness_sha = sha256_hex(CERT_RECURSION_SOUNDNESS.as_bytes());
+    let mutual_recursion_soundness_sha = sha256_hex(CERT_MUTUAL_RECURSION_SOUNDNESS.as_bytes());
+    let composition_soundness_sha = sha256_hex(CERT_COMPOSITION_SOUNDNESS.as_bytes());
+    let acceptance_soundness_core_sha = sha256_hex(CERT_ACCEPTANCE_SOUNDNESS_CORE.as_bytes());
+    let discharge_expr_fragment_sha =
+        sha256_hex(CERT_DISCHARGE_EXPR_FRAGMENT.as_bytes());
+    let discharge_field_projection_sha = sha256_hex(CERT_DISCHARGE_FIELD_PROJECTION.as_bytes());
+    let discharge_construct_sha = sha256_hex(CERT_DISCHARGE_CONSTRUCT.as_bytes());
+    let discharge_verbatim_sha = sha256_hex(CERT_DISCHARGE_VERBATIM.as_bytes());
+    let discharge_string_sha = sha256_hex(CERT_DISCHARGE_STRING.as_bytes());
+    let discharge_int_dispatch_sha = sha256_hex(CERT_DISCHARGE_INT_DISPATCH.as_bytes());
+    let discharge_recursion_sha = sha256_hex(CERT_DISCHARGE_RECURSION.as_bytes());
+    let discharge_composition_sha = sha256_hex(CERT_DISCHARGE_COMPOSITION.as_bytes());
+    let acceptance_soundness_sha = sha256_hex(CERT_ACCEPTANCE_SOUNDNESS.as_bytes());
     let manifest_hashes = ManifestHashes {
         schema: &schema_sha,
         schema_core: &schema_core_sha,
@@ -195,26 +195,26 @@ pub fn write_project(
         expr_fragment_accepted: &expr_fragment_accepted_sha,
         accepted_artifact: &accepted_artifact_sha,
         accepted_artifact_core: &accepted_artifact_core_sha,
-        v3_expr_fragment_full: &v3_expr_fragment_full_sha,
-        v3_strong_fuel: &v3_strong_fuel_sha,
-        v3_generic_certified: &v3_generic_certified_sha,
-        v3_field_proj: &v3_field_proj_sha,
-        v3_construct_verbatim: &v3_construct_verbatim_sha,
-        v3_dispatch_core: &v3_dispatch_core_sha,
-        v3_string: &v3_string_sha,
-        v3_rec_spike: &v3_rec_spike_sha,
-        v3_mutual_generic: &v3_mutual_generic_sha,
-        v3_composition: &v3_composition_sha,
-        v3_master: &v3_master_sha,
-        v3_discharge_expr_fragment: &v3_discharge_expr_fragment_sha,
-        v3_discharge_field_proj: &v3_discharge_field_proj_sha,
-        v3_discharge_construct: &v3_discharge_construct_sha,
-        v3_discharge_verbatim: &v3_discharge_verbatim_sha,
-        v3_discharge_string: &v3_discharge_string_sha,
-        v3_discharge_int_dispatch: &v3_discharge_int_dispatch_sha,
-        v3_discharge_recursion: &v3_discharge_recursion_sha,
-        v3_discharge_composition: &v3_discharge_composition_sha,
-        v3_accept_sound: &v3_accept_sound_sha,
+        expr_fragment_semantics: &expr_fragment_semantics_sha,
+        interpreter_sequencing: &interpreter_sequencing_sha,
+        expr_fragment_soundness: &expr_fragment_soundness_sha,
+        field_projection_soundness: &field_projection_soundness_sha,
+        construct_verbatim_soundness: &construct_verbatim_soundness_sha,
+        int_dispatch_soundness: &int_dispatch_soundness_sha,
+        string_soundness: &string_soundness_sha,
+        recursion_soundness: &recursion_soundness_sha,
+        mutual_recursion_soundness: &mutual_recursion_soundness_sha,
+        composition_soundness: &composition_soundness_sha,
+        acceptance_soundness_core: &acceptance_soundness_core_sha,
+        discharge_expr_fragment: &discharge_expr_fragment_sha,
+        discharge_field_projection: &discharge_field_projection_sha,
+        discharge_construct: &discharge_construct_sha,
+        discharge_verbatim: &discharge_verbatim_sha,
+        discharge_string: &discharge_string_sha,
+        discharge_int_dispatch: &discharge_int_dispatch_sha,
+        discharge_recursion: &discharge_recursion_sha,
+        discharge_composition: &discharge_composition_sha,
+        acceptance_soundness: &acceptance_soundness_sha,
     };
     std::fs::write(
         cert_dir.join("cert-manifest.json"),
@@ -1818,7 +1818,7 @@ fn render_artifact(
          import Certificate\n\
          import Manifest\n\
          import Plans\n\
-         import V3AcceptSound\n\n\
+         import AcceptanceSoundness\n\n\
          -- The whole-module big-Nat closure fold is kernel reduction. This\n\
          -- explicit depth budget affects kernel reduction limits only, not soundness or axioms.\n\
          set_option maxRecDepth 200000\n\
@@ -1887,22 +1887,22 @@ end AverCert.Artifact
 /// This module deliberately remains outside the sha-pinned wall because its
 /// conclusion mentions the generated `CertModule.wasmSha256` through
 /// `AverCert.Schema.Holds`.
-fn render_v3_accept_real() -> String {
+fn render_artifact_soundness() -> String {
     r#"import Artifact
-import V3AcceptSound
+import AcceptanceSoundness
 
-namespace AverCert.V3AcceptReal
+namespace AverCert.ArtifactSoundness
 
-/-- Instantiate the artifact-independent v3 wall at this artifact's real
+/-- Instantiate the artifact-independent acceptance wall at this artifact's real
 wasm hash.  The remaining semantic bridge assumptions are still explicit. -/
 theorem accept_sound_holds
-    (hSide : V3Master.dischargeSideConditions AverCert.Artifact.data) :
+    (hSide : AcceptanceSoundness.dischargeSideConditions AverCert.Artifact.data) :
     AverCert.Schema.Holds AverCert.Artifact.data.manifest := by
-  exact V3Master.accept_sound CertModule.wasmSha256 AverCert.Artifact.data rfl
+  exact AcceptanceSoundness.accept_sound CertModule.wasmSha256 AverCert.Artifact.data rfl
     AverCert.Artifact.claimObligationsBound
     AverCert.Artifact.fragmentsAccepted hSide
 
-end AverCert.V3AcceptReal
+end AverCert.ArtifactSoundness
 "#
     .to_string()
 }

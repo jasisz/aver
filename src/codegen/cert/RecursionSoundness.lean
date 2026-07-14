@@ -1,4 +1,4 @@
-/- V3 RECURSION SKELETON SPIKE — generic fuel-induction soundness for the
+/- Generic fuel-induction soundness for the
    descent-by-one unary recursion family.
 
    One theorem, proven ONCE by fuel induction generically over parsed recursion
@@ -14,7 +14,7 @@ import PlanLower
 
 set_option maxRecDepth 100000
 
-namespace V3Rec
+namespace RecursionSoundness
 open CertPrelude AverCert.Schema AverCert.PlanLower
 
 /-! ### The parsed shape of a unary descent-by-one recursion plan -/
@@ -231,7 +231,7 @@ def recInstrsU (C self bI aI sI : Nat) (sh : RecShapeU) : List WInstr :=
     literal body whose lowering reduces by `rfl`. -/
 -- Block-level literal-pinning: parseTopU succeeding pins b to a literal whose
 -- canonical lowering is `recInstrsU`. This is the SAME mechanical shape the
--- straight-line spike (V3Spike.lowerBlock_inv + per-arm rfl) already closed
+-- straight-line proof (the lowering invariant plus per-arm reduction) closes
 -- kernel-clean; the recursion version is strictly more mechanical (no
 -- induction). The helper equalities below give stable names to the literal
 -- base and step blocks before the final lowering computation.
@@ -1057,4 +1057,4 @@ theorem recursion_accumulator_generic_certified_total
 
 /- The fixture-specific section is retained as spike documentation but is not
    part of the reusable generic module. -/
-end V3Rec
+end RecursionSoundness

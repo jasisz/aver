@@ -238,8 +238,8 @@ pub enum ObligationFace {
     /// Integer classes (straight-line / self-recursive / accumulator):
     /// `Dom := List Int`, `Cod := Int`, `codRepr := intRepr`,
     /// `domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = arity`.
-    /// `arity` is the byte-bound argument count of the class (restores the
-    /// v2 arity binding the v3 domRepr moved into an attacker-editable literal).
+    /// `arity` is the byte-bound argument count of the class, keeping it out of
+    /// attacker-editable manifest literals.
     IntList { arity: usize },
     /// Field projection: `Dom := WVal × WVal`, `Cod := WVal`,
     /// `codRepr := verbatimRepr`,
@@ -589,7 +589,7 @@ impl ObligationFace {
                 s.push_str(&format!(
                     "example : ∀ o, {obl}[{idx}]? = some o →\n    \
                      HEq o.model (fun (v : CertPrelude.WVal) =>\n      \
-                     V3ConstructVerbatim.verbatimModel ({plan_lean}) v) := by\n  \
+                     ConstructVerbatimSoundness.verbatimModel ({plan_lean}) v) := by\n  \
                      intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
                 ));
             }
@@ -602,7 +602,7 @@ impl ObligationFace {
                 s.push_str(&format!(
                     "example : ∀ o, {obl}[{idx}]? = some o →\n    \
                      HEq o.model (fun (v : CertPrelude.WVal) =>\n      \
-                     V3String.evalStringEq {string_ty} ({plan_lean}) v) := by\n  \
+                     StringSoundness.evalStringEq {string_ty} ({plan_lean}) v) := by\n  \
                      intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
                 ));
                 s.push_str(&format!(
@@ -624,7 +624,7 @@ impl ObligationFace {
                 s.push_str(&format!(
                     "example : ∀ o, {obl}[{idx}]? = some o →\n    \
                      HEq o.model (fun (v : CertPrelude.WVal) =>\n      \
-                     V3String.evalStringConcat {result_ty} {container_ty} \
+                     StringSoundness.evalStringConcat {result_ty} {container_ty} \
                      ({plan_lean}) v) := by\n  \
                      intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"
                 ));
@@ -668,7 +668,7 @@ impl ObligationFace {
                 s.push_str(&format!(
                     "example : ∀ o, {obl}[{idx}]? = some o →\n    \
                      HEq o.model (fun (p : {dom}) => CertPrelude.WVal.structv \
-                     {struct_idx} (V3ConstructVerbatim.constructModelFields\n        \
+                     {struct_idx} (ConstructVerbatimSoundness.constructModelFields\n        \
                      ({args} ++ List.replicate 1 CertPrelude.WVal.null) \
                      ({plan_lean}).fields)) := by\n  \
                      intro o h\n  {reduce}\n  subst h; exact HEq.rfl\n"

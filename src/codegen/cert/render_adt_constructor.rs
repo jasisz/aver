@@ -1,7 +1,7 @@
 /// Option-(b) residual for one model-bearing ADT constructor. The generated
 /// theorem relates the named source model to the plan-derived constructed
 /// value; byte lowering, host simulation and fuel reasoning live in the
-/// audited `V3ConstructVerbatim` / `V3DischargeConstruct` wall.
+/// audited `ConstructVerbatimSoundness` / `DischargeConstruct` wall.
 fn render_adt_constructor_semantic_bridge(c: &Cert, model_info: &ModelInfo) -> String {
     let c = c.inner();
     let Cert::AdtConstructor {
@@ -29,7 +29,7 @@ theorem {name}_constructSemanticBridge :
       args.length = AverCert.Plans.{name}ConstructPlan.arity ∧
       {ret}Repr S ({name} n)
         (.structv {struct_idx}
-          (V3ConstructVerbatim.constructModelFields
+          (ConstructVerbatimSoundness.constructModelFields
             (args ++ List.replicate 1 .null)
             AverCert.Plans.{name}ConstructPlan.fields)) := by
   intro S n args hDom
@@ -38,8 +38,8 @@ theorem {name}_constructSemanticBridge :
   · rfl
   · cases n <;>
       simpa [{name}, AverCert.Plans.{name}ConstructPlan,
-        V3ConstructVerbatim.constructModelFields,
-        V3ConstructVerbatim.constructModelField, {ret}Repr,
+        ConstructVerbatimSoundness.constructModelFields,
+        ConstructVerbatimSoundness.constructModelField, {ret}Repr,
         AverCert.Schema.intRepr] using hv
 
 #print axioms {name}_constructSemanticBridge

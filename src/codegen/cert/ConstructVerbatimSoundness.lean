@@ -7,7 +7,7 @@ import PlanBytes
 set_option maxRecDepth 100000
 set_option maxHeartbeats 1000000
 
-namespace V3ConstructVerbatim
+namespace ConstructVerbatimSoundness
 open CertPrelude AverCert.Schema
 
 def outValue : Option Out → Option WVal
@@ -49,7 +49,7 @@ theorem fieldsReadable_tail
   exact h i (by simp [hi])
 
 /-- The constructor-family simulation lemma.  Its `rest` quantifier is the same
-    compositional device used by the v3 straight-line template. -/
+    compositional device used by the straight-line soundness proof. -/
 theorem simNodes_construct
     (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
     (structIdx : Nat) (locals : List WVal) :
@@ -448,4 +448,4 @@ theorem generic_verbatim_certified
       exact generic_verbatim_shape_certified plan code host self nlocals
         hall.1.1 ⟨ty, hit, rest, hbody⟩ hall.1.2 hall.2 hself
 
-end V3ConstructVerbatim
+end ConstructVerbatimSoundness

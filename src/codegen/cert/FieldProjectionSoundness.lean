@@ -5,7 +5,7 @@ import PlanLower
 
 set_option maxRecDepth 100000
 
-namespace V3FieldProj
+namespace FieldProjectionSoundness
 open CertPrelude AverCert.Schema
 
 /-- Read field `fieldIdx` from a represented pair. -/
@@ -57,4 +57,4 @@ theorem generic_field_projection_certified
               exact False.elim (hbad (by simpa using hlt))
 
 
-end V3FieldProj
+end FieldProjectionSoundness

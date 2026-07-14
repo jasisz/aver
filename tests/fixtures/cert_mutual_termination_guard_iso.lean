@@ -27,10 +27,9 @@ def mutualPlanAcceptedWithoutCheckTerm
     ∃ body codeEntry binding,
       AverCert.PlanLower.lowerMutualBody carrier plan = some body ∧
       AverCert.PlanBytes.lowerMutualCodeEntry carrier plan = some codeEntry ∧
-      AverCert.WasmSlice.codeEntryForExport modBytes modLen exportNameBytes = some codeEntry ∧
-      AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
+      AverCert.WasmSlice.exactFuncBindingForExport
+        modBytes modLen exportNameBytes codeEntry = some binding ∧
       binding.funcIdx = obligation.self ∧
-      binding.codeEntry = codeEntry ∧
       AverCert.PlanCheck.checkMutualPlanShape memberSet hostTable plan = true ∧
       AverCert.WasmSlice.funcTypeMatches
         modBytes modLen binding.typeIdx plan.params.length carrier = true ∧

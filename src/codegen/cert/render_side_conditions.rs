@@ -60,7 +60,7 @@ fn render_expr_side_arm(c: &Cert) -> String {
     if let Some(face) = c.project_face() {
         return format!(
             "exact Or.inr (Or.inl ⟨rfl, by\n  exact \
-             V3Master.fieldProjection_direct_canonical_discharges \
+             AcceptanceSoundness.fieldProjection_direct_canonical_discharges \
              \"{name}\" {} {} {} {} CertModule.{name}Code \
              (fun _ _ _ _ _ => CertModule.{name}Host) (by decide) (by rfl)⟩)",
             c.carrier(),
@@ -124,7 +124,7 @@ fn render_mutual_side_arm(c: &Cert) -> String {
         "intro plan hPlan\n\
          dsimp [AverCert.AcceptedArtifact.mutualPlanForExport] at hPlan\n\
          injection hPlan with hPlan\nsubst plan\n\
-         simpa [V3Master.mutualSemanticBridge, data, mutualRecursionClaims, \
+         simpa [AcceptanceSoundness.mutualSemanticBridge, data, mutualRecursionClaims, \
            CertProofs.{primary}_mutualArtifact, \
            CertProofs.{primary}_mutualClaims, \
            {claim_defs}] using \
@@ -226,10 +226,10 @@ fn render_discharge_side_conditions(analysis: &Analysis, model_info: &ModelInfo)
         .collect::<Vec<_>>();
 
     let mut out = String::new();
-    out.push_str("/-! ### Artifact semantic side conditions consumed by V3Master.accept_sound -/\n\n");
-    out.push_str("theorem exprFragmentSideConditions :\n    V3Master.exprFragmentSemanticBridges data := by\n");
+    out.push_str("/-! ### Artifact semantic side conditions consumed by AcceptanceSoundness.accept_sound -/\n\n");
+    out.push_str("theorem exprFragmentSideConditions :\n    AcceptanceSoundness.exprFragmentSemanticBridges data := by\n");
     out.push_str(&render_claim_cases(&sym, "symFragmentClaims", render_expr_side_arm));
-    out.push_str("\ntheorem stringSideConditions :\n    V3Master.stringSemanticBridges data := by\n  refine ⟨?_, ?_⟩\n");
+    out.push_str("\ntheorem stringSideConditions :\n    AcceptanceSoundness.stringSemanticBridges data := by\n  refine ⟨?_, ?_⟩\n");
     out.push_str(&render_tactic_branch(&render_claim_cases(
         &string_eq,
         "stringEqClaims",
@@ -240,28 +240,28 @@ fn render_discharge_side_conditions(analysis: &Analysis, model_info: &ModelInfo)
         "stringConcatClaims",
         render_string_side_arm,
     )));
-    out.push_str("\n\ntheorem constructSideConditions :\n    V3Master.constructSemanticBridges data := by\n");
+    out.push_str("\n\ntheorem constructSideConditions :\n    AcceptanceSoundness.constructSemanticBridges data := by\n");
     out.push_str(&render_claim_cases(&construct, "constructClaims", |c| {
         render_construct_side_arm(c, model_info)
     }));
-    out.push_str("\ntheorem recursionSideConditions :\n    V3Master.recursionSemanticBridges data := by\n");
+    out.push_str("\ntheorem recursionSideConditions :\n    AcceptanceSoundness.recursionSemanticBridges data := by\n");
     out.push_str(&render_claim_cases(&recursion, "recursionClaims", render_recursion_side_arm));
-    out.push_str("\ntheorem mutualSideConditions :\n    V3Master.mutualSemanticBridges data := by\n");
+    out.push_str("\ntheorem mutualSideConditions :\n    AcceptanceSoundness.mutualSemanticBridges data := by\n");
     out.push_str(&render_claim_cases(&mutual, "mutualRecursionClaims", render_mutual_side_arm));
-    out.push_str("\ntheorem verbatimSideConditions :\n    V3Master.verbatimSemanticBridges data := by\n");
+    out.push_str("\ntheorem verbatimSideConditions :\n    AcceptanceSoundness.verbatimSemanticBridges data := by\n");
     out.push_str(&render_claim_cases(&verbatim, "verbatimClaims", render_verbatim_side_arm));
-    out.push_str("\ntheorem intDispatchSideConditions :\n    V3Master.intDispatchSemanticBridges data := by\n");
+    out.push_str("\ntheorem intDispatchSideConditions :\n    AcceptanceSoundness.intDispatchSemanticBridges data := by\n");
     out.push_str(&render_claim_cases(
         &int_dispatch,
         "intDispatchClaims",
         render_int_dispatch_side_arm,
     ));
-    out.push_str("\ntheorem fieldProjectionSideConditions :\n    V3Master.fieldProjectionSemanticBridges data := by\n");
+    out.push_str("\ntheorem fieldProjectionSideConditions :\n    AcceptanceSoundness.fieldProjectionSemanticBridges data := by\n");
     out.push_str(&render_claim_cases(&field_projection, "fieldProjectionClaims", render_field_projection_side_arm));
-    out.push_str("\ntheorem compositionSideConditions :\n    V3Master.compositionClaimSemanticBridges data := by\n");
+    out.push_str("\ntheorem compositionSideConditions :\n    AcceptanceSoundness.compositionClaimSemanticBridges data := by\n");
     out.push_str(&render_claim_cases(&composition, "compositionClaims", render_composition_side_arm));
     out.push_str(
-        "\ntheorem dischargeSideConditions : V3Master.dischargeSideConditions data := by\n  \
+        "\ntheorem dischargeSideConditions : AcceptanceSoundness.dischargeSideConditions data := by\n  \
          exact ⟨exprFragmentSideConditions, stringSideConditions, constructSideConditions,\n    \
          recursionSideConditions, mutualSideConditions, verbatimSideConditions,\n    \
          intDispatchSideConditions, fieldProjectionSideConditions,\n    \

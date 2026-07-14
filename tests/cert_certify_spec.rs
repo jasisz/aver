@@ -189,9 +189,9 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     assert_eq!(
         manifest["schema_version"].as_u64(),
         Some(63),
-        "accept-sound Final.cert flip with a guarded float residual is certificate schema 63"
+        "the first public certificate schema is version 1"
     );
-    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 63);
+    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 1);
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
@@ -591,14 +591,14 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
 }
 
 #[test]
-fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
+fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping certify test: `lake` not available");
         return;
     }
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("certify-v3-wall");
+    let out_dir = temp_dir("certify-acceptance-wall");
     let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
@@ -625,126 +625,145 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
     .expect("manifest is valid JSON");
     let audited_modules = [
         (
-            "V3ExprFragmentFull.lean",
-            aver::codegen::cert::CERT_V3_EXPR_FRAGMENT_FULL,
-            "v3_expr_fragment_full_sha256",
-            aver::codegen::cert::audited_v3_expr_fragment_full_sha(),
+            "ExprFragmentSemantics.lean",
+            aver::codegen::cert::CERT_EXPR_FRAGMENT_SEMANTICS,
+            "expr_fragment_semantics_sha256",
+            aver::codegen::cert::audited_expr_fragment_semantics_sha(),
         ),
         (
-            "V3StrongFuel.lean",
-            aver::codegen::cert::CERT_V3_STRONG_FUEL,
-            "v3_strong_fuel_sha256",
-            aver::codegen::cert::audited_v3_strong_fuel_sha(),
+            "InterpreterSequencing.lean",
+            aver::codegen::cert::CERT_INTERPRETER_SEQUENCING,
+            "interpreter_sequencing_sha256",
+            aver::codegen::cert::audited_interpreter_sequencing_sha(),
         ),
         (
-            "V3GenericCertified.lean",
-            aver::codegen::cert::CERT_V3_GENERIC_CERTIFIED,
-            "v3_generic_certified_sha256",
-            aver::codegen::cert::audited_v3_generic_certified_sha(),
+            "ExprFragmentSoundness.lean",
+            aver::codegen::cert::CERT_EXPR_FRAGMENT_SOUNDNESS,
+            "expr_fragment_soundness_sha256",
+            aver::codegen::cert::audited_expr_fragment_soundness_sha(),
         ),
         (
-            "V3FieldProj.lean",
-            aver::codegen::cert::CERT_V3_FIELD_PROJ,
-            "v3_field_proj_sha256",
-            aver::codegen::cert::audited_v3_field_proj_sha(),
+            "FieldProjectionSoundness.lean",
+            aver::codegen::cert::CERT_FIELD_PROJECTION_SOUNDNESS,
+            "field_projection_soundness_sha256",
+            aver::codegen::cert::audited_field_projection_soundness_sha(),
         ),
         (
-            "V3ConstructVerbatim.lean",
-            aver::codegen::cert::CERT_V3_CONSTRUCT_VERBATIM,
-            "v3_construct_verbatim_sha256",
-            aver::codegen::cert::audited_v3_construct_verbatim_sha(),
+            "ConstructVerbatimSoundness.lean",
+            aver::codegen::cert::CERT_CONSTRUCT_VERBATIM_SOUNDNESS,
+            "construct_verbatim_soundness_sha256",
+            aver::codegen::cert::audited_construct_verbatim_soundness_sha(),
         ),
         (
-            "V3DispatchCore.lean",
-            aver::codegen::cert::CERT_V3_DISPATCH_CORE,
-            "v3_dispatch_core_sha256",
-            aver::codegen::cert::audited_v3_dispatch_core_sha(),
+            "IntDispatchSoundness.lean",
+            aver::codegen::cert::CERT_INT_DISPATCH_SOUNDNESS,
+            "int_dispatch_soundness_sha256",
+            aver::codegen::cert::audited_int_dispatch_soundness_sha(),
         ),
         (
-            "V3String.lean",
-            aver::codegen::cert::CERT_V3_STRING,
-            "v3_string_sha256",
-            aver::codegen::cert::audited_v3_string_sha(),
+            "StringSoundness.lean",
+            aver::codegen::cert::CERT_STRING_SOUNDNESS,
+            "string_soundness_sha256",
+            aver::codegen::cert::audited_string_soundness_sha(),
         ),
         (
-            "V3RecSpike.lean",
-            aver::codegen::cert::CERT_V3_REC_SPIKE,
-            "v3_rec_spike_sha256",
-            aver::codegen::cert::audited_v3_rec_spike_sha(),
+            "RecursionSoundness.lean",
+            aver::codegen::cert::CERT_RECURSION_SOUNDNESS,
+            "recursion_soundness_sha256",
+            aver::codegen::cert::audited_recursion_soundness_sha(),
         ),
         (
-            "V3MutualGeneric.lean",
-            aver::codegen::cert::CERT_V3_MUTUAL_GENERIC,
-            "v3_mutual_generic_sha256",
-            aver::codegen::cert::audited_v3_mutual_generic_sha(),
+            "MutualRecursionSoundness.lean",
+            aver::codegen::cert::CERT_MUTUAL_RECURSION_SOUNDNESS,
+            "mutual_recursion_soundness_sha256",
+            aver::codegen::cert::audited_mutual_recursion_soundness_sha(),
         ),
         (
-            "V3Composition.lean",
-            aver::codegen::cert::CERT_V3_COMPOSITION,
-            "v3_composition_sha256",
-            aver::codegen::cert::audited_v3_composition_sha(),
+            "CompositionSoundness.lean",
+            aver::codegen::cert::CERT_COMPOSITION_SOUNDNESS,
+            "composition_soundness_sha256",
+            aver::codegen::cert::audited_composition_soundness_sha(),
         ),
         (
-            "V3Master.lean",
-            aver::codegen::cert::CERT_V3_MASTER,
-            "v3_master_sha256",
-            aver::codegen::cert::audited_v3_master_sha(),
+            "AcceptanceSoundnessCore.lean",
+            aver::codegen::cert::CERT_ACCEPTANCE_SOUNDNESS_CORE,
+            "acceptance_soundness_core_sha256",
+            aver::codegen::cert::audited_acceptance_soundness_core_sha(),
         ),
         (
-            "V3DischargeExprFragment.lean",
-            aver::codegen::cert::CERT_V3_DISCHARGE_EXPR_FRAGMENT,
-            "v3_discharge_expr_fragment_sha256",
-            aver::codegen::cert::audited_v3_discharge_expr_fragment_sha(),
+            "DischargeExprFragment.lean",
+            aver::codegen::cert::CERT_DISCHARGE_EXPR_FRAGMENT,
+            "discharge_expr_fragment_sha256",
+            aver::codegen::cert::audited_discharge_expr_fragment_sha(),
         ),
         (
-            "V3DischargeFieldProj.lean",
-            aver::codegen::cert::CERT_V3_DISCHARGE_FIELD_PROJ,
-            "v3_discharge_field_proj_sha256",
-            aver::codegen::cert::audited_v3_discharge_field_proj_sha(),
+            "DischargeFieldProjection.lean",
+            aver::codegen::cert::CERT_DISCHARGE_FIELD_PROJECTION,
+            "discharge_field_projection_sha256",
+            aver::codegen::cert::audited_discharge_field_projection_sha(),
         ),
         (
-            "V3DischargeConstruct.lean",
-            aver::codegen::cert::CERT_V3_DISCHARGE_CONSTRUCT,
-            "v3_discharge_construct_sha256",
-            aver::codegen::cert::audited_v3_discharge_construct_sha(),
+            "DischargeConstruct.lean",
+            aver::codegen::cert::CERT_DISCHARGE_CONSTRUCT,
+            "discharge_construct_sha256",
+            aver::codegen::cert::audited_discharge_construct_sha(),
         ),
         (
-            "V3DischargeVerbatim.lean",
-            aver::codegen::cert::CERT_V3_DISCHARGE_VERBATIM,
-            "v3_discharge_verbatim_sha256",
-            aver::codegen::cert::audited_v3_discharge_verbatim_sha(),
+            "DischargeVerbatim.lean",
+            aver::codegen::cert::CERT_DISCHARGE_VERBATIM,
+            "discharge_verbatim_sha256",
+            aver::codegen::cert::audited_discharge_verbatim_sha(),
         ),
         (
-            "V3DischargeString.lean",
-            aver::codegen::cert::CERT_V3_DISCHARGE_STRING,
-            "v3_discharge_string_sha256",
-            aver::codegen::cert::audited_v3_discharge_string_sha(),
+            "DischargeString.lean",
+            aver::codegen::cert::CERT_DISCHARGE_STRING,
+            "discharge_string_sha256",
+            aver::codegen::cert::audited_discharge_string_sha(),
         ),
         (
-            "V3DischargeIntDispatch.lean",
-            aver::codegen::cert::CERT_V3_DISCHARGE_INT_DISPATCH,
-            "v3_discharge_int_dispatch_sha256",
-            aver::codegen::cert::audited_v3_discharge_int_dispatch_sha(),
+            "DischargeIntDispatch.lean",
+            aver::codegen::cert::CERT_DISCHARGE_INT_DISPATCH,
+            "discharge_int_dispatch_sha256",
+            aver::codegen::cert::audited_discharge_int_dispatch_sha(),
         ),
         (
-            "V3DischargeRecursion.lean",
-            aver::codegen::cert::CERT_V3_DISCHARGE_RECURSION,
-            "v3_discharge_recursion_sha256",
-            aver::codegen::cert::audited_v3_discharge_recursion_sha(),
+            "DischargeRecursion.lean",
+            aver::codegen::cert::CERT_DISCHARGE_RECURSION,
+            "discharge_recursion_sha256",
+            aver::codegen::cert::audited_discharge_recursion_sha(),
         ),
         (
-            "V3DischargeComposition.lean",
-            aver::codegen::cert::CERT_V3_DISCHARGE_COMPOSITION,
-            "v3_discharge_composition_sha256",
-            aver::codegen::cert::audited_v3_discharge_composition_sha(),
+            "DischargeComposition.lean",
+            aver::codegen::cert::CERT_DISCHARGE_COMPOSITION,
+            "discharge_composition_sha256",
+            aver::codegen::cert::audited_discharge_composition_sha(),
         ),
         (
-            "V3AcceptSound.lean",
-            aver::codegen::cert::CERT_V3_ACCEPT_SOUND,
-            "v3_accept_sound_sha256",
-            aver::codegen::cert::audited_v3_accept_sound_sha(),
+            "AcceptanceSoundness.lean",
+            aver::codegen::cert::CERT_ACCEPTANCE_SOUNDNESS,
+            "acceptance_soundness_sha256",
+            aver::codegen::cert::audited_acceptance_soundness_sha(),
         ),
     ];
+    for entry in std::fs::read_dir(&cert_dir).expect("read emitted certificate directory") {
+        let name = entry
+            .expect("read emitted certificate entry")
+            .file_name()
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            !name.starts_with("V3"),
+            "emitted certificate must not expose a historical V3 module: {name}"
+        );
+    }
+    assert!(
+        manifest
+            .as_object()
+            .expect("certificate manifest is an object")
+            .keys()
+            .all(|key| !key.starts_with("v3_")),
+        "certificate manifest must not expose historical v3 keys: {manifest}"
+    );
     for (file, embedded, manifest_key, expected_sha) in audited_modules {
         let emitted = std::fs::read_to_string(cert_dir.join(file))
             .unwrap_or_else(|e| panic!("emitted {file} exists: {e}"));
@@ -762,7 +781,8 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
     let final_lean =
         std::fs::read_to_string(cert_dir.join("Final.lean")).expect("Final.lean exists");
     assert!(
-        final_lean.contains("AverCert.V3AcceptReal.accept_sound_holds")
+        final_lean.contains("import ArtifactSoundness")
+            && final_lean.contains("AverCert.ArtifactSoundness.accept_sound_holds")
             && final_lean.contains("AverCert.Artifact.dischargeSideConditions"),
         "Final.cert must be the single accept-sound capstone application:\n{final_lean}"
     );
@@ -793,7 +813,9 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
         );
     }
     assert!(
-        artifact_lean.contains("V3Master.fieldProjection_direct_canonical_discharges \"userName\""),
+        artifact_lean.contains(
+            "AcceptanceSoundness.fieldProjection_direct_canonical_discharges \"userName\""
+        ),
         "field-projection-faced expr claim must use its audited generic:\n{artifact_lean}"
     );
     for (name, bridge_kind) in [
@@ -831,7 +853,7 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
     assert!(
         artifact_certificate.contains("acceptedWithFinal AverCert.Final.cert")
             && artifact_certificate.contains("#print axioms AverCert.Artifact.certificate"),
-        "accepted-artifact wrapper must remain outside the acyclic Artifact -> V3AcceptReal -> Final path:\n{artifact_certificate}"
+        "accepted-artifact wrapper must remain outside the acyclic Artifact -> ArtifactSoundness -> Final path:\n{artifact_certificate}"
     );
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
         .expect("Certificate.lean exists");
@@ -936,20 +958,20 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
     assert!(
         certificate.contains("theorem mkOp_constructSemanticBridge")
             && certificate.contains("cases n")
-            && certificate.contains("V3ConstructVerbatim.constructModelFields"),
+            && certificate.contains("ConstructVerbatimSoundness.constructModelFields"),
         "construct-with-model must emit only its small source-model bridge:\n{certificate}"
     );
     assert!(
         certificate.contains("theorem sumFrom_recursionSemanticBridge")
             && certificate.contains("have hModelFuel")
-            && certificate.contains("V3Rec.evalRecUFuel")
+            && certificate.contains("RecursionSoundness.evalRecUFuel")
             && certificate.contains("⟨n, _, rfl, hv")
             && !certificate.contains("⟨[n], ⟨ReprAll.cons hv ReprAll.nil, rfl⟩"),
         "recursion must emit only the used option-(b) model direction and no evaluator proof:\n{certificate}"
     );
     assert!(
         certificate.contains("theorem countDown_recursionSemanticBridge")
-            && certificate.contains("V3Rec.evalRecAFuel")
+            && certificate.contains("RecursionSoundness.evalRecAFuel")
             && certificate.contains("refine Or.inr")
             && certificate.contains("⟨n, acc, vn, vacc, rfl, hvn, hvacc")
             && !certificate.contains("⟨[n, acc],")
@@ -959,7 +981,7 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
     for mutual_name in ["isEven", "isOdd"] {
         assert!(
             certificate.contains(&format!("theorem {mutual_name}_mutualSemanticBridge"))
-                && certificate.contains("V3Mutual.evalMutualUFuel")
+                && certificate.contains("MutualRecursionSoundness.evalMutualUFuel")
                 && certificate.contains("have hModelFuel")
                 && certificate.contains("refine ⟨n, v, rfl, hv")
                 && !certificate.contains("⟨[n], ⟨ReprAll.cons hv ReprAll.nil, rfl⟩"),
@@ -974,7 +996,7 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
         .unwrap();
     assert_eq!(
         user_name["theorem"],
-        "V3Master.fieldProjection_direct_canonical_discharges"
+        "AcceptanceSoundness.fieldProjection_direct_canonical_discharges"
     );
     let mk_op = manifest["certified"]
         .as_array()
@@ -982,21 +1004,30 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
         .iter()
         .find(|entry| entry["name"] == "mkOp")
         .unwrap();
-    assert_eq!(mk_op["theorem"], "V3Master.construct_canonical_discharges");
+    assert_eq!(
+        mk_op["theorem"],
+        "AcceptanceSoundness.construct_canonical_discharges"
+    );
     let sum_from = manifest["certified"]
         .as_array()
         .unwrap()
         .iter()
         .find(|entry| entry["name"] == "sumFrom")
         .unwrap();
-    assert_eq!(sum_from["theorem"], "V3Master.recursion_claim_discharges");
+    assert_eq!(
+        sum_from["theorem"],
+        "AcceptanceSoundness.recursion_claim_discharges"
+    );
     let count_down = manifest["certified"]
         .as_array()
         .unwrap()
         .iter()
         .find(|entry| entry["name"] == "countDown")
         .unwrap();
-    assert_eq!(count_down["theorem"], "V3Master.recursion_claim_discharges");
+    assert_eq!(
+        count_down["theorem"],
+        "AcceptanceSoundness.recursion_claim_discharges"
+    );
     for name in [
         "addTwo",
         "inAsciiDigit",
@@ -1010,7 +1041,10 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             .iter()
             .find(|entry| entry["name"] == name)
             .unwrap();
-        assert_eq!(entry["theorem"], "V3Master.exprFragment_claim_discharges");
+        assert_eq!(
+            entry["theorem"],
+            "AcceptanceSoundness.exprFragment_claim_discharges"
+        );
     }
     for name in ["quad", "hex16"] {
         let entry = manifest["certified"]
@@ -1021,7 +1055,7 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             .unwrap();
         assert_eq!(
             entry["theorem"],
-            "V3Master.composition_claim_discharges_with_bridge"
+            "AcceptanceSoundness.composition_claim_discharges_with_bridge"
         );
     }
     for name in ["isEven", "isOdd"] {
@@ -1031,13 +1065,28 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             .iter()
             .find(|entry| entry["name"] == name)
             .unwrap();
-        assert_eq!(entry["theorem"], "V3Master.mutual_claim_discharges");
+        assert_eq!(
+            entry["theorem"],
+            "AcceptanceSoundness.mutual_claim_discharges"
+        );
     }
     for (name, theorem) in [
-        ("wrapItems", "V3Master.verbatim_canonical_discharges"),
-        ("tagName", "V3Master.verbatim_canonical_discharges"),
-        ("quoteOrSelf", "V3Master.stringEq_canonical_discharges"),
-        ("shout", "V3Master.stringConcat_canonical_discharges"),
+        (
+            "wrapItems",
+            "AcceptanceSoundness.verbatim_canonical_discharges",
+        ),
+        (
+            "tagName",
+            "AcceptanceSoundness.verbatim_canonical_discharges",
+        ),
+        (
+            "quoteOrSelf",
+            "AcceptanceSoundness.stringEq_canonical_discharges",
+        ),
+        (
+            "shout",
+            "AcceptanceSoundness.stringConcat_canonical_discharges",
+        ),
     ] {
         let entry = manifest["certified"]
             .as_array()
@@ -1056,7 +1105,7 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             .unwrap();
         assert_eq!(
             entry["theorem"],
-            "V3Master.intDispatch_canonical_discharges"
+            "AcceptanceSoundness.intDispatch_canonical_discharges"
         );
     }
 
@@ -1072,10 +1121,10 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
         String::from_utf8_lossy(&build.stdout),
         String::from_utf8_lossy(&build.stderr)
     );
-    eprintln!("emitted v3 wall lake build: {:.2?}", elapsed);
+    eprintln!("emitted acceptance wall lake build: {:.2?}", elapsed);
     assert!(
         build.status.success(),
-        "lake build of emitted v3 wall cert failed after {elapsed:.2?}:\n{combined}"
+        "lake build of emitted acceptance wall cert failed after {elapsed:.2?}:\n{combined}"
     );
     assert!(
         combined.contains(
@@ -1089,7 +1138,7 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
         ) && combined.contains(
             "'CertProofs.countDown_recursionSemanticBridge' depends on axioms: [propext]"
         ) && combined.contains(
-            "'V3Master.recursion_claim_discharges' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            "'AcceptanceSoundness.recursion_claim_discharges' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ),
         "recursion bridge/discharge changed axiom surface:\n{combined}"
     );
@@ -1115,30 +1164,30 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
         ) && combined.contains(
             "'CertProofs.isOdd_mutualSemanticBridge' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ) && combined.contains(
-            "'V3Master.mutual_claim_discharges' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            "'AcceptanceSoundness.mutual_claim_discharges' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ),
         "mutual bridge/discharge changed axiom surface:\n{combined}"
     );
 
-    let typecheck = cert_dir.join("V3AcceptRealTypecheck.lean");
+    let typecheck = cert_dir.join("ArtifactSoundnessTypecheck.lean");
     std::fs::write(
         &typecheck,
-        r#"import V3AcceptReal
+        r#"import ArtifactSoundness
 
 example :
-    V3Master.dischargeSideConditions AverCert.Artifact.data →
+    AcceptanceSoundness.dischargeSideConditions AverCert.Artifact.data →
     AverCert.Schema.Holds AverCert.Artifact.data.manifest :=
-  AverCert.V3AcceptReal.accept_sound_holds
+  AverCert.ArtifactSoundness.accept_sound_holds
 
-#print axioms AverCert.V3AcceptReal.accept_sound_holds
+#print axioms AverCert.ArtifactSoundness.accept_sound_holds
 "#,
     )
-    .expect("write V3AcceptReal typecheck");
+    .expect("write ArtifactSoundness typecheck");
     let typecheck_output = Command::new("lake")
         .current_dir(&cert_dir)
-        .args(["env", "lean", "V3AcceptRealTypecheck.lean"])
+        .args(["env", "lean", "ArtifactSoundnessTypecheck.lean"])
         .output()
-        .expect("expected V3AcceptReal typecheck to run");
+        .expect("expected ArtifactSoundness typecheck to run");
     let typecheck_combined = format!(
         "{}{}",
         String::from_utf8_lossy(&typecheck_output.stdout),
@@ -1146,17 +1195,17 @@ example :
     );
     assert!(
         typecheck_output.status.success(),
-        "V3AcceptReal Schema.Holds typecheck failed:\n{typecheck_combined}"
+        "ArtifactSoundness Schema.Holds typecheck failed:\n{typecheck_combined}"
     );
     assert!(
         typecheck_combined.contains(
-            "'AverCert.V3AcceptReal.accept_sound_holds' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            "'AverCert.ArtifactSoundness.accept_sound_holds' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ),
-        "V3AcceptReal.accept_sound_holds did not reduce to the exact audited axiom set:\n{typecheck_combined}"
+        "ArtifactSoundness.accept_sound_holds did not reduce to the exact audited axiom set:\n{typecheck_combined}"
     );
     assert!(
         !combined.contains("sorryAx") && !typecheck_combined.contains("sorryAx"),
-        "emitted v3 wall leaked sorryAx:\n{combined}\n{typecheck_combined}"
+        "emitted acceptance wall leaked sorryAx:\n{combined}\n{typecheck_combined}"
     );
 
     let _ = std::fs::remove_dir_all(&out_dir);
@@ -1540,7 +1589,10 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
             .unwrap();
         assert_eq!(entry["policy"], "simulatesModelTotally");
         assert_eq!(entry["level"], "L3");
-        assert_eq!(entry["theorem"], "V3Master.recursion_claim_discharges");
+        assert_eq!(
+            entry["theorem"],
+            "AcceptanceSoundness.recursion_claim_discharges"
+        );
         assert_eq!(entry["termination_witness"]["measure"]["kind"], "intNatAbs");
         assert_eq!(entry["termination_witness"]["measure"]["param_index"], 0);
         assert_eq!(entry["termination_witness"]["descent"], -1);
@@ -1632,7 +1684,7 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
                 && !certificate.contains(&format!("{name}_wasm_total"))
                 && !certificate.contains(&format!("{name}_simulates"))
                 && !certificate.contains(&format!("{name}HostRef"))
-                && artifact_lean.contains("V3Master.recursionSemanticBridges data")
+                && artifact_lean.contains("AcceptanceSoundness.recursionSemanticBridges data")
                 && artifact_lean.contains(&format!("CertProofs.{name}_recursionSemanticBridge")),
             "migrated recursion emitted a bespoke proof/tripwire or missed the accept-sound side condition for {name}:\n{certificate}\n{artifact_lean}"
         );
@@ -1658,7 +1710,7 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
     );
     assert!(
         combined.contains(
-            "'V3Master.recursion_claim_discharges' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            "'AcceptanceSoundness.recursion_claim_discharges' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ) && combined.contains(
             "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ),
@@ -1707,8 +1759,8 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
     for (name, honest, hostile) in [
         (
             "factorial-shape",
-            "({ base := 1, step := .inputSecond } : V3Rec.RecShapeU)",
-            "({ base := 2, step := .inputSecond } : V3Rec.RecShapeU)",
+            "({ base := 1, step := .inputSecond } : RecursionSoundness.RecShapeU)",
+            "({ base := 2, step := .inputSecond } : RecursionSoundness.RecShapeU)",
         ),
         ("countDown-shape", "refine Or.inr ?_", "refine Or.inl ?_"),
     ] {
@@ -1800,7 +1852,10 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
                 assert_eq!(entry["level"], "L3");
                 assert_eq!(entry["termination_witness"]["measure"]["kind"], "intNatAbs");
                 assert_eq!(entry["termination_witness"]["descent"], -1);
-                assert_eq!(entry["theorem"], "V3Master.mutual_claim_discharges");
+                assert_eq!(
+                    entry["theorem"],
+                    "AcceptanceSoundness.mutual_claim_discharges"
+                );
             }
         }
 
@@ -1831,7 +1886,7 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
                 certificate.contains(&format!("theorem {name}_mutualSemanticBridge"))
                     && !certificate.contains(&format!("{name}_simulates"))
                     && !certificate.contains(&format!("{name}_wasm"))
-                    && artifact_lean.contains("V3Master.mutualSemanticBridges data")
+                    && artifact_lean.contains("AcceptanceSoundness.mutualSemanticBridges data")
                     && artifact_lean.contains(&format!("CertProofs.{name}_mutualSemanticBridge")),
                 "migrated mutual export retained bespoke proof/tripwire emission or missed the accept-sound side condition: {name}\n{certificate}\n{artifact_lean}"
             );
@@ -1909,13 +1964,13 @@ fn certify_verbatim_variant_dispatch_lake_builds_kernel_clean() {
         .unwrap();
     assert_eq!(
         tag_name["theorem"],
-        "V3Master.verbatim_canonical_discharges"
+        "AcceptanceSoundness.verbatim_canonical_discharges"
     );
     let artifact_lean =
         std::fs::read_to_string(cert_dir.join("Artifact.lean")).expect("Artifact.lean exists");
     assert!(
         artifact_lean.contains("theorem verbatimSideConditions")
-            && artifact_lean.contains("V3Master.verbatimSemanticBridges data"),
+            && artifact_lean.contains("AcceptanceSoundness.verbatimSemanticBridges data"),
         "verbatim bridge must feed the accept-sound aggregate:\n{artifact_lean}"
     );
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
@@ -2027,7 +2082,7 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
         .expect("quoteOrSelf manifest entry exists");
     assert_eq!(
         quote_entry["theorem"],
-        "V3Master.stringEq_canonical_discharges"
+        "AcceptanceSoundness.stringEq_canonical_discharges"
     );
     assert_eq!(
         quote_entry["source_fragment"]["profile"].as_str(),
@@ -2086,7 +2141,7 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
     );
     assert!(
         artifact_lean.contains("theorem stringSideConditions")
-            && artifact_lean.contains("V3Master.stringSemanticBridges data"),
+            && artifact_lean.contains("AcceptanceSoundness.stringSemanticBridges data"),
         "String.eq bridge must feed the accept-sound aggregate:\n{artifact_lean}"
     );
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
@@ -2187,7 +2242,7 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         .expect("shout manifest entry");
     assert_eq!(
         shout_entry["theorem"],
-        "V3Master.stringConcat_canonical_discharges"
+        "AcceptanceSoundness.stringConcat_canonical_discharges"
     );
     let shout_class = shout_entry["class"].as_str().unwrap_or("<missing>");
     assert_eq!(
@@ -2319,7 +2374,7 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
     );
     assert!(
         artifact_lean.contains("theorem stringSideConditions")
-            && artifact_lean.contains("V3Master.stringSemanticBridges data"),
+            && artifact_lean.contains("AcceptanceSoundness.stringSemanticBridges data"),
         "String.concat bridge must feed the accept-sound aggregate:\n{artifact_lean}"
     );
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
@@ -2560,7 +2615,7 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             .iter()
             .filter(|entry| {
                 entry["class"] == "adt-constructor"
-                    && entry["theorem"] == "V3Master.construct_canonical_discharges"
+                    && entry["theorem"] == "AcceptanceSoundness.construct_canonical_discharges"
             })
             .collect::<Vec<_>>();
         if !model_construct_entries.is_empty() {
@@ -2571,7 +2626,7 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             for entry in &model_construct_entries {
                 let name = entry["name"].as_str().unwrap();
                 assert!(
-                    artifact_lean.contains("V3Master.constructSemanticBridges data")
+                    artifact_lean.contains("AcceptanceSoundness.constructSemanticBridges data")
                         && artifact_lean
                             .contains(&format!("CertProofs.{name}_constructSemanticBridge")),
                     "construct-with-model bridge must feed the accept-sound aggregate for {name}:\n{artifact_lean}"
@@ -2593,10 +2648,10 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
                 let name = entry["name"].as_str().unwrap();
                 assert_eq!(
                     entry["theorem"],
-                    "V3Master.intDispatch_canonical_discharges"
+                    "AcceptanceSoundness.intDispatch_canonical_discharges"
                 );
                 assert!(
-                    artifact_lean.contains("V3Master.intDispatchSemanticBridges data")
+                    artifact_lean.contains("AcceptanceSoundness.intDispatchSemanticBridges data")
                         && artifact_lean
                             .contains(&format!("CertProofs.{name}_intDispatchSemanticBridge")),
                     "dispatch bridge must feed the accept-sound aggregate for {name}:\n{artifact_lean}"
@@ -2614,7 +2669,7 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             for name in ["pairFst", "pairSnd"] {
                 let entry = entries.iter().find(|entry| entry["name"] == name).unwrap();
                 assert_eq!(
-                    entry["theorem"], "V3Master.fieldProjection_canonical_discharges",
+                    entry["theorem"], "AcceptanceSoundness.fieldProjection_canonical_discharges",
                     "projection metadata must name the audited generic leaf theorem"
                 );
             }
@@ -2631,7 +2686,8 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
                 .expect("Artifact.lean exists");
             for name in ["pairFst", "pairSnd"] {
                 assert!(
-                    artifact_lean.contains("V3Master.fieldProjectionSemanticBridges data")
+                    artifact_lean
+                        .contains("AcceptanceSoundness.fieldProjectionSemanticBridges data")
                         && artifact_lean.contains(&format!("exportName := \"{name}\"")),
                     "field projection must feed the audited accept-sound side condition for {name}:\n{artifact_lean}"
                 );
@@ -2658,7 +2714,7 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
         if !model_construct_entries.is_empty() {
             assert!(
                 combined.contains(
-                    "'V3Master.construct_canonical_discharges' depends on axioms: [propext, Classical.choice, Quot.sound]"
+                    "'AcceptanceSoundness.construct_canonical_discharges' depends on axioms: [propext, Classical.choice, Quot.sound]"
                 ),
                 "audited construct discharge changed axiom surface:\n{combined}"
             );
@@ -2742,7 +2798,10 @@ fn certify_carrier_at_type_index_64_lake_builds_kernel_clean() {
         .unwrap();
     assert_eq!(sum_big["policy"], "simulatesModelTotally");
     assert_eq!(sum_big["level"], "L3");
-    assert_eq!(sum_big["theorem"], "V3Master.recursion_claim_discharges");
+    assert_eq!(
+        sum_big["theorem"],
+        "AcceptanceSoundness.recursion_claim_discharges"
+    );
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")
@@ -2761,7 +2820,7 @@ fn certify_carrier_at_type_index_64_lake_builds_kernel_clean() {
         combined.contains(
             "'CertProofs.sumBig_recursionSemanticBridge' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ) && combined.contains(
-            "'V3Master.recursion_claim_discharges' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            "'AcceptanceSoundness.recursion_claim_discharges' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ) && combined.contains(
             "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ),

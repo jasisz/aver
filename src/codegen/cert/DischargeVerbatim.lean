@@ -1,15 +1,15 @@
 /-
-v3 master wiring — verbatim-family discharge.
+Acceptance-soundness wiring for verbatim plans.
 -/
-import V3Master
-import V3ConstructVerbatim
+import AcceptanceSoundnessCore
+import ConstructVerbatimSoundness
 
 open AverCert
 open AverCert.Schema
 open AverCert.AcceptedArtifact
 open CertPrelude
 
-namespace V3Master
+namespace AcceptanceSoundness
 
 /-- The exact plan-derived `WVal` must represent the obligation's separately
 declared model result. Plan admission is already part of artifact acceptance. -/
@@ -22,7 +22,7 @@ def verbatimSemanticBridge
     ∃ v,
       vs = [v] ∧
       claim.obligation.codRepr S (claim.obligation.model x)
-        (V3ConstructVerbatim.verbatimModel plan v)
+        (ConstructVerbatimSoundness.verbatimModel plan v)
 
 def verbatimSemanticBridges (artifact : ArtifactData) : Prop :=
   ∀ claim ∈ artifact.verbatimClaims,
@@ -43,7 +43,7 @@ theorem verbatim_accepted_call
       ∀ (host : HostTbl) (fuel : Nat) (v w : WVal),
         wFuncN claim.obligation.code host (fuel + 1)
             claim.obligation.self [v] = some w →
-          w = V3ConstructVerbatim.verbatimModel plan v := by
+          w = ConstructVerbatimSoundness.verbatimModel plan v := by
   have hClaim : verbatimClaimAccepted artifact.modBytes artifact.modLen
       artifact.manifest claim := by
     exact allClaims_of_mem
@@ -67,7 +67,7 @@ theorem verbatim_accepted_call
         simpa [← hSelf] using hCode
       refine ⟨plan, rfl, ?_⟩
       intro host fuel v w hRun
-      exact V3ConstructVerbatim.generic_verbatim_certified
+      exact ConstructVerbatimSoundness.generic_verbatim_certified
         plan claim.obligation.code host claim.obligation.self
         (verbatimNLocals plan) hCheck hCodeSelf fuel v w hRun
 
@@ -99,7 +99,7 @@ theorem verbatim_canonical_discharges
          Cod := WVal
          domRepr := fun _ v vs => vs = [v]
          codRepr := fun S v w => verbatimRepr S v w
-         model := fun v => V3ConstructVerbatim.verbatimModel plan v } :
+         model := fun v => ConstructVerbatimSoundness.verbatimModel plan v } :
         Obligation) := by
   intro S add sub mul stringEq stringConcat
     _hAdd _hSub _hMul _hStringEq _hStringConcat fuel v vs w hDom hRun
@@ -107,7 +107,7 @@ theorem verbatim_canonical_discharges
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
-      have hCall := V3ConstructVerbatim.generic_verbatim_certified
+      have hCall := ConstructVerbatimSoundness.generic_verbatim_certified
         plan code (host add sub mul stringEq stringConcat) self
         (verbatimNLocals plan) hCheck hCode fuel v w hRun
       simpa [verbatimRepr] using hCall
@@ -148,4 +148,4 @@ theorem verbatim_discharges
   exact verbatim_claim_discharges artifact hAcc claim hMem
     (hSemantic claim hMem)
 
-end V3Master
+end AcceptanceSoundness

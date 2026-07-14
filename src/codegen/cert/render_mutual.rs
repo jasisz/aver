@@ -109,7 +109,7 @@ fn render_mutual_shared_bridge_data(c: &Cert) -> String {
                 .expect("mutual cross target is an SCC member");
             format!(
                 "({{ self := {}, base := {}, cross := ⟨{cross}, by omega⟩ }} : \
-                 V3Mutual.MemberU {k})",
+                 MutualRecursionSoundness.MemberU {k})",
                 member.self_idx,
                 lean_int_lit(member.base_k),
             )
@@ -139,7 +139,7 @@ fn render_mutual_shared_bridge_data(c: &Cert) -> String {
     let mut out = format!(
         r#"/-! ### {primary} — option-(b) mutual SCC data -/
 
-def {primary}_mutualMembers : Fin {k} → V3Mutual.MemberU {k} := fun i =>
+def {primary}_mutualMembers : Fin {k} → MutualRecursionSoundness.MemberU {k} := fun i =>
   [{members}].get i
 
 def {primary}_mutualPlans : Fin {k} → MutualRawPlan := fun i =>
@@ -148,7 +148,7 @@ def {primary}_mutualPlans : Fin {k} → MutualRawPlan := fun i =>
 def {primary}_mutualEdges : List (Nat × Nat × List Nat) :=
   [{edges}]
 
-def {primary}_mutualScc : V3Mutual.AdmittedScc {k} {carrier} {box_idx} {sub_idx} :=
+def {primary}_mutualScc : MutualRecursionSoundness.AdmittedScc {k} {carrier} {box_idx} {sub_idx} :=
   {{ members := {primary}_mutualMembers
     plans := {primary}_mutualPlans
     rawEdges := {primary}_mutualEdges
@@ -259,7 +259,7 @@ fn render_mutual_semantic_bridge(c: &Cert) -> String {
         .enumerate()
         .map(|(member_pos, member)| {
             format!(
-                "V3Mutual.evalMutualUFuel {primary}_mutualMembers fuel \
+                "MutualRecursionSoundness.evalMutualUFuel {primary}_mutualMembers fuel \
                  ⟨{member_pos}, by omega⟩ n = {}__fuel fuel n",
                 member.name,
             )
@@ -278,7 +278,7 @@ fn render_mutual_semantic_bridge(c: &Cert) -> String {
         r#"/-! ### {name} — option-(b) mutual semantic bridge -/
 
 theorem {name}_mutualSemanticBridge :
-    V3Master.mutualSemanticBridge {primary}_mutualArtifact
+    AcceptanceSoundness.mutualSemanticBridge {primary}_mutualArtifact
       {name}_mutualClaim AverCert.Plans.{name}MutualPlan := by
   have hModelFuel : ∀ fuel n,
       {model_fuel} := by
@@ -287,13 +287,13 @@ theorem {name}_mutualSemanticBridge :
     | zero => intro n; exact {zero}
     | succ fuel ih =>
         intro n
-        simp only [V3Mutual.evalMutualUFuel, {source_fuels}]
+        simp only [MutualRecursionSoundness.evalMutualUFuel, {source_fuels}]
         split <;> simp_all [{primary}_mutualMembers]
   have hModel : ∀ n,
-      V3Mutual.evalMutualU {primary}_mutualMembers
+      MutualRecursionSoundness.evalMutualU {primary}_mutualMembers
         ⟨{position}, by omega⟩ n = {name} n := by
     intro n
-    simpa [V3Mutual.evalMutualU, {name}] using
+    simpa [MutualRecursionSoundness.evalMutualU, {name}] using
       (hModelFuel (n.natAbs + 1) n){projection}
   refine ⟨{k}, {box_idx}, {sub_idx}, {primary}_mutualScc,
     ⟨{position}, by omega⟩, rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
@@ -313,7 +313,7 @@ theorem {name}_mutualSemanticBridge :
         | nil =>
             refine ⟨n, v, rfl, hv, ?_⟩
             intro w hw
-            change S.Repr (V3Mutual.evalMutualU {primary}_mutualMembers
+            change S.Repr (MutualRecursionSoundness.evalMutualU {primary}_mutualMembers
               ⟨{position}, by omega⟩ n) w at hw
             rw [hModel n] at hw
             simpa [{name}_mutualClaim, AverCert.{name}Ob,

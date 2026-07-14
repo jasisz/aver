@@ -464,21 +464,21 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     );
 
     // The cert schema version is a breaking cert-data shape. The checker rejects
-    // old manifests honestly instead of trying to reinterpret them under the
+    // unsupported manifests instead of trying to reinterpret them under the
     // current schema.
     {
-        let dir = temp_dir("neg-schema-v1");
+        let dir = temp_dir("neg-schema-v2");
         copy_dir(&out_dir, &dir);
         let mf = dir.join("cert").join("cert-manifest.json");
         let mut m: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["schema_version"] = serde_json::json!(1);
+        m["schema_version"] = serde_json::json!(2);
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "schema v1 cert must be rejected:\n{out}");
+        assert!(!ok, "schema v2 cert must be rejected:\n{out}");
         assert!(
-            out.contains("unsupported certificate schema_version 1"),
-            "wrong reason for schema v1 rejection:\n{out}"
+            out.contains("unsupported certificate schema_version 2"),
+            "wrong reason for schema v2 rejection:\n{out}"
         );
     }
 
@@ -1815,8 +1815,7 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let def_start = artifact_text
         .find("def acceptedWithFinal")
         .expect("Artifact.lean should define acceptedWithFinal");
-    let end_marker =
-        "\n\n/-! ### Artifact semantic side conditions consumed by V3Master.accept_sound -/";
+    let end_marker = "\n\n/-! ### Artifact semantic side conditions consumed by AcceptanceSoundness.accept_sound -/";
     let def_end = artifact_text
         .find(end_marker)
         .expect("Artifact.lean should render accept-sound side conditions after acceptedWithFinal");

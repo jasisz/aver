@@ -1,13 +1,13 @@
-/- LUKA-1 v3: full expr-fragment generic certificate assembly. -/
-import V3ExprFragmentFull
-import V3StrongFuel
+/- Generic soundness theorem for accepted expression-fragment plans. -/
+import ExprFragmentSemantics
+import InterpreterSequencing
 
 set_option maxRecDepth 1000000
 set_option maxHeartbeats 8000000
 
-namespace V3ExprFragmentGeneric
+namespace ExprFragmentSoundness
 open CertPrelude AverCert.Schema AverCert.PlanLower
-open V3ExprFragmentFull V3StrongFuel
+open ExprFragmentSemantics InterpreterSequencing
 
 /-! ## The call/grammar fence
 
@@ -487,4 +487,4 @@ theorem exprfragment_generic_certified {C : Nat} (S : CarrierSpec C)
     (.ok modelLocals [result]) hevalBlock
   simp [wFuncN, hself, hwrun]
 
-end V3ExprFragmentGeneric
+end ExprFragmentSoundness
