@@ -18,19 +18,6 @@ open CertPrelude
 
 namespace V3Master
 
-private theorem allClaims_of_mem {Claim : Type u} (accept : Claim → Prop)
-    (claims : List Claim) (hAll : allClaims accept claims)
-    (claim : Claim) (hMem : claim ∈ claims) : accept claim := by
-  induction claims with
-  | nil => simp at hMem
-  | cons head tail ih =>
-      simp only [allClaims] at hAll
-      simp only [List.mem_cons] at hMem
-      rcases hAll with ⟨hHead, hTail⟩
-      rcases hMem with rfl | hMem
-      · exact hHead
-      · exact ih hTail hMem
-
 /-- Host, unary-domain, and source-model faces not pinned by
 `recursionPlanAccepted`. Both domain directions are explicit trust faces: the
 forward direction decomposes arbitrary represented obligation inputs, while the
@@ -170,16 +157,14 @@ theorem unary_recursion_claim_discharges
               | add =>
                   exact V3Rec.recursion_generic_certified
                     claim.obligation.carrier .add claim.obligation.self boxIdx
-                    combineIdx subIdx 1 S.Repr S.car S.smallIntro S.smallElim
-                    S.bigElim claim.obligation.code
+                    combineIdx subIdx 1 S claim.obligation.code
                     (claim.obligation.host add sub mul stringEq stringConcat)
                     add sub hBox hCombineHost hSubHost hSelfHost hAdd hSub plan sh
                     hParse body hLower hCodeSelf fuel n v w hv hRun
               | mul =>
                   exact V3Rec.recursion_generic_certified
                     claim.obligation.carrier .mul claim.obligation.self boxIdx
-                    combineIdx subIdx 1 S.Repr S.car S.smallIntro S.smallElim
-                    S.bigElim claim.obligation.code
+                    combineIdx subIdx 1 S claim.obligation.code
                     (claim.obligation.host add sub mul stringEq stringConcat)
                     mul sub hBox hCombineHost hSubHost hSelfHost _hMul hSub plan sh
                     hParse body hLower hCodeSelf fuel n v w hv hRun
@@ -205,8 +190,7 @@ theorem unary_recursion_claim_discharges
                   obtain ⟨w, hRun, hRepr⟩ :=
                     V3Rec.recursion_generic_certified_total
                       claim.obligation.carrier .add claim.obligation.self boxIdx
-                      combineIdx subIdx 1 S.Repr S.car S.smallIntro S.smallElim
-                      S.bigElim claim.obligation.code
+                      combineIdx subIdx 1 S claim.obligation.code
                       (claim.obligation.host add sub mul stringEq stringConcat)
                       add sub hBox hCombineHost hSubHost hSelfHost hAdd hSub
                       hAddTot hSubTot plan sh hParse body hLower hCodeSelf n v hv
@@ -226,8 +210,7 @@ theorem unary_recursion_claim_discharges
                   obtain ⟨w, hRun, hRepr⟩ :=
                     V3Rec.recursion_generic_certified_total
                       claim.obligation.carrier .mul claim.obligation.self boxIdx
-                      combineIdx subIdx 1 S.Repr S.car S.smallIntro S.smallElim
-                      S.bigElim claim.obligation.code
+                      combineIdx subIdx 1 S claim.obligation.code
                       (claim.obligation.host add sub mul stringEq stringConcat)
                       mul sub hBox hCombineHost hSubHost hSelfHost hMul hSub
                       hMulTot hSubTot plan sh hParse body hLower hCodeSelf n v hv
@@ -291,8 +274,7 @@ theorem accumulator_recursion_claim_discharges
               apply hCod w
               exact V3Rec.recursion_accumulator_generic_certified
                 claim.obligation.carrier claim.obligation.self boxIdx addIdx
-                subIdx 1 S.Repr S.car S.smallIntro S.smallElim S.bigElim
-                claim.obligation.code
+                subIdx 1 S claim.obligation.code
                 (claim.obligation.host add sub mul stringEq stringConcat)
                 add sub hBox hAddHost hSubHost hSelfHost hAdd hSub plan sh
                 hParse body hLower hCodeSelf fuel n acc vn vacc w hvn hvacc hRun
@@ -316,8 +298,7 @@ theorem accumulator_recursion_claim_discharges
               obtain ⟨w, hRun, hRepr⟩ :=
                 V3Rec.recursion_accumulator_generic_certified_total
                   claim.obligation.carrier claim.obligation.self boxIdx addIdx
-                  subIdx 1 S.Repr S.car S.smallIntro S.smallElim S.bigElim
-                  claim.obligation.code
+                  subIdx 1 S claim.obligation.code
                   (claim.obligation.host add sub mul stringEq stringConcat)
                   add sub hBox hAddHost hSubHost hSelfHost hAdd hSub
                   hAddTot hSubTot plan sh hParse body hLower hCodeSelf
@@ -497,8 +478,7 @@ theorem mutual_claim_discharges
                 simpa [hSccSelf] using hRun
               apply hCod w
               simpa [hSccSelf] using V3Mutual.mutual_generic_certified
-                k claim.obligation.carrier boxIdx subIdx scc S.Repr S.car
-                S.smallIntro S.smallElim S.bigElim claim.obligation.code
+                k claim.obligation.carrier boxIdx subIdx scc S claim.obligation.code
                 (claim.obligation.host add sub mul stringEq stringConcat)
                 sub hBox hSubHost hMemberHost hCodeAll hSub fuel i n v w hv hRun'
       | simulatesModelTotally =>
@@ -518,8 +498,7 @@ theorem mutual_claim_discharges
                 ⟨hBox, hSubHost, hMemberHost⟩
               obtain ⟨w, hRun, hRepr⟩ :=
                 V3Mutual.mutual_generic_certified_total
-                  k claim.obligation.carrier boxIdx subIdx scc S.Repr S.car
-                  S.smallIntro S.smallElim S.bigElim claim.obligation.code
+                  k claim.obligation.carrier boxIdx subIdx scc S claim.obligation.code
                   (claim.obligation.host add sub mul stringEq stringConcat)
                   sub hBox hSubHost hMemberHost hCodeAll hSub hSubTot i n v hv
               exact ⟨n, v, [], rfl, hv, w,
@@ -538,9 +517,6 @@ theorem mutual_discharges
 
 end V3Master
 
-#print axioms V3Master.unary_recursion_claim_discharges
-#print axioms V3Master.accumulator_recursion_claim_discharges
+-- Compatibility diagnostics; the checker enforces axioms once at the root.
 #print axioms V3Master.recursion_claim_discharges
-#print axioms V3Master.recursion_discharges
 #print axioms V3Master.mutual_claim_discharges
-#print axioms V3Master.mutual_discharges

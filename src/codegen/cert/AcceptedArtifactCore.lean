@@ -18,6 +18,16 @@ namespace AverCert.AcceptedArtifact
 open AverCert.Schema
 open CertPrelude
 
+/-- Select the first plan attached to an export name.  Every manifest plan
+family uses this exact lookup; keeping it once prevents family-specific copies
+from drifting in name comparison or first-match behaviour. -/
+def namedPlanForExport {Plan : Type u} (exportName : String) :
+    List (String × Plan) → Option Plan
+  | [] => none
+  | (name, plan) :: rest =>
+      if name == exportName then some plan
+      else namedPlanForExport exportName rest
+
 /-- Canonical locals count declared by `lowerExprFragmentBodyBytes`: every
     accepted expression fragment has one carrier scratch local. -/
 def exprFragmentNLocals (_plan : ExprFragmentRawPlan) : Nat := 1
@@ -172,33 +182,18 @@ def stringEqPlanAccepted
 
 def stringEqPlanForExport
     (exportName : String) : List (String × StringEqRawPlan) →
-    Option StringEqRawPlan
-  | [] => none
-  | (name, plan) :: rest =>
-      if name == exportName then
-        some plan
-      else
-        stringEqPlanForExport exportName rest
+    Option StringEqRawPlan :=
+  namedPlanForExport exportName
 
 def stringConcatPlanForExport
     (exportName : String) : List (String × StringConcatRawPlan) →
-    Option StringConcatRawPlan
-  | [] => none
-  | (name, plan) :: rest =>
-      if name == exportName then
-        some plan
-      else
-        stringConcatPlanForExport exportName rest
+    Option StringConcatRawPlan :=
+  namedPlanForExport exportName
 
 def constructPlanForExport
     (exportName : String) : List (String × ConstructRawPlan) →
-    Option ConstructRawPlan
-  | [] => none
-  | (name, plan) :: rest =>
-      if name == exportName then
-        some plan
-      else
-        constructPlanForExport exportName rest
+    Option ConstructRawPlan :=
+  namedPlanForExport exportName
 
 /-- One source-level String.concat claim inside an artifact certificate. -/
 structure StringConcatClaim where
@@ -490,13 +485,8 @@ def recursionPlanAccepted
 
 def recursionPlanForExport
     (exportName : String) : List (String × RecursionRawPlan) →
-    Option RecursionRawPlan
-  | [] => none
-  | (name, plan) :: rest =>
-      if name == exportName then
-        some plan
-      else
-        recursionPlanForExport exportName rest
+    Option RecursionRawPlan :=
+  namedPlanForExport exportName
 
 def recursionClaimAccepted
     (modBytes modLen : Nat)
@@ -562,13 +552,8 @@ def mutualPlanAccepted
 
 def mutualPlanForExport
     (exportName : String) : List (String × MutualRawPlan) →
-    Option MutualRawPlan
-  | [] => none
-  | (name, plan) :: rest =>
-      if name == exportName then
-        some plan
-      else
-        mutualPlanForExport exportName rest
+    Option MutualRawPlan :=
+  namedPlanForExport exportName
 
 def mutualRecursionClaimAccepted
     (modBytes modLen : Nat)
@@ -658,13 +643,8 @@ def verbatimPlanAccepted
 
 def verbatimPlanForExport
     (exportName : String) : List (String × VerbatimRawPlan) →
-    Option VerbatimRawPlan
-  | [] => none
-  | (name, plan) :: rest =>
-      if name == exportName then
-        some plan
-      else
-        verbatimPlanForExport exportName rest
+    Option VerbatimRawPlan :=
+  namedPlanForExport exportName
 
 def verbatimClaimAccepted
     (modBytes modLen : Nat)
@@ -778,13 +758,8 @@ def intDispatchPlanAccepted
 
 def intDispatchPlanForExport
     (exportName : String) : List (String × IntDispatchRawPlan) →
-    Option IntDispatchRawPlan
-  | [] => none
-  | (name, plan) :: rest =>
-      if name == exportName then
-        some plan
-      else
-        intDispatchPlanForExport exportName rest
+    Option IntDispatchRawPlan :=
+  namedPlanForExport exportName
 
 def intDispatchClaimAccepted
     (modBytes modLen : Nat)
@@ -804,11 +779,8 @@ def intDispatchClaimAccepted
 
 def fieldProjectionPlanForExport
     (exportName : String) : List (String × FieldProjectionRawPlan) →
-    Option FieldProjectionRawPlan
-  | [] => none
-  | (name, plan) :: rest =>
-      if name == exportName then some plan
-      else fieldProjectionPlanForExport exportName rest
+    Option FieldProjectionRawPlan :=
+  namedPlanForExport exportName
 
 /-- Plan-backed acceptance for the bare bind/cast projection lowering. The
     exact three-local layout is part of the canonical code-entry encoder and is
@@ -1040,6 +1012,22 @@ def compositionClaimAccepted
 def allClaims (accept : Claim → Prop) : List Claim → Prop
   | [] => True
   | claim :: rest => accept claim ∧ allClaims accept rest
+
+/-- Recover one accepted claim from the shared conjunction spine.  Keeping this
+    structural lemma beside `allClaims` gives every family discharge the same
+    proof instead of maintaining one private copy per claim kind. -/
+theorem allClaims_of_mem (accept : Claim → Prop)
+    (claims : List Claim) (hAll : allClaims accept claims)
+    (claim : Claim) (hMem : claim ∈ claims) : accept claim := by
+  induction claims with
+  | nil => simp at hMem
+  | cons head tail ih =>
+      simp only [allClaims] at hAll
+      simp only [List.mem_cons] at hMem
+      rcases hAll with ⟨hHead, hTail⟩
+      rcases hMem with rfl | hMem
+      · exact hHead
+      · exact ih hTail hMem
 
 def symFragmentClaimsAccepted (modBytes modLen : Nat)
     (claims : List SymFragmentClaim) : Prop :=
@@ -1661,6 +1649,7 @@ def closureIsolation (artifact : ArtifactData) : Bool :=
   | none => false
 
 def acceptedWholeModule (artifact : ArtifactData) : Prop :=
+  CertDecode.moduleFramingValid artifact.modBytes artifact.modLen = true ∧
   exportsAccounted artifact = true ∧
   importsWithinCapabilities artifact = true ∧
   startAccounted artifact = true ∧

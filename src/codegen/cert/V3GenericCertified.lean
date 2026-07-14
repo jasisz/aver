@@ -540,9 +540,6 @@ theorem carrierSmall_intConstCmp_bridge {C : Nat} (S : CarrierSpec C)
   cases op <;> simp [intConstCmpInstrs, smallCmpInstr, bigCmpInstrs,
     sourceIntCmp, wRunF, carrierSmall, b32, boolRepr]
 
-#print axioms carrierSmall_intConstCmp_bridge
 
-#print axioms mutualCorrect
-#print axioms exprfragment_generic_certified
 
 end V3ExprFragmentGeneric

@@ -15,19 +15,6 @@ open CertPrelude
 
 namespace V3Master
 
-private theorem allClaims_of_mem {Claim : Type u} (accept : Claim → Prop)
-    (claims : List Claim) (hAll : allClaims accept claims)
-    (claim : Claim) (hMem : claim ∈ claims) : accept claim := by
-  induction claims with
-  | nil => simp at hMem
-  | cons head tail ih =>
-      simp only [allClaims] at hAll
-      simp only [List.mem_cons] at hMem
-      rcases hAll with ⟨hHead, hTail⟩
-      rcases hMem with rfl | hMem
-      · exact hHead
-      · exact ih hTail hMem
-
 /-- The exact extra guard required by `generic_verbatim_certified`. -/
 def verbatimGenericGuards (plan : VerbatimRawPlan) : Prop :=
   V3ConstructVerbatim.checkVerbatimPlan (verbatimNLocals plan) plan = true
@@ -236,12 +223,3 @@ theorem verbatim_discharges
     (hSemantic claim hMem)
 
 end V3Master
-
-#print axioms V3Master.verbatim_raw_allows_bare_leaf
-#print axioms V3Master.verbatim_generic_rejects_bare_leaf
-#print axioms V3Master.verbatim_raw_allows_oob_locals
-#print axioms V3Master.verbatim_generic_rejects_oob_locals
-#print axioms V3Master.verbatim_accepted_call
-#print axioms V3Master.verbatim_canonical_discharges
-#print axioms V3Master.verbatim_claim_discharges
-#print axioms V3Master.verbatim_discharges

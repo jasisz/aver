@@ -41,9 +41,8 @@ def popExpectedAll : List Nat → List Nat → Option (List Nat)
       | some stack' => popExpectedAll stack' rest
       | none => none
 
-/-- Fuel cap for recursive lowering through nested `if` blocks. Exceeding it is
-    a fail-closed unsupported fragment, matching `PlanCheck.maxFuel`. -/
-def maxFuel : Nat := 10000
+/-- Semantic lowering uses the checker's one canonical recursive-plan budget. -/
+abbrev maxFuel : Nat := AverCert.PlanCheck.maxFuel
 
 mutual
   def lowerNodesFuel :

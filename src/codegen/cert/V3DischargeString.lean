@@ -16,19 +16,6 @@ open CertPrelude
 
 namespace V3Master
 
-private theorem allClaims_of_mem {Claim : Type u} (accept : Claim → Prop)
-    (claims : List Claim) (hAll : allClaims accept claims)
-    (claim : Claim) (hMem : claim ∈ claims) : accept claim := by
-  induction claims with
-  | nil => simp at hMem
-  | cons head tail ih =>
-      simp only [allClaims] at hAll
-      simp only [List.mem_cons] at hMem
-      rcases hAll with ⟨hHead, hTail⟩
-      rcases hMem with rfl | hMem
-      · exact hHead
-      · exact ih hTail hMem
-
 def stringEqSemanticBridge
     (claim : StringEqClaim) (plan : StringEqRawPlan) : Prop :=
   claim.obligation.policy = .simulatesModel ∧
@@ -414,13 +401,3 @@ theorem string_discharges
   · exact stringConcat_discharges artifact hConcatAcc hSemantic o hConcat
 
 end V3Master
-
-#print axioms V3Master.stringEq_accepted_call
-#print axioms V3Master.stringConcat_accepted_call
-#print axioms V3Master.stringEq_canonical_discharges
-#print axioms V3Master.stringConcat_canonical_discharges
-#print axioms V3Master.stringEq_claim_discharges
-#print axioms V3Master.stringConcat_claim_discharges
-#print axioms V3Master.stringEq_discharges
-#print axioms V3Master.stringConcat_discharges
-#print axioms V3Master.string_discharges

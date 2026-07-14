@@ -15,35 +15,6 @@ open CertPrelude
 
 namespace V3Master
 
-/-- One-way weakening used by family generics that ask only for the common
-`ReprSpec` carrier shape.  `CarrierSpec.car` distinguishes small and big
-carriers; forgetting that distinction gives `ReprSpec.car`. -/
-def reprSpecOfCarrierSpec {C : Nat} (S : CarrierSpec C) : ReprSpec C where
-  Repr := S.Repr
-  car := by
-    intro n v hRepr
-    rcases S.car n v hRepr with hSmall | hBig
-    · rcases hSmall with ⟨s, sg, rfl⟩
-      exact ⟨s, .null, sg, rfl⟩
-    · rcases hBig with ⟨s, lty, les, sg, rfl⟩
-      exact ⟨s, .arr lty les, sg, rfl⟩
-  smallIntro := S.smallIntro
-  smallElim := S.smallElim
-  bigElim := S.bigElim
-
-private theorem allClaims_of_mem {Claim : Type u} (accept : Claim → Prop)
-    (claims : List Claim) (hAll : allClaims accept claims)
-    (claim : Claim) (hMem : claim ∈ claims) : accept claim := by
-  induction claims with
-  | nil => simp at hMem
-  | cons head tail ih =>
-      simp only [allClaims] at hAll
-      simp only [List.mem_cons] at hMem
-      rcases hAll with ⟨hHead, hTail⟩
-      rcases hMem with rfl | hMem
-      · exact hHead
-      · exact ih hTail hMem
-
 /-- The semantic face which the raw field-projection acceptance predicate does
 not currently carry.  It says that represented inputs expose a two-field
 struct and that the generic theorem's exact projected `WVal` represents the
@@ -327,10 +298,3 @@ theorem fieldProjection_discharges
     (hSemantic claim hMem)
 
 end V3Master
-
-#print axioms V3Master.fieldProjection_accepted_call
-#print axioms V3Master.fieldProjection_claim_discharges
-#print axioms V3Master.fieldProjection_discharges
-#print axioms V3Master.fieldProjection_canonical_discharges
-#print axioms V3Master.fieldProjection_direct_canonical_discharges
-#print axioms V3Master.reprSpecOfCarrierSpec

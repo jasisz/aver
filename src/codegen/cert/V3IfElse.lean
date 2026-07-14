@@ -43,6 +43,5 @@ theorem blockOK_ifElse {C : Nat} (S : CarrierSpec C)
           cases branchOut <;> simp [wRunF, b32, hb] at hrun
           all_goals subst out; exact hbranch _ (by simpa using hb)
 
-#print axioms blockOK_ifElse
 
 end V3ExprFragmentIfElse

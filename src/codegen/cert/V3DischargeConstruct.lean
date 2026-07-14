@@ -15,19 +15,6 @@ open CertPrelude
 
 namespace V3Master
 
-private theorem allClaims_of_mem {Claim : Type u} (accept : Claim → Prop)
-    (claims : List Claim) (hAll : allClaims accept claims)
-    (claim : Claim) (hMem : claim ∈ claims) : accept claim := by
-  induction claims with
-  | nil => simp at hMem
-  | cons head tail ih =>
-      simp only [allClaims] at hAll
-      simp only [List.mem_cons] at hMem
-      rcases hAll with ⟨hHead, hTail⟩
-      rcases hMem with rfl | hMem
-      · exact hHead
-      · exact ih hTail hMem
-
 /-- The semantic face not carried by `constructPlanAccepted`: represented
 inputs have the plan's arity and the exact constructed `WVal` represents the
 obligation's independently declared model result. -/
@@ -357,9 +344,5 @@ theorem construct_discharges
 
 end V3Master
 
-#print axioms V3Master.construct_accepted_call
+-- Compatibility diagnostic; the checker enforces axioms once at the root.
 #print axioms V3Master.construct_canonical_discharges
-#print axioms V3Master.constructUnary_canonical_discharges
-#print axioms V3Master.constructBinary_canonical_discharges
-#print axioms V3Master.construct_claim_discharges
-#print axioms V3Master.construct_discharges

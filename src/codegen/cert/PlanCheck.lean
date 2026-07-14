@@ -162,7 +162,7 @@ def symPrimResultTy? (nodes : List SymNode) (op : SymPrim) (args : List Nat) :
 /-- Hard cap for recursive plan checking. Exceeding it is a fail-closed
     unsupported fragment, matching the profile-limit discipline on the Rust
     side. -/
-def maxFuel : Nat := 10000
+abbrev maxFuel : Nat := 10000
 
 def isByte (n : Nat) : Bool :=
   if n <= 255 then true else false

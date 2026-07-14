@@ -302,9 +302,5 @@ theorem generic_string_eq_certified
         | some got => simp [hc] at hrun; exact hrun.symm
       · simp [wFuncN, wRunF, hself, initLocals, List.set, hty] at hrun
 
-#print axioms runConcatChunks
-#print axioms runEqResult
-#print axioms generic_string_concat_certified
-#print axioms generic_string_eq_certified
 
 end V3String

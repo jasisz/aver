@@ -1800,7 +1800,7 @@ fn render_artifact(
             "  exact {composition_proof}\n\n",
             "theorem wholeModuleAccepted : AverCert.AcceptedArtifact.acceptedWholeModule data := by\n",
             "{artifact_dsimp}",
-            "  exact ⟨rfl, rfl, rfl, rfl⟩\n\n",
+            "  exact ⟨rfl, rfl, rfl, rfl, rfl⟩\n\n",
             "theorem fragmentsAccepted : AverCert.AcceptedArtifact.acceptedFragments data := by\n",
             "  dsimp [AverCert.AcceptedArtifact.acceptedFragments]\n",
             "  exact ⟨symFragmentsAccepted, stringEqFragmentsAccepted, stringConcatFragmentsAccepted, constructFragmentsAccepted, recursionFragmentsAccepted, mutualFragmentsAccepted, verbatimFragmentsAccepted, intDispatchFragmentsAccepted, fieldProjectionFragmentsAccepted, compositionFragmentsAccepted, wholeModuleAccepted⟩\n\n",

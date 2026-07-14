@@ -113,6 +113,3 @@ theorem masterTarget_of_sideConditions
   exact accept_sound wasmSha256 artifact hHash hInManifest hAccepted hSide
 
 end V3Master
-
-#print axioms V3Master.hClaims_of_accepted
-#print axioms V3Master.accept_sound

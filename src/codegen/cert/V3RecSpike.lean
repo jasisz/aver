@@ -339,7 +339,6 @@ theorem parse_lower (C : Nat) (combine : RecCombine) (self bI aI sI : Nat)
   case isFalse => exact absurd h (by simp)
   case isTrue => exact parseTop_lower C combine self bI aI sI plan.body sh h
 
-#print axioms parse_lower
 
 /-! ### One partial-correctness theorem for the parsed recursion family -/
 
@@ -374,13 +373,13 @@ def stepRightW (C : Nat) (step : RecStep) (v vr : WVal) : WVal :=
   | .inputFirst => v
   | .constFirst k => carrierSmall C k
 
-theorem stepOperands_repr (C : Nat) (Repr : Int → WVal → Prop)
-    (hsmall : ∀ k : Int, Repr k (carrierSmall C k))
+theorem stepOperands_repr (C : Nat) (S : CarrierSpec C)
     (step : RecStep) (n r : Int) (v vr : WVal)
-    (hv : Repr n v) (hvr : Repr r vr) :
-    Repr (stepLeft step n r) (stepLeftW C step v vr) ∧
-    Repr (stepRight step n r) (stepRightW C step v vr) := by
-  cases step <;> simp [stepLeft, stepRight, stepLeftW, stepRightW, hv, hvr, hsmall]
+    (hv : S.Repr n v) (hvr : S.Repr r vr) :
+    S.Repr (stepLeft step n r) (stepLeftW C step v vr) ∧
+    S.Repr (stepRight step n r) (stepRightW C step v vr) := by
+  cases step <;>
+    simp [stepLeft, stepRight, stepLeftW, stepRightW, hv, hvr, S.smallIntro]
 
 /-- Every parser-accepted unary recursion plan whose code entry is its audited
     lowering simulates the plan-derived model.  The four `RecStep` cases are
@@ -389,34 +388,25 @@ theorem stepOperands_repr (C : Nat) (Repr : Int → WVal → Prop)
 theorem recursion_generic_certified
     (C : Nat) (combineOp : RecCombine)
     (self bI cI sI nlocals : Nat)
-    (Repr : Int → WVal → Prop)
-    (hcar : ∀ n v, Repr n v →
-      (∃ s sg, v = .structv C [.i64v s, .null, .i32v sg]) ∨
-      (∃ s lty les sg, v = .structv C [.i64v s, .arr lty les, .i32v sg]))
-    (hsmall_intro : ∀ k : Int, Repr k (carrierSmall C k))
-    (hsmall_elim : ∀ n s sg,
-      Repr n (.structv C [.i64v s, .null, .i32v sg]) → s = n)
-    (hbig : ∀ n s lty les sg,
-      Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) →
-        ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)
+    (S : CarrierSpec C)
     (code : CodeTbl) (host : HostTbl)
     (combine sub : List WVal → Option WVal)
     (hBox : host bI = some (1, boxRef C))
     (hCombineHost : host cI = some (2, combine))
     (hSubHost : host sI = some (2, sub))
     (hSelfHost : host self = none)
-    (hCombine : ∀ a b va vb w, Repr a va → Repr b vb →
-      combine [va, vb] = some w → Repr (combineEval combineOp a b) w)
-    (hSub : ∀ a b va vb w, Repr a va → Repr b vb →
-      sub [va, vb] = some w → Repr (a - b) w)
+    (hCombine : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      combine [va, vb] = some w → S.Repr (combineEval combineOp a b) w)
+    (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      sub [va, vb] = some w → S.Repr (a - b) w)
     (plan : RecursionRawPlan) (sh : RecShapeU)
     (hparse : parseRecShapeU combineOp self bI cI sI plan = some sh)
     (instrs : List WInstr)
     (hlow : lowerBlock C plan.body = some instrs)
     (hself : code self = some ⟨1, nlocals, instrs⟩) :
-    ∀ (fuel : Nat) (n : Int) (v w : WVal), Repr n v →
+    ∀ (fuel : Nat) (n : Int) (v w : WVal), S.Repr n v →
       wFuncN code host fuel self [v] = some w →
-      Repr (evalRecU combineOp sh n) w := by
+      S.Repr (evalRecU combineOp sh n) w := by
   have hcanon := parse_lower C combineOp self bI cI sI plan sh hparse
   rw [hlow] at hcanon
   injection hcanon with hinstrs
@@ -432,15 +422,15 @@ theorem recursion_generic_certified
           simp [wFuncN] at hrun
       | succ fuel ih =>
           intro n v w hv hrun
-          rcases hcar n v hv with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
-          · have hs := hsmall_elim n s sg hv
+          rcases S.car n v hv with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
+          · have hs := S.smallElim n s sg hv
             subst hs
             by_cases hle : s ≤ (0 : Int)
             · simp [wFuncN, wRunF, hself, hBox, hstep,
                 recInstrsU, signSInstrs, signBInstrs, baseInstrs, stepInstrs,
                 boxRef, b32, popArgs, initLocals, hle] at hrun
               rw [evalRecU_base combineOp _ s hle, ← hrun]
-              exact hsmall_intro base
+              exact S.smallIntro base
             · simp [wFuncN, wRunF, hself, hBox, hCombineHost, hSubHost, hSelfHost, hstep,
                 recInstrsU, signSInstrs, signBInstrs, baseInstrs, stepInstrs,
                 boxRef, b32, popArgs, initLocals, hle] at hrun
@@ -448,8 +438,8 @@ theorem recursion_generic_certified
                   [.structv C [.i64v s, .null, .i32v sg], carrierSmall C 1] with _ | vd
               · simp [hsub] at hrun
               · simp only [hsub] at hrun
-                have hrd : Repr (s - 1) vd :=
-                  hSub s 1 _ _ vd hv (hsmall_intro 1) hsub
+                have hrd : S.Repr (s - 1) vd :=
+                  hSub s 1 _ _ vd hv (S.smallIntro 1) hsub
                 rcases hrec : wFuncN code host fuel self [vd] with _ | vr
                 · simp [hrec] at hrun
                 · simp only [hrec] at hrun
@@ -462,7 +452,7 @@ theorem recursion_generic_certified
                   · have hadd' := hadd
                     simp [hstep, stepWArgs] at hadd'
                     simp only [hadd', Option.some.injEq] at hrun
-                    obtain ⟨hl, hr⟩ := stepOperands_repr C Repr hsmall_intro step
+                    obtain ⟨hl, hr⟩ := stepOperands_repr C S step
                       s (evalRecU combineOp ⟨base, step⟩ (s - 1)) _ _ hv
                       (by simpa [hstep] using hrr)
                     have haddArgs : combine
@@ -473,14 +463,14 @@ theorem recursion_generic_certified
                     have hout := hCombine _ _ _ _ wa hl hr haddArgs
                     rw [evalRecU_step combineOp _ s hle, ← hrun]
                     simpa [hstep, stepEval, stepLeft, stepRight, combineEval] using hout
-          · obtain ⟨hsign, hne⟩ := hbig n s lty les sg hv
+          · obtain ⟨hsign, hne⟩ := S.bigElim n s lty les sg hv
             by_cases hlt : sg < (0 : Int)
             · have hn0 : n ≤ 0 := by have := hsign.mp hlt; omega
               simp [wFuncN, wRunF, hself, hBox, hstep,
                   recInstrsU, signSInstrs, signBInstrs, baseInstrs, stepInstrs,
                   boxRef, b32, popArgs, initLocals, hlt] at hrun
               rw [evalRecU_base combineOp _ n hn0, ← hrun]
-              exact hsmall_intro base
+              exact S.smallIntro base
             · have hn0 : ¬ n ≤ 0 := by
                 intro hle
                 have : ¬ n < 0 := fun h => hlt (hsign.mpr h)
@@ -492,8 +482,8 @@ theorem recursion_generic_certified
                   [.structv C [.i64v s, .arr lty les, .i32v sg], carrierSmall C 1] with _ | vd
               · simp [hsub] at hrun
               · simp only [hsub] at hrun
-                have hrd : Repr (n - 1) vd :=
-                  hSub n 1 _ _ vd hv (hsmall_intro 1) hsub
+                have hrd : S.Repr (n - 1) vd :=
+                  hSub n 1 _ _ vd hv (S.smallIntro 1) hsub
                 rcases hrec : wFuncN code host fuel self [vd] with _ | vr
                 · simp [hrec] at hrun
                 · simp only [hrec] at hrun
@@ -506,7 +496,7 @@ theorem recursion_generic_certified
                   · have hadd' := hadd
                     simp [hstep, stepWArgs] at hadd'
                     simp only [hadd', Option.some.injEq] at hrun
-                    obtain ⟨hl, hr⟩ := stepOperands_repr C Repr hsmall_intro step
+                    obtain ⟨hl, hr⟩ := stepOperands_repr C S step
                       n (evalRecU combineOp ⟨base, step⟩ (n - 1)) _ _ hv
                       (by simpa [hstep] using hrr)
                     have haddArgs : combine
@@ -518,7 +508,6 @@ theorem recursion_generic_certified
                     rw [evalRecU_step combineOp _ n hn0, ← hrun]
                     simpa [hstep, stepEval, stepLeft, stepRight, combineEval] using hout
 
-#print axioms recursion_generic_certified
 
 /-! ### Bounded-total correctness for the parsed descent-by-one family -/
 
@@ -529,38 +518,29 @@ theorem recursion_generic_certified
 theorem recursion_generic_certified_total_aux
     (C : Nat) (combineOp : RecCombine)
     (self bI cI sI nlocals : Nat)
-    (Repr : Int → WVal → Prop)
-    (hcar : ∀ n v, Repr n v →
-      (∃ s sg, v = .structv C [.i64v s, .null, .i32v sg]) ∨
-      (∃ s lty les sg, v = .structv C [.i64v s, .arr lty les, .i32v sg]))
-    (hsmall_intro : ∀ k : Int, Repr k (carrierSmall C k))
-    (hsmall_elim : ∀ n s sg,
-      Repr n (.structv C [.i64v s, .null, .i32v sg]) → s = n)
-    (hbig : ∀ n s lty les sg,
-      Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) →
-        ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)
+    (S : CarrierSpec C)
     (code : CodeTbl) (host : HostTbl)
     (combine sub : List WVal → Option WVal)
     (hBox : host bI = some (1, boxRef C))
     (hCombineHost : host cI = some (2, combine))
     (hSubHost : host sI = some (2, sub))
     (hSelfHost : host self = none)
-    (hCombine : ∀ a b va vb w, Repr a va → Repr b vb →
-      combine [va, vb] = some w → Repr (combineEval combineOp a b) w)
-    (hSub : ∀ a b va vb w, Repr a va → Repr b vb →
-      sub [va, vb] = some w → Repr (a - b) w)
-    (hCombineTot : ∀ a b va vb, Repr a va → Repr b vb →
+    (hCombine : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      combine [va, vb] = some w → S.Repr (combineEval combineOp a b) w)
+    (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      sub [va, vb] = some w → S.Repr (a - b) w)
+    (hCombineTot : ∀ a b va vb, S.Repr a va → S.Repr b vb →
       ∃ w, combine [va, vb] = some w)
-    (hSubTot : ∀ a b va vb, Repr a va → Repr b vb →
+    (hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb →
       ∃ w, sub [va, vb] = some w)
     (plan : RecursionRawPlan) (sh : RecShapeU)
     (hparse : parseRecShapeU combineOp self bI cI sI plan = some sh)
     (instrs : List WInstr)
     (hlow : lowerBlock C plan.body = some instrs)
     (hself : code self = some ⟨1, nlocals, instrs⟩) :
-    ∀ (fuel : Nat) (n : Int) (v : WVal), Repr n v → n.natAbs < fuel →
+    ∀ (fuel : Nat) (n : Int) (v : WVal), S.Repr n v → n.natAbs < fuel →
       ∃ w, wFuncN code host fuel self [v] = some w ∧
-        Repr (evalRecU combineOp sh n) w := by
+        S.Repr (evalRecU combineOp sh n) w := by
   have hcanon := parse_lower C combineOp self bI cI sI plan sh hparse
   rw [hlow] at hcanon
   injection hcanon with hinstrs
@@ -576,8 +556,8 @@ theorem recursion_generic_certified_total_aux
           omega
       | succ fuel ih =>
           intro n v hv hlt
-          rcases hcar n v hv with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
-          · have hs := hsmall_elim n s sg hv
+          rcases S.car n v hv with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
+          · have hs := S.smallElim n s sg hv
             subst hs
             by_cases hle : s ≤ (0 : Int)
             · refine ⟨carrierSmall C base, ?_, ?_⟩
@@ -585,13 +565,13 @@ theorem recursion_generic_certified_total_aux
                   recInstrsU, signSInstrs, signBInstrs, baseInstrs, stepInstrs,
                   boxRef, b32, popArgs, initLocals, hle]
               · rw [evalRecU_base combineOp _ s hle]
-                exact hsmall_intro base
+                exact S.smallIntro base
             · obtain ⟨vd, hsub⟩ := hSubTot s 1 _ (carrierSmall C 1)
-                hv (hsmall_intro 1)
-              have hrd : Repr (s - 1) vd :=
-                hSub s 1 _ _ vd hv (hsmall_intro 1) hsub
+                hv (S.smallIntro 1)
+              have hrd : S.Repr (s - 1) vd :=
+                hSub s 1 _ _ vd hv (S.smallIntro 1) hsub
               obtain ⟨vr, hrec, hrr⟩ := ih (s - 1) vd hrd (by omega)
-              obtain ⟨hl, hr⟩ := stepOperands_repr C Repr hsmall_intro step
+              obtain ⟨hl, hr⟩ := stepOperands_repr C S step
                 s (evalRecU combineOp ⟨base, step⟩ (s - 1)) _ _ hv
                 (by simpa [hstep] using hrr)
               obtain ⟨wa, hadd⟩ := hCombineTot _ _ _ _ hl hr
@@ -605,7 +585,7 @@ theorem recursion_generic_certified_total_aux
               · have hout := hCombine _ _ _ _ wa hl hr hadd
                 rw [evalRecU_step combineOp _ s hle]
                 simpa [hstep, stepEval, stepLeft, stepRight, combineEval] using hout
-          · obtain ⟨hsign, hne⟩ := hbig n s lty les sg hv
+          · obtain ⟨hsign, hne⟩ := S.bigElim n s lty les sg hv
             by_cases hlt : sg < (0 : Int)
             · have hn0 : n ≤ 0 := by
                 have := hsign.mp hlt
@@ -615,17 +595,17 @@ theorem recursion_generic_certified_total_aux
                   recInstrsU, signSInstrs, signBInstrs, baseInstrs, stepInstrs,
                   boxRef, b32, popArgs, initLocals, hlt]
               · rw [evalRecU_base combineOp _ n hn0]
-                exact hsmall_intro base
+                exact S.smallIntro base
             · have hn0 : ¬ n ≤ 0 := by
                 intro hle
                 have : ¬ n < 0 := fun h => hlt (hsign.mpr h)
                 omega
               obtain ⟨vd, hsub⟩ := hSubTot n 1 _ (carrierSmall C 1)
-                hv (hsmall_intro 1)
-              have hrd : Repr (n - 1) vd :=
-                hSub n 1 _ _ vd hv (hsmall_intro 1) hsub
+                hv (S.smallIntro 1)
+              have hrd : S.Repr (n - 1) vd :=
+                hSub n 1 _ _ vd hv (S.smallIntro 1) hsub
               obtain ⟨vr, hrec, hrr⟩ := ih (n - 1) vd hrd (by omega)
-              obtain ⟨hl, hr⟩ := stepOperands_repr C Repr hsmall_intro step
+              obtain ⟨hl, hr⟩ := stepOperands_repr C S step
                 n (evalRecU combineOp ⟨base, step⟩ (n - 1)) _ _ hv
                 (by simpa [hstep] using hrr)
               obtain ⟨wa, hadd⟩ := hCombineTot _ _ _ _ hl hr
@@ -640,52 +620,41 @@ theorem recursion_generic_certified_total_aux
                 rw [evalRecU_step combineOp _ n hn0]
                 simpa [hstep, stepEval, stepLeft, stepRight, combineEval] using hout
 
-#print axioms recursion_generic_certified_total_aux
 
 /-- Bounded-total correctness at the standard fuel selected by the checked
     `Int.natAbs` descent witness. -/
 theorem recursion_generic_certified_total
     (C : Nat) (combineOp : RecCombine)
     (self bI cI sI nlocals : Nat)
-    (Repr : Int → WVal → Prop)
-    (hcar : ∀ n v, Repr n v →
-      (∃ s sg, v = .structv C [.i64v s, .null, .i32v sg]) ∨
-      (∃ s lty les sg, v = .structv C [.i64v s, .arr lty les, .i32v sg]))
-    (hsmall_intro : ∀ k : Int, Repr k (carrierSmall C k))
-    (hsmall_elim : ∀ n s sg,
-      Repr n (.structv C [.i64v s, .null, .i32v sg]) → s = n)
-    (hbig : ∀ n s lty les sg,
-      Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) →
-        ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)
+    (S : CarrierSpec C)
     (code : CodeTbl) (host : HostTbl)
     (combine sub : List WVal → Option WVal)
     (hBox : host bI = some (1, boxRef C))
     (hCombineHost : host cI = some (2, combine))
     (hSubHost : host sI = some (2, sub))
     (hSelfHost : host self = none)
-    (hCombine : ∀ a b va vb w, Repr a va → Repr b vb →
-      combine [va, vb] = some w → Repr (combineEval combineOp a b) w)
-    (hSub : ∀ a b va vb w, Repr a va → Repr b vb →
-      sub [va, vb] = some w → Repr (a - b) w)
-    (hCombineTot : ∀ a b va vb, Repr a va → Repr b vb →
+    (hCombine : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      combine [va, vb] = some w → S.Repr (combineEval combineOp a b) w)
+    (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      sub [va, vb] = some w → S.Repr (a - b) w)
+    (hCombineTot : ∀ a b va vb, S.Repr a va → S.Repr b vb →
       ∃ w, combine [va, vb] = some w)
-    (hSubTot : ∀ a b va vb, Repr a va → Repr b vb →
+    (hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb →
       ∃ w, sub [va, vb] = some w)
     (plan : RecursionRawPlan) (sh : RecShapeU)
     (hparse : parseRecShapeU combineOp self bI cI sI plan = some sh)
     (instrs : List WInstr)
     (hlow : lowerBlock C plan.body = some instrs)
     (hself : code self = some ⟨1, nlocals, instrs⟩) :
-    ∀ (n : Int) (v : WVal), Repr n v →
+    ∀ (n : Int) (v : WVal), S.Repr n v →
       ∃ w, wFuncN code host (n.natAbs + 1) self [v] = some w ∧
-        Repr (evalRecU combineOp sh n) w :=
+        S.Repr (evalRecU combineOp sh n) w :=
   fun n v hv =>
     recursion_generic_certified_total_aux C combineOp self bI cI sI nlocals
-      Repr hcar hsmall_intro hsmall_elim hbig code host combine sub hBox hCombineHost
-      hSubHost hSelfHost hCombine hSub hCombineTot hSubTot plan sh hparse instrs hlow
-      hself (n.natAbs + 1) n v hv (by omega)
+      S code host combine sub hBox hCombineHost hSubHost hSelfHost hCombine hSub
+      hCombineTot hSubTot plan sh hparse instrs hlow hself
+      (n.natAbs + 1) n v hv (by omega)
 
-#print axioms recursion_generic_certified_total
 
 /-! ### Two-argument accumulator recursion -/
 
@@ -867,7 +836,6 @@ theorem parseA_lower (C self bI aI sI : Nat) (plan : RecursionRawPlan)
   case isFalse => exact absurd h (by simp)
   case isTrue => exact parseTopA_lower C self bI aI sI plan.body sh h
 
-#print axioms parseA_lower
 
 /-- Partial correctness for the parser-accepted two-argument accumulator
     family. The fuel induction is quantified over both the counter and the
@@ -875,35 +843,26 @@ theorem parseA_lower (C self bI aI sI : Nat) (plan : RecursionRawPlan)
     `(n - 1, acc + n)`. -/
 theorem recursion_accumulator_generic_certified
     (C self bI aI sI nlocals : Nat)
-    (Repr : Int → WVal → Prop)
-    (hcar : ∀ n v, Repr n v →
-      (∃ s sg, v = .structv C [.i64v s, .null, .i32v sg]) ∨
-      (∃ s lty les sg, v = .structv C [.i64v s, .arr lty les, .i32v sg]))
-    (hsmall_intro : ∀ k : Int, Repr k (carrierSmall C k))
-    (hsmall_elim : ∀ n s sg,
-      Repr n (.structv C [.i64v s, .null, .i32v sg]) → s = n)
-    (hbig : ∀ n s lty les sg,
-      Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) →
-        ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)
+    (S : CarrierSpec C)
     (code : CodeTbl) (host : HostTbl)
     (add sub : List WVal → Option WVal)
     (hBox : host bI = some (1, boxRef C))
     (hAddHost : host aI = some (2, add))
     (hSubHost : host sI = some (2, sub))
     (hSelfHost : host self = none)
-    (hAdd : ∀ a b va vb w, Repr a va → Repr b vb →
-      add [va, vb] = some w → Repr (a + b) w)
-    (hSub : ∀ a b va vb w, Repr a va → Repr b vb →
-      sub [va, vb] = some w → Repr (a - b) w)
+    (hAdd : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      add [va, vb] = some w → S.Repr (a + b) w)
+    (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      sub [va, vb] = some w → S.Repr (a - b) w)
     (plan : RecursionRawPlan) (sh : RecShapeA)
     (hparse : parseRecShapeA self bI aI sI plan = some sh)
     (instrs : List WInstr)
     (hlow : lowerBlock C plan.body = some instrs)
     (hself : code self = some ⟨2, nlocals, instrs⟩) :
     ∀ (fuel : Nat) (n acc : Int) (vn vacc w : WVal),
-      Repr n vn → Repr acc vacc →
+      S.Repr n vn → S.Repr acc vacc →
       wFuncN code host fuel self [vn, vacc] = some w →
-      Repr (evalRecA n acc) w := by
+      S.Repr (evalRecA n acc) w := by
   have hcanon := parseA_lower C self bI aI sI plan sh hparse
   rw [hlow] at hcanon
   injection hcanon with hinstrs
@@ -916,8 +875,8 @@ theorem recursion_accumulator_generic_certified
       simp [wFuncN] at hrun
   | succ fuel ih =>
       intro n acc vn vacc w hvn hvacc hrun
-      rcases hcar n vn hvn with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
-      · have hs := hsmall_elim n s sg hvn
+      rcases S.car n vn hvn with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
+      · have hs := S.smallElim n s sg hvn
         subst hs
         by_cases hle : s ≤ (0 : Int)
         · simp [wFuncN, wRunF, hself, hBox, recInstrsA, signSInstrs,
@@ -932,19 +891,19 @@ theorem recursion_accumulator_generic_certified
               [.structv C [.i64v s, .null, .i32v sg], carrierSmall C 1] with _ | vd
           · simp [hsub] at hrun
           · simp only [hsub] at hrun
-            have hrd : Repr (s - 1) vd :=
-              hSub s 1 _ _ vd hvn (hsmall_intro 1) hsub
+            have hrd : S.Repr (s - 1) vd :=
+              hSub s 1 _ _ vd hvn (S.smallIntro 1) hsub
             rcases hadd : add
                 [vacc, .structv C [.i64v s, .null, .i32v sg]] with _ | va
             · simp [hadd] at hrun
             · simp only [hadd] at hrun
-              have hra : Repr (acc + s) va := hAdd acc s _ _ va hvacc hvn hadd
+              have hra : S.Repr (acc + s) va := hAdd acc s _ _ va hvacc hvn hadd
               rcases hrec : wFuncN code host fuel self [vd, va] with _ | vr
               · simp [hrec] at hrun
               · simp only [hrec, Option.some.injEq] at hrun
                 rw [evalRecA_step s acc hle, ← hrun]
                 exact ih (s - 1) (acc + s) vd va vr hrd hra hrec
-      · obtain ⟨hsign, hne⟩ := hbig n s lty les sg hvn
+      · obtain ⟨hsign, hne⟩ := S.bigElim n s lty les sg hvn
         by_cases hlt : sg < (0 : Int)
         · have hn0 : n ≤ 0 := by have := hsign.mp hlt; omega
           simp [wFuncN, wRunF, hself, hBox, recInstrsA, signSInstrs,
@@ -963,46 +922,36 @@ theorem recursion_accumulator_generic_certified
               [.structv C [.i64v s, .arr lty les, .i32v sg], carrierSmall C 1] with _ | vd
           · simp [hsub] at hrun
           · simp only [hsub] at hrun
-            have hrd : Repr (n - 1) vd :=
-              hSub n 1 _ _ vd hvn (hsmall_intro 1) hsub
+            have hrd : S.Repr (n - 1) vd :=
+              hSub n 1 _ _ vd hvn (S.smallIntro 1) hsub
             rcases hadd : add
                 [vacc, .structv C [.i64v s, .arr lty les, .i32v sg]] with _ | va
             · simp [hadd] at hrun
             · simp only [hadd] at hrun
-              have hra : Repr (acc + n) va := hAdd acc n _ _ va hvacc hvn hadd
+              have hra : S.Repr (acc + n) va := hAdd acc n _ _ va hvacc hvn hadd
               rcases hrec : wFuncN code host fuel self [vd, va] with _ | vr
               · simp [hrec] at hrun
               · simp only [hrec, Option.some.injEq] at hrun
                 rw [evalRecA_step n acc hn0, ← hrun]
                 exact ih (n - 1) (acc + n) vd va vr hrd hra hrec
 
-#print axioms recursion_accumulator_generic_certified
 
 theorem recursion_accumulator_generic_certified_total_aux
     (C self bI aI sI nlocals : Nat)
-    (Repr : Int → WVal → Prop)
-    (hcar : ∀ n v, Repr n v →
-      (∃ s sg, v = .structv C [.i64v s, .null, .i32v sg]) ∨
-      (∃ s lty les sg, v = .structv C [.i64v s, .arr lty les, .i32v sg]))
-    (hsmall_intro : ∀ k : Int, Repr k (carrierSmall C k))
-    (hsmall_elim : ∀ n s sg,
-      Repr n (.structv C [.i64v s, .null, .i32v sg]) → s = n)
-    (hbig : ∀ n s lty les sg,
-      Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) →
-        ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)
+    (S : CarrierSpec C)
     (code : CodeTbl) (host : HostTbl)
     (add sub : List WVal → Option WVal)
     (hBox : host bI = some (1, boxRef C))
     (hAddHost : host aI = some (2, add))
     (hSubHost : host sI = some (2, sub))
     (hSelfHost : host self = none)
-    (hAdd : ∀ a b va vb w, Repr a va → Repr b vb →
-      add [va, vb] = some w → Repr (a + b) w)
-    (hSub : ∀ a b va vb w, Repr a va → Repr b vb →
-      sub [va, vb] = some w → Repr (a - b) w)
-    (hAddTot : ∀ a b va vb, Repr a va → Repr b vb →
+    (hAdd : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      add [va, vb] = some w → S.Repr (a + b) w)
+    (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      sub [va, vb] = some w → S.Repr (a - b) w)
+    (hAddTot : ∀ a b va vb, S.Repr a va → S.Repr b vb →
       ∃ w, add [va, vb] = some w)
-    (hSubTot : ∀ a b va vb, Repr a va → Repr b vb →
+    (hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb →
       ∃ w, sub [va, vb] = some w)
     (plan : RecursionRawPlan) (sh : RecShapeA)
     (hparse : parseRecShapeA self bI aI sI plan = some sh)
@@ -1010,9 +959,9 @@ theorem recursion_accumulator_generic_certified_total_aux
     (hlow : lowerBlock C plan.body = some instrs)
     (hself : code self = some ⟨2, nlocals, instrs⟩) :
     ∀ (fuel : Nat) (n acc : Int) (vn vacc : WVal),
-      Repr n vn → Repr acc vacc → n.natAbs < fuel →
+      S.Repr n vn → S.Repr acc vacc → n.natAbs < fuel →
       ∃ w, wFuncN code host fuel self [vn, vacc] = some w ∧
-        Repr (evalRecA n acc) w := by
+        S.Repr (evalRecA n acc) w := by
   have hcanon := parseA_lower C self bI aI sI plan sh hparse
   rw [hlow] at hcanon
   injection hcanon with hinstrs
@@ -1025,8 +974,8 @@ theorem recursion_accumulator_generic_certified_total_aux
       omega
   | succ fuel ih =>
       intro n acc vn vacc hvn hvacc hfuel
-      rcases hcar n vn hvn with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
-      · have hs := hsmall_elim n s sg hvn
+      rcases S.car n vn hvn with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
+      · have hs := S.smallElim n s sg hvn
         subst hs
         by_cases hle : s ≤ (0 : Int)
         · refine ⟨vacc, ?_, ?_⟩
@@ -1035,11 +984,11 @@ theorem recursion_accumulator_generic_certified_total_aux
           · rw [evalRecA_base s acc hle]
             exact hvacc
         · obtain ⟨vd, hsub⟩ := hSubTot s 1 _ (carrierSmall C 1)
-            hvn (hsmall_intro 1)
-          have hrd : Repr (s - 1) vd :=
-            hSub s 1 _ _ vd hvn (hsmall_intro 1) hsub
+            hvn (S.smallIntro 1)
+          have hrd : S.Repr (s - 1) vd :=
+            hSub s 1 _ _ vd hvn (S.smallIntro 1) hsub
           obtain ⟨va, hadd⟩ := hAddTot acc s _ _ hvacc hvn
-          have hra : Repr (acc + s) va := hAdd acc s _ _ va hvacc hvn hadd
+          have hra : S.Repr (acc + s) va := hAdd acc s _ _ va hvacc hvn hadd
           obtain ⟨w, hrec, hrepr⟩ := ih (s - 1) (acc + s) vd va hrd hra (by omega)
           refine ⟨w, ?_, ?_⟩
           · simp [wFuncN, wRunF, hself, hBox, hAddHost, hSubHost, hSelfHost,
@@ -1047,7 +996,7 @@ theorem recursion_accumulator_generic_certified_total_aux
               boxRef, b32, popArgs, initLocals, hle, hsub, hadd, hrec]
           · rw [evalRecA_step s acc hle]
             exact hrepr
-      · obtain ⟨hsign, hne⟩ := hbig n s lty les sg hvn
+      · obtain ⟨hsign, hne⟩ := S.bigElim n s lty les sg hvn
         by_cases hlt : sg < (0 : Int)
         · have hn0 : n ≤ 0 := by have := hsign.mp hlt; omega
           refine ⟨vacc, ?_, ?_⟩
@@ -1060,11 +1009,11 @@ theorem recursion_accumulator_generic_certified_total_aux
             have : ¬ n < 0 := fun h => hlt (hsign.mpr h)
             omega
           obtain ⟨vd, hsub⟩ := hSubTot n 1 _ (carrierSmall C 1)
-            hvn (hsmall_intro 1)
-          have hrd : Repr (n - 1) vd :=
-            hSub n 1 _ _ vd hvn (hsmall_intro 1) hsub
+            hvn (S.smallIntro 1)
+          have hrd : S.Repr (n - 1) vd :=
+            hSub n 1 _ _ vd hvn (S.smallIntro 1) hsub
           obtain ⟨va, hadd⟩ := hAddTot acc n _ _ hvacc hvn
-          have hra : Repr (acc + n) va := hAdd acc n _ _ va hvacc hvn hadd
+          have hra : S.Repr (acc + n) va := hAdd acc n _ _ va hvacc hvn hadd
           obtain ⟨w, hrec, hrepr⟩ := ih (n - 1) (acc + n) vd va hrd hra (by omega)
           refine ⟨w, ?_, ?_⟩
           · simp [wFuncN, wRunF, hself, hBox, hAddHost, hSubHost, hSelfHost,
@@ -1073,50 +1022,38 @@ theorem recursion_accumulator_generic_certified_total_aux
           · rw [evalRecA_step n acc hn0]
             exact hrepr
 
-#print axioms recursion_accumulator_generic_certified_total_aux
 
 theorem recursion_accumulator_generic_certified_total
     (C self bI aI sI nlocals : Nat)
-    (Repr : Int → WVal → Prop)
-    (hcar : ∀ n v, Repr n v →
-      (∃ s sg, v = .structv C [.i64v s, .null, .i32v sg]) ∨
-      (∃ s lty les sg, v = .structv C [.i64v s, .arr lty les, .i32v sg]))
-    (hsmall_intro : ∀ k : Int, Repr k (carrierSmall C k))
-    (hsmall_elim : ∀ n s sg,
-      Repr n (.structv C [.i64v s, .null, .i32v sg]) → s = n)
-    (hbig : ∀ n s lty les sg,
-      Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) →
-        ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)
+    (S : CarrierSpec C)
     (code : CodeTbl) (host : HostTbl)
     (add sub : List WVal → Option WVal)
     (hBox : host bI = some (1, boxRef C))
     (hAddHost : host aI = some (2, add))
     (hSubHost : host sI = some (2, sub))
     (hSelfHost : host self = none)
-    (hAdd : ∀ a b va vb w, Repr a va → Repr b vb →
-      add [va, vb] = some w → Repr (a + b) w)
-    (hSub : ∀ a b va vb w, Repr a va → Repr b vb →
-      sub [va, vb] = some w → Repr (a - b) w)
-    (hAddTot : ∀ a b va vb, Repr a va → Repr b vb →
+    (hAdd : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      add [va, vb] = some w → S.Repr (a + b) w)
+    (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      sub [va, vb] = some w → S.Repr (a - b) w)
+    (hAddTot : ∀ a b va vb, S.Repr a va → S.Repr b vb →
       ∃ w, add [va, vb] = some w)
-    (hSubTot : ∀ a b va vb, Repr a va → Repr b vb →
+    (hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb →
       ∃ w, sub [va, vb] = some w)
     (plan : RecursionRawPlan) (sh : RecShapeA)
     (hparse : parseRecShapeA self bI aI sI plan = some sh)
     (instrs : List WInstr)
     (hlow : lowerBlock C plan.body = some instrs)
     (hself : code self = some ⟨2, nlocals, instrs⟩) :
-    ∀ (n acc : Int) (vn vacc : WVal), Repr n vn → Repr acc vacc →
+    ∀ (n acc : Int) (vn vacc : WVal), S.Repr n vn → S.Repr acc vacc →
       ∃ w, wFuncN code host (n.natAbs + 1) self [vn, vacc] = some w ∧
-        Repr (evalRecA n acc) w :=
+        S.Repr (evalRecA n acc) w :=
   fun n acc vn vacc hvn hvacc =>
     recursion_accumulator_generic_certified_total_aux
-      C self bI aI sI nlocals Repr hcar hsmall_intro hsmall_elim hbig
-      code host add sub hBox hAddHost hSubHost hSelfHost hAdd hSub
+      C self bI aI sI nlocals S code host add sub hBox hAddHost hSubHost hSelfHost hAdd hSub
       hAddTot hSubTot plan sh hparse instrs hlow hself
       (n.natAbs + 1) n acc vn vacc hvn hvacc (by omega)
 
-#print axioms recursion_accumulator_generic_certified_total
 
 /- The fixture-specific section is retained as spike documentation but is not
    part of the reusable generic module. -/

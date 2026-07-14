@@ -163,7 +163,5 @@ theorem generic_composition_certified {C : Nat} (S : CarrierSpec C)
           exact simCompositionCalls S members funcTable code host models fuel _
             callees callInstrs x v w hcalls facts hv hrun'
 
-#print axioms simCompositionCalls
-#print axioms generic_composition_certified
 
 end V3Composition

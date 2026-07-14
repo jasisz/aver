@@ -4,7 +4,7 @@
 -- This is still not a full Wasm module parser. It is the plan-first byte
 -- encoder for one checked profile: local declarations + expression body +
 -- body-size prefix.
-import PlanCheck
+import PlanLower
 
 namespace AverCert.PlanBytes
 open AverCert.Schema
@@ -65,6 +65,24 @@ def sleb64 (value : Int) : Option (List Nat) :=
 def s33HeapIdx (idx : Nat) : Option (List Nat) :=
   if idx < 4294967296 then slebFuel 6 (Int.ofNat idx) else none
 
+/-- Prefix a successfully lowered function body with its canonical u32 byte
+    length, producing the exact byte sequence stored as one Wasm code entry. -/
+private def codeEntryBytes : Option (List Nat) → Option (List Nat)
+  | some body =>
+      match uleb32 body.length with
+      | some lengthBytes => some (lengthBytes ++ body)
+      | none => none
+  | none => none
+
+/-- Encode the local declaration shared by plan families that reserve exactly
+    one nullable carrier-reference local, then append the lowered expression. -/
+private def singleCarrierLocalBodyBytes
+    (carrier : Nat) (exprBytes? : Option (List Nat)) : Option (List Nat) :=
+  match uleb32 1, uleb32 1, s33HeapIdx carrier, exprBytes? with
+  | some localDeclCount, some localCount, some carrierBytes, some exprBytes =>
+      some (localDeclCount ++ localCount ++ [0x63] ++ carrierBytes ++ exprBytes)
+  | _, _, _, _ => none
+
 def fieldProjectionResultTyBytes : FieldProjectionResultTy → Option (List Nat)
   | .eqref => some [0x6d]
   | .nullableRef idx => (s33HeapIdx idx).map (fun b => [0x63] ++ b)
@@ -83,7 +101,7 @@ def lowerFieldProjectionCodeEntry
           [0x20, 0x00, 0x21, 0x02, 0x20, 0x02, 0xfb, 0x16] ++ castTy ++
           [0xfb, 0x02] ++ getTy ++ fieldB ++
           [0x21, 0x01, 0x20, 0x01, 0x0b]
-        (uleb32 body.length).map (fun len => len ++ body)
+        codeEntryBytes (some body)
     | _, _, _, _, _ => none
   else none
 
@@ -125,19 +143,12 @@ def primBytes : FragPrim → List Nat
   | .i32LtS => [0x48]
   | .i32GtS => [0x4a]
 
-def popExpected : List Nat → Nat → Option (List Nat)
-  | got :: rest, expected => if got = expected then some rest else none
-  | [], _ => none
-
-def popExpectedAll : List Nat → List Nat → Option (List Nat)
-  | stack, [] => some stack
-  | stack, expected :: rest =>
-      match popExpected stack expected with
-      | some stack' => popExpectedAll stack' rest
-      | none => none
-
-/-- Fuel cap for recursive byte lowering through nested `if` blocks. -/
-def maxFuel : Nat := 10000
+/-- Byte and semantic lowering share one symbolic-stack discipline and one
+    fail-closed recursion budget.  The aliases retain the public API while
+    making divergence between the two lowerers impossible here. -/
+abbrev popExpected := AverCert.PlanLower.popExpected
+abbrev popExpectedAll := AverCert.PlanLower.popExpectedAll
+abbrev maxFuel : Nat := AverCert.PlanLower.maxFuel
 
 mutual
   def lowerNodesBytesFuel :
@@ -235,20 +246,11 @@ def lowerExprFragmentExprBytes (carrier : Nat) (plan : ExprFragmentRawPlan) :
 
 def lowerExprFragmentBodyBytes (carrier : Nat) (plan : ExprFragmentRawPlan) :
     Option (List Nat) :=
-  match uleb32 1, uleb32 1, s33HeapIdx carrier,
-        lowerExprFragmentExprBytes carrier plan with
-  | some localDeclCount, some localCount, some carrierBytes, some exprBytes =>
-      some (localDeclCount ++ localCount ++ [0x63] ++ carrierBytes ++ exprBytes)
-  | _, _, _, _ => none
+  singleCarrierLocalBodyBytes carrier (lowerExprFragmentExprBytes carrier plan)
 
 def lowerExprFragmentCodeEntry (carrier : Nat) (plan : ExprFragmentRawPlan) :
     Option (List Nat) :=
-  match lowerExprFragmentBodyBytes carrier plan with
-  | some body =>
-      match uleb32 body.length with
-      | some lenBytes => some (lenBytes ++ body)
-      | none => none
-  | none => none
+  codeEntryBytes (lowerExprFragmentBodyBytes carrier plan)
 
 def lowerRecursionExprBytes (carrier : Nat) (plan : RecursionRawPlan) :
     Option (List Nat) :=
@@ -261,20 +263,11 @@ def lowerRecursionExprBytes (carrier : Nat) (plan : RecursionRawPlan) :
 
 def lowerRecursionBodyBytes (carrier : Nat) (plan : RecursionRawPlan) :
     Option (List Nat) :=
-  match uleb32 1, uleb32 1, s33HeapIdx carrier,
-        lowerRecursionExprBytes carrier plan with
-  | some localDeclCount, some localCount, some carrierBytes, some exprBytes =>
-      some (localDeclCount ++ localCount ++ [0x63] ++ carrierBytes ++ exprBytes)
-  | _, _, _, _ => none
+  singleCarrierLocalBodyBytes carrier (lowerRecursionExprBytes carrier plan)
 
 def lowerRecursionCodeEntry (carrier : Nat) (plan : RecursionRawPlan) :
     Option (List Nat) :=
-  match lowerRecursionBodyBytes carrier plan with
-  | some body =>
-      match uleb32 body.length with
-      | some lenBytes => some (lenBytes ++ body)
-      | none => none
-  | none => none
+  codeEntryBytes (lowerRecursionBodyBytes carrier plan)
 
 def lowerMutualExprBytes (carrier : Nat) (plan : MutualRawPlan) :
     Option (List Nat) :=
@@ -287,20 +280,11 @@ def lowerMutualExprBytes (carrier : Nat) (plan : MutualRawPlan) :
 
 def lowerMutualBodyBytes (carrier : Nat) (plan : MutualRawPlan) :
     Option (List Nat) :=
-  match uleb32 1, uleb32 1, s33HeapIdx carrier,
-        lowerMutualExprBytes carrier plan with
-  | some localDeclCount, some localCount, some carrierBytes, some exprBytes =>
-      some (localDeclCount ++ localCount ++ [0x63] ++ carrierBytes ++ exprBytes)
-  | _, _, _, _ => none
+  singleCarrierLocalBodyBytes carrier (lowerMutualExprBytes carrier plan)
 
 def lowerMutualCodeEntry (carrier : Nat) (plan : MutualRawPlan) :
     Option (List Nat) :=
-  match lowerMutualBodyBytes carrier plan with
-  | some body =>
-      match uleb32 body.length with
-      | some lenBytes => some (lenBytes ++ body)
-      | none => none
-  | none => none
+  codeEntryBytes (lowerMutualBodyBytes carrier plan)
 
 /-! ### Verbatim `ref.test`-dispatch byte lowering (exact code-entry bytes).
 
@@ -391,12 +375,7 @@ def lowerVerbatimBodyBytes (carrier : Nat) (plan : VerbatimRawPlan) : Option (Li
   | _, _ => none
 
 def lowerVerbatimCodeEntry (carrier : Nat) (plan : VerbatimRawPlan) : Option (List Nat) :=
-  match lowerVerbatimBodyBytes carrier plan with
-  | some body =>
-      match uleb32 body.length with
-      | some lenBytes => some (lenBytes ++ body)
-      | none => none
-  | none => none
+  codeEntryBytes (lowerVerbatimBodyBytes carrier plan)
 
 /-! ### Int-face `ref.test`-dispatch byte lowering (exact code-entry bytes).
 
@@ -493,12 +472,7 @@ def lowerIntDispatchBodyBytes
 def lowerIntDispatchCodeEntry
     (carrier : Nat) (hostTable : List (HostRole × Nat))
     (plan : IntDispatchRawPlan) : Option (List Nat) :=
-  match lowerIntDispatchBodyBytes carrier hostTable plan with
-  | some body =>
-      match uleb32 body.length with
-      | some lenBytes => some (lenBytes ++ body)
-      | none => none
-  | none => none
+  codeEntryBytes (lowerIntDispatchBodyBytes carrier hostTable plan)
 
 def lowerStringConcatChunkBytes
     (resultTy : Nat) (chunk : StringConcatChunk) : Option (List Nat) :=
@@ -553,21 +527,14 @@ def lowerStringConcatExprBytes
 def lowerStringConcatBodyBytes
     (carrier resultTy containerTy concatFuncIdx : Nat)
     (plan : StringConcatRawPlan) : Option (List Nat) :=
-  match uleb32 1, uleb32 1, s33HeapIdx carrier,
-        lowerStringConcatExprBytes resultTy containerTy concatFuncIdx plan with
-  | some localDeclCount, some localCount, some carrierBytes, some exprBytes =>
-      some (localDeclCount ++ localCount ++ [0x63] ++ carrierBytes ++ exprBytes)
-  | _, _, _, _ => none
+  singleCarrierLocalBodyBytes carrier
+    (lowerStringConcatExprBytes resultTy containerTy concatFuncIdx plan)
 
 def lowerStringConcatCodeEntry
     (carrier resultTy containerTy concatFuncIdx : Nat)
     (plan : StringConcatRawPlan) : Option (List Nat) :=
-  match lowerStringConcatBodyBytes carrier resultTy containerTy concatFuncIdx plan with
-  | some body =>
-      match uleb32 body.length with
-      | some lenBytes => some (lenBytes ++ body)
-      | none => none
-  | none => none
+  codeEntryBytes
+    (lowerStringConcatBodyBytes carrier resultTy containerTy concatFuncIdx plan)
 
 def lowerStringEqChunkBytes
     (stringTy : Nat)
@@ -639,12 +606,7 @@ def lowerStringEqBodyBytes
 def lowerStringEqCodeEntry
     (carrier stringTy stringEqFuncIdx : Nat)
     (plan : StringEqRawPlan) : Option (List Nat) :=
-  match lowerStringEqBodyBytes carrier stringTy stringEqFuncIdx plan with
-  | some body =>
-      match uleb32 body.length with
-      | some lenBytes => some (lenBytes ++ body)
-      | none => none
-  | none => none
+  codeEntryBytes (lowerStringEqBodyBytes carrier stringTy stringEqFuncIdx plan)
 
 def lowerConstructFieldBytes (structIdx : Nat) : ConstructField → Option (List Nat)
   | .local index =>
@@ -678,22 +640,13 @@ def lowerConstructBodyBytes
     (carrier : Nat)
     (structIdx : Nat)
     (plan : ConstructRawPlan) : Option (List Nat) :=
-  match uleb32 1, uleb32 1, s33HeapIdx carrier,
-        lowerConstructExprBytes structIdx plan with
-  | some localDeclCount, some localCount, some carrierBytes, some exprBytes =>
-      some (localDeclCount ++ localCount ++ [0x63] ++ carrierBytes ++ exprBytes)
-  | _, _, _, _ => none
+  singleCarrierLocalBodyBytes carrier (lowerConstructExprBytes structIdx plan)
 
 def lowerConstructCodeEntry
     (carrier : Nat)
     (structIdx : Nat)
     (plan : ConstructRawPlan) : Option (List Nat) :=
-  match lowerConstructBodyBytes carrier structIdx plan with
-  | some body =>
-      match uleb32 body.length with
-      | some lenBytes => some (lenBytes ++ body)
-      | none => none
-  | none => none
+  codeEntryBytes (lowerConstructBodyBytes carrier structIdx plan)
 
 /-! ### `composition-plan-v1` exact byte lowering -/
 
@@ -737,22 +690,14 @@ def lowerCompositionBodyBytes
     (hostTable : List (HostRole × Nat))
     (funcTable : List (String × Nat))
     (plan : CompositionRawPlan) : Option (List Nat) :=
-  match uleb32 1, uleb32 1, s33HeapIdx carrier,
-        lowerCompositionExprBytes hostTable funcTable plan with
-  | some decls, some count, some carrierBytes, some exprBytes =>
-      some (decls ++ count ++ [0x63] ++ carrierBytes ++ exprBytes)
-  | _, _, _, _ => none
+  singleCarrierLocalBodyBytes carrier
+    (lowerCompositionExprBytes hostTable funcTable plan)
 
 def lowerCompositionCodeEntry
     (carrier : Nat)
     (hostTable : List (HostRole × Nat))
     (funcTable : List (String × Nat))
     (plan : CompositionRawPlan) : Option (List Nat) :=
-  match lowerCompositionBodyBytes carrier hostTable funcTable plan with
-  | some body =>
-      match uleb32 body.length with
-      | some lenBytes => some (lenBytes ++ body)
-      | none => none
-  | none => none
+  codeEntryBytes (lowerCompositionBodyBytes carrier hostTable funcTable plan)
 
 end AverCert.PlanBytes

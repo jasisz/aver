@@ -16,19 +16,6 @@ open CertPrelude
 
 namespace V3Master
 
-private theorem allClaims_of_mem {Claim : Type u} (accept : Claim → Prop)
-    (claims : List Claim) (hAll : allClaims accept claims)
-    (claim : Claim) (hMem : claim ∈ claims) : accept claim := by
-  induction claims with
-  | nil => simp at hMem
-  | cons head tail ih =>
-      simp only [allClaims] at hAll
-      simp only [List.mem_cons] at hMem
-      rcases hAll with ⟨hHead, hTail⟩
-      rcases hMem with rfl | hMem
-      · exact hHead
-      · exact ih hTail hMem
-
 /-- A raw plan accepted by `checkIntDispatchRawPlan` whose body has no test
 root.  This witnesses the admission premise missing from current acceptance. -/
 def uncoveredIntDispatchDefaultPlan : IntDispatchRawPlan :=
@@ -358,10 +345,3 @@ theorem intDispatch_discharges
     (hSemantic claim hMem)
 
 end V3Master
-
-#print axioms V3Master.intDispatch_raw_allows_default_root
-#print axioms V3Master.intDispatch_default_root_has_no_test
-#print axioms V3Master.intDispatch_accepted_call
-#print axioms V3Master.intDispatch_claim_discharges
-#print axioms V3Master.intDispatch_canonical_discharges
-#print axioms V3Master.intDispatch_discharges

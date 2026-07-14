@@ -53,7 +53,6 @@ theorem wRunF_append
         (repeat' split) <;>
         simp only [seqOut, ih]
 
-#print axioms wRunF_append
 
 /-! ## Why this closes the STUCK.md #2 obstacle
 

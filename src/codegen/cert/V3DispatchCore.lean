@@ -418,8 +418,5 @@ theorem generic_int_dispatch_certified {C : Nat} (S : CarrierSpec C)
                       exact hok.2
                   | cons x xs => simp [hr] at hrun
 
-#print axioms blockOK_ifElse
-#print axioms simCascade
-#print axioms generic_int_dispatch_certified
 
 end V3Dispatch

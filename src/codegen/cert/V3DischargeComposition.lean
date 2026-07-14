@@ -17,19 +17,6 @@ open CertPrelude
 
 namespace V3Master
 
-private theorem allClaims_of_mem {Claim : Type u} (accept : Claim → Prop)
-    (claims : List Claim) (hAll : allClaims accept claims)
-    (claim : Claim) (hMem : claim ∈ claims) : accept claim := by
-  induction claims with
-  | nil => simp at hMem
-  | cons head tail ih =>
-      simp only [allClaims] at hAll
-      simp only [List.mem_cons] at hMem
-      rcases hAll with ⟨hHead, hTail⟩
-      rcases hMem with rfl | hMem
-      · exact hHead
-      · exact ih hTail hMem
-
 private theorem mem_foldl_insert (xs : List String) (s : Std.TreeSet String)
     (x : String)
     (h : x ∈ xs.foldl (fun set value => set.insert value) s) :
@@ -500,8 +487,3 @@ theorem composition_discharges
   exact composition_claim_discharges artifact hAcc hSemantic hMembers claim hMem
 
 end V3Master
-
-#print axioms V3Master.composition_claim_discharges
-#print axioms V3Master.composition_claim_discharges_with_bridge
-#print axioms V3Master.composition_discharges_with_bridges
-#print axioms V3Master.composition_discharges
