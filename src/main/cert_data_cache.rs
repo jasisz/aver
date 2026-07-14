@@ -325,7 +325,7 @@ mod tests {
         let material = KeyMaterial {
             schema_version: 50,
             pinned_sha256: &pins,
-            toolchain_version: "leanprover/lean4:v4.31.0",
+            toolchain_version: "leanprover/lean4:v4.32.0",
         };
         let baseline = artifact_cache_key(&dir, &material).unwrap();
 
@@ -352,7 +352,7 @@ mod tests {
         }
 
         let changed_toolchain = KeyMaterial {
-            toolchain_version: "leanprover/lean4:v4.32.0",
+            toolchain_version: "leanprover/lean4:v4.33.0",
             ..material
         };
         assert_ne!(

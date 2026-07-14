@@ -11,7 +11,7 @@ semantics layer plus its tooling.
 |------|------|
 | `prelude/CertPrelude.lean` | Semantics: `WVal`, `WInstr` (all 39 opcodes), stratified `wRunF` + fuelled `wFuncN`, `ReprSpec`, executable host-contract faces (`boxRef`, `addRef`, `subRef`, `leRef`…). |
 | `prelude/CertPreludeSanity.lean` | Ported simulation theorem `addTwo_wasm_certified` (kernel-clean) + 32 `native_decide` anti-vacuity guards executing every opcode. |
-| `prelude/lakefile.lean`, `lean-toolchain` | Standalone lake project, pinned `leanprover/lean4:v4.31.0` (same as `aver proof`). |
+| `prelude/lakefile.lean`, `lean-toolchain` | Standalone lake project, pinned `leanprover/lean4:v4.32.0` (same as `aver proof`). |
 | `wat.py` | Minimal `wasm-tools print` reader (types, data, exports, user-fn bodies). |
 | `extract.py` | `.wasm` -> Lean `CodeTbl` term + `*.meta.json` metadata. |
 | `diff_harness.py` | Three-way differential + coverage matrix. |
