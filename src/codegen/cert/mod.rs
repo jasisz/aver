@@ -57,7 +57,6 @@ pub const CERT_ACCEPTED_ARTIFACT: &str = include_str!("AcceptedArtifact.lean");
 pub const CERT_ACCEPTED_ARTIFACT_CORE: &str = include_str!("AcceptedArtifactCore.lean");
 pub const CERT_V3_EXPR_FRAGMENT_FULL: &str = include_str!("V3ExprFragmentFull.lean");
 pub const CERT_V3_STRONG_FUEL: &str = include_str!("V3StrongFuel.lean");
-pub const CERT_V3_IF_ELSE: &str = include_str!("V3IfElse.lean");
 pub const CERT_V3_GENERIC_CERTIFIED: &str = include_str!("V3GenericCertified.lean");
 pub const CERT_V3_FIELD_PROJ: &str = include_str!("V3FieldProj.lean");
 pub const CERT_V3_CONSTRUCT_VERBATIM: &str = include_str!("V3ConstructVerbatim.lean");
@@ -157,9 +156,6 @@ pub fn audited_v3_expr_fragment_full_sha() -> String {
 }
 pub fn audited_v3_strong_fuel_sha() -> String {
     sha256_hex(CERT_V3_STRONG_FUEL.as_bytes())
-}
-pub fn audited_v3_if_else_sha() -> String {
-    sha256_hex(CERT_V3_IF_ELSE.as_bytes())
 }
 pub fn audited_v3_generic_certified_sha() -> String {
     sha256_hex(CERT_V3_GENERIC_CERTIFIED.as_bytes())

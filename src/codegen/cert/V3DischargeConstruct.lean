@@ -15,19 +15,6 @@ open CertPrelude
 
 namespace V3Master
 
-private theorem allClaims_of_mem {Claim : Type u} (accept : Claim → Prop)
-    (claims : List Claim) (hAll : allClaims accept claims)
-    (claim : Claim) (hMem : claim ∈ claims) : accept claim := by
-  induction claims with
-  | nil => simp at hMem
-  | cons head tail ih =>
-      simp only [allClaims] at hAll
-      simp only [List.mem_cons] at hMem
-      rcases hAll with ⟨hHead, hTail⟩
-      rcases hMem with rfl | hMem
-      · exact hHead
-      · exact ih hTail hMem
-
 /-- The semantic face not carried by `constructPlanAccepted`: represented
 inputs have the plan's arity and the exact constructed `WVal` represents the
 obligation's independently declared model result. -/
@@ -49,49 +36,6 @@ def constructSemanticBridges (artifact : ArtifactData) : Prop :=
       constructPlanForExport claim.exportName
           artifact.manifest.constructPlans = some plan →
         constructSemanticBridge claim plan
-
-/-- Byte/plan half of one constructor claim. -/
-theorem construct_accepted_call
-    (artifact : ArtifactData)
-    (hAcc : acceptedConstructFragments artifact)
-    (claim : ConstructClaim)
-    (hMem : claim ∈ artifact.constructClaims) :
-    ∃ plan,
-      constructPlanForExport claim.exportName
-          artifact.manifest.constructPlans = some plan ∧
-      ∀ (host : HostTbl) (args : List WVal),
-        args.length = plan.arity →
-        wFuncN claim.obligation.code host 1 claim.obligation.self args =
-          some (.structv claim.structIdx
-            (V3ConstructVerbatim.constructModelFields
-              (args ++ List.replicate 1 .null) plan.fields)) := by
-  have hClaim : constructClaimAccepted artifact.modBytes artifact.modLen
-      artifact.manifest claim := by
-    exact allClaims_of_mem
-      (constructClaimAccepted artifact.modBytes artifact.modLen artifact.manifest)
-      artifact.constructClaims hAcc.1 claim hMem
-  unfold constructClaimAccepted at hClaim
-  cases hPlan : constructPlanForExport claim.exportName
-      artifact.manifest.constructPlans with
-  | none => simp [hPlan] at hClaim
-  | some plan =>
-      have hAccepted : constructPlanAccepted
-          artifact.modBytes artifact.modLen claim.exportNameBytes claim.exportName
-          claim.carrier claim.structIdx claim.fieldCount claim.elemTy claim.symPlan
-          plan claim.obligation := by
-        simpa [hPlan] using hClaim
-      rcases hAccepted with
-        ⟨_hExport, _hCarrier, _hSym, _hMatches, hCheck, _hFields,
-          body, codeEntry, binding, hLow, _hCodeEntry, _hExportCode,
-          _hBinding, hSelf, _hBindingCode, _hStructTy, _hFuncTy, hCode⟩
-      have hCodeSelf : claim.obligation.code claim.obligation.self =
-          some { arity := plan.arity, nlocals := 1, body := body } := by
-        simpa [← hSelf] using hCode
-      refine ⟨plan, rfl, ?_⟩
-      intro host args hLen
-      exact V3ConstructVerbatim.generic_construct_certified
-        claim.structIdx plan claim.obligation.code host claim.obligation.self 1
-        hCheck body hLow hCodeSelf args hLen
 
 private theorem construct_run_succ_eq_one
     (structIdx : Nat) (plan : ConstructRawPlan)
@@ -135,6 +79,55 @@ private theorem construct_run_succ_eq_one
         (args ++ List.replicate 1 .null) [])
   rw [hFuel, hOne]
   simp [wRunF]
+
+/-- The single byte-to-execution seam for one accepted constructor claim.
+    It exposes the selected plan and its exact result at every positive fuel;
+    downstream model discharge no longer reopens artifact acceptance. -/
+theorem construct_accepted_call
+    (artifact : ArtifactData)
+    (hAcc : acceptedConstructFragments artifact)
+    (claim : ConstructClaim)
+    (hMem : claim ∈ artifact.constructClaims) :
+    ∃ plan,
+      constructPlanForExport claim.exportName
+          artifact.manifest.constructPlans = some plan ∧
+      ∀ (host : HostTbl) (fuel : Nat) (args : List WVal),
+        args.length = plan.arity →
+        wFuncN claim.obligation.code host (fuel + 1)
+            claim.obligation.self args =
+          some (.structv claim.structIdx
+            (V3ConstructVerbatim.constructModelFields
+              (args ++ List.replicate 1 .null) plan.fields)) := by
+  have hClaim : constructClaimAccepted artifact.modBytes artifact.modLen
+      artifact.manifest claim := by
+    exact allClaims_of_mem
+      (constructClaimAccepted artifact.modBytes artifact.modLen artifact.manifest)
+      artifact.constructClaims hAcc.1 claim hMem
+  unfold constructClaimAccepted at hClaim
+  cases hPlan : constructPlanForExport claim.exportName
+      artifact.manifest.constructPlans with
+  | none => simp [hPlan] at hClaim
+  | some plan =>
+      have hAccepted : constructPlanAccepted
+          artifact.modBytes artifact.modLen claim.exportNameBytes claim.exportName
+          claim.carrier claim.structIdx claim.fieldCount claim.elemTy claim.symPlan
+          plan claim.obligation := by
+        simpa [hPlan] using hClaim
+      rcases hAccepted with
+        ⟨_hExport, _hCarrier, _hSym, _hMatches, hCheck, _hFields,
+          body, codeEntry, binding, hLow, _hCodeEntry, _hExportCode,
+          _hBinding, hSelf, _hBindingCode, _hStructTy, _hFuncTy, hCode⟩
+      have hCodeSelf : claim.obligation.code claim.obligation.self =
+          some { arity := plan.arity, nlocals := 1, body := body } := by
+        simpa [← hSelf] using hCode
+      refine ⟨plan, rfl, ?_⟩
+      intro host fuel args hLen
+      have hOne := V3ConstructVerbatim.generic_construct_certified
+        claim.structIdx plan claim.obligation.code host claim.obligation.self 1
+        hCheck body hLow hCodeSelf args hLen
+      exact (construct_run_succ_eq_one
+        claim.structIdx plan claim.obligation.code host claim.obligation.self
+        hCheck body hLow hCodeSelf fuel args hLen).trans hOne
 
 /-- Per-obligation option-(b) discharge for a concrete model-bearing
 constructor export. The checked plan, canonical lowering, and code binding are
@@ -299,51 +292,26 @@ theorem construct_claim_discharges
           artifact.manifest.constructPlans = some plan →
         constructSemanticBridge claim plan) :
     obligationHolds claim.obligation := by
-  have hClaim : constructClaimAccepted artifact.modBytes artifact.modLen
-      artifact.manifest claim := by
-    exact allClaims_of_mem
-      (constructClaimAccepted artifact.modBytes artifact.modLen artifact.manifest)
-      artifact.constructClaims hAcc.1 claim hMem
-  unfold constructClaimAccepted at hClaim
-  cases hPlan : constructPlanForExport claim.exportName
-      artifact.manifest.constructPlans with
-  | none => simp [hPlan] at hClaim
-  | some plan =>
-      have hAccepted : constructPlanAccepted
-          artifact.modBytes artifact.modLen claim.exportNameBytes claim.exportName
-          claim.carrier claim.structIdx claim.fieldCount claim.elemTy claim.symPlan
-          plan claim.obligation := by
-        simpa [hPlan] using hClaim
-      rcases hBridge plan hPlan with ⟨hPolicy, hSemantic⟩
-      rcases hAccepted with
-        ⟨_hExport, _hCarrier, _hSym, _hMatches, hCheck, _hFields,
-          body, codeEntry, binding, hLow, _hCodeEntry, _hExportCode,
-          _hBinding, hSelf, _hBindingCode, _hStructTy, _hFuncTy, hCode⟩
-      have hCodeSelf : claim.obligation.code claim.obligation.self =
-          some { arity := plan.arity, nlocals := 1, body := body } := by
-        simpa [← hSelf] using hCode
-      rw [obligationHolds, hPolicy]
-      intro S add sub mul stringEq stringConcat
-        _hAdd _hSub _hMul _hStringEq _hStringConcat fuel x args w hDom hRun
-      rcases hSemantic S x args hDom with ⟨hLen, hCod⟩
-      cases fuel with
-      | zero => simp [wFuncN] at hRun
-      | succ fuel =>
-          have hCall := V3ConstructVerbatim.generic_construct_certified
-            claim.structIdx plan claim.obligation.code
-            (claim.obligation.host add sub mul stringEq stringConcat)
-            claim.obligation.self 1 hCheck body hLow hCodeSelf args hLen
-          have hFuel := construct_run_succ_eq_one
-            claim.structIdx plan claim.obligation.code
-            (claim.obligation.host add sub mul stringEq stringConcat)
-            claim.obligation.self hCheck body hLow hCodeSelf fuel args hLen
-          rw [hFuel, hCall] at hRun
-          have hw :
-              .structv claim.structIdx
-                (V3ConstructVerbatim.constructModelFields
-                  (args ++ List.replicate 1 .null) plan.fields) = w :=
-            Option.some.inj hRun
-          simpa [← hw] using hCod
+  rcases construct_accepted_call artifact hAcc claim hMem with
+    ⟨plan, hPlan, hCall⟩
+  rcases hBridge plan hPlan with ⟨hPolicy, hSemantic⟩
+  rw [obligationHolds, hPolicy]
+  intro S add sub mul stringEq stringConcat
+    _hAdd _hSub _hMul _hStringEq _hStringConcat fuel x args w hDom hRun
+  rcases hSemantic S x args hDom with ⟨hLen, hCod⟩
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      have hResult := hCall
+        (claim.obligation.host add sub mul stringEq stringConcat)
+        fuel args hLen
+      rw [hResult] at hRun
+      have hw :
+          .structv claim.structIdx
+            (V3ConstructVerbatim.constructModelFields
+              (args ++ List.replicate 1 .null) plan.fields) = w :=
+        Option.some.inj hRun
+      simpa [← hw] using hCod
 
 theorem construct_discharges
     (artifact : ArtifactData)
@@ -357,9 +325,5 @@ theorem construct_discharges
 
 end V3Master
 
-#print axioms V3Master.construct_accepted_call
+-- Compatibility diagnostic; the checker enforces axioms once at the root.
 #print axioms V3Master.construct_canonical_discharges
-#print axioms V3Master.constructUnary_canonical_discharges
-#print axioms V3Master.constructBinary_canonical_discharges
-#print axioms V3Master.construct_claim_discharges
-#print axioms V3Master.construct_discharges

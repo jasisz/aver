@@ -209,5 +209,3 @@ def masterTarget (wasmSha256 : String) (artifact : ArtifactData) : Prop :=
   holdsAtHash wasmSha256 artifact.manifest
 
 end V3Master
-
-#print axioms V3Master.holdsCore_of_claims

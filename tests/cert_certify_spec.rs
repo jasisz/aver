@@ -637,12 +637,6 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             aver::codegen::cert::audited_v3_strong_fuel_sha(),
         ),
         (
-            "V3IfElse.lean",
-            aver::codegen::cert::CERT_V3_IF_ELSE,
-            "v3_if_else_sha256",
-            aver::codegen::cert::audited_v3_if_else_sha(),
-        ),
-        (
             "V3GenericCertified.lean",
             aver::codegen::cert::CERT_V3_GENERIC_CERTIFIED,
             "v3_generic_certified_sha256",
@@ -950,17 +944,17 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
             && certificate.contains("have hModelFuel")
             && certificate.contains("V3Rec.evalRecUFuel")
             && certificate.contains("⟨n, _, rfl, hv")
-            && certificate.contains("⟨[n], ⟨ReprAll.cons hv ReprAll.nil, rfl⟩"),
-        "recursion must emit both option-(b) model directions and no evaluator proof:\n{certificate}"
+            && !certificate.contains("⟨[n], ⟨ReprAll.cons hv ReprAll.nil, rfl⟩"),
+        "recursion must emit only the used option-(b) model direction and no evaluator proof:\n{certificate}"
     );
     assert!(
         certificate.contains("theorem countDown_recursionSemanticBridge")
             && certificate.contains("V3Rec.evalRecAFuel")
             && certificate.contains("refine Or.inr")
             && certificate.contains("⟨n, acc, vn, vacc, rfl, hvn, hvacc")
-            && certificate.contains("⟨[n, acc],")
-            && certificate.contains("ReprAll.cons hvn (ReprAll.cons hvacc ReprAll.nil)"),
-        "accumulator recursion must emit both arity-two option-(b) model directions:\n{certificate}"
+            && !certificate.contains("⟨[n, acc],")
+            && !certificate.contains("ReprAll.cons hvn (ReprAll.cons hvacc ReprAll.nil)"),
+        "accumulator recursion must emit only the used arity-two model direction:\n{certificate}"
     );
     for mutual_name in ["isEven", "isOdd"] {
         assert!(
@@ -968,8 +962,8 @@ fn certify_goal_matrix_lands_v3_wall_kernel_clean() {
                 && certificate.contains("V3Mutual.evalMutualUFuel")
                 && certificate.contains("have hModelFuel")
                 && certificate.contains("refine ⟨n, v, rfl, hv")
-                && certificate.contains("⟨[n], ⟨ReprAll.cons hv ReprAll.nil, rfl⟩"),
-            "mutual export must emit both option-(b) model directions: {mutual_name}\n{certificate}"
+                && !certificate.contains("⟨[n], ⟨ReprAll.cons hv ReprAll.nil, rfl⟩"),
+            "mutual export must emit only the used option-(b) model direction: {mutual_name}\n{certificate}"
         );
     }
     let user_name = manifest["certified"]

@@ -7,7 +7,8 @@
 //! every user-function body, the section walk, exports, imports and carrier —
 //! and, for the CERTIFIED obligations, additionally with the Rust
 //! `cert::rederive_obligations` (three oracles on those; two on the rest).
-//! It compiles each fixture, emits a Lean witness pinning `walkIds`,
+//! It compiles each fixture, emits a Lean witness pinning a test-only whole-file
+//! section walk built from `CertDecode.readU`,
 //! `decodeExports`, `decodeImports`, `decodeCarrier`, and per-function
 //! `decodeCode` to the oracle values, and lets `lake env lean` be the verdict —
 //! a divergence is a kernel `rfl` failure with a full repro, never a string
@@ -133,6 +134,43 @@ const SYNTH_BYTES: &[u8] = &[
     0x71, 0x46, 0x50, 0x0f, 0xd0, 0x70, 0xfb, 0x08, 0x02, 0x03, 0x0b,
 ];
 const SYNTH_TERM: &str = "[.i32And, .i32Eq, .i64Eqz, .ret, .refNull, .arrayNewFixed 2 3]";
+
+/// Differential-only views stay in the test witness instead of enlarging the
+/// checker-owned decoder API. They still reduce in Lean's kernel against the
+/// production primitives, so an oracle mismatch remains an `rfl` failure.
+const TEST_HELPERS: &str = r#"
+namespace CertDecodeTest
+
+def walkIds : Nat → Nat → Nat → Option (List Nat)
+  | 0, _, _ => none
+  | fuel + 1, n, len =>
+      if len == 0 then some [] else
+        let id := n &&& 0xff
+        let n1 := n >>> 8
+        match CertDecode.readU n1 (len - 1) with
+        | none => none
+        | some (size, n2, len2) =>
+            match walkIds fuel (n2 >>> (8 * size)) (len2 - size) with
+            | none => none
+            | some tail => some (id :: tail)
+
+def decodeBodyBytes (nfields : List Nat) (segs : List (List Nat))
+    (fuel n len : Nat) : Option (List WInstr) :=
+  match CertDecode.decBlock nfields segs fuel [] n len with
+  | none => none
+  | some (instrs, _, _, _, term) => if term == 0 then some instrs else none
+
+def scanDefined (n len defIdx : Nat) : Option (List CertDecode.StringHost.Op) :=
+  match CertDecode.StringHost.bodyLocs n len with
+  | none => none
+  | some locs =>
+      match locs[defIdx]? with
+      | none => none
+      | some (_, bodyN, bodyLen) =>
+          CertDecode.StringHost.scan (bodyLen + 1) bodyN bodyLen
+
+end CertDecodeTest
+"#;
 
 // ---- environment ---------------------------------------------------------
 
@@ -696,12 +734,12 @@ fn s3_role_table_negative_controls_decline_empty_and_ambiguous_candidates() {
          def bytesLen : Nat := {}\n\n\
          example : CertDecode.AddSub.roleTable changedAdd bytesLen =\n\
              some {{ box := some {box_idx}, add := none, mul := some {mul_idx}, sub := none }} := rfl\n\
-         example : CertDecode.AddSub.addCands changedAdd bytesLen = some [] := rfl\n\
-         example : CertDecode.AddSub.subCands changedAdd bytesLen = some [{add_idx}, {sub_idx}] := rfl\n\n\
+         example : Option.map (CertDecode.AddSub.candFor .add) (CertDecode.AddSub.carrierBinopFns changedAdd bytesLen) = some [] := rfl\n\
+         example : Option.map (CertDecode.AddSub.candFor .sub) (CertDecode.AddSub.carrierBinopFns changedAdd bytesLen) = some [{add_idx}, {sub_idx}] := rfl\n\n\
          example : CertDecode.AddSub.roleTable ambiguousAdd bytesLen =\n\
              some {{ box := some {box_idx}, add := none, mul := some {mul_idx}, sub := none }} := rfl\n\
-         example : CertDecode.AddSub.addCands ambiguousAdd bytesLen = some [{add_idx}, {sub_idx}] := rfl\n\
-         example : CertDecode.AddSub.subCands ambiguousAdd bytesLen = some [] := rfl\n",
+         example : Option.map (CertDecode.AddSub.candFor .add) (CertDecode.AddSub.carrierBinopFns ambiguousAdd bytesLen) = some [{add_idx}, {sub_idx}] := rfl\n\
+         example : Option.map (CertDecode.AddSub.candFor .sub) (CertDecode.AddSub.carrierBinopFns ambiguousAdd bytesLen) = some [] := rfl\n",
         hex_le(&changed_add),
         hex_le(&ambiguous_add),
         bytes.len(),
@@ -793,14 +831,14 @@ fn f5_mutated_string_eq_loop_opcode_changes_kernel_classification() {
 
     let def_idx = eq_idx - imported;
     let src = format!(
-        "import CertDecode\nopen CertPrelude\nset_option maxRecDepth 200000\n\n\
+        "import CertDecode\nopen CertPrelude\nset_option maxRecDepth 200000\n\n{TEST_HELPERS}\n\
          def original : Nat := 0x{}\n\
          def mutated : Nat := 0x{}\n\
          def bytesLen : Nat := {}\n\n\
          example : CertDecode.StringHost.roleTable original bytesLen = some [(3, .eq)] := rfl\n\
          example : CertDecode.StringHost.roleTable mutated bytesLen = some [] := rfl\n\
-         example : (CertDecode.StringHost.scanDefined original bytesLen {def_idx}).bind (fun ops => ops[26]?) = some .i32Ne := rfl\n\
-         example : (CertDecode.StringHost.scanDefined mutated bytesLen {def_idx}).bind (fun ops => ops[26]?) = some .other := rfl\n",
+         example : (CertDecodeTest.scanDefined original bytesLen {def_idx}).bind (fun ops => ops[26]?) = some .i32Ne := rfl\n\
+         example : (CertDecodeTest.scanDefined mutated bytesLen {def_idx}).bind (fun ops => ops[26]?) = some .other := rfl\n",
         hex_le(&bytes),
         hex_le(&mutated),
         bytes.len(),
@@ -1087,13 +1125,14 @@ fn cert_decode_three_way_differential_and_coverage() {
 
         let mut src = String::new();
         src.push_str("import CertDecode\nopen CertPrelude\n\n");
+        src.push_str(TEST_HELPERS);
+        src.push('\n');
         src.push_str(&format!("def bytesN : Nat := 0x{}\n", hex_le(&bytes)));
         src.push_str(&format!("def bytesLen : Nat := {}\n\n", bytes.len()));
 
-        // Section-level bindings (oracle: Python byte decoder). The `walkIds`
-        // binding walks the ENTIRE file (one entry per section), so a malformed
-        // section frame anywhere in the module fails the differential even in
-        // regions the targeted decoders skip.
+        // Section-level bindings (oracle: Python byte decoder). The test-only
+        // walker uses production `readU` and traverses the ENTIRE file, so a
+        // malformed frame anywhere still fails the differential.
         let sections: Vec<String> = oracle["sections"]
             .as_array()
             .unwrap()
@@ -1101,7 +1140,7 @@ fn cert_decode_three_way_differential_and_coverage() {
             .map(|s| s.as_u64().unwrap().to_string())
             .collect();
         src.push_str(&format!(
-            "example : CertDecode.walkIds 64 (bytesN >>> 64) (bytesLen - 8) = some [{}] := rfl\n",
+            "example : CertDecodeTest.walkIds 64 (bytesN >>> 64) (bytesLen - 8) = some [{}] := rfl\n",
             sections.join(", ")
         ));
         src.push_str(&format!(
@@ -1171,10 +1210,12 @@ fn cert_decode_three_way_differential_and_coverage() {
     {
         let mut src = String::new();
         src.push_str("import CertDecode\nopen CertPrelude\n\n");
+        src.push_str(TEST_HELPERS);
+        src.push('\n');
         src.push_str(&format!("def synthN : Nat := 0x{}\n", hex_le(SYNTH_BYTES)));
         src.push_str(&format!("def synthLen : Nat := {}\n\n", SYNTH_BYTES.len()));
         src.push_str(&format!(
-            "example : CertDecode.decodeBodyBytes [] [] {} synthN synthLen = some {} := rfl\n",
+            "example : CertDecodeTest.decodeBodyBytes [] [] {} synthN synthLen = some {} := rfl\n",
             SYNTH_BYTES.len(),
             SYNTH_TERM
         ));
@@ -1342,7 +1383,8 @@ fn cert_decode_mutations_fail_closed() {
     // helper: build a witness over an explicit byte array + a single example.
     let witness = |b: &[u8], example: &str| -> String {
         format!(
-            "import CertDecode\nopen CertPrelude\n\ndef bytesN : Nat := 0x{}\ndef bytesLen : Nat := {}\n\n{example}\n",
+            "import CertDecode\nopen CertPrelude\n\n{}\ndef bytesN : Nat := 0x{}\ndef bytesLen : Nat := {}\n\n{example}\n",
+            TEST_HELPERS,
             hex_le(b),
             b.len()
         )
@@ -1388,6 +1430,18 @@ fn cert_decode_mutations_fail_closed() {
         assert!(
             !ok,
             "M1: a body-byte flip must break the original decode:\n{report}"
+        );
+
+        // M1b: an early top-level `end` cannot hide residual bytes inside the
+        // same declared code entry.
+        let mut m = bytes.clone();
+        m[body0] = 0x0b;
+        let example =
+            format!("example : CertDecode.decodeCode bytesN bytesLen {self_idx} = none := rfl");
+        let (ok, report) = run_lean(&prelude, &witness(&m, &example));
+        assert!(
+            ok,
+            "M1b: trailing bytes after a top-level end must fail closed:\n{report}"
         );
     }
 
@@ -1449,8 +1503,9 @@ fn cert_decode_mutations_fail_closed() {
         m.push(size_byte | 0x80); // continuation set …
         m.push(0x00); // … then a trailing zero → overlong (rejected)
         m.extend_from_slice(&bytes[mem.1..]);
-        let example =
-            "example : CertDecode.decodeExports bytesN bytesLen = none := rfl".to_string();
+        let example = "example : CertDecode.decodeExports bytesN bytesLen = none := rfl\n\
+             example : CertDecode.moduleFramingValid bytesN bytesLen = false := rfl"
+            .to_string();
         let (ok, report) = run_lean(&prelude, &witness(&m, &example));
         assert!(
             ok,
@@ -1470,7 +1525,8 @@ fn cert_decode_mutations_fail_closed() {
         let m = bytes[..cut].to_vec();
         let example = format!(
             "example : CertDecode.decodeCode bytesN bytesLen {self_idx} = none := rfl\n\
-             example : (CertDecode.decodeExports bytesN bytesLen).isSome = true := rfl"
+             example : (CertDecode.decodeExports bytesN bytesLen).isSome = true := rfl\n\
+             example : CertDecode.moduleFramingValid bytesN bytesLen = false := rfl"
         );
         let (ok, report) = run_lean(&prelude, &witness(&m, &example));
         assert!(
@@ -1521,7 +1577,8 @@ fn cert_decode_mutations_fail_closed() {
         let mut m = bytes.clone();
         m[size_start..cstart].copy_from_slice(&encoded);
         let example = "example : CertDecode.codeLocs bytesN bytesLen = none := rfl\n\
-             example : CertDecode.walkIds 64 (bytesN >>> 64) (bytesLen - 8) = none := rfl"
+             example : CertDecodeTest.walkIds 64 (bytesN >>> 64) (bytesLen - 8) = none := rfl\n\
+             example : CertDecode.moduleFramingValid bytesN bytesLen = false := rfl"
             .to_string();
         let (ok, report) = run_lean(&prelude, &witness(&m, &example));
         assert!(

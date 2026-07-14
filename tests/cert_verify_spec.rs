@@ -5215,6 +5215,7 @@ fn verbatim_kernel_guards_are_isolating() {
     lean.push_str("open AverCert\nopen AverCert.Schema\n");
     lean.push_str("set_option maxRecDepth 100000\n\n");
     lean.push_str("def packLE : List Nat → Nat | [] => 0 | b :: bs => b + (packLE bs <<< 8)\n\n");
+    lean.push_str("def decodeTestType (bytes : List Nat) : Option CertDecode.TypeEntry :=\n  match CertDecode.readTypeEntry (packLE bytes) bytes.length with\n  | some (entry, _, 0) => some entry\n  | _ => none\n\n");
     // Minimal modules: header, type section, then a shared func/export/code/data
     // tail. `f` is func 0 of type 0; code entry `[2, 0, 11]`; data segment 0 is
     // "alpha" (passive). Only the type section differs between the two.
@@ -5260,10 +5261,10 @@ fn verbatim_kernel_guards_are_isolating() {
     // byte-derived binding and code entry are IDENTICAL (the reftype is never in
     // the code entry) — only `checkVerbatimFuncType` tells them apart.
     lean.push_str(
-        "example : WasmSlice.checkVerbatimFuncType (.refNull 5) [96, 1, 99, 4, 1, 99, 5] = true := rfl\n",
+        "example : (decodeTestType [96, 1, 99, 4, 1, 99, 5]).map (WasmSlice.checkVerbatimFuncType (.refNull 5)) = some true := rfl\n",
     );
     lean.push_str(
-        "example : WasmSlice.checkVerbatimFuncType (.refNull 5) [96, 1, 99, 4, 1, 100, 5] = false := rfl\n",
+        "example : (decodeTestType [96, 1, 99, 4, 1, 100, 5]).map (WasmSlice.checkVerbatimFuncType (.refNull 5)) = some false := rfl\n",
     );
     lean.push_str(
         "def nonNullMod : List Nat := hdr ++ [1, 8, 1, 96, 1, 99, 4, 1, 100, 5] ++ tailSecs\n",
@@ -5280,10 +5281,10 @@ fn verbatim_kernel_guards_are_isolating() {
     // `unaryMod` only in that param byte (`4 -> 109`), so the byte-derived binding
     // and code entry are IDENTICAL — only `checkVerbatimFuncType` tells them apart.
     lean.push_str(
-        "example : WasmSlice.checkVerbatimFuncType (.refNull 5) [96, 1, 99, 109, 1, 99, 5] = false := rfl\n",
+        "example : (decodeTestType [96, 1, 99, 109, 1, 99, 5]).map (WasmSlice.checkVerbatimFuncType (.refNull 5)) = some false := rfl\n",
     );
     lean.push_str(
-        "example : WasmSlice.checkVerbatimFuncType .f64Scalar [96, 1, 99, 109, 1, 124] = false := rfl\n",
+        "example : (decodeTestType [96, 1, 99, 109, 1, 124]).map (WasmSlice.checkVerbatimFuncType .f64Scalar) = some false := rfl\n",
     );
     lean.push_str(
         "def abstractParamMod : List Nat := hdr ++ [1, 8, 1, 96, 1, 99, 109, 1, 99, 5] ++ tailSecs\n",
@@ -5415,6 +5416,34 @@ example : ¬ AcceptedArtifact.verbatimPlanAccepted
   have cross : WasmSlice.verbatimFuncTypeMatches (packLE isoRefMod) isoRefMod.length 0 .f64Scalar = false := rfl
   rw [cross] at hsig
   contradiction
+"#,
+    );
+
+    // Regression-only plan checker controls belong in the test witness, not in
+    // the checker-owned proof wall.
+    lean.push_str(
+        r#"
+def offGrammarSymPlan : SymRawPlan :=
+  { profile := "sym-fragment-v1", params := [.string, .string], result := .bool,
+    body := { nodes := [
+      { id := 0, ty := .string, kind := .param 0 },
+      { id := 1, ty := .string, kind := .param 1 },
+      { id := 2, ty := .bool, kind := .prim .stringEq [0, 1] }], result := 2 } }
+
+example : PlanCheck.checkSymRawPlan offGrammarSymPlan = true := rfl
+example : PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+    [] [] offGrammarSymPlan = none := rfl
+
+def illTypedExprPlan : ExprFragmentRawPlan :=
+  { profile := "expr-fragment-v1", params := [], result := .boolI32,
+    body := { nodes := [
+      { id := 0, ty := .boolI32, kind := .constBool true },
+      { id := 1, ty := .boolI32, kind := .prim .i64Eq [0, 0] }], result := 1 } }
+
+example : PlanCheck.checkExprFragmentRawPlan illTypedExprPlan = false := rfl
+example : PlanCheck.checkConstructRawPlan
+    ({ profile := "construct-v1", arity := 1,
+       fields := [.local 9] } : ConstructRawPlan) = false := rfl
 "#,
     );
 

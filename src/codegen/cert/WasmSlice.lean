@@ -1,10 +1,10 @@
--- Lean-side relevant Wasm byte slicer for certificate artifacts.
+-- Lean-side exact Wasm policy checks for certificate artifacts.
 --
--- This is intentionally not a full WebAssembly validator. It parses only the
--- module facts needed to bind an exported function name to its raw function
--- binding: header, import function count, function section type index, export
--- section and code section.
--- Unsupported import kinds decline.
+-- This is intentionally not a full WebAssembly validator. `CertDecode` owns
+-- the shared strict section/type grammar; this layer projects that typed IR and
+-- exact raw code/data slices into the shapes admitted by certified plans. Its
+-- closure scanner additionally rejects every instruction channel outside the
+-- certificate profile.
 import SchemaCore
 import CertDecode
 import Std.Data.TreeSet
@@ -28,34 +28,11 @@ is the same byte model and the same shift/mask discipline as
 soundness-relevant because high trailing `0x00` bytes are not represented by the
 numeral.
 
-Only whole-module navigation uses this cursor.  Export names, selected type
-entries, data payloads, and code entries cross back to `ByteSeq`; those objects
-are small and remain the byte-exact certificate surface. -/
-
-abbrev takeNatBytes := CertDecode.takeBytes
+Only the closure scanner uses the local list cursor. Export/import names, data
+payloads, and code entries cross to `ByteSeq`; selected types stay in the typed
+`CertDecode.TypeEntry` IR. -/
 
 @[inline] def readNatUleb32 := CertDecode.readU
-
-def readNatS33 (bytes len : Nat) : Option (Int × Nat × Nat) :=
-  match CertDecode.sleb 5 0 0 bytes len with
-  | some (v, bytes', len') =>
-      if -(Int.ofNat (2 ^ 32)) ≤ v ∧ v < Int.ofNat (2 ^ 32) then
-        some (v, bytes', len')
-      else
-        none
-  | none => none
-
-/-- Validate and remove the exact eight-byte Wasm header. -/
-def stripHeader (modBytes modLen : Nat) : Option (Nat × Nat) :=
-  if 8 ≤ modLen ∧ (modBytes &&& 0xffffffffffffffff) = 0x000000016d736100 then
-    some (modBytes >>> 64, modLen - 8)
-  else
-    none
-
-def findSectionPayload (target modBytes modLen : Nat) : Option (Nat × Nat) :=
-  match CertDecode.moduleView modBytes modLen with
-  | some view => view.payload target
-  | none => none
 
 def takeN : Nat → ByteSeq → Option (ByteSeq × ByteSeq)
   | 0, xs => some ([], xs)
@@ -64,10 +41,6 @@ def takeN : Nat → ByteSeq → Option (ByteSeq × ByteSeq)
       | some (taken, rest) => some (x :: taken, rest)
       | none => none
   | _ + 1, [] => none
-
-def readByte : ByteSeq → Option (Nat × ByteSeq)
-  | b :: rest => if b < 256 then some (b, rest) else none
-  | [] => none
 
 def readUlebFuel : Nat → Nat → Nat → ByteSeq → Option (Nat × ByteSeq)
   | 0, _, _, _ => none
@@ -85,11 +58,6 @@ def readUlebFuel : Nat → Nat → Nat → ByteSeq → Option (Nat × ByteSeq)
 
 def readUleb32 (bytes : ByteSeq) : Option (Nat × ByteSeq) :=
   readUlebFuel 5 0 0 bytes
-
-def readNameBytes (bytes : ByteSeq) : Option (ByteSeq × ByteSeq) :=
-  match readUleb32 bytes with
-  | some (len, rest) => takeN len rest
-  | none => none
 
 /-- Signed LEB128 reader (s33 heap-type indices in value types). -/
 def readSlebFuel : Nat → Nat → Int → ByteSeq → Option (Int × ByteSeq)
@@ -148,47 +116,6 @@ def skipValTypesFuel : Nat → Nat → ByteSeq → Option ByteSeq
       | some rest => skipValTypesFuel fuel n rest
       | none => none
 
-/-- Skip one field type: a storage type (value type, or packed `0x78`/`0x77`)
-    followed by a mutability byte. -/
-def skipFieldType (bytes : ByteSeq) : Option ByteSeq :=
-  let storage? : Option ByteSeq :=
-    match bytes with
-    | 0x78 :: rest => some rest
-    | 0x77 :: rest => some rest
-    | _ => skipValType bytes
-  match storage? with
-  | some (m :: rest) => if m = 0x00 ∨ m = 0x01 then some rest else none
-  | _ => none
-
-def skipFieldTypesFuel : Nat → Nat → ByteSeq → Option ByteSeq
-  | 0, _, _ => none
-  | _fuel + 1, 0, bytes => some bytes
-  | fuel + 1, n + 1, bytes =>
-      match skipFieldType bytes with
-      | some rest => skipFieldTypesFuel fuel n rest
-      | none => none
-
-/-- Skip one composite type: `0x60` func (params vec + results vec), `0x5f`
-    struct (field vec), `0x5e` array (one field). -/
-def skipCompType (bytes : ByteSeq) : Option ByteSeq :=
-  match bytes with
-  | 0x60 :: rest =>
-      match readUleb32 rest with
-      | some (np, r1) =>
-          match skipValTypesFuel (np + 1) np r1 with
-          | some r2 =>
-              match readUleb32 r2 with
-              | some (nr, r3) => skipValTypesFuel (nr + 1) nr r3
-              | none => none
-          | none => none
-      | none => none
-  | 0x5f :: rest =>
-      match readUleb32 rest with
-      | some (nf, r1) => skipFieldTypesFuel (nf + 1) nf r1
-      | none => none
-  | 0x5e :: rest => skipFieldType rest
-  | _ => none
-
 def skipUlebsFuel : Nat → Nat → ByteSeq → Option ByteSeq
   | 0, _, _ => none
   | _fuel + 1, 0, bytes => some bytes
@@ -197,257 +124,28 @@ def skipUlebsFuel : Nat → Nat → ByteSeq → Option ByteSeq
       | some (_, rest) => skipUlebsFuel fuel n rest
       | none => none
 
-/-- Skip one subtype: an optional `0x50`/`0x4f` prefix carrying a supertype
-    index vector, then the composite type. -/
-def skipSubType (bytes : ByteSeq) : Option ByteSeq :=
-  match bytes with
-  | 0x50 :: rest | 0x4f :: rest =>
-      match readUleb32 rest with
-      | some (ns, r1) =>
-          match skipUlebsFuel (ns + 1) ns r1 with
-          | some r2 => skipCompType r2
-          | none => none
-      | none => none
-  | _ => skipCompType bytes
+/-- The exact nullable concrete reference admitted by certified signatures. -/
+def nullableRefType (typeIdx : Nat) : CertDecode.ValType :=
+  .ref 0x63 (Int.ofNat typeIdx)
 
-def skipSubTypesFuel : Nat → Nat → ByteSeq → Option ByteSeq
-  | 0, _, _ => none
-  | _fuel + 1, 0, bytes => some bytes
-  | fuel + 1, n + 1, bytes =>
-      match skipSubType bytes with
-      | some rest => skipSubTypesFuel fuel n rest
-      | none => none
-
-/-- Whether `n` value types, each exactly `(ref null carrier)`, sit at the head
-    of `bytes`; returns the remainder. -/
-def readCarrierRefsFuel : Nat → Nat → Nat → ByteSeq → Option ByteSeq
-  | 0, _, _, _ => none
-  | _fuel + 1, 0, _carrier, bytes => some bytes
-  | fuel + 1, n + 1, carrier, bytes =>
-      match bytes with
-      | 0x63 :: rest =>
-          match readS33 rest with
-          | some (idx, rest') =>
-              if idx = Int.ofNat carrier then
-                readCarrierRefsFuel fuel n carrier rest'
-              else
-                none
-          | none => none
-      | _ => none
-
-/-- Whether the subtype at the head of `bytes` is EXACTLY the plain (final,
-    supertype-free) canonical certified function type
-    `[(ref null carrier)^arity] → [(ref null carrier)]`. Subtype prefixes
-    fail-close: the emitter never produces them for certified functions. -/
-def checkCanonicalFuncType (arity carrier : Nat) (bytes : ByteSeq) : Bool :=
-  match bytes with
-  | 0x60 :: rest =>
-      match readUleb32 rest with
-      | some (np, r1) =>
-          if np = arity then
-            match readCarrierRefsFuel (np + 1) np carrier r1 with
-            | some r2 =>
-                match readUleb32 r2 with
-                | some (nr, r3) =>
-                    if nr = 1 then
-                      match readCarrierRefsFuel 2 1 carrier r3 with
-                      | some _ => true
-                      | none => false
-                    else
-                      false
-                | none => false
-            | none => false
-          else
-            false
-      | none => false
-  | _ => false
-
-/-- Walk exactly `n` consecutive subtypes at cumulative type index `base`,
-    applying `check` to the one at absolute index `target`. Returns the remaining
-    bytes and whether the target (if it fell in this run) passed `check`. Every
-    subtype is fully skipped (`skipSubType` fail-closes on malformed), so the run
-    is exact — a garbage subtype anywhere in the run declines. -/
-def walkSubtypesFuel (check : ByteSeq → Bool) (target : Nat) :
-    Nat → Nat → Nat → ByteSeq → Bool → Option (ByteSeq × Bool)
-  | 0, _, _, _, _ => none
-  | _fuel + 1, 0, _base, bytes, acc => some (bytes, acc)
-  | fuel + 1, n + 1, base, bytes, acc =>
-      let acc := if base = target then check bytes else acc
-      match skipSubType bytes with
-      | some rest => walkSubtypesFuel check target fuel n (base + 1) rest acc
-      | none => none
-
-/-- Walk the type section's ENTIRE rectype vector (all `remaining` rec groups —
-    an explicit `0x4e cnt` group defines `cnt` consecutive type indices, a bare
-    subtype defines one), applying `check` to the subtype at absolute index
-    `target`. Every rec group is fully parsed (not just up to `target`), so the
-    remainder returned is the tail after the last declared rectype; the caller
-    requires it to be EMPTY, rejecting trailing bytes / a count mismatch. -/
-def walkRecTypesFuel (check : ByteSeq → Bool) (target : Nat) :
-    Nat → Nat → Nat → ByteSeq → Bool → Option (ByteSeq × Bool)
-  | 0, _, _, _, _ => none
-  | _fuel + 1, 0, _base, bytes, acc => some (bytes, acc)
-  | fuel + 1, rem + 1, base, bytes, acc =>
-      match bytes with
-      | 0x4e :: rest =>
-          match readUleb32 rest with
-          | some (cnt, r1) =>
-              match walkSubtypesFuel check target (cnt + 1) cnt base r1 acc with
-              | some (r2, acc') => walkRecTypesFuel check target fuel rem (base + cnt) r2 acc'
-              | none => none
-          | none => none
-      | _ =>
-          match walkSubtypesFuel check target 2 1 base bytes acc with
-          | some (r2, acc') => walkRecTypesFuel check target fuel rem (base + 1) r2 acc'
-          | none => none
-
-/-! The matching whole-module walkers use the shared big-`Nat` cursor.  They
-parse every declared subtype, but materialize only the selected subtype as a
-small `ByteSeq` for the existing signature checker. -/
-
-def skipValTypeNat (bytes len : Nat) : Option (Nat × Nat) :=
-  if len = 0 then none else
-    let b := bytes &&& 0xff
-    let rest := bytes >>> 8
-    let restLen := len - 1
-    if b = 0x63 ∨ b = 0x64 then
-      match readNatS33 rest restLen with
-      | some (_, rest', restLen') => some (rest', restLen')
-      | none => none
-    else if (0x7b ≤ b ∧ b ≤ 0x7f) ∨ (0x69 ≤ b ∧ b ≤ 0x73) then
-      some (rest, restLen)
-    else
-      none
-
-def skipValTypesNatFuel : Nat → Nat → Nat → Nat → Option (Nat × Nat)
-  | 0, _, _, _ => none
-  | _fuel + 1, 0, bytes, len => some (bytes, len)
-  | fuel + 1, count + 1, bytes, len =>
-      match skipValTypeNat bytes len with
-      | some (rest, restLen) => skipValTypesNatFuel fuel count rest restLen
-      | none => none
-
-def skipFieldTypeNat (bytes len : Nat) : Option (Nat × Nat) :=
-  if len = 0 then none else
-    let b := bytes &&& 0xff
-    let storage? :=
-      if b = 0x78 ∨ b = 0x77 then some (bytes >>> 8, len - 1)
-      else skipValTypeNat bytes len
-    match storage? with
-    | some (afterStorage, storageLen) =>
-        if storageLen = 0 then none else
-          let mutability := afterStorage &&& 0xff
-          if mutability = 0x00 ∨ mutability = 0x01 then
-            some (afterStorage >>> 8, storageLen - 1)
-          else
-            none
-    | none => none
-
-def skipFieldTypesNatFuel : Nat → Nat → Nat → Nat → Option (Nat × Nat)
-  | 0, _, _, _ => none
-  | _fuel + 1, 0, bytes, len => some (bytes, len)
-  | fuel + 1, count + 1, bytes, len =>
-      match skipFieldTypeNat bytes len with
-      | some (rest, restLen) => skipFieldTypesNatFuel fuel count rest restLen
-      | none => none
-
-def skipCompTypeNat (bytes len : Nat) : Option (Nat × Nat) :=
-  if len = 0 then none else
-    let tag := bytes &&& 0xff
-    let rest := bytes >>> 8
-    let restLen := len - 1
-    if tag = 0x60 then
-      match readNatUleb32 rest restLen with
-      | some (np, params, paramsLen) =>
-          match skipValTypesNatFuel (np + 1) np params paramsLen with
-          | some (afterParams, afterParamsLen) =>
-              match readNatUleb32 afterParams afterParamsLen with
-              | some (nr, results, resultsLen) =>
-                  skipValTypesNatFuel (nr + 1) nr results resultsLen
-              | none => none
-          | none => none
-      | none => none
-    else if tag = 0x5f then
-      match readNatUleb32 rest restLen with
-      | some (nf, fields, fieldsLen) =>
-          skipFieldTypesNatFuel (nf + 1) nf fields fieldsLen
-      | none => none
-    else if tag = 0x5e then
-      skipFieldTypeNat rest restLen
-    else
-      none
-
-def skipNatUlebsFuel : Nat → Nat → Nat → Nat → Option (Nat × Nat)
-  | 0, _, _, _ => none
-  | _fuel + 1, 0, bytes, len => some (bytes, len)
-  | fuel + 1, count + 1, bytes, len =>
-      match readNatUleb32 bytes len with
-      | some (_, rest, restLen) => skipNatUlebsFuel fuel count rest restLen
-      | none => none
-
-def skipSubTypeNat (bytes len : Nat) : Option (Nat × Nat) :=
-  if len = 0 then none else
-    let b := bytes &&& 0xff
-    if b = 0x50 ∨ b = 0x4f then
-      match readNatUleb32 (bytes >>> 8) (len - 1) with
-      | some (ns, supertypes, supertypesLen) =>
-          match skipNatUlebsFuel (ns + 1) ns supertypes supertypesLen with
-          | some (comp, compLen) => skipCompTypeNat comp compLen
-          | none => none
-      | none => none
-    else
-      skipCompTypeNat bytes len
-
-def walkSubtypesNatFuel (check : ByteSeq → Bool) (target : Nat) :
-    Nat → Nat → Nat → Nat → Nat → Bool → Option (Nat × Nat × Bool)
-  | 0, _, _, _, _, _ => none
-  | _fuel + 1, 0, _base, bytes, len, acc => some (bytes, len, acc)
-  | fuel + 1, count + 1, base, bytes, len, acc =>
-      match skipSubTypeNat bytes len with
-      | some (rest, restLen) =>
-          let consumed := len - restLen
-          let acc' := if base = target then check (takeNatBytes consumed bytes) else acc
-          walkSubtypesNatFuel check target fuel count (base + 1) rest restLen acc'
-      | none => none
-
-def walkRecTypesNatFuel (check : ByteSeq → Bool) (target : Nat) :
-    Nat → Nat → Nat → Nat → Nat → Bool → Option (Nat × Nat × Bool)
-  | 0, _, _, _, _, _ => none
-  | _fuel + 1, 0, _base, bytes, len, acc => some (bytes, len, acc)
-  | fuel + 1, remaining + 1, base, bytes, len, acc =>
-      if len = 0 then none else
-        let b := bytes &&& 0xff
-        if b = 0x4e then
-          match readNatUleb32 (bytes >>> 8) (len - 1) with
-          | some (count, subtypes, subtypesLen) =>
-              match walkSubtypesNatFuel check target (count + 1) count base
-                  subtypes subtypesLen acc with
-              | some (rest, restLen, acc') =>
-                  walkRecTypesNatFuel check target fuel remaining (base + count)
-                    rest restLen acc'
-              | none => none
-          | none => none
-        else
-          match walkSubtypesNatFuel check target 2 1 base bytes len acc with
-          | some (rest, restLen, acc') =>
-              walkRecTypesNatFuel check target fuel remaining (base + 1)
-                rest restLen acc'
-          | none => none
+def checkCanonicalFuncType (arity carrier : Nat)
+    (entry : CertDecode.TypeEntry) : Bool :=
+  match entry.form, entry.composite with
+  | .plain, .funcType params results =>
+      decide (params = List.replicate arity (nullableRefType carrier)) &&
+        decide (results = [nullableRefType carrier])
+  | _, _ => false
 
 /-- Whether the module's type section is well-formed AND its entry `typeIdx`
     satisfies `check`. The whole rectype vector is parsed and required to consume
     the section payload EXACTLY (no trailing bytes past the last rectype), so a
     valid target entry followed by garbage is rejected, not silently accepted. -/
-def typeSectionMatches (check : ByteSeq → Bool)
+def typeSectionMatches (check : CertDecode.TypeEntry → Bool)
     (modBytes modLen typeIdx : Nat) : Bool :=
-  match findSectionPayload 0x01 modBytes modLen with
-  | some (payload, payloadLen) =>
-      match readNatUleb32 payload payloadLen with
-      | some (count, rest, restLen) =>
-          match walkRecTypesNatFuel check typeIdx (count + 1) count 0
-              rest restLen false with
-          | some (_, 0, acc) => acc
-          | _ => false
+  match CertDecode.decodeTypes modBytes modLen with
+  | some info =>
+      match info.entryIndex[typeIdx]? with
+      | some entry => check entry
       | none => false
   | none => false
 
@@ -459,37 +157,27 @@ def typeSectionMatches (check : ByteSeq → Bool)
 def funcTypeMatches (modBytes modLen typeIdx arity carrier : Nat) : Bool :=
   typeSectionMatches (checkCanonicalFuncType arity carrier) modBytes modLen typeIdx
 
-/-- Whether the head of `bytes` is EXACTLY the certified verbatim dispatch
-    function type for `resultSig`: one nullable concrete nominal-root parameter
-    followed by `[(ref null heapTy)]` for a `.refNull heapTy` plan, or `[f64]`
-    for `.f64Scalar`. The result
-    bytes are parsed from the type section and must match the plan variant
-    exactly; accepting f64 never loosens the nullable-reference branch. The
-    parameter's s33 heap type must be non-negative: a negative s33 after `0x63`
-    encodes an abstract heap type (e.g. long-form `eqref` as `0x63 0x6D`), not
-    a concrete nominal root, so it fail-closes. -/
-def checkVerbatimFuncType (resultSig : AverCert.Schema.VerbatimResultSig)
-    (bytes : ByteSeq) : Bool :=
-  match bytes with
-  | 0x60 :: 0x01 :: 0x63 :: rootBytes =>
-      match readS33 rootBytes with
-      | some (rootIdx, rest) =>
-          if rootIdx < 0 then false else
-          match readUleb32 rest with
-          | some (nr, r1) =>
-              if nr = 1 then
-                match resultSig, r1 with
-                | .refNull resultHeapTy, 0x63 :: r2 =>
-                    match readS33 r2 with
-                    | some (idx, _) => idx == Int.ofNat resultHeapTy
-                    | none => false
-                | .f64Scalar, 0x7c :: _ => true
-                | _, _ => false
-              else
-                false
-          | none => false
-      | none => false
+def isNonnegativeNullableRef : CertDecode.ValType → Bool
+  | .ref 0x63 heap => decide (0 ≤ heap)
   | _ => false
+
+def verbatimResultTypeMatches
+    (expected : AverCert.Schema.VerbatimResultSig) : CertDecode.ValType → Bool
+  | .ref 0x63 heap =>
+      match expected with
+      | .refNull expectedHeap => heap == Int.ofNat expectedHeap
+      | .f64Scalar => false
+  | .numeric 0x7c => expected == .f64Scalar
+  | _ => false
+
+/-- Exact plain certified verbatim signature: one nullable concrete nominal
+    root parameter and exactly one result selected by `resultSig`. -/
+def checkVerbatimFuncType (resultSig : AverCert.Schema.VerbatimResultSig)
+    (entry : CertDecode.TypeEntry) : Bool :=
+  match entry.form, entry.composite with
+  | .plain, .funcType [root] [result] =>
+      isNonnegativeNullableRef root && verbatimResultTypeMatches resultSig result
+  | _, _ => false
 
 /-- Whether the module's byte-derived type-section entry `typeIdx` exactly
     matches the verbatim plan's declared result-signature variant. -/
@@ -499,50 +187,37 @@ def verbatimFuncTypeMatches (modBytes modLen typeIdx : Nat)
 
 /-! ### Bare field-projection type binding -/
 
-def readProjectionResultTy
-    (expected : AverCert.Schema.FieldProjectionResultTy) : ByteSeq → Option ByteSeq
-  | 0x6d :: rest =>
-      if expected = .eqref then some rest else none
-  | 0x63 :: rest =>
-      match expected, readS33 rest with
-      | .nullableRef expectedIdx, some (actualIdx, tail) =>
-          if actualIdx = Int.ofNat expectedIdx then some tail else none
-      | _, _ => none
-  | _ => none
+def projectionResultTypeMatches
+    (expected : AverCert.Schema.FieldProjectionResultTy) : CertDecode.ValType → Bool
+  | .abstract 0x6d => expected == .eqref
+  | .ref 0x63 heap =>
+      match expected with
+      | .nullableRef expectedIdx => heap == Int.ofNat expectedIdx
+      | .eqref => false
+  | _ => false
 
-def readProjectionField
-    (selected current : Nat)
+def hasValStorage : CertDecode.FieldType → Bool
+  | ⟨.val _, _⟩ => true
+  | _ => false
+
+def projectionFieldMatches
     (expected : AverCert.Schema.FieldProjectionResultTy)
-    (bytes : ByteSeq) : Option ByteSeq :=
-  let storage? :=
-    if current = selected then readProjectionResultTy expected bytes
-    else skipValType bytes
-  match storage? with
-  | some (mutability :: rest) =>
-      if mutability = 0x00 ∨ mutability = 0x01 then some rest else none
-  | _ => none
-
-def readProjectionFieldsFuel
-    (selected : Nat) (expected : AverCert.Schema.FieldProjectionResultTy) :
-    Nat → Nat → Nat → ByteSeq → Option ByteSeq
-  | 0, _, _, _ => none
-  | _fuel + 1, 0, _current, bytes => some bytes
-  | fuel + 1, remaining + 1, current, bytes =>
-      match readProjectionField selected current expected bytes with
-      | some rest => readProjectionFieldsFuel selected expected fuel remaining (current + 1) rest
-      | none => none
+    (field : CertDecode.FieldType) : Bool :=
+  match field.storage with
+  | .val actual => projectionResultTypeMatches expected actual
+  | .packed _ => false
 
 def checkProjectionStructType
     (fieldCount fieldIdx : Nat)
-    (resultTy : AverCert.Schema.FieldProjectionResultTy) : ByteSeq → Bool
-  | 0x5f :: rest =>
-      match readUleb32 rest with
-      | some (actualCount, fields) =>
-          actualCount = fieldCount && fieldIdx < actualCount &&
-            (readProjectionFieldsFuel fieldIdx resultTy
-              (actualCount + 1) actualCount 0 fields).isSome
-      | none => false
-  | _ => false
+    (resultTy : AverCert.Schema.FieldProjectionResultTy)
+    (entry : CertDecode.TypeEntry) : Bool :=
+  match entry.form, entry.composite with
+  | .plain, .structType fields =>
+      fields.length == fieldCount && fields.all hasValStorage &&
+        match fields[fieldIdx]? with
+        | some field => projectionFieldMatches resultTy field
+        | none => false
+  | _, _ => false
 
 def projectionStructTypeMatches
     (modBytes modLen structIdx fieldCount fieldIdx : Nat)
@@ -553,20 +228,13 @@ def projectionStructTypeMatches
 
 def checkProjectionFuncType
     (structIdx : Nat)
-    (resultTy : AverCert.Schema.FieldProjectionResultTy) : ByteSeq → Bool
-  | 0x60 :: rest =>
-      match readUleb32 rest with
-      | some (1, 0x63 :: paramTail) =>
-          match readS33 paramTail with
-          | some (paramIdx, resultCountBytes) =>
-              if paramIdx = Int.ofNat structIdx then
-                match readUleb32 resultCountBytes with
-                | some (1, resultBytes) => (readProjectionResultTy resultTy resultBytes).isSome
-                | _ => false
-              else false
-          | none => false
-      | _ => false
-  | _ => false
+    (resultTy : AverCert.Schema.FieldProjectionResultTy)
+    (entry : CertDecode.TypeEntry) : Bool :=
+  match entry.form, entry.composite with
+  | .plain, .funcType [param] [result] =>
+      decide (param = nullableRefType structIdx) &&
+        projectionResultTypeMatches resultTy result
+  | _, _ => false
 
 def projectionFuncTypeMatches
     (modBytes modLen typeIdx structIdx : Nat)
@@ -575,36 +243,31 @@ def projectionFuncTypeMatches
 
 /-! ### List-constructor type binding -/
 
-def readConstructValType
-    (expected : AverCert.Schema.ConstructValType) : ByteSeq → Option ByteSeq
-  | 0x7f :: rest => if expected = .i32 then some rest else none
-  | 0x7e :: rest => if expected = .i64 then some rest else none
-  | 0x7c :: rest => if expected = .f64 then some rest else none
-  | 0x6d :: rest => if expected = .eqref then some rest else none
-  | 0x63 :: rest =>
-      match expected, readS33 rest with
-      | .nullableRef expectedIdx, some (actualIdx, tail) =>
-          if actualIdx = Int.ofNat expectedIdx then some tail else none
-      | _, _ => none
-  | _ => none
+def constructValType
+    (expected : AverCert.Schema.ConstructValType) : CertDecode.ValType :=
+  match expected with
+  | .i32 => .numeric 0x7f
+  | .i64 => .numeric 0x7e
+  | .f64 => .numeric 0x7c
+  | .eqref => .abstract 0x6d
+  | .nullableRef typeIdx => nullableRefType typeIdx
 
-def readImmutableConstructField
-    (expected : AverCert.Schema.ConstructValType) (bytes : ByteSeq) : Option ByteSeq :=
-  match readConstructValType expected bytes with
-  | some (0x00 :: rest) => some rest
-  | _ => none
+def immutableConstructFieldMatches
+    (expected : AverCert.Schema.ConstructValType)
+    (field : CertDecode.FieldType) : Bool :=
+  field.mutability == 0 &&
+    match field.storage with
+    | .val actual => decide (actual = constructValType expected)
+    | .packed _ => false
 
 def checkListConstructStructType
-    (structIdx : Nat) (elemTy : AverCert.Schema.ConstructValType) : ByteSeq → Bool
-  | 0x5f :: rest =>
-      match readUleb32 rest with
-      | some (2, fields) =>
-          match readImmutableConstructField elemTy fields with
-          | some tailField =>
-              (readImmutableConstructField (.nullableRef structIdx) tailField).isSome
-          | none => false
-      | _ => false
-  | _ => false
+    (structIdx : Nat) (elemTy : AverCert.Schema.ConstructValType)
+    (entry : CertDecode.TypeEntry) : Bool :=
+  match entry.form, entry.composite with
+  | .plain, .structType [head, tail] =>
+      immutableConstructFieldMatches elemTy head &&
+        immutableConstructFieldMatches (.nullableRef structIdx) tail
+  | _, _ => false
 
 def listConstructStructTypeMatches
     (modBytes modLen structIdx : Nat)
@@ -612,29 +275,18 @@ def listConstructStructTypeMatches
   typeSectionMatches (checkListConstructStructType structIdx elemTy) modBytes modLen structIdx
 
 def checkListConstructFuncType
-    (arity structIdx : Nat) (elemTy : AverCert.Schema.ConstructValType) : ByteSeq → Bool
-  | 0x60 :: rest =>
-      match readUleb32 rest with
-      | some (actualArity, params) =>
-          if actualArity = arity then
-            match readConstructValType elemTy params with
-            | some afterHead =>
-                let afterParams? :=
-                  if arity = 1 then some afterHead
-                  else if arity = 2 then
-                    readConstructValType (.nullableRef structIdx) afterHead
-                  else none
-                match afterParams? with
-                | some resultCountBytes =>
-                    match readUleb32 resultCountBytes with
-                    | some (1, resultBytes) =>
-                        (readConstructValType (.nullableRef structIdx) resultBytes).isSome
-                    | _ => false
-                | none => false
-            | none => false
-          else false
-      | none => false
-  | _ => false
+    (arity structIdx : Nat) (elemTy : AverCert.Schema.ConstructValType)
+    (entry : CertDecode.TypeEntry) : Bool :=
+  match entry.form, entry.composite with
+  | .plain, .funcType params results =>
+      let head := constructValType elemTy
+      let tail := nullableRefType structIdx
+      let paramsMatch :=
+        if arity = 1 then decide (params = [head])
+        else if arity = 2 then decide (params = [head, tail])
+        else false
+      paramsMatch && decide (results = [tail])
+  | _, _ => false
 
 def listConstructFuncTypeMatches
     (modBytes modLen typeIdx arity structIdx : Nat)
@@ -642,320 +294,60 @@ def listConstructFuncTypeMatches
   typeSectionMatches (checkListConstructFuncType arity structIdx elemTy)
     modBytes modLen typeIdx
 
-/-! ### Passive data-section navigation
-
-`array.new_data` encodes only the referenced segment's INDEX and the copied
-LENGTH into the code entry — never the segment's byte CONTENTS, which live in the
-data section (id 11). The verbatim string-literal leaves therefore need the exact
-segment bytes recovered here to bind a plan's claimed payload to the module. The
-wasm-gc backend emits every data segment passively (`0x01 <vec byte>`); an active
-flag (`0x00`/`0x02`) is a shape this slicer never needs to cross, so it
-fail-closes. -/
-
-/-- Read one passive data segment (`0x01 <vec byte>`), returning its byte
-    contents and the remaining bytes; any other flag fail-closes. -/
-def walkDataSegmentsNatFuel (target : Nat) :
-    Nat → Nat → Nat → Nat → Nat → Option ByteSeq → Option ByteSeq
-  | 0, _, _, _, _, _ => none
-  | _fuel + 1, 0, _current, _bytes, len, found =>
-      if len = 0 then found else none
-  | fuel + 1, remaining + 1, current, bytes, len, found =>
-      if len = 0 ∨ (bytes &&& 0xff) != 0x01 then none else
-        match readNatUleb32 (bytes >>> 8) (len - 1) with
-        | none => none
-        | some (size, contents, contentsLen) =>
-            if size ≤ contentsLen then
-              let found' :=
-                if current = target then some (takeNatBytes size contents) else found
-              walkDataSegmentsNatFuel target fuel remaining (current + 1)
-                (contents >>> (8 * size)) (contentsLen - size) found'
-            else
-              none
-
 /-- Exact selected passive data payload.  The full declared vector must parse
     and exhaust the section payload. -/
 def dataSegmentBytes (modBytes modLen dataIdx : Nat) : Option ByteSeq :=
-  match findSectionPayload 0x0b modBytes modLen with
-  | some (payload, payloadLen) =>
-      match readNatUleb32 payload payloadLen with
-      | some (count, rest, restLen) =>
-          if dataIdx < count then
-            walkDataSegmentsNatFuel dataIdx (count + 1) count 0 rest restLen none
-          else
-            none
-      | none => none
+  match CertDecode.decodeData modBytes modLen with
+  | some segments => segments[dataIdx]?
   | none => none
-
-def skipNatName (bytes len : Nat) : Option (Nat × Nat) :=
-  match readNatUleb32 bytes len with
-  | some (nameLen, name, nameAndRestLen) =>
-      if nameLen ≤ nameAndRestLen then
-        some (name >>> (8 * nameLen), nameAndRestLen - nameLen)
-      else
-        none
-  | none => none
-
-def readImportFuncNat (bytes len : Nat) : Option (Nat × Nat) :=
-  match skipNatName bytes len with
-  | some (afterModule, afterModuleLen) =>
-      match skipNatName afterModule afterModuleLen with
-      | some (afterName, afterNameLen) =>
-          if afterNameLen = 0 ∨ (afterName &&& 0xff) != 0x00 then none else
-            match readNatUleb32 (afterName >>> 8) (afterNameLen - 1) with
-            | some (_, rest, restLen) => some (rest, restLen)
-            | none => none
-      | none => none
-  | none => none
-
-def countFuncImportsNatFuel : Nat → Nat → Nat → Nat → Nat → Option Nat
-  | 0, _, _, _, _ => none
-  | _fuel + 1, 0, _bytes, len, count =>
-      if len = 0 then some count else none
-  | fuel + 1, remaining + 1, bytes, len, count =>
-      match readImportFuncNat bytes len with
-      | some (rest, restLen) =>
-          countFuncImportsNatFuel fuel remaining rest restLen (count + 1)
-      | none => none
 
 def importedFuncCount (modBytes modLen : Nat) : Option Nat :=
-  match findSectionPayload 0x02 modBytes modLen with
-  | none => some 0
-  | some (payload, payloadLen) =>
-      match readNatUleb32 payload payloadLen with
-      | some (count, rest, restLen) =>
-          countFuncImportsNatFuel (count + 1) count rest restLen 0
-      | none => none
+  CertDecode.funcImportBase modBytes modLen
 
 /-! ### Whole-module interface enumeration
 
-These folds retain the names that the older binding slicer intentionally
-discarded.  They consume each section exactly and return `none` on malformed or
-unsupported descriptors, so the artifact envelope fails closed. -/
+The canonical decoders retain the names that the older binding slicer
+intentionally discarded. They consume each section exactly and return `none`
+on malformed or unsupported descriptors, so the artifact envelope fails closed. -/
 
-structure ExportEntry where
-  name : ByteSeq
-  kind : Nat
-  idx  : Nat
-deriving Repr, DecidableEq
-
-def readNatName (bytes len : Nat) : Option (ByteSeq × Nat × Nat) :=
-  match readNatUleb32 bytes len with
-  | some (nameLen, nameBytes, nameAndRestLen) =>
-      if nameLen ≤ nameAndRestLen then
-        some (takeNatBytes nameLen nameBytes,
-          nameBytes >>> (8 * nameLen), nameAndRestLen - nameLen)
-      else none
-  | none => none
-
-def skipLimitsNat (bytes len : Nat) : Option (Nat × Nat) :=
-  match readNatUleb32 bytes len with
-  | some (flags, afterFlags, afterFlagsLen) =>
-      if flags < 16 then
-        match readNatUleb32 afterFlags afterFlagsLen with
-        | some (_, afterMin, afterMinLen) =>
-            let afterMax? :=
-              if (flags &&& 0x01) != 0 then readNatUleb32 afterMin afterMinLen
-              else some (0, afterMin, afterMinLen)
-            match afterMax? with
-            | some (_, afterMax, afterMaxLen) =>
-                if (flags &&& 0x08) != 0 then
-                  match readNatUleb32 afterMax afterMaxLen with
-                  | some (_, rest, restLen) => some (rest, restLen)
-                  | none => none
-                else some (afterMax, afterMaxLen)
-            | none => none
-        | none => none
-      else none
-  | none => none
-
-def skipImportDescNat (bytes len : Nat) : Option (Nat × Nat) :=
-  if len = 0 then none else
-    let kind := bytes &&& 0xff
-    let rest := bytes >>> 8
-    let restLen := len - 1
-    if kind = 0x00 then
-      match readNatUleb32 rest restLen with
-      | some (_, tail, tailLen) => some (tail, tailLen)
-      | none => none
-    else if kind = 0x01 then
-      match skipValTypeNat rest restLen with
-      | some (limits, limitsLen) => skipLimitsNat limits limitsLen
-      | none => none
-    else if kind = 0x02 then
-      skipLimitsNat rest restLen
-    else if kind = 0x03 then
-      match skipValTypeNat rest restLen with
-      | some (mutability, mutabilityLen) =>
-          if mutabilityLen = 0 then none else
-            let m := mutability &&& 0xff
-            if m = 0 ∨ m = 1 then some (mutability >>> 8, mutabilityLen - 1)
-            else none
-      | none => none
-    else if kind = 0x04 then
-      if restLen = 0 ∨ (rest &&& 0xff) != 0 then none else
-        match readNatUleb32 (rest >>> 8) (restLen - 1) with
-        | some (_, tail, tailLen) => some (tail, tailLen)
-        | none => none
-    else none
-
-def readImportNamePairNat (bytes len : Nat) :
-    Option ((ByteSeq × ByteSeq) × Nat × Nat) :=
-  match readNatName bytes len with
-  | some (moduleName, afterModule, afterModuleLen) =>
-      match readNatName afterModule afterModuleLen with
-      | some (fieldName, descriptor, descriptorLen) =>
-          match skipImportDescNat descriptor descriptorLen with
-          | some (rest, restLen) => some ((moduleName, fieldName), rest, restLen)
-          | none => none
-      | none => none
-  | none => none
-
-def enumImportNamesNatFuel :
-    Nat → Nat → Nat → Nat → List (ByteSeq × ByteSeq) →
-      Option (List (ByteSeq × ByteSeq))
-  | 0, _, _, _, _ => none
-  | _fuel + 1, 0, _bytes, len, acc =>
-      if len = 0 then some acc.reverse else none
-  | fuel + 1, remaining + 1, bytes, len, acc =>
-      match readImportNamePairNat bytes len with
-      | some (pair, rest, restLen) =>
-          enumImportNamesNatFuel fuel remaining rest restLen (pair :: acc)
-      | none => none
+abbrev ExportEntry := CertDecode.ExportEntry
 
 def enumImportNames (modBytes modLen : Nat) :
     Option (List (ByteSeq × ByteSeq)) :=
-  match findSectionPayload 0x02 modBytes modLen with
-  | none => some []
-  | some (payload, payloadLen) =>
-      match readNatUleb32 payload payloadLen with
-      | some (count, rest, restLen) =>
-          enumImportNamesNatFuel (count + 1) count rest restLen []
-      | none => none
-
-def readExportEntryNat (bytes len : Nat) :
-    Option (ByteSeq × Nat × Nat × Nat × Nat) :=
-  match readNatUleb32 bytes len with
-  | some (nameLen, nameBytes, nameAndRestLen) =>
-      if nameLen ≤ nameAndRestLen then
-        let name := takeNatBytes nameLen nameBytes
-        let afterName := nameBytes >>> (8 * nameLen)
-        let afterNameLen := nameAndRestLen - nameLen
-        if afterNameLen = 0 then none else
-          let kind := afterName &&& 0xff
-          match readNatUleb32 (afterName >>> 8) (afterNameLen - 1) with
-          | some (idx, rest, restLen) => some (name, kind, idx, rest, restLen)
-          | none => none
-      else
-        none
-  | none => none
-
-def enumExportsNatFuel :
-    Nat → Nat → Nat → Nat → List ExportEntry → Option (List ExportEntry)
-  | 0, _, _, _, _ => none
-  | _fuel + 1, 0, _bytes, len, acc =>
-      if len = 0 then some acc.reverse else none
-  | fuel + 1, remaining + 1, bytes, len, acc =>
-      match readExportEntryNat bytes len with
-      | some (name, kind, idx, rest, restLen) =>
-          enumExportsNatFuel fuel remaining rest restLen
-            ({ name := name, kind := kind, idx := idx } :: acc)
-      | none => none
+  (CertDecode.decodeRawImports modBytes modLen).map
+    (fun imports => imports.map (fun entry => (entry.moduleName, entry.fieldName)))
 
 def enumExports (modBytes modLen : Nat) : Option (List ExportEntry) :=
-  match findSectionPayload 0x07 modBytes modLen with
-  | some (payload, payloadLen) =>
-      match readNatUleb32 payload payloadLen with
-      | some (count, rest, restLen) =>
-          enumExportsNatFuel (count + 1) count rest restLen []
-      | none => none
-  | none => none
+  CertDecode.decodeRawExports modBytes modLen
 
 /-- `some none` means no start section; `some (some idx)` is the exact function
     index encoded by section 8.  A present payload must contain one u32 and no
     trailing bytes. -/
 def startFuncIndex (modBytes modLen : Nat) : Option (Option Nat) :=
-  match findSectionPayload 0x08 modBytes modLen with
-  | none => some none
-  | some (payload, payloadLen) =>
-      match readNatUleb32 payload payloadLen with
-      | some (idx, _, 0) => some (some idx)
-      | _ => none
+  CertDecode.decodeStart modBytes modLen
 
-def findExportFuncIndexNatFuel (targetName : ByteSeq) :
-    Nat → Nat → Nat → Nat → Option Nat → Option Nat
-  | 0, _, _, _, _ => none
-  | _fuel + 1, 0, _bytes, len, found =>
-      if len = 0 then found else none
-  | fuel + 1, remaining + 1, bytes, len, found =>
-      match readExportEntryNat bytes len with
-      | some (name, kind, idx, rest, restLen) =>
-          let found' :=
-            if kind = 0x00 ∧ name = targetName ∧ found.isNone then some idx else found
-          findExportFuncIndexNatFuel targetName fuel remaining rest restLen found'
-      | none => none
+def findExportFuncIndex (targetName : ByteSeq) : List ExportEntry → Option Nat
+  | [] => none
+  | entry :: rest =>
+      if entry.kind = 0x00 ∧ entry.name = targetName then some entry.idx
+      else findExportFuncIndex targetName rest
 
 def exportFuncIndex (modBytes modLen : Nat) (targetName : ByteSeq) : Option Nat :=
-  match findSectionPayload 0x07 modBytes modLen with
-  | some (payload, payloadLen) =>
-      match readNatUleb32 payload payloadLen with
-      | some (count, rest, restLen) =>
-          findExportFuncIndexNatFuel targetName (count + 1) count rest restLen none
-      | none => none
+  match CertDecode.decodeRawExports modBytes modLen with
+  | some entries => findExportFuncIndex targetName entries
   | none => none
-
-def codeEntryByCodeIndexNatFuel (target : Nat) :
-    Nat → Nat → Nat → Nat → Nat → Option ByteSeq → Option ByteSeq
-  | 0, _, _, _, _, _ => none
-  | _fuel + 1, 0, _current, _bytes, len, found =>
-      if len = 0 then found else none
-  | fuel + 1, remaining + 1, current, bytes, len, found =>
-      match readNatUleb32 bytes len with
-      | some (size, body, bodyAndRestLen) =>
-          if size ≤ bodyAndRestLen then
-            let prefixLen := len - bodyAndRestLen
-            let found' :=
-              if current = target then some (takeNatBytes (prefixLen + size) bytes) else found
-            codeEntryByCodeIndexNatFuel target fuel remaining (current + 1)
-              (body >>> (8 * size)) (bodyAndRestLen - size) found'
-          else
-            none
-      | none => none
 
 def codeEntryByCodeIndex (modBytes modLen codeIdx : Nat) : Option ByteSeq :=
-  match findSectionPayload 0x0a modBytes modLen with
-  | some (payload, payloadLen) =>
-      match readNatUleb32 payload payloadLen with
-      | some (count, rest, restLen) =>
-          if codeIdx < count then
-            codeEntryByCodeIndexNatFuel codeIdx (count + 1) count 0 rest restLen none
-          else
-            none
+  match CertDecode.codeLocs modBytes modLen with
+  | some locations =>
+      match locations[codeIdx]? with
+      | some location => some (CertDecode.takeBytes location.entryLen location.entryN)
       | none => none
   | none => none
 
-def typeIndexByCodeIndexNatFuel (target : Nat) :
-    Nat → Nat → Nat → Nat → Nat → Option Nat → Option Nat
-  | 0, _, _, _, _, _ => none
-  | _fuel + 1, 0, _current, _bytes, len, found =>
-      if len = 0 then found else none
-  | fuel + 1, remaining + 1, current, bytes, len, found =>
-      match readNatUleb32 bytes len with
-      | some (typeIdx, rest, restLen) =>
-          let found' := if current = target then some typeIdx else found
-          typeIndexByCodeIndexNatFuel target fuel remaining (current + 1)
-            rest restLen found'
-      | none => none
-
 def typeIndexByCodeIndex (modBytes modLen codeIdx : Nat) : Option Nat :=
-  match findSectionPayload 0x03 modBytes modLen with
-  | some (payload, payloadLen) =>
-      match readNatUleb32 payload payloadLen with
-      | some (count, rest, restLen) =>
-          if codeIdx < count then
-            typeIndexByCodeIndexNatFuel codeIdx (count + 1) count 0 rest restLen none
-          else
-            none
-      | none => none
+  match CertDecode.decodeFuncTypes modBytes modLen with
+  | some typeIndices => typeIndices[codeIdx]?
   | none => none
 
 def codeEntryByFuncIndex (modBytes modLen funcIdx : Nat) : Option ByteSeq :=
@@ -1166,9 +558,6 @@ def uniqueMap [Ord Key] : List (Key × Value) → Option (Std.TreeMap Key Value)
       | some index =>
           if index.contains key then none else some (index.insert key value)
 
-def natSubset : List Nat → List Nat → Bool
-  | xs, ys => indexedSubset xs ys
-
 def natSetEq (xs ys : List Nat) : Bool :=
   indexedSetEq xs ys
 
@@ -1218,7 +607,7 @@ def memoryLimitsUnshared : Nat → Nat → Nat → Option (Nat × Nat)
     bodies contain no atomic opcode, so the strict profile rejects the
     declaration itself. -/
 def noSharedMemory (modBytes modLen : Nat) : Bool :=
-  match findSectionPayload 0x05 modBytes modLen with
+  match CertDecode.modulePayload 0x05 modBytes modLen with
   | none => true
   | some (payload, payloadLen) =>
       match readNatUleb32 payload payloadLen with

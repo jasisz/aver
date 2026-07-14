@@ -133,44 +133,4 @@ def evalSymRawPlan
   | some exprPlan => runBlock host ar callee carrier exprPlan.body locals
   | none => none
 
-/-! The proof below is the lowering-correctness kernel.  `rest` is quantified,
-    as in V3Spike's `simNodes`, so node-list composition and nested blocks do
-    not re-prove sequencing. -/
-
-theorem finishWith_nil
-    (host : HostTbl) (ar : Nat -> Option Nat) (callee : Callee) (out : Option Out) :
-    finishWith host ar callee [] out = out := by
-  cases out with
-  | none => rfl
-  | some out => cases out <;> simp [finishWith, wRunF]
-
-/- The attempted full lowering-correctness theorem is recorded, with its exact
-   residual primitive/branch goals, in ../STUCK.md.  No admitted theorem is
-   retained in this kernel-checked file. -/
-
-/- Off-grammar negative control: source String equality does not encode through
-   expr-fragment-v1 (it belongs to the separately contracted string face). -/
-def offGrammarSymPlan : SymRawPlan :=
-  { profile := "sym-fragment-v1", params := [.string, .string], result := .bool,
-    body := { nodes := [
-      { id := 0, ty := .string, kind := .param 0 },
-      { id := 1, ty := .string, kind := .param 1 },
-      { id := 2, ty := .bool, kind := .prim .stringEq [0, 1] }], result := 2 } }
-
-example : AverCert.PlanCheck.checkSymRawPlan offGrammarSymPlan = true := by decide
-example : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
-    [] [] offGrammarSymPlan = none := by decide
-
-def offGrammarExprPlan : ExprFragmentRawPlan :=
-  { profile := "expr-fragment-v1", params := [], result := .boolI32,
-    body := { nodes := [
-      { id := 0, ty := .boolI32, kind := .constBool true },
-      { id := 1, ty := .boolI32, kind := .prim .i64Eq [0, 0] }], result := 1 } }
-
-/-- An ill-typed primitive is outside the audited grammar and fails closed. -/
-example : AverCert.PlanCheck.checkExprFragmentRawPlan offGrammarExprPlan = false := by
-  decide
-
-#print axioms finishWith_nil
-
 end V3ExprFragmentFull

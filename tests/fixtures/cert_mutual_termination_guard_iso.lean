@@ -63,6 +63,7 @@ theorem honestMutualAccepted : AverCert.AcceptedArtifact.mutualPlanAccepted
     AverCert.AcceptedArtifact.mutualRecursionClaimsAccepted,
     AverCert.AcceptedArtifact.mutualRecursionClaimAccepted,
     AverCert.AcceptedArtifact.mutualPlanForExport,
+    AverCert.AcceptedArtifact.namedPlanForExport,
     AverCert.Artifact.data, AverCert.Artifact.mutualRecursionClaims,
     AverCert.manifest, evenPlan, mutualModBytes, mutualModLen, evenNameBytes,
     mutualHostTable, mutualMemberSet] using hmutual.1.1

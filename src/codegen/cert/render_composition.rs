@@ -285,7 +285,6 @@ fn render_composition_semantic_bridge(c: &Cert, analysis: &Analysis) -> String {
          AverCert.AcceptedArtifact.compositionEdgesDescend,\n    \
          AverCert.AcceptedArtifact.compositionReachClosure,\n    \
          AverCert.AcceptedArtifact.compositionReachStep,\n    \
-         AverCert.AcceptedArtifact.compositionEdgeLookup,\n    \
          AverCert.AcceptedArtifact.stringListNodup,\n    \
          AverCert.AcceptedArtifact.stringListSetEq]\n  \
          exact {acceptance}\n\n"

@@ -2,10 +2,11 @@
   CertDecode — checker-owned, in-kernel decoder for the AverUserProfile/v0
   certificate profile. Given a wasm-gc module as a little-endian big-`Nat`
   plus a byte length, it decodes the profile-relevant sections into PURE DATA
-  (`rfl`-comparable): the export map, the imported (module, name) list, the Int
-  carrier type index, and per-function `WCode` (arity from the type section,
-  nlocals from the locals declaration, body as `List CertPrelude.WInstr` — the
-  full 39-opcode fragment, if/else/end folded into `WInstr.ifElse`).
+  (`rfl`-comparable): a typed type-section IR, raw import/export indices, the
+  Int carrier type index, exact data/code locations, and per-function `WCode`
+  (arity from the type section, nlocals from the locals declaration, body as
+  `List CertPrelude.WInstr` — the full 39-opcode fragment, if/else/end folded
+  into `WInstr.ifElse`).
 
   The result semantics mirror `src/codegen/cert/mod.rs::rederive_obligations`
   and `tools/certkit/extract.py` so all three decoders agree term for term on
@@ -26,9 +27,9 @@
   (0x63/0x64 + heaptype), and the abstract-heap valtype shorthands (0x6a–0x73,
   e.g. `eqref`). Anything outside this subset (a valtype/opcode the emitter does
   not produce, an overlong LEB, a truncated section) decodes to `none` — never a
-  garbage success. Module admission is out of scope (that is a later item on the
-  same decoder); the certificate claim is about obligations, and skipped
-  sections are covered by the checker-side module hash.
+  garbage success. `moduleFramingValid` separately guards the entire module;
+  prefix-preserving section projections remain useful for isolated negative
+  tests, while whole-artifact admission requires strict global framing.
 -/
 import CertPrelude
 open CertPrelude
@@ -77,44 +78,18 @@ def sleb : Nat → Int → Nat → Nat → Nat → Option (Int × Nat × Nat)
 
 @[inline] def readS (n len : Nat) : Option (Int × Nat × Nat) := sleb 10 0 0 n len
 
+/-- Spec-bounded signed heap type: at most five bytes and in s33 range. -/
+def readS33 (n len : Nat) : Option (Int × Nat × Nat) :=
+  match sleb 5 0 0 n len with
+  | some (v, n1, len1) =>
+      if -(Int.ofNat (2 ^ 32)) ≤ v ∧ v < Int.ofNat (2 ^ 32) then
+        some (v, n1, len1)
+      else none
+  | none => none
+
 /- ===================================================================== -/
 /-  Section walk                                                          -/
 /- ===================================================================== -/
-
-/-- Whole-file section id sequence (skip is one GMP shift per section). Not on
-    the targeted decode paths below, but pinned per fixture by the decoder
-    differential (`tests/cert_decode_spec.rs`) so a malformed section frame
-    anywhere in the module — including regions the targeted decoders skip —
-    fails the kernel witness. -/
-def walkIds : Nat → Nat → Nat → Option (List Nat)
-  | 0,      _, _   => none
-  | fuel+1, n, len =>
-      if len == 0 then some [] else
-        let id  := n &&& 0xff
-        let n1  := n >>> 8
-        match readU n1 (len-1) with
-        | none => none
-        | some (size, n2, len2) =>
-            match walkIds fuel (n2 >>> (8*size)) (len2 - size) with
-            | none => none
-            | some tl => some (id :: tl)
-
-/-- First target section as `(payload bytes, payload size, suffix length at the
-    payload start)`. This is the single bounds-checked section-frame walker
-    shared by the format-B decoder and the certificate Wasm slicer. -/
-def findSecFrame (target : Nat) : Nat → Nat → Nat → Option (Nat × Nat × Nat)
-  | 0,      _, _   => none
-  | fuel+1, n, len =>
-      if len == 0 then none else
-        let id  := n &&& 0xff
-        let n1  := n >>> 8
-        match readU n1 (len-1) with
-        | none => none
-        | some (size, n2, len2) =>
-            if size ≤ len2 then
-              if id == target then some (n2, size, len2)
-              else findSecFrame target fuel (n2 >>> (8*size)) (len2 - size)
-            else none
 
 /-- Isolate exactly `len` low bytes. Besides enforcing the declared section
     boundary, this keeps every subsequent byte shift proportional to the
@@ -156,187 +131,279 @@ def moduleView (modBytes modLen : Nat) : Option ModuleView :=
     (sectionTable 64 (modBytes >>> 64) (modLen - 8)).map (fun sections => ⟨sections⟩)
   else none
 
-/-- Exact bounded body `(n, len)` of the first section with id = target, else
-    none. Historically this returned the entire module-suffix length; callers
-    could therefore consume a malformed short section into its successor.
-    The compatibility wrapper retains target-specific navigation; consumers
-    that need several sections use `moduleView` once. -/
-def findSec (target fuel n len : Nat) : Option (Nat × Nat) :=
-  (findSecFrame target fuel n len).map
-    (fun p => (isolateBytes p.1 p.2.1, p.2.1))
+/-- Strict whole-file framing, intentionally separate from prefix-decoding
+    `moduleView`: every canonical section-size LEB must be in bounds and the
+    declared module length must be exhausted within 64 section frames. -/
+def sectionFramingValid : Nat → Nat → Nat → Bool
+  | 0,      _, len => len == 0
+  | fuel+1, n, len =>
+      if len == 0 then true else
+        match readU (n >>> 8) (len - 1) with
+        | none => false
+        | some (size, payload, payloadAndRestLen) =>
+            size ≤ payloadAndRestLen &&
+              sectionFramingValid fuel (payload >>> (8 * size))
+                (payloadAndRestLen - size)
 
-/-- Exact `(payload bytes, payload size)` of the first target section. -/
-def findSecPayload (target fuel n len : Nat) : Option (Nat × Nat) :=
-  findSec target fuel n len
+def moduleFramingValid (modBytes modLen : Nat) : Bool :=
+  8 ≤ modLen &&
+    (modBytes &&& 0xffffffffffffffff) == 0x000000016d736100 &&
+    sectionFramingValid 64 (modBytes >>> 64) (modLen - 8)
+
+/-- Header-validated exact payload of the first section with id `target`. All
+    section decoders share this one framing implementation. -/
+def modulePayload (target modBytes modLen : Nat) : Option (Nat × Nat) :=
+  (moduleView modBytes modLen).bind (fun view => view.payload target)
 
 /- ===================================================================== -/
-/-  Type section (arity per type index, struct field counts, carrier)     -/
+/-  Type section: one exact typed IR shared by every checker projection     -/
 /- ===================================================================== -/
 
-/-- Per-type-index arities (0 for non-func), struct field counts (0 for
-    non-struct), and the first Int-carrier struct index. -/
+/-- Exact wasm value-type form admitted by this certificate profile. Tags are
+    retained because nullability (`0x63`/`0x64`) and abstract shorthands are
+    byte-significant even when a downstream projection ignores the detail. -/
+inductive ValType
+  | numeric (tag : Nat)
+  | abstract (tag : Nat)
+  | ref (tag : Nat) (heap : Int)
+deriving Repr, DecidableEq
+
+inductive StorageType
+  | packed (tag : Nat)
+  | val (type : ValType)
+deriving Repr, DecidableEq
+
+structure FieldType where
+  storage : StorageType
+  mutability : Nat
+deriving Repr, DecidableEq
+
+inductive CompositeType
+  | funcType (params results : List ValType)
+  | structType (fields : List FieldType)
+  | arrayType (field : FieldType)
+deriving Repr, DecidableEq
+
+inductive SubtypeForm
+  | plain
+  | sub (supertypes : List Nat)
+  | subFinal (supertypes : List Nat)
+deriving Repr, DecidableEq
+
+/-- One flattened subtype in absolute type-index order. -/
+structure TypeEntry where
+  form : SubtypeForm
+  composite : CompositeType
+deriving Repr, DecidableEq
+
+/-- One strict type-section pass plus compatibility summaries used by WCode. -/
 structure TypeInfo where
-  arities : List Nat
   nfields : List Nat
   arityIndex : Array Nat
   nfieldIndex : Array Nat
   carrier : Option Nat
+  entries : List TypeEntry
+  entryIndex : Array TypeEntry
 
-/-- Consume one valtype, returning its leading byte (for carrier detection). -/
-def readValType (n len : Nat) : Option (Nat × Nat × Nat) :=
+def readValType (n len : Nat) : Option (ValType × Nat × Nat) :=
   if len == 0 then none else
-    let v := n &&& 0xff
+    let tag := n &&& 0xff
     let n1 := n >>> 8
     let len1 := len - 1
-    if v == 0x7f || v == 0x7e || v == 0x7d || v == 0x7c || v == 0x7b then some (v, n1, len1)
-    else if v == 0x63 || v == 0x64 then
-      match readS n1 len1 with            -- heaptype (s33)
+    if tag == 0x7f || tag == 0x7e || tag == 0x7d || tag == 0x7c || tag == 0x7b then
+      some (.numeric tag, n1, len1)
+    else if tag == 0x63 || tag == 0x64 then
+      match readS33 n1 len1 with
+      | some (heap, n2, len2) => some (.ref tag heap, n2, len2)
       | none => none
-      | some (_, n2, len2) => some (v, n2, len2)
-    else if decide (0x6a ≤ v ∧ v ≤ 0x73) then some (v, n1, len1)  -- abstract-heap shorthand
+    else if decide (0x6a ≤ tag ∧ tag ≤ 0x73) then
+      some (.abstract tag, n1, len1)
     else none
 
-/-- Consume one storage type (packed i8/i16, or a valtype). -/
-def readStorageType (n len : Nat) : Option (Nat × Nat × Nat) :=
-  if len == 0 then none else
-    let v := n &&& 0xff
-    if v == 0x78 || v == 0x77 then some (v, n >>> 8, len - 1)
-    else readValType n len
+def readValTypes : Nat → Nat → Nat → Option (List ValType × Nat × Nat)
+  | 0,   n, len => some ([], n, len)
+  | k+1, n, len =>
+      match readValType n len with
+      | none => none
+      | some (type, n1, len1) =>
+          match readValTypes k n1 len1 with
+          | none => none
+          | some (rest, n2, len2) => some (type :: rest, n2, len2)
 
-/-- Consume one struct/array field (storage type + mut byte); return leading
-    byte of the storage type. -/
-def readField (n len : Nat) : Option (Nat × Nat × Nat) :=
+def readStorageType (n len : Nat) : Option (StorageType × Nat × Nat) :=
+  if len == 0 then none else
+    let tag := n &&& 0xff
+    if tag == 0x78 || tag == 0x77 then some (.packed tag, n >>> 8, len - 1)
+    else (readValType n len).map (fun p => (.val p.1, p.2.1, p.2.2))
+
+def readField (n len : Nat) : Option (FieldType × Nat × Nat) :=
   match readStorageType n len with
   | none => none
-  | some (sfb, n1, len1) =>
-      if len1 == 0 then none else some (sfb, n1 >>> 8, len1 - 1)   -- drop mut byte
+  | some (storage, n1, len1) =>
+      if len1 == 0 then none else
+        let mutability := n1 &&& 0xff
+        if mutability == 0 || mutability == 1 then
+          some (⟨storage, mutability⟩, n1 >>> 8, len1 - 1)
+        else none
 
-/-- Read `k` fields, collecting their leading storage bytes. -/
-def readFields : Nat → Nat → Nat → Option (List Nat × Nat × Nat)
+def readFields : Nat → Nat → Nat → Option (List FieldType × Nat × Nat)
   | 0,   n, len => some ([], n, len)
   | k+1, n, len =>
       match readField n len with
       | none => none
-      | some (sfb, n1, len1) =>
+      | some (field, n1, len1) =>
           match readFields k n1 len1 with
           | none => none
-          | some (rest, n2, len2) => some (sfb :: rest, n2, len2)
+          | some (rest, n2, len2) => some (field :: rest, n2, len2)
 
-/-- Skip `p` valtypes (func params/results). -/
-def skipValTypes : Nat → Nat → Nat → Option (Nat × Nat)
-  | 0,   n, len => some (n, len)
-  | p+1, n, len =>
-      match readValType n len with
-      | none => none
-      | some (_, n1, len1) => skipValTypes p n1 len1
-
-/-- Skip `s` unsigned LEB values (e.g. a vec of supertype type indices). -/
-def skipUlebs : Nat → Nat → Nat → Option (Nat × Nat)
-  | 0,   n, len => some (n, len)
-  | s+1, n, len =>
+def readUlebs : Nat → Nat → Nat → Option (List Nat × Nat × Nat)
+  | 0,   n, len => some ([], n, len)
+  | k+1, n, len =>
       match readU n len with
       | none => none
-      | some (_, n1, len1) => skipUlebs s n1 len1
+      | some (value, n1, len1) =>
+          match readUlebs k n1 len1 with
+          | none => none
+          | some (rest, n2, len2) => some (value :: rest, n2, len2)
 
-/-- Decode one composite type at absolute type index `tidx`. -/
-def decComptype (tidx n len : Nat) : Option (Nat × Nat × Option Nat × Nat × Nat) :=
+/-- Cursor-only compatibility projection used by instruction scanners. -/
+def skipUlebs (k n len : Nat) : Option (Nat × Nat) :=
+  (readUlebs k n len).map (fun p => (p.2.1, p.2.2))
+
+def readCompositeType (n len : Nat) : Option (CompositeType × Nat × Nat) :=
   if len == 0 then none else
-    let c := n &&& 0xff
+    let tag := n &&& 0xff
     let n1 := n >>> 8
     let len1 := len - 1
-    if c == 0x60 then            -- func
+    if tag == 0x60 then
       match readU n1 len1 with
       | none => none
       | some (np, n2, len2) =>
-          match skipValTypes np n2 len2 with
+          match readValTypes np n2 len2 with
           | none => none
-          | some (n3, len3) =>
+          | some (params, n3, len3) =>
               match readU n3 len3 with
               | none => none
               | some (nr, n4, len4) =>
-                  match skipValTypes nr n4 len4 with
+                  match readValTypes nr n4 len4 with
+                  | some (results, n5, len5) => some (.funcType params results, n5, len5)
                   | none => none
-                  | some (n5, len5) => some (np, 0, none, n5, len5)
-    else if c == 0x5f then       -- struct
+    else if tag == 0x5f then
       match readU n1 len1 with
       | none => none
       | some (nf, n2, len2) =>
           match readFields nf n2 len2 with
+          | some (fields, n3, len3) => some (.structType fields, n3, len3)
           | none => none
-          | some (fbs, n3, len3) =>
-              let isCarrier :=
-                nf == 3 && (fbs[0]?).getD 0 == 0x7e && (fbs[2]?).getD 0 == 0x7f
-              some (0, nf, (if isCarrier then some tidx else none), n3, len3)
-    else if c == 0x5e then       -- array
+    else if tag == 0x5e then
       match readField n1 len1 with
+      | some (field, n2, len2) => some (.arrayType field, n2, len2)
       | none => none
-      | some (_, n2, len2) => some (0, 0, none, n2, len2)
     else none
 
-/-- Decode one subtype at absolute type index `tidx`: its func arity (0 if not
-    func), struct field count (0 if not struct), and whether it is the carrier.
-    Handles an optional `sub` / `sub final` prefix (0x50 / 0x4f). -/
-def decOneSubtype (tidx n len : Nat) : Option (Nat × Nat × Option Nat × Nat × Nat) :=
+def readSubtypeForm (n len : Nat) : Option (SubtypeForm × Nat × Nat) :=
   if len == 0 then none else
-    let b0 := n &&& 0xff
-    if b0 == 0x50 || b0 == 0x4f then
-      match readU (n >>> 8) (len - 1) with        -- vec of supertype typeidx
+    let tag := n &&& 0xff
+    if tag == 0x50 || tag == 0x4f then
+      match readU (n >>> 8) (len - 1) with
       | none => none
-      | some (nsup, n1, len1) =>
-          match skipUlebs nsup n1 len1 with
+      | some (count, n1, len1) =>
+          match readUlebs count n1 len1 with
           | none => none
-          | some (n2, len2) => decComptype tidx n2 len2
-    else decComptype tidx n len
+          | some (supertypes, n2, len2) =>
+              if tag == 0x50 then some (.sub supertypes, n2, len2)
+              else some (.subFinal supertypes, n2, len2)
+    else some (.plain, n, len)
 
-/-- Decode `k` subtypes in a rec group, threading the absolute type index. -/
-def decSubtypes : Nat → Nat → Nat → Nat → Option (List Nat × List Nat × Option Nat × Nat × Nat)
-  | 0,   _,    n, len => some ([], [], none, n, len)
-  | k+1, tidx, n, len =>
-      match decOneSubtype tidx n len with
+def readTypeEntry (n len : Nat) : Option (TypeEntry × Nat × Nat) :=
+  match readSubtypeForm n len with
+  | none => none
+  | some (form, n1, len1) =>
+      match readCompositeType n1 len1 with
       | none => none
-      | some (ar, nf, car, n1, len1) =>
-          match decSubtypes k (tidx+1) n1 len1 with
-          | none => none
-          | some (ars, nfs, car2, n2, len2) =>
-              some (ar :: ars, nf :: nfs, car.orElse (fun _ => car2), n2, len2)
+      | some (composite, n2, len2) =>
+          some (⟨form, composite⟩, n2, len2)
 
-/-- Decode `entries` rectype entries (each a rec group or a bare subtype). -/
-def decRecVec : Nat → Nat → Nat → Nat → Option (List Nat × List Nat × Option Nat × Nat × Nat)
-  | 0,   _,    n, len => some ([], [], none, n, len)
-  | e+1, tidx, n, len =>
+def readTypeEntries : Nat → Nat → Nat → Option (List TypeEntry × Nat × Nat)
+  | 0,   n, len => some ([], n, len)
+  | k+1, n, len =>
+      match readTypeEntry n len with
+      | none => none
+      | some (entry, n1, len1) =>
+          match readTypeEntries k n1 len1 with
+          | none => none
+          | some (rest, n2, len2) => some (entry :: rest, n2, len2)
+
+/-- Decode the declared rectype vector, flattening explicit rec groups into one
+    absolute type-index order. This is the only type grammar parser. -/
+def decRecVec : Nat → Nat → Nat → Option (List TypeEntry × Nat × Nat)
+  | 0,   n, len => some ([], n, len)
+  | k+1, n, len =>
       if len == 0 then none else
-        let b0 := n &&& 0xff
-        if b0 == 0x4e then                 -- explicit rec group
+        if (n &&& 0xff) == 0x4e then
           match readU (n >>> 8) (len - 1) with
           | none => none
-          | some (sc, n1, len1) =>
-              match decSubtypes sc tidx n1 len1 with
+          | some (count, n1, len1) =>
+              match readTypeEntries count n1 len1 with
               | none => none
-              | some (ars, nfs, car, n2, len2) =>
-                  match decRecVec e (tidx + sc) n2 len2 with
+              | some (group, n2, len2) =>
+                  match decRecVec k n2 len2 with
                   | none => none
-                  | some (ars2, nfs2, car2, n3, len3) =>
-                      some (ars ++ ars2, nfs ++ nfs2, car.orElse (fun _ => car2), n3, len3)
-        else                               -- single implicit rec group
-          match decOneSubtype tidx n len with
+                  | some (rest, n3, len3) => some (group ++ rest, n3, len3)
+        else
+          match readTypeEntry n len with
           | none => none
-          | some (ar, nf, car, n1, len1) =>
-              match decRecVec e (tidx+1) n1 len1 with
+          | some (entry, n1, len1) =>
+              match decRecVec k n1 len1 with
               | none => none
-              | some (ars2, nfs2, car2, n2, len2) =>
-                  some (ar :: ars2, nf :: nfs2, car.orElse (fun _ => car2), n2, len2)
+              | some (rest, n2, len2) => some (entry :: rest, n2, len2)
+
+def StorageType.tag : StorageType → Nat
+  | .packed tag => tag
+  | .val (.numeric tag) => tag
+  | .val (.abstract tag) => tag
+  | .val (.ref tag _) => tag
+
+def TypeEntry.arity (entry : TypeEntry) : Nat :=
+  match entry.composite with
+  | .funcType params _ => params.length
+  | _ => 0
+
+def TypeEntry.fieldCount (entry : TypeEntry) : Nat :=
+  match entry.composite with
+  | .structType fields => fields.length
+  | _ => 0
+
+def TypeEntry.isCarrier (entry : TypeEntry) : Bool :=
+  match entry.composite with
+  | .structType fields =>
+      fields.length == 3 && (fields[0]?).map (fun f => f.storage.tag) == some 0x7e &&
+        (fields[2]?).map (fun f => f.storage.tag) == some 0x7f
+  | _ => false
+
+def firstCarrier : Nat → List TypeEntry → Option Nat
+  | _,   [] => none
+  | idx, entry :: rest =>
+      if entry.isCarrier then some idx else firstCarrier (idx + 1) rest
 
 def decodeTypes (n len : Nat) : Option TypeInfo :=
-  match findSec 1 64 (n >>> 64) (len - 8) with
+  match modulePayload 1 n len with
   | none => none
   | some (tN, tLen) =>
       match readU tN tLen with
       | none => none
-      | some (cnt, n1, len1) =>
-          match decRecVec cnt 0 n1 len1 with
-          | none => none
-          | some (ars, nfs, car, _, _) =>
-              some ⟨ars, nfs, ars.toArray, nfs.toArray, car⟩
+      | some (count, n1, len1) =>
+          match decRecVec count n1 len1 with
+          | some (entries, _, 0) =>
+              let arities := entries.map TypeEntry.arity
+              let nfields := entries.map TypeEntry.fieldCount
+              some { nfields := nfields
+                   , arityIndex := arities.toArray
+                   , nfieldIndex := nfields.toArray
+                   , carrier := firstCarrier 0 entries
+                   , entries := entries
+                   , entryIndex := entries.toArray }
+          | _ => none
 
 /-- The Int carrier struct type index. -/
 def decodeCarrier (n len : Nat) : Option Nat :=
@@ -369,7 +436,7 @@ def decFuncVec : Nat → Nat → Nat → Option (List Nat × Nat × Nat)
 
 /-- Per-defined-function type index (function section). -/
 def decodeFuncTypes (n len : Nat) : Option (List Nat) :=
-  match findSec 3 64 (n >>> 64) (len - 8) with
+  match modulePayload 3 n len with
   | none => some []
   | some (fN, fLen) =>
       match readU fN fLen with
@@ -377,83 +444,199 @@ def decodeFuncTypes (n len : Nat) : Option (List Nat) :=
       | some (cnt, n1, len1) =>
           match decFuncVec cnt n1 len1 with
           | none => none
-          | some (ts, _, _) => some ts
+          | some (ts, _, 0) => some ts
+          | some _ => none
 
-/-- Read `k` imports, keeping the (module, name) of each imported FUNCTION.
-    Non-function import kinds are outside the profile → reject (fail-closed). -/
-def decImportVec : Nat → Nat → Nat → Option (List (String × String) × Nat × Nat)
+/-! The raw module-indexing records below retain descriptor kinds and byte-exact
+    names. Profile-specific APIs are projections of this one strict parse. -/
+
+structure ImportEntry where
+  moduleName : List Nat
+  fieldName : List Nat
+  kind : Nat
+  funcTypeIdx : Option Nat
+deriving Repr, DecidableEq
+
+structure ExportEntry where
+  name : List Nat
+  kind : Nat
+  idx : Nat
+deriving Repr, DecidableEq
+
+/-- A bounded raw wasm name. -/
+def readName (n len : Nat) : Option (List Nat × Nat × Nat) :=
+  match readU n len with
+  | none => none
+  | some (nameLen, bytes, bytesLen) =>
+      if nameLen ≤ bytesLen then
+        some (takeBytes nameLen bytes, bytes >>> (8 * nameLen), bytesLen - nameLen)
+      else none
+
+/-- Skip exactly one import-descriptor value type. Import descriptors admit
+    the `0x69` abstract shorthand in addition to the profile type-section IR. -/
+def skipImportValType (n len : Nat) : Option (Nat × Nat) :=
+  if len != 0 && (n &&& 0xff) == 0x69 then some (n >>> 8, len - 1)
+  else (readValType n len).map (fun p => (p.2.1, p.2.2))
+
+/-- Skip one table/memory limits descriptor. This is the exact descriptor
+    subset admitted by the certificate wasm slicer. -/
+def skipLimits (n len : Nat) : Option (Nat × Nat) :=
+  match readU n len with
+  | none => none
+  | some (flags, n1, len1) =>
+      if flags < 16 then
+        match readU n1 len1 with
+        | none => none
+        | some (_, n2, len2) =>
+            let afterMax :=
+              if (flags &&& 0x01) != 0 then readU n2 len2 else some (0, n2, len2)
+            match afterMax with
+            | none => none
+            | some (_, n3, len3) =>
+                if (flags &&& 0x08) != 0 then
+                  match readU n3 len3 with
+                  | some (_, n4, len4) => some (n4, len4)
+                  | none => none
+                else some (n3, len3)
+      else none
+
+/-- Parse one import descriptor. Function imports retain their type index;
+    table, memory, global, and tag imports are validated but store `none`. -/
+def readImportDesc (n len : Nat) : Option (Nat × Option Nat × Nat × Nat) :=
+  if len == 0 then none else
+    let kind := n &&& 0xff
+    let rest := n >>> 8
+    let restLen := len - 1
+    if kind == 0x00 then
+      match readU rest restLen with
+      | some (typeIdx, tail, tailLen) => some (kind, some typeIdx, tail, tailLen)
+      | none => none
+    else if kind == 0x01 then
+      match skipImportValType rest restLen with
+      | some (limits, limitsLen) =>
+          (skipLimits limits limitsLen).map (fun p => (kind, none, p.1, p.2))
+      | none => none
+    else if kind == 0x02 then
+      (skipLimits rest restLen).map (fun p => (kind, none, p.1, p.2))
+    else if kind == 0x03 then
+      match skipImportValType rest restLen with
+      | some (mutability, mutabilityLen) =>
+          if mutabilityLen == 0 then none else
+            let m := mutability &&& 0xff
+            if m == 0 || m == 1 then
+              some (kind, none, mutability >>> 8, mutabilityLen - 1)
+            else none
+      | none => none
+    else if kind == 0x04 then
+      if restLen == 0 || (rest &&& 0xff) != 0 then none else
+        match readU (rest >>> 8) (restLen - 1) with
+        | some (_, tail, tailLen) => some (kind, none, tail, tailLen)
+        | none => none
+    else none
+
+def readImportEntry (n len : Nat) : Option (ImportEntry × Nat × Nat) :=
+  match readName n len with
+  | none => none
+  | some (moduleName, n1, len1) =>
+      match readName n1 len1 with
+      | none => none
+      | some (fieldName, n2, len2) =>
+          match readImportDesc n2 len2 with
+          | none => none
+          | some (kind, typeIdx, n3, len3) =>
+              some (⟨moduleName, fieldName, kind, typeIdx⟩, n3, len3)
+
+def decRawImportVec : Nat → Nat → Nat → Option (List ImportEntry × Nat × Nat)
   | 0,   n, len => some ([], n, len)
   | k+1, n, len =>
-      match readU n len with                     -- module name length
+      match readImportEntry n len with
       | none => none
-      | some (ml, n1, len1) =>
-          let modName := mkName (takeBytes ml n1)
-          let n2 := n1 >>> (8*ml)
-          let len2 := len1 - ml
-          match readU n2 len2 with                -- import name length
+      | some (entry, n1, len1) =>
+          match decRawImportVec k n1 len1 with
           | none => none
-          | some (nl, n3, len3) =>
-              let nm := mkName (takeBytes nl n3)
-              let n4 := n3 >>> (8*nl)
-              let len4 := len3 - nl
-              if len4 == 0 then none else
-                let kind := n4 &&& 0xff
-                let n5 := n4 >>> 8
-                let len5 := len4 - 1
-                if kind == 0 then                 -- func import: typeidx uleb
-                  match readU n5 len5 with
-                  | none => none
-                  | some (_, n6, len6) =>
-                      match decImportVec k n6 len6 with
-                      | none => none
-                      | some (rest, n7, len7) => some ((modName, nm) :: rest, n7, len7)
-                else none
+          | some (rest, n2, len2) => some (entry :: rest, n2, len2)
 
-/-- Imported (module, name) list. Absent import section → no imports. -/
-def decodeImports (n len : Nat) : Option (List (String × String)) :=
-  match findSec 2 64 (n >>> 64) (len - 8) with
+/-- Byte-exact import table. The declared vector must exhaust section 2. -/
+def decodeRawImports (n len : Nat) : Option (List ImportEntry) :=
+  match modulePayload 2 n len with
   | none => some []
   | some (iN, iLen) =>
       match readU iN iLen with
       | none => none
       | some (cnt, n1, len1) =>
-          match decImportVec cnt n1 len1 with
-          | none => none
-          | some (imps, _, _) => some imps
+          match decRawImportVec cnt n1 len1 with
+          | some (entries, _, 0) => some entries
+          | _ => none
+
+def functionImports : List ImportEntry → Option (List (String × String))
+  | [] => some []
+  | entry :: rest =>
+      if entry.kind == 0 && entry.funcTypeIdx.isSome then
+        (functionImports rest).map
+          (fun tail => (mkName entry.moduleName, mkName entry.fieldName) :: tail)
+      else none
+
+/-- Imported function names. Any valid non-function import still declines this
+    profile projection, preserving the original fail-closed contract. -/
+def decodeImports (n len : Nat) : Option (List (String × String)) :=
+  (decodeRawImports n len).bind functionImports
 
 /-- Number of imported functions = the base offset for defined function indices. -/
 def funcImportBase (n len : Nat) : Option Nat :=
-  match decodeImports n len with
-  | some imps => some imps.length
+  (decodeImports n len).map List.length
+
+def readExportEntry (n len : Nat) : Option (ExportEntry × Nat × Nat) :=
+  match readName n len with
   | none => none
+  | some (name, n1, len1) =>
+      if len1 == 0 then none else
+        let kind := n1 &&& 0xff
+        if kind > 4 then none else
+          match readU (n1 >>> 8) (len1 - 1) with
+          | none => none
+          | some (idx, n2, len2) => some (⟨name, kind, idx⟩, n2, len2)
 
-/-- Export section: keep function exports (kind 0) as (name, funcidx). -/
-def decEntries : Nat → Nat → Nat → Option (List (String × Nat))
-  | 0,     _, _   => some []
-  | cnt+1, n, len =>
-      match readU n len with
+def decRawExportVec : Nat → Nat → Nat → Option (List ExportEntry × Nat × Nat)
+  | 0,   n, len => some ([], n, len)
+  | k+1, n, len =>
+      match readExportEntry n len with
       | none => none
-      | some (nlen, n1, len1) =>
-          let name := takeBytes nlen n1
-          let n2   := n1 >>> (8*nlen)
-          let len2 := len1 - nlen
-          if len2 == 0 then none else
-            let kind := n2 &&& 0xff
-            let n3   := n2 >>> 8
-            match readU n3 (len2-1) with
-            | none => none
-            | some (idx, n4, len4) =>
-                match decEntries cnt n4 len4 with
-                | none => none
-                | some tl => if kind == 0 then some ((mkName name, idx) :: tl) else some tl
+      | some (entry, n1, len1) =>
+          match decRawExportVec k n1 len1 with
+          | none => none
+          | some (rest, n2, len2) => some (entry :: rest, n2, len2)
 
-def decodeExports (n len : Nat) : Option (List (String × Nat)) :=
-  match findSec 7 64 (n >>> 64) (len - 8) with
+/-- Byte-exact export table. The declared vector must exhaust section 7. -/
+def decodeRawExports (n len : Nat) : Option (List ExportEntry) :=
+  match modulePayload 7 n len with
   | none => none
   | some (eN, eLen) =>
       match readU eN eLen with
       | none => none
-      | some (cnt, n1, len1) => decEntries cnt n1 len1
+      | some (cnt, n1, len1) =>
+          match decRawExportVec cnt n1 len1 with
+          | some (entries, _, 0) => some entries
+          | _ => none
+
+def functionExports : List ExportEntry → List (String × Nat)
+  | [] => []
+  | entry :: rest =>
+      if entry.kind == 0 then (mkName entry.name, entry.idx) :: functionExports rest
+      else functionExports rest
+
+/-- Function-export compatibility projection of `decodeRawExports`. -/
+def decodeExports (n len : Nat) : Option (List (String × Nat)) :=
+  (decodeRawExports n len).map functionExports
+
+/-- `some none` means section 8 is absent; a present section must contain one
+    canonical u32 and no trailing bytes. -/
+def decodeStart (n len : Nat) : Option (Option Nat) :=
+  match modulePayload 8 n len with
+  | none => some none
+  | some (sN, sLen) =>
+      match readU sN sLen with
+      | some (idx, _, 0) => some (some idx)
+      | _ => none
 
 /-- Read `k` (passive) data segments as byte lists. Non-passive flags are
     outside the profile → reject (fail-closed). -/
@@ -468,17 +651,19 @@ def decDataVec : Nat → Nat → Nat → Option (List (List Nat) × Nat × Nat)
           match readU n1 len1 with              -- byte count
           | none => none
           | some (bc, n2, len2) =>
-              let bytes := takeBytes bc n2
-              let n3 := n2 >>> (8*bc)
-              let len3 := len2 - bc
-              match decDataVec k n3 len3 with
-              | none => none
-              | some (rest, n4, len4) => some (bytes :: rest, n4, len4)
+              if bc ≤ len2 then
+                let bytes := takeBytes bc n2
+                let n3 := n2 >>> (8*bc)
+                let len3 := len2 - bc
+                match decDataVec k n3 len3 with
+                | none => none
+                | some (rest, n4, len4) => some (bytes :: rest, n4, len4)
+              else none
         else none
 
 /-- Data segment payloads by segment index. Absent data section → no segments. -/
 def decodeData (n len : Nat) : Option (List (List Nat)) :=
-  match findSec 11 64 (n >>> 64) (len - 8) with
+  match modulePayload 11 n len with
   | none => some []
   | some (dN, dLen) =>
       match readU dN dLen with
@@ -486,7 +671,8 @@ def decodeData (n len : Nat) : Option (List (List Nat)) :=
       | some (cnt, n1, len1) =>
           match decDataVec cnt n1 len1 with
           | none => none
-          | some (segs, _, _) => some segs
+          | some (segs, _, 0) => some segs
+          | some _ => none
 
 /- ===================================================================== -/
 /-  Code section: locals, instructions, nested if/else                    -/
@@ -650,14 +836,6 @@ def decBlock (nfields : List Nat) (segs : List (List Nat)) :
               | none => none
               | some (rest, pend3, n3, len3, t3) => some (ins :: rest, pend3, n3, len3, t3)
 
-/-- Decode a raw straight/nested body Nat (little-endian, ending in `end`).
-    Used by the coverage matrix's synthetic single-body probes. -/
-def decodeBodyBytes (nfields : List Nat) (segs : List (List Nat)) (fuel n len : Nat) :
-    Option (List WInstr) :=
-  match decBlock nfields segs fuel [] n len with
-  | none => none
-  | some (instrs, _, _, _, term) => if term == 0 then some instrs else none
-
 /- ===================================================================== -/
 /-  Per-function obligation decode                                        -/
 /- ===================================================================== -/
@@ -666,19 +844,25 @@ structure CodeLoc where
   nlocals : Nat
   bodyN : Nat
   bodyLen : Nat
+  /-- Exact raw code entry, including its size-LEB prefix. -/
+  entryN : Nat
+  entryLen : Nat
 
 /-- One bounded code-section pass. Every body is isolated from both the next
     code entry and the enclosing section, and its final list position is its
     defined-function index. -/
 def decCodeLocs : Nat → Nat → Nat → Option (List CodeLoc)
-  | 0,   _, _   => some []
+  | 0,   _, len => if len == 0 then some [] else none
   | k+1, n, len =>
       match readU n len with
       | none => none
       | some (esz, bN, bLen) =>
           if esz ≤ bLen then
-            let entryN := isolateBytes bN esz
-            match readU entryN esz with
+            let entryBodyN := isolateBytes bN esz
+            let sizePrefixLen := len - bLen
+            let wholeEntryLen := sizePrefixLen + esz
+            let wholeEntryN := isolateBytes n wholeEntryLen
+            match readU entryBodyN esz with
             | none => none
             | some (ng, gN, gLen) =>
                 match decLocals ng gN gLen with
@@ -687,11 +871,12 @@ def decCodeLocs : Nat → Nat → Nat → Option (List CodeLoc)
                     match decCodeLocs k (bN >>> (8 * esz)) (bLen - esz) with
                     | none => none
                     | some rest =>
-                        some (⟨nloc, isolateBytes bodyN bodyLen, bodyLen⟩ :: rest)
+                        some (⟨nloc, isolateBytes bodyN bodyLen, bodyLen,
+                          wholeEntryN, wholeEntryLen⟩ :: rest)
           else none
 
 def codeLocs (n len : Nat) : Option (Array CodeLoc) :=
-  match findSec 10 64 (n >>> 64) (len - 8) with
+  match modulePayload 10 n len with
   | none => none
   | some (codeN, codeLen) =>
       match readU codeN codeLen with
@@ -727,16 +912,10 @@ def decodeCode (n len funcidx : Nat) : Option WCode :=
                 | some loc =>
                   match decBlock ti.nfields segs loc.bodyLen [] loc.bodyN loc.bodyLen with
                   | none => none
-                  | some (instrs, _, _, _, term) =>
-                      if term == 0 then some ⟨ar, loc.nlocals, instrs⟩ else none
-
-/-- The decoded body (`List WInstr`) of `funcidx`. -/
-def decodeBody (n len funcidx : Nat) : Option (List WInstr) :=
-  (decodeCode n len funcidx).map (·.body)
-
-/-- The decoded arity of `funcidx` (from the type section). -/
-def decodeArity (n len funcidx : Nat) : Option Nat :=
-  (decodeCode n len funcidx).map (·.arity)
+                  | some (instrs, _, _, restLen, term) =>
+                      if term == 0 && restLen == 0 then
+                        some ⟨ar, loc.nlocals, instrs⟩
+                      else none
 
 /- ===================================================================== -/
 /-  Plan-first add/mul/sub/box host-role table                           -/
@@ -748,133 +927,21 @@ namespace AddSub
     `none` for scalar or abstract-heap value types. -/
 abbrev Sig := List (Option Nat) × List (Option Nat)
 
-/-- Consume one value type while retaining its concrete reference target.
-    This is the target-preserving counterpart of `CertDecode.readValType`. -/
-def readValTgt (n len : Nat) : Option (Option Nat × Nat × Nat) :=
-  if len == 0 then none else
-    let v := n &&& 0xff
-    let n1 := n >>> 8
-    let len1 := len - 1
-    if v == 0x7f || v == 0x7e || v == 0x7d || v == 0x7c || v == 0x7b then
-      some (none, n1, len1)
-    else if v == 0x63 || v == 0x64 then
-      match readS n1 len1 with
-      | none => none
-      | some (h, n2, len2) =>
-          some ((if h ≥ 0 then some h.toNat else none), n2, len2)
-    else if decide (0x6a ≤ v ∧ v ≤ 0x73) then some (none, n1, len1)
-    else none
+/-- Both concrete-reference tags retain their nonnegative heap type index;
+    scalars, abstract shorthands, and negative abstract heaps project to none. -/
+def valTarget : ValType → Option Nat
+  | .ref _ heap => if heap ≥ 0 then some heap.toNat else none
+  | _ => none
 
-def readValTgts : Nat → Nat → Nat → Option (List (Option Nat) × Nat × Nat)
-  | 0,   n, len => some ([], n, len)
-  | p+1, n, len =>
-      match readValTgt n len with
-      | none => none
-      | some (t, n1, len1) =>
-          match readValTgts p n1 len1 with
-          | none => none
-          | some (ts, n2, len2) => some (t :: ts, n2, len2)
+def decodeTypeSig (entry : TypeEntry) : Option Sig :=
+  match entry.composite with
+  | .funcType params results => some (params.map valTarget, results.map valTarget)
+  | _ => none
 
-/-- Decode one composite type while collecting both its function signature
-    and the first Int-carrier struct index. `tidx` is the absolute type index. -/
-def decComptypeSigC (tidx n len : Nat) :
-    Option (Option Sig × Option Nat × Nat × Nat) :=
-  if len == 0 then none else
-    let c := n &&& 0xff
-    let n1 := n >>> 8
-    let len1 := len - 1
-    if c == 0x60 then
-      match readU n1 len1 with
-      | none => none
-      | some (np, n2, len2) =>
-          match readValTgts np n2 len2 with
-          | none => none
-          | some (ptgts, n3, len3) =>
-              match readU n3 len3 with
-              | none => none
-              | some (nr, n4, len4) =>
-                  match readValTgts nr n4 len4 with
-                  | none => none
-                  | some (rtgts, n5, len5) =>
-                      some (some (ptgts, rtgts), none, n5, len5)
-    else if c == 0x5f then
-      match readU n1 len1 with
-      | none => none
-      | some (nf, n2, len2) =>
-          match readFields nf n2 len2 with
-          | none => none
-          | some (fbs, n3, len3) =>
-              let isCarrier :=
-                nf == 3 && (fbs[0]?).getD 0 == 0x7e && (fbs[2]?).getD 0 == 0x7f
-              some (none, (if isCarrier then some tidx else none), n3, len3)
-    else if c == 0x5e then
-      match readField n1 len1 with
-      | none => none
-      | some (_, n2, len2) => some (none, none, n2, len2)
-    else none
-
-def decOneSubtypeSigC (tidx n len : Nat) :
-    Option (Option Sig × Option Nat × Nat × Nat) :=
-  if len == 0 then none else
-    let b0 := n &&& 0xff
-    if b0 == 0x50 || b0 == 0x4f then
-      match readU (n >>> 8) (len - 1) with
-      | none => none
-      | some (nsup, n1, len1) =>
-          match skipUlebs nsup n1 len1 with
-          | none => none
-          | some (n2, len2) => decComptypeSigC tidx n2 len2
-    else decComptypeSigC tidx n len
-
-def decSubtypesSigC : Nat → Nat → Nat → Nat →
-    Option (List (Option Sig) × Option Nat × Nat × Nat)
-  | 0,   _,    n, len => some ([], none, n, len)
-  | k+1, tidx, n, len =>
-      match decOneSubtypeSigC tidx n len with
-      | none => none
-      | some (s, car, n1, len1) =>
-          match decSubtypesSigC k (tidx+1) n1 len1 with
-          | none => none
-          | some (ss, car2, n2, len2) =>
-              some (s :: ss, car.orElse (fun _ => car2), n2, len2)
-
-def decRecVecSigC : Nat → Nat → Nat → Nat →
-    Option (List (Option Sig) × Option Nat × Nat × Nat)
-  | 0,   _,    n, len => some ([], none, n, len)
-  | e+1, tidx, n, len =>
-      if len == 0 then none else
-        let b0 := n &&& 0xff
-        if b0 == 0x4e then
-          match readU (n >>> 8) (len - 1) with
-          | none => none
-          | some (sc, n1, len1) =>
-              match decSubtypesSigC sc tidx n1 len1 with
-              | none => none
-              | some (ss, car, n2, len2) =>
-                  match decRecVecSigC e (tidx+sc) n2 len2 with
-                  | none => none
-                  | some (ss2, car2, n3, len3) =>
-                      some (ss ++ ss2, car.orElse (fun _ => car2), n3, len3)
-        else
-          match decOneSubtypeSigC tidx n len with
-          | none => none
-          | some (s, car, n1, len1) =>
-              match decRecVecSigC e (tidx+1) n1 len1 with
-              | none => none
-              | some (ss2, car2, n2, len2) =>
-                  some (s :: ss2, car.orElse (fun _ => car2), n2, len2)
-
-/-- Function signatures and carrier index from one type-section pass. -/
+/-- Function-signature and carrier projections of the canonical type parse. -/
 def decodeTypeSigsC (n len : Nat) : Option (Array (Option Sig) × Option Nat) :=
-  match findSec 1 64 (n >>> 64) (len - 8) with
-  | none => none
-  | some (tN, tLen) =>
-      match readU tN tLen with
-      | none => none
-      | some (cnt, n1, len1) =>
-          match decRecVecSigC cnt 0 n1 len1 with
-          | none => none
-          | some (ss, car, _, _) => some (ss.toArray, car)
+  (decodeTypes n len).map (fun info =>
+    ((info.entries.map decodeTypeSig).toArray, info.carrier))
 
 def isCarrierBinop (carrier : Nat) : Option Sig → Bool
   | some (ptgts, rtgts) =>
@@ -1014,15 +1081,6 @@ def carrierBinopFns (n len : Nat) : Option (List (Nat × Option Arith)) :=
       scanFns carrier tsigs nimp 0 ftys locs
   | _, _, _, _ => none
 
-def addCands (n len : Nat) : Option (List Nat) :=
-  (carrierBinopFns n len).map (candFor Arith.add)
-
-def subCands (n len : Nat) : Option (List Nat) :=
-  (carrierBinopFns n len).map (candFor Arith.sub)
-
-def mulCands (n len : Nat) : Option (List Nat) :=
-  (carrierBinopFns n len).map (candFor Arith.mul)
-
 /-- The module-wide plan-first host-role table. `add`, `mul`, and `sub` are admitted
     only for unique carrier-binop candidates; ambiguity or absence declines the
     individual role to `none`. `box` is the named runtime export. -/
@@ -1054,135 +1112,39 @@ inductive Ty
 
 abbrev Sig := List Ty × List Ty
 
-def readVal (n len : Nat) : Option (Ty × Nat × Nat) :=
-  if len == 0 then none else
-    let v := n &&& 0xff
-    let n1 := n >>> 8
-    let len1 := len - 1
-    if v == 0x7f then some (Ty.i32, n1, len1)
-    else if v == 0x7e || v == 0x7d || v == 0x7c || v == 0x7b then
-      some (Ty.scalar, n1, len1)
-    else if v == 0x63 || v == 0x64 then
-      match CertDecode.readS n1 len1 with
-      | none => none
-      | some (h, n2, len2) =>
-          some ((if h ≥ 0 then Ty.ref h.toNat else Ty.abstractHeap), n2, len2)
-    else if decide (0x6a ≤ v ∧ v ≤ 0x73) then
-      some (Ty.abstractHeap, n1, len1)
-    else none
+def projectVal : ValType → Ty
+  | .numeric tag => if tag == 0x7f then .i32 else .scalar
+  | .ref _ heap => if heap ≥ 0 then .ref heap.toNat else .abstractHeap
+  | .abstract _ => .abstractHeap
 
-def readVals : Nat → Nat → Nat → Option (List Ty × Nat × Nat)
-  | 0,   n, len => some ([], n, len)
-  | p+1, n, len =>
-      match readVal n len with
-      | none => none
-      | some (t, n1, len1) =>
-          match readVals p n1 len1 with
-          | none => none
-          | some (ts, n2, len2) => some (t :: ts, n2, len2)
+def decodeTypeSig (entry : TypeEntry) : Option Sig :=
+  match entry.composite with
+  | .funcType params results => some (params.map projectVal, results.map projectVal)
+  | _ => none
 
-/-- One composite type at absolute `tidx`: its function signature, plus
-    `some tidx` exactly for `(array (mut i8))`, the runtime String carrier. -/
-def decComptype (tidx n len : Nat) :
-    Option (Option Sig × Option Nat × Nat × Nat) :=
-  if len == 0 then none else
-    let c := n &&& 0xff
-    let n1 := n >>> 8
-    let len1 := len - 1
-    if c == 0x60 then
-      match CertDecode.readU n1 len1 with
-      | none => none
-      | some (np, n2, len2) =>
-          match readVals np n2 len2 with
-          | none => none
-          | some (ptys, n3, len3) =>
-              match CertDecode.readU n3 len3 with
-              | none => none
-              | some (nr, n4, len4) =>
-                  match readVals nr n4 len4 with
-                  | none => none
-                  | some (rtys, n5, len5) =>
-                      some (some (ptys, rtys), none, n5, len5)
-    else if c == 0x5f then
-      match CertDecode.readU n1 len1 with
-      | none => none
-      | some (nf, n2, len2) =>
-          match CertDecode.readFields nf n2 len2 with
-          | none => none
-          | some (_, n3, len3) => some (none, none, n3, len3)
-    else if c == 0x5e then
-      match CertDecode.readField n1 len1 with
-      | none => none
-      | some (sfb, n2, len2) =>
-          some (none, (if sfb == 0x78 then some tidx else none), n2, len2)
-    else none
-
-def decOneSubtype (tidx n len : Nat) :
-    Option (Option Sig × Option Nat × Nat × Nat) :=
-  if len == 0 then none else
-    let b0 := n &&& 0xff
-    if b0 == 0x50 || b0 == 0x4f then
-      match CertDecode.readU (n >>> 8) (len - 1) with
-      | none => none
-      | some (nsup, n1, len1) =>
-          match CertDecode.skipUlebs nsup n1 len1 with
-          | none => none
-          | some (n2, len2) => decComptype tidx n2 len2
-    else decComptype tidx n len
+/-- Exactly the packed-i8 array shape used as String byte storage. As before,
+    either validated field mutability projects to the same array index. -/
+def stringBytesIndex (tidx : Nat) (entry : TypeEntry) : Option Nat :=
+  match entry.composite with
+  | .arrayType ⟨.packed tag, _⟩ => if tag == 0x78 then some tidx else none
+  | _ => none
 
 @[inline] def consOpt (o : Option Nat) (l : List Nat) : List Nat :=
   match o with | some x => x :: l | none => l
 
-def decSubtypes : Nat → Nat → Nat → Nat →
-    Option (List (Option Sig) × List Nat × Nat × Nat)
-  | 0,   _,    n, len => some ([], [], n, len)
-  | k+1, tidx, n, len =>
-      match decOneSubtype tidx n len with
-      | none => none
-      | some (s, sb, n1, len1) =>
-          match decSubtypes k (tidx+1) n1 len1 with
-          | none => none
-          | some (ss, sbs, n2, len2) =>
-              some (s :: ss, consOpt sb sbs, n2, len2)
-
-def decRecVec : Nat → Nat → Nat → Nat →
-    Option (List (Option Sig) × List Nat × Nat × Nat)
-  | 0,   _,    n, len => some ([], [], n, len)
-  | e+1, tidx, n, len =>
-      if len == 0 then none else
-        let b0 := n &&& 0xff
-        if b0 == 0x4e then
-          match CertDecode.readU (n >>> 8) (len - 1) with
-          | none => none
-          | some (sc, n1, len1) =>
-              match decSubtypes sc tidx n1 len1 with
-              | none => none
-              | some (ss, sbs, n2, len2) =>
-                  match decRecVec e (tidx+sc) n2 len2 with
-                  | none => none
-                  | some (ss2, sbs2, n3, len3) =>
-                      some (ss ++ ss2, sbs ++ sbs2, n3, len3)
-        else
-          match decOneSubtype tidx n len with
-          | none => none
-          | some (s, sb, n1, len1) =>
-              match decRecVec e (tidx+1) n1 len1 with
-              | none => none
-              | some (ss2, sbs2, n2, len2) =>
-                  some (s :: ss2, consOpt sb sbs2, n2, len2)
+def decodeTypeEntries : Nat → List TypeEntry → List (Option Sig) × List Nat
+  | _,    [] => ([], [])
+  | tidx, entry :: rest =>
+      let decoded := decodeTypeEntries (tidx + 1) rest
+      (decodeTypeSig entry :: decoded.1,
+        consOpt (stringBytesIndex tidx entry) decoded.2)
 
 /-- Function signatures and string-byte-array indices from one type pass. -/
 def decodeTypeSigs (n len : Nat) :
     Option (Array (Option Sig) × List Nat) :=
-  match CertDecode.findSec 1 64 (n >>> 64) (len - 8) with
-  | none => none
-  | some (tN, tLen) =>
-      match CertDecode.readU tN tLen with
-      | none => none
-      | some (cnt, n1, len1) =>
-          match decRecVec cnt 0 n1 len1 with
-          | none => none
-          | some (ss, sbat, _, _) => some (ss.toArray, sbat)
+  (CertDecode.decodeTypes n len).map (fun info =>
+    let decoded := decodeTypeEntries 0 info.entries
+    (decoded.1.toArray, decoded.2))
 
 /-- Exact Rust `HostOp` vocabulary. Non-mapped but boundary-known opcodes are
     `other`, making the exact template comparison decline. -/
@@ -1388,15 +1350,6 @@ def roleTable (n len : Nat) : Option (List (Nat × Role)) :=
   | some (tsigs, sbat), some ftys, some nimp, some locs =>
       some (classify nimp sbat tsigs 0 ftys locs)
   | _, _, _, _ => none
-
-/-- Raw body scan used by negative controls. `defIdx` excludes imports. -/
-def scanDefined (n len defIdx : Nat) : Option (List Op) :=
-  match bodyLocs n len with
-  | none => none
-  | some locs =>
-      match locs[defIdx]? with
-      | none => none
-      | some (_, bodyN, bodyLen) => scan (bodyLen+1) bodyN bodyLen
 
 end StringHost
 

@@ -15,19 +15,6 @@ open CertPrelude
 
 namespace V3Master
 
-private theorem allClaims_of_mem {Claim : Type u} (accept : Claim → Prop)
-    (claims : List Claim) (hAll : allClaims accept claims)
-    (claim : Claim) (hMem : claim ∈ claims) : accept claim := by
-  induction claims with
-  | nil => simp at hMem
-  | cons head tail ih =>
-      simp only [allClaims] at hAll
-      simp only [List.mem_cons] at hMem
-      rcases hAll with ⟨hHead, hTail⟩
-      rcases hMem with rfl | hMem
-      · exact hHead
-      · exact ih hTail hMem
-
 /-- The exact extra guard required by `generic_verbatim_certified`. -/
 def verbatimGenericGuards (plan : VerbatimRawPlan) : Prop :=
   V3ConstructVerbatim.checkVerbatimPlan (verbatimNLocals plan) plan = true
@@ -187,43 +174,22 @@ theorem verbatim_claim_discharges
           artifact.manifest.verbatimPlans = some plan →
         verbatimSemanticBridge claim plan) :
     obligationHolds claim.obligation := by
-  have hClaim : verbatimClaimAccepted artifact.modBytes artifact.modLen
-      artifact.manifest claim := by
-    exact allClaims_of_mem
-      (verbatimClaimAccepted artifact.modBytes artifact.modLen artifact.manifest)
-      artifact.verbatimClaims hAcc claim hMem
-  unfold verbatimClaimAccepted at hClaim
-  cases hPlan : verbatimPlanForExport claim.exportName
-      artifact.manifest.verbatimPlans with
-  | none => simp [hPlan] at hClaim
-  | some plan =>
-      have hAccepted : verbatimPlanAccepted
-          artifact.modBytes artifact.modLen claim.exportNameBytes claim.exportName
-          claim.carrier plan claim.obligation := by
-        simpa [hPlan] using hClaim
-      rcases hBridge plan hPlan with ⟨hGuards, hPolicy, hSemantic⟩
-      rcases hAccepted with
-        ⟨_hExport, _hCarrier, _hRaw, codeEntry, binding,
-          _hCodeEntry, _hExportCode, _hBinding, hSelf, _hBindingCode,
-          _hFuncType, _hPayload, hCode⟩
-      have hCodeSelf : claim.obligation.code claim.obligation.self =
-          some ⟨1, verbatimNLocals plan,
-            AverCert.PlanLower.lowerVerbatimBody plan⟩ := by
-        simpa [← hSelf] using hCode
-      rw [obligationHolds, hPolicy]
-      intro S add sub mul stringEq stringConcat
-        _hAdd _hSub _hMul _hStringEq _hStringConcat fuel x vs w hDom hRun
-      rcases hSemantic S x vs hDom with ⟨v, hVs, hCod⟩
-      subst vs
-      cases fuel with
-      | zero => simp [wFuncN] at hRun
-      | succ fuel =>
-          have hCall := V3ConstructVerbatim.generic_verbatim_certified
-            plan claim.obligation.code
-            (claim.obligation.host add sub mul stringEq stringConcat)
-            claim.obligation.self (verbatimNLocals plan)
-            hGuards hCodeSelf fuel v w hRun
-          simpa [hCall] using hCod
+  rcases verbatim_accepted_call artifact hAcc claim hMem
+      (fun plan hPlan => (hBridge plan hPlan).1) with
+    ⟨plan, hPlan, hCall⟩
+  rcases hBridge plan hPlan with ⟨_hGuards, hPolicy, hSemantic⟩
+  rw [obligationHolds, hPolicy]
+  intro S add sub mul stringEq stringConcat
+    _hAdd _hSub _hMul _hStringEq _hStringConcat fuel x vs w hDom hRun
+  rcases hSemantic S x vs hDom with ⟨v, hVs, hCod⟩
+  subst vs
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      have hResult := hCall
+        (claim.obligation.host add sub mul stringEq stringConcat)
+        fuel v w hRun
+      simpa [hResult] using hCod
 
 theorem verbatim_discharges
     (artifact : ArtifactData)
@@ -236,12 +202,3 @@ theorem verbatim_discharges
     (hSemantic claim hMem)
 
 end V3Master
-
-#print axioms V3Master.verbatim_raw_allows_bare_leaf
-#print axioms V3Master.verbatim_generic_rejects_bare_leaf
-#print axioms V3Master.verbatim_raw_allows_oob_locals
-#print axioms V3Master.verbatim_generic_rejects_oob_locals
-#print axioms V3Master.verbatim_accepted_call
-#print axioms V3Master.verbatim_canonical_discharges
-#print axioms V3Master.verbatim_claim_discharges
-#print axioms V3Master.verbatim_discharges

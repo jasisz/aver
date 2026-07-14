@@ -380,13 +380,6 @@ def stringEqW : WVal → WVal → Bool
   | .arr _ as, .arr _ bs => wByteListEq as bs
   | _, _ => false
 
-/-- `String.eq` executable reference face: compare represented string byte arrays
-    and return the i32 boolean the wasm helper produces. Certificate theorems use
-    the abstract contract; this reference exists for interpreter tripwires. -/
-def stringEqRef : List WVal → Option WVal
-  | [a, b] => some (b32 (stringEqW a b))
-  | _ => none
-
 /-- Byte-list append for represented string bytes. A malformed element is a
     contract failure, not a byte to skip. -/
 def wByteAppend : List WVal → List WVal → Option (List WVal)
@@ -412,14 +405,6 @@ def stringConcatW (resultTy : Nat) : WVal → Option WVal
   | .arr _ parts => do
       let bytes ← stringConcatParts parts
       some (.arr resultTy bytes)
-  | _ => none
-
-/-- `String.concat` executable reference face: takes a container `arr` of
-    string-arrays as a single argument and returns the byte-concatenated array.
-    Certificate theorems use the abstract contract; this reference exists for
-    interpreter tripwires. -/
-def stringConcatRef (resultTy : Nat) : List WVal → Option WVal
-  | [parts] => stringConcatW resultTy parts
   | _ => none
 
 /-- Int comparison contract faces: decode both carriers, compare in ℤ, return

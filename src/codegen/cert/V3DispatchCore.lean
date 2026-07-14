@@ -78,15 +78,6 @@ theorem finishRun_nil
   | none => rfl
   | some out => cases out <;> simp [wRunF]
 
-theorem finishPassthrough (r : Option Out) :
-    (match r with
-     | some (.ok locals stack) => some (.ok locals stack)
-     | some (.ret value) => some (.ret value)
-     | none => none) = r := by
-  cases r with
-  | none => rfl
-  | some out => cases out <;> rfl
-
 theorem popArgs_one (a : WVal) (rest : List WVal) :
     popArgs 1 (a :: rest) = some ([a], rest) := by
   simp [popArgs, List.take, List.drop]
@@ -418,8 +409,5 @@ theorem generic_int_dispatch_certified {C : Nat} (S : CarrierSpec C)
                       exact hok.2
                   | cons x xs => simp [hr] at hrun
 
-#print axioms blockOK_ifElse
-#print axioms simCascade
-#print axioms generic_int_dispatch_certified
 
 end V3Dispatch

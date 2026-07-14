@@ -238,7 +238,7 @@ theorem {primary}_mutualFragmentsAccepted :
 
 /// Option-(b) residual for one mutual export.  A simultaneous fuel induction
 /// relates every source member to the plan-derived k-generic evaluator; the
-/// selected member then supplies both domain directions required by
+/// selected member then supplies the represented-domain relation required by
 /// `mutualSemanticBridge`.  Wasm execution and totality stay in the audited wall.
 fn render_mutual_semantic_bridge(c: &Cert) -> String {
     let Cert::MutualRecursion {
@@ -296,7 +296,7 @@ theorem {name}_mutualSemanticBridge :
     simpa [V3Mutual.evalMutualU, {name}] using
       (hModelFuel (n.natAbs + 1) n){projection}
   refine ⟨{k}, {box_idx}, {sub_idx}, {primary}_mutualScc,
-    ⟨{position}, by omega⟩, rfl, rfl, rfl, rfl, ?_, ?_, ?_, ?_⟩
+    ⟨{position}, by omega⟩, rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
   · intro i _hi
 {fin_cases}
   · intro add sub mul stringEq stringConcat
@@ -319,15 +319,6 @@ theorem {name}_mutualSemanticBridge :
             simpa [{name}_mutualClaim, AverCert.{name}Ob,
               AverCert.Schema.intRepr] using hw
         | cons _ _ => simp at hLen
-  · intro S n v hv
-    refine ⟨[n], ⟨ReprAll.cons hv ReprAll.nil, rfl⟩, ?_⟩
-    intro w hw
-    change S.Repr (V3Mutual.evalMutualU {primary}_mutualMembers
-      ⟨{position}, by omega⟩ n) w at hw
-    rw [hModel n] at hw
-    simpa [{name}_mutualClaim, AverCert.{name}Ob,
-      AverCert.Schema.intRepr] using hw
-
 #print axioms {name}_mutualSemanticBridge
 "#,
     )

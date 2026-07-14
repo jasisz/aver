@@ -40,12 +40,6 @@ def evalStringConcat (stringTy containerTy : Nat)
     (plan : StringConcatRawPlan) (input : WVal) : WVal :=
   (stringConcatW stringTy (.arr containerTy (evalConcatParts stringTy plan input))).getD .null
 
-def checkStringEqFamily (namedIdx citedIdx : Nat) (plan : StringEqRawPlan) : Bool :=
-  AverCert.PlanCheck.checkStringEqRawPlan plan && decide (citedIdx = namedIdx)
-
-def checkStringConcatFamily (namedIdx citedIdx : Nat) (plan : StringConcatRawPlan) : Bool :=
-  AverCert.PlanCheck.checkStringConcatRawPlan plan && decide (citedIdx = namedIdx)
-
 inductive ValKind where
   | exact (v : WVal)
   | arr (ty : Nat) (bytes : List Nat)
@@ -58,10 +52,6 @@ def StackOK : List ValKind → List WVal → Prop
   | [], [] => True
   | k :: ks, w :: ws => ValOK k w ∧ StackOK ks ws
   | _, _ => False
-
-theorem byteArray_eq (ty : Nat) (bytes : List Nat) :
-    .arr ty (bytes.map (.i32v ∘ Int.ofNat)) = byteArray ty bytes := by
-  simp [byteArray, Function.comp_def]
 
 theorem evalConcatChunks_length (stringTy : Nat) : ∀ chunks,
     (evalConcatChunks stringTy chunks).length = chunks.length := by
@@ -302,9 +292,5 @@ theorem generic_string_eq_certified
         | some got => simp [hc] at hrun; exact hrun.symm
       · simp [wFuncN, wRunF, hself, initLocals, List.set, hty] at hrun
 
-#print axioms runConcatChunks
-#print axioms runEqResult
-#print axioms generic_string_concat_certified
-#print axioms generic_string_eq_certified
 
 end V3String

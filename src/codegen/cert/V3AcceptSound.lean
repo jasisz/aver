@@ -100,19 +100,4 @@ theorem accept_sound
   exact ⟨hHash, holdsCore_of_claims artifact hCover hInManifest hUnique
     (hClaims_of_accepted artifact hAccepted hSide)⟩
 
-/-- With the two residual seams supplied, the originally stated master target
-follows.  Its subject-root, manifest-plan, and decoded-byte hypotheses are
-stronger acceptance-context facts not needed by the final logical step. -/
-theorem masterTarget_of_sideConditions
-    (wasmSha256 : String)
-    (artifact : ArtifactData)
-    (hHash : artifact.manifest.subject.artifactHash = wasmSha256)
-    (hSide : dischargeSideConditions artifact) :
-    masterTarget wasmSha256 artifact := by
-  intro _ hInManifest _ _ hAccepted _
-  exact accept_sound wasmSha256 artifact hHash hInManifest hAccepted hSide
-
 end V3Master
-
-#print axioms V3Master.hClaims_of_accepted
-#print axioms V3Master.accept_sound

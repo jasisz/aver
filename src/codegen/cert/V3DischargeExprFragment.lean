@@ -20,19 +20,6 @@ open CertPrelude
 
 namespace V3Master
 
-private theorem allClaims_of_mem {Claim : Type u} (accept : Claim → Prop)
-    (claims : List Claim) (hAll : allClaims accept claims)
-    (claim : Claim) (hMem : claim ∈ claims) : accept claim := by
-  induction claims with
-  | nil => simp at hMem
-  | cons head tail ih =>
-      simp only [allClaims] at hAll
-      simp only [List.mem_cons] at hMem
-      rcases hAll with ⟨hHead, hTail⟩
-      rcases hMem with rfl | hMem
-      · exact hHead
-      · exact ih hTail hMem
-
 /-- The semantic face not carried by `symFragmentPlanAccepted`.  It relates an
 arbitrary obligation-domain representation to the generic theorem's honest
 input values and pins the SymRawPlan-derived evaluator's result to the
@@ -193,6 +180,3 @@ theorem exprFragment_discharges
     (hSemantic claim hMem)
 
 end V3Master
-
-#print axioms V3Master.exprFragment_claim_discharges
-#print axioms V3Master.exprFragment_discharges

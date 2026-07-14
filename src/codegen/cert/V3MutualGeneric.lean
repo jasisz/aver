@@ -127,7 +127,6 @@ structure AdmittedScc (k C boxIdx subIdx : Nat) where
 
 /-! One conjunction-over-fuel simulation theorem. -/
 
-set_option trace.profiler true in
 /-- Every admitted k-member SCC simulates its mutual fuel-twin.  There is one
     induction over fuel and one finite-conjunction motive (`∀ i : Fin k`).
     In the cross-call arm the recursive fact is exactly
@@ -135,16 +134,7 @@ set_option trace.profiler true in
 theorem mutual_generic_certified
     (k C boxIdx subIdx : Nat)
     (scc : AdmittedScc k C boxIdx subIdx)
-    (Repr : Int → WVal → Prop)
-    (hcar : ∀ n v, Repr n v →
-      (∃ s sg, v = .structv C [.i64v s, .null, .i32v sg]) ∨
-      (∃ s lty les sg, v = .structv C [.i64v s, .arr lty les, .i32v sg]))
-    (hsmall_intro : ∀ x : Int, Repr x (carrierSmall C x))
-    (hsmall_elim : ∀ n s sg,
-      Repr n (.structv C [.i64v s, .null, .i32v sg]) → s = n)
-    (hbig : ∀ n s lty les sg,
-      Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) →
-        ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)
+    (S : CarrierSpec C)
     (code : CodeTbl) (host : HostTbl)
     (sub : List WVal → Option WVal)
     (hBox : host boxIdx = some (1, boxRef C))
@@ -152,11 +142,11 @@ theorem mutual_generic_certified
     (hMemberHost : ∀ i, host (scc.members i).self = none)
     (hCode : ∀ i, code (scc.members i).self =
       some ⟨1, 1, mutualInstrs C boxIdx subIdx scc.members i⟩)
-    (hSub : ∀ a b va vb w, Repr a va → Repr b vb →
-      sub [va, vb] = some w → Repr (a - b) w) :
-    ∀ (fuel : Nat) (i : Fin k) (n : Int) (v w : WVal), Repr n v →
+    (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      sub [va, vb] = some w → S.Repr (a - b) w) :
+    ∀ (fuel : Nat) (i : Fin k) (n : Int) (v w : WVal), S.Repr n v →
       wFuncN code host fuel (scc.members i).self [v] = some w →
-      Repr (evalMutualU scc.members i n) w := by
+      S.Repr (evalMutualU scc.members i n) w := by
   intro fuel
   induction fuel with
   | zero =>
@@ -164,15 +154,15 @@ theorem mutual_generic_certified
       simp [wFuncN] at hrun
   | succ fuel ih =>
       intro i n v w hv hrun
-      rcases hcar n v hv with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
-      · have hs := hsmall_elim n s sg hv
+      rcases S.car n v hv with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
+      · have hs := S.smallElim n s sg hv
         subst hs
         by_cases hle : s ≤ (0 : Int)
         · simp [wFuncN, wRunF, hCode i, hBox, hMemberHost i,
             mutualInstrs, signSmallInstrs, signBigInstrs,
             boxRef, b32, popArgs, initLocals, hle] at hrun
           rw [evalMutualU_base scc.members i s hle, ← hrun]
-          exact hsmall_intro (scc.members i).base
+          exact S.smallIntro (scc.members i).base
         · simp [wFuncN, wRunF, hCode i, hCode (scc.members i).cross,
             hBox, hSubHost, hMemberHost i,
             mutualInstrs, signSmallInstrs, signBigInstrs,
@@ -181,8 +171,8 @@ theorem mutual_generic_certified
               [.structv C [.i64v s, .null, .i32v sg], carrierSmall C 1] with _ | vd
           · simp [hsub] at hrun
           · simp only [hsub] at hrun
-            have hrd : Repr (s - 1) vd :=
-              hSub s 1 _ _ vd hv (hsmall_intro 1) hsub
+            have hrd : S.Repr (s - 1) vd :=
+              hSub s 1 _ _ vd hv (S.smallIntro 1) hsub
             rcases hrec : wFuncN code host fuel
                 (scc.members (scc.members i).cross).self [vd] with _ | vr
             · simp [hrec] at hrun
@@ -192,14 +182,14 @@ theorem mutual_generic_certified
               rw [Option.some.injEq] at hrun
               rw [← hrun]
               exact hrr
-      · obtain ⟨hsign, hne⟩ := hbig n s lty les sg hv
+      · obtain ⟨hsign, hne⟩ := S.bigElim n s lty les sg hv
         by_cases hlt : sg < (0 : Int)
         · have hn0 : n ≤ 0 := by have := hsign.mp hlt; omega
           simp [wFuncN, wRunF, hCode i, hBox, hMemberHost i,
               mutualInstrs, signSmallInstrs, signBigInstrs,
               boxRef, b32, popArgs, initLocals, hlt] at hrun
           rw [evalMutualU_base scc.members i n hn0, ← hrun]
-          exact hsmall_intro (scc.members i).base
+          exact S.smallIntro (scc.members i).base
         · have hn0 : ¬ n ≤ 0 := by
             intro hle
             have : ¬ n < 0 := fun h => hlt (hsign.mpr h)
@@ -212,8 +202,8 @@ theorem mutual_generic_certified
               [.structv C [.i64v s, .arr lty les, .i32v sg], carrierSmall C 1] with _ | vd
           · simp [hsub] at hrun
           · simp only [hsub] at hrun
-            have hrd : Repr (n - 1) vd :=
-              hSub n 1 _ _ vd hv (hsmall_intro 1) hsub
+            have hrd : S.Repr (n - 1) vd :=
+              hSub n 1 _ _ vd hv (S.smallIntro 1) hsub
             rcases hrec : wFuncN code host fuel
                 (scc.members (scc.members i).cross).self [vd] with _ | vr
             · simp [hrec] at hrun
@@ -230,16 +220,7 @@ theorem mutual_generic_certified
 theorem mutual_generic_certified_total_aux
     (k C boxIdx subIdx : Nat)
     (scc : AdmittedScc k C boxIdx subIdx)
-    (Repr : Int → WVal → Prop)
-    (hcar : ∀ n v, Repr n v →
-      (∃ s sg, v = .structv C [.i64v s, .null, .i32v sg]) ∨
-      (∃ s lty les sg, v = .structv C [.i64v s, .arr lty les, .i32v sg]))
-    (hsmall_intro : ∀ x : Int, Repr x (carrierSmall C x))
-    (hsmall_elim : ∀ n s sg,
-      Repr n (.structv C [.i64v s, .null, .i32v sg]) → s = n)
-    (hbig : ∀ n s lty les sg,
-      Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) →
-        ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)
+    (S : CarrierSpec C)
     (code : CodeTbl) (host : HostTbl)
     (sub : List WVal → Option WVal)
     (hBox : host boxIdx = some (1, boxRef C))
@@ -247,13 +228,13 @@ theorem mutual_generic_certified_total_aux
     (hMemberHost : ∀ i, host (scc.members i).self = none)
     (hCode : ∀ i, code (scc.members i).self =
       some ⟨1, 1, mutualInstrs C boxIdx subIdx scc.members i⟩)
-    (hSub : ∀ a b va vb w, Repr a va → Repr b vb →
-      sub [va, vb] = some w → Repr (a - b) w)
-    (hSubTot : ∀ a b va vb, Repr a va → Repr b vb →
+    (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      sub [va, vb] = some w → S.Repr (a - b) w)
+    (hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb →
       ∃ w, sub [va, vb] = some w) :
-    ∀ fuel i n v, Repr n v → n.natAbs < fuel →
+    ∀ fuel i n v, S.Repr n v → n.natAbs < fuel →
       ∃ w, wFuncN code host fuel (scc.members i).self [v] = some w ∧
-        Repr (evalMutualU scc.members i n) w := by
+        S.Repr (evalMutualU scc.members i n) w := by
   intro fuel
   induction fuel with
   | zero =>
@@ -261,8 +242,8 @@ theorem mutual_generic_certified_total_aux
       omega
   | succ fuel ih =>
       intro i n v hv hlt
-      rcases hcar n v hv with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
-      · have hs := hsmall_elim n s sg hv
+      rcases S.car n v hv with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
+      · have hs := S.smallElim n s sg hv
         subst hs
         by_cases hle : s ≤ (0 : Int)
         · refine ⟨carrierSmall C (scc.members i).base, ?_, ?_⟩
@@ -270,11 +251,11 @@ theorem mutual_generic_certified_total_aux
               mutualInstrs, signSmallInstrs, signBigInstrs,
               boxRef, b32, popArgs, initLocals, hle]
           · rw [evalMutualU_base scc.members i s hle]
-            exact hsmall_intro (scc.members i).base
+            exact S.smallIntro (scc.members i).base
         · obtain ⟨vd, hsub⟩ := hSubTot s 1 _ (carrierSmall C 1)
-            hv (hsmall_intro 1)
-          have hrd : Repr (s - 1) vd :=
-            hSub s 1 _ _ vd hv (hsmall_intro 1) hsub
+            hv (S.smallIntro 1)
+          have hrd : S.Repr (s - 1) vd :=
+            hSub s 1 _ _ vd hv (S.smallIntro 1) hsub
           obtain ⟨vr, hrec, hrr⟩ :=
             ih (scc.members i).cross (s - 1) vd hrd (by omega)
           refine ⟨vr, ?_, ?_⟩
@@ -284,7 +265,7 @@ theorem mutual_generic_certified_total_aux
               initLocals, hle, hsub, hrec]
           · rw [evalMutualU_step scc.members i s hle]
             exact hrr
-      · obtain ⟨hsign, hne⟩ := hbig n s lty les sg hv
+      · obtain ⟨hsign, hne⟩ := S.bigElim n s lty les sg hv
         by_cases hlt : sg < (0 : Int)
         · have hn0 : n ≤ 0 := by
             have := hsign.mp hlt
@@ -294,15 +275,15 @@ theorem mutual_generic_certified_total_aux
               mutualInstrs, signSmallInstrs, signBigInstrs,
               boxRef, b32, popArgs, initLocals, hlt]
           · rw [evalMutualU_base scc.members i n hn0]
-            exact hsmall_intro (scc.members i).base
+            exact S.smallIntro (scc.members i).base
         · have hn0 : ¬ n ≤ 0 := by
             intro hle
             have : ¬ n < 0 := fun h => hlt (hsign.mpr h)
             omega
           obtain ⟨vd, hsub⟩ := hSubTot n 1 _ (carrierSmall C 1)
-            hv (hsmall_intro 1)
-          have hrd : Repr (n - 1) vd :=
-            hSub n 1 _ _ vd hv (hsmall_intro 1) hsub
+            hv (S.smallIntro 1)
+          have hrd : S.Repr (n - 1) vd :=
+            hSub n 1 _ _ vd hv (S.smallIntro 1) hsub
           obtain ⟨vr, hrec, hrr⟩ :=
             ih (scc.members i).cross (n - 1) vd hrd (by omega)
           refine ⟨vr, ?_, ?_⟩
@@ -318,16 +299,7 @@ theorem mutual_generic_certified_total_aux
 theorem mutual_generic_certified_total
     (k C boxIdx subIdx : Nat)
     (scc : AdmittedScc k C boxIdx subIdx)
-    (Repr : Int → WVal → Prop)
-    (hcar : ∀ n v, Repr n v →
-      (∃ s sg, v = .structv C [.i64v s, .null, .i32v sg]) ∨
-      (∃ s lty les sg, v = .structv C [.i64v s, .arr lty les, .i32v sg]))
-    (hsmall_intro : ∀ x : Int, Repr x (carrierSmall C x))
-    (hsmall_elim : ∀ n s sg,
-      Repr n (.structv C [.i64v s, .null, .i32v sg]) → s = n)
-    (hbig : ∀ n s lty les sg,
-      Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) →
-        ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0)
+    (S : CarrierSpec C)
     (code : CodeTbl) (host : HostTbl)
     (sub : List WVal → Option WVal)
     (hBox : host boxIdx = some (1, boxRef C))
@@ -335,26 +307,18 @@ theorem mutual_generic_certified_total
     (hMemberHost : ∀ i, host (scc.members i).self = none)
     (hCode : ∀ i, code (scc.members i).self =
       some ⟨1, 1, mutualInstrs C boxIdx subIdx scc.members i⟩)
-    (hSub : ∀ a b va vb w, Repr a va → Repr b vb →
-      sub [va, vb] = some w → Repr (a - b) w)
-    (hSubTot : ∀ a b va vb, Repr a va → Repr b vb →
+    (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+      sub [va, vb] = some w → S.Repr (a - b) w)
+    (hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb →
       ∃ w, sub [va, vb] = some w) :
-    ∀ i n v, Repr n v →
+    ∀ i n v, S.Repr n v →
       ∃ w, wFuncN code host (n.natAbs + 1) (scc.members i).self [v] = some w ∧
-        Repr (evalMutualU scc.members i n) w := by
+        S.Repr (evalMutualU scc.members i n) w := by
   intro i n v hv
-  apply mutual_generic_certified_total_aux k C boxIdx subIdx scc Repr hcar
-    hsmall_intro hsmall_elim hbig code host sub hBox hSubHost hMemberHost
-    hCode hSub hSubTot
+  apply mutual_generic_certified_total_aux k C boxIdx subIdx scc S code host sub
+    hBox hSubHost hMemberHost hCode hSub hSubTot
   · exact hv
   · omega
 
-#print axioms evalMutualU_fuel_irrel
-#print axioms evalMutualU_fuel_stable
-#print axioms evalMutualU_base
-#print axioms evalMutualU_step
-#print axioms mutual_generic_certified
-#print axioms mutual_generic_certified_total_aux
-#print axioms mutual_generic_certified_total
 
 end V3Mutual

@@ -1,7 +1,6 @@
 /- LUKA-1 v3: full expr-fragment generic certificate assembly. -/
 import V3ExprFragmentFull
 import V3StrongFuel
-import V3IfElse
 
 set_option maxRecDepth 1000000
 set_option maxHeartbeats 8000000
@@ -122,19 +121,6 @@ theorem runBlockFuel_ok_stack
                       have hs : ls = locals' /\ [value] = stack := by simpa using h
                       exact ⟨value, hs.2.symm⟩
                   | cons value' tail => simp at h
-
-theorem runPrim_eq_single
-    (host : HostTbl) (ar : Nat -> Option Nat) (callee : Callee)
-    (op : FragPrim) (locals stack : List WVal) :
-    wRunF host ar callee [primInstr op] locals stack =
-      match runPrim op stack with
-      | some stack' => some (.ok locals stack')
-      | none => none := by
-  cases op <;> cases stack <;> try simp [runPrim, primInstr, wRunF]
-  all_goals rename_i a stack
-  all_goals cases a <;> cases stack <;> try simp [runPrim, primInstr, wRunF]
-  all_goals rename_i b stack
-  all_goals cases b <;> simp [runPrim, primInstr, wRunF]
 
 /- The mutual theorem is intentionally stated in the strong-induction shape
    left by the architect fork. -/
@@ -500,49 +486,5 @@ theorem exprfragment_generic_certified {C : Nat} (S : CarrierSpec C)
     (initLocals ⟨plan.params.length, nlocals, instrs⟩ inputs)
     (.ok modelLocals [result]) hevalBlock
   simp [wFuncN, hself, hwrun]
-
-/-! The source comparison bridge, stated at exactly the honest domain. -/
-
-def sourceIntCmp : SymIntCmp -> Int -> Int -> Bool
-  | .eq, n, k => n = k
-  | .lt, n, k => n < k
-  | .le, n, k => n <= k
-  | .ge, n, k => n >= k
-
-def smallCmpInstr : SymIntCmp -> WInstr
-  | .eq => .i64Eq
-  | .lt => .i64LtS
-  | .le => .i64LeS
-  | .ge => .i64GeS
-
-def bigCmpInstrs (C : Nat) : SymIntCmp -> List WInstr
-  | .eq => [.i32Const 0]
-  | .lt => [.localGet 0, .structGet C 2, .i32Const 0, .i32LtS]
-  | .le => [.localGet 0, .structGet C 2, .i32Const 0, .i32LtS]
-  | .ge => [.localGet 0, .structGet C 2, .i32Const 0, .i32GtS]
-
-def intConstCmpInstrs (C : Nat) (op : SymIntCmp) (k : Int) : List WInstr :=
-  [.localGet 0, .structGet C 1, .refIsNull,
-   .ifElse
-     [.localGet 0, .structGet C 0, .i64Const k, smallCmpInstr op]
-     (bigCmpInstrs C op)]
-
-/-- All four source integer comparisons agree with their representation
-    lowering on `carrierSmall`.  The `CarrierSpec` appears in the codomain
-    relation, while the executable premise is deliberately not widened to an
-    arbitrary `S.Repr`. -/
-theorem carrierSmall_intConstCmp_bridge {C : Nat} (S : CarrierSpec C)
-    (op : SymIntCmp) (n k : Int) :
-    wRunF (fun _ => none) (fun _ => none) (fun _ _ => none)
-      (intConstCmpInstrs C op k) [carrierSmall C n] [] =
-        some (.ok [carrierSmall C n] [b32 (sourceIntCmp op n k)]) /\
-    boolRepr S (sourceIntCmp op n k) (b32 (sourceIntCmp op n k)) := by
-  cases op <;> simp [intConstCmpInstrs, smallCmpInstr, bigCmpInstrs,
-    sourceIntCmp, wRunF, carrierSmall, b32, boolRepr]
-
-#print axioms carrierSmall_intConstCmp_bridge
-
-#print axioms mutualCorrect
-#print axioms exprfragment_generic_certified
 
 end V3ExprFragmentGeneric
