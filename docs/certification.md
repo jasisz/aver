@@ -166,7 +166,34 @@ Anti-vacuity is enforced separately: executable guard `example`s must compute ea
 
 The verdict is the witness process exit code. No byte of build output is ever parsed into the verdict or the CERTIFIED report.
 
-What a consumer trusts, exhaustively: the Lean kernel and the exact toolchain and audited wall selected by `wall_id`; and the checker orchestration above. The wall identity commits to `SchemaCore.lean`, `Schema.lean`, `CertDecode.lean`, `PlanCheck.lean`, `PlanLower.lean`, `PlanBytes.lean`, `WasmSlice.lean`, `ExprFragmentAccepted.lean`, `AcceptedArtifactCore.lean`, `AcceptedArtifact.lean`, `CertPrelude.lean`, and every reusable soundness/discharge module as one byte-exact unit. The final byte-origin rule is: **every byte fact a theorem stands on is computed in the kernel**. `CertDecode.lean`, `WasmSlice.lean`, and the checked plan lowerers cover code, carrier, struct fields, exports/self indices, closure facts, box/add/sub roles, and every independently classified String.eq/String.concat role; the witness contains zero trust-bearing Rust byte facts. What remains outside the kernel is explicit and not byte-fact-shaped: **model and `domRepr` read declarations**; the elaboration token-scan as a **raised bar**, not a proof; and **Rust rederivation plus `validate_all` as non-trust-bearing fail-fast checks**. The full Rust disassembler/classifier remains useful for differential testing and early diagnostics, but never supplies a theorem premise. `PlanBytes.lean` mirrors the expr-fragment canonical byte encoder in Lean, `WasmSlice.lean` checks that the checker-read module bytes expose each expr-fragment export's exact `FuncBinding`, and `ExprFragmentAccepted.lean` packages those checks into the dependency-closed artifact bridge. The generated `Artifact.lean` is data, not verifier authority: its `data` is pinned before its `certificate` root is audited.
+What a consumer trusts, exhaustively: the Lean kernel, the exact toolchain and
+audited wall selected by `wall_id`, and the Rust verifier orchestration above.
+The wall identity commits to the schema, decoder, plan checker/lowerer, Wasm
+slicer, accepted-artifact predicate, semantics, and every reusable
+soundness/discharge module as one byte-exact unit.
+
+The final byte-origin rule is: **every byte fact a theorem stands on is
+computed in the kernel**. `CertDecode.lean`, `WasmSlice.lean`, and the checked
+plan lowerers cover code, carrier, struct fields, exports/self indices, closure
+facts, box/add/sub roles, and every independently classified
+String.eq/String.concat role; the witness contains zero trust-bearing Rust
+byte facts.
+
+Rust remains trust-bearing for obligation-family selection, typed semantic
+faces and models, plan-surface interpretation, policy and termination claims,
+runtime-contract selection, and construction of the expected artifact data
+and witness. Lean pins those choices to its independently decoded byte facts,
+but it does not independently choose them. Redundant validation and diagnostic
+mirrors are fail-fast checks only. The other explicit non-byte inputs are
+**model and `domRepr` read declarations** and the elaboration token scan as a
+**raised bar**, not a formal sandbox.
+
+`PlanBytes.lean` mirrors the expr-fragment canonical byte encoder in Lean,
+`WasmSlice.lean` checks that the checker-read module bytes expose each
+expr-fragment export's exact `FuncBinding`, and `ExprFragmentAccepted.lean`
+packages those checks into the dependency-closed artifact bridge. The
+generated `Artifact.lean` is data, not verifier authority: its `data` is pinned
+before its `certificate` root is audited.
 
 **Read surface (what is declared vs. pinned).** As of this branch the checker pins the typed face of each obligation to the standard form of its byte-derived class (see trust-model step 4). Two items remain **read declarations**, not kernel-re-derived: the **model** of every class, and the **`domRepr` of the ADT classes** — the `variant match` domain (both the three-branch and the widened Int match) and the `constructor` domain/codomain are stated over a user-inductive `Repr` the checker cannot reconstruct from bytes alone. For those the checker still proves `Nonempty Dom` and forces the constructor's runtime behaviour with an executable interpreter tripwire, but the domain/codomain *representation* of a user type is read from the certificate, exactly like the model. Closing this residue (a per-build mechanical disjunction of the variants, and an in-kernel decoder for the model) is future work.
 
