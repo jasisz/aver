@@ -78,6 +78,10 @@
 //! skipped when `lake` is unavailable, mirroring `cert_certify_spec.rs`.
 #![cfg(feature = "wasm")]
 
+#[path = "support/cert_wall.rs"]
+mod cert_wall;
+
+use cert_wall::materialize as materialize_wall;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -114,6 +118,13 @@ fn aver_command() -> Command {
         "AVER_CERT_DATA_CACHE",
         std::env::temp_dir().join("aver-cert-data-store"),
     );
+    command
+}
+
+fn lake_for_cert(cert_dir: &Path) -> Command {
+    materialize_wall(cert_dir);
+    let mut command = Command::new("lake");
+    command.current_dir(cert_dir);
     command
 }
 
@@ -1353,7 +1364,7 @@ fn big_nat_code_entry_pin_closes_at_130kb_and_flipped_byte_fails() {
         render_list(&code_entry)
     );
     std::fs::write(cert.join("LargePin.lean"), positive).unwrap();
-    let prebuild = Command::new("lake")
+    let prebuild = lake_for_cert(&cert)
         .current_dir(&cert)
         .args(["build", "WasmSlice"])
         .output()
@@ -1365,7 +1376,7 @@ fn big_nat_code_entry_pin_closes_at_130kb_and_flipped_byte_fails() {
         String::from_utf8_lossy(&prebuild.stderr)
     );
     let started = std::time::Instant::now();
-    let large_pin = Command::new("lake")
+    let large_pin = lake_for_cert(&cert)
         .current_dir(&cert)
         .args([
             "env",
@@ -1394,7 +1405,7 @@ fn big_nat_code_entry_pin_closes_at_130kb_and_flipped_byte_fails() {
         render_list(&flipped)
     );
     std::fs::write(cert.join("LargePinBad.lean"), negative).unwrap();
-    let bad_pin = Command::new("lake")
+    let bad_pin = lake_for_cert(&cert)
         .current_dir(&cert)
         .args(["env", "lean", "LargePinBad.lean"])
         .output()
@@ -3145,7 +3156,7 @@ fn run_manifest_obligation_guard_iso(prefix: &str, lean: &str) {
         String::from_utf8_lossy(&compile.stderr)
     );
     let cert = out_dir.join("cert");
-    let build = Command::new("lake")
+    let build = lake_for_cert(&cert)
         .current_dir(&cert)
         .arg("build")
         .output()
@@ -3157,7 +3168,7 @@ fn run_manifest_obligation_guard_iso(prefix: &str, lean: &str) {
         String::from_utf8_lossy(&build.stderr)
     );
     std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
+    let check = lake_for_cert(&cert)
         .current_dir(&cert)
         .arg("env")
         .arg("lean")
@@ -3462,7 +3473,7 @@ fn composition_plan_guards_are_isolated_and_weaken_confirmed() {
         String::from_utf8_lossy(&compile.stderr)
     );
     let cert = out_dir.join("cert");
-    let build = Command::new("lake")
+    let build = lake_for_cert(&cert)
         .current_dir(&cert)
         .arg("build")
         .output()
@@ -3590,7 +3601,7 @@ def weakCoverage (_ : List AverCert.AcceptedArtifact.CompositionMemberClaim)
 example : weakCoverage AverCert.Artifact.compositionMembers orphanClaims = true := rfl
 "#;
     std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
+    let check = lake_for_cert(&cert)
         .current_dir(&cert)
         .arg("env")
         .arg("lean")
@@ -3637,7 +3648,7 @@ fn field_projection_plan_guards_are_isolated_and_weaken_confirmed() {
         String::from_utf8_lossy(&compile.stderr)
     );
     let cert = out_dir.join("cert");
-    let build = Command::new("lake")
+    let build = lake_for_cert(&cert)
         .current_dir(&cert)
         .arg("build")
         .output()
@@ -3853,7 +3864,7 @@ def weakManifest (_ : List String) : Bool := true
 example : weakManifest (AverCert.AcceptedArtifact.fieldProjectionClaimExportNames relabeled) = true := rfl
 "#;
     std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
+    let check = lake_for_cert(&cert)
         .current_dir(&cert)
         .arg("env")
         .arg("lean")
@@ -4228,7 +4239,7 @@ fn recursion_termination_witness_guard_is_isolating() {
         String::from_utf8_lossy(&compile.stderr)
     );
     let cert = out_dir.join("cert");
-    let build = Command::new("lake")
+    let build = lake_for_cert(&cert)
         .current_dir(&cert)
         .arg("build")
         .output()
@@ -4244,7 +4255,7 @@ fn recursion_termination_witness_guard_is_isolating() {
         include_str!("fixtures/cert_termination_guard_iso.lean"),
     )
     .unwrap();
-    let check = Command::new("lake")
+    let check = lake_for_cert(&cert)
         .current_dir(&cert)
         .arg("env")
         .arg("lean")
@@ -4289,7 +4300,7 @@ fn mutual_termination_witness_guard_is_isolating() {
         String::from_utf8_lossy(&compile.stderr)
     );
     let cert = out_dir.join("cert");
-    let build = Command::new("lake")
+    let build = lake_for_cert(&cert)
         .current_dir(&cert)
         .arg("build")
         .output()
@@ -4303,7 +4314,7 @@ fn mutual_termination_witness_guard_is_isolating() {
         include_str!("fixtures/cert_mutual_termination_guard_iso.lean"),
     )
     .unwrap();
-    let check = Command::new("lake")
+    let check = lake_for_cert(&cert)
         .current_dir(&cert)
         .arg("env")
         .arg("lean")
@@ -4647,9 +4658,8 @@ fn cert_verify_declines_broken_mutual_scc_membership() {
     ];
 
     let lake_ok = |cert: &Path| -> bool {
-        Command::new("lake")
+        lake_for_cert(cert)
             .arg("build")
-            .current_dir(cert)
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
@@ -4800,7 +4810,7 @@ fn mutual_scc_kernel_guards_are_isolating() {
     );
     let cert = out_dir.join("cert");
     // Build the audited modules so `lake env lean` can resolve the imports.
-    let honest_build = Command::new("lake")
+    let honest_build = lake_for_cert(&cert)
         .arg("build")
         .current_dir(&cert)
         .output()
@@ -4808,7 +4818,7 @@ fn mutual_scc_kernel_guards_are_isolating() {
     assert!(honest_build.status.success(), "honest cert must lake-build");
 
     std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let elab = Command::new("lake")
+    let elab = lake_for_cert(&cert)
         .arg("env")
         .arg("lean")
         .arg("GuardIso.lean")
@@ -4956,14 +4966,14 @@ fn cert_verify_declines_tampered_verbatim_plan() {
     );
     lean.push_str("example : lowerVerbatimCodeEntry 9 tamper4 ≠ lowerVerbatimCodeEntry 9 honestWrap := by decide\n");
 
-    let honest_build = Command::new("lake")
+    let honest_build = lake_for_cert(&cert)
         .arg("build")
         .current_dir(&cert)
         .output()
         .expect("lake build runs");
     assert!(honest_build.status.success(), "honest cert must lake-build");
     std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let elab = Command::new("lake")
+    let elab = lake_for_cert(&cert)
         .arg("env")
         .arg("lean")
         .arg("GuardIso.lean")
@@ -5528,7 +5538,7 @@ example : PlanCheck.checkConstructRawPlan
         String::from_utf8_lossy(&compile.stderr)
     );
     let cert = out_dir.join("cert");
-    let honest_build = Command::new("lake")
+    let honest_build = lake_for_cert(&cert)
         .arg("build")
         .current_dir(&cert)
         .output()
@@ -5536,7 +5546,7 @@ example : PlanCheck.checkConstructRawPlan
     assert!(honest_build.status.success(), "honest cert must lake-build");
 
     std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let elab = Command::new("lake")
+    let elab = lake_for_cert(&cert)
         .arg("env")
         .arg("lean")
         .arg("GuardIso.lean")
@@ -5800,14 +5810,14 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
     lean.push_str("example : (lowerIntDispatchCodeEntry 11 tbl rootless).isSome = true := rfl\n");
     lean.push_str("example : AverCert.PlanCheck.checkIntDispatchRawPlan rootless = false := rfl\n");
 
-    let honest_build = Command::new("lake")
+    let honest_build = lake_for_cert(&cert)
         .arg("build")
         .current_dir(&cert)
         .output()
         .expect("lake build runs");
     assert!(honest_build.status.success(), "honest cert must lake-build");
     std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let elab = Command::new("lake")
+    let elab = lake_for_cert(&cert)
         .arg("env")
         .arg("lean")
         .arg("GuardIso.lean")
@@ -5899,7 +5909,7 @@ fn list_constructor_kernel_guards_are_isolating() {
         String::from_utf8_lossy(&compile.stderr)
     );
     let cert = out_dir.join("cert");
-    let build = Command::new("lake")
+    let build = lake_for_cert(&cert)
         .current_dir(&cert)
         .arg("build")
         .output()
@@ -6148,7 +6158,7 @@ example : constructFamilyDropNodup dupManifest dupClaims := by
 example : ¬ (AverCert.AcceptedArtifact.constructClaimExportNames dupClaims).Nodup := by decide
 "#.replace("__BYTE_OFFSET__", &tamper_offset.to_string());
     std::fs::write(cert.join("ListConstructGuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
+    let check = lake_for_cert(&cert)
         .current_dir(&cert)
         .arg("env")
         .arg("lean")
@@ -6331,7 +6341,7 @@ fn int_dispatch_kernel_guards_are_isolating() {
         String::from_utf8_lossy(&compile.stderr)
     );
     let cert = out_dir.join("cert");
-    let honest_build = Command::new("lake")
+    let honest_build = lake_for_cert(&cert)
         .arg("build")
         .current_dir(&cert)
         .output()
@@ -6339,7 +6349,7 @@ fn int_dispatch_kernel_guards_are_isolating() {
     assert!(honest_build.status.success(), "honest cert must lake-build");
 
     std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let elab = Command::new("lake")
+    let elab = lake_for_cert(&cert)
         .arg("env")
         .arg("lean")
         .arg("GuardIso.lean")
