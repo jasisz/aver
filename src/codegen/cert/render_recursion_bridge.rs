@@ -101,7 +101,7 @@ fn recursion_claim_acceptance_proof(c: &Cert) -> String {
 /// Option-(b) residual for one unary additive or multiplicative recursion obligation. The
 /// generated proof identifies the byte-derived parsed shape and relates the
 /// generated source model to the independent `V3Rec.evalRecU` evaluator in
-/// both domain directions. Fuel induction and Wasm execution stay in the
+/// the represented obligation domain. Fuel induction and Wasm execution stay in the
 /// sha-pinned `V3RecSpike` / `V3DischargeRecursion` wall.
 fn render_unary_recursion_semantic_bridge(c: &Cert) -> String {
     let Cert::Recursive {
@@ -148,7 +148,7 @@ theorem {name}_recursionSemanticBridge :
     simpa [V3Rec.evalRecU, {name}] using hModelFuel (n.natAbs + 1) n
   refine Or.inl ?_
   refine ⟨{combine}, {box_idx}, {add_idx}, {sub_idx}, {shape},
-    rfl, rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
+    rfl, rfl, rfl, rfl, rfl, ?_, ?_⟩
   · intro add sub mul stringEq stringConcat
     simpa [AverCert.{name}Ob, CertModule.{name}Host]
   · intro S ns vs hDom
@@ -165,11 +165,6 @@ theorem {name}_recursionSemanticBridge :
                 intro w hw
                 simpa [AverCert.Schema.intRepr, hModel n] using hw
         | cons _ _ => simp at hLen
-  · intro S n v hv
-    refine ⟨[n], ⟨ReprAll.cons hv ReprAll.nil, rfl⟩, ?_⟩
-    intro w hw
-    simpa [AverCert.Schema.intRepr, hModel n] using hw
-
 #print axioms {name}_recursionSemanticBridge
 "#
     )
@@ -217,7 +212,7 @@ theorem {name}_recursionSemanticBridge :
     simpa [V3Rec.evalRecA, {name}] using hModelFuel (n.natAbs + 1) n acc
   refine Or.inr ?_
   refine ⟨{box_idx}, {add_idx}, {sub_idx}, .accumulator,
-    rfl, rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
+    rfl, rfl, rfl, rfl, rfl, ?_, ?_⟩
   · intro add sub mul stringEq stringConcat
     simpa [AverCert.{name}Ob, CertModule.{name}Host]
   · intro S ns vs hDom
@@ -236,12 +231,6 @@ theorem {name}_recursionSemanticBridge :
                 intro w hw
                 simpa [AverCert.Schema.intRepr, hModel n acc] using hw
             | cons _ _ => simp at hLen
-  · intro S n acc vn vacc hvn hvacc
-    refine ⟨[n, acc],
-      ⟨ReprAll.cons hvn (ReprAll.cons hvacc ReprAll.nil), rfl⟩, ?_⟩
-    intro w hw
-    simpa [AverCert.Schema.intRepr, hModel n acc] using hw
-
 #print axioms {name}_recursionSemanticBridge
 "#
     )

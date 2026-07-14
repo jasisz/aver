@@ -902,12 +902,6 @@ def compositionEdges
     (members : List CompositionMemberClaim) : List (String × List String) :=
   members.map (fun member => (member.exportName, compositionPlanCallees member.plan))
 
-def compositionEdgeLookup
-    (edges : List (String × List String)) (name : String) : Option (List String) :=
-  match edges.find? (fun edge => edge.1 == name) with
-  | some edge => some edge.2
-  | none => none
-
 /-- One worklist step on an already-indexed composition graph. Missing targets
     fail closed; undiscovered callee edges are discovered exactly once. -/
 def compositionReachStep

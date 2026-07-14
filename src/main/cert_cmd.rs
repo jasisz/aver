@@ -114,7 +114,7 @@ enum WitnessMode {
 /// audited trusted computing base (taken from this binary) plus the checker's
 /// own build config and witness. A cert shipping files by these names has them
 /// ignored.
-const CHECKER_OWNED: [&str; 35] = [
+const CHECKER_OWNED: [&str; 34] = [
     "Schema.lean",
     "SchemaCore.lean",
     "PlanCheck.lean",
@@ -126,7 +126,6 @@ const CHECKER_OWNED: [&str; 35] = [
     "AcceptedArtifactCore.lean",
     "V3ExprFragmentFull.lean",
     "V3StrongFuel.lean",
-    "V3IfElse.lean",
     "V3GenericCertified.lean",
     "V3FieldProj.lean",
     "V3ConstructVerbatim.lean",
@@ -154,7 +153,7 @@ const CHECKER_OWNED: [&str; 35] = [
 
 /// Audited modules whose exact bytes are shared by every certificate build.
 /// ArtifactBytes and certificate/model modules are deliberately absent.
-const STATIC_PRELUDE_ROOTS: [&str; 32] = [
+const STATIC_PRELUDE_ROOTS: [&str; 31] = [
     "SchemaCore",
     "Schema",
     "PlanCheck",
@@ -166,7 +165,6 @@ const STATIC_PRELUDE_ROOTS: [&str; 32] = [
     "AcceptedArtifact",
     "V3ExprFragmentFull",
     "V3StrongFuel",
-    "V3IfElse",
     "V3GenericCertified",
     "V3FieldProj",
     "V3ConstructVerbatim",
@@ -190,7 +188,7 @@ const STATIC_PRELUDE_ROOTS: [&str; 32] = [
 ];
 
 /// Static roots whose complete import graph is artifact-independent.
-const PRISTINE_PRELUDE_ROOTS: [&str; 30] = [
+const PRISTINE_PRELUDE_ROOTS: [&str; 29] = [
     "CertPrelude",
     "CertDecode",
     "WasmSlice",
@@ -202,7 +200,6 @@ const PRISTINE_PRELUDE_ROOTS: [&str; 30] = [
     "AcceptedArtifactCore",
     "V3ExprFragmentFull",
     "V3StrongFuel",
-    "V3IfElse",
     "V3GenericCertified",
     "V3FieldProj",
     "V3ConstructVerbatim",
@@ -377,7 +374,6 @@ fn read_lean_files(cert_dir: &Path) -> Vec<(String, String)> {
         "WasmSlice.lean",
         "V3ExprFragmentFull.lean",
         "V3StrongFuel.lean",
-        "V3IfElse.lean",
         "V3GenericCertified.lean",
         "V3FieldProj.lean",
         "V3ConstructVerbatim.lean",
@@ -913,12 +909,6 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
         "v3-strong-fuel",
         &cert::audited_v3_strong_fuel_sha(),
     )?;
-    let v3_if_else_pin = audited_manifest_pin(
-        &manifest,
-        "v3_if_else_sha256",
-        "v3-if-else",
-        &cert::audited_v3_if_else_sha(),
-    )?;
     let v3_generic_certified_pin = audited_manifest_pin(
         &manifest,
         "v3_generic_certified_sha256",
@@ -1138,7 +1128,6 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
         ("accepted_artifact_core_sha256", accepted_artifact_core_pin),
         ("v3_expr_fragment_full_sha256", v3_expr_fragment_full_pin),
         ("v3_strong_fuel_sha256", v3_strong_fuel_pin),
-        ("v3_if_else_sha256", v3_if_else_pin),
         ("v3_generic_certified_sha256", v3_generic_certified_pin),
         ("v3_field_proj_sha256", v3_field_proj_pin),
         ("v3_construct_verbatim_sha256", v3_construct_verbatim_pin),
@@ -1942,7 +1931,6 @@ fn static_prelude_files() -> Vec<(String, Vec<u8>)> {
             "V3StrongFuel.lean",
             cert::CERT_V3_STRONG_FUEL.as_bytes().to_vec(),
         ),
-        ("V3IfElse.lean", cert::CERT_V3_IF_ELSE.as_bytes().to_vec()),
         (
             "V3GenericCertified.lean",
             cert::CERT_V3_GENERIC_CERTIFIED.as_bytes().to_vec(),
@@ -3343,7 +3331,6 @@ fn lean_fragment_acceptance_proof_block(
             "{indent}  AverCert.AcceptedArtifact.compositionEdgesDescend,\n",
             "{indent}  AverCert.AcceptedArtifact.compositionReachClosure,\n",
             "{indent}  AverCert.AcceptedArtifact.compositionReachStep,\n",
-            "{indent}  AverCert.AcceptedArtifact.compositionEdgeLookup,\n",
             "{indent}  AverCert.AcceptedArtifact.stringListNodup,\n",
             "{indent}  AverCert.AcceptedArtifact.stringListSetEq,\n",
             "{indent}  AverCert.AcceptedArtifact.intDispatchCanonicalHost,\n",
@@ -3536,7 +3523,6 @@ fn lean_accepted_artifact_witness(
             "    AverCert.AcceptedArtifact.compositionEdgesDescend,\n",
             "    AverCert.AcceptedArtifact.compositionReachClosure,\n",
             "    AverCert.AcceptedArtifact.compositionReachStep,\n",
-            "    AverCert.AcceptedArtifact.compositionEdgeLookup,\n",
             "    AverCert.AcceptedArtifact.stringListNodup,\n",
             "    AverCert.AcceptedArtifact.stringListSetEq,\n",
             "    AverCert.AcceptedArtifact.intDispatchCanonicalHost,\n",

@@ -19,10 +19,8 @@ open CertPrelude
 namespace V3Master
 
 /-- Host, unary-domain, and source-model faces not pinned by
-`recursionPlanAccepted`. Both domain directions are explicit trust faces: the
-forward direction decomposes arbitrary represented obligation inputs, while the
-reverse direction proves that every represented generic input has a matching
-source-domain witness. The total discharges consume both. -/
+`recursionPlanAccepted`.  The domain bridge decomposes every represented
+obligation input and relates the generic evaluator to the source model. -/
 def unaryRecursionSemanticBridge
     (claim : RecursionClaim) (plan : RecursionRawPlan) : Prop :=
   ∃ combineOp boxIdx combineIdx subIdx sh,
@@ -46,16 +44,10 @@ def unaryRecursionSemanticBridge
       claim.obligation.domRepr S x vs →
       ∃ n v, vs = [v] ∧ S.Repr n v ∧
         ∀ w, S.Repr (V3Rec.evalRecU combineOp sh n) w →
-          claim.obligation.codRepr S (claim.obligation.model x) w) ∧
-    (∀ (S : CarrierSpec claim.obligation.carrier) (n : Int) (v : WVal),
-      S.Repr n v →
-      ∃ x : claim.obligation.Dom,
-        claim.obligation.domRepr S x [v] ∧
-        ∀ w, S.Repr (V3Rec.evalRecU combineOp sh n) w →
-        claim.obligation.codRepr S (claim.obligation.model x) w)
+          claim.obligation.codRepr S (claim.obligation.model x) w)
 
 /-- Host, arity-two domain, and source-model faces for the accumulator shape.
-    Both directions pin the exact `[counter, accumulator]` domain ordering. -/
+    The domain bridge pins the exact `[counter, accumulator]` ordering. -/
 def accumulatorRecursionSemanticBridge
     (claim : RecursionClaim) (plan : RecursionRawPlan) : Prop :=
   ∃ boxIdx addIdx subIdx sh,
@@ -75,13 +67,6 @@ def accumulatorRecursionSemanticBridge
       claim.obligation.domRepr S x vs →
       ∃ n acc vn vacc,
         vs = [vn, vacc] ∧ S.Repr n vn ∧ S.Repr acc vacc ∧
-        ∀ w, S.Repr (V3Rec.evalRecA n acc) w →
-          claim.obligation.codRepr S (claim.obligation.model x) w) ∧
-    (∀ (S : CarrierSpec claim.obligation.carrier)
-      (n acc : Int) (vn vacc : WVal),
-      S.Repr n vn → S.Repr acc vacc →
-      ∃ x : claim.obligation.Dom,
-        claim.obligation.domRepr S x [vn, vacc] ∧
         ∀ w, S.Repr (V3Rec.evalRecA n acc) w →
           claim.obligation.codRepr S (claim.obligation.model x) w)
 
@@ -128,7 +113,7 @@ theorem unary_recursion_claim_discharges
       rcases hBridge plan hPlan with
         ⟨combineOp, boxIdx, combineIdx, subIdx, sh,
           _hBoxLookup, _hCombineLookup, _hSubLookup,
-          hParse, hTotalityRole, hHost, hPartialModel, hTotalModel⟩
+          hParse, hTotalityRole, hHost, hModel⟩
       have hParams : plan.params = [.intCarrier] := by
         unfold V3Rec.parseRecShapeU at hParse
         split at hParse
@@ -148,7 +133,7 @@ theorem unary_recursion_claim_discharges
               rw [obligationHolds, hPolicy]
               intro S add sub mul stringEq stringConcat
                 hAdd hSub _hMul _hStringEq _hStringConcat fuel x vs w hDom hRun
-              rcases hPartialModel S x vs hDom with
+              rcases hModel S x vs hDom with
                 ⟨n, v, rfl, hv, hCod⟩
               rcases hHost add sub mul stringEq stringConcat with
                 ⟨hBox, hCombineHost, hSubHost, hSelfHost⟩
@@ -181,10 +166,8 @@ theorem unary_recursion_claim_discharges
                   intro S add sub mul stringEq stringConcat
                     hAdd hSub _hMul _hStringEq _hStringConcat
                     hAddTot hSubTot x vs hDom
-                  rcases hPartialModel S x vs hDom with
+                  rcases hModel S x vs hDom with
                     ⟨n, v, rfl, hv, hCod⟩
-                  rcases hTotalModel S n v hv with
-                    ⟨_sourceWitness, _hWitnessDom, _hWitnessCod⟩
                   rcases hHost add sub mul stringEq stringConcat with
                     ⟨hBox, hCombineHost, hSubHost, hSelfHost⟩
                   obtain ⟨w, hRun, hRepr⟩ :=
@@ -201,10 +184,8 @@ theorem unary_recursion_claim_discharges
                   intro S add sub mul stringEq stringConcat
                     _hAdd hSub hMul _hStringEq _hStringConcat
                     _hAddTot hSubTot hMulTot x vs hDom
-                  rcases hPartialModel S x vs hDom with
+                  rcases hModel S x vs hDom with
                     ⟨n, v, rfl, hv, hCod⟩
-                  rcases hTotalModel S n v hv with
-                    ⟨_sourceWitness, _hWitnessDom, _hWitnessCod⟩
                   rcases hHost add sub mul stringEq stringConcat with
                     ⟨hBox, hCombineHost, hSubHost, hSelfHost⟩
                   obtain ⟨w, hRun, hRepr⟩ :=
@@ -247,7 +228,7 @@ theorem accumulator_recursion_claim_discharges
       rcases hBridge plan hPlan with
         ⟨boxIdx, addIdx, subIdx, sh,
           _hBoxLookup, _hAddLookup, _hSubLookup,
-          hParse, hTotalityRole, hHost, hPartialModel, hTotalModel⟩
+          hParse, hTotalityRole, hHost, hModel⟩
       have hParams : plan.params = [.intCarrier, .intCarrier] := by
         unfold V3Rec.parseRecShapeA at hParse
         split at hParse
@@ -267,7 +248,7 @@ theorem accumulator_recursion_claim_discharges
               rw [obligationHolds, hPolicy]
               intro S add sub mul stringEq stringConcat
                 hAdd hSub _hMul _hStringEq _hStringConcat fuel x vs w hDom hRun
-              rcases hPartialModel S x vs hDom with
+              rcases hModel S x vs hDom with
                 ⟨n, acc, vn, vacc, rfl, hvn, hvacc, hCod⟩
               rcases hHost add sub mul stringEq stringConcat with
                 ⟨hBox, hAddHost, hSubHost, hSelfHost⟩
@@ -289,10 +270,8 @@ theorem accumulator_recursion_claim_discharges
               intro S add sub mul stringEq stringConcat
                 hAdd hSub _hMul _hStringEq _hStringConcat
                 hAddTot hSubTot x vs hDom
-              rcases hPartialModel S x vs hDom with
+              rcases hModel S x vs hDom with
                 ⟨n, acc, vn, vacc, rfl, hvn, hvacc, hCod⟩
-              rcases hTotalModel S n acc vn vacc hvn hvacc with
-                ⟨_sourceWitness, _hWitnessDom, _hWitnessCod⟩
               rcases hHost add sub mul stringEq stringConcat with
                 ⟨hBox, hAddHost, hSubHost, hSelfHost⟩
               obtain ⟨w, hRun, hRepr⟩ :=
@@ -386,12 +365,6 @@ def mutualSemanticBridge
       claim.obligation.domRepr S x vs →
       ∃ n v, vs = [v] ∧ S.Repr n v ∧
         ∀ w, S.Repr (V3Mutual.evalMutualU scc.members i n) w →
-          claim.obligation.codRepr S (claim.obligation.model x) w) ∧
-    (∀ (S : CarrierSpec claim.obligation.carrier) (n : Int) (v : WVal),
-      S.Repr n v →
-      ∃ x : claim.obligation.Dom,
-        claim.obligation.domRepr S x [v] ∧
-        ∀ w, S.Repr (V3Mutual.evalMutualU scc.members i n) w →
           claim.obligation.codRepr S (claim.obligation.model x) w)
 
 def mutualSemanticBridges (artifact : ArtifactData) : Prop :=
@@ -431,7 +404,7 @@ theorem mutual_claim_discharges
           _hBinding, hSelf, _hBindingCode, _hShape, _hType, hCode⟩
       rcases hBridge plan hPlan with
         ⟨k, boxIdx, subIdx, scc, i, hSccPlan, hSccSelf, hParams,
-          hEdges, hCodeOther, hHost, hPartialModel, hTotalModel⟩
+          hEdges, hCodeOther, hHost, hModel⟩
       have hArtifactClosed :
           mutualMembersFormClosedSccs scc.rawEdges = true := by
         have hClosed := hAcc.2
@@ -468,7 +441,7 @@ theorem mutual_claim_discharges
               rw [obligationHolds, hPolicy]
               intro S add sub mul stringEq stringConcat
                 _hAdd hSub _hMul _hStringEq _hStringConcat fuel x vs w hDom hRun
-              rcases hPartialModel S x vs hDom with
+              rcases hModel S x vs hDom with
                 ⟨n, v, rfl, hv, hCod⟩
               rcases hHost add sub mul stringEq stringConcat with
                 ⟨hBox, hSubHost, hMemberHost⟩
@@ -492,7 +465,7 @@ theorem mutual_claim_discharges
               intro S add sub mul stringEq stringConcat
                 _hAdd hSub _hMul _hStringEq _hStringConcat
                 _hAddTot hSubTot x vs hDom
-              rcases hPartialModel S x vs hDom with
+              rcases hModel S x vs hDom with
                 ⟨n, v, rfl, hv, hCod⟩
               rcases hHost add sub mul stringEq stringConcat with
                 ⟨hBox, hSubHost, hMemberHost⟩

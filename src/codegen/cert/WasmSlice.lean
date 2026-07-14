@@ -34,11 +34,6 @@ payloads, and code entries cross to `ByteSeq`; selected types stay in the typed
 
 @[inline] def readNatUleb32 := CertDecode.readU
 
-def findSectionPayload (target modBytes modLen : Nat) : Option (Nat × Nat) :=
-  match CertDecode.moduleView modBytes modLen with
-  | some view => view.payload target
-  | none => none
-
 def takeN : Nat → ByteSeq → Option (ByteSeq × ByteSeq)
   | 0, xs => some ([], xs)
   | n + 1, x :: xs =>
@@ -612,7 +607,7 @@ def memoryLimitsUnshared : Nat → Nat → Nat → Option (Nat × Nat)
     bodies contain no atomic opcode, so the strict profile rejects the
     declaration itself. -/
 def noSharedMemory (modBytes modLen : Nat) : Bool :=
-  match findSectionPayload 0x05 modBytes modLen with
+  match CertDecode.modulePayload 0x05 modBytes modLen with
   | none => true
   | some (payload, payloadLen) =>
       match readNatUleb32 payload payloadLen with

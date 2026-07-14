@@ -66,7 +66,6 @@ pub fn write_project(
     for (name, contents) in [
         ("V3ExprFragmentFull.lean", CERT_V3_EXPR_FRAGMENT_FULL),
         ("V3StrongFuel.lean", CERT_V3_STRONG_FUEL),
-        ("V3IfElse.lean", CERT_V3_IF_ELSE),
         ("V3GenericCertified.lean", CERT_V3_GENERIC_CERTIFIED),
         ("V3FieldProj.lean", CERT_V3_FIELD_PROJ),
         ("V3ConstructVerbatim.lean", CERT_V3_CONSTRUCT_VERBATIM),
@@ -165,7 +164,6 @@ pub fn write_project(
     let accepted_artifact_core_sha = sha256_hex(CERT_ACCEPTED_ARTIFACT_CORE.as_bytes());
     let v3_expr_fragment_full_sha = sha256_hex(CERT_V3_EXPR_FRAGMENT_FULL.as_bytes());
     let v3_strong_fuel_sha = sha256_hex(CERT_V3_STRONG_FUEL.as_bytes());
-    let v3_if_else_sha = sha256_hex(CERT_V3_IF_ELSE.as_bytes());
     let v3_generic_certified_sha = sha256_hex(CERT_V3_GENERIC_CERTIFIED.as_bytes());
     let v3_field_proj_sha = sha256_hex(CERT_V3_FIELD_PROJ.as_bytes());
     let v3_construct_verbatim_sha = sha256_hex(CERT_V3_CONSTRUCT_VERBATIM.as_bytes());
@@ -199,7 +197,6 @@ pub fn write_project(
         accepted_artifact_core: &accepted_artifact_core_sha,
         v3_expr_fragment_full: &v3_expr_fragment_full_sha,
         v3_strong_fuel: &v3_strong_fuel_sha,
-        v3_if_else: &v3_if_else_sha,
         v3_generic_certified: &v3_generic_certified_sha,
         v3_field_proj: &v3_field_proj_sha,
         v3_construct_verbatim: &v3_construct_verbatim_sha,
@@ -1547,7 +1544,7 @@ fn render_artifact_expr_fragment_claims(
         "composition",
         "AverCert.AcceptedArtifact.compositionClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen compositionMembers",
         "compositionClaims",
-        "AverCert.AcceptedArtifact.compositionClaimAccepted, AverCert.AcceptedArtifact.compositionFuncTable, AverCert.AcceptedArtifact.compositionMemberBinding, AverCert.AcceptedArtifact.compositionNamedMembersAccepted, AverCert.AcceptedArtifact.compositionMemberPlanAccepted, AverCert.AcceptedArtifact.compositionMemberForName, AverCert.AcceptedArtifact.compositionClosureBound, AverCert.AcceptedArtifact.compositionEdges, AverCert.AcceptedArtifact.compositionPlanCallees, AverCert.AcceptedArtifact.compositionEdgesDescend, AverCert.AcceptedArtifact.compositionReachClosure, AverCert.AcceptedArtifact.compositionReachStep, AverCert.AcceptedArtifact.compositionEdgeLookup, AverCert.AcceptedArtifact.stringListNodup, AverCert.AcceptedArtifact.stringListSetEq",
+        "AverCert.AcceptedArtifact.compositionClaimAccepted, AverCert.AcceptedArtifact.compositionFuncTable, AverCert.AcceptedArtifact.compositionMemberBinding, AverCert.AcceptedArtifact.compositionNamedMembersAccepted, AverCert.AcceptedArtifact.compositionMemberPlanAccepted, AverCert.AcceptedArtifact.compositionMemberForName, AverCert.AcceptedArtifact.compositionClosureBound, AverCert.AcceptedArtifact.compositionEdges, AverCert.AcceptedArtifact.compositionPlanCallees, AverCert.AcceptedArtifact.compositionEdgesDescend, AverCert.AcceptedArtifact.compositionReachClosure, AverCert.AcceptedArtifact.compositionReachStep, AverCert.AcceptedArtifact.stringListNodup, AverCert.AcceptedArtifact.stringListSetEq",
         &composition_proofs,
     );
     // `acceptedCompositionFragments` conjoins the per-claim acceptance with the
@@ -1734,7 +1731,6 @@ fn render_artifact(
             "    AverCert.AcceptedArtifact.compositionEdgesDescend,\n",
             "    AverCert.AcceptedArtifact.compositionReachClosure,\n",
             "    AverCert.AcceptedArtifact.compositionReachStep,\n",
-            "    AverCert.AcceptedArtifact.compositionEdgeLookup,\n",
             "    AverCert.AcceptedArtifact.stringListNodup,\n",
             "    AverCert.AcceptedArtifact.stringListSetEq,\n",
             "    AverCert.AcceptedArtifact.manifestObligationsClaimed,\n",

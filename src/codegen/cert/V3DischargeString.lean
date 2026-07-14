@@ -267,49 +267,20 @@ theorem stringEq_claim_discharges
           artifact.manifest.stringEqPlans = some plan →
         stringEqSemanticBridge claim plan) :
     obligationHolds claim.obligation := by
-  have hClaim : stringEqClaimAccepted artifact.modBytes artifact.modLen
-      artifact.manifest claim := by
-    exact allClaims_of_mem
-      (stringEqClaimAccepted artifact.modBytes artifact.modLen artifact.manifest)
-      artifact.stringEqClaims hAcc claim hMem
-  unfold stringEqClaimAccepted at hClaim
-  cases hPlan : stringEqPlanForExport claim.exportName
-      artifact.manifest.stringEqPlans with
-  | none => simp [hPlan] at hClaim
-  | some plan =>
-      have hAccepted : stringEqPlanAccepted
-          artifact.modBytes artifact.modLen claim.exportNameBytes claim.exportName
-          claim.carrier claim.stringTy claim.stringEqFuncIdx
-          artifact.manifest.subject.stringHostRoles claim.symPlan plan
-          claim.obligation := by
-        simpa [hPlan] using hClaim
-      rcases hBridge plan hPlan with ⟨hPolicy, hSemantic⟩
-      rcases hAccepted with
-        ⟨_hExport, _hCarrier, _hRole, hHost, _hSym, _hMatches, hCheck,
-          body, codeEntry, binding, hLow, _hCodeEntry, _hExportCode,
-          _hBinding, hSelf, _hBindingCode, hCode⟩
-      have hCodeSelf : claim.obligation.code claim.obligation.self =
-          some ⟨1, 2, body⟩ := by
-        simpa [← hSelf] using hCode
-      rw [obligationHolds, hPolicy]
-      intro S add sub mul stringEq stringConcat
-        _hAdd _hSub _hMul hStringEq _hStringConcat fuel x vs w hDom hRun
-      rcases hSemantic S x vs hDom with ⟨v, hVs, hCod⟩
-      subst vs
-      cases fuel with
-      | zero => simp [wFuncN] at hRun
-      | succ fuel =>
-          have hHostSlot :
-              claim.obligation.host add sub mul stringEq stringConcat
-                  claim.stringEqFuncIdx = some (2, stringEq) := by
-            rw [hHost]
-            simp [stringEqCanonicalHost]
-          have hCall := V3String.generic_string_eq_certified
-            claim.stringTy claim.stringEqFuncIdx plan claim.obligation.code
-            (claim.obligation.host add sub mul stringEq stringConcat)
-            claim.obligation.self stringEq hStringEq hCheck body hLow hCodeSelf
-            hHostSlot fuel v w hRun
-          simpa [hCall] using hCod
+  rcases stringEq_accepted_call artifact hAcc claim hMem with
+    ⟨plan, hPlan, hCall⟩
+  rcases hBridge plan hPlan with ⟨hPolicy, hSemantic⟩
+  rw [obligationHolds, hPolicy]
+  intro S add sub mul stringEq stringConcat
+    _hAdd _hSub _hMul hStringEq _hStringConcat fuel x vs w hDom hRun
+  rcases hSemantic S x vs hDom with ⟨v, hVs, hCod⟩
+  subst vs
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      have hResult := hCall add sub mul stringEq stringConcat
+        hStringEq fuel v w hRun
+      simpa [hResult] using hCod
 
 theorem stringConcat_claim_discharges
     (artifact : ArtifactData)
@@ -321,51 +292,20 @@ theorem stringConcat_claim_discharges
           artifact.manifest.stringConcatPlans = some plan →
         stringConcatSemanticBridge claim plan) :
     obligationHolds claim.obligation := by
-  have hClaim : stringConcatClaimAccepted artifact.modBytes artifact.modLen
-      artifact.manifest claim := by
-    exact allClaims_of_mem
-      (stringConcatClaimAccepted artifact.modBytes artifact.modLen artifact.manifest)
-      artifact.stringConcatClaims hAcc claim hMem
-  unfold stringConcatClaimAccepted at hClaim
-  cases hPlan : stringConcatPlanForExport claim.exportName
-      artifact.manifest.stringConcatPlans with
-  | none => simp [hPlan] at hClaim
-  | some plan =>
-      have hAccepted : stringConcatPlanAccepted
-          artifact.modBytes artifact.modLen claim.exportNameBytes claim.exportName
-          claim.carrier claim.resultTy claim.containerTy claim.concatFuncIdx
-          artifact.manifest.subject.stringHostRoles claim.symPlan plan
-          claim.obligation := by
-        simpa [hPlan] using hClaim
-      rcases hBridge plan hPlan with ⟨hPolicy, hSemantic⟩
-      rcases hAccepted with
-        ⟨_hExport, _hCarrier, _hRole, hHost, body, codeEntry, binding,
-          _hSym, _hMatches, hCheck, hLow, _hCodeEntry, _hBinding,
-          _hBindingCode, hSelf, hCode⟩
-      have hCodeSelf : claim.obligation.code claim.obligation.self =
-          some ⟨1, 1, body⟩ := by
-        simpa [hSelf, stringConcatNLocals] using hCode
-      rw [obligationHolds, hPolicy]
-      intro S add sub mul stringEq stringConcat
-        _hAdd _hSub _hMul _hStringEq hStringConcat fuel x vs w hDom hRun
-      rcases hSemantic S x vs hDom with ⟨v, hVs, hCod⟩
-      subst vs
-      cases fuel with
-      | zero => simp [wFuncN] at hRun
-      | succ fuel =>
-          have hHostSlot :
-              claim.obligation.host add sub mul stringEq stringConcat
-                  claim.concatFuncIdx =
-                some (1, stringConcat claim.resultTy) := by
-            rw [hHost]
-            simp [stringConcatCanonicalHost]
-          have hCall := V3String.generic_string_concat_certified
-            claim.resultTy claim.containerTy claim.concatFuncIdx plan
-            claim.obligation.code
-            (claim.obligation.host add sub mul stringEq stringConcat)
-            claim.obligation.self stringConcat hStringConcat hCheck body hLow
-            hCodeSelf hHostSlot fuel v w hRun
-          simpa [hCall] using hCod
+  rcases stringConcat_accepted_call artifact hAcc claim hMem with
+    ⟨plan, hPlan, hCall⟩
+  rcases hBridge plan hPlan with ⟨hPolicy, hSemantic⟩
+  rw [obligationHolds, hPolicy]
+  intro S add sub mul stringEq stringConcat
+    _hAdd _hSub _hMul _hStringEq hStringConcat fuel x vs w hDom hRun
+  rcases hSemantic S x vs hDom with ⟨v, hVs, hCod⟩
+  subst vs
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      have hResult := hCall add sub mul stringEq stringConcat
+        hStringConcat fuel v w hRun
+      simpa [hResult] using hCod
 
 theorem stringEq_discharges
     (artifact : ArtifactData)

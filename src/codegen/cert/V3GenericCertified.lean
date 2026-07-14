@@ -1,7 +1,6 @@
 /- LUKA-1 v3: full expr-fragment generic certificate assembly. -/
 import V3ExprFragmentFull
 import V3StrongFuel
-import V3IfElse
 
 set_option maxRecDepth 1000000
 set_option maxHeartbeats 8000000

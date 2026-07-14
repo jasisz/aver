@@ -71,7 +71,7 @@ proved by `Nat.strongRecOn` on `fuel`.  At `fuel+1`: the audited
 `lowerNodesFuel (fuel+1)` recurses the tail at `fuel` (use the IH's
 `NodesCorrect fuel`) and lowers an `ifElse` branch at `lowerBlockFuel fuel`
 (use the IH's `BlockCorrect fuel`, glued through the audited `.ifElse`
-instruction by `V3ExprFragmentIfElse.blockOK_ifElse`); `BlockCorrect (fuel+1)`
+instruction); `BlockCorrect (fuel+1)`
 calls `lowerNodesFuel fuel` (use `NodesCorrect fuel`).  Every sequencing step
 is discharged by `wRunF_append`.  The residual beyond this skeleton is
 case-transcription for the remaining leaf kinds and the `carrierSmall`
