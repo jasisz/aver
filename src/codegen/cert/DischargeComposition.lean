@@ -1,20 +1,20 @@
 /-
-v3 master wiring — composition-family discharge.
+Acceptance-soundness wiring for composition.
 
 The audited acceptance predicate supplies the byte-derived root member,
 closure membership, canonical lowering, and the shared obligation code table.
 The semantic bridge ties the root's selected source models to the member facts
 used by the generic composition theorem, preventing model-selection drift.
 -/
-import V3Master
-import V3Composition
+import AcceptanceSoundnessCore
+import CompositionSoundness
 
 open AverCert
 open AverCert.Schema
 open AverCert.AcceptedArtifact
 open CertPrelude
 
-namespace V3Master
+namespace AcceptanceSoundness
 
 private theorem mem_foldl_insert (xs : List String) (s : Std.TreeSet String)
     (x : String)
@@ -251,14 +251,14 @@ def compositionClaimSemanticBridge
       (rootModel : Int → Int),
       vs = [v] ∧ S.Repr n v ∧
       (∀ input, rootModel input =
-        V3Composition.evalCompositionCalls models callees input) ∧
+        CompositionSoundness.evalCompositionCalls models callees input) ∧
       (∀ w, S.Repr (rootModel n) w →
         claim.obligation.codRepr S (claim.obligation.model x) w) ∧
       ∀ funcTable,
         compositionFuncTable artifact.modBytes artifact.modLen
             artifact.compositionMembers = some funcTable →
         ∀ name ∈ callees,
-          Nonempty (V3Composition.MemberFact S artifact.compositionMembers
+          Nonempty (CompositionSoundness.MemberFact S artifact.compositionMembers
             funcTable claim.obligation.code
             (claim.obligation.host add sub mul stringEq stringConcat)
           models name)
@@ -336,7 +336,7 @@ theorem composition_claim_discharges_with_bridge
           rcases hModel S add sub mul stringEq stringConcat
               hAdd hSub hMul hStringEq hStringConcat x vs hDom with
             ⟨n, v, models, rootModel, rfl, hv, hRootModel, hCod, hMembers⟩
-          have hCertified := V3Composition.generic_composition_certified
+          have hCertified := CompositionSoundness.generic_composition_certified
             S artifact.compositionMembers funcTable claim.obligation.code
             (claim.obligation.host add sub mul stringEq stringConcat)
             models rootModel claim.obligation.self claim.hostTable
@@ -364,4 +364,4 @@ theorem composition_discharges_with_bridges
   exact composition_claim_discharges_with_bridge artifact claim hClaim
     (hBridges claim hMem)
 
-end V3Master
+end AcceptanceSoundness

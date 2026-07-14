@@ -1,5 +1,5 @@
-/- V3 MUTUAL-RECURSION FAMILY — a k-generic conjunction layer over the
-   completed unary recursion/fuel skeleton.
+/- Mutual-recursion soundness — a k-generic conjunction layer over the
+   unary recursion/fuel proof.
 
    A member is a byte-bound unary countdown body.  Its step tail-calls the
    byte-bound member at `cross`.  `Fin k` makes the proof motive the finite
@@ -15,7 +15,7 @@ set_option linter.unusedSimpArgs false
 set_option linter.unusedVariables false
 set_option maxRecDepth 1000000
 
-namespace V3Mutual
+namespace MutualRecursionSoundness
 open CertPrelude AverCert AverCert.Schema AverCert.PlanLower
 
 structure MemberU (k : Nat) where
@@ -321,4 +321,4 @@ theorem mutual_generic_certified_total
   · omega
 
 
-end V3Mutual
+end MutualRecursionSoundness

@@ -1,7 +1,7 @@
 /// Option-(b) residual for one model-bearing Int dispatch.  The generated
 /// theorem performs only source-ADT case analysis and builds the matching
 /// `EvalCascade`; byte lowering, host simulation and fuel reasoning live in
-/// the audited `V3DispatchCore` / `V3DischargeIntDispatch` wall.
+/// the audited `IntDispatchSoundness` / `DischargeIntDispatch` wall.
 fn render_int_dispatch_semantic_bridge(
     c: &Cert,
     model_info: &ModelInfo,
@@ -69,7 +69,7 @@ fn render_variant_dispatch_semantic_bridge(
                 Err(error) => return render_dispatch_bridge_failure(name, &error),
             };
             cases.push(format!(
-                "  | {ctor} =>\n      subst v\n      refine ⟨{tag}, [], {source_value}, rfl, ?_, ?_⟩\n      · simpa [AverCert.Plans.{name}IntDispatchPlan, {name}, V3Dispatch.evalLeaf] using\n          ({term})\n      · intro w hw\n        simpa [AverCert.Schema.intRepr] using hw",
+                "  | {ctor} =>\n      subst v\n      refine ⟨{tag}, [], {source_value}, rfl, ?_, ?_⟩\n      · simpa [AverCert.Plans.{name}IntDispatchPlan, {name}, IntDispatchSoundness.evalLeaf] using\n          ({term})\n      · intro w hw\n        simpa [AverCert.Schema.intRepr] using hw",
                 ctor = ctor.name,
             ));
         } else if ctor.fields.as_slice() == ["Int"] {
@@ -85,7 +85,7 @@ fn render_variant_dispatch_semantic_bridge(
                 Err(error) => return render_dispatch_bridge_failure(name, &error),
             };
             cases.push(format!(
-                "  | {ctor} x =>\n      obtain ⟨cx, rfl, hcx⟩ := hv\n      refine ⟨{tag}, [cx], {source_value}, rfl, ?_, ?_⟩\n      · simpa [AverCert.Plans.{name}IntDispatchPlan, {name}, V3Dispatch.evalLeaf] using\n          ({term})\n      · intro w hw\n        simpa [AverCert.Schema.intRepr] using hw",
+                "  | {ctor} x =>\n      obtain ⟨cx, rfl, hcx⟩ := hv\n      refine ⟨{tag}, [cx], {source_value}, rfl, ?_, ?_⟩\n      · simpa [AverCert.Plans.{name}IntDispatchPlan, {name}, IntDispatchSoundness.evalLeaf] using\n          ({term})\n      · intro w hw\n        simpa [AverCert.Schema.intRepr] using hw",
                 ctor = ctor.name,
             ));
         } else {
@@ -104,7 +104,7 @@ theorem {name}_intDispatchSemanticBridge :
       (∃ v, vs = [v] ∧ {ty}Repr S x v) →
       ∃ tag fields n,
         vs = [.structv tag fields] ∧
-        V3Dispatch.EvalCascade S
+        IntDispatchSoundness.EvalCascade S
           AverCert.Plans.{name}IntDispatchPlan.body tag fields n ∧
         ∀ w, S.Repr n w → AverCert.Schema.intRepr S ({name} x) w := by
   intro S x vs hDom
@@ -155,7 +155,7 @@ fn render_widened_int_semantic_bridge(
                 Err(error) => return render_dispatch_bridge_failure(name, &error),
             };
             cases.push(format!(
-                "  | {ctor} x =>\n      obtain ⟨cx, rfl, hcx⟩ := hv\n      refine ⟨{hit_variant_idx}, [cx], {source_value}, rfl, ?_, ?_⟩\n      · simpa [AverCert.Plans.{name}IntDispatchPlan, {name}, V3Dispatch.evalLeaf] using\n          ({term})\n      · intro w hw\n        simpa [AverCert.Schema.intRepr] using hw",
+                "  | {ctor} x =>\n      obtain ⟨cx, rfl, hcx⟩ := hv\n      refine ⟨{hit_variant_idx}, [cx], {source_value}, rfl, ?_, ?_⟩\n      · simpa [AverCert.Plans.{name}IntDispatchPlan, {name}, IntDispatchSoundness.evalLeaf] using\n          ({term})\n      · intro w hw\n        simpa [AverCert.Schema.intRepr] using hw",
                 ctor = ctor.name,
             ));
         } else {
@@ -170,7 +170,7 @@ fn render_widened_int_semantic_bridge(
                 Err(error) => return render_dispatch_bridge_failure(name, &error),
             };
             cases.push(format!(
-                "  | {ctor}{binders} =>\n      obtain ⟨tag, fields, rfl, hne⟩ := hv\n      refine ⟨tag, fields, {source_value}, rfl, ?_, ?_⟩\n      · simpa [AverCert.Plans.{name}IntDispatchPlan, {name}, V3Dispatch.evalLeaf] using\n          ({term})\n      · intro w hw\n        simpa [AverCert.Schema.intRepr] using hw",
+                "  | {ctor}{binders} =>\n      obtain ⟨tag, fields, rfl, hne⟩ := hv\n      refine ⟨tag, fields, {source_value}, rfl, ?_, ?_⟩\n      · simpa [AverCert.Plans.{name}IntDispatchPlan, {name}, IntDispatchSoundness.evalLeaf] using\n          ({term})\n      · intro w hw\n        simpa [AverCert.Schema.intRepr] using hw",
                 ctor = ctor.name,
             ));
         }
@@ -184,7 +184,7 @@ theorem {name}_intDispatchSemanticBridge :
       (∃ v, vs = [v] ∧ {name}DomRepr S x v) →
       ∃ tag fields n,
         vs = [.structv tag fields] ∧
-        V3Dispatch.EvalCascade S
+        IntDispatchSoundness.EvalCascade S
           AverCert.Plans.{name}IntDispatchPlan.body tag fields n ∧
         ∀ w, S.Repr n w → AverCert.Schema.intRepr S ({name} x) w := by
   intro S x vs hDom
@@ -207,7 +207,7 @@ fn render_eval_cascade_term(
 ) -> Result<String, String> {
     match cascade {
         IntDispatchCascade::Default(k) => Ok(format!(
-            "V3Dispatch.EvalCascade.default ({k}) {tag} {fields}"
+            "IntDispatchSoundness.EvalCascade.default ({k}) {tag} {fields}"
         )),
         IntDispatchCascade::Test {
             ty_idx,
@@ -220,7 +220,7 @@ fn render_eval_cascade_term(
                 ));
             };
             Ok(format!(
-                "V3Dispatch.EvalCascade.hit {ty_idx} ({leaf}) ({rest}) {fields} {x} {cx} rfl {hcx}",
+                "IntDispatchSoundness.EvalCascade.hit {ty_idx} ({leaf}) ({rest}) {fields} {x} {cx} rfl {hcx}",
                 leaf = int_dispatch_leaf_lean_value(hit),
                 rest = int_dispatch_cascade_lean_value(rest),
             ))
@@ -232,7 +232,7 @@ fn render_eval_cascade_term(
         } => {
             let tail = render_eval_cascade_term(rest, tag, fields, result, payload)?;
             Ok(format!(
-                "V3Dispatch.EvalCascade.miss {ty_idx} {tag} ({leaf}) ({rest}) {fields} ({result}) (by decide) ({tail})",
+                "IntDispatchSoundness.EvalCascade.miss {ty_idx} {tag} ({leaf}) ({rest}) {fields} ({result}) (by decide) ({tail})",
                 leaf = int_dispatch_leaf_lean_value(hit),
                 rest = int_dispatch_cascade_lean_value(rest),
             ))
@@ -259,7 +259,7 @@ fn render_widened_miss_term(
         return Err("widened plan is not one projected hit plus default zero".to_string());
     }
     Ok(format!(
-        "V3Dispatch.EvalCascade.miss {ty_idx} {tag} ({leaf}) ({rest}) {fields} ({result}) hne (V3Dispatch.EvalCascade.default (0) {tag} {fields})",
+        "IntDispatchSoundness.EvalCascade.miss {ty_idx} {tag} ({leaf}) ({rest}) {fields} ({result}) hne (IntDispatchSoundness.EvalCascade.default (0) {tag} {fields})",
         leaf = int_dispatch_leaf_lean_value(hit),
         rest = int_dispatch_cascade_lean_value(rest),
     ))

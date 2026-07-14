@@ -1,4 +1,4 @@
-/- LUKA-1: full expr-fragment structured-evaluator / audited-lowering spike. -/
+/- Plan-shaped expression-fragment semantics used by the audited lowering. -/
 import CertPrelude
 import SchemaCore
 import PlanCheck
@@ -7,7 +7,7 @@ import PlanLower
 set_option maxRecDepth 100000
 set_option maxHeartbeats 4000000
 
-namespace V3ExprFragmentFull
+namespace ExprFragmentSemantics
 open CertPrelude AverCert.Schema AverCert.PlanLower
 
 /-! The model is plan-shaped, not the old five-node integer evaluator.  It
@@ -133,4 +133,4 @@ def evalSymRawPlan
   | some exprPlan => runBlock host ar callee carrier exprPlan.body locals
   | none => none
 
-end V3ExprFragmentFull
+end ExprFragmentSemantics

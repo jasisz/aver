@@ -245,7 +245,7 @@ fn render_manifest_lean(
 ) -> String {
     let mut s = String::new();
     s.push_str(
-        "import Schema\nimport Module\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\nimport WasmSlice\nimport ExprFragmentAccepted\nimport ArtifactBytes\nimport Plans\nimport V3ConstructVerbatim\n",
+        "import Schema\nimport Module\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\nimport WasmSlice\nimport ExprFragmentAccepted\nimport ArtifactBytes\nimport Plans\nimport ConstructVerbatimSoundness\n",
     );
     for r in model_roots {
         s.push_str(&format!("import {r}\n"));
@@ -513,14 +513,14 @@ fn render_manifest_lean(
 /// No other final theorem is emitted; the checker pins this exact statement.
 fn render_final() -> String {
     format!(
-        "import Manifest\nimport V3AcceptReal\n\n\
+        "import Manifest\nimport ArtifactSoundness\n\n\
          set_option maxRecDepth 1000000\n\n\
          open AverCert AverCert.Schema\n\n\
          /-- THE single artifact certificate. All migrated families flow through\n\
          the audited accept-sound capstone; Artifact.dischargeSideConditions\n\
          isolates the float-only bespoke residual. -/\n\
          {FINAL_STATEMENT_LINE} :=\n  \
-         AverCert.V3AcceptReal.accept_sound_holds\n    \
+         AverCert.ArtifactSoundness.accept_sound_holds\n    \
          AverCert.Artifact.dischargeSideConditions\n\n\
          #print axioms {FINAL_THEOREM}\n"
     )
@@ -542,33 +542,33 @@ fn render_lakefile(model_roots: &[String]) -> String {
     roots.push("`ExprFragmentAccepted".to_string());
     roots.push("`AcceptedArtifactCore".to_string());
     roots.push("`AcceptedArtifact".to_string());
-    roots.push("`V3ExprFragmentFull".to_string());
-    roots.push("`V3StrongFuel".to_string());
-    roots.push("`V3GenericCertified".to_string());
-    roots.push("`V3FieldProj".to_string());
-    roots.push("`V3ConstructVerbatim".to_string());
-    roots.push("`V3DispatchCore".to_string());
-    roots.push("`V3String".to_string());
-    roots.push("`V3RecSpike".to_string());
-    roots.push("`V3MutualGeneric".to_string());
-    roots.push("`V3Composition".to_string());
-    roots.push("`V3Master".to_string());
-    roots.push("`V3DischargeExprFragment".to_string());
-    roots.push("`V3DischargeFieldProj".to_string());
-    roots.push("`V3DischargeConstruct".to_string());
-    roots.push("`V3DischargeVerbatim".to_string());
-    roots.push("`V3DischargeString".to_string());
-    roots.push("`V3DischargeIntDispatch".to_string());
-    roots.push("`V3DischargeRecursion".to_string());
-    roots.push("`V3DischargeComposition".to_string());
-    roots.push("`V3AcceptSound".to_string());
+    roots.push("`ExprFragmentSemantics".to_string());
+    roots.push("`InterpreterSequencing".to_string());
+    roots.push("`ExprFragmentSoundness".to_string());
+    roots.push("`FieldProjectionSoundness".to_string());
+    roots.push("`ConstructVerbatimSoundness".to_string());
+    roots.push("`IntDispatchSoundness".to_string());
+    roots.push("`StringSoundness".to_string());
+    roots.push("`RecursionSoundness".to_string());
+    roots.push("`MutualRecursionSoundness".to_string());
+    roots.push("`CompositionSoundness".to_string());
+    roots.push("`AcceptanceSoundnessCore".to_string());
+    roots.push("`DischargeExprFragment".to_string());
+    roots.push("`DischargeFieldProjection".to_string());
+    roots.push("`DischargeConstruct".to_string());
+    roots.push("`DischargeVerbatim".to_string());
+    roots.push("`DischargeString".to_string());
+    roots.push("`DischargeIntDispatch".to_string());
+    roots.push("`DischargeRecursion".to_string());
+    roots.push("`DischargeComposition".to_string());
+    roots.push("`AcceptanceSoundness".to_string());
     roots.push("`ArtifactBytes".to_string());
     roots.push("`Plans".to_string());
     roots.push("`Manifest".to_string());
     roots.push("`Certificate".to_string());
     roots.push("`Final".to_string());
     roots.push("`Artifact".to_string());
-    roots.push("`V3AcceptReal".to_string());
+    roots.push("`ArtifactSoundness".to_string());
     roots.push("`ArtifactCertificate".to_string());
     format!(
         "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
@@ -589,26 +589,26 @@ struct ManifestHashes<'a> {
     expr_fragment_accepted: &'a str,
     accepted_artifact: &'a str,
     accepted_artifact_core: &'a str,
-    v3_expr_fragment_full: &'a str,
-    v3_strong_fuel: &'a str,
-    v3_generic_certified: &'a str,
-    v3_field_proj: &'a str,
-    v3_construct_verbatim: &'a str,
-    v3_dispatch_core: &'a str,
-    v3_string: &'a str,
-    v3_rec_spike: &'a str,
-    v3_mutual_generic: &'a str,
-    v3_composition: &'a str,
-    v3_master: &'a str,
-    v3_discharge_expr_fragment: &'a str,
-    v3_discharge_field_proj: &'a str,
-    v3_discharge_construct: &'a str,
-    v3_discharge_verbatim: &'a str,
-    v3_discharge_string: &'a str,
-    v3_discharge_int_dispatch: &'a str,
-    v3_discharge_recursion: &'a str,
-    v3_discharge_composition: &'a str,
-    v3_accept_sound: &'a str,
+    expr_fragment_semantics: &'a str,
+    interpreter_sequencing: &'a str,
+    expr_fragment_soundness: &'a str,
+    field_projection_soundness: &'a str,
+    construct_verbatim_soundness: &'a str,
+    int_dispatch_soundness: &'a str,
+    string_soundness: &'a str,
+    recursion_soundness: &'a str,
+    mutual_recursion_soundness: &'a str,
+    composition_soundness: &'a str,
+    acceptance_soundness_core: &'a str,
+    discharge_expr_fragment: &'a str,
+    discharge_field_projection: &'a str,
+    discharge_construct: &'a str,
+    discharge_verbatim: &'a str,
+    discharge_string: &'a str,
+    discharge_int_dispatch: &'a str,
+    discharge_recursion: &'a str,
+    discharge_composition: &'a str,
+    acceptance_soundness: &'a str,
 }
 
 fn render_manifest(
@@ -685,84 +685,84 @@ fn render_manifest(
         hashes.accepted_artifact_core
     ));
     s.push_str(&format!(
-        "  \"v3_expr_fragment_full_sha256\": \"{}\",\n",
-        hashes.v3_expr_fragment_full
+        "  \"expr_fragment_semantics_sha256\": \"{}\",\n",
+        hashes.expr_fragment_semantics
     ));
     s.push_str(&format!(
-        "  \"v3_strong_fuel_sha256\": \"{}\",\n",
-        hashes.v3_strong_fuel
+        "  \"interpreter_sequencing_sha256\": \"{}\",\n",
+        hashes.interpreter_sequencing
     ));
     s.push_str(&format!(
-        "  \"v3_generic_certified_sha256\": \"{}\",\n",
-        hashes.v3_generic_certified
+        "  \"expr_fragment_soundness_sha256\": \"{}\",\n",
+        hashes.expr_fragment_soundness
     ));
     s.push_str(&format!(
-        "  \"v3_field_proj_sha256\": \"{}\",\n",
-        hashes.v3_field_proj
+        "  \"field_projection_soundness_sha256\": \"{}\",\n",
+        hashes.field_projection_soundness
     ));
     s.push_str(&format!(
-        "  \"v3_construct_verbatim_sha256\": \"{}\",\n",
-        hashes.v3_construct_verbatim
+        "  \"construct_verbatim_soundness_sha256\": \"{}\",\n",
+        hashes.construct_verbatim_soundness
     ));
     s.push_str(&format!(
-        "  \"v3_dispatch_core_sha256\": \"{}\",\n",
-        hashes.v3_dispatch_core
+        "  \"int_dispatch_soundness_sha256\": \"{}\",\n",
+        hashes.int_dispatch_soundness
     ));
     s.push_str(&format!(
-        "  \"v3_string_sha256\": \"{}\",\n",
-        hashes.v3_string
+        "  \"string_soundness_sha256\": \"{}\",\n",
+        hashes.string_soundness
     ));
     s.push_str(&format!(
-        "  \"v3_rec_spike_sha256\": \"{}\",\n",
-        hashes.v3_rec_spike
+        "  \"recursion_soundness_sha256\": \"{}\",\n",
+        hashes.recursion_soundness
     ));
     s.push_str(&format!(
-        "  \"v3_mutual_generic_sha256\": \"{}\",\n",
-        hashes.v3_mutual_generic
+        "  \"mutual_recursion_soundness_sha256\": \"{}\",\n",
+        hashes.mutual_recursion_soundness
     ));
     s.push_str(&format!(
-        "  \"v3_composition_sha256\": \"{}\",\n",
-        hashes.v3_composition
+        "  \"composition_soundness_sha256\": \"{}\",\n",
+        hashes.composition_soundness
     ));
     s.push_str(&format!(
-        "  \"v3_master_sha256\": \"{}\",\n",
-        hashes.v3_master
+        "  \"acceptance_soundness_core_sha256\": \"{}\",\n",
+        hashes.acceptance_soundness_core
     ));
     s.push_str(&format!(
-        "  \"v3_discharge_expr_fragment_sha256\": \"{}\",\n",
-        hashes.v3_discharge_expr_fragment
+        "  \"discharge_expr_fragment_sha256\": \"{}\",\n",
+        hashes.discharge_expr_fragment
     ));
     s.push_str(&format!(
-        "  \"v3_discharge_field_proj_sha256\": \"{}\",\n",
-        hashes.v3_discharge_field_proj
+        "  \"discharge_field_projection_sha256\": \"{}\",\n",
+        hashes.discharge_field_projection
     ));
     s.push_str(&format!(
-        "  \"v3_discharge_construct_sha256\": \"{}\",\n",
-        hashes.v3_discharge_construct
+        "  \"discharge_construct_sha256\": \"{}\",\n",
+        hashes.discharge_construct
     ));
     s.push_str(&format!(
-        "  \"v3_discharge_verbatim_sha256\": \"{}\",\n",
-        hashes.v3_discharge_verbatim
+        "  \"discharge_verbatim_sha256\": \"{}\",\n",
+        hashes.discharge_verbatim
     ));
     s.push_str(&format!(
-        "  \"v3_discharge_string_sha256\": \"{}\",\n",
-        hashes.v3_discharge_string
+        "  \"discharge_string_sha256\": \"{}\",\n",
+        hashes.discharge_string
     ));
     s.push_str(&format!(
-        "  \"v3_discharge_int_dispatch_sha256\": \"{}\",\n",
-        hashes.v3_discharge_int_dispatch
+        "  \"discharge_int_dispatch_sha256\": \"{}\",\n",
+        hashes.discharge_int_dispatch
     ));
     s.push_str(&format!(
-        "  \"v3_discharge_recursion_sha256\": \"{}\",\n",
-        hashes.v3_discharge_recursion
+        "  \"discharge_recursion_sha256\": \"{}\",\n",
+        hashes.discharge_recursion
     ));
     s.push_str(&format!(
-        "  \"v3_discharge_composition_sha256\": \"{}\",\n",
-        hashes.v3_discharge_composition
+        "  \"discharge_composition_sha256\": \"{}\",\n",
+        hashes.discharge_composition
     ));
     s.push_str(&format!(
-        "  \"v3_accept_sound_sha256\": \"{}\",\n",
-        hashes.v3_accept_sound
+        "  \"acceptance_soundness_sha256\": \"{}\",\n",
+        hashes.acceptance_soundness
     ));
     if let Some(c) = analysis.carrier {
         s.push_str(&format!("  \"carrier_type_index\": {c},\n"));
@@ -956,43 +956,43 @@ fn render_manifest(
             None => String::new(),
         };
         let theorem = if matches!(c.inner(), Cert::Composition { .. }) {
-            "V3Master.composition_claim_discharges_with_bridge".to_string()
+            "AcceptanceSoundness.composition_claim_discharges_with_bridge".to_string()
         } else if expr_fragment_uses_audited_generic(c) {
-            "V3Master.exprFragment_claim_discharges".to_string()
+            "AcceptanceSoundness.exprFragment_claim_discharges".to_string()
         } else if c.project_face().is_some() {
-            "V3Master.fieldProjection_direct_canonical_discharges".to_string()
+            "AcceptanceSoundness.fieldProjection_direct_canonical_discharges".to_string()
         } else if matches!(c.inner(), Cert::FieldProjection { .. }) {
-            "V3Master.fieldProjection_canonical_discharges".to_string()
+            "AcceptanceSoundness.fieldProjection_canonical_discharges".to_string()
         } else if matches!(c.inner(), Cert::AdtConstructor { .. })
             && adt_constructor_uses_model(c, model_info)
         {
-            "V3Master.construct_canonical_discharges".to_string()
+            "AcceptanceSoundness.construct_canonical_discharges".to_string()
         } else if let Cert::AdtConstructor { arity, .. } = c.inner()
             && !adt_constructor_uses_model(c, model_info)
         {
             if *arity == 1 {
-                "V3Master.constructUnary_canonical_discharges".to_string()
+                "AcceptanceSoundness.constructUnary_canonical_discharges".to_string()
             } else {
-                "V3Master.constructBinary_canonical_discharges".to_string()
+                "AcceptanceSoundness.constructBinary_canonical_discharges".to_string()
             }
         } else if matches!(
             c.inner(),
             Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. }
         ) {
-            "V3Master.verbatim_canonical_discharges".to_string()
+            "AcceptanceSoundness.verbatim_canonical_discharges".to_string()
         } else if matches!(c.inner(), Cert::StringEqVerbatimMatch { .. }) {
-            "V3Master.stringEq_canonical_discharges".to_string()
+            "AcceptanceSoundness.stringEq_canonical_discharges".to_string()
         } else if matches!(c.inner(), Cert::StringConcatVerbatimMatch { .. }) {
-            "V3Master.stringConcat_canonical_discharges".to_string()
+            "AcceptanceSoundness.stringConcat_canonical_discharges".to_string()
         } else if matches!(
             c.inner(),
             Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. }
         ) {
-            "V3Master.intDispatch_canonical_discharges".to_string()
+            "AcceptanceSoundness.intDispatch_canonical_discharges".to_string()
         } else if recursion_uses_audited_generic(c) {
-            "V3Master.recursion_claim_discharges".to_string()
+            "AcceptanceSoundness.recursion_claim_discharges".to_string()
         } else if matches!(c.inner(), Cert::MutualRecursion { .. }) {
-            "V3Master.mutual_claim_discharges".to_string()
+            "AcceptanceSoundness.mutual_claim_discharges".to_string()
         } else {
             let theorem_suffix = if policy == CertificationPolicy::SimulatesModelTotally {
                 "wasm_total"

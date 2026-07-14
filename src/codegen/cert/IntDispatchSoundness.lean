@@ -6,7 +6,7 @@ import PlanLower
 set_option maxRecDepth 100000
 set_option maxHeartbeats 2000000
 
-namespace V3Dispatch
+namespace IntDispatchSoundness
 open CertPrelude AverCert.Schema
 
 /-! ### Semantic evaluator and family invariant -/
@@ -394,4 +394,4 @@ theorem generic_int_dispatch_certified {C : Nat} (S : CarrierSpec C)
                   | cons x xs => simp [hr] at hrun
 
 
-end V3Dispatch
+end IntDispatchSoundness

@@ -1,4 +1,4 @@
-/- V3 STRING FAMILY PORT -- generic String.eq and String.concat certificates.
+/- Generic soundness for String.eq and String.concat certificates.
 
    The model is explicit and the helper implementations remain abstract.  The
    only facts used about them are the named contracts from SchemaCore.holds.
@@ -10,7 +10,7 @@ import PlanLower
 
 set_option maxRecDepth 100000
 
-namespace V3String
+namespace StringSoundness
 open CertPrelude AverCert.Schema AverCert.PlanLower
 
 /-! ## Model and reusable invariant -/
@@ -293,4 +293,4 @@ theorem generic_string_eq_certified
       · simp [wFuncN, wRunF, hself, initLocals, List.set, hty] at hrun
 
 
-end V3String
+end StringSoundness

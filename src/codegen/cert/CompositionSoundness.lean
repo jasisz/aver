@@ -1,4 +1,4 @@
-/- V3 COMPOSITION FAMILY SPIKE.
+/- Generic soundness for composition-family call chains.
 
    A composition root is a unary chain of user calls.  The byte-bound plan
    resolves each callee name through the kernel function table.  Soundness of
@@ -9,7 +9,7 @@ import AcceptedArtifactCore
 set_option maxRecDepth 1000000
 set_option linter.unusedSimpArgs false
 
-namespace V3Composition
+namespace CompositionSoundness
 open CertPrelude AverCert.Schema AverCert.PlanLower
 open AverCert.AcceptedArtifact
 open AverCert
@@ -164,4 +164,4 @@ theorem generic_composition_certified {C : Nat} (S : CarrierSpec C)
             callees callInstrs x v w hcalls facts hv hrun'
 
 
-end V3Composition
+end CompositionSoundness

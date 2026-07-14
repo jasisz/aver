@@ -320,7 +320,7 @@ fn render_composition_semantic_bridge(c: &Cert, analysis: &Analysis) -> String {
     );
     s.push_str(&format!(
         "theorem {name}_compositionSemanticBridge :\n    \
-         V3Master.compositionClaimSemanticBridge\n      \
+         AcceptanceSoundness.compositionClaimSemanticBridge\n      \
          ({{ modBytes := AverCert.ArtifactBytes.modBytes,\n         \
          modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest,\n         \
          symFragmentClaims := [], stringEqClaims := [], stringConcatClaims := [],\n         \
@@ -345,7 +345,7 @@ fn render_composition_semantic_bridge(c: &Cert, analysis: &Analysis) -> String {
          | nil =>\n          \
          refine ⟨n, v, {model_name}, {name}, rfl, hv, ?_, ?_, ?_⟩\n          \
          · intro input\n            \
-         simp [{model_name}, V3Composition.evalCompositionCalls, {model_simp}]\n          \
+         simp [{model_name}, CompositionSoundness.evalCompositionCalls, {model_simp}]\n          \
          · intro w hw\n            \
          simpa [AverCert.Schema.intRepr] using hw\n          \
          · intro funcTable hTable member hMember\n            \
@@ -355,7 +355,7 @@ fn render_composition_semantic_bridge(c: &Cert, analysis: &Analysis) -> String {
          {direct_member},\n              \
          by rfl,\n              \
          {},\n              \
-         V3Master.compositionFuncIdx_eq_binding\n                \
+         AcceptanceSoundness.compositionFuncIdx_eq_binding\n                \
          AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen\n                \
          {all_members} funcTable {} {direct_member}\n                \
          {direct_binding} hTable (by rfl) (by rfl),\n              \

@@ -1,6 +1,6 @@
 /// Integer and Bool source fragments are within the audited symbolic fragment
 /// grammar. Float fragments are deliberately excluded: their bit-level source
-/// models remain bespoke because floating-point semantics are outside v3's
+/// models remain bespoke because floating-point semantics are outside the
 /// integer/Bool model.
 fn expr_fragment_uses_audited_generic(c: &Cert) -> bool {
     let Cert::ExprFragment {
@@ -118,7 +118,7 @@ theorem {name}_exprFragmentClaimAccepted :
   exact {acceptance}
 
 theorem {name}_exprFragmentSemanticBridge :
-    V3Master.exprFragmentSemanticBridge {claim}
+    AcceptanceSoundness.exprFragmentSemanticBridge {claim}
       AverCert.Plans.{name}Plan := by
   refine ⟨rfl, ?_⟩
   intro S add sub mul stringEq stringConcat
@@ -138,36 +138,36 @@ theorem {name}_exprFragmentSemanticBridge :
                 boxRef, popArgs, initLocals, hc] at hRun
           | some result =>
               refine ⟨[v], [v, .null], result, rfl, rfl, ?_, ?_, ?_⟩
-              · simp [V3ExprFragmentGeneric.blockCallsOK,
-                  V3ExprFragmentGeneric.nodesCallsOK,
-                  V3ExprFragmentGeneric.kindCallsOK, AverCert.Plans.{name}Plan,
+              · simp [ExprFragmentSoundness.blockCallsOK,
+                  ExprFragmentSoundness.nodesCallsOK,
+                  ExprFragmentSoundness.kindCallsOK, AverCert.Plans.{name}Plan,
                   CertModule.{name}Code, CertModule.{name}Host]
-              · simp only [V3ExprFragmentFull.evalSymRawPlan]
+              · simp only [ExprFragmentSemantics.evalSymRawPlan]
                 rw [show AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
                   {host_table_lean} {struct_table_lean}
                   AverCert.Plans.{name}SymPlan =
                     some AverCert.Plans.{name}Plan by rfl]
                 simp [AverCert.Plans.{name}Plan,
-                  AverCert.PlanLower.maxFuel, V3ExprFragmentFull.runBlock,
-                  V3ExprFragmentFull.runBlockFuel,
-                  V3ExprFragmentFull.runNodesFuel,
-                  V3ExprFragmentFull.finishWith,
+                  AverCert.PlanLower.maxFuel, ExprFragmentSemantics.runBlock,
+                  ExprFragmentSemantics.runBlockFuel,
+                  ExprFragmentSemantics.runNodesFuel,
+                  ExprFragmentSemantics.finishWith,
                   AverCert.AcceptedArtifact.exprFragmentNLocals,
                   CertModule.{name}Code, CertModule.{name}Host, boxRef,
                   popArgs, initLocals, carrierSmall, hc] <;>
-                try simp_all [V3ExprFragmentFull.runBlockFuel,
-                  V3ExprFragmentFull.runNodesFuel,
-                  V3ExprFragmentFull.finishWith, PlanLower.popExpected,
+                try simp_all [ExprFragmentSemantics.runBlockFuel,
+                  ExprFragmentSemantics.runNodesFuel,
+                  ExprFragmentSemantics.finishWith, PlanLower.popExpected,
                   PlanLower.popExpectedAll, PlanLower.primInstr,
-                  V3ExprFragmentFull.runPrim, wRunF,
+                  ExprFragmentSemantics.runPrim, wRunF,
                   AverCert.AcceptedArtifact.exprFragmentNLocals,
                   CertModule.{name}Code, CertModule.{name}Host, boxRef,
                   popArgs, initLocals, hc, carrierSmall, b32] <;>
-                try simp_all [V3ExprFragmentFull.runBlockFuel,
-                  V3ExprFragmentFull.runNodesFuel,
-                  V3ExprFragmentFull.finishWith, PlanLower.popExpected,
+                try simp_all [ExprFragmentSemantics.runBlockFuel,
+                  ExprFragmentSemantics.runNodesFuel,
+                  ExprFragmentSemantics.finishWith, PlanLower.popExpected,
                   PlanLower.popExpectedAll, PlanLower.primInstr,
-                  V3ExprFragmentFull.runPrim, wRunF,
+                  ExprFragmentSemantics.runPrim, wRunF,
                   AverCert.AcceptedArtifact.exprFragmentNLocals,
                   CertModule.{name}Code, CertModule.{name}Host, boxRef,
                   popArgs, initLocals, hc, carrierSmall, b32]
@@ -218,13 +218,13 @@ fn expr_fragment_bridge_eval_tactic(
             steps.join(" <;> ")
         )
     };
-    let normalize = "V3ExprFragmentFull.runBlockFuel, \
-        V3ExprFragmentFull.runNodesFuel, V3ExprFragmentFull.finishWith, \
+    let normalize = "ExprFragmentSemantics.runBlockFuel, \
+        ExprFragmentSemantics.runNodesFuel, ExprFragmentSemantics.finishWith, \
         PlanLower.popExpected, PlanLower.popExpectedAll, PlanLower.primInstr, \
-        V3ExprFragmentFull.runPrim, wRunF, \
+        ExprFragmentSemantics.runPrim, wRunF, \
         AverCert.AcceptedArtifact.exprFragmentNLocals, carrierSmall, b32";
     format!(
-        "    simp only [V3ExprFragmentFull.evalSymRawPlan]\n    \
+        "    simp only [ExprFragmentSemantics.evalSymRawPlan]\n    \
          rw [show AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan\n      \
          {host_table_lean} {struct_table_lean} AverCert.Plans.{name}SymPlan =\n      \
          some AverCert.Plans.{name}Plan by rfl]\n    \
@@ -272,8 +272,8 @@ fn render_expr_fragment_int_bool_semantic_bridge(
     };
     let evalset = format!(
         "AverCert.Plans.{name}Plan, AverCert.PlanLower.maxFuel, \
-         V3ExprFragmentFull.runBlock, V3ExprFragmentFull.runBlockFuel, \
-         V3ExprFragmentFull.runNodesFuel, V3ExprFragmentFull.finishWith, \
+         ExprFragmentSemantics.runBlock, ExprFragmentSemantics.runBlockFuel, \
+         ExprFragmentSemantics.runNodesFuel, ExprFragmentSemantics.finishWith, \
          AverCert.AcceptedArtifact.exprFragmentNLocals, \
          CertModule.{name}Code, CertModule.{name}Host, wFuncN, wRunF, f, b32, \
          popArgs, initLocals, {name}"
@@ -296,7 +296,7 @@ theorem {name}_exprFragmentClaimAccepted :
   exact {acceptance}
 
 theorem {name}_exprFragmentSemanticBridge :
-    V3Master.exprFragmentSemanticBridge {claim}
+    AcceptanceSoundness.exprFragmentSemanticBridge {claim}
       AverCert.Plans.{name}Plan := by
   refine ⟨rfl, ?_⟩
   intro S add sub mul stringEq stringConcat
@@ -304,8 +304,8 @@ theorem {name}_exprFragmentSemanticBridge :
   dsimp [AverCert.{name}Ob] at {dom_name} vs hDom hRun ⊢
 {unpack}  subst vs
   refine ⟨{inputs}, {locals}, {result}, rfl, rfl, ?_, ?_, ?_⟩
-  · simp [V3ExprFragmentGeneric.blockCallsOK,
-      V3ExprFragmentGeneric.nodesCallsOK, V3ExprFragmentGeneric.kindCallsOK,
+  · simp [ExprFragmentSoundness.blockCallsOK,
+      ExprFragmentSoundness.nodesCallsOK, ExprFragmentSoundness.kindCallsOK,
       AverCert.Plans.{name}Plan, CertModule.{name}Code, CertModule.{name}Host]
   ·
 {eval_tactic}

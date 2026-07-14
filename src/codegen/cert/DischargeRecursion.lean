@@ -1,5 +1,5 @@
 /-
-v3 master wiring — unary, accumulator, and mutual recursion-family discharges.
+Acceptance-soundness wiring for unary, accumulator, and mutual recursion.
 
 The accepted-plan predicates supply policy/termination admission and the exact
 selected code entry.  The independent obligation host/domain/model faces stay
@@ -7,16 +7,16 @@ explicit, following the established discharge pattern.  Mutual recursion also
 needs the shared-code/SCC package: one member's acceptance constrains only its
 own obligation code table, while the k-generic theorem executes every member.
 -/
-import V3Master
-import V3RecSpike
-import V3MutualGeneric
+import AcceptanceSoundnessCore
+import RecursionSoundness
+import MutualRecursionSoundness
 
 open AverCert
 open AverCert.Schema
 open AverCert.AcceptedArtifact
 open CertPrelude
 
-namespace V3Master
+namespace AcceptanceSoundness
 
 /-- Host, unary-domain, and source-model faces not pinned by
 `recursionPlanAccepted`.  The domain bridge decomposes every represented
@@ -24,7 +24,7 @@ obligation input and relates the generic evaluator to the source model. -/
 def unaryRecursionSemanticBridge
     (claim : RecursionClaim) (plan : RecursionRawPlan) : Prop :=
   ∃ combineOp boxIdx combineIdx subIdx sh,
-    V3Rec.parseRecShapeU combineOp claim.obligation.self boxIdx combineIdx subIdx plan = some sh ∧
+    RecursionSoundness.parseRecShapeU combineOp claim.obligation.self boxIdx combineIdx subIdx plan = some sh ∧
     claim.obligation.totalityRole =
       (match combineOp with | .add => .addSub | .mul => .mul) ∧
     (∀ add sub mul stringEq stringConcat,
@@ -39,7 +39,7 @@ def unaryRecursionSemanticBridge
       (x : claim.obligation.Dom) (vs : List WVal),
       claim.obligation.domRepr S x vs →
       ∃ n v, vs = [v] ∧ S.Repr n v ∧
-        ∀ w, S.Repr (V3Rec.evalRecU combineOp sh n) w →
+        ∀ w, S.Repr (RecursionSoundness.evalRecU combineOp sh n) w →
           claim.obligation.codRepr S (claim.obligation.model x) w)
 
 /-- Host, arity-two domain, and source-model faces for the accumulator shape.
@@ -47,7 +47,7 @@ def unaryRecursionSemanticBridge
 def accumulatorRecursionSemanticBridge
     (claim : RecursionClaim) (plan : RecursionRawPlan) : Prop :=
   ∃ boxIdx addIdx subIdx sh,
-    V3Rec.parseRecShapeA claim.obligation.self boxIdx addIdx subIdx plan = some sh ∧
+    RecursionSoundness.parseRecShapeA claim.obligation.self boxIdx addIdx subIdx plan = some sh ∧
     claim.obligation.totalityRole = .addSub ∧
     (∀ add sub mul stringEq stringConcat,
       let host := claim.obligation.host add sub mul stringEq stringConcat
@@ -60,7 +60,7 @@ def accumulatorRecursionSemanticBridge
       claim.obligation.domRepr S x vs →
       ∃ n acc vn vacc,
         vs = [vn, vacc] ∧ S.Repr n vn ∧ S.Repr acc vacc ∧
-        ∀ w, S.Repr (V3Rec.evalRecA n acc) w →
+        ∀ w, S.Repr (RecursionSoundness.evalRecA n acc) w →
           claim.obligation.codRepr S (claim.obligation.model x) w)
 
 def recursionSemanticBridge
@@ -92,7 +92,7 @@ theorem unary_recursion_claim_discharges
     ⟨combineOp, boxIdx, combineIdx, subIdx, sh,
       hParse, hTotalityRole, hHost, hModel⟩
   have hParams : plan.params = [.intCarrier] := by
-    unfold V3Rec.parseRecShapeU at hParse
+    unfold RecursionSoundness.parseRecShapeU at hParse
     split at hParse
     next h => exact h.2.1
     next => simp at hParse
@@ -113,14 +113,14 @@ theorem unary_recursion_claim_discharges
       apply hCod w
       cases combineOp with
       | add =>
-          exact V3Rec.recursion_generic_certified
+          exact RecursionSoundness.recursion_generic_certified
             claim.obligation.carrier .add claim.obligation.self boxIdx
             combineIdx subIdx 1 S claim.obligation.code
             (claim.obligation.host add sub mul stringEq stringConcat)
             add sub hBox hCombineHost hSubHost hSelfHost hAdd hSub plan sh
             hParse body hLower hCodeSelf fuel n v w hv hRun
       | mul =>
-          exact V3Rec.recursion_generic_certified
+          exact RecursionSoundness.recursion_generic_certified
             claim.obligation.carrier .mul claim.obligation.self boxIdx
             combineIdx subIdx 1 S claim.obligation.code
             (claim.obligation.host add sub mul stringEq stringConcat)
@@ -138,7 +138,7 @@ theorem unary_recursion_claim_discharges
           rcases hHost add sub mul stringEq stringConcat with
             ⟨hBox, hCombineHost, hSubHost, hSelfHost⟩
           obtain ⟨w, hRun, hRepr⟩ :=
-            V3Rec.recursion_generic_certified_total
+            RecursionSoundness.recursion_generic_certified_total
               claim.obligation.carrier .add claim.obligation.self boxIdx
               combineIdx subIdx 1 S claim.obligation.code
               (claim.obligation.host add sub mul stringEq stringConcat)
@@ -155,7 +155,7 @@ theorem unary_recursion_claim_discharges
           rcases hHost add sub mul stringEq stringConcat with
             ⟨hBox, hCombineHost, hSubHost, hSelfHost⟩
           obtain ⟨w, hRun, hRepr⟩ :=
-            V3Rec.recursion_generic_certified_total
+            RecursionSoundness.recursion_generic_certified_total
               claim.obligation.carrier .mul claim.obligation.self boxIdx
               combineIdx subIdx 1 S claim.obligation.code
               (claim.obligation.host add sub mul stringEq stringConcat)
@@ -179,7 +179,7 @@ theorem accumulator_recursion_claim_discharges
   rcases hBridge with
     ⟨boxIdx, addIdx, subIdx, sh, hParse, hTotalityRole, hHost, hModel⟩
   have hParams : plan.params = [.intCarrier, .intCarrier] := by
-    unfold V3Rec.parseRecShapeA at hParse
+    unfold RecursionSoundness.parseRecShapeA at hParse
     split at hParse
     next h => exact h.2.1
     next => simp at hParse
@@ -199,7 +199,7 @@ theorem accumulator_recursion_claim_discharges
       rcases hHost add sub mul stringEq stringConcat with
         ⟨hBox, hAddHost, hSubHost, hSelfHost⟩
       apply hCod w
-      exact V3Rec.recursion_accumulator_generic_certified
+      exact RecursionSoundness.recursion_accumulator_generic_certified
         claim.obligation.carrier claim.obligation.self boxIdx addIdx
         subIdx 1 S claim.obligation.code
         (claim.obligation.host add sub mul stringEq stringConcat)
@@ -216,7 +216,7 @@ theorem accumulator_recursion_claim_discharges
       rcases hHost add sub mul stringEq stringConcat with
         ⟨hBox, hAddHost, hSubHost, hSelfHost⟩
       obtain ⟨w, hRun, hRepr⟩ :=
-        V3Rec.recursion_accumulator_generic_certified_total
+        RecursionSoundness.recursion_accumulator_generic_certified_total
           claim.obligation.carrier claim.obligation.self boxIdx addIdx
           subIdx 1 S claim.obligation.code
           (claim.obligation.host add sub mul stringEq stringConcat)
@@ -274,7 +274,7 @@ def mutualSemanticBridge
     (artifact : ArtifactData) (claim : MutualRecursionClaim)
     (plan : MutualRawPlan) : Prop :=
   ∃ k boxIdx subIdx,
-    ∃ (scc : V3Mutual.AdmittedScc k claim.obligation.carrier boxIdx subIdx)
+    ∃ (scc : MutualRecursionSoundness.AdmittedScc k claim.obligation.carrier boxIdx subIdx)
       (i : Fin k),
     scc.plans i = plan ∧
     (scc.members i).self = claim.obligation.self ∧
@@ -282,7 +282,7 @@ def mutualSemanticBridge
     mutualClaimEdges artifact.manifest artifact.mutualRecursionClaims =
       some scc.rawEdges ∧
     (∀ j, j ≠ i → claim.obligation.code (scc.members j).self =
-      some ⟨1, 1, V3Mutual.mutualInstrs claim.obligation.carrier
+      some ⟨1, 1, MutualRecursionSoundness.mutualInstrs claim.obligation.carrier
         boxIdx subIdx scc.members j⟩) ∧
     (∀ add sub mul stringEq stringConcat,
       let host := claim.obligation.host add sub mul stringEq stringConcat
@@ -293,7 +293,7 @@ def mutualSemanticBridge
       (x : claim.obligation.Dom) (vs : List WVal),
       claim.obligation.domRepr S x vs →
       ∃ n v, vs = [v] ∧ S.Repr n v ∧
-        ∀ w, S.Repr (V3Mutual.evalMutualU scc.members i n) w →
+        ∀ w, S.Repr (MutualRecursionSoundness.evalMutualU scc.members i n) w →
           claim.obligation.codRepr S (claim.obligation.model x) w)
 
 def mutualSemanticBridges (artifact : ArtifactData) : Prop :=
@@ -345,7 +345,7 @@ theorem mutual_claim_discharges
       have hLower : AverCert.PlanLower.lowerMutualBody claim.obligation.carrier
           plan = some body := by
         simpa [hCarrier] using hLow
-      have hCanonical : body = V3Mutual.mutualInstrs
+      have hCanonical : body = MutualRecursionSoundness.mutualInstrs
           claim.obligation.carrier boxIdx subIdx scc.members i := by
         have hSccLower := scc.lowered i
         rw [hSccPlan] at hSccLower
@@ -355,7 +355,7 @@ theorem mutual_claim_discharges
           some ⟨1, 1, body⟩ := by
         simpa [hParams, mutualNLocals, ← hSelf] using hCode
       have hCodeAll : ∀ j, claim.obligation.code (scc.members j).self =
-          some ⟨1, 1, V3Mutual.mutualInstrs claim.obligation.carrier
+          some ⟨1, 1, MutualRecursionSoundness.mutualInstrs claim.obligation.carrier
             boxIdx subIdx scc.members j⟩ := by
         intro j
         by_cases hji : j = i
@@ -375,7 +375,7 @@ theorem mutual_claim_discharges
               fuel (scc.members i).self [v] = some w := by
             simpa [hSccSelf] using hRun
           apply hCod w
-          simpa [hSccSelf] using V3Mutual.mutual_generic_certified
+          simpa [hSccSelf] using MutualRecursionSoundness.mutual_generic_certified
             k claim.obligation.carrier boxIdx subIdx scc S claim.obligation.code
             (claim.obligation.host add sub mul stringEq stringConcat)
             sub hBox hSubHost hMemberHost hCodeAll hSub fuel i n v w hv hRun'
@@ -389,7 +389,7 @@ theorem mutual_claim_discharges
           rcases hHost add sub mul stringEq stringConcat with
             ⟨hBox, hSubHost, hMemberHost⟩
           obtain ⟨w, hRun, hRepr⟩ :=
-            V3Mutual.mutual_generic_certified_total
+            MutualRecursionSoundness.mutual_generic_certified_total
               k claim.obligation.carrier boxIdx subIdx scc S claim.obligation.code
               (claim.obligation.host add sub mul stringEq stringConcat)
               sub hBox hSubHost hMemberHost hCodeAll hSub hSubTot i n v hv
@@ -407,8 +407,8 @@ theorem mutual_discharges
   exact mutual_claim_discharges artifact hAcc claim hMem
     (hSemantic claim hMem)
 
-end V3Master
+end AcceptanceSoundness
 
 -- Compatibility diagnostics; the checker enforces axioms once at the root.
-#print axioms V3Master.recursion_claim_discharges
-#print axioms V3Master.mutual_claim_discharges
+#print axioms AcceptanceSoundness.recursion_claim_discharges
+#print axioms AcceptanceSoundness.mutual_claim_discharges

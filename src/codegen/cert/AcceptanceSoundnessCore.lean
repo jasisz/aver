@@ -1,28 +1,21 @@
 /-
-v3 MASTER THEOREM — spike-lane capstone assembly.
-
-The production `AcceptedArtifact.accepted` predicate literally carries
-`Schema.Holds artifact.manifest` as its FIRST conjunct — today that `Holds`
-is ASSERTED and discharged per-artifact by generated `Certificate.lean` proofs.
-v3's endgame makes `Holds` DERIVED: prove it generically from the remaining
-byte-acceptance conjuncts, so the certificate becomes pure data.
+ACCEPTANCE-SOUNDNESS CORE.
 
 This file assembles the structural heart against the REAL audited types:
 `holdsCore_of_claims` reduces `HoldsCore m` (∀ manifest obligation, it holds)
 to the per-claim obligations holding, via the coverage bijection
 (`manifestObligationsClaimed` + `fragmentClaimObligationsInManifest` +
-export-name uniqueness). Each family's generic soundness theorem (all 9 proven
-kernel-clean in the sibling spike dirs) discharges its slice of the per-claim
-hypothesis; wiring all ten is the enumerated residual in VERDICT.md.
+export-name uniqueness). Each family's generic soundness theorem discharges
+its slice of the per-claim hypothesis; the capstone wires all ten families.
 -/
 import AcceptedArtifactCore
-import V3GenericCertified
+import ExprFragmentSoundness
 
 open AverCert
 open AverCert.Schema
 open AverCert.AcceptedArtifact
 
-namespace V3Master
+namespace AcceptanceSoundness
 
 /-- Per-obligation denotation selected by policy — the body of `HoldsCore`. -/
 def obligationHolds (o : Obligation) : Prop :=
@@ -208,4 +201,4 @@ def masterTarget (wasmSha256 : String) (artifact : ArtifactData) : Prop :=
   manifestObligationsClaimed artifact = true →
   holdsAtHash wasmSha256 artifact.manifest
 
-end V3Master
+end AcceptanceSoundness

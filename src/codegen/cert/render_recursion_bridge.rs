@@ -1,4 +1,4 @@
-/// The audited `V3Rec` generic covers the four unary descent-by-one operand
+/// The audited `RecursionSoundness` generic covers the four unary descent-by-one operand
 /// shapes with either the `Int.add` or `Int.mul` semantic combinator. The
 /// two-argument accumulator has its own arity-pinned audited shape.
 fn recursion_uses_audited_generic(c: &Cert) -> bool {
@@ -16,7 +16,7 @@ fn recursion_shape_lean_value(c: &Cert) -> String {
         ..
     } = c.inner()
     else {
-        unreachable!("only unary recursion has a V3Rec shape")
+        unreachable!("only unary recursion has a RecursionSoundness shape")
     };
     let step = match (*rec_first, *other) {
         (false, BodyOperand::Input) => ".inputSecond".to_string(),
@@ -29,14 +29,14 @@ fn recursion_shape_lean_value(c: &Cert) -> String {
         }
     };
     format!(
-        "({{ base := {}, step := {step} }} : V3Rec.RecShapeU)",
+        "({{ base := {}, step := {step} }} : RecursionSoundness.RecShapeU)",
         lean_int_lit(*base_k)
     )
 }
 
 fn recursion_combine_lean_value(c: &Cert) -> &'static str {
     let Cert::Recursive { combinator, .. } = c.inner() else {
-        unreachable!("only unary recursion has a V3Rec combinator")
+        unreachable!("only unary recursion has a RecursionSoundness combinator")
     };
     match combinator {
         Combinator::Add => ".add",
@@ -98,9 +98,9 @@ fn recursion_claim_acceptance_proof(c: &Cert) -> String {
 
 /// Option-(b) residual for one unary additive or multiplicative recursion obligation. The
 /// generated proof identifies the byte-derived parsed shape and relates the
-/// generated source model to the independent `V3Rec.evalRecU` evaluator in
+/// generated source model to the independent `RecursionSoundness.evalRecU` evaluator in
 /// the represented obligation domain. Fuel induction and Wasm execution stay in the
-/// sha-pinned `V3RecSpike` / `V3DischargeRecursion` wall.
+/// sha-pinned `RecursionSoundness` / `DischargeRecursion` wall.
 fn render_unary_recursion_semantic_bridge(c: &Cert) -> String {
     let Cert::Recursive {
         name,
@@ -130,20 +130,20 @@ theorem {name}_recursionClaimAccepted :
   exact {acceptance}
 
 theorem {name}_recursionSemanticBridge :
-    V3Master.recursionSemanticBridge {claim}
+    AcceptanceSoundness.recursionSemanticBridge {claim}
       AverCert.Plans.{name}RecursionPlan := by
   have hModelFuel : ∀ fuel n,
-      V3Rec.evalRecUFuel {combine} {shape} fuel n = {name}__fuel fuel n := by
+      RecursionSoundness.evalRecUFuel {combine} {shape} fuel n = {name}__fuel fuel n := by
     intro fuel
     induction fuel with
     | zero => intro n; rfl
     | succ fuel ih =>
         intro n
-        simp only [V3Rec.evalRecUFuel, {name}__fuel]
-        split <;> simp_all [V3Rec.stepEval, V3Rec.combineEval]
-  have hModel : ∀ n, V3Rec.evalRecU {combine} {shape} n = {name} n := by
+        simp only [RecursionSoundness.evalRecUFuel, {name}__fuel]
+        split <;> simp_all [RecursionSoundness.stepEval, RecursionSoundness.combineEval]
+  have hModel : ∀ n, RecursionSoundness.evalRecU {combine} {shape} n = {name} n := by
     intro n
-    simpa [V3Rec.evalRecU, {name}] using hModelFuel (n.natAbs + 1) n
+    simpa [RecursionSoundness.evalRecU, {name}] using hModelFuel (n.natAbs + 1) n
   refine Or.inl ?_
   refine ⟨{combine}, {box_idx}, {add_idx}, {sub_idx}, {shape},
     rfl, rfl, ?_, ?_⟩
@@ -194,20 +194,20 @@ theorem {name}_recursionClaimAccepted :
   exact {acceptance}
 
 theorem {name}_recursionSemanticBridge :
-    V3Master.recursionSemanticBridge {claim}
+    AcceptanceSoundness.recursionSemanticBridge {claim}
       AverCert.Plans.{name}RecursionPlan := by
   have hModelFuel : ∀ fuel n acc,
-      V3Rec.evalRecAFuel fuel n acc = {name}__fuel fuel n acc := by
+      RecursionSoundness.evalRecAFuel fuel n acc = {name}__fuel fuel n acc := by
     intro fuel
     induction fuel with
     | zero => intro n acc; rfl
     | succ fuel ih =>
         intro n acc
-        simp only [V3Rec.evalRecAFuel, {name}__fuel]
+        simp only [RecursionSoundness.evalRecAFuel, {name}__fuel]
         split <;> simp_all
-  have hModel : ∀ n acc, V3Rec.evalRecA n acc = {name} n acc := by
+  have hModel : ∀ n acc, RecursionSoundness.evalRecA n acc = {name} n acc := by
     intro n acc
-    simpa [V3Rec.evalRecA, {name}] using hModelFuel (n.natAbs + 1) n acc
+    simpa [RecursionSoundness.evalRecA, {name}] using hModelFuel (n.natAbs + 1) n acc
   refine Or.inr ?_
   refine ⟨{box_idx}, {add_idx}, {sub_idx}, .accumulator,
     rfl, rfl, ?_, ?_⟩

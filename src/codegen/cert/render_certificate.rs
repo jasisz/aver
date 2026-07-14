@@ -5,7 +5,7 @@ fn render_certificate(
 ) -> String {
     let mut s = String::new();
     s.push_str(
-        "import CertPrelude\nimport Module\nimport Schema\nimport Manifest\nimport V3DispatchCore\nimport V3DischargeComposition\nimport V3DischargeExprFragment\nimport V3DischargeRecursion\n",
+        "import CertPrelude\nimport Module\nimport Schema\nimport Manifest\nimport IntDispatchSoundness\nimport DischargeComposition\nimport DischargeExprFragment\nimport DischargeRecursion\n",
     );
     for r in model_roots {
         s.push_str(&format!("import {r}\n"));
@@ -44,7 +44,7 @@ fn render_certificate(
             // source-model bridge above.
             Cert::AdtConstructor { .. } => {}
             // The field-projection family is discharged in `Final.cert` by the
-            // audited v3 generic plus its canonical option-(c) leaf bridge.
+            // audited generic theorem plus its canonical option-(c) leaf bridge.
             // Its plan, obligation and claim data remain emitted unchanged.
             Cert::FieldProjection { .. } => {}
             Cert::WidenedIntMatch { .. } | Cert::VariantDispatch { .. } => {

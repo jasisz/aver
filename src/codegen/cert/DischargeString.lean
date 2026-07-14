@@ -1,20 +1,20 @@
 /-
-v3 master wiring — String.eq and String.concat discharges.
+Acceptance-soundness wiring for String.eq and String.concat.
 
 The generic theorems consume exactly the named helper contracts quantified by
 `Schema.Obligation.holds`; this file threads those hypotheses through the
 audited canonical host wiring.  String results use the concrete `WVal` model
 face (the generated obligations instantiate `codRepr` with `verbatimRepr`).
 -/
-import V3Master
-import V3String
+import AcceptanceSoundnessCore
+import StringSoundness
 
 open AverCert
 open AverCert.Schema
 open AverCert.AcceptedArtifact
 open CertPrelude
 
-namespace V3Master
+namespace AcceptanceSoundness
 
 def stringEqSemanticBridge
     (claim : StringEqClaim) (plan : StringEqRawPlan) : Prop :=
@@ -25,7 +25,7 @@ def stringEqSemanticBridge
     ∃ v,
       vs = [v] ∧
       claim.obligation.codRepr S (claim.obligation.model x)
-        (V3String.evalStringEq claim.stringTy plan v)
+        (StringSoundness.evalStringEq claim.stringTy plan v)
 
 def stringConcatSemanticBridge
     (claim : StringConcatClaim) (plan : StringConcatRawPlan) : Prop :=
@@ -36,7 +36,7 @@ def stringConcatSemanticBridge
     ∃ v,
       vs = [v] ∧
       claim.obligation.codRepr S (claim.obligation.model x)
-        (V3String.evalStringConcat claim.resultTy claim.containerTy plan v)
+        (StringSoundness.evalStringConcat claim.resultTy claim.containerTy plan v)
 
 def stringSemanticBridges (artifact : ArtifactData) : Prop :=
   (∀ claim ∈ artifact.stringEqClaims,
@@ -67,7 +67,7 @@ theorem stringEq_accepted_call
           wFuncN claim.obligation.code
               (claim.obligation.host add sub mul stringEq stringConcat)
               (fuel + 1) claim.obligation.self [v] = some w →
-            w = V3String.evalStringEq claim.stringTy plan v := by
+            w = StringSoundness.evalStringEq claim.stringTy plan v := by
   have hClaim : stringEqClaimAccepted artifact.modBytes artifact.modLen
       artifact.manifest claim := by
     exact allClaims_of_mem
@@ -98,7 +98,7 @@ theorem stringEq_accepted_call
               claim.stringEqFuncIdx = some (2, stringEq) := by
         rw [hHost]
         simp [stringEqCanonicalHost]
-      exact V3String.generic_string_eq_certified
+      exact StringSoundness.generic_string_eq_certified
         claim.stringTy claim.stringEqFuncIdx plan claim.obligation.code
         (claim.obligation.host add sub mul stringEq stringConcat)
         claim.obligation.self stringEq hStringEq hCheck body hLow hCodeSelf
@@ -121,7 +121,7 @@ theorem stringConcat_accepted_call
           wFuncN claim.obligation.code
               (claim.obligation.host add sub mul stringEq stringConcat)
               (fuel + 1) claim.obligation.self [v] = some w →
-            w = V3String.evalStringConcat
+            w = StringSoundness.evalStringConcat
               claim.resultTy claim.containerTy plan v := by
   have hClaim : stringConcatClaimAccepted artifact.modBytes artifact.modLen
       artifact.manifest claim := by
@@ -154,7 +154,7 @@ theorem stringConcat_accepted_call
             some (1, stringConcat claim.resultTy) := by
         rw [hHost]
         simp [stringConcatCanonicalHost]
-      exact V3String.generic_string_concat_certified
+      exact StringSoundness.generic_string_concat_certified
         claim.resultTy claim.containerTy claim.concatFuncIdx plan
         claim.obligation.code
         (claim.obligation.host add sub mul stringEq stringConcat)
@@ -192,7 +192,7 @@ theorem stringEq_canonical_discharges
          Cod := WVal
          domRepr := fun _ v vs => vs = [v]
          codRepr := fun S v w => verbatimRepr S v w
-         model := fun v => V3String.evalStringEq stringTy plan v } :
+         model := fun v => StringSoundness.evalStringEq stringTy plan v } :
         Obligation) := by
   intro S add sub mul stringEq stringConcat
     _hAdd _hSub _hMul hStringEq _hStringConcat fuel v vs w hDom hRun
@@ -200,7 +200,7 @@ theorem stringEq_canonical_discharges
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
-      have hCall := V3String.generic_string_eq_certified
+      have hCall := StringSoundness.generic_string_eq_certified
         stringTy stringEqFuncIdx plan code
         (host add sub mul stringEq stringConcat) self stringEq hStringEq
         hCheck body hLow hCode (hHost add sub mul stringEq stringConcat)
@@ -238,7 +238,7 @@ theorem stringConcat_canonical_discharges
          domRepr := fun _ v vs => vs = [v]
          codRepr := fun S v w => verbatimRepr S v w
          model := fun v =>
-           V3String.evalStringConcat resultTy containerTy plan v } :
+           StringSoundness.evalStringConcat resultTy containerTy plan v } :
         Obligation) := by
   intro S add sub mul stringEq stringConcat
     _hAdd _hSub _hMul _hStringEq hStringConcat fuel v vs w hDom hRun
@@ -246,7 +246,7 @@ theorem stringConcat_canonical_discharges
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
-      have hCall := V3String.generic_string_concat_certified
+      have hCall := StringSoundness.generic_string_concat_certified
         resultTy containerTy concatFuncIdx plan code
         (host add sub mul stringEq stringConcat) self stringConcat hStringConcat
         hCheck body hLow hCode (hHost add sub mul stringEq stringConcat)
@@ -323,4 +323,4 @@ theorem stringConcat_discharges
   exact stringConcat_claim_discharges artifact hAcc claim hMem
     (hSemantic.2 claim hMem)
 
-end V3Master
+end AcceptanceSoundness

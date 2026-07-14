@@ -1,19 +1,19 @@
 /-
-v3 master wiring — field-projection discharge spike.
+Acceptance-soundness wiring for field projections.
 
 This file deliberately separates the byte/plan theorem, which follows from
 `acceptedFieldProjectionFragments`, from the semantic-face bridge required to
 turn that theorem into `Obligation.holds`.
 -/
-import V3Master
-import V3FieldProj
+import AcceptanceSoundnessCore
+import FieldProjectionSoundness
 
 open AverCert
 open AverCert.Schema
 open AverCert.AcceptedArtifact
 open CertPrelude
 
-namespace V3Master
+namespace AcceptanceSoundness
 
 /-- The semantic face which the raw field-projection acceptance predicate does
 not currently carry.  It says that represented inputs expose a two-field
@@ -29,7 +29,7 @@ def fieldProjectionSemanticBridge
     ∃ a b,
       vs = [.structv claim.structIdx [a, b]] ∧
       claim.obligation.codRepr S (claim.obligation.model x)
-        (V3FieldProj.pairProjection plan.fieldIdx a b)
+        (FieldProjectionSoundness.pairProjection plan.fieldIdx a b)
 
 /-- Artifact-wide semantic bridges for all field-projection claims.  The plan
 is selected by the same manifest lookup used by
@@ -76,7 +76,7 @@ theorem fieldProjection_accepted_call
       ∀ (host : HostTbl) (fuel : Nat) (a b : WVal),
         wFuncN claim.obligation.code host (fuel + 1) claim.obligation.self
             [.structv claim.structIdx [a, b]] =
-          some (V3FieldProj.pairProjection plan.fieldIdx a b) := by
+          some (FieldProjectionSoundness.pairProjection plan.fieldIdx a b) := by
   have hClaim : fieldProjectionClaimAccepted artifact.modBytes artifact.modLen
       artifact.manifest claim := by
     exact allClaims_of_mem
@@ -110,7 +110,7 @@ theorem fieldProjection_accepted_call
         simpa [hSelf] using hCode
       refine ⟨plan, rfl, ?_⟩
       intro host fuel a b
-      have hOne := V3FieldProj.generic_field_projection_certified
+      have hOne := FieldProjectionSoundness.generic_field_projection_certified
         claim.structIdx plan claim.obligation.code host claim.obligation.self
         hCheckTwo body hLowTwo hCodeSelf a b
       exact (fieldProjection_run_succ_eq_one
@@ -150,7 +150,7 @@ theorem fieldProjection_canonical_discharges
          Cod := WVal
          domRepr := fun _ p vs => vs = [.structv structIdx [p.1, p.2]]
          codRepr := fun S v w => verbatimRepr S v w
-         model := fun p => V3FieldProj.pairProjection plan.fieldIdx p.1 p.2 } :
+         model := fun p => FieldProjectionSoundness.pairProjection plan.fieldIdx p.1 p.2 } :
         Obligation) := by
   intro S add sub mul stringEq stringConcat
     _hAdd _hSub _hMul _hStringEq _hStringConcat fuel p vs w hDom hRun
@@ -165,7 +165,7 @@ theorem fieldProjection_canonical_discharges
       have hLow : AverCert.PlanLower.lowerFieldProjectionBody structIdx 2 plan =
           some body := by
         simp [body, AverCert.PlanLower.lowerFieldProjectionBody, hCheck]
-      have hCall := V3FieldProj.generic_field_projection_certified
+      have hCall := FieldProjectionSoundness.generic_field_projection_certified
         structIdx plan code (host add sub mul stringEq stringConcat) self
         hCheck body hLow hCode a b
       have hFuel := fieldProjection_run_succ_eq_one
@@ -205,7 +205,7 @@ theorem fieldProjection_direct_canonical_discharges
          Cod := WVal
          domRepr := fun _ p vs => vs = [.structv structIdx [p.1, p.2]]
          codRepr := fun S v w => verbatimRepr S v w
-         model := fun p => V3FieldProj.pairProjection fieldIdx p.1 p.2 } :
+         model := fun p => FieldProjectionSoundness.pairProjection fieldIdx p.1 p.2 } :
         Obligation) := by
   intro S add sub mul stringEq stringConcat
     _hAdd _hSub _hMul _hStringEq _hStringConcat fuel p vs w hDom hRun
@@ -216,13 +216,13 @@ theorem fieldProjection_direct_canonical_discharges
   | succ fuel =>
       cases fieldIdx with
       | zero =>
-          simpa [V3FieldProj.pairProjection, verbatimRepr] using
+          simpa [FieldProjectionSoundness.pairProjection, verbatimRepr] using
             (Option.some.inj (by
               simpa [wFuncN, hCode, initLocals, wRunF] using hRun)).symm
       | succ fieldIdx =>
           cases fieldIdx with
           | zero =>
-              simpa [V3FieldProj.pairProjection, verbatimRepr] using
+              simpa [FieldProjectionSoundness.pairProjection, verbatimRepr] using
                 (Option.some.inj (by
                   simpa [wFuncN, hCode, initLocals, wRunF] using hRun)).symm
           | succ fieldIdx => omega
@@ -255,7 +255,7 @@ theorem fieldProjection_claim_discharges
         (claim.obligation.host add sub mul stringEq stringConcat)
         fuel a b
       rw [hResult] at hRun
-      have hw : V3FieldProj.pairProjection plan.fieldIdx a b = w :=
+      have hw : FieldProjectionSoundness.pairProjection plan.fieldIdx a b = w :=
         Option.some.inj hRun
       simpa [← hw] using hCod
 
@@ -272,4 +272,4 @@ theorem fieldProjection_discharges
   exact fieldProjection_claim_discharges artifact hAcc claim hMem
     (hSemantic claim hMem)
 
-end V3Master
+end AcceptanceSoundness

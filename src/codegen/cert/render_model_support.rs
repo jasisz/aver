@@ -84,7 +84,7 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
         }
         out.push_str(&format!(
             "def {name}Model (v : CertPrelude.WVal) : CertPrelude.WVal :=\n  \
-             V3ConstructVerbatim.verbatimModel Plans.{name}VerbatimPlan v\n\n",
+             ConstructVerbatimSoundness.verbatimModel Plans.{name}VerbatimPlan v\n\n",
             name = c.name(),
         ));
     }

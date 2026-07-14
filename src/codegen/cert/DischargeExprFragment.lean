@@ -1,5 +1,5 @@
 /-
-v3 master wiring — source expression-fragment discharge.
+Acceptance-soundness wiring for source expression fragments.
 
 Acceptance pins the audited SymRawPlan encoder, checked representation plan,
 canonical lowering, and exact code entry.  The independent obligation
@@ -11,14 +11,14 @@ partial host contracts, the successful byte run is exposed only to rule out a
 missing host result; the audited generic still identifies the evaluator result
 with the byte result.
 -/
-import V3Master
+import AcceptanceSoundnessCore
 
 open AverCert
 open AverCert.Schema
 open AverCert.AcceptedArtifact
 open CertPrelude
 
-namespace V3Master
+namespace AcceptanceSoundness
 
 /-- The semantic face not carried by `symFragmentPlanAccepted`.  It relates an
 arbitrary obligation-domain representation to the generic theorem's honest
@@ -49,11 +49,11 @@ def exprFragmentSemanticBridge
     ∃ (inputs : List WVal) (modelLocals : List WVal) (result : WVal),
       vs = inputs ∧
       inputs.length = plan.params.length ∧
-      V3ExprFragmentGeneric.blockCallsOK
+      ExprFragmentSoundness.blockCallsOK
         (claim.obligation.host add sub mul stringEq stringConcat)
         (fun g => (claim.obligation.code g).map (fun c => c.arity))
         plan.body ∧
-      V3ExprFragmentFull.evalSymRawPlan
+      ExprFragmentSemantics.evalSymRawPlan
         claim.hostTable claim.structTable
         (claim.obligation.host add sub mul stringEq stringConcat)
         (fun g => (claim.obligation.code g).map (fun c => c.arity))
@@ -71,7 +71,7 @@ def exprFragmentUsesAuditedGeneric (claim : SymFragmentClaim) : Bool :=
   claim.plan.params.all (fun ty => ty = .int || ty = .bool) &&
   (claim.plan.result = .int || claim.plan.result = .bool)
 
-/-- Float semantics are deliberately outside the v3 integer/Bool model.  A
+/-- Float semantics are deliberately outside the audited integer/Bool model. A
 float at the source boundary is the only bespoke residual admitted below. -/
 def exprFragmentHasFloatBoundary (claim : SymFragmentClaim) : Bool :=
   claim.plan.params.any (· = .float) || claim.plan.result = .float
@@ -147,7 +147,7 @@ theorem exprFragment_claim_discharges_generic
           rcases hSemantic S add sub mul stringEq stringConcat
               hAdd hSub hMul hStringEq hStringConcat fuel x vs w hDom hRun with
             ⟨inputs, modelLocals, result, rfl, hArity, hCalls, hEval, hCod⟩
-          have hGeneric := V3ExprFragmentGeneric.exprfragment_generic_certified
+          have hGeneric := ExprFragmentSoundness.exprfragment_generic_certified
             S claim.hostTable claim.structTable claim.obligation.code
             (claim.obligation.host add sub mul stringEq stringConcat)
             claim.plan plan hEncode hCheck body hLower claim.obligation.self
@@ -179,4 +179,4 @@ theorem exprFragment_discharges
   exact exprFragment_claim_discharges artifact hAcc claim hMem
     (hSemantic claim hMem)
 
-end V3Master
+end AcceptanceSoundness
