@@ -102,6 +102,7 @@ structure Subject where
 inductive Policy where
   | simulatesModel
   | simulatesModelTotally
+deriving Repr, DecidableEq
 
 /-- Extra totality premise selected for one total obligation.  The default
     preserves the shipped L3 contract: add/sub are total, while the partial mul

@@ -233,7 +233,7 @@ def exprProjectionFace? (plan : AverCert.Schema.ExprFragmentRawPlan) :
     | [n0, n1] =>
         match n0.kind, n1.kind with
         | .local 0, .structGetUser structIdx fieldIdx 0 =>
-            if n0.ty = .adtRef && n1.ty = .adtRef then
+            if fieldIdx ≤ 1 && n0.ty = .adtRef && n1.ty = .adtRef then
               some (structIdx, fieldIdx)
             else none
         | _, _ => none

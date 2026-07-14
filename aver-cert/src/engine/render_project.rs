@@ -1596,6 +1596,7 @@ fn render_artifact(
             "theorem standardFacesChecked : AverCert.StandardFace.checkedFaces data := by\n",
             "{face_dsimp}",
             "  repeat' constructor\n\n",
+            "theorem claimAxesChecked : AverCert.ClaimAxes.checked data = true := rfl\n\n",
             "theorem decodedNonExprClaimFacts : AverCert.AcceptedArtifact.decodedNonExprClaimFacts data := by\n",
             "{artifact_dsimp}",
             "  repeat' constructor\n\n",
@@ -1642,7 +1643,7 @@ fn render_artifact(
             "    (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n",
             "    AverCert.AcceptedArtifact.accepted data := by\n",
             "  dsimp [AverCert.AcceptedArtifact.accepted, AverCert.AcceptedArtifact.subjectMatchesArtifactRoot, AverCert.AcceptedArtifact.expectedArtifactRoot]\n",
-            "  exact ⟨finalCert, rfl, claimObligationsBound, claimsMatchManifest, standardFacesChecked, decodedNonExprFacts, fragmentsAccepted⟩\n"
+            "  exact ⟨finalCert, rfl, claimObligationsBound, claimsMatchManifest, standardFacesChecked, claimAxesChecked, decodedNonExprFacts, fragmentsAccepted⟩\n"
         ),
         obligation_proof_step = family_exact(&claims.obligation_proof),
         sym_proof_step = family_exact(&claims.sym_proof),
@@ -1661,7 +1662,7 @@ fn render_artifact(
     format!(
          "-- Artifact-carried acceptance root.\n\
          -- This file is useful metadata, not verifier authority: `aver cert verify`\n\
-         -- pins `AverCert.Artifact.data` to its checker-reconstructed literal and\n\
+         -- pins its bytes and manifest to checker-owned inputs and\n\
          -- audits `AverCert.Artifact.certificate` through the Lean axiom collector.\n\
          import AcceptedArtifact\n\
          import ArtifactBytes\n\

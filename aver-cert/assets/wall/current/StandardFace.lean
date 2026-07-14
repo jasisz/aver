@@ -238,27 +238,6 @@ def classifyIntAdd (plan : ExprFragmentRawPlan) : Option IntAddFace :=
     | _ => none
   else none
 
-structure ProjectionFace where
-  structIdx : Nat
-  fieldIdx : Nat
-deriving Repr, DecidableEq
-
-/-- Exact user-struct projection classifier. Other ADT-reference fragments do
-    not silently fall back to a generic verbatim face. -/
-def classifyProjection (plan : ExprFragmentRawPlan) : Option ProjectionFace :=
-  if plan.params = [.adtRef] && plan.result = .adtRef &&
-      plan.body.result = 1 then
-    match plan.body.nodes with
-    | [n0, n1] =>
-        match n0.kind, n1.kind with
-        | .local 0, .structGetUser structIdx fieldIdx 0 =>
-            if fieldIdx ≤ 1 && n0.ty = .adtRef && n1.ty = .adtRef then
-              some { structIdx := structIdx, fieldIdx := fieldIdx }
-            else none
-        | _, _ => none
-    | _ => none
-  else none
-
 /-- Generic fragments have no host-dependent or opaque-ADT face. Fuel
     exhaustion rejects rather than accidentally admitting a future deeper
     plan. Exact integer-add and projection plans are selected before this
@@ -294,9 +273,9 @@ noncomputable def symFragmentFace (claim : SymFragmentClaim) : Option StandardFa
           some (.known
             (intList claim.carrier 1 (intAddHost claim.carrier face)))
       | none =>
-          match classifyProjection plan with
-          | some face =>
-              some (.known (projection claim.carrier face.structIdx face.fieldIdx))
+          match AverCert.WasmSlice.exprProjectionFace? plan with
+          | some (structIdx, fieldIdx) =>
+              some (.known (projection claim.carrier structIdx fieldIdx))
           | none =>
               if genericFragmentAllowed plan then
                 some (.known (fragment claim.carrier plan.params plan.result))
@@ -411,6 +390,64 @@ def compositionMatches
     plan lists: one obligation export may be claimed by exactly one family. -/
 def claimExportsUnique (artifact : ArtifactData) : Bool :=
   AverCert.WasmSlice.indexedNodup (claimObligationExports artifact)
+
+/-- Report one fixed class for every claim in a family. The export and class
+    stay paired throughout; the verifier never compares two independently
+    ordered lists. -/
+def fixedReportEntries {Claim : Type u}
+    (className : String) (obligation : Claim → Obligation) :
+    List Claim → List (String × String) :=
+  List.map fun claim => ((obligation claim).export_, className)
+
+def recursionReportEntry
+    (manifest : Manifest) (claim : RecursionClaim) : Option (String × String) := do
+  let plan ← recursionPlanForExport claim.exportName manifest.recursionPlans
+  let className ← match plan.params with
+    | [_] => some "self-recursive"
+    | [_, _] => some "multi-argument self-recursive"
+    | _ => none
+  pure (claim.obligation.export_, className)
+
+/-- Derive every public class label from the checked claim family and plan.
+    This is report data only, but deriving it in the wall prevents Rust from
+    choosing a more favourable family name for an accepted obligation. -/
+def claimReportEntries (artifact : ArtifactData) : Option (List (String × String)) := do
+  let recursion ← artifact.recursionClaims.mapM
+    (recursionReportEntry artifact.manifest)
+  pure <|
+    fixedReportEntries "expr-fragment-v1"
+      (fun c : SymFragmentClaim => c.obligation) artifact.symFragmentClaims ++
+    fixedReportEntries "verbatim-string-eq"
+      (fun c : StringEqClaim => c.obligation) artifact.stringEqClaims ++
+    fixedReportEntries "verbatim-string-concat"
+      (fun c : StringConcatClaim => c.obligation) artifact.stringConcatClaims ++
+    fixedReportEntries "adt-constructor"
+      (fun c : ConstructClaim => c.obligation) artifact.constructClaims ++
+    recursion ++
+    fixedReportEntries "mutual-recursive"
+      (fun c : MutualRecursionClaim => c.obligation) artifact.mutualRecursionClaims ++
+    fixedReportEntries "verbatim-dispatch"
+      (fun c : VerbatimClaim => c.obligation) artifact.verbatimClaims ++
+    fixedReportEntries "int-dispatch"
+      (fun c : IntDispatchClaim => c.obligation) artifact.intDispatchClaims ++
+    fixedReportEntries "field-projection"
+      (fun c : FieldProjectionClaim => c.obligation) artifact.fieldProjectionClaims ++
+    fixedReportEntries "cross-function-composition"
+      (fun c : CompositionClaim => c.obligation) artifact.compositionClaims
+
+def reportEntryFor
+    (entries : List (String × String)) (obligation : Obligation) :
+    Option (String × String) := do
+  let className ← namedPlanForExport obligation.export_ entries
+  pure (obligation.export_, className)
+
+/-- Public report entries in manifest order. Cross-family uniqueness is checked
+    before lookup, so a label can never be selected by first-match ambiguity. -/
+def reportEntries (artifact : ArtifactData) : Option (List (String × String)) :=
+  if claimExportsUnique artifact then do
+    let entries ← claimReportEntries artifact
+    artifact.manifest.obligations.mapM (reportEntryFor entries)
+  else none
 
 /-- Every claim is unique across families and carries the semantic face selected
     by its checked family and plan. This is deliberately conjoined with the

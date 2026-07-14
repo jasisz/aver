@@ -302,6 +302,26 @@ pub fn resolve(id: &str) -> Option<&'static Wall> {
     (id == current_id()).then_some(&CURRENT)
 }
 
+/// Checker-authored Lean module containing the exact artifact bytes. A
+/// certificate package never supplies this module; production verification
+/// and direct-Lake test harnesses materialize it from the `.wasm` under test.
+pub fn render_artifact_bytes(bytes: &[u8]) -> String {
+    let numeral = if bytes.is_empty() {
+        "0".to_string()
+    } else {
+        let mut numeral = String::with_capacity(2 + bytes.len() * 2);
+        numeral.push_str("0x");
+        for byte in bytes.iter().rev() {
+            numeral.push_str(&format!("{byte:02x}"));
+        }
+        numeral
+    };
+    format!(
+        "import WasmSlice\n\nset_option maxRecDepth 200000\n\nnamespace AverCert.ArtifactBytes\n\ndef modBytes : Nat := {numeral}\ndef modLen : Nat := {}\n\nend AverCert.ArtifactBytes\n",
+        bytes.len()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

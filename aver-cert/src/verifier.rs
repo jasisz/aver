@@ -230,7 +230,16 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     let witness = checker_witness(&actual_hash, &candidates);
     std::fs::write(build.path.join("CheckerWitness.lean"), witness)
         .map_err(|error| format!("cannot write checker witness: {error}"))?;
-    let elaborated = run_lake(&build.path, &["env", "lean", "CheckerWitness.lean"])?;
+    let elaborated = run_lake(
+        &build.path,
+        &[
+            "env",
+            "lean",
+            "-o",
+            ".lake/build/lib/lean/CheckerWitness.olean",
+            "CheckerWitness.lean",
+        ],
+    )?;
     if !elaborated.status.success() {
         return Err(format!(
             "certificate does not bind to this artifact: the checker-owned Lean witness failed:\n{}",
@@ -380,16 +389,16 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
          example : AverCert.manifest.subject.stringHostRoles = {string_roles} := rfl\n\
          example : AverCert.manifest.subject.profile = \"{}\" := rfl\n\
          example : AverCert.manifest.subject.abi = \"{}\" := rfl\n\n\
-         def checked : AverCert.AcceptedArtifact.accepted AverCert.Artifact.data :=\n\
+         theorem checked : AverCert.AcceptedArtifact.accepted AverCert.Artifact.data :=\n\
            AverCert.Artifact.certificate\n\n\
          end AverCertChecker\n\n\
          open Lean in\n\
          run_cmd do\n  \
            let allowed : List Lean.Name := [{allowed}]\n  \
            let axioms ← Lean.collectAxioms `{CHECKED_ROOT}\n  \
-           for axiom in axioms do\n    \
-             unless allowed.contains axiom do\n      \
-               throwError s!\"non-whitelisted axiom: {{axiom}}\"\n",
+           for usedAxiom in axioms do\n    \
+             unless allowed.contains usedAxiom do\n      \
+               throwError s!\"non-whitelisted axiom: {{usedAxiom}}\"\n",
         format::ARTIFACT_CERTIFICATE_ROOT,
         candidates.profile,
         candidates.abi,
@@ -743,7 +752,7 @@ fn assemble_build(
     }
     std::fs::write(
         build.path.join("ArtifactBytes.lean"),
-        render_artifact_bytes_lean(wasm_bytes),
+        wall::render_artifact_bytes(wasm_bytes),
     )
     .map_err(|error| format!("cannot stage ArtifactBytes.lean: {error}"))?;
     roots.push("ArtifactBytes".to_string());
@@ -792,23 +801,6 @@ fn checker_lakefile(roots: &[String]) -> String {
         .join(", ");
     format!(
         "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n@[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  roots := #[{roots}]\n"
-    )
-}
-
-fn render_artifact_bytes_lean(bytes: &[u8]) -> String {
-    let numeral = if bytes.is_empty() {
-        "0".to_string()
-    } else {
-        let mut numeral = String::with_capacity(2 + bytes.len() * 2);
-        numeral.push_str("0x");
-        for byte in bytes.iter().rev() {
-            numeral.push_str(&format!("{byte:02x}"));
-        }
-        numeral
-    };
-    format!(
-        "import WasmSlice\n\nset_option maxRecDepth 200000\n\nnamespace AverCert.ArtifactBytes\n\ndef modBytes : Nat := {numeral}\ndef modLen : Nat := {}\n\nend AverCert.ArtifactBytes\n",
-        bytes.len()
     )
 }
 
@@ -981,7 +973,7 @@ mod tests {
 
     #[test]
     fn artifact_bytes_are_little_endian_nat() {
-        let rendered = render_artifact_bytes_lean(&[0x00, 0x61, 0x73, 0x6d]);
+        let rendered = wall::render_artifact_bytes(&[0x00, 0x61, 0x73, 0x6d]);
         assert!(rendered.contains("def modBytes : Nat := 0x6d736100"));
         assert!(rendered.contains("def modLen : Nat := 4"));
     }

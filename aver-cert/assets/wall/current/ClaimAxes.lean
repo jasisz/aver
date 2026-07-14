@@ -27,10 +27,10 @@ def total (role : TotalityRole) : AxisSpec :=
     termination? := some canonicalTermination
     totalityRole := role }
 
-def AxisSpec.Matches (spec : AxisSpec) (obligation : Obligation) : Prop :=
-  obligation.policy = spec.policy ∧
-  obligation.termination? = spec.termination? ∧
-  obligation.totalityRole = spec.totalityRole
+def AxisSpec.matches (spec : AxisSpec) (obligation : Obligation) : Bool :=
+  obligation.policy == spec.policy &&
+  obligation.termination? == spec.termination? &&
+  obligation.totalityRole == spec.totalityRole
 
 /-- Classify the byte-bound recursion grammar first; compare the obligation's
     claimed role only after classification. The additive unary and accumulator
@@ -51,33 +51,33 @@ def mutualAxis (manifest : Manifest) (claim : MutualRecursionClaim) : Option Axi
   pure (total .addSub)
 
 def allMatch (axis : Claim → Option AxisSpec)
-    (obligation : Claim → Obligation) : List Claim → Prop
-  | [] => True
+    (obligation : Claim → Obligation) : List Claim → Bool
+  | [] => true
   | claim :: rest =>
-      (match axis claim with
-       | some spec => spec.Matches (obligation claim)
-       | none => False) ∧
-      allMatch axis obligation rest
+      match axis claim with
+      | some spec =>
+          spec.matches (obligation claim) && allMatch axis obligation rest
+      | none => false
 
-def checkedAxes (artifact : ArtifactData) : Prop :=
+def checkedAxes (artifact : ArtifactData) : Bool :=
   allMatch (fun _ : SymFragmentClaim => some partialAxis) (fun c => c.obligation)
-      artifact.symFragmentClaims ∧
+      artifact.symFragmentClaims &&
   allMatch (fun _ : StringEqClaim => some partialAxis) (fun c => c.obligation)
-      artifact.stringEqClaims ∧
+      artifact.stringEqClaims &&
   allMatch (fun _ : StringConcatClaim => some partialAxis) (fun c => c.obligation)
-      artifact.stringConcatClaims ∧
+      artifact.stringConcatClaims &&
   allMatch (fun _ : ConstructClaim => some partialAxis) (fun c => c.obligation)
-      artifact.constructClaims ∧
+      artifact.constructClaims &&
   allMatch (recursionAxis artifact.manifest) (fun c => c.obligation)
-      artifact.recursionClaims ∧
+      artifact.recursionClaims &&
   allMatch (mutualAxis artifact.manifest) (fun c => c.obligation)
-      artifact.mutualRecursionClaims ∧
+      artifact.mutualRecursionClaims &&
   allMatch (fun _ : VerbatimClaim => some partialAxis) (fun c => c.obligation)
-      artifact.verbatimClaims ∧
+      artifact.verbatimClaims &&
   allMatch (fun _ : IntDispatchClaim => some partialAxis) (fun c => c.obligation)
-      artifact.intDispatchClaims ∧
+      artifact.intDispatchClaims &&
   allMatch (fun _ : FieldProjectionClaim => some partialAxis) (fun c => c.obligation)
-      artifact.fieldProjectionClaims ∧
+      artifact.fieldProjectionClaims &&
   allMatch (fun _ : CompositionClaim => some partialAxis) (fun c => c.obligation)
       artifact.compositionClaims
 
@@ -227,12 +227,12 @@ def requiredContracts (artifact : ArtifactData) : Option (List String) := do
   let use ← requiredContractUse artifact
   pure use.contracts
 
-def contractsMatch (artifact : ArtifactData) : Prop :=
-  requiredContracts artifact = some artifact.manifest.subject.contracts
+def contractsMatch (artifact : ArtifactData) : Bool :=
+  requiredContracts artifact == some artifact.manifest.subject.contracts
 
 /-- All producer-selectable claim metadata that is instead canonicalized by
     the checked family and plan. -/
-def checked (artifact : ArtifactData) : Prop :=
-  checkedAxes artifact ∧ contractsMatch artifact
+def checked (artifact : ArtifactData) : Bool :=
+  checkedAxes artifact && contractsMatch artifact
 
 end AverCert.ClaimAxes

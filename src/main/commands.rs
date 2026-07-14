@@ -4582,7 +4582,11 @@ fn emit_artifact_certificate(
     if !certified.is_empty() {
         println!("    certified: {}", certified.join(", "));
     }
-    println!("    build: cd {} && lake build", cert_dir.display());
+    println!(
+        "    verify: aver cert verify {} {}",
+        out_path.join(wasm_name).display(),
+        cert_dir.display()
+    );
 }
 
 /// `--target wasip2` compile entry — 0.18 "Span".
