@@ -1,5 +1,9 @@
 #![cfg(feature = "wasm")]
 
+#[path = "support/cert_wall.rs"]
+mod cert_wall;
+
+use cert_wall::materialize as materialize_wall;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -170,6 +174,7 @@ fn whole_module_guards_are_isolated_and_weaken_confirmed() {
         String::from_utf8_lossy(&compile.stderr)
     );
     let cert = out_dir.join("cert");
+    materialize_wall(&cert);
     let build = Command::new("lake")
         .current_dir(&cert)
         .arg("build")
@@ -414,6 +419,7 @@ fn inkernel_host_role_table_guard_is_isolated_and_weaken_confirmed() {
     assert_ne!(wrong_add_idx, add_idx);
 
     let cert = out_dir.join("cert");
+    materialize_wall(&cert);
     let build = Command::new("lake")
         .current_dir(&cert)
         .arg("build")
@@ -524,6 +530,7 @@ fn inkernel_string_host_roles_guard_is_isolated_and_weaken_confirmed() {
     let wrong_eq_idx = eq_idx + 1;
 
     let cert = out_dir.join("cert");
+    materialize_wall(&cert);
     let build = Command::new("lake")
         .current_dir(&cert)
         .arg("build")
@@ -650,6 +657,7 @@ fn inkernel_code_table_guard_is_isolated_and_weaken_confirmed() {
         String::from_utf8_lossy(&compile.stderr)
     );
     let cert = out_dir.join("cert");
+    materialize_wall(&cert);
     let build = Command::new("lake")
         .current_dir(&cert)
         .arg("build")
@@ -770,6 +778,7 @@ fn self_index_is_kernel_bound_by_exports_accounted() {
         String::from_utf8_lossy(&compile.stderr)
     );
     let cert = out_dir.join("cert");
+    materialize_wall(&cert);
     let build = Command::new("lake")
         .current_dir(&cert)
         .arg("build")

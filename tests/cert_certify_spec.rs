@@ -9,6 +9,10 @@
 //! backend) and skipped when `lake` is unavailable, mirroring `proof_spec.rs`.
 #![cfg(feature = "wasm")]
 
+#[path = "support/cert_wall.rs"]
+mod cert_wall;
+
+use cert_wall::materialize as materialize_wall;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::Command;
@@ -47,56 +51,6 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
             std::fs::copy(entry.path(), target).unwrap();
         }
     }
-}
-
-/// Materialize the checker-owned wall only for tests that intentionally invoke
-/// Lake directly. Production certificate packages carry just `format.wall_id`;
-/// `aver cert verify` performs the equivalent staging in a fresh directory.
-fn materialize_wall(cert_dir: &std::path::Path) {
-    for source in aver::codegen::cert::wall::SOURCES {
-        std::fs::write(cert_dir.join(source.name), source.contents).unwrap();
-    }
-    std::fs::write(
-        cert_dir.join("lean-toolchain"),
-        aver::codegen::cert::wall::LEAN_TOOLCHAIN,
-    )
-    .unwrap();
-
-    fn collect_roots(base: &std::path::Path, dir: &std::path::Path, roots: &mut Vec<String>) {
-        for entry in std::fs::read_dir(dir).unwrap() {
-            let entry = entry.unwrap();
-            if entry.file_type().unwrap().is_dir() {
-                collect_roots(base, &entry.path(), roots);
-                continue;
-            }
-            if entry.path().extension().and_then(|ext| ext.to_str()) != Some("lean") {
-                continue;
-            }
-            let relative = entry.path().strip_prefix(base).unwrap().to_path_buf();
-            let mut components = relative
-                .components()
-                .map(|component| component.as_os_str().to_string_lossy().into_owned())
-                .collect::<Vec<_>>();
-            let leaf = components.last_mut().unwrap();
-            leaf.truncate(leaf.len() - ".lean".len());
-            roots.push(components.join("."));
-        }
-    }
-
-    let mut roots = Vec::new();
-    collect_roots(cert_dir, cert_dir, &mut roots);
-    roots.sort();
-    roots.dedup();
-    let roots = roots
-        .iter()
-        .map(|root| format!("`{root}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let lakefile = format!(
-        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
-         @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  roots := #[{roots}]\n"
-    );
-    std::fs::write(cert_dir.join("lakefile.lean"), lakefile).unwrap();
 }
 
 fn verify_certificate(wasm: &std::path::Path, cert_dir: &std::path::Path) -> (bool, String) {
