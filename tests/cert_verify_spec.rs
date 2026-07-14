@@ -60,29 +60,15 @@
 //!   (x) expr-fragment sidecar drift: mutating the emitted canonical plan either
 //!       fails its sidecar hash pin or, with the hash rebound, fails plan-first
 //!       canonical lowering against the actual wasm body
-//!   (y) plan-check TCB pin drift: rebinding `plan_check_sha256` to a different
-//!       checker is rejected before Lean build, so certs cannot ship their own
-//!       weakened `PlanCheck.lean`
-//!   (z) plan-lower TCB pin drift: rebinding `plan_lower_sha256` to a different
-//!       checker is rejected before Lean build, so certs cannot ship their own
-//!       weakened `PlanLower.lean`
-//!   (aa) plan-bytes TCB pin drift: rebinding `plan_bytes_sha256` to a different
-//!       checker is rejected before Lean build, so certs cannot ship their own
-//!       weakened `PlanBytes.lean`
-//!   (ab) wasm-slice TCB pin drift: rebinding `wasm_slice_sha256` to a different
-//!       checker is rejected before Lean build, so certs cannot ship their own
-//!       weakened `WasmSlice.lean`
-//!   (ac) expr-fragment-accepted TCB pin drift: rebinding
-//!       `expr_fragment_accepted_sha256` to a different checker is rejected
-//!       before Lean build
-//!   (ad) accepted-artifact TCB pin drift: rebinding
-//!       `accepted_artifact_sha256` to a different checker is rejected before
-//!       Lean build
-//!   (ae) artifact-bytes decoy: cert-supplied `ArtifactBytes.lean` is ignored;
+//!   (y) package-format drift: an unknown `format.version` is rejected rather
+//!       than reinterpreted under the current parser
+//!   (z) wall drift: an unknown aggregate `wall_id` is rejected before Lean
+//!       build; resolution has no filesystem, environment, or network fallback
+//!   (aa) artifact-bytes decoy: cert-supplied `ArtifactBytes.lean` is ignored;
 //!       the checker regenerates it from the actual artifact bytes it read
-//!   (af) artifact-data decoy: cert-supplied `Artifact.lean` data is pinned to
+//!   (ab) artifact-data decoy: cert-supplied `Artifact.lean` data is pinned to
 //!       the checker-reconstructed artifact data with `rfl`
-//!   (ag) artifact-root axiom: the artifact-carried bridge proof is the axiom
+//!   (ac) artifact-root axiom: the artifact-carried bridge proof is the axiom
 //!       audit root, so a smuggled axiom there is rejected
 //! plus a separate empty-cert test: zero certified exports must NOT print the
 //! green path and must exit nonzero, and the A5 report-line injection payload
@@ -482,119 +468,40 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         );
     }
 
-    // The plan checker is audited TCB, not artifact data. A cert may carry a
-    // `PlanCheck.lean` file for human audit, but the verifier builds against
-    // its embedded copy and rejects a manifest pin for any other copy.
+    // The package format is independently versioned from the Lean statement
+    // schema. Unknown versions are never reinterpreted as the current shape.
     {
-        let dir = temp_dir("neg-plancheck-pin");
+        let dir = temp_dir("neg-format-version");
         copy_dir(&out_dir, &dir);
         let mf = dir.join("cert").join("cert-manifest.json");
         let mut m: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["plan_check_sha256"] = serde_json::json!("not-the-audited-plan-check");
+        m["format"]["version"] = serde_json::json!(2);
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "plan-check hash drift must be rejected:\n{out}");
+        assert!(!ok, "format version drift must be rejected:\n{out}");
         assert!(
-            out.contains("plan-check hash mismatch"),
-            "wrong reason for plan-check hash drift:\n{out}"
+            out.contains("unsupported certificate format version 2"),
+            "wrong reason for format version drift:\n{out}"
         );
     }
 
-    // The plan lowerer is audited TCB too. A cert may carry `PlanLower.lean`
-    // for auditability, but verification only accepts the embedded checker
-    // copy and its exact hash.
+    // One aggregate identifier commits to every checker-owned Lean source and
+    // the exact toolchain. Resolution is embedded-only: no path, URL, or
+    // ambient installation is consulted for an unknown wall.
     {
-        let dir = temp_dir("neg-planlower-pin");
+        let dir = temp_dir("neg-wall-id");
         copy_dir(&out_dir, &dir);
         let mf = dir.join("cert").join("cert-manifest.json");
         let mut m: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["plan_lower_sha256"] = serde_json::json!("not-the-audited-plan-lower");
+        m["format"]["wall_id"] = serde_json::json!("sha256:deadbeef");
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "plan-lower hash drift must be rejected:\n{out}");
+        assert!(!ok, "unknown wall id must be rejected:\n{out}");
         assert!(
-            out.contains("plan-lower hash mismatch"),
-            "wrong reason for plan-lower hash drift:\n{out}"
-        );
-    }
-
-    // The plan byte encoder is audited TCB as well. It is the Lean-side
-    // canonical RawPlan -> code-entry byte encoder, so its manifest pin must
-    // match the checker-owned copy.
-    {
-        let dir = temp_dir("neg-planbytes-pin");
-        copy_dir(&out_dir, &dir);
-        let mf = dir.join("cert").join("cert-manifest.json");
-        let mut m: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["plan_bytes_sha256"] = serde_json::json!("not-the-audited-plan-bytes");
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "plan-bytes hash drift must be rejected:\n{out}");
-        assert!(
-            out.contains("plan-bytes hash mismatch"),
-            "wrong reason for plan-bytes hash drift:\n{out}"
-        );
-    }
-
-    // The relevant Wasm byte slicer is audited TCB too. It binds checker-read
-    // module bytes to export-named code-entry bytes inside Lean, so its manifest
-    // pin must match the checker-owned copy.
-    {
-        let dir = temp_dir("neg-wasmslice-pin");
-        copy_dir(&out_dir, &dir);
-        let mf = dir.join("cert").join("cert-manifest.json");
-        let mut m: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["wasm_slice_sha256"] = serde_json::json!("not-the-audited-wasm-slice");
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "wasm-slice hash drift must be rejected:\n{out}");
-        assert!(
-            out.contains("wasm-slice hash mismatch"),
-            "wrong reason for wasm-slice hash drift:\n{out}"
-        );
-    }
-
-    // The aggregate expr-fragment acceptance predicate is audited TCB. A cert
-    // cannot swap it for a weaker definition and rebind the manifest.
-    {
-        let dir = temp_dir("neg-expr-fragment-accepted-pin");
-        copy_dir(&out_dir, &dir);
-        let mf = dir.join("cert").join("cert-manifest.json");
-        let mut m: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["expr_fragment_accepted_sha256"] =
-            serde_json::json!("not-the-audited-expr-fragment-accepted");
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(
-            !ok,
-            "expr-fragment-accepted hash drift must be rejected:\n{out}"
-        );
-        assert!(
-            out.contains("expr-fragment-accepted hash mismatch"),
-            "wrong reason for expr-fragment-accepted hash drift:\n{out}"
-        );
-    }
-
-    // The artifact-acceptance bridge is audited TCB too. A cert cannot swap the
-    // obligation bridge for a weaker definition and rebind the manifest.
-    {
-        let dir = temp_dir("neg-accepted-artifact-pin");
-        copy_dir(&out_dir, &dir);
-        let mf = dir.join("cert").join("cert-manifest.json");
-        let mut m: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["accepted_artifact_sha256"] = serde_json::json!("not-the-audited-accepted-artifact");
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "accepted-artifact hash drift must be rejected:\n{out}");
-        assert!(
-            out.contains("accepted-artifact hash mismatch"),
-            "wrong reason for accepted-artifact hash drift:\n{out}"
+            out.contains("unsupported certificate wall `sha256:deadbeef`"),
+            "wrong reason for unknown wall rejection:\n{out}"
         );
     }
 

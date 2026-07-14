@@ -9,6 +9,8 @@ use std::sync::OnceLock;
 
 /// Public certificate-package format understood by this verifier.
 pub const FORMAT_VERSION: u32 = 1;
+pub const CURRENT_ID: &str =
+    "sha256:1640257b46af06181796c2ca9e8dedc72089de5222f924dba8b9edd2cbd2652d";
 
 pub const LEAN_TOOLCHAIN: &str = include_str!("../../../tools/certkit/prelude/lean-toolchain");
 
@@ -249,6 +251,21 @@ pub const PRISTINE_ROOTS: [&str; 29] = [
     "AcceptanceSoundness",
 ];
 
+#[derive(Debug)]
+pub struct Wall {
+    pub sources: &'static [Source],
+    pub build_roots: &'static [&'static str],
+    pub pristine_roots: &'static [&'static str],
+    pub toolchain: &'static str,
+}
+
+pub static CURRENT: Wall = Wall {
+    sources: &SOURCES,
+    build_roots: &BUILD_ROOTS,
+    pristine_roots: &PRISTINE_ROOTS,
+    toolchain: LEAN_TOOLCHAIN,
+};
+
 /// Domain-separated digest of sorted, length-framed filenames and exact bytes.
 /// The exact Lean toolchain is part of the wall identity as a synthetic file.
 fn compute_id() -> String {
@@ -276,104 +293,22 @@ fn compute_id() -> String {
 
 /// Identity of the one wall embedded in this pre-public verifier.
 pub fn current_id() -> &'static str {
-    static ID: OnceLock<String> = OnceLock::new();
-    ID.get_or_init(compute_id)
+    static VERIFIED: OnceLock<()> = OnceLock::new();
+    VERIFIED.get_or_init(|| {
+        assert_eq!(
+            compute_id(),
+            CURRENT_ID,
+            "embedded certificate wall changed without updating CURRENT_ID"
+        );
+    });
+    CURRENT_ID
 }
 
 /// Resolve only checker-embedded, byte-exact walls. There is intentionally no
 /// filesystem, environment, or network fallback.
-pub fn resolve(id: &str) -> Option<&'static [Source]> {
-    (id == current_id()).then_some(&SOURCES)
+pub fn resolve(id: &str) -> Option<&'static Wall> {
+    (id == current_id()).then_some(&CURRENT)
 }
-
-macro_rules! audited_hashes {
-    ($(($fn_name:ident, $contents:ident)),+ $(,)?) => {$(
-        pub fn $fn_name() -> String {
-            super::sha256_hex($contents.as_bytes())
-        }
-    )+};
-}
-
-// Compatibility helpers for the inline-wall package format. They disappear
-// together with its per-file manifest pins in the wall-id format commit.
-audited_hashes!(
-    (audited_schema_sha, CERT_SCHEMA),
-    (audited_schema_core_sha, CERT_SCHEMA_CORE),
-    (audited_prelude_sha, CERT_PRELUDE),
-    (audited_decode_sha, CERT_DECODE),
-    (audited_plan_check_sha, CERT_PLAN_CHECK),
-    (audited_plan_lower_sha, CERT_PLAN_LOWER),
-    (audited_plan_bytes_sha, CERT_PLAN_BYTES),
-    (audited_wasm_slice_sha, CERT_WASM_SLICE),
-    (
-        audited_expr_fragment_accepted_sha,
-        CERT_EXPR_FRAGMENT_ACCEPTED
-    ),
-    (audited_accepted_artifact_sha, CERT_ACCEPTED_ARTIFACT),
-    (
-        audited_accepted_artifact_core_sha,
-        CERT_ACCEPTED_ARTIFACT_CORE
-    ),
-    (
-        audited_expr_fragment_semantics_sha,
-        CERT_EXPR_FRAGMENT_SEMANTICS
-    ),
-    (
-        audited_interpreter_sequencing_sha,
-        CERT_INTERPRETER_SEQUENCING
-    ),
-    (
-        audited_expr_fragment_soundness_sha,
-        CERT_EXPR_FRAGMENT_SOUNDNESS
-    ),
-    (
-        audited_field_projection_soundness_sha,
-        CERT_FIELD_PROJECTION_SOUNDNESS
-    ),
-    (
-        audited_construct_verbatim_soundness_sha,
-        CERT_CONSTRUCT_VERBATIM_SOUNDNESS
-    ),
-    (
-        audited_int_dispatch_soundness_sha,
-        CERT_INT_DISPATCH_SOUNDNESS
-    ),
-    (audited_string_soundness_sha, CERT_STRING_SOUNDNESS),
-    (audited_recursion_soundness_sha, CERT_RECURSION_SOUNDNESS),
-    (
-        audited_mutual_recursion_soundness_sha,
-        CERT_MUTUAL_RECURSION_SOUNDNESS
-    ),
-    (
-        audited_composition_soundness_sha,
-        CERT_COMPOSITION_SOUNDNESS
-    ),
-    (
-        audited_acceptance_soundness_core_sha,
-        CERT_ACCEPTANCE_SOUNDNESS_CORE
-    ),
-    (
-        audited_discharge_expr_fragment_sha,
-        CERT_DISCHARGE_EXPR_FRAGMENT
-    ),
-    (
-        audited_discharge_field_projection_sha,
-        CERT_DISCHARGE_FIELD_PROJECTION
-    ),
-    (audited_discharge_construct_sha, CERT_DISCHARGE_CONSTRUCT),
-    (audited_discharge_verbatim_sha, CERT_DISCHARGE_VERBATIM),
-    (audited_discharge_string_sha, CERT_DISCHARGE_STRING),
-    (
-        audited_discharge_int_dispatch_sha,
-        CERT_DISCHARGE_INT_DISPATCH
-    ),
-    (audited_discharge_recursion_sha, CERT_DISCHARGE_RECURSION),
-    (
-        audited_discharge_composition_sha,
-        CERT_DISCHARGE_COMPOSITION
-    ),
-    (audited_acceptance_soundness_sha, CERT_ACCEPTANCE_SOUNDNESS),
-);
 
 #[cfg(test)]
 mod tests {
@@ -394,7 +329,8 @@ mod tests {
 
     #[test]
     fn current_wall_resolves_only_by_exact_id() {
-        assert_eq!(resolve(current_id()), Some(SOURCES.as_slice()));
-        assert_eq!(resolve("sha256:deadbeef"), None);
+        assert_eq!(compute_id(), CURRENT_ID);
+        assert!(std::ptr::eq(resolve(current_id()).unwrap(), &CURRENT));
+        assert!(resolve("sha256:deadbeef").is_none());
     }
 }

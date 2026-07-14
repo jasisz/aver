@@ -577,46 +577,11 @@ fn render_lakefile(model_roots: &[String]) -> String {
     )
 }
 
-struct ManifestHashes<'a> {
-    schema: &'a str,
-    schema_core: &'a str,
-    prelude: &'a str,
-    decode: &'a str,
-    plan_check: &'a str,
-    plan_lower: &'a str,
-    plan_bytes: &'a str,
-    wasm_slice: &'a str,
-    expr_fragment_accepted: &'a str,
-    accepted_artifact: &'a str,
-    accepted_artifact_core: &'a str,
-    expr_fragment_semantics: &'a str,
-    interpreter_sequencing: &'a str,
-    expr_fragment_soundness: &'a str,
-    field_projection_soundness: &'a str,
-    construct_verbatim_soundness: &'a str,
-    int_dispatch_soundness: &'a str,
-    string_soundness: &'a str,
-    recursion_soundness: &'a str,
-    mutual_recursion_soundness: &'a str,
-    composition_soundness: &'a str,
-    acceptance_soundness_core: &'a str,
-    discharge_expr_fragment: &'a str,
-    discharge_field_projection: &'a str,
-    discharge_construct: &'a str,
-    discharge_verbatim: &'a str,
-    discharge_string: &'a str,
-    discharge_int_dispatch: &'a str,
-    discharge_recursion: &'a str,
-    discharge_composition: &'a str,
-    acceptance_soundness: &'a str,
-}
-
 fn render_manifest(
     analysis: &Analysis,
     model_info: &ModelInfo,
     wasm_name: &str,
     sha: &str,
-    hashes: &ManifestHashes<'_>,
 ) -> String {
     let mut s = String::new();
     let has_total = analysis
@@ -634,6 +599,11 @@ fn render_manifest(
     };
     s.push_str("{\n");
     s.push_str(&format!("  \"schema_version\": {CERT_SCHEMA_VERSION},\n"));
+    s.push_str(&format!(
+        "  \"format\": {{\"version\": {}, \"wall_id\": {}}},\n",
+        wall::FORMAT_VERSION,
+        json_str(wall::current_id()),
+    ));
     s.push_str(&format!("  \"wasm\": \"{wasm_name}.wasm\",\n"));
     s.push_str(&format!("  \"wasm_sha256\": \"{sha}\",\n"));
     s.push_str(&format!("  \"level\": \"{artifact_level}\",\n"));
@@ -642,127 +612,6 @@ fn render_manifest(
     s.push_str(&format!("  \"final_theorem\": \"{FINAL_THEOREM}\",\n"));
     s.push_str(&format!(
         "  \"artifact_certificate_root\": \"{ARTIFACT_CERTIFICATE_ROOT}\",\n"
-    ));
-    s.push_str(&format!("  \"schema_sha256\": \"{}\",\n", hashes.schema));
-    s.push_str(&format!(
-        "  \"schema_core_sha256\": \"{}\",\n",
-        hashes.schema_core
-    ));
-    s.push_str(&format!(
-        "  \"prelude_sha256\": \"{}\",\n",
-        hashes.prelude
-    ));
-    s.push_str(&format!(
-        "  \"cert_decode_sha256\": \"{}\",\n",
-        hashes.decode
-    ));
-    s.push_str(&format!(
-        "  \"plan_check_sha256\": \"{}\",\n",
-        hashes.plan_check
-    ));
-    s.push_str(&format!(
-        "  \"plan_lower_sha256\": \"{}\",\n",
-        hashes.plan_lower
-    ));
-    s.push_str(&format!(
-        "  \"plan_bytes_sha256\": \"{}\",\n",
-        hashes.plan_bytes
-    ));
-    s.push_str(&format!(
-        "  \"wasm_slice_sha256\": \"{}\",\n",
-        hashes.wasm_slice
-    ));
-    s.push_str(&format!(
-        "  \"expr_fragment_accepted_sha256\": \"{}\",\n",
-        hashes.expr_fragment_accepted
-    ));
-    s.push_str(&format!(
-        "  \"accepted_artifact_sha256\": \"{}\",\n",
-        hashes.accepted_artifact
-    ));
-    s.push_str(&format!(
-        "  \"accepted_artifact_core_sha256\": \"{}\",\n",
-        hashes.accepted_artifact_core
-    ));
-    s.push_str(&format!(
-        "  \"expr_fragment_semantics_sha256\": \"{}\",\n",
-        hashes.expr_fragment_semantics
-    ));
-    s.push_str(&format!(
-        "  \"interpreter_sequencing_sha256\": \"{}\",\n",
-        hashes.interpreter_sequencing
-    ));
-    s.push_str(&format!(
-        "  \"expr_fragment_soundness_sha256\": \"{}\",\n",
-        hashes.expr_fragment_soundness
-    ));
-    s.push_str(&format!(
-        "  \"field_projection_soundness_sha256\": \"{}\",\n",
-        hashes.field_projection_soundness
-    ));
-    s.push_str(&format!(
-        "  \"construct_verbatim_soundness_sha256\": \"{}\",\n",
-        hashes.construct_verbatim_soundness
-    ));
-    s.push_str(&format!(
-        "  \"int_dispatch_soundness_sha256\": \"{}\",\n",
-        hashes.int_dispatch_soundness
-    ));
-    s.push_str(&format!(
-        "  \"string_soundness_sha256\": \"{}\",\n",
-        hashes.string_soundness
-    ));
-    s.push_str(&format!(
-        "  \"recursion_soundness_sha256\": \"{}\",\n",
-        hashes.recursion_soundness
-    ));
-    s.push_str(&format!(
-        "  \"mutual_recursion_soundness_sha256\": \"{}\",\n",
-        hashes.mutual_recursion_soundness
-    ));
-    s.push_str(&format!(
-        "  \"composition_soundness_sha256\": \"{}\",\n",
-        hashes.composition_soundness
-    ));
-    s.push_str(&format!(
-        "  \"acceptance_soundness_core_sha256\": \"{}\",\n",
-        hashes.acceptance_soundness_core
-    ));
-    s.push_str(&format!(
-        "  \"discharge_expr_fragment_sha256\": \"{}\",\n",
-        hashes.discharge_expr_fragment
-    ));
-    s.push_str(&format!(
-        "  \"discharge_field_projection_sha256\": \"{}\",\n",
-        hashes.discharge_field_projection
-    ));
-    s.push_str(&format!(
-        "  \"discharge_construct_sha256\": \"{}\",\n",
-        hashes.discharge_construct
-    ));
-    s.push_str(&format!(
-        "  \"discharge_verbatim_sha256\": \"{}\",\n",
-        hashes.discharge_verbatim
-    ));
-    s.push_str(&format!(
-        "  \"discharge_string_sha256\": \"{}\",\n",
-        hashes.discharge_string
-    ));
-    s.push_str(&format!(
-        "  \"discharge_int_dispatch_sha256\": \"{}\",\n",
-        hashes.discharge_int_dispatch
-    ));
-    s.push_str(&format!(
-        "  \"discharge_recursion_sha256\": \"{}\",\n",
-        hashes.discharge_recursion
-    ));
-    s.push_str(&format!(
-        "  \"discharge_composition_sha256\": \"{}\",\n",
-        hashes.discharge_composition
-    ));
-    s.push_str(&format!(
-        "  \"acceptance_soundness_sha256\": \"{}\",\n",
-        hashes.acceptance_soundness
     ));
     if let Some(c) = analysis.carrier {
         s.push_str(&format!("  \"carrier_type_index\": {c},\n"));

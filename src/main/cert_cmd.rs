@@ -296,21 +296,6 @@ fn manifest_str<'a>(m: &'a Value, key: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("cert-manifest.json is missing string field `{key}`"))
 }
 
-fn audited_manifest_pin<'a>(
-    manifest: &'a Value,
-    key: &str,
-    label: &str,
-    audited: &str,
-) -> Result<&'a str, String> {
-    let pin = manifest_str(manifest, key)?;
-    if pin != audited {
-        return Err(format!(
-            "{label} hash mismatch: certificate pins {pin}, checker expects {audited}"
-        ));
-    }
-    Ok(pin)
-}
-
 fn manifest_u64(m: &Value, key: &str) -> Result<u64, String> {
     m.get(key)
         .and_then(Value::as_u64)
@@ -686,203 +671,27 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
             artifact.display()
         ));
     }
-    let schema_pin = manifest_str(&manifest, "schema_sha256")?;
-    let audited_schema = cert::audited_schema_sha();
-    if schema_pin != audited_schema {
+    let format = manifest
+        .get("format")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "cert-manifest.json is missing object field `format`".to_string())?;
+    let format_version = format
+        .get("version")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "cert-manifest.json `format.version` must be an integer".to_string())?;
+    if format_version != cert::wall::FORMAT_VERSION as u64 {
         return Err(format!(
-            "schema hash mismatch: certificate pins {schema_pin}, checker expects {audited_schema}"
+            "unsupported certificate format version {format_version}; this checker only accepts format version {}",
+            cert::wall::FORMAT_VERSION,
         ));
     }
-    let schema_core_pin = manifest_str(&manifest, "schema_core_sha256")?;
-    let audited_schema_core = cert::audited_schema_core_sha();
-    if schema_core_pin != audited_schema_core {
-        return Err(format!(
-            "schema-core hash mismatch: certificate pins {schema_core_pin}, checker expects {audited_schema_core}"
-        ));
-    }
-    let prelude_pin = manifest_str(&manifest, "prelude_sha256")?;
-    let audited_prelude = cert::audited_prelude_sha();
-    if prelude_pin != audited_prelude {
-        return Err(format!(
-            "prelude hash mismatch: certificate pins {prelude_pin}, checker expects {audited_prelude}"
-        ));
-    }
-    let decode_pin = manifest_str(&manifest, "cert_decode_sha256")?;
-    let audited_decode = cert::audited_decode_sha();
-    if decode_pin != audited_decode {
-        return Err(format!(
-            "cert-decode hash mismatch: certificate pins {decode_pin}, checker expects {audited_decode}"
-        ));
-    }
-    let plan_check_pin = manifest_str(&manifest, "plan_check_sha256")?;
-    let audited_plan_check = cert::audited_plan_check_sha();
-    if plan_check_pin != audited_plan_check {
-        return Err(format!(
-            "plan-check hash mismatch: certificate pins {plan_check_pin}, checker expects {audited_plan_check}"
-        ));
-    }
-    let plan_lower_pin = manifest_str(&manifest, "plan_lower_sha256")?;
-    let audited_plan_lower = cert::audited_plan_lower_sha();
-    if plan_lower_pin != audited_plan_lower {
-        return Err(format!(
-            "plan-lower hash mismatch: certificate pins {plan_lower_pin}, checker expects {audited_plan_lower}"
-        ));
-    }
-    let plan_bytes_pin = manifest_str(&manifest, "plan_bytes_sha256")?;
-    let audited_plan_bytes = cert::audited_plan_bytes_sha();
-    if plan_bytes_pin != audited_plan_bytes {
-        return Err(format!(
-            "plan-bytes hash mismatch: certificate pins {plan_bytes_pin}, checker expects {audited_plan_bytes}"
-        ));
-    }
-    let wasm_slice_pin = manifest_str(&manifest, "wasm_slice_sha256")?;
-    let audited_wasm_slice = cert::audited_wasm_slice_sha();
-    if wasm_slice_pin != audited_wasm_slice {
-        return Err(format!(
-            "wasm-slice hash mismatch: certificate pins {wasm_slice_pin}, checker expects {audited_wasm_slice}"
-        ));
-    }
-    let expr_fragment_accepted_pin = manifest_str(&manifest, "expr_fragment_accepted_sha256")?;
-    let audited_expr_fragment_accepted = cert::audited_expr_fragment_accepted_sha();
-    if expr_fragment_accepted_pin != audited_expr_fragment_accepted {
-        return Err(format!(
-            "expr-fragment-accepted hash mismatch: certificate pins {expr_fragment_accepted_pin}, checker expects {audited_expr_fragment_accepted}"
-        ));
-    }
-    let accepted_artifact_pin = manifest_str(&manifest, "accepted_artifact_sha256")?;
-    let audited_accepted_artifact = cert::audited_accepted_artifact_sha();
-    if accepted_artifact_pin != audited_accepted_artifact {
-        return Err(format!(
-            "accepted-artifact hash mismatch: certificate pins {accepted_artifact_pin}, checker expects {audited_accepted_artifact}"
-        ));
-    }
-    let accepted_artifact_core_pin = manifest_str(&manifest, "accepted_artifact_core_sha256")?;
-    let audited_accepted_artifact_core = cert::audited_accepted_artifact_core_sha();
-    if accepted_artifact_core_pin != audited_accepted_artifact_core {
-        return Err(format!(
-            "accepted-artifact-core hash mismatch: certificate pins {accepted_artifact_core_pin}, checker expects {audited_accepted_artifact_core}"
-        ));
-    }
-    let expr_fragment_semantics_pin = audited_manifest_pin(
-        &manifest,
-        "expr_fragment_semantics_sha256",
-        "expr-fragment-semantics",
-        &cert::audited_expr_fragment_semantics_sha(),
-    )?;
-    let interpreter_sequencing_pin = audited_manifest_pin(
-        &manifest,
-        "interpreter_sequencing_sha256",
-        "interpreter-sequencing",
-        &cert::audited_interpreter_sequencing_sha(),
-    )?;
-    let expr_fragment_soundness_pin = audited_manifest_pin(
-        &manifest,
-        "expr_fragment_soundness_sha256",
-        "expr-fragment-soundness",
-        &cert::audited_expr_fragment_soundness_sha(),
-    )?;
-    let field_projection_soundness_pin = audited_manifest_pin(
-        &manifest,
-        "field_projection_soundness_sha256",
-        "field-projection-soundness",
-        &cert::audited_field_projection_soundness_sha(),
-    )?;
-    let construct_verbatim_soundness_pin = audited_manifest_pin(
-        &manifest,
-        "construct_verbatim_soundness_sha256",
-        "construct-verbatim-soundness",
-        &cert::audited_construct_verbatim_soundness_sha(),
-    )?;
-    let int_dispatch_soundness_pin = audited_manifest_pin(
-        &manifest,
-        "int_dispatch_soundness_sha256",
-        "int-dispatch-soundness",
-        &cert::audited_int_dispatch_soundness_sha(),
-    )?;
-    let string_soundness_pin = audited_manifest_pin(
-        &manifest,
-        "string_soundness_sha256",
-        "string-soundness",
-        &cert::audited_string_soundness_sha(),
-    )?;
-    let recursion_soundness_pin = audited_manifest_pin(
-        &manifest,
-        "recursion_soundness_sha256",
-        "recursion-soundness",
-        &cert::audited_recursion_soundness_sha(),
-    )?;
-    let mutual_recursion_soundness_pin = audited_manifest_pin(
-        &manifest,
-        "mutual_recursion_soundness_sha256",
-        "mutual-recursion-soundness",
-        &cert::audited_mutual_recursion_soundness_sha(),
-    )?;
-    let composition_soundness_pin = audited_manifest_pin(
-        &manifest,
-        "composition_soundness_sha256",
-        "composition-soundness",
-        &cert::audited_composition_soundness_sha(),
-    )?;
-    let acceptance_soundness_core_pin = audited_manifest_pin(
-        &manifest,
-        "acceptance_soundness_core_sha256",
-        "acceptance-soundness-core",
-        &cert::audited_acceptance_soundness_core_sha(),
-    )?;
-    let discharge_expr_fragment_pin = audited_manifest_pin(
-        &manifest,
-        "discharge_expr_fragment_sha256",
-        "discharge-expr-fragment",
-        &cert::audited_discharge_expr_fragment_sha(),
-    )?;
-    let discharge_field_projection_pin = audited_manifest_pin(
-        &manifest,
-        "discharge_field_projection_sha256",
-        "discharge-field-projection",
-        &cert::audited_discharge_field_projection_sha(),
-    )?;
-    let discharge_construct_pin = audited_manifest_pin(
-        &manifest,
-        "discharge_construct_sha256",
-        "discharge-construct",
-        &cert::audited_discharge_construct_sha(),
-    )?;
-    let discharge_verbatim_pin = audited_manifest_pin(
-        &manifest,
-        "discharge_verbatim_sha256",
-        "discharge-verbatim",
-        &cert::audited_discharge_verbatim_sha(),
-    )?;
-    let discharge_string_pin = audited_manifest_pin(
-        &manifest,
-        "discharge_string_sha256",
-        "discharge-string",
-        &cert::audited_discharge_string_sha(),
-    )?;
-    let discharge_int_dispatch_pin = audited_manifest_pin(
-        &manifest,
-        "discharge_int_dispatch_sha256",
-        "discharge-int-dispatch",
-        &cert::audited_discharge_int_dispatch_sha(),
-    )?;
-    let discharge_recursion_pin = audited_manifest_pin(
-        &manifest,
-        "discharge_recursion_sha256",
-        "discharge-recursion",
-        &cert::audited_discharge_recursion_sha(),
-    )?;
-    let discharge_composition_pin = audited_manifest_pin(
-        &manifest,
-        "discharge_composition_sha256",
-        "discharge-composition",
-        &cert::audited_discharge_composition_sha(),
-    )?;
-    let acceptance_soundness_pin = audited_manifest_pin(
-        &manifest,
-        "acceptance_soundness_sha256",
-        "acceptance-soundness",
-        &cert::audited_acceptance_soundness_sha(),
-    )?;
+    let wall_id = format
+        .get("wall_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "cert-manifest.json `format.wall_id` must be a string".to_string())?;
+    let wall = cert::wall::resolve(wall_id).ok_or_else(|| {
+        format!("unsupported certificate wall `{wall_id}`; no byte-exact embedded wall matches")
+    })?;
     let artifact_root = manifest_str(&manifest, "artifact_certificate_root")?;
     if artifact_root != cert::ARTIFACT_CERTIFICATE_ROOT {
         return Err(format!(
@@ -969,7 +778,7 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     //    file's name is gated (no lakefile-root injection) and its text scanned
     //    for code-executing tokens before it is staged. The cert's own lakefile
     //    / srcDir / `.lake` cache are never read.
-    let build = assemble_build(cert_dir, &bytes)?;
+    let build = assemble_build(cert_dir, &bytes, wall)?;
 
     // The artifact DATA cache is content-addressed by the complete manifest hash
     // wall, schema version, toolchain, and exact staged build sources. It stores
@@ -979,77 +788,20 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     // Artifact.certificate type ascription, and axiom audit) below. Accidental
     // stale or poisoned output either fails integrity, makes Lake rebuild/fail,
     // or makes that fresh witness fail; none of those paths can report certified.
-    let cache_pins = [
-        ("wasm_sha256", pinned),
-        ("schema_sha256", schema_pin),
-        ("schema_core_sha256", schema_core_pin),
-        ("prelude_sha256", prelude_pin),
-        ("cert_decode_sha256", decode_pin),
-        ("plan_check_sha256", plan_check_pin),
-        ("plan_lower_sha256", plan_lower_pin),
-        ("plan_bytes_sha256", plan_bytes_pin),
-        ("wasm_slice_sha256", wasm_slice_pin),
-        ("expr_fragment_accepted_sha256", expr_fragment_accepted_pin),
-        ("accepted_artifact_sha256", accepted_artifact_pin),
-        ("accepted_artifact_core_sha256", accepted_artifact_core_pin),
-        (
-            "expr_fragment_semantics_sha256",
-            expr_fragment_semantics_pin,
-        ),
-        ("interpreter_sequencing_sha256", interpreter_sequencing_pin),
-        (
-            "expr_fragment_soundness_sha256",
-            expr_fragment_soundness_pin,
-        ),
-        (
-            "field_projection_soundness_sha256",
-            field_projection_soundness_pin,
-        ),
-        (
-            "construct_verbatim_soundness_sha256",
-            construct_verbatim_soundness_pin,
-        ),
-        ("int_dispatch_soundness_sha256", int_dispatch_soundness_pin),
-        ("string_soundness_sha256", string_soundness_pin),
-        ("recursion_soundness_sha256", recursion_soundness_pin),
-        (
-            "mutual_recursion_soundness_sha256",
-            mutual_recursion_soundness_pin,
-        ),
-        ("composition_soundness_sha256", composition_soundness_pin),
-        (
-            "acceptance_soundness_core_sha256",
-            acceptance_soundness_core_pin,
-        ),
-        (
-            "discharge_expr_fragment_sha256",
-            discharge_expr_fragment_pin,
-        ),
-        (
-            "discharge_field_projection_sha256",
-            discharge_field_projection_pin,
-        ),
-        ("discharge_construct_sha256", discharge_construct_pin),
-        ("discharge_verbatim_sha256", discharge_verbatim_pin),
-        ("discharge_string_sha256", discharge_string_pin),
-        ("discharge_int_dispatch_sha256", discharge_int_dispatch_pin),
-        ("discharge_recursion_sha256", discharge_recursion_pin),
-        ("discharge_composition_sha256", discharge_composition_pin),
-        ("acceptance_soundness_sha256", acceptance_soundness_pin),
-    ];
+    let cache_pins = [("wasm_sha256", pinned), ("wall_id", wall_id)];
     let mut artifact_cache = ArtifactBuildCache::prepare(
         &build.path,
         &ArtifactCacheKeyMaterial {
             schema_version,
             pinned_sha256: &cache_pins,
-            toolchain_version: cert::LEAN_TOOLCHAIN.trim(),
+            toolchain_version: wall.toolchain.trim(),
         },
     );
 
     // A whole DATA-cache hit already contains the pristine prelude. On a miss,
     // retain the existing env-gated prelude seed before building the DATA roots.
     if !artifact_cache.was_hit() {
-        reuse_prebuilt_prelude(&build.path);
+        reuse_prebuilt_prelude(&build.path, wall);
     }
 
     // Byte-derived inputs used by both witness variants. They are computed
@@ -1069,7 +821,7 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     let mut b = run_lake(&build.path, &["build"])?;
     if !b.status.success() && artifact_cache.was_hit() {
         artifact_cache.invalidate(&build.path);
-        reuse_prebuilt_prelude(&build.path);
+        reuse_prebuilt_prelude(&build.path, wall);
         b = run_lake(&build.path, &["build"])?;
     }
     if !b.status.success() {
@@ -1712,7 +1464,11 @@ fn reject_duplicate_rederived_func_orders(
 /// plan-check/plan-lower/prelude/
 /// toolchain from THIS binary, the actual artifact bytes as checker-authored
 /// Lean data, and a checker-authored lakefile.
-fn assemble_build(cert_dir: &Path, wasm_bytes: &[u8]) -> Result<BuildDir, String> {
+fn assemble_build(
+    cert_dir: &Path,
+    wasm_bytes: &[u8],
+    wall: &cert::wall::Wall,
+) -> Result<BuildDir, String> {
     let build = BuildDir::new()?;
 
     // Copy the cert's data Lean files, collecting lakefile roots as we go.
@@ -1741,7 +1497,7 @@ fn assemble_build(cert_dir: &Path, wasm_bytes: &[u8]) -> Result<BuildDir, String
     }
 
     // Audited trusted computing base from THIS binary (not the cert).
-    for (name, bytes) in static_prelude_files() {
+    for (name, bytes) in static_prelude_files(wall) {
         if name == "lakefile.lean" {
             continue;
         }
@@ -1755,7 +1511,7 @@ fn assemble_build(cert_dir: &Path, wasm_bytes: &[u8]) -> Result<BuildDir, String
     )?;
     // Preserve the production lakefile's historical root order exactly.
     roots.extend(
-        cert::wall::BUILD_ROOTS[..cert::wall::BUILD_ROOTS.len() - 1]
+        wall.build_roots[..wall.build_roots.len() - 1]
             .iter()
             .map(|root| (*root).to_string()),
     );
@@ -1770,21 +1526,23 @@ fn assemble_build(cert_dir: &Path, wasm_bytes: &[u8]) -> Result<BuildDir, String
 
 /// Exact, artifact-independent files used to build the reusable prelude. The
 /// returned sequence is filename-sorted so both staging and keying are stable.
-fn static_prelude_files() -> Vec<(String, Vec<u8>)> {
+fn static_prelude_files(wall: &cert::wall::Wall) -> Vec<(String, Vec<u8>)> {
     let static_lakefile = checker_lakefile(
-        &cert::wall::PRISTINE_ROOTS
+        &wall
+            .pristine_roots
             .iter()
             .map(|root| (*root).to_string())
             .collect::<Vec<_>>(),
     );
-    let mut files = cert::wall::SOURCES
+    let mut files = wall
+        .sources
         .iter()
         .map(|source| (source.name.to_string(), source.contents.as_bytes().to_vec()))
         .collect::<Vec<_>>();
     files.push(("lakefile.lean".to_string(), static_lakefile.into_bytes()));
     files.push((
         "lean-toolchain".to_string(),
-        cert::wall::LEAN_TOOLCHAIN.as_bytes().to_vec(),
+        wall.toolchain.as_bytes().to_vec(),
     ));
     files.sort_by(|a, b| a.0.cmp(&b.0));
     files
@@ -1805,15 +1563,19 @@ fn static_prelude_key(files: &[(String, Vec<u8>)]) -> String {
 
 /// Reuse a pristine prelude-only Lake build when the certification test
 /// harness opts in. Every failure returns silently to the fresh-cache build.
-fn reuse_prebuilt_prelude(build_dir: &Path) -> bool {
+fn reuse_prebuilt_prelude(build_dir: &Path, wall: &cert::wall::Wall) -> bool {
     let Some(store) = std::env::var_os("AVER_CERT_PRELUDE_CACHE").map(PathBuf::from) else {
         return false;
     };
-    try_reuse_prebuilt_prelude(&store, build_dir).is_ok()
+    try_reuse_prebuilt_prelude(&store, build_dir, wall).is_ok()
 }
 
-fn try_reuse_prebuilt_prelude(store: &Path, build_dir: &Path) -> Result<(), ()> {
-    let files = static_prelude_files();
+fn try_reuse_prebuilt_prelude(
+    store: &Path,
+    build_dir: &Path,
+    wall: &cert::wall::Wall,
+) -> Result<(), ()> {
+    let files = static_prelude_files(wall);
     let key = static_prelude_key(&files);
     let entry = store.join(&key);
     let cached_lake = entry.join(".lake");
