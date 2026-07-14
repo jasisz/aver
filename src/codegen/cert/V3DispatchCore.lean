@@ -126,20 +126,6 @@ def HostSlots (C : Nat) (host : HostTbl)
   (∀ idx, AverCert.PlanCheck.hostRoleIdx? hostTable .sub = some idx →
       host idx = some (2, sub))
 
-/-! ### Family admission -/
-
-/-- Every tested struct type must come from the byte-pinned nominal variant
-    set for the exported sum root. The production raw checker supplies the
-    profile guard; this family wrapper supplies the GuardIso index guard used
-    by the generic theorem lane. -/
-def checkCascadeTypes (pinned : List Nat) : IntDispatchCascade → Bool
-  | .default _ => true
-  | .test tyIdx _ rest => pinned.contains tyIdx && checkCascadeTypes pinned rest
-
-def checkIntDispatchFamily (pinned : List Nat) (plan : IntDispatchRawPlan) : Bool :=
-  AverCert.PlanCheck.checkIntDispatchRawPlan plan &&
-    checkCascadeTypes pinned plan.body
-
 /-! ### Leaf simulation -/
 
 theorem simLeaf {C : Nat} (S : CarrierSpec C)
@@ -321,8 +307,6 @@ theorem generic_int_dispatch_certified {C : Nat} (S : CarrierSpec C)
       add [va, vb] = some w → S.Repr (a + b) w)
     (hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
       sub [va, vb] = some w → S.Repr (a - b) w)
-    (pinned : List Nat)
-    (_hcheck : checkIntDispatchFamily pinned plan = true)
     (hroot : ∃ tyIdx leaf rest, plan.body = .test tyIdx leaf rest)
     (body : List WInstr)
     (hlow : AverCert.PlanLower.lowerIntDispatchBody hostTable plan = some body)

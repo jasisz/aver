@@ -94,7 +94,7 @@ theorem fieldProjection_accepted_call
         simpa [hPlan] using hClaim
       rcases hAccepted with
         ⟨_hExport, _hCarrier, hCheck, body, codeEntry, binding,
-          hLow, _hCodeEntry, _hBinding, _hBindingCode, _hStructTy,
+          hLow, _hCodeEntry, _hExactBinding, _hStructTy,
           _hFuncTy, hSelf, hCode⟩
       have hTwo : claim.fieldCount = 2 := by
         by_cases hEq : claim.fieldCount = 2

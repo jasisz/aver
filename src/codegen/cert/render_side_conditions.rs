@@ -135,34 +135,16 @@ fn render_mutual_side_arm(c: &Cert) -> String {
 fn render_verbatim_side_arm(_c: &Cert) -> String {
     String::from(
         "intro plan hPlan\ninjection hPlan with hPlan\nsubst plan\n\
-         refine ⟨by rfl, rfl, ?_⟩\nintro S x vs hDom\n\
+         refine ⟨rfl, ?_⟩\nintro S x vs hDom\n\
          exact ⟨x, hDom, by rfl⟩"
     )
 }
 
-fn render_int_dispatch_side_arm(
-    c: &Cert,
-    strict: FragHostTable,
-) -> String {
+fn render_int_dispatch_side_arm(c: &Cert) -> String {
     let name = c.name();
-    let plan = int_dispatch_plan_from_cert(c, strict)
-        .expect("certified Int dispatch has a byte-matching plan");
-    let IntDispatchCascade::Test {
-        ty_idx,
-        hit,
-        rest,
-    } = &plan.body
-    else {
-        unreachable!("certified Int dispatch has a test root")
-    };
-    let root = format!(
-        "⟨{ty_idx}, ({}), ({}), rfl⟩",
-        int_dispatch_leaf_lean_value(hit),
-        int_dispatch_cascade_lean_value(rest),
-    );
     format!(
         "intro plan hPlan\ninjection hPlan with hPlan\nsubst plan\n\
-         exact ⟨{root}, rfl, CertProofs.{name}_intDispatchSemanticBridge⟩"
+         exact ⟨rfl, CertProofs.{name}_intDispatchSemanticBridge⟩"
     )
 }
 
@@ -269,9 +251,11 @@ fn render_discharge_side_conditions(analysis: &Analysis, model_info: &ModelInfo)
     out.push_str("\ntheorem verbatimSideConditions :\n    V3Master.verbatimSemanticBridges data := by\n");
     out.push_str(&render_claim_cases(&verbatim, "verbatimClaims", render_verbatim_side_arm));
     out.push_str("\ntheorem intDispatchSideConditions :\n    V3Master.intDispatchSemanticBridges data := by\n");
-    out.push_str(&render_claim_cases(&int_dispatch, "intDispatchClaims", |c| {
-        render_int_dispatch_side_arm(c, analysis.frag_host_table)
-    }));
+    out.push_str(&render_claim_cases(
+        &int_dispatch,
+        "intDispatchClaims",
+        render_int_dispatch_side_arm,
+    ));
     out.push_str("\ntheorem fieldProjectionSideConditions :\n    V3Master.fieldProjectionSemanticBridges data := by\n");
     out.push_str(&render_claim_cases(&field_projection, "fieldProjectionClaims", render_field_projection_side_arm));
     out.push_str("\ntheorem compositionSideConditions :\n    V3Master.compositionClaimSemanticBridges data := by\n");

@@ -737,7 +737,6 @@ mod sym_plan_defs_tests {
         let cert = Cert::AdtConstructor {
             name: "mkOp".to_string(),
             self_idx: 1,
-            code_idx: 1,
             type_idx: 1,
             nlocals: 0,
             carrier: 0,
@@ -785,7 +784,6 @@ mod sym_plan_defs_tests {
         let cert = Cert::AdtConstructor {
             name: "singletonEntry".to_string(),
             self_idx: 1,
-            code_idx: 1,
             type_idx: 1,
             nlocals: 1,
             carrier: 18,

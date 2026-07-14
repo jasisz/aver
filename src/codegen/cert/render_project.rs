@@ -332,7 +332,6 @@ fn render_expr_fragment_plans(
             name,
             carrier,
             self_idx,
-            code_idx,
             type_idx,
             source_plan,
             plan,
@@ -349,7 +348,7 @@ fn render_expr_fragment_plans(
             .expect("certified expr-fragment plan lowers to WInstr body");
         let export_name_bytes = render_byte_list(name.as_bytes());
         let func_binding = format!(
-            "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+            "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
         );
         let sym_plan = expr_fragment_source_plan(source_plan, plan)
             .map(|sym| {
@@ -389,13 +388,9 @@ fn render_expr_fragment_plans(
                  to the exact canonical code-entry bytes. -/\n\
              example : AverCert.PlanBytes.lowerExprFragmentCodeEntry {carrier} {name}Plan =\n  \
                some {code_entry_bytes} := rfl\n\n\
-             /-- The audited Lean-side Wasm slicer finds `{name}`'s exact code-entry bytes\n\
-                 inside the emitted module bytes by export name. -/\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
-               some {code_entry_bytes} := rfl\n\n\
              /-- The audited Lean-side Wasm slicer binds `{name}` to its function\n\
-                 index, defined-code index, type index and code-entry bytes. -/\n\
-             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
+                 index, type index and exact expected code-entry bytes. -/\n\
+             example : AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry_bytes} =\n  \
                some {func_binding} := rfl\n\n\
              /-- The audited Lean-side expr-fragment acceptance predicate aggregates\n\
                  plan checking, semantic lowering, byte lowering and byte-origin binding. -/\n\
@@ -403,7 +398,7 @@ fn render_expr_fragment_plans(
                {export_name_bytes} {carrier} {name}Plan\n  \
                {lowered_body}\n  \
                {code_entry_bytes}\n  \
-               {func_binding} := by dsimp [AverCert.ExprFragmentAccepted.accepted]; exact ⟨rfl, rfl, rfl, rfl, rfl⟩\n\n",
+               {func_binding} := by dsimp [AverCert.ExprFragmentAccepted.accepted]; exact ⟨rfl, rfl, rfl, rfl⟩\n\n",
             plan_value = expr_fragment_plan_lean_value(plan),
             sym_plan = sym_plan,
         ));
@@ -412,7 +407,6 @@ fn render_expr_fragment_plans(
         let Cert::FieldProjection {
             name,
             self_idx,
-            code_idx,
             type_idx,
             carrier,
             struct_idx,
@@ -435,7 +429,7 @@ fn render_expr_fragment_plans(
         let result_ty_lean = field_projection_result_ty_lean_value(result_ty);
         let export_name_bytes = render_byte_list(name.as_bytes());
         let binding = format!(
-            "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry} }} : AverCert.WasmSlice.FuncBinding)"
+            "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry} }} : AverCert.WasmSlice.FuncBinding)"
         );
         any = true;
         s.push_str(&format!(
@@ -446,7 +440,7 @@ fn render_expr_fragment_plans(
                AverCert.PlanLower.lowerFieldProjectionBody {struct_idx} {field_count} {name}FieldProjectionPlan := rfl\n\n\
              example : AverCert.PlanBytes.lowerFieldProjectionCodeEntry {carrier} {struct_idx} {field_count} {result_ty_lean} {name}FieldProjectionPlan =\n  \
                some {code_entry} := rfl\n\n\
-             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
+             example : AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry} =\n  \
                some {binding} := rfl\n\n\
              example : AverCert.WasmSlice.projectionStructTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {struct_idx} {field_count} {field_idx} {result_ty_lean} = true := rfl\n\n\
              example : AverCert.WasmSlice.projectionFuncTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {type_idx} {struct_idx} {result_ty_lean} = true := rfl\n\n",
@@ -458,7 +452,6 @@ fn render_expr_fragment_plans(
         let Cert::AdtConstructor {
             name,
             self_idx,
-            code_idx,
             type_idx,
             carrier,
             struct_idx,
@@ -499,7 +492,7 @@ fn render_expr_fragment_plans(
             String::new()
         };
         let func_binding = format!(
-            "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+            "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
         );
         any = true;
         s.push_str(&format!(
@@ -531,13 +524,9 @@ fn render_expr_fragment_plans(
                  to the exact canonical code-entry bytes. -/\n\
              example : AverCert.PlanBytes.lowerConstructCodeEntry {carrier} {struct_idx} {name}ConstructPlan =\n  \
                some {code_entry_bytes} := rfl\n\n\
-             /-- The audited Lean-side Wasm slicer finds `{name}`'s exact constructor\n\
-                 code-entry bytes inside the emitted module bytes by export name. -/\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
-               some {code_entry_bytes} := rfl\n\n\
              /-- The audited Lean-side Wasm slicer binds `{name}` to its function\n\
-                 index, defined-code index, type index and code-entry bytes. -/\n\
-             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
+                 index, type index and exact expected code-entry bytes. -/\n\
+             example : AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry_bytes} =\n  \
                some {func_binding} := rfl\n\n\
              {type_match_pins}",
             sym_plan_value = sym_plan_lean_value(&sym_plan),
@@ -549,7 +538,6 @@ fn render_expr_fragment_plans(
         let Cert::StringConcatVerbatimMatch {
             name,
             self_idx,
-            code_idx,
             type_idx,
             carrier,
             string_concat_idx,
@@ -574,7 +562,7 @@ fn render_expr_fragment_plans(
         let code_entry_bytes = render_byte_list(&code_entry_bytes);
         let export_name_bytes = render_byte_list(name.as_bytes());
         let func_binding = format!(
-            "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+            "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
         );
         any = true;
         s.push_str(&format!(
@@ -598,13 +586,9 @@ fn render_expr_fragment_plans(
                  to the exact canonical code-entry bytes. -/\n\
              example : AverCert.PlanBytes.lowerStringConcatCodeEntry {carrier} {result_ty} {container_ty} {string_concat_idx} {name}StringConcatPlan =\n  \
                some {code_entry_bytes} := rfl\n\n\
-             /-- The audited Lean-side Wasm slicer finds `{name}`'s exact code-entry bytes\n\
-                 inside the emitted module bytes by export name. -/\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
-               some {code_entry_bytes} := rfl\n\n\
              /-- The audited Lean-side Wasm slicer binds `{name}` to its function\n\
-                 index, defined-code index, type index and code-entry bytes. -/\n\
-             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
+                 index, type index and exact expected code-entry bytes. -/\n\
+             example : AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry_bytes} =\n  \
                some {func_binding} := rfl\n\n\
              \n",
             sym_plan_value = sym_plan_lean_value(&sym_plan),
@@ -615,7 +599,6 @@ fn render_expr_fragment_plans(
         let Cert::StringEqVerbatimMatch {
             name,
             self_idx,
-            code_idx,
             type_idx,
             carrier,
             string_eq_idx,
@@ -635,7 +618,7 @@ fn render_expr_fragment_plans(
         let code_entry_bytes = render_byte_list(&code_entry_bytes);
         let export_name_bytes = render_byte_list(name.as_bytes());
         let func_binding = format!(
-            "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+            "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
         );
         any = true;
         s.push_str(&format!(
@@ -659,13 +642,9 @@ fn render_expr_fragment_plans(
                  to the exact canonical code-entry bytes. -/\n\
              example : AverCert.PlanBytes.lowerStringEqCodeEntry {carrier} {string_ty} {string_eq_idx} {name}StringEqPlan =\n  \
                some {code_entry_bytes} := rfl\n\n\
-             /-- The audited Lean-side Wasm slicer finds `{name}`'s exact code-entry bytes\n\
-                 inside the emitted module bytes by export name. -/\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
-               some {code_entry_bytes} := rfl\n\n\
              /-- The audited Lean-side Wasm slicer binds `{name}` to its function\n\
-                 index, defined-code index, type index and code-entry bytes. -/\n\
-             example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
+                 index, type index and exact expected code-entry bytes. -/\n\
+             example : AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry_bytes} =\n  \
                some {func_binding} := rfl\n\n\
              \n",
             sym_plan_value = sym_plan_lean_value(&sym_plan),
@@ -697,6 +676,9 @@ fn render_expr_fragment_plans(
             .expect("certified recursion plan lowers to code-entry bytes");
         let code_entry_bytes = render_byte_list(&code_entry_bytes);
         let export_name_bytes = render_byte_list(name.as_bytes());
+        let func_binding = format!(
+            "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+        );
         let host_table = recursion_host_table_lean_value(c);
         let totality_role = c.totality_role_lean_value();
         let wrong_totality_role = if c.requires_mul_totality() {
@@ -727,8 +709,8 @@ fn render_expr_fragment_plans(
              example : AverCert.PlanBytes.lowerRecursionCodeEntry {carrier} {name}RecursionPlan =\n  \
                some {code_entry_bytes} := rfl\n\n\
              /-- The Wasm slicer finds `{name}`'s exact code-entry bytes by export name. -/\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
-               some {code_entry_bytes} := rfl\n\n",
+             example : AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry_bytes} =\n  \
+               some {func_binding} := rfl\n\n",
             plan_value = recursion_plan_lean_value(&plan),
         ));
     }
@@ -755,6 +737,9 @@ fn render_expr_fragment_plans(
             .expect("certified mutual member plan lowers to code-entry bytes");
         let code_entry_bytes = render_byte_list(&code_entry_bytes);
         let export_name_bytes = render_byte_list(name.as_bytes());
+        let func_binding = format!(
+            "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+        );
         let host_table = mutual_host_table_lean_value(*box_idx, *sub_idx);
         let member_set = mutual_member_set_lean_value(scc);
         any = true;
@@ -779,8 +764,8 @@ fn render_expr_fragment_plans(
              example : AverCert.PlanBytes.lowerMutualCodeEntry {carrier} {name}MutualPlan =\n  \
                some {code_entry_bytes} := rfl\n\n\
              /-- The Wasm slicer finds `{name}`'s exact code-entry bytes by export name. -/\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
-               some {code_entry_bytes} := rfl\n\n",
+             example : AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry_bytes} =\n  \
+               some {func_binding} := rfl\n\n",
             plan_value = mutual_plan_lean_value(&plan),
         ));
     }
@@ -805,22 +790,27 @@ fn render_expr_fragment_plans(
         };
         let code_entry_bytes = render_byte_list(&lower_verbatim_code_entry(&plan, carrier));
         let export_name_bytes = render_byte_list(name.as_bytes());
+        let nlocals = if verbatim_dispatch_has_projection(&plan.body) {
+            3
+        } else {
+            2
+        };
         any = true;
         s.push_str(&format!(
             "/-- Byte-derived `verbatim-plan-v1` plan for `{name}` (a `Cod := WVal`\n\
                  verbatim `ref.test`-dispatch match; no host, no representation). -/\n\
              def {name}VerbatimPlan : VerbatimRawPlan := {plan_value}\n\n\
-             /-- The audited verbatim-plan checker accepts `{name}`'s byte-derived plan. -/\n\
-             example : AverCert.PlanCheck.checkVerbatimRawPlan {name}VerbatimPlan = true := rfl\n\n\
+             /-- The audited verbatim-plan admission checker accepts `{name}`'s\n\
+                 byte-derived plan with its canonical local count. -/\n\
+             example : AverCert.PlanCheck.checkVerbatimPlan {nlocals} {name}VerbatimPlan = true := rfl\n\n\
              /-- The audited verbatim lowerer maps `{name}`'s plan to the exact `Module.lean` body. -/\n\
              example : (CertModule.{name}Code {self_idx}).map (fun c => c.body) =\n  \
                some (AverCert.PlanLower.lowerVerbatimBody {name}VerbatimPlan) := rfl\n\n\
              /-- The audited verbatim byte lowerer reproduces `{name}`'s exact code-entry bytes. -/\n\
              example : AverCert.PlanBytes.lowerVerbatimCodeEntry {carrier} {name}VerbatimPlan =\n  \
                some {code_entry_bytes} := rfl\n\n\
-             /-- The Wasm slicer finds `{name}`'s exact code-entry bytes by export name. -/\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
-               some {code_entry_bytes} := rfl\n\n",
+             /-- The Wasm slicer finds `{name}`'s export binding with the exact code-entry bytes. -/\n\
+             example : (AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry_bytes}).isSome = true := rfl\n\n",
             plan_value = verbatim_plan_lean_value(&plan),
         ));
     }
@@ -869,9 +859,8 @@ fn render_expr_fragment_plans(
              /-- The audited int-dispatch byte lowerer reproduces `{name}`'s exact code-entry bytes. -/\n\
              example : AverCert.PlanBytes.lowerIntDispatchCodeEntry {carrier} {host_table} {name}IntDispatchPlan =\n  \
                some {code_entry_bytes} := rfl\n\n\
-             /-- The Wasm slicer finds `{name}`'s exact code-entry bytes by export name. -/\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
-               some {code_entry_bytes} := rfl\n\n",
+             /-- The Wasm slicer finds `{name}`'s export binding with the exact code-entry bytes. -/\n\
+             example : (AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry_bytes}).isSome = true := rfl\n\n",
             plan_value = int_dispatch_plan_lean_value(&plan),
         ));
     }
@@ -902,6 +891,12 @@ fn render_expr_fragment_plans(
         let host_table = composition_host_table_lean_value(add_idx);
         let func_table = composition_func_table_lean_value(closure);
         let export_name_bytes = render_byte_list(entry.name.as_bytes());
+        let binding = format!(
+            "({{ funcIdx := {}, typeIdx := {}, codeEntry := {} }} : AverCert.WasmSlice.FuncBinding)",
+            entry.self_idx,
+            entry.type_idx,
+            render_byte_list(&code_entry),
+        );
         any = true;
         s.push_str(&format!(
             "/-- Byte-derived composition shape for `{name}`. Callees are named;\n\
@@ -912,12 +907,13 @@ fn render_expr_fragment_plans(
                some {body} := rfl\n\n\
              example : AverCert.PlanBytes.lowerCompositionCodeEntry {carrier} {host_table} {func_table} {name}CompositionPlan =\n  \
                some {code_entry} := rfl\n\n\
-             example : AverCert.WasmSlice.codeEntryForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} =\n  \
-               some {code_entry} := rfl\n\n",
+             example : AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry} =\n  \
+               some {binding} := rfl\n\n",
             name = entry.name,
             plan_value = composition_plan_lean_value(&plan),
             body = render_ops_value(&lowered),
             code_entry = render_byte_list(&code_entry),
+            binding = binding,
         ));
     }
     if !any {
@@ -1015,7 +1011,6 @@ fn render_artifact_expr_fragment_claims(
                 name,
                 carrier,
                 self_idx,
-                code_idx,
                 type_idx,
                 source_plan,
                 plan,
@@ -1029,11 +1024,11 @@ fn render_artifact_expr_fragment_claims(
                     .expect("certified expr-fragment plan lowers to WInstr body");
                 let export_name_bytes = render_byte_list(name.as_bytes());
                 let func_binding = format!(
-                    "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+                    "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
                 );
                 let proof = format!(
                     "⟨rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨⟨rfl, rfl, rfl, rfl, rfl⟩, rfl, rfl⟩⟩⟩"
+                     ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl⟩⟩⟩"
                 );
                 if expr_fragment_source_plan(source_plan, plan).is_some() {
                     sym_claims.push(format!(
@@ -1046,7 +1041,6 @@ fn render_artifact_expr_fragment_claims(
             Cert::StringConcatVerbatimMatch {
                 name,
                 self_idx,
-                code_idx,
                 type_idx,
                 carrier,
                 string_concat_idx,
@@ -1075,7 +1069,7 @@ fn render_artifact_expr_fragment_claims(
                 .expect("certified String.concat plan lowers to WInstr body");
                 let export_name_bytes = render_byte_list(name.as_bytes());
                 let func_binding = format!(
-                    "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+                    "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
                 );
                 string_claims.push(format!(
                     "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, resultTy := {result_ty}, containerTy := {container_ty}, concatFuncIdx := {string_concat_idx}, symPlan := AverCert.Plans.{name}StringConcatSymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.StringConcatClaim)",
@@ -1083,13 +1077,12 @@ fn render_artifact_expr_fragment_claims(
                 ));
                 string_proofs.push(format!(
                     "⟨rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
+                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }
             Cert::StringEqVerbatimMatch {
                 name,
                 self_idx,
-                code_idx,
                 type_idx,
                 carrier,
                 string_eq_idx,
@@ -1108,7 +1101,7 @@ fn render_artifact_expr_fragment_claims(
                     .expect("certified String.eq plan lowers to WInstr body");
                 let export_name_bytes = render_byte_list(name.as_bytes());
                 let func_binding = format!(
-                    "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+                    "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
                 );
                 string_eq_claims.push(format!(
                     "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, stringTy := {string_ty}, stringEqFuncIdx := {string_eq_idx}, symPlan := AverCert.Plans.{name}StringEqSymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.StringEqClaim)",
@@ -1116,13 +1109,12 @@ fn render_artifact_expr_fragment_claims(
                 ));
                 string_eq_proofs.push(format!(
                     "⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
+                     ⟨rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }
             Cert::AdtConstructor {
                 name,
                 self_idx,
-                code_idx,
                 type_idx,
                 carrier,
                 struct_idx,
@@ -1147,7 +1139,7 @@ fn render_artifact_expr_fragment_claims(
                 let elem_ty = construct_val_type_lean_value(*elem_ty)
                     .expect("certified constructor has a supported byte-level element type");
                 let func_binding = format!(
-                    "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+                    "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
                 );
                 let (struct_type_proof, func_type_proof) =
                     if sym_plan_is_list_construct(&sym_plan) {
@@ -1164,14 +1156,13 @@ fn render_artifact_expr_fragment_claims(
                 ));
                 construct_proofs.push(format!(
                     "⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, {struct_type_proof}, \
+                     ⟨rfl, rfl, rfl, rfl, {struct_type_proof}, \
                      {func_type_proof}, rfl⟩⟩⟩"
                 ));
             }
             Cert::Recursive {
                 name,
                 self_idx,
-                code_idx,
                 type_idx,
                 carrier,
                 ..
@@ -1179,7 +1170,6 @@ fn render_artifact_expr_fragment_claims(
             | Cert::AccumulatorRecursive {
                 name,
                 self_idx,
-                code_idx,
                 type_idx,
                 carrier,
                 ..
@@ -1199,7 +1189,7 @@ fn render_artifact_expr_fragment_claims(
                 let export_name_bytes = render_byte_list(name.as_bytes());
                 let host_table = recursion_host_table_lean_value(c);
                 let func_binding = format!(
-                    "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
+                    "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
                 );
                 recursion_claims.push(format!(
                     "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, hostTable := {host_table}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.RecursionClaim)",
@@ -1207,7 +1197,7 @@ fn render_artifact_expr_fragment_claims(
                 ));
                 recursion_proofs.push(format!(
                     "⟨rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
+                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }
             Cert::MutualRecursion {
@@ -1236,8 +1226,7 @@ fn render_artifact_expr_fragment_claims(
                 let host_table = mutual_host_table_lean_value(*box_idx, *sub_idx);
                 let member_set = mutual_member_set_lean_value(scc);
                 let func_binding = format!(
-                    "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)",
-                    code_idx = member.code_idx,
+                    "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)",
                     type_idx = member.type_idx,
                 );
                 mutual_claims.push(format!(
@@ -1246,7 +1235,7 @@ fn render_artifact_expr_fragment_claims(
                 ));
                 mutual_proofs.push(format!(
                     "⟨rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
+                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }
             Cert::VerbatimWidenedMatch {
@@ -1272,7 +1261,7 @@ fn render_artifact_expr_fragment_claims(
                 // count (the two preceding `rfl`s discharge the byte-derived
                 // signature and payload binds).
                 verbatim_proofs.push(
-                    "⟨rfl, rfl, rfl, ⟨_, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
+                    "⟨rfl, rfl, rfl, ⟨_, _, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
                         .to_string(),
                 );
             }
@@ -1300,7 +1289,7 @@ fn render_artifact_expr_fragment_claims(
                 // pins the code table with the CANONICAL locals count, no
                 // existential).
                 int_dispatch_proofs.push(
-                    "⟨rfl, rfl, rfl, rfl, rfl, ⟨_, _, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
+                    "⟨rfl, rfl, rfl, rfl, rfl, ⟨_, _, _, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
                         .to_string(),
                 );
             }
@@ -1321,7 +1310,7 @@ fn render_artifact_expr_fragment_claims(
                     result_ty = field_projection_result_ty_lean_value(result_ty),
                 ));
                 field_projection_proofs.push(
-                    "⟨rfl, rfl, rfl, ⟨_, _, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
+                    "⟨rfl, rfl, rfl, ⟨_, _, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
                         .to_string(),
                 );
             }
@@ -1386,11 +1375,11 @@ fn render_artifact_expr_fragment_claims(
                     .expect("composition member byte-lowers against global byte table"),
             );
             let binding = format!(
-                "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {} }} : AverCert.WasmSlice.FuncBinding)",
-                entry.self_idx, entry.code_idx, entry.type_idx, code_entry
+                "({{ funcIdx := {}, typeIdx := {}, codeEntry := {} }} : AverCert.WasmSlice.FuncBinding)",
+                entry.self_idx, entry.type_idx, code_entry
             );
             let member_proof = format!(
-                "⟨rfl, ⟨({body}), ({code_entry}), {binding}, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
+                "⟨rfl, ⟨({body}), ({code_entry}), {binding}, rfl, rfl, rfl, rfl, rfl⟩⟩"
             );
             named_proof = format!("⟨{member_proof}, {named_proof}⟩");
         }

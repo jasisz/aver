@@ -24,7 +24,7 @@ def accepted
   AverCert.PlanCheck.checkExprFragmentRawPlan plan = true ∧
   AverCert.PlanLower.lowerExprFragmentBody carrier plan = some body ∧
   AverCert.PlanBytes.lowerExprFragmentCodeEntry carrier plan = some codeEntry ∧
-  AverCert.WasmSlice.funcBindingForExport modBytes modLen exportName = some binding ∧
-  binding.codeEntry = codeEntry
+  AverCert.WasmSlice.exactFuncBindingForExport
+    modBytes modLen exportName codeEntry = some binding
 
 end AverCert.ExprFragmentAccepted

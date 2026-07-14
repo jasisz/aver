@@ -109,7 +109,6 @@ fn recognize_fueled_recursion(
         Some(Cert::Recursive {
             name: f.name.clone(),
             self_idx: f.wasm_idx,
-            code_idx: f.code_idx,
             type_idx: f.type_idx,
             nlocals: f.nlocals,
             carrier,
@@ -151,7 +150,6 @@ fn recognize_fueled_recursion(
         Some(Cert::AccumulatorRecursive {
             name: f.name.clone(),
             self_idx: f.wasm_idx,
-            code_idx: f.code_idx,
             type_idx: f.type_idx,
             nlocals: f.nlocals,
             carrier,
@@ -272,7 +270,6 @@ fn recognize_mutual_scc(
         cycle.push(MutualMember {
             name: uf.name.clone(),
             self_idx: cur,
-            code_idx: uf.code_idx,
             type_idx: uf.type_idx,
             nlocals: uf.nlocals,
             base_k,

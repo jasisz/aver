@@ -309,7 +309,9 @@ theorem composition_claim_discharges_with_bridge
       clear hClosure
       rcases hRootAccepted with
         ⟨hCheck, body, codeEntry, binding, hLower, _hCodeEntry,
-          _hExportCode, hBinding, _hBindingCode, _hType, hCode⟩
+          hExactBinding, _hType, hCode⟩
+      unfold AverCert.WasmSlice.exactFuncBindingForExport at hExactBinding
+      have hBinding := Option.eq_some_of_filter_eq_some hExactBinding
       cases hTarget : AverCert.PlanLower.compositionFuncIdx?
               funcTable claim.exportName with
       | none => simp [hTarget] at hRootIdx

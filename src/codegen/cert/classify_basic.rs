@@ -45,7 +45,6 @@ fn nr_adt_constructor(
     Some(Cert::AdtConstructor {
         name: f.name.clone(),
         self_idx: f.wasm_idx,
-        code_idx: f.code_idx,
         type_idx: f.type_idx,
         nlocals: f.nlocals,
         carrier: carrier?,
@@ -89,7 +88,6 @@ fn nr_field_projection(
     Some(Cert::FieldProjection {
         name: f.name.clone(),
         self_idx: f.wasm_idx,
-        code_idx: f.code_idx,
         type_idx: f.type_idx,
         nlocals: f.nlocals,
         carrier,

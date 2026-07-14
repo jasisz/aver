@@ -101,12 +101,12 @@ fn composition_claim_acceptance_proof(
                 .expect("composition member byte-lowers against closure table"),
         );
         let binding = format!(
-            "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {} }} : \
+            "({{ funcIdx := {}, typeIdx := {}, codeEntry := {} }} : \
              AverCert.WasmSlice.FuncBinding)",
-            entry.self_idx, entry.code_idx, entry.type_idx, code_entry
+            entry.self_idx, entry.type_idx, code_entry
         );
         let member_proof = format!(
-            "⟨rfl, ⟨({body}), ({code_entry}), {binding}, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
+            "⟨rfl, ⟨({body}), ({code_entry}), {binding}, rfl, rfl, rfl, rfl, rfl⟩⟩"
         );
         named_proof = format!("⟨{member_proof}, {named_proof}⟩");
     }
@@ -312,10 +312,9 @@ fn render_composition_semantic_bridge(c: &Cert, analysis: &Analysis) -> String {
             .expect("direct composition member byte-lowers"),
     );
     let direct_binding = format!(
-        "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {} }} : \
+        "({{ funcIdx := {}, typeIdx := {}, codeEntry := {} }} : \
          AverCert.WasmSlice.FuncBinding)",
         direct_callee.self_idx,
-        direct_callee.code_idx,
         direct_callee.type_idx,
         direct_code_entry,
     );

@@ -45,13 +45,13 @@ fn mutual_claim_acceptance_proof(c: &Cert) -> String {
         .expect("audited mutual plan lowers to exact code-entry bytes");
     let bytes = render_byte_list(&bytes);
     let binding = format!(
-        "({{ funcIdx := {}, codeIdx := {}, typeIdx := {}, codeEntry := {bytes} }} : \
+        "({{ funcIdx := {}, typeIdx := {}, codeEntry := {bytes} }} : \
          AverCert.WasmSlice.FuncBinding)",
-        member.self_idx, member.code_idx, member.type_idx,
+        member.self_idx, member.type_idx,
     );
     format!(
         "⟨rfl, rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
-         ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
+         ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
     )
 }
 

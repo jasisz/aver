@@ -28,10 +28,6 @@ pub struct RederivedObligation {
     /// (`Dom := Empty`, `codRepr := fun _ _ _ => True`, `domRepr := fun _ _ _ => False`,
     /// or a nerfed arity) fails a kernel `rfl`/`HEq.rfl` and is DECLINED.
     pub face: ObligationFace,
-    /// For expression fragments, the byte-derived defined-function index into
-    /// the code section (`funcIdx - importedFuncCount`). Lean's relevant Wasm
-    /// slicer re-derives and pins this through `FuncBinding`.
-    pub fragment_code_idx: Option<u32>,
     /// For expression fragments, the byte-derived function-section type index.
     /// This connects export/function routing to the actual declared function
     /// signature slot before later in-kernel signature decoding lands.
@@ -89,9 +85,6 @@ pub struct RederivedObligation {
     /// concat shape. The checker witness requires this to explain the
     /// target-bound `StringConcatRawPlan`.
     pub string_concat_sym_plan_lean: Option<String>,
-    /// For `string-concat-v1`, the byte-derived defined-function index into the
-    /// code section (`funcIdx - importedFuncCount`).
-    pub string_concat_code_idx: Option<u32>,
     /// For `string-concat-v1`, the byte-derived function-section type index.
     pub string_concat_type_idx: Option<u32>,
     /// For `string-concat-v1`, the verifier-rendered `List WInstr` body that the
@@ -115,8 +108,6 @@ pub struct RederivedObligation {
     pub string_eq_plan_lean: Option<String>,
     /// The source-level `SymRawPlan` view of the same byte-derived String.eq shape.
     pub string_eq_sym_plan_lean: Option<String>,
-    /// For `string-eq-v1`, the byte-derived defined-function index.
-    pub string_eq_code_idx: Option<u32>,
     /// For `string-eq-v1`, the byte-derived function-section type index.
     pub string_eq_type_idx: Option<u32>,
     /// For `string-eq-v1`, the verifier-rendered `List WInstr` body.
@@ -140,9 +131,6 @@ pub struct RederivedObligation {
     /// The source-level `SymRawPlan` view of the same byte-derived constructor
     /// shape.
     pub construct_sym_plan_lean: Option<String>,
-    /// For `construct-v1`, the byte-derived defined-function index into the
-    /// code section (`funcIdx - importedFuncCount`).
-    pub construct_code_idx: Option<u32>,
     /// For `construct-v1`, the byte-derived function-section type index.
     pub construct_type_idx: Option<u32>,
     pub construct_struct_idx: Option<u32>,
@@ -165,8 +153,6 @@ pub struct RederivedObligation {
     /// (box/combinator/sub) rendered as the Lean `List (HostRole × Nat)`
     /// literal the recursion claim carries.
     pub recursion_host_table_lean: Option<String>,
-    /// For `recursion-plan-v1`, the byte-derived defined-function index.
-    pub recursion_code_idx: Option<u32>,
     /// For `recursion-plan-v1`, the byte-derived function-section type index.
     pub recursion_type_idx: Option<u32>,
     /// For `recursion-plan-v1`, the verifier-rendered `List WInstr` body the
@@ -185,8 +171,6 @@ pub struct RederivedObligation {
     /// For `mutual-plan-v1`, the byte-derived SCC member-index set rendered as
     /// the Lean `List Nat` literal the claim threads as member-call context.
     pub mutual_member_set_lean: Option<String>,
-    /// For `mutual-plan-v1`, this member's byte-derived defined-function index.
-    pub mutual_code_idx: Option<u32>,
     /// For `mutual-plan-v1`, this member's byte-derived function-section type index.
     pub mutual_type_idx: Option<u32>,
     /// For `mutual-plan-v1`, the verifier-rendered `List WInstr` body this
@@ -234,7 +218,6 @@ pub struct RederivedObligation {
 pub struct RederivedCompositionMember {
     pub name: String,
     pub self_idx: u32,
-    pub code_idx: u32,
     pub type_idx: u32,
     pub plan_lean: String,
     pub lowered_body_lean: String,
@@ -787,10 +770,6 @@ fn rederive_certificate_inner(
             policy: c.policy(),
             termination_witness: c.termination_witness(),
             face: ObligationFace::of_cert_with_model_info(c, Some(&model_info)),
-            fragment_code_idx: match c.inner() {
-                Cert::ExprFragment { code_idx, .. } => Some(*code_idx),
-                _ => None,
-            },
             fragment_type_idx: match c.inner() {
                 Cert::ExprFragment { type_idx, .. } => Some(*type_idx),
                 _ => None,
@@ -862,10 +841,6 @@ fn rederive_certificate_inner(
                 Cert::StringConcatVerbatimMatch { .. } => {
                     string_concat_sym_plan_from_cert(c).map(|plan| sym_plan_lean_value(&plan))
                 }
-                _ => None,
-            },
-            string_concat_code_idx: match c.inner() {
-                Cert::StringConcatVerbatimMatch { code_idx, .. } => Some(*code_idx),
                 _ => None,
             },
             string_concat_type_idx: match c.inner() {
@@ -950,10 +925,6 @@ fn rederive_certificate_inner(
                 }
                 _ => None,
             },
-            string_eq_code_idx: match c.inner() {
-                Cert::StringEqVerbatimMatch { code_idx, .. } => Some(*code_idx),
-                _ => None,
-            },
             string_eq_type_idx: match c.inner() {
                 Cert::StringEqVerbatimMatch { type_idx, .. } => Some(*type_idx),
                 _ => None,
@@ -1022,10 +993,6 @@ fn rederive_certificate_inner(
                     .map(|plan| sym_plan_lean_value(&plan)),
                 _ => None,
             },
-            construct_code_idx: match c.inner() {
-                Cert::AdtConstructor { code_idx, .. } => Some(*code_idx),
-                _ => None,
-            },
             construct_type_idx: match c.inner() {
                 Cert::AdtConstructor { type_idx, .. } => Some(*type_idx),
                 _ => None,
@@ -1067,12 +1034,6 @@ fn rederive_certificate_inner(
                 }
                 _ => None,
             },
-            recursion_code_idx: match c.inner() {
-                Cert::Recursive { code_idx, .. } | Cert::AccumulatorRecursive { code_idx, .. } => {
-                    Some(*code_idx)
-                }
-                _ => None,
-            },
             recursion_type_idx: match c.inner() {
                 Cert::Recursive { type_idx, .. } | Cert::AccumulatorRecursive { type_idx, .. } => {
                     Some(*type_idx)
@@ -1106,12 +1067,6 @@ fn rederive_certificate_inner(
             },
             mutual_member_set_lean: match c.inner() {
                 Cert::MutualRecursion { scc, .. } => Some(mutual_member_set_lean_value(scc)),
-                _ => None,
-            },
-            mutual_code_idx: match c.inner() {
-                Cert::MutualRecursion { position, scc, .. } => {
-                    scc.get(*position).map(|m| m.code_idx)
-                }
                 _ => None,
             },
             mutual_type_idx: match c.inner() {
@@ -1169,7 +1124,6 @@ fn rederive_certificate_inner(
                             Some(RederivedCompositionMember {
                                 name: entry.name,
                                 self_idx: entry.self_idx,
-                                code_idx: entry.code_idx,
                                 type_idx: entry.type_idx,
                                 plan_lean: composition_plan_lean_value(&plan),
                                 lowered_body_lean: render_ops_value(

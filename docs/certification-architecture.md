@@ -191,16 +191,14 @@ example :
   PlanBytes.lowerExprFragmentCodeEntry carrier floatAddGoalPlan =
     some [/* exact code-entry bytes */] := rfl
 example :
-  WasmSlice.codeEntryForExport ArtifactBytes.wasmBytes [/* export name */] =
-    some [/* exact code-entry bytes */] := rfl
-example :
-  WasmSlice.funcBindingForExport ArtifactBytes.wasmBytes [/* export name */] =
-    some { funcIdx := selfIdx, codeIdx := codeIdx, typeIdx := typeIdx,
+  WasmSlice.exactFuncBindingForExport ArtifactBytes.wasmBytes
+      [/* export name */] [/* exact code-entry bytes */] =
+    some { funcIdx := selfIdx, typeIdx := typeIdx,
            codeEntry := [/* exact code-entry bytes */] } := rfl
 example :
   ExprFragmentAccepted.accepted ArtifactBytes.wasmBytes [/* export name */]
     carrier floatAddGoalPlan floatAddGoalBody [/* exact code-entry bytes */]
-    { funcIdx := selfIdx, codeIdx := codeIdx, typeIdx := typeIdx,
+    { funcIdx := selfIdx, typeIdx := typeIdx,
       codeEntry := [/* exact code-entry bytes */] }
 example :
   AcceptedArtifact.exprFragmentPlanAccepted

@@ -86,8 +86,8 @@ theorem stringEq_accepted_call
         simpa [hPlan] using hClaim
       rcases hAccepted with
         ⟨_hExport, _hCarrier, _hRole, hHost, _hSym, _hMatches, hCheck,
-          body, codeEntry, binding, hLow, _hCodeEntry, _hExportCode,
-          _hBinding, hSelf, _hBindingCode, hCode⟩
+          body, codeEntry, binding, hLow, _hCodeEntry, _hExactBinding,
+          hSelf, hCode⟩
       have hCodeSelf : claim.obligation.code claim.obligation.self =
           some ⟨1, 2, body⟩ := by
         simpa [← hSelf] using hCode
@@ -141,8 +141,8 @@ theorem stringConcat_accepted_call
         simpa [hPlan] using hClaim
       rcases hAccepted with
         ⟨_hExport, _hCarrier, _hRole, hHost, body, codeEntry, binding,
-          _hSym, _hMatches, hCheck, hLow, _hCodeEntry, _hBinding,
-          _hBindingCode, hSelf, hCode⟩
+          _hSym, _hMatches, hCheck, hLow, _hCodeEntry, _hExactBinding,
+          hSelf, hCode⟩
       have hCodeSelf : claim.obligation.code claim.obligation.self =
           some ⟨1, 1, body⟩ := by
         simpa [hSelf, stringConcatNLocals] using hCode

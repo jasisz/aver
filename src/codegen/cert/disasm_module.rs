@@ -441,7 +441,6 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
         user_fns.push(UserFn {
             name,
             wasm_idx,
-            code_idx: def_idx,
             type_idx,
             arity: params.len(),
             params,

@@ -188,16 +188,6 @@ def verbatimDispatchModel (scrutinee : WVal) : VerbatimDispatch → Option WVal
 def verbatimModel (plan : VerbatimRawPlan) (scrutinee : WVal) : WVal :=
   (verbatimDispatchModel scrutinee plan.body).getD .null
 
-/-- Family-port admission: the audited raw-plan check plus the local bounds
-    and non-degenerate dispatch root needed by this proof face. -/
-def checkVerbatimPlan (nlocals : Nat) (plan : VerbatimRawPlan) : Bool :=
-  AverCert.PlanCheck.checkVerbatimRawPlan plan &&
-  decide (plan.scrutineeLocal < 1 + nlocals) &&
-  decide (plan.fieldLocal < 1 + nlocals) &&
-  match plan.body with
-  | .test _ _ _ => true
-  | .leaf _ => false
-
 @[simp] theorem finishRun_nil
     (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
     (r : Option Out) :
@@ -442,7 +432,7 @@ theorem generic_verbatim_shape_certified
 theorem generic_verbatim_certified
     (plan : VerbatimRawPlan) (code : CodeTbl) (host : HostTbl)
     (self nlocals : Nat)
-    (hcheck : checkVerbatimPlan nlocals plan = true)
+    (hcheck : AverCert.PlanCheck.checkVerbatimPlan nlocals plan = true)
     (hself : code self = some
       { arity := 1, nlocals := nlocals,
         body := AverCert.PlanLower.lowerVerbatimBody plan }) :
@@ -451,10 +441,10 @@ theorem generic_verbatim_certified
       w = verbatimModel plan v := by
   cases hbody : plan.body with
   | leaf leaf =>
-      simp [checkVerbatimPlan, hbody] at hcheck
+      simp [AverCert.PlanCheck.checkVerbatimPlan, hbody] at hcheck
   | test ty hit rest =>
       have hall := hcheck
-      simp [checkVerbatimPlan, hbody] at hall
+      simp [AverCert.PlanCheck.checkVerbatimPlan, hbody] at hall
       exact generic_verbatim_shape_certified plan code host self nlocals
         hall.1.1 ⟨ty, hit, rest, hbody⟩ hall.1.2 hall.2 hself
 

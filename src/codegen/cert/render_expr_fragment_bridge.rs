@@ -56,7 +56,6 @@ fn expr_fragment_claim_acceptance_proof(c: &Cert) -> String {
     let Cert::ExprFragment {
         carrier,
         self_idx,
-        code_idx,
         type_idx,
         plan,
         ..
@@ -71,12 +70,12 @@ fn expr_fragment_claim_acceptance_proof(c: &Cert) -> String {
         .map(|ops| render_ops_value(&ops))
         .expect("generic expr-fragment plan lowers to WInstr body");
     let binding = format!(
-        "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, \
+        "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, \
          codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
     );
     format!(
         "⟨rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {binding}, \
-         ⟨⟨rfl, rfl, rfl, rfl, rfl⟩, rfl, rfl⟩⟩⟩"
+         ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl⟩⟩⟩"
     )
 }
 
