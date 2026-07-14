@@ -1,10 +1,7 @@
 -- Dependency-closed Lean-side artifact acceptance helpers.
 --
--- This is the first bridge from expr-fragment byte-origin checking to the
--- schema obligation the final certificate theorem reasons about. It is still
--- per-fragment, not a full artifact predicate, but it pins the checked plan and
--- Wasm binding to `Schema.Obligation` fields instead of leaving them as loose
--- examples.
+-- These predicates pin checked plans and Wasm bindings to the
+-- `Schema.Obligation` fields used by the final certificate theorem.
 import CertPrelude
 import SchemaCore
 import PlanCheck
@@ -35,8 +32,7 @@ def exprFragmentNLocals (_plan : ExprFragmentRawPlan) : Nat := 1
 /-- Artifact-level acceptance for one expression-fragment export. The body,
     canonical code-entry bytes, and function binding are witnesses to the
     audited Lean predicate `ExprFragmentAccepted.accepted`, existentially
-    quantified rather than accepted as checker-rendered parameters. This is the
-    v2-shaped API: raw artifact bytes + raw plan + schema obligation. -/
+    quantified rather than accepted as external parameters. -/
 def exprFragmentPlanAccepted
     (modBytes modLen : Nat)
     (exportNameBytes : AverCert.WasmSlice.ByteSeq)
@@ -79,8 +75,7 @@ def symFragmentPlanAccepted
   | none => False
 
 /-- One source-level symbolic fragment claim inside an artifact certificate.
-    This is the preferred v2 shape for fragments whose meaning can already be
-    stated in Aver-level terms. `hostTable`/`structTable` are representation
+    `hostTable`/`structTable` are representation
     context (the byte-derived host-role and struct-type indices), not part of
     the source plan: a wrong table encodes to a representation plan that cannot
     match the byte-bound `exprFragmentPlans` the checker pins, so the claim
@@ -664,8 +659,8 @@ def verbatimClaimAccepted
     to exactly the `if fn = idx then …` chain (in table order) the emitter's
     `{name}Host` definitions carry — a `box` entry wires the audited `boxRef`
     over the carrier, an `add`/`sub` entry wires that contract-slot PARAMETER.
-    This reuses the same contract functions the checker-rendered obligation
-    host is built from (`boxRef` and the abstract add/sub slots of
+    This reuses the same contract functions the obligation host is built from
+    (`boxRef` and the abstract add/sub slots of
     `Obligation.host`); it defines no new semantics. -/
 def intDispatchCanonicalSlots
     (carrier : Nat) (add sub mul : List WVal → Option WVal) :
@@ -1375,15 +1370,15 @@ structure ArtifactData where
   closureFuel        : Nat
   closureClaim       : ClosureClaim
 
-/-! ### In-kernel F1/F2/F3 byte-fact binding
+/-! ### In-kernel artifact binding
 
 The source expression-fragment family retains its canonical plan-to-code-entry
 byte equality. Every other accepted family is additionally tied to the full
-profile decoder here: F1 code-table entries, F2 carrier index, and (where the
-family consumes them) F3 struct-field counts are computed from `modBytes` by
+profile decoder here: code-table entries, the carrier index, and (where the
+family consumes them) struct-field counts are computed from `modBytes` by
 `CertDecode`, then equated to the claim obligation already pinned into the
-manifest. Rust re-derivation remains a fail-fast producer/checker diagnostic,
-but none of these equalities takes a Rust-rendered code/carrier/field literal. -/
+manifest. None of these equalities takes an externally supplied code, carrier,
+or field literal. -/
 
 def decodedCodeAt
     (modBytes modLen : Nat) (obligation : Obligation) (funcIdx : Nat) : Prop :=
@@ -1451,7 +1446,7 @@ def decodedCompositionClaims
       decodedCompositionNames modBytes modLen members claim.obligation claim.memberNames ∧
       decodedCompositionClaims modBytes modLen members rest
 
-/-- Kernel-computed F1/F2/F3 facts for every non-expression-fragment family.
+/-- Artifact-decoded facts for every non-expression-fragment family.
     Mutual obligations bind every member of their shared SCC `CodeTbl`;
     composition obligations bind every name in their byte-checked transitive
     closure. The source expression-fragment claim list is deliberately absent.

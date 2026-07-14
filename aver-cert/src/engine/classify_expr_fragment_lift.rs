@@ -76,8 +76,8 @@ pub fn byte_derived_string_host_roles(
 }
 
 /// Every `call` in a candidate expr-fragment body must resolve through the
-/// byte-derived host-role table; any other callee fail-closes the sidecar
-/// gate (recursion, user calls, unknown helpers).
+/// byte-derived host-role table; any other callee fail-closes producer
+/// classification (recursion, user calls, unknown helpers).
 fn frag_calls_resolvable(calls: &[u32], table: &FragHostTable) -> bool {
     calls
         .iter()
@@ -390,9 +390,9 @@ fn check_sym_plan_named_consistency(plan: &SymPlan) -> Result<(), String> {
 
 /// Byte-derived struct table for ONE export's source plan: the plan's
 /// `project.field` type names bound to the export body's own (unique,
-/// non-carrier) `struct.get` type index. Names come from the untrusted
-/// sidecar, indices come ONLY from the module bytes, and the byte-exact gate
-/// then pins the pairing. Fail-closed: no projections → empty table; more
+/// non-carrier) `struct.get` type index. Names come from the source plan,
+/// indices come only from the module bytes, and artifact acceptance pins the
+/// pairing. Fail-closed: no projections → empty table; more
 /// than one projected type name or more than one distinct byte-level
 /// `struct.get` type → decline.
 fn byte_derived_frag_struct_table(

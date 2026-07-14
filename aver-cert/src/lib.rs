@@ -18,6 +18,8 @@ pub use engine::*;
 #[cfg(feature = "verify")]
 mod cache;
 #[cfg(feature = "verify")]
+mod prelude_cache;
+#[cfg(feature = "verify")]
 mod verifier;
 #[cfg(feature = "verify")]
 pub use verifier::{ARTIFACT_DECODE_LINE, Explanation, Verdict, explain, verify};

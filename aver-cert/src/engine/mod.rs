@@ -13,11 +13,10 @@
 //! `CertPrelude.WInstr` data. Any body that cannot be bound to an admitted
 //! obligation is declined rather than assigned a weaker theorem.
 //!
-//! `aver cert verify` re-runs the audited Rust byte pipeline as a fail-fast,
-//! then the accepted-artifact witness uses `CertDecode` to compute
-//! non-expression code/carrier/struct facts from `ArtifactBytes` in-kernel.
-//! Host/self byte facts are now fully kernel-bound; Rust rederivation and
-//! validation remain producer diagnostics. Expression plans are emitted once,
+//! `aver cert verify` performs standard Wasm validation, then the accepted-
+//! artifact witness uses `CertDecode` to compute code/carrier/struct facts from
+//! `ArtifactBytes` in-kernel. Rust classification and rederivation remain
+//! producer diagnostics only. Expression plans are emitted once,
 //! as Lean data in `Plans.lean`; the checker-owned wall validates and lowers
 //! that data against the exact artifact bytes. Redundant text sidecars are not
 //! part of the public certificate package.
@@ -31,10 +30,9 @@ pub use crate::wall::*;
 /// Emitted-fragment profile and runtime ABI identifiers recorded in the
 /// manifest. Stable strings the checker echoes; bumped when the certified
 /// fragment or the runtime import surface changes.
-pub const PROFILE_ID: &str = "AverUserProfile/v0";
+pub const PROFILE_ID: &str = "AverUserProfile/v1";
 pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
-/// Certification level of a v0 artifact certificate: conditional on the named
-/// runtime contracts (see the consult level naming L0/L1/L2/L3).
+/// Conditional simulation under the runtime contracts named by the claim.
 pub const CERT_LEVEL: &str = "L1";
 pub const CERT_SCHEMA_VERSION: u32 = 1;
 pub const BOX_CONTRACT: &str = "__rt_aint_from_i64 (box i64 -> carrier)";
@@ -57,7 +55,7 @@ pub const STRING_CONCAT_CONTRACT: &str =
 pub const FINAL_THEOREM: &str = "AverCert.Final.cert";
 pub const FINAL_STATEMENT_LINE: &str =
     "theorem AverCert.Final.cert : AverCert.Schema.Holds manifest";
-/// The artifact-level theorem root that v2-style consumers should check. It
+/// The artifact-level theorem root consumed by the standalone verifier. It
 /// packages the final schema theorem through `AcceptedArtifact.accepted`.
 pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 

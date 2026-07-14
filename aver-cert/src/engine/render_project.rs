@@ -3,6 +3,8 @@
 /// Write the artifact-specific `cert/` package. `model_files` are the
 /// `(path, content)` pairs from the reused `aver proof` Lean emission. The
 /// checker-owned wall and build configuration are resolved from `wall_id`.
+/// Any existing `cert/` directory is removed first so a reused output path
+/// cannot retain files from an older package format.
 pub fn write_project(
     out_dir: &Path,
     wasm_name: &str,
@@ -11,6 +13,11 @@ pub fn write_project(
     model_files: &[(String, String)],
 ) -> Result<(), String> {
     let cert_dir = out_dir.join("cert");
+    match std::fs::remove_dir_all(&cert_dir) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("replace cert dir: {error}")),
+    }
     std::fs::create_dir_all(&cert_dir).map_err(|e| format!("create cert dir: {e}"))?;
 
     // Copy the model files (AverCommon + <Module>.lean) verbatim.
@@ -123,9 +130,8 @@ fn render_expr_fragment_plans(
     let mut s = String::new();
     s.push_str(
         "-- Compiler-emitted source/fragment plans as Lean data.\n\
-         -- v1 still checks/canonical-lowers byte-bound fragments in Rust before\n\
-         -- rendering proofs; this module is the stable data surface for the v2\n\
-         -- in-kernel checker.\n\
+         -- This is the package's sole authoritative plan representation. The\n\
+         -- checker-owned wall validates and lowers it against the actual artifact.\n\
          import Schema\n\
          import PlanCheck\n\n\
          import PlanLower\n\
@@ -1639,7 +1645,7 @@ fn render_artifact(
             "theorem fragmentsAccepted : AverCert.AcceptedArtifact.acceptedFragments data := by\n",
             "  dsimp [AverCert.AcceptedArtifact.acceptedFragments]\n",
             "  exact ⟨symFragmentsAccepted, stringEqFragmentsAccepted, stringConcatFragmentsAccepted, constructFragmentsAccepted, recursionFragmentsAccepted, mutualFragmentsAccepted, verbatimFragmentsAccepted, intDispatchFragmentsAccepted, fieldProjectionFragmentsAccepted, compositionFragmentsAccepted, wholeModuleAccepted⟩\n\n",
-            "def acceptedWithFinal\n",
+            "theorem acceptedWithFinal\n",
             "    (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n",
             "    AverCert.AcceptedArtifact.accepted data := by\n",
             "  dsimp [AverCert.AcceptedArtifact.accepted, AverCert.AcceptedArtifact.subjectMatchesArtifactRoot, AverCert.AcceptedArtifact.expectedArtifactRoot]\n",

@@ -1,6 +1,6 @@
-/// Model-facing type used by the legacy `ExprFragment` obligation. This is not
-/// the source-level `SymPlan` type system: raw representation limbs stay `WVal`
-/// here because older obligations can still be byte-level/verbatim.
+/// Model-facing type used by representation-level `ExprFragment` obligations.
+/// This is not the source-level `SymPlan` type system: raw representation limbs
+/// stay `WVal` when the source grammar has no corresponding value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FragModelTy {
     Float,
@@ -29,8 +29,8 @@ impl FragModelTy {
     }
 }
 
-/// Typed, ordered non-recursive expression fragment. The compiler emits this as
-/// an untrusted plan sidecar, and the verifier checks/canonically lowers it
+/// Typed, ordered non-recursive expression fragment. The producer renders this
+/// as untrusted `Plans.lean` data; the Lean wall checks and canonically lowers it
 /// before using it as a certificate witness. Every value has an explicit
 /// representation type and a defining node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -116,8 +116,8 @@ impl FragTy {
 
 /// Runtime host-helper role admitted by `expr-fragment-v1`. Each role fixes a
 /// representation-level type signature; the resolved wasm function index is
-/// carried on the node (variant B) and bound to the module bytes by the
-/// byte-exact gate, and to the byte-derived role table by the Rust checker.
+/// carried on the node and bound to the module bytes and decoded role table by
+/// artifact acceptance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FragHostRole {
     Box,

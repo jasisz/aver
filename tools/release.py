@@ -110,6 +110,7 @@ def crate_source_changed_since_version_set(crate: str, version: str) -> bool:
     recent tag. We baseline against "where this crate's version was last set"
     instead, which tracks the last time it was actually (re)published.
 
+    Committed, staged, unstaged, and untracked source files are considered.
     Manifest/lockfile churn (version bumps, dep-pin updates) is ignored.
     """
     toml = VERSION_FILES[crate]
@@ -120,10 +121,19 @@ def crate_source_changed_since_version_set(crate: str, version: str) -> bool:
     ).stdout.strip()
     if not ver_commit:
         return True  # cannot establish a baseline -> bump to be safe
-    changed = subprocess.run(
+    committed = subprocess.run(
         ["git", "diff", "--name-only", f"{ver_commit}..HEAD", "--", str(crate_dir)],
         cwd=REPO_ROOT, capture_output=True, text=True,
     ).stdout.strip().splitlines()
+    working = subprocess.run(
+        ["git", "diff", "--name-only", "HEAD", "--", str(crate_dir)],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    ).stdout.strip().splitlines()
+    untracked = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "--", str(crate_dir)],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    ).stdout.strip().splitlines()
+    changed = set(committed + working + untracked)
     return any(not f.endswith(("Cargo.toml", "Cargo.lock")) for f in changed)
 
 

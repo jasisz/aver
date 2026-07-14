@@ -409,8 +409,8 @@ def recursionReportEntry
   pure (claim.obligation.export_, className)
 
 /-- Derive every public class label from the checked claim family and plan.
-    This is report data only, but deriving it in the wall prevents Rust from
-    choosing a more favourable family name for an accepted obligation. -/
+    This is report data only, but deriving it in the wall prevents the package
+    producer from choosing a more favourable label for an accepted obligation. -/
 def claimReportEntries (artifact : ArtifactData) : Option (List (String × String)) := do
   let recursion ← artifact.recursionClaims.mapM
     (recursionReportEntry artifact.manifest)

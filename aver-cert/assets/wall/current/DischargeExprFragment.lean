@@ -66,7 +66,7 @@ def exprFragmentSemanticBridge
       claim.obligation.codRepr S (claim.obligation.model x) result
 
 /-- The audited expression-fragment generic currently owns exactly the
-integer/Bool boundary used by the Rust classifier. -/
+integer/Bool boundary admitted by the producer classifier. -/
 def exprFragmentUsesAuditedGeneric (claim : SymFragmentClaim) : Bool :=
   claim.plan.params.all (fun ty => ty = .int || ty = .bool) &&
   (claim.plan.result = .int || claim.plan.result = .bool)

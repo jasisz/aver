@@ -52,7 +52,9 @@ cargo install aver-cert
 
 `aver-lang` installs the compiler as `aver`. `aver-cert` installs the
 independent certificate verifier used by `aver cert`; keep both executables in
-the same directory or on `PATH`.
+the same directory or on `PATH`. The verifier starts its own public version
+line at `0.1.0` rather than sharing the `aver-lang` version, and checks
+certificates with the pinned Lean 4.32 toolchain.
 
 Then try it with a tiny file:
 
@@ -492,9 +494,17 @@ aver run     file.av
 aver verify  file.av
 aver context file.av
 aver compile file.av -o out/
+aver compile file.av --target wasm-gc --certify -o out/
+aver-cert verify out/file.wasm out/cert
+aver cert explain out/file.wasm out/cert
 ```
 
 Full per-command reference, including flags, replay, formatting, REPL, and the audit / why / proof / bench surface: [docs/cli.md](docs/cli.md). Both `check` and `verify` accept `--deps` to walk transitive `depends [...]` modules; `aver verify --wasm-gc` runs the same cases through the wasm-gc backend as a cross-target check.
+
+`aver-cert` is an independent process. `aver cert ...` forwards to that binary
+without linking a verifier into the compiler. Certificate package format and
+schema version `1` are described in
+[docs/certification.md](docs/certification.md).
 
 ---
 
@@ -646,6 +656,8 @@ For repository self-documentation via decision exports, see `decisions/architect
 | [docs/wasm.md](docs/wasm.md) | WASM backend: ABI, memory model, browser hosting |
 | [docs/lean.md](docs/lean.md) | Lean backend: proof export and formal-verification path |
 | [docs/dafny.md](docs/dafny.md) | Dafny backend: Z3-powered automated law verification |
+| [docs/certification.md](docs/certification.md) | Artifact behavioral certificates: commands, guarantees, admitted families, and limits |
+| [docs/certification-architecture.md](docs/certification-architecture.md) | Certificate data flow, checker ownership, and trust boundary |
 | [docs/independence.md](docs/independence.md) | Independent products: the semantic model behind `?!` and `!` |
 | [docs/research.md](docs/research.md) | Narrow related work for effects, Oracle, independent products, and proof targets |
 | [docs/pushback.md](docs/pushback.md) | Common pushback: questions, objections, and honest answers |

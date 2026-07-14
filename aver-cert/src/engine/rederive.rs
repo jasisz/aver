@@ -1,15 +1,11 @@
-/// A certified obligation re-derived straight from the module bytes: the
-/// `CodeTbl` body value, self function index and carrier type index — each a pure function of the
-/// hash-verified bytes, via the SAME audited `disassemble` → `classify` pipeline
-/// the emitter uses. `aver cert verify` keeps this rederivation as a fail-fast
-/// pre-check. All trust-bearing byte facts are independently recomputed from
-/// ArtifactBytes by the audited Lean decoders inside the kernel witness.
+/// Producer-side analysis of one candidate obligation. It records the plan and
+/// byte-derived facts needed to render package data. The verifier does not trust
+/// this value: the Lean wall decodes and binds the relevant facts from
+/// `ArtifactBytes` again.
 pub struct RederivedObligation {
     pub name: String,
-    /// Position of the export's user function in the module's byte-derived user
-    /// function list. The verifier uses this to merge byte-derived legacy
-    /// obligations with plan-first expr-fragment sidecar obligations without
-    /// trusting JSON order.
+    /// Position in the module's byte-derived user-function list, used by the
+    /// producer to keep claims in artifact order.
     pub func_order: usize,
     /// The `fun fn => ...` `CodeTbl` value (`render_code_value`).
     pub code: String,
@@ -17,69 +13,51 @@ pub struct RederivedObligation {
     pub self_idx: u32,
     /// `Obligation.carrier`: the Int carrier struct type index.
     pub carrier: u32,
-    /// Policy and witness independently re-derived from the byte-classified
-    /// recursion family. The checker pins both fields separately from the plan
-    /// hash and rejects producer-supplied promotion labels that disagree.
+    /// Producer candidates for policy and termination. `ClaimAxes` derives the
+    /// accepted values again from the checked plan.
     pub policy: CertificationPolicy,
     pub termination_witness: Option<TerminationWitness>,
-    /// The BYTE-derived typed face: which standard `Dom`/`Cod`/`domRepr`/`codRepr`
-    /// forms the honest emitter renders for this class. `aver cert verify` pins
-    /// these into its witness, so a manifest weakening the semantic face
-    /// (`Dom := Empty`, `codRepr := fun _ _ _ => True`, `domRepr := fun _ _ _ => False`,
-    /// or a nerfed arity) fails a kernel `rfl`/`HEq.rfl` and is DECLINED.
+    /// The producer's typed face. `StandardFace` independently checks the
+    /// standard portions selected by the family and plan.
     pub face: ObligationFace,
     /// For expression fragments, the byte-derived function-section type index.
     /// This connects export/function routing to the actual declared function
-    /// signature slot before later in-kernel signature decoding lands.
+    /// signature slot; the Lean wall decodes and checks it independently.
     pub fragment_type_idx: Option<u32>,
     /// For expression fragments, the byte-derived local count recorded in the
     /// `WCode` body. The current plan-first lowering emits one scratch carrier
-    /// local; this pin keeps the artifact acceptance bridge tied to the schema
-    /// code table rather than only to the lowered instruction list.
+    /// local; artifact acceptance also binds it to the decoded code table.
     pub fragment_nlocals: Option<u32>,
-    /// For expression fragments, the canonical plan sidecar attached to this
-    /// obligation. During `aver cert verify`, transitional byte re-derivation
-    /// may populate this first, then the plan-first sidecar checker overlays the
-    /// obligation with the checked sidecar plan after canonical code-entry
-    /// equality succeeds.
+    /// Internal serialized form of the expression plan. Public packages render
+    /// the authoritative value only in `Plans.lean`.
     pub fragment_plan: Option<FragmentPlanSidecar>,
-    /// The same checked expression-fragment plan rendered as a Lean
-    /// `ExprFragmentRawPlan` term. `aver cert verify` pins
-    /// `manifest.exprFragmentPlans` to these checker-rendered terms so
-    /// `Plans.lean` cannot drift from the sidecar/body pair.
+    /// The expression plan rendered as an `ExprFragmentRawPlan` term.
     pub fragment_plan_lean: Option<String>,
     /// For expression fragments whose checked representation plan can be
-    /// projected into the source-level symbolic grammar, the canonical
-    /// `sym-fragment-v1` sidecar.
+    /// projected into the source-level symbolic grammar, its internal
+    /// serialized form.
     pub fragment_sym_plan: Option<FragmentPlanSidecar>,
     /// For expression fragments whose checked representation plan can be
-    /// projected into the source-level symbolic grammar, the same verifier
-    /// result rendered as a `SymRawPlan` term. This feeds the preferred v2
-    /// artifact claim shape; representation-only fragments leave it absent.
+    /// projected into the source-level symbolic grammar, the corresponding
+    /// `SymRawPlan` term. Representation-only fragments leave it absent.
     pub fragment_sym_plan_lean: Option<String>,
     /// For field-projection fragments, the byte-derived struct-table entries
     /// (`source type name -> wasm struct type index`) this export pins. The
-    /// verifier unions these into the module-wide struct table its witnesses
-    /// and artifact claims cite; empty for non-projection fragments.
+    /// producer unions these into the module-wide struct table cited by the
+    /// artifact claims; empty for non-projection fragments.
     pub fragment_struct_entries: Vec<(String, u32)>,
-    /// For expression fragments, the verifier-rendered `List WInstr` body that
-    /// the checked plan canonically lowers to. The checker witness pins
-    /// `PlanLower.lowerExprFragmentBody carrier plan = some body`.
+    /// Producer-computed `List WInstr` body used as an emission consistency
+    /// check. Lean lowers the plan independently.
     pub fragment_lowered_body_lean: Option<String>,
-    /// For expression fragments, the verifier-rendered canonical raw code-entry
-    /// bytes that the checked plan lowers to. The checker witness pins
-    /// `PlanBytes.lowerExprFragmentCodeEntry carrier plan = some bytes`.
+    /// Producer-computed canonical code-entry bytes used as an emission
+    /// consistency check. Lean lowers and compares independently.
     pub fragment_lowered_code_entry_lean: Option<String>,
     /// For `string-concat-v1`, the byte-derived target-bound concat plan.
     pub string_concat_plan: Option<FragmentPlanSidecar>,
     /// For `string-concat-v1`, the byte-derived source-level symbolic view of
-    /// the concat plan. This is the JSON/sidecar counterpart of
-    /// `string_concat_sym_plan_lean`.
+    /// the concat plan in the producer's internal serialization.
     pub string_concat_sym_plan: Option<FragmentPlanSidecar>,
-    /// The same checked string-concat plan rendered as a Lean
-    /// `StringConcatRawPlan` term. `aver cert verify` pins
-    /// `manifest.stringConcatPlans` to these checker-rendered terms so
-    /// `Plans.lean` cannot drift from the verified sidecar/body pair.
+    /// The string-concat plan rendered as a `StringConcatRawPlan` term.
     pub string_concat_plan_lean: Option<String>,
     /// The source-level `SymRawPlan` view of the same byte-derived string
     /// concat shape. The checker witness requires this to explain the
@@ -87,11 +65,9 @@ pub struct RederivedObligation {
     pub string_concat_sym_plan_lean: Option<String>,
     /// For `string-concat-v1`, the byte-derived function-section type index.
     pub string_concat_type_idx: Option<u32>,
-    /// For `string-concat-v1`, the verifier-rendered `List WInstr` body that the
-    /// checked source plan canonically lowers to.
+    /// For `string-concat-v1`, the producer-computed `List WInstr` body.
     pub string_concat_lowered_body_lean: Option<String>,
-    /// For `string-concat-v1`, the verifier-rendered canonical raw code-entry
-    /// bytes that the checked source plan lowers to.
+    /// For `string-concat-v1`, the producer-computed canonical code-entry bytes.
     pub string_concat_lowered_code_entry_lean: Option<String>,
     /// The string byte-array type used by `array.new_data` and returned by the
     /// concat helper.
@@ -110,9 +86,9 @@ pub struct RederivedObligation {
     pub string_eq_sym_plan_lean: Option<String>,
     /// For `string-eq-v1`, the byte-derived function-section type index.
     pub string_eq_type_idx: Option<u32>,
-    /// For `string-eq-v1`, the verifier-rendered `List WInstr` body.
+    /// For `string-eq-v1`, the producer-computed `List WInstr` body.
     pub string_eq_lowered_body_lean: Option<String>,
-    /// For `string-eq-v1`, the verifier-rendered canonical raw code-entry bytes.
+    /// For `string-eq-v1`, the producer-computed canonical code-entry bytes.
     pub string_eq_lowered_code_entry_lean: Option<String>,
     /// The string byte-array type used by the String.eq dispatch.
     pub string_eq_string_ty: Option<u32>,
@@ -125,8 +101,7 @@ pub struct RederivedObligation {
     /// byte-derived constructor shape.
     pub construct_sym_plan: Option<FragmentPlanSidecar>,
     /// The same checked construct plan rendered as a Lean `ConstructRawPlan`
-    /// term. `aver cert verify` pins `manifest.constructPlans` to these
-    /// checker-rendered terms.
+    /// term.
     pub construct_plan_lean: Option<String>,
     /// The source-level `SymRawPlan` view of the same byte-derived constructor
     /// shape.
@@ -136,18 +111,17 @@ pub struct RederivedObligation {
     pub construct_struct_idx: Option<u32>,
     pub construct_field_count: Option<u32>,
     pub construct_elem_ty_lean: Option<String>,
-    /// True only when the checker-reconstructed source result is `List<T>`;
+    /// True only when the producer-reconstructed source result is `List<T>`;
     /// only those claims require the cons-cell-specific type-section guards.
     pub construct_is_list: bool,
-    /// For `construct-v1`, the verifier-rendered `List WInstr` body that the
+    /// For `construct-v1`, the producer-computed `List WInstr` body that the
     /// checked constructor plan canonically lowers to.
     pub construct_lowered_body_lean: Option<String>,
-    /// For `construct-v1`, the verifier-rendered canonical raw code-entry bytes
+    /// For `construct-v1`, the producer-computed canonical raw code-entry bytes
     /// that the checked constructor plan lowers to.
     pub construct_lowered_code_entry_lean: Option<String>,
     /// For `recursion-plan-v1` (fuel-recursion), the byte-derived recursion plan
-    /// rendered as a Lean `RecursionRawPlan` term. `aver cert verify` pins
-    /// `manifest.recursionPlans` to this checker-rendered term.
+    /// rendered as a Lean `RecursionRawPlan` term.
     pub recursion_plan_lean: Option<String>,
     /// For `recursion-plan-v1`, the per-export byte-derived host-role table
     /// (box/combinator/sub) rendered as the Lean `List (HostRole × Nat)`
@@ -155,15 +129,14 @@ pub struct RederivedObligation {
     pub recursion_host_table_lean: Option<String>,
     /// For `recursion-plan-v1`, the byte-derived function-section type index.
     pub recursion_type_idx: Option<u32>,
-    /// For `recursion-plan-v1`, the verifier-rendered `List WInstr` body the
+    /// For `recursion-plan-v1`, the producer-computed `List WInstr` body the
     /// checked recursion plan canonically lowers to (equal to `Module.lean`).
     pub recursion_lowered_body_lean: Option<String>,
-    /// For `recursion-plan-v1`, the verifier-rendered canonical raw code-entry
+    /// For `recursion-plan-v1`, the producer-computed canonical raw code-entry
     /// bytes the checked recursion plan lowers to.
     pub recursion_lowered_code_entry_lean: Option<String>,
     /// For `mutual-plan-v1` (mutual-recursion member), the byte-derived member
-    /// plan rendered as a Lean `MutualRawPlan` term. `aver cert verify` pins
-    /// `manifest.mutualPlans` to this checker-rendered term.
+    /// plan rendered as a Lean `MutualRawPlan` term.
     pub mutual_plan_lean: Option<String>,
     /// For `mutual-plan-v1`, the byte-derived SCC box/sub host-role table
     /// rendered as the Lean `List (HostRole × Nat)` literal the claim carries.
@@ -173,23 +146,21 @@ pub struct RederivedObligation {
     pub mutual_member_set_lean: Option<String>,
     /// For `mutual-plan-v1`, this member's byte-derived function-section type index.
     pub mutual_type_idx: Option<u32>,
-    /// For `mutual-plan-v1`, the verifier-rendered `List WInstr` body this
+    /// For `mutual-plan-v1`, the producer-computed `List WInstr` body this
     /// member's checked plan lowers to (equal to its arm of the shared table).
     pub mutual_lowered_body_lean: Option<String>,
-    /// For `mutual-plan-v1`, the verifier-rendered canonical raw code-entry
+    /// For `mutual-plan-v1`, the producer-computed canonical raw code-entry
     /// bytes this member's checked plan lowers to.
     pub mutual_lowered_code_entry_lean: Option<String>,
     /// For `verbatim-plan-v1` (a `Cod := WVal` verbatim `ref.test`-dispatch
     /// match), the byte-derived plan rendered as a Lean `VerbatimRawPlan` term.
-    /// `aver cert verify` pins `manifest.verbatimPlans` to this checker-rendered
-    /// term. There is no host/self call to bind, so no host-table/member-set/
+    /// There is no host/self call to bind, so no host-table/member-set/
     /// lowered-body/code-entry companion fields are needed: the byte-equality
     /// gate is the whole soundness binding and the claim's witness is anonymous.
     pub verbatim_plan_lean: Option<String>,
     /// For `int-dispatch-v1` (a `Cod := Int` ADT-match: general variant
     /// dispatch or widened Int match), the byte-derived plan rendered as a Lean
-    /// `IntDispatchRawPlan` term. `aver cert verify` pins
-    /// `manifest.intDispatchPlans` to this checker-rendered term. The claim's
+    /// `IntDispatchRawPlan` term. The claim's
     /// witness is anonymous like the verbatim family's (no code/type index is
     /// carried); unlike it the arms consume host contracts, so the claim also
     /// carries the byte-derived role table below.
@@ -206,7 +177,7 @@ pub struct RederivedObligation {
     pub field_projection_field_count: Option<u32>,
     pub field_projection_result_ty_lean: Option<String>,
     /// Plan-backed composition closure members. Each member carries the
-    /// checker-rendered shape/name plan plus byte-derived binding facts.
+    /// rendered shape/name plan plus byte-derived binding facts.
     pub composition_members: Vec<RederivedCompositionMember>,
     /// Strict byte-derived singleton add-role table.
     pub composition_host_table_lean: Option<String>,
@@ -710,14 +681,9 @@ pub fn rederive_certificate(
     rederive_certificate_inner(wasm_bytes, model_files, &[])
 }
 
-/// Re-derive only non-expression-fragment obligations. The verifier uses this
-/// for plan-first checking: expr fragments are admitted by checked sidecar plans
-/// plus canonical code-entry byte equality, not by byte-only classification.
-/// `plan_covered_exports` are the export names the manifest routes through
-/// checked plan sidecars; they are excluded from byte classification BY NAME so
-/// a plan-first export does not produce a duplicate obligation for the same
-/// function. This never widens acceptance: an export claimed as plan-first that
-/// fails its sidecar check is declined outright.
+/// Producer helper that classifies only non-expression-fragment obligations.
+/// `plan_covered_exports` are excluded by export name so a separately supplied
+/// expression plan does not create a duplicate candidate for the same function.
 pub fn rederive_certificate_without_expr_fragments(
     wasm_bytes: &[u8],
     model_files: &[(String, String)],

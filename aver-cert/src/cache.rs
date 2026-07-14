@@ -3,6 +3,11 @@
 //! Entries contain only `.lake` plus an integrity manifest. Source inputs are
 //! always staged afresh by the verifier; `lake build` still runs on every verify,
 //! and the checker witness is never cached.
+//!
+//! This cache is explicitly opt-in because its directory is trusted local
+//! state. The integrity manifest detects accidental corruption, but a writer
+//! able to replace both `.olean` outputs and Lake traces can also replace that
+//! manifest. Strict verification therefore runs with no cache configured.
 
 use std::path::{Path, PathBuf};
 
@@ -71,49 +76,20 @@ impl ArtifactBuildCache {
     }
 }
 
-/// `AVER_CERT_DATA_CACHE=0|off|false` opts out. Any other explicit value is a
-/// cache directory (useful for hermetic tests); otherwise use the OS user cache
-/// location. Failure to identify a user cache directory disables the hint.
+/// Any explicit value except `0|off|false` opts into a trusted cache directory.
+/// An absent variable is the strict, cache-free default.
 fn cache_store() -> Option<PathBuf> {
-    if let Some(value) = std::env::var_os(CACHE_ENV) {
-        let text = value.to_string_lossy();
-        if text.is_empty()
-            || text == "0"
-            || text.eq_ignore_ascii_case("off")
-            || text.eq_ignore_ascii_case("false")
-        {
-            return None;
-        }
-        return Some(PathBuf::from(value));
+    let value = std::env::var_os(CACHE_ENV)?;
+    let text = value.to_string_lossy();
+    if text.is_empty()
+        || text == "0"
+        || text.eq_ignore_ascii_case("off")
+        || text.eq_ignore_ascii_case("false")
+    {
+        None
+    } else {
+        Some(PathBuf::from(value))
     }
-
-    if let Some(xdg) = std::env::var_os("XDG_CACHE_HOME") {
-        return Some(PathBuf::from(xdg).join("aver").join("cert-data"));
-    }
-    #[cfg(target_os = "macos")]
-    if let Some(home) = std::env::var_os("HOME") {
-        return Some(
-            PathBuf::from(home)
-                .join("Library")
-                .join("Caches")
-                .join("aver")
-                .join("cert-data"),
-        );
-    }
-    #[cfg(target_os = "windows")]
-    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        return Some(PathBuf::from(local).join("aver").join("cert-data"));
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    if let Some(home) = std::env::var_os("HOME") {
-        return Some(
-            PathBuf::from(home)
-                .join(".cache")
-                .join("aver")
-                .join("cert-data"),
-        );
-    }
-    None
 }
 
 /// Hash all inputs that can affect artifact DATA build products. The explicit

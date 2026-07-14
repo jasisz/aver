@@ -80,9 +80,9 @@ fn parse_body_step(
 
 /// The combinator operator of each `X__fuel` model definition's else-branch:
 /// `+` (add) or `*` (mul). The bytes cannot distinguish the bignum helpers, so
-/// this is the trusted source of the operation. Both the emitter (`analyze`) and
-/// the checker (`rederive_certificate`) build the SAME map from the model, so the
-/// re-derived host still pins. The descent (`n - 1`) uses `-`, so it never
+/// this is the producer's source of the operation. Lean derives and checks the
+/// corresponding standard face from the emitted plan. The descent (`n - 1`)
+/// uses `-`, so it never
 /// confuses the scan; the recognised body shapes carry no other arithmetic.
 fn model_step_ops(model_files: &[(String, String)]) -> std::collections::HashMap<String, char> {
     let mut ops = std::collections::HashMap::new();

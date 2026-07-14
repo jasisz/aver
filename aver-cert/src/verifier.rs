@@ -7,6 +7,7 @@
 //! termination witness, host table, and runtime contracts.
 
 use crate::cache::{ArtifactBuildCache, KeyMaterial as ArtifactCacheKeyMaterial};
+use crate::prelude_cache::PristineWallCache;
 use crate::{format, wall};
 use colored::Colorize;
 use serde_json::Value;
@@ -213,11 +214,24 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
             toolchain_version: selected_wall.toolchain.trim(),
         },
     );
+    let data_cache_hit = cache.was_hit();
+    let mut wall_cache = if data_cache_hit {
+        PristineWallCache::disabled()
+    } else {
+        PristineWallCache::prepare(&build.path, selected_wall)
+    };
 
     let mut data_build = run_lake(&build.path, &["build"])?;
-    if !data_build.status.success() && cache.was_hit() {
-        cache.invalidate(&build.path);
+    if !data_build.status.success() && (data_cache_hit || wall_cache.was_seeded()) {
+        if data_cache_hit {
+            cache.invalidate(&build.path);
+        } else {
+            wall_cache.clear_build(&build.path);
+        }
         data_build = run_lake(&build.path, &["build"])?;
+        if data_build.status.success() && wall_cache.was_seeded() {
+            wall_cache.evict();
+        }
     }
     if !data_build.status.success() {
         return Err(format!(

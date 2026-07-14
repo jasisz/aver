@@ -129,11 +129,9 @@ structure TerminationWitness where
 deriving Repr, DecidableEq
 
 /-- Value representation types admitted by the `expr-fragment-v1` plan grammar.
-    This is the Lean-data mirror of the Rust `ExprFragmentPlan` sidecar: v1
-    proofs still use the rendered `Obligation` face below, but this
-    representation grammar is the stable landing zone for v2
-    `CheckPlan`/`LowersCodeEntry`. Source-level projection is explicit through
-    `FragTy.sourceTy?` below rather than a raw `WVal` fallback. -/
+    `Plans.lean` stores these values as the sole plan DATA representation; the
+    checker validates and lowers them to artifact bytes. Source-level projection
+    is explicit through `FragTy.sourceTy?` rather than a raw `WVal` fallback. -/
 inductive FragTy where
   | f64
   | boolI32
@@ -256,8 +254,8 @@ deriving Repr, DecidableEq
 
 /-- Runtime host helper roles admitted by `expr-fragment-v1`. Each role fixes a
     representation-level type signature (checked by `PlanCheck`); the resolved
-    wasm function index is carried on the node and bound to the module bytes by
-    the byte-exact gate, and to the byte-derived role table by the Rust checker. -/
+    wasm function index is carried on the node and bound both to the module
+    bytes and to the decoded role table by artifact acceptance. -/
 inductive HostRole where
   | box
   | add
@@ -277,7 +275,7 @@ mutual
     /-- Projection of `field` out of a user struct of wasm type `tyIdx` (a whole
         record/ADT, not the Int carrier). The type index is node data bound to
         the module bytes by the byte-exact gate and validated against the
-        byte-derived struct context by the Rust checker, mirroring `hostCall`'s
+        struct context decoded from the artifact, mirroring `hostCall`'s
         resolved function index. -/
     | structGetUser (tyIdx : Nat) (field : Nat) (value : Nat)
     | refIsNull (value : Nat)
@@ -286,15 +284,14 @@ mutual
     /-- A self-recursive call to the function being certified. `tail` selects
         `return_call` (tail position, `0x12`) over `call` (`0x10`). `funcIdx` is
         the resolved self function index; it is bound to the module bytes by the
-        byte-exact gate and validated against the byte-derived self index by the
-        Rust checker, exactly as `hostCall` binds its resolved index. The plan
-        never invents it. -/
+        byte-exact gate and validated against the decoded self index, exactly as
+        `hostCall` binds its resolved index. The plan never invents it. -/
     | selfCall (tail : Bool) (funcIdx : Nat) (args : List Nat)
     | ifElse (cond : Nat) (thenBlock elseBlock : FragBlock)
   deriving Repr
 
   /-- A typed value definition. `id` must match its position in the containing
-      block; v1 Rust checks this, v2 Lean `CheckPlan` will. -/
+      block; `PlanCheck` enforces this before lowering. -/
   structure FragNode where
     id   : Nat
     ty   : FragTy
@@ -668,8 +665,8 @@ structure ConstructRawPlan where
   fields    : List ConstructField
 deriving Repr
 
-/-- Pointwise lifting of an integer representation relation to argument lists.
-    Kept as the standard domain representation for the v2 integer classes. -/
+/-- Pointwise lifting of an integer representation relation to argument lists;
+    this is the standard domain representation for integer families. -/
 inductive ReprAll (R : Int → WVal → Prop) : List Int → List WVal → Prop
   | nil : ReprAll R [] []
   | cons {n v ns vs} : R n v → ReprAll R ns vs → ReprAll R (n :: ns) (v :: vs)
@@ -702,9 +699,9 @@ def verbatimRepr (_S : CarrierSpec C) (v : WVal) (w : WVal) : Prop := w = v
 
 /-- One certified export. `code`/`host`/`self` pin the emitted body and its
     runtime wiring; `Dom`/`Cod` and their representation relations describe the
-    typed source-model face the body is proven to simulate. `aver cert verify`
-    re-derives `code`, `self` and `carrier` from the module bytes, so the
-    obligation is bound to the artifact. -/
+    typed source-model face the body is proven to simulate. `AcceptedArtifact`
+    decodes and binds the relevant code, function, type, and carrier facts from
+    the artifact bytes. -/
 structure Obligation where
   export_ : String
   policy  : Policy

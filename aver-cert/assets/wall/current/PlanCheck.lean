@@ -1,9 +1,8 @@
 -- Lean-side structural checker for `expr-fragment-v1` raw plans.
 --
 -- This is intentionally a small checker over the plan grammar, not a Wasm
--- decoder. v1 still binds plans to bytes in Rust by canonical lowering and raw
--- code-entry equality; this module is the trusted Lean landing zone for v2:
--- `RawPlan -> CheckedPlan -> LowersCodeEntry`.
+-- decoder. `AcceptedArtifact` binds checked plans to decoded artifact code;
+-- this module validates the raw plan grammar before that binding.
 import SchemaCore
 
 namespace AverCert.PlanCheck
@@ -160,8 +159,7 @@ def symPrimResultTy? (nodes : List SymNode) (op : SymPrim) (args : List Nat) :
       else if symArgsAllTy nodes .string args then some .string else none
 
 /-- Hard cap for recursive plan checking. Exceeding it is a fail-closed
-    unsupported fragment, matching the profile-limit discipline on the Rust
-    side. -/
+    unsupported fragment, matching the producer's profile-limit discipline. -/
 abbrev maxFuel : Nat := 10000
 
 def isByte (n : Nat) : Bool :=
@@ -188,8 +186,7 @@ def checkBlockFuel : Nat → List FragTy → FragBlock → Bool
         -- projected value is handled verbatim (`adtRef`), never reinterpreted
         -- as a scalar. Scalar-field projections need their own proof face
         -- before they can be typed here. The node's `tyIdx`/`field` are bound
-        -- to the module bytes by the byte-exact gate and validated against the
-        -- byte-derived struct context by the Rust checker.
+        -- to the module bytes and decoded struct context by artifact acceptance.
         | .structGetUser _tyIdx _field value =>
             if hasTy checked value .adtRef then some .adtRef else none
         | .refIsNull value =>
@@ -199,8 +196,8 @@ def checkBlockFuel : Nat → List FragTy → FragBlock → Bool
         | .prim op args => primResultTy? checked op args
         | .hostCall role _funcIdx args => hostCallResultTy? checked role args
         -- A self-call yields the Int carrier when every argument is an Int
-        -- carrier. `funcIdx` is not typed here (the byte gate binds it and the
-        -- Rust checker validates it against the byte-derived self index),
+        -- carrier. `funcIdx` is not typed here; artifact acceptance binds it to
+        -- the byte-derived self index,
         -- mirroring `hostCall`.
         | .selfCall _tail _funcIdx args =>
             if !args.isEmpty && fragArgsAllTy checked .intCarrier args then

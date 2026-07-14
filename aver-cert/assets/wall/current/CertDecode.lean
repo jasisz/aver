@@ -1,5 +1,5 @@
 /-
-  CertDecode — checker-owned, in-kernel decoder for the AverUserProfile/v0
+  CertDecode — checker-owned, in-kernel decoder for the AverUserProfile/v1
   certificate profile. Given a wasm-gc module as a little-endian big-`Nat`
   plus a byte length, it decodes the profile-relevant sections into PURE DATA
   (`rfl`-comparable): a typed type-section IR, raw import/export indices, the
@@ -8,9 +8,8 @@
   `List CertPrelude.WInstr` — the full 39-opcode fragment, if/else/end folded
   into `WInstr.ifElse`).
 
-  The result semantics mirror `src/codegen/cert/mod.rs::rederive_obligations`
-  and `tools/certkit/extract.py` so all three decoders agree term for term on
-  every certkit fixture (three-way differential).
+  Differential fixtures pin this decoder against the producer decoder and the
+  standalone certkit reference implementation.
 
   Construction constraints (from the C2 kill-fast probes):
   * All recursion is STRUCTURAL or on an explicit fuel `Nat`. There is no
@@ -412,8 +411,8 @@ def decodeCarrier (n len : Nat) : Option Nat :=
   | none => none
 
 /-- The decoded struct-field count at one type index. Non-struct type entries
-    have count zero, matching the Rust disassembler's `struct_field_counts`
-    table; an out-of-range index or malformed type section is rejected. -/
+    have count zero; an out-of-range index or malformed type section is
+    rejected. -/
 def decodeStructFieldCount (n len typeidx : Nat) : Option Nat :=
   match decodeTypes n len with
   | some ti => ti.nfieldIndex[typeidx]?
@@ -1146,8 +1145,8 @@ def decodeTypeSigs (n len : Nat) :
     let decoded := decodeTypeEntries 0 info.entries
     (decoded.1.toArray, decoded.2))
 
-/-- Exact Rust `HostOp` vocabulary. Non-mapped but boundary-known opcodes are
-    `other`, making the exact template comparison decline. -/
+/-- Exact admitted host-operation vocabulary. Non-mapped but boundary-known
+    opcodes are `other`, making exact template comparison decline. -/
 inductive Op
   | localGet (i : Nat)
   | localSet (i : Nat)

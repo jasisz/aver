@@ -1,9 +1,6 @@
--- Lean-side canonical lowering from `expr-fragment-v1` plans to the measured
--- `CertPrelude.WInstr` tree.
---
--- This still targets the semantic instruction tree, not raw Wasm code-entry
--- bytes. v1 raw-byte equality remains verifier-side Rust TCB; this module moves
--- the plan-to-semantics lowering rule into hash-pinned Lean code.
+-- Lean-side canonical lowering from checked plans to the measured
+-- `CertPrelude.WInstr` tree. `PlanBytes` lowers that tree to exact code-entry
+-- bytes, and `AcceptedArtifact` binds it to the decoded artifact.
 import CertPrelude
 import PlanCheck
 
