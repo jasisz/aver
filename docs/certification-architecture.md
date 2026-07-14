@@ -36,21 +36,21 @@ cert/
   ArtifactSoundness.lean
   Final.lean
   ArtifactCertificate.lean
-  ...copies of the audited checker modules...
 ```
 
-The directory deliberately mixes untrusted artifact data with convenient
-copies of audited modules. `aver cert verify` distinguishes them by ownership:
+The directory contains artifact-specific, untrusted certificate data. The
+audited wall, Lean toolchain, and build configuration are not copied into the
+package. `aver cert verify` resolves and authors them independently:
 
 | Input | Treatment during verification |
 |---|---|
 | Wasm artifact | Read directly, hashed, decoded, and regenerated as checker-owned `ArtifactBytes.lean`. |
 | Manifest, sidecars, models, and artifact-specific Lean modules | Treated as untrusted data; names and contents are gated before staging. |
-| Audited Lean modules copied into the certificate | Ignored. Exact sources embedded in the verifier binary are staged instead. |
-| Certificate lakefile, toolchain file, and `.lake` directory | Ignored. The verifier authors its own project and uses the pinned toolchain. |
+| `format.wall_id` | Resolved only against exact walls embedded in the verifier; there is no filesystem, environment, or network fallback. |
+| Checker-owned source names, lakefile, toolchain file, or `.lake` directory injected into the package | Ignored or replaced. The verifier authors a fresh build from the resolved wall and pinned toolchain. |
 | `CheckerWitness.lean` | Never accepted from the certificate; authored by the verifier for each check. |
 
-Checker-owned Lean sources include:
+The wall named by `format.wall_id` includes:
 
 - the schema and decoding layer: `SchemaCore`, `Schema`, `CertPrelude`,
   `CertDecode`, `PlanCheck`, `PlanLower`, `PlanBytes`, `WasmSlice`,
@@ -61,14 +61,20 @@ Checker-owned Lean sources include:
   `IntDispatchSoundness`, `StringSoundness`, `RecursionSoundness`,
   `MutualRecursionSoundness`, and `CompositionSoundness`;
 - the acceptance wall: `AcceptanceSoundnessCore`, the `Discharge*` modules,
-  and `AcceptanceSoundness`;
-- the actual-byte module `ArtifactBytes` and the checker-authored lakefile and
-  witness.
+  and `AcceptanceSoundness`.
 
-The manifest uses public certificate schema version `1`. It pins the Wasm hash,
-the expected theorem and artifact root, sidecar hashes, and the exact SHA-256 of
-every checker-owned wall module. The verifier recomputes every trust-bearing
-pin; manifest agreement alone cannot produce acceptance.
+The verifier separately authors the artifact-specific `ArtifactBytes` module,
+lakefile, and witness. Those files are checker-owned but are not static wall
+sources.
+
+The manifest uses public certificate schema version `1` and package format
+version `1`. It pins the Wasm hash, expected theorem and artifact root, sidecar
+hashes, and one aggregate `wall_id`. The wall identity is a domain-separated
+SHA-256 over the exact toolchain plus every wall filename and byte sequence,
+sorted by filename and length-framed. A changed, added, removed, or renamed
+wall source therefore produces a different identity. Manifest agreement alone
+cannot produce acceptance: the verifier accepts only an identity whose exact
+contents it already embeds.
 
 The public proof roots are:
 
@@ -136,9 +142,10 @@ and ABI role.
 `aver cert verify` performs the following acceptance path:
 
 1. Read the actual Wasm bytes, compute their SHA-256, parse
-   `cert-manifest.json`, and require schema version `1`.
-2. Compare the artifact hash, theorem name, artifact root, and every audited
-   module hash with values compiled into the verifier.
+   `cert-manifest.json`, and require schema and format version `1`.
+2. Compare the artifact hash, theorem name, and artifact root with the fixed
+   verifier contract. Resolve `format.wall_id` to one exact embedded wall and
+   reject unknown identities.
 3. Decode the module and derive export, function, type, local, import, host,
    struct, start-function, capability, and code-entry facts.
 4. Derive non-expression certificate candidates from the decoded module.
@@ -155,9 +162,9 @@ and ABI role.
    checked plans, typed obligation faces, and the artifact literal used by the
    Lean witness.
 8. Create a fresh Lean project. Stage certificate data only after a module-name
-   gate and an elaboration-execution token scan; replace every checker-owned
-   source, `ArtifactBytes.lean`, lakefile, and witness with verifier-authored
-   content.
+   gate and an elaboration-execution token scan; materialize the resolved wall
+   and author `ArtifactBytes.lean`, the lakefile, and the witness from
+   verifier-owned data.
 9. Build the project with the pinned Lean toolchain. A build failure is a
    rejection.
 10. Run the checker-authored witness. It pins the manifest candidates,
@@ -174,8 +181,8 @@ witness can localize a rejected conjunct, but it cannot upgrade a failure to an
 acceptance. If the two modes disagree in that direction, verification fails
 closed as an internal error.
 
-Build caches are performance hints only. Cache keys include the schema,
-toolchain, complete hash wall, and staged sources; cached Lake trees carry an
+Build caches are performance hints only. Cache keys include the schema, exact
+`wall_id`, and artifact-specific staged sources; cached Lake trees carry an
 integrity manifest. A cache hit is still followed by the fresh project build
 and checker-authored witness. A bad cache is discarded or causes rejection,
 never certification.
@@ -248,8 +255,8 @@ The following inputs are outside the trust boundary:
 - manifest claims, ordering, theorem labels, report fields, and sidecar text;
 - artifact-specific Lean definitions and proofs before checker binding and
   kernel checking;
-- certificate copies of audited sources, the certificate lakefile/toolchain,
-  and certificate build caches;
+- package files using checker-owned source, lakefile, toolchain, or witness
+  names, and certificate build caches;
 - source/debug names that are not independently recovered from Wasm exports.
 
 Generated artifact-specific Lean is untrusted proof data, not a trusted proof
@@ -261,8 +268,8 @@ witness fail.
 
 Verification rejects on any of these conditions:
 
-- unsupported schema, missing or malformed manifest fields, or any hash-wall
-  mismatch;
+- unsupported schema or format version, missing or malformed manifest fields,
+  or an unknown `wall_id`;
 - malformed Wasm, ambiguous/invalid export binding, unsupported module shape,
   duplicate obligation order, or inconsistent whole-module facts;
 - missing, malformed, unsupported, noncanonical, or hash-mismatched sidecars;

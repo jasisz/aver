@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 /// Public certificate-package format understood by this verifier.
 pub const FORMAT_VERSION: u32 = 1;
 pub const CURRENT_ID: &str =
-    "sha256:1640257b46af06181796c2ca9e8dedc72089de5222f924dba8b9edd2cbd2652d";
+    "sha256:4d5d1b61e1d6e2544fd0aed769349bd9d98dcc54fd9c27bb8591caa0f4f0dddb";
 
 pub const LEAN_TOOLCHAIN: &str = include_str!("../../../tools/certkit/prelude/lean-toolchain");
 
