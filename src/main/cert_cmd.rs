@@ -112,8 +112,8 @@ enum WitnessMode {
 
 /// True for source files authored by the checker rather than accepted from a
 /// certificate package.
-fn is_checker_owned(name: &str) -> bool {
-    cert::wall::SOURCES.iter().any(|source| source.name == name)
+fn is_checker_owned(name: &str, wall: &cert::wall::Wall) -> bool {
+    wall.sources.iter().any(|source| source.name == name)
         || matches!(
             name,
             "ArtifactBytes.lean" | "lakefile.lean" | "CheckerWitness.lean"
@@ -253,9 +253,9 @@ pub(super) fn cmd_cert_explain(artifact: &str, cert_dir: &str) {
 /// Read every `*.lean` file in the cert dir as `(name, content)` pairs. Used only
 /// to extract the model recursion operator (`+`/`*`); the content is untrusted and
 /// never executed.
-fn read_lean_files(cert_dir: &Path) -> Vec<(String, String)> {
-    // Checker-owned audited files are staged into the cert dir but are kernel
-    // infrastructure, never source models; feeding them to the line-level model
+fn read_lean_files(cert_dir: &Path, wall: &cert::wall::Wall) -> Vec<(String, String)> {
+    // Checker-owned audited files are kernel infrastructure, never source
+    // models; feeding them to the line-level model
     // parser lets an audited-file type name (e.g. the decoder's `Op`) shadow a
     // same-named model inductive, with the winner decided by filesystem
     // iteration order. Exclude them, and sort what remains so extraction is
@@ -270,7 +270,7 @@ fn read_lean_files(cert_dir: &Path) -> Vec<(String, String)> {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string();
-                if is_checker_owned(&name) {
+                if is_checker_owned(&name, wall) {
                     continue;
                 }
                 if let Ok(content) = std::fs::read_to_string(&path) {
@@ -719,7 +719,7 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
     //     (untrusted) model the kernel witness proves the bytes against, so
     //     reading the operator here does not widen trust — `lake` rejects any
     //     mismatch. Only the `def X__fuel` operator is read; nothing is executed.
-    let model_files = read_lean_files(cert_dir);
+    let model_files = read_lean_files(cert_dir, wall);
     // Exports the manifest routes through checked expr-fragment plan sidecars
     // are excluded from legacy byte classification BY NAME: a plan-first
     // export that also matches a legacy template (the straight-line integer
@@ -1481,7 +1481,7 @@ fn assemble_build(
             continue; // skip `.lake/` and any other subdirectory
         }
         let name = entry.file_name().to_string_lossy().into_owned();
-        if !name.ends_with(".lean") || is_checker_owned(&name) {
+        if !name.ends_with(".lean") || is_checker_owned(&name, wall) {
             continue;
         }
         // Gate the file NAME: it must be a plain `Foo.lean` module identifier,
@@ -1509,14 +1509,14 @@ fn assemble_build(
         "ArtifactBytes.lean",
         &cert::render_artifact_bytes_lean(wasm_bytes),
     )?;
-    // Preserve the production lakefile's historical root order exactly.
-    roots.extend(
-        wall.build_roots[..wall.build_roots.len() - 1]
-            .iter()
-            .map(|root| (*root).to_string()),
-    );
+    let mut wall_roots = wall
+        .sources
+        .iter()
+        .map(|source| source.name.strip_suffix(".lean").unwrap().to_string())
+        .collect::<Vec<_>>();
+    wall_roots.sort();
+    roots.extend(wall_roots);
     roots.push("ArtifactBytes".to_string());
-    roots.push("CertPrelude".to_string());
 
     // Checker-authored lakefile: fixed `srcDir := "."`, roots derived from the
     // (gated) files actually present.

@@ -49,6 +49,56 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
     }
 }
 
+/// Materialize the checker-owned wall only for tests that intentionally invoke
+/// Lake directly. Production certificate packages carry just `format.wall_id`;
+/// `aver cert verify` performs the equivalent staging in a fresh directory.
+fn materialize_wall(cert_dir: &std::path::Path) {
+    for source in aver::codegen::cert::wall::SOURCES {
+        std::fs::write(cert_dir.join(source.name), source.contents).unwrap();
+    }
+    std::fs::write(
+        cert_dir.join("lean-toolchain"),
+        aver::codegen::cert::wall::LEAN_TOOLCHAIN,
+    )
+    .unwrap();
+
+    fn collect_roots(base: &std::path::Path, dir: &std::path::Path, roots: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_dir() {
+                collect_roots(base, &entry.path(), roots);
+                continue;
+            }
+            if entry.path().extension().and_then(|ext| ext.to_str()) != Some("lean") {
+                continue;
+            }
+            let relative = entry.path().strip_prefix(base).unwrap().to_path_buf();
+            let mut components = relative
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            let leaf = components.last_mut().unwrap();
+            leaf.truncate(leaf.len() - ".lean".len());
+            roots.push(components.join("."));
+        }
+    }
+
+    let mut roots = Vec::new();
+    collect_roots(cert_dir, cert_dir, &mut roots);
+    roots.sort();
+    roots.dedup();
+    let roots = roots
+        .iter()
+        .map(|root| format!("`{root}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let lakefile = format!(
+        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
+         @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  roots := #[{roots}]\n"
+    );
+    std::fs::write(cert_dir.join("lakefile.lean"), lakefile).unwrap();
+}
+
 fn verify_certificate(wasm: &std::path::Path, cert_dir: &std::path::Path) -> (bool, String) {
     let output = aver_command()
         .arg("cert")
@@ -68,6 +118,7 @@ fn verify_certificate(wasm: &std::path::Path, cert_dir: &std::path::Path) -> (bo
 }
 
 fn assert_certificate_target_builds(cert_dir: &std::path::Path, case: &str) {
+    materialize_wall(cert_dir);
     let output = Command::new("lake")
         .current_dir(cert_dir)
         .args(["build", "Certificate"])
@@ -696,12 +747,16 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
         "certificate manifest must not expose historical v3 keys: {manifest}"
     );
     for source in audited_modules {
-        let emitted = std::fs::read_to_string(cert_dir.join(source.name))
-            .unwrap_or_else(|e| panic!("emitted {} exists: {e}", source.name));
-        assert_eq!(
-            emitted, source.contents,
-            "emitted {} must be byte-identical to its embedded audited source",
+        assert!(
+            !cert_dir.join(source.name).exists(),
+            "checker-owned wall source {} must be resolved by wall_id, not copied",
             source.name,
+        );
+    }
+    for checker_owned in ["lean-toolchain", "lakefile.lean"] {
+        assert!(
+            !cert_dir.join(checker_owned).exists(),
+            "checker-owned {checker_owned} must not be copied into the certificate package"
         );
     }
     assert_eq!(
@@ -1052,6 +1107,7 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
     }
 
     let started = std::time::Instant::now();
+    materialize_wall(&cert_dir);
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")
@@ -1392,6 +1448,7 @@ fn certify_straight_line_fixture_lake_builds_kernel_clean() {
         "expected addTwo certified, got {certified:?}"
     );
 
+    materialize_wall(&cert_dir);
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")
@@ -1577,6 +1634,7 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
         factorial_obligation.contains("totalityRole := .mul"),
         "factorial must select the byte-checked mul-totality role:\n{factorial_obligation}"
     );
+    materialize_wall(&cert_dir);
     let schema_core = std::fs::read_to_string(cert_dir.join("SchemaCore.lean")).unwrap();
     let totality = schema_core
         .split_once("def Obligation.holdsTotal")
@@ -1801,6 +1859,7 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
             }
         }
 
+        materialize_wall(&cert_dir);
         let build = Command::new("lake")
             .current_dir(&cert_dir)
             .arg("build")
@@ -1923,6 +1982,7 @@ fn certify_verbatim_variant_dispatch_lake_builds_kernel_clean() {
         "verbatim dispatch must not emit bespoke proofs:\n{certificate}"
     );
 
+    materialize_wall(&cert_dir);
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")
@@ -2094,6 +2154,7 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
         "String.eq must not emit bespoke proofs:\n{certificate}"
     );
 
+    materialize_wall(&cert_dir);
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")
@@ -2326,6 +2387,7 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         "String.concat must not emit bespoke proofs:\n{certificate}"
     );
 
+    materialize_wall(&cert_dir);
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")
@@ -2414,6 +2476,7 @@ fn certify_composition_fixture_lake_builds_kernel_clean() {
         .and_then(|c| c["class"].as_str())
         .unwrap_or("");
     assert_eq!(class, "cross-function-composition", "wrong class for quad");
+    materialize_wall(&cert_dir);
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")
@@ -2635,6 +2698,7 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
                 );
             }
         }
+        materialize_wall(&cert_dir);
         let build = Command::new("lake")
             .current_dir(&cert_dir)
             .arg("build")
@@ -2744,6 +2808,7 @@ fn certify_carrier_at_type_index_64_lake_builds_kernel_clean() {
         sum_big["theorem"],
         "AcceptanceSoundness.recursion_claim_discharges"
     );
+    materialize_wall(&cert_dir);
     let build = Command::new("lake")
         .current_dir(&cert_dir)
         .arg("build")

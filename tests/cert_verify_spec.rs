@@ -790,9 +790,8 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         std::fs::write(cert.join("Final.lean"), WEAK_FINAL).unwrap();
         // Redirect the cert's own lakefile at the decoy tree.
         let lf = cert.join("lakefile.lean");
-        let src = std::fs::read_to_string(&lf).unwrap();
-        let redirected = src.replace("srcDir := \".\"", "srcDir := \"hidden\"");
-        assert_ne!(src, redirected, "lakefile srcDir shape changed");
+        let redirected = "import Lake\nopen Lake DSL\n\npackage «hostile»\n\n\
+             @[default_target]\nlean_lib «Hostile» where\n  srcDir := \"hidden\"\n  roots := #[`Final]\n";
         std::fs::write(&lf, redirected).unwrap();
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &cert);
         assert!(!ok, "A3 srcDir subversion must fail:\n{out}");

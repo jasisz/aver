@@ -1,7 +1,8 @@
 // ---- rendering -----------------------------------------------------------
 
-/// Write the full `cert/` project. `model_files` are the (path, content) pairs
-/// from the reused `aver proof` Lean emission (AverCommon + model modules).
+/// Write the artifact-specific `cert/` package. `model_files` are the
+/// `(path, content)` pairs from the reused `aver proof` Lean emission. The
+/// checker-owned wall and build configuration are resolved from `wall_id`.
 pub fn write_project(
     out_dir: &Path,
     wasm_name: &str,
@@ -11,11 +12,6 @@ pub fn write_project(
 ) -> Result<(), String> {
     let cert_dir = out_dir.join("cert");
     std::fs::create_dir_all(&cert_dir).map_err(|e| format!("create cert dir: {e}"))?;
-
-    // Copy in the semantics prelude + toolchain (single source of truth).
-    write(&cert_dir, "CertPrelude.lean", CERT_PRELUDE)?;
-    write(&cert_dir, "CertDecode.lean", CERT_DECODE)?;
-    write(&cert_dir, "lean-toolchain", LEAN_TOOLCHAIN)?;
 
     // Copy the model files (AverCommon + <Module>.lean) verbatim.
     let mut model_roots: Vec<String> = Vec::new();
@@ -44,58 +40,8 @@ pub fn write_project(
         "Module.lean",
         &render_module(analysis, wasm_name, &sha),
     )?;
-    // Audited statement schema (fixed) + generated manifest literal + the one
-    // final theorem that composes the per-export obligations.
-    write(&cert_dir, "Schema.lean", CERT_SCHEMA)?;
-    write(&cert_dir, "SchemaCore.lean", CERT_SCHEMA_CORE)?;
-    write(&cert_dir, "PlanCheck.lean", CERT_PLAN_CHECK)?;
-    write(&cert_dir, "PlanLower.lean", CERT_PLAN_LOWER)?;
-    write(&cert_dir, "PlanBytes.lean", CERT_PLAN_BYTES)?;
-    write(&cert_dir, "WasmSlice.lean", CERT_WASM_SLICE)?;
-    write(
-        &cert_dir,
-        "ExprFragmentAccepted.lean",
-        CERT_EXPR_FRAGMENT_ACCEPTED,
-    )?;
-    write(&cert_dir, "AcceptedArtifact.lean", CERT_ACCEPTED_ARTIFACT)?;
-    write(
-        &cert_dir,
-        "AcceptedArtifactCore.lean",
-        CERT_ACCEPTED_ARTIFACT_CORE,
-    )?;
-    for (name, contents) in [
-        ("ExprFragmentSemantics.lean", CERT_EXPR_FRAGMENT_SEMANTICS),
-        ("InterpreterSequencing.lean", CERT_INTERPRETER_SEQUENCING),
-        ("ExprFragmentSoundness.lean", CERT_EXPR_FRAGMENT_SOUNDNESS),
-        ("FieldProjectionSoundness.lean", CERT_FIELD_PROJECTION_SOUNDNESS),
-        ("ConstructVerbatimSoundness.lean", CERT_CONSTRUCT_VERBATIM_SOUNDNESS),
-        ("IntDispatchSoundness.lean", CERT_INT_DISPATCH_SOUNDNESS),
-        ("StringSoundness.lean", CERT_STRING_SOUNDNESS),
-        ("RecursionSoundness.lean", CERT_RECURSION_SOUNDNESS),
-        ("MutualRecursionSoundness.lean", CERT_MUTUAL_RECURSION_SOUNDNESS),
-        ("CompositionSoundness.lean", CERT_COMPOSITION_SOUNDNESS),
-        ("AcceptanceSoundnessCore.lean", CERT_ACCEPTANCE_SOUNDNESS_CORE),
-        (
-            "DischargeExprFragment.lean",
-            CERT_DISCHARGE_EXPR_FRAGMENT,
-        ),
-        ("DischargeFieldProjection.lean", CERT_DISCHARGE_FIELD_PROJECTION),
-        ("DischargeConstruct.lean", CERT_DISCHARGE_CONSTRUCT),
-        ("DischargeVerbatim.lean", CERT_DISCHARGE_VERBATIM),
-        ("DischargeString.lean", CERT_DISCHARGE_STRING),
-        (
-            "DischargeIntDispatch.lean",
-            CERT_DISCHARGE_INT_DISPATCH,
-        ),
-        ("DischargeRecursion.lean", CERT_DISCHARGE_RECURSION),
-        (
-            "DischargeComposition.lean",
-            CERT_DISCHARGE_COMPOSITION,
-        ),
-        ("AcceptanceSoundness.lean", CERT_ACCEPTANCE_SOUNDNESS),
-    ] {
-        write(&cert_dir, name, contents)?;
-    }
+    // Checker-owned Lean sources are identified by `format.wall_id` and are
+    // materialized by the verifier. They are not duplicated in the package.
     write(
         &cert_dir,
         "ArtifactBytes.lean",
@@ -146,8 +92,6 @@ pub fn write_project(
         "ArtifactSoundness.lean",
         &render_artifact_soundness(),
     )?;
-    write(&cert_dir, "lakefile.lean", &render_lakefile(&model_roots))?;
-
     std::fs::write(
         cert_dir.join("cert-manifest.json"),
         render_manifest(analysis, &model_info, wasm_name, &sha),

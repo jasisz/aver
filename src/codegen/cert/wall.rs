@@ -181,42 +181,6 @@ pub const SOURCES: [Source; 31] = [
     },
 ];
 
-/// Audited modules staged in every checker-owned build, in historical build
-/// order. ArtifactBytes and certificate/model modules are deliberately absent.
-pub const BUILD_ROOTS: [&str; 31] = [
-    "SchemaCore",
-    "Schema",
-    "PlanCheck",
-    "PlanLower",
-    "PlanBytes",
-    "WasmSlice",
-    "ExprFragmentAccepted",
-    "AcceptedArtifactCore",
-    "AcceptedArtifact",
-    "ExprFragmentSemantics",
-    "InterpreterSequencing",
-    "ExprFragmentSoundness",
-    "FieldProjectionSoundness",
-    "ConstructVerbatimSoundness",
-    "IntDispatchSoundness",
-    "StringSoundness",
-    "RecursionSoundness",
-    "MutualRecursionSoundness",
-    "CompositionSoundness",
-    "AcceptanceSoundnessCore",
-    "DischargeExprFragment",
-    "DischargeFieldProjection",
-    "DischargeConstruct",
-    "DischargeVerbatim",
-    "DischargeString",
-    "DischargeIntDispatch",
-    "DischargeRecursion",
-    "DischargeComposition",
-    "AcceptanceSoundness",
-    "CertDecode",
-    "CertPrelude",
-];
-
 /// Roots whose complete import graph is artifact-independent and can therefore
 /// be cached before a certificate is seen.
 pub const PRISTINE_ROOTS: [&str; 29] = [
@@ -254,14 +218,12 @@ pub const PRISTINE_ROOTS: [&str; 29] = [
 #[derive(Debug)]
 pub struct Wall {
     pub sources: &'static [Source],
-    pub build_roots: &'static [&'static str],
     pub pristine_roots: &'static [&'static str],
     pub toolchain: &'static str,
 }
 
 pub static CURRENT: Wall = Wall {
     sources: &SOURCES,
-    build_roots: &BUILD_ROOTS,
     pristine_roots: &PRISTINE_ROOTS,
     toolchain: LEAN_TOOLCHAIN,
 };

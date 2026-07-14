@@ -526,57 +526,6 @@ fn render_final() -> String {
     )
 }
 
-fn render_lakefile(model_roots: &[String]) -> String {
-    let mut roots = vec!["`CertPrelude".to_string(), "`Contracts".to_string()];
-    roots.push("`CertDecode".to_string());
-    for r in model_roots {
-        roots.push(format!("`{r}"));
-    }
-    roots.push("`Module".to_string());
-    roots.push("`SchemaCore".to_string());
-    roots.push("`Schema".to_string());
-    roots.push("`PlanCheck".to_string());
-    roots.push("`PlanLower".to_string());
-    roots.push("`PlanBytes".to_string());
-    roots.push("`WasmSlice".to_string());
-    roots.push("`ExprFragmentAccepted".to_string());
-    roots.push("`AcceptedArtifactCore".to_string());
-    roots.push("`AcceptedArtifact".to_string());
-    roots.push("`ExprFragmentSemantics".to_string());
-    roots.push("`InterpreterSequencing".to_string());
-    roots.push("`ExprFragmentSoundness".to_string());
-    roots.push("`FieldProjectionSoundness".to_string());
-    roots.push("`ConstructVerbatimSoundness".to_string());
-    roots.push("`IntDispatchSoundness".to_string());
-    roots.push("`StringSoundness".to_string());
-    roots.push("`RecursionSoundness".to_string());
-    roots.push("`MutualRecursionSoundness".to_string());
-    roots.push("`CompositionSoundness".to_string());
-    roots.push("`AcceptanceSoundnessCore".to_string());
-    roots.push("`DischargeExprFragment".to_string());
-    roots.push("`DischargeFieldProjection".to_string());
-    roots.push("`DischargeConstruct".to_string());
-    roots.push("`DischargeVerbatim".to_string());
-    roots.push("`DischargeString".to_string());
-    roots.push("`DischargeIntDispatch".to_string());
-    roots.push("`DischargeRecursion".to_string());
-    roots.push("`DischargeComposition".to_string());
-    roots.push("`AcceptanceSoundness".to_string());
-    roots.push("`ArtifactBytes".to_string());
-    roots.push("`Plans".to_string());
-    roots.push("`Manifest".to_string());
-    roots.push("`Certificate".to_string());
-    roots.push("`Final".to_string());
-    roots.push("`Artifact".to_string());
-    roots.push("`ArtifactSoundness".to_string());
-    roots.push("`ArtifactCertificate".to_string());
-    format!(
-        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
-         @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  roots := #[{}]\n",
-        roots.join(", ")
-    )
-}
-
 fn render_manifest(
     analysis: &Analysis,
     model_info: &ModelInfo,

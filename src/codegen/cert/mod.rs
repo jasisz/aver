@@ -1,24 +1,17 @@
 //! Stage B artifact-certificate emitter: `aver compile --target wasm-gc --certify`.
 //!
-//! Emits, next to `<name>.wasm`, a self-contained Lean `cert/` project that
-//! `lake build`s green with kernel-clean theorems for the user functions that
-//! fall into the three measured classes:
-//!
-//! * straight-line `Int -> Int` add-a-constant (the `addTwo` kill-fast shape),
-//! * single-argument self-recursion of the `sumTo` shape
-//!   (`match n <= 0 { true -> 0; false -> n + f(n - 1) }`),
-//! * two-argument accumulator self-recursion of the `countDown` shape
-//!   (`match n <= 0 { true -> acc; false -> f(n - 1, acc + n) }`).
+//! Emits, next to `<name>.wasm`, an artifact-specific `cert/` package. The
+//! package names its checker-owned Lean soundness wall by `format.wall_id`;
+//! `aver cert verify` resolves the exact embedded wall and authors a fresh
+//! build instead of trusting or duplicating build infrastructure in the cert.
 //!
 //! Everything else is FAIL-CLOSED: listed in `cert-manifest.json` as
 //! `source-level-only` with a reason. No weaker theorem is ever emitted.
 //!
-//! The certified-function bodies are read back from the module bytes the
-//! compiler just emitted (the same bytes whose sha256 the certificate pins),
-//! matched against the two structural templates, and re-rendered as
-//! `CertPrelude.WInstr` data. A function whose real emitted body does not match
-//! a template is declined — so the `WInstr` data in `Module.lean` is exactly
-//! the shape present in the hashed bytes.
+//! Certified-function bodies are read back from the module bytes the compiler
+//! just emitted, checked against the admitted profiles, and re-rendered as
+//! `CertPrelude.WInstr` data. Any body that cannot be bound to an admitted
+//! obligation is declined rather than assigned a weaker theorem.
 //!
 //! `aver cert verify` re-runs the audited Rust byte pipeline as a fail-fast,
 //! then the accepted-artifact witness uses `CertDecode` to compute
