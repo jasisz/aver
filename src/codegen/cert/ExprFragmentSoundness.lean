@@ -11,8 +11,9 @@ open ExprFragmentSemantics InterpreterSequencing
 
 /-! ## The call/grammar fence
 
-`checkExprFragmentRawPlan` checks the representation types and ANF stack
-discipline.  Runtime call arities are necessarily a separate hypothesis: they
+`checkExprFragmentRawPlan` checks the representation types, ANF stack
+discipline, and the general-Wasm exact-bit Float/NaN admission boundary.
+Runtime call arities are necessarily a separate hypothesis: they
 live in the byte-derived host/code tables, not in the raw plan.  `CallsOK` is
 the exact missing fence.  It also excludes `selfCall`, whose proof face is the
 separate recursion family rather than expr-fragment-v1.

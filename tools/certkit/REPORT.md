@@ -67,6 +67,13 @@ VM/wasm round-trip decimals are re-packed) because Lean's `toString Float` is
 lossy — all three engines agree to the bit, including sub-ULP cases where the VM
 and wasm formatters print different decimals for the same double.
 
+This finite decimal-generated sample did not cover arbitrary raw-bit NaN
+payloads, so it is not evidence for an exact-bit Float arithmetic theorem over
+all `UInt64` inputs. The certification gate now declines Float-producing
+`f64.add`/`f64.mul` plans in the general WebAssembly profile, and a separate
+raw-bit Wasmtime regression exercises payload-bearing NaNs under both the
+general and canonicalizing engine profiles.
+
 ```
 fixtures: 4   cases compared: 1440   divergences: 0
 

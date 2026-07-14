@@ -104,6 +104,13 @@ projection is explicit; there is no generic raw-`WVal` escape hatch that lets a
 representation-only plan claim an arbitrary Aver meaning. A fragment without
 an admitted source or family bridge is declined.
 
+The general Wasm profile does not admit an exact-bit Float result whose plan
+contains `f64.add` or `f64.mul`. WebAssembly permits multiple NaN sign/payload
+results for those operations, while `floatBitsRepr` names one exact `UInt64`.
+Rust admission and audited Lean `PlanCheck` enforce the same boundary.
+Payload-independent Bool results such as `f64.le`, plus Float constants and
+pass-through values, remain admitted.
+
 The plan checker independently validates claimed types, refinements, effects,
 arity, host roles, struct bindings, and result shape. Plan annotations do not
 grant facts merely by being present. In particular, canonical booleans are
@@ -291,6 +298,9 @@ total policy with its additional termination and runtime-contract premises.
 - Certification covers only admitted Wasm profiles and named runtime
   contracts. It does not establish arbitrary Wasm safety, equivalence for
   uncertified exports, or correctness of effects outside those contracts.
+- Float-producing `f64.add` and `f64.mul` require a relational NaN result face
+  or a separately declared deterministic NaN profile before they can be
+  admitted as all-input exact-bit claims.
 - A `SymPlan` expresses source meaning only for admitted source constructs.
   Representation-only shapes without a checked source or family bridge are not
   promoted to a source-level claim.

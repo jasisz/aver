@@ -290,12 +290,90 @@ def checkSymBlockFuel : Nat → List SymTy → SymBlock → Bool
 def checkSymBlock (params : List SymTy) (block : SymBlock) : Bool :=
   checkSymBlockFuel maxFuel params block
 
+/-- Exhaustive so extending `FragPrim` requires an explicit NaN-profile choice. -/
+def primNeedsRelationalFloatResult : FragPrim → Bool
+  | .f64Add => true
+  | .f64Mul => true
+  | .f64Le => false
+  | .i64Eq => false
+  | .i64LeS => false
+  | .i64LtS => false
+  | .i64GeS => false
+  | .i32LtS => false
+  | .i32GtS => false
+
+/-- The general WebAssembly profile gives `f64.add`/`f64.mul` a set-valued
+    result when they produce NaN: more than one sign/payload bit pattern may
+    be valid. The current Float codomain face names one exact `UInt64`, so a
+    Float-result plan containing either operation needs a relational result
+    model before it can be admitted. Fuel exhaustion rejects fail-closed. The
+    node match is deliberately exhaustive so extending `FragNodeKind` forces an
+    explicit decision about nested blocks and Float-bit observation here.
+
+    A Bool-result plan is intentionally outside this gate. In the current
+    grammar the only Float-to-Bool primitive is `f64.le`, whose result is false
+    for every NaN independently of its sign or payload. -/
+def blockNeedsRelationalFloatResultFuel : Nat → FragBlock → Bool
+  | 0, _ => true
+  | fuel + 1, block =>
+      block.nodes.any fun node =>
+        match node.kind with
+        | .prim op _ => primNeedsRelationalFloatResult op
+        | .ifElse _ thenBlock elseBlock =>
+            blockNeedsRelationalFloatResultFuel fuel thenBlock ||
+              blockNeedsRelationalFloatResultFuel fuel elseBlock
+        | .local _ => false
+        | .constBool _ => false
+        | .constI64 _ => false
+        | .constI32 _ => false
+        | .constF64Bits _ => false
+        | .structGet _ _ => false
+        | .structGetUser _ _ _ => false
+        | .refIsNull _ => false
+        | .hostCall _ _ _ => false
+        | .selfCall _ _ _ => false
+
+def exactBitFloatResultAllowed (plan : ExprFragmentRawPlan) : Bool :=
+  match plan.result with
+  | .f64 => !blockNeedsRelationalFloatResultFuel maxFuel plan.body
+  | _ => true
+
 def checkExprFragmentRawPlan (plan : ExprFragmentRawPlan) : Bool :=
   plan.profile = "expr-fragment-v1" &&
+    exactBitFloatResultAllowed plan &&
     checkBlock plan.params plan.body &&
     match lookupNode plan.body.nodes plan.body.result with
     | some n => sameTy n.ty plan.result
     | none => false
+
+/-! Executable regression pins for the general-Wasm NaN boundary. -/
+
+private def binaryFloatProbe (op : FragPrim) (result : FragTy) : ExprFragmentRawPlan :=
+  { profile := "expr-fragment-v1", params := [.f64, .f64], result := result,
+    body := { nodes :=
+      [{ id := 0, ty := .f64, kind := .local 0 },
+       { id := 1, ty := .f64, kind := .local 1 },
+       { id := 2, ty := result, kind := .prim op [0, 1] }], result := 2 } }
+
+private def nestedFloatProbe (op : FragPrim) : ExprFragmentRawPlan :=
+  { profile := "expr-fragment-v1", params := [.boolI32, .f64, .f64], result := .f64,
+    body := { nodes :=
+      [{ id := 0, ty := .boolI32, kind := .local 0 },
+       { id := 1, ty := .f64, kind := .ifElse 0
+          { nodes :=
+            [{ id := 0, ty := .f64, kind := .local 1 },
+             { id := 1, ty := .f64, kind := .local 2 },
+             { id := 2, ty := .f64, kind := .prim op [0, 1] }], result := 2 }
+          { nodes :=
+            [{ id := 0, ty := .f64, kind := .local 1 }], result := 0 } }], result := 1 } }
+
+example : checkExprFragmentRawPlan (binaryFloatProbe .f64Add .f64) = false := rfl
+example : checkExprFragmentRawPlan (binaryFloatProbe .f64Mul .f64) = false := rfl
+example : checkExprFragmentRawPlan (binaryFloatProbe .f64Le .boolI32) = true := rfl
+example : checkBlock (nestedFloatProbe .f64Add).params
+    (nestedFloatProbe .f64Add).body = true := rfl
+example : checkExprFragmentRawPlan (nestedFloatProbe .f64Add) = false := rfl
+example : checkExprFragmentRawPlan (nestedFloatProbe .f64Mul) = false := rfl
 
 def checkRecursionRawPlan (plan : RecursionRawPlan) : Bool :=
   plan.profile = "recursion-plan-v1" &&

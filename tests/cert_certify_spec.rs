@@ -94,6 +94,32 @@ fn lean_obligation_def<'a>(manifest_lean: &'a str, name: &str) -> &'a str {
         .map_or(&manifest_lean[start..], |(definition, _)| definition)
 }
 
+fn instantiate_float_probe(
+    wasm: &[u8],
+    canonicalize_nans: bool,
+) -> (wasmtime::Store<()>, wasmtime::Instance) {
+    let mut config = wasmtime::Config::new();
+    config.wasm_gc(true);
+    config.wasm_tail_call(true);
+    config.wasm_function_references(true);
+    config.wasm_reference_types(true);
+    config.wasm_multi_value(true);
+    config.wasm_bulk_memory(true);
+    config.cranelift_nan_canonicalization(canonicalize_nans);
+    config.max_wasm_stack(8 * 1024 * 1024);
+    config.async_stack_size(12 * 1024 * 1024);
+    let engine = wasmtime::Engine::new(&config).expect("Wasmtime Float probe engine");
+    let module = wasmtime::Module::new(&engine, wasm).expect("generated cert goals Wasm");
+    let mut store = wasmtime::Store::new(&engine, ());
+    let instance = wasmtime::Instance::new(&mut store, &module, &[])
+        .expect("instantiate generated cert goals Wasm");
+    (store, instance)
+}
+
+fn is_arithmetic_nan_bits(bits: u64) -> bool {
+    bits & 0x7ff0_0000_0000_0000 == 0x7ff0_0000_0000_0000 && bits & 0x0008_0000_0000_0000 != 0
+}
+
 #[test]
 fn certify_goal_matrix_manifest_tracks_current_surface() {
     // This fixture is the dashboard for "how much do we certify now?". Larger
@@ -195,7 +221,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
-        13,
+        15,
         "all 36 module exports must be certified or explicitly declared"
     );
     assert!(declared_uncertified.iter().all(|entry| {
@@ -217,6 +243,73 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         serde_json::json!({"present": false, "function_index": null})
     );
     let wasm = std::fs::read(out_dir.join("cert_goals.wasm")).unwrap();
+    // Exercise the actual generated exports with raw positive/negative,
+    // quiet/signalling, non-canonical NaN payloads in both operand positions.
+    // The ordinary WebAssembly profile may return any arithmetic NaN here,
+    // while Wasmtime's deterministic/canonicalizing profile returns the
+    // positive canonical NaN. That set-valued boundary is why Float-producing
+    // arithmetic is source-level-only until its certificate codomain becomes
+    // relational. The Bool comparison remains sign/payload-independent.
+    const RAW_NANS: [(&str, u64); 4] = [
+        ("positive qNaN payload", 0x7ff8_0000_0000_0001),
+        ("negative qNaN payload", 0xfff8_0000_0000_0042),
+        ("positive sNaN payload", 0x7ff0_0000_0000_0001),
+        ("negative sNaN payload", 0xfff0_0000_0000_0042),
+    ];
+    const ONE: u64 = 0x3ff0_0000_0000_0000;
+    const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
+    for canonicalize_nans in [false, true] {
+        let profile = if canonicalize_nans {
+            "canonicalizing"
+        } else {
+            "general"
+        };
+        let (mut store, instance) = instantiate_float_probe(&wasm, canonicalize_nans);
+        let add = instance
+            .get_typed_func::<(f64, f64), f64>(&mut store, "floatAddGoal")
+            .expect("floatAddGoal export");
+        let mul_add = instance
+            .get_typed_func::<(f64, f64), f64>(&mut store, "floatMulAddGoal")
+            .expect("floatMulAddGoal export");
+        let le = instance
+            .get_typed_func::<(f64, f64), i32>(&mut store, "floatLeGoal")
+            .expect("floatLeGoal export");
+
+        for (nan_name, nan_bits) in RAW_NANS {
+            let nan = f64::from_bits(nan_bits);
+            let one = f64::from_bits(ONE);
+            for (position, raw_args) in [("lhs", (nan, one)), ("rhs", (one, nan))] {
+                for (export, function) in [("floatAddGoal", &add), ("floatMulAddGoal", &mul_add)] {
+                    let result_bits = function
+                        .call(&mut store, raw_args)
+                        .unwrap_or_else(|error| {
+                            panic!("run {profile} {export} with {nan_name} on {position}: {error}")
+                        })
+                        .to_bits();
+                    if canonicalize_nans {
+                        assert_eq!(
+                            result_bits, CANONICAL_NAN,
+                            "canonicalizing {export} must return the positive canonical NaN \
+                             for {nan_name} on {position}"
+                        );
+                    } else {
+                        assert!(
+                            is_arithmetic_nan_bits(result_bits),
+                            "general {export} must return an allowed arithmetic NaN for \
+                             {nan_name} on {position}, got 0x{result_bits:016x}"
+                        );
+                    }
+                }
+                assert_eq!(
+                    le.call(&mut store, raw_args).unwrap_or_else(|error| {
+                        panic!("run {profile} floatLeGoal with {nan_name} on {position}: {error}")
+                    }),
+                    0,
+                    "f64.le must be false for {nan_name} on {position} in the {profile} profile"
+                );
+            }
+        }
+    }
     let (box_idx, add_idx, mul_idx, sub_idx) =
         aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
     assert_eq!(
@@ -273,8 +366,6 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         ("intLessZero", "expr-fragment-v1"),
         ("intEqZero", "expr-fragment-v1"),
         ("boolAndGoal", "expr-fragment-v1"),
-        ("floatAddGoal", "expr-fragment-v1"),
-        ("floatMulAddGoal", "expr-fragment-v1"),
         ("floatLeGoal", "expr-fragment-v1"),
     ]
     .into_iter()
@@ -292,7 +383,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         .collect::<Vec<_>>();
     assert_eq!(
         expr_entries.len(),
-        9,
+        7,
         "expr-fragment sidecar count changed; update this deliberately"
     );
     let mut sym_sidecar_names = BTreeSet::new();
@@ -337,8 +428,6 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     assert!(
         sym_sidecar_names.contains("addTwo")
             && sym_sidecar_names.contains("userName")
-            && sym_sidecar_names.contains("floatAddGoal")
-            && sym_sidecar_names.contains("floatMulAddGoal")
             && sym_sidecar_names.contains("floatLeGoal")
             && sym_sidecar_names.contains("boolAndGoal")
             && sym_sidecar_names.contains("intLessZero")
@@ -349,26 +438,11 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     let plans_lean = std::fs::read_to_string(out_dir.join("cert").join("Plans.lean"))
         .expect("Plans.lean exists");
     assert!(
-        plans_lean.contains("def floatAddGoalSymPlan : SymRawPlan"),
-        "direct float fragment should render a source-level SymPlan:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains(".prim .floatAdd [0, 1]"),
-        "floatAddGoal SymPlan should expose source-level float add:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains("checkSymRawPlan floatAddGoalSymPlan = true := rfl"),
-        "direct SymPlan projection should be accepted by the Lean-side source checker:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains("encodeSymRawPlanToExprFragmentRawPlan [(.box, ")
-            && plans_lean.contains(" floatAddGoalSymPlan =\n  some floatAddGoalPlan := rfl"),
-        "direct SymPlan projection should encode, under the byte-derived host-role table, \
-         to the byte-bound ExprFragment plan:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains("some floatAddGoalPlan := rfl"),
-        "SymPlan encoder witness should target the existing ExprFragment plan:\n{plans_lean}"
+        !plans_lean.contains("floatAddGoalPlan")
+            && !plans_lean.contains("floatMulAddGoalPlan")
+            && plans_lean.contains("def floatLeGoalSymPlan : SymRawPlan")
+            && plans_lean.contains(".prim .floatLe [0, 1]"),
+        "only the payload-independent Float comparison should render a certificate plan:\n{plans_lean}"
     );
     assert!(
         plans_lean.contains("def intLessZeroSymPlan : SymRawPlan"),
@@ -460,12 +534,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "artifact should carry source-level fragment claims:\n{artifact_lean}"
     );
     assert!(
-        artifact_lean.contains("plan := AverCert.Plans.floatAddGoalSymPlan"),
-        "source-projectable fragment should be claimed through SymPlan:\n{artifact_lean}"
-    );
-    assert!(
-        !artifact_lean.contains("plan := AverCert.Plans.floatAddGoalPlan"),
-        "source-projectable fragment should not carry a duplicate ExprFragmentClaim:\n{artifact_lean}"
+        artifact_lean.contains("plan := AverCert.Plans.floatLeGoalSymPlan")
+            && !artifact_lean.contains("floatAddGoalSymPlan")
+            && !artifact_lean.contains("floatMulAddGoalSymPlan"),
+        "only the NaN-payload-independent Float comparison should reach artifact claims:\n{artifact_lean}"
     );
     assert!(
         !artifact_lean.contains("ExprFragmentClaim"),
@@ -532,12 +604,18 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     .into_iter()
     .map(str::to_string)
     .collect();
-    let expected_backlog: BTreeSet<String> = ["idGoal", "listHeadGoal", "sumListGoal"]
-        .into_iter()
-        .map(str::to_string)
-        .collect();
+    let expected_backlog: BTreeSet<String> = [
+        "floatAddGoal",
+        "floatMulAddGoal",
+        "idGoal",
+        "listHeadGoal",
+        "sumListGoal",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
     assert_eq!(planned_goal_names.len(), 26, "goal denominator changed");
-    assert_eq!(actual.len(), 23, "goal numerator changed");
+    assert_eq!(actual.len(), 21, "goal numerator changed");
 
     let contracts: Vec<&str> = manifest["runtime_contracts"]
         .as_array()
@@ -582,6 +660,20 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         planned_declined, expected_backlog,
         "goal backlog changed; update the denominator/numerator deliberately"
     );
+    for name in ["floatAddGoal", "floatMulAddGoal"] {
+        let reason = manifest["source_level_only"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"].as_str() == Some(name))
+            .and_then(|entry| entry["reason"].as_str())
+            .unwrap_or_else(|| panic!("{name} should carry a source-level-only reason"));
+        assert!(
+            reason.contains("general Wasm allows multiple NaN sign/payload")
+                && reason.contains("exact-bit Float output needs a relational result model"),
+            "{name} should expose the exact semantic boundary: {reason}"
+        );
+    }
     assert!(
         declined_names.contains("double"),
         "composition helper should remain reported as source-level-only: {declined_names:?}"
@@ -840,14 +932,19 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
             "migrated family bridge must feed accept_sound: {name}\n{artifact_lean}"
         );
     }
-    for float_name in ["floatAddGoal", "floatMulAddGoal", "floatLeGoal"] {
+    for float_name in ["floatLeGoal"] {
         assert!(
             artifact_lean.contains(&format!(
                 "Or.inr (Or.inr ⟨rfl, CertProofs.{float_name}_simulates⟩)"
             )),
-            "float expr-fragment must be the only bespoke accept-sound residual: {float_name}\n{artifact_lean}"
+            "certified Float comparison must use the bespoke accept-sound residual: {float_name}\n{artifact_lean}"
         );
     }
+    assert!(
+        !artifact_lean.contains("floatAddGoal_simulates")
+            && !artifact_lean.contains("floatMulAddGoal_simulates"),
+        "NaN-nondeterministic Float results must not reach artifact side conditions:\n{artifact_lean}"
+    );
     let artifact_certificate = std::fs::read_to_string(cert_dir.join("ArtifactCertificate.lean"))
         .expect("ArtifactCertificate.lean exists");
     assert!(
@@ -940,13 +1037,18 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
             "integer composition must emit claim acceptance plus its small semantic bridge: {composition_name}\n{certificate}"
         );
     }
-    for float_name in ["floatAddGoal", "floatMulAddGoal", "floatLeGoal"] {
+    for float_name in ["floatLeGoal"] {
         assert!(
             certificate.contains(&format!("theorem {float_name}_wasm_certified"))
                 && certificate.contains(&format!("theorem {float_name}_simulates")),
-            "float proof must remain on the bespoke surface: {float_name}\n{certificate}"
+            "Float comparison proof must remain on the bespoke surface: {float_name}\n{certificate}"
         );
     }
+    assert!(
+        !certificate.contains("floatAddGoal_wasm_certified")
+            && !certificate.contains("floatMulAddGoal_wasm_certified"),
+        "exact-bit Float arithmetic proofs must not be emitted:\n{certificate}"
+    );
     for dispatch_name in ["evalOp", "boxInt", "gauge"] {
         assert!(
             certificate.contains(&format!(
