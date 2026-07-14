@@ -115,8 +115,8 @@ theorem construct_accepted_call
         simpa [hPlan] using hClaim
       rcases hAccepted with
         ⟨_hExport, _hCarrier, _hSym, _hMatches, hCheck, _hFields,
-          body, codeEntry, binding, hLow, _hCodeEntry, _hExportCode,
-          _hBinding, hSelf, _hBindingCode, _hStructTy, _hFuncTy, hCode⟩
+          body, codeEntry, binding, hLow, _hCodeEntry, _hExactBinding,
+          hSelf, _hStructTy, _hFuncTy, hCode⟩
       have hCodeSelf : claim.obligation.code claim.obligation.self =
           some { arity := plan.arity, nlocals := 1, body := body } := by
         simpa [← hSelf] using hCode

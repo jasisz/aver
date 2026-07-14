@@ -32,7 +32,6 @@ enum LeafShape {
 struct ClosureEntry {
     name: String,
     self_idx: u32,
-    code_idx: u32,
     type_idx: u32,
     nlocals: usize,
     code_entry_bytes: Vec<u8>,

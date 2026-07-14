@@ -121,7 +121,6 @@ fn nr_string_eq_verbatim_match(
     Some(Cert::StringEqVerbatimMatch {
         name: f.name.clone(),
         self_idx: f.wasm_idx,
-        code_idx: f.code_idx,
         type_idx: f.type_idx,
         nlocals: f.nlocals,
         carrier: carrier?,
@@ -244,7 +243,6 @@ fn nr_string_concat_verbatim_match(
     Some(Cert::StringConcatVerbatimMatch {
         name: f.name.clone(),
         self_idx: f.wasm_idx,
-        code_idx: f.code_idx,
         type_idx: f.type_idx,
         nlocals: f.nlocals,
         carrier: carrier?,

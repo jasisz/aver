@@ -128,7 +128,7 @@ theorem exprFragment_claim_discharges_generic
         ⟨_hExport, hCarrier, body, codeEntry, binding, hPlanAccepted,
           hSelf, hCode⟩
       rcases hPlanAccepted with
-        ⟨hCheck, hLowerExpr, _hCodeEntry, _hBinding, _hBindingCode⟩
+        ⟨hCheck, hLowerExpr, _hCodeEntry, _hExactBinding⟩
       rcases hBridge plan hEncode with ⟨hPolicy, hSemantic⟩
       have hLower : AverCert.PlanLower.lowerBlock
           claim.obligation.carrier plan.body = some body := by

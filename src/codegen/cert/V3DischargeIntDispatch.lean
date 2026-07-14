@@ -2,9 +2,9 @@
 v3 master wiring — Int-dispatch-family discharge.
 
 Acceptance supplies the checked plan, canonical host wiring, lowering, and
-exact code entry.  The independent domain/model face and the generic theorem's
-non-default-root premise are explicit: the audited raw checker currently checks
-only the profile string and therefore cannot derive that premise.
+exact code entry. The audited raw checker supplies the generic theorem's
+non-default-root premise; only the independent domain/model face remains in
+the semantic bridge.
 -/
 import V3Master
 import V3DispatchCore
@@ -16,50 +16,14 @@ open CertPrelude
 
 namespace V3Master
 
-/-- A raw plan accepted by `checkIntDispatchRawPlan` whose body has no test
-root.  This witnesses the admission premise missing from current acceptance. -/
-def uncoveredIntDispatchDefaultPlan : IntDispatchRawPlan :=
-  { profile := "int-dispatch-v1", body := .default 0 }
-
-theorem intDispatch_raw_allows_default_root :
-    AverCert.PlanCheck.checkIntDispatchRawPlan
-      uncoveredIntDispatchDefaultPlan = true := by
-  decide
-
-theorem intDispatch_default_root_has_no_test :
-    ¬ ∃ tyIdx leaf rest,
-      uncoveredIntDispatchDefaultPlan.body = .test tyIdx leaf rest := by
-  simp [uncoveredIntDispatchDefaultPlan]
-
-/-- All type indices occurring in a cascade.  The generic's family check is
-unused semantically, but its premise can be reconstructed for every raw-checked
-plan by choosing this complete finite list. -/
-def intDispatchPinnedTypes : IntDispatchCascade → List Nat
-  | .default _ => []
-  | .test tyIdx _ rest => tyIdx :: intDispatchPinnedTypes rest
-
-private theorem checkCascadeTypes_pinned_more
-    (extra : List Nat) (cascade : IntDispatchCascade) :
-    V3Dispatch.checkCascadeTypes
-      (extra ++ intDispatchPinnedTypes cascade) cascade = true := by
-  induction cascade generalizing extra with
-  | default k => simp [V3Dispatch.checkCascadeTypes]
-  | test tyIdx leaf rest ih =>
-      simp only [intDispatchPinnedTypes, V3Dispatch.checkCascadeTypes,
-        Bool.and_eq_true]
-      constructor
-      · simp
-      · simpa [List.append_assoc] using ih (extra ++ [tyIdx])
-
-private theorem checkCascadeTypes_pinned (cascade : IntDispatchCascade) :
-    V3Dispatch.checkCascadeTypes (intDispatchPinnedTypes cascade) cascade = true := by
-  simpa using checkCascadeTypes_pinned_more [] cascade
-
-private theorem checkIntDispatchFamily_of_raw (plan : IntDispatchRawPlan)
+private theorem intDispatchRoot_of_raw (plan : IntDispatchRawPlan)
     (hRaw : AverCert.PlanCheck.checkIntDispatchRawPlan plan = true) :
-    V3Dispatch.checkIntDispatchFamily
-      (intDispatchPinnedTypes plan.body) plan = true := by
-  simp [V3Dispatch.checkIntDispatchFamily, hRaw, checkCascadeTypes_pinned]
+    ∃ tyIdx leaf rest, plan.body = .test tyIdx leaf rest := by
+  cases hBody : plan.body with
+  | default k =>
+      simp [AverCert.PlanCheck.checkIntDispatchRawPlan, hBody] at hRaw
+  | test tyIdx leaf rest =>
+      exact ⟨tyIdx, leaf, rest, rfl⟩
 
 private theorem hostRoleIdx_mem_pair
     (hostTable : List (HostRole × Nat)) (role : HostRole) (idx : Nat)
@@ -139,14 +103,12 @@ private theorem canonicalHostSlots
       simpa [intDispatchExpectedSlot] using
         canonicalSlot_of_lookup C add sub mul hostTable hDistinct .sub idx hLookup
 
-/-- The semantic and generic-admission face absent from
-`intDispatchPlanAccepted`.  A represented source input must expose one runtime
-variant, `EvalCascade` must relate that variant to the checked plan's Int
-result, and every representation of that result must satisfy the obligation's
-independently declared codomain/model relation. -/
+/-- The semantic face intentionally absent from `intDispatchPlanAccepted`.
+A represented source input must expose one runtime variant, `EvalCascade` must
+relate that variant to the checked plan's Int result, and every representation
+of that result must satisfy the independently declared codomain/model relation. -/
 def intDispatchSemanticBridge
     (claim : IntDispatchClaim) (plan : IntDispatchRawPlan) : Prop :=
-  (∃ tyIdx leaf rest, plan.body = .test tyIdx leaf rest) ∧
   claim.obligation.policy = .simulatesModel ∧
   ∀ (S : CarrierSpec claim.obligation.carrier)
     (x : claim.obligation.Dom) (vs : List WVal),
@@ -164,17 +126,12 @@ def intDispatchSemanticBridges (artifact : ArtifactData) : Prop :=
           artifact.manifest.intDispatchPlans = some plan →
         intDispatchSemanticBridge claim plan
 
-/-- Byte/plan and generic-application half for one accepted Int-dispatch claim.
-Only the generic theorem's non-default-root premise remains explicit. -/
+/-- Byte/plan and generic-application half for one accepted Int-dispatch claim. -/
 theorem intDispatch_accepted_call
     (artifact : ArtifactData)
     (hAcc : acceptedIntDispatchFragments artifact)
     (claim : IntDispatchClaim)
-    (hMem : claim ∈ artifact.intDispatchClaims)
-    (hRoot : ∀ plan,
-      intDispatchPlanForExport claim.exportName
-          artifact.manifest.intDispatchPlans = some plan →
-        ∃ tyIdx leaf rest, plan.body = .test tyIdx leaf rest) :
+    (hMem : claim ∈ artifact.intDispatchClaims) :
     ∃ plan,
       intDispatchPlanForExport claim.exportName
           artifact.manifest.intDispatchPlans = some plan ∧
@@ -207,8 +164,8 @@ theorem intDispatch_accepted_call
         simpa [hPlan] using hClaim
       rcases hAccepted with
         ⟨_hExport, hCarrier, hRaw, hDistinct, hHost,
-          body, codeEntry, binding, hLow, _hCodeEntry, _hExportCode,
-          _hBinding, hSelf, _hBindingCode, _hFuncType, hCode⟩
+          body, codeEntry, binding, hLow, _hCodeEntry, _hExactBinding,
+          hSelf, _hFuncType, hCode⟩
       have hCodeSelf : claim.obligation.code claim.obligation.self =
           some ⟨1, AverCert.PlanCheck.intDispatchArmCount plan.body + 2,
             body⟩ := by
@@ -229,9 +186,7 @@ theorem intDispatch_accepted_call
         S plan claim.obligation.code
         (claim.obligation.host add sub mul stringEq stringConcat)
         claim.obligation.self claim.hostTable add sub hSlots hAdd hSub
-        (intDispatchPinnedTypes plan.body)
-        (checkIntDispatchFamily_of_raw plan hRaw)
-        (hRoot plan hPlan) body hLow hCodeSelf
+        (intDispatchRoot_of_raw plan hRaw) body hLow hCodeSelf
         fuel tag fields n w hSem hRun
 
 theorem intDispatch_claim_discharges
@@ -245,9 +200,8 @@ theorem intDispatch_claim_discharges
         intDispatchSemanticBridge claim plan) :
     obligationHolds claim.obligation := by
   have hCall := intDispatch_accepted_call artifact hAcc claim hMem
-    (fun plan hPlan => (hBridge plan hPlan).1)
   rcases hCall with ⟨plan, hPlan, hGeneric⟩
-  rcases hBridge plan hPlan with ⟨_hRoot, hPolicy, hSemantic⟩
+  rcases hBridge plan hPlan with ⟨hPolicy, hSemantic⟩
   rw [obligationHolds, hPolicy]
   intro S add sub mul stringEq stringConcat
     hAdd hSub _hMul _hStringEq _hStringConcat fuel x vs w hDom hRun
@@ -287,7 +241,6 @@ theorem intDispatch_canonical_discharges
       host add sub mul stringEq stringConcat =
         intDispatchCanonicalHost carrier hostTable
           add sub mul stringEq stringConcat)
-    (hRoot : ∃ tyIdx leaf rest, plan.body = .test tyIdx leaf rest)
     (body : List WInstr)
     (hLow : AverCert.PlanLower.lowerIntDispatchBody hostTable plan = some body)
     (hCode : code self = some {
@@ -327,13 +280,10 @@ theorem intDispatch_canonical_discharges
       have hGeneric := V3Dispatch.generic_int_dispatch_certified
         S plan code (host add sub mul stringEq stringConcat) self
         hostTable add sub hSlots hAdd hSub
-        (intDispatchPinnedTypes plan.body)
-        (checkIntDispatchFamily_of_raw plan hRaw)
-        hRoot body hLow hCode
+        (intDispatchRoot_of_raw plan hRaw) body hLow hCode
       exact hCod w (hGeneric fuel tag fields n w hCascade hRun)
 
-/-- Complete family slice under the semantic/root bridge missing from current
-artifact acceptance. -/
+/-- Complete family slice under the residual semantic bridge. -/
 theorem intDispatch_discharges
     (artifact : ArtifactData)
     (hAcc : acceptedIntDispatchFragments artifact)

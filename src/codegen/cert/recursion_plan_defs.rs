@@ -423,7 +423,6 @@ mod recursion_plan_gate_tests {
         Cert::Recursive {
             name: "sumFrom".to_string(),
             self_idx: 1,
-            code_idx: 1,
             type_idx: 4,
             nlocals: 1,
             carrier: 2,

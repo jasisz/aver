@@ -138,7 +138,6 @@ fn collect_closure(
         ClosureEntry {
             name: uf.name.clone(),
             self_idx: idx,
-            code_idx: uf.code_idx,
             type_idx: uf.type_idx,
             nlocals: uf.nlocals,
             code_entry_bytes: uf.code_entry_bytes.clone(),

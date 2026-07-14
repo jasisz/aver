@@ -64,21 +64,19 @@ fn recursion_claim_lean_value(c: &Cert) -> String {
 /// audited discharge from `Final.lean`. This is data reconstruction only: the
 /// source-model residual lives exclusively in the semantic bridge below.
 fn recursion_claim_acceptance_proof(c: &Cert) -> String {
-    let (self_idx, code_idx, type_idx, carrier) = match c.inner() {
+    let (self_idx, type_idx, carrier) = match c.inner() {
         Cert::Recursive {
             self_idx,
-            code_idx,
             type_idx,
             carrier,
             ..
         }
         | Cert::AccumulatorRecursive {
             self_idx,
-            code_idx,
             type_idx,
             carrier,
             ..
-        } => (self_idx, code_idx, type_idx, carrier),
+        } => (self_idx, type_idx, carrier),
         _ => unreachable!("audited recursion acceptance has a recursion shape"),
     };
     let plan = recursion_plan_from_cert(c).expect("audited recursion has a canonical plan");
@@ -89,12 +87,12 @@ fn recursion_claim_acceptance_proof(c: &Cert) -> String {
         .expect("audited recursion plan lowers to exact code-entry bytes");
     let bytes = render_byte_list(&bytes);
     let binding = format!(
-        "({{ funcIdx := {self_idx}, codeIdx := {code_idx}, typeIdx := {type_idx}, \
+        "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, \
          codeEntry := {bytes} }} : AverCert.WasmSlice.FuncBinding)"
     );
     format!(
         "⟨rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
-         ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
+         ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
     )
 }
 

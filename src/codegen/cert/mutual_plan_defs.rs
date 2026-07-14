@@ -141,7 +141,6 @@ mod mutual_plan_gate_tests {
             MutualMember {
                 name: "isEven".to_string(),
                 self_idx: 1,
-                code_idx: 1,
                 type_idx: 4,
                 nlocals: 1,
                 base_k: 1,
@@ -151,7 +150,6 @@ mod mutual_plan_gate_tests {
             MutualMember {
                 name: "isOdd".to_string(),
                 self_idx: 2,
-                code_idx: 2,
                 type_idx: 4,
                 nlocals: 1,
                 base_k: 0,

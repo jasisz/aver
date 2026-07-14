@@ -363,6 +363,18 @@ def checkVerbatimRawPlan (plan : VerbatimRawPlan) : Bool :=
   checkVerbatimDispatch plan.body &&
   (!dispatchHasProjection plan.body || plan.fieldLocal != plan.scrutineeLocal)
 
+/-- Full admission for a verbatim plan at its canonical function-local count.
+    Besides the byte-facing raw checks, the two scratch locals must exist and
+    the dispatch must begin with a test: the generic proof lane starts with the
+    scrutinee on the stack and therefore cannot certify a bare leaf root. -/
+def checkVerbatimPlan (nlocals : Nat) (plan : VerbatimRawPlan) : Bool :=
+  checkVerbatimRawPlan plan &&
+  decide (plan.scrutineeLocal < 1 + nlocals) &&
+  decide (plan.fieldLocal < 1 + nlocals) &&
+  match plan.body with
+  | .test _ _ _ => true
+  | .leaf _ => false
+
 def checkSymRawPlan (plan : SymRawPlan) : Bool :=
   plan.profile = "sym-fragment-v1" &&
     checkSymBlock plan.params plan.body &&
@@ -1027,11 +1039,15 @@ The `Cod := Int` ADT-match families (general variant dispatch, widened Int
 match). The soundness binding is the byte-equality gate in
 `AcceptedArtifact.intDispatchPlanAccepted` together with the byte-derived
 host-role table the lowerers are parameterized by; the plan carries neither
-locals nor indices (both are derived), so the structural check is the profile
-discipline only. -/
+locals nor indices (both are derived). A top-level `test` is required because
+the canonical lowering starts with the scrutinee on the stack; a bare default
+would violate the generic theorem's stack boundary. -/
 
 def checkIntDispatchRawPlan (plan : IntDispatchRawPlan) : Bool :=
-  plan.profile == "int-dispatch-v1"
+  plan.profile == "int-dispatch-v1" &&
+    match plan.body with
+    | .test _ _ _ => true
+    | .default _ => false
 
 /-- The number of `test` arms in an Int-face dispatch cascade. The scratch-local
     layout both lowerers compute is a fixed function of this count: arm `i`

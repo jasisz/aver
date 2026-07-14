@@ -147,8 +147,8 @@ def stringConcatPlanAccepted
       resultTy containerTy concatFuncIdx plan = some body ∧
     AverCert.PlanBytes.lowerStringConcatCodeEntry
       carrier resultTy containerTy concatFuncIdx plan = some codeEntry ∧
-    AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
-    binding.codeEntry = codeEntry ∧
+    AverCert.WasmSlice.exactFuncBindingForExport
+      modBytes modLen exportNameBytes codeEntry = some binding ∧
     obligation.self = binding.funcIdx ∧
     obligation.code binding.funcIdx =
       some { arity := 1, nlocals := stringConcatNLocals plan, body := body }
@@ -173,10 +173,9 @@ def stringEqPlanAccepted
       AverCert.PlanLower.lowerStringEqBody stringTy stringEqFuncIdx plan = some body ∧
       AverCert.PlanBytes.lowerStringEqCodeEntry carrier stringTy stringEqFuncIdx plan =
         some codeEntry ∧
-      AverCert.WasmSlice.codeEntryForExport modBytes modLen exportNameBytes = some codeEntry ∧
-      AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
+      AverCert.WasmSlice.exactFuncBindingForExport
+        modBytes modLen exportNameBytes codeEntry = some binding ∧
       binding.funcIdx = obligation.self ∧
-      binding.codeEntry = codeEntry ∧
       obligation.code binding.funcIdx =
         some { arity := 1, nlocals := 2, body := body }
 
@@ -407,10 +406,9 @@ def constructPlanAccepted
     ∃ body codeEntry binding,
       AverCert.PlanLower.lowerConstructBody structIdx plan = some body ∧
       AverCert.PlanBytes.lowerConstructCodeEntry carrier structIdx plan = some codeEntry ∧
-      AverCert.WasmSlice.codeEntryForExport modBytes modLen exportNameBytes = some codeEntry ∧
-      AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
+      AverCert.WasmSlice.exactFuncBindingForExport
+        modBytes modLen exportNameBytes codeEntry = some binding ∧
       binding.funcIdx = obligation.self ∧
-      binding.codeEntry = codeEntry ∧
       (isListConstructSymPlan symPlan = false ∨
         AverCert.WasmSlice.listConstructStructTypeMatches
           modBytes modLen structIdx elemTy = true) ∧
@@ -471,10 +469,9 @@ def recursionPlanAccepted
     ∃ body codeEntry binding,
       AverCert.PlanLower.lowerRecursionBody carrier plan = some body ∧
       AverCert.PlanBytes.lowerRecursionCodeEntry carrier plan = some codeEntry ∧
-      AverCert.WasmSlice.codeEntryForExport modBytes modLen exportNameBytes = some codeEntry ∧
-      AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
+      AverCert.WasmSlice.exactFuncBindingForExport
+        modBytes modLen exportNameBytes codeEntry = some binding ∧
       binding.funcIdx = obligation.self ∧
-      binding.codeEntry = codeEntry ∧
       AverCert.PlanCheck.checkRecursionPlanShape binding.funcIdx hostTable
         obligation.totalityRole plan = true ∧
       AverCert.WasmSlice.funcTypeMatches
@@ -539,10 +536,9 @@ def mutualPlanAccepted
     ∃ body codeEntry binding,
       AverCert.PlanLower.lowerMutualBody carrier plan = some body ∧
       AverCert.PlanBytes.lowerMutualCodeEntry carrier plan = some codeEntry ∧
-      AverCert.WasmSlice.codeEntryForExport modBytes modLen exportNameBytes = some codeEntry ∧
-      AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
+      AverCert.WasmSlice.exactFuncBindingForExport
+        modBytes modLen exportNameBytes codeEntry = some binding ∧
       binding.funcIdx = obligation.self ∧
-      binding.codeEntry = codeEntry ∧
       AverCert.PlanCheck.checkMutualPlanShape memberSet hostTable plan = true ∧
       AverCert.WasmSlice.funcTypeMatches
         modBytes modLen binding.typeIdx plan.params.length carrier = true ∧
@@ -603,9 +599,9 @@ def verbatimNLocals (plan : VerbatimRawPlan) : Nat :=
   if AverCert.PlanCheck.dispatchHasProjection plan.body then 3 else 2
 
 /-- Artifact-level acceptance for one verbatim `ref.test`-dispatch export. The
-    `VerbatimRawPlan` is checked structurally (`checkVerbatimRawPlan`), lowered to
-    the match `WInstr` body and its exact code-entry bytes, and those bytes are
-    bound to the exported function by name. There are no host/self calls to tie,
+    `VerbatimRawPlan` is checked against the canonical local count, lowered to the
+    match `WInstr` body and its exact code-entry bytes, and those bytes are bound
+    to the exported function by name. There are no host/self calls to tie,
     so the code entry is nearly the whole binding — but the code entry alone does
     NOT determine the export's meaning: it omits the function SIGNATURE (a second
     nominal-root parameter leaves the locals + body bytes identical) and the
@@ -627,13 +623,12 @@ def verbatimPlanAccepted
     (obligation : Obligation) : Prop :=
   obligation.export_ = exportName ∧
     obligation.carrier = carrier ∧
-    AverCert.PlanCheck.checkVerbatimRawPlan plan = true ∧
+    AverCert.PlanCheck.checkVerbatimPlan (verbatimNLocals plan) plan = true ∧
     ∃ codeEntry binding,
       AverCert.PlanBytes.lowerVerbatimCodeEntry carrier plan = some codeEntry ∧
-      AverCert.WasmSlice.codeEntryForExport modBytes modLen exportNameBytes = some codeEntry ∧
-      AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
+      AverCert.WasmSlice.exactFuncBindingForExport
+        modBytes modLen exportNameBytes codeEntry = some binding ∧
       binding.funcIdx = obligation.self ∧
-      binding.codeEntry = codeEntry ∧
       AverCert.WasmSlice.verbatimFuncTypeMatches
         modBytes modLen binding.typeIdx plan.resultSig = true ∧
       verbatimPayloadsBound modBytes modLen plan.body = true ∧
@@ -745,10 +740,9 @@ def intDispatchPlanAccepted
       AverCert.PlanLower.lowerIntDispatchBody hostTable plan = some body ∧
       AverCert.PlanBytes.lowerIntDispatchCodeEntry carrier hostTable plan =
         some codeEntry ∧
-      AverCert.WasmSlice.codeEntryForExport modBytes modLen exportNameBytes = some codeEntry ∧
-      AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
+      AverCert.WasmSlice.exactFuncBindingForExport
+        modBytes modLen exportNameBytes codeEntry = some binding ∧
       binding.funcIdx = obligation.self ∧
-      binding.codeEntry = codeEntry ∧
       AverCert.WasmSlice.verbatimFuncTypeMatches
         modBytes modLen binding.typeIdx (.refNull carrier) = true ∧
       obligation.code binding.funcIdx =
@@ -800,8 +794,8 @@ def fieldProjectionPlanAccepted
     AverCert.PlanLower.lowerFieldProjectionBody structIdx fieldCount plan = some body ∧
     AverCert.PlanBytes.lowerFieldProjectionCodeEntry
       carrier structIdx fieldCount resultTy plan = some codeEntry ∧
-    AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
-    binding.codeEntry = codeEntry ∧
+    AverCert.WasmSlice.exactFuncBindingForExport
+      modBytes modLen exportNameBytes codeEntry = some binding ∧
     AverCert.WasmSlice.projectionStructTypeMatches
       modBytes modLen structIdx fieldCount plan.fieldIdx resultTy = true ∧
     AverCert.WasmSlice.projectionFuncTypeMatches
@@ -861,9 +855,8 @@ def compositionMemberPlanAccepted
     AverCert.PlanLower.lowerCompositionBody hostTable funcTable member.plan = some body ∧
     AverCert.PlanBytes.lowerCompositionCodeEntry carrier hostTable funcTable member.plan =
       some codeEntry ∧
-    AverCert.WasmSlice.codeEntryForExport modBytes modLen member.exportNameBytes = some codeEntry ∧
-    AverCert.WasmSlice.funcBindingForExport modBytes modLen member.exportNameBytes = some binding ∧
-    binding.codeEntry = codeEntry ∧
+    AverCert.WasmSlice.exactFuncBindingForExport
+      modBytes modLen member.exportNameBytes codeEntry = some binding ∧
     AverCert.WasmSlice.funcTypeMatches modBytes modLen binding.typeIdx 1 carrier = true ∧
     obligation.code binding.funcIdx =
       some { arity := 1, nlocals := compositionNLocals member.plan, body := body }
@@ -1122,7 +1115,7 @@ cycle visiting every member. This section binds the SCC to bytes: it derives
 each member's `(self, cross-target)` edge from the SAME byte-bound facts the
 per-claim acceptance pins — `self` is the obligation's byte-pinned function
 index (`= binding.funcIdx` from `mutualPlanAccepted`), `target` is read from the
-byte-pinned plan (`lowerMutualCodeEntry plan = codeEntryForExport …`). It then
+byte-pinned plan (joined to the export by `exactFuncBindingForExport`). It then
 checks, purely over those byte-derived edges, that the claims form disjoint
 CLOSED simple cycles and that every member's declared `memberSet` equals its own
 cycle's vertex set — so `memberSet` is a function of the bytes, not a free

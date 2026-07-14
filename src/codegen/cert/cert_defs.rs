@@ -73,10 +73,9 @@ enum Cert {
     Recursive {
         name: String,
         self_idx: u32,
-        /// Defined-code index and declared type index of the exported function,
-        /// carried for the byte-first `recursion-plan-v1` artifact claim's
-        /// function binding. They do not enter the fuel-induction obligation.
-        code_idx: u32,
+        /// Declared type index of the exported function, carried for the
+        /// byte-first `recursion-plan-v1` artifact claim's function binding.
+        /// It does not enter the fuel-induction obligation.
         type_idx: u32,
         nlocals: usize,
         carrier: u32,
@@ -101,7 +100,6 @@ enum Cert {
     AccumulatorRecursive {
         name: String,
         self_idx: u32,
-        code_idx: u32,
         type_idx: u32,
         nlocals: usize,
         carrier: u32,
@@ -115,7 +113,6 @@ enum Cert {
     AdtConstructor {
         name: String,
         self_idx: u32,
-        code_idx: u32,
         type_idx: u32,
         nlocals: usize,
         carrier: u32,
@@ -130,7 +127,6 @@ enum Cert {
     FieldProjection {
         name: String,
         self_idx: u32,
-        code_idx: u32,
         type_idx: u32,
         nlocals: usize,
         carrier: u32,
@@ -214,7 +210,6 @@ enum Cert {
     StringEqVerbatimMatch {
         name: String,
         self_idx: u32,
-        code_idx: u32,
         type_idx: u32,
         nlocals: usize,
         carrier: u32,
@@ -233,7 +228,6 @@ enum Cert {
     StringConcatVerbatimMatch {
         name: String,
         self_idx: u32,
-        code_idx: u32,
         type_idx: u32,
         nlocals: usize,
         carrier: u32,
@@ -258,7 +252,6 @@ enum Cert {
     ExprFragment {
         name: String,
         self_idx: u32,
-        code_idx: u32,
         type_idx: u32,
         nlocals: usize,
         carrier: u32,
@@ -340,10 +333,9 @@ enum Cert {
 struct MutualMember {
     name: String,
     self_idx: u32,
-    /// Defined-code index and declared type index of this member's exported
-    /// function, carried for the byte-first `mutual-plan-v1` artifact claim's
-    /// function binding. They do not enter the fuel-induction obligation.
-    code_idx: u32,
+    /// Declared type index of this member's exported function, carried for the
+    /// byte-first `mutual-plan-v1` artifact claim's function binding. It does
+    /// not enter the fuel-induction obligation.
     type_idx: u32,
     nlocals: usize,
     /// Literal returned in the base arm (`n ≤ 0`).

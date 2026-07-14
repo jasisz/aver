@@ -36,10 +36,9 @@ def recursionPlanAcceptedWithoutCheckTerm
     ∃ body codeEntry binding,
       AverCert.PlanLower.lowerRecursionBody carrier plan = some body ∧
       AverCert.PlanBytes.lowerRecursionCodeEntry carrier plan = some codeEntry ∧
-      AverCert.WasmSlice.codeEntryForExport modBytes modLen exportNameBytes = some codeEntry ∧
-      AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
+      AverCert.WasmSlice.exactFuncBindingForExport
+        modBytes modLen exportNameBytes codeEntry = some binding ∧
       binding.funcIdx = obligation.self ∧
-      binding.codeEntry = codeEntry ∧
       AverCert.PlanCheck.checkRecursionPlanShape binding.funcIdx hostTable
         obligation.totalityRole plan = true ∧
       AverCert.WasmSlice.funcTypeMatches

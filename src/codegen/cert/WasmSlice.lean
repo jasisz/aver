@@ -15,7 +15,6 @@ abbrev ByteSeq := List Nat
 
 structure FuncBinding where
   funcIdx : Nat
-  codeIdx : Nat
   typeIdx : Nat
   codeEntry : ByteSeq
 
@@ -350,28 +349,29 @@ def typeIndexByCodeIndex (modBytes modLen codeIdx : Nat) : Option Nat :=
   | some typeIndices => typeIndices[codeIdx]?
   | none => none
 
-def codeEntryByFuncIndex (modBytes modLen funcIdx : Nat) : Option ByteSeq :=
+def codeIndexByFuncIndex (modBytes modLen funcIdx : Nat) : Option Nat :=
   match importedFuncCount modBytes modLen with
   | some imported =>
       if imported ≤ funcIdx then
-        codeEntryByCodeIndex modBytes modLen (funcIdx - imported)
+        some (funcIdx - imported)
       else
         none
   | none => none
 
+def codeEntryByFuncIndex (modBytes modLen funcIdx : Nat) : Option ByteSeq :=
+  match codeIndexByFuncIndex modBytes modLen funcIdx with
+  | some codeIdx => codeEntryByCodeIndex modBytes modLen codeIdx
+  | none => none
+
 def funcBindingByFuncIndex (modBytes modLen funcIdx : Nat) : Option FuncBinding :=
-  match importedFuncCount modBytes modLen with
-  | some imported =>
-      if imported ≤ funcIdx then
-        let codeIdx := funcIdx - imported
-        match typeIndexByCodeIndex modBytes modLen codeIdx,
-              codeEntryByCodeIndex modBytes modLen codeIdx with
-        | some typeIdx, some codeEntry =>
-            some { funcIdx := funcIdx, codeIdx := codeIdx,
-                   typeIdx := typeIdx, codeEntry := codeEntry }
-        | _, _ => none
-      else
-        none
+  match codeIndexByFuncIndex modBytes modLen funcIdx with
+  | some codeIdx =>
+      match typeIndexByCodeIndex modBytes modLen codeIdx,
+            codeEntryByCodeIndex modBytes modLen codeIdx with
+      | some typeIdx, some codeEntry =>
+          some { funcIdx := funcIdx, typeIdx := typeIdx,
+                 codeEntry := codeEntry }
+      | _, _ => none
   | none => none
 
 def codeEntryForExport (modBytes modLen : Nat) (targetName : ByteSeq) : Option ByteSeq :=
@@ -383,6 +383,12 @@ def funcBindingForExport (modBytes modLen : Nat) (targetName : ByteSeq) : Option
   match exportFuncIndex modBytes modLen targetName with
   | some funcIdx => funcBindingByFuncIndex modBytes modLen funcIdx
   | none => none
+
+/-- Bind an export only when its selected code entry exactly matches the expected bytes. -/
+def exactFuncBindingForExport
+    (modBytes modLen : Nat) (targetName expectedCode : ByteSeq) : Option FuncBinding :=
+  (funcBindingForExport modBytes modLen targetName).filter
+    (fun binding => binding.codeEntry = expectedCode)
 
 /-! ### Certified direct-call closure and rejected-channel scan
 
