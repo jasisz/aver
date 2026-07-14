@@ -188,7 +188,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["schema_version"].as_u64(),
-        Some(63),
+        Some(1),
         "the first public certificate schema is version 1"
     );
     assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 1);
