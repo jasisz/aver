@@ -2275,7 +2275,7 @@ fn cert_verify_declines_expr_fragment_bad_bool01_raw_plan() {
     // PlanCheck rejects the ill-typed Bool01 node (`constI32` is inferred
     // `rawI32`; `sameTy` fails against the declared `boolI32`), so the
     // Plans.lean examples fail to elaborate. The verify report keeps only the
-    // tail of the lake output (`tail(.., 20)` in cert_cmd), so the earliest
+    // tail of the lake output (`tail(.., 20)` in the standalone verifier), so the earliest
     // error (the `checkExprFragmentRawPlan` example) can be cut when the later
     // byte-pin errors fill the tail — accept either attribution of the same
     // fail-closed Plans.lean build failure.

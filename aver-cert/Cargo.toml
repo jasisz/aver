@@ -18,14 +18,19 @@ include = [
 
 [features]
 default = ["verify"]
-# Both frontends currently share the byte-level certification engine. Keeping
-# the feature names separate lets the verifier orchestration gain its own
-# dependencies without pulling them into aver-lang in the next extraction step.
 engine = ["dep:sha2", "dep:wasm-encoder", "dep:wasmparser"]
 producer = ["engine"]
-verify = ["engine"]
+verify = ["engine", "dep:clap", "dep:colored", "dep:serde_json"]
+
+[[bin]]
+name = "aver-cert"
+path = "src/main.rs"
+required-features = ["verify"]
 
 [dependencies]
+clap = { version = "4", features = ["derive"], optional = true }
+colored = { version = "2", optional = true }
+serde_json = { version = "1", optional = true }
 sha2 = { version = "0.10", optional = true }
 wasm-encoder = { version = "0.248", optional = true }
 wasmparser = { version = "0.248", optional = true }

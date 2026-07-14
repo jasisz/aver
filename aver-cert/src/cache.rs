@@ -1,7 +1,7 @@
 //! Content-addressed Lake build-output cache for artifact-specific cert DATA.
 //!
 //! Entries contain only `.lake` plus an integrity manifest. Source inputs are
-//! always staged afresh by `cert_cmd`; `lake build` still runs on every verify,
+//! always staged afresh by the verifier; `lake build` still runs on every verify,
 //! and the checker witness is never cached.
 
 use std::path::{Path, PathBuf};

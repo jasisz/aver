@@ -12,3 +12,10 @@ pub mod format;
 mod engine;
 #[cfg(feature = "engine")]
 pub use engine::*;
+
+#[cfg(feature = "verify")]
+mod cache;
+#[cfg(feature = "verify")]
+mod verifier;
+#[cfg(feature = "verify")]
+pub use verifier::{ARTIFACT_DECODE_LINE, Explanation, Verdict, explain, verify};

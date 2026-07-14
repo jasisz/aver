@@ -1,11 +1,7 @@
 use clap::Parser as ClapParser;
 
-#[cfg(feature = "wasm-compile")]
-#[path = "main/cert_cmd.rs"]
-mod cert_cmd;
-#[cfg(feature = "wasm-compile")]
-#[path = "main/cert_data_cache.rs"]
-mod cert_data_cache;
+#[path = "main/cert_delegate.rs"]
+mod cert_delegate;
 #[path = "main/cli.rs"]
 mod cli;
 #[path = "main/commands.rs"]
@@ -37,13 +33,21 @@ mod shared;
 #[path = "main/why_cmd.rs"]
 mod why_cmd;
 
-#[cfg(feature = "wasm-compile")]
-use cli::CertCommand;
 use cli::{Cli, Commands, CompilePolicyMode};
 #[allow(unused_imports)]
 use cli::{CompileTarget, DeployPack, DeployPreset};
 
 fn main() {
+    if let Some(result) = cert_delegate::run_if_requested() {
+        match result {
+            Ok(status) => std::process::exit(cert_delegate::exit_code(status)),
+            Err(error) => {
+                eprintln!("error: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     let cli = Cli::parse();
 
     match &cli.command {
@@ -431,29 +435,6 @@ fn main() {
                 write_baseline.as_deref(),
             );
         }
-        Commands::Cert { cmd } => {
-            #[cfg(feature = "wasm-compile")]
-            match cmd {
-                CertCommand::Verify { artifact, cert_dir } => {
-                    cert_cmd::cmd_cert_verify(artifact, cert_dir);
-                }
-                CertCommand::Explain { artifact, cert_dir }
-                | CertCommand::Inspect { artifact, cert_dir } => {
-                    cert_cmd::cmd_cert_explain(artifact, cert_dir);
-                }
-            }
-            #[cfg(not(feature = "wasm-compile"))]
-            {
-                let _ = cmd;
-                use colored::Colorize;
-                eprintln!(
-                    "{}",
-                    "aver cert requires a wasm-enabled build (rebuild with: \
-                     cargo build --features wasm)"
-                        .red()
-                );
-                std::process::exit(1);
-            }
-        }
+        Commands::Cert { .. } => unreachable!("`aver cert` is delegated before CLI parsing"),
     }
 }

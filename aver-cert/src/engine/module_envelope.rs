@@ -202,7 +202,7 @@ mod module_envelope_tests {
         let registry = crate::format::WASM_GC_CAPABILITIES;
         let unique = registry.iter().copied().collect::<std::collections::BTreeSet<_>>();
         assert_eq!(registry.len(), unique.len(), "effect import pairs must be unique");
-        for (module, field) in registry.iter().copied() {
+        for (module, field) in registry {
             let lean_entry = format!("(\"{module}\", \"{field}\")");
             assert!(
                 super::CERT_SCHEMA_CORE.contains(&lean_entry),

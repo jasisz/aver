@@ -142,6 +142,9 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 name = "aver-cert"
 version = "0.1.0"
 dependencies = [
+ "clap",
+ "colored",
+ "serde_json",
  "sha2",
  "wasm-encoder 0.248.0",
  "wasmparser 0.248.0",

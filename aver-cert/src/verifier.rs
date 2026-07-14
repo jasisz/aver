@@ -1,4 +1,4 @@
-//! `aver cert verify|explain` — the consumer side of `aver compile --certify`.
+//! `aver-cert verify|explain` — the consumer side of `aver compile --certify`.
 //!
 //! `verify` is a fail-closed checker. The Lean/proof verdict comes only from
 //! the exit code of the Lean toolchain over files the checker itself authored;
@@ -82,12 +82,12 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use aver::codegen::cert;
 use colored::Colorize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::cert_data_cache::{ArtifactBuildCache, KeyMaterial as ArtifactCacheKeyMaterial};
+use crate as cert;
+use crate::cache::{ArtifactBuildCache, KeyMaterial as ArtifactCacheKeyMaterial};
 
 /// Kernel axioms a certificate is allowed to depend on. Anything else — most
 /// importantly `sorryAx` (an admitted goal) or `ofReduceBool` (native-code
@@ -127,7 +127,7 @@ const MAX_CANDIDATE_LEN: usize = 200;
 /// were decoded from ArtifactBytes in-kernel, including the module-wide
 /// add/sub/box table and all string roles; expression code comes from its
 /// checked plan and canonical code-entry equality.
-const ARTIFACT_DECODE_LINE: &str = "artifact-decode: every byte fact is kernel-computed from ArtifactBytes, including code/carrier/struct facts and all host roles; expression code uses checked-plan canonical byte equality";
+pub const ARTIFACT_DECODE_LINE: &str = "artifact-decode: every byte fact is kernel-computed from ArtifactBytes, including code/carrier/struct facts and all host roles; expression code uses checked-plan canonical byte equality";
 
 /// Tokens that make Lean ELABORATION execute code. The scan is a substring
 /// match on raw cert data-file text (see the module doc: a deliberately brittle
@@ -157,13 +157,23 @@ const CODE_EXEC_TOKENS: [&str; 20] = [
 ];
 
 /// Outcome of a successful (fail-closed) verify pass.
-enum Verdict {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Verdict {
     /// At least one export carries a behavioral certificate. `faces` are the
     /// one-line per-export claim summaries (class + Dom/Cod + codRepr form).
     Certified { summary: String, faces: Vec<String> },
     /// The certificate built and stayed kernel-clean, but names zero certified
     /// exports — an admission with no behavioral claims. Not the green path.
     NoExports(String),
+}
+
+/// Whether the human-readable explanation contained at least one behavioral
+/// certificate. An admission-only package is rendered, but remains a failing
+/// verifier outcome.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Explanation {
+    Certified,
+    NoExports,
 }
 
 /// One proven obligation in the trusted report.
@@ -212,41 +222,6 @@ struct Candidates {
     string_host_roles: cert::StringHostRoles,
     profile: String,
     abi: String,
-}
-
-pub(super) fn cmd_cert_verify(artifact: &str, cert_dir: &str) {
-    match verify(Path::new(artifact), Path::new(cert_dir)) {
-        Ok(Verdict::Certified { summary, faces }) => {
-            println!("{} {}", "CERTIFIED".green().bold(), summary);
-            println!("  {ARTIFACT_DECODE_LINE}");
-            for f in &faces {
-                println!("  {f}");
-            }
-        }
-        Ok(Verdict::NoExports(summary)) => {
-            // Fail-closed: a trust tool must not exit green for a cert that
-            // makes no behavioral claims.
-            eprintln!(
-                "{} {}",
-                "NO CERTIFIED EXPORTS (admission only, no behavioral claims)"
-                    .yellow()
-                    .bold(),
-                summary
-            );
-            std::process::exit(1);
-        }
-        Err(reason) => {
-            eprintln!("{} {}", "DECLINED".red().bold(), reason);
-            std::process::exit(1);
-        }
-    }
-}
-
-pub(super) fn cmd_cert_explain(artifact: &str, cert_dir: &str) {
-    if let Err(e) = explain(Path::new(artifact), Path::new(cert_dir)) {
-        eprintln!("{} {}", "error:".red(), e);
-        std::process::exit(1);
-    }
 }
 
 /// Read + parse `cert-manifest.json` from the cert directory.
@@ -613,7 +588,11 @@ fn read_candidates(m: &Value) -> Result<Candidates, String> {
     Ok(cands)
 }
 
-fn verify(artifact: &Path, cert_dir: &Path) -> Result<Verdict, String> {
+/// Verify one emitted certificate package against the exact artifact bytes it
+/// claims. Success means the checker-owned Lean build and kernel witness both
+/// accepted; an admission-only package is returned as [`Verdict::NoExports`]
+/// so callers can fail closed without parsing terminal output.
+pub fn verify(artifact: &Path, cert_dir: &Path) -> Result<Verdict, String> {
     let report = trusted_check(artifact, cert_dir)?;
     let n = report.exports.len();
     let has_total = report
@@ -3627,7 +3606,10 @@ fn display_safe(s: &str) -> String {
 /// Human-readable report. The CERTIFIED side is the trusted, kernel-confirmed
 /// report (so it builds); the DECLINED side is read from the untrusted JSON
 /// (declines carry no behavioral claim) and sanitized for display.
-fn explain(artifact: &Path, cert_dir: &Path) -> Result<(), String> {
+/// Render the human-readable report backed by the same trusted check as
+/// [`verify`]. The return value keeps admission-only packages non-successful at
+/// the CLI boundary without terminating a process from library code.
+pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> {
     let report = trusted_check(artifact, cert_dir)?;
 
     println!("{}", "Artifact certificate".bold());
@@ -3691,8 +3673,9 @@ fn explain(artifact: &Path, cert_dir: &Path) -> Result<(), String> {
 
     // Same fail-closed exit contract as `verify`: an admission-only cert carries
     // no behavioral claim, so `explain`/`inspect` must not exit green either.
-    if report.exports.is_empty() {
-        std::process::exit(1);
-    }
-    Ok(())
+    Ok(if report.exports.is_empty() {
+        Explanation::NoExports
+    } else {
+        Explanation::Certified
+    })
 }
