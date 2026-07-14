@@ -652,97 +652,18 @@ fn render_manifest(
             Cert::AccumulatorRecursive { .. } => "multi-argument self-recursive",
             Cert::AdtConstructor { .. } => "adt-constructor",
             Cert::FieldProjection { .. } => "field-projection",
-            Cert::WidenedIntMatch { .. } => "widened-int-match",
-            Cert::VerbatimWidenedMatch { .. } => "verbatim-widened-match",
-            Cert::VerbatimVariantDispatch { .. } => "verbatim-variant-dispatch",
+            Cert::WidenedIntMatch { .. } | Cert::VariantDispatch { .. } => "int-dispatch",
+            Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. } => {
+                "verbatim-dispatch"
+            }
             Cert::StringEqVerbatimMatch { .. } => "verbatim-string-eq",
             Cert::StringConcatVerbatimMatch { .. } => "verbatim-string-concat",
             Cert::ExprFragment { .. } => "expr-fragment-v1",
-            Cert::VariantDispatch { .. } => "variant-dispatch",
             Cert::Composition { .. } => "cross-function-composition",
             Cert::MutualRecursion { .. } => "mutual-recursive",
             Cert::NonRecursive { .. } => unreachable!(),
         };
         let (dom, cod) = c.source_dom_cod(model_info);
-        let fragment_json = match c.inner() {
-            Cert::ExprFragment {
-                source_plan, plan, ..
-            } => {
-                if let Some(sym) = expr_fragment_source_plan(source_plan, plan) {
-                    let sym_sidecar = sym_fragment_sidecar(c.name(), &sym);
-                    format!(
-                        ", \"source_fragment\": {{\"profile\": \"sym-fragment-v1\", \
-                         \"plan\": {}, \"plan_sha256\": {}}}",
-                        json_str(&sym_sidecar.path),
-                        json_str(&sym_sidecar.sha256)
-                    )
-                } else {
-                    let sidecar = expr_fragment_sidecar(c.name(), plan);
-                    format!(
-                        ", \"fragment\": {{\"profile\": \"expr-fragment-v1\", \
-                         \"plan\": {}, \"plan_sha256\": {}}}",
-                        json_str(&sidecar.path),
-                        json_str(&sidecar.sha256)
-                    )
-                }
-            }
-            Cert::StringConcatVerbatimMatch { .. } => {
-                let plan = string_concat_plan_from_cert(c)
-                    .expect("certified String.concat should project to a source plan");
-                let sym_plan = string_concat_sym_plan_from_plan(&plan);
-                let sym_sidecar = sym_fragment_sidecar(c.name(), &sym_plan);
-                let sidecar = string_concat_sidecar(c.name(), &plan);
-                format!(
-                    ", \"source_fragment\": {{\"profile\": \"sym-fragment-v1\", \
-                     \"plan\": {}, \"plan_sha256\": {}}}, \
-                     \"fragment\": {{\"profile\": \"string-concat-v1\", \
-                     \"plan\": {}, \"plan_sha256\": {}}}",
-                    json_str(&sym_sidecar.path),
-                    json_str(&sym_sidecar.sha256),
-                    json_str(&sidecar.path),
-                    json_str(&sidecar.sha256)
-                )
-            }
-            Cert::StringEqVerbatimMatch { .. } => {
-                let plan = string_eq_plan_from_cert(c)
-                    .expect("certified String.eq should project to a source plan");
-                let sym_plan = string_eq_sym_plan_from_plan(&plan);
-                let sym_sidecar = sym_fragment_sidecar(c.name(), &sym_plan);
-                let sidecar = string_eq_sidecar(c.name(), &plan);
-                format!(
-                    ", \"source_fragment\": {{\"profile\": \"sym-fragment-v1\", \
-                     \"plan\": {}, \"plan_sha256\": {}}}, \
-                     \"fragment\": {{\"profile\": \"string-eq-v1\", \
-                     \"plan\": {}, \"plan_sha256\": {}}}",
-                    json_str(&sym_sidecar.path),
-                    json_str(&sym_sidecar.sha256),
-                    json_str(&sidecar.path),
-                    json_str(&sidecar.sha256)
-                )
-            }
-            Cert::AdtConstructor { .. } => {
-                if let (Some(sym_plan), Some(plan)) = (
-                    adt_constructor_sym_plan_from_cert(c, model_info),
-                    construct_plan_from_cert(c),
-                ) {
-                    let sym_sidecar = sym_fragment_sidecar(c.name(), &sym_plan);
-                    let sidecar = construct_sidecar(c.name(), &plan);
-                    format!(
-                        ", \"source_fragment\": {{\"profile\": \"sym-fragment-v1\", \
-                         \"plan\": {}, \"plan_sha256\": {}}}, \
-                         \"fragment\": {{\"profile\": \"construct-v1\", \
-                         \"plan\": {}, \"plan_sha256\": {}}}",
-                        json_str(&sym_sidecar.path),
-                        json_str(&sym_sidecar.sha256),
-                        json_str(&sidecar.path),
-                        json_str(&sidecar.sha256)
-                    )
-                } else {
-                    String::new()
-                }
-            }
-            _ => String::new(),
-        };
         let policy = c.policy();
         let termination_json = match c.termination_witness() {
             Some(TerminationWitness {
@@ -802,7 +723,7 @@ fn render_manifest(
         s.push_str(&format!(
             "\n    {{\"name\": {}, \"class\": \"{}\", \"policy\": \"{}\", \
              \"level\": \"{}\", \"dom\": {}, \"cod\": {}, \
-             \"theorem\": {}{}{}}}",
+             \"theorem\": {}{}}}",
             json_str(c.name()),
             kind,
             policy.manifest_name(),
@@ -811,7 +732,6 @@ fn render_manifest(
             json_str(&cod),
             json_str(&theorem),
             termination_json,
-            fragment_json,
         ));
     }
     if !analysis.certs.is_empty() {

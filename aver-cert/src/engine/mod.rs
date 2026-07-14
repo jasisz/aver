@@ -17,12 +17,10 @@
 //! then the accepted-artifact witness uses `CertDecode` to compute
 //! non-expression code/carrier/struct facts from `ArtifactBytes` in-kernel.
 //! Host/self byte facts are now fully kernel-bound; Rust rederivation and
-//! validation remain non-trust-bearing fail-fast checks. Expression
-//! fragments emit a canonical plan sidecar under `cert/fragments/`; verify
-//! parses that untrusted plan, typechecks it against byte-derived function facts,
-//! canonically lowers it to raw code-entry bytes, and only then uses the checked
-//! plan to render the witness code/face. The complete disassembler and role
-//! classifier are not retired by this S1 step.
+//! validation remain producer diagnostics. Expression plans are emitted once,
+//! as Lean data in `Plans.lean`; the checker-owned wall validates and lowers
+//! that data against the exact artifact bytes. Redundant text sidecars are not
+//! part of the public certificate package.
 
 use sha2::{Digest, Sha256};
 use std::path::Path;

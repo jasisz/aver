@@ -32,8 +32,6 @@ pub fn write_project(
         hex(&h.finalize())
     };
 
-    write_fragment_sidecars(&cert_dir, analysis, &model_info)?;
-
     write(&cert_dir, "Contracts.lean", &render_contracts(analysis))?;
     write(
         &cert_dir,
@@ -42,11 +40,6 @@ pub fn write_project(
     )?;
     // Checker-owned Lean sources are identified by `format.wall_id` and are
     // materialized by the verifier. They are not duplicated in the package.
-    write(
-        &cert_dir,
-        "ArtifactBytes.lean",
-        &render_artifact_bytes_lean(wasm_bytes),
-    )?;
     // Byte-derived host-role table for source-plan encoding. One module-wide
     // value: every sym-plan encode example and artifact claim consumes it, so
     // plan-supplied indices can never enter the encoder.
@@ -97,63 +90,6 @@ pub fn write_project(
         render_manifest(analysis, &model_info, wasm_name, &sha),
     )
     .map_err(|e| format!("write manifest: {e}"))?;
-    Ok(())
-}
-
-fn write_fragment_sidecars(
-    cert_dir: &Path,
-    analysis: &Analysis,
-    model_info: &ModelInfo,
-) -> Result<(), String> {
-    let mut sidecars = Vec::new();
-    for c in &analysis.certs {
-        match c.inner() {
-            Cert::ExprFragment {
-                source_plan, plan, ..
-            } => {
-                if let Some(sym) = expr_fragment_source_plan(source_plan, plan) {
-                    sidecars.push(sym_fragment_sidecar(c.name(), &sym));
-                } else {
-                    sidecars.push(expr_fragment_sidecar(c.name(), plan));
-                }
-            }
-            Cert::StringConcatVerbatimMatch { .. } => {
-                let plan = string_concat_plan_from_cert(c)
-                    .expect("certified String.concat should project to a source plan");
-                let sym_plan = string_concat_sym_plan_from_plan(&plan);
-                sidecars.push(sym_fragment_sidecar(c.name(), &sym_plan));
-                sidecars.push(string_concat_sidecar(c.name(), &plan));
-            }
-            Cert::StringEqVerbatimMatch { .. } => {
-                let plan = string_eq_plan_from_cert(c)
-                    .expect("certified String.eq should project to a source plan");
-                let sym_plan = string_eq_sym_plan_from_plan(&plan);
-                sidecars.push(sym_fragment_sidecar(c.name(), &sym_plan));
-                sidecars.push(string_eq_sidecar(c.name(), &plan));
-            }
-            Cert::AdtConstructor { .. } => {
-                if let Some(sym_plan) = adt_constructor_sym_plan_from_cert(c, model_info) {
-                    sidecars.push(sym_fragment_sidecar(c.name(), &sym_plan));
-                }
-                if let Some(plan) = construct_plan_from_cert(c)
-                    && check_construct_plan(&plan).is_ok()
-                {
-                    sidecars.push(construct_sidecar(c.name(), &plan));
-                }
-            }
-            _ => {}
-        }
-    }
-    if sidecars.is_empty() {
-        return Ok(());
-    }
-
-    std::fs::create_dir_all(cert_dir.join("fragments"))
-        .map_err(|e| format!("create cert fragments dir: {e}"))?;
-    for plan in sidecars {
-        std::fs::write(cert_dir.join(&plan.path), plan.text)
-            .map_err(|e| format!("write {}: {e}", plan.path))?;
-    }
     Ok(())
 }
 
