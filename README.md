@@ -47,7 +47,12 @@ This builds `aver`, runs `examples/core/hello.av`, and checks one Lean law from 
 
 ```bash
 cargo install aver-lang
+cargo install aver-cert
 ```
+
+`aver-lang` installs the compiler as `aver`. `aver-cert` installs the
+independent certificate verifier used by `aver cert`; keep both executables in
+the same directory or on `PATH`.
 
 Then try it with a tiny file:
 

@@ -345,6 +345,12 @@ def verify(dry_run: bool) -> None:
     run(["cargo", "clippy", "--workspace", "--all-targets", "--exclude", "aver-lang", "--", "-D", "warnings"])
     print("  verify: cargo clippy -p aver-lang --features wasm,wasip2", flush=True)
     run(["cargo", "clippy", "-p", "aver-lang", "--lib", "--bin", "aver", "--features", "wasm,wasip2", "--", "-D", "warnings"])
+    # The certificate integration suites exercise the real subprocess boundary:
+    # `aver cert ...` must find the standalone sibling executable. Building
+    # aver-lang does not build dependency binaries, so make that executable an
+    # explicit release-gate input even from a completely clean target directory.
+    print("  verify: cargo build -p aver-cert --bin aver-cert", flush=True)
+    run(["cargo", "build", "-p", "aver-cert", "--bin", "aver-cert"])
     # `wasip2` is a separate feature; with `wasm` alone every
     # `#![cfg(feature = "wasip2")]` test file reports 0 tests, so the
     # wasip2 codegen / component-model surface was never gated by the

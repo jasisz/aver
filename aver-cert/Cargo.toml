@@ -13,6 +13,7 @@ categories = ["development-tools", "wasm"]
 include = [
     "/src/**",
     "/assets/wall/**",
+    "/LICENSE",
     "/README.md",
 ]
 

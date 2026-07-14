@@ -156,7 +156,8 @@ Anti-vacuity is enforced separately: executable guard `example`s must compute ea
 
 ## Trust model
 
-`aver-cert verify app.wasm out/cert` (exit 0 = certified, anything else = 1):
+`aver-cert verify app.wasm out/cert` exits 0 exactly for a certified artifact
+and nonzero otherwise:
 
 1. hashes the artifact and declines on mismatch with the pinned value;
 2. resolves `format.wall_id` only against exact walls embedded in the checker, then assembles a **checker-owned build**: audited Lean sources and the pinned toolchain come from that wall, `ArtifactBytes.lean` is regenerated from the actual artifact bytes, and the cert contributes data files only — each name-gated and scanned for elaboration-executing tokens; package-provided wall sources, lakefiles, toolchains, witnesses, and caches are never trusted;
@@ -254,6 +255,13 @@ aver-cert explain out/app.wasm out/cert    # same full check + human-readable re
 # Exact subprocess shortcuts; require aver-cert beside aver or on PATH.
 aver cert verify  out/app.wasm out/cert
 aver cert explain out/app.wasm out/cert
+```
+
+Install the two executables independently:
+
+```bash
+cargo install aver-lang
+cargo install aver-cert
 ```
 
 `explain` prints the kernel-confirmed CERTIFIED exports with their policies and runtime contracts, then the DECLINED list with reasons (the DECLINED side is informational and carries no claim). A certificate with zero certified exports reports `NO CERTIFIED EXPORTS` and exits 1 — a trust tool does not exit green for a certificate that claims nothing.
