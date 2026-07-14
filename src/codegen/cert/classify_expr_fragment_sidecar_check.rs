@@ -376,6 +376,21 @@ fn check_expr_fragment_plan_object(
             plan.result, result
         ));
     }
+    // The ordinary WebAssembly profile admits multiple sign and, in arithmetic
+    // NaN cases, payload bit patterns for an arithmetic NaN result.
+    // Our current Float codomain face is `floatBitsRepr`, i.e. equality with
+    // one exact `UInt64`.  It is therefore not a sound face for a Float result
+    // that depends on f64.add/f64.mul over the unrestricted raw-bit domain.
+    // Keep comparisons such as f64.le: their Bool result is deterministic even
+    // when either operand is NaN.  Re-enable Float-producing arithmetic only
+    // after the schema has a relational NaN result representation (or a
+    // separately declared deterministic/canonicalizing Wasm profile).
+    if expr_fragment_needs_relational_nan_result(&plan) {
+        return Err(format!(
+            "plan for `{export_name}`: general Wasm allows multiple NaN sign/payload results for \
+             f64.add/f64.mul; exact-bit Float output needs a relational result model"
+        ));
+    }
     let canonical_ops = lower_expr_fragment_plan(&plan, carrier)?;
     let actual_ops = strip_trailing_end(&f.ops);
     let canonical_code_entry_bytes = lower_expr_fragment_plan_code_entry_bytes(&plan, carrier)?;
@@ -411,6 +426,49 @@ fn check_expr_fragment_plan_object(
         ops_match && bytes_match,
         mismatch_reason,
     ))
+}
+
+fn expr_fragment_needs_relational_nan_result(plan: &ExprFragmentPlan) -> bool {
+    plan.result == FragTy::F64 && block_has_nan_nondeterministic_float_op(&plan.body)
+}
+
+fn block_has_nan_nondeterministic_float_op(block: &FragBlock) -> bool {
+    // Deliberately exhaustive: extending FragNodeKind must force an explicit
+    // decision about nested blocks and Float-bit observation at this gate.
+    block.nodes.iter().any(|node| match &node.kind {
+        FragNodeKind::Prim { op, .. } => prim_has_nan_nondeterministic_float_result(op),
+        FragNodeKind::If {
+            then_block,
+            else_block,
+            ..
+        } => {
+            block_has_nan_nondeterministic_float_op(then_block)
+                || block_has_nan_nondeterministic_float_op(else_block)
+        }
+        FragNodeKind::Local { .. }
+        | FragNodeKind::ConstBool(_)
+        | FragNodeKind::ConstI64(_)
+        | FragNodeKind::ConstI32(_)
+        | FragNodeKind::ConstF64(_)
+        | FragNodeKind::StructGet { .. }
+        | FragNodeKind::StructGetUser { .. }
+        | FragNodeKind::RefIsNull { .. }
+        | FragNodeKind::HostCall { .. }
+        | FragNodeKind::SelfCall { .. } => false,
+    })
+}
+
+fn prim_has_nan_nondeterministic_float_result(op: &FragPrim) -> bool {
+    match op {
+        FragPrim::F64Add | FragPrim::F64Mul => true,
+        FragPrim::F64Le
+        | FragPrim::I64Eq
+        | FragPrim::I64LeS
+        | FragPrim::I64LtS
+        | FragPrim::I64GeS
+        | FragPrim::I32LtS
+        | FragPrim::I32GtS => false,
+    }
 }
 
 fn check_sym_fragment_plan_object(

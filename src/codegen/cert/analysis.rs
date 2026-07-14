@@ -290,18 +290,9 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
 mod analysis_tests {
     use super::*;
 
-    fn compile_float_add_probe() -> crate::codegen::wasm_gc::WasmGcCompileOutput {
+    fn compile_float_probe(source: &str) -> crate::codegen::wasm_gc::WasmGcCompileOutput {
         let mut items = crate::source::parse_source(
-            r#"
-module PlanFirstProbe
-    intent = "plan-first producer overlay probe"
-    depends []
-    exposes [floatAddGoal]
-
-fn floatAddGoal(a: Float, b: Float) -> Float
-    ? "Small scalar island."
-    a + b
-"#,
+            source,
         )
         .expect("source parses");
         let pipeline = crate::ir::pipeline::run(
@@ -326,12 +317,27 @@ fn floatAddGoal(a: Float, b: Float) -> Float
 
     #[test]
     fn expr_fragment_certification_requires_matching_producer_plan() {
-        let output = compile_float_add_probe();
+        let output = compile_float_probe(
+            r#"
+module PlanFirstProbe
+    intent = "plan-first producer overlay probe"
+    depends []
+    exposes [carrierAnchor, floatLeGoal]
+
+fn carrierAnchor(x: Int) -> Int
+    ? "Keeps the shared Int carrier available to the certificate analyzer."
+    x + 1
+
+fn floatLeGoal(a: Float, b: Float) -> Bool
+    ? "Small scalar comparison island."
+    a <= b
+"#,
+        );
         let without_plan = analyze(&output.bytes, &[]).expect("analysis without producer plan");
         assert!(
             !without_plan
                 .certified_names()
-                .contains(&"floatAddGoal".to_string()),
+                .contains(&"floatLeGoal".to_string()),
             "expr-fragment should not be certified without a producer plan"
         );
 
@@ -340,7 +346,7 @@ fn floatAddGoal(a: Float, b: Float) -> Float
         assert!(
             checked
                 .certified_names()
-                .contains(&"floatAddGoal".to_string()),
+                .contains(&"floatLeGoal".to_string()),
             "matching producer plan should certify the probe"
         );
         let source_plan = checked
@@ -351,51 +357,209 @@ fn floatAddGoal(a: Float, b: Float) -> Float
                     name,
                     source_plan,
                     ..
-                } if name == "floatAddGoal" => source_plan.as_ref(),
+                } if name == "floatLeGoal" => source_plan.as_ref(),
                 _ => None,
             })
             .expect("source-level producer plan should be preserved on the cert");
-        assert_eq!(source_plan.result, SymTy::Float);
+        assert_eq!(source_plan.result, SymTy::Bool);
 
         let mut tampered = output
             .fragment_plans
             .iter()
-            .find(|artifact| artifact.export_name == "floatAddGoal")
-            .expect("producer emitted a floatAddGoal plan")
+            .find(|artifact| artifact.export_name == "floatLeGoal")
+            .expect("producer emitted a floatLeGoal plan")
             .clone();
         let FragmentPlan::Sym(sym_plan) = &mut tampered.plan else {
-            panic!("source-level producer should emit floatAddGoal as a SymPlan");
+            panic!("source-level producer should emit floatLeGoal as a SymPlan");
         };
         let mut changed = false;
         for node in &mut sym_plan.body.nodes {
-            if let SymNodeKind::Prim { op, .. } = &mut node.kind
-                && *op == SymPrim::FloatAdd
+            if let SymNodeKind::Param { index } = &mut node.kind
+                && *index == 0
             {
-                *op = SymPrim::FloatMul;
+                *index = 1;
                 changed = true;
                 break;
             }
         }
-        assert!(changed, "probe source plan should contain float.add");
+        assert!(changed, "probe source plan should contain parameter zero");
 
         let checked = analyze_with_fragment_plans(&output.bytes, &[], &[tampered])
             .expect("analysis should report a declined producer plan");
         assert!(
             !checked
                 .certified_names()
-                .contains(&"floatAddGoal".to_string()),
+                .contains(&"floatLeGoal".to_string()),
             "a bad producer plan must not fall back to byte-derived classification"
         );
         let reason = checked
             .declined()
             .iter()
-            .find(|(name, _)| name == "floatAddGoal")
+            .find(|(name, _)| name == "floatLeGoal")
             .map(|(_, reason)| reason.as_str())
-            .expect("floatAddGoal should be declined");
+            .expect("floatLeGoal should be declined");
         assert!(
             reason.contains("producer fragment plan does not match emitted wasm"),
             "decline reason should identify producer-plan mismatch, got: {reason}"
         );
+    }
+
+    #[test]
+    fn float_arithmetic_result_is_declined_until_nan_results_are_relational() {
+        let output = compile_float_probe(
+            r#"
+module FloatNanProfileProbe
+    intent = "Float NaN portability boundary probe"
+    depends []
+    exposes [floatAddGoal, floatMulAddGoal, floatLeGoal]
+
+fn floatAddGoal(a: Float, b: Float) -> Float
+    ? "Float addition has a set-valued NaN result in general WebAssembly."
+    a + b
+
+fn floatMulAddGoal(a: Float, b: Float) -> Float
+    ? "Both arithmetic stages can produce a set-valued NaN result."
+    a * b + a
+
+fn floatLeGoal(a: Float, b: Float) -> Bool
+    ? "NaN makes the comparison false independently of its payload."
+    a <= b
+"#,
+        );
+        let checked = analyze_with_fragment_plans(&output.bytes, &[], &output.fragment_plans)
+            .expect("analysis should fail closed per Float export");
+
+        assert!(
+            checked
+                .certified_names()
+                .contains(&"floatLeGoal".to_string()),
+            "the deterministic Bool comparison should remain certifiable"
+        );
+        for name in ["floatAddGoal", "floatMulAddGoal"] {
+            assert!(
+                !checked.certified_names().contains(&name.to_string()),
+                "{name} must not retain an exact-bit Float certificate"
+            );
+            let reason = checked
+                .declined()
+                .iter()
+                .find(|(declined, _)| declined == name)
+                .map(|(_, reason)| reason.as_str())
+                .unwrap_or_else(|| panic!("{name} should be reported source-level-only"));
+            assert!(
+                reason.contains("general Wasm allows multiple NaN sign/payload")
+                    && reason.contains("exact-bit Float output needs a relational result model"),
+                "{name} should report the semantic boundary honestly, got: {reason}"
+            );
+        }
+
+        // Old certificate directories may still carry either public sidecar
+        // profile. The verifier-owned parsers must enforce the same boundary,
+        // not merely the producer-plan overlay above.
+        let add_plan = output
+            .fragment_plans
+            .iter()
+            .find(|artifact| artifact.export_name == "floatAddGoal")
+            .expect("producer emitted the historical Float-add plan");
+        let FragmentPlan::Sym(add_sym) = &add_plan.plan else {
+            panic!("Float add should originate as a SymPlan");
+        };
+        let sym_error = check_sym_fragment_plan_sidecar(
+            &output.bytes,
+            "floatAddGoal",
+            &sym_fragment_plan_text(add_sym),
+        )
+        .err()
+        .expect("historical SymPlan sidecar must be rejected");
+        assert!(
+            sym_error.contains("exact-bit Float output needs a relational result model"),
+            "SymPlan verifier should report the NaN boundary: {sym_error}"
+        );
+
+        let add_expr = add_sym
+            .to_expr_fragment_plan(
+                &FragHostTable::placeholder(),
+                &FragStructTable::default(),
+            )
+            .expect("Float add encodes to the historical ExprFragment plan");
+        let expr_error = check_expr_fragment_plan_sidecar(
+            &output.bytes,
+            "floatAddGoal",
+            &expr_fragment_plan_text(&add_expr),
+        )
+        .err()
+        .expect("historical ExprFragment sidecar must be rejected");
+        assert!(
+            expr_error.contains("exact-bit Float output needs a relational result model"),
+            "ExprFragment verifier should report the NaN boundary: {expr_error}"
+        );
+    }
+
+    #[test]
+    fn float_nan_gate_descends_into_nested_if_blocks() {
+        fn nested_plan(op: FragPrim) -> ExprFragmentPlan {
+            let arithmetic_branch = FragBlock {
+                nodes: vec![
+                    FragNode {
+                        id: FragValueId(0),
+                        ty: FragTy::F64,
+                        kind: FragNodeKind::Local { index: 1 },
+                    },
+                    FragNode {
+                        id: FragValueId(1),
+                        ty: FragTy::F64,
+                        kind: FragNodeKind::Local { index: 2 },
+                    },
+                    FragNode {
+                        id: FragValueId(2),
+                        ty: FragTy::F64,
+                        kind: FragNodeKind::Prim {
+                            op,
+                            args: vec![FragValueId(0), FragValueId(1)],
+                        },
+                    },
+                ],
+                result: FragValueId(2),
+            };
+            let passthrough_branch = FragBlock {
+                nodes: vec![FragNode {
+                    id: FragValueId(0),
+                    ty: FragTy::F64,
+                    kind: FragNodeKind::Local { index: 1 },
+                }],
+                result: FragValueId(0),
+            };
+            ExprFragmentPlan {
+                params: vec![FragTy::BoolI32, FragTy::F64, FragTy::F64],
+                result: FragTy::F64,
+                body: FragBlock {
+                    nodes: vec![
+                        FragNode {
+                            id: FragValueId(0),
+                            ty: FragTy::BoolI32,
+                            kind: FragNodeKind::Local { index: 0 },
+                        },
+                        FragNode {
+                            id: FragValueId(1),
+                            ty: FragTy::F64,
+                            kind: FragNodeKind::If {
+                                cond: FragValueId(0),
+                                then_block: Box::new(arithmetic_branch),
+                                else_block: Box::new(passthrough_branch),
+                            },
+                        },
+                    ],
+                    result: FragValueId(1),
+                },
+            }
+        }
+
+        for op in [FragPrim::F64Add, FragPrim::F64Mul] {
+            assert!(
+                expr_fragment_needs_relational_nan_result(&nested_plan(op)),
+                "the exact-Float gate must inspect arithmetic inside nested If blocks"
+            );
+        }
     }
 
     #[test]

@@ -1873,15 +1873,15 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|c| c["name"].as_str() == Some("floatAddGoal"))
-        .expect("floatAddGoal expr-fragment entry");
+        .find(|c| c["name"].as_str() == Some("floatLeGoal"))
+        .expect("floatLeGoal expr-fragment entry");
     assert!(
         float_entry.get("fragment").is_none(),
-        "floatAddGoal should be verified from its source SymPlan only"
+        "floatLeGoal should be verified from its source SymPlan only"
     );
     let float_source_plan = float_entry["source_fragment"]["plan"]
         .as_str()
-        .expect("floatAddGoal source plan path");
+        .expect("floatLeGoal source plan path");
 
     let source_plan_tamper_dir = temp_dir("cert-expr-source-plan-tamper");
     copy_dir(&out_dir, &source_plan_tamper_dir);
@@ -1889,10 +1889,11 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let source_plan_tamper_cert = source_plan_tamper_dir.join("cert");
     let source_sidecar = source_plan_tamper_cert.join(float_source_plan);
     let source_text = std::fs::read_to_string(&source_sidecar).unwrap();
-    let tampered_source = source_text.replacen("op=float.add", "op=float.mul", 1);
+    let tampered_source =
+        source_text.replacen("const.bool value=true", "const.bool value=false", 1);
     assert_ne!(
         source_text, tampered_source,
-        "floatAddGoal source plan shape changed"
+        "floatLeGoal source plan shape changed"
     );
     std::fs::write(&source_sidecar, &tampered_source).unwrap();
     let source_plan_tamper_mf = source_plan_tamper_cert.join("cert-manifest.json");
@@ -1902,8 +1903,8 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
         .as_array_mut()
         .unwrap()
         .iter_mut()
-        .find(|c| c["name"].as_str() == Some("floatAddGoal"))
-        .expect("floatAddGoal sidecar");
+        .find(|c| c["name"].as_str() == Some("floatLeGoal"))
+        .expect("floatLeGoal sidecar");
     source_plan_tamper_entry["source_fragment"]["plan_sha256"] =
         serde_json::Value::String(aver::codegen::cert::sha256_hex(tampered_source.as_bytes()));
     std::fs::write(
@@ -1933,17 +1934,17 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let lean_plan_tamper_cert = lean_plan_tamper_dir.join("cert");
     let plans_lean = lean_plan_tamper_cert.join("Plans.lean");
     let plans_text = std::fs::read_to_string(&plans_lean).unwrap();
-    let tampered_plans_text = plans_text.replacen(".f64Add [0, 1]", ".f64Mul [0, 1]", 1);
+    let tampered_plans_text = plans_text.replacen(".f64Le [0, 1]", ".f64Le [1, 0]", 1);
     assert_ne!(
         plans_text, tampered_plans_text,
-        "Plans.lean floatAddGoal shape changed"
+        "Plans.lean floatLeGoal shape changed"
     );
     std::fs::write(&plans_lean, tampered_plans_text).unwrap();
 
     let (ok, out) = aver_verify(&lean_plan_tamper_wasm, &lean_plan_tamper_cert);
     assert!(!ok, "tampered Lean RawPlan data must be DECLINED:\n{out}");
     let old_body_pin_failed =
-        out.contains("PlanLower.lowerExprFragmentBody") && out.contains("floatAddGoalCode");
+        out.contains("PlanLower.lowerExprFragmentBody") && out.contains("floatLeGoalCode");
     let plan_byte_or_aggregate_pin_failed = out.contains("PlanBytes.lowerExprFragmentCodeEntry")
         || out.contains("ExprFragmentAccepted.accepted");
     assert!(
@@ -1961,11 +1962,13 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let lean_bytes_tamper_cert = lean_bytes_tamper_dir.join("cert");
     let plans_lean = lean_bytes_tamper_cert.join("Plans.lean");
     let plans_text = std::fs::read_to_string(&plans_lean).unwrap();
-    let honest_bytes = "some [10, 1, 1, 99, 23, 32, 0, 32, 1, 160, 11]";
-    let tampered_bytes = "some [10, 1, 1, 99, 23, 32, 0, 32, 1, 161, 11]";
+    let honest_bytes =
+        "some [18, 1, 1, 99, 23, 32, 0, 32, 1, 101, 4, 127, 65, 1, 5, 65, 0, 11, 11]";
+    let tampered_bytes =
+        "some [18, 1, 1, 99, 23, 32, 0, 32, 1, 102, 4, 127, 65, 1, 5, 65, 0, 11, 11]";
     assert!(
         plans_text.contains(honest_bytes),
-        "Plans.lean floatAddGoal byte pin changed"
+        "Plans.lean floatLeGoal byte pin changed"
     );
     std::fs::write(
         &plans_lean,
@@ -1979,7 +1982,7 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
         "tampered Lean code-entry byte pin must be DECLINED:\n{out}"
     );
     assert!(
-        out.contains("PlanBytes.lowerExprFragmentCodeEntry") && out.contains("floatAddGoalPlan"),
+        out.contains("PlanBytes.lowerExprFragmentCodeEntry") && out.contains("floatLeGoalPlan"),
         "wrong reason for Lean code-entry byte pin tamper:\n{out}"
     );
     assert!(
@@ -1993,11 +1996,13 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let lean_slice_tamper_cert = lean_slice_tamper_dir.join("cert");
     let plans_lean = lean_slice_tamper_cert.join("Plans.lean");
     let plans_text = std::fs::read_to_string(&plans_lean).unwrap();
-    let honest_exact_arg = "[10, 1, 1, 99, 23, 32, 0, 32, 1, 160, 11] =\n";
-    let slice_tampered_exact_arg = "[11, 1, 1, 99, 18, 32, 0, 32, 1, 160, 11] =\n";
+    let honest_exact_arg =
+        "[18, 1, 1, 99, 23, 32, 0, 32, 1, 101, 4, 127, 65, 1, 5, 65, 0, 11, 11] =\n";
+    let slice_tampered_exact_arg =
+        "[18, 1, 1, 99, 23, 32, 0, 32, 1, 102, 4, 127, 65, 1, 5, 65, 0, 11, 11] =\n";
     assert!(
         plans_text.contains(honest_exact_arg),
-        "Plans.lean should contain the exact WasmSlice floatAddGoal byte pin"
+        "Plans.lean should contain the exact WasmSlice floatLeGoal byte pin"
     );
     let tampered_exact = plans_text.replacen(honest_exact_arg, slice_tampered_exact_arg, 1);
     std::fs::write(&plans_lean, tampered_exact).unwrap();
@@ -2203,17 +2208,37 @@ fn cert_verify_declines_expr_fragment_extra_instruction_sidecar() {
     }
 
     let (out_dir, wasm, cert) = compile_cert_goals("cert-expr-extra-instr");
-    let plan_path = source_fragment_plan_path(&cert, "floatAddGoal");
+    let plan_path = source_fragment_plan_path(&cert, "floatLeGoal");
     let sidecar = cert.join(plan_path);
     let source_text = std::fs::read_to_string(&sidecar).unwrap();
     let honest_block = concat!(
-        "block result=v2
+        "block result=v3
 ",
         "  v0 ty=float param index=0
 ",
         "  v1 ty=float param index=1
 ",
-        "  v2 ty=float prim op=float.add args=v0,v1
+        "  v2 ty=bool prim op=float.le args=v0,v1
+",
+        "  v3 ty=bool if cond=v2
+",
+        "  then
+",
+        "    block result=v0
+",
+        "      v0 ty=bool const.bool value=true
+",
+        "    end
+",
+        "  else
+",
+        "    block result=v0
+",
+        "      v0 ty=bool const.bool value=false
+",
+        "    end
+",
+        "  endif
 ",
         "end
 ",
@@ -2225,11 +2250,47 @@ fn cert_verify_declines_expr_fragment_extra_instruction_sidecar() {
 ",
         "  v1 ty=float param index=1
 ",
-        "  v2 ty=float prim op=float.add args=v0,v1
+        "  v2 ty=bool prim op=float.le args=v0,v1
 ",
-        "  v3 ty=float const.float bits=0x0000000000000000
+        "  v3 ty=bool if cond=v2
 ",
-        "  v4 ty=float prim op=float.add args=v2,v3
+        "  then
+",
+        "    block result=v0
+",
+        "      v0 ty=bool const.bool value=true
+",
+        "    end
+",
+        "  else
+",
+        "    block result=v0
+",
+        "      v0 ty=bool const.bool value=false
+",
+        "    end
+",
+        "  endif
+",
+        "  v4 ty=bool if cond=v3
+",
+        "  then
+",
+        "    block result=v0
+",
+        "      v0 ty=bool const.bool value=true
+",
+        "    end
+",
+        "  else
+",
+        "    block result=v0
+",
+        "      v0 ty=bool const.bool value=false
+",
+        "    end
+",
+        "  endif
 ",
         "end
 ",
@@ -2237,10 +2298,10 @@ fn cert_verify_declines_expr_fragment_extra_instruction_sidecar() {
     let tampered = source_text.replacen(honest_block, tampered_block, 1);
     assert_ne!(
         source_text, tampered,
-        "floatAddGoal source plan block shape changed"
+        "floatLeGoal source plan block shape changed"
     );
     std::fs::write(&sidecar, &tampered).unwrap();
-    rebind_source_fragment_plan_sha(&cert, "floatAddGoal", &tampered);
+    rebind_source_fragment_plan_sha(&cert, "floatLeGoal", &tampered);
 
     let (ok, out) = aver_verify(&wasm, &cert);
     let _ = std::fs::remove_dir_all(&out_dir);
@@ -2249,7 +2310,7 @@ fn cert_verify_declines_expr_fragment_extra_instruction_sidecar() {
         "extra-instruction expr-fragment source plan must be DECLINED:
 {out}"
     );
-    assert_source_plan_byte_mismatch("floatAddGoal", &out);
+    assert_source_plan_byte_mismatch("floatLeGoal", &out);
 }
 
 #[test]
