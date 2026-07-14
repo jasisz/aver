@@ -1022,37 +1022,55 @@ def recTopBlock (isAcc : Bool) (combineRole : HostRole)
             recStepUnary combineRole self boxIdx combineIdx subIdx step)
   | _, _ => false
 
-/-- Context-sensitive `recursion-plan-v1` checking: the plan must be one of the
-    two recognised fuel-recursion grammars, every self-call must target `self`
-    (the byte-derived function binding of the claimed export), and every host
-    call must cite the byte-derived role table.  `totalityRole` is checked in
-    the same byte-pinned grammar: only the unary `.mul` combine shape accepts a
-    `.mul` totality premise; unary additive and accumulator shapes accept only
-    the shipped `.addSub` premise surface. -/
+/-- Classify the context-sensitive `recursion-plan-v1` grammar. Every self-call
+    targets the byte-derived `self`, every host call cites the byte-derived role
+    table, and the returned role is a consequence of the checked combine shape:
+    unary multiplication is `.mul`; unary addition and the accumulator are
+    `.addSub`. -/
+def classifyRecursionPlanShape
+    (self : Nat)
+    (hostTable : List (HostRole × Nat))
+    (plan : RecursionRawPlan) : Option TotalityRole :=
+  match hostRoleIdx? hostTable .box, hostRoleIdx? hostTable .sub with
+  | some boxIdx, some subIdx =>
+      if plan.profile = "recursion-plan-v1" && sameTy plan.result .intCarrier then
+        match plan.params with
+        | [.intCarrier] =>
+            match hostRoleIdx? hostTable .add, hostRoleIdx? hostTable .mul with
+            | some addIdx, _ =>
+                if recTopBlock false .add self boxIdx addIdx subIdx plan.body then
+                  some .addSub
+                else
+                  match hostRoleIdx? hostTable .mul with
+                  | some mulIdx =>
+                      if recTopBlock false .mul self boxIdx mulIdx subIdx plan.body then
+                        some .mul
+                      else none
+                  | none => none
+            | none, some mulIdx =>
+                if recTopBlock false .mul self boxIdx mulIdx subIdx plan.body then
+                  some .mul
+                else none
+            | none, none => none
+        | [.intCarrier, .intCarrier] =>
+            match hostRoleIdx? hostTable .add with
+            | some addIdx =>
+                if recTopBlock true .add self boxIdx addIdx subIdx plan.body then
+                  some .addSub
+                else none
+            | none => none
+        | _ => none
+      else none
+  | _, _ => none
+
+/-- Compatibility predicate for family acceptance. The obligation's claimed
+    role is compared with the independently classified result. -/
 def checkRecursionPlanShape
     (self : Nat)
     (hostTable : List (HostRole × Nat))
     (totalityRole : TotalityRole)
     (plan : RecursionRawPlan) : Bool :=
-  match hostRoleIdx? hostTable .box, hostRoleIdx? hostTable .sub with
-  | some boxIdx, some subIdx =>
-      plan.profile = "recursion-plan-v1" &&
-        sameTy plan.result .intCarrier &&
-        (match plan.params, totalityRole with
-        | [.intCarrier], .addSub =>
-            (match hostRoleIdx? hostTable .add with
-             | some addIdx => recTopBlock false .add self boxIdx addIdx subIdx plan.body
-             | none => false)
-        | [.intCarrier], .mul =>
-            (match hostRoleIdx? hostTable .mul with
-             | some mulIdx => recTopBlock false .mul self boxIdx mulIdx subIdx plan.body
-             | none => false)
-        | [.intCarrier, .intCarrier], .addSub =>
-            match hostRoleIdx? hostTable .add with
-            | some addIdx => recTopBlock true .add self boxIdx addIdx subIdx plan.body
-            | none => false
-        | _, _ => false)
-  | _, _ => false
+  classifyRecursionPlanShape self hostTable plan == some totalityRole
 
 /-! ### `mutual-plan-v1` shape checking
 
