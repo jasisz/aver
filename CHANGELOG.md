@@ -8,14 +8,18 @@ Named for the proof carried beside the artifact: Aver binaries can now ship a Le
 
 ### Added
 
-- **Aver binaries can carry an Artifact Behavioral Certificate.** `aver compile --certify` emits one beside wasm-gc output, and the independent `aver-cert verify` checks the exact shipped bytes with the pinned Lean kernel. Unsupported exports are declined fail-closed.
-- **Certificates cover real programs:** arithmetic, comparisons, ADTs, lists, floats, strings, calls, recursion, and mutually recursive families. They account for the whole module and can include checked termination witnesses for total correctness.
+- **Aver binaries can carry an Artifact Behavioral Certificate.** `aver compile --certify` emits one beside wasm-gc output, and the independent `aver-cert verify` checks the exact shipped bytes with the pinned Lean kernel. Unsupported exports remain explicitly uncertified with a reason.
+- **Certificates cover real programs:** arithmetic, comparisons, ADTs, list construction and payloads, safe float comparisons and results, strings, calls, recursion, and mutually recursive families. They account for the whole module and can include checked termination witnesses for total correctness.
 - **`aver cert check` provides a faster development loop.** It reports `CHECKED`; strict `verify` performs the final `leanchecker --fresh` replay and remains the release or admission gate.
 - **Egg Catch demonstrates the full workflow** with twenty-one kernel-proven engine laws. The playground also gains touch controls and a practical mobile layout.
 
 ### Changed
 
 - **wasm-gc sum types use precise nominal references** instead of a catch-all reference type.
+
+### Fixed
+
+- **The VM keeps every NaN as a Float** instead of mistaking rare payloads for boxed values.
 
 ## 0.26.0 "Zahlen" — 2026-06-26
 

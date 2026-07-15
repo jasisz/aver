@@ -366,7 +366,7 @@ fn report_face(candidate: &CertifiedCandidate) -> String {
         other => other,
     };
     format!(
-        "class: {label}  |  source types (display only): {} -> {}",
+        "class: {label}  |  certificate face: Dom {}, Cod {}",
         display_safe(&candidate.dom),
         display_safe(&candidate.cod)
     )

@@ -4504,8 +4504,8 @@ fn cmd_compile_wasm_gc(
     // with `--optimize`) via sha256, classifies each user function, and
     // emits kernel-clean Lean theorems for the certified ones. The model
     // definitions are the reused `aver proof` Lean emission.
-    if certify {
-        emit_artifact_certificate(
+    if certify
+        && let Err(error) = emit_artifact_certificate(
             file,
             project_name,
             module_root_override,
@@ -4513,7 +4513,10 @@ fn cmd_compile_wasm_gc(
             &wasm_name,
             &bytes,
             &wasm_gc_output.fragment_plans,
-        );
+        )
+    {
+        eprintln!("{}", format!("certificate: {error}").red());
+        process::exit(1);
     }
     // Deployment pack — drops platform-specific bootstrap files
     // next to the wasm-gc artifact. Same call site as the legacy
@@ -4535,7 +4538,7 @@ fn emit_artifact_certificate(
     wasm_name: &str,
     bytes: &[u8],
     fragment_plans: &[aver::codegen::cert::FragmentPlanArtifact],
-) {
+) -> Result<(), String> {
     use aver::codegen::cert;
 
     // Reuse the `aver proof` Lean model emission for the model definitions.
@@ -4556,19 +4559,9 @@ fn emit_artifact_certificate(
     );
     let model_out = lean_codegen::transpile_for_cert_model(&mut mctx);
 
-    let analysis = match cert::analyze_with_fragment_plans(bytes, &model_out.files, fragment_plans)
-    {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("{}", format!("certificate: {e}").red());
-            return;
-        }
-    };
+    let analysis = cert::analyze_with_fragment_plans(bytes, &model_out.files, fragment_plans)?;
 
-    if let Err(e) = cert::write_project(out_path, wasm_name, bytes, &analysis, &model_out.files) {
-        eprintln!("{}", format!("certificate: {e}").red());
-        return;
-    }
+    cert::write_project(out_path, wasm_name, bytes, &analysis, &model_out.files)?;
 
     let cert_dir = out_path.join("cert");
     let certified = analysis.certified_names();
@@ -4587,6 +4580,7 @@ fn emit_artifact_certificate(
         out_path.join(format!("{wasm_name}.wasm")).display(),
         cert_dir.display()
     );
+    Ok(())
 }
 
 /// `--target wasip2` compile entry — 0.18 "Span".

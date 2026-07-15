@@ -53,7 +53,9 @@ cargo install aver-cert
 ```
 
 The `wasm` feature enables wasm-gc compilation and `--certify`; omit it only if
-you need the VM and Rust backend. `aver-lang` installs the compiler as `aver`.
+you need the VM and Rust backend. Install with `--features wasm,wasip2` if you
+also want the WASI 0.2 target shown below. `aver-lang` installs the compiler as
+`aver`.
 `aver-cert` installs the independent certificate verifier used by `aver cert`;
 keep both executables in the same directory or on `PATH`. The verifier starts
 its own public version line at `0.1.0` rather than sharing the `aver-lang`
