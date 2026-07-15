@@ -1,0 +1,12 @@
+module CertificateHello
+    intent =
+        "Small end-to-end Artifact Behavioral Certificate example."
+    exposes [addOne]
+    effects []
+
+fn addOne(x: Int) -> Int
+    ? "Adds one to an integer."
+    x + 1
+
+verify addOne
+    addOne(2) => 3

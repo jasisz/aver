@@ -25,8 +25,8 @@ enum Command {
         /// The emitted `cert/` directory.
         cert_dir: PathBuf,
     },
-    /// Fast developer preflight. Trusts local `.olean` imports and does not
-    /// produce a certification verdict.
+    /// Fast developer preflight. Trusts the freshly built or explicitly cached
+    /// `.olean` closure and skips whole-closure `leanchecker --fresh`.
     Check {
         artifact: PathBuf,
         cert_dir: PathBuf,
@@ -103,7 +103,8 @@ fn main() -> ExitCode {
                 Ok(CheckVerdict::Checked { summary, faces }) => {
                     println!("{} {}", "CHECKED".cyan().bold(), summary);
                     println!(
-                        "  trusted-olean developer preflight; fresh-environment replay was skipped"
+                        "  trusted freshly built or explicitly cached .olean closure; \
+                         whole-closure leanchecker --fresh replay was skipped"
                     );
                     for face in faces {
                         println!("  {face}");

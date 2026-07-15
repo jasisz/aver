@@ -10,7 +10,7 @@
 
 Aver is a statically typed language designed for AI to write in and humans to review, with a bytecode VM for runtime execution, a Rust backend for deployment, a WASM backend for browser and embedded targets, Lean proof export for pure logic and classified effectful laws, and Dafny verification for automated law checking via Z3.
 
-It is built around one idea: an AI reviewer's opinion of generated code gets cheaper every year; a kernel-checked certificate does not. The same file that runs can carry machine-checkable guarantees — proof obligations a Lean kernel signs off on, not a judgment someone eyeballed once. As the volume of generated code outpaces anyone's capacity to read it, the thing worth keeping is the certificate, not the spot-check.
+It is built around one idea: an AI reviewer's opinion of generated code gets cheaper every year; a kernel-checked certificate does not. Aver source carries proof obligations, and a compiled wasm-gc artifact can ship with a sidecar certificate bound to its exact bytes — guarantees a Lean kernel signs off on, not a judgment someone eyeballed once. As the volume of generated code outpaces anyone's capacity to read it, the thing worth keeping is the certificate, not the spot-check.
 
 Readability comes second, and it still counts: the risky part of AI-written code is usually not syntax, it is missing intent. Aver makes that intent explicit and machine-readable:
 
@@ -20,11 +20,11 @@ Readability comes second, and it still counts: the risky part of AI-written code
 - selected effectful behavior can be verified with explicit stubs and trace assertions
 - effectful runs can be recorded and replayed deterministically
 
-The toolchain (run / verify / check / audit / why / context / compile / bench / proof / replay) lives in [docs/cli.md](docs/cli.md). Backend-specific deep dives: [docs/bench.md](docs/bench.md), [docs/transpilation.md](docs/transpilation.md), [docs/lean.md](docs/lean.md), [docs/dafny.md](docs/dafny.md), [docs/wasm.md](docs/wasm.md), [docs/rust.md](docs/rust.md). Compiled wasm-gc modules can carry a machine-checkable certificate of what their exports compute: [docs/certification.md](docs/certification.md).
+The toolchain (run / verify / check / audit / why / context / compile / bench / proof / replay) lives in [docs/cli.md](docs/cli.md). Backend-specific deep dives: [docs/bench.md](docs/bench.md), [docs/transpilation.md](docs/transpilation.md), [docs/lean.md](docs/lean.md), [docs/dafny.md](docs/dafny.md), [docs/effects.md](docs/effects.md), [docs/wasip2.md](docs/wasip2.md), and [docs/rust.md](docs/rust.md). Compiled wasm-gc modules can carry a machine-checkable certificate of what their exports compute: [docs/certification.md](docs/certification.md).
 
 This is not a language optimized for humans to type by hand all day. It is optimized for AI to generate code that humans can inspect, constrain, test, and ship.
 
-**Prompting an LLM to write Aver?** Feed it [`llms.txt`](https://averlang.dev/llms.txt) (419 lines, curated). Same file at repo root ([`llms.txt`](llms.txt)) and at [averlang.dev/llms.txt](https://averlang.dev/llms.txt) — `.av` extension, single-line match arms, qualified constructors, classified effects, `verify` block shapes, and every other rule that catches model-generated code on first try. Longer reference cut: [`llms-full.txt`](https://averlang.dev/llms-full.txt).
+**Prompting an LLM to write Aver?** Feed it the curated [`llms.txt`](https://averlang.dev/llms.txt). Same file at repo root ([`llms.txt`](llms.txt)) and at [averlang.dev/llms.txt](https://averlang.dev/llms.txt) — `.av` extension, single-line match arms, qualified constructors, classified effects, `verify` block shapes, and every other rule that catches model-generated code on first try. Longer reference cut: [`llms-full.txt`](https://averlang.dev/llms-full.txt).
 
 Website: [averlang.dev](https://averlang.dev)  
 Browser playground: [averlang.dev/playground](https://averlang.dev/playground/)
@@ -41,23 +41,28 @@ Read the [Aver Manifesto](https://jasisz.github.io/aver-language/) for the longe
 docker build -t aver-one-command . && docker run --rm aver-one-command
 ```
 
-This builds `aver`, runs `examples/core/hello.av`, and checks one Lean law from `examples/formal`. See [docs/quickstart.md](docs/quickstart.md).
+This builds `aver` and `aver-cert`, runs `examples/core/hello.av`, checks one
+Lean law, and smoke-checks a small artifact certificate. See
+[docs/quickstart.md](docs/quickstart.md).
 
 ### Install from crates.io
 
 ```bash
-cargo install aver-lang
+cargo install aver-lang --features wasm
 cargo install aver-cert
 ```
 
-`aver-lang` installs the compiler as `aver`. `aver-cert` installs the
-independent certificate verifier used by `aver cert`; keep both executables in
-the same directory or on `PATH`. The verifier starts its own public version
-line at `0.1.0` rather than sharing the `aver-lang` version, and checks
-certificates with the pinned Lean 4.32 toolchain. Certificate verification
-requires a standard Elan installation at `$ELAN_HOME/bin/elan` (or
-`$HOME/.elan/bin/elan` when `ELAN_HOME` is unset); the verifier deliberately
-does not resolve its trusted Lean subprocesses through `PATH`.
+The `wasm` feature enables wasm-gc compilation and `--certify`; omit it only if
+you need the VM and Rust backend. Install with `--features wasm,wasip2` if you
+also want the WASI 0.2 target shown below. `aver-lang` installs the compiler as
+`aver`.
+`aver-cert` installs the independent certificate verifier used by `aver cert`;
+keep both executables in the same directory or on `PATH`. The verifier starts
+its own public version line at `0.1.0` rather than sharing the `aver-lang`
+version, and checks certificates with the pinned Lean 4.32 toolchain.
+Verification requires a standard Elan installation. The verifier resolves the
+canonical Elan executable directly and does not find its trusted Lake, Lean, or
+leanchecker processes through `PATH`.
 
 Then try it with a tiny file:
 
@@ -111,7 +116,8 @@ aver compile  hello.av -o out/
 ```bash
 git clone https://github.com/jasisz/aver
 cd aver
-cargo install --path . --force
+cargo install --path . --features wasm --force
+cargo install --path aver-cert --force
 
 aver run      examples/core/calculator.av
 aver run      examples/core/calculator.av --self-host
@@ -269,8 +275,8 @@ aver run hello.av --wasip2 -- some-arg
 Firefox 120+ / Safari 18.2+ / wasmtime 25+ / Node 22+ / Workers).
 `--target wasip2` is its peer for the Component Model side. The
 pre-2024 NaN-boxed wasm32 backend (`--target wasm` + `--bridge`)
-was dropped in 0.18 — see [`src/codegen/wasm_gc/README.md`](src/codegen/wasm_gc/README.md)
-and [`docs/wasip2.md`](docs/wasip2.md) for the design notes.
+was dropped in 0.18 — see [`docs/effects.md`](docs/effects.md) and
+[`docs/wasip2.md`](docs/wasip2.md) for the supported deployment surfaces.
 
 ### Native Rust
 
@@ -498,11 +504,19 @@ aver verify  file.av
 aver context file.av
 aver compile file.av -o out/
 aver compile file.av --target wasm-gc --certify -o out/
-aver-cert verify out/file.wasm out/cert
+aver cert check out/file.wasm out/cert
+aver cert verify out/file.wasm out/cert
 aver cert explain out/file.wasm out/cert
 ```
 
 Full per-command reference, including flags, replay, formatting, REPL, and the audit / why / proof / bench surface: [docs/cli.md](docs/cli.md). Both `check` and `verify` accept `--deps` to walk transitive `depends [...]` modules; `aver verify --wasm-gc` runs the same cases through the wasm-gc backend as a cross-target check.
+
+| Command | What it checks | Use as a gate? |
+|---|---|---|
+| `aver check` | Source contracts and static diagnostics | Source-quality gate |
+| `aver verify` | Declared source examples | Regression gate |
+| `aver cert check` | Fast certificate preflight using the built or trusted-cache `.olean` closure | Development only (`CHECKED`) |
+| `aver cert verify` | Exact artifact certificate with final fresh replay | Release/admission gate (`CERTIFIED`) |
 
 `aver-cert` is an independent process. `aver cert ...` forwards to that binary
 without linking a verifier into the compiler. Certificate package format and
@@ -656,7 +670,8 @@ For repository self-documentation via decision exports, see `decisions/architect
 | [docs/extending.md](docs/extending.md) | How to add keywords, namespace functions, expression types |
 | [docs/transpilation.md](docs/transpilation.md) | Overview of `aver compile` and `aver proof` |
 | [docs/rust.md](docs/rust.md) | Rust backend: deployment-oriented Cargo generation |
-| [docs/wasm.md](docs/wasm.md) | WASM backend: ABI, memory model, browser hosting |
+| [docs/effects.md](docs/effects.md) | Effect support across the VM, wasm-gc, and wasip2 targets |
+| [docs/wasip2.md](docs/wasip2.md) | WASI 0.2 / Component Model target and host compatibility |
 | [docs/lean.md](docs/lean.md) | Lean backend: proof export and formal-verification path |
 | [docs/dafny.md](docs/dafny.md) | Dafny backend: Z3-powered automated law verification |
 | [docs/certification.md](docs/certification.md) | Artifact behavioral certificates: commands, guarantees, admitted families, and limits |

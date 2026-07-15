@@ -8,9 +8,14 @@ docker build -t aver-one-command . && docker run --rm aver-one-command
 
 That one command builds a local image and then runs the image's default smoke test. The Dockerfile also runs the same smoke test while building the image, so the build fails before producing a usable image if either step regresses.
 
-Expected first-build cost on a native `linux/amd64` host is roughly 10-20 minutes and 1-2 GB of downloads for Docker base layers, Rust crates, Lean, and Dafny. Later builds are much smaller when Docker and Cargo caches are warm.
+The first build downloads roughly 1-2 GB of Docker layers, Rust crates, Lean,
+and Dafny, and can take tens of minutes. Later builds are much smaller when
+Docker and Cargo caches are warm.
 
-Apple Silicon warning: this image is currently `linux/amd64` only because Dafny `4.11.0` publishes the Ubuntu x64 asset used here, but not a Linux ARM64 asset. Docker Desktop runs the image under qemu on Apple Silicon; expect the first build to take roughly 30-60 minutes and the default smoke-test run to take a few minutes under full emulation.
+Apple Silicon warning: this image is currently `linux/amd64` only because Dafny
+`4.11.0` publishes the Ubuntu x64 asset used here, but not a Linux ARM64 asset.
+Docker Desktop runs the image under qemu, so both the first build and the smoke
+test are substantially slower than on native `linux/amd64`.
 
 The image pins:
 
@@ -27,35 +32,39 @@ The smoke test runs:
 ```bash
 aver run examples/core/hello.av
 aver proof examples/formal/validated_wrapper_law.av --backend lean --check -o /tmp/aver-proof-smoke-run
+aver compile examples/certification/add_one.av --target wasm-gc --certify -o /tmp/aver-cert-smoke-run
+aver-cert check /tmp/aver-cert-smoke-run/add_one.wasm /tmp/aver-cert-smoke-run/cert
 ```
 
 The first command executes the hello example on the Aver VM.
 
-The second command exports `examples/formal/validated_wrapper_law.av` to Lean and asks `lake build` to re-check the generated theorem on the Lean kernel. The checked law is `checkedDiv.returnsCore`: when the divisor is nonzero, the error-checking wrapper returns `Result.Ok(coreDiv(a, b))`. The check is strict: the default budgets allow no Lean build errors and no residual `sorry`.
+The second command exports `examples/formal/validated_wrapper_law.av` to Lean
+and asks `lake build` to re-check the generated theorem on the Lean kernel. The
+checked law is `checkedDiv.returnsCore`: when the divisor is nonzero, the
+error-checking wrapper returns `Result.Ok(coreDiv(a, b))`. The check is strict:
+the default budgets allow no Lean build errors and no residual `sorry`.
 
-## Five-Minute Follow-Up
+The last two commands compile a tiny wasm-gc function with an Artifact
+Behavioral Certificate and run the faster developer preflight. Its success
+word is `CHECKED`, not `CERTIFIED`; the Docker smoke deliberately does not
+pretend to be a release gate.
 
-The durable-promise demo is not on `main` yet. If it has not been merged, inspect it from the `demo-durable-promise` branch:
+## Full Certificate Follow-Up
 
-```bash
-git fetch origin demo-durable-promise
-git switch demo-durable-promise
-cd projects/durable_promise
-```
-
-The demo path on that branch is:
-
-```text
-projects/durable_promise/main.av
-```
-
-Add one `verify ... law ...` block to the demo, then ask the proof checker to show the missing proof obligation:
+Run the strict whole-closure replay in a one-off container:
 
 ```bash
-aver proof main.av --backend lean --check-json --explain -o /tmp/aver-durable-proof
+docker run --rm aver-one-command sh -c '
+  rm -rf /tmp/aver-cert-verify &&
+  aver compile examples/certification/add_one.av --target wasm-gc --certify -o /tmp/aver-cert-verify &&
+  aver-cert verify /tmp/aver-cert-verify/add_one.wasm /tmp/aver-cert-verify/cert
+'
 ```
 
-If the law does not close universally, the check-json summary names it: `sorry_laws` lists the `fn.law` identities whose theorem carries the residual `sorry` — that field is the authoritative "which law failed" answer. `--explain` additionally surfaces goal text where there is any to show: a failing law whose proof left a partial goal gets it under `open_goals` (keyed by the same identity); a law that fails outright (its theorem is just a `sorry`) has no residual goal to print, so it appears in `sorry_laws` only. Goals the coarse probe borrows from *proven* laws land under `probe_of`, never `open_goals`.
+Only this command may print `CERTIFIED`. It is intentionally slower because it
+adds `leanchecker --fresh` over the complete imported closure. See the
+[certificate guide](certification.md) for the exact guarantee and trust
+boundary.
 
 ## CI
 

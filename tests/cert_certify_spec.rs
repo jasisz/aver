@@ -174,6 +174,46 @@ fn is_arithmetic_nan_bits(bits: u64) -> bool {
 }
 
 #[test]
+fn certify_exits_nonzero_when_the_certificate_package_cannot_be_replaced() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-package-write-failure");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    std::fs::write(out_dir.join("cert"), "not a directory\n").unwrap();
+
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/certification/add_one.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    assert!(
+        !compile.status.success(),
+        "certificate package emission failure must fail the command:\n{report}"
+    );
+    assert!(
+        out_dir.join("add_one.wasm").is_file(),
+        "the regression must reach certificate emission after writing the Wasm artifact"
+    );
+    assert!(
+        report.contains("certificate: replace cert dir"),
+        "the real package replacement failure must remain visible:\n{report}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
 fn certify_goal_matrix_manifest_tracks_current_surface() {
     // This fixture is the dashboard for "how much do we certify now?". Larger
     // programs such as examples/data/json.av remain integration side-effects;

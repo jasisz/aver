@@ -734,8 +734,9 @@ pub(super) enum CertCommand {
         /// The emitted `cert/` directory.
         cert_dir: String,
     },
-    /// Fast developer preflight. Trusts local `.olean` imports, skips the
-    /// fresh-environment replay, and never produces a certification verdict.
+    /// Fast developer preflight. Trusts the freshly built or explicitly cached
+    /// `.olean` closure, skips whole-closure `leanchecker --fresh`, and never
+    /// produces a certification verdict.
     Check { artifact: String, cert_dir: String },
     /// Human-readable report backed by the SAME trusted check as `verify` (it
     /// builds and kernel-checks the certificate): CERTIFIED exports with their

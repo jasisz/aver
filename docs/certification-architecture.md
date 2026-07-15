@@ -58,7 +58,7 @@ actual app.wasm
   -> WasmSlice / CertDecode --------------------------+
                                                        |
 package Plans.lean -> PlanCheck -> PlanLower/PlanBytes +-> StandardFace
-package manifest and artifact data -------------------+-> ClaimAxes
+package Lean model and artifact proof data -----------+-> ClaimAxes
                                                        |
 family soundness and discharge theorems ---------------+
                                                        v
@@ -101,7 +101,7 @@ The steps are:
 9. Check `AverCert.Artifact.certificate` and alias it at the fixed type as
    `AverCertChecker.checked`. The checker witness also pins the Lean manifest
    and atomically derived `(export, class)` report entries to the JSON envelope.
-10. Collect the named root's axioms and require exactly the whitelist
+10. Collect the named root's axioms and reject any name outside the whitelist
     `[propext, Classical.choice, Quot.sound]`.
 11. Replay the checker module with `lake env leanchecker --fresh`. Only after
     all checks succeed is the human-readable report constructed.
@@ -161,6 +161,7 @@ A successful verdict depends on:
   staging, process execution, and report pinning;
 - `wasmparser::Validator` for full WebAssembly validity;
 - the exact embedded Lean wall and Lean 4.32 elaborator/kernel/tooling;
+- the canonical local Elan home used to resolve that pinned toolchain;
 - SHA-256 collision resistance;
 - the semantic truth and totality, where required, of named runtime contracts;
 - the explicit source declarations that a binary cannot determine;

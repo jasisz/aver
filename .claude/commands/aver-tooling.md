@@ -181,6 +181,7 @@ Notes:
 ```bash
 aver compile file.av -o /tmp/out --module-root .
 aver compile file.av --target wasm-gc -o /tmp/out
+aver compile file.av --target wasip2 -o /tmp/out
 aver compile file.av --target wasm-gc --optimize size -o /tmp/out
 aver compile file.av --preset cloudflare --handler handler -o /tmp/out
 aver compile file.av --emit-ir-after=PASS
@@ -188,11 +189,11 @@ aver compile file.av --explain-passes
 ```
 
 - Default: Rust codegen, emits a modular Cargo project
-- `--target wasm-gc`: native WebAssembly GC + tail-call output (recommended). Self-contained binary, engine handles GC/recursion, per-instantiation helpers DCE'd to what each program calls. Modern host baseline (Chrome 119+, Firefox 120+, Safari 18.2+, wasmtime 25+, Node 22+).
-- `--target wasm`: legacy fallback for pre-2024 hosts. Bundles a custom NaN-boxed runtime via `wasm-merge`.
+- `--target wasm-gc`: native WebAssembly GC + tail-call output. Self-contained binary, engine handles GC/recursion, per-instantiation helpers DCE'd to what each program calls. Modern host baseline (Chrome 119+, Firefox 120+, Safari 18.2+, wasmtime 25+, Node 22+, Cloudflare Workers).
+- `--target wasip2`: WASI 0.2 / Component Model output for wasmtime and other component hosts. It wraps the wasm-gc core with `wit-component`; see `docs/wasip2.md` for the supported effect surface.
 - `--optimize size|speed`: post-process with binaryen `-Oz` (size) or `-O3` (speed).
 - `--preset cloudflare --handler <fn>`: Cloudflare Workers pack — `--target wasm-gc --pack cloudflare`, drops `worker.js` + `wrangler.toml` next to the wasm. `<fn>` must have signature `Fn(HttpRequest) -> HttpResponse`.
-- `--emit-ir-after=PASS`: print the IR snapshot after the named pipeline stage and exit before codegen. PASS ∈ { `parse`, `tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`, `last_use`, `analyze` }. `diff -u` between two stages shows exactly what each pass rewrote.
+- `--emit-ir-after=PASS`: print the IR snapshot after the named pipeline stage and exit before codegen. PASS ∈ { `parse`, `tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`, `last_use`, `analyze`, `escape`, `build_symbols`, `name_resolve`, `refinement_lower`, `contract_lower`, `law_lower` }. `diff -u` between two stages shows exactly what each pass rewrote.
 - `--explain-passes`: run the full pipeline (no codegen) and print a per-pass diagnostic report — tail-call conversions, interpolations lowered, fusion sites rewritten + sinks synthesized, slots resolved, last-use markers annotated, alloc/recursion facts. Drives failable-invariant CI checks ("fail if buffer_build no longer fires on the canonical shape", "fail if hot fn loses no-alloc status"). Pair with `--json` for typed-per-stage shape: `{schema_version: 1, passes: [{stage, data: {...stage-specific fields}}, ...]}` — buffer_build's `data` exposes `rewrites`, `synthesized`, `sinks`, `rewrites_by_sink`; analyze's exposes `total_fns`, `no_alloc_fns`, `recursive_fns`, `mutual_tco_members`. `jq '.passes[] | select(.stage=="buffer_build") | .data.rewrites'` instead of regex-parsing summary strings.
 
 ### Artifact certificates
@@ -200,14 +201,23 @@ aver compile file.av --explain-passes
 ```bash
 aver compile app.av --target wasm-gc --certify -o out/
 aver-cert verify out/app.wasm out/cert
+aver-cert check out/app.wasm out/cert
 aver-cert explain out/app.wasm out/cert
 aver cert verify out/app.wasm out/cert
+aver cert check out/app.wasm out/cert
 aver cert explain out/app.wasm out/cert
 ```
 
 `--certify` emits a version-1 artifact certificate for admitted exports of the
 exact wasm-gc module. Install `aver-cert` separately; it is an independently
-versioned verifier using Lean 4.32.
+versioned verifier using Lean 4.32. A crates.io compiler install needs the
+backend enabled: `cargo install aver-lang --features wasm`. Verification also
+requires a standard Elan installation for the pinned toolchain.
+
+`check` is the faster development preflight. It trusts the freshly built or
+explicitly cached `.olean` closure, skips the final `leanchecker --fresh`
+replay, and prints `CHECKED`, never `CERTIFIED`. Use strict `verify` for release
+or admission gates.
 
 `aver cert ...` is only a subprocess shortcut. It forwards the original
 arguments, standard streams, and exit status to a sibling `aver-cert` binary or
@@ -217,8 +227,11 @@ performs the same full check as `verify` before printing the report, and
 
 This command is different from `aver verify`: source `verify` runs examples,
 whereas `aver cert verify` kernel-checks a behavioral certificate for compiled
-WebAssembly. See the certificate guide and architecture documents for the
-admitted families and trust boundary.
+WebAssembly. See the
+[certificate guide](https://github.com/jasisz/aver/blob/main/docs/certification.md)
+and
+[architecture](https://github.com/jasisz/aver/blob/main/docs/certification-architecture.md)
+for the admitted families and trust boundary.
 
 ### Bench
 
@@ -229,7 +242,8 @@ aver bench bench/scenarios/fib.toml                          # named manifest
 aver bench bench/scenarios/fib.toml --json                   # structured report
 aver bench bench/scenarios/                                  # directory mode (every *.toml)
 aver bench bench/scenarios/ --json                           # NDJSON
-aver bench bench/scenarios/fib.toml --target=wasm-local      # requires --features wasm
+aver bench bench/scenarios/fib.toml --target=wasm-gc         # embedded wasmtime, requires --features wasm
+aver bench bench/scenarios/fib.toml --target=wasm-gc-v8      # the same bytes under Node/V8
 aver bench bench/scenarios/fib.toml --target=rust            # native binary, subprocess per iter
 aver bench bench/scenarios/fib.toml --save-baseline base.json
 aver bench bench/scenarios/fib.toml --compare base.json --fail-on-regression
@@ -238,11 +252,11 @@ aver bench bench/scenarios/ --baseline-dir bench/baselines/ --fail-on-regression
 ```
 
 - Three input shapes: `.av` (ad-hoc, defaults + `--iterations` / `--warmup` overrides), `.toml` (named manifest with per-scenario tolerance + expected shape), directory (globs `*.toml`).
-- Three targets: `vm` (default, in-process), `wasm-local` (wasmtime in-process), `rust` (native binary).
+- Four targets: `vm` (default, in-process), `wasm-gc` (wasmtime in-process), `wasm-gc-v8` (Node/V8 subprocess), and `rust` (native binary).
 - Reports include `backend` (aver version, build, wasmtime version) and `host` (os/arch/cpus) so cross-machine runs disambiguate.
 - `--save-baseline` works in both single-scenario (pretty JSON) and directory (NDJSON) mode. `--compare` is single-scenario only.
 - `--baseline-dir DIR` auto-picks `<host.os>-<host.arch>-<backend.name>.json` from `DIR`. Silent skip when no matching baseline exists — single workflow gates wherever a baseline is pinned. CI uses this.
-- See [docs/bench.md](docs/bench.md) for the full reference.
+- See the [benchmark guide](https://github.com/jasisz/aver/blob/main/docs/bench.md) for the full reference.
 
 ### Proof
 

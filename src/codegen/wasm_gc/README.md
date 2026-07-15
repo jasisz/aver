@@ -1,5 +1,10 @@
 # `wasm_gc` codegen backend (default WASM target since 0.16, codename "Concede")
 
+> This is an engineering history and implementation note. Historical
+> comparisons below mention the retired linear-memory backend; they are not
+> supported CLI commands. For the current public surface, see
+> `docs/effects.md` and `docs/wasip2.md`.
+
 WASM backend that targets the **WebAssembly GC + tail-call** proposals natively, instead of layering a custom runtime on top of MVP WASM. Default since 0.16; the legacy NaN-boxed `--target wasm` backend was deleted in 0.18 "Span" (Phase 1.8), so this is now the only path that produces `--target wasm-gc` artifacts and the core for `--target wasip2` (Component Model output, also wraps a wasm-gc core module).
 
 Historical bench verdict (0.16 cross-engine sweep, when the legacy backend still existed for comparison): `wasm-gc` won decisively where allocations or recursion dominate — `fib` 8.4×, `vector_ops` 182×, `countdown` 2.9×, `record` 1.4×; the edge fetch handler stayed a tie at ~33 ms because that workload is f64 arithmetic the engine optimises identically on either codegen. 35% smaller binary on the edge demo. The legacy backend reached the end of its headroom on those workloads, which is why 0.18 retired it.
@@ -43,7 +48,7 @@ The reason wasm-gc doesn't ship the sidecar mode yet: most of the helpers are **
 
 Practical proposal: leave `--target wasm-gc` inline-only for now (matches the dominant deploy story), and design `--target edge-wasm-gc` against a fixed monomorphic menu later when there's a concrete consumer (the playground, probably). Memory entry `project_wasm_gc_multimodule.md` captures the related Component Model question.
 
-**One worker.js per target.** `src/main/templates/cloudflare/worker.js` is the source-of-truth template; `aver compile --preset cloudflare` drops it next to `app.wasm` (see `tools/edge/dist/worker.js` for the deployed copy). ~120 lines: GC + tail-call config, `(ref null any)` import shapes, the `__rt_string_*` LM round-trip helpers the host needs to deliver `query: String` and read back the rendered body. A legacy-ABI dual-emit mode would let one worker.js drive both backends, but the gain is illusory — host code still has to know whether strings are `(array i8)` or OBJ_STRING with an 8-byte header — and the maintenance cost (every effect landing twice, every per-instantiation helper carrying both shapes) scales with the surface area. Pick a target, use the matching worker.js; pre-2024 hosts stay on `--target wasm` with their own bridge.
+**One worker.js per target.** `src/main/templates/cloudflare/worker.js` is the source-of-truth template; `aver compile --preset cloudflare` drops it next to `app.wasm` (see `tools/edge/dist/worker.js` for the deployed copy). ~120 lines: GC + tail-call config, `(ref null any)` import shapes, and the `__rt_string_*` LM round-trip helpers the host needs to deliver `query: String` and read back the rendered body. The retired legacy ABI used a different string representation, so a dual-ABI bootstrap would only hide incompatible host contracts. Older engines without wasm-gc + tail-call support are no longer supported by this target.
 
 **Where the sidecar story actually pays off: wasip2.** Component Model gives cross-component types and a real linking story instead of MVP wasm's "two modules, hope the imports line up" shape. A wasip2 component can declare `interface aver-runtime { resource map<...>; ... }` and let the host instantiate the helper module once, hand its functions to every guest component on demand. The per-instantiation problem softens because the Component Model lets a guest component say "instantiate `aver-runtime` with K=String, V=Int" and the runtime component does the monomorphisation locally. That's the model where shared runtime starts to make sense again — not MVP wasm sidecars where every type signature has to be globally agreed up front. `project_015_traversal.md` already has wasip2 on the parallel track; pairing it with `--target edge-wasm-gc` would land both stories together.
 
@@ -100,12 +105,12 @@ This backend assumes the host runtime supports:
 - **Reference types** (transitive — pulled in by GC).
 - **Stringref proposal**, when emitted (`(ref string)`); fallback path is a struct of `i32 ptr + i32 len + memory` if a target rejects stringref. The backend ships one shape and doesn't carry both.
 
-These are stable in Chrome 119+, Firefox 120+, Safari 18.2+, wasmtime 25+, Cloudflare Workers, Node 22+ (flag) / 24+ (default). If you target older runtimes, use `aver compile --target=wasm` (the legacy backend stays). No feature flags, no probes, no graceful degradation here — the whole point is leveraging what the modern engine gives us.
+These are stable in Chrome 119+, Firefox 120+, Safari 18.2+, wasmtime 25+, Cloudflare Workers, Node 22+ (flag) / 24+ (default). Older runtimes are outside the supported wasm-gc baseline. No feature probes or graceful degradation are emitted into the artifact — the target deliberately uses what a modern engine provides.
 
 ## What we deliberately don't do
 
 - **No `(ref any)` / `extern.externalize` shortcuts.** Type-direct lowering or fail. Casts are the path to wasm-gc-as-MVP-with-extra-steps and the cost reappears.
-- **No fallback to legacy backend on missing engine support.** A user picks `--target=wasm-gc` exactly because their target supports it. If they're on legacy runtimes, `--target=wasm` stays available.
+- **No fallback on missing engine support.** A user picks `--target=wasm-gc` exactly because their target supports it; the retired legacy backend is not an alternate path.
 - **No interop with `aver_runtime.wasm`.** Different ABI, different memory model. The two backends share IR and nothing else.
 - **No trampoline / no manual dispatch loop.** Tail calls are `return_call(_indirect)` always.
 - **No NaN-boxing / no tag-bit munging.** Values carry their wasm type.
@@ -204,7 +209,7 @@ Audited 2026-05-02 against `src/codegen/wasm/abi.rs` + `src/types/checker/builti
 | Request/Response/Http/Env | ✅ all 13 fetch-bridge effects | full |
 | Terminal.*     | ✅ enableRawMode/disableRawMode/clear/moveTo/print/setColor/resetColor/readKey/size/hideCursor/showCursor/flush + `Terminal.Size` builtin record (auto-registered when any fn declares `! [Terminal.size]`) | full |
 | Print/Format.value | ❌ deliberately | wasm-gc lowers interpolations natively via `__wasmgc_concat_n` + `String.fromInt`; debug helpers not needed |
-| Disk.*, Tcp.*, HttpServer.listen* | ❌ deliberately | per-deployment policy domain (host's job per `docs/wasm.md`) |
+| Disk.*, Tcp.*, HttpServer.listen* | ❌ deliberately | per-deployment policy domain; see `docs/effects.md` |
 
 **Pure builtins parity:**
 

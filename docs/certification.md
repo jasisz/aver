@@ -14,9 +14,13 @@ attestation. A valid certificate binds all accepted claims to the supplied
 Install the compiler and the independently versioned verifier:
 
 ```bash
-cargo install aver-lang
+cargo install aver-lang --features wasm
 cargo install aver-cert
 ```
+
+The compiler needs the `wasm` feature for `--target wasm-gc --certify`.
+Verification also requires a standard Elan installation; `aver-cert` selects
+the pinned Lean 4.32 toolchain through Elan and installs it when necessary.
 
 Generate a wasm-gc module and its certificate package:
 
@@ -24,11 +28,16 @@ Generate a wasm-gc module and its certificate package:
 aver compile app.av --target wasm-gc --certify -o out/
 ```
 
-Verify it directly with the standalone checker:
+`--certify` cannot be combined with `--optimize`, because the certificate binds
+the emitter's exact bytes. Reusing an output directory replaces its `cert/`
+package, so use one output directory per artifact.
+
+Run the fast preflight or strict verification directly with the standalone
+checker:
 
 ```bash
-aver-cert verify out/app.wasm out/cert
 aver-cert check out/app.wasm out/cert
+aver-cert verify out/app.wasm out/cert
 aver-cert explain out/app.wasm out/cert
 ```
 
@@ -36,8 +45,8 @@ If `aver-cert` is next to `aver` or on `PATH`, the same commands are available
 through:
 
 ```bash
-aver cert verify out/app.wasm out/cert
 aver cert check out/app.wasm out/cert
+aver cert verify out/app.wasm out/cert
 aver cert explain out/app.wasm out/cert
 ```
 
@@ -52,10 +61,17 @@ the accepted exports, policies, semantic faces, runtime contracts, and the
 explicitly declined surface.
 
 `check` is an explicitly weaker developer/CI preflight. It performs the same
-Rust gates, `lake build`, and fresh checker-witness elaboration, but trusts
-local `.olean` imports and skips the final `leanchecker --fresh` whole-closure
-replay. It reports `CHECKED`, never `CERTIFIED`; do not use it as a release or
-admission gate.
+Rust gates, `lake build`, and fresh checker-witness elaboration, but trusts the
+freshly built or explicitly cached `.olean` closure and skips the final
+`leanchecker --fresh` whole-closure replay. It reports `CHECKED`, never
+`CERTIFIED`; do not use it as a release or admission gate.
+
+Build caches are disabled by default. `AVER_CERT_DATA_CACHE=/trusted/path`
+opts into artifact-specific Lake output, while
+`AVER_CERT_PRELUDE_CACHE=/trusted/path` also reuses artifact-independent wall
+output. Those directories become trusted local state and must not be writable
+by an attacker. Strict `verify` still authors a fresh checker witness and runs
+the final whole-closure replay.
 
 ## What a successful certification means
 
@@ -76,7 +92,7 @@ The checker binds it to the named local root
   are the canonical values derived from the checked plans;
 - certified exports, other exports, imports/capabilities, the start function,
   and the reachable certified call surface are accounted for;
-- the proof depends on exactly the allowed Lean axioms:
+- the proof uses no Lean axioms outside the allowed whitelist:
   `propext`, `Classical.choice`, and `Quot.sound`.
 
 Exports outside the admitted fragment are listed as uncertified with a reason.
@@ -159,13 +175,15 @@ tables; `ClaimAxes.lean` fixes policy, termination, totality role, and runtime
 contracts. The artifact proof is then checked through the named root and its
 axiom closure.
 
-`leanchecker --fresh` protects the final replay from declarations retained in
-the preceding elaboration environment. It is part of the same Lean toolchain,
-not a separately implemented or independently distributed kernel checker.
+The Lake build and witness elaboration import the built `.olean` closure.
+`leanchecker --fresh` then kernel-checks that whole closure in a fresh Lean
+declaration environment. It is part of the same Lean toolchain, not a
+separately implemented or independently distributed kernel checker.
+
 The canonical Elan installation directory is a local trust anchor. Every Lake,
 Lean, and leanchecker subprocess otherwise starts with a cleared environment,
-an exact toolchain argument, disabled implicit Lake caches, and checker-owned
-temporary paths; ambient Lean/Lake search paths and toolchain overrides are not
+the exact pinned toolchain, disabled implicit Lake caches, and checker-owned
+temporary paths. Ambient Lean/Lake search paths and toolchain overrides are not
 forwarded.
 
 Some source meaning cannot be reconstructed from WebAssembly alone. In

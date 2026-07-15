@@ -8,5 +8,6 @@
 - [Oracle](https://github.com/jasisz/aver/blob/main/docs/oracle.md) — `verify <fn> trace`, `given` stubs, `--hostile`
 - [Lean proofs](https://github.com/jasisz/aver/blob/main/docs/lean.md) — verify blocks to Lean 4
 - [Dafny verification](https://github.com/jasisz/aver/blob/main/docs/dafny.md) — verify laws to Dafny / Z3
-- [WASM backend](https://github.com/jasisz/aver/blob/main/docs/wasm.md) — browser compilation
+- [Effect and wasm-gc support](https://github.com/jasisz/aver/blob/main/docs/effects.md) — browser and host surface
+- [WASI 0.2 target](https://github.com/jasisz/aver/blob/main/docs/wasip2.md) — Component Model deployment
 - [Toolchain reference (`llms-full.txt`)](https://averlang.dev/llms-full.txt) — `aver run`, `verify`, `audit`, `format`, `context`, `compile`, `proof`, `replay`

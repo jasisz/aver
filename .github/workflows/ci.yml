@@ -30,13 +30,16 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Release tooling
+        run: python3 tools/tests/test_release.py
+
       - name: Format
         run: cargo fmt --all -- --check
 
       - name: Package standalone certificate engine
         run: |
-          cargo package -p aver-cert --no-verify
-          if cargo tree -p aver-cert --edges normal | grep -Eq 'aver-(lang|rt|memory)'; then
+          cargo package -p aver-cert --all-features
+          if cargo tree -p aver-cert --all-features --edges normal | grep -Eq 'aver-(lang|rt|memory)'; then
             echo "aver-cert must not depend on the compiler or runtime crates"
             exit 1
           fi
