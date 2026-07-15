@@ -16,6 +16,19 @@ pub fn materialize(cert_dir: &Path) {
         std::fs::write(cert_dir.join(source.name), source.contents).unwrap();
     }
     std::fs::write(cert_dir.join("lean-toolchain"), wall.toolchain).unwrap();
+    let wasm_name = manifest["wasm"].as_str().unwrap();
+    let wasm_path = cert_dir.parent().unwrap().join(wasm_name);
+    let wasm_bytes = std::fs::read(&wasm_path).unwrap_or_else(|error| {
+        panic!(
+            "cannot read checker artifact {}: {error}",
+            wasm_path.display()
+        )
+    });
+    std::fs::write(
+        cert_dir.join("ArtifactBytes.lean"),
+        aver::codegen::cert::wall::render_artifact_bytes(&wasm_bytes),
+    )
+    .unwrap();
 
     fn collect_roots(base: &Path, dir: &Path, roots: &mut Vec<String>) {
         for entry in std::fs::read_dir(dir).unwrap() {

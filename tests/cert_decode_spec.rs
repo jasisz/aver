@@ -1,5 +1,5 @@
 //! Integration tests for the in-kernel certificate profile decoder
-//! (`tools/certkit/prelude/CertDecode.lean`).
+//! (`aver-cert/assets/wall/current/CertDecode.lean`).
 //!
 //! The main test is a decoder differential: for every certkit fixture the Lean
 //! kernel decoder (`CertDecode.decode…`, checked by `rfl`) agrees, TERM FOR
@@ -209,7 +209,7 @@ fn aver_command() -> Command {
 /// (the witnesses import the resulting `.olean`s).
 fn build_prelude() -> PathBuf {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = repo.join("tools/certkit/prelude");
+    let src = repo.join("aver-cert/assets/wall/current");
     let dst = temp_dir("cdec-prelude");
     std::fs::create_dir_all(&dst).unwrap();
     for f in [

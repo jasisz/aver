@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Byte-level reference decoder for the AverUserProfile/v0 certificate profile.
+"""Byte-level reference decoder for the AverUserProfile/v1 certificate profile.
 
 This is the Python leg of the three-way decoder differential: it decodes a
 compiled wasm-gc module DIRECTLY from its bytes (section walk, type section,

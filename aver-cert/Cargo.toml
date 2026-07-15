@@ -1,0 +1,46 @@
+[package]
+name = "aver-cert"
+version = "0.1.0"
+edition = "2024"
+description = "Independent artifact certificate engine and verifier for Aver WebAssembly"
+license = "MIT"
+repository = "https://github.com/jasisz/aver"
+homepage = "https://github.com/jasisz/aver"
+documentation = "https://docs.rs/aver-cert"
+readme = "README.md"
+keywords = ["aver", "lean", "verification", "webassembly"]
+categories = ["development-tools", "wasm"]
+include = [
+    "/src/**",
+    "/assets/wall/**",
+    "/LICENSE",
+    "/README.md",
+]
+
+[features]
+default = ["verify"]
+engine = ["dep:sha2", "dep:wasm-encoder", "dep:wasmparser"]
+producer = ["engine"]
+verify = [
+    "dep:sha2",
+    "dep:clap",
+    "dep:colored",
+    "dep:serde_json",
+    "dep:wasmparser",
+]
+
+[[bin]]
+name = "aver-cert"
+path = "src/main.rs"
+required-features = ["verify"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"], optional = true }
+colored = { version = "2", optional = true }
+serde_json = { version = "1", optional = true }
+sha2 = { version = "0.10", optional = true }
+wasm-encoder = { version = "0.248", optional = true }
+wasmparser = { version = "0.248", optional = true }
+
+[dev-dependencies]
+wat = "1"

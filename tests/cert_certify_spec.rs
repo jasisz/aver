@@ -53,14 +53,14 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
     }
 }
 
-fn verify_certificate(wasm: &std::path::Path, cert_dir: &std::path::Path) -> (bool, String) {
+fn check_certificate(wasm: &std::path::Path, cert_dir: &std::path::Path) -> (bool, String) {
     let output = aver_command()
         .arg("cert")
-        .arg("verify")
+        .arg("check")
         .arg(wasm)
         .arg(cert_dir)
         .output()
-        .expect("expected `aver cert verify` to run");
+        .expect("expected `aver cert check` to run");
     (
         output.status.success(),
         format!(
@@ -99,6 +99,54 @@ fn lean_obligation_def<'a>(manifest_lean: &'a str, name: &str) -> &'a str {
         .map_or(&manifest_lean[start..], |(definition, _)| definition)
 }
 
+fn assert_plans_lean_is_the_only_public_plan_data(
+    cert_dir: &std::path::Path,
+    manifest: &serde_json::Value,
+) {
+    assert!(
+        cert_dir.join("Plans.lean").is_file(),
+        "Plans.lean must be the package's authoritative plan DATA"
+    );
+    assert!(
+        !cert_dir.join("ArtifactBytes.lean").exists(),
+        "ArtifactBytes.lean is checker-generated from Wasm, not public package DATA"
+    );
+    assert!(
+        !cert_dir.join("fragments").exists(),
+        "the public package must not duplicate Plans.lean as fragment sidecars"
+    );
+
+    for entry in manifest["certified"]
+        .as_array()
+        .expect("certified report is an array")
+    {
+        let name = entry["name"].as_str().unwrap_or("<missing>");
+        let fields = entry
+            .as_object()
+            .unwrap_or_else(|| panic!("certified report entry for {name} is an object"));
+        for removed in ["source_fragment", "fragment", "plan_sha256"] {
+            assert!(
+                !fields.contains_key(removed),
+                "{name} must not expose removed public plan metadata `{removed}`"
+            );
+        }
+        assert!(
+            fields.keys().all(|field| matches!(
+                field.as_str(),
+                "name"
+                    | "class"
+                    | "policy"
+                    | "level"
+                    | "dom"
+                    | "cod"
+                    | "theorem"
+                    | "termination_witness"
+            )),
+            "{name} manifest entry must remain envelope/report metadata only: {fields:?}"
+        );
+    }
+}
+
 fn instantiate_float_probe(
     wasm: &[u8],
     canonicalize_nans: bool,
@@ -133,6 +181,14 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     // goal becomes certifiable, move it from `expected_backlog` into `expected`.
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("certify-goals");
+    let stale_fragments = out_dir.join("cert").join("fragments");
+    std::fs::create_dir_all(&stale_fragments).unwrap();
+    std::fs::write(stale_fragments.join("v0.plan"), "stale v0 sidecar\n").unwrap();
+    std::fs::write(
+        out_dir.join("cert").join("ArtifactBytes.lean"),
+        "-- stale checker-owned file\n",
+    )
+    .unwrap();
     let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
@@ -156,6 +212,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             .expect("cert-manifest.json exists"),
     )
     .expect("manifest is valid JSON");
+    assert_plans_lean_is_the_only_public_plan_data(&out_dir.join("cert"), &manifest);
     assert_eq!(
         manifest["format"],
         serde_json::json!({
@@ -181,6 +238,11 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         manifest["schema_version"].as_u64(),
         Some(1),
         "the first public certificate schema is version 1"
+    );
+    assert_eq!(
+        manifest["profile"].as_str(),
+        Some("AverUserProfile/v1"),
+        "the first public byte profile is pinned exactly"
     );
     assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 1);
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
@@ -319,12 +381,12 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         ("isEven", "mutual-recursive"),
         ("isOdd", "mutual-recursive"),
         ("mkOp", "adt-constructor"),
-        ("evalOp", "variant-dispatch"),
+        ("evalOp", "int-dispatch"),
         ("userName", "expr-fragment-v1"),
-        ("boxInt", "widened-int-match"),
-        ("wrapItems", "verbatim-widened-match"),
-        ("tagName", "verbatim-variant-dispatch"),
-        ("gauge", "variant-dispatch"),
+        ("boxInt", "int-dispatch"),
+        ("wrapItems", "verbatim-dispatch"),
+        ("tagName", "verbatim-dispatch"),
+        ("gauge", "int-dispatch"),
         ("inAsciiDigit", "expr-fragment-v1"),
         ("quoteOrSelf", "verbatim-string-eq"),
         ("shout", "verbatim-string-concat"),
@@ -349,59 +411,63 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     assert_eq!(
         expr_entries.len(),
         7,
-        "expr-fragment sidecar count changed; update this deliberately"
+        "expr-fragment report count changed; update this deliberately"
     );
-    let mut sym_sidecar_names = BTreeSet::new();
-    for entry in expr_entries {
-        let name = entry["name"].as_str().unwrap();
-        assert!(
-            entry.get("fragment").is_none(),
-            "{name} should not emit a duplicate byte-bound expr sidecar when a \
-             source SymPlan can encode it"
-        );
-        assert!(
-            entry.get("trace").is_none() && entry.get("trace_sha256").is_none(),
-            "{name} should not emit trace/replay sidecars after plan-first lowering"
-        );
-        let source_fragment = &entry["source_fragment"];
-        assert_eq!(
-            source_fragment["profile"].as_str(),
-            Some("sym-fragment-v1"),
-            "{name} should carry its source-level SymPlan in `source_fragment`"
-        );
-        let source_plan = source_fragment["plan"]
-            .as_str()
-            .expect("source fragment plan path");
-        sym_sidecar_names.insert(name.to_string());
-        assert!(
-            source_plan.starts_with("fragments/") && source_plan.ends_with(".sym-fragment-v1.plan"),
-            "{name} should point at a source SymPlan sidecar, got {source_plan}"
-        );
-        let source_text = std::fs::read_to_string(out_dir.join("cert").join(source_plan))
-            .expect("source fragment sidecar exists");
-        assert!(
-            source_text.starts_with("aver.sym-fragment.plan.v1\nprofile sym-fragment-v1\n"),
-            "{name} source sidecar should be the canonical SymPlan:\n{source_text}"
-        );
-        let expected_source_sha = aver::codegen::cert::sha256_hex(source_text.as_bytes());
-        assert_eq!(
-            source_fragment["plan_sha256"].as_str(),
-            Some(expected_source_sha.as_str()),
-            "{name} source sidecar hash should match the sidecar bytes"
-        );
-    }
-    assert!(
-        sym_sidecar_names.contains("addTwo")
-            && sym_sidecar_names.contains("userName")
-            && sym_sidecar_names.contains("floatLeGoal")
-            && sym_sidecar_names.contains("boolAndGoal")
-            && sym_sidecar_names.contains("intLessZero")
-            && sym_sidecar_names.contains("intEqZero")
-            && sym_sidecar_names.contains("inAsciiDigit"),
-        "direct source-level fragments should prefer sym sidecars, got {sym_sidecar_names:?}"
+    let expr_names = expr_entries
+        .into_iter()
+        .map(|entry| entry["name"].as_str().unwrap().to_string())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        expr_names,
+        [
+            "addTwo",
+            "userName",
+            "inAsciiDigit",
+            "intLessZero",
+            "intEqZero",
+            "boolAndGoal",
+            "floatLeGoal",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+        "expr-fragment report membership changed"
     );
     let plans_lean = std::fs::read_to_string(out_dir.join("cert").join("Plans.lean"))
         .expect("Plans.lean exists");
+    for name in [
+        "addTwo",
+        "userName",
+        "inAsciiDigit",
+        "intLessZero",
+        "intEqZero",
+        "boolAndGoal",
+        "floatLeGoal",
+    ] {
+        assert!(
+            plans_lean.contains(&format!("def {name}SymPlan : SymRawPlan"))
+                && plans_lean.contains(&format!("def {name}Plan : ExprFragmentRawPlan")),
+            "{name} must keep source and byte-bound plans in authoritative Plans.lean:\n{plans_lean}"
+        );
+    }
+    assert!(
+        plans_lean.contains(".constInt (2 : Int)") && plans_lean.contains(".prim .intAdd [0, 1]"),
+        "addTwo SymPlan should expose source-level addition by two:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains(".intConstCmp .ge 0 (48 : Int)")
+            && plans_lean.contains(".intConstCmp .le 0 (57 : Int)"),
+        "inAsciiDigit SymPlan should preserve both source-level bounds:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains(".intConstCmp .eq 0 (0 : Int)"),
+        "intEqZero SymPlan should preserve equality with zero:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains("def boolAndGoalSymPlan : SymRawPlan")
+            && plans_lean.contains("kind := .ifElse 0"),
+        "boolAndGoal SymPlan should preserve source-level short-circuiting:\n{plans_lean}"
+    );
     assert!(
         !plans_lean.contains("floatAddGoalPlan")
             && !plans_lean.contains("floatMulAddGoalPlan")
@@ -440,8 +506,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "mkOp construct SymPlan should expose source-level ADT construction:\n{plans_lean}"
     );
     assert!(
-        plans_lean.contains("def mkOpConstructPlan : ConstructRawPlan"),
-        "mkOp should render a target-bound construct plan:\n{plans_lean}"
+        plans_lean.contains(
+            "def mkOpConstructPlan : ConstructRawPlan := ({ profile := \"construct-v1\", arity := 1, fields := [.local 0] } : ConstructRawPlan)"
+        ),
+        "mkOp should render its concrete target-bound constructor DATA in Plans.lean:\n{plans_lean}"
     );
     assert!(
         plans_lean.contains("checkConstructRawPlan mkOpConstructPlan = true := rfl"),
@@ -467,29 +535,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         .iter()
         .find(|entry| entry["name"].as_str() == Some("mkOp"))
         .expect("mkOp manifest entry");
-    assert!(
-        mkop_entry["source_fragment"]["profile"].as_str() == Some("sym-fragment-v1"),
-        "mkOp should advertise its source constructor plan in the checked manifest:\n{mkop_entry:?}"
-    );
-    assert!(
-        mkop_entry["fragment"]["profile"].as_str() == Some("construct-v1"),
-        "mkOp should advertise its byte-bound constructor plan in the checked manifest:\n{mkop_entry:?}"
-    );
-    let mkop_source_plan =
-        std::fs::read_to_string(out_dir.join("cert/fragments/6d6b4f70.sym-fragment-v1.plan"))
-            .expect("mkOp source-only construct sidecar exists");
-    assert!(
-        mkop_source_plan.contains("construct type=Op ctor=add args=v0"),
-        "mkOp sidecar should carry the constructor plan:\n{mkop_source_plan}"
-    );
-    let mkop_target_plan =
-        std::fs::read_to_string(out_dir.join("cert/fragments/6d6b4f70.construct-v1.plan"))
-            .expect("mkOp target-bound construct sidecar exists");
-    assert!(
-        mkop_target_plan.contains("profile construct-v1")
-            && !mkop_target_plan.contains("struct ")
-            && mkop_target_plan.contains("local index=0"),
-        "mkOp target sidecar should carry the struct.new binding:\n{mkop_target_plan}"
+    assert_eq!(mkop_entry["class"], "adt-constructor");
+    assert_eq!(
+        mkop_entry["theorem"], "AcceptanceSoundness.construct_canonical_discharges",
+        "the JSON envelope reports mkOp's checked claim but carries no plan DATA"
     );
     let artifact_lean = std::fs::read_to_string(out_dir.join("cert").join("Artifact.lean"))
         .expect("Artifact.lean exists");
@@ -603,6 +652,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     let manifest_lean =
         std::fs::read_to_string(out_dir.join("cert/Manifest.lean")).expect("Manifest.lean");
+    assert!(
+        manifest_lean.contains("profile := \"AverUserProfile/v1\""),
+        "Lean manifest must pin the same public byte profile as JSON"
+    );
     for name in ["sumFrom", "countDown", "isEven", "isOdd"] {
         let obligation = lean_obligation_def(&manifest_lean, name);
         assert!(
@@ -1192,10 +1245,14 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
 
     let wasm = out_dir.join("cert_goals.wasm");
     let cert = out_dir.join("cert");
-    let (clean_ok, clean_report) = verify_certificate(&wasm, &cert);
+    let (clean_ok, clean_report) = check_certificate(&wasm, &cert);
     assert!(
         clean_ok,
-        "hostile-model baseline must first certify:\n{clean_report}"
+        "hostile-model baseline must first pass trusted-olean preflight:\n{clean_report}"
+    );
+    assert!(
+        clean_report.contains("CHECKED") && !clean_report.contains("CERTIFIED"),
+        "developer preflight must never emit the certification verdict:\n{clean_report}"
     );
     let build_green = temp_dir("certify-hostile-mutual-build-green");
     copy_dir_all(&out_dir, &build_green);
@@ -1225,10 +1282,9 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
         "expr-fragment hostile regression must leave the manifest model reference untouched"
     );
 
-    let (ok, report) =
-        verify_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+    let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
     assert!(
-        !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+        !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
         "wrong generated expr-fragment model definition must fail its emitted bridge and be DECLINED:\n{report}"
     );
     let _ = std::fs::remove_dir_all(&tampered);
@@ -1258,9 +1314,9 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
         std::fs::write(&manifest, edited).unwrap();
 
         let (ok, report) =
-            verify_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+            check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
         assert!(
-            !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+            !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
             "wrong {label} model must make its emitted bridge fail and be DECLINED:\n{report}"
         );
         let _ = std::fs::remove_dir_all(&tampered);
@@ -1284,10 +1340,9 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
         "construct hostile regression must leave the manifest model reference untouched"
     );
 
-    let (ok, report) =
-        verify_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+    let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
     assert!(
-        !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+        !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
         "wrong generated construct model definition must fail its emitted bridge and be DECLINED:\n{report}"
     );
     let _ = std::fs::remove_dir_all(&tampered);
@@ -1321,9 +1376,9 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
         );
 
         let (ok, report) =
-            verify_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+            check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
         assert!(
-            !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+            !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
             "wrong generated {name} definition must fail the mutual semantic bridge and be DECLINED:\n{report}"
         );
         let _ = std::fs::remove_dir_all(&tampered);
@@ -1347,10 +1402,9 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
         "recursion hostile regression must leave the manifest model reference untouched"
     );
 
-    let (ok, report) =
-        verify_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+    let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
     assert!(
-        !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+        !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
         "wrong generated recursion model definition must fail its emitted bridge and be DECLINED:\n{report}"
     );
     let _ = std::fs::remove_dir_all(&tampered);
@@ -1698,10 +1752,9 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
         );
         std::fs::write(&model, edited).unwrap();
 
-        let (ok, report) =
-            verify_certificate(&tampered.join("recgen.wasm"), &tampered.join("cert"));
+        let (ok, report) = check_certificate(&tampered.join("recgen.wasm"), &tampered.join("cert"));
         assert!(
-            !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+            !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
             "wrong generated {name} definition must be caught by its semantic bridge:\n{report}"
         );
         let _ = std::fs::remove_dir_all(&tampered);
@@ -1729,10 +1782,9 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
         );
         std::fs::write(&certificate, edited).unwrap();
 
-        let (ok, report) =
-            verify_certificate(&tampered.join("recgen.wasm"), &tampered.join("cert"));
+        let (ok, report) = check_certificate(&tampered.join("recgen.wasm"), &tampered.join("cert"));
         assert!(
-            !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+            !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
             "wrong {name} must be constrained by the bridge/parsed byte shape:\n{report}"
         );
         let _ = std::fs::remove_dir_all(&tampered);
@@ -1999,6 +2051,7 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
             .expect("cert-manifest.json exists"),
     )
     .expect("manifest is valid JSON");
+    assert_plans_lean_is_the_only_public_plan_data(&cert_dir, &manifest);
     let certified: Vec<&str> = manifest["certified"]
         .as_array()
         .unwrap()
@@ -2040,16 +2093,6 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
         quote_entry["theorem"],
         "AcceptanceSoundness.stringEq_canonical_discharges"
     );
-    assert_eq!(
-        quote_entry["source_fragment"]["profile"].as_str(),
-        Some("sym-fragment-v1"),
-        "quoteOrSelf should expose a source-level SymPlan sidecar"
-    );
-    assert_eq!(
-        quote_entry["fragment"]["profile"].as_str(),
-        Some("string-eq-v1"),
-        "quoteOrSelf should expose a target-bound String.eq sidecar"
-    );
     let plans_lean =
         std::fs::read_to_string(cert_dir.join("Plans.lean")).expect("Plans.lean exists");
     assert!(
@@ -2059,6 +2102,19 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
     assert!(
         plans_lean.contains("def quoteOrSelfStringEqPlan : StringEqRawPlan"),
         "String.eq cert should render a Lean-data StringEqRawPlan:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains(".constStringBytes [34]")
+            && plans_lean.contains(".prim .stringEq [0, 1]")
+            && plans_lean.contains(".constStringBytes [92, 34]"),
+        "String.eq source plan DATA should preserve the needle, comparison and hit literal:\n{plans_lean}"
+    );
+    assert!(
+        plans_lean.contains("needle := ({ dataIdx := 0, bytes := [34] } : StringEqChunk)")
+            && plans_lean
+                .contains("hit := .literal ({ dataIdx := 1, bytes := [92, 34] } : StringEqChunk)")
+            && plans_lean.contains("default := .input"),
+        "String.eq target plan DATA should preserve its byte/data-segment bindings:\n{plans_lean}"
     );
     assert!(
         plans_lean.contains("stringEqPlanMatchesSymRawPlan")
@@ -2171,6 +2227,7 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
             .expect("cert-manifest.json exists"),
     )
     .expect("manifest is valid JSON");
+    assert_plans_lean_is_the_only_public_plan_data(&cert_dir, &manifest);
     let certified: Vec<&str> = manifest["certified"]
         .as_array()
         .unwrap()
@@ -2205,68 +2262,6 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
     assert_eq!(
         shout_class, "verbatim-string-concat",
         "shout should render its concat class, got {shout_class}"
-    );
-    let source_fragment = &shout_entry["source_fragment"];
-    assert_eq!(
-        source_fragment["profile"].as_str(),
-        Some("sym-fragment-v1"),
-        "shout should carry a source-level SymPlan sidecar"
-    );
-    let sym_plan = source_fragment["plan"]
-        .as_str()
-        .expect("shout source plan path");
-    assert!(
-        sym_plan.starts_with("fragments/") && sym_plan.ends_with(".sym-fragment-v1.plan"),
-        "shout should point at a source SymPlan sidecar, got {sym_plan}"
-    );
-    let sym_plan_text = std::fs::read_to_string(cert_dir.join(sym_plan))
-        .expect("String.concat SymPlan sidecar exists");
-    assert!(
-        sym_plan_text.starts_with(
-            "aver.sym-fragment.plan.v1\nprofile sym-fragment-v1\nparams string\nresult string\n"
-        ),
-        "shout should also emit the source-level SymPlan sidecar:\n{sym_plan_text}"
-    );
-    assert!(
-        sym_plan_text.contains("const.string hex=21")
-            && sym_plan_text.contains("prim op=string.concat args=v0,v1"),
-        "shout SymPlan sidecar should expose source string concat without target data indices:\n{sym_plan_text}"
-    );
-    let expected_sym_sha = aver::codegen::cert::sha256_hex(sym_plan_text.as_bytes());
-    assert_eq!(
-        source_fragment["plan_sha256"].as_str(),
-        Some(expected_sym_sha.as_str()),
-        "shout source sidecar hash should match the sidecar bytes"
-    );
-
-    let fragment = &shout_entry["fragment"];
-    assert_eq!(
-        fragment["profile"].as_str(),
-        Some("string-concat-v1"),
-        "shout should carry a byte-bound String.concat plan sidecar"
-    );
-    let plan = fragment["plan"].as_str().expect("shout plan path");
-    assert!(
-        plan.starts_with("fragments/") && plan.ends_with(".string-concat-v1.plan"),
-        "shout should point at a string-concat sidecar, got {plan}"
-    );
-    let plan_text =
-        std::fs::read_to_string(cert_dir.join(plan)).expect("String.concat sidecar exists");
-    assert!(
-        plan_text.starts_with(
-            "aver.string-fragment.plan.v1\nprofile string-concat-v1\nparams string\nresult string\n"
-        ),
-        "shout sidecar should be the canonical string source plan:\n{plan_text}"
-    );
-    assert!(
-        plan_text.contains("input index=0") && plan_text.contains("suffix data=0 hex=21"),
-        "shout sidecar should preserve the input plus literal suffix:\n{plan_text}"
-    );
-    let expected_sha = aver::codegen::cert::sha256_hex(plan_text.as_bytes());
-    assert_eq!(
-        fragment["plan_sha256"].as_str(),
-        Some(expected_sha.as_str()),
-        "shout sidecar hash should match the sidecar bytes"
     );
     let plans_lean =
         std::fs::read_to_string(cert_dir.join("Plans.lean")).expect("Plans.lean exists");

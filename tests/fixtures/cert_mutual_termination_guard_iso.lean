@@ -55,7 +55,7 @@ theorem honestMutualAccepted : AverCert.AcceptedArtifact.mutualPlanAccepted
     mutualModBytes mutualModLen evenNameBytes "isEven" 2 mutualMemberSet
     mutualHostTable evenPlan AverCert.isEvenOb := by
   have hfrags : AverCert.AcceptedArtifact.acceptedFragments AverCert.Artifact.data :=
-    AverCert.Artifact.certificate.2.2.2.2.2
+    AverCert.Artifact.certificate.2.2.2.2.2.2.2
   have hmutual : AverCert.AcceptedArtifact.acceptedMutualRecursionFragments AverCert.Artifact.data :=
     hfrags.2.2.2.2.2.1
   simpa [AverCert.AcceptedArtifact.acceptedMutualRecursionFragments,

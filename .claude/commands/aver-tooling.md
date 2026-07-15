@@ -195,6 +195,31 @@ aver compile file.av --explain-passes
 - `--emit-ir-after=PASS`: print the IR snapshot after the named pipeline stage and exit before codegen. PASS ∈ { `parse`, `tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`, `last_use`, `analyze` }. `diff -u` between two stages shows exactly what each pass rewrote.
 - `--explain-passes`: run the full pipeline (no codegen) and print a per-pass diagnostic report — tail-call conversions, interpolations lowered, fusion sites rewritten + sinks synthesized, slots resolved, last-use markers annotated, alloc/recursion facts. Drives failable-invariant CI checks ("fail if buffer_build no longer fires on the canonical shape", "fail if hot fn loses no-alloc status"). Pair with `--json` for typed-per-stage shape: `{schema_version: 1, passes: [{stage, data: {...stage-specific fields}}, ...]}` — buffer_build's `data` exposes `rewrites`, `synthesized`, `sinks`, `rewrites_by_sink`; analyze's exposes `total_fns`, `no_alloc_fns`, `recursive_fns`, `mutual_tco_members`. `jq '.passes[] | select(.stage=="buffer_build") | .data.rewrites'` instead of regex-parsing summary strings.
 
+### Artifact certificates
+
+```bash
+aver compile app.av --target wasm-gc --certify -o out/
+aver-cert verify out/app.wasm out/cert
+aver-cert explain out/app.wasm out/cert
+aver cert verify out/app.wasm out/cert
+aver cert explain out/app.wasm out/cert
+```
+
+`--certify` emits a version-1 artifact certificate for admitted exports of the
+exact wasm-gc module. Install `aver-cert` separately; it is an independently
+versioned verifier using Lean 4.32.
+
+`aver cert ...` is only a subprocess shortcut. It forwards the original
+arguments, standard streams, and exit status to a sibling `aver-cert` binary or
+one on `PATH`; `aver` contains no linked verification fallback. `explain`
+performs the same full check as `verify` before printing the report, and
+`inspect` is an alias of `explain`.
+
+This command is different from `aver verify`: source `verify` runs examples,
+whereas `aver cert verify` kernel-checks a behavioral certificate for compiled
+WebAssembly. See the certificate guide and architecture documents for the
+admitted families and trust boundary.
+
 ### Bench
 
 ```bash

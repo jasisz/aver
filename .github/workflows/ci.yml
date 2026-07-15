@@ -33,6 +33,14 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
 
+      - name: Package standalone certificate engine
+        run: |
+          cargo package -p aver-cert --no-verify
+          if cargo tree -p aver-cert --edges normal | grep -Eq 'aver-(lang|rt|memory)'; then
+            echo "aver-cert must not depend on the compiler or runtime crates"
+            exit 1
+          fi
+
       - name: Clippy
         run: cargo clippy --workspace --all-targets --exclude aver-lang -- -D warnings && cargo clippy -p aver-lang --lib --bin aver -- -D warnings
 
@@ -146,6 +154,7 @@ jobs:
           PROPTEST_CASES: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '2000' || '64' }}
         run: |
           set -euo pipefail
+          cargo build -p aver-cert --bin aver-cert
           for test in \
             bigint_literals_differential \
             cert_certify_spec \

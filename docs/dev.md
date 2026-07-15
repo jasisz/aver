@@ -1,6 +1,8 @@
 # Developer notes
 
-Local-development tips for working on the Aver compiler itself. None of this is needed to *use* Aver — `cargo install aver-lang` is still the consumer-side flow.
+Local-development tips for working on the Aver compiler itself. None of this is
+needed to *use* Aver — install `aver-lang` for the compiler and `aver-cert` for
+independent certificate verification.
 
 ## Faster rebuilds
 

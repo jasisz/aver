@@ -49,25 +49,23 @@
 //!       function index; the generic recursion claim binds it to the byte index
 //!       and fails closed without a bespoke proof → DECLINED
 //!   (u) String.eq helper shape: a byte-level mutation inside the exact
-//!       compiler-generated helper, with the wasm hash rebound, makes the
-//!       checker re-derive a different host table and the kernel witness fails
-//!       the host binding → DECLINED
-//!   (v) String.eq contract drift: deleting the byte-required contract from
-//!       both `Manifest.lean` and `cert-manifest.json` still fails because the
-//!       checker re-derives runtime contracts from the wasm bytes → DECLINED
+//!       compiler-generated helper, with the wasm hash rebound, breaks the
+//!       Lean byte-origin/host binding → DECLINED
+//!   (v) String.eq contract drift: deleting the plan-required contract from
+//!       both `Manifest.lean` and `cert-manifest.json` fails `ClaimAxes` → DECLINED
 //!   (w) String.concat helper shape / contract drift: same fail-closed checks
 //!       for the concat helper's byte-exact host-contract recognition
-//!   (x) expr-fragment sidecar drift: mutating the emitted canonical plan either
-//!       fails its sidecar hash pin or, with the hash rebound, fails plan-first
-//!       canonical lowering against the actual wasm body
+//!   (x) plan DATA drift: mutating `Plans.lean` fails its structural,
+//!       canonical-lowering, or exact-byte binding inside Lean
 //!   (y) package-format drift: an unknown `format.version` is rejected rather
 //!       than reinterpreted under the current parser
 //!   (z) wall drift: an unknown aggregate `wall_id` is rejected before Lean
 //!       build; resolution has no filesystem, environment, or network fallback
-//!   (aa) artifact-bytes decoy: cert-supplied `ArtifactBytes.lean` is ignored;
-//!       the checker regenerates it from the actual artifact bytes it read
-//!   (ab) artifact-data decoy: cert-supplied `Artifact.lean` data is pinned to
-//!       the checker-reconstructed artifact data with `rfl`
+//!   (aa) package authority: `Plans.lean` is the sole public plan DATA module;
+//!       a hostile `ArtifactBytes.lean` decoy is ignored and checker-generated
+//!       from the artifact
+//!   (ab) artifact-data decoy: cert-supplied `Artifact.data` must bind its
+//!       byte/manifest fields and satisfy the checker-owned Lean predicate
 //!   (ac) artifact-root axiom: the artifact-carried bridge proof is the axiom
 //!       audit root, so a smuggled axiom there is rejected
 //! plus a separate empty-cert test: zero certified exports must NOT print the
@@ -126,6 +124,10 @@ fn lake_for_cert(cert_dir: &Path) -> Command {
     let mut command = Command::new("lake");
     command.current_dir(cert_dir);
     command
+}
+
+fn aver_check(artifact: &Path, cert_dir: &Path) -> (bool, String) {
+    aver_cert(&["check"], artifact, cert_dir)
 }
 
 fn aver_verify(artifact: &Path, cert_dir: &Path) -> (bool, String) {
@@ -210,7 +212,7 @@ fn cert_verify_rebuilds_after_cached_olean_corruption() {
         String::from_utf8_lossy(&compile.stderr)
     );
 
-    let verify = || {
+    let check = || {
         Command::new(env!("CARGO_BIN_EXE_aver"))
             .env(
                 "AVER_CERT_PRELUDE_CACHE",
@@ -218,16 +220,16 @@ fn cert_verify_rebuilds_after_cached_olean_corruption() {
             )
             .env("AVER_CERT_DATA_CACHE", &cache_dir)
             .arg("cert")
-            .arg("verify")
+            .arg("check")
             .arg(out_dir.join("mutual.wasm"))
             .arg(out_dir.join("cert"))
             .output()
-            .expect("verify mutual fixture with isolated DATA cache")
+            .expect("check mutual fixture with isolated DATA cache")
     };
-    let first = verify();
+    let first = check();
     assert!(
         first.status.success(),
-        "initial cached verify failed:\n{}{}",
+        "initial cached preflight failed:\n{}{}",
         String::from_utf8_lossy(&first.stdout),
         String::from_utf8_lossy(&first.stderr)
     );
@@ -239,7 +241,7 @@ fn cert_verify_rebuilds_after_cached_olean_corruption() {
     corrupted[0] ^= 0xff;
     std::fs::write(&artifact_olean, &corrupted).unwrap();
 
-    let second = verify();
+    let second = check();
     let second_report = format!(
         "{}{}",
         String::from_utf8_lossy(&second.stdout),
@@ -250,8 +252,8 @@ fn cert_verify_rebuilds_after_cached_olean_corruption() {
         "corrupt cached olean must be rejected and rebuilt (or fail closed):\n{second_report}"
     );
     assert!(
-        second_report.contains("CERTIFIED"),
-        "rebuilt verification did not produce the normal verdict:\n{second_report}"
+        second_report.contains("CHECKED") && !second_report.contains("CERTIFIED"),
+        "rebuilt preflight did not produce the trusted-olean verdict:\n{second_report}"
     );
     assert_ne!(
         std::fs::read(&artifact_olean).unwrap(),
@@ -317,62 +319,18 @@ fn compile_cert_goals(prefix: &str) -> (PathBuf, PathBuf, PathBuf) {
 
     let wasm = out_dir.join("cert_goals.wasm");
     let cert = out_dir.join("cert");
-    let (ok, report) = aver_verify(&wasm, &cert);
+    let (ok, report) = aver_check(&wasm, &cert);
     assert!(
         ok,
         "expected clean goals certificate to verify:
 {report}"
     );
     assert!(
-        report.contains("CERTIFIED"),
-        "clean goals certificate should be certified:
+        report.contains("CHECKED") && !report.contains("CERTIFIED"),
+        "clean goals certificate should pass trusted-olean preflight:
 {report}"
     );
     (out_dir, wasm, cert)
-}
-
-fn source_fragment_plan_path(cert_dir: &Path, export_name: &str) -> String {
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(cert_dir.join("cert-manifest.json")).unwrap(),
-    )
-    .unwrap();
-    manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|c| c["name"].as_str() == Some(export_name))
-        .and_then(|c| c["source_fragment"]["plan"].as_str())
-        .unwrap_or_else(|| panic!("{export_name} should have a source fragment plan"))
-        .to_string()
-}
-
-fn rebind_source_fragment_plan_sha(cert_dir: &Path, export_name: &str, plan_text: &str) {
-    let mf = cert_dir.join("cert-manifest.json");
-    let mut manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-    let entry = manifest["certified"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|c| c["name"].as_str() == Some(export_name))
-        .unwrap_or_else(|| panic!("{export_name} manifest entry should exist"));
-    entry["source_fragment"]["plan_sha256"] =
-        serde_json::Value::String(aver::codegen::cert::sha256_hex(plan_text.as_bytes()));
-    std::fs::write(&mf, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
-}
-
-fn assert_source_plan_byte_mismatch(export_name: &str, out: &str) {
-    assert!(
-        out.contains("source plan-first canonical lowering")
-            && out.contains("does not match the actual wasm code-entry"),
-        "wrong reason for {export_name} source plan tamper:
-{out}"
-    );
-    assert!(
-        !out.contains("CERTIFIED"),
-        "tampered {export_name} source plan credited:
-{out}"
-    );
 }
 
 /// A weakened schema whose `Holds` is trivially `True`. Used by the A3 decoy;
@@ -452,12 +410,11 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         report.contains("2 certified exports"),
         "expected exactly two certified exports:\n{report}"
     );
-    // Each obligation's code/host/self/carrier was pinned to the bytes-derived
-    // values by `rfl` inside the kernel witness: the CERTIFIED report names that
-    // guarantee (artifact-decode).
+    // The green report names the actual boundary: exact bytes and manifest pass
+    // the checker-owned Lean acceptance predicate.
     assert!(
-        report.contains("artifact-decode:") && report.contains("kernel-computed"),
-        "missing artifact-decode line on the happy path:\n{report}"
+        report.contains("artifact-check:") && report.contains("checker-owned Lean predicate"),
+        "missing artifact-check line on the happy path:\n{report}"
     );
 
     // The cert schema version is a breaking cert-data shape. The checker rejects
@@ -471,7 +428,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
             serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
         m["schema_version"] = serde_json::json!(2);
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "schema v2 cert must be rejected:\n{out}");
         assert!(
             out.contains("unsupported certificate schema_version 2"),
@@ -489,7 +446,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
             serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
         m["format"]["version"] = serde_json::json!(2);
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "format version drift must be rejected:\n{out}");
         assert!(
             out.contains("unsupported certificate format version 2"),
@@ -508,7 +465,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
             serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
         m["format"]["wall_id"] = serde_json::json!("sha256:deadbeef");
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "unknown wall id must be rejected:\n{out}");
         assert!(
             out.contains("unsupported certificate wall `sha256:deadbeef`"),
@@ -526,7 +483,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
             serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
         m["artifact_certificate_root"] = serde_json::json!("AverCert.Final.cert");
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(
             !ok,
             "wrong artifact certificate root must be rejected:\n{out}"
@@ -552,7 +509,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         );
         assert_ne!(src, poisoned, "Manifest.lean artifactRoot shape changed");
         std::fs::write(&manifest, poisoned).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "wrong Lean artifact root must be rejected:\n{out}");
         assert!(
             out.contains("manifest.subject.artifactRoot"),
@@ -564,8 +521,8 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     // the recursion exports carry byte-origin plan claims, an `Artifact.lean`
     // whose `data` points at zero module bytes can no longer even prove its own
     // claims (`exactFuncBindingForExport 0 modLen name code = some …` has no `rfl`), so the tamper
-    // dies at the cert's own build — before the checker's `AverCert.Artifact.data`
-    // reconstruction pin, which remains the authority for claim-free certs.
+    // dies at the cert's own build — before the checker witness pins
+    // `AverCert.Artifact.data` to the actual bytes and manifest.
     {
         let dir = temp_dir("neg-artifact-data-pin");
         copy_dir(&out_dir, &dir);
@@ -578,7 +535,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         );
         assert_ne!(src, corrupted, "Artifact.lean data shape changed");
         std::fs::write(&artifact, corrupted).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "tampered Artifact.lean data must fail:\n{out}");
         assert!(
             out.contains("did not build")
@@ -601,7 +558,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let mid = bytes.len() / 2;
         bytes[mid] ^= 0x01;
         std::fs::write(&w, &bytes).unwrap();
-        let (ok, out) = aver_verify(&w, &dir.join("cert"));
+        let (ok, out) = aver_check(&w, &dir.join("cert"));
         assert!(!ok, "flipped wasm byte must fail:\n{out}");
         assert!(out.contains("hash mismatch"), "wrong reason (a):\n{out}");
     }
@@ -624,7 +581,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
             .expect("countDown body prefix should be present in wasm");
         bytes[off + 1] ^= 0x01;
         std::fs::write(&w, &bytes).unwrap();
-        let (ok, out) = aver_verify(&w, &dir.join("cert"));
+        let (ok, out) = aver_check(&w, &dir.join("cert"));
         assert!(!ok, "countDown body-byte flip must fail:\n{out}");
         assert!(
             out.contains("hash mismatch"),
@@ -641,7 +598,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let corrupted = src.replacen(".i64Const 0, .i64LeS", ".i64Const 999, .i64LeS", 1);
         assert_ne!(src, corrupted, "fixture body shape changed");
         std::fs::write(&m, corrupted).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "corrupted Module.lean must fail:\n{out}");
         assert!(out.contains("did not build"), "wrong reason (b):\n{out}");
     }
@@ -658,7 +615,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
              theorem AverCert.Final.cert : True := trivial\n\n\
              #print axioms AverCert.Final.cert\n";
         std::fs::write(&f, trivial).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "trivialized final theorem must fail:\n{out}");
         assert!(out.contains("did not build"), "wrong reason (c):\n{out}");
     }
@@ -670,18 +627,18 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let dir = temp_dir("neg-d");
         copy_dir(&out_dir, &dir);
         std::fs::write(dir.join("cert").join("Schema.lean"), WEAK_SCHEMA).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(ok, "cert-supplied Schema.lean must be ignored:\n{out}");
         assert!(
-            out.contains("CERTIFIED"),
-            "genuine cert should verify (d):\n{out}"
+            out.contains("CHECKED") && !out.contains("CERTIFIED"),
+            "genuine cert should pass trusted-olean preflight (d):\n{out}"
         );
     }
 
     // (e) A1 hash rebind: replace the artifact with a DIFFERENT but genuine cert
     //     module (certprobe's wasm) and edit ONLY `wasm_sha256` in the JSON to
     //     match it. The fast JSON pre-check passes and the swapped module still
-    //     disassembles. The recursion exports carry byte-origin plan claims that
+    //     validates as Wasm. The recursion exports carry byte-origin plan claims that
     //     bind the checker-staged `ArtifactBytes` (the actual, swapped bytes), so
     //     the cert's own build now fails before the checker witness even runs —
     //     an even earlier fail-closed decline than the witness hash face.
@@ -709,7 +666,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let mut m: serde_json::Value = serde_json::from_str(&json).unwrap();
         m["wasm_sha256"] = serde_json::Value::String(sha);
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         let _ = std::fs::remove_dir_all(&foreign_out);
         assert!(!ok, "A1 hash rebind must fail:\n{out}");
         assert!(
@@ -727,7 +684,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     //      over any staged bytes. Appending an inert custom section changes the
     //      artifact hash without perturbing any byte-derived fact, and the JSON
     //      pin is rebound to match — so ONLY the kernel witness's hash faces can
-    //      catch the swap: the theorems (and `CertModule.wasmSha256`) talk about
+    //      catch the swap: the theorems (and the manifest artifact-hash face) talk about
     //      the ORIGINAL hash, not the checker-computed one. This keeps the
     //      witness hash face exercised now that claim-covered certs die earlier.
     {
@@ -755,13 +712,13 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let mut m: serde_json::Value = serde_json::from_str(&json).unwrap();
         m["wasm_sha256"] = serde_json::Value::String(sha);
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_verify(&w, &empty_out.join("cert"));
+        let (ok, out) = aver_check(&w, &empty_out.join("cert"));
         let _ = std::fs::remove_dir_all(&empty_out);
         assert!(!ok, "A1 hash rebind on claim-free cert must fail:\n{out}");
         assert!(out.contains("does not bind"), "wrong reason (e2):\n{out}");
         // The witness names the exact face the kernel rejected.
         assert!(
-            out.contains("CertModule.wasmSha256"),
+            out.contains("AverCert.manifest.subject.artifactHash"),
             "witness not exercised (e2):\n{out}"
         );
     }
@@ -779,7 +736,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
              theorem AverCert.Final.cert : True := trivial\n\n\
              #print axioms AverCert.Final.cert\n";
         std::fs::write(&f, smuggled).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "A2 comment smuggle must fail:\n{out}");
         assert!(out.contains("did not build"), "wrong reason (f):\n{out}");
     }
@@ -804,7 +761,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let redirected = "import Lake\nopen Lake DSL\n\npackage «hostile»\n\n\
              @[default_target]\nlean_lib «Hostile» where\n  srcDir := \"hidden\"\n  roots := #[`Final]\n";
         std::fs::write(&lf, redirected).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &cert);
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &cert);
         assert!(!ok, "A3 srcDir subversion must fail:\n{out}");
         assert!(out.contains("did not build"), "wrong reason (g):\n{out}");
     }
@@ -819,11 +776,11 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         std::fs::create_dir_all(&lib).unwrap();
         std::fs::write(lib.join("Schema.olean"), b"GARBAGE-NOT-AN-OLEAN").unwrap();
         std::fs::write(lib.join("Final.olean"), b"GARBAGE").unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(ok, "shipped .lake cache must be ignored:\n{out}");
         assert!(
-            out.contains("CERTIFIED"),
-            "genuine cert should verify (h):\n{out}"
+            out.contains("CHECKED") && !out.contains("CERTIFIED"),
+            "genuine cert should pass trusted-olean preflight (h):\n{out}"
         );
     }
 
@@ -846,7 +803,9 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
                 "class": "straight-line",
                 "policy": "simulatesModel",
                 "level": "L1",
-                "theorem": "CertProofs.withdrawAll_wasm_certified"
+                "theorem": "CertProofs.withdrawAll_wasm_certified",
+                "dom": "List Int",
+                "cod": "Int"
             }));
         m["runtime_contracts"]
             .as_array_mut()
@@ -854,7 +813,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
             .push(serde_json::Value::String("FAKE contract injected".into()));
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
         // Every .lean and hash is byte-identical; only the JSON changed.
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "padded JSON must be DECLINED, not credited:\n{out}");
         assert!(out.contains("does not bind"), "wrong reason (i):\n{out}");
         // The declined diagnostic echoes the rejected candidate; what matters is
@@ -862,6 +821,36 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         assert!(
             !out.contains("CERTIFIED"),
             "forged export credited (i):\n{out}"
+        );
+    }
+
+    // Class labels are paired with exports by Lean, not compared as two bags.
+    // Swapping the two distinct recursion labels while preserving names and
+    // order must therefore fail the atomic `reportEntries` binding.
+    {
+        let dir = temp_dir("neg-i-report-pair-swap");
+        copy_dir(&out_dir, &dir);
+        let mf = dir.join("cert/cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        let certified = m["certified"].as_array_mut().unwrap();
+        assert!(certified.len() >= 2);
+        let first = certified[0]["class"].as_str().unwrap().to_string();
+        let second = certified[1]["class"].as_str().unwrap().to_string();
+        assert_ne!(first, second, "fixture needs two distinct report classes");
+        certified[0]["class"] = serde_json::Value::String(second);
+        certified[1]["class"] = serde_json::Value::String(first);
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        assert!(!ok, "swapped export/class pairs must be DECLINED:\n{out}");
+        assert!(
+            out.contains("does not bind"),
+            "wrong report-pair decline:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "swapped classes were credited:\n{out}"
         );
     }
 
@@ -874,11 +863,19 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let mf = dir.join("cert").join("cert-manifest.json");
         let mut m: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["certified"].as_array_mut().unwrap().push(serde_json::json!({
-            "name": "phantom", "class": "straight-line", "policy": "simulatesModel", "level": "L1"
-        }));
+        m["certified"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "name": "phantom",
+                "class": "straight-line",
+                "policy": "simulatesModel",
+                "level": "L1",
+                "dom": "List Int",
+                "cod": "Int"
+            }));
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "JSON claiming an extra export must fail (j):\n{out}");
         assert!(out.contains("does not bind"), "wrong reason (j):\n{out}");
         assert!(
@@ -897,7 +894,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
             serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
         m["certified"] = serde_json::Value::Array(vec![]);
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "JSON dropping a real export must fail (k):\n{out}");
         assert!(out.contains("does not bind"), "wrong reason (k):\n{out}");
     }
@@ -913,9 +910,9 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
             serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
         m["certified"][0]["name"] = serde_json::Value::String("sumTo\nevil := by rfl".into());
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "control char in a candidate must fail (l):\n{out}");
-        assert!(out.contains("charset"), "wrong reason (l):\n{out}");
+        assert!(out.contains("printable ASCII"), "wrong reason (l):\n{out}");
     }
 
     // (m) Evil axiom: prove `Final.cert` from a smuggled `axiom evil`. The build
@@ -930,7 +927,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
              axiom evil : AverCert.Schema.Holds AverCert.manifest\n\
              theorem AverCert.Final.cert : AverCert.Schema.Holds manifest := evil\n";
         std::fs::write(&f, evil).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "axiom-backed final theorem must fail (m):\n{out}");
         assert!(
             out.contains("non-whitelisted axiom"),
@@ -949,10 +946,10 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
             "-- inert\ndef x : Nat := 0\n",
         )
         .unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "hostile cert file name must fail (n):\n{out}");
         assert!(
-            out.contains("module identifier"),
+            out.contains("bad name.lean") && out.contains("^[A-Za-z][A-Za-z0-9_]*\\.lean$"),
             "wrong reason (n):\n{out}"
         );
     }
@@ -966,13 +963,13 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let mut src = std::fs::read_to_string(&c).unwrap();
         src.push_str("\n#eval IO.println \"pwned\"\n");
         std::fs::write(&c, src).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(
             !ok,
             "code-executing token in a data file must fail (o):\n{out}"
         );
         assert!(
-            out.contains("execute code") && out.contains("#eval"),
+            out.contains("elaboration-executing") && out.contains("#eval"),
             "wrong reason (o):\n{out}"
         );
     }
@@ -996,10 +993,10 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         assert_ne!(src, corrupted, "fixture recursive body shape changed");
         std::fs::write(&m, corrupted).unwrap();
         // wasm bytes are untouched: the hash still matches the pinned value.
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(
             !ok,
-            "a body that does not re-derive must be DECLINED:\n{out}"
+            "a body that does not bind to the artifact bytes must be DECLINED:\n{out}"
         );
         // The acceptance predicate now pins the locals count exactly, so this
         // mutation can trip either the shipped artifact's own acceptance `rfl`
@@ -1032,7 +1029,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let planted = mutated.replacen("end CertModule", &shadow, 1);
         assert_ne!(mutated, planted, "shadow decoy not planted");
         std::fs::write(&m, planted).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "shadow decoy must be DECLINED:\n{out}");
         // The locals-count mutation can trip the shipped artifact's own
         // acceptance `rfl` at lake build ("did not build") or the later
@@ -1061,7 +1058,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let comment = format!("/- honest decoy:\n{HONEST_SUMTO_CODE}\n-/\n\nend CertModule");
         let planted = mutated.replacen("end CertModule", &comment, 1);
         std::fs::write(&m, planted).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "comment decoy must be DECLINED:\n{out}");
         // Same stage-agnostic decline as (q): the locals-count pin can trip at
         // the artifact's own lake build or at the checker witness.
@@ -1102,7 +1099,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         );
         assert_ne!(msrc, decoupled, "manifest code field shape changed");
         std::fs::write(&man, decoupled).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &cert);
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &cert);
         assert!(!ok, "code decouple must be DECLINED:\n{out}");
         assert!(
             out.contains("did not build") || out.contains("does not bind"),
@@ -1127,7 +1124,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let decoupled = msrc.replacen("self := 1,", "self := 999,", 1);
         assert_ne!(msrc, decoupled, "manifest self field shape changed");
         std::fs::write(&man, decoupled).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &cert);
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &cert);
         assert!(!ok, "self decouple must be DECLINED:\n{out}");
         assert!(
             out.contains("did not build") || out.contains("does not bind"),
@@ -1143,7 +1140,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     //     relabel the first obligation (and the JSON) to a duplicate export name
     //     (`countDown`). The artifact-carried recursion claim pins
     //     `obligation.export_` to the claimed export name, so the relabel now
-    //     fails the cert's OWN build; the checker witness's re-derived export
+    //     fails the cert's OWN build; the checker witness's manifest export
     //     list `rfl` remains the backstop for claim-free certs → DECLINED.
     {
         let dir = temp_dir("neg-u");
@@ -1163,7 +1160,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
             }
         }
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "export-name relabel must be DECLINED (u):\n{out}");
         assert!(
             out.contains("did not build") || out.contains("does not bind"),
@@ -1201,7 +1198,7 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         assert_ne!(msrc, decoupled, "countDown code field shape changed");
         std::fs::write(&manifest, decoupled).unwrap();
 
-        let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &cert);
+        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &cert);
         assert!(!ok, "countDown code decouple must be DECLINED (v):\n{out}");
         assert!(
             out.contains("did not build") || out.contains("does not bind"),
@@ -1474,10 +1471,10 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
 
     let wasm = out_dir.join("json.wasm");
     let cert = out_dir.join("cert");
-    let (ok, report) = aver_verify(&wasm, &cert);
+    let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "expected clean json certificate to verify:\n{report}");
     assert!(
-        report.contains("12 certified exports"),
+        report.contains("12 checked exports"),
         "json should certify the widened data-segment functions:\n{report}"
     );
 
@@ -1521,7 +1518,7 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     m["wasm_sha256"] = serde_json::Value::String(new_hash);
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 
-    let (ok, out) = aver_verify(&w, &dir.join("cert"));
+    let (ok, out) = aver_check(&w, &dir.join("cert"));
     let _ = std::fs::remove_dir_all(&out_dir);
     let _ = std::fs::remove_dir_all(&dir);
     assert!(
@@ -1546,14 +1543,14 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
 }
 
 #[test]
-fn cert_verify_declines_tampered_expr_fragment_sidecar() {
+fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
     if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping expr-fragment sidecar tamper test: `lake` not available");
+        eprintln!("skipping Plans.lean authority test: `lake` not available");
         return;
     }
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-expr-sidecar");
+    let out_dir = temp_dir("cert-plans-authority");
 
     let compile = aver_command()
         .current_dir(&repo_root)
@@ -1575,8 +1572,47 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
 
     let wasm = out_dir.join("cert_goals.wasm");
     let cert = out_dir.join("cert");
-    let (ok, report) = aver_verify(&wasm, &cert);
+    let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "expected clean goals certificate to verify:\n{report}");
+    assert!(
+        cert.join("Plans.lean").is_file(),
+        "Plans.lean is public plan DATA"
+    );
+    assert!(
+        !cert.join("ArtifactBytes.lean").exists(),
+        "ArtifactBytes.lean is checker-generated, not package DATA"
+    );
+    assert!(
+        !cert.join("fragments").exists(),
+        "the public package must not duplicate Plans.lean as sidecars"
+    );
+    let public_manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap())
+            .unwrap();
+    for entry in public_manifest["certified"].as_array().unwrap() {
+        assert!(entry.get("fragment").is_none());
+        assert!(entry.get("source_fragment").is_none());
+        assert!(entry.get("plan_sha256").is_none());
+    }
+
+    // The honest package does not carry ArtifactBytes, but an adversarial
+    // package may add a decoy. The verifier must still generate the module from
+    // the artifact bytes it read and ignore this checker-owned filename.
+    let artifact_bytes_decoy_dir = temp_dir("cert-expr-artifact-bytes-decoy");
+    copy_dir(&out_dir, &artifact_bytes_decoy_dir);
+    std::fs::write(
+        artifact_bytes_decoy_dir.join("cert/ArtifactBytes.lean"),
+        "namespace AverCert.ArtifactBytes\n\ndef modBytes : Nat := 0\ndef modLen : Nat := 0\n\nend AverCert.ArtifactBytes\n",
+    )
+    .unwrap();
+    let (ok, out) = aver_check(
+        &artifact_bytes_decoy_dir.join("cert_goals.wasm"),
+        &artifact_bytes_decoy_dir.join("cert"),
+    );
+    assert!(
+        ok,
+        "cert-supplied ArtifactBytes.lean must be ignored and regenerated:\n{out}"
+    );
 
     // Honest bytes and plan, but the standalone obligation code table claims
     // zero locals. The expr-fragment acceptance path must pin the one carrier
@@ -1585,31 +1621,13 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
         let dir = temp_dir("cert-expr-zero-locals");
         copy_dir(&out_dir, &dir);
         set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "addTwo", 1, 1);
-        let (ok, report) = aver_verify(&dir.join("cert_goals.wasm"), &dir.join("cert"));
+        let (ok, report) = aver_check(&dir.join("cert_goals.wasm"), &dir.join("cert"));
         assert!(
             !ok,
             "expr-fragment zero-locals code must be DECLINED:\n{report}"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
-
-    let artifact_bytes_decoy_dir = temp_dir("cert-expr-artifact-bytes-decoy");
-    copy_dir(&out_dir, &artifact_bytes_decoy_dir);
-    std::fs::write(
-        artifact_bytes_decoy_dir
-            .join("cert")
-            .join("ArtifactBytes.lean"),
-        "namespace AverCert.ArtifactBytes\n\ndef modBytes : Nat := 0\ndef modLen : Nat := 0\n\nend AverCert.ArtifactBytes\n",
-    )
-    .unwrap();
-    let (ok, out) = aver_verify(
-        &artifact_bytes_decoy_dir.join("cert_goals.wasm"),
-        &artifact_bytes_decoy_dir.join("cert"),
-    );
-    assert!(
-        ok,
-        "cert-supplied ArtifactBytes.lean must be ignored and regenerated:\n{out}"
-    );
 
     let claim_without_manifest_ob_dir = temp_dir("cert-expr-claim-without-obligation");
     copy_dir(&out_dir, &claim_without_manifest_ob_dir);
@@ -1652,7 +1670,7 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
         ),
     )
     .unwrap();
-    let (ok, out) = aver_verify(
+    let (ok, out) = aver_check(
         &claim_without_manifest_ob_wasm,
         &claim_without_manifest_ob_cert,
     );
@@ -1702,7 +1720,7 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
         "Artifact.lean claim obligation shape changed"
     );
     std::fs::write(&artifact_lean, tampered_artifact).unwrap();
-    let (ok, out) = aver_verify(
+    let (ok, out) = aver_check(
         &artifact_obligation_tamper_wasm,
         &artifact_obligation_tamper_cert,
     );
@@ -1730,8 +1748,9 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let artifact_lean = artifact_axiom_tamper_cert.join("Artifact.lean");
     let artifact_text = std::fs::read_to_string(&artifact_lean).unwrap();
     let def_start = artifact_text
-        .find("def acceptedWithFinal")
-        .expect("Artifact.lean should define acceptedWithFinal");
+        .find("theorem acceptedWithFinal")
+        .or_else(|| artifact_text.find("def acceptedWithFinal"))
+        .expect("Artifact.lean should declare acceptedWithFinal");
     let end_marker = "\n\n/-! ### Artifact semantic side conditions consumed by AcceptanceSoundness.accept_sound -/";
     let def_end = artifact_text
         .find(end_marker)
@@ -1739,7 +1758,7 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let evil_bridge = concat!(
         "axiom artifactEvil : ∀ (finalCert : AverCert.Schema.Holds AverCert.manifest), ",
         "AverCert.AcceptedArtifact.accepted data\n\n",
-        "def acceptedWithFinal\n",
+        "theorem acceptedWithFinal\n",
         "    (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n",
         "    AverCert.AcceptedArtifact.accepted data := artifactEvil finalCert\n\n",
     );
@@ -1748,7 +1767,7 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     tampered_artifact.push_str(evil_bridge);
     tampered_artifact.push_str(&artifact_text[def_end..]);
     std::fs::write(&artifact_lean, tampered_artifact).unwrap();
-    let (ok, out) = aver_verify(&artifact_axiom_tamper_wasm, &artifact_axiom_tamper_cert);
+    let (ok, out) = aver_check(&artifact_axiom_tamper_wasm, &artifact_axiom_tamper_cert);
     assert!(
         !ok,
         "artifact-carried axiom bridge must be DECLINED:\n{out}"
@@ -1760,89 +1779,6 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     assert!(
         !out.contains("CERTIFIED"),
         "artifact-carried axiom bridge credited:\n{out}"
-    );
-
-    let manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap())
-            .unwrap();
-    let expr_entry = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|c| c["class"].as_str() == Some("expr-fragment-v1"))
-        .expect("at least one expr-fragment manifest entry");
-    assert!(
-        expr_entry.get("fragment").is_none(),
-        "source-projectable expr fragments should not emit duplicate target sidecars"
-    );
-    assert!(
-        expr_entry.get("trace").is_none() && expr_entry.get("trace_sha256").is_none(),
-        "expr-fragment manifests should not emit trace/replay sidecars"
-    );
-    let source_plan = expr_entry["source_fragment"]["plan"]
-        .as_str()
-        .expect("expr-fragment source plan path");
-    assert!(
-        source_plan.ends_with(".sym-fragment-v1.plan"),
-        "expr-fragment source plan should be a SymPlan sidecar, got {source_plan}"
-    );
-    let float_entry = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|c| c["name"].as_str() == Some("floatLeGoal"))
-        .expect("floatLeGoal expr-fragment entry");
-    assert!(
-        float_entry.get("fragment").is_none(),
-        "floatLeGoal should be verified from its source SymPlan only"
-    );
-    let float_source_plan = float_entry["source_fragment"]["plan"]
-        .as_str()
-        .expect("floatLeGoal source plan path");
-
-    let source_plan_tamper_dir = temp_dir("cert-expr-source-plan-tamper");
-    copy_dir(&out_dir, &source_plan_tamper_dir);
-    let source_plan_tamper_wasm = source_plan_tamper_dir.join("cert_goals.wasm");
-    let source_plan_tamper_cert = source_plan_tamper_dir.join("cert");
-    let source_sidecar = source_plan_tamper_cert.join(float_source_plan);
-    let source_text = std::fs::read_to_string(&source_sidecar).unwrap();
-    let tampered_source =
-        source_text.replacen("const.bool value=true", "const.bool value=false", 1);
-    assert_ne!(
-        source_text, tampered_source,
-        "floatLeGoal source plan shape changed"
-    );
-    std::fs::write(&source_sidecar, &tampered_source).unwrap();
-    let source_plan_tamper_mf = source_plan_tamper_cert.join("cert-manifest.json");
-    let mut source_plan_tamper_manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&source_plan_tamper_mf).unwrap()).unwrap();
-    let source_plan_tamper_entry = source_plan_tamper_manifest["certified"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|c| c["name"].as_str() == Some("floatLeGoal"))
-        .expect("floatLeGoal sidecar");
-    source_plan_tamper_entry["source_fragment"]["plan_sha256"] =
-        serde_json::Value::String(aver::codegen::cert::sha256_hex(tampered_source.as_bytes()));
-    std::fs::write(
-        &source_plan_tamper_mf,
-        serde_json::to_string_pretty(&source_plan_tamper_manifest).unwrap(),
-    )
-    .unwrap();
-
-    let (ok, out) = aver_verify(&source_plan_tamper_wasm, &source_plan_tamper_cert);
-    assert!(
-        !ok,
-        "tampered expr-fragment source SymPlan must be DECLINED:\n{out}"
-    );
-    assert!(
-        out.contains("source plan-first canonical lowering")
-            && out.contains("does not match the actual wasm code-entry"),
-        "wrong reason for expr-fragment source SymPlan tamper:\n{out}"
-    );
-    assert!(
-        !out.contains("CERTIFIED"),
-        "tampered expr-fragment source SymPlan credited:\n{out}"
     );
 
     let lean_plan_tamper_dir = temp_dir("cert-expr-lean-plan-tamper");
@@ -1858,7 +1794,7 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     );
     std::fs::write(&plans_lean, tampered_plans_text).unwrap();
 
-    let (ok, out) = aver_verify(&lean_plan_tamper_wasm, &lean_plan_tamper_cert);
+    let (ok, out) = aver_check(&lean_plan_tamper_wasm, &lean_plan_tamper_cert);
     assert!(!ok, "tampered Lean RawPlan data must be DECLINED:\n{out}");
     let old_body_pin_failed =
         out.contains("PlanLower.lowerExprFragmentBody") && out.contains("floatLeGoalCode");
@@ -1893,7 +1829,7 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     )
     .unwrap();
 
-    let (ok, out) = aver_verify(&lean_bytes_tamper_wasm, &lean_bytes_tamper_cert);
+    let (ok, out) = aver_check(&lean_bytes_tamper_wasm, &lean_bytes_tamper_cert);
     assert!(
         !ok,
         "tampered Lean code-entry byte pin must be DECLINED:\n{out}"
@@ -1924,7 +1860,7 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let tampered_exact = plans_text.replacen(honest_exact_arg, slice_tampered_exact_arg, 1);
     std::fs::write(&plans_lean, tampered_exact).unwrap();
 
-    let (ok, out) = aver_verify(&lean_slice_tamper_wasm, &lean_slice_tamper_cert);
+    let (ok, out) = aver_check(&lean_slice_tamper_wasm, &lean_slice_tamper_cert);
     assert!(
         !ok,
         "tampered Lean WasmSlice byte-origin pin must be DECLINED:\n{out}"
@@ -1953,54 +1889,8 @@ fn cert_verify_declines_tampered_expr_fragment_sidecar() {
     let _ = std::fs::remove_dir_all(&lean_slice_tamper_dir);
 }
 
-#[test]
-fn cert_verify_declines_expr_fragment_operand_swap_sidecar() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping expr-fragment operand-swap sidecar test: `lake` not available");
-        return;
-    }
-
-    let (out_dir, wasm, cert) = compile_cert_goals("cert-expr-operand-swap");
-    let plan_path = source_fragment_plan_path(&cert, "floatLeGoal");
-    let sidecar = cert.join(plan_path);
-    let source_text = std::fs::read_to_string(&sidecar).unwrap();
-    let tampered = source_text.replacen(
-        "prim op=float.le args=v0,v1",
-        "prim op=float.le args=v1,v0",
-        1,
-    );
-    assert_ne!(
-        source_text, tampered,
-        "floatLeGoal source plan operand shape changed"
-    );
-    std::fs::write(&sidecar, &tampered).unwrap();
-    rebind_source_fragment_plan_sha(&cert, "floatLeGoal", &tampered);
-
-    let (ok, out) = aver_verify(&wasm, &cert);
-    let _ = std::fs::remove_dir_all(&out_dir);
-    assert!(
-        !ok,
-        "operand-swapped expr-fragment source plan must be DECLINED:
-{out}"
-    );
-    // The operand swap is caught by the verifier's canonical plan lowering
-    // (stack-order check on the swapped prim arguments) before the byte
-    // comparison stage — an earlier, equally fail-closed gate of the same
-    // plan-first path.
-    assert!(
-        out.contains("source plan sidecar does not check against wasm"),
-        "wrong reason for floatLeGoal operand swap:
-{out}"
-    );
-    assert!(
-        !out.contains("CERTIFIED"),
-        "operand-swapped expr-fragment source plan credited:
-{out}"
-    );
-}
-
-/// Byte-derived host-role indices for the goals module, read from the
-/// checker-rendered `addTwoPlan` in `Plans.lean` (`.hostCall .box N`,
+/// Byte-derived host-role indices for the goals module, read from the emitted
+/// `addTwoPlan` in `Plans.lean` (`.hostCall .box N`,
 /// `.hostCall .add M`). Used to compose host-call tamper plans without
 /// hardcoding module layout.
 fn add_two_host_indices(cert_dir: &Path) -> (u32, u32) {
@@ -2018,43 +1908,10 @@ fn add_two_host_indices(cert_dir: &Path) -> (u32, u32) {
     (extract(".hostCall .box "), extract(".hostCall .add "))
 }
 
-/// Rebind `addTwo`'s manifest entry from the emitted `source_fragment` SymPlan
-/// to an attacker-supplied representation `fragment` sidecar with the given
-/// text (sha rebound so only the plan-vs-bytes gates decide).
-fn rebind_add_two_to_repr_fragment(cert_dir: &Path, plan_text: &str) {
-    let plan_path = "fragments/61646454776f.expr-fragment-v1.plan";
-    std::fs::write(cert_dir.join(plan_path), plan_text).unwrap();
-    let mf = cert_dir.join("cert-manifest.json");
-    let mut manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-    let entry = manifest["certified"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|c| c["name"].as_str() == Some("addTwo"))
-        .expect("addTwo manifest entry should exist");
-    entry.as_object_mut().unwrap().remove("source_fragment");
-    entry["fragment"] = serde_json::json!({
-        "profile": "expr-fragment-v1",
-        "plan": plan_path,
-        "plan_sha256": aver::codegen::cert::sha256_hex(plan_text.as_bytes()),
-    });
-    std::fs::write(&mf, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
-}
-
-fn add_two_host_call_plan_text(box_idx: u32, add_call_idx: u32) -> String {
-    format!(
-        "aver.expr-fragment.plan.v1\nprofile expr-fragment-v1\nparams int-carrier\n\
-         result int-carrier\nbody\nblock result=v3\n  v0 ty=int-carrier local index=0\n  \
-         v1 ty=i64 const.i64 value=2\n  v2 ty=int-carrier hostcall role=box func={box_idx} args=v1\n  \
-         v3 ty=int-carrier hostcall role=add func={add_call_idx} args=v0,v2\nend\n"
-    )
-}
-
 #[test]
-fn cert_verify_declines_expr_fragment_host_role_swap() {
+fn cert_verify_declines_host_role_relabel_in_plans_lean() {
     if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping expr-fragment host-role swap test: `lake` not available");
+        eprintln!("skipping Plans.lean host-role relabel test: `lake` not available");
         return;
     }
 
@@ -2064,170 +1921,27 @@ fn cert_verify_declines_expr_fragment_host_role_swap() {
         box_idx, add_idx,
         "goals module should have distinct host roles"
     );
-    // The `add` host call is rebound to a helper that IS in the module (the
-    // box constructor) but does not realise the `add` role: the byte-derived
-    // role table must decline the swap fail-closed.
-    let tampered = add_two_host_call_plan_text(box_idx, box_idx);
-    rebind_add_two_to_repr_fragment(&cert, &tampered);
+    let plans = cert.join("Plans.lean");
+    let text = std::fs::read_to_string(&plans).unwrap();
+    let honest = format!(".hostCall .add {add_idx} [0, 2]");
+    let relabeled = format!(".hostCall .box {add_idx} [0, 2]");
+    assert!(text.contains(&honest), "addTwo raw plan shape changed");
+    std::fs::write(&plans, text.replacen(&honest, &relabeled, 1)).unwrap();
 
-    let (ok, out) = aver_verify(&wasm, &cert);
+    let (ok, out) = aver_check(&wasm, &cert);
     let _ = std::fs::remove_dir_all(&out_dir);
     assert!(
         !ok,
-        "host-role-swapped expr-fragment plan must be DECLINED:\n{out}"
+        "host-role-relabeled Plans.lean must be DECLINED:\n{out}"
     );
     assert!(
-        out.contains("plan sidecar does not check against wasm") && out.contains("cites function"),
-        "wrong reason for addTwo host-role swap:\n{out}"
+        out.contains("did not build") || out.contains("does not bind"),
+        "wrong reason for addTwo role relabel:\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),
-        "host-role-swapped expr-fragment plan credited:\n{out}"
+        "host-role-relabeled expr-fragment plan credited:\n{out}"
     );
-}
-
-#[test]
-fn cert_verify_declines_expr_fragment_host_call_outside_role_table() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping expr-fragment host-call outside-table test: `lake` not available");
-        return;
-    }
-
-    let (out_dir, wasm, cert) = compile_cert_goals("cert-expr-host-outside-table");
-    let (box_idx, _add_idx) = add_two_host_indices(&cert);
-    // A callee index that resolves through NO role in the byte-derived table:
-    // the Rust checker declines before any byte comparison or kernel work.
-    let tampered = add_two_host_call_plan_text(box_idx, 9999);
-    rebind_add_two_to_repr_fragment(&cert, &tampered);
-
-    let (ok, out) = aver_verify(&wasm, &cert);
-    let _ = std::fs::remove_dir_all(&out_dir);
-    assert!(
-        !ok,
-        "expr-fragment plan citing a callee outside the role table must be DECLINED:\n{out}"
-    );
-    assert!(
-        out.contains("plan sidecar does not check against wasm")
-            && out.contains("cites function 9999"),
-        "wrong reason for addTwo outside-table host call:\n{out}"
-    );
-    assert!(
-        !out.contains("CERTIFIED"),
-        "outside-table expr-fragment plan credited:\n{out}"
-    );
-}
-
-#[test]
-fn cert_verify_declines_expr_fragment_extra_instruction_sidecar() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping expr-fragment extra-instruction sidecar test: `lake` not available");
-        return;
-    }
-
-    let (out_dir, wasm, cert) = compile_cert_goals("cert-expr-extra-instr");
-    let plan_path = source_fragment_plan_path(&cert, "floatLeGoal");
-    let sidecar = cert.join(plan_path);
-    let source_text = std::fs::read_to_string(&sidecar).unwrap();
-    let honest_block = concat!(
-        "block result=v3
-",
-        "  v0 ty=float param index=0
-",
-        "  v1 ty=float param index=1
-",
-        "  v2 ty=bool prim op=float.le args=v0,v1
-",
-        "  v3 ty=bool if cond=v2
-",
-        "  then
-",
-        "    block result=v0
-",
-        "      v0 ty=bool const.bool value=true
-",
-        "    end
-",
-        "  else
-",
-        "    block result=v0
-",
-        "      v0 ty=bool const.bool value=false
-",
-        "    end
-",
-        "  endif
-",
-        "end
-",
-    );
-    let tampered_block = concat!(
-        "block result=v4
-",
-        "  v0 ty=float param index=0
-",
-        "  v1 ty=float param index=1
-",
-        "  v2 ty=bool prim op=float.le args=v0,v1
-",
-        "  v3 ty=bool if cond=v2
-",
-        "  then
-",
-        "    block result=v0
-",
-        "      v0 ty=bool const.bool value=true
-",
-        "    end
-",
-        "  else
-",
-        "    block result=v0
-",
-        "      v0 ty=bool const.bool value=false
-",
-        "    end
-",
-        "  endif
-",
-        "  v4 ty=bool if cond=v3
-",
-        "  then
-",
-        "    block result=v0
-",
-        "      v0 ty=bool const.bool value=true
-",
-        "    end
-",
-        "  else
-",
-        "    block result=v0
-",
-        "      v0 ty=bool const.bool value=false
-",
-        "    end
-",
-        "  endif
-",
-        "end
-",
-    );
-    let tampered = source_text.replacen(honest_block, tampered_block, 1);
-    assert_ne!(
-        source_text, tampered,
-        "floatLeGoal source plan block shape changed"
-    );
-    std::fs::write(&sidecar, &tampered).unwrap();
-    rebind_source_fragment_plan_sha(&cert, "floatLeGoal", &tampered);
-
-    let (ok, out) = aver_verify(&wasm, &cert);
-    let _ = std::fs::remove_dir_all(&out_dir);
-    assert!(
-        !ok,
-        "extra-instruction expr-fragment source plan must be DECLINED:
-{out}"
-    );
-    assert_source_plan_byte_mismatch("floatLeGoal", &out);
 }
 
 #[test]
@@ -2265,7 +1979,7 @@ fn cert_verify_declines_expr_fragment_bad_bool01_raw_plan() {
     tampered.push_str(&plans_text[def_end..]);
     std::fs::write(&plans, tampered).unwrap();
 
-    let (ok, out) = aver_verify(&wasm, &cert);
+    let (ok, out) = aver_check(&wasm, &cert);
     let _ = std::fs::remove_dir_all(&out_dir);
     assert!(
         !ok,
@@ -2275,7 +1989,7 @@ fn cert_verify_declines_expr_fragment_bad_bool01_raw_plan() {
     // PlanCheck rejects the ill-typed Bool01 node (`constI32` is inferred
     // `rawI32`; `sameTy` fails against the declared `boolI32`), so the
     // Plans.lean examples fail to elaborate. The verify report keeps only the
-    // tail of the lake output (`tail(.., 20)` in cert_cmd), so the earliest
+    // tail of the lake output (`tail(.., 20)` in the standalone verifier), so the earliest
     // error (the `checkExprFragmentRawPlan` example) can be cut when the later
     // byte-pin errors fill the tail — accept either attribution of the same
     // fail-closed Plans.lean build failure.
@@ -2322,13 +2036,13 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
 
     let wasm = out_dir.join("stringeq.wasm");
     let cert = out_dir.join("cert");
-    let (ok, report) = aver_verify(&wasm, &cert);
+    let (ok, report) = aver_check(&wasm, &cert);
     assert!(
         ok,
         "expected clean stringeq certificate to verify:\n{report}"
     );
     assert!(
-        report.contains("2 certified exports"),
+        report.contains("2 checked exports"),
         "stringeq should certify quoteOrSelf plus bump:\n{report}"
     );
     assert!(
@@ -2387,11 +2101,11 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
         );
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 
-        let (ok, out) = aver_verify(&dir.join("stringeq.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("stringeq.wasm"), &dir.join("cert"));
         let _ = std::fs::remove_dir_all(&dir);
         assert!(!ok, "deleted String.eq contract must be DECLINED:\n{out}");
         assert!(
-            out.contains("does not bind"),
+            out.contains("does not bind") || out.contains("did not build"),
             "wrong reason for deleted String.eq contract:\n{out}"
         );
         assert!(
@@ -2443,7 +2157,7 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
     m["wasm_sha256"] = serde_json::Value::String(new_hash);
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 
-    let (ok, out) = aver_verify(&w, &dir.join("cert"));
+    let (ok, out) = aver_check(&w, &dir.join("cert"));
     let _ = std::fs::remove_dir_all(&out_dir);
     let _ = std::fs::remove_dir_all(&dir);
     assert!(
@@ -2451,7 +2165,7 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
         "tampered String.eq helper shape must be DECLINED:\n{out}"
     );
     assert!(
-        out.contains("do not re-derive a String.eq certificate"),
+        out.contains("did not build") || out.contains("does not bind"),
         "wrong reason for String.eq helper tamper:\n{out}"
     );
     assert!(
@@ -2490,7 +2204,7 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
 
     let wasm = out_dir.join("stringconcat.wasm");
     let cert = out_dir.join("cert");
-    let (ok, report) = aver_verify(&wasm, &cert);
+    let (ok, report) = aver_check(&wasm, &cert);
     assert!(
         ok,
         "expected clean stringconcat certificate to verify:\n{report}"
@@ -2502,7 +2216,7 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         let dir = temp_dir("cert-stringconcat-zero-locals");
         copy_dir(&out_dir, &dir);
         set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "shout", 1, 1);
-        let (ok, report) = aver_verify(&dir.join("stringconcat.wasm"), &dir.join("cert"));
+        let (ok, report) = aver_check(&dir.join("stringconcat.wasm"), &dir.join("cert"));
         assert!(
             !ok,
             "String.concat zero-locals code must be DECLINED:\n{report}"
@@ -2510,7 +2224,7 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         let _ = std::fs::remove_dir_all(&dir);
     }
     assert!(
-        report.contains("2 certified exports"),
+        report.contains("2 checked exports"),
         "stringconcat should certify shout plus bump:\n{report}"
     );
     let manifest: serde_json::Value = serde_json::from_str(
@@ -2539,108 +2253,63 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         shout_class, "verbatim-string-concat",
         "shout should render its concat class, got {shout_class}"
     );
-    let shout_fragment = &shout_entry["fragment"];
-    assert_eq!(
-        shout_fragment["profile"].as_str(),
-        Some("string-concat-v1"),
-        "shout should carry a byte-bound String.concat sidecar"
-    );
-    let shout_plan = shout_fragment["plan"]
-        .as_str()
-        .expect("shout string-concat plan path")
-        .to_string();
-    let shout_source_fragment = &shout_entry["source_fragment"];
-    assert_eq!(
-        shout_source_fragment["profile"].as_str(),
-        Some("sym-fragment-v1"),
-        "shout should carry a source-level SymPlan sidecar"
-    );
-    let shout_source_plan = shout_source_fragment["plan"]
-        .as_str()
-        .expect("shout source SymPlan path")
-        .to_string();
+    assert!(shout_entry.get("fragment").is_none());
+    assert!(shout_entry.get("source_fragment").is_none());
 
     {
-        let dir = temp_dir("cert-stringconcat-source-sidecar-tamper");
+        let dir = temp_dir("cert-stringconcat-source-plan-tamper");
         copy_dir(&out_dir, &dir);
-        let sidecar = dir.join("cert").join(&shout_source_plan);
-        let plan_text = std::fs::read_to_string(&sidecar).unwrap();
-        let tampered_plan = plan_text.replacen("const.string hex=21", "const.string hex=3f", 1);
+        let plans = dir.join("cert/Plans.lean");
+        let plan_text = std::fs::read_to_string(&plans).unwrap();
+        let tampered_plan =
+            plan_text.replacen(".constStringBytes [33]", ".constStringBytes [63]", 1);
         assert_ne!(
             plan_text, tampered_plan,
-            "String.concat SymPlan sidecar shape changed"
+            "String.concat SymPlan DATA shape changed"
         );
-        std::fs::write(&sidecar, &tampered_plan).unwrap();
+        std::fs::write(&plans, &tampered_plan).unwrap();
 
-        let mf = dir.join("cert").join("cert-manifest.json");
-        let mut m: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        let entry = m["certified"]
-            .as_array_mut()
-            .unwrap()
-            .iter_mut()
-            .find(|c| c["name"].as_str() == Some("shout"))
-            .expect("shout manifest entry");
-        entry["source_fragment"]["plan_sha256"] =
-            serde_json::Value::String(aver::codegen::cert::sha256_hex(tampered_plan.as_bytes()));
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-
-        let (ok, out) = aver_verify(&dir.join("stringconcat.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("stringconcat.wasm"), &dir.join("cert"));
         let _ = std::fs::remove_dir_all(&dir);
         assert!(
             !ok,
-            "tampered String.concat SymPlan sidecar must be DECLINED:\n{out}"
+            "tampered String.concat SymPlan DATA must be DECLINED:\n{out}"
         );
         assert!(
-            out.contains("source SymPlan sidecar")
-                && out.contains("canonical byte-derived source plan"),
-            "wrong reason for String.concat SymPlan sidecar tamper:\n{out}"
+            out.contains("did not build") || out.contains("does not bind"),
+            "wrong reason for String.concat SymPlan DATA tamper:\n{out}"
         );
         assert!(
             !out.contains("CERTIFIED"),
-            "tampered String.concat SymPlan sidecar credited:\n{out}"
+            "tampered String.concat SymPlan DATA credited:\n{out}"
         );
     }
 
     {
-        let dir = temp_dir("cert-stringconcat-sidecar-tamper");
+        let dir = temp_dir("cert-stringconcat-plan-tamper");
         copy_dir(&out_dir, &dir);
-        let sidecar = dir.join("cert").join(&shout_plan);
-        let plan_text = std::fs::read_to_string(&sidecar).unwrap();
-        let tampered_plan = plan_text.replacen("suffix data=0 hex=21", "suffix data=0 hex=3f", 1);
+        let plans = dir.join("cert/Plans.lean");
+        let plan_text = std::fs::read_to_string(&plans).unwrap();
+        let tampered_plan = plan_text.replacen("bytes := [33]", "bytes := [63]", 1);
         assert_ne!(
             plan_text, tampered_plan,
-            "String.concat sidecar shape changed"
+            "String.concat target plan DATA shape changed"
         );
-        std::fs::write(&sidecar, &tampered_plan).unwrap();
+        std::fs::write(&plans, &tampered_plan).unwrap();
 
-        let mf = dir.join("cert").join("cert-manifest.json");
-        let mut m: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        let entry = m["certified"]
-            .as_array_mut()
-            .unwrap()
-            .iter_mut()
-            .find(|c| c["name"].as_str() == Some("shout"))
-            .expect("shout manifest entry");
-        entry["fragment"]["plan_sha256"] =
-            serde_json::Value::String(aver::codegen::cert::sha256_hex(tampered_plan.as_bytes()));
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-
-        let (ok, out) = aver_verify(&dir.join("stringconcat.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("stringconcat.wasm"), &dir.join("cert"));
         let _ = std::fs::remove_dir_all(&dir);
         assert!(
             !ok,
-            "tampered String.concat sidecar must be DECLINED:\n{out}"
+            "tampered String.concat target plan DATA must be DECLINED:\n{out}"
         );
         assert!(
-            out.contains("string-concat sidecar")
-                && out.contains("canonical byte-derived concat plan"),
-            "wrong reason for String.concat sidecar tamper:\n{out}"
+            out.contains("did not build") || out.contains("does not bind"),
+            "wrong reason for String.concat target plan DATA tamper:\n{out}"
         );
         assert!(
             !out.contains("CERTIFIED"),
-            "tampered String.concat sidecar credited:\n{out}"
+            "tampered String.concat target plan DATA credited:\n{out}"
         );
     }
 
@@ -2669,14 +2338,14 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         );
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 
-        let (ok, out) = aver_verify(&dir.join("stringconcat.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("stringconcat.wasm"), &dir.join("cert"));
         let _ = std::fs::remove_dir_all(&dir);
         assert!(
             !ok,
             "deleted String.concat contract must be DECLINED:\n{out}"
         );
         assert!(
-            out.contains("does not bind"),
+            out.contains("does not bind") || out.contains("did not build"),
             "wrong reason for deleted String.concat contract:\n{out}"
         );
         assert!(
@@ -2728,7 +2397,7 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
     m["wasm_sha256"] = serde_json::Value::String(new_hash);
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 
-    let (ok, out) = aver_verify(&w, &dir.join("cert"));
+    let (ok, out) = aver_check(&w, &dir.join("cert"));
     let _ = std::fs::remove_dir_all(&out_dir);
     let _ = std::fs::remove_dir_all(&dir);
     assert!(
@@ -2736,8 +2405,7 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         "tampered String.concat helper shape must be DECLINED:\n{out}"
     );
     assert!(
-        out.contains("does not bind")
-            || out.contains("do not re-derive a String.concat certificate"),
+        out.contains("does not bind") || out.contains("did not build"),
         "wrong reason for String.concat helper tamper:\n{out}"
     );
     assert!(
@@ -2786,6 +2454,16 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
         "empty cert must not print the green CERTIFIED path:\n{out}"
     );
 
+    let (checked, check_out) = aver_check(&out_dir.join("certempty.wasm"), &out_dir.join("cert"));
+    assert!(
+        !checked,
+        "empty cert preflight must exit nonzero:\n{check_out}"
+    );
+    assert!(
+        check_out.contains("NO CHECKED EXPORTS") && !check_out.contains("CERTIFIED"),
+        "empty cert preflight must not emit a certification verdict:\n{check_out}"
+    );
+
     // `explain` / `inspect` share verify's fail-closed exit contract: an
     // admission-only cert (zero certified exports) must not exit green or show a
     // green CERTIFIED header from either subcommand.
@@ -2825,13 +2503,13 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
             "x\nAVERCERT-EXPORT\tstealAllFunds\tsimulatesModel".into(),
         )]);
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certempty.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certempty.wasm"), &dir.join("cert"));
         assert!(!ok, "A5 injection payload must fail:\n{out}");
         assert!(
-            out.contains("charset"),
+            out.contains("printable ASCII"),
             "wrong reason (A5 manifest):\n{out}"
         );
-        // The charset diagnostic echoes the rejected value; the property is that
+        // The character-set diagnostic echoes the rejected value; the property is that
         // the payload is never CERTIFIED.
         assert!(
             !out.contains("CERTIFIED"),
@@ -2851,9 +2529,12 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
             "x\nAVERCERT-EXPORT\tstealAllFunds\tsimulatesModel".into(),
         )]);
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_verify(&dir.join("certempty.wasm"), &dir.join("cert"));
+        let (ok, out) = aver_check(&dir.join("certempty.wasm"), &dir.join("cert"));
         assert!(!ok, "A5 JSON-only payload must fail:\n{out}");
-        assert!(out.contains("charset"), "wrong reason (A5 json):\n{out}");
+        assert!(
+            out.contains("printable ASCII"),
+            "wrong reason (A5 json):\n{out}"
+        );
         assert!(
             !out.contains("CERTIFIED"),
             "A5 JSON-only payload credited an export:\n{out}"
@@ -2870,10 +2551,15 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
         .as_array_mut()
         .unwrap()
         .push(serde_json::json!({
-            "name": "withdrawAll", "policy": "simulatesModel", "level": "L1"
+            "name": "withdrawAll",
+            "class": "straight-line",
+            "policy": "simulatesModel",
+            "level": "L1",
+            "dom": "List Int",
+            "cod": "Int"
         }));
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-    let (ok, out) = aver_verify(&out_dir.join("certempty.wasm"), &out_dir.join("cert"));
+    let (ok, out) = aver_check(&out_dir.join("certempty.wasm"), &out_dir.join("cert"));
     assert!(!ok, "padded empty cert must still exit nonzero:\n{out}");
     assert!(
         out.contains("does not bind") && !out.contains("CERTIFIED"),
@@ -2925,7 +2611,7 @@ fn adt_witness_body_mutation_is_declined() {
     assert_ne!(src, mutated, "emitted greetCode header shape changed");
     std::fs::write(&m, mutated).unwrap();
 
-    let (ok, out) = aver_verify(&out_dir.join("user_record.wasm"), &out_dir.join("cert"));
+    let (ok, out) = aver_check(&out_dir.join("user_record.wasm"), &out_dir.join("cert"));
     assert!(!ok, "mutated ADT witness body must be DECLINED:\n{out}");
     // The acceptance predicate now pins the locals count exactly, so this
     // mutation can trip either the shipped artifact's own acceptance `rfl`
@@ -2988,7 +2674,7 @@ fn variant_dispatch_body_mutation_is_declined() {
     assert_ne!(src, mutated, "emitted gaugeCode header shape changed");
     std::fs::write(&m, mutated).unwrap();
 
-    let (ok, out) = aver_verify(&out_dir.join("signalgauge.wasm"), &out_dir.join("cert"));
+    let (ok, out) = aver_check(&out_dir.join("signalgauge.wasm"), &out_dir.join("cert"));
     assert!(
         !ok,
         "mutated dispatch witness body must be DECLINED:\n{out}"
@@ -3041,8 +2727,8 @@ fn composition_callee_mutation_is_declined() {
 
     // Bump the CALLEE (double) entry's local count in the caller's shared
     // multi-entry table: the extra unused local keeps the cert's own build
-    // green, so only the checker's whole-table code `rfl` — which re-derives
-    // every closure entry from the bytes — can catch the decoupling. This is
+    // green, so the Lean whole-table code binding to actual bytes catches the
+    // decoupling. This is
     // the load-bearing tripwire for cross-function composition.
     let m = out_dir.join("cert").join("Module.lean");
     let src = std::fs::read_to_string(&m).unwrap();
@@ -3057,13 +2743,13 @@ fn composition_callee_mutation_is_declined() {
     );
     std::fs::write(&m, mutated).unwrap();
 
-    let (ok, out) = aver_verify(&out_dir.join("compose.wasm"), &out_dir.join("cert"));
+    let (ok, out) = aver_check(&out_dir.join("compose.wasm"), &out_dir.join("cert"));
     assert!(
         !ok,
         "mutated composition callee entry must be DECLINED:\n{out}"
     );
     assert!(
-        out.contains("does not bind") || out.contains("certificate did not build"),
+        out.contains("does not bind") || out.contains("did not build"),
         "wrong reason:\n{out}"
     );
     assert!(
@@ -3118,10 +2804,10 @@ fn composition_orphan_member_is_declined() {
     );
     std::fs::write(&a, src.replacen(hex16_claim, "", 1)).unwrap();
 
-    let (ok, out) = aver_verify(&out_dir.join("compose.wasm"), &out_dir.join("cert"));
+    let (ok, out) = aver_check(&out_dir.join("compose.wasm"), &out_dir.join("cert"));
     assert!(!ok, "orphan composition member must be DECLINED:\n{out}");
     assert!(
-        out.contains("does not bind") || out.contains("certificate did not build"),
+        out.contains("does not bind") || out.contains("did not build"),
         "wrong reason:\n{out}"
     );
     assert!(
@@ -3184,6 +2870,18 @@ fn run_manifest_obligation_guard_iso(prefix: &str, lean: &str) {
     let _ = std::fs::remove_dir_all(out_dir);
 }
 
+/// The old acceptance surface did not constrain the whole host builder. An
+/// obligation could therefore trap at its first host call and satisfy partial
+/// correctness vacuously. The standard face must be the single guard that
+/// rejects that otherwise accepted artifact.
+#[test]
+fn standard_face_host_guard_is_isolating() {
+    run_manifest_obligation_guard_iso(
+        "cert-standard-face-host-guard-iso",
+        include_str!("fixtures/cert_standard_face_guard_iso.lean"),
+    );
+}
+
 /// An otherwise valid artifact with one extra manifest obligation is rejected
 /// only by `manifestObligationsClaimed`; the literal one-conjunct-weakened copy
 /// accepts it, while every byte-derived binding and code entry stays identical.
@@ -3234,6 +2932,8 @@ def acceptedWithoutClaimCoverage
   AcceptedArtifact.subjectMatchesArtifactRoot artifact ∧
   AcceptedArtifact.fragmentClaimObligationsInManifest artifact ∧
   AcceptedArtifact.claimsMatchManifest artifact ∧
+  AverCert.StandardFace.checkedFaces artifact ∧
+  AverCert.ClaimAxes.checked artifact = true ∧
   AcceptedArtifact.decodedNonExprFacts artifact ∧
   acceptedFragmentsWithoutClaimCoverage artifact
 
@@ -3274,7 +2974,7 @@ example : ∀ nameBytes,
 
 example : ¬ AcceptedArtifact.accepted unclaimedArtifact := by
   intro h
-  rcases h with ⟨_, _, _, _, _, hfragments⟩
+  rcases h with ⟨_, _, _, _, _, _, _, hfragments⟩
   rcases hfragments with ⟨_, _, _, _, _, _, _, _, _, hcomposition, _⟩
   have hclaimed := hcomposition.2.2.1
   change false = true at hclaimed
@@ -3282,11 +2982,11 @@ example : ¬ AcceptedArtifact.accepted unclaimedArtifact := by
 
 example : acceptedWithoutClaimCoverage unclaimedArtifact := by
   rcases Artifact.certificate with
-    ⟨_, hsubject, hobs, hmatch, hdecoded, hsym, hstringEq, hstringConcat, hconstruct,
+    ⟨_, hsubject, hobs, hmatch, hfaces, haxes, hdecoded, hsym, hstringEq, hstringConcat, hconstruct,
       hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
       hcompositionAccepted, _⟩
   rcases hcompositionAccepted with ⟨hcomposition, hmembersCovered, _, _⟩
-  refine ⟨unclaimedFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨unclaimedFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact hsubject
   · simpa [unclaimedArtifact, unclaimedManifest,
       AcceptedArtifact.fragmentClaimObligationsInManifest,
@@ -3294,6 +2994,10 @@ example : acceptedWithoutClaimCoverage unclaimedArtifact := by
       claimObligationsInManifest_append AverCert.manifest.obligations
         [unclaimedOb] (AcceptedArtifact.claimObligations Artifact.data) hobs
   · exact hmatch
+  · change AverCert.StandardFace.checkedFaces Artifact.data
+    exact hfaces
+  · change AverCert.ClaimAxes.checked Artifact.data = true
+    exact haxes
   · exact hdecoded
   · exact hsym
   · exact hstringEq
@@ -3388,6 +3092,8 @@ def acceptedWithoutUniqueExports
   AcceptedArtifact.subjectMatchesArtifactRoot artifact ∧
   AcceptedArtifact.fragmentClaimObligationsInManifest artifact ∧
   AcceptedArtifact.claimsMatchManifest artifact ∧
+  AverCert.StandardFace.checkedFaces artifact ∧
+  AverCert.ClaimAxes.checked artifact = true ∧
   AcceptedArtifact.decodedNonExprFacts artifact ∧
   acceptedFragmentsWithoutUniqueExports artifact
 
@@ -3408,7 +3114,7 @@ example : ∀ nameBytes,
 
 example : ¬ AcceptedArtifact.accepted duplicateArtifact := by
   intro h
-  rcases h with ⟨_, _, _, _, _, hfragments⟩
+  rcases h with ⟨_, _, _, _, _, _, _, hfragments⟩
   rcases hfragments with ⟨_, _, _, _, _, _, _, _, _, hcomposition, _⟩
   have hunique := hcomposition.2.2.2
   change false = true at hunique
@@ -3416,11 +3122,11 @@ example : ¬ AcceptedArtifact.accepted duplicateArtifact := by
 
 example : acceptedWithoutUniqueExports duplicateArtifact := by
   rcases Artifact.certificate with
-    ⟨_, hsubject, hobs, hmatch, hdecoded, hsym, hstringEq, hstringConcat, hconstruct,
+    ⟨_, hsubject, hobs, hmatch, hfaces, haxes, hdecoded, hsym, hstringEq, hstringConcat, hconstruct,
       hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
       hcompositionAccepted, _⟩
   rcases hcompositionAccepted with ⟨hcomposition, hmembersCovered, _, _⟩
-  refine ⟨duplicateFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨duplicateFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact hsubject
   · simpa [duplicateArtifact, duplicateManifest,
       AcceptedArtifact.fragmentClaimObligationsInManifest,
@@ -3428,6 +3134,10 @@ example : acceptedWithoutUniqueExports duplicateArtifact := by
       claimObligationsInManifest_append AverCert.manifest.obligations
         [duplicateOb] (AcceptedArtifact.claimObligations Artifact.data) hobs
   · exact hmatch
+  · change AverCert.StandardFace.checkedFaces Artifact.data
+    exact hfaces
+  · change AverCert.ClaimAxes.checked Artifact.data = true
+    exact haxes
   · exact hdecoded
   · exact hsym
   · exact hstringEq
@@ -3883,121 +3593,41 @@ example : weakManifest (AverCert.AcceptedArtifact.fieldProjectionClaimExportName
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
-/// S2a field-projection tamper: flipping the projected field index 0 -> 1 in
-/// `userName`'s source SymPlan sidecar (with the sidecar sha rebound in the
-/// JSON manifest, so only the plan-vs-bytes gate is in play) lowers to
-/// `struct.get ty 1` — canonical code-entry bytes that do not match the
-/// module — and must be DECLINED, never silently re-admitted through the
-/// legacy field-projection classifier.
+/// The projection index is authoritative Lean plan DATA. Flipping it while
+/// leaving the artifact unchanged must fail the source/target and byte pins.
 #[test]
-fn cert_verify_declines_flipped_field_projection_sidecar() {
+fn cert_verify_declines_flipped_field_projection_plan() {
     if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping field-projection sidecar tamper test: `lake` not available");
+        eprintln!("skipping field-projection plan tamper test: `lake` not available");
         return;
     }
 
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-proj-sidecar");
+    let (out_dir, wasm, cert) = compile_cert_goals("cert-proj-plan-flip");
+    let plans = cert.join("Plans.lean");
+    let text = std::fs::read_to_string(&plans).unwrap();
+    let tampered = text.replacen(".structGetUser 20 0 0", ".structGetUser 20 1 0", 1);
+    assert_ne!(text, tampered, "userName raw projection plan shape changed");
+    std::fs::write(&plans, tampered).unwrap();
 
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/cert_goals.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("aver compile --certify runs");
-    assert!(
-        compile.status.success(),
-        "compile --certify goals failed:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
-    );
-
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json")).unwrap(),
-    )
-    .unwrap();
-    let user_entry = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|c| c["name"].as_str() == Some("userName"))
-        .expect("userName manifest entry");
-    assert_eq!(
-        user_entry["class"].as_str(),
-        Some("expr-fragment-v1"),
-        "userName should be plan-first before tampering"
-    );
-    let source_plan = user_entry["source_fragment"]["plan"]
-        .as_str()
-        .expect("userName source plan path")
-        .to_string();
-
-    let tamper_dir = temp_dir("cert-proj-sidecar-flip");
-    copy_dir(&out_dir, &tamper_dir);
-    let tamper_wasm = tamper_dir.join("cert_goals.wasm");
-    let tamper_cert = tamper_dir.join("cert");
-    let sidecar_path = tamper_cert.join(&source_plan);
-    let sidecar_text = std::fs::read_to_string(&sidecar_path).unwrap();
-    let tampered_text = sidecar_text.replacen(
-        "project.field type=User field=0",
-        "project.field type=User field=1",
-        1,
-    );
-    assert_ne!(
-        sidecar_text, tampered_text,
-        "userName sidecar shape changed"
-    );
-    std::fs::write(&sidecar_path, &tampered_text).unwrap();
-    let mf = tamper_cert.join("cert-manifest.json");
-    let mut m: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-    let entry = m["certified"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|c| c["name"].as_str() == Some("userName"))
-        .expect("userName sidecar entry");
-    entry["source_fragment"]["plan_sha256"] =
-        serde_json::Value::String(aver::codegen::cert::sha256_hex(tampered_text.as_bytes()));
-    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-
-    let (ok, out) = aver_verify(&tamper_wasm, &tamper_cert);
+    let (ok, out) = aver_check(&wasm, &cert);
     assert!(
         !ok,
-        "flipped field-projection sidecar must be DECLINED:\n{out}"
+        "flipped field-projection plan must be DECLINED:\n{out}"
     );
     assert!(
-        out.contains("source plan-first canonical lowering")
-            && out.contains("does not match the actual wasm code-entry"),
+        out.contains("did not build") || out.contains("does not bind"),
         "wrong reason for flipped projection field:\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),
-        "flipped field-projection sidecar credited:\n{out}"
+        "flipped field-projection plan credited:\n{out}"
     );
 
     let _ = std::fs::remove_dir_all(&out_dir);
-    let _ = std::fs::remove_dir_all(&tamper_dir);
 }
 
-/// Cross-vendor review follow-up (S2a): source-level TYPE NAMES in projection
-/// claims carry the MODEL trust story — the kernel-checked content is the
-/// byte-derived struct identity (type index + field index), while `named:`
-/// types are producer-asserted annotations (docs/certification.md, "Read
-/// surface"). What the checker DOES enforce is consistency across the
-/// artifact: a PARTIAL relabel (the `userName` sidecar renamed
-/// `named:User`/`type=User` -> `Other` with its sha rebound, but the
-/// Lean-side `Plans.lean`/`Artifact.lean` claims untouched) diverges from the
-/// checker-rendered plan terms, fails the kernel `rfl` pins, and must be
-/// DECLINED. A FULLY coordinated relabel of every surface at once is a
-/// read-surface change equivalent to shipping a different model — out of
-/// scope for a decline (and deliberately NOT asserted as accepted here);
-/// binding names to true source provenance is the planned provenance flip.
+/// A partial source-type relabel inside authoritative `Plans.lean` must not
+/// change the byte-bound representation plan it purports to explain.
 #[test]
 fn cert_verify_declines_relabeled_projection_source_types() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -4005,84 +3635,23 @@ fn cert_verify_declines_relabeled_projection_source_types() {
         return;
     }
 
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-proj-relabel");
+    let (out_dir, wasm, cert) = compile_cert_goals("cert-proj-relabel");
+    let plans = cert.join("Plans.lean");
+    let text = std::fs::read_to_string(&plans).unwrap();
+    let tampered = text
+        .replacen("(.named \"User\")", "(.named \"Other\")", 2)
+        .replacen(".projectField \"User\"", ".projectField \"Other\"", 1);
+    assert_ne!(text, tampered, "userName SymPlan type labels changed");
+    std::fs::write(&plans, tampered).unwrap();
 
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/cert_goals.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("aver compile --certify runs");
-    assert!(
-        compile.status.success(),
-        "compile --certify goals failed:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
-    );
-
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json")).unwrap(),
-    )
-    .unwrap();
-    let user_entry = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|c| c["name"].as_str() == Some("userName"))
-        .expect("userName manifest entry");
-    let source_plan = user_entry["source_fragment"]["plan"]
-        .as_str()
-        .expect("userName source plan path")
-        .to_string();
-
-    let tamper_dir = temp_dir("cert-proj-relabel-partial");
-    copy_dir(&out_dir, &tamper_dir);
-    let tamper_wasm = tamper_dir.join("cert_goals.wasm");
-    let tamper_cert = tamper_dir.join("cert");
-    let sidecar_path = tamper_cert.join(&source_plan);
-    let sidecar_text = std::fs::read_to_string(&sidecar_path).unwrap();
-    // A sidecar-internally CONSISTENT rename (params + node type + projection
-    // owner), so the Rust-side intra-plan consistency checks pass and the
-    // decline is forced by the cross-file kernel pins alone.
-    let tampered_text = sidecar_text
-        .replace("named:User", "named:Other")
-        .replace("type=User", "type=Other");
-    assert_ne!(
-        sidecar_text, tampered_text,
-        "userName sidecar shape changed"
-    );
-    std::fs::write(&sidecar_path, &tampered_text).unwrap();
-    let mf = tamper_cert.join("cert-manifest.json");
-    let mut m: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-    let entry = m["certified"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|c| c["name"].as_str() == Some("userName"))
-        .expect("userName sidecar entry");
-    entry["source_fragment"]["plan_sha256"] =
-        serde_json::Value::String(aver::codegen::cert::sha256_hex(tampered_text.as_bytes()));
-    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-
-    let (ok, out) = aver_verify(&tamper_wasm, &tamper_cert);
+    let (ok, out) = aver_check(&wasm, &cert);
     assert!(
         !ok,
         "partially relabeled projection source types must be DECLINED:\n{out}"
     );
     assert!(
-        out.contains("does not bind"),
+        out.contains("did not build") || out.contains("does not bind"),
         "wrong reason for partial source-type relabel:\n{out}"
-    );
-    assert!(
-        !out.contains("did not build"),
-        "partial relabel must be caught by the kernel witness, not a broken build:\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),
@@ -4090,7 +3659,6 @@ fn cert_verify_declines_relabeled_projection_source_types() {
     );
 
     let _ = std::fs::remove_dir_all(&out_dir);
-    let _ = std::fs::remove_dir_all(&tamper_dir);
 }
 
 /// A tampered byte-first `recursion-plan-v1` plan is declined. The vectors
@@ -4128,7 +3696,7 @@ fn cert_verify_declines_tampered_recursion_plan() {
 
     let wasm = out_dir.join("recgen.wasm");
     let cert = out_dir.join("cert");
-    let (ok, report) = aver_verify(&wasm, &cert);
+    let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "honest recursion certificate should verify:\n{report}");
 
     // Honest bytes and plan, zero locals in the obligation only: recursion
@@ -4137,7 +3705,7 @@ fn cert_verify_declines_tampered_recursion_plan() {
         let dir = temp_dir("cert-recursion-zero-locals");
         copy_dir(&out_dir, &dir);
         set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "sumFrom", 1, 1);
-        let (ok, report) = aver_verify(&dir.join("recgen.wasm"), &dir.join("cert"));
+        let (ok, report) = aver_check(&dir.join("recgen.wasm"), &dir.join("cert"));
         assert!(
             !ok,
             "recursion zero-locals code must be DECLINED:\n{report}"
@@ -4198,7 +3766,7 @@ fn cert_verify_declines_tampered_recursion_plan() {
         let tampered_plans = dir.join("cert").join("Plans.lean");
         let src = std::fs::read_to_string(&tampered_plans).unwrap();
         std::fs::write(&tampered_plans, src.replacen(from, to, 1)).unwrap();
-        let (ok, report) = aver_verify(&dir.join("recgen.wasm"), &dir.join("cert"));
+        let (ok, report) = aver_check(&dir.join("recgen.wasm"), &dir.join("cert"));
         assert!(
             !ok,
             "{label}: tampered recursion plan must be declined:\n{report}"
@@ -4330,10 +3898,9 @@ fn mutual_termination_witness_guard_is_isolating() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
-/// The JSON policy/witness is only a candidate: supported-but-wrong data must
-/// disagree with verifier byte re-derivation in the checker-authored Lean
-/// witness, while an unknown measure or missing total witness declines during
-/// strict manifest decoding.
+/// The JSON policy/witness is transport data. Unsupported shapes fail strict
+/// decoding; supported-but-wrong values fail the Lean bindings, and even a
+/// coordinated JSON + Manifest rewrite fails canonical `ClaimAxes`.
 #[test]
 fn cert_verify_declines_tampered_termination_manifest() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -4356,7 +3923,7 @@ fn cert_verify_declines_tampered_termination_manifest() {
     assert!(compile.status.success());
     let wasm = out_dir.join("recgen.wasm");
     let cert = out_dir.join("cert");
-    let (ok, report) = aver_verify(&wasm, &cert);
+    let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "honest totality manifest should verify:\n{report}");
 
     for (label, mutate, expected) in [
@@ -4384,7 +3951,7 @@ fn cert_verify_declines_tampered_termination_manifest() {
             _ => unreachable!(),
         }
         std::fs::write(&path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
-        let (ok, report) = aver_verify(&dir.join("recgen.wasm"), &dir.join("cert"));
+        let (ok, report) = aver_check(&dir.join("recgen.wasm"), &dir.join("cert"));
         assert!(
             !ok,
             "{label}: hostile totality manifest verified:\n{report}"
@@ -4395,10 +3962,78 @@ fn cert_verify_declines_tampered_termination_manifest() {
         );
         if label == "wrong descent" {
             assert!(
-                report.contains("diagnostic kernel witness"),
-                "witness decline must surface the diagnostic rerun:\n{report}"
+                report.contains("checker-owned Lean witness"),
+                "witness decline must identify the Lean binding:\n{report}"
             );
         }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // Coordinate the JSON envelope with the Lean manifest so the witness's
+    // transport bindings still agree. Canonical recursion axes must then reject
+    // the producer-selected policy/termination inside Lean.
+    {
+        let dir = temp_dir("cert-claim-axes-descent-tamper");
+        copy_dir(&out_dir, &dir);
+        let manifest_lean = dir.join("cert/Manifest.lean");
+        let text = std::fs::read_to_string(&manifest_lean).unwrap();
+        let tampered = text.replacen("descent := (-1)", "descent := (1)", 1);
+        assert_ne!(text, tampered, "sumFrom termination shape changed");
+        std::fs::write(&manifest_lean, tampered).unwrap();
+
+        let manifest_json = dir.join("cert/cert-manifest.json");
+        let mut json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&manifest_json).unwrap()).unwrap();
+        let entry = json["certified"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|entry| entry["name"] == "sumFrom")
+            .unwrap();
+        entry["termination_witness"]["descent"] = serde_json::json!(1);
+        std::fs::write(&manifest_json, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+
+        let (ok, report) = aver_check(&dir.join("recgen.wasm"), &dir.join("cert"));
+        assert!(!ok, "noncanonical coordinated descent verified:\n{report}");
+        assert!(
+            report.contains("did not build") || report.contains("does not bind"),
+            "wrong ClaimAxes descent decline:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    {
+        let dir = temp_dir("cert-claim-axes-policy-tamper");
+        copy_dir(&out_dir, &dir);
+        let manifest_lean = dir.join("cert/Manifest.lean");
+        let text = std::fs::read_to_string(&manifest_lean).unwrap();
+        let honest = "policy := .simulatesModelTotally, termination? := some ({ measure := .intNatAbs 0, descent := (-1) } : AverCert.Schema.TerminationWitness)";
+        let tampered = text.replacen(honest, "policy := .simulatesModel, termination? := none", 1);
+        assert_ne!(text, tampered, "sumFrom policy shape changed");
+        std::fs::write(&manifest_lean, tampered).unwrap();
+
+        let manifest_json = dir.join("cert/cert-manifest.json");
+        let mut json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&manifest_json).unwrap()).unwrap();
+        let entry = json["certified"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|entry| entry["name"] == "sumFrom")
+            .unwrap();
+        entry["policy"] = serde_json::json!("simulatesModel");
+        entry.as_object_mut().unwrap().remove("termination_witness");
+        std::fs::write(&manifest_json, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+
+        let (ok, report) = aver_check(&dir.join("recgen.wasm"), &dir.join("cert"));
+        assert!(
+            !ok,
+            "coordinated partial-recursion policy verified:\n{report}"
+        );
+        assert!(
+            report.contains("did not build") || report.contains("does not bind"),
+            "wrong ClaimAxes policy decline:\n{report}"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
     let _ = std::fs::remove_dir_all(out_dir);
@@ -4441,7 +4076,7 @@ fn cert_verify_declines_tampered_mutual_plan() {
 
     let wasm = out_dir.join("mutual.wasm");
     let cert = out_dir.join("cert");
-    let (ok, report) = aver_verify(&wasm, &cert);
+    let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "honest mutual certificate should verify:\n{report}");
     let certificate = std::fs::read_to_string(cert.join("Certificate.lean")).unwrap();
     assert!(
@@ -4460,7 +4095,7 @@ fn cert_verify_declines_tampered_mutual_plan() {
         let dir = temp_dir("cert-mutual-zero-locals");
         copy_dir(&out_dir, &dir);
         set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "isEven", 1, 1);
-        let (ok, report) = aver_verify(&dir.join("mutual.wasm"), &dir.join("cert"));
+        let (ok, report) = aver_check(&dir.join("mutual.wasm"), &dir.join("cert"));
         assert!(!ok, "mutual zero-locals code must be DECLINED:\n{report}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -4492,7 +4127,7 @@ fn cert_verify_declines_tampered_mutual_plan() {
         assert_ne!(source, edited, "isEven obligation code field changed");
         std::fs::write(&manifest, edited).unwrap();
 
-        let (ok, report) = aver_verify(&dir.join("mutual.wasm"), &dir.join("cert"));
+        let (ok, report) = aver_check(&dir.join("mutual.wasm"), &dir.join("cert"));
         assert!(
             !ok && !report.contains("CERTIFIED"),
             "mutual code decouple must be DECLINED by generic acceptance:\n{report}"
@@ -4513,7 +4148,7 @@ fn cert_verify_declines_tampered_mutual_plan() {
         assert_ne!(source, edited, "isEven obligation self field changed");
         std::fs::write(&manifest, edited).unwrap();
 
-        let (ok, report) = aver_verify(&dir.join("mutual.wasm"), &dir.join("cert"));
+        let (ok, report) = aver_check(&dir.join("mutual.wasm"), &dir.join("cert"));
         assert!(
             !ok && !report.contains("CERTIFIED"),
             "mutual self decouple must be DECLINED by generic acceptance:\n{report}"
@@ -4574,7 +4209,7 @@ fn cert_verify_declines_tampered_mutual_plan() {
         let tampered_plans = dir.join("cert").join("Plans.lean");
         let src = std::fs::read_to_string(&tampered_plans).unwrap();
         std::fs::write(&tampered_plans, src.replacen(from, to, 1)).unwrap();
-        let (ok, report) = aver_verify(&dir.join("mutual.wasm"), &dir.join("cert"));
+        let (ok, report) = aver_check(&dir.join("mutual.wasm"), &dir.join("cert"));
         assert!(
             !ok,
             "{label}: tampered mutual plan must be declined:\n{report}"
@@ -4874,7 +4509,7 @@ fn cert_verify_declines_tampered_verbatim_plan() {
 
     let wasm = out_dir.join("verbatimgen.wasm");
     let cert = out_dir.join("cert");
-    let (ok, report) = aver_verify(&wasm, &cert);
+    let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "honest verbatim certificate should verify:\n{report}");
 
     // Honest bytes and plan, zero locals in the obligation only. `wrapItems`
@@ -4883,7 +4518,7 @@ fn cert_verify_declines_tampered_verbatim_plan() {
         let dir = temp_dir("cert-verbatim-zero-locals");
         copy_dir(&out_dir, &dir);
         set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "wrapItems", 1, 3);
-        let (ok, report) = aver_verify(&dir.join("verbatimgen.wasm"), &dir.join("cert"));
+        let (ok, report) = aver_check(&dir.join("verbatimgen.wasm"), &dir.join("cert"));
         assert!(!ok, "verbatim zero-locals code must be DECLINED:\n{report}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -4936,7 +4571,7 @@ fn cert_verify_declines_tampered_verbatim_plan() {
         let tampered_plans = dir.join("cert").join("Plans.lean");
         let src = std::fs::read_to_string(&tampered_plans).unwrap();
         std::fs::write(&tampered_plans, src.replacen(from, to, 1)).unwrap();
-        let (ok, report) = aver_verify(&dir.join("verbatimgen.wasm"), &dir.join("cert"));
+        let (ok, report) = aver_check(&dir.join("verbatimgen.wasm"), &dir.join("cert"));
         assert!(
             !ok,
             "{label}: tampered verbatim plan must be declined:\n{report}"
@@ -5039,11 +4674,14 @@ fn cert_verify_scalar_f64_verbatim_fixture_and_tampers() {
         "floatOrZero code obligation must bind nlocals = 3"
     );
 
-    let (ok, report) = aver_verify(&wasm, &cert);
-    assert!(ok, "honest scalar-f64 certificate should verify:\n{report}");
+    let (ok, report) = aver_check(&wasm, &cert);
     assert!(
-        report.contains("CERTIFIED"),
-        "honest scalar-f64 verification must report CERTIFIED:\n{report}"
+        ok,
+        "honest scalar-f64 certificate should pass trusted-olean preflight:\n{report}"
+    );
+    assert!(
+        report.contains("CHECKED") && !report.contains("CERTIFIED"),
+        "honest scalar-f64 preflight must report CHECKED only:\n{report}"
     );
 
     let mut imported_funcs = 0u32;
@@ -5117,7 +4755,7 @@ fn cert_verify_scalar_f64_verbatim_fixture_and_tampers() {
             .validate_all(&bytes)
             .expect("an f64 immediate bit flip must preserve wasm validity");
         std::fs::write(&tampered_wasm, bytes).unwrap();
-        let (ok, report) = aver_verify(&tampered_wasm, &dir.join("cert"));
+        let (ok, report) = aver_check(&tampered_wasm, &dir.join("cert"));
         assert!(
             !ok,
             "tampered f64.const immediate must be DECLINED:\n{report}"
@@ -5150,7 +4788,7 @@ fn cert_verify_scalar_f64_verbatim_fixture_and_tampers() {
         let mut bytes = honest_bytes.clone();
         bytes[matches[0] + signature.len() - 1] = 0x63;
         std::fs::write(&tampered_wasm, bytes).unwrap();
-        let (ok, report) = aver_verify(&tampered_wasm, &dir.join("cert"));
+        let (ok, report) = aver_check(&tampered_wasm, &dir.join("cert"));
         assert!(!ok, "tampered f64 result type must be DECLINED:\n{report}");
         assert!(
             !report.contains("CERTIFIED"),
@@ -5616,7 +5254,7 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
 
     let wasm = out_dir.join("intdispatchgen.wasm");
     let cert = out_dir.join("cert");
-    let (ok, report) = aver_verify(&wasm, &cert);
+    let (ok, report) = aver_check(&wasm, &cert);
     assert!(
         ok,
         "honest int-dispatch certificate should verify:\n{report}"
@@ -5676,7 +5314,7 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
         let tampered_plans = dir.join("cert").join("Plans.lean");
         let src = std::fs::read_to_string(&tampered_plans).unwrap();
         std::fs::write(&tampered_plans, src.replacen(from, to, 1)).unwrap();
-        let (ok, report) = aver_verify(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
+        let (ok, report) = aver_check(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
         assert!(
             !ok,
             "{label}: tampered int-dispatch plan must be declined:\n{report}"
@@ -5700,7 +5338,7 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
             "boxIntCode locals-count header shape changed; update the test"
         );
         std::fs::write(&module, src.replacen("some ⟨1, 3,", "some ⟨1, 0,", 1)).unwrap();
-        let (ok, report) = aver_verify(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
+        let (ok, report) = aver_check(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
         assert!(!ok, "zero-locals code table must be DECLINED:\n{report}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -5741,7 +5379,7 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
             "hostTable := [(.box, 7), (.add, 9), (.sub, 8)]",
         );
         std::fs::write(&artifact, src).unwrap();
-        let (ok, report) = aver_verify(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
+        let (ok, report) = aver_check(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
         assert!(!ok, "role/table permutation must be DECLINED:\n{report}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -5765,7 +5403,7 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
             "boxIntHost shape changed; update the test"
         );
         std::fs::write(&module, src.replacen(from, to, 1)).unwrap();
-        let (ok, report) = aver_verify(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
+        let (ok, report) = aver_check(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
         assert!(!ok, "sampled-probe-escape host must be DECLINED:\n{report}");
         let _ = std::fs::remove_dir_all(&dir);
     }

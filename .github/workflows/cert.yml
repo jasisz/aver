@@ -52,7 +52,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.elan
-          key: elan-${{ runner.os }}-${{ hashFiles('tools/certkit/prelude/lean-toolchain') }}
+          key: elan-${{ runner.os }}-${{ hashFiles('aver-cert/assets/wall/current/lean-toolchain') }}
 
       - name: Install Lean (via elan)
         run: |
@@ -90,11 +90,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/aver-cert-prelude-store
-          key: prelude-store-${{ runner.os }}-${{ hashFiles('src/codegen/cert/*.lean', 'tools/certkit/prelude/**', 'src/main/cert_cmd.rs') }}
+          key: prelude-store-${{ runner.os }}-${{ hashFiles('aver-cert/assets/wall/current/**', 'aver-cert/src/verifier.rs') }}
 
       - name: Install nextest
         if: matrix.partition != ''
         uses: taiki-e/install-action@nextest
+
+      - name: Build standalone certificate verifier
+        run: cargo build -p aver-cert --bin aver-cert
 
       - name: Run certification suite
         if: matrix.partition == ''

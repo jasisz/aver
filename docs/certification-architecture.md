@@ -1,336 +1,208 @@
 # Certification Architecture
 
-Aver certificates bind a verifier-checked semantic plan to one exact Wasm
-artifact and then ask Lean to prove the fixed certification statement for that
-binding. The compiler may propose plans, manifests, and proof data, but it does
-not choose the verifier's theorem target or trusted proof wall.
+The certificate verifier has one job: decide whether an untrusted certificate
+package proves the fixed Aver statement about the exact WebAssembly bytes it
+was given. The producer may suggest data, but it cannot choose the checker,
+the accepted theorem shape, or the facts recovered from the artifact.
 
-The central acceptance relation is:
+## Invariants
 
-```text
-checked source/representation plan
-  -> canonical instruction body and code-entry bytes
-  == bytes selected from the named export in the artifact
-  -> fixed Lean obligation over the source model
-```
+The design keeps five authority rules explicit:
 
-The Wasm bytes remain the artifact identity. A plan is an untrusted witness for
-those bytes, not an alternative source of truth.
+1. The `.wasm` file passed to `aver-cert` is the artifact identity.
+2. `Plans.lean` is the only authoritative plan data in the package.
+3. The soundness wall, Lean toolchain, build files, `ArtifactBytes.lean`, and
+   checker witness are checker-owned.
+4. A positive verdict comes from the named Lean acceptance root, not from a
+   Rust reconstruction of the producer's classification.
+5. Every mismatch declines; diagnostics cannot upgrade a failed proof.
 
-## Certificate Artifact
+## Components
 
-A certified build contains the Wasm module and a `cert/` directory:
+`aver-cert` is a standalone crate and executable with its own `0.1.x` release
+line. It does not depend on `aver-lang`, `aver-rt`, or `aver-memory`.
 
-```text
-foo.wasm
-cert/
-  cert-manifest.json
-  fragments/<export>.<profile>.plan
-  AverCommon.lean and source-model modules
-  Contracts.lean
-  Module.lean
-  Plans.lean
-  Manifest.lean
-  Certificate.lean
-  Artifact.lean
-  ArtifactSoundness.lean
-  Final.lean
-  ArtifactCertificate.lean
-```
+Its default `verify` feature contains the checker and embedded wall. The
+separate `producer` feature contains the certificate-emission engine consumed
+by `aver-lang` during `aver compile --certify`. The verifier does not link or
+invoke that engine on its positive path.
 
-The directory contains artifact-specific, untrusted certificate data. The
-audited wall, Lean toolchain, and build configuration are not copied into the
-package. `aver cert verify` resolves and authors them independently:
+`aver cert ...` only locates a sibling `aver-cert` executable or one on `PATH`
+and runs it with unchanged arguments, standard input, standard output,
+standard error, and exit status.
 
-| Input | Treatment during verification |
-|---|---|
-| Wasm artifact | Read directly, hashed, decoded, and regenerated as checker-owned `ArtifactBytes.lean`. |
-| Manifest, sidecars, models, and artifact-specific Lean modules | Treated as untrusted data; names and contents are gated before staging. |
-| `format.wall_id` | Resolved only against exact walls embedded in the verifier; there is no filesystem, environment, or network fallback. |
-| Checker-owned source names, lakefile, toolchain file, or `.lake` directory injected into the package | Ignored or replaced. The verifier authors a fresh build from the resolved wall and pinned toolchain. |
-| `CheckerWitness.lean` | Never accepted from the certificate; authored by the verifier for each check. |
+## Ownership of inputs
 
-The wall named by `format.wall_id` includes:
+| Input | Owner | Treatment |
+|---|---|---|
+| WebAssembly module | Caller | Validated, hashed, and encoded into checker-generated `ArtifactBytes.lean` |
+| `cert-manifest.json` | Certificate | Untrusted transport/report data; versioned and pinned against Lean data |
+| `Plans.lean` | Certificate | Untrusted but authoritative plan data; structurally checked and canonically lowered in Lean |
+| Model and artifact-specific Lean modules | Certificate | Untrusted proof data; admitted only after staging gates, data pinning, and kernel checking |
+| Soundness wall | Verifier | Embedded, selected by exact `wall_id`, and materialized by the checker |
+| Lean toolchain and build files | Verifier | Pinned to Lean 4.32 and authored by the checker |
+| `CheckerWitness.lean` | Verifier | Generated for this artifact; never accepted from the package |
 
-- the schema and decoding layer: `SchemaCore`, `Schema`, `CertPrelude`,
-  `CertDecode`, `PlanCheck`, `PlanLower`, `PlanBytes`, `WasmSlice`,
-  `ExprFragmentAccepted`, `AcceptedArtifactCore`, and `AcceptedArtifact`;
-- reusable semantics and soundness modules: `ExprFragmentSemantics`,
-  `InterpreterSequencing`, `ExprFragmentSoundness`,
-  `FieldProjectionSoundness`, `ConstructVerbatimSoundness`,
-  `IntDispatchSoundness`, `StringSoundness`, `RecursionSoundness`,
-  `MutualRecursionSoundness`, and `CompositionSoundness`;
-- the acceptance wall: `AcceptanceSoundnessCore`, the `Discharge*` modules,
-  and `AcceptanceSoundness`.
+The public package therefore contains no `.plan` files and no
+`ArtifactBytes.lean`. A JSON plan AST is not needed for acceptance: using one
+as a second authority would add a parser/translation boundary and create two
+representations that must agree. Tooling may project `Plans.lean` to JSON for
+inspection, but such a projection cannot affect the verdict.
 
-The verifier separately authors the artifact-specific `ArtifactBytes` module,
-lakefile, and witness. Those files are checker-owned but are not static wall
-sources.
-
-The manifest uses public certificate schema version `1` and package format
-version `1`. It pins the Wasm hash, expected theorem and artifact root, sidecar
-hashes, and one aggregate `wall_id`. The wall identity is a domain-separated
-SHA-256 over the exact toolchain plus every wall filename and byte sequence,
-sorted by filename and length-framed. A changed, added, removed, or renamed
-wall source therefore produces a different identity. Manifest agreement alone
-cannot produce acceptance: the verifier accepts only an identity whose exact
-contents it already embeds.
-
-The public proof roots are:
-
-```lean
-AverCert.Final.cert : AverCert.Schema.Holds manifest
-AverCert.Artifact.certificate : AverCert.AcceptedArtifact.accepted
-  AverCert.Artifact.data
-```
-
-`AverCert.Artifact.data` contains the manifest, artifact bytes, plan claims,
-family claims, composition members, and whole-module closure facts.
-The verifier requires that this term reduce to its independently reconstructed
-artifact literal.
-
-## Plan-First Binding
-
-For source-projectable expression fragments, the sidecar carries a
-source-shaped `SymPlan`. Its Lean form is a `SymRawPlan` over Aver concepts such
-as integer comparison, floating-point arithmetic, boolean operations, and
-string operations. The accepted chain is:
+## Acceptance flow
 
 ```text
-SymRawPlan
-  -> checked source plan
-  -> ExprFragmentRawPlan
-  -> checked representation plan
-  -> WInstr body
-  -> canonical Wasm code-entry bytes
+actual app.wasm
+  -> wasmparser Validator
+  -> checker-generated ArtifactBytes.lean
+  -> WasmSlice / CertDecode --------------------------+
+                                                       |
+package Plans.lean -> PlanCheck -> PlanLower/PlanBytes +-> StandardFace
+package manifest and artifact data -------------------+-> ClaimAxes
+                                                       |
+family soundness and discharge theorems ---------------+
+                                                       v
+                              Artifact.certificate
+                                                       |
+checker-generated pins and report agreement -----------+
+                                                       v
+                              AverCertChecker.checked
+                                                       |
+                              axiom audit + leanchecker --fresh
+                                                       v
+                                      CERTIFIED
 ```
 
-`FragTy` and carrier details live in the representation layer. Source-level
-projection is explicit; there is no generic raw-`WVal` escape hatch that lets a
-representation-only plan claim an arbitrary Aver meaning. A fragment without
-an admitted source or family bridge is declined.
+The steps are:
 
-The general Wasm profile does not admit an exact-bit Float result whose plan
-contains `f64.add` or `f64.mul`. WebAssembly permits multiple NaN sign/payload
-results for those operations, while `floatBitsRepr` names one exact `UInt64`.
-Rust admission and audited Lean `PlanCheck` enforce the same boundary.
-Payload-independent Bool results such as `f64.le`, plus Float constants and
-pass-through values, remain admitted.
+1. Read the actual module, run the standard WebAssembly validator, compute its
+   SHA-256, and parse `cert-manifest.json`.
+2. Require package format `1`, statement schema `1`, the expected artifact
+   root, the actual hash, and a `wall_id` embedded in this verifier.
+3. Assemble a fresh project from the checker-owned wall and the allowed
+   artifact-specific data. Checker-owned module names, build files, toolchain
+   files, witnesses, and caches supplied by the package cannot replace the
+   generated versions.
+4. Generate `ArtifactBytes.lean` from the bytes read in step 1. The package has
+   no opportunity to provide a different byte numeral.
+5. Build the package data and wall under Lean 4.32. `WasmSlice` and
+   `CertDecode` recover the export/function/type/code facts required by the
+   accepted fragment.
+6. Check the `Plans.lean` values and lower accepted plans to their canonical
+   instruction bodies and code-entry bytes. Those values must match the
+   function selected from `ArtifactBytes`.
+7. Run `StandardFace` over the checked claims. It binds each class to its
+   standard domain, codomain, representations, complete host function, model
+   constraints, signature, carrier, and structure facts. Class names and host
+   role labels cannot grant a weaker face.
+8. Run `ClaimAxes`. It derives partial versus total policy, the canonical
+   termination witness, totality role, and exact runtime-contract set from the
+   family plans. These are outputs of the proof check, not manifest choices.
+9. Check `AverCert.Artifact.certificate` and alias it at the fixed type as
+   `AverCertChecker.checked`. The checker witness also pins the Lean manifest
+   and atomically derived `(export, class)` report entries to the JSON envelope.
+10. Collect the named root's axioms and require exactly the whitelist
+    `[propext, Classical.choice, Quot.sound]`.
+11. Replay the checker module with `lake env leanchecker --fresh`. Only after
+    all checks succeed is the human-readable report constructed.
 
-The plan checker independently validates claimed types, refinements, effects,
-arity, host roles, struct bindings, and result shape. Plan annotations do not
-grant facts merely by being present. In particular, canonical booleans are
-accepted only from checked `Bool01` sources such as boolean parameters,
-comparisons, `i32.eqz`, admitted reference tests, constants `0`/`1`, and
-branches whose results are both canonical booleans.
+Build caches are disabled by default. Explicitly configured data or prelude
+caches never replace the checker-authored witness or the final fresh-environment
+replay, but their directories are trusted local state: the integrity manifests
+detect accidental corruption, not an active writer able to replace `.olean`
+outputs, Lake traces, and the manifest together. Package-supplied caches remain
+ignored.
 
-Canonical lowering is byte-exact rather than semantically permissive. For the
-accepted expression profile it binds the body-size prefix, local declaration
-vector, instruction bytes, and final `end`. Dead instructions, alternate local
-groupings, noncanonical encodings, reordered operands, or a different export
-binding do not match the plan.
+The separate `aver cert check` developer preflight runs steps 1–10 but omits
+step 11. It therefore trusts the locally built or explicitly cached `.olean`
+graph and emits `CHECKED`, not `CERTIFIED`. The checker-owned witness is still
+written and elaborated after cache restoration on every invocation, so the
+report pins and axiom whitelist continue to run. This mode is suitable for
+inner-loop and source/manifest tamper tests, never for release or admission.
 
-String, constructor, verbatim, dispatch, recursion, mutual-recursion,
-field-projection, and composition families use family-specific checked plans
-and claims. Their numeric bindings are reconstructed from the module rather
-than trusted from the sidecar. Host calls are admitted only through the audited
-role/contract registry and must match the actual imported function, signature,
-and ABI role.
+## Why one Rust Wasm validator remains
 
-## Verifier Algorithm
+The Lean wall decodes and binds every byte fact used by an admitted claim, but
+its relevant-subset decoder is not a complete WebAssembly stack/control typing
+validator. `wasmparser::Validator` is therefore retained as one explicit gate
+before Lean. Removing it today would weaken the guarantee that the artifact is
+a valid WebAssembly module.
 
-`aver cert verify` performs the following acceptance path:
+No other producer analysis is needed for a positive verdict. In particular,
+the verifier does not re-run the producer's obligation classifier,
+disassembler, candidate derivation, or reconstruction of
+`AverCert.Artifact.data`.
 
-1. Read the actual Wasm bytes, compute their SHA-256, parse
-   `cert-manifest.json`, and require schema and format version `1`.
-2. Compare the artifact hash, theorem name, and artifact root with the fixed
-   verifier contract. Resolve `format.wall_id` to one exact embedded wall and
-   reject unknown identities.
-3. Decode the module and derive export, function, type, local, import, host,
-   struct, start-function, capability, and code-entry facts.
-4. Derive non-expression certificate candidates from the decoded module.
-   Expression candidates come from manifest-named sidecars; they are excluded
-   from the non-expression byte classifiers.
-5. Parse and check each selected sidecar in Rust, canonically lower it, and
-   require exact equality with the code entry selected from the actual Wasm.
-   The sidecar text must also equal the checker's canonical rendering and match
-   its manifest hash.
-6. Reject duplicate function orders and merge expression and non-expression
-   obligations by byte-derived function order. Export names and report order
-   therefore come from the module, not from JSON ordering.
-7. Reconstruct runtime contracts, host/struct tables, module-envelope facts,
-   checked plans, typed obligation faces, and the artifact literal used by the
-   Lean witness.
-8. Create a fresh Lean project. Stage certificate data only after a module-name
-   gate and an elaboration-execution token scan; materialize the resolved wall
-   and author `ArtifactBytes.lean`, the lakefile, and the witness from
-   verifier-owned data.
-9. Build the project with the pinned Lean toolchain. A build failure is a
-   rejection.
-10. Run the checker-authored witness. It pins the manifest candidates,
-    byte-derived names and module facts, checked plans, exact artifact data,
-    semantic faces, final theorem type, and artifact acceptance root with Lean
-    equalities and type ascriptions.
-11. Ask Lean's axiom collector for the dependencies of the artifact root and
-    require the exact whitelist `[propext, Classical.choice, Quot.sound]`.
-12. Construct the human-readable report only after the witness succeeds, using
-    byte-derived export names and kernel-confirmed manifest data.
+## Lean acceptance wall
 
-The verifier has a fast witness and a diagnostic superset. The diagnostic
-witness can localize a rejected conjunct, but it cannot upgrade a failure to an
-acceptance. If the two modes disagree in that direction, verification fails
-closed as an internal error.
+The wall is one hash-addressed unit. Its responsibilities are separated by
+module:
 
-Build caches are performance hints only. Cache keys include the schema, exact
-`wall_id`, and artifact-specific staged sources; cached Lake trees carry an
-integrity manifest. A cache hit is still followed by the fresh project build
-and checker-authored witness. A bad cache is discarded or causes rejection,
-never certification.
+- `PlanCheck`, `PlanLower`, and `PlanBytes` validate plan data and produce the
+  canonical semantics and bytes;
+- `WasmSlice` and `CertDecode` recover relevant facts from the actual module;
+- `StandardFace` selects the complete admitted semantic face and binds host,
+  signature, carrier, and structure facts;
+- `ClaimAxes` derives policy, termination, totality, and contracts;
+- family soundness and `Discharge*` modules prove the reusable simulations;
+- `AcceptedArtifact` and the artifact-specific bridge assemble the single
+  acceptance statement.
 
-## Lean Proof Chain
+Changing any audited wall source or the pinned toolchain changes `wall_id`.
+The manifest can request only an identity already embedded in the verifier;
+there is no filesystem, environment, or network fallback for a replacement
+wall.
 
-The kernel-checked dependencies have this shape:
+## Trust boundary
 
-```text
-ArtifactBytes + Plans + Manifest
-        |          |
-        |          +-> PlanCheck -> PlanLower / PlanBytes
-        +------------> WasmSlice / CertDecode
-                            |
-                            v
-                    AcceptedArtifact claims
-                            |
-           family soundness + Discharge* theorems
-                            |
-                            v
-                 AcceptanceSoundness.accept_sound
-                            |
-                            v
-          ArtifactSoundness.accept_sound_holds
-                            |
-                            v
-                      Final.cert
-                            |
-                            v
-                 Artifact.certificate
-```
+A successful verdict depends on:
 
-`PlanCheck` validates plan structure. `PlanLower` reconstructs the measured
-`WInstr` body. `PlanBytes` reconstructs canonical code-entry bytes.
-`WasmSlice` resolves the named export through function and type indices and
-requires the selected entry to equal those bytes. `CertDecode` derives the
-non-expression code, carrier, host-role, and consumed-structure facts used by
-the artifact predicate.
+- the small Rust verifier path for file I/O, hashing, version checks, safe
+  staging, process execution, and report pinning;
+- `wasmparser::Validator` for full WebAssembly validity;
+- the exact embedded Lean wall and Lean 4.32 elaborator/kernel/tooling;
+- SHA-256 collision resistance;
+- the semantic truth and totality, where required, of named runtime contracts;
+- the explicit source declarations that a binary cannot determine;
+- any explicitly configured local build-cache directory.
 
-The family soundness modules prove reusable simulations. The `Discharge*`
-modules connect accepted artifact claims and explicit semantic bridges to those
-generic theorems. `AcceptanceSoundness.accept_sound` assembles all accepted
-families into `Schema.Holds`. Artifact-specific side conditions remain explicit
-in `AverCert.Artifact.dischargeSideConditions`; they cannot be silently replaced
-by weaker manifest predicates.
+It does not depend on:
 
-The checker witness separately pins each obligation's `Dom`, `Cod`, `domRepr`,
-`codRepr`, model, and inhabited domain to the standard face implied by its
-byte-derived class. Vacuous faces such as an empty domain, always-false input
-relation, always-true output relation, or weakened arity fail a kernel equality.
+- correctness of the Aver compiler, optimizer, or producer classifier;
+- the order or truth of JSON report candidates before Lean pinning;
+- package-supplied wall/build/toolchain/witness files;
+- certificate caches when none are explicitly configured;
+- diagnostic output.
 
-## Trust Boundary
+`leanchecker --fresh` prevents the final replay from inheriting declarations
+from the prior elaboration environment. It is still a component of the same
+Lean 4.32 distribution, not an independent checker implementation. The
+current architecture should not be described as having two diverse kernels.
 
-Acceptance depends on the correctness of:
+## Read declarations and scope
 
-- the Rust verifier's hashing, Wasm decoding, module-context construction,
-  sidecar parser/checker/lowerer, exact-byte comparison, non-expression
-  classification, obligation reconstruction, and Lean project generation;
-- the audited host ABI and runtime-contract registry;
-- the checker-owned Lean schema, decoders, plan checks, lowerers, Wasm slicer,
-  family soundness proofs, discharge wall, and acceptance assembly;
-- the pinned Lean toolchain, elaborator, kernel, Lake invocation, and axiom
-  collection;
-- SHA-256 collision resistance and the semantic truth of the named runtime
-  contracts assumed by an obligation.
+For known non-ADT families, `StandardFace` fixes the semantic face available
+from checked plans and bytes. User ADTs have information that WebAssembly
+erases: source domain meaning, representation interpretation, and the intended
+model. Those `Dom`/`Repr`/model components remain explicit read declarations.
+The wall enforces the byte-derived structure, standard portions of the face,
+and available non-vacuity checks, but cannot recover source semantics that are
+not present in the artifact.
 
-The following inputs are outside the trust boundary:
+Certified closure isolation does not certify the rest of the module. Imports,
+the start function, and uncertified exports are accounted for, while behavioral
+claims remain limited to admitted obligations. Trace/replay recordings are not
+certificate evidence and never enter plan selection, theorem construction, or
+the verdict.
 
-- the Aver compiler and optimizer;
-- manifest claims, ordering, theorem labels, report fields, and sidecar text;
-- artifact-specific Lean definitions and proofs before checker binding and
-  kernel checking;
-- package files using checker-owned source, lakefile, toolchain, or witness
-  names, and certificate build caches;
-- source/debug names that are not independently recovered from Wasm exports.
+## Fail-closed behavior
 
-Generated artifact-specific Lean is untrusted proof data, not a trusted proof
-checker. The accepted theorem type is fixed by the verifier, artifact data is
-pinned to the verifier reconstruction, and non-whitelisted axioms make the
-witness fail.
+Verification rejects malformed or invalid Wasm, hash/version/wall mismatches,
+unsafe package structure, unsupported plans or classes, noncanonical
+lowerings, byte/type/host/structure disagreement, weakened semantic faces,
+incorrect policy or contract axes, Lean build failure, a mismatched named root,
+non-whitelisted axioms, and failed fresh replay.
 
-## Fail-Closed Conditions
-
-Verification rejects on any of these conditions:
-
-- unsupported schema or format version, missing or malformed manifest fields,
-  or an unknown `wall_id`;
-- malformed Wasm, ambiguous/invalid export binding, unsupported module shape,
-  duplicate obligation order, or inconsistent whole-module facts;
-- missing, malformed, unsupported, noncanonical, or hash-mismatched sidecars;
-- plan type/refinement/effect failure, host/struct binding mismatch, lowering
-  failure, or any byte difference from the selected code entry;
-- disagreement between JSON candidates, byte-derived facts, generated Lean
-  data, obligation faces, final theorem type, or artifact root;
-- unsafe staged module names, rejected elaboration-execution tokens, Lean build
-  failure, witness failure, or an axiom outside the whitelist;
-- cache corruption, fast/diagnostic witness inconsistency, or any internal
-  verifier inconsistency detected along the path.
-
-Only exports represented by accepted obligations are reported as certified.
-Other exports remain explicitly uncertified. Partial-correctness policies prove
-the stated simulation when evaluation returns; totality is claimed only by a
-total policy with its additional termination and runtime-contract premises.
-
-## Known Trust Gaps and Limits
-
-- Rust still parses, checks, and lowers sidecars and performs the executable
-  byte-equality gate. Lean repeats structural plan checks, canonical lowering,
-  byte encoding, and the relevant export slice, but does not replace all of the
-  Rust path.
-- Rust still performs substantial module validation and derives the complete
-  non-expression obligation set. Lean binds many resulting code, carrier,
-  export, host, and struct facts back to `ArtifactBytes`, but
-  obligation-family selection remains part of the Rust TCB.
-- `WasmSlice` and `CertDecode` are purpose-built relevant-subset decoders, not a
-  complete independent validator for every Wasm feature.
-- The token scan on untrusted Lean data is a deliberately strict defense
-  against elaboration-time code execution, not a formal sandbox. The accepted
-  result still depends on the pinned Lean elaborator/kernel boundary.
-- Certification covers only admitted Wasm profiles and named runtime
-  contracts. It does not establish arbitrary Wasm safety, equivalence for
-  uncertified exports, or correctness of effects outside those contracts.
-- Float-producing `f64.add` and `f64.mul` require a relational NaN result face
-  or a separately declared deterministic NaN profile before they can be
-  admitted as all-input exact-bit claims.
-- A `SymPlan` expresses source meaning only for admitted source constructs.
-  Representation-only shapes without a checked source or family bridge are not
-  promoted to a source-level claim.
-
-These limits are part of the stated guarantee: the checker rejects outside its
-admitted surface instead of inferring a broader claim.
-
-## Trace and Replay Exclusion
-
-Execution traces and replay metadata are not certificate evidence. The
-certificate format emits no `trace` or `trace_sha256` field, the verifier does
-not read trace sidecars, and no acceptance branch reconstructs a plan from an
-observed execution.
-
-The only admitted direction is:
-
-```text
-untrusted plan
-  -> independent checking
-  -> canonical lowering
-  -> exact artifact bytes
-```
-
-This direction is never reversed to `Wasm + trace -> accepted plan`. Traces may
-be used by separate debugging tools, but they do not enter hashing, obligation
-selection, theorem generation, witness checking, or the certification verdict.
+An artifact with no accepted exports is reported as having no behavioral
+certificate and exits nonzero. A diagnostic can explain a decline, but cannot
+turn it into acceptance.

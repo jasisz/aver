@@ -71,7 +71,7 @@ example : checkTerm accumulatorPlan wrongDescentWitness = false := rfl
 theorem honestAccepted : AverCert.AcceptedArtifact.recursionPlanAccepted
     modBytes modLen nameBytes "sumFrom" 2 hostTable plan AverCert.sumFromOb := by
   have hfrags : AverCert.AcceptedArtifact.acceptedFragments AverCert.Artifact.data :=
-    AverCert.Artifact.certificate.2.2.2.2.2
+    AverCert.Artifact.certificate.2.2.2.2.2.2.2
   have hrec : AverCert.AcceptedArtifact.acceptedRecursionFragments AverCert.Artifact.data :=
     hfrags.2.2.2.2.1
   simpa [AverCert.AcceptedArtifact.acceptedRecursionFragments,
