@@ -2464,18 +2464,9 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
         "empty cert preflight must not emit a certification verdict:\n{check_out}"
     );
 
-    // `explain` / `inspect` share verify's fail-closed exit contract: an
-    // admission-only cert (zero certified exports) must not exit green or show a
-    // green CERTIFIED header from either subcommand.
-    for sub in [["explain"], ["inspect"]] {
-        let (ok_e, out_e) = aver_cert(&sub, &out_dir.join("certempty.wasm"), &out_dir.join("cert"));
-        assert!(!ok_e, "empty cert `{}` must exit nonzero:\n{out_e}", sub[0]);
-        assert!(
-            out_e.contains("NO CERTIFIED EXPORTS") && !out_e.contains("\u{1b}[32m"),
-            "empty cert `{}` must report admission-only, not green CERTIFIED:\n{out_e}",
-            sub[0]
-        );
-    }
+    // `explain` and its `inspect` alias normalize to the same strict route in
+    // the standalone verifier. That routing contract has a cheap binary unit
+    // test; do not repeat two full fresh-environment replays here.
 
     // A5 report-line injection (the BANK verbatim attack), Manifest + JSON:
     // stash the fabricated `AVERCERT-EXPORT\tstealAllFunds` report line in the
