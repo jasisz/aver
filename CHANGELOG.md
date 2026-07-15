@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.27.0 "Witness" (unreleased)
+## 0.27.0 "Witness" — 2026-07-15
 
 Named for the proof carried beside the artifact: Aver binaries can now ship a Lean witness about their exact bytes, checked independently of the compiler.
 

@@ -153,7 +153,7 @@ dependencies = [
 
 [[package]]
 name = "aver-lang"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "aver-cert",
  "aver-memory",
@@ -186,7 +186,7 @@ dependencies = [
 
 [[package]]
 name = "aver-lsp"
-version = "0.6.15"
+version = "0.6.16"
 dependencies = [
  "aver-lang",
  "serde_json",
@@ -196,7 +196,7 @@ dependencies = [
 
 [[package]]
 name = "aver-memory"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "aver-rt",
  "num-bigint",
