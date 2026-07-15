@@ -44,10 +44,34 @@ Linux: `apt install sccache` or `cargo install sccache`.
 
 ## Test runner
 
-`cargo nextest` parallelizes test execution and avoids re-running unchanged tests; install once:
+`cargo nextest` parallelizes test execution and gives fast filtering; it does
+not cache successful test results. Install it once:
 
 ```bash
 cargo install cargo-nextest
 ```
 
-Then use `cargo nextest run` instead of `cargo test`. The full suite drops from ~40 s to ~15 s on this machine.
+Use `cargo nextest run` for the Rust inner loop, or select the crate/test you are
+changing. Certificate integration tests still launch Lean and remain much
+slower than ordinary Rust tests, so there is no useful single time estimate for
+the whole workspace.
+
+For an emitted certificate, use the two explicit trust levels:
+
+```bash
+aver cert check out/app.wasm out/cert    # developer preflight: CHECKED
+aver cert verify out/app.wasm out/cert   # release/admission gate: CERTIFIED
+```
+
+`check` skips only the final `leanchecker --fresh` replay and trusts the built
+or explicitly cached `.olean` closure. It is the inner-loop command, never a
+replacement for strict `verify`.
+
+## Releases
+
+Release `aver-cert` through `python3 tools/release.py X.Y.Z`, never with a
+separate manual `cargo publish`. The verifier keeps its own `0.1.x` version
+line, but the release tool coordinates it with Aver: it publishes the first
+`0.1.0`, patch-bumps it only when its source changes, updates `aver-lang`'s
+exact producer dependency pin, and publishes `aver-cert` before `aver-lang`.
+Users still install the two executables separately.

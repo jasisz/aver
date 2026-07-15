@@ -11,14 +11,19 @@ to the `aver-lang` release number.
 ## Install
 
 ```bash
+cargo install aver-lang --features wasm
 cargo install aver-cert
 ```
 
-Verification uses the checker-pinned `leanprover/lean4:v4.32.0` toolchain.
-It requires a standard Elan installation at `$ELAN_HOME/bin/elan` (or
-`$HOME/.elan/bin/elan` when `ELAN_HOME` is unset). The verifier invokes that
-canonical executable directly and deliberately does not resolve its trusted
-`lake`, `lean`, or `leanchecker` subprocesses through `PATH`.
+The first command installs the certificate producer; omit it if you only need
+to verify an existing package.
+
+Verification uses the checker-pinned `leanprover/lean4:v4.32.0` toolchain and
+requires a standard Elan installation. The verifier resolves
+`$ELAN_HOME/bin/elan`, or the platform's default Elan home when `ELAN_HOME` is
+unset (`$HOME/.elan` on Unix, `%USERPROFILE%\.elan` on Windows). It invokes that
+canonical executable directly and does not resolve its trusted `lake`, `lean`,
+or `leanchecker` subprocesses through `PATH`.
 
 ## Commands
 
@@ -26,8 +31,8 @@ Given a module produced with
 `aver compile app.av --target wasm-gc --certify -o out/`:
 
 ```bash
-aver-cert verify out/app.wasm out/cert
 aver-cert check out/app.wasm out/cert
+aver-cert verify out/app.wasm out/cert
 aver-cert explain out/app.wasm out/cert
 aver-cert inspect out/app.wasm out/cert
 ```
@@ -35,8 +40,10 @@ aver-cert inspect out/app.wasm out/cert
 `verify` exits zero only when at least one export is certified and the full
 Lean check succeeds. `check` is a faster developer/CI preflight: it performs
 the same Rust gates, `lake build`, and fresh checker-witness elaboration, but
-trusts local `.olean` imports and skips `leanchecker --fresh`. Its green output
-is `CHECKED`, never `CERTIFIED`, and it must not gate a release or admission.
+trusts the freshly built or explicitly cached `.olean` closure and skips
+`leanchecker --fresh`. Its green output is `CHECKED`, never `CERTIFIED`, and it
+must not gate a release or admission.
+
 `explain` performs the same trusted check as `verify` before printing the
 accepted semantic faces, policies, contracts, and declined exports. `inspect`
 is an alias of `explain`.

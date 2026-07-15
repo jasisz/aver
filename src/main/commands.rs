@@ -4584,7 +4584,7 @@ fn emit_artifact_certificate(
     }
     println!(
         "    verify: aver cert verify {} {}",
-        out_path.join(wasm_name).display(),
+        out_path.join(format!("{wasm_name}.wasm")).display(),
         cert_dir.display()
     );
 }

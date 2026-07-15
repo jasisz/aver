@@ -1468,6 +1468,15 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
         "json certificate KPI denominator changed:
 {compile_report}"
     );
+    let verify_hint = format!(
+        "verify: aver cert verify {} {}",
+        out_dir.join("json.wasm").display(),
+        out_dir.join("cert").display()
+    );
+    assert!(
+        compile_report.contains(&verify_hint),
+        "compile should print a copyable verifier command:\n{compile_report}"
+    );
 
     let wasm = out_dir.join("json.wasm");
     let cert = out_dir.join("cert");

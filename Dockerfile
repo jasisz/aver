@@ -35,10 +35,12 @@ COPY Cargo.toml Cargo.lock build.rs ./
 COPY aver-memory ./aver-memory
 COPY aver-rt ./aver-rt
 COPY aver-lsp ./aver-lsp
+COPY aver-cert ./aver-cert
 COPY src ./src
 COPY benches ./benches
 
-RUN cargo build --bin aver
+RUN cargo build --bin aver --features wasm && \
+    cargo build -p aver-cert --bin aver-cert
 
 FROM --platform=linux/amd64 debian:bookworm-slim AS runtime
 
@@ -56,8 +58,10 @@ COPY --from=builder /opt/elan /opt/elan
 COPY --from=builder /opt/dafny-install /opt/dafny-install
 COPY --from=builder /opt/dafny /opt/dafny
 COPY --from=builder /work/target/debug/aver /usr/local/bin/aver
+COPY --from=builder /work/target/debug/aver-cert /usr/local/bin/aver-cert
 COPY examples/core/hello.av ./examples/core/hello.av
 COPY examples/formal/validated_wrapper_law.av ./examples/formal/validated_wrapper_law.av
+COPY examples/certification/add_one.av ./examples/certification/add_one.av
 
 RUN set -eux; \
     lean --version; \
@@ -65,6 +69,9 @@ RUN set -eux; \
     dafny --version; \
     aver run examples/core/hello.av; \
     rm -rf /tmp/aver-proof-smoke-build; \
-    aver proof examples/formal/validated_wrapper_law.av --backend lean --check -o /tmp/aver-proof-smoke-build
+    aver proof examples/formal/validated_wrapper_law.av --backend lean --check -o /tmp/aver-proof-smoke-build; \
+    rm -rf /tmp/aver-cert-smoke-build; \
+    aver compile examples/certification/add_one.av --target wasm-gc --certify -o /tmp/aver-cert-smoke-build; \
+    aver-cert check /tmp/aver-cert-smoke-build/add_one.wasm /tmp/aver-cert-smoke-build/cert
 
-CMD ["sh", "-c", "aver run examples/core/hello.av && rm -rf /tmp/aver-proof-smoke-run && aver proof examples/formal/validated_wrapper_law.av --backend lean --check -o /tmp/aver-proof-smoke-run"]
+CMD ["sh", "-c", "aver run examples/core/hello.av && rm -rf /tmp/aver-proof-smoke-run /tmp/aver-cert-smoke-run && aver proof examples/formal/validated_wrapper_law.av --backend lean --check -o /tmp/aver-proof-smoke-run && aver compile examples/certification/add_one.av --target wasm-gc --certify -o /tmp/aver-cert-smoke-run && aver-cert check /tmp/aver-cert-smoke-run/add_one.wasm /tmp/aver-cert-smoke-run/cert"]
