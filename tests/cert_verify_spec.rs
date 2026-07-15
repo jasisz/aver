@@ -859,9 +859,17 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         let mf = dir.join("cert").join("cert-manifest.json");
         let mut m: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["certified"].as_array_mut().unwrap().push(serde_json::json!({
-            "name": "phantom", "class": "straight-line", "policy": "simulatesModel", "level": "L1"
-        }));
+        m["certified"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "name": "phantom",
+                "class": "straight-line",
+                "policy": "simulatesModel",
+                "level": "L1",
+                "dom": "List Int",
+                "cod": "Int"
+            }));
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
         let (ok, out) = aver_verify(&dir.join("certprobe2.wasm"), &dir.join("cert"));
         assert!(!ok, "JSON claiming an extra export must fail (j):\n{out}");
