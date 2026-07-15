@@ -28,6 +28,7 @@ Verify it directly with the standalone checker:
 
 ```bash
 aver-cert verify out/app.wasm out/cert
+aver-cert check out/app.wasm out/cert
 aver-cert explain out/app.wasm out/cert
 ```
 
@@ -36,6 +37,7 @@ through:
 
 ```bash
 aver cert verify out/app.wasm out/cert
+aver cert check out/app.wasm out/cert
 aver cert explain out/app.wasm out/cert
 ```
 
@@ -49,7 +51,13 @@ complete check passes. `explain` first performs that same check, then prints
 the accepted exports, policies, semantic faces, runtime contracts, and the
 explicitly declined surface.
 
-## What a successful check means
+`check` is an explicitly weaker developer/CI preflight. It performs the same
+Rust gates, `lake build`, and fresh checker-witness elaboration, but trusts
+local `.olean` imports and skips the final `leanchecker --fresh` whole-closure
+replay. It reports `CHECKED`, never `CERTIFIED`; do not use it as a release or
+admission gate.
+
+## What a successful certification means
 
 The public proof root is:
 

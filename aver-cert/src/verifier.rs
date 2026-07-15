@@ -19,6 +19,7 @@ const AXIOM_WHITELIST: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"]
 const CHECKED_ROOT: &str = "AverCertChecker.checked";
 const MAX_CANDIDATE_LEN: usize = 200;
 const TOOLCHAIN_ROOTS: [&str; 4] = ["Init", "Lake", "Lean", "Std"];
+const FRESH_REPLAY_ARGS: [&str; 4] = ["env", "leanchecker", "--fresh", "CheckerWitness"];
 
 /// Emitted on a green verdict. All trust-bearing byte facts and claim metadata
 /// are checked by the embedded Lean wall; Rust performs no parallel verdict
@@ -55,10 +56,26 @@ pub enum Verdict {
     NoExports(String),
 }
 
+/// Developer preflight result. A green value means the checker-owned witness
+/// elaborated successfully while trusting the local Lake `.olean` graph. It is
+/// deliberately distinct from [`Verdict`]: only [`verify`] performs the final
+/// fresh-environment replay required for certification.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CheckVerdict {
+    Checked { summary: String, faces: Vec<String> },
+    NoExports(String),
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Explanation {
     Certified,
     NoExports,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReplayMode {
+    Fresh,
+    TrustBuiltOleans,
 }
 
 struct CertifiedExport {
@@ -104,7 +121,45 @@ struct Candidates {
 }
 
 pub fn verify(artifact: &Path, cert_dir: &Path) -> Result<Verdict, String> {
-    let report = trusted_check(artifact, cert_dir)?;
+    let report = trusted_check(artifact, cert_dir, ReplayMode::Fresh)?;
+    let summary = summarize_report(artifact, report, "certified");
+    if summary.count == 0 {
+        Ok(Verdict::NoExports(summary.text))
+    } else {
+        Ok(Verdict::Certified {
+            summary: summary.text,
+            faces: summary.faces,
+        })
+    }
+}
+
+/// Fast developer/CI preflight which trusts locally built or explicitly
+/// cached `.olean` imports. Rust validation, `lake build`, and fresh
+/// elaboration of the checker-owned witness still run; only the final
+/// `leanchecker --fresh` whole-closure replay is omitted.
+///
+/// This function cannot produce [`Verdict::Certified`]. Release and admission
+/// gates must use [`verify`].
+pub fn check(artifact: &Path, cert_dir: &Path) -> Result<CheckVerdict, String> {
+    let report = trusted_check(artifact, cert_dir, ReplayMode::TrustBuiltOleans)?;
+    let summary = summarize_report(artifact, report, "checked");
+    if summary.count == 0 {
+        Ok(CheckVerdict::NoExports(summary.text))
+    } else {
+        Ok(CheckVerdict::Checked {
+            summary: summary.text,
+            faces: summary.faces,
+        })
+    }
+}
+
+struct ReportSummary {
+    text: String,
+    faces: Vec<String>,
+    count: usize,
+}
+
+fn summarize_report(artifact: &Path, report: TrustedReport, status: &'static str) -> ReportSummary {
     let count = report.exports.len();
     let has_total = report
         .exports
@@ -119,33 +174,38 @@ pub fn verify(artifact: &Path, cert_dir: &Path) -> Result<Verdict, String> {
         (false, true) => "L3",
         _ => "L1",
     };
-    let summary = format!(
-        "{} ({} certified export{}, level {})",
+    let text = format!(
+        "{} ({} {status} export{}, level {})",
         artifact.display(),
         count,
         if count == 1 { "" } else { "s" },
         level,
     );
-    if count == 0 {
-        Ok(Verdict::NoExports(summary))
-    } else {
-        Ok(Verdict::Certified {
-            summary,
-            faces: report
-                .exports
-                .into_iter()
-                .map(|export| {
-                    format!(
-                        "{}  policy: {}  {}",
-                        export.name, export.policy, export.face
-                    )
-                })
-                .collect(),
+    let faces = report
+        .exports
+        .into_iter()
+        .map(|export| {
+            format!(
+                "{}  policy: {}  {}",
+                export.name, export.policy, export.face
+            )
         })
+        .collect();
+    ReportSummary { text, faces, count }
+}
+
+fn kernel_replay_args(mode: ReplayMode) -> Option<&'static [&'static str]> {
+    match mode {
+        ReplayMode::Fresh => Some(&FRESH_REPLAY_ARGS),
+        ReplayMode::TrustBuiltOleans => None,
     }
 }
 
-fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, String> {
+fn trusted_check(
+    artifact: &Path,
+    cert_dir: &Path,
+    replay_mode: ReplayMode,
+) -> Result<TrustedReport, String> {
     let bytes = std::fs::read(artifact)
         .map_err(|error| format!("cannot read artifact {}: {error}", artifact.display()))?;
     // Artifact acceptance reasons about a valid WebAssembly module. The Lean
@@ -260,15 +320,14 @@ fn trusted_check(artifact: &Path, cert_dir: &Path) -> Result<TrustedReport, Stri
             tail(&elaborated.combined, 30)
         ));
     }
-    let replayed = run_lake(
-        &build.path,
-        &["env", "leanchecker", "--fresh", "CheckerWitness"],
-    )?;
-    if !replayed.status.success() {
-        return Err(format!(
-            "certificate failed fresh-environment kernel replay:\n{}",
-            tail(&replayed.combined, 30)
-        ));
+    if let Some(replay_args) = kernel_replay_args(replay_mode) {
+        let replayed = run_lake(&build.path, replay_args)?;
+        if !replayed.status.success() {
+            return Err(format!(
+                "certificate failed fresh-environment kernel replay:\n{}",
+                tail(&replayed.combined, 30)
+            ));
+        }
     }
 
     let exports = candidates
@@ -923,7 +982,7 @@ fn display_safe(value: &str) -> String {
 }
 
 pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> {
-    let report = trusted_check(artifact, cert_dir)?;
+    let report = trusted_check(artifact, cert_dir, ReplayMode::Fresh)?;
     println!("{}", "Artifact certificate".bold());
     println!("  artifact: {}", artifact.display());
     println!("  pinned sha256: {}", report.artifact_hash);
@@ -990,5 +1049,14 @@ mod tests {
         let rendered = wall::render_artifact_bytes(&[0x00, 0x61, 0x73, 0x6d]);
         assert!(rendered.contains("def modBytes : Nat := 0x6d736100"));
         assert!(rendered.contains("def modLen : Nat := 4"));
+    }
+
+    #[test]
+    fn strict_and_trusted_olean_modes_differ_only_at_fresh_replay_dispatch() {
+        assert_eq!(
+            kernel_replay_args(ReplayMode::Fresh),
+            Some(FRESH_REPLAY_ARGS.as_slice())
+        );
+        assert_eq!(kernel_replay_args(ReplayMode::TrustBuiltOleans), None);
     }
 }

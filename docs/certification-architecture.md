@@ -113,6 +113,13 @@ detect accidental corruption, not an active writer able to replace `.olean`
 outputs, Lake traces, and the manifest together. Package-supplied caches remain
 ignored.
 
+The separate `aver cert check` developer preflight runs steps 1–10 but omits
+step 11. It therefore trusts the locally built or explicitly cached `.olean`
+graph and emits `CHECKED`, not `CERTIFIED`. The checker-owned witness is still
+written and elaborated after cache restoration on every invocation, so the
+report pins and axiom whitelist continue to run. This mode is suitable for
+inner-loop and source/manifest tamper tests, never for release or admission.
+
 ## Why one Rust Wasm validator remains
 
 The Lean wall decodes and binds every byte fact used by an admitted claim, but

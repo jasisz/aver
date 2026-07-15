@@ -1,9 +1,9 @@
 //! Opt-in cache for the artifact-independent Lean acceptance wall.
 //!
-//! The cache is only a build hint. The verifier still stages every source,
-//! runs `lake build`, authors a fresh witness, and finishes with
-//! `leanchecker --fresh`. Any cache failure removes the copied build tree so
-//! the verifier can retry from freshly staged sources.
+//! The cache is only a build hint. Every path still stages each source, runs
+//! `lake build`, and authors a fresh witness; strict `verify` additionally
+//! finishes with `leanchecker --fresh`. Any cache failure removes the copied
+//! build tree so the verifier can retry from freshly staged sources.
 //!
 //! The configured directory is trusted local state. Its integrity manifest
 //! detects accidental corruption, not an active writer able to replace both

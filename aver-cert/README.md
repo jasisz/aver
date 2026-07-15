@@ -25,14 +25,19 @@ Given a module produced with
 
 ```bash
 aver-cert verify out/app.wasm out/cert
+aver-cert check out/app.wasm out/cert
 aver-cert explain out/app.wasm out/cert
 aver-cert inspect out/app.wasm out/cert
 ```
 
 `verify` exits zero only when at least one export is certified and the full
-Lean check succeeds. `explain` performs the same trusted check before printing
-the accepted semantic faces, policies, contracts, and declined exports.
-`inspect` is an alias of `explain`.
+Lean check succeeds. `check` is a faster developer/CI preflight: it performs
+the same Rust gates, `lake build`, and fresh checker-witness elaboration, but
+trusts local `.olean` imports and skips `leanchecker --fresh`. Its green output
+is `CHECKED`, never `CERTIFIED`, and it must not gate a release or admission.
+`explain` performs the same trusted check as `verify` before printing the
+accepted semantic faces, policies, contracts, and declined exports. `inspect`
+is an alias of `explain`.
 
 Installing `aver-lang` adds the process-level shortcut:
 
@@ -71,6 +76,11 @@ artifact-independent wall output. These directories become trusted local state:
 their manifests detect accidental corruption, not an active writer able to
 replace both `.olean` files and Lake traces. Package-supplied caches are always
 ignored, and neither cache skips the mandatory trusted checks.
+
+Developer preflight with `check` deliberately has a weaker trust boundary: it
+omits only the final fresh replay and therefore trusts the locally built or
+explicitly cached `.olean` graph. It still writes and elaborates a fresh
+checker-owned witness on every run, including the report pins and axiom guard.
 
 See the [certificate guide](../docs/certification.md) and
 [architecture](../docs/certification-architecture.md) for the guarantee and

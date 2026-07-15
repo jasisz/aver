@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use aver_cert::{Explanation, Verdict};
+use aver_cert::{CheckVerdict, Explanation, Verdict};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 
@@ -23,6 +23,12 @@ enum Command {
         /// The wasm-gc module the certificate is about.
         artifact: PathBuf,
         /// The emitted `cert/` directory.
+        cert_dir: PathBuf,
+    },
+    /// Fast developer preflight. Trusts local `.olean` imports and does not
+    /// produce a certification verdict.
+    Check {
+        artifact: PathBuf,
         cert_dir: PathBuf,
     },
     /// Human-readable report backed by the same trusted check as `verify`.
@@ -60,6 +66,32 @@ fn main() -> ExitCode {
             }
             Err(reason) => {
                 eprintln!("{} {}", "DECLINED".red().bold(), reason);
+                ExitCode::FAILURE
+            }
+        },
+        Command::Check { artifact, cert_dir } => match aver_cert::check(&artifact, &cert_dir) {
+            Ok(CheckVerdict::Checked { summary, faces }) => {
+                println!("{} {}", "CHECKED".cyan().bold(), summary);
+                println!(
+                    "  trusted-olean developer preflight; fresh-environment replay was skipped"
+                );
+                for face in faces {
+                    println!("  {face}");
+                }
+                ExitCode::SUCCESS
+            }
+            Ok(CheckVerdict::NoExports(summary)) => {
+                eprintln!(
+                    "{} {}",
+                    "NO CHECKED EXPORTS (developer preflight only, no behavioral claims)"
+                        .yellow()
+                        .bold(),
+                    summary
+                );
+                ExitCode::FAILURE
+            }
+            Err(reason) => {
+                eprintln!("{} {}", "CHECK FAILED".red().bold(), reason);
                 ExitCode::FAILURE
             }
         },

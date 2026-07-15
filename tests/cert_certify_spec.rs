@@ -53,14 +53,14 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
     }
 }
 
-fn verify_certificate(wasm: &std::path::Path, cert_dir: &std::path::Path) -> (bool, String) {
+fn check_certificate(wasm: &std::path::Path, cert_dir: &std::path::Path) -> (bool, String) {
     let output = aver_command()
         .arg("cert")
-        .arg("verify")
+        .arg("check")
         .arg(wasm)
         .arg(cert_dir)
         .output()
-        .expect("expected `aver cert verify` to run");
+        .expect("expected `aver cert check` to run");
     (
         output.status.success(),
         format!(
@@ -1245,10 +1245,14 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
 
     let wasm = out_dir.join("cert_goals.wasm");
     let cert = out_dir.join("cert");
-    let (clean_ok, clean_report) = verify_certificate(&wasm, &cert);
+    let (clean_ok, clean_report) = check_certificate(&wasm, &cert);
     assert!(
         clean_ok,
-        "hostile-model baseline must first certify:\n{clean_report}"
+        "hostile-model baseline must first pass trusted-olean preflight:\n{clean_report}"
+    );
+    assert!(
+        clean_report.contains("CHECKED") && !clean_report.contains("CERTIFIED"),
+        "developer preflight must never emit the certification verdict:\n{clean_report}"
     );
     let build_green = temp_dir("certify-hostile-mutual-build-green");
     copy_dir_all(&out_dir, &build_green);
@@ -1278,10 +1282,9 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
         "expr-fragment hostile regression must leave the manifest model reference untouched"
     );
 
-    let (ok, report) =
-        verify_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+    let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
     assert!(
-        !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+        !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
         "wrong generated expr-fragment model definition must fail its emitted bridge and be DECLINED:\n{report}"
     );
     let _ = std::fs::remove_dir_all(&tampered);
@@ -1311,9 +1314,9 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
         std::fs::write(&manifest, edited).unwrap();
 
         let (ok, report) =
-            verify_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+            check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
         assert!(
-            !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+            !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
             "wrong {label} model must make its emitted bridge fail and be DECLINED:\n{report}"
         );
         let _ = std::fs::remove_dir_all(&tampered);
@@ -1337,10 +1340,9 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
         "construct hostile regression must leave the manifest model reference untouched"
     );
 
-    let (ok, report) =
-        verify_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+    let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
     assert!(
-        !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+        !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
         "wrong generated construct model definition must fail its emitted bridge and be DECLINED:\n{report}"
     );
     let _ = std::fs::remove_dir_all(&tampered);
@@ -1374,9 +1376,9 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
         );
 
         let (ok, report) =
-            verify_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+            check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
         assert!(
-            !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+            !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
             "wrong generated {name} definition must fail the mutual semantic bridge and be DECLINED:\n{report}"
         );
         let _ = std::fs::remove_dir_all(&tampered);
@@ -1400,10 +1402,9 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
         "recursion hostile regression must leave the manifest model reference untouched"
     );
 
-    let (ok, report) =
-        verify_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+    let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
     assert!(
-        !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+        !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
         "wrong generated recursion model definition must fail its emitted bridge and be DECLINED:\n{report}"
     );
     let _ = std::fs::remove_dir_all(&tampered);
@@ -1751,10 +1752,9 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
         );
         std::fs::write(&model, edited).unwrap();
 
-        let (ok, report) =
-            verify_certificate(&tampered.join("recgen.wasm"), &tampered.join("cert"));
+        let (ok, report) = check_certificate(&tampered.join("recgen.wasm"), &tampered.join("cert"));
         assert!(
-            !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+            !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
             "wrong generated {name} definition must be caught by its semantic bridge:\n{report}"
         );
         let _ = std::fs::remove_dir_all(&tampered);
@@ -1782,10 +1782,9 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
         );
         std::fs::write(&certificate, edited).unwrap();
 
-        let (ok, report) =
-            verify_certificate(&tampered.join("recgen.wasm"), &tampered.join("cert"));
+        let (ok, report) = check_certificate(&tampered.join("recgen.wasm"), &tampered.join("cert"));
         assert!(
-            !ok && report.contains("DECLINED") && !report.contains("CERTIFIED"),
+            !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
             "wrong {name} must be constrained by the bridge/parsed byte shape:\n{report}"
         );
         let _ = std::fs::remove_dir_all(&tampered);
