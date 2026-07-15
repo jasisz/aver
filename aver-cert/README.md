@@ -15,8 +15,10 @@ cargo install aver-cert
 ```
 
 Verification uses the checker-pinned `leanprover/lean4:v4.32.0` toolchain.
-`lake`, `lean`, and `leanchecker` must therefore be available through the Lean
-toolchain manager.
+It requires a standard Elan installation at `$ELAN_HOME/bin/elan` (or
+`$HOME/.elan/bin/elan` when `ELAN_HOME` is unset). The verifier invokes that
+canonical executable directly and deliberately does not resolve its trusted
+`lake`, `lean`, or `leanchecker` subprocesses through `PATH`.
 
 ## Commands
 

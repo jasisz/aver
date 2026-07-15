@@ -10,14 +10,14 @@
 //! `.olean` outputs and Lake traces. With no environment variable, the strict
 //! path uses no prelude cache.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
-
 use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
 
+use crate::lean_process::LeanRunner;
 use crate::wall::Wall;
 
 const CACHE_ENV: &str = "AVER_CERT_PRELUDE_CACHE";
+const CACHE_LAYOUT_VERSION: &str = "v2-hermetic-env";
 
 pub(crate) struct PristineWallCache {
     entry: Option<PathBuf>,
@@ -25,7 +25,7 @@ pub(crate) struct PristineWallCache {
 }
 
 impl PristineWallCache {
-    pub(crate) fn prepare(build_dir: &Path, wall: &Wall) -> Self {
+    pub(crate) fn prepare(build_dir: &Path, wall: &Wall, lean: &LeanRunner) -> Self {
         let Some(store) = cache_store() else {
             return Self::disabled();
         };
@@ -38,7 +38,7 @@ impl PristineWallCache {
             Err(()) => {
                 let _ = std::fs::remove_dir_all(build_dir.join(".lake"));
                 let _ = std::fs::remove_dir_all(&entry);
-                populate(&store, &entry, &key, &files).is_ok()
+                populate(&store, &entry, &key, &files, lean).is_ok()
                     && try_reuse(&entry, build_dir, &key).is_ok()
             }
         };
@@ -128,6 +128,7 @@ fn checker_lakefile(roots: &[&str]) -> String {
 /// lakefile binds the pristine root set, and `lean-toolchain` binds Lean.
 fn static_wall_key(files: &[(String, Vec<u8>)]) -> String {
     let mut hasher = Sha256::new();
+    hasher.update(CACHE_LAYOUT_VERSION.as_bytes());
     for (name, bytes) in files {
         hasher.update((name.len() as u64).to_be_bytes());
         hasher.update(name.as_bytes());
@@ -137,7 +138,13 @@ fn static_wall_key(files: &[(String, Vec<u8>)]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn populate(store: &Path, entry: &Path, key: &str, files: &[(String, Vec<u8>)]) -> Result<(), ()> {
+fn populate(
+    store: &Path,
+    entry: &Path,
+    key: &str,
+    files: &[(String, Vec<u8>)],
+    lean: &LeanRunner,
+) -> Result<(), ()> {
     std::fs::create_dir_all(store).map_err(|_| ())?;
     let temp = store.join(format!("tmp-{}-{}", std::process::id(), unique_nanos()));
     std::fs::create_dir(&temp).map_err(|_| ())?;
@@ -146,11 +153,7 @@ fn populate(store: &Path, entry: &Path, key: &str, files: &[(String, Vec<u8>)]) 
         for (name, bytes) in files {
             std::fs::write(temp.join(name), bytes).map_err(|_| ())?;
         }
-        let built = Command::new("lake")
-            .current_dir(&temp)
-            .arg("build")
-            .output()
-            .map_err(|_| ())?;
+        let built = lean.run_lake(&temp, &["build"]).map_err(|_| ())?;
         if !built.status.success() || !temp.join(".lake").is_dir() {
             return Err(());
         }

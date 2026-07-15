@@ -162,6 +162,11 @@ axiom closure.
 `leanchecker --fresh` protects the final replay from declarations retained in
 the preceding elaboration environment. It is part of the same Lean toolchain,
 not a separately implemented or independently distributed kernel checker.
+The canonical Elan installation directory is a local trust anchor. Every Lake,
+Lean, and leanchecker subprocess otherwise starts with a cleared environment,
+an exact toolchain argument, disabled implicit Lake caches, and checker-owned
+temporary paths; ambient Lean/Lake search paths and toolchain overrides are not
+forwarded.
 
 Some source meaning cannot be reconstructed from WebAssembly alone. In
 particular, ADT domain/representation and model declarations remain explicit

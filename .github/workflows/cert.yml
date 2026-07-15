@@ -6,17 +6,19 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   cert-kernel:
-    # One job per certification suite, and the long verify suite is further
-    # sharded across four runners (tests are independent; each spawns its own
-    # kernel build), so wall-clock is bounded by the slowest single test rather
-    # than the whole suite. Shared toolchain setup is duplicated per matrix leg
-    # but runs in parallel.
-    name: Cert Kernel (${{ matrix.suite }}${{ matrix.partition && format(' {0}', matrix.partition) || '' }})
+    # The two sequential verify monster tests get dedicated runners. The
+    # complement is slice-partitioned, so each verify test is selected exactly
+    # once. The one certify monster test is isolated from its complement.
+    name: Cert Kernel (${{ matrix.suite }}${{ matrix.lane && format(' {0}', matrix.lane) || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -24,15 +26,50 @@ jobs:
       matrix:
         include:
           - suite: cert_certify_spec
+            lane: hostile-models
+            mode: nextest
+            filter: 'test(=cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutual_models)'
+            partition: 1/1
+          - suite: cert_certify_spec
+            lane: rest
+            mode: nextest
+            filter: 'not test(=cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutual_models)'
+            partition: 1/1
           - suite: cert_decode_spec
+            lane: ''
+            mode: cargo
           - suite: cert_whole_module_guard_iso
+            lane: ''
+            mode: cargo
           - suite: cert_verify_spec
+            lane: tripwires
+            mode: nextest
+            filter: 'test(=cert_verify_accepts_and_tripwires_fail_closed)'
+            partition: 1/1
+          - suite: cert_verify_spec
+            lane: plans-authority
+            mode: nextest
+            filter: 'test(=cert_verify_uses_plans_lean_as_the_only_plan_data)'
+            partition: 1/1
+          - suite: cert_verify_spec
+            lane: rest-1/4
+            mode: nextest
+            filter: 'not (test(=cert_verify_accepts_and_tripwires_fail_closed) or test(=cert_verify_uses_plans_lean_as_the_only_plan_data))'
             partition: 1/4
           - suite: cert_verify_spec
+            lane: rest-2/4
+            mode: nextest
+            filter: 'not (test(=cert_verify_accepts_and_tripwires_fail_closed) or test(=cert_verify_uses_plans_lean_as_the_only_plan_data))'
             partition: 2/4
           - suite: cert_verify_spec
+            lane: rest-3/4
+            mode: nextest
+            filter: 'not (test(=cert_verify_accepts_and_tripwires_fail_closed) or test(=cert_verify_uses_plans_lean_as_the_only_plan_data))'
             partition: 3/4
           - suite: cert_verify_spec
+            lane: rest-4/4
+            mode: nextest
+            filter: 'not (test(=cert_verify_accepts_and_tripwires_fail_closed) or test(=cert_verify_uses_plans_lean_as_the_only_plan_data))'
             partition: 4/4
     env:
       CARGO_BUILD_JOBS: '2'
@@ -72,14 +109,15 @@ jobs:
           sudo mv /tmp/wasm-tools-1.246.2-x86_64-linux/wasm-tools /usr/local/bin/wasm-tools
           wasm-tools --version
 
-      - name: Verify `lake` reachable
+      - name: Verify pinned `lake` reachable
         run: |
+          toolchain="$(tr -d '\r\n' < aver-cert/assets/wall/current/lean-toolchain)"
           for attempt in 1 2 3 4 5 6; do
-            if lake --version; then exit 0; fi
-            echo "::warning::lake/toolchain fetch failed (attempt ${attempt}/6); retrying in 15s"
+            if elan run --install "$toolchain" lake --version; then exit 0; fi
+            echo "::warning::pinned lake/toolchain fetch failed (attempt ${attempt}/6); retrying in 15s"
             sleep 15
           done
-          echo "::error::lake unreachable after 6 attempts (toolchain download)"
+          echo "::error::pinned lake unreachable after 6 attempts (toolchain download)"
           exit 1
 
       - name: Cache prebuilt prelude store
@@ -90,22 +128,32 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/aver-cert-prelude-store
-          key: prelude-store-${{ runner.os }}-${{ hashFiles('aver-cert/assets/wall/current/**', 'aver-cert/src/verifier.rs') }}
+          key: prelude-store-${{ runner.os }}-${{ hashFiles('aver-cert/assets/wall/current/**', 'aver-cert/src/verifier.rs', 'aver-cert/src/prelude_cache.rs', 'aver-cert/src/lean_process.rs') }}
 
       - name: Install nextest
-        if: matrix.partition != ''
+        if: matrix.mode == 'nextest'
         uses: taiki-e/install-action@nextest
 
       - name: Build standalone certificate verifier
         run: cargo build -p aver-cert --bin aver-cert
 
+      - name: Verify hostile Lean search paths are isolated
+        if: matrix.suite == 'cert_decode_spec'
+        env:
+          AVER_CERT_REQUIRE_PINNED_LEAN: '1'
+        run: >-
+          cargo test -p aver-cert --lib --features verify
+          lean_process::tests::hostile_lean_path_olean_is_not_visible -- --exact
+
       - name: Run certification suite
-        if: matrix.partition == ''
+        if: matrix.mode == 'cargo'
         run: cargo test -p aver-lang --features wasm --test ${{ matrix.suite }}
 
-      - name: Run certification suite shard
-        # The verify tests are independent (each builds its own temp cert
-        # project), so count-partitioning across runners is safe; every test
-        # runs in exactly one shard.
-        if: matrix.partition != ''
-        run: cargo nextest run -p aver-lang --features wasm --test ${{ matrix.suite }} --partition count:${{ matrix.partition }}
+      - name: Run certification suite lane
+        # Filtering happens before slice partitioning. Each exact monster-test
+        # filter and its suite-specific complement are disjoint and exhaustive.
+        if: matrix.mode == 'nextest'
+        run: >-
+          cargo nextest run -p aver-lang --features wasm --test ${{ matrix.suite }}
+          -E '${{ matrix.filter }}'
+          --partition slice:${{ matrix.partition }}

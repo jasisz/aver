@@ -14,7 +14,9 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 const CACHE_ENV: &str = "AVER_CERT_DATA_CACHE";
-const CACHE_LAYOUT_VERSION: &str = "v1";
+// Do not reuse outputs produced before Lean subprocesses had a cleared,
+// exact-toolchain environment.
+const CACHE_LAYOUT_VERSION: &str = "v2-hermetic-env";
 
 pub(crate) struct KeyMaterial<'a> {
     pub schema_version: u64,

@@ -7,13 +7,13 @@
 //! termination witness, host table, and runtime contracts.
 
 use crate::cache::{ArtifactBuildCache, KeyMaterial as ArtifactCacheKeyMaterial};
+use crate::lean_process::LeanRunner;
 use crate::prelude_cache::PristineWallCache;
 use crate::{format, wall};
 use colored::Colorize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const AXIOM_WHITELIST: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"];
 const CHECKED_ROOT: &str = "AverCertChecker.checked";
@@ -265,6 +265,7 @@ fn trusted_check(
 
     let candidates = read_candidates(&manifest)?;
     let build = assemble_build(cert_dir, &bytes, selected_wall)?;
+    let lean = LeanRunner::new(selected_wall.toolchain)?;
     let cache_pins = [("wasm_sha256", pinned_hash), ("wall_id", wall_id)];
     let mut cache = ArtifactBuildCache::prepare(
         &build.path,
@@ -278,17 +279,17 @@ fn trusted_check(
     let mut wall_cache = if data_cache_hit {
         PristineWallCache::disabled()
     } else {
-        PristineWallCache::prepare(&build.path, selected_wall)
+        PristineWallCache::prepare(&build.path, selected_wall, &lean)
     };
 
-    let mut data_build = run_lake(&build.path, &["build"])?;
+    let mut data_build = run_lake(&lean, &build.path, &["build"])?;
     if !data_build.status.success() && (data_cache_hit || wall_cache.was_seeded()) {
         if data_cache_hit {
             cache.invalidate(&build.path);
         } else {
             wall_cache.clear_build(&build.path);
         }
-        data_build = run_lake(&build.path, &["build"])?;
+        data_build = run_lake(&lean, &build.path, &["build"])?;
         if data_build.status.success() && wall_cache.was_seeded() {
             wall_cache.evict();
         }
@@ -305,6 +306,7 @@ fn trusted_check(
     std::fs::write(build.path.join("CheckerWitness.lean"), witness)
         .map_err(|error| format!("cannot write checker witness: {error}"))?;
     let elaborated = run_lake(
+        &lean,
         &build.path,
         &[
             "env",
@@ -321,7 +323,7 @@ fn trusted_check(
         ));
     }
     if let Some(replay_args) = kernel_replay_args(replay_mode) {
-        let replayed = run_lake(&build.path, replay_args)?;
+        let replayed = run_lake(&lean, &build.path, replay_args)?;
         if !replayed.status.success() {
             return Err(format!(
                 "certificate failed fresh-environment kernel replay:\n{}",
@@ -913,14 +915,52 @@ struct BuildDir {
 
 impl BuildDir {
     fn new() -> Result<Self, String> {
-        let path = std::env::temp_dir().join(format!(
+        let path = checker_temp_root()?.join(format!(
             "aver-cert-check-{}-{}",
             std::process::id(),
             unique_nanos()
         ));
-        std::fs::create_dir(&path)
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder
+            .create(&path)
             .map_err(|error| format!("cannot create checker build dir: {error}"))?;
         Ok(Self { path })
+    }
+}
+
+fn checker_temp_root() -> Result<PathBuf, String> {
+    #[cfg(unix)]
+    {
+        Ok(PathBuf::from("/tmp"))
+    }
+    #[cfg(windows)]
+    {
+        let home = std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .ok_or_else(|| {
+                "cannot select checker temp root: USERPROFILE/HOME is not set".to_string()
+            })?;
+        let root = PathBuf::from(home)
+            .join("AppData")
+            .join("Local")
+            .join("Temp");
+        std::fs::create_dir_all(&root)
+            .map_err(|error| format!("cannot create checker temp root: {error}"))?;
+        Ok(root)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let home = std::env::var_os("HOME")
+            .ok_or_else(|| "cannot select checker temp root: HOME is not set".to_string())?;
+        let root = PathBuf::from(home).join(".aver-cert-tmp");
+        std::fs::create_dir_all(&root)
+            .map_err(|error| format!("cannot create checker temp root: {error}"))?;
+        Ok(root)
     }
 }
 
@@ -942,17 +982,13 @@ struct LakeOut {
     combined: String,
 }
 
-fn run_lake(build_dir: &Path, arguments: &[&str]) -> Result<LakeOut, String> {
-    let output = Command::new("lake")
-        .current_dir(build_dir)
-        .args(arguments)
-        .output()
-        .map_err(|error| {
-            format!(
-                "could not run `lake {}`: {error} (is Lean/lake installed?)",
-                arguments.join(" ")
-            )
-        })?;
+fn run_lake(lean: &LeanRunner, build_dir: &Path, arguments: &[&str]) -> Result<LakeOut, String> {
+    let output = lean.run_lake(build_dir, arguments).map_err(|error| {
+        format!(
+            "could not run pinned `elan run … lake {}`: {error} (is Elan installed?)",
+            arguments.join(" ")
+        )
+    })?;
     Ok(LakeOut {
         status: output.status,
         combined: format!(

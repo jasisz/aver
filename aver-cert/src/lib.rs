@@ -18,6 +18,8 @@ pub use engine::*;
 #[cfg(feature = "verify")]
 mod cache;
 #[cfg(feature = "verify")]
+mod lean_process;
+#[cfg(feature = "verify")]
 mod prelude_cache;
 #[cfg(feature = "verify")]
 mod verifier;

@@ -54,7 +54,10 @@ cargo install aver-cert
 independent certificate verifier used by `aver cert`; keep both executables in
 the same directory or on `PATH`. The verifier starts its own public version
 line at `0.1.0` rather than sharing the `aver-lang` version, and checks
-certificates with the pinned Lean 4.32 toolchain.
+certificates with the pinned Lean 4.32 toolchain. Certificate verification
+requires a standard Elan installation at `$ELAN_HOME/bin/elan` (or
+`$HOME/.elan/bin/elan` when `ELAN_HOME` is unset); the verifier deliberately
+does not resolve its trusted Lean subprocesses through `PATH`.
 
 Then try it with a tiny file:
 
