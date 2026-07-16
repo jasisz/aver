@@ -286,6 +286,44 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
     contracts
 }
 
+#[cfg(test)]
+mod analysis_without_box_helper_tests {
+    /// A valid module WITHOUT the `__rt_aint_from_i64` export must still
+    /// analyze end-to-end: `analyze` returns `Ok`, and the user export is
+    /// either certified by a carrier-free class or declared uncertified with a
+    /// readable reason — never a whole-module `Err` that aborts `--certify`.
+    #[test]
+    fn analyze_accepts_module_without_box_helper() {
+        let bytes = wat::parse_str(
+            r#"(module
+  (type $t (func (param i64) (result i64)))
+  (func $identity (type $t) local.get 0)
+  (export "identity" (func $identity))
+)"#,
+        )
+        .expect("no-box-helper module WAT parses");
+        let analysis = super::analyze(&bytes, &[])
+            .expect("a module without the Int box helper must analyze, not abort");
+        assert!(
+            analysis.frag_host_table.box_idx.is_none(),
+            "the host-role table must leave the box role unbound, never invent an index"
+        );
+        let certified = analysis.certified_names();
+        if !certified.contains(&"identity".to_string()) {
+            let reason = analysis
+                .declined()
+                .iter()
+                .find(|(name, _)| name == "identity")
+                .map(|(_, reason)| reason.as_str())
+                .expect("identity must be declared uncertified when it does not certify");
+            assert!(
+                reason.contains("__rt_aint_from_i64"),
+                "decline reason should name the missing Int carrier helpers, got: {reason}"
+            );
+        }
+    }
+}
+
 // These historical tests compile Aver source through the producer and cannot
 // live in the independent engine crate. Their end-to-end coverage remains in
 // aver-lang's certificate integration suites; engine-only tests are colocated

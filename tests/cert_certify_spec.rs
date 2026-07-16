@@ -2829,3 +2829,119 @@ fn certify_carrier_at_type_index_64_lake_builds_kernel_clean() {
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }
+
+#[test]
+fn certify_emits_declared_uncertified_package_for_module_without_int_helper() {
+    // No `lake` needed: this is a pure emitter no-abort check. hello.av has
+    // zero Int arithmetic, so its emitted module carries neither the Int
+    // carrier type nor the `__rt_aint_from_i64` box helper export. The
+    // certificate producer must still emit the `cert/` package with every
+    // export either certified or declared uncertified with a readable reason
+    // — never exit 1 with a whole-module error.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-no-int-helper");
+
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/core/hello.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    assert!(
+        compile.status.success(),
+        "compile --certify must not abort on a module without the Int box helper:\n{report}"
+    );
+    assert!(
+        !report.contains("module has no __rt_aint_from_i64 box helper"),
+        "the whole-module abort must be gone:\n{report}"
+    );
+    assert!(
+        out_dir.join("hello.wasm").is_file(),
+        "wasm artifact must be written"
+    );
+
+    let cert_dir = out_dir.join("cert");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    assert!(
+        cert_dir.join("Plans.lean").is_file(),
+        "the certificate package must be written next to the wasm artifact"
+    );
+
+    // Every module export appears either as certified or as declared
+    // uncertified with a non-empty human-readable reason.
+    let certified: BTreeSet<String> = manifest["certified"]
+        .as_array()
+        .expect("certified report is an array")
+        .iter()
+        .map(|c| c["name"].as_str().unwrap().to_string())
+        .collect();
+    let declared: BTreeMap<String, String> = manifest["declaredUncertified"]
+        .as_array()
+        .expect("declaredUncertified report is an array")
+        .iter()
+        .map(|entry| {
+            (
+                entry["name"]
+                    .as_str()
+                    .expect("entry has a name")
+                    .to_string(),
+                entry["reason"]
+                    .as_str()
+                    .expect("entry has a reason")
+                    .to_string(),
+            )
+        })
+        .collect();
+    for (name, reason) in &declared {
+        assert!(
+            !reason.trim().is_empty(),
+            "declared-uncertified export `{name}` must carry a readable reason"
+        );
+    }
+    for export in ["greet", "shout", "main"] {
+        assert!(
+            certified.contains(export) || declared.contains_key(export),
+            "export `{export}` must be certified or declared uncertified, got \
+             certified={certified:?} declared={declared:?}"
+        );
+    }
+
+    // hello.wasm has no Int carrier at all, so the integer-family classes can
+    // never match; the string-shaped exports decline with a reason that names
+    // the missing Int carrier helpers instead of the generic template list.
+    assert_eq!(
+        manifest["carrier_type_index"],
+        serde_json::Value::Null,
+        "hello.wasm must not declare an Int carrier type"
+    );
+    assert_eq!(
+        manifest["hostRoleTable"],
+        serde_json::json!({"box": null, "add": null, "mul": null, "sub": null}),
+        "every host role must stay unbound rather than inventing an index"
+    );
+    if !certified.contains("shout") {
+        let reason = declared
+            .get("shout")
+            .expect("shout must be declared uncertified when it does not certify");
+        assert!(
+            reason.contains("__rt_aint_from_i64"),
+            "shout's decline reason should name the missing Int carrier helpers, got: {reason}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}

@@ -1,6 +1,10 @@
 type DisasmResult = (
     Vec<UserFn>,
-    u32,
+    // Int box helper (`__rt_aint_from_i64`) export index. `None` when the
+    // module does not export it — a legal module shape (no Int arithmetic);
+    // every integer-family recognizer then declines fail-closed instead of
+    // aborting the whole analysis.
+    Option<u32>,
     std::collections::HashSet<u32>,
     Option<u32>,
     std::collections::HashMap<u32, HostRole>,
@@ -334,11 +338,14 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
             || name == "memory"
     };
 
+    // Int box helper, exact by export name. A module without Int arithmetic
+    // legitimately has no such export: keep it `None` so the integer-family
+    // recognizers never match (fail-closed decline per export), while the
+    // carrier-free classes still get their shot at certification.
     let box_idx = exports
         .iter()
         .find(|(n, _)| n == "__rt_aint_from_i64")
-        .map(|(_, i)| *i)
-        .ok_or_else(|| "module has no __rt_aint_from_i64 box helper".to_string())?;
+        .map(|(_, i)| *i);
 
     // user export name -> wasm func index
     let mut user_exports: Vec<(String, u32)> = exports
@@ -379,7 +386,8 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
     // fast path multiplies first. If the module
     // does not determine a UNIQUE candidate, the role stays unbound (`None`)
     // and every plan citing it declines fail-closed — never guess by index
-    // order. `box` is the exported `__rt_aint_from_i64`, exact by name. `sub`
+    // order. `box` is the exported `__rt_aint_from_i64`, exact by name
+    // (unbound when the module has no such export). `sub`
     // is derived exactly like `add` and `mul`, each with its own uniqueness
     // check. All four roles are surfaced to Lean and bound in the artifact.
     let frag_host_table = {
@@ -414,7 +422,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
             }
         };
         FragHostTable {
-            box_idx: Some(box_idx),
+            box_idx,
             add_idx: unique(strict_binop_candidates(FirstI64Arith::Add)),
             mul_idx: unique(strict_binop_candidates(FirstI64Arith::Mul)),
             sub_idx: unique(strict_binop_candidates(FirstI64Arith::Sub)),

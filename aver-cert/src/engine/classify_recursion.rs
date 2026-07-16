@@ -7,13 +7,16 @@
 /// parsed tree and a symbolic step evaluator; no full opcode sequence is pinned.
 fn recognize_fueled_recursion(
     f: &UserFn,
-    box_idx: u32,
+    box_idx: Option<u32>,
     carrier: Option<u32>,
     host_roles: &std::collections::HashMap<u32, HostRole>,
     model_ops: &std::collections::HashMap<String, char>,
 ) -> Option<Cert> {
     use Op::*;
     let carrier = carrier?;
+    // Both recognised shapes box a constant (base arm / descent), so a module
+    // without the box helper can never match — decline, don't guess.
+    let box_idx = box_idx?;
     if f.arity != 1 && f.arity != 2 {
         return None;
     }
@@ -249,13 +252,15 @@ fn recognize_mutual_member(
 /// the whole SCC (sorted by `self_idx` so the checker re-derives the same set).
 fn recognize_mutual_scc(
     f: &UserFn,
-    box_idx: u32,
+    box_idx: Option<u32>,
     carrier: Option<u32>,
     user_idx_set: &std::collections::HashSet<u32>,
     fns: &std::collections::HashMap<u32, &UserFn>,
     host_roles: &std::collections::HashMap<u32, HostRole>,
 ) -> Option<Cert> {
     let carrier = carrier?;
+    // Every member's base arm boxes a constant; no box helper, no match.
+    let box_idx = box_idx?;
     let (_, _, sub_idx) = recognize_mutual_member(f, box_idx, carrier, user_idx_set, host_roles)?;
     // Walk the cross-call chain from f; it must close back to f.
     let mut cycle: Vec<MutualMember> = Vec::new();
