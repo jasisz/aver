@@ -895,7 +895,7 @@ const TWO_EQ_WAT: &str = r#"
       local.get 3 i32.const 1 i32.add local.set 3 br 0
     end end
     i32.const 1)
-  (export "__rt_aint_from_i64" (func $eq0)))
+  (export "eq0" (func $eq0)))
 "#;
 
 /// Positive no-uniqueness control: two exact String.eq helpers are both kept.
