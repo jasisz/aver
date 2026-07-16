@@ -108,13 +108,15 @@ enum StringHostRole {
     Concat,
 }
 
+type HostRoleTable = (Option<u32>, Option<u32>, Option<u32>, Option<u32>);
+
 struct Candidates {
     certified: Vec<CertifiedCandidate>,
     contracts: Vec<String>,
     declared_uncertified: Vec<(String, String)>,
     capabilities: Vec<(String, String)>,
     start: Option<u32>,
-    host_role_table: Option<(Option<u32>, Option<u32>, Option<u32>, Option<u32>)>,
+    host_role_table: Option<HostRoleTable>,
     string_host_roles: Vec<(u32, StringHostRole)>,
     profile: String,
     abi: String,
