@@ -10,9 +10,9 @@ pub mod format;
 #[cfg(any(feature = "engine", feature = "verify"))]
 pub mod wall;
 
-#[cfg(feature = "engine")]
+#[cfg(any(feature = "engine", feature = "plans"))]
 mod engine;
-#[cfg(feature = "engine")]
+#[cfg(any(feature = "engine", feature = "plans"))]
 pub use engine::*;
 
 #[cfg(feature = "verify")]

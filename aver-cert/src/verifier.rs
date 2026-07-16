@@ -82,6 +82,7 @@ struct CertifiedExport {
     name: String,
     policy: String,
     face: String,
+    manifest_face: String,
 }
 
 struct TrustedReport {
@@ -341,6 +342,7 @@ fn trusted_check(
             name: candidate.name.clone(),
             policy: candidate.policy.clone(),
             face: report_face(candidate),
+            manifest_face: manifest_face(candidate),
         })
         .collect();
     Ok(TrustedReport {
@@ -352,6 +354,12 @@ fn trusted_check(
     })
 }
 
+/// The per-export line printed under a CERTIFIED/CHECKED verdict. Everything
+/// on it must be kernel-pinned: the class is rfl-bound to
+/// `StandardFace.reportEntries` by the checker witness (like the name, policy,
+/// and termination). The manifest's `dom`/`cod` strings are NOT pinned by any
+/// witness line, so they must never appear here — `explain` shows them,
+/// explicitly labeled as manifest-declared.
 fn report_face(candidate: &CertifiedCandidate) -> String {
     let label = match candidate.class.as_str() {
         "expr-fragment-v1" => "expression fragment",
@@ -367,8 +375,12 @@ fn report_face(candidate: &CertifiedCandidate) -> String {
         "cross-function-composition" => "cross-function composition",
         other => other,
     };
+    format!("class: {label}")
+}
+
+fn manifest_face(candidate: &CertifiedCandidate) -> String {
     format!(
-        "class: {label}  |  certificate face: Dom {}, Cod {}",
+        "manifest face (declared, not kernel-pinned): Dom {}, Cod {}",
         display_safe(&candidate.dom),
         display_safe(&candidate.cod)
     )
@@ -1045,6 +1057,7 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
         println!("  {}", export.name.bold());
         println!("    policy: {}", export.policy);
         println!("    {}", export.face);
+        println!("    {}", export.manifest_face);
     }
     if !report.contracts.is_empty() {
         println!("\n{}", "Runtime contracts".yellow().bold());
@@ -1078,6 +1091,24 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn report_face_prints_only_kernel_pinned_facts() {
+        let candidate = CertifiedCandidate {
+            name: "addOne".to_string(),
+            class: "expr-fragment-v1".to_string(),
+            policy: "simulatesModel".to_string(),
+            policy_lean: ".simulatesModel",
+            termination_lean: "none".to_string(),
+            dom: "List Int".to_string(),
+            cod: "Int".to_string(),
+        };
+        assert_eq!(report_face(&candidate), "class: expression fragment");
+        assert_eq!(
+            manifest_face(&candidate),
+            "manifest face (declared, not kernel-pinned): Dom List Int, Cod Int"
+        );
+    }
 
     #[test]
     fn module_names_are_plain() {

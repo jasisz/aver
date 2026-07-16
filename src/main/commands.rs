@@ -4246,6 +4246,23 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
     out
 }
 
+/// Flag-level gate for `--certify`: `Some(error)` when this binary was built
+/// without the certificate engine (feature `certify`, implied by `--features
+/// wasm`), `None` when the flag can proceed (or was not passed). Uses `cfg!`
+/// rather than an `#[cfg]`-gated block so the decision compiles — and is
+/// unit-testable — under every feature combination, including the default
+/// certify-less build.
+fn certify_flag_rejection(certify: bool) -> Option<&'static str> {
+    if certify && !cfg!(feature = "certify") {
+        Some(
+            "--certify: this build of aver was compiled without certificate support \
+             (feature `certify`; rebuild with: cargo build --features wasm)",
+        )
+    } else {
+        None
+    }
+}
+
 pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
     let CompileOptions {
         file,
@@ -4263,6 +4280,16 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         optimize,
         certify,
     } = opts;
+
+    // `--certify` needs the certificate engine (feature `certify`, part of
+    // `--features wasm`). Reject the flag before any target dispatch, so a
+    // binary built without the engine (default, `wasip2`-only, playground-
+    // style builds) fails with a clean flag-level error instead of a
+    // target-level one — or, worse, half a certificate.
+    if let Some(error) = certify_flag_rejection(certify) {
+        eprintln!("{}", error.red());
+        process::exit(1);
+    }
 
     // `--target wasip2` follows its own pipeline: wasm-gc lowering
     // gives the core module, then `wit-component` wraps it as a
@@ -4504,6 +4531,7 @@ fn cmd_compile_wasm_gc(
     // with `--optimize`) via sha256, classifies each user function, and
     // emits kernel-clean Lean theorems for the certified ones. The model
     // definitions are the reused `aver proof` Lean emission.
+    #[cfg(feature = "certify")]
     if certify
         && let Err(error) = emit_artifact_certificate(
             file,
@@ -4529,7 +4557,11 @@ fn cmd_compile_wasm_gc(
 
 /// Emit the Stage-B artifact certificate: classify the emitted module,
 /// reuse the `aver proof` Lean model emission, and write `cert/`.
-#[cfg(feature = "wasm")]
+///
+/// Gated on `certify` (the aver-cert producer engine + `codegen::cert`) AND
+/// `wasm` (the sole caller, `cmd_compile_wasm_gc`), so a bare
+/// `--features certify` build compiles without an uncallable function.
+#[cfg(all(feature = "certify", feature = "wasm"))]
 fn emit_artifact_certificate(
     file: &str,
     project_name: Option<&str>,
@@ -9286,6 +9318,24 @@ mod tests {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         std::env::temp_dir().join(format!("aver_commands_{tag}_{nanos}"))
+    }
+
+    #[test]
+    fn certify_flag_is_rejected_exactly_on_certify_less_builds() {
+        // `--certify` dispatch is decided by `certify_flag_rejection`, called
+        // before any target dispatch in `cmd_compile`. On a build without the
+        // `certify` feature (the default test build) the flag must produce
+        // the clean flag-level error; on certify-carrying builds it must pass
+        // through. Not passing the flag is never an error.
+        let rejection = super::certify_flag_rejection(true);
+        if cfg!(feature = "certify") {
+            assert!(rejection.is_none());
+        } else {
+            let error = rejection.expect("--certify must be rejected without the certify feature");
+            assert!(error.contains("--certify"));
+            assert!(error.contains("certify"));
+        }
+        assert!(super::certify_flag_rejection(false).is_none());
     }
 
     #[test]

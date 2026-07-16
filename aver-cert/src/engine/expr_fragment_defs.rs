@@ -10,6 +10,7 @@ pub enum FragModelTy {
 }
 
 impl FragModelTy {
+    #[cfg(feature = "engine")]
     fn display_name(self) -> &'static str {
         match self {
             FragModelTy::Float => "Float",
@@ -19,6 +20,7 @@ impl FragModelTy {
         }
     }
 
+    #[cfg(feature = "engine")]
     fn lean_dom_type(self) -> &'static str {
         match self {
             FragModelTy::Float => "UInt64",
@@ -50,6 +52,7 @@ pub enum FragTy {
 }
 
 impl FragTy {
+    #[cfg(feature = "engine")]
     fn model_ty(self) -> FragModelTy {
         match self {
             FragTy::F64 => FragModelTy::Float,
@@ -71,6 +74,7 @@ impl FragTy {
         }
     }
 
+    #[cfg(feature = "engine")]
     fn lean_plan_ctor(self) -> &'static str {
         match self {
             FragTy::F64 => ".f64",
@@ -83,6 +87,7 @@ impl FragTy {
         }
     }
 
+    #[cfg(feature = "engine")]
     fn from_plan_tag(tag: &str) -> Option<Self> {
         match tag {
             "f64" => Some(FragTy::F64),
@@ -96,14 +101,17 @@ impl FragTy {
         }
     }
 
+    #[cfg(feature = "engine")]
     fn source_name(self) -> &'static str {
         self.model_ty().display_name()
     }
 
+    #[cfg(feature = "engine")]
     fn lean_dom_type(self) -> &'static str {
         self.model_ty().lean_dom_type()
     }
 
+    #[cfg(feature = "engine")]
     fn lean_arg_repr(self, name: &str, carrier: &str) -> String {
         match self {
             FragTy::F64 => format!(".f64v {name}"),
@@ -129,6 +137,7 @@ pub enum FragHostRole {
 }
 
 impl FragHostRole {
+    #[cfg(feature = "engine")]
     fn plan_tag(self) -> &'static str {
         match self {
             FragHostRole::Box => "box",
@@ -138,6 +147,7 @@ impl FragHostRole {
         }
     }
 
+    #[cfg(feature = "engine")]
     fn lean_ctor(self) -> &'static str {
         match self {
             FragHostRole::Box => ".box",
@@ -283,6 +293,7 @@ impl FragStructTable {
     }
 
     /// The Lean `List (String × Nat)` literal claims and witnesses consume.
+    #[cfg(feature = "engine")]
     pub fn lean_value(&self) -> String {
         format!(
             "[{}]",
@@ -309,6 +320,7 @@ impl FragStructTable {
 /// The Lean `List (String × Nat)` literal of a module-wide struct table: the
 /// consistent union of per-export entries. An inconsistent union (one name
 /// bound to two indices) fail-closes.
+#[cfg(feature = "engine")]
 pub fn frag_struct_table_lean_from_entries<'a>(
     entries: impl IntoIterator<Item = &'a (String, u32)>,
 ) -> Result<String, String> {
@@ -341,6 +353,7 @@ pub enum FragPrim {
 }
 
 impl FragPrim {
+    #[cfg(feature = "engine")]
     fn plan_tag(self) -> &'static str {
         match self {
             FragPrim::F64Add => "f64.add",
@@ -355,6 +368,7 @@ impl FragPrim {
         }
     }
 
+    #[cfg(feature = "engine")]
     fn lean_plan_ctor(self) -> &'static str {
         match self {
             FragPrim::F64Add => ".f64Add",
@@ -448,10 +462,12 @@ pub struct ExprFragmentPlan {
 }
 
 impl ExprFragmentPlan {
+    #[cfg(feature = "engine")]
     fn arity(&self) -> usize {
         self.params.len()
     }
 
+    #[cfg(feature = "engine")]
     fn source_dom(&self) -> String {
         self.params
             .iter()
@@ -460,11 +476,13 @@ impl ExprFragmentPlan {
             .join(" x ")
     }
 
+    #[cfg(feature = "engine")]
     fn source_cod(&self) -> String {
         self.result.source_name().to_string()
     }
 }
 
+#[cfg(feature = "engine")]
 #[derive(Clone, Debug)]
 pub struct FragmentPlanSidecar {
     pub path: String,
@@ -472,6 +490,7 @@ pub struct FragmentPlanSidecar {
     pub text: String,
 }
 
+#[cfg(feature = "engine")]
 fn expr_fragment_sidecar(name: &str, plan: &ExprFragmentPlan) -> FragmentPlanSidecar {
     let text = expr_fragment_plan_text(plan);
     FragmentPlanSidecar {
@@ -481,6 +500,7 @@ fn expr_fragment_sidecar(name: &str, plan: &ExprFragmentPlan) -> FragmentPlanSid
     }
 }
 
+#[cfg(feature = "engine")]
 fn expr_fragment_plan_path(name: &str) -> String {
     format!(
         "fragments/{}.expr-fragment-v1.plan",
@@ -488,6 +508,7 @@ fn expr_fragment_plan_path(name: &str) -> String {
     )
 }
 
+#[cfg(feature = "engine")]
 fn expr_fragment_plan_text(plan: &ExprFragmentPlan) -> String {
     let mut out = String::new();
     out.push_str("aver.expr-fragment.plan.v1\n");
@@ -504,6 +525,7 @@ fn expr_fragment_plan_text(plan: &ExprFragmentPlan) -> String {
     out
 }
 
+#[cfg(feature = "engine")]
 fn expr_fragment_plan_lean_value(plan: &ExprFragmentPlan) -> String {
     format!(
         "{{ profile := \"expr-fragment-v1\", params := [{}], result := {}, body := {} }}",
@@ -517,6 +539,7 @@ fn expr_fragment_plan_lean_value(plan: &ExprFragmentPlan) -> String {
     )
 }
 
+#[cfg(feature = "engine")]
 fn expr_fragment_block_lean_value(block: &FragBlock) -> String {
     format!(
         "({{ nodes := [{}], result := {} }} : FragBlock)",
@@ -530,6 +553,7 @@ fn expr_fragment_block_lean_value(block: &FragBlock) -> String {
     )
 }
 
+#[cfg(feature = "engine")]
 fn expr_fragment_node_lean_value(node: &FragNode) -> String {
     format!(
         "{{ id := {}, ty := {}, kind := {} }}",
@@ -539,6 +563,7 @@ fn expr_fragment_node_lean_value(node: &FragNode) -> String {
     )
 }
 
+#[cfg(feature = "engine")]
 fn expr_fragment_node_kind_lean_value(kind: &FragNodeKind) -> String {
     match kind {
         FragNodeKind::Local { index } => format!(".local {index}"),
@@ -599,6 +624,7 @@ fn expr_fragment_node_kind_lean_value(kind: &FragNodeKind) -> String {
     }
 }
 
+#[cfg(feature = "engine")]
 fn render_fragment_block_plan(block: &FragBlock, indent: usize, out: &mut String) {
     let pad = "  ".repeat(indent);
     out.push_str(&format!("{pad}block result=v{}\n", block.result.0));
@@ -608,6 +634,7 @@ fn render_fragment_block_plan(block: &FragBlock, indent: usize, out: &mut String
     out.push_str(&format!("{pad}end\n"));
 }
 
+#[cfg(feature = "engine")]
 fn render_fragment_node_plan(node: &FragNode, indent: usize, out: &mut String) {
     let pad = "  ".repeat(indent);
     out.push_str(&format!(
@@ -690,6 +717,7 @@ fn render_fragment_node_plan(node: &FragNode, indent: usize, out: &mut String) {
     }
 }
 
+#[cfg(feature = "engine")]
 fn render_fragment_plan_ids(args: &[FragValueId]) -> String {
     args.iter()
         .map(|id| format!("v{}", id.0))
@@ -697,6 +725,7 @@ fn render_fragment_plan_ids(args: &[FragValueId]) -> String {
         .join(",")
 }
 
+#[cfg(feature = "engine")]
 fn expr_fragment_dom_type(params: &[FragTy]) -> String {
     match params {
         [] => "Unit".to_string(),
@@ -709,6 +738,7 @@ fn expr_fragment_dom_type(params: &[FragTy]) -> String {
     }
 }
 
+#[cfg(feature = "engine")]
 fn expr_fragment_dom_accessor(root: &str, index: usize, len: usize) -> String {
     if len <= 1 {
         return root.to_string();
@@ -719,6 +749,7 @@ fn expr_fragment_dom_accessor(root: &str, index: usize, len: usize) -> String {
     expr_fragment_dom_accessor(&format!("{root}.2"), index - 1, len - 1)
 }
 
+#[cfg(feature = "engine")]
 fn expr_fragment_dom_repr_list(params: &[FragTy], root: &str, carrier: &str) -> String {
     let args = params
         .iter()
@@ -731,7 +762,7 @@ fn expr_fragment_dom_repr_list(params: &[FragTy], root: &str, carrier: &str) -> 
     format!("[{}]", args.join(", "))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "engine"))]
 mod expr_fragment_sem_ty_tests {
     use super::*;
 

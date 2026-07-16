@@ -159,7 +159,10 @@ embedded-wall identity, report candidates, declared uncertified exports,
 capabilities, and other envelope metadata. It does not contain an
 authoritative plan AST. During verification, the checker requires its report
 view to agree with the Lean manifest and the class/order derived by
-`StandardFace.lean`.
+`StandardFace.lean`. The manifest's `dom`/`cod` strings are display-only and
+are not pinned by the checker witness, so the CERTIFIED/CHECKED report prints
+only the pinned class; `aver cert explain` shows the declared face, explicitly
+labeled as manifest-declared.
 
 The manifest's `format.wall_id` selects one exact soundness wall embedded in
 the verifier. Files from the certificate package cannot replace the wall,

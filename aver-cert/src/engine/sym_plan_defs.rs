@@ -35,6 +35,7 @@ impl SymTy {
         }
     }
 
+    #[cfg(feature = "engine")]
     fn plan_tag(&self) -> String {
         match self {
             SymTy::Int => "int".to_string(),
@@ -49,6 +50,7 @@ impl SymTy {
         }
     }
 
+    #[cfg(feature = "engine")]
     fn from_plan_tag(tag: &str) -> Option<Self> {
         match tag {
             "int" => Some(SymTy::Int),
@@ -133,6 +135,15 @@ pub struct SymBlock {
     pub result: SymValueId,
 }
 
+impl SymBlock {
+    pub fn result_ty(&self) -> Option<SymTy> {
+        self.nodes
+            .get(self.result.0)
+            .filter(|node| node.id == self.result)
+            .map(|node| node.ty.clone())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SymPlan {
     pub params: Vec<SymTy>,
@@ -200,6 +211,7 @@ impl FragmentPlan {
     }
 }
 
+#[cfg(feature = "engine")]
 fn expr_fragment_source_plan(
     source_plan: &Option<SymPlan>,
     plan: &ExprFragmentPlan,
@@ -209,6 +221,7 @@ fn expr_fragment_source_plan(
         .or_else(|| SymPlan::from_expr_fragment_source_subset(plan))
 }
 
+#[cfg(feature = "engine")]
 fn adt_constructor_sym_plan_from_cert(c: &Cert, model_info: &ModelInfo) -> Option<SymPlan> {
     let Cert::AdtConstructor {
         name,
@@ -307,10 +320,12 @@ fn adt_constructor_sym_plan_from_cert(c: &Cert, model_info: &ModelInfo) -> Optio
     })
 }
 
+#[cfg(feature = "engine")]
 fn sym_plan_is_list_construct(plan: &SymPlan) -> bool {
     matches!(&plan.result, SymTy::App(name, args) if name == "List" && args.len() == 1)
 }
 
+#[cfg(feature = "engine")]
 fn sym_ty_from_source_type_name(ty: &str) -> Option<SymTy> {
     let ty = strip_balanced_outer_parens(ty.trim());
     match ty {
@@ -334,6 +349,7 @@ fn sym_ty_from_source_type_name(ty: &str) -> Option<SymTy> {
     }
 }
 
+#[cfg(feature = "engine")]
 fn strip_balanced_outer_parens(mut value: &str) -> &str {
     loop {
         let Some(inner) = value.strip_prefix('(').and_then(|v| v.strip_suffix(')')) else {
@@ -355,6 +371,7 @@ fn strip_balanced_outer_parens(mut value: &str) -> &str {
     }
 }
 
+#[cfg(feature = "engine")]
 fn split_top_level(value: &str, needle: char) -> Option<(&str, &str)> {
     let mut depth = 0i32;
     for (at, ch) in value.char_indices() {
@@ -370,6 +387,7 @@ fn split_top_level(value: &str, needle: char) -> Option<(&str, &str)> {
     None
 }
 
+#[cfg(feature = "engine")]
 fn parse_sym_ty_plan_tag(tag: &str) -> Option<SymTy> {
     if let Some(name) = tag.strip_prefix("named:") {
         return sym_plan_simple_token(name).then(|| SymTy::Named(name.to_string()));
@@ -399,6 +417,7 @@ fn parse_sym_ty_plan_tag(tag: &str) -> Option<SymTy> {
     Some(SymTy::App(name.to_string(), args))
 }
 
+#[cfg(feature = "engine")]
 fn sym_plan_simple_token(value: &str) -> bool {
     !value.is_empty() && !value.chars().any(char::is_whitespace) && !value.contains('=')
 }
@@ -440,6 +459,7 @@ pub(crate) fn sym_plan_project_type_names(plan: &SymPlan) -> Vec<String> {
     out
 }
 
+#[cfg(feature = "engine")]
 fn frag_block_struct_get_user_tys_in_order(block: &FragBlock, out: &mut Vec<u32>) {
     for node in &block.nodes {
         match &node.kind {
@@ -461,6 +481,7 @@ fn frag_block_struct_get_user_tys_in_order(block: &FragBlock, out: &mut Vec<u32>
 /// pin together: each `project.field` type name paired with the wasm struct
 /// index its `struct.get.user` encoding resolved to (deterministic node
 /// order). `None` when the pairing is inconsistent — fail-closed.
+#[cfg(feature = "engine")]
 fn expr_fragment_struct_table_entries(
     source_plan: &SymPlan,
     plan: &ExprFragmentPlan,
@@ -562,7 +583,7 @@ fn sym_node_from_frag_source_subset(node: &FragNode) -> Option<SymNode> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "engine"))]
 mod sym_plan_defs_tests {
     use super::*;
 

@@ -21,10 +21,21 @@
 //! that data against the exact artifact bytes. Redundant text sidecars are not
 //! part of the public certificate package.
 
+// This module compiles in two layers. With only the `plans` feature the
+// plan-surface files below are compiled: the fragment/sym plan IR types and
+// the canonical byte lowering the wasm-gc emitter needs in every build. The
+// full certificate engine — byte classifier, rederiver, Lean renderer, and
+// the embedded soundness wall re-export — is additionally compiled under the
+// `engine` feature (which implies `plans`). External paths are unchanged:
+// everything stays a flat `aver_cert::*` item.
+#[cfg(feature = "engine")]
 use sha2::{Digest, Sha256};
+#[cfg(feature = "engine")]
 use std::path::Path;
 
+#[cfg(feature = "engine")]
 pub use crate::wall;
+#[cfg(feature = "engine")]
 pub use crate::wall::*;
 
 /// Emitted-fragment profile and runtime ABI identifiers recorded in the
@@ -60,32 +71,61 @@ pub const FINAL_STATEMENT_LINE: &str =
 pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 
 /// sha256 of a byte slice, lowercase hex.
+#[cfg(feature = "engine")]
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
     hex(&h.finalize())
 }
 
-include!("core_wasm.rs");
-include!("core_shapes.rs");
+// Plan surface (`plans` feature): plan IR types, the SymPlan -> ExprFragmentPlan
+// encoder, and the canonical byte lowering the wasm-gc emitter calls at emit
+// time.
 include!("expr_fragment_defs.rs");
+include!("expr_fragment_faces.rs");
 include!("sym_plan_defs.rs");
-include!("sym_plan_render.rs");
 include!("sym_plan_encode.rs");
+include!("classify_expr_fragment_lower.rs");
+
+// Full certificate engine (`engine` feature): byte-derived classification,
+// rederivation, Lean rendering, and everything that references the wall.
+#[cfg(feature = "engine")]
+include!("core_wasm.rs");
+#[cfg(feature = "engine")]
+include!("core_shapes.rs");
+#[cfg(feature = "engine")]
+include!("sym_plan_render.rs");
+#[cfg(feature = "engine")]
 include!("cert_defs.rs");
+#[cfg(feature = "engine")]
 include!("recursion_plan_defs.rs");
+#[cfg(feature = "engine")]
 include!("mutual_plan_defs.rs");
+#[cfg(feature = "engine")]
 include!("composition_plan_defs.rs");
+#[cfg(feature = "engine")]
 include!("verbatim_plan_defs.rs");
+#[cfg(feature = "engine")]
 include!("int_dispatch_plan_defs.rs");
+#[cfg(feature = "engine")]
 include!("string_plan_defs.rs");
+#[cfg(feature = "engine")]
 include!("construct_plan_defs.rs");
+#[cfg(feature = "engine")]
 include!("field_projection_plan_defs.rs");
+#[cfg(feature = "engine")]
 include!("cert_methods.rs");
+#[cfg(feature = "engine")]
 include!("analysis.rs");
+#[cfg(feature = "engine")]
 include!("module_envelope.rs");
+#[cfg(feature = "engine")]
 include!("rederive.rs");
+#[cfg(feature = "engine")]
 include!("disasm.rs");
+#[cfg(feature = "engine")]
 include!("classification.rs");
+#[cfg(feature = "engine")]
 include!("model_eval.rs");
+#[cfg(feature = "engine")]
 include!("render.rs");

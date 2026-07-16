@@ -2569,6 +2569,102 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
+/// The manifest `dom`/`cod` strings are declared display metadata: no
+/// checker-witness line pins them, so editing them cannot fail verification.
+/// Precisely because they are unpinned, the trusted CHECKED/CERTIFIED report
+/// must never echo them. Sentinels planted in `cert-manifest.json` must leave
+/// the trusted check green, stay out of the complete trusted report output,
+/// and surface in `explain` only on the line explicitly labeled as
+/// manifest-declared and not kernel-pinned.
+#[test]
+fn unpinned_manifest_dom_cod_never_reach_the_trusted_report() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping unpinned manifest-face report test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-unpinned-manifest-face");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/certprobe.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let wasm = out_dir.join("certprobe.wasm");
+    let cert = out_dir.join("cert");
+
+    // Sentinels that cannot collide with any real report text. They stay
+    // printable ASCII on purpose: the charset gate must keep admitting them so
+    // the test exercises the report boundary, not the input gate.
+    const DOM_SENTINEL: &str = "TAMPERED_DOM_SENTINEL";
+    const COD_SENTINEL: &str = "TAMPERED_COD_SENTINEL";
+    let mf = cert.join("cert-manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    let certified = manifest["certified"].as_array_mut().unwrap();
+    assert!(
+        !certified.is_empty(),
+        "fixture must certify at least one export"
+    );
+    for entry in certified.iter_mut() {
+        entry["dom"] = serde_json::Value::String(DOM_SENTINEL.into());
+        entry["cod"] = serde_json::Value::String(COD_SENTINEL.into());
+    }
+    std::fs::write(&mf, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
+
+    // Unpinned by design: only the JSON display strings changed, so the same
+    // trusted check the tamper cases use must still pass.
+    let (ok, report) = aver_check(&wasm, &cert);
+    assert!(
+        ok,
+        "editing the unpinned dom/cod strings must not fail the trusted check:\n{report}"
+    );
+    assert!(
+        report.contains("CHECKED") && report.contains("addTwo") && report.contains("class: "),
+        "trusted report lost its verdict or kernel-pinned face line:\n{report}"
+    );
+    // The complete end-to-end trusted output — verdict, summary, and every
+    // per-export face line — must never echo the unpinned manifest strings.
+    assert!(
+        !report.contains(DOM_SENTINEL) && !report.contains(COD_SENTINEL),
+        "trusted report echoed an unpinned manifest dom/cod string:\n{report}"
+    );
+
+    // `explain` shows the declared face, but only under the explicit
+    // manifest-declared label; the sentinels must never leak anywhere else.
+    let (ok, explain) = aver_cert(&["explain"], &wasm, &cert);
+    assert!(
+        ok,
+        "explain must accept the certificate with edited dom/cod:\n{explain}"
+    );
+    assert!(
+        explain.contains(DOM_SENTINEL) && explain.contains(COD_SENTINEL),
+        "explain must still show the declared manifest face:\n{explain}"
+    );
+    for line in explain.lines() {
+        if line.contains(DOM_SENTINEL) || line.contains(COD_SENTINEL) {
+            assert!(
+                line.contains("manifest face (declared, not kernel-pinned)"),
+                "dom/cod escaped the labeled manifest-face line:\n{line}\n\nfull explain output:\n{explain}"
+            );
+        }
+    }
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
 /// An ADT class carries its witness body in `Module.lean` exactly like the
 /// integer classes: mutating the emitted `greetCode` (field-projection witness)
 /// so it no longer decodes from the bytes still builds green, but the checker
