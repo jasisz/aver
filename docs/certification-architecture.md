@@ -77,7 +77,7 @@ The steps are:
 
 1. Read the actual module, run the standard WebAssembly validator, compute its
    SHA-256, and parse `cert-manifest.json`.
-2. Require package format `1`, statement schema `1`, the expected artifact
+2. Require package format `1`, statement schema `2`, the expected artifact
    root, the actual hash, and a `wall_id` embedded in this verifier.
 3. Assemble a fresh project from the checker-owned wall and the allowed
    artifact-specific data. Checker-owned module names, build files, toolchain

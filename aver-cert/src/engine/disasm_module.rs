@@ -24,6 +24,133 @@ enum FirstI64Arith {
     Mul,
 }
 
+/// Byte-for-byte mirror of the certificate decoder's first-arith body scan.
+///
+/// The Lean decoder walks raw instruction boundaries with a fixed vocabulary
+/// and fails closed on any encoding outside it. The producer runs this exact
+/// mirror over every carrier-binop-signature body so a module whose role scan
+/// the decoder cannot complete is refused at certification time — no package
+/// is ever emitted whose module-wide role pin can close against no manifest
+/// value. Returns `None` when the decoder's scan would fail, `Some(first)`
+/// with the first `i64` add/sub/mul marker (or `Some(None)` for none) when it
+/// succeeds.
+fn kernel_first_arith_scan(bytes: &[u8]) -> Option<Option<FirstI64Arith>> {
+    // Canonical unsigned LEB128, at most `fuel` bytes, overlong-zero rejected.
+    fn skip_uleb(bytes: &[u8], cursor: &mut usize) -> Option<u64> {
+        let mut value: u64 = 0;
+        let mut shift: u32 = 0;
+        for _ in 0..5 {
+            let byte = *bytes.get(*cursor)?;
+            *cursor += 1;
+            value |= u64::from(byte & 0x7f) << shift;
+            if byte < 128 {
+                if shift != 0 && byte == 0 {
+                    return None;
+                }
+                return Some(value);
+            }
+            shift += 7;
+        }
+        None
+    }
+    // Signed LEB128, at most 10 bytes; only the cursor movement matters here.
+    fn skip_sleb(bytes: &[u8], cursor: &mut usize) -> Option<()> {
+        for _ in 0..10 {
+            let byte = *bytes.get(*cursor)?;
+            *cursor += 1;
+            if byte < 128 {
+                return Some(());
+            }
+        }
+        None
+    }
+    fn skip_block_type(bytes: &[u8], cursor: &mut usize) -> Option<()> {
+        let byte = *bytes.get(*cursor)?;
+        if byte == 0x40 || matches!(byte, 0x7b..=0x7f) {
+            *cursor += 1;
+            Some(())
+        } else if byte == 0x63 || byte == 0x64 {
+            *cursor += 1;
+            skip_sleb(bytes, cursor)
+        } else {
+            skip_sleb(bytes, cursor)
+        }
+    }
+
+    let mut cursor = 0usize;
+    loop {
+        if cursor == bytes.len() {
+            return Some(None);
+        }
+        let op = bytes[cursor];
+        cursor += 1;
+        match op {
+            0x7c => return Some(Some(FirstI64Arith::Add)),
+            0x7d => return Some(Some(FirstI64Arith::Sub)),
+            0x7e => return Some(Some(FirstI64Arith::Mul)),
+            // Single-byte numeric / comparison / conversion opcodes.
+            0x45..=0xc4 => {}
+            // Immediate-free control and parametric opcodes.
+            0x0b | 0x05 | 0x0f | 0x00 | 0x01 | 0x1a | 0x1b | 0xd1 => {}
+            // One index immediate.
+            0x20 | 0x21 | 0x22 | 0x23 | 0x24 | 0x0c | 0x0d | 0x10 | 0x12 => {
+                skip_uleb(bytes, &mut cursor)?;
+            }
+            // br_table: count, then count+1 label indices.
+            0x0e => {
+                let count = skip_uleb(bytes, &mut cursor)?;
+                for _ in 0..count.checked_add(1)? {
+                    skip_uleb(bytes, &mut cursor)?;
+                }
+            }
+            // call_indirect: type index + table index.
+            0x11 => {
+                skip_uleb(bytes, &mut cursor)?;
+                skip_uleb(bytes, &mut cursor)?;
+            }
+            // block / loop / if.
+            0x02..=0x04 => skip_block_type(bytes, &mut cursor)?,
+            // i32.const / i64.const.
+            0x41 | 0x42 => skip_sleb(bytes, &mut cursor)?,
+            0x43 => {
+                if bytes.len() - cursor < 4 {
+                    return None;
+                }
+                cursor += 4;
+            }
+            0x44 => {
+                if bytes.len() - cursor < 8 {
+                    return None;
+                }
+                cursor += 8;
+            }
+            // ref.null <heaptype s33>.
+            0xd0 => skip_sleb(bytes, &mut cursor)?,
+            // ref.func <funcidx>.
+            0xd2 => {
+                skip_uleb(bytes, &mut cursor)?;
+            }
+            // GC prefix: the decoder's admitted subset only.
+            0xfb => {
+                let sub = skip_uleb(bytes, &mut cursor)?;
+                match sub {
+                    0x00 | 0x01 | 0x06 | 0x07 | 0x0b | 0x0c | 0x0d | 0x0e => {
+                        skip_uleb(bytes, &mut cursor)?;
+                    }
+                    0x02 | 0x05 | 0x08 | 0x09 => {
+                        skip_uleb(bytes, &mut cursor)?;
+                        skip_uleb(bytes, &mut cursor)?;
+                    }
+                    0x0f => {}
+                    0x14..=0x17 => skip_sleb(bytes, &mut cursor)?,
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        }
+    }
+}
+
 fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
     use wasmparser::{
         CompositeInnerType, DataKind, Operator, Parser, Payload, StorageType, ValType,
@@ -62,6 +189,11 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
     let mut data_segments: Vec<Option<Vec<u8>>> = Vec::new();
     let mut carrier: Option<u32> = None;
     let mut next_type_idx: u32 = 0;
+    // The certificate decoder's whole-module role scan declines any
+    // non-function import; record the fact so a module that also carries the
+    // Int box helper is refused instead of certified into an unverifiable
+    // package.
+    let mut has_non_function_import = false;
 
     for payload in Parser::new(0).parse_all(wasm_bytes) {
         let payload = payload.map_err(|e| format!("wasm parse: {e}"))?;
@@ -140,6 +272,8 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                         let (_, imp) = imp.map_err(|e| format!("import read: {e}"))?;
                         if let wasmparser::TypeRef::Func(_) = imp.ty {
                             num_imported_funcs += 1;
+                        } else {
+                            has_non_function_import = true;
                         }
                     }
                 }
@@ -198,6 +332,12 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                 let mut opr = body
                     .get_operators_reader()
                     .map_err(|e| format!("ops reader: {e}"))?;
+                // Body bytes after the locals vector — the exact slice the
+                // certificate decoder's first-arith scan walks.
+                let arith_scan_start = opr.original_position();
+                let kernel_arith_scan = wasm_bytes
+                    .get(arith_scan_start..entry_end)
+                    .and_then(kernel_first_arith_scan);
                 while !opr.eof() {
                     let op = opr.read().map_err(|e| format!("op read: {e}"))?;
                     host_ops.push(host_op(&op));
@@ -314,6 +454,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                     has_loop_or_branch,
                     host_role,
                     first_arith_strict,
+                    kernel_arith_scan,
                     host_ops,
                 });
             }
@@ -346,6 +487,63 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
         .iter()
         .find(|(n, _)| n == "__rt_aint_from_i64")
         .map(|(_, i)| *i);
+
+    let is_carrier_binop = |def_idx: usize| -> bool {
+        let Some(c) = carrier else {
+            return false;
+        };
+        let Some((params, results)) = func_type_idx.get(def_idx).and_then(|ti| type_sigs.get(ti))
+        else {
+            return false;
+        };
+        let is_carrier_ref = |t: &TyKind| matches!(t, TyKind::Ref { idx, .. } if *idx == c);
+        matches!(params.as_slice(), [a, b] if is_carrier_ref(a) && is_carrier_ref(b))
+            && matches!(results.as_slice(), [r] if is_carrier_ref(r))
+    };
+
+    // Producer-side mirror of the verifier's module-wide role decode. A module
+    // that carries the Int box helper must let the certificate decoder resolve
+    // its whole host-role table; when the decoder's scan would fail, NO
+    // manifest value can satisfy the acceptance pin, so emitting a package
+    // would only defer the failure to `aver cert verify`. Refuse honestly here
+    // instead, naming the reason.
+    if box_idx.is_some() {
+        if carrier.is_none() {
+            return Err(
+                "module exports the Int box helper `__rt_aint_from_i64` but declares no Int \
+                 carrier struct type; the certificate decoder cannot resolve its host-role \
+                 table, so no certificate for this module can verify"
+                    .to_string(),
+            );
+        }
+        if has_non_function_import {
+            return Err(
+                "module exports the Int box helper `__rt_aint_from_i64` and also declares a \
+                 non-function import; the certificate decoder declines such modules, so no \
+                 certificate for this module can verify"
+                    .to_string(),
+            );
+        }
+        for (def_idx, entry) in code_entries.iter().enumerate() {
+            if !is_carrier_binop(def_idx) {
+                continue;
+            }
+            let strict = entry.first_arith_strict;
+            match entry.kernel_arith_scan {
+                Some(first) if first == strict => {}
+                Some(_) | None => {
+                    return Err(format!(
+                        "module exports the Int box helper `__rt_aint_from_i64` but function \
+                         index {} has the Int carrier-binop signature and a body the \
+                         certificate decoder's role scan cannot classify; the module-wide \
+                         host-role table is undecodable, so no certificate for this module \
+                         can verify",
+                        num_imported_funcs + def_idx as u32,
+                    ));
+                }
+            }
+        }
+    }
 
     // user export name -> wasm func index
     let mut user_exports: Vec<(String, u32)> = exports
@@ -391,20 +589,6 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
     // is derived exactly like `add` and `mul`, each with its own uniqueness
     // check. All four roles are surfaced to Lean and bound in the artifact.
     let frag_host_table = {
-        let is_carrier_binop = |def_idx: usize| -> bool {
-            let Some(c) = carrier else {
-                return false;
-            };
-            let Some((params, results)) = func_type_idx
-                .get(def_idx)
-                .and_then(|ti| type_sigs.get(ti))
-            else {
-                return false;
-            };
-            let is_carrier_ref = |t: &TyKind| matches!(t, TyKind::Ref { idx, .. } if *idx == c);
-            matches!(params.as_slice(), [a, b] if is_carrier_ref(a) && is_carrier_ref(b))
-                && matches!(results.as_slice(), [r] if is_carrier_ref(r))
-        };
         let strict_binop_candidates = |arith: FirstI64Arith| -> Vec<u32> {
             code_entries
                 .iter()

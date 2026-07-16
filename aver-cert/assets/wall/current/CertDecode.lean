@@ -1092,6 +1092,35 @@ def roleTable (n len : Nat) : Option Roles :=
            , mul := uniqueC (candFor Arith.mul fns)
            , sub := uniqueC (candFor Arith.sub fns) }
 
+/-- Byte-derived proof that the module carries no Int-carrier box helper: the
+    export section decodes strictly and no function export is named
+    `__rt_aint_from_i64` — the same name the disassembler binds as the `box`
+    role. A malformed or unreadable export section never certifies absence. -/
+def carrierHelperAbsent (n len : Nat) : Bool :=
+  match decodeExports n len with
+  | none => false
+  | some es => es.all (fun e => e.1 != "__rt_aint_from_i64")
+
+/-- Three-state module host-role decode. Exactly one unconditional equality on
+    this value distinguishes every module class:
+    * `some none`     — the module is definitely carrierless (the
+                        `__rt_aint_from_i64` helper export is byte-provably
+                        absent); the manifest must declare no table.
+    * `some (some t)` — the helper is present and the module-wide role scan
+                        succeeded with exactly `t`; the manifest must declare
+                        exactly `t`.
+    * `none`          — the helper is present but the role scan failed. This
+                        poisoned state equals `some v` for NO `v`, so no
+                        manifest value can close the acceptance pin — in
+                        particular a carriered module whose scan fails cannot
+                        claim the carrierless `none`. -/
+def roleTableStrict (n len : Nat) : Option (Option Roles) :=
+  if carrierHelperAbsent n len then some none
+  else
+    match roleTable n len with
+    | none => none
+    | some t => some (some t)
+
 end AddSub
 
 /- ===================================================================== -/

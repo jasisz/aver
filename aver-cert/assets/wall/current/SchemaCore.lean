@@ -85,10 +85,12 @@ def CAPABILITY_REGISTRY : List (String × String) := [
     Pure data, mirrored in `cert-manifest.json`.
 
     `hostRoleTable` is optional exactly like `start`: a module without the Int
-    carrier type has no host-role table at all (`none`), which the acceptance
-    pin binds against the byte decoder returning `none`. A module with the
-    carrier always carries `some` table, even when every role inside it is
-    unbound. -/
+    carrier helper has no host-role table at all (`none`), which the acceptance
+    pin binds against the strict byte decoder returning `some none` — a
+    byte-derived proof that the `__rt_aint_from_i64` helper export is absent.
+    A module with the helper always carries `some` table, even when every role
+    inside it is unbound; a module whose role scan fails decodes to the
+    poisoned `none`, which no manifest value can match. -/
 structure Subject where
   artifactHash : String
   profile      : String

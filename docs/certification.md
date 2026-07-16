@@ -140,8 +140,10 @@ unless the admitted result relation can state the weaker behavior honestly.
 
 The public package format is version `1`, and its certificate statement
 schema is version `2` (schema `2` made the subject's `hostRoleTable`
-optional: a module without the Int carrier declares `null`, and the checker
-pins that declaration against the byte decoder resolving no table at all).
+optional: a module without the Int carrier runtime declares `null`, and the
+checker pins that declaration against a byte-derived proof that the module
+carries no Int box helper; a module whose host-role scan the decoder cannot
+complete satisfies no manifest declaration at all).
 A generated `cert/` directory contains:
 
 - `cert-manifest.json`, a transport and reporting envelope;

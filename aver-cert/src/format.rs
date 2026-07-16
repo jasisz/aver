@@ -8,8 +8,11 @@
 pub const FORMAT_VERSION: u32 = 1;
 
 /// Manifest schema accepted by the standalone verifier. Version 2 made the
-/// subject's `hostRoleTable` optional: modules without the Int carrier
-/// declare `null`, pinned against the byte decoder returning `none`.
+/// subject's `hostRoleTable` optional: modules without the Int box helper
+/// declare `null`, pinned against a byte-derived proof of the helper's
+/// absence, while modules with the helper pin the exact decoded table. A
+/// module whose role scan the decoder cannot complete matches no manifest
+/// value.
 pub const CERT_SCHEMA_VERSION: u32 = 2;
 
 /// Named theorem audited by the checker-owned witness.
@@ -17,7 +20,7 @@ pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:e4e89735a662dc2ce0eda32953b0e39561dc052228d47c9d15312d0ab5c8b7df";
+    "sha256:0d667eb0d8ff38f5d11105fb18ea6e326c5545da5662b284a4e46b35321927ac";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///

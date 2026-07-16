@@ -400,6 +400,90 @@ mod analysis_without_box_helper_tests {
     }
 }
 
+#[cfg(test)]
+mod poisoned_role_scan_tests {
+    /// A module WITH the `__rt_aint_from_i64` export and one carrier-binop-
+    /// signature function whose body starts with an instruction encoding the
+    /// certificate decoder's role scan does not support (`ref.as_non_null`).
+    const POISONED_WAT: &str = r#"(module
+  (type $carrier (struct (field i64) (field anyref) (field i32)))
+  (func $box (param i64) (result (ref null $carrier))
+    local.get 0
+    ref.null any
+    i32.const 0
+    struct.new $carrier)
+  (func $add (param (ref null $carrier) (ref null $carrier)) (result (ref null $carrier))
+    local.get 0
+    struct.get $carrier 0
+    local.get 1
+    struct.get $carrier 0
+    i64.add
+    ref.null any
+    i32.const 0
+    struct.new $carrier)
+  (func $unrelated (param (ref null $carrier) (ref null $carrier)) (result (ref null $carrier))
+    local.get 0
+    ref.as_non_null)
+  (export "__rt_aint_from_i64" (func $box))
+)"#;
+
+    /// A module carrying the Int box helper whose module-wide role scan the
+    /// certificate decoder cannot complete has NO manifest declaration that
+    /// satisfies its acceptance pin. The producer must refuse it outright —
+    /// emitting the package would only defer the failure to verification.
+    #[test]
+    fn analyze_refuses_box_helper_module_with_unscannable_carrier_binop_body() {
+        let bytes = wat::parse_str(POISONED_WAT).expect("poisoned module WAT parses");
+        let error = match super::analyze(&bytes, &[]) {
+            Err(error) => error,
+            Ok(_) => {
+                panic!("a box-helper module with an unscannable carrier-binop body must be refused")
+            }
+        };
+        assert!(
+            error.contains("__rt_aint_from_i64"),
+            "the refusal must name the box helper, got: {error}"
+        );
+        assert!(
+            error.contains("role scan") && error.contains("function index 2"),
+            "the refusal must name the failed role scan and the offending function, got: {error}"
+        );
+    }
+
+    /// Control: the same module without the unscannable function analyzes and
+    /// binds its box and add roles.
+    #[test]
+    fn analyze_accepts_box_helper_module_when_every_carrier_binop_body_scans() {
+        let healthy = POISONED_WAT.replace(
+            r#"  (func $unrelated (param (ref null $carrier) (ref null $carrier)) (result (ref null $carrier))
+    local.get 0
+    ref.as_non_null)
+"#,
+            "",
+        );
+        assert_ne!(healthy, POISONED_WAT, "the control must drop the poisoned function");
+        let bytes = wat::parse_str(&healthy).expect("healthy module WAT parses");
+        let analysis = super::analyze(&bytes, &[])
+            .expect("the healthy sibling must analyze");
+        assert_eq!(analysis.frag_host_table.box_idx, Some(0));
+        assert_eq!(analysis.frag_host_table.add_idx, Some(1));
+    }
+
+    /// Without the box helper export the module-wide table is byte-provably
+    /// absent, so an unscannable carrier-binop body is NOT the poisoned state:
+    /// analysis proceeds and every integer-family recognizer declines
+    /// per-export as usual.
+    #[test]
+    fn analyze_accepts_unscannable_body_when_box_helper_is_absent() {
+        let helperless = POISONED_WAT.replace("  (export \"__rt_aint_from_i64\" (func $box))\n", "");
+        assert_ne!(helperless, POISONED_WAT, "the control must drop the helper export");
+        let bytes = wat::parse_str(&helperless).expect("helperless module WAT parses");
+        let analysis = super::analyze(&bytes, &[])
+            .expect("a module without the box helper is never in the poisoned state");
+        assert!(analysis.frag_host_table.box_idx.is_none());
+    }
+}
+
 // These historical tests compile Aver source through the producer and cannot
 // live in the independent engine crate. Their end-to-end coverage remains in
 // aver-lang's certificate integration suites; engine-only tests are colocated

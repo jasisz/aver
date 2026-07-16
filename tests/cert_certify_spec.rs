@@ -2977,6 +2977,77 @@ fn certify_emits_declared_uncertified_package_for_module_without_int_helper() {
 }
 
 #[test]
+fn certify_then_verify_module_without_int_helper_is_admission_only_green() {
+    // The end-to-end regression whose absence let the carrierless flow ship
+    // with an unprovable acceptance pin: emit the certificate package for a
+    // module WITHOUT the Int box helper, then run the REAL verification. The
+    // Lean acceptance must build green; the only rejection allowed is the
+    // admission-only verdict every 0-certified module gets, with its exact
+    // banner and honest nonzero exit.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping carrierless verify test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-verify-no-int-helper");
+
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/core/hello.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    assert!(
+        compile.status.success(),
+        "hello --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let verify = aver_command()
+        .arg("cert")
+        .arg("verify")
+        .arg(out_dir.join("hello.wasm"))
+        .arg(out_dir.join("cert"))
+        .output()
+        .expect("expected `aver cert verify` to run");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&verify.stdout),
+        String::from_utf8_lossy(&verify.stderr)
+    );
+
+    // 0 certified exports: the verdict is admission-only, never CERTIFIED.
+    assert_eq!(
+        verify.status.code(),
+        Some(1),
+        "the admission-only verdict must be the honest exit 1, not a crash:\n{combined}"
+    );
+    assert!(
+        combined.contains("NO CERTIFIED EXPORTS (admission only, no behavioral claims)"),
+        "the admission-only banner must be printed:\n{combined}"
+    );
+    assert!(
+        combined.contains("0 certified exports"),
+        "the summary must count zero certified exports:\n{combined}"
+    );
+    // The Lean acceptance itself built green: reaching the admission-only
+    // verdict requires the full checker pipeline to succeed, so no decline
+    // reason may appear.
+    assert!(
+        !combined.contains("DECLINED"),
+        "the carrierless package must not be DECLINED — its acceptance pin must close:\n{combined}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
 fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
     // Regression guard for the optional-helper change: a module that DOES
     // export `__rt_aint_from_i64` must certify exactly as before. The
@@ -3076,6 +3147,23 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
         manifest_lean.contains(&expected_roles),
         "Manifest.lean must pin the byte-derived table, got:\n{manifest_lean}"
     );
+
+    // Golden comparison, independent of the production path that derived the
+    // fields above: the emitted envelope and the two authoritative Lean data
+    // files are compared verbatim against a committed snapshot. Any change to
+    // the emitted certificate content for add_one — a re-keyed manifest, a
+    // shifted role table, a new wall identity, a reordered plan — must show
+    // up as a reviewed snapshot update, never ride in silently. Refresh with
+    // `INSTA_UPDATE=always` (or `cargo insta review`) after an intended
+    // producer or wall change.
+    let manifest_json = std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+        .expect("cert-manifest.json exists");
+    let plans_lean =
+        std::fs::read_to_string(cert_dir.join("Plans.lean")).expect("Plans.lean exists");
+    let golden = format!(
+        "== cert-manifest.json ==\n{manifest_json}\n== Manifest.lean ==\n{manifest_lean}\n== Plans.lean ==\n{plans_lean}"
+    );
+    insta::assert_snapshot!("add_one_certificate_package", golden);
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }
