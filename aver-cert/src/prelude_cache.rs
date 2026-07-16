@@ -3,7 +3,10 @@
 //! The cache is only a build hint. Every path still stages each source, runs
 //! `lake build`, and authors a fresh witness; strict `verify` additionally
 //! finishes with `leanchecker --fresh`. Any cache failure removes the copied
-//! build tree so the verifier can retry from freshly staged sources.
+//! build tree so the verifier can retry from freshly staged sources. A cache
+//! build that times out or cannot run is reported as a warning and degrades
+//! to a plain cache miss: the mandatory proof build that follows has its own
+//! wall-clock limit, so the verify/check flow stays bounded and fail-closed.
 //!
 //! The configured directory is trusted local state. Its integrity manifest
 //! detects accidental corruption, not an active writer able to replace both
@@ -13,7 +16,7 @@
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
-use crate::lean_process::LeanRunner;
+use crate::lean_process::{LeanRunner, LeanStepError};
 use crate::wall::Wall;
 
 const CACHE_ENV: &str = "AVER_CERT_PRELUDE_CACHE";
@@ -153,7 +156,26 @@ fn populate(
         for (name, bytes) in files {
             std::fs::write(temp.join(name), bytes).map_err(|_| ())?;
         }
-        let built = lean.run_lake(&temp, &["build"]).map_err(|_| ())?;
+        // A cache build that times out or cannot run must NOT fail
+        // verification: the cache is only a build hint, and skipping it is
+        // exactly a cache miss. Soundness is unaffected because the
+        // mandatory certificate proof build that follows re-does this work
+        // under its own wall-clock limit and fails closed on its own. But
+        // the fallback must be loud, not silent: name the step and say what
+        // happens next.
+        let built = lean
+            .run_lake(&temp, "proof library cache build", &["build"])
+            .map_err(|error| match error {
+                LeanStepError::Timeout { limit, .. } => eprintln!(
+                    "warning: the proof library cache build exceeded its {}-second limit; \
+                     continuing without the cache",
+                    limit.as_secs()
+                ),
+                LeanStepError::Failed(reason) => eprintln!(
+                    "warning: the proof library cache build could not run; \
+                     continuing without the cache: {reason}"
+                ),
+            })?;
         if !built.status.success() || !temp.join(".lake").is_dir() {
             return Err(());
         }
