@@ -9,7 +9,10 @@ use colored::Colorize;
 #[command(
     name = "aver-cert",
     version,
-    about = "Independent verifier for Aver artifact certificates"
+    about = "Independent verifier for Aver artifact certificates",
+    after_help = "Every Lean toolchain step runs under a wall-clock limit (900 seconds per \
+                  step by default). Set AVER_CERT_PHASE_TIMEOUT_SECS to change it; when a \
+                  step exceeds the limit it is stopped and the certificate is not accepted."
 )]
 struct Cli {
     #[command(subcommand)]

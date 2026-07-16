@@ -91,6 +91,11 @@ omits only the final fresh replay and therefore trusts the locally built or
 explicitly cached `.olean` graph. It still writes and elaborates a fresh
 checker-owned witness on every run, including the report pins and axiom guard.
 
+Every Lean toolchain step runs under a wall-clock limit (15 minutes per step
+by default), so no certificate can hang the verifier forever. On expiry the
+step's whole process tree is stopped and the certificate is not accepted.
+`AVER_CERT_PHASE_TIMEOUT_SECS=N` replaces the per-step limit.
+
 See the [certificate guide](../docs/certification.md) and
 [architecture](../docs/certification-architecture.md) for the guarantee and
 trust boundary.

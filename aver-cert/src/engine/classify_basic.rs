@@ -1,7 +1,7 @@
 fn nr_adt_constructor(
     f: &UserFn,
     body: &StructuralBody,
-    box_idx: u32,
+    box_idx: Option<u32>,
     carrier: Option<u32>,
 ) -> Option<Cert> {
     use Op::*;
@@ -39,7 +39,9 @@ fn nr_adt_constructor(
     if seen_locals != (0..f.arity as u32).collect::<Vec<_>>() {
         return None;
     }
-    if f.calls.iter().any(|c| *c == f.wasm_idx || *c != box_idx) {
+    // Every call must be the box helper; with no box helper in the module any
+    // call disqualifies (a call-free constructor still matches).
+    if f.calls.iter().any(|c| *c == f.wasm_idx || Some(*c) != box_idx) {
         return None;
     }
     Some(Cert::AdtConstructor {
@@ -103,7 +105,7 @@ fn nr_field_projection(
 fn nr_ref_dispatch_match(
     f: &UserFn,
     body: &StructuralBody,
-    box_idx: u32,
+    box_idx: Option<u32>,
     carrier: Option<u32>,
     _host_roles: &std::collections::HashMap<u32, HostRole>,
 ) -> Option<Cert> {
@@ -142,7 +144,11 @@ fn nr_ref_dispatch_match(
         // one nullable Int-carrier reference out (the plan path additionally
         // pins the exact unary concrete-ref -> nullable-carrier signature
         // in-kernel).
-        if matches!(miss_ops.as_slice(), [Op::I64Const(0), Op::Call(b)] if *b == box_idx)
+        // The widened Int match boxes its `0` default, so it structurally
+        // requires the box helper; without one this branch never matches and
+        // the verbatim route below still gets its shot.
+        if let Some(box_idx) = box_idx
+            && matches!(miss_ops.as_slice(), [Op::I64Const(0), Op::Call(b)] if *b == box_idx)
             && matches!(f.params.as_slice(), [TyKind::Ref { nullable: true, .. }])
             && matches!(f.results.as_slice(),
                 [TyKind::Ref { nullable: true, idx }] if *idx == carrier)

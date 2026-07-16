@@ -73,6 +73,14 @@ output. Those directories become trusted local state and must not be writable
 by an attacker. Strict `verify` still authors a fresh checker witness and runs
 the final whole-closure replay.
 
+Every Lean toolchain step (the certificate proof build, the artifact witness
+check, and the final kernel replay) runs under a wall-clock limit of 15
+minutes, so a degenerate or hostile certificate cannot hang `verify` or
+`check` forever: when a step exceeds the limit, its entire process tree is
+stopped and the certificate is declined. `AVER_CERT_PHASE_TIMEOUT_SECS=N`
+replaces the per-step limit, for slower machines or a first run that still
+installs the pinned toolchain.
+
 ## What a successful certification means
 
 The public proof root is:
@@ -138,8 +146,13 @@ unless the admitted result relation can state the weaker behavior honestly.
 
 ## Package format
 
-The first public package format is version `1`, and its certificate statement
-schema is version `1`. A generated `cert/` directory contains:
+The public package format is version `1`, and its certificate statement
+schema is version `2` (schema `2` made the subject's `hostRoleTable`
+optional: a module without the Int carrier runtime declares `null`, and the
+checker pins that declaration against a byte-derived proof that the module
+carries no Int box helper; a module whose host-role scan the decoder cannot
+complete satisfies no manifest declaration at all).
+A generated `cert/` directory contains:
 
 - `cert-manifest.json`, a transport and reporting envelope;
 - `Plans.lean`, the sole authoritative plan data;

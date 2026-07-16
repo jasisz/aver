@@ -38,6 +38,13 @@ struct CodeEntry {
     /// behavioural `add` helper apart from the `mul` helper (whose umag loops
     /// also contain `i64.add`).
     first_arith_strict: Option<FirstI64Arith>,
+    /// Result of the certificate decoder's own first-arith body scan, mirrored
+    /// byte for byte over the body bytes after the locals vector. `None` means
+    /// the decoder's scan would FAIL on this body (an instruction encoding
+    /// outside its vocabulary); `Some(first)` is its successful verdict. Used
+    /// to refuse certification of any module whose module-wide role scan the
+    /// verifier could never complete.
+    kernel_arith_scan: Option<Option<FirstI64Arith>>,
     host_ops: Vec<HostOp>,
 }
 

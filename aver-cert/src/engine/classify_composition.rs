@@ -55,7 +55,7 @@ fn classify_leaf_shape(
 /// wholly covered by the straight-line integer shapes.
 fn try_composition(
     f: &UserFn,
-    box_idx: u32,
+    box_idx: Option<u32>,
     carrier: Option<u32>,
     user_idx_set: &std::collections::HashSet<u32>,
     fns: &std::collections::HashMap<u32, &UserFn>,

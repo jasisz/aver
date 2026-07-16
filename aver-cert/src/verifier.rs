@@ -20,6 +20,8 @@ const CHECKED_ROOT: &str = "AverCertChecker.checked";
 const MAX_CANDIDATE_LEN: usize = 200;
 const TOOLCHAIN_ROOTS: [&str; 4] = ["Init", "Lake", "Lean", "Std"];
 const FRESH_REPLAY_ARGS: [&str; 4] = ["env", "leanchecker", "--fresh", "CheckerWitness"];
+/// User-facing name of the `lake build` step in timeout and failure messages.
+const PROOF_BUILD_PHASE: &str = "certificate proof build";
 
 /// Emitted on a green verdict. All trust-bearing byte facts and claim metadata
 /// are checked by the embedded Lean wall; Rust performs no parallel verdict
@@ -109,13 +111,15 @@ enum StringHostRole {
     Concat,
 }
 
+type HostRoleTable = (Option<u32>, Option<u32>, Option<u32>, Option<u32>);
+
 struct Candidates {
     certified: Vec<CertifiedCandidate>,
     contracts: Vec<String>,
     declared_uncertified: Vec<(String, String)>,
     capabilities: Vec<(String, String)>,
     start: Option<u32>,
-    host_role_table: (Option<u32>, Option<u32>, Option<u32>, Option<u32>),
+    host_role_table: Option<HostRoleTable>,
     string_host_roles: Vec<(u32, StringHostRole)>,
     profile: String,
     abi: String,
@@ -283,14 +287,14 @@ fn trusted_check(
         PristineWallCache::prepare(&build.path, selected_wall, &lean)
     };
 
-    let mut data_build = run_lake(&lean, &build.path, &["build"])?;
+    let mut data_build = run_lake(&lean, &build.path, PROOF_BUILD_PHASE, &["build"])?;
     if !data_build.status.success() && (data_cache_hit || wall_cache.was_seeded()) {
         if data_cache_hit {
             cache.invalidate(&build.path);
         } else {
             wall_cache.clear_build(&build.path);
         }
-        data_build = run_lake(&lean, &build.path, &["build"])?;
+        data_build = run_lake(&lean, &build.path, PROOF_BUILD_PHASE, &["build"])?;
         if data_build.status.success() && wall_cache.was_seeded() {
             wall_cache.evict();
         }
@@ -309,6 +313,7 @@ fn trusted_check(
     let elaborated = run_lake(
         &lean,
         &build.path,
+        "artifact witness check",
         &[
             "env",
             "lean",
@@ -324,7 +329,7 @@ fn trusted_check(
         ));
     }
     if let Some(replay_args) = kernel_replay_args(replay_mode) {
-        let replayed = run_lake(&lean, &build.path, replay_args)?;
+        let replayed = run_lake(&lean, &build.path, "final kernel replay", replay_args)?;
         if !replayed.status.success() {
             return Err(format!(
                 "certificate failed fresh-environment kernel replay:\n{}",
@@ -421,13 +426,16 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     let declared = lean_string_pair_list(&candidates.declared_uncertified);
     let capabilities = lean_string_pair_list(&candidates.capabilities);
     let start = lean_option_nat(candidates.start);
-    let roles = format!(
-        "({{ box := {}, add := {}, mul := {}, sub := {} }} : CertDecode.AddSub.Roles)",
-        lean_option_nat(candidates.host_role_table.0),
-        lean_option_nat(candidates.host_role_table.1),
-        lean_option_nat(candidates.host_role_table.2),
-        lean_option_nat(candidates.host_role_table.3),
-    );
+    let roles = match candidates.host_role_table {
+        Some((box_role, add_role, mul_role, sub_role)) => format!(
+            "some ({{ box := {}, add := {}, mul := {}, sub := {} }} : CertDecode.AddSub.Roles)",
+            lean_option_nat(box_role),
+            lean_option_nat(add_role),
+            lean_option_nat(mul_role),
+            lean_option_nat(sub_role),
+        ),
+        None => "(none : Option CertDecode.AddSub.Roles)".to_string(),
+    };
     let string_roles = format!(
         "[{}]",
         candidates
@@ -585,19 +593,27 @@ fn read_candidates(manifest: &Value) -> Result<Candidates, String> {
     let host_roles = manifest
         .get("hostRoleTable")
         .ok_or_else(|| "cert-manifest.json is missing object field `hostRoleTable`".to_string())?;
-    exact_object_fields(host_roles, "hostRoleTable", &["box", "add", "mul", "sub"])?;
-    let optional_index = |key: &str| -> Result<Option<u32>, String> {
-        match &host_roles[key] {
-            Value::Null => Ok(None),
-            value => Ok(Some(value_u32(value, &format!("hostRoleTable.{key}"))?)),
-        }
+    // `null` declares the absence of a host-role table (a module without the
+    // Int carrier); the Lean witness pins that declaration against the byte
+    // decoder returning `none`, so it stays exactly as constraining as the
+    // `some`-table case.
+    let host_role_table = if host_roles.is_null() {
+        None
+    } else {
+        exact_object_fields(host_roles, "hostRoleTable", &["box", "add", "mul", "sub"])?;
+        let optional_index = |key: &str| -> Result<Option<u32>, String> {
+            match &host_roles[key] {
+                Value::Null => Ok(None),
+                value => Ok(Some(value_u32(value, &format!("hostRoleTable.{key}"))?)),
+            }
+        };
+        Some((
+            optional_index("box")?,
+            optional_index("add")?,
+            optional_index("mul")?,
+            optional_index("sub")?,
+        ))
     };
-    let host_role_table = (
-        optional_index("box")?,
-        optional_index("add")?,
-        optional_index("mul")?,
-        optional_index("sub")?,
-    );
 
     let string_roles_json = manifest
         .get("stringHostRoles")
@@ -994,13 +1010,17 @@ struct LakeOut {
     combined: String,
 }
 
-fn run_lake(lean: &LeanRunner, build_dir: &Path, arguments: &[&str]) -> Result<LakeOut, String> {
-    let output = lean.run_lake(build_dir, arguments).map_err(|error| {
-        format!(
-            "could not run pinned `elan run … lake {}`: {error} (is Elan installed?)",
-            arguments.join(" ")
-        )
-    })?;
+fn run_lake(
+    lean: &LeanRunner,
+    build_dir: &Path,
+    phase: &str,
+    arguments: &[&str],
+) -> Result<LakeOut, String> {
+    // Any step failure — including a timeout — fails the whole verify/check
+    // closed; only the opt-in prelude cache may downgrade a step error.
+    let output = lean
+        .run_lake(build_dir, phase, arguments)
+        .map_err(|error| error.to_string())?;
     Ok(LakeOut {
         status: output.status,
         combined: format!(

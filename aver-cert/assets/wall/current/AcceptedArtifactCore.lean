@@ -1491,9 +1491,15 @@ def decodedNonExprClaimFacts (artifact : ArtifactData) : Prop :=
       artifact.compositionMembers artifact.compositionClaims
 
 /-- Decode the plan-first box/add/sub host-role table exactly once for the
-    whole module, then bind it to the manifest. -/
+    whole module, then bind the strict three-state result to the manifest:
+    a byte-provably carrierless module (`some none`) must declare no table;
+    a carriered module whose scan succeeded (`some (some t)`) must declare
+    exactly `t`; and a carriered module whose role scan failed decodes to
+    `none`, which equals `some v` for no manifest value `v` — the poisoned
+    state can never close, so neither class can borrow the other's manifest
+    value and scan failure cannot masquerade as carrierlessness. -/
 def decodedHostRoleTable (artifact : ArtifactData) : Prop :=
-  CertDecode.AddSub.roleTable artifact.modBytes artifact.modLen =
+  CertDecode.AddSub.roleTableStrict artifact.modBytes artifact.modLen =
     some artifact.manifest.subject.hostRoleTable
 
 /-- Decode every String.eq/String.concat role exactly once for the whole module.

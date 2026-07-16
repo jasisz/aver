@@ -276,15 +276,15 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["schema_version"].as_u64(),
-        Some(1),
-        "the first public certificate schema is version 1"
+        Some(2),
+        "schema 2 made the subject host-role table optional"
     );
     assert_eq!(
         manifest["profile"].as_str(),
         Some("AverUserProfile/v1"),
         "the first public byte profile is pinned exactly"
     );
-    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 1);
+    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 2);
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
@@ -2826,6 +2826,344 @@ fn certify_carrier_at_type_index_64_lake_builds_kernel_clean() {
         !combined.contains("sorryAx"),
         "boundary certificate leaked sorryAx:\n{combined}"
     );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
+fn certify_emits_declared_uncertified_package_for_module_without_int_helper() {
+    // No `lake` needed: this is a pure emitter no-abort check. hello.av has
+    // zero Int arithmetic, so its emitted module carries neither the Int
+    // carrier type nor the `__rt_aint_from_i64` box helper export. The
+    // certificate producer must still emit the `cert/` package with every
+    // export either certified or declared uncertified with a readable reason
+    // — never exit 1 with a whole-module error.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-no-int-helper");
+
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/core/hello.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    assert!(
+        compile.status.success(),
+        "compile --certify must not abort on a module without the Int box helper:\n{report}"
+    );
+    assert!(
+        !report.contains("module has no __rt_aint_from_i64 box helper"),
+        "the whole-module abort must be gone:\n{report}"
+    );
+    assert!(
+        out_dir.join("hello.wasm").is_file(),
+        "wasm artifact must be written"
+    );
+
+    let cert_dir = out_dir.join("cert");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    assert!(
+        cert_dir.join("Plans.lean").is_file(),
+        "the certificate package must be written next to the wasm artifact"
+    );
+
+    // Every module export appears either as certified or as declared
+    // uncertified with a non-empty human-readable reason.
+    let certified: BTreeSet<String> = manifest["certified"]
+        .as_array()
+        .expect("certified report is an array")
+        .iter()
+        .map(|c| c["name"].as_str().unwrap().to_string())
+        .collect();
+    let declared: BTreeMap<String, String> = manifest["declaredUncertified"]
+        .as_array()
+        .expect("declaredUncertified report is an array")
+        .iter()
+        .map(|entry| {
+            (
+                entry["name"]
+                    .as_str()
+                    .expect("entry has a name")
+                    .to_string(),
+                entry["reason"]
+                    .as_str()
+                    .expect("entry has a reason")
+                    .to_string(),
+            )
+        })
+        .collect();
+    for (name, reason) in &declared {
+        assert!(
+            !reason.trim().is_empty(),
+            "declared-uncertified export `{name}` must carry a readable reason"
+        );
+    }
+    for export in ["greet", "shout", "main"] {
+        assert!(
+            certified.contains(export) || declared.contains_key(export),
+            "export `{export}` must be certified or declared uncertified, got \
+             certified={certified:?} declared={declared:?}"
+        );
+    }
+
+    // hello.wasm has no Int carrier at all, so the integer-family classes can
+    // never match; the manifest must truthfully declare the ABSENCE of the
+    // host-role table (`null`), never a fabricated all-null table, because the
+    // in-kernel pin equates the manifest value with the byte decoder's result
+    // and the decoder resolves no table for a carrierless module.
+    assert_eq!(
+        manifest["carrier_type_index"],
+        serde_json::Value::Null,
+        "hello.wasm must not declare an Int carrier type"
+    );
+    assert_eq!(
+        manifest["hostRoleTable"],
+        serde_json::Value::Null,
+        "a carrierless module has no host-role table; the manifest must say so"
+    );
+    let manifest_lean =
+        std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
+    assert!(
+        manifest_lean.contains("hostRoleTable := none,"),
+        "the Lean manifest must declare the absent host-role table as `none`"
+    );
+
+    // Pin the exact human-readable decline reasons. If a future classifier
+    // change silently certifies (or reclassifies) one of these exports, this
+    // must fail loudly instead of quietly shifting the report.
+    const NO_INT_HELPER_REASON: &str = "body does not match a carrier-free certified template, \
+         and the module has no Int carrier host helpers (`__rt_aint_from_i64`); \
+         integer-family certification requires the Int carrier";
+    for export in ["greet", "shout"] {
+        assert!(
+            !certified.contains(export),
+            "`{export}` is a String-shaped export with no certified class; \
+             a sudden certification is a false positive until reviewed"
+        );
+        assert_eq!(
+            declared.get(export).map(String::as_str),
+            Some(NO_INT_HELPER_REASON),
+            "`{export}` must decline with the exact no-Int-helper reason"
+        );
+    }
+    assert!(
+        !certified.contains("main"),
+        "`main` is an effectful zero-argument export and must not certify"
+    );
+    assert_eq!(
+        declared.get("main").map(String::as_str),
+        Some(
+            "unsupported signature (0 params); Stage-B templates cover \
+             one-argument Int functions and two-argument accumulator recursion"
+        ),
+        "`main` must decline for its signature, not for the missing Int helper"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
+fn certify_then_verify_module_without_int_helper_is_admission_only_green() {
+    // The end-to-end regression whose absence let the carrierless flow ship
+    // with an unprovable acceptance pin: emit the certificate package for a
+    // module WITHOUT the Int box helper, then run the REAL verification. The
+    // Lean acceptance must build green; the only rejection allowed is the
+    // admission-only verdict every 0-certified module gets, with its exact
+    // banner and honest nonzero exit.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping carrierless verify test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-verify-no-int-helper");
+
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/core/hello.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    assert!(
+        compile.status.success(),
+        "hello --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let verify = aver_command()
+        .arg("cert")
+        .arg("verify")
+        .arg(out_dir.join("hello.wasm"))
+        .arg(out_dir.join("cert"))
+        .output()
+        .expect("expected `aver cert verify` to run");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&verify.stdout),
+        String::from_utf8_lossy(&verify.stderr)
+    );
+
+    // 0 certified exports: the verdict is admission-only, never CERTIFIED.
+    assert_eq!(
+        verify.status.code(),
+        Some(1),
+        "the admission-only verdict must be the honest exit 1, not a crash:\n{combined}"
+    );
+    assert!(
+        combined.contains("NO CERTIFIED EXPORTS (admission only, no behavioral claims)"),
+        "the admission-only banner must be printed:\n{combined}"
+    );
+    assert!(
+        combined.contains("0 certified exports"),
+        "the summary must count zero certified exports:\n{combined}"
+    );
+    // The Lean acceptance itself built green: reaching the admission-only
+    // verdict requires the full checker pipeline to succeed, so no decline
+    // reason may appear.
+    assert!(
+        !combined.contains("DECLINED"),
+        "the carrierless package must not be DECLINED — its acceptance pin must close:\n{combined}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
+fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
+    // Regression guard for the optional-helper change: a module that DOES
+    // export `__rt_aint_from_i64` must certify exactly as before. The
+    // expectations below are the pre-change add_one certification facts;
+    // if the carrierless handling ever leaks into the carriered path (a
+    // missing certification, a reclassification, or a `null` host-role
+    // table), this fails.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-add-one-regression");
+
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/certification/add_one.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    assert!(
+        compile.status.success(),
+        "add_one --certify failed:\n{report}"
+    );
+    assert!(
+        report.contains("1 certified"),
+        "add_one must report exactly one certified export:\n{report}"
+    );
+
+    let cert_dir = out_dir.join("cert");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+
+    // The certified entry, byte for byte the pre-change classification.
+    assert_eq!(
+        manifest["certified"],
+        serde_json::json!([{
+            "name": "addOne",
+            "class": "expr-fragment-v1",
+            "policy": "simulatesModel",
+            "level": "L1",
+            "dom": "List Int",
+            "cod": "Int",
+            "theorem": "AcceptanceSoundness.exprFragment_claim_discharges",
+        }]),
+        "the add_one certification must be unchanged by the optional-helper handling"
+    );
+    assert_eq!(
+        manifest["runtime_contracts"],
+        serde_json::json!([
+            "__rt_aint_from_i64 (box i64 -> carrier)",
+            "Int.add (carrier add = exact integer addition on represented values)",
+        ]),
+        "add_one's runtime contracts must be unchanged"
+    );
+
+    // The host-role table stays the exact byte-derived OBJECT — never `null`
+    // — and every role is bound for the full Int runtime.
+    let wasm = std::fs::read(out_dir.join("add_one.wasm")).expect("wasm artifact exists");
+    let (box_idx, add_idx, mul_idx, sub_idx) =
+        aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
+    assert!(
+        box_idx.is_some() && add_idx.is_some() && mul_idx.is_some() && sub_idx.is_some(),
+        "add_one carries the full Int runtime; every strict role must bind"
+    );
+    assert!(
+        manifest["carrier_type_index"].is_u64(),
+        "add_one must declare its Int carrier type index"
+    );
+    assert_eq!(
+        manifest["hostRoleTable"],
+        serde_json::json!({"box": box_idx, "add": add_idx, "mul": mul_idx, "sub": sub_idx}),
+        "a module with the Int helper must keep the concrete host-role table"
+    );
+
+    // And the Lean manifest binds the same table as `some` — the acceptance
+    // equality for carriered modules is exactly as strong as before.
+    let manifest_lean =
+        std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
+    let expected_roles = format!(
+        "hostRoleTable := some ({{ box := some {}, add := some {}, mul := some {}, sub := some {} }} : CertDecode.AddSub.Roles),",
+        box_idx.unwrap(),
+        add_idx.unwrap(),
+        mul_idx.unwrap(),
+        sub_idx.unwrap(),
+    );
+    assert!(
+        manifest_lean.contains(&expected_roles),
+        "Manifest.lean must pin the byte-derived table, got:\n{manifest_lean}"
+    );
+
+    // Golden comparison, independent of the production path that derived the
+    // fields above: the emitted envelope and the two authoritative Lean data
+    // files are compared verbatim against a committed snapshot. Any change to
+    // the emitted certificate content for add_one — a re-keyed manifest, a
+    // shifted role table, a new wall identity, a reordered plan — must show
+    // up as a reviewed snapshot update, never ride in silently. Refresh with
+    // `INSTA_UPDATE=always` (or `cargo insta review`) after an intended
+    // producer or wall change.
+    let manifest_json = std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+        .expect("cert-manifest.json exists");
+    let plans_lean =
+        std::fs::read_to_string(cert_dir.join("Plans.lean")).expect("Plans.lean exists");
+    let golden = format!(
+        "== cert-manifest.json ==\n{manifest_json}\n== Manifest.lean ==\n{manifest_lean}\n== Plans.lean ==\n{plans_lean}"
+    );
+    insta::assert_snapshot!("add_one_certificate_package", golden);
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }

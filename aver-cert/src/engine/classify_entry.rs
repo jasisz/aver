@@ -6,7 +6,7 @@ struct ClassifierContext<'a> {
 
 fn classify_without_expr_fragment(
     f: &UserFn,
-    box_idx: u32,
+    box_idx: Option<u32>,
     carrier: Option<u32>,
     user_idx_set: &std::collections::HashSet<u32>,
     fns: &std::collections::HashMap<u32, &UserFn>,
@@ -97,6 +97,16 @@ fn classify_without_expr_fragment(
                 .to_string(),
         );
     }
+    // A module can legitimately carry no Int runtime at all. Say so instead
+    // of the generic template list: every integer-family template cites the
+    // box helper, so it can never match here, and the carrier-free templates
+    // above already had their shot.
+    if box_idx.is_none() {
+        return Err(
+            "body does not match a carrier-free certified template, and the module has no Int carrier host helpers (`__rt_aint_from_i64`); integer-family certification requires the Int carrier"
+                .to_string(),
+        );
+    }
     Err("body does not match a certified template (straight-line add-constant, single-argument self-recursion, two-argument accumulator recursion, or non-recursive ADT constructor/projection/match)".to_string())
 }
 
@@ -113,7 +123,7 @@ struct StructuralBody {
 
 fn walk_nonrecursive(
     f: &UserFn,
-    box_idx: u32,
+    box_idx: Option<u32>,
     carrier: Option<u32>,
     user_idx_set: &std::collections::HashSet<u32>,
     host_roles: &std::collections::HashMap<u32, HostRole>,
