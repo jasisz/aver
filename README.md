@@ -676,6 +676,7 @@ For repository self-documentation via decision exports, see `decisions/architect
 | [docs/dafny.md](docs/dafny.md) | Dafny backend: Z3-powered automated law verification |
 | [docs/certification.md](docs/certification.md) | Artifact behavioral certificates: commands, guarantees, admitted families, and limits |
 | [docs/certification-architecture.md](docs/certification-architecture.md) | Certificate data flow, checker ownership, and trust boundary |
+| [docs/certification-tcb.md](docs/certification-tcb.md) | Certificate trust inventory (the complete TCB) and the versioning, lifetime, and freeze policy |
 | [docs/independence.md](docs/independence.md) | Independent products: the semantic model behind `?!` and `!` |
 | [docs/research.md](docs/research.md) | Narrow related work for effects, Oracle, independent products, and proof targets |
 | [docs/pushback.md](docs/pushback.md) | Common pushback: questions, objections, and honest answers |

@@ -180,6 +180,12 @@ from the prior elaboration environment. It is still a component of the same
 Lean 4.32 distribution, not an independent checker implementation. The
 current architecture should not be described as having two diverse kernels.
 
+The component-by-component inventory of this trust — including which
+assumptions are held by differential testing rather than kernel proof — and
+the policy for how the package version, statement schema, and wall identity
+evolve are documented in
+[Certification Trust Inventory and Versioning Policy](certification-tcb.md).
+
 ## Read declarations and scope
 
 For known non-ADT families, `StandardFace` fixes the semantic face available

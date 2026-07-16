@@ -201,4 +201,7 @@ conditional on their stated meaning, while the wall still enforces the
 standard byte-level face and non-vacuity checks available for that family.
 
 See [Certification Architecture](certification-architecture.md) for the exact
-data flow and trust boundary.
+data flow and trust boundary, and
+[Certification Trust Inventory and Versioning Policy](certification-tcb.md)
+for the complete trusted-component inventory, the version identities and what
+bumps them, and the certificate lifetime and freeze policy.
