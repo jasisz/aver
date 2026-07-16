@@ -7,15 +7,20 @@
 /// Public certificate-package layout understood by this verifier.
 pub const FORMAT_VERSION: u32 = 1;
 
-/// First public schema accepted by the standalone verifier.
-pub const CERT_SCHEMA_VERSION: u32 = 1;
+/// Manifest schema accepted by the standalone verifier. Version 2 made the
+/// subject's `hostRoleTable` optional: modules without the Int box helper
+/// declare `null`, pinned against a byte-derived proof of the helper's
+/// absence, while modules with the helper pin the exact decoded table. A
+/// module whose role scan the decoder cannot complete matches no manifest
+/// value.
+pub const CERT_SCHEMA_VERSION: u32 = 2;
 
 /// Named theorem audited by the checker-owned witness.
 pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:a362a446db77142750423abaae80eafeffd040fa0b8f7b57fb53fac60b22eea6";
+    "sha256:0d667eb0d8ff38f5d11105fb18ea6e326c5545da5662b284a4e46b35321927ac";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///

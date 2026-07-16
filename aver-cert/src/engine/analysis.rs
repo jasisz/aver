@@ -286,6 +286,204 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
     contracts
 }
 
+#[cfg(test)]
+mod analysis_without_box_helper_tests {
+    /// A valid module WITHOUT the `__rt_aint_from_i64` export must still
+    /// analyze end-to-end: `analyze` returns `Ok`, and the user export is
+    /// either certified by a carrier-free class or declared uncertified with a
+    /// readable reason — never a whole-module `Err` that aborts `--certify`.
+    #[test]
+    fn analyze_accepts_module_without_box_helper() {
+        let bytes = wat::parse_str(
+            r#"(module
+  (type $t (func (param i64) (result i64)))
+  (func $identity (type $t) local.get 0)
+  (export "identity" (func $identity))
+)"#,
+        )
+        .expect("no-box-helper module WAT parses");
+        let analysis = super::analyze(&bytes, &[])
+            .expect("a module without the Int box helper must analyze, not abort");
+        assert!(
+            analysis.frag_host_table.box_idx.is_none(),
+            "the host-role table must leave the box role unbound, never invent an index"
+        );
+        let certified = analysis.certified_names();
+        if !certified.contains(&"identity".to_string()) {
+            let reason = analysis
+                .declined()
+                .iter()
+                .find(|(name, _)| name == "identity")
+                .map(|(_, reason)| reason.as_str())
+                .expect("identity must be declared uncertified when it does not certify");
+            assert!(
+                reason.contains("__rt_aint_from_i64"),
+                "decline reason should name the missing Int carrier helpers, got: {reason}"
+            );
+        }
+    }
+
+    /// Adversarial half-runtime module: the Int carrier STRUCT TYPE exists,
+    /// but the `__rt_aint_from_i64` box helper export does not, so every
+    /// integer-family recognizer sees `carrier = Some(..)` with
+    /// `box_idx = None`. Each shape below drives one classify path past its
+    /// `carrier` admission into the `box_idx` decline:
+    ///   - `descend` (self-recursive on the carrier) — `classify_recursion.rs`
+    ///     (both the fueled-recursion and mutual-SCC recognizers);
+    ///   - `dispatch` (sum-root in, scalar out, parseable straight-line body)
+    ///     — `classify_variant_dispatch.rs` via `walk_nonrecursive`;
+    ///   - `probe` (calls an unexported, role-free helper) —
+    ///     `classify_structural.rs`, where the only non-host call cannot be
+    ///     the absent box helper.
+    /// All three must decline fail-closed with the readable no-Int-helper
+    /// reason; nothing may panic, certify, or invent a box index.
+    #[test]
+    fn analyze_declines_carrier_without_box_helper_across_classify_paths() {
+        let bytes = wat::parse_str(
+            r#"(module
+  (type $carrier (struct (field i64) (field (ref null $carrier)) (field i32)))
+  (type $sum (struct (field i32)))
+  (func $descend (param (ref null $carrier)) (result (ref null $carrier))
+    local.get 0
+    call $descend)
+  (func $dispatch (param (ref null $sum)) (result i64)
+    i64.const 5)
+  (func $helper (param (ref null $sum)) (result i64)
+    i64.const 1)
+  (func $probe (param (ref null $sum)) (result i64)
+    local.get 0
+    call $helper)
+  (func $addlike (param (ref null $carrier) (ref null $carrier)) (result (ref null $carrier))
+    (local i64 i64)
+    local.get 2
+    local.get 3
+    i64.add
+    drop
+    local.get 0)
+  (export "descend" (func $descend))
+  (export "dispatch" (func $dispatch))
+  (export "probe" (func $probe))
+)"#,
+        )
+        .expect("carrier-without-box-helper module WAT parses");
+        let analysis = super::analyze(&bytes, &[])
+            .expect("a carriered module without the box helper must analyze, not abort");
+        assert!(
+            analysis.carrier.is_some(),
+            "the fixture deliberately carries the Int carrier struct type"
+        );
+        assert!(
+            analysis.frag_host_table.box_idx.is_none(),
+            "no `__rt_aint_from_i64` export means no box role, ever"
+        );
+        assert!(
+            analysis.frag_host_table.add_idx.is_some(),
+            "the byte-derived add role binds independently of the box helper"
+        );
+        assert!(
+            analysis.certified_names().is_empty(),
+            "no integer-family shape may certify without the box helper, got {:?}",
+            analysis.certified_names()
+        );
+        for export in ["descend", "dispatch", "probe"] {
+            let reason = analysis
+                .declined()
+                .iter()
+                .find(|(name, _)| name == export)
+                .map(|(_, reason)| reason.as_str())
+                .unwrap_or_else(|| panic!("`{export}` must be declared uncertified"));
+            assert!(
+                reason.contains("__rt_aint_from_i64"),
+                "`{export}` must decline with the no-Int-helper reason, got: {reason}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod poisoned_role_scan_tests {
+    /// A module WITH the `__rt_aint_from_i64` export and one carrier-binop-
+    /// signature function whose body starts with an instruction encoding the
+    /// certificate decoder's role scan does not support (`ref.as_non_null`).
+    const POISONED_WAT: &str = r#"(module
+  (type $carrier (struct (field i64) (field anyref) (field i32)))
+  (func $box (param i64) (result (ref null $carrier))
+    local.get 0
+    ref.null any
+    i32.const 0
+    struct.new $carrier)
+  (func $add (param (ref null $carrier) (ref null $carrier)) (result (ref null $carrier))
+    local.get 0
+    struct.get $carrier 0
+    local.get 1
+    struct.get $carrier 0
+    i64.add
+    ref.null any
+    i32.const 0
+    struct.new $carrier)
+  (func $unrelated (param (ref null $carrier) (ref null $carrier)) (result (ref null $carrier))
+    local.get 0
+    ref.as_non_null)
+  (export "__rt_aint_from_i64" (func $box))
+)"#;
+
+    /// A module carrying the Int box helper whose module-wide role scan the
+    /// certificate decoder cannot complete has NO manifest declaration that
+    /// satisfies its acceptance pin. The producer must refuse it outright —
+    /// emitting the package would only defer the failure to verification.
+    #[test]
+    fn analyze_refuses_box_helper_module_with_unscannable_carrier_binop_body() {
+        let bytes = wat::parse_str(POISONED_WAT).expect("poisoned module WAT parses");
+        let error = match super::analyze(&bytes, &[]) {
+            Err(error) => error,
+            Ok(_) => {
+                panic!("a box-helper module with an unscannable carrier-binop body must be refused")
+            }
+        };
+        assert!(
+            error.contains("__rt_aint_from_i64"),
+            "the refusal must name the box helper, got: {error}"
+        );
+        assert!(
+            error.contains("role scan") && error.contains("function index 2"),
+            "the refusal must name the failed role scan and the offending function, got: {error}"
+        );
+    }
+
+    /// Control: the same module without the unscannable function analyzes and
+    /// binds its box and add roles.
+    #[test]
+    fn analyze_accepts_box_helper_module_when_every_carrier_binop_body_scans() {
+        let healthy = POISONED_WAT.replace(
+            r#"  (func $unrelated (param (ref null $carrier) (ref null $carrier)) (result (ref null $carrier))
+    local.get 0
+    ref.as_non_null)
+"#,
+            "",
+        );
+        assert_ne!(healthy, POISONED_WAT, "the control must drop the poisoned function");
+        let bytes = wat::parse_str(&healthy).expect("healthy module WAT parses");
+        let analysis = super::analyze(&bytes, &[])
+            .expect("the healthy sibling must analyze");
+        assert_eq!(analysis.frag_host_table.box_idx, Some(0));
+        assert_eq!(analysis.frag_host_table.add_idx, Some(1));
+    }
+
+    /// Without the box helper export the module-wide table is byte-provably
+    /// absent, so an unscannable carrier-binop body is NOT the poisoned state:
+    /// analysis proceeds and every integer-family recognizer declines
+    /// per-export as usual.
+    #[test]
+    fn analyze_accepts_unscannable_body_when_box_helper_is_absent() {
+        let helperless = POISONED_WAT.replace("  (export \"__rt_aint_from_i64\" (func $box))\n", "");
+        assert_ne!(helperless, POISONED_WAT, "the control must drop the helper export");
+        let bytes = wat::parse_str(&helperless).expect("helperless module WAT parses");
+        let analysis = super::analyze(&bytes, &[])
+            .expect("a module without the box helper is never in the poisoned state");
+        assert!(analysis.frag_host_table.box_idx.is_none());
+    }
+}
+
 // These historical tests compile Aver source through the producer and cannot
 // live in the independent engine crate. Their end-to-end coverage remains in
 // aver-lang's certificate integration suites; engine-only tests are colocated

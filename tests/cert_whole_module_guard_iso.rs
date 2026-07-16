@@ -447,7 +447,7 @@ def hostileRoleTable : CertDecode.AddSub.Roles :=
   {{ box := some {box_idx}, add := some {wrong_add_idx}, mul := some {mul_idx}, sub := some {sub_idx} }}
 def hostileManifest : Manifest :=
   {{ manifest with subject :=
-      {{ manifest.subject with hostRoleTable := hostileRoleTable }} }}
+      {{ manifest.subject with hostRoleTable := some hostileRoleTable }} }}
 def hostileArtifact : AcceptedArtifact.ArtifactData :=
   {{ Artifact.data with manifest := hostileManifest }}
 
@@ -466,15 +466,33 @@ example : withoutHostRoleTable hostileArtifact := by
 example : ¬ AcceptedArtifact.decodedNonExprFacts hostileArtifact := by
   intro h
   have bad := h.1
-  change CertDecode.AddSub.roleTable ArtifactBytes.modBytes ArtifactBytes.modLen =
-      some hostileRoleTable at bad
+  change CertDecode.AddSub.roleTableStrict ArtifactBytes.modBytes ArtifactBytes.modLen =
+      some (some hostileRoleTable) at bad
   rw [Artifact.decodedHostRoles] at bad
-  have badTable : manifest.subject.hostRoleTable = hostileRoleTable :=
-    Option.some.inj bad
-  have badAdd := congrArg CertDecode.AddSub.Roles.add badTable
+  have badTable : (some (some ({{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx} }} : CertDecode.AddSub.Roles)) : Option (Option CertDecode.AddSub.Roles)) = some (some hostileRoleTable) := bad
+  have badAdd := congrArg CertDecode.AddSub.Roles.add
+    (Option.some.inj (Option.some.inj badTable))
   change some {add_idx} = some {wrong_add_idx} at badAdd
   have distinct : (some {add_idx} : Option Nat) ≠ some {wrong_add_idx} := by decide
   exact distinct badAdd
+
+-- A carriered artifact cannot declare the table absent either: the strict
+-- decoder yields the honest `some (some table)`, never the carrierless
+-- `some none`.
+def absentTableManifest : Manifest :=
+  {{ manifest with subject :=
+      {{ manifest.subject with hostRoleTable := none }} }}
+def absentTableArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with manifest := absentTableManifest }}
+example : ¬ AcceptedArtifact.decodedNonExprFacts absentTableArtifact := by
+  intro h
+  have bad := h.1
+  change CertDecode.AddSub.roleTableStrict ArtifactBytes.modBytes ArtifactBytes.modLen =
+      some (none : Option CertDecode.AddSub.Roles) at bad
+  rw [Artifact.decodedHostRoles] at bad
+  have impossible : (some (some ({{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx} }} : CertDecode.AddSub.Roles)) : Option (Option CertDecode.AddSub.Roles)) = some none := bad
+  have inner := Option.some.inj impossible
+  exact nomatch inner
 "#
     );
     std::fs::write(cert.join("HostRoleGuardIso.lean"), lean).unwrap();
@@ -488,6 +506,235 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts hostileArtifact := by
     assert!(
         check.status.success(),
         "S3 host-role GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(out_dir);
+}
+
+/// A module WITH the Int box helper whose module-wide role scan fails: it
+/// contains an unrelated carrier-binop-signature function whose body starts
+/// with an instruction encoding outside the certificate decoder's scan
+/// vocabulary (`ref.as_non_null`). The strict decode must land in the closed
+/// `none` state that satisfies NO manifest declaration — in particular the
+/// carrierless `null` this attack claims.
+const POISONED_ROLE_SCAN_WAT: &str = r#"
+(module
+  (type $carrier (struct (field i64) (field anyref) (field i32)))
+  (func $box (param i64) (result (ref null $carrier))
+    local.get 0
+    ref.null any
+    i32.const 0
+    struct.new $carrier)
+  (func $add (param (ref null $carrier) (ref null $carrier)) (result (ref null $carrier))
+    local.get 0
+    struct.get $carrier 0
+    local.get 1
+    struct.get $carrier 0
+    i64.add
+    ref.null any
+    i32.const 0
+    struct.new $carrier)
+  (func $unrelated (param (ref null $carrier) (ref null $carrier)) (result (ref null $carrier))
+    local.get 0
+    ref.as_non_null)
+  (export "__rt_aint_from_i64" (func $box)))
+"#;
+
+/// The same module without the unscannable function: the healthy control
+/// whose strict decode resolves the full table.
+const HEALTHY_ROLE_SCAN_WAT: &str = r#"
+(module
+  (type $carrier (struct (field i64) (field anyref) (field i32)))
+  (func $box (param i64) (result (ref null $carrier))
+    local.get 0
+    ref.null any
+    i32.const 0
+    struct.new $carrier)
+  (func $add (param (ref null $carrier) (ref null $carrier)) (result (ref null $carrier))
+    local.get 0
+    struct.get $carrier 0
+    local.get 1
+    struct.get $carrier 0
+    i64.add
+    ref.null any
+    i32.const 0
+    struct.new $carrier)
+  (export "__rt_aint_from_i64" (func $box)))
+"#;
+
+fn hex_le(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes.iter().rev() {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+/// Negative control for the round-two attack on the module-wide host-role
+/// pin: a CARRIERED module (the Int box helper is exported) engineered so the
+/// role scan fails, with a manifest claiming the carrierless `null`, must be
+/// REJECTED at the host-role-table pin. The producer refuses to certify such
+/// a module at all, and the kernel-side strict decode equals `some v` for no
+/// manifest value `v`, so the claimed `null` (and every other declaration)
+/// leaves the acceptance pin unprovable.
+#[test]
+fn poisoned_role_scan_is_rejected_at_the_host_role_table_pin() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping poisoned role-scan pin test: `lake` not available");
+        return;
+    }
+    let poisoned = wat::parse_str(POISONED_ROLE_SCAN_WAT).expect("poisoned WAT compiles");
+    let healthy = wat::parse_str(HEALTHY_ROLE_SCAN_WAT).expect("healthy WAT compiles");
+    for (name, bytes) in [("poisoned", &poisoned), ("healthy", &healthy)] {
+        wasmparser::Validator::new()
+            .validate_all(bytes)
+            .unwrap_or_else(|error| panic!("{name} module must be valid wasm: {error}"));
+    }
+
+    // Producer honesty: the poisoned module is refused at disassembly with a
+    // readable reason — no certificate package in the unverifiable state is
+    // ever emitted.
+    let refusal = aver::codegen::cert::byte_derived_frag_host_role_indices(&poisoned)
+        .expect_err("the poisoned module must be refused by the producer");
+    assert!(
+        refusal.contains("__rt_aint_from_i64") && refusal.contains("role scan"),
+        "the refusal must name the helper and the failed role scan, got: {refusal}"
+    );
+
+    // Healthy control: the identical module without the unscannable function
+    // resolves its box and add roles.
+    let (box_idx, add_idx, mul_idx, sub_idx) =
+        aver::codegen::cert::byte_derived_frag_host_role_indices(&healthy)
+            .expect("the healthy control must classify");
+    let (box_idx, add_idx) = (
+        box_idx.expect("healthy box role"),
+        add_idx.expect("healthy add role"),
+    );
+    assert_eq!((mul_idx, sub_idx), (None, None));
+
+    // Kernel side, inside a production package environment: the strict
+    // decode of the poisoned bytes is the closed `none`, the full acceptance
+    // predicate rejects the null claim exactly at the host-role-table pin,
+    // and the literal one-conjunct-weakened copy accepts the same artifact.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-poisoned-role-scan-pin");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/certification/add_one.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile add_one fixture for the poisoned role-scan pin test");
+    assert!(
+        compile.status.success(),
+        "add_one compile failed for the poisoned role-scan pin test:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let cert = out_dir.join("cert");
+    materialize_wall(&cert);
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build add_one certificate before the poisoned role-scan pin test");
+    assert!(
+        build.status.success(),
+        "add_one certificate failed before the poisoned role-scan pin test:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let lean = format!(
+        r#"import ArtifactCertificate
+
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 300000
+
+-- A module WITH the Int box helper export whose role scan hits an unrelated
+-- carrier-binop-signature function with an instruction encoding outside the
+-- decoder's vocabulary. Bytes crafted by the test harness.
+def poisonedBytes : Nat := 0x{poisoned_hex}
+def poisonedLen : Nat := {poisoned_len}
+
+-- The identical module without the unscannable function.
+def healthyBytes : Nat := 0x{healthy_hex}
+def healthyLen : Nat := {healthy_len}
+
+-- Control: the healthy sibling decodes to the full table.
+example : CertDecode.AddSub.roleTableStrict healthyBytes healthyLen =
+    some (some {{ box := some {box_idx}, add := some {add_idx}, mul := none, sub := none }}) := rfl
+
+-- The poisoned module decodes to the closed scan-failure state.
+theorem poisonedStrict :
+    CertDecode.AddSub.roleTableStrict poisonedBytes poisonedLen = none := rfl
+
+-- No manifest declaration whatsoever can close the pin over poisoned bytes.
+example (v : Option CertDecode.AddSub.Roles) :
+    CertDecode.AddSub.roleTableStrict poisonedBytes poisonedLen ≠ some v := by
+  intro h
+  rw [poisonedStrict] at h
+  exact nomatch h
+
+-- The attack itself: the poisoned module claims the carrierless `null`.
+def nullClaimManifest : Manifest :=
+  {{ manifest with
+      obligations := [],
+      subject := {{ manifest.subject with
+        hostRoleTable := none, stringHostRoles := [] }} }}
+def poisonedArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with
+      modBytes := poisonedBytes, modLen := poisonedLen,
+      manifest := nullClaimManifest,
+      symFragmentClaims := [], stringEqClaims := [], stringConcatClaims := [],
+      constructClaims := [], recursionClaims := [], mutualRecursionClaims := [],
+      verbatimClaims := [], intDispatchClaims := [], fieldProjectionClaims := [],
+      compositionMembers := [], compositionClaims := [] }}
+
+-- Literal one-conjunct-weakened copy: only the role-table equality is absent.
+def withoutHostRoleTable (artifact : AcceptedArtifact.ArtifactData) : Prop :=
+  AcceptedArtifact.decodedStringHostRoles artifact ∧
+  AcceptedArtifact.decodedNonExprClaimFacts artifact
+
+-- Every sibling decoded fact accepts the poisoned artifact...
+example : withoutHostRoleTable poisonedArtifact := by
+  constructor
+  · show CertDecode.StringHost.roleTable poisonedBytes poisonedLen = some []
+    rfl
+  · exact ⟨trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial⟩
+
+-- ...and the full predicate rejects it exactly at the host-role-table pin.
+example : ¬ AcceptedArtifact.decodedNonExprFacts poisonedArtifact := by
+  intro h
+  have bad := h.1
+  change CertDecode.AddSub.roleTableStrict poisonedBytes poisonedLen =
+      some (none : Option CertDecode.AddSub.Roles) at bad
+  rw [poisonedStrict] at bad
+  exact nomatch bad
+"#,
+        poisoned_hex = hex_le(&poisoned),
+        poisoned_len = poisoned.len(),
+        healthy_hex = hex_le(&healthy),
+        healthy_len = healthy.len(),
+        box_idx = box_idx,
+        add_idx = add_idx,
+    );
+    std::fs::write(cert.join("PoisonedRoleScanPin.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("PoisonedRoleScanPin.lean")
+        .output()
+        .expect("run the poisoned role-scan pin check");
+    assert!(
+        check.status.success(),
+        "poisoned role-scan pin check failed:\n{}{}",
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );

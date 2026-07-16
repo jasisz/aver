@@ -533,18 +533,35 @@ fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
         let (box_idx, add_idx, mul_idx, sub_idx) =
             aver::codegen::cert::byte_derived_frag_host_role_indices(&bytes)
                 .unwrap_or_else(|error| panic!("{name}: Rust role classifier failed: {error}"));
+        // The production acceptance pin consumes the strict three-state
+        // decode: a module with the box helper resolves the full table, a
+        // module without it resolves the byte-proven absence.
+        let strict_expected = if box_idx.is_some() {
+            format!(
+                "some (some {{ box := {}, add := {}, mul := {}, sub := {} }})",
+                option_nat(box_idx),
+                option_nat(add_idx),
+                option_nat(mul_idx),
+                option_nat(sub_idx),
+            )
+        } else {
+            "some (none : Option CertDecode.AddSub.Roles)".to_string()
+        };
         let src = format!(
             "import CertDecode\nopen CertPrelude\nset_option maxRecDepth 200000\n\n\
              def bytesN : Nat := 0x{}\n\
              def bytesLen : Nat := {}\n\n\
              example : CertDecode.AddSub.roleTable bytesN bytesLen =\n\
-                 some {{ box := {}, add := {}, mul := {}, sub := {} }} := rfl\n",
+                 some {{ box := {}, add := {}, mul := {}, sub := {} }} := rfl\n\
+             example : CertDecode.AddSub.roleTableStrict bytesN bytesLen =\n\
+                 {} := rfl\n",
             hex_le(&bytes),
             bytes.len(),
             option_nat(box_idx),
             option_nat(add_idx),
             option_nat(mul_idx),
             option_nat(sub_idx),
+            strict_expected,
         );
         let (ok, report) = run_lean(&prelude, &src);
         assert!(
@@ -878,7 +895,7 @@ const TWO_EQ_WAT: &str = r#"
       local.get 3 i32.const 1 i32.add local.set 3 br 0
     end end
     i32.const 1)
-  (export "__rt_aint_from_i64" (func $eq0)))
+  (export "eq0" (func $eq0)))
 "#;
 
 /// Positive no-uniqueness control: two exact String.eq helpers are both kept.

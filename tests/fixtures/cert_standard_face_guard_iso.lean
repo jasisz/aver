@@ -102,9 +102,9 @@ example : ¬ StandardFace.checkedFaces hostileArtifact := by
     StandardFace.intAddHost] at hslot
 
 -- Role labels cannot be permuted while retaining the same helper indices.
-example : StandardFace.hostTableBound manifest.subject.hostRoleTable
+example : StandardFace.hostTableBound manifest.subject.hostRoles
     [(.box, 34), (.add, 35), (.mul, 37), (.sub, 36)] = true := rfl
-example : StandardFace.hostTableBound manifest.subject.hostRoleTable
+example : StandardFace.hostTableBound manifest.subject.hostRoles
     [(.box, 35), (.add, 34), (.mul, 37), (.sub, 36)] = false := rfl
 
 -- Generic non-recursive fragments cannot smuggle a recursive call.

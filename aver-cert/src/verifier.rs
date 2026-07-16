@@ -109,13 +109,15 @@ enum StringHostRole {
     Concat,
 }
 
+type HostRoleTable = (Option<u32>, Option<u32>, Option<u32>, Option<u32>);
+
 struct Candidates {
     certified: Vec<CertifiedCandidate>,
     contracts: Vec<String>,
     declared_uncertified: Vec<(String, String)>,
     capabilities: Vec<(String, String)>,
     start: Option<u32>,
-    host_role_table: (Option<u32>, Option<u32>, Option<u32>, Option<u32>),
+    host_role_table: Option<HostRoleTable>,
     string_host_roles: Vec<(u32, StringHostRole)>,
     profile: String,
     abi: String,
@@ -421,13 +423,16 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     let declared = lean_string_pair_list(&candidates.declared_uncertified);
     let capabilities = lean_string_pair_list(&candidates.capabilities);
     let start = lean_option_nat(candidates.start);
-    let roles = format!(
-        "({{ box := {}, add := {}, mul := {}, sub := {} }} : CertDecode.AddSub.Roles)",
-        lean_option_nat(candidates.host_role_table.0),
-        lean_option_nat(candidates.host_role_table.1),
-        lean_option_nat(candidates.host_role_table.2),
-        lean_option_nat(candidates.host_role_table.3),
-    );
+    let roles = match candidates.host_role_table {
+        Some((box_role, add_role, mul_role, sub_role)) => format!(
+            "some ({{ box := {}, add := {}, mul := {}, sub := {} }} : CertDecode.AddSub.Roles)",
+            lean_option_nat(box_role),
+            lean_option_nat(add_role),
+            lean_option_nat(mul_role),
+            lean_option_nat(sub_role),
+        ),
+        None => "(none : Option CertDecode.AddSub.Roles)".to_string(),
+    };
     let string_roles = format!(
         "[{}]",
         candidates
@@ -585,19 +590,27 @@ fn read_candidates(manifest: &Value) -> Result<Candidates, String> {
     let host_roles = manifest
         .get("hostRoleTable")
         .ok_or_else(|| "cert-manifest.json is missing object field `hostRoleTable`".to_string())?;
-    exact_object_fields(host_roles, "hostRoleTable", &["box", "add", "mul", "sub"])?;
-    let optional_index = |key: &str| -> Result<Option<u32>, String> {
-        match &host_roles[key] {
-            Value::Null => Ok(None),
-            value => Ok(Some(value_u32(value, &format!("hostRoleTable.{key}"))?)),
-        }
+    // `null` declares the absence of a host-role table (a module without the
+    // Int carrier); the Lean witness pins that declaration against the byte
+    // decoder returning `none`, so it stays exactly as constraining as the
+    // `some`-table case.
+    let host_role_table = if host_roles.is_null() {
+        None
+    } else {
+        exact_object_fields(host_roles, "hostRoleTable", &["box", "add", "mul", "sub"])?;
+        let optional_index = |key: &str| -> Result<Option<u32>, String> {
+            match &host_roles[key] {
+                Value::Null => Ok(None),
+                value => Ok(Some(value_u32(value, &format!("hostRoleTable.{key}"))?)),
+            }
+        };
+        Some((
+            optional_index("box")?,
+            optional_index("add")?,
+            optional_index("mul")?,
+            optional_index("sub")?,
+        ))
     };
-    let host_role_table = (
-        optional_index("box")?,
-        optional_index("add")?,
-        optional_index("mul")?,
-        optional_index("sub")?,
-    );
 
     let string_roles_json = manifest
         .get("stringHostRoles")

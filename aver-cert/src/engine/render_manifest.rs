@@ -291,7 +291,18 @@ fn render_manifest_lean(
         .start
         .map(|idx| format!("some {idx}"))
         .unwrap_or_else(|| "none".to_string());
-    let host_role_table = analysis.frag_host_table.roles_lean_value();
+    // A module without the Int box helper export has no host-role table: the
+    // manifest says `none`, matching the strict byte decoder, which proves the
+    // `__rt_aint_from_i64` export absent and resolves the module-wide table to
+    // `some none`. A module with the helper always declares `some` table (the
+    // decoder resolves `some (some table)`), even when a role inside it is
+    // unbound; a module whose role scan the decoder cannot complete is refused
+    // at disassembly, so this branch never renders a table for it.
+    let host_role_table = if analysis.frag_host_table.box_idx.is_some() {
+        format!("some {}", analysis.frag_host_table.roles_lean_value())
+    } else {
+        "none".to_string()
+    };
     let string_host_roles = string_host_roles_lean_value(&analysis.string_host_roles);
     let obligations = analysis
         .certs
@@ -624,13 +635,20 @@ fn render_manifest(
             .map(|index| index.to_string())
             .unwrap_or_else(|| "null".to_string())
     };
-    s.push_str(&format!(
-        "  \"hostRoleTable\": {{\"box\": {}, \"add\": {}, \"mul\": {}, \"sub\": {}}},\n",
-        json_role(analysis.frag_host_table.box_idx),
-        json_role(analysis.frag_host_table.add_idx),
-        json_role(analysis.frag_host_table.mul_idx),
-        json_role(analysis.frag_host_table.sub_idx),
-    ));
+    // Mirror of the Lean manifest: `null` when the module has no Int box
+    // helper export (and therefore no host-role table), the exact role object
+    // otherwise.
+    if analysis.frag_host_table.box_idx.is_some() {
+        s.push_str(&format!(
+            "  \"hostRoleTable\": {{\"box\": {}, \"add\": {}, \"mul\": {}, \"sub\": {}}},\n",
+            json_role(analysis.frag_host_table.box_idx),
+            json_role(analysis.frag_host_table.add_idx),
+            json_role(analysis.frag_host_table.mul_idx),
+            json_role(analysis.frag_host_table.sub_idx),
+        ));
+    } else {
+        s.push_str("  \"hostRoleTable\": null,\n");
+    }
     s.push_str("  \"stringHostRoles\": [");
     for (index, (function_index, role)) in analysis.string_host_roles.iter().enumerate() {
         if index > 0 {

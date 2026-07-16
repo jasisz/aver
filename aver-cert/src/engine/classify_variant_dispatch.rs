@@ -7,11 +7,13 @@
 fn nr_variant_dispatch(
     f: &UserFn,
     body: &StructuralBody,
-    box_idx: u32,
+    box_idx: Option<u32>,
     carrier: Option<u32>,
     host_roles: &std::collections::HashMap<u32, HostRole>,
 ) -> Option<Cert> {
     let carrier = carrier?;
+    // The terminal else is always a boxed constant; no box helper, no match.
+    let box_idx = box_idx?;
     // Typed admission: the byte signature must be exactly one nullable,
     // concrete nominal sum-root reference in and one Int carrier out. Full
     // wasm validation has already proved that every tested constructor is a

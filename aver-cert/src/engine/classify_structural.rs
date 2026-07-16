@@ -1,6 +1,6 @@
 fn structural_body(
     f: &UserFn,
-    box_idx: u32,
+    box_idx: Option<u32>,
     user_idx_set: &std::collections::HashSet<u32>,
     host_roles: &std::collections::HashMap<u32, HostRole>,
 ) -> Option<StructuralBody> {
@@ -19,7 +19,9 @@ fn structural_body(
             if *idx == f.wasm_idx || user_idx_set.contains(idx) {
                 return None;
             }
-            if *idx != box_idx && !host_roles.contains_key(idx) {
+            // With no box helper in the module, every non-host call is
+            // unresolvable — strictly fewer bodies parse (fail-closed).
+            if Some(*idx) != box_idx && !host_roles.contains_key(idx) {
                 return None;
             }
         }
