@@ -132,6 +132,7 @@ def build_compiler() -> None:
 
     raw_wasm = pkg_dir / "aver_bg.wasm"
     optimized = WASM_COMPILER_DST / "aver_bg.wasm"
+    previous_size = optimized.stat().st_size if optimized.exists() else None
     raw_size = raw_wasm.stat().st_size
     print(f"  aver_bg.wasm (wasm-pack): {format_kib(raw_size)}")
 
@@ -148,6 +149,17 @@ def build_compiler() -> None:
     opt_size = optimized.stat().st_size
     ratio = 100.0 * (raw_size - opt_size) / raw_size if raw_size else 0.0
     print(f"  aver_bg.wasm (wasm-opt -Oz): {format_kib(opt_size)} (-{ratio:.1f}%)")
+    # Size regression guard: make growth of the shipped compiler visible at
+    # rebuild time, next to the sizes it replaces.
+    if previous_size is None:
+        print(f"  aver_bg.wasm size: new file, {opt_size} B ({format_kib(opt_size)})")
+    else:
+        delta = opt_size - previous_size
+        pct = 100.0 * delta / previous_size if previous_size else 0.0
+        print(
+            f"  aver_bg.wasm size: {previous_size} B -> {opt_size} B "
+            f"({delta:+d} B, {pct:+.1f}%)"
+        )
 
 
 def build_wasm(aver_bin: str) -> None:

@@ -65,19 +65,6 @@ impl SymTy {
 }
 
 impl SymPrim {
-    fn to_frag_prim(self) -> Option<FragPrim> {
-        match self {
-            SymPrim::FloatAdd => Some(FragPrim::F64Add),
-            SymPrim::FloatMul => Some(FragPrim::F64Mul),
-            SymPrim::FloatLe => Some(FragPrim::F64Le),
-            // `IntAdd` has no representation-level primitive: the encoder
-            // binds it to a `hostCall add` node through the role table.
-            SymPrim::IntAdd => None,
-            SymPrim::StringEq => None,
-            SymPrim::StringConcat => None,
-        }
-    }
-
     fn plan_tag(self) -> &'static str {
         match self {
             SymPrim::FloatAdd => "float.add",

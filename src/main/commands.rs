@@ -4392,6 +4392,20 @@ fn cmd_compile_wasm_gc(
 ) {
     use aver::codegen::wasm_gc;
 
+    // `--certify` needs the certificate engine (feature `certify`, part of
+    // `--features wasm`). Fail before compiling anything on a build that
+    // carries the wasm-gc backend but not the engine.
+    #[cfg(not(feature = "certify"))]
+    if certify {
+        eprintln!(
+            "{}",
+            "--certify: this build of aver was compiled without certificate support \
+             (feature `certify`)"
+                .red()
+        );
+        process::exit(1);
+    }
+
     let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
         Ok(s) => s,
@@ -4504,6 +4518,7 @@ fn cmd_compile_wasm_gc(
     // with `--optimize`) via sha256, classifies each user function, and
     // emits kernel-clean Lean theorems for the certified ones. The model
     // definitions are the reused `aver proof` Lean emission.
+    #[cfg(feature = "certify")]
     if certify
         && let Err(error) = emit_artifact_certificate(
             file,
@@ -4529,7 +4544,7 @@ fn cmd_compile_wasm_gc(
 
 /// Emit the Stage-B artifact certificate: classify the emitted module,
 /// reuse the `aver proof` Lean model emission, and write `cert/`.
-#[cfg(feature = "wasm")]
+#[cfg(feature = "certify")]
 fn emit_artifact_certificate(
     file: &str,
     project_name: Option<&str>,

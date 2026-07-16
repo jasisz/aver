@@ -289,15 +289,6 @@ fn infer_list_construct_ty(nodes: &[SymNode], args: &[SymValueId]) -> Option<Sym
     (tail_ty == SymTy::App("List".to_string(), vec![head_ty])).then_some(tail_ty)
 }
 
-impl SymBlock {
-    pub fn result_ty(&self) -> Option<SymTy> {
-        self.nodes
-            .get(self.result.0)
-            .filter(|node| node.id == self.result)
-            .map(|node| node.ty.clone())
-    }
-}
-
 fn require_sym_plan_ty(id: SymValueId, got: &SymTy, expected: &SymTy) -> Result<(), String> {
     if got == expected {
         Ok(())
