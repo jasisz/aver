@@ -1003,7 +1003,11 @@ fn run_lake(
     phase: &str,
     arguments: &[&str],
 ) -> Result<LakeOut, String> {
-    let output = lean.run_lake(build_dir, phase, arguments)?;
+    // Any step failure — including a timeout — fails the whole verify/check
+    // closed; only the opt-in prelude cache may downgrade a step error.
+    let output = lean
+        .run_lake(build_dir, phase, arguments)
+        .map_err(|error| error.to_string())?;
     Ok(LakeOut {
         status: output.status,
         combined: format!(

@@ -17,7 +17,39 @@ const PHASE_TIMEOUT_ENV: &str = "AVER_CERT_PHASE_TIMEOUT_SECS";
 /// Generous default: real certificate verifies take minutes per step, and the
 /// first run on a machine may also install the pinned toolchain.
 const DEFAULT_PHASE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// Upper bound for the override: one day per step. Far beyond any real
+/// verify, and it keeps every deadline computation trivially in range.
+const MAX_PHASE_TIMEOUT_SECS: u64 = 24 * 60 * 60;
+/// How long cleanup after a kill may itself take (reaping the child, waiting
+/// for the kill helper) before the cleanup is abandoned so the caller gets
+/// its fail-closed error promptly.
+const CLEANUP_LIMIT: Duration = Duration::from_secs(5);
 const WAIT_POLL: Duration = Duration::from_millis(50);
+
+/// Why a Lean toolchain step produced no usable output.
+#[derive(Debug)]
+pub(crate) enum LeanStepError {
+    /// The step exceeded the per-step wall-clock limit and its process tree
+    /// was stopped. Mandatory verifier steps fail closed on this; the prelude
+    /// cache downgrades it to a loud cache miss.
+    Timeout { phase: String, limit: Duration },
+    /// The step could not be started, observed, or staged.
+    Failed(String),
+}
+
+impl std::fmt::Display for LeanStepError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Timeout { phase, limit } => write!(
+                formatter,
+                "the {phase} step exceeded its {}-second time limit and was stopped; \
+                 the certificate is not accepted (set {PHASE_TIMEOUT_ENV} to allow more time)",
+                limit.as_secs()
+            ),
+            Self::Failed(reason) => formatter.write_str(reason),
+        }
+    }
+}
 
 pub(crate) struct LeanRunner {
     elan: PathBuf,
@@ -98,12 +130,12 @@ impl LeanRunner {
         work_dir: &Path,
         phase: &str,
         arguments: &[&str],
-    ) -> Result<Output, String> {
+    ) -> Result<Output, LeanStepError> {
         let work_dir = std::fs::canonicalize(work_dir).map_err(|error| {
-            format!(
+            LeanStepError::Failed(format!(
                 "cannot resolve checker-owned Lean work dir {}: {error}",
                 work_dir.display()
-            )
+            ))
         })?;
         let temp_dir = work_dir.join(format!(
             ".aver-cert-tmp-{}-{}",
@@ -117,10 +149,10 @@ impl LeanRunner {
             builder.mode(0o700);
         }
         builder.create(&temp_dir).map_err(|error| {
-            format!(
+            LeanStepError::Failed(format!(
                 "cannot create checker-owned Lean temp dir {}: {error}",
                 temp_dir.display()
-            )
+            ))
         })?;
 
         let output = run_with_timeout(
@@ -169,23 +201,37 @@ fn phase_timeout(environment: &impl Fn(&str) -> Option<OsString>) -> Result<Dura
         return Ok(DEFAULT_PHASE_TIMEOUT);
     };
     let text = value.to_string_lossy();
-    text.trim()
+    let seconds = text
+        .trim()
         .parse::<u64>()
         .ok()
         .filter(|&seconds| seconds > 0)
-        .map(Duration::from_secs)
         .ok_or_else(|| {
             format!(
                 "{PHASE_TIMEOUT_ENV} must be a positive whole number of seconds, got `{}`",
                 text.trim()
             )
-        })
+        })?;
+    // Fail closed on absurd overrides instead of carrying an unbounded value
+    // into deadline arithmetic: past one day per step nothing legitimate is
+    // being configured.
+    if seconds > MAX_PHASE_TIMEOUT_SECS {
+        return Err(format!(
+            "{PHASE_TIMEOUT_ENV} must be at most {MAX_PHASE_TIMEOUT_SECS} seconds (one day), got `{}`",
+            text.trim()
+        ));
+    }
+    Ok(Duration::from_secs(seconds))
 }
 
 /// Run one verifier step to completion under a wall-clock limit. On expiry the
 /// step's entire process tree is killed and a fail-closed error naming the
 /// step is returned: a timed-out step can never contribute to a green verdict.
-fn run_with_timeout(mut command: Command, limit: Duration, phase: &str) -> Result<Output, String> {
+fn run_with_timeout(
+    mut command: Command,
+    limit: Duration,
+    phase: &str,
+) -> Result<Output, LeanStepError> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -198,14 +244,19 @@ fn run_with_timeout(mut command: Command, limit: Duration, phase: &str) -> Resul
         command.process_group(0);
     }
     let mut child = command.spawn().map_err(|error| {
-        format!("could not start the trusted Lean toolchain for the {phase} step: {error}")
+        LeanStepError::Failed(format!(
+            "could not start the trusted Lean toolchain for the {phase} step: {error}"
+        ))
     })?;
     let stdout = drain(child.stdout.take());
     let stderr = drain(child.stderr.take());
 
-    // The deadline covers both process exit and output drain: a runaway
+    // The limit covers both process exit and output drain: a runaway
     // descendant holding the output pipes open must not stall the verifier.
-    let deadline = Instant::now() + limit;
+    // Compare elapsed time against the limit instead of precomputing a
+    // deadline so no configured limit can overflow `Instant` arithmetic
+    // after the child has already been spawned.
+    let started = Instant::now();
     let mut status = None;
     let finished = loop {
         if status.is_none() {
@@ -213,27 +264,35 @@ fn run_with_timeout(mut command: Command, limit: Duration, phase: &str) -> Resul
                 Ok(exited) => exited,
                 Err(error) => {
                     kill_process_tree(&mut child);
-                    let _ = child.wait();
-                    return Err(format!("could not observe the {phase} step: {error}"));
+                    // Leave the drain threads detached: a survivor holding
+                    // the pipes open must not delay this error.
+                    drop(stdout);
+                    drop(stderr);
+                    return Err(LeanStepError::Failed(format!(
+                        "could not observe the {phase} step: {error}"
+                    )));
                 }
             };
         }
         match status {
             Some(status) if stdout.is_finished() && stderr.is_finished() => break Some(status),
-            _ if Instant::now() >= deadline => break None,
+            _ if started.elapsed() >= limit => break None,
             _ => std::thread::sleep(WAIT_POLL),
         }
     };
 
     let Some(status) = finished else {
         kill_process_tree(&mut child);
-        let _ = child.wait();
-        let _ = (join_drain(stdout), join_drain(stderr));
-        return Err(format!(
-            "the {phase} step exceeded its {}-second time limit and was stopped; \
-             the certificate is not accepted (set {PHASE_TIMEOUT_ENV} to allow more time)",
-            limit.as_secs()
-        ));
+        // Do not join the drain threads: if any process escaped the group
+        // kill and still holds a pipe open, joining would hang the verifier.
+        // The threads own nothing the caller needs, so leave them detached
+        // and report the timeout promptly.
+        drop(stdout);
+        drop(stderr);
+        return Err(LeanStepError::Timeout {
+            phase: phase.to_string(),
+            limit,
+        });
     };
     Ok(Output {
         status,
@@ -245,26 +304,50 @@ fn run_with_timeout(mut command: Command, limit: Duration, phase: &str) -> Resul
 /// Stop the child and every process it spawned. On Unix the child leads its
 /// own process group, so one group-wide SIGKILL reaches lake and its lean
 /// workers; on Windows `taskkill /T` walks the process tree.
+///
+/// Cleanup is itself bounded: the kill helper and the reap of the child each
+/// get [`CLEANUP_LIMIT`], and a cleanup that cannot finish in time is
+/// abandoned so the caller's fail-closed error is reported promptly instead
+/// of trading a hung step for a hung cleanup.
 fn kill_process_tree(child: &mut Child) {
     #[cfg(unix)]
-    {
-        let _ = Command::new("kill")
-            .args(["-KILL", "--", &format!("-{}", child.id())])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
+    let killer = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{}", child.id())])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
     #[cfg(windows)]
+    let killer = Command::new("taskkill")
+        .args(["/T", "/F", "/PID", &child.id().to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    if let Ok(mut killer) = killer
+        && reap_with_deadline(&mut killer, CLEANUP_LIMIT).is_none()
     {
-        let _ = Command::new("taskkill")
-            .args(["/T", "/F", "/PID", &child.id().to_string()])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        let _ = killer.kill();
+        let _ = killer.try_wait();
     }
     let _ = child.kill();
+    // Reap the child if it exits promptly; a child that ignores SIGKILL
+    // (unkillable kernel state) is abandoned rather than waited on forever.
+    let _ = reap_with_deadline(child, CLEANUP_LIMIT);
+}
+
+/// Poll `try_wait` until the process exits or the deadline passes. Returns
+/// `None` when the process is still running (or cannot be observed) so the
+/// caller can abandon it instead of blocking.
+fn reap_with_deadline(child: &mut Child, limit: Duration) -> Option<std::process::ExitStatus> {
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) if started.elapsed() < limit => std::thread::sleep(WAIT_POLL),
+            Ok(None) | Err(_) => return None,
+        }
+    }
 }
 
 fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
@@ -381,9 +464,13 @@ mod tests {
 
     impl TestTree {
         fn new() -> Self {
+            // The clock alone can collide across parallel test threads; the
+            // counter keeps every tree in this process unique.
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let path = std::env::temp_dir().join(format!(
-                "aver-cert-lean-env-{}-{}",
+                "aver-cert-lean-env-{}-{}-{}",
                 std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|duration| duration.as_nanos())
@@ -531,11 +618,27 @@ mod tests {
         let overridden = runner_with_timeout_setting(Some("120")).unwrap();
         assert_eq!(overridden.phase_timeout, Duration::from_secs(120));
 
+        let at_cap = runner_with_timeout_setting(Some(&MAX_PHASE_TIMEOUT_SECS.to_string()))
+            .expect("the cap itself is a valid override");
+        assert_eq!(
+            at_cap.phase_timeout,
+            Duration::from_secs(MAX_PHASE_TIMEOUT_SECS)
+        );
+
         for invalid in ["0", "-5", "soon", "1.5"] {
             let Err(error) = runner_with_timeout_setting(Some(invalid)) else {
                 panic!("malformed timeout override `{invalid}` must fail closed");
             };
             assert!(error.contains(PHASE_TIMEOUT_ENV), "{error}");
+        }
+
+        let over_cap = (MAX_PHASE_TIMEOUT_SECS + 1).to_string();
+        for oversized in [over_cap.as_str(), &u64::MAX.to_string()] {
+            let Err(error) = runner_with_timeout_setting(Some(oversized)) else {
+                panic!("oversized timeout override `{oversized}` must fail closed");
+            };
+            assert!(error.contains(PHASE_TIMEOUT_ENV), "{error}");
+            assert!(error.contains("at most"), "{error}");
         }
     }
 
@@ -553,7 +656,8 @@ mod tests {
         ));
 
         let error = run_with_timeout(command, Duration::from_secs(1), "test probe")
-            .expect_err("a hung step must fail closed");
+            .expect_err("a hung step must fail closed")
+            .to_string();
         assert!(error.contains("test probe"), "{error}");
         assert!(error.contains("time limit"), "{error}");
         assert!(error.contains(PHASE_TIMEOUT_ENV), "{error}");
