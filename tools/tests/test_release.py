@@ -415,7 +415,13 @@ aver = { path = "..", version = "=0.26.0", package = "aver-lang" }
             root["features"]["certify"], ["wasm-compile", "aver-cert/producer"]
         )
         self.assertEqual(cert["features"]["producer"], ["engine"])
-        self.assertIn("plans", cert["features"]["engine"])
+        # The whole ladder from the slim plan surface up to the producer is
+        # pinned exactly: a new edge anywhere in aver-cert's feature graph must
+        # show up here before it can widen what any downstream build compiles.
+        self.assertEqual(cert["features"]["plans"], ["dep:wasm-encoder"])
+        self.assertEqual(
+            cert["features"]["engine"], ["plans", "dep:sha2", "dep:wasmparser"]
+        )
 
         def feature_closure(feature: str) -> set[str]:
             seen: set[str] = set()
@@ -428,12 +434,24 @@ aver = { path = "..", version = "=0.26.0", package = "aver-lang" }
                 stack.extend(root["features"].get(name, []))
             return seen
 
+        def forwarded_cert_features(feature: str) -> set[str]:
+            # Dependency-feature edges like `aver-cert/producer` (and the weak
+            # form `aver-cert?/…`) are the only way a root feature can enable
+            # more of aver-cert than the base dependency's `plans` surface.
+            return {
+                name
+                for name in feature_closure(feature)
+                if name.startswith("aver-cert/") or name.startswith("aver-cert?/")
+            }
+
         # Publishing builds with `--features wasm`, so the crates.io binary
-        # must keep the certificate producer; browser/component builds must
-        # stay on the plan surface only.
-        self.assertIn("aver-cert/producer", feature_closure("wasm"))
-        self.assertNotIn("aver-cert/producer", feature_closure("playground"))
-        self.assertNotIn("aver-cert/producer", feature_closure("wasip2"))
+        # must keep the certificate producer — and nothing else beyond it.
+        self.assertEqual(forwarded_cert_features("wasm"), {"aver-cert/producer"})
+        # Browser/component builds must stay on the plan surface only: no
+        # aver-cert feature at all may be forwarded (not producer, and not a
+        # sibling like engine or verify slipping in around it).
+        self.assertEqual(forwarded_cert_features("playground"), set())
+        self.assertEqual(forwarded_cert_features("wasip2"), set())
 
     def test_saved_targets_repair_a_main_written_before_lsp(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
