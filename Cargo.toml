@@ -46,10 +46,12 @@ tty-render = ["dep:colored"]
 wasm = ["wasm-compile", "certify", "dep:wasmtime"]
 wasm-compile = ["dep:aver-cert", "dep:wasm-encoder", "dep:wasmprinter", "dep:wasmparser", "dep:wat", "dep:sha2"]
 # Certificate production (`aver compile --certify`). Pulls the full aver-cert
-# engine (classifier, Lean renderer, embedded soundness wall). Kept out of
-# `wasm-compile` so browser/component builds (`playground`, `wasip2`) link
-# only the plan surface the wasm-gc emitter needs.
-certify = ["aver-cert/producer"]
+# engine (classifier, Lean renderer, embedded soundness wall) on top of the
+# wasm-gc compile pipeline it certifies, so `--features certify` is a
+# complete, compilable combination on its own. Deliberately NOT part of
+# `wasm-compile` itself, so browser/component builds (`playground`,
+# `wasip2`) link only the plan surface the wasm-gc emitter needs.
+certify = ["wasm-compile", "aver-cert/producer"]
 # 0.18 "Span" — `--target wasip2` (WASI 0.2 Component Model output).
 # Direct WIT lowering: the wasm-gc backend emits a core module in
 # canonical-ABI-compatible shapes, we embed a `component-type:<world>`

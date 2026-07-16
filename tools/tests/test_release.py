@@ -407,9 +407,13 @@ aver = { path = "..", version = "=0.26.0", package = "aver-lang" }
         self.assertEqual(dep["version"], f"={cert['package']['version']}")
         self.assertFalse(dep["default-features"])
         # The base dependency carries only the plan surface; certificate
-        # production is opted into through the root `certify` feature.
+        # production is opted into through the root `certify` feature, which
+        # also pulls the wasm-gc compile pipeline it certifies so `certify`
+        # is a complete, compilable feature combination on its own.
         self.assertEqual(dep["features"], ["plans"])
-        self.assertEqual(root["features"]["certify"], ["aver-cert/producer"])
+        self.assertEqual(
+            root["features"]["certify"], ["wasm-compile", "aver-cert/producer"]
+        )
         self.assertEqual(cert["features"]["producer"], ["engine"])
         self.assertIn("plans", cert["features"]["engine"])
 
