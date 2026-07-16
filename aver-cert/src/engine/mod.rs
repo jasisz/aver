@@ -34,7 +34,7 @@ pub const PROFILE_ID: &str = "AverUserProfile/v1";
 pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
 /// Conditional simulation under the runtime contracts named by the claim.
 pub const CERT_LEVEL: &str = "L1";
-pub const CERT_SCHEMA_VERSION: u32 = 1;
+pub const CERT_SCHEMA_VERSION: u32 = 2;
 pub const BOX_CONTRACT: &str = "__rt_aint_from_i64 (box i64 -> carrier)";
 pub const INT_ADD_CONTRACT: &str =
     "Int.add (carrier add = exact integer addition on represented values)";

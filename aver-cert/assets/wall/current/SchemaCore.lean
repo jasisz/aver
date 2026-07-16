@@ -82,7 +82,13 @@ def CAPABILITY_REGISTRY : List (String × String) := [
     ABI, artifact theorem root, the certified and explicitly uncertified export
     names, the exact effect-import capability surface, byte-derived start
     status, and the runtime contracts every certificate is conditional on.
-    Pure data, mirrored in `cert-manifest.json`. -/
+    Pure data, mirrored in `cert-manifest.json`.
+
+    `hostRoleTable` is optional exactly like `start`: a module without the Int
+    carrier type has no host-role table at all (`none`), which the acceptance
+    pin binds against the byte decoder returning `none`. A module with the
+    carrier always carries `some` table, even when every role inside it is
+    unbound. -/
 structure Subject where
   artifactHash : String
   profile      : String
@@ -92,9 +98,17 @@ structure Subject where
   declaredUncertified : List (String × String)
   capabilities : List (String × String)
   start        : Option Nat
-  hostRoleTable : CertDecode.AddSub.Roles
+  hostRoleTable : Option CertDecode.AddSub.Roles
   stringHostRoles : List (Nat × CertDecode.StringHost.Role)
   contracts    : List String
+
+/-- Claim-matching view of the optional module host-role table. An absent
+    table binds no host roles, so any claim citing a box/add/mul/sub role
+    fails to match — strictly fail-closed, never a default index. -/
+def Subject.hostRoles (s : Subject) : CertDecode.AddSub.Roles :=
+  match s.hostRoleTable with
+  | some roles => roles
+  | none => { box := none, add := none, mul := none, sub := none }
 
 /-- The certification policy attached to a certified export. Partial simulation
     remains the default; the total preset additionally promises return at the

@@ -447,7 +447,7 @@ def hostileRoleTable : CertDecode.AddSub.Roles :=
   {{ box := some {box_idx}, add := some {wrong_add_idx}, mul := some {mul_idx}, sub := some {sub_idx} }}
 def hostileManifest : Manifest :=
   {{ manifest with subject :=
-      {{ manifest.subject with hostRoleTable := hostileRoleTable }} }}
+      {{ manifest.subject with hostRoleTable := some hostileRoleTable }} }}
 def hostileArtifact : AcceptedArtifact.ArtifactData :=
   {{ Artifact.data with manifest := hostileManifest }}
 
@@ -469,12 +469,27 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts hostileArtifact := by
   change CertDecode.AddSub.roleTable ArtifactBytes.modBytes ArtifactBytes.modLen =
       some hostileRoleTable at bad
   rw [Artifact.decodedHostRoles] at bad
-  have badTable : manifest.subject.hostRoleTable = hostileRoleTable :=
-    Option.some.inj bad
-  have badAdd := congrArg CertDecode.AddSub.Roles.add badTable
+  have badTable : (some ({{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx} }} : CertDecode.AddSub.Roles) : Option CertDecode.AddSub.Roles) = some hostileRoleTable := bad
+  have badAdd := congrArg CertDecode.AddSub.Roles.add (Option.some.inj badTable)
   change some {add_idx} = some {wrong_add_idx} at badAdd
   have distinct : (some {add_idx} : Option Nat) ≠ some {wrong_add_idx} := by decide
   exact distinct badAdd
+
+-- A carriered artifact cannot declare the table absent either: the byte
+-- decoder yields the honest `some` table, never `none`.
+def absentTableManifest : Manifest :=
+  {{ manifest with subject :=
+      {{ manifest.subject with hostRoleTable := none }} }}
+def absentTableArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with manifest := absentTableManifest }}
+example : ¬ AcceptedArtifact.decodedNonExprFacts absentTableArtifact := by
+  intro h
+  have bad := h.1
+  change CertDecode.AddSub.roleTable ArtifactBytes.modBytes ArtifactBytes.modLen =
+      (none : Option CertDecode.AddSub.Roles) at bad
+  rw [Artifact.decodedHostRoles] at bad
+  have impossible : (some ({{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx} }} : CertDecode.AddSub.Roles) : Option CertDecode.AddSub.Roles) = none := bad
+  exact nomatch impossible
 "#
     );
     std::fs::write(cert.join("HostRoleGuardIso.lean"), lean).unwrap();

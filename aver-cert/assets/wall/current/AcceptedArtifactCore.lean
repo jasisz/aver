@@ -1491,10 +1491,14 @@ def decodedNonExprClaimFacts (artifact : ArtifactData) : Prop :=
       artifact.compositionMembers artifact.compositionClaims
 
 /-- Decode the plan-first box/add/sub host-role table exactly once for the
-    whole module, then bind it to the manifest. -/
+    whole module, then bind the full optional result to the manifest: a
+    carrierless module must declare `none` and its bytes must decode to
+    `none`; a carriered module must declare `some` table equal to the exact
+    decoded one. Both directions stay pinned — neither class can borrow the
+    other's manifest value. -/
 def decodedHostRoleTable (artifact : ArtifactData) : Prop :=
   CertDecode.AddSub.roleTable artifact.modBytes artifact.modLen =
-    some artifact.manifest.subject.hostRoleTable
+    artifact.manifest.subject.hostRoleTable
 
 /-- Decode every String.eq/String.concat role exactly once for the whole module.
     Unlike add/sub, the result is a list because every matching function is

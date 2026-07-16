@@ -322,6 +322,82 @@ mod analysis_without_box_helper_tests {
             );
         }
     }
+
+    /// Adversarial half-runtime module: the Int carrier STRUCT TYPE exists,
+    /// but the `__rt_aint_from_i64` box helper export does not, so every
+    /// integer-family recognizer sees `carrier = Some(..)` with
+    /// `box_idx = None`. Each shape below drives one classify path past its
+    /// `carrier` admission into the `box_idx` decline:
+    ///   - `descend` (self-recursive on the carrier) — `classify_recursion.rs`
+    ///     (both the fueled-recursion and mutual-SCC recognizers);
+    ///   - `dispatch` (sum-root in, scalar out, parseable straight-line body)
+    ///     — `classify_variant_dispatch.rs` via `walk_nonrecursive`;
+    ///   - `probe` (calls an unexported, role-free helper) —
+    ///     `classify_structural.rs`, where the only non-host call cannot be
+    ///     the absent box helper.
+    /// All three must decline fail-closed with the readable no-Int-helper
+    /// reason; nothing may panic, certify, or invent a box index.
+    #[test]
+    fn analyze_declines_carrier_without_box_helper_across_classify_paths() {
+        let bytes = wat::parse_str(
+            r#"(module
+  (type $carrier (struct (field i64) (field (ref null $carrier)) (field i32)))
+  (type $sum (struct (field i32)))
+  (func $descend (param (ref null $carrier)) (result (ref null $carrier))
+    local.get 0
+    call $descend)
+  (func $dispatch (param (ref null $sum)) (result i64)
+    i64.const 5)
+  (func $helper (param (ref null $sum)) (result i64)
+    i64.const 1)
+  (func $probe (param (ref null $sum)) (result i64)
+    local.get 0
+    call $helper)
+  (func $addlike (param (ref null $carrier) (ref null $carrier)) (result (ref null $carrier))
+    (local i64 i64)
+    local.get 2
+    local.get 3
+    i64.add
+    drop
+    local.get 0)
+  (export "descend" (func $descend))
+  (export "dispatch" (func $dispatch))
+  (export "probe" (func $probe))
+)"#,
+        )
+        .expect("carrier-without-box-helper module WAT parses");
+        let analysis = super::analyze(&bytes, &[])
+            .expect("a carriered module without the box helper must analyze, not abort");
+        assert!(
+            analysis.carrier.is_some(),
+            "the fixture deliberately carries the Int carrier struct type"
+        );
+        assert!(
+            analysis.frag_host_table.box_idx.is_none(),
+            "no `__rt_aint_from_i64` export means no box role, ever"
+        );
+        assert!(
+            analysis.frag_host_table.add_idx.is_some(),
+            "the byte-derived add role binds independently of the box helper"
+        );
+        assert!(
+            analysis.certified_names().is_empty(),
+            "no integer-family shape may certify without the box helper, got {:?}",
+            analysis.certified_names()
+        );
+        for export in ["descend", "dispatch", "probe"] {
+            let reason = analysis
+                .declined()
+                .iter()
+                .find(|(name, _)| name == export)
+                .map(|(_, reason)| reason.as_str())
+                .unwrap_or_else(|| panic!("`{export}` must be declared uncertified"));
+            assert!(
+                reason.contains("__rt_aint_from_i64"),
+                "`{export}` must decline with the no-Int-helper reason, got: {reason}"
+            );
+        }
+    }
 }
 
 // These historical tests compile Aver source through the producer and cannot

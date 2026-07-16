@@ -138,8 +138,11 @@ unless the admitted result relation can state the weaker behavior honestly.
 
 ## Package format
 
-The first public package format is version `1`, and its certificate statement
-schema is version `1`. A generated `cert/` directory contains:
+The public package format is version `1`, and its certificate statement
+schema is version `2` (schema `2` made the subject's `hostRoleTable`
+optional: a module without the Int carrier declares `null`, and the checker
+pins that declaration against the byte decoder resolving no table at all).
+A generated `cert/` directory contains:
 
 - `cert-manifest.json`, a transport and reporting envelope;
 - `Plans.lean`, the sole authoritative plan data;

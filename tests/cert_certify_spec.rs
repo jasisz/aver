@@ -276,15 +276,15 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["schema_version"].as_u64(),
-        Some(1),
-        "the first public certificate schema is version 1"
+        Some(2),
+        "schema 2 made the subject host-role table optional"
     );
     assert_eq!(
         manifest["profile"].as_str(),
         Some("AverUserProfile/v1"),
         "the first public byte profile is pinned exactly"
     );
-    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 1);
+    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 2);
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
@@ -2921,8 +2921,10 @@ fn certify_emits_declared_uncertified_package_for_module_without_int_helper() {
     }
 
     // hello.wasm has no Int carrier at all, so the integer-family classes can
-    // never match; the string-shaped exports decline with a reason that names
-    // the missing Int carrier helpers instead of the generic template list.
+    // never match; the manifest must truthfully declare the ABSENCE of the
+    // host-role table (`null`), never a fabricated all-null table, because the
+    // in-kernel pin equates the manifest value with the byte decoder's result
+    // and the decoder resolves no table for a carrierless module.
     assert_eq!(
         manifest["carrier_type_index"],
         serde_json::Value::Null,
@@ -2930,18 +2932,150 @@ fn certify_emits_declared_uncertified_package_for_module_without_int_helper() {
     );
     assert_eq!(
         manifest["hostRoleTable"],
-        serde_json::json!({"box": null, "add": null, "mul": null, "sub": null}),
-        "every host role must stay unbound rather than inventing an index"
+        serde_json::Value::Null,
+        "a carrierless module has no host-role table; the manifest must say so"
     );
-    if !certified.contains("shout") {
-        let reason = declared
-            .get("shout")
-            .expect("shout must be declared uncertified when it does not certify");
+    let manifest_lean =
+        std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
+    assert!(
+        manifest_lean.contains("hostRoleTable := none,"),
+        "the Lean manifest must declare the absent host-role table as `none`"
+    );
+
+    // Pin the exact human-readable decline reasons. If a future classifier
+    // change silently certifies (or reclassifies) one of these exports, this
+    // must fail loudly instead of quietly shifting the report.
+    const NO_INT_HELPER_REASON: &str = "body does not match a carrier-free certified template, \
+         and the module has no Int carrier host helpers (`__rt_aint_from_i64`); \
+         integer-family certification requires the Int carrier";
+    for export in ["greet", "shout"] {
         assert!(
-            reason.contains("__rt_aint_from_i64"),
-            "shout's decline reason should name the missing Int carrier helpers, got: {reason}"
+            !certified.contains(export),
+            "`{export}` is a String-shaped export with no certified class; \
+             a sudden certification is a false positive until reviewed"
+        );
+        assert_eq!(
+            declared.get(export).map(String::as_str),
+            Some(NO_INT_HELPER_REASON),
+            "`{export}` must decline with the exact no-Int-helper reason"
         );
     }
+    assert!(
+        !certified.contains("main"),
+        "`main` is an effectful zero-argument export and must not certify"
+    );
+    assert_eq!(
+        declared.get("main").map(String::as_str),
+        Some(
+            "unsupported signature (0 params); Stage-B templates cover \
+             one-argument Int functions and two-argument accumulator recursion"
+        ),
+        "`main` must decline for its signature, not for the missing Int helper"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
+fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
+    // Regression guard for the optional-helper change: a module that DOES
+    // export `__rt_aint_from_i64` must certify exactly as before. The
+    // expectations below are the pre-change add_one certification facts;
+    // if the carrierless handling ever leaks into the carriered path (a
+    // missing certification, a reclassification, or a `null` host-role
+    // table), this fails.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-add-one-regression");
+
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/certification/add_one.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    assert!(
+        compile.status.success(),
+        "add_one --certify failed:\n{report}"
+    );
+    assert!(
+        report.contains("1 certified"),
+        "add_one must report exactly one certified export:\n{report}"
+    );
+
+    let cert_dir = out_dir.join("cert");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+
+    // The certified entry, byte for byte the pre-change classification.
+    assert_eq!(
+        manifest["certified"],
+        serde_json::json!([{
+            "name": "addOne",
+            "class": "expr-fragment-v1",
+            "policy": "simulatesModel",
+            "level": "L1",
+            "dom": "List Int",
+            "cod": "Int",
+            "theorem": "AcceptanceSoundness.exprFragment_claim_discharges",
+        }]),
+        "the add_one certification must be unchanged by the optional-helper handling"
+    );
+    assert_eq!(
+        manifest["runtime_contracts"],
+        serde_json::json!([
+            "__rt_aint_from_i64 (box i64 -> carrier)",
+            "Int.add (carrier add = exact integer addition on represented values)",
+        ]),
+        "add_one's runtime contracts must be unchanged"
+    );
+
+    // The host-role table stays the exact byte-derived OBJECT — never `null`
+    // — and every role is bound for the full Int runtime.
+    let wasm = std::fs::read(out_dir.join("add_one.wasm")).expect("wasm artifact exists");
+    let (box_idx, add_idx, mul_idx, sub_idx) =
+        aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
+    assert!(
+        box_idx.is_some() && add_idx.is_some() && mul_idx.is_some() && sub_idx.is_some(),
+        "add_one carries the full Int runtime; every strict role must bind"
+    );
+    assert!(
+        manifest["carrier_type_index"].is_u64(),
+        "add_one must declare its Int carrier type index"
+    );
+    assert_eq!(
+        manifest["hostRoleTable"],
+        serde_json::json!({"box": box_idx, "add": add_idx, "mul": mul_idx, "sub": sub_idx}),
+        "a module with the Int helper must keep the concrete host-role table"
+    );
+
+    // And the Lean manifest binds the same table as `some` — the acceptance
+    // equality for carriered modules is exactly as strong as before.
+    let manifest_lean =
+        std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
+    let expected_roles = format!(
+        "hostRoleTable := some ({{ box := some {}, add := some {}, mul := some {}, sub := some {} }} : CertDecode.AddSub.Roles),",
+        box_idx.unwrap(),
+        add_idx.unwrap(),
+        mul_idx.unwrap(),
+        sub_idx.unwrap(),
+    );
+    assert!(
+        manifest_lean.contains(&expected_roles),
+        "Manifest.lean must pin the byte-derived table, got:\n{manifest_lean}"
+    );
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }

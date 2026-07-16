@@ -291,7 +291,15 @@ fn render_manifest_lean(
         .start
         .map(|idx| format!("some {idx}"))
         .unwrap_or_else(|| "none".to_string());
-    let host_role_table = analysis.frag_host_table.roles_lean_value();
+    // A module without the Int carrier has no host-role table: the manifest
+    // says `none`, matching the byte decoder, which resolves the module-wide
+    // table to `none` when no carrier type exists. A carriered module always
+    // declares `some` table, even when every role inside it is unbound.
+    let host_role_table = if analysis.carrier.is_some() {
+        format!("some {}", analysis.frag_host_table.roles_lean_value())
+    } else {
+        "none".to_string()
+    };
     let string_host_roles = string_host_roles_lean_value(&analysis.string_host_roles);
     let obligations = analysis
         .certs
@@ -624,13 +632,19 @@ fn render_manifest(
             .map(|index| index.to_string())
             .unwrap_or_else(|| "null".to_string())
     };
-    s.push_str(&format!(
-        "  \"hostRoleTable\": {{\"box\": {}, \"add\": {}, \"mul\": {}, \"sub\": {}}},\n",
-        json_role(analysis.frag_host_table.box_idx),
-        json_role(analysis.frag_host_table.add_idx),
-        json_role(analysis.frag_host_table.mul_idx),
-        json_role(analysis.frag_host_table.sub_idx),
-    ));
+    // Mirror of the Lean manifest: `null` when the module has no Int carrier
+    // (and therefore no host-role table), the exact role object otherwise.
+    if analysis.carrier.is_some() {
+        s.push_str(&format!(
+            "  \"hostRoleTable\": {{\"box\": {}, \"add\": {}, \"mul\": {}, \"sub\": {}}},\n",
+            json_role(analysis.frag_host_table.box_idx),
+            json_role(analysis.frag_host_table.add_idx),
+            json_role(analysis.frag_host_table.mul_idx),
+            json_role(analysis.frag_host_table.sub_idx),
+        ));
+    } else {
+        s.push_str("  \"hostRoleTable\": null,\n");
+    }
     s.push_str("  \"stringHostRoles\": [");
     for (index, (function_index, role)) in analysis.string_host_roles.iter().enumerate() {
         if index > 0 {

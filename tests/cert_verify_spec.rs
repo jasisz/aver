@@ -421,18 +421,18 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     // unsupported manifests instead of trying to reinterpret them under the
     // current schema.
     {
-        let dir = temp_dir("neg-schema-v2");
+        let dir = temp_dir("neg-schema-v99");
         copy_dir(&out_dir, &dir);
         let mf = dir.join("cert").join("cert-manifest.json");
         let mut m: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["schema_version"] = serde_json::json!(2);
+        m["schema_version"] = serde_json::json!(99);
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
         let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "schema v2 cert must be rejected:\n{out}");
+        assert!(!ok, "schema v99 cert must be rejected:\n{out}");
         assert!(
-            out.contains("unsupported certificate schema_version 2"),
-            "wrong reason for schema v2 rejection:\n{out}"
+            out.contains("unsupported certificate schema_version 99"),
+            "wrong reason for schema v99 rejection:\n{out}"
         );
     }
 
@@ -4418,7 +4418,7 @@ fn mutual_scc_kernel_guards_are_isolating() {
     lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3, 4]), (2, 1, [1, 2, 3, 4]), (3, 4, [1, 2, 3, 4]), (4, 3, [1, 2, 3, 4])] = false := rfl\n\n");
     // FIX B: the REAL acceptance conjunct rejects a dangling group; shape passes.
     lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := 2, code := fun _ => none,\n    host := fun _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
-    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], declaredUncertified := [], capabilities := [], start := none, hostRoleTable := { box := none, add := none, mul := none, sub := none }, stringHostRoles := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
+    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], declaredUncertified := [], capabilities := [], start := none, hostRoleTable := some { box := none, add := none, mul := none, sub := none }, stringHostRoles := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
     lean.push_str("def claimsS : List MutualRecursionClaim :=\n  [ { exportNameBytes := [], exportName := \"a\", carrier := 2, memberSet := [1, 2],\n      hostTable := [(.box, 7), (.sub, 9)], obligation := dummyOb \"a\" 1 } ]\n\n");
     lean.push_str("example : AverCert.PlanCheck.checkMutualPlanShape [1, 2] [(.box, 7), (.sub, 9)] honestPlan = true := rfl\n");
     lean.push_str("example : mutualClaimEdges manifestS claimsS = some [(1, 2, [1, 2])] := rfl\n");

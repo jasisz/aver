@@ -455,20 +455,20 @@ def reportEntries (artifact : ArtifactData) : Option (List (String × String)) :
     not remove any existing acceptance gate. -/
 def checkedFaces (artifact : ArtifactData) : Prop :=
   claimExportsUnique artifact = true ∧
-  allClaims (symFragmentMatches artifact.manifest.subject.hostRoleTable)
+  allClaims (symFragmentMatches artifact.manifest.subject.hostRoles)
     artifact.symFragmentClaims ∧
   allClaims (stringEqMatches artifact.manifest) artifact.stringEqClaims ∧
   allClaims (stringConcatMatches artifact.manifest) artifact.stringConcatClaims ∧
   allClaims (constructMatches artifact.manifest) artifact.constructClaims ∧
   allClaims (recursionMatches artifact.manifest
-    artifact.manifest.subject.hostRoleTable) artifact.recursionClaims ∧
+    artifact.manifest.subject.hostRoles) artifact.recursionClaims ∧
   allClaims (mutualMatches artifact.manifest
-    artifact.manifest.subject.hostRoleTable) artifact.mutualRecursionClaims ∧
+    artifact.manifest.subject.hostRoles) artifact.mutualRecursionClaims ∧
   allClaims (verbatimMatches artifact.manifest) artifact.verbatimClaims ∧
   allClaims (intDispatchMatches artifact.manifest
-    artifact.manifest.subject.hostRoleTable) artifact.intDispatchClaims ∧
+    artifact.manifest.subject.hostRoles) artifact.intDispatchClaims ∧
   allClaims (fieldProjectionMatches artifact.manifest) artifact.fieldProjectionClaims ∧
   allClaims (compositionMatches artifact.compositionMembers
-    artifact.manifest.subject.hostRoleTable) artifact.compositionClaims
+    artifact.manifest.subject.hostRoles) artifact.compositionClaims
 
 end AverCert.StandardFace
