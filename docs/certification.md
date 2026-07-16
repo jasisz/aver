@@ -9,6 +9,8 @@ This is a behavioral proof, not a signature or a reproducible-build
 attestation. A valid certificate binds all accepted claims to the supplied
 `.wasm` bytes and to a fixed, checker-owned statement schema.
 
+This document is the user guide: what a certificate is and how to produce and verify one. See [Certification Architecture](certification-architecture.md) for how the verifier reaches its verdict, and the [Certificate Format Specification](certificate-format.md) for the normative reference aimed at independent reimplementors, including the trust inventory and the versioning and freeze policy.
+
 ## Generate and verify
 
 Install the compiler and the independently versioned verifier:
@@ -208,5 +210,4 @@ read declarations. They are not silently inferred from bytes; the theorem is
 conditional on their stated meaning, while the wall still enforces the
 standard byte-level face and non-vacuity checks available for that family.
 
-See [Certification Architecture](certification-architecture.md) for the exact
-data flow and trust boundary.
+See [Certification Architecture](certification-architecture.md) for the exact data flow and trust boundary, and the [Certificate Format Specification](certificate-format.md) for the field-by-field normative reference.
