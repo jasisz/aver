@@ -340,7 +340,7 @@ name = "demo"
 version = "1.0.0"
 
 [dependencies]
-aver-cert = { path = "cert", version = "=0.1.0", features = ["producer"] }
+aver-cert = { path = "cert", version = "=0.1.0", features = ["plans"] }
 other = { version = "=0.1.0" }
 aver = { path = "..", version = "=0.26.0", package = "aver-lang" }
 """
@@ -406,8 +406,30 @@ aver = { path = "..", version = "=0.26.0", package = "aver-lang" }
         self.assertIn("dep:aver-cert", root["features"]["wasm-compile"])
         self.assertEqual(dep["version"], f"={cert['package']['version']}")
         self.assertFalse(dep["default-features"])
-        self.assertEqual(dep["features"], ["producer"])
+        # The base dependency carries only the plan surface; certificate
+        # production is opted into through the root `certify` feature.
+        self.assertEqual(dep["features"], ["plans"])
+        self.assertEqual(root["features"]["certify"], ["aver-cert/producer"])
         self.assertEqual(cert["features"]["producer"], ["engine"])
+        self.assertIn("plans", cert["features"]["engine"])
+
+        def feature_closure(feature: str) -> set[str]:
+            seen: set[str] = set()
+            stack = [feature]
+            while stack:
+                name = stack.pop()
+                if name in seen:
+                    continue
+                seen.add(name)
+                stack.extend(root["features"].get(name, []))
+            return seen
+
+        # Publishing builds with `--features wasm`, so the crates.io binary
+        # must keep the certificate producer; browser/component builds must
+        # stay on the plan surface only.
+        self.assertIn("aver-cert/producer", feature_closure("wasm"))
+        self.assertNotIn("aver-cert/producer", feature_closure("playground"))
+        self.assertNotIn("aver-cert/producer", feature_closure("wasip2"))
 
     def test_saved_targets_repair_a_main_written_before_lsp(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
