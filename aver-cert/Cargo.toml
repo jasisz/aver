@@ -19,7 +19,12 @@ include = [
 
 [features]
 default = ["verify"]
-engine = ["dep:sha2", "dep:wasm-encoder", "dep:wasmparser"]
+# Plan surface only: the fragment/sym plan IR types plus the canonical byte
+# lowering the wasm-gc emitter consumes in every build. No classifier, no
+# renderer, no embedded Lean wall — this keeps ordinary (non-certify)
+# compiler builds free of the certificate engine.
+plans = ["dep:wasm-encoder"]
+engine = ["plans", "dep:sha2", "dep:wasmparser"]
 producer = ["engine"]
 verify = [
     "dep:sha2",

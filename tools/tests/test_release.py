@@ -340,7 +340,7 @@ name = "demo"
 version = "1.0.0"
 
 [dependencies]
-aver-cert = { path = "cert", version = "=0.1.0", features = ["producer"] }
+aver-cert = { path = "cert", version = "=0.1.0", features = ["plans"] }
 other = { version = "=0.1.0" }
 aver = { path = "..", version = "=0.26.0", package = "aver-lang" }
 """
@@ -406,8 +406,52 @@ aver = { path = "..", version = "=0.26.0", package = "aver-lang" }
         self.assertIn("dep:aver-cert", root["features"]["wasm-compile"])
         self.assertEqual(dep["version"], f"={cert['package']['version']}")
         self.assertFalse(dep["default-features"])
-        self.assertEqual(dep["features"], ["producer"])
+        # The base dependency carries only the plan surface; certificate
+        # production is opted into through the root `certify` feature, which
+        # also pulls the wasm-gc compile pipeline it certifies so `certify`
+        # is a complete, compilable feature combination on its own.
+        self.assertEqual(dep["features"], ["plans"])
+        self.assertEqual(
+            root["features"]["certify"], ["wasm-compile", "aver-cert/producer"]
+        )
         self.assertEqual(cert["features"]["producer"], ["engine"])
+        # The whole ladder from the slim plan surface up to the producer is
+        # pinned exactly: a new edge anywhere in aver-cert's feature graph must
+        # show up here before it can widen what any downstream build compiles.
+        self.assertEqual(cert["features"]["plans"], ["dep:wasm-encoder"])
+        self.assertEqual(
+            cert["features"]["engine"], ["plans", "dep:sha2", "dep:wasmparser"]
+        )
+
+        def feature_closure(feature: str) -> set[str]:
+            seen: set[str] = set()
+            stack = [feature]
+            while stack:
+                name = stack.pop()
+                if name in seen:
+                    continue
+                seen.add(name)
+                stack.extend(root["features"].get(name, []))
+            return seen
+
+        def forwarded_cert_features(feature: str) -> set[str]:
+            # Dependency-feature edges like `aver-cert/producer` (and the weak
+            # form `aver-cert?/…`) are the only way a root feature can enable
+            # more of aver-cert than the base dependency's `plans` surface.
+            return {
+                name
+                for name in feature_closure(feature)
+                if name.startswith("aver-cert/") or name.startswith("aver-cert?/")
+            }
+
+        # Publishing builds with `--features wasm`, so the crates.io binary
+        # must keep the certificate producer — and nothing else beyond it.
+        self.assertEqual(forwarded_cert_features("wasm"), {"aver-cert/producer"})
+        # Browser/component builds must stay on the plan surface only: no
+        # aver-cert feature at all may be forwarded (not producer, and not a
+        # sibling like engine or verify slipping in around it).
+        self.assertEqual(forwarded_cert_features("playground"), set())
+        self.assertEqual(forwarded_cert_features("wasip2"), set())
 
     def test_saved_targets_repair_a_main_written_before_lsp(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

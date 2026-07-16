@@ -61,6 +61,21 @@ jobs:
         # this class now gates on PRs instead of the morning after.
         run: cargo check --manifest-path fuzz/mutator/Cargo.toml
 
+      - name: Compile gate — isolated certificate feature sets
+        # The certificate-producer split leaves feature combinations that no
+        # test step compiles on its own: the slim aver-cert plan surface
+        # (what non-certify compiler builds link), the playground build
+        # (library target only — the aver_self_host_cli bin has never built
+        # under playground features, a pre-existing gap outside this gate's
+        # scope), and a bare `certify` build. Cheap `cargo check`s keep every
+        # nameable combination compiling without adding test time. The
+        # remaining combination, wasip2-only, is checked in the WASM job,
+        # whose cache already holds the heavy component-model dependencies.
+        run: |
+          cargo check -p aver-cert --no-default-features --features plans
+          cargo check -p aver-lang --lib --no-default-features --features playground
+          cargo check -p aver-lang --features certify
+
       - name: Test
         # Iron — Stage 4: CI exercises proptest sweeps at 2 000 cases
         # per property instead of the 256-case default. The matcher
@@ -127,6 +142,14 @@ jobs:
 
       - name: Clippy (wasm + wasip2)
         run: cargo clippy -p aver-lang --lib --bin aver --features wasm,wasip2 -- -D warnings
+
+      - name: Compile gate — wasip2 without wasm
+        # Every other step here builds `wasm` or `wasm,wasip2`; a wasip2-only
+        # binary (component output, no certificate engine, no wasm-gc CLI
+        # target) is a combination users can name and must keep compiling.
+        # Check-only — this job's cache already carries the component-model
+        # dependency graph.
+        run: cargo check -p aver-lang --features wasip2
 
       - name: Unit tests (wasm + wasip2)
         run: cargo test -p aver-lang --lib --features wasm,wasip2
