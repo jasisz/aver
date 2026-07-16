@@ -153,7 +153,9 @@ fn populate(
         for (name, bytes) in files {
             std::fs::write(temp.join(name), bytes).map_err(|_| ())?;
         }
-        let built = lean.run_lake(&temp, &["build"]).map_err(|_| ())?;
+        let built = lean
+            .run_lake(&temp, "proof library cache build", &["build"])
+            .map_err(|_| ())?;
         if !built.status.success() || !temp.join(".lake").is_dir() {
             return Err(());
         }

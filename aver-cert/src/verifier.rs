@@ -20,6 +20,8 @@ const CHECKED_ROOT: &str = "AverCertChecker.checked";
 const MAX_CANDIDATE_LEN: usize = 200;
 const TOOLCHAIN_ROOTS: [&str; 4] = ["Init", "Lake", "Lean", "Std"];
 const FRESH_REPLAY_ARGS: [&str; 4] = ["env", "leanchecker", "--fresh", "CheckerWitness"];
+/// User-facing name of the `lake build` step in timeout and failure messages.
+const PROOF_BUILD_PHASE: &str = "certificate proof build";
 
 /// Emitted on a green verdict. All trust-bearing byte facts and claim metadata
 /// are checked by the embedded Lean wall; Rust performs no parallel verdict
@@ -283,14 +285,14 @@ fn trusted_check(
         PristineWallCache::prepare(&build.path, selected_wall, &lean)
     };
 
-    let mut data_build = run_lake(&lean, &build.path, &["build"])?;
+    let mut data_build = run_lake(&lean, &build.path, PROOF_BUILD_PHASE, &["build"])?;
     if !data_build.status.success() && (data_cache_hit || wall_cache.was_seeded()) {
         if data_cache_hit {
             cache.invalidate(&build.path);
         } else {
             wall_cache.clear_build(&build.path);
         }
-        data_build = run_lake(&lean, &build.path, &["build"])?;
+        data_build = run_lake(&lean, &build.path, PROOF_BUILD_PHASE, &["build"])?;
         if data_build.status.success() && wall_cache.was_seeded() {
             wall_cache.evict();
         }
@@ -309,6 +311,7 @@ fn trusted_check(
     let elaborated = run_lake(
         &lean,
         &build.path,
+        "artifact witness check",
         &[
             "env",
             "lean",
@@ -324,7 +327,7 @@ fn trusted_check(
         ));
     }
     if let Some(replay_args) = kernel_replay_args(replay_mode) {
-        let replayed = run_lake(&lean, &build.path, replay_args)?;
+        let replayed = run_lake(&lean, &build.path, "final kernel replay", replay_args)?;
         if !replayed.status.success() {
             return Err(format!(
                 "certificate failed fresh-environment kernel replay:\n{}",
@@ -994,13 +997,13 @@ struct LakeOut {
     combined: String,
 }
 
-fn run_lake(lean: &LeanRunner, build_dir: &Path, arguments: &[&str]) -> Result<LakeOut, String> {
-    let output = lean.run_lake(build_dir, arguments).map_err(|error| {
-        format!(
-            "could not run pinned `elan run … lake {}`: {error} (is Elan installed?)",
-            arguments.join(" ")
-        )
-    })?;
+fn run_lake(
+    lean: &LeanRunner,
+    build_dir: &Path,
+    phase: &str,
+    arguments: &[&str],
+) -> Result<LakeOut, String> {
+    let output = lean.run_lake(build_dir, phase, arguments)?;
     Ok(LakeOut {
         status: output.status,
         combined: format!(

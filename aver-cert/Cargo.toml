@@ -48,4 +48,5 @@ wasm-encoder = { version = "0.248", optional = true }
 wasmparser = { version = "0.248", optional = true }
 
 [dev-dependencies]
+sha2 = "0.10"
 wat = "1"
