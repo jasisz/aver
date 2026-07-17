@@ -1345,7 +1345,11 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
             "model := quoteOrSelfModel }",
             "model := shoutModel }",
         ),
-        ("dispatch", "model := gauge }", "model := fun _ => 0 }"),
+        (
+            "dispatch",
+            "model := AverCert.DeclaredIndexEnvelope.dEnvStructModel Plans.gaugeDeclaredEnvelope Plans.gaugeIntDispatchPlan.body }",
+            "model := fun _ => 0 }",
+        ),
     ] {
         let tampered = temp_dir(&format!("certify-hostile-{label}-model"));
         copy_dir_all(&out_dir, &tampered);
@@ -1367,28 +1371,41 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
         let _ = std::fs::remove_dir_all(&tampered);
     }
 
+    // The declared-envelope wiring derives the constructor obligation model from
+    // the emitted plan (`dEnvCtorModel Plans.mkOpDeclaredEnvelope 1`), so the
+    // generated `def mkOp` source definition is no longer load-bearing for the
+    // obligation. The hostile vector moves with the model: declare the WRONG hit
+    // constructor index, so the still well-typed model claims `mkOp` builds the
+    // second constructor while the accepted claim and module bytes pin the first.
     let tampered = temp_dir("certify-hostile-construct-model-definition");
     copy_dir_all(&out_dir, &tampered);
-    let model = tampered.join("cert/CertGoals.lean");
-    let source = std::fs::read_to_string(&model).unwrap();
-    let honest = "def mkOp (n : Int) : Op :=\n  Op.add n";
-    let hostile = "def mkOp (n : Int) : Op :=\n  Op.neg n";
+    let manifest_path = tampered.join("cert/Manifest.lean");
+    let source = std::fs::read_to_string(&manifest_path).unwrap();
+    let honest =
+        "model := AverCert.DeclaredIndexEnvelope.dEnvCtorModel Plans.mkOpDeclaredEnvelope 1 (by decide) }";
+    let hostile =
+        "model := AverCert.DeclaredIndexEnvelope.dEnvCtorModel Plans.mkOpDeclaredEnvelope 2 (by decide) }";
     let edited = source.replacen(honest, hostile, 1);
     assert_ne!(
         source, edited,
-        "construct model definition changed; update the hostile-model regression"
+        "construct obligation model shape changed; update the hostile-model regression"
     );
-    std::fs::write(&model, edited).unwrap();
-    let manifest = std::fs::read_to_string(tampered.join("cert/Manifest.lean")).unwrap();
+    std::fs::write(&manifest_path, edited).unwrap();
+    let artifact = std::fs::read_to_string(tampered.join("cert/Artifact.lean")).unwrap();
     assert!(
-        manifest.contains("model := mkOp }"),
-        "construct hostile regression must leave the manifest model reference untouched"
+        artifact.contains("exportName := \"mkOp\", carrier := 23, structIdx := 1"),
+        "construct hostile regression must leave the accepted claim pinned at the honest constructor index"
+    );
+    let envelope = std::fs::read_to_string(tampered.join("cert/Plans.lean")).unwrap();
+    assert!(
+        envelope.contains("def mkOpDeclaredEnvelope : AverCert.DeclaredIndexEnvelope.DIdxEnvelope :=\n  ⟨0, 23, [⟨1, .hit, 23⟩, ⟨2, .hit, 23⟩, ⟨3, .unit, 0⟩]⟩"),
+        "construct hostile regression needs a second declared hit constructor for the wrong-index vector"
     );
 
     let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
     assert!(
         !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
-        "wrong generated construct model definition must fail its emitted bridge and be DECLINED:\n{report}"
+        "wrong declared constructor index must fail its emitted bridge and be DECLINED:\n{report}"
     );
     let _ = std::fs::remove_dir_all(&tampered);
 
