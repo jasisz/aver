@@ -28,6 +28,7 @@ computed FROM THE PLAN; the cursor only advances, never yields a parsed type.
 -/
 import WidenedEnvelope
 import IntDispatchSoundness
+import ConstructVerbatimSoundness
 
 set_option maxRecDepth 1000000
 set_option maxHeartbeats 4000000
@@ -276,5 +277,90 @@ theorem env_declaredIntDispatch_bridge (env : DIdxEnvelope) (plan : IntDispatchR
 
 #print axioms dCascade_bridge
 #print axioms env_declaredIntDispatch_bridge
+
+/-! ## §6 The declared-index CONSTRUCTOR column (meaning -> bytes, reverse arrow)
+
+The Int-read column reads the hit constructor's Int payload OUT of a declared
+value; the constructor column builds one IN. The domain is a single `Int`
+argument; the model is the declared hit constructor at its DECLARED index
+carrying that Int as its Int-box payload; the codomain relation is the
+single-result view of `dEnvDomRepr`. No new byte pin is needed beyond the same
+per-constructor `entryPinnedAt` column the read face already carries — the
+constructed struct's type index IS a pinned `c.idx`, so a forger cannot build at
+a fabricated position. -/
+
+/-- Single-result codomain view of `dEnvDomRepr`: the declared value `y` is
+    represented by exactly one `WVal`. Reads the same payload discipline. -/
+def dEnvCodRepr (env : DIdxEnvelope) :
+    CarrierSpec env.carrier → DAdtVal env → WVal → Prop :=
+  fun S y w =>
+    match y.1.2 with
+    | .int n => ∃ v, w = .structv y.1.1 [v] ∧ S.Repr n v
+    | .opaqueFields fs => w = .structv y.1.1 fs
+
+/-- Constructor model from the plan: build the DECLARED hit constructor
+    `structIdx` with the Int argument as its readable Int-box payload. The hit
+    fact is DEMANDED so the value is well-formed (`DEnvValidChild`). -/
+def dEnvCtorModel (env : DIdxEnvelope) (structIdx : Nat)
+    (h : dCtorShape? env structIdx = some .hit) : Int → DAdtVal env :=
+  fun n => ⟨(structIdx, .int n), Or.inl ⟨h, n, rfl⟩⟩
+
+/-- The declared-index constructor face. Mirrors `DIdxIntReadFace` with the
+    domain/codomain arrow reversed: the constructed result is a `DAdtVal` at the
+    declared hit position, the plan builds that hit constructor with the Int
+    argument as its Int-box payload, the ctor entries are pinned at their
+    declared indices, and `o.policy = .simulatesModel` is asserted so the full
+    semantic bridge (policy conjunct included) is derivable. -/
+def DIdxCtorFace
+    (modBytes modLen : Nat)
+    (env : DIdxEnvelope) (structIdx : Nat)
+    (hhit : dCtorShape? env structIdx = some .hit)
+    (plan : ConstructRawPlan) (o : Obligation) : Prop :=
+  checkDIdxEnvelope env = true ∧
+  plan.arity = 1 ∧ plan.fields = [.local 0] ∧
+  (∀ c ∈ env.ctors, entryPinnedAt modBytes modLen c.idx (dCtorBody env.root c)) ∧
+  o.policy = .simulatesModel ∧
+  o.carrier = env.carrier ∧
+  HEq o.Dom Int ∧
+  HEq o.Cod (DAdtVal env) ∧
+  HEq o.domRepr (AverCert.EnvelopeLowering.intArgDomRepr env.carrier) ∧
+  HEq o.codRepr (dEnvCodRepr env) ∧
+  HEq o.model (dEnvCtorModel env structIdx hhit)
+
+/-- The positive constructor bridge, in the exact shape the acceptance-soundness
+    assembly (`constructSemanticBridge`) consumes for the unary Int-payload
+    constructor profile. On the declared Int-argument representation, the
+    plan-computed constructor model `dEnvCtorModel env structIdx hhit x` is
+    represented by exactly the struct the canonical lowering builds:
+    `structv structIdx [v]`, where `v` represents the argument. `model`,
+    `codRepr`, and `domRepr` are all wall terms over the plan envelope; there is
+    no byte -> structure decoder. -/
+theorem env_declaredConstruct_bridge (env : DIdxEnvelope) (structIdx : Nat)
+    (hhit : dCtorShape? env structIdx = some .hit)
+    (plan : ConstructRawPlan)
+    (harity : plan.arity = 1) (hfields : plan.fields = [.local 0])
+    (S : CarrierSpec env.carrier) (x : Int) (args : List WVal)
+    (hdom : AverCert.EnvelopeLowering.intArgDomRepr env.carrier S x args) :
+    args.length = plan.arity ∧
+    dEnvCodRepr env S (dEnvCtorModel env structIdx hhit x)
+      (.structv structIdx
+        (ConstructVerbatimSoundness.constructModelFields
+          (args ++ List.replicate 1 .null) plan.fields)) := by
+  obtain ⟨v, hargs, hrepr⟩ := hdom
+  subst hargs
+  rw [harity, hfields]
+  refine ⟨rfl, ?_⟩
+  have hflds : ConstructVerbatimSoundness.constructModelFields
+      ([v] ++ List.replicate 1 (.null : WVal)) [.local 0] = [v] := by
+    simp [ConstructVerbatimSoundness.constructModelFields,
+      ConstructVerbatimSoundness.constructModelField]
+  rw [hflds]
+  show dEnvCodRepr env S (dEnvCtorModel env structIdx hhit x)
+    (.structv structIdx [v])
+  unfold dEnvCodRepr dEnvCtorModel
+  exact ⟨v, rfl, hrepr⟩
+
+#print axioms dEnvCodRepr
+#print axioms env_declaredConstruct_bridge
 
 end AverCert.DeclaredIndexEnvelope

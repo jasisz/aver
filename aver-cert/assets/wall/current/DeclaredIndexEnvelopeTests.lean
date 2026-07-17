@@ -266,7 +266,71 @@ theorem cg_forge_wrong_carrier_index_dies
   obtain rfl := Option.some.inj hcur
   exact absurd htake (by decide +kernel)
 
-/-! ## §4 Axiom scrub (kernel-checked witness inventory) -/
+/-! ## §4 The declared-index CONSTRUCTOR column, REAL bytes
+
+The reverse arrow: build the `JsonInt` hit constructor at its declared index 2
+from a single Int argument. The same seven-constructor pin column closes on the
+real json bytes, so the constructed struct's type index is byte-pinned; a forge
+that declares the built (result) constructor at a WRONG index dies at the pin. -/
+
+def jsonCtorPlan : ConstructRawPlan :=
+  { profile := "construct-v1", arity := 1, fields := [.local 0] }
+
+/-- The honest `JsonInt` constructor obligation: domain a single `Int`, codomain
+    the declared `Json` value, model the declared hit constructor at index 2. -/
+def oJsonCtorHonest : Obligation where
+  export_ := "jsonMkInt"
+  policy := .simulatesModel
+  carrier := 21
+  code := fun _ => none
+  host := fun _ _ _ _ _ _ => none
+  self := 1
+  Dom := Int
+  Cod := DAdtVal jsonEnv
+  domRepr := AverCert.EnvelopeLowering.intArgDomRepr 21
+  codRepr := dEnvCodRepr jsonEnv
+  model := dEnvCtorModel jsonEnv 2 (by decide)
+
+/-- HONEST PASS: the declared-index constructor face closes on the REAL json
+    bytes — the hit constructor pins hold at their real positions and the model
+    builds the hit constructor at its declared index. -/
+theorem json_ctor_honest_passes :
+    DIdxCtorFace JsonBytes.modBytes JsonBytes.modLen jsonEnv 2 (by decide)
+      jsonCtorPlan oJsonCtorHonest := by
+  refine ⟨by decide, rfl, rfl, json_ctor_pins, rfl, rfl,
+    HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩
+
+/-- The positive constructor bridge specializes to the json envelope: the single
+    Int argument's canonical representation is carried into the exact struct the
+    lowering builds at declared index 2. -/
+theorem json_ctor_bridge_applies
+    (S : CarrierSpec jsonEnv.carrier) (x : Int) (args : List WVal)
+    (hdom : AverCert.EnvelopeLowering.intArgDomRepr jsonEnv.carrier S x args) :
+    args.length = jsonCtorPlan.arity ∧
+    dEnvCodRepr jsonEnv S (dEnvCtorModel jsonEnv 2 (by decide) x)
+      (.structv 2
+        (ConstructVerbatimSoundness.constructModelFields
+          (args ++ List.replicate 1 .null) jsonCtorPlan.fields)) :=
+  env_declaredConstruct_bridge jsonEnv 2 (by decide) jsonCtorPlan rfl rfl S x args hdom
+
+/-- WRONG RESULT TAG: the forger declares the built hit constructor at index 3
+    (the real `JsonFloat` slot) so `struct.new` would target a Float struct while
+    claiming an Int result. The pin at index 3 refutes the hit body against the
+    real bytes (`struct{f64}`), exactly as in the read column. -/
+theorem forge_ctor_wrong_result_tag_dies
+    (structIdx : Nat) (hhit : dCtorShape? jsonForgeHitPos structIdx = some .hit)
+    (plan : ConstructRawPlan) (o : Obligation) :
+    ¬ DIdxCtorFace JsonBytes.modBytes JsonBytes.modLen jsonForgeHitPos structIdx
+        hhit plan o := by
+  intro hface
+  obtain ⟨-, -, -, hpins, -, -, -, -, -, -, -⟩ := hface
+  obtain ⟨cur, hcur, -, htake⟩ := hpins ⟨3, .hit, 21⟩ (by decide)
+  have hjc : entryCursorAt JsonBytes.modBytes JsonBytes.modLen 3 = some jFloatCur := rfl
+  rw [hjc] at hcur
+  obtain rfl := Option.some.inj hcur
+  exact absurd htake (by decide +kernel)
+
+/-! ## §5 Axiom scrub (kernel-checked witness inventory) -/
 
 #print axioms json_ctor_pins
 #print axioms json_honest_passes
@@ -279,5 +343,8 @@ theorem cg_forge_wrong_carrier_index_dies
 #print axioms cg_ctor_pins
 #print axioms cg_honest_passes
 #print axioms cg_forge_wrong_carrier_index_dies
+#print axioms json_ctor_honest_passes
+#print axioms json_ctor_bridge_applies
+#print axioms forge_ctor_wrong_result_tag_dies
 
 end AverCert.DeclaredIndexEnvelope.Tests

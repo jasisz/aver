@@ -15,4 +15,4 @@ lean_lib «CertPrelude» where
     `IntboxBytes, `MkopBytes, `IntboxTag7Bytes, `IntboxTag2Bytes,
     `EnvelopeLoweringTests, `WidenedEnvelope, `WidenedEnvelopeTests,
     `JsonBytes, `CertGoalsBytes, `DeclaredIndexEnvelope,
-    `DeclaredIndexEnvelopeTests]
+    `DeclaredEnvelopeAcceptTransport, `DeclaredIndexEnvelopeTests]
