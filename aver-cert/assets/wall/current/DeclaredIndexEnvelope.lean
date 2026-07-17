@@ -129,9 +129,150 @@ def declaredConcat (typePrefix : List Nat) (env : DIdxEnvelope) : List Nat :=
   typePrefix ++ (env.ctors.map (dCtorBody env.root)).flatten
 
 /-- Declared shape at a flattened index (fail-closed): the constructor whose
-    declared `idx` equals `tag`. -/
+    declared `idx` equals `tag`. On its own the label lookup would be FREE —
+    `dCtorBody` never reads `c.idx` and `declaredConcat` lays bodies by list
+    order, so permuting labels is invisible to a body-only byte pin. The unified
+    walk (§2c) is what makes the label DERIVED from byte position: the ctor at
+    counted position `tag` is the one whose body the walk fixes at that position
+    by equality, so `dCtorShape? env tag` can only resolve `tag` to a shape the
+    real entry at type index `tag` actually carries. -/
 def dCtorShape? (env : DIdxEnvelope) (tag : Nat) : Option WCtor :=
   (env.ctors.find? (fun c => decide (c.idx = tag))).map (fun c => c.shape)
+
+/-! ## §2c The UNIFIED walk-match pin (position by counting, content by equality)
+
+ONE single-pass traversal of the type section replaces the former split of a
+whole-prefix concat equality plus a separate entry-count walk. Entry by entry,
+starting at flattened index 0, the walk:
+
+* skips a rec-group header (`0x4e` + single-byte member count) WITHOUT counting
+  — group boundaries do not contribute a flattened index;
+* at a position where a constructor is DECLARED (`idx = current count`), confirms
+  the entry bytes EQUAL that constructor's declared template `dCtorBody` and
+  advances by the TEMPLATE's length — the length comes from the DECLARATION, and
+  the bytes are matched by equality, never read for meaning;
+* at every other (undeclared) position, NAVIGATES one entry by its REAL byte
+  length via the WebAssembly type-entry grammar and counts it — the navigator
+  yields only the advanced cursor (a position), never a surfaced shape.
+
+Both jobs — assigning each entry its flattened index by counting, and confirming
+each declared constructor's body at its declared index by equality — are done in
+this ONE traversal. The only primitives are length-advance (`bEntryStep`,
+`takeBytes`-length) and equality (`takeBytes … = template`); there is no
+shape-to-meaning decoder. It also drops the contiguity assumption of
+`declaredConcat` (`prefix ++ bodies.flatten`): declared constructors may be
+separated by unrelated navigated entries and still be pinned at their true
+indices, because position is counted, not assumed. A relabelled (idx-swapped)
+constructor fails because the walk matches its template at the position its label
+names, and the real bytes there are a different entry — the equality breaks. -/
+
+/-- Peel one byte off the little-endian cursor `(n, len)`; fail-closed at the
+    end of the bounded region. -/
+@[inline] def dpByte : Nat × Nat → Option (Nat × (Nat × Nat))
+  | (n, len) => if len = 0 then none else some (n &&& 0xff, (n >>> 8, len - 1))
+
+/-- Navigate one single-byte (`< 0x80`) LEB index over the cursor. -/
+def bIdxByte : Nat × Nat → Option (Nat × Nat)
+  | (n, len) => if len = 0 then none
+      else if (n &&& 0xff) < 0x80 then some (n >>> 8, len - 1) else none
+
+/-- Navigate one value/storage type: a one-byte code (numeric, packed, or
+    abstract-ref shorthand `0x65..0x7f`) or a `(ref …)`/`(ref null …)` prefix
+    (`0x63`/`0x64`) followed by a single-byte heap type. Fail-closed otherwise. -/
+def bValStep : Nat × Nat → Option (Nat × Nat)
+  | (n, len) => if len = 0 then none else
+      let b := n &&& 0xff
+      if b = 0x63 ∨ b = 0x64 then bIdxByte (n >>> 8, len - 1)
+      else if 0x65 ≤ b ∧ b ≤ 0x7f then some (n >>> 8, len - 1)
+      else none
+
+/-- Navigate one field type: a storage type then a mutability byte. -/
+def bFieldStep (c : Nat × Nat) : Option (Nat × Nat) :=
+  match bValStep c with
+  | some (n, len) => if len = 0 then none else
+      let m := n &&& 0xff
+      if m = 0x00 ∨ m = 0x01 then some (n >>> 8, len - 1) else none
+  | none => none
+
+/-- Navigate `k` items with `step`. -/
+def bSteps (step : Nat × Nat → Option (Nat × Nat)) : Nat → Nat × Nat → Option (Nat × Nat)
+  | 0,     c => some c
+  | k + 1, c => (step c).bind (bSteps step k)
+
+/-- Navigate one composite type: `struct` (`0x5f` + field vector), `array`
+    (`0x5e` + one field), or `func` (`0x60` + param vector + result vector).
+    Vector counts must be single-byte LEBs; fail-closed otherwise. -/
+def bCompStep : Nat × Nat → Option (Nat × Nat)
+  | (n, len) => if len = 0 then none else
+      let b := n &&& 0xff
+      let c1 := (n >>> 8, len - 1)
+      if b = 0x5f then
+        match dpByte c1 with
+        | some (nf, c2) => if nf < 0x80 then bSteps bFieldStep nf c2 else none
+        | none => none
+      else if b = 0x5e then bFieldStep c1
+      else if b = 0x60 then
+        match dpByte c1 with
+        | some (np, c2) =>
+            if np < 0x80 then
+              match bSteps bValStep np c2 with
+              | some c3 =>
+                  match dpByte c3 with
+                  | some (nr, c4) => if nr < 0x80 then bSteps bValStep nr c4 else none
+                  | none => none
+              | none => none
+            else none
+        | none => none
+      else none
+
+/-- Navigate one complete type entry: a `sub` / `sub final` header
+    (`0x50`/`0x4f` + single-byte supertype vector) followed by a composite type,
+    or a bare composite type. Returns only the advanced cursor. -/
+def bEntryStep : Nat × Nat → Option (Nat × Nat)
+  | (n, len) => if len = 0 then none else
+      let b := n &&& 0xff
+      let c1 := (n >>> 8, len - 1)
+      if b = 0x50 ∨ b = 0x4f then
+        match dpByte c1 with
+        | some (m, c2) => if m < 0x80 then (bSteps bIdxByte m c2).bind bCompStep else none
+        | none => none
+      else bCompStep (n, len)
+
+/-- The single-pass walk-match. `fuel` bounds the traversal, `idx` is the running
+    flattened index, `(n, len)` the cursor. Succeeds once every declared
+    constructor has been passed (each matched at its own index along the way). -/
+def dWalkFuel (root : Nat) (ctors : List DCtor) : Nat → Nat → Nat × Nat → Bool
+  | 0,        _,   _        => false
+  | fuel + 1, idx, (n, len) =>
+      if ctors.all (fun c => decide (c.idx < idx)) then true
+      else if len = 0 then false
+      else
+        let b := n &&& 0xff
+        if b = 0x4e then
+          -- rec-group header: consume `0x4e` + single-byte member count, no count
+          if decide (2 ≤ len) && decide (((n >>> 8) &&& 0xff) < 0x80) then
+            dWalkFuel root ctors fuel idx (n >>> 16, len - 2)
+          else false
+        else
+          match ctors.find? (fun c => decide (c.idx = idx)) with
+          | some c =>
+              let tmpl := dCtorBody root c
+              if decide (tmpl.length ≤ len) && (CertDecode.takeBytes tmpl.length n == tmpl) then
+                dWalkFuel root ctors fuel (idx + 1) (n >>> (8 * tmpl.length), len - tmpl.length)
+              else false
+          | none =>
+              match bEntryStep (n, len) with
+              | some c' => dWalkFuel root ctors fuel (idx + 1) c'
+              | none => false
+
+/-- THE PIN: from the located type-section start, the unified walk succeeds. One
+    traversal both counts positions and confirms every declared constructor's
+    body at its declared index by equality — replacing `concatPinnedAt
+    (declaredConcat …)` and any separate index-alignment walk. -/
+def dWalkPinned (modBytes modLen : Nat) (env : DIdxEnvelope) : Prop :=
+  ∃ cur : Nat × Nat,
+    typeSectionCursor modBytes modLen = some cur ∧
+    dWalkFuel env.root env.ctors (cur.2 + 1) 0 cur = true
 
 /-- Profile checker, fail-closed. Single-byte index regime (`< 64`, covering the
     real fixtures whose largest declared index is the `Map` struct at 38), at
@@ -187,11 +328,11 @@ and each hit `c.target` byte lives inside the pinned concat, so the carrier inde
 is confirmed by byte equality, not chosen. No `readTypeEntry` walk participates. -/
 
 def DIdxIntReadFace
-    (modBytes modLen : Nat) (typePrefix : List Nat)
+    (modBytes modLen : Nat) (_typePrefix : List Nat)
     (env : DIdxEnvelope) (plan : IntDispatchRawPlan) (o : Obligation) : Prop :=
   checkDIdxEnvelope env = true ∧
   dCascadeInEnv env plan.body = true ∧
-  concatPinnedAt modBytes modLen (declaredConcat typePrefix env) ∧
+  dWalkPinned modBytes modLen env ∧
   o.carrier = env.carrier ∧
   HEq o.Dom (DAdtVal env) ∧
   HEq o.Cod Int ∧
@@ -320,13 +461,13 @@ def dEnvCtorModel (env : DIdxEnvelope) (structIdx : Nat)
     declared indices, and `o.policy = .simulatesModel` is asserted so the full
     semantic bridge (policy conjunct included) is derivable. -/
 def DIdxCtorFace
-    (modBytes modLen : Nat) (typePrefix : List Nat)
+    (modBytes modLen : Nat) (_typePrefix : List Nat)
     (env : DIdxEnvelope) (structIdx : Nat)
     (hhit : dCtorShape? env structIdx = some .hit)
     (plan : ConstructRawPlan) (o : Obligation) : Prop :=
   checkDIdxEnvelope env = true ∧
   plan.arity = 1 ∧ plan.fields = [.local 0] ∧
-  concatPinnedAt modBytes modLen (declaredConcat typePrefix env) ∧
+  dWalkPinned modBytes modLen env ∧
   o.policy = .simulatesModel ∧
   o.carrier = env.carrier ∧
   HEq o.Dom Int ∧

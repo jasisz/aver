@@ -1096,7 +1096,7 @@ fn render_artifact_expr_fragment_claims(
                         format!("AverCert.Plans.{name}ConstructPlan"),
                         "⟨rfl, rfl, rfl, AverCert.Plans.{name}TypePrefix, AverCert.Plans.{name}DeclaredEnvelope, \
                          by decide, by decide, rfl, rfl, \
-                         ⟨AverCert.Plans.declaredTypeCur, rfl, by decide +kernel, by decide +kernel⟩, \
+                         ⟨AverCert.Plans.declaredTypeCur, rfl, by decide +kernel⟩, \
                          rfl, rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩"
                             .replace("{name}", name),
                     )));
@@ -1240,7 +1240,7 @@ fn render_artifact_expr_fragment_claims(
                     format!("AverCert.Plans.{name}IntDispatchPlan"),
                     "⟨rfl, rfl, AverCert.Plans.{name}TypePrefix, AverCert.Plans.{name}DeclaredEnvelope, \
                      by decide, by decide, \
-                     ⟨AverCert.Plans.declaredTypeCur, rfl, by decide +kernel, by decide +kernel⟩, \
+                     ⟨AverCert.Plans.declaredTypeCur, rfl, by decide +kernel⟩, \
                      rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩"
                         .replace("{name}", name),
                 )));
