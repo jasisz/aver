@@ -120,6 +120,8 @@ include!("analysis.rs");
 #[cfg(feature = "engine")]
 include!("module_envelope.rs");
 #[cfg(feature = "engine")]
+include!("declared_envelope.rs");
+#[cfg(feature = "engine")]
 include!("rederive.rs");
 #[cfg(feature = "engine")]
 include!("disasm.rs");

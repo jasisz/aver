@@ -3050,6 +3050,10 @@ pub(super) fn emit_module_with(
         add_idx: builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintAdd),
         mul_idx: builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintMul),
         sub_idx: builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintSub),
+        // The declared arith template indices matter only for the certificate
+        // manifest, which the checker re-derives from the emitted bytes; the
+        // plan encoder here needs only the four call-target roles above.
+        ..Default::default()
     };
     for (i, _fd) in fn_defs.iter().enumerate() {
         let self_wasm_idx = import_count + 1 + (i as u32);

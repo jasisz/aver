@@ -12,7 +12,11 @@ pub const FORMAT_VERSION: u32 = 1;
 /// declare `null`, pinned against a byte-derived proof of the helper's
 /// absence, while modules with the helper pin the exact decoded table. A
 /// module whose role scan the decoder cannot complete matches no manifest
-/// value.
+/// value. The declared arith helper indices (carrier, limb, and the
+/// decompose/normalize/strip/umagCmp sub-routines) are proof-term data in the
+/// generated Lean certificate, not public JSON, so the acceptance pin can
+/// confirm each declared add/sub/mul helper body byte-for-byte without moving
+/// the public schema.
 pub const CERT_SCHEMA_VERSION: u32 = 2;
 
 /// Named theorem audited by the checker-owned witness.
@@ -20,7 +24,7 @@ pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:0d667eb0d8ff38f5d11105fb18ea6e326c5545da5662b284a4e46b35321927ac";
+    "sha256:d34b2bb4ac4f86ba722649651560758c85484c84524bfdaf4e7b222335b10722";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///

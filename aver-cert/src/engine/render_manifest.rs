@@ -38,17 +38,18 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
         );
     }
     match c.inner() {
-        Cert::AdtConstructor { .. } if adt_constructor_uses_model(c, model_info) => {
-            let sig = model_info.fns.get(name);
-            let ret = sig.map(|s| s.ret.as_str()).unwrap_or("Unit");
+        Cert::AdtConstructor { struct_idx, .. }
+            if adt_constructor_uses_model(c, model_info) =>
+        {
             format!(
                 "abbrev {name}Ob : Schema.Obligation :=\n  \
                  {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
                  code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
-                 Dom := Int, Cod := {ret},\n    \
-                 domRepr := fun S n vs => ∃ v, vs = [v] ∧ intRepr S n v,\n    \
-                 codRepr := fun S x w => {ret}Repr S x w,\n    \
-                 model := {name} }}\n\n",
+                 Dom := Int,\n    \
+                 Cod := AverCert.DeclaredIndexEnvelope.DAdtVal Plans.{name}DeclaredEnvelope,\n    \
+                 domRepr := AverCert.EnvelopeLowering.intArgDomRepr {carrier},\n    \
+                 codRepr := AverCert.DeclaredIndexEnvelope.dEnvCodRepr Plans.{name}DeclaredEnvelope,\n    \
+                 model := AverCert.DeclaredIndexEnvelope.dEnvCtorModel Plans.{name}DeclaredEnvelope {struct_idx} (by decide) }}\n\n",
                 carrier = c.carrier(),
                 host = c.host_expr(),
                 self_idx = c.self_idx(),
@@ -97,46 +98,19 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
                 self_idx = c.self_idx(),
             )
         }
-        Cert::VariantDispatch { .. } => {
-            let ty = model_info
-                .fns
-                .get(name)
-                .and_then(|s| s.params.first())
-                .map(|s| s.as_str())
-                .unwrap_or("Op");
-            format!(
-                "abbrev {name}Ob : Schema.Obligation :=\n  \
-                 {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
-                 code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
-                 Dom := {ty}, Cod := Int,\n    \
-                 domRepr := fun S o vs => ∃ v, vs = [v] ∧ {ty}Repr S o v,\n    \
-                 codRepr := fun S n w => intRepr S n w,\n    \
-                 model := {name} }}\n\n",
-                carrier = c.carrier(),
-                host = c.host_expr(),
-                self_idx = c.self_idx(),
-            )
-        }
-        Cert::WidenedIntMatch { .. } => {
-            let ty = model_info
-                .fns
-                .get(name)
-                .and_then(|s| s.params.first())
-                .map(|s| s.as_str())
-                .unwrap_or("Op");
-            format!(
-                "abbrev {name}Ob : Schema.Obligation :=\n  \
-                 {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
-                 code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
-                 Dom := {ty}, Cod := Int,\n    \
-                 domRepr := fun S o vs => ∃ v, vs = [v] ∧ {name}DomRepr S o v,\n    \
-                 codRepr := fun S n w => intRepr S n w,\n    \
-                 model := {name} }}\n\n",
-                carrier = c.carrier(),
-                host = c.host_expr(),
-                self_idx = c.self_idx(),
-            )
-        }
+        Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. } => format!(
+            "abbrev {name}Ob : Schema.Obligation :=\n  \
+             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+             Dom := AverCert.DeclaredIndexEnvelope.DAdtVal Plans.{name}DeclaredEnvelope,\n    \
+             Cod := Int,\n    \
+             domRepr := AverCert.DeclaredIndexEnvelope.dEnvDomRepr Plans.{name}DeclaredEnvelope,\n    \
+             codRepr := fun S n w => intRepr S n w,\n    \
+             model := AverCert.DeclaredIndexEnvelope.dEnvStructModel Plans.{name}DeclaredEnvelope Plans.{name}IntDispatchPlan.body }}\n\n",
+            carrier = c.carrier(),
+            host = c.host_expr(),
+            self_idx = c.self_idx(),
+        ),
         Cert::ExprFragment { carrier, plan, .. } => {
             let dom = expr_fragment_dom_type(&plan.params);
             let cod = plan.result.lean_dom_type();
@@ -303,6 +277,9 @@ fn render_manifest_lean(
     } else {
         "none".to_string()
     };
+    let arith_params = analysis
+        .frag_host_table
+        .arith_params_lean_value(analysis.carrier);
     let string_host_roles = string_host_roles_lean_value(&analysis.string_host_roles);
     let obligations = analysis
         .certs
@@ -500,6 +477,7 @@ fn render_manifest_lean(
          capabilities := [{capabilities}],\n        \
          start := {start},\n        \
          hostRoleTable := {host_role_table},\n        \
+         arithParams := {arith_params},\n        \
          stringHostRoles := {string_host_roles},\n        \
          contracts := [{contracts}] }},\n    \
          symFragmentPlans := [{sym_fragment_plans}],\n    \

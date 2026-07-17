@@ -139,7 +139,8 @@ fn render_expr_fragment_plans(
          import WasmSlice\n\
          import ExprFragmentAccepted\n\
          import ArtifactBytes\n\
-         import Module\n\n\
+         import Module\n\
+         import DeclaredEnvelopeAcceptTransport\n\n\
          set_option maxRecDepth 200000\n\n\
          namespace AverCert.Plans\n\
          open AverCert.Schema\n\n",
@@ -734,11 +735,69 @@ fn render_expr_fragment_plans(
             binding = binding,
         ));
     }
+    for c in &analysis.certs {
+        let Some(envelope) = declared_envelope_for_cert(c, model_info, analysis) else {
+            continue;
+        };
+        any = true;
+        s.push_str(&format!(
+            "/-- Declared ADT envelope for `{name}`: root, carrier and every constructor's\n\
+                 flattened type index, shape and payload target. The wall confirms the whole\n\
+                 declaration against the module bytes with one type-section walk-match\n\
+                 traversal (`DeclaredIndexEnvelope.dWalkPinned`). -/\n\
+             def {name}DeclaredEnvelope : AverCert.DeclaredIndexEnvelope.DIdxEnvelope :=\n  \
+             {env}\n\n\
+             /-- Opaque declared type-section bytes before `{name}`'s constructor entries. -/\n\
+             def {name}TypePrefix : List Nat :=\n  \
+             {prefix}\n\n",
+            name = c.name(),
+            env = envelope.lean_env(),
+            prefix = envelope.lean_prefix(),
+        ));
+    }
+    if analysis.certs.iter().any(|c| {
+        declared_envelope_for_cert(c, model_info, analysis).is_some()
+            || matches!(c.inner(), Cert::StringConcatVerbatimMatch { .. })
+    }) {
+        any = true;
+        s.push_str(
+            "/-- Located type-section entry cursor: the section payload found by\n\
+                 `modulePayload 1`, advanced past the vector-count LEB. A framing\n\
+                 locate only — no type entry is parsed. -/\n\
+             def declaredTypeCur : Nat × Nat :=\n  \
+             (AverCert.DeclaredIndexEnvelope.typeSectionCursor AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen).getD (0, 0)\n\n",
+        );
+    }
     if !any {
         s.push_str("-- This artifact contains no source/fragment plans.\n\n");
     }
     s.push_str("end AverCert.Plans\n");
     s
+}
+
+/// The declared envelope backing a user-ADT claim, when the certificate must
+/// carry one: Int-face dispatch (keyed by the first tested variant) and
+/// model-bearing named-ADT constructors (keyed by the constructed variant).
+/// Analysis keeps only certs whose envelope is extractable, so a `None` here
+/// means the cert simply carries no envelope.
+fn declared_envelope_for_cert<'a>(
+    c: &Cert,
+    model_info: &ModelInfo,
+    analysis: &'a Analysis,
+) -> Option<&'a DeclaredEnvelope> {
+    match c.inner() {
+        Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. } => {
+            let plan = int_dispatch_plan_from_cert(c, analysis.frag_host_table)?;
+            let first = int_dispatch_test_tags(&plan.body).first().copied()?;
+            analysis.declared_envelopes.for_ctor(first)
+        }
+        Cert::AdtConstructor { struct_idx, .. }
+            if adt_constructor_uses_model(c, model_info) =>
+        {
+            analysis.declared_envelopes.for_ctor(*struct_idx)
+        }
+        _ => None,
+    }
 }
 
 struct RenderedArtifactClaims {
@@ -765,6 +824,50 @@ struct RenderedArtifactClaims {
     int_dispatch_proof: String,
     field_projection_proof: String,
     composition_proof: String,
+    string_concat_face_proof: String,
+    construct_face_proof: String,
+    int_dispatch_face_proof: String,
+}
+
+/// Render one opaque declared-envelope face theorem per claim plus the
+/// aggregate spine `standardFacesChecked` consumes for the family slot.
+/// `None` elements are known-face claims closed inline by `repeat' constructor`.
+fn render_face_bundles(
+    family: &str,
+    face_def: &str,
+    claims_def: &str,
+    extra_unfolds: &str,
+    host_table_conj: bool,
+    elements: &[Option<(String, String)>],
+) -> (String, String) {
+    let mut theorems = String::new();
+    let mut parts = Vec::with_capacity(elements.len());
+    for (index, element) in elements.iter().enumerate() {
+        match element {
+            Some((plan_ref, proof)) => {
+                let theorem = format!("{family}Claim{index}Face");
+                theorems.push_str(&format!(
+                    "theorem {theorem} :\n  \
+                     AverCert.StandardFace.{face_def} AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen ({claims_def}.get ⟨{index}, by decide⟩) {plan_ref} := by\n  \
+                     dsimp [{claims_def}, AverCert.StandardFace.{face_def}{extra_unfolds}]\n  \
+                     exact {proof}\n\n"
+                ));
+                if host_table_conj {
+                    parts.push(format!("⟨rfl, {theorem}⟩"));
+                } else {
+                    parts.push(theorem);
+                }
+            }
+            None => parts.push("(by repeat' constructor)".to_string()),
+        }
+    }
+    let aggregate = parts
+        .into_iter()
+        .rev()
+        .fold("trivial".to_string(), |rest, part| {
+            format!("⟨{part}, {rest}⟩")
+        });
+    (theorems, aggregate)
 }
 
 /// Render one opaque theorem per concrete claim plus the small constructor
@@ -823,6 +926,9 @@ fn render_artifact_expr_fragment_claims(
     let mut int_dispatch_proofs = Vec::new();
     let mut field_projection_proofs = Vec::new();
     let mut composition_proofs = Vec::new();
+    let mut string_concat_faces: Vec<Option<(String, String)>> = Vec::new();
+    let mut construct_faces: Vec<Option<(String, String)>> = Vec::new();
+    let mut int_dispatch_faces: Vec<Option<(String, String)>> = Vec::new();
     for c in &analysis.certs {
         match c.inner() {
             Cert::ExprFragment {
@@ -897,6 +1003,14 @@ fn render_artifact_expr_fragment_claims(
                     "⟨rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
                      ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
+                string_concat_faces.push(Some((
+                    format!("AverCert.Plans.{name}StringConcatPlan"),
+                    format!(
+                        "⟨rfl, rfl, ([] : List Nat), (⟨0, {carrier}, []⟩ : AverCert.DeclaredIndexEnvelope.DIdxEnvelope), \
+                         ⟨AverCert.Plans.declaredTypeCur, rfl, Nat.zero_le _, rfl⟩, rfl, rfl, \
+                         HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩"
+                    ),
+                )));
             }
             Cert::StringEqVerbatimMatch {
                 name,
@@ -977,6 +1091,18 @@ fn render_artifact_expr_fragment_claims(
                      ⟨rfl, rfl, rfl, rfl, {struct_type_proof}, \
                      {func_type_proof}, rfl⟩⟩⟩"
                 ));
+                if adt_constructor_uses_model(c, model_info) {
+                    construct_faces.push(Some((
+                        format!("AverCert.Plans.{name}ConstructPlan"),
+                        "⟨rfl, rfl, rfl, AverCert.Plans.{name}TypePrefix, AverCert.Plans.{name}DeclaredEnvelope, \
+                         by decide, by decide, rfl, rfl, \
+                         ⟨AverCert.Plans.declaredTypeCur, rfl, by decide +kernel⟩, \
+                         rfl, rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩"
+                            .replace("{name}", name),
+                    )));
+                } else {
+                    construct_faces.push(None);
+                }
             }
             Cert::Recursive {
                 name,
@@ -1110,6 +1236,14 @@ fn render_artifact_expr_fragment_claims(
                     "⟨rfl, rfl, rfl, rfl, rfl, ⟨_, _, _, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
                         .to_string(),
                 );
+                int_dispatch_faces.push(Some((
+                    format!("AverCert.Plans.{name}IntDispatchPlan"),
+                    "⟨rfl, rfl, AverCert.Plans.{name}TypePrefix, AverCert.Plans.{name}DeclaredEnvelope, \
+                     by decide, by decide, \
+                     ⟨AverCert.Plans.declaredTypeCur, rfl, by decide +kernel⟩, \
+                     rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩"
+                        .replace("{name}", name),
+                )));
             }
             Cert::FieldProjection {
                 name,
@@ -1359,6 +1493,30 @@ fn render_artifact_expr_fragment_claims(
     // obligation-export bounds. Each is a decidable `Bool = true` over concrete
     // artifact literals, closed by `rfl`.
     let composition_proof = format!("⟨{composition_claims_proof}, rfl, rfl, rfl⟩");
+    let (string_concat_face_bundles, string_concat_face_proof) = render_face_bundles(
+        "stringConcat",
+        "stringConcatDeclaredFace",
+        "stringConcatClaims",
+        ", AverCert.AcceptedArtifact.stringConcatCanonicalHost",
+        false,
+        &string_concat_faces,
+    );
+    let (construct_face_bundles, construct_face_proof) = render_face_bundles(
+        "construct",
+        "constructNamedFace",
+        "constructClaims",
+        ", AverCert.StandardFace.emptyHost",
+        false,
+        &construct_faces,
+    );
+    let (int_dispatch_face_bundles, int_dispatch_face_proof) = render_face_bundles(
+        "intDispatch",
+        "intDispatchDeclaredFace",
+        "intDispatchClaims",
+        ", AverCert.AcceptedArtifact.intDispatchCanonicalHost, AverCert.AcceptedArtifact.intDispatchCanonicalSlots",
+        true,
+        &int_dispatch_faces,
+    );
     let claim_proof_bundles = [
         sym_bundles,
         string_eq_bundles,
@@ -1370,6 +1528,9 @@ fn render_artifact_expr_fragment_claims(
         int_dispatch_bundles,
         field_projection_bundles,
         composition_bundles,
+        string_concat_face_bundles,
+        construct_face_bundles,
+        int_dispatch_face_bundles,
     ]
     .concat();
     RenderedArtifactClaims {
@@ -1396,6 +1557,9 @@ fn render_artifact_expr_fragment_claims(
         int_dispatch_proof,
         field_projection_proof,
         composition_proof,
+        string_concat_face_proof,
+        construct_face_proof,
+        int_dispatch_face_proof,
     }
 }
 
@@ -1602,7 +1766,17 @@ fn render_artifact(
             "  exact ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, rfl⟩⟩⟩⟩⟩⟩⟩⟩⟩⟩\n\n",
             "theorem standardFacesChecked : AverCert.StandardFace.checkedFaces data := by\n",
             "{face_dsimp}",
-            "  repeat' constructor\n\n",
+            "  refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩\n",
+            "  · repeat' constructor\n",
+            "  · repeat' constructor\n",
+            "  · exact {string_concat_face_proof}\n",
+            "  · exact {construct_face_proof}\n",
+            "  · repeat' constructor\n",
+            "  · repeat' constructor\n",
+            "  · repeat' constructor\n",
+            "  · exact {int_dispatch_face_proof}\n",
+            "  · repeat' constructor\n",
+            "  · repeat' constructor\n\n",
             "theorem claimAxesChecked : AverCert.ClaimAxes.checked data = true := rfl\n\n",
             "theorem decodedNonExprClaimFacts : AverCert.AcceptedArtifact.decodedNonExprClaimFacts data := by\n",
             "{artifact_dsimp}",
@@ -1665,6 +1839,9 @@ fn render_artifact(
         composition_proof = claims.composition_proof,
         artifact_dsimp = artifact_dsimp,
         face_dsimp = face_dsimp,
+        string_concat_face_proof = claims.string_concat_face_proof,
+        construct_face_proof = claims.construct_face_proof,
+        int_dispatch_face_proof = claims.int_dispatch_face_proof,
     );
     format!(
          "-- Artifact-carried acceptance root.\n\
@@ -1697,7 +1874,7 @@ fn render_artifact(
          {mutual_scc_closure_pins}\
          def data : AverCert.AcceptedArtifact.ArtifactData :=\n  \
            ({{ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims, fieldProjectionClaims := fieldProjectionClaims, compositionMembers := compositionMembers, compositionClaims := compositionClaims, closureFuel := {closure_fuel}, closureClaim := closureClaim }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
-         theorem decodedHostRoles : CertDecode.AddSub.roleTableStrict AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen = some AverCert.manifest.subject.hostRoleTable := by change AverCert.AcceptedArtifact.decodedHostRoleTable data; dsimp [AverCert.AcceptedArtifact.decodedHostRoleTable, data]; rfl\n\n\
+         theorem decodedHostRoles : AverCert.AcceptedArtifact.decodedHostRoleTable data := by dsimp [AverCert.AcceptedArtifact.decodedHostRoleTable, data]; decide +kernel\n\n\
          theorem decodedStringHostRoles : CertDecode.StringHost.roleTable AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen = some AverCert.manifest.subject.stringHostRoles := by change AverCert.AcceptedArtifact.decodedStringHostRoles data; dsimp [AverCert.AcceptedArtifact.decodedStringHostRoles, data]; rfl\n\n\
          {claim_proof_bundles}\
          {proof_bundles}\n\n\
@@ -1758,6 +1935,7 @@ theorem accept_sound_holds
     AverCert.Schema.Holds AverCert.Artifact.data.manifest := by
   exact AcceptanceSoundness.accept_sound CertModule.wasmSha256 AverCert.Artifact.data rfl
     AverCert.Artifact.claimObligationsBound
+    AverCert.Artifact.standardFacesChecked
     AverCert.Artifact.fragmentsAccepted hSide
 
 end AverCert.ArtifactSoundness

@@ -832,12 +832,11 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
         std::fs::read_to_string(cert_dir.join("Artifact.lean")).expect("Artifact.lean exists");
     for side_condition in [
         "exprFragmentSideConditions",
-        "stringSideConditions",
+        "stringEqSideConditions",
         "constructSideConditions",
         "recursionSideConditions",
         "mutualSideConditions",
         "verbatimSideConditions",
-        "intDispatchSideConditions",
         "fieldProjectionSideConditions",
         "compositionSideConditions",
     ] {
@@ -858,20 +857,28 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
         ("intLessZero", "exprFragmentSemanticBridge"),
         ("intEqZero", "exprFragmentSemanticBridge"),
         ("boolAndGoal", "exprFragmentSemanticBridge"),
-        ("mkOp", "constructSemanticBridge"),
         ("sumFrom", "recursionSemanticBridge"),
         ("countDown", "recursionSemanticBridge"),
         ("isEven", "mutualSemanticBridge"),
         ("isOdd", "mutualSemanticBridge"),
-        ("evalOp", "intDispatchSemanticBridge"),
-        ("boxInt", "intDispatchSemanticBridge"),
-        ("gauge", "intDispatchSemanticBridge"),
         ("quad", "compositionSemanticBridge"),
         ("hex16", "compositionSemanticBridge"),
     ] {
         assert!(
             artifact_lean.contains(&format!("CertProofs.{name}_{bridge_kind}")),
             "migrated family bridge must feed accept_sound: {name}\n{artifact_lean}"
+        );
+    }
+    for face in [
+        "theorem constructClaim0Face",
+        "theorem intDispatchClaim0Face",
+        "theorem intDispatchClaim1Face",
+        "theorem intDispatchClaim2Face",
+        "theorem stringConcatClaim0Face",
+    ] {
+        assert!(
+            artifact_lean.contains(face),
+            "declared-envelope face theorem missing from Artifact.lean: {face}\n{artifact_lean}"
         );
     }
     for float_name in ["floatLeGoal"] {
@@ -993,17 +1000,15 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
     );
     for dispatch_name in ["evalOp", "boxInt", "gauge"] {
         assert!(
-            certificate.contains(&format!(
+            !certificate.contains(&format!(
                 "theorem {dispatch_name}_intDispatchSemanticBridge"
             )),
-            "dispatch must emit its option-(b) source-model bridge: {dispatch_name}\n{certificate}"
+            "dispatch bridges are derived from the declared-envelope face; no bespoke bridge: {dispatch_name}\n{certificate}"
         );
     }
     assert!(
-        certificate.contains("theorem mkOp_constructSemanticBridge")
-            && certificate.contains("cases n")
-            && certificate.contains("ConstructVerbatimSoundness.constructModelFields"),
-        "construct-with-model must emit only its small source-model bridge:\n{certificate}"
+        !certificate.contains("theorem mkOp_constructSemanticBridge"),
+        "named constructor bridges are derived from the declared-envelope face:\n{certificate}"
     );
     assert!(
         certificate.contains("theorem sumFrom_recursionSemanticBridge")
@@ -1340,7 +1345,11 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
             "model := quoteOrSelfModel }",
             "model := shoutModel }",
         ),
-        ("dispatch", "model := gauge }", "model := fun _ => 0 }"),
+        (
+            "dispatch",
+            "model := AverCert.DeclaredIndexEnvelope.dEnvStructModel Plans.gaugeDeclaredEnvelope Plans.gaugeIntDispatchPlan.body }",
+            "model := fun _ => 0 }",
+        ),
     ] {
         let tampered = temp_dir(&format!("certify-hostile-{label}-model"));
         copy_dir_all(&out_dir, &tampered);
@@ -1362,28 +1371,39 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
         let _ = std::fs::remove_dir_all(&tampered);
     }
 
+    // The declared-envelope wiring derives the constructor obligation model from
+    // the emitted plan (`dEnvCtorModel Plans.mkOpDeclaredEnvelope 1`), so the
+    // generated `def mkOp` source definition is no longer load-bearing for the
+    // obligation. The hostile vector moves with the model: declare the WRONG hit
+    // constructor index, so the still well-typed model claims `mkOp` builds the
+    // second constructor while the accepted claim and module bytes pin the first.
     let tampered = temp_dir("certify-hostile-construct-model-definition");
     copy_dir_all(&out_dir, &tampered);
-    let model = tampered.join("cert/CertGoals.lean");
-    let source = std::fs::read_to_string(&model).unwrap();
-    let honest = "def mkOp (n : Int) : Op :=\n  Op.add n";
-    let hostile = "def mkOp (n : Int) : Op :=\n  Op.neg n";
+    let manifest_path = tampered.join("cert/Manifest.lean");
+    let source = std::fs::read_to_string(&manifest_path).unwrap();
+    let honest = "model := AverCert.DeclaredIndexEnvelope.dEnvCtorModel Plans.mkOpDeclaredEnvelope 1 (by decide) }";
+    let hostile = "model := AverCert.DeclaredIndexEnvelope.dEnvCtorModel Plans.mkOpDeclaredEnvelope 2 (by decide) }";
     let edited = source.replacen(honest, hostile, 1);
     assert_ne!(
         source, edited,
-        "construct model definition changed; update the hostile-model regression"
+        "construct obligation model shape changed; update the hostile-model regression"
     );
-    std::fs::write(&model, edited).unwrap();
-    let manifest = std::fs::read_to_string(tampered.join("cert/Manifest.lean")).unwrap();
+    std::fs::write(&manifest_path, edited).unwrap();
+    let artifact = std::fs::read_to_string(tampered.join("cert/Artifact.lean")).unwrap();
     assert!(
-        manifest.contains("model := mkOp }"),
-        "construct hostile regression must leave the manifest model reference untouched"
+        artifact.contains("exportName := \"mkOp\", carrier := 23, structIdx := 1"),
+        "construct hostile regression must leave the accepted claim pinned at the honest constructor index"
+    );
+    let envelope = std::fs::read_to_string(tampered.join("cert/Plans.lean")).unwrap();
+    assert!(
+        envelope.contains("def mkOpDeclaredEnvelope : AverCert.DeclaredIndexEnvelope.DIdxEnvelope :=\n  ⟨0, 23, [⟨1, .hit, 23⟩, ⟨2, .hit, 23⟩, ⟨3, .unit, 0⟩]⟩"),
+        "construct hostile regression needs a second declared hit constructor for the wrong-index vector"
     );
 
     let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
     assert!(
         !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
-        "wrong generated construct model definition must fail its emitted bridge and be DECLINED:\n{report}"
+        "wrong declared constructor index must fail its emitted bridge and be DECLINED:\n{report}"
     );
     let _ = std::fs::remove_dir_all(&tampered);
 
@@ -2192,8 +2212,8 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
         "String.eq artifact claim should carry lowering indices:\n{artifact_lean}"
     );
     assert!(
-        artifact_lean.contains("theorem stringSideConditions")
-            && artifact_lean.contains("AcceptanceSoundness.stringSemanticBridges data"),
+        artifact_lean.contains("theorem stringEqSideConditions")
+            && artifact_lean.contains("AcceptanceSoundness.stringEqSemanticBridges data"),
         "String.eq bridge must feed the accept-sound aggregate:\n{artifact_lean}"
     );
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
@@ -2365,9 +2385,9 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         "String.concat artifact claim should carry lowering indices:\n{artifact_lean}"
     );
     assert!(
-        artifact_lean.contains("theorem stringSideConditions")
-            && artifact_lean.contains("AcceptanceSoundness.stringSemanticBridges data"),
-        "String.concat bridge must feed the accept-sound aggregate:\n{artifact_lean}"
+        artifact_lean.contains("theorem stringConcatClaim0Face")
+            && artifact_lean.contains("AverCert.StandardFace.stringConcatDeclaredFace"),
+        "String.concat must carry its declared-envelope face:\n{artifact_lean}"
     );
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
         .expect("Certificate.lean exists");
@@ -2620,16 +2640,15 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             for entry in &model_construct_entries {
                 let name = entry["name"].as_str().unwrap();
                 assert!(
-                    artifact_lean.contains("AcceptanceSoundness.constructSemanticBridges data")
-                        && artifact_lean
-                            .contains(&format!("CertProofs.{name}_constructSemanticBridge")),
-                    "construct-with-model bridge must feed the accept-sound aggregate for {name}:\n{artifact_lean}"
+                    artifact_lean.contains("AverCert.StandardFace.constructNamedFace")
+                        && artifact_lean.contains(&format!("exportName := \"{name}\"")),
+                    "construct-with-model must carry its declared-envelope face for {name}:\n{artifact_lean}"
                 );
                 assert!(
-                    certificate.contains(&format!("theorem {name}_constructSemanticBridge"))
+                    !certificate.contains(&format!("theorem {name}_constructSemanticBridge"))
                         && !certificate.contains(&format!("{name}_wasm_certified"))
                         && !certificate.contains(&format!("{name}_simulates")),
-                    "construct-with-model must emit only its option-(b) bridge for {name}:\n{certificate}"
+                    "construct-with-model must not emit a bespoke bridge for {name}:\n{certificate}"
                 );
             }
         }
@@ -2645,16 +2664,15 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
                     "AcceptanceSoundness.intDispatch_canonical_discharges"
                 );
                 assert!(
-                    artifact_lean.contains("AcceptanceSoundness.intDispatchSemanticBridges data")
-                        && artifact_lean
-                            .contains(&format!("CertProofs.{name}_intDispatchSemanticBridge")),
-                    "dispatch bridge must feed the accept-sound aggregate for {name}:\n{artifact_lean}"
+                    artifact_lean.contains("AverCert.StandardFace.intDispatchDeclaredFace")
+                        && artifact_lean.contains(&format!("exportName := \"{name}\"")),
+                    "dispatch must carry its declared-envelope face for {name}:\n{artifact_lean}"
                 );
                 assert!(
-                    certificate.contains(&format!("theorem {name}_intDispatchSemanticBridge"))
+                    !certificate.contains(&format!("theorem {name}_intDispatchSemanticBridge"))
                         && !certificate.contains(&format!("{name}_wasm_certified"))
                         && !certificate.contains(&format!("{name}_simulates")),
-                    "dispatch must emit only its option-(b) bridge for {name}:\n{certificate}"
+                    "dispatch must not emit a bespoke bridge for {name}:\n{certificate}"
                 );
             }
         }
@@ -2713,15 +2731,6 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
                 ),
                 "audited construct discharge changed axiom surface:\n{combined}"
             );
-            for entry in &model_construct_entries {
-                let name = entry["name"].as_str().unwrap();
-                assert!(
-                    combined.contains(&format!(
-                        "'CertProofs.{name}_constructSemanticBridge' depends on axioms: [propext, Quot.sound]"
-                    )),
-                    "construct source-model bridge changed axiom surface for {name}:\n{combined}"
-                );
-            }
         }
         if prefix == "tuple-proj"
             || !dispatch_entries.is_empty()

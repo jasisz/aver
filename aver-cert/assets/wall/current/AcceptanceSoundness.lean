@@ -4,9 +4,13 @@ ACCEPTANCE-SOUNDNESS ASSEMBLY.
 The audited byte predicates do not constrain the semantic faces of an
 `Obligation` (`policy`, `Dom`, `Cod`, representations, and `model`).  The
 family discharge theorems therefore expose those faces as semantic bridge
-predicates.  Composition also exposes the facts for its called members.
-`dischargeSideConditions` collects precisely those remaining assumptions;
-everything else in this file is the mechanical ten-family assembly.
+predicates.  For the Int-dispatch, named-ADT constructor, and String.concat
+families those bridges are no longer producer premises: the checked standard
+faces carry declared-index envelope pins, and the transport lemmas of
+`DeclaredEnvelopeAcceptTransport` derive the exact residual bridge bodies
+from them.  `dischargeSideConditions` collects precisely the remaining
+assumptions; everything else in this file is the mechanical ten-family
+assembly.
 -/
 import DischargeExprFragment
 import DischargeFieldProjection
@@ -16,6 +20,8 @@ import DischargeString
 import DischargeIntDispatch
 import DischargeRecursion
 import DischargeComposition
+import StandardFace
+import DeclaredEnvelopeAcceptTransport
 
 open AverCert
 open AverCert.Schema
@@ -23,26 +29,112 @@ open AverCert.AcceptedArtifact
 
 namespace AcceptanceSoundness
 
-/-- Semantic premises still exposed by the ten kernel-clean family discharge
-theorems. String equality and concatenation share `stringSemanticBridges`.
-Composition uses the tied root/member bridge so a root's selected source
-models cannot be separated from the member facts that discharge its calls. -/
+/-- The String.eq half of `stringSemanticBridges`; the String.concat half is
+derived from the checked declared-envelope face. -/
+def stringEqSemanticBridges (artifact : ArtifactData) : Prop :=
+  ∀ claim ∈ artifact.stringEqClaims,
+    ∀ plan,
+      stringEqPlanForExport claim.exportName
+          artifact.manifest.stringEqPlans = some plan →
+        stringEqSemanticBridge claim plan
+
+/-- The non-named slice of `constructSemanticBridges`: bridges for the wall
+canonical `List` constructor packs. Named user-ADT constructor bridges are
+derived from the checked declared-envelope face. -/
+def constructListSemanticBridges (artifact : ArtifactData) : Prop :=
+  ∀ claim ∈ artifact.constructClaims,
+    (∀ name, claim.symPlan.result ≠ .named name) →
+    ∀ plan,
+      constructPlanForExport claim.exportName
+          artifact.manifest.constructPlans = some plan →
+        constructSemanticBridge claim plan
+
+/-- Semantic premises still exposed by the kernel-clean family discharge
+theorems after the declared-envelope faces took over the Int-dispatch,
+named-ADT constructor, and String.concat bridges. Composition uses the tied
+root/member bridge so a root's selected source models cannot be separated
+from the member facts that discharge its calls. -/
 def dischargeSideConditions (artifact : ArtifactData) : Prop :=
   exprFragmentSemanticBridges artifact ∧
-  stringSemanticBridges artifact ∧
-  constructSemanticBridges artifact ∧
+  stringEqSemanticBridges artifact ∧
+  constructListSemanticBridges artifact ∧
   recursionSemanticBridges artifact ∧
   mutualSemanticBridges artifact ∧
   verbatimSemanticBridges artifact ∧
-  intDispatchSemanticBridges artifact ∧
   fieldProjectionSemanticBridges artifact ∧
   compositionClaimSemanticBridges artifact
 
+/-! ### Face-derived semantic bridges
+
+Each lemma peels the family slice out of `StandardFace.checkedFaces`, reduces
+the checked plan lookup, and hands the declared-envelope face to the matching
+`DeclaredEnvelopeAcceptTransport` transport, which emits the exact residual
+bridge body the family discharge consumes. -/
+
+theorem intDispatch_bridges_of_faces
+    (artifact : ArtifactData)
+    (hFaces : AverCert.StandardFace.checkedFaces artifact) :
+    intDispatchSemanticBridges artifact := by
+  obtain ⟨-, -, -, -, -, -, -, -, hInt, -, -⟩ := hFaces
+  intro claim hMem plan hPlan
+  have hMatch := allClaims_of_mem _ artifact.intDispatchClaims hInt claim hMem
+  obtain ⟨-, hArm⟩ := hMatch
+  rw [hPlan] at hArm
+  obtain ⟨hPolicy, -, typePrefix, env, hFace⟩ := hArm
+  exact AverCert.DeclaredIndexEnvelope.face_gives_declaredIntDispatch_bridge
+    artifact.modBytes artifact.modLen typePrefix env plan claim.obligation
+    hFace hPolicy
+
+theorem stringConcat_bridges_of_faces
+    (artifact : ArtifactData)
+    (hFaces : AverCert.StandardFace.checkedFaces artifact) :
+    ∀ claim ∈ artifact.stringConcatClaims,
+      ∀ plan,
+        stringConcatPlanForExport claim.exportName
+            artifact.manifest.stringConcatPlans = some plan →
+          stringConcatSemanticBridge claim plan := by
+  obtain ⟨-, -, -, hConcat, -, -, -, -, -, -, -⟩ := hFaces
+  intro claim hMem plan hPlan
+  have hMatch := allClaims_of_mem _ artifact.stringConcatClaims hConcat claim hMem
+  rw [AverCert.StandardFace.stringConcatMatches, hPlan] at hMatch
+  obtain ⟨-, -, typePrefix, env, hFace⟩ := hMatch
+  exact AverCert.DeclaredIndexEnvelope.face_gives_declaredStringConcat_bridge
+    artifact.modBytes artifact.modLen typePrefix env claim.resultTy
+    claim.containerTy plan claim.obligation hFace
+
+theorem construct_bridges_of_faces
+    (artifact : ArtifactData)
+    (hFaces : AverCert.StandardFace.checkedFaces artifact)
+    (hList : constructListSemanticBridges artifact) :
+    constructSemanticBridges artifact := by
+  obtain ⟨-, -, -, -, hConstruct, -, -, -, -, -, -⟩ := hFaces
+  intro claim hMem plan hPlan
+  have hMatch := allClaims_of_mem _ artifact.constructClaims hConstruct claim hMem
+  rw [AverCert.StandardFace.constructMatches, hPlan] at hMatch
+  cases hRes : claim.symPlan.result with
+  | named name =>
+      rw [hRes] at hMatch
+      obtain ⟨-, -, -, typePrefix, env, hhit, hFace⟩ := hMatch
+      exact AverCert.DeclaredIndexEnvelope.face_gives_declaredConstruct_bridge
+        artifact.modBytes artifact.modLen typePrefix env claim.structIdx hhit
+        plan claim.obligation hFace
+  | int => exact hList claim hMem (fun name h => by simp [hRes] at h) plan hPlan
+  | float => exact hList claim hMem (fun name h => by simp [hRes] at h) plan hPlan
+  | bool => exact hList claim hMem (fun name h => by simp [hRes] at h) plan hPlan
+  | string => exact hList claim hMem (fun name h => by simp [hRes] at h) plan hPlan
+  | app1 name arg =>
+      exact hList claim hMem (fun n h => by simp [hRes] at h) plan hPlan
+  | app2 name left right =>
+      exact hList claim hMem (fun n h => by simp [hRes] at h) plan hPlan
+
 /-- Every claimed obligation holds.  Membership in the audited concatenation
 is split into its ten family slices, then discharged by the matching generic
-family theorem. -/
+family theorem.  The Int-dispatch, named-ADT constructor, and String.concat
+bridges are derived from the checked declared-envelope faces; the remaining
+families consume the explicit side conditions. -/
 theorem hClaims_of_accepted
     (artifact : ArtifactData)
+    (hFaces : AverCert.StandardFace.checkedFaces artifact)
     (hAccepted : acceptedFragments artifact)
     (hSide : dischargeSideConditions artifact) :
     ∀ o ∈ claimObligations artifact, obligationHolds o := by
@@ -50,9 +142,15 @@ theorem hClaims_of_accepted
     ⟨hSym, hStringEq, hStringConcat, hConstruct, hRecursion, hMutual,
       hVerbatim, hIntDispatch, hFieldProjection, hComposition, _⟩
   rcases hSide with
-    ⟨hExprSemantic, hStringSemantic, hConstructSemantic, hRecursionSemantic,
-      hMutualSemantic, hVerbatimSemantic, hIntDispatchSemantic,
+    ⟨hExprSemantic, hStringEqSemantic, hConstructListSemantic,
+      hRecursionSemantic, hMutualSemantic, hVerbatimSemantic,
       hFieldProjectionSemantic, hCompositionSemantic⟩
+  have hStringSemantic : stringSemanticBridges artifact :=
+    ⟨hStringEqSemantic, stringConcat_bridges_of_faces artifact hFaces⟩
+  have hConstructSemantic : constructSemanticBridges artifact :=
+    construct_bridges_of_faces artifact hFaces hConstructListSemantic
+  have hIntDispatchSemantic : intDispatchSemanticBridges artifact :=
+    intDispatch_bridges_of_faces artifact hFaces
   intro o ho
   simp only [claimObligations, List.mem_append] at ho
   rcases ho with ho | ho
@@ -90,6 +188,7 @@ theorem accept_sound
     (artifact : ArtifactData)
     (hHash : artifact.manifest.subject.artifactHash = wasmSha256)
     (hInManifest : fragmentClaimObligationsInManifest artifact)
+    (hFaces : AverCert.StandardFace.checkedFaces artifact)
     (hAccepted : acceptedFragments artifact)
     (hSide : dischargeSideConditions artifact) :
     holdsAtHash wasmSha256 artifact.manifest := by
@@ -98,6 +197,11 @@ theorem accept_sound
     ⟨_, _, _, _, _, _, _, _, _, hComposition, _⟩
   rcases hComposition with ⟨_, _, hCover, hUnique⟩
   exact ⟨hHash, holdsCore_of_claims artifact hCover hInManifest hUnique
-    (hClaims_of_accepted artifact hAccepted hSide)⟩
+    (hClaims_of_accepted artifact hFaces hAccepted hSide)⟩
+
+#print axioms intDispatch_bridges_of_faces
+#print axioms stringConcat_bridges_of_faces
+#print axioms construct_bridges_of_faces
+#print axioms accept_sound
 
 end AcceptanceSoundness

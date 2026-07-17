@@ -5,7 +5,7 @@ expression: golden
 == cert-manifest.json ==
 {
   "schema_version": 2,
-  "format": {"version": 1, "wall_id": "sha256:0d667eb0d8ff38f5d11105fb18ea6e326c5545da5662b284a4e46b35321927ac"},
+  "format": {"version": 1, "wall_id": "sha256:d34b2bb4ac4f86ba722649651560758c85484c84524bfdaf4e7b222335b10722"},
   "wasm": "add_one.wasm",
   "wasm_sha256": "613ae37c96e854a7adce250ed7a583f872d8b3f7a59852e0636e7a207e5fbc3f",
   "level": "L1",
@@ -77,6 +77,7 @@ def manifest : Schema.Manifest :=
         capabilities := [],
         start := none,
         hostRoleTable := some ({ box := some 6, add := some 7, mul := some 9, sub := some 8 } : CertDecode.AddSub.Roles),
+        arithParams := some ({ carrier := 2, limb := 1, decompose := 2, normalize := 3, strip := 4, umagCmp := 5 } : ArithTemplateDerisk.ArithHostParams),
         stringHostRoles := [],
         contracts := ["__rt_aint_from_i64 (box i64 -> carrier)", "Int.add (carrier add = exact integer addition on represented values)"] },
     symFragmentPlans := [("addOne", Plans.addOneSymPlan)],
@@ -107,6 +108,7 @@ import WasmSlice
 import ExprFragmentAccepted
 import ArtifactBytes
 import Module
+import DeclaredEnvelopeAcceptTransport
 
 set_option maxRecDepth 200000
 
