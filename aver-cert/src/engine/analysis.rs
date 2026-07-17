@@ -16,6 +16,10 @@ pub struct Analysis {
     /// add/sub, each matching helper is retained independently (no uniqueness
     /// decline), exactly as the Rust classifier and audited kernel classifier do.
     string_host_roles: StringHostRoles,
+    /// Declarable ADT envelopes by constructor type index. User-ADT claims
+    /// declare an envelope from this table; a claim whose ADT is not
+    /// extractable declines during analysis (fail-closed).
+    declared_envelopes: DeclaredEnvelopes,
 }
 
 impl Analysis {
@@ -24,6 +28,68 @@ impl Analysis {
     }
     pub fn declined(&self) -> &[(String, String)] {
         &self.declined
+    }
+}
+
+/// Collect the tags the checked cascade tests, in dispatch order.
+fn int_dispatch_test_tags(body: &IntDispatchCascade) -> Vec<u32> {
+    let mut tags = Vec::new();
+    let mut cursor = body;
+    while let IntDispatchCascade::Test { ty_idx, rest, .. } = cursor {
+        tags.push(*ty_idx);
+        cursor = rest;
+    }
+    tags
+}
+
+/// Fail-closed declared-envelope gate for user-ADT claims: an Int-dispatch or
+/// named-ADT constructor certificate is kept only when its ADT's envelope is
+/// extractable and the claim's byte-pinned indices are declared hit
+/// constructors of that envelope. Everything else keeps its existing route.
+fn declared_envelope_gate(
+    c: &Cert,
+    model_info: &ModelInfo,
+    frag_host_table: FragHostTable,
+    envelopes: &DeclaredEnvelopes,
+) -> Result<(), String> {
+    match c.inner() {
+        Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. } => {
+            let plan = int_dispatch_plan_from_cert(c, frag_host_table).ok_or_else(|| {
+                "declared-envelope gate: no byte-matching int-dispatch plan".to_string()
+            })?;
+            let tags = int_dispatch_test_tags(&plan.body);
+            let first = *tags.first().ok_or_else(|| {
+                "declared-envelope gate: dispatch plan tests no variant".to_string()
+            })?;
+            let envelope = envelopes.for_ctor(first).ok_or_else(|| {
+                "user ADT layout is outside the declarable envelope vocabulary; declined"
+                    .to_string()
+            })?;
+            let hits = envelope.hit_indices();
+            for tag in &tags {
+                if !hits.contains(tag) {
+                    return Err(format!(
+                        "dispatch tests variant {tag} which is not a declared Int-payload constructor; declined"
+                    ));
+                }
+            }
+            Ok(())
+        }
+        Cert::AdtConstructor { struct_idx, .. }
+            if adt_constructor_uses_model(c, model_info) =>
+        {
+            let envelope = envelopes.for_ctor(*struct_idx).ok_or_else(|| {
+                "user ADT layout is outside the declarable envelope vocabulary; declined"
+                    .to_string()
+            })?;
+            if !envelope.hit_indices().contains(struct_idx) {
+                return Err(format!(
+                    "constructed variant {struct_idx} is not a declared Int-payload constructor; declined"
+                ));
+            }
+            Ok(())
+        }
+        _ => Ok(()),
     }
 }
 
@@ -125,6 +191,18 @@ pub fn analyze_with_fragment_plans(
         }
     }
 
+    // Declared-envelope gate: user-ADT claims must be declarable against the
+    // module's type section or they decline before rendering.
+    let declared_envelopes = collect_declared_envelopes(wasm_bytes, carrier)?;
+    let mut gated_certs = Vec::new();
+    for c in certs {
+        match declared_envelope_gate(&c, &model_info, frag_host_table, &declared_envelopes) {
+            Ok(()) => gated_certs.push(c),
+            Err(reason) => declined.push((c.name().to_string(), reason)),
+        }
+    }
+    let certs = gated_certs;
+
     // Named runtime contracts actually consumed by the certified functions.
     let contracts = runtime_contracts_for_certs(&certs);
     let certified = certs
@@ -141,6 +219,7 @@ pub fn analyze_with_fragment_plans(
         contracts,
         frag_host_table,
         string_host_roles,
+        declared_envelopes,
     })
 }
 

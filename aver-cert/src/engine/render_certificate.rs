@@ -1,7 +1,7 @@
 fn render_certificate(
     analysis: &Analysis,
     model_roots: &[String],
-    model_info: &ModelInfo,
+    _model_info: &ModelInfo,
 ) -> String {
     let mut s = String::new();
     s.push_str(
@@ -36,24 +36,17 @@ fn render_certificate(
             Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. } => {
                 s.push_str(&render_fueled_recursion_cert(c))
             }
-            Cert::AdtConstructor { .. } if adt_constructor_uses_model(c, model_info) => {
-                s.push_str(&render_adt_constructor_semantic_bridge(c, model_info))
-            }
-            // Verbatim constructor packs are option-(c) leaves discharged in
-            // `Final.cert`; model-bearing constructors emit only their option-(b)
-            // source-model bridge above.
+            // Constructor packs (verbatim and named-ADT) are discharged in
+            // `Final.cert`: verbatim packs by the canonical option-(c) leaf,
+            // named constructors by the declared-envelope face transport.
             Cert::AdtConstructor { .. } => {}
             // The field-projection family is discharged in `Final.cert` by the
             // audited generic theorem plus its canonical option-(c) leaf bridge.
             // Its plan, obligation and claim data remain emitted unchanged.
             Cert::FieldProjection { .. } => {}
-            Cert::WidenedIntMatch { .. } | Cert::VariantDispatch { .. } => {
-                s.push_str(&render_int_dispatch_semantic_bridge(
-                    c,
-                    model_info,
-                    analysis.frag_host_table,
-                ))
-            }
+            // Int-face dispatch is discharged in `Final.cert` by the
+            // declared-envelope face transport; no bespoke bridge is emitted.
+            Cert::WidenedIntMatch { .. } | Cert::VariantDispatch { .. } => {}
             Cert::ExprFragment { .. } if expr_fragment_uses_audited_generic(c) => {
                 s.push_str(&render_expr_fragment_semantic_bridge(
                     c,

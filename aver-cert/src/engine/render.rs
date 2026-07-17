@@ -3,8 +3,6 @@ include!("render_code.rs");
 include!("render_certificate.rs");
 include!("render_integer.rs");
 include!("render_composition.rs");
-include!("render_adt_constructor.rs");
-include!("render_adt.rs");
 include!("render_expr_fragment.rs");
 include!("render_expr_fragment_bridge.rs");
 include!("render_model_support.rs");

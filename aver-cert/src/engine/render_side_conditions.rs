@@ -34,21 +34,6 @@ fn render_claim_cases(
     out
 }
 
-fn render_tactic_branch(body: &str) -> String {
-    let mut out = String::new();
-    for (index, line) in body.trim_end().lines().enumerate() {
-        let line = line.strip_prefix("  ").unwrap_or(line);
-        if index == 0 {
-            out.push_str("  · ");
-        } else {
-            out.push_str("    ");
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
-
 fn render_expr_side_arm(c: &Cert) -> String {
     let name = c.name();
     if expr_fragment_uses_audited_generic(c) {
@@ -89,14 +74,22 @@ fn render_string_side_arm(_c: &Cert) -> String {
 }
 
 fn render_construct_side_arm(c: &Cert, model_info: &ModelInfo) -> String {
-    let name = c.name();
-    let semantic = if adt_constructor_uses_model(c, model_info) {
-        format!("exact CertProofs.{name}_constructSemanticBridge")
-    } else {
-        "intro S x args hDom\nsubst args\nconstructor <;> rfl".to_string()
-    };
-    format!(
-        "intro plan hPlan\ninjection hPlan with hPlan\nsubst plan\nrefine ⟨rfl, ?_⟩\n{semantic}"
+    if adt_constructor_uses_model(c, model_info) {
+        // Named-ADT constructor bridges are derived in the wall from the
+        // checked declared-envelope face; the residual list-slice hypothesis
+        // excludes this claim by its named result.
+        let ret = model_info
+            .fns
+            .get(c.name())
+            .map(|sig| sig.ret.clone())
+            .expect("model-bearing ADT constructor has a source signature");
+        return format!(
+            "intro hNamed\nexact absurd rfl (hNamed \"{ret}\")"
+        );
+    }
+    String::from(
+        "intro _hNamed plan hPlan\ninjection hPlan with hPlan\nsubst plan\nrefine ⟨rfl, ?_⟩\n\
+         intro S x args hDom\nsubst args\nconstructor <;> rfl",
     )
 }
 
@@ -140,14 +133,6 @@ fn render_verbatim_side_arm(_c: &Cert) -> String {
     )
 }
 
-fn render_int_dispatch_side_arm(c: &Cert) -> String {
-    let name = c.name();
-    format!(
-        "intro plan hPlan\ninjection hPlan with hPlan\nsubst plan\n\
-         exact ⟨rfl, CertProofs.{name}_intDispatchSemanticBridge⟩"
-    )
-}
-
 fn render_field_projection_side_arm(_c: &Cert) -> String {
     String::from(
         "intro plan hPlan\ninjection hPlan with hPlan\nsubst plan\n\
@@ -180,11 +165,6 @@ fn render_discharge_side_conditions(analysis: &Analysis, model_info: &ModelInfo)
         .iter()
         .filter(|c| matches!(c.inner(), Cert::StringEqVerbatimMatch { .. }))
         .collect::<Vec<_>>();
-    let string_concat = analysis
-        .certs
-        .iter()
-        .filter(|c| matches!(c.inner(), Cert::StringConcatVerbatimMatch { .. }))
-        .collect::<Vec<_>>();
     let construct = analysis
         .certs
         .iter()
@@ -209,11 +189,6 @@ fn render_discharge_side_conditions(analysis: &Analysis, model_info: &ModelInfo)
         .iter()
         .filter(|c| matches!(c.inner(), Cert::VerbatimWidenedMatch { .. } | Cert::VerbatimVariantDispatch { .. }))
         .collect::<Vec<_>>();
-    let int_dispatch = analysis
-        .certs
-        .iter()
-        .filter(|c| matches!(c.inner(), Cert::VariantDispatch { .. } | Cert::WidenedIntMatch { .. }))
-        .collect::<Vec<_>>();
     let field_projection = analysis
         .certs
         .iter()
@@ -229,18 +204,13 @@ fn render_discharge_side_conditions(analysis: &Analysis, model_info: &ModelInfo)
     out.push_str("/-! ### Artifact semantic side conditions consumed by AcceptanceSoundness.accept_sound -/\n\n");
     out.push_str("theorem exprFragmentSideConditions :\n    AcceptanceSoundness.exprFragmentSemanticBridges data := by\n");
     out.push_str(&render_claim_cases(&sym, "symFragmentClaims", render_expr_side_arm));
-    out.push_str("\ntheorem stringSideConditions :\n    AcceptanceSoundness.stringSemanticBridges data := by\n  refine ⟨?_, ?_⟩\n");
-    out.push_str(&render_tactic_branch(&render_claim_cases(
+    out.push_str("\ntheorem stringEqSideConditions :\n    AcceptanceSoundness.stringEqSemanticBridges data := by\n");
+    out.push_str(&render_claim_cases(
         &string_eq,
         "stringEqClaims",
         render_string_side_arm,
-    )));
-    out.push_str(&render_tactic_branch(&render_claim_cases(
-        &string_concat,
-        "stringConcatClaims",
-        render_string_side_arm,
-    )));
-    out.push_str("\n\ntheorem constructSideConditions :\n    AcceptanceSoundness.constructSemanticBridges data := by\n");
+    ));
+    out.push_str("\ntheorem constructSideConditions :\n    AcceptanceSoundness.constructListSemanticBridges data := by\n");
     out.push_str(&render_claim_cases(&construct, "constructClaims", |c| {
         render_construct_side_arm(c, model_info)
     }));
@@ -250,22 +220,15 @@ fn render_discharge_side_conditions(analysis: &Analysis, model_info: &ModelInfo)
     out.push_str(&render_claim_cases(&mutual, "mutualRecursionClaims", render_mutual_side_arm));
     out.push_str("\ntheorem verbatimSideConditions :\n    AcceptanceSoundness.verbatimSemanticBridges data := by\n");
     out.push_str(&render_claim_cases(&verbatim, "verbatimClaims", render_verbatim_side_arm));
-    out.push_str("\ntheorem intDispatchSideConditions :\n    AcceptanceSoundness.intDispatchSemanticBridges data := by\n");
-    out.push_str(&render_claim_cases(
-        &int_dispatch,
-        "intDispatchClaims",
-        render_int_dispatch_side_arm,
-    ));
     out.push_str("\ntheorem fieldProjectionSideConditions :\n    AcceptanceSoundness.fieldProjectionSemanticBridges data := by\n");
     out.push_str(&render_claim_cases(&field_projection, "fieldProjectionClaims", render_field_projection_side_arm));
     out.push_str("\ntheorem compositionSideConditions :\n    AcceptanceSoundness.compositionClaimSemanticBridges data := by\n");
     out.push_str(&render_claim_cases(&composition, "compositionClaims", render_composition_side_arm));
     out.push_str(
         "\ntheorem dischargeSideConditions : AcceptanceSoundness.dischargeSideConditions data := by\n  \
-         exact ⟨exprFragmentSideConditions, stringSideConditions, constructSideConditions,\n    \
+         exact ⟨exprFragmentSideConditions, stringEqSideConditions, constructSideConditions,\n    \
          recursionSideConditions, mutualSideConditions, verbatimSideConditions,\n    \
-         intDispatchSideConditions, fieldProjectionSideConditions,\n    \
-         compositionSideConditions⟩\n\n\
+         fieldProjectionSideConditions, compositionSideConditions⟩\n\n\
          #print axioms AverCert.Artifact.dischargeSideConditions\n",
     );
     out
