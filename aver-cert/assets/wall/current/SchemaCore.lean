@@ -5,6 +5,7 @@
 -- `Schema.lean` shim adds only the artifact-hash equality from `Module.lean`.
 import CertPrelude
 import CertDecode
+import ArithTemplateDerisk
 
 namespace AverCert.Schema
 open CertPrelude
@@ -90,7 +91,14 @@ def CAPABILITY_REGISTRY : List (String × String) := [
     byte-derived proof that the `__rt_aint_from_i64` helper export is absent.
     A module with the helper always carries `some` table, even when every role
     inside it is unbound; a module whose role scan fails decodes to the
-    poisoned `none`, which no manifest value can match. -/
+    poisoned `none`, which no manifest value can match.
+
+    `arithParams` declares the indices the canonical arith helper bodies are a
+    function of (Int carrier struct, limb array, and the decompose/normalize/
+    strip/umagCmp bignum sub-routine functions); it is `some` exactly when
+    `hostRoleTable` is. The acceptance pin synthesizes each declared add/sub/mul
+    helper body from these and confirms it byte-for-byte in the real module, so
+    a wrong declaration fails the pin rather than riding a byte fingerprint. -/
 structure Subject where
   artifactHash : String
   profile      : String
@@ -101,6 +109,7 @@ structure Subject where
   capabilities : List (String × String)
   start        : Option Nat
   hostRoleTable : Option CertDecode.AddSub.Roles
+  arithParams : Option ArithTemplateDerisk.ArithHostParams
   stringHostRoles : List (Nat × CertDecode.StringHost.Role)
   contracts    : List String
 

@@ -72,6 +72,8 @@ pub const CERT_DISCHARGE_COMPOSITION: &str =
     include_str!("../assets/wall/current/DischargeComposition.lean");
 pub const CERT_ACCEPTANCE_SOUNDNESS: &str =
     include_str!("../assets/wall/current/AcceptanceSoundness.lean");
+pub const CERT_ARITH_TEMPLATE_DERISK: &str =
+    include_str!("../assets/wall/current/ArithTemplateDerisk.lean");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Source {
@@ -81,10 +83,14 @@ pub struct Source {
 
 /// Exact checker-owned source set. Ordering is not part of the identity:
 /// [`compute_id`] sorts by filename before hashing.
-pub const SOURCES: [Source; 37] = [
+pub const SOURCES: [Source; 38] = [
     Source {
         name: "AcceptedArtifact.lean",
         contents: CERT_ACCEPTED_ARTIFACT,
+    },
+    Source {
+        name: "ArithTemplateDerisk.lean",
+        contents: CERT_ARITH_TEMPLATE_DERISK,
     },
     Source {
         name: "AcceptedArtifactCore.lean",
@@ -234,9 +240,10 @@ pub const SOURCES: [Source; 37] = [
 
 /// Roots whose complete import graph is artifact-independent and can therefore
 /// be cached before a certificate is seen.
-pub const PRISTINE_ROOTS: [&str; 35] = [
+pub const PRISTINE_ROOTS: [&str; 36] = [
     "CertPrelude",
     "CertDecode",
+    "ArithTemplateDerisk",
     "WasmSlice",
     "SchemaCore",
     "PlanCheck",

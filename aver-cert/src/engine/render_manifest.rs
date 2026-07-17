@@ -277,6 +277,9 @@ fn render_manifest_lean(
     } else {
         "none".to_string()
     };
+    let arith_params = analysis
+        .frag_host_table
+        .arith_params_lean_value(analysis.carrier);
     let string_host_roles = string_host_roles_lean_value(&analysis.string_host_roles);
     let obligations = analysis
         .certs
@@ -474,6 +477,7 @@ fn render_manifest_lean(
          capabilities := [{capabilities}],\n        \
          start := {start},\n        \
          hostRoleTable := {host_role_table},\n        \
+         arithParams := {arith_params},\n        \
          stringHostRoles := {string_host_roles},\n        \
          contracts := [{contracts}] }},\n    \
          symFragmentPlans := [{sym_fragment_plans}],\n    \

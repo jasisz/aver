@@ -462,37 +462,26 @@ example : withoutHostRoleTable hostileArtifact := by
     AcceptedArtifact.decodedNonExprClaimFacts Artifact.data
   exact honestDecoded.2
 
--- The full predicate fails exactly at the omitted module-wide equality.
+-- The full predicate fails exactly at the omitted module-wide template pin:
+-- the hostile add index does not carry the canonical add helper body.
 example : ¬ AcceptedArtifact.decodedNonExprFacts hostileArtifact := by
   intro h
-  have bad := h.1
-  change CertDecode.AddSub.roleTableStrict ArtifactBytes.modBytes ArtifactBytes.modLen =
-      some (some hostileRoleTable) at bad
-  rw [Artifact.decodedHostRoles] at bad
-  have badTable : (some (some ({{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx} }} : CertDecode.AddSub.Roles)) : Option (Option CertDecode.AddSub.Roles)) = some (some hostileRoleTable) := bad
-  have badAdd := congrArg CertDecode.AddSub.Roles.add
-    (Option.some.inj (Option.some.inj badTable))
-  change some {add_idx} = some {wrong_add_idx} at badAdd
-  have distinct : (some {add_idx} : Option Nat) ≠ some {wrong_add_idx} := by decide
-  exact distinct badAdd
+  have bad : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+      (some hostileRoleTable) Artifact.data.manifest.subject.arithParams = true := h.1
+  exact absurd bad (by decide +kernel)
 
--- A carriered artifact cannot declare the table absent either: the strict
--- decoder yields the honest `some (some table)`, never the carrierless
--- `some none`.
+-- A carriered artifact cannot declare the table absent either: the byte-derived
+-- box export is present, so the carrierless `none`/`none` pin never closes.
 def absentTableManifest : Manifest :=
   {{ manifest with subject :=
-      {{ manifest.subject with hostRoleTable := none }} }}
+      {{ manifest.subject with hostRoleTable := none, arithParams := none }} }}
 def absentTableArtifact : AcceptedArtifact.ArtifactData :=
   {{ Artifact.data with manifest := absentTableManifest }}
 example : ¬ AcceptedArtifact.decodedNonExprFacts absentTableArtifact := by
   intro h
-  have bad := h.1
-  change CertDecode.AddSub.roleTableStrict ArtifactBytes.modBytes ArtifactBytes.modLen =
-      some (none : Option CertDecode.AddSub.Roles) at bad
-  rw [Artifact.decodedHostRoles] at bad
-  have impossible : (some (some ({{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx} }} : CertDecode.AddSub.Roles)) : Option (Option CertDecode.AddSub.Roles)) = some none := bad
-  have inner := Option.some.inj impossible
-  exact nomatch inner
+  have bad : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+      none none = true := h.1
+  exact absurd bad (by decide +kernel)
 "#
     );
     std::fs::write(cert.join("HostRoleGuardIso.lean"), lean).unwrap();
@@ -686,7 +675,7 @@ def nullClaimManifest : Manifest :=
   {{ manifest with
       obligations := [],
       subject := {{ manifest.subject with
-        hostRoleTable := none, stringHostRoles := [] }} }}
+        hostRoleTable := none, arithParams := none, stringHostRoles := [] }} }}
 def poisonedArtifact : AcceptedArtifact.ArtifactData :=
   {{ Artifact.data with
       modBytes := poisonedBytes, modLen := poisonedLen,
@@ -708,14 +697,13 @@ example : withoutHostRoleTable poisonedArtifact := by
     rfl
   · exact ⟨trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial⟩
 
--- ...and the full predicate rejects it exactly at the host-role-table pin.
+-- ...and the full predicate rejects it exactly at the host-role-table pin: the
+-- carrierless `none`/`none` declaration demands the box export be byte-provably
+-- absent, but this module exports it, so the pin never closes.
 example : ¬ AcceptedArtifact.decodedNonExprFacts poisonedArtifact := by
   intro h
-  have bad := h.1
-  change CertDecode.AddSub.roleTableStrict poisonedBytes poisonedLen =
-      some (none : Option CertDecode.AddSub.Roles) at bad
-  rw [poisonedStrict] at bad
-  exact nomatch bad
+  have bad : AcceptedArtifact.arithTableCheck poisonedBytes poisonedLen none none = true := h.1
+  exact absurd bad (by decide +kernel)
 "#,
         poisoned_hex = hex_le(&poisoned),
         poisoned_len = poisoned.len(),

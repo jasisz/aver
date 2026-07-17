@@ -188,6 +188,10 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
     let mut next_code_entry_start: Option<usize> = None;
     let mut data_segments: Vec<Option<Vec<u8>>> = Vec::new();
     let mut carrier: Option<u32> = None;
+    // The limb array type index the Int carrier's middle field references. The
+    // arith helper bodies read/write this array type, so the acceptance pin
+    // needs it declared alongside the carrier.
+    let mut limb: Option<u32> = None;
     let mut next_type_idx: u32 = 0;
     // The certificate decoder's whole-module role scan declines any
     // non-function import; record the fact so a module that also carries the
@@ -250,6 +254,13 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                             {
                                 carrier = Some(idx);
                                 struct_field_counts.insert(idx, st.fields.len() as u32);
+                                // The middle field is `(ref null $mag)`; capture
+                                // the declared limb array type index it targets.
+                                if let StorageType::Val(ValType::Ref(rt)) =
+                                    st.fields[1].element_type
+                                {
+                                    limb = heap_type_index(rt.heap_type());
+                                }
                             }
                             CompositeInnerType::Struct(st) => {
                                 struct_field_counts.insert(idx, st.fields.len() as u32);
@@ -605,11 +616,57 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                 _ => None,
             }
         };
+        let add_idx = unique(strict_binop_candidates(FirstI64Arith::Add));
+        let mul_idx = unique(strict_binop_candidates(FirstI64Arith::Mul));
+        let sub_idx = unique(strict_binop_candidates(FirstI64Arith::Sub));
+        // The add/sub/mul helpers call the four bignum sub-routines by function
+        // index; read those indices out of the add helper's call sites and
+        // bucket them by their distinct signatures. The producer only needs the
+        // honest indices — the checker template-pins them, so a misread fails
+        // closed rather than certifying a wrong body. Signatures:
+        //   decompose: 1 param -> 2 results;  normalize: 2 params -> 1 result;
+        //   strip:     1 param -> 1 result;    umagCmp:   4 params -> 1 result.
+        let mut decompose_idx = None;
+        let mut normalize_idx = None;
+        let mut strip_idx = None;
+        let mut umag_cmp_idx = None;
+        let add_entry = add_idx
+            .and_then(|add_fn| add_fn.checked_sub(num_imported_funcs))
+            .and_then(|add_def| code_entries.get(add_def as usize));
+        if let Some(entry) = add_entry {
+            let mut seen = std::collections::HashSet::new();
+            for &callee in &entry.calls {
+                if !seen.insert(callee) {
+                    continue;
+                }
+                let Some(callee_def) = callee.checked_sub(num_imported_funcs) else {
+                    continue;
+                };
+                let Some(type_idx) = func_type_idx.get(callee_def as usize).copied() else {
+                    continue;
+                };
+                let Some((params, results)) = type_sigs.get(&type_idx) else {
+                    continue;
+                };
+                match (params.len(), results.len()) {
+                    (1, 2) => decompose_idx = decompose_idx.or(Some(callee)),
+                    (2, 1) => normalize_idx = normalize_idx.or(Some(callee)),
+                    (1, 1) => strip_idx = strip_idx.or(Some(callee)),
+                    (4, _) => umag_cmp_idx = umag_cmp_idx.or(Some(callee)),
+                    _ => {}
+                }
+            }
+        }
         FragHostTable {
             box_idx,
-            add_idx: unique(strict_binop_candidates(FirstI64Arith::Add)),
-            mul_idx: unique(strict_binop_candidates(FirstI64Arith::Mul)),
-            sub_idx: unique(strict_binop_candidates(FirstI64Arith::Sub)),
+            add_idx,
+            mul_idx,
+            sub_idx,
+            limb_idx: limb,
+            decompose_idx,
+            normalize_idx,
+            strip_idx,
+            umag_cmp_idx,
         }
     };
 

@@ -191,6 +191,16 @@ pub struct FragHostTable {
     /// The strict `sub` binding (byte-derived exactly like add/mul:
     /// carrier-binop signature + first arithmetic operator + uniqueness).
     pub sub_idx: Option<u32>,
+    /// The limb array type index the Int carrier's middle field references.
+    pub limb_idx: Option<u32>,
+    /// The four bignum sub-routine FUNCTION indices the arith helper bodies
+    /// call, read out of the add helper's call sites and disambiguated by their
+    /// distinct signatures. Declared so the acceptance pin can synthesize the
+    /// canonical helper bodies; a wrong index fails the template equality.
+    pub decompose_idx: Option<u32>,
+    pub normalize_idx: Option<u32>,
+    pub strip_idx: Option<u32>,
+    pub umag_cmp_idx: Option<u32>,
 }
 
 /// Public differential surface for the four strict module-level roles, in
@@ -253,6 +263,42 @@ impl FragHostTable {
             add_idx: Some(0),
             mul_idx: Some(0),
             sub_idx: Some(0),
+            limb_idx: Some(0),
+            decompose_idx: Some(0),
+            normalize_idx: Some(0),
+            strip_idx: Some(0),
+            umag_cmp_idx: Some(0),
+        }
+    }
+
+    /// The six declared arith helper indices (`ArithHostParams`) as
+    /// `Some((carrier, limb, decompose, normalize, strip, umag_cmp))` when every
+    /// index is known and the module carries the Int box helper, or `None`. The
+    /// declaration and the host-role table are `Some`/`None` together, so the
+    /// acceptance pin's three-state consistency holds.
+    pub fn arith_params(&self, carrier: Option<u32>) -> Option<(u32, u32, u32, u32, u32, u32)> {
+        // A `None` box index means the module has no Int carrier helper, so no
+        // arith parameters are declared.
+        self.box_idx?;
+        Some((
+            carrier?,
+            self.limb_idx?,
+            self.decompose_idx?,
+            self.normalize_idx?,
+            self.strip_idx?,
+            self.umag_cmp_idx?,
+        ))
+    }
+
+    /// Lean `Option ArithTemplateDerisk.ArithHostParams` literal for the subject.
+    pub fn arith_params_lean_value(&self, carrier: Option<u32>) -> String {
+        match self.arith_params(carrier) {
+            Some((carrier, limb, decompose, normalize, strip, umag_cmp)) => format!(
+                "some ({{ carrier := {carrier}, limb := {limb}, decompose := {decompose}, \
+                 normalize := {normalize}, strip := {strip}, umagCmp := {umag_cmp} }} : \
+                 ArithTemplateDerisk.ArithHostParams)"
+            ),
+            None => "(none : Option ArithTemplateDerisk.ArithHostParams)".to_string(),
         }
     }
 }

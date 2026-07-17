@@ -4,6 +4,7 @@
 -- `Schema.Obligation` fields used by the final certificate theorem.
 import CertPrelude
 import SchemaCore
+import ArithTemplateDerisk
 import PlanCheck
 import PlanLower
 import PlanBytes
@@ -1490,17 +1491,72 @@ def decodedNonExprClaimFacts (artifact : ArtifactData) : Prop :=
   decodedCompositionClaims artifact.modBytes artifact.modLen
       artifact.compositionMembers artifact.compositionClaims
 
-/-- Decode the plan-first box/add/sub host-role table exactly once for the
-    whole module, then bind the strict three-state result to the manifest:
-    a byte-provably carrierless module (`some none`) must declare no table;
-    a carriered module whose scan succeeded (`some (some t)`) must declare
-    exactly `t`; and a carriered module whose role scan failed decodes to
-    `none`, which equals `some v` for no manifest value `v` — the poisoned
-    state can never close, so neither class can borrow the other's manifest
-    value and scan failure cannot masquerade as carrierlessness. -/
+/-- Body bytes of the defined function at absolute wasm function index `idx`
+    (the import base is applied before indexing the code section), or `none`
+    when `idx` is not a defined-function index. The bytes are the code entry
+    WITHOUT its leading size-LEB — the locals vector followed by the
+    instruction body — matching exactly what `arithHelperBody` synthesizes.
+    `codeLocs` isolates each entry (`entryN`, `entryLen`, size-LEB included);
+    re-reading that size LEB yields the locals+body region as `esz` bytes. -/
+def bodyBytesAtFuncIndex (n len idx : Nat) : Option (List Nat) :=
+  match CertDecode.funcImportBase n len, CertDecode.codeLocs n len with
+  | some nimp, some locs =>
+      if nimp ≤ idx then
+        match locs[idx - nimp]? with
+        | some loc =>
+            match CertDecode.readU loc.entryN loc.entryLen with
+            | some (esz, bodyN, _) => some (CertDecode.takeBytes esz bodyN)
+            | none => none
+        | none => none
+      else none
+  | _, _ => none
+
+/-- One declared arith role pinned by TEMPLATE equality: the real code-section
+    body at the declared function index equals the canonical helper body
+    synthesized from the declared indices alone (`arithHelperBody`). An unbound
+    role (`none`) is vacuously pinned — no claim can cite an absent role, so no
+    plan can use it. No byte is scanned to DISCOVER a role; a wrong declaration
+    synthesizes the wrong bytes and fails this equality. -/
+def arithRoleCheck (n len : Nat) (role : ArithTemplateDerisk.ArithRole)
+    (idx? : Option Nat) (p : ArithTemplateDerisk.ArithHostParams) : Bool :=
+  match idx? with
+  | none => true
+  | some idx =>
+      bodyBytesAtFuncIndex n len idx == some (ArithTemplateDerisk.arithHelperBody role p)
+
+/-- The whole-module arith host-role pin — declare-and-confirm, no fingerprint.
+    A byte-provably carrierless module (`__rt_aint_from_i64` export absent)
+    declares no table and no params. A carriered module declares both, with the
+    `box` role bound by the runtime export name exactly as before (#736), the
+    declared indices inside the single-byte-LEB regime, and each declared
+    add/sub/mul index pinned to its canonical helper body by template equality.
+    The three-state consistency between presence of the helper export and
+    presence of the declaration is preserved: mixing `some`/`none` across the
+    table and params fails closed. `firstArithScan`/`scanFns`/`candFor`/`uniqueC`
+    no longer participate here; they remain producer-side classifiers only. -/
+def arithTableCheck (n len : Nat) (roles? : Option CertDecode.AddSub.Roles)
+    (params? : Option ArithTemplateDerisk.ArithHostParams) : Bool :=
+  match roles?, params? with
+  | none, none => CertDecode.AddSub.carrierHelperAbsent n len
+  | some roles, some p =>
+      !CertDecode.AddSub.carrierHelperAbsent n len &&
+      (roles.box == CertDecode.AddSub.boxIdx n len) &&
+      ArithTemplateDerisk.checkArithHostParams p &&
+      arithRoleCheck n len .add roles.add p &&
+      arithRoleCheck n len .sub roles.sub p &&
+      arithRoleCheck n len .mul roles.mul p
+  | _, _ => false
+
+/-- Bind the declared host-role table and arith indices to the module bytes by
+    TEMPLATE equality. Replaces the earlier byte-fingerprint decode: the
+    certificate DECLARES which function index carries each add/sub/mul helper
+    (plus the carrier/limb/sub-routine indices the bodies mention) and the wall
+    SYNTHESIZES the canonical helper body from that declaration and pins the real
+    code bytes equal to it. `box` stays name-bound and the carrierless class
+    stays proved by the absent `__rt_aint_from_i64` export (#736 intact). -/
 def decodedHostRoleTable (artifact : ArtifactData) : Prop :=
-  CertDecode.AddSub.roleTableStrict artifact.modBytes artifact.modLen =
-    some artifact.manifest.subject.hostRoleTable
+  arithTableCheck artifact.modBytes artifact.modLen
+    artifact.manifest.subject.hostRoleTable artifact.manifest.subject.arithParams = true
 
 /-- Decode every String.eq/String.concat role exactly once for the whole module.
     Unlike add/sub, the result is a list because every matching function is

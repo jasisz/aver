@@ -47,12 +47,25 @@ structure ArithHostParams where
   umagCmp   : Nat
 deriving Repr, DecidableEq
 
-/-- Single-byte-LEB profile, fail-closed: every declared index must encode as
-    one LEB byte (< 128) so the template's one-byte holes are the honest
-    encoding. Type indices additionally < 64 (they also appear as heap-type
-    bytes inside `ref null`). -/
+/-- Signed-LEB (`s33`) encoding of a heap-type index, fail-closed to at most two
+    bytes. A concrete type index inside `ref null` is encoded as a signed LEB, so
+    it needs two bytes once the index reaches 64 (whose low seven bits set the
+    sign bit): `64` is `c0 00`, not the unsigned `40`. Values below 64 stay a
+    single byte, so the honest single-byte templates for the in-regime fixtures
+    are unchanged. The `checkArithHostParams` bound keeps `carrier < 128`, so the
+    quotient is `0` and the second byte's sign bit is always clear (positive). -/
+def s33 (v : Nat) : List Nat :=
+  if v < 64 then [v]
+  else [0x80 ||| (v % 128), (v / 128) % 64]
+
+/-- LEB profile, fail-closed: the four sub-routine FUNCTION indices and the
+    carrier encode within the template's holes. The limb array index stays a
+    single byte in every position (< 64). The carrier is `< 128`: its unsigned
+    `struct.new`/`struct.get` type-index positions stay one byte, while its
+    signed `ref null` heap-type positions are lowered through `s33` (one byte
+    below 64, two bytes at 64..127). -/
 def checkArithHostParams (p : ArithHostParams) : Bool :=
-  decide (p.carrier < 64) && decide (p.limb < 64) &&
+  decide (p.carrier < 128) && decide (p.limb < 64) &&
   decide (p.decompose < 128) && decide (p.normalize < 128) &&
   decide (p.strip < 128) && decide (p.umagCmp < 128)
 
@@ -82,7 +95,7 @@ def addTemplateBody (p : ArithHostParams) : List Nat :=
     [0x01, 0xd1, 0x20, 0x01, 0xfb, 0x02] ++
     [p.carrier] ++
     [0x01, 0xd1, 0x71, 0x04, 0x63] ++
-    [p.carrier] ++
+    s33 p.carrier ++
     [0x20, 0x00, 0xfb, 0x02] ++
     [p.carrier] ++
     [0x00, 0x20, 0x01, 0xfb, 0x02] ++
@@ -92,7 +105,7 @@ def addTemplateBody (p : ArithHostParams) : List Nat :=
     [0x00, 0x20, 0x02, 0x85, 0x20, 0x01, 0xfb, 0x02] ++
     [p.carrier] ++
     [0x00, 0x20, 0x02, 0x85, 0x83, 0x42, 0x00, 0x53, 0x04, 0x63] ++
-    [p.carrier] ++
+    s33 p.carrier ++
     [0x20, 0x00, 0x10] ++
     [p.decompose] ++
     [0x21, 0x04, 0x21, 0x03, 0x20, 0x01, 0x10] ++
@@ -181,7 +194,7 @@ def subTemplateBody (p : ArithHostParams) : List Nat :=
     [0x01, 0xd1, 0x20, 0x01, 0xfb, 0x02] ++
     [p.carrier] ++
     [0x01, 0xd1, 0x71, 0x04, 0x63] ++
-    [p.carrier] ++
+    s33 p.carrier ++
     [0x20, 0x00, 0xfb, 0x02] ++
     [p.carrier] ++
     [0x00, 0x20, 0x01, 0xfb, 0x02] ++
@@ -193,7 +206,7 @@ def subTemplateBody (p : ArithHostParams) : List Nat :=
     [0x00, 0x85, 0x20, 0x00, 0xfb, 0x02] ++
     [p.carrier] ++
     [0x00, 0x20, 0x02, 0x85, 0x83, 0x42, 0x00, 0x53, 0x04, 0x63] ++
-    [p.carrier] ++
+    s33 p.carrier ++
     [0x20, 0x00, 0x10] ++
     [p.decompose] ++
     [0x21, 0x04, 0x21, 0x03, 0x20, 0x01, 0x10] ++
@@ -282,13 +295,13 @@ def mulTemplateBody (p : ArithHostParams) : List Nat :=
     [0x01, 0xd1, 0x20, 0x01, 0xfb, 0x02] ++
     [p.carrier] ++
     [0x01, 0xd1, 0x71, 0x04, 0x63] ++
-    [p.carrier] ++
+    s33 p.carrier ++
     [0x20, 0x00, 0xfb, 0x02] ++
     [p.carrier] ++
     [0x00, 0x21, 0x03, 0x20, 0x01, 0xfb, 0x02] ++
     [p.carrier] ++
     [0x00, 0x21, 0x04, 0x20, 0x03, 0x20, 0x04, 0x7e, 0x21, 0x02, 0x20, 0x03, 0x50, 0x04, 0x40, 0x41, 0x01, 0x21, 0x07, 0x05, 0x20, 0x03, 0x42, 0x7f, 0x51, 0x20, 0x04, 0x42, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7f, 0x51, 0x71, 0x04, 0x40, 0x41, 0x00, 0x21, 0x07, 0x05, 0x20, 0x02, 0x20, 0x03, 0x7f, 0x20, 0x04, 0x51, 0x21, 0x07, 0x0b, 0x0b, 0x20, 0x07, 0x04, 0x63] ++
-    [p.carrier] ++
+    s33 p.carrier ++
     [0x20, 0x02, 0xd0] ++
     [p.limb] ++
     [0x41, 0x00, 0xfb, 0x00] ++

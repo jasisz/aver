@@ -480,6 +480,7 @@ mod int_dispatch_plan_gate_tests {
             add_idx: Some(35),
             mul_idx: Some(37),
             sub_idx: Some(36),
+            ..Default::default()
         }
     }
 
@@ -568,6 +569,7 @@ mod int_dispatch_plan_gate_tests {
                     add_idx: Some(35),
                     mul_idx: Some(37),
                     sub_idx: None,
+                    ..Default::default()
                 }
             )
             .is_none(),
@@ -582,6 +584,7 @@ mod int_dispatch_plan_gate_tests {
                     add_idx: Some(99),
                     mul_idx: Some(37),
                     sub_idx: Some(36),
+                    ..Default::default()
                 }
             )
             .is_none(),
@@ -596,6 +599,7 @@ mod int_dispatch_plan_gate_tests {
                     add_idx: Some(35),
                     mul_idx: Some(37),
                     sub_idx: Some(36),
+                    ..Default::default()
                 }
             )
             .is_none(),
