@@ -5,7 +5,7 @@ expression: golden
 == cert-manifest.json ==
 {
   "schema_version": 2,
-  "format": {"version": 1, "wall_id": "sha256:0d667eb0d8ff38f5d11105fb18ea6e326c5545da5662b284a4e46b35321927ac"},
+  "format": {"version": 1, "wall_id": "sha256:57233fe3ca451758105b3dd296c392b72675ce4e1e6c19ed6ae815489d2f92ff"},
   "wasm": "add_one.wasm",
   "wasm_sha256": "613ae37c96e854a7adce250ed7a583f872d8b3f7a59852e0636e7a207e5fbc3f",
   "level": "L1",
@@ -107,6 +107,7 @@ import WasmSlice
 import ExprFragmentAccepted
 import ArtifactBytes
 import Module
+import DeclaredEnvelopeAcceptTransport
 
 set_option maxRecDepth 200000
 

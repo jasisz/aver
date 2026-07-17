@@ -216,11 +216,17 @@ fn build_prelude() -> PathBuf {
         "CertPrelude.lean",
         "CertDecode.lean",
         "CertPreludeSanity.lean",
-        "lakefile.lean",
         "lean-toolchain",
     ] {
         std::fs::copy(src.join(f), dst.join(f)).unwrap();
     }
+    // The wall lakefile also lists the acceptance-side roots; this package only
+    // carries the decoder prelude, so it gets its own minimal lakefile.
+    std::fs::write(
+        dst.join("lakefile.lean"),
+        "import Lake\nopen Lake DSL\n\npackage «certprelude» where\n  version := v!\"0.1.0\"\n\n@[default_target]\nlean_lib «CertPrelude» where\n  srcDir := \".\"\n  roots := #[`CertPrelude, `CertPreludeSanity, `CertDecode]\n",
+    )
+    .unwrap();
     let o = Command::new("lake")
         .arg("build")
         .current_dir(&dst)
