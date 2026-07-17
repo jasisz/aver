@@ -22,6 +22,7 @@ derivable.
 Self-verified `#print axioms` at the foot of the file: `[propext]`.
 -/
 import DeclaredIndexEnvelope
+import StringSoundness
 
 set_option maxRecDepth 1000000
 set_option maxHeartbeats 4000000
@@ -76,9 +77,9 @@ theorem env_declaredIntDispatch_bridge_transport
     residual `intDispatchSemanticBridge` body over the real `Obligation`
     projections — the policy conjunct AND the represented model agreement. -/
 theorem face_gives_declaredIntDispatch_bridge
-    (modBytes modLen : Nat)
+    (modBytes modLen : Nat) (typePrefix : List Nat)
     (env : DIdxEnvelope) (plan : IntDispatchRawPlan) (o : Obligation)
-    (hface : DIdxIntReadFace modBytes modLen env plan o)
+    (hface : DIdxIntReadFace modBytes modLen typePrefix env plan o)
     (hpolicy : o.policy = .simulatesModel) :
     o.policy = .simulatesModel ∧
     ∀ (S : CarrierSpec o.carrier) (x : o.Dom) (vs : List WVal),
@@ -142,11 +143,11 @@ theorem env_declaredConstruct_bridge_transport
     is included) yields the FULL residual `constructSemanticBridge` body over the
     real `Obligation` projections. -/
 theorem face_gives_declaredConstruct_bridge
-    (modBytes modLen : Nat)
+    (modBytes modLen : Nat) (typePrefix : List Nat)
     (env : DIdxEnvelope) (structIdx : Nat)
     (hhit : dCtorShape? env structIdx = some .hit)
     (plan : ConstructRawPlan) (o : Obligation)
-    (hface : DIdxCtorFace modBytes modLen env structIdx hhit plan o) :
+    (hface : DIdxCtorFace modBytes modLen typePrefix env structIdx hhit plan o) :
     o.policy = .simulatesModel ∧
     ∀ (S : CarrierSpec o.carrier) (x : o.Dom) (args : List WVal),
       o.domRepr S x args →
@@ -166,5 +167,123 @@ theorem face_gives_declaredConstruct_bridge
 #print axioms face_gives_declaredIntDispatch_bridge
 #print axioms env_declaredConstruct_bridge_transport
 #print axioms face_gives_declaredConstruct_bridge
+
+/-! ## §3 The string-concat transport (finishing the Lean core)
+
+The String.concat column, threaded in the SAME declared-index discipline. The
+model terms are exactly the canonical string obligation's (`DischargeString`): the
+domain is the single input `WVal`, `domRepr` is `vs = [v]`, `codRepr` is
+`verbatimRepr` (`w = v`), and the model is the plan's `evalStringConcat`. The
+face pins those onto `o.Dom / o.domRepr / o.codRepr / o.model` (plus the same
+single `concatPinnedAt` type-section byte pin and `o.policy = .simulatesModel`),
+and the HEq transport — mirroring `face_gives_declaredIntDispatch_bridge` — emits
+the residual body that `AcceptanceSoundness.stringConcatSemanticBridge` consumes
+(policy conjunct plus represented-model agreement against `evalStringConcat`). -/
+
+/-- Canonical string-concat domain representation: the single input `WVal`. -/
+def dStrConcatDomRepr (carrier : Nat) : CarrierSpec carrier → WVal → List WVal → Prop :=
+  fun _ v vs => vs = [v]
+
+/-- Canonical string-concat codomain representation: `verbatimRepr` (`w = v`). -/
+def dStrConcatCodRepr (carrier : Nat) : CarrierSpec carrier → WVal → WVal → Prop :=
+  fun S v w => verbatimRepr S v w
+
+/-- Canonical string-concat model: the plan's `evalStringConcat` over the single
+    input, with the declared result / container element type indices. -/
+def dStrConcatModel (resultTy containerTy : Nat) (plan : StringConcatRawPlan) :
+    WVal → WVal :=
+  fun v => StringSoundness.evalStringConcat resultTy containerTy plan v
+
+/-- The positive string-concat bridge: on the single-input representation, the
+    model output is represented (verbatim) by exactly the plan's
+    `evalStringConcat` of that input. -/
+theorem dStringConcat_bridge (carrier resultTy containerTy : Nat)
+    (plan : StringConcatRawPlan)
+    (S : CarrierSpec carrier) (x : WVal) (vs : List WVal)
+    (hdom : dStrConcatDomRepr carrier S x vs) :
+    ∃ v, vs = [v] ∧
+      dStrConcatCodRepr carrier S (dStrConcatModel resultTy containerTy plan x)
+        (StringSoundness.evalStringConcat resultTy containerTy plan v) := by
+  refine ⟨x, hdom, ?_⟩
+  simp only [dStrConcatCodRepr, dStrConcatModel, verbatimRepr]
+
+/-- The declared-index string-concat face. Same shape as `DIdxIntReadFace`: one
+    `concatPinnedAt` byte pin, `o.policy = .simulatesModel`, and the model-term
+    HEq column, with the string-concat domain/codomain/model. -/
+def DIdxStringConcatFace
+    (modBytes modLen : Nat) (typePrefix : List Nat)
+    (env : DIdxEnvelope) (resultTy containerTy : Nat)
+    (plan : StringConcatRawPlan) (o : Obligation) : Prop :=
+  concatPinnedAt modBytes modLen (declaredConcat typePrefix env) ∧
+  o.policy = .simulatesModel ∧
+  o.carrier = env.carrier ∧
+  HEq o.Dom WVal ∧
+  HEq o.Cod WVal ∧
+  HEq o.domRepr (dStrConcatDomRepr env.carrier) ∧
+  HEq o.codRepr (dStrConcatCodRepr env.carrier) ∧
+  HEq o.model (dStrConcatModel resultTy containerTy plan)
+
+/-- The dependent-cast core for the string-concat column: with the field values
+    as free variables and the face's pins as `Eq`/`HEq`, the residual
+    `stringConcatSemanticBridge` body over those fields is exactly
+    `dStringConcat_bridge`. -/
+theorem dStringConcat_bridge_transport
+    (env : DIdxEnvelope) (resultTy containerTy : Nat) (plan : StringConcatRawPlan)
+    (carrier : Nat) (Dom Cod : Type)
+    (domRepr : CarrierSpec carrier → Dom → List WVal → Prop)
+    (codRepr : CarrierSpec carrier → Cod → WVal → Prop)
+    (model : Dom → Cod)
+    (hcar : carrier = env.carrier)
+    (hDom : HEq Dom WVal) (hCod : HEq Cod WVal)
+    (hdomRepr : HEq domRepr (dStrConcatDomRepr env.carrier))
+    (hcodRepr : HEq codRepr (dStrConcatCodRepr env.carrier))
+    (hmodel : HEq model (dStrConcatModel resultTy containerTy plan)) :
+    ∀ (S : CarrierSpec carrier) (x : Dom) (vs : List WVal),
+      domRepr S x vs →
+      ∃ v, vs = [v] ∧
+        codRepr S (model x)
+          (StringSoundness.evalStringConcat resultTy containerTy plan v) := by
+  subst hcar
+  have hDomEq : Dom = WVal := eq_of_heq hDom
+  subst hDomEq
+  have hCodEq : Cod = WVal := eq_of_heq hCod
+  subst hCodEq
+  have e1 : domRepr = dStrConcatDomRepr env.carrier := eq_of_heq hdomRepr
+  subst e1
+  have e2 : codRepr = dStrConcatCodRepr env.carrier := eq_of_heq hcodRepr
+  subst e2
+  have e3 : model = dStrConcatModel resultTy containerTy plan := eq_of_heq hmodel
+  subst e3
+  intro S x vs hdom
+  exact dStringConcat_bridge env.carrier resultTy containerTy plan S x vs hdom
+
+/-- Obligation-level corollary for the string-concat column: the declared-index
+    string-concat face yields the FULL residual `stringConcatSemanticBridge` body
+    over the real `Obligation` projections — the policy conjunct AND the
+    represented-model agreement against `evalStringConcat`. This is the body
+    `AcceptanceSoundness.stringConcatSemanticBridge` is defined as, with
+    `claim.obligation := o`, `claim.resultTy := resultTy`,
+    `claim.containerTy := containerTy`. -/
+theorem face_gives_declaredStringConcat_bridge
+    (modBytes modLen : Nat) (typePrefix : List Nat)
+    (env : DIdxEnvelope) (resultTy containerTy : Nat)
+    (plan : StringConcatRawPlan) (o : Obligation)
+    (hface : DIdxStringConcatFace modBytes modLen typePrefix env resultTy
+      containerTy plan o) :
+    o.policy = .simulatesModel ∧
+    ∀ (S : CarrierSpec o.carrier) (x : o.Dom) (vs : List WVal),
+      o.domRepr S x vs →
+      ∃ v, vs = [v] ∧
+        o.codRepr S (o.model x)
+          (StringSoundness.evalStringConcat resultTy containerTy plan v) := by
+  obtain ⟨-, hpolicy, hcar, hDom, hCod, hdomRepr, hcodRepr, hmodel⟩ := hface
+  refine ⟨hpolicy, ?_⟩
+  exact dStringConcat_bridge_transport env resultTy containerTy plan
+    o.carrier o.Dom o.Cod o.domRepr o.codRepr o.model
+    hcar hDom hCod hdomRepr hcodRepr hmodel
+
+#print axioms dStringConcat_bridge
+#print axioms dStringConcat_bridge_transport
+#print axioms face_gives_declaredStringConcat_bridge
 
 end AverCert.DeclaredIndexEnvelope

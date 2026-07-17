@@ -40,46 +40,40 @@ open CertPrelude
 open AverCert.WidenedEnvelope (WCtor WPayload)
 open AverCert.EnvelopeLowering (cascadeEval takeBytes_take)
 
-/-! ## §0 Cursor-only navigation to a FLATTENED type index inside a shared rec group
+/-! ## §0 The type-section START cursor, and the single concat pin
 
-`EnvelopeLowering.typeCursorAt` stops only at rec-group BOUNDARIES: given a target
-strictly inside a rec group it fails closed. That is fine when each ADT owns a rec
-group, but the real compiler emits one shared rec group, so a constructor's type
-index is INSIDE it. `entryStep` descends into rec groups: on a `0x4e` header it
-skips the header and keeps the running flat index; on a subtype entry it either
-stops (`flatIdx = target`) or advances one entry (`readTypeEntry`, whose parsed
-value is discarded). It is the same cursor-only discipline, extended to individual
-members of a shared group. -/
+The previous revision navigated to each constructor's flattened index with a
+fuel loop (`entryStep`) that called `CertDecode.readTypeEntry` on every preceding
+entry to COUNT positions. That put a per-entry byte-structure parser in the
+trusted confirmation path: a `readTypeEntry` length mistake would land the cursor
+at a wrong position and the pin would confirm a wrong body at a wrong index.
 
-def entryStep : Nat → Nat → Nat → Nat → Nat → Option (Nat × Nat)
-  | 0, _, _, _, _ => none
-  | fuel + 1, target, flatIdx, n, len =>
-      if len == 0 then none
-      else if (n &&& 0xff) == 0x4e then
-        match CertDecode.readU (n >>> 8) (len - 1) with
-        | none => none
-        | some (_count, n1, len1) => entryStep fuel target flatIdx n1 len1
-      else if flatIdx == target then some (n, len)
-      else
-        match CertDecode.readTypeEntry n len with
-        | none => none
-        | some (_, n1, len1) => entryStep fuel target (flatIdx + 1) n1 len1
+That parser is now GONE. The only byte navigation that remains is locating the
+type section's entry region — `modulePayload 1` (section framing) followed by
+`readU` (skip the vector count LEB). Neither descends into the entry bytes; both
+are fixed section-framing locates. Positions are no longer walked out of the
+bytes: they are DECLARED (see `declaredConcat`) and CONFIRMED by one byte-slice
+equality against the located start. -/
 
-def entryCursorAt (modBytes modLen target : Nat) : Option (Nat × Nat) :=
+/-- Cursor at the FIRST type-section entry: the section payload located by
+    `modulePayload 1`, advanced past the vector count `readU` reads. No entry is
+    parsed; this is the type-section-framing locate and nothing more. -/
+def typeSectionCursor (modBytes modLen : Nat) : Option (Nat × Nat) :=
   match CertDecode.modulePayload 1 modBytes modLen with
   | none => none
   | some (tN, tLen) =>
       match CertDecode.readU tN tLen with
       | none => none
-      | some (_count, n1, len1) => entryStep (tLen + 1) target 0 n1 len1
+      | some (_count, n1, len1) => some (n1, len1)
 
-/-- The module's type-section bytes at (the position of) flattened type index
-    `target` are EXACTLY `expected`. Same pin shape as
-    `EnvelopeLowering.bytesPinnedAt`, but keyed on a per-constructor DECLARED
-    index reached by `entryCursorAt`. -/
-def entryPinnedAt (modBytes modLen target : Nat) (expected : List Nat) : Prop :=
+/-- The module's type-section entry bytes, taken from the located start, are
+    EXACTLY `expected`. A single byte-slice equality over the whole declared
+    prefix of the type section — not a per-entry walk. Because `expected` is a
+    concatenation of DECLARED chunks (§2 `declaredConcat`), this one equality
+    fixes every declared byte, hence every declared position, by construction. -/
+def concatPinnedAt (modBytes modLen : Nat) (expected : List Nat) : Prop :=
   ∃ cur : Nat × Nat,
-    entryCursorAt modBytes modLen target = some cur ∧
+    typeSectionCursor modBytes modLen = some cur ∧
     expected.length ≤ cur.2 ∧
     CertDecode.takeBytes expected.length cur.1 = expected
 
@@ -122,6 +116,17 @@ def dCtorBody (root : Nat) (c : DCtor) : List Nat :=
      | .floatBox => [0x5f, 0x01, 0x7c, 0x00]
      | .boolBox  => [0x5f, 0x01, 0x7f, 0x00]
      | .unit     => [0x5f, 0x00])
+
+/-- The DECLARED type-section prefix as one ordered byte list: an opaque declared
+    chunk (`typePrefix` — the rec-group header and every entry BEFORE the ADT's
+    constructors: other ADTs, `List`/`Map` cons structs, the prelude, function
+    signatures, all named as literal bytes), followed by the ADT's constructor
+    entries SYNTHESIZED from meaning in source order (`dCtorBody`). Every position
+    is fixed by construction: constructor `k`'s flattened index is the number of
+    entries before it, and its byte offset is `typePrefix.length` plus the summed
+    lengths of the earlier constructor bodies. No byte is read to compute either. -/
+def declaredConcat (typePrefix : List Nat) (env : DIdxEnvelope) : List Nat :=
+  typePrefix ++ (env.ctors.map (dCtorBody env.root)).flatten
 
 /-- Declared shape at a flattened index (fail-closed): the constructor whose
     declared `idx` equals `tag`. -/
@@ -172,18 +177,21 @@ def dCascadeInEnv (env : DIdxEnvelope) : IntDispatchCascade → Bool
 
 /-! ## §4 The declared-index Int-read face
 
-The pin column is a per-constructor pin at the DECLARED index — not one rec-group
-prefix pin. Every declared index is therefore nailed by a byte pin: `env.root` and
-each `c.target` sit inside the pinned body bytes, each `c.idx` is the position the
-pin is TAKEN at, and `env.carrier` equals every hit `c.target` by the checker.
-There is no free index a forger can pick without falsifying a pin. -/
+The pin is now ONE byte-slice equality over the whole declared type-section
+prefix (`concatPinnedAt … (declaredConcat typePrefix env)`), replacing the former
+per-constructor walked pin. Every declared byte — `env.root`, each `c.target`, and
+the exact source-order placement of every synthesized constructor body — sits
+inside that single `expected` list, so the equality against the real bytes fixes
+all of them at once. `env.carrier` equals every hit `c.target` by the checker,
+and each hit `c.target` byte lives inside the pinned concat, so the carrier index
+is confirmed by byte equality, not chosen. No `readTypeEntry` walk participates. -/
 
 def DIdxIntReadFace
-    (modBytes modLen : Nat)
+    (modBytes modLen : Nat) (typePrefix : List Nat)
     (env : DIdxEnvelope) (plan : IntDispatchRawPlan) (o : Obligation) : Prop :=
   checkDIdxEnvelope env = true ∧
   dCascadeInEnv env plan.body = true ∧
-  (∀ c ∈ env.ctors, entryPinnedAt modBytes modLen c.idx (dCtorBody env.root c)) ∧
+  concatPinnedAt modBytes modLen (declaredConcat typePrefix env) ∧
   o.carrier = env.carrier ∧
   HEq o.Dom (DAdtVal env) ∧
   HEq o.Cod Int ∧
@@ -285,9 +293,9 @@ value; the constructor column builds one IN. The domain is a single `Int`
 argument; the model is the declared hit constructor at its DECLARED index
 carrying that Int as its Int-box payload; the codomain relation is the
 single-result view of `dEnvDomRepr`. No new byte pin is needed beyond the same
-per-constructor `entryPinnedAt` column the read face already carries — the
-constructed struct's type index IS a pinned `c.idx`, so a forger cannot build at
-a fabricated position. -/
+single `concatPinnedAt` equality the read face already carries — the constructed
+struct's body sits at its declared offset inside the pinned concat, so a forger
+cannot build at a fabricated position without breaking the byte equality. -/
 
 /-- Single-result codomain view of `dEnvDomRepr`: the declared value `y` is
     represented by exactly one `WVal`. Reads the same payload discipline. -/
@@ -312,13 +320,13 @@ def dEnvCtorModel (env : DIdxEnvelope) (structIdx : Nat)
     declared indices, and `o.policy = .simulatesModel` is asserted so the full
     semantic bridge (policy conjunct included) is derivable. -/
 def DIdxCtorFace
-    (modBytes modLen : Nat)
+    (modBytes modLen : Nat) (typePrefix : List Nat)
     (env : DIdxEnvelope) (structIdx : Nat)
     (hhit : dCtorShape? env structIdx = some .hit)
     (plan : ConstructRawPlan) (o : Obligation) : Prop :=
   checkDIdxEnvelope env = true ∧
   plan.arity = 1 ∧ plan.fields = [.local 0] ∧
-  (∀ c ∈ env.ctors, entryPinnedAt modBytes modLen c.idx (dCtorBody env.root c)) ∧
+  concatPinnedAt modBytes modLen (declaredConcat typePrefix env) ∧
   o.policy = .simulatesModel ∧
   o.carrier = env.carrier ∧
   HEq o.Dom Int ∧
