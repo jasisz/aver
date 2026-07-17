@@ -13,4 +13,6 @@ lean_lib «CertPrelude» where
     `EnvelopeBridge, `EnvelopeBridgeConstruct, `EnvelopeBridgeString,
     `EnvelopeAcceptTransport, `ConstructVerbatimSoundness, `StringSoundness,
     `IntboxBytes, `MkopBytes, `IntboxTag7Bytes, `IntboxTag2Bytes,
-    `EnvelopeLoweringTests, `WidenedEnvelope, `WidenedEnvelopeTests]
+    `EnvelopeLoweringTests, `WidenedEnvelope, `WidenedEnvelopeTests,
+    `JsonBytes, `CertGoalsBytes, `DeclaredIndexEnvelope,
+    `DeclaredIndexEnvelopeTests]

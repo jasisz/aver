@@ -1,0 +1,280 @@
+/-
+Declared-index envelope lowering (real shared-rec-group modules).
+
+`EnvelopeLowering` / `WidenedEnvelope` derive every non-root type index
+ARITHMETICALLY: `carrier = root + ctors.length + 3`, string array `root + len + 1`,
+and so on, and model each ADT as living in its OWN rec group. That is exactly the
+shape the SYNTHETIC `synthMod` test modules had. It is WRONG for the modules the
+real compiler emits: `aver compile --target wasm-gc` puts ALL ADTs of a module
+PLUS the shared `List`/`Map` cons structs and the Int carrier into ONE rec group,
+with compiler-assigned type indices and source-order constructor positions. In
+`examples/data/json.av` the `Json` ADT's Int carrier sits at type index 21, its
+string byte-array at 19, its `List` cons at 27, its `Map` struct at 38 — none of
+which equals `root + len + 3 = 10` (index 10 is in fact the *other* ADT's
+`ParseResult.Err`).
+
+This module stops COMPUTING those indices. It DECLARES them — the carrier index,
+each constructor's flattened type index, and each non-Int payload target index —
+as OPAQUE `Nat` fields pulled up from the bytes, and pins each constructor's
+synthesized struct-body AT ITS DECLARED INDEX in the REAL module. The struct-body
+bytes are still SYNTHESIZED from the plan (they already byte-match the compiler);
+the only residue lifted from the bytes are those opaque indices. Source order and
+multiple-ADTs-per-module are then non-problems: each constructor is pinned wherever
+it actually sits, navigated to by a cursor that descends into the shared rec group
+and DISCARDS every value it parses.
+
+There is NO byte -> structure decoder: `dEnvDomRepr` / `dEnvStructModel` are
+computed FROM THE PLAN; the cursor only advances, never yields a parsed type.
+-/
+import WidenedEnvelope
+import IntDispatchSoundness
+
+set_option maxRecDepth 1000000
+set_option maxHeartbeats 4000000
+
+namespace AverCert.DeclaredIndexEnvelope
+
+open AverCert.Schema
+open CertPrelude
+open AverCert.WidenedEnvelope (WCtor WPayload)
+open AverCert.EnvelopeLowering (cascadeEval takeBytes_take)
+
+/-! ## §0 Cursor-only navigation to a FLATTENED type index inside a shared rec group
+
+`EnvelopeLowering.typeCursorAt` stops only at rec-group BOUNDARIES: given a target
+strictly inside a rec group it fails closed. That is fine when each ADT owns a rec
+group, but the real compiler emits one shared rec group, so a constructor's type
+index is INSIDE it. `entryStep` descends into rec groups: on a `0x4e` header it
+skips the header and keeps the running flat index; on a subtype entry it either
+stops (`flatIdx = target`) or advances one entry (`readTypeEntry`, whose parsed
+value is discarded). It is the same cursor-only discipline, extended to individual
+members of a shared group. -/
+
+def entryStep : Nat → Nat → Nat → Nat → Nat → Option (Nat × Nat)
+  | 0, _, _, _, _ => none
+  | fuel + 1, target, flatIdx, n, len =>
+      if len == 0 then none
+      else if (n &&& 0xff) == 0x4e then
+        match CertDecode.readU (n >>> 8) (len - 1) with
+        | none => none
+        | some (_count, n1, len1) => entryStep fuel target flatIdx n1 len1
+      else if flatIdx == target then some (n, len)
+      else
+        match CertDecode.readTypeEntry n len with
+        | none => none
+        | some (_, n1, len1) => entryStep fuel target (flatIdx + 1) n1 len1
+
+def entryCursorAt (modBytes modLen target : Nat) : Option (Nat × Nat) :=
+  match CertDecode.modulePayload 1 modBytes modLen with
+  | none => none
+  | some (tN, tLen) =>
+      match CertDecode.readU tN tLen with
+      | none => none
+      | some (_count, n1, len1) => entryStep (tLen + 1) target 0 n1 len1
+
+/-- The module's type-section bytes at (the position of) flattened type index
+    `target` are EXACTLY `expected`. Same pin shape as
+    `EnvelopeLowering.bytesPinnedAt`, but keyed on a per-constructor DECLARED
+    index reached by `entryCursorAt`. -/
+def entryPinnedAt (modBytes modLen target : Nat) (expected : List Nat) : Prop :=
+  ∃ cur : Nat × Nat,
+    entryCursorAt modBytes modLen target = some cur ∧
+    expected.length ≤ cur.2 ∧
+    CertDecode.takeBytes expected.length cur.1 = expected
+
+/-! ## §1 The declared-index envelope
+
+Every index is DECLARED, not computed. `DCtor.idx` is the constructor's flattened
+type index (its source-order position in the shared group); `DCtor.target` is the
+declared payload TARGET index the constructor's ref field points at (the carrier
+for `hit`, the string array for `strBox`, the `List` cons for `listBox`, the `Map`
+struct for `mapBox`; unused by the payloadless / scalar shapes). `root` and
+`carrier` are the two remaining declared indices. -/
+
+structure DCtor where
+  idx    : Nat
+  shape  : WCtor
+  target : Nat
+deriving Repr, DecidableEq
+
+structure DIdxEnvelope where
+  root    : Nat
+  carrier : Nat
+  ctors   : List DCtor
+deriving Repr, DecidableEq
+
+/-! ## §2 Canonical byte LOWERING of one declared constructor (meaning -> bytes)
+
+Mirrors `src/codegen/wasm_gc/module.rs`: each constructor is one
+`(sub_final [root] struct{…})` entry. The struct body is a function of the shape
+and the declared target index. The ref shapes (`hit`/`strBox`/`listBox`/`mapBox`)
+share the `struct{(ref null target)}` body and differ ONLY in which declared index
+`target` names; the scalar/unit shapes ignore `target`. -/
+
+def dCtorBody (root : Nat) (c : DCtor) : List Nat :=
+  0x4f :: 0x01 :: root ::
+    (match c.shape with
+     | .hit      => [0x5f, 0x01, 0x63, c.target, 0x00]
+     | .strBox   => [0x5f, 0x01, 0x63, c.target, 0x00]
+     | .listBox  => [0x5f, 0x01, 0x63, c.target, 0x00]
+     | .mapBox   => [0x5f, 0x01, 0x63, c.target, 0x00]
+     | .floatBox => [0x5f, 0x01, 0x7c, 0x00]
+     | .boolBox  => [0x5f, 0x01, 0x7f, 0x00]
+     | .unit     => [0x5f, 0x00])
+
+/-- Declared shape at a flattened index (fail-closed): the constructor whose
+    declared `idx` equals `tag`. -/
+def dCtorShape? (env : DIdxEnvelope) (tag : Nat) : Option WCtor :=
+  (env.ctors.find? (fun c => decide (c.idx = tag))).map (fun c => c.shape)
+
+/-- Profile checker, fail-closed. Single-byte index regime (`< 64`, covering the
+    real fixtures whose largest declared index is the `Map` struct at 38), at
+    least one constructor, and — crucially — the declared `carrier` is the target
+    of every `hit` constructor, so the Int-box read index and the pinned hit body
+    name the SAME index. -/
+def checkDIdxEnvelope (env : DIdxEnvelope) : Bool :=
+  decide (1 ≤ env.ctors.length) &&
+  decide (env.carrier < 64) && decide (env.root < 64) &&
+  env.ctors.all (fun c =>
+    decide (c.idx < 64) && decide (c.target < 64) &&
+    (if c.shape == WCtor.hit then decide (c.target = env.carrier) else true))
+
+/-! ## §3 Wall-owned meaning terms over the PLAN (no decode output)
+
+Identical discipline to `WidenedEnvelope`, but the carrier index is the DECLARED
+`env.carrier`, not `wCarrierIdx`. The model reads only the `hit` constructor's Int
+payload; a non-hit payload is opaque and `toInt?` sends it to `none`, which — since
+`dCascadeInEnv` forces every tested tag to be `hit` — never reaches a projection. -/
+
+def DEnvValidChild (env : DIdxEnvelope) (tag : Nat) (p : WPayload) : Prop :=
+  (dCtorShape? env tag = some .hit ∧ ∃ n, p = .int n) ∨
+  (∃ c, dCtorShape? env tag = some c ∧ c ≠ .hit ∧ ∃ fs, p = .opaqueFields fs)
+
+def DAdtVal (env : DIdxEnvelope) : Type :=
+  { q : Nat × WPayload // DEnvValidChild env q.1 q.2 }
+
+def dEnvDomRepr (env : DIdxEnvelope) :
+    CarrierSpec env.carrier → DAdtVal env → List WVal → Prop :=
+  fun S x vs =>
+    match x.1.2 with
+    | .int n => ∃ v, vs = [.structv x.1.1 [v]] ∧ S.Repr n v
+    | .opaqueFields fs => vs = [.structv x.1.1 fs]
+
+def dEnvStructModel (env : DIdxEnvelope) (body : IntDispatchCascade) :
+    DAdtVal env → Int :=
+  fun x => (cascadeEval body x.1.1 x.1.2.toInt?).getD 0
+
+def dCascadeInEnv (env : DIdxEnvelope) : IntDispatchCascade → Bool
+  | .default _ => true
+  | .test tyIdx _ rest =>
+      decide (dCtorShape? env tyIdx = some .hit) && dCascadeInEnv env rest
+
+/-! ## §4 The declared-index Int-read face
+
+The pin column is a per-constructor pin at the DECLARED index — not one rec-group
+prefix pin. Every declared index is therefore nailed by a byte pin: `env.root` and
+each `c.target` sit inside the pinned body bytes, each `c.idx` is the position the
+pin is TAKEN at, and `env.carrier` equals every hit `c.target` by the checker.
+There is no free index a forger can pick without falsifying a pin. -/
+
+def DIdxIntReadFace
+    (modBytes modLen : Nat)
+    (env : DIdxEnvelope) (plan : IntDispatchRawPlan) (o : Obligation) : Prop :=
+  checkDIdxEnvelope env = true ∧
+  dCascadeInEnv env plan.body = true ∧
+  (∀ c ∈ env.ctors, entryPinnedAt modBytes modLen c.idx (dCtorBody env.root c)) ∧
+  o.carrier = env.carrier ∧
+  HEq o.Dom (DAdtVal env) ∧
+  HEq o.Cod Int ∧
+  HEq o.domRepr (dEnvDomRepr env) ∧
+  HEq o.codRepr (@AverCert.Schema.intRepr env.carrier) ∧
+  HEq o.model (dEnvStructModel env plan.body)
+
+/-! ## §5 The positive bridge (reads only hit)
+
+On any represented declared value the byte-origin `EvalCascade` relates it to
+exactly the plan-computed `cascadeEval` result, whatever the non-hit payload
+shapes. Mirrors `WidenedEnvelope.wCascade_bridge` over the declared carrier. -/
+
+theorem dCascade_bridge (env : DIdxEnvelope) (body : IntDispatchCascade)
+    (hcasc : dCascadeInEnv env body = true)
+    (S : CarrierSpec env.carrier) (x : DAdtVal env) (vs : List WVal)
+    (hdom : dEnvDomRepr env S x vs) :
+    ∃ tag fields,
+      vs = [.structv tag fields] ∧
+      IntDispatchSoundness.EvalCascade S body tag fields
+        ((cascadeEval body x.1.1 x.1.2.toInt?).getD 0) := by
+  induction body with
+  | default k =>
+      refine ⟨x.1.1, ?_⟩
+      unfold dEnvDomRepr at hdom
+      cases hpay : x.1.2 with
+      | int m =>
+          rw [hpay] at hdom
+          obtain ⟨v, hvs, _hrepr⟩ := hdom
+          refine ⟨[v], hvs, ?_⟩
+          simp only [cascadeEval, Option.getD]
+          exact IntDispatchSoundness.EvalCascade.default k x.1.1 [v]
+      | opaqueFields fs =>
+          rw [hpay] at hdom
+          refine ⟨fs, hdom, ?_⟩
+          simp only [cascadeEval, Option.getD]
+          exact IntDispatchSoundness.EvalCascade.default k x.1.1 fs
+  | test tyIdx leaf rest ih =>
+      simp only [dCascadeInEnv, Bool.and_eq_true, decide_eq_true_eq] at hcasc
+      obtain ⟨hpayTy, hrest⟩ := hcasc
+      by_cases htag : x.1.1 = tyIdx
+      · have hchild := x.2
+        unfold DEnvValidChild at hchild
+        rw [htag] at hchild
+        rcases hchild with ⟨_, m, hm⟩ | ⟨c, hcshape, hcne, _⟩
+        · unfold dEnvDomRepr at hdom
+          rw [hm] at hdom
+          obtain ⟨v, hvs, hrepr⟩ := hdom
+          refine ⟨tyIdx, [v], by rw [← htag]; exact hvs, ?_⟩
+          have hce : (cascadeEval (.test tyIdx leaf rest) x.1.1 x.1.2.toInt?).getD 0
+              = IntDispatchSoundness.evalLeaf leaf m := by
+            rw [hm]; simp [cascadeEval, htag, WPayload.toInt?]
+          rw [hce]
+          exact IntDispatchSoundness.EvalCascade.hit tyIdx leaf rest [v] m v rfl hrepr
+        · rw [hpayTy] at hcshape
+          exact absurd (Option.some.inj hcshape).symm hcne
+      · obtain ⟨tag, fields, hvs, hev⟩ := ih hrest
+        refine ⟨tag, fields, hvs, ?_⟩
+        have htageq : tag = x.1.1 := by
+          unfold dEnvDomRepr at hdom
+          cases hpay : x.1.2 with
+          | int m =>
+              rw [hpay] at hdom; obtain ⟨v, hvs2, _⟩ := hdom
+              rw [hvs2] at hvs; injection hvs with hh; injection hh with h1 _; exact h1.symm
+          | opaqueFields fs =>
+              rw [hpay] at hdom
+              rw [hdom] at hvs; injection hvs with hh; injection hh with h1 _; exact h1.symm
+        have hne : x.1.1 ≠ tyIdx := htag
+        have hce : (cascadeEval (.test tyIdx leaf rest) x.1.1 x.1.2.toInt?).getD 0
+            = (cascadeEval rest x.1.1 x.1.2.toInt?).getD 0 := by
+          simp only [cascadeEval, if_neg hne]
+        rw [hce]
+        subst htageq
+        exact IntDispatchSoundness.EvalCascade.miss tyIdx x.1.1 leaf rest fields _ hne hev
+
+/-- The bridge in assembly shape: every represented declared input relates to the
+    declared-carrier Int model, whatever its non-hit payload. -/
+theorem env_declaredIntDispatch_bridge (env : DIdxEnvelope) (plan : IntDispatchRawPlan)
+    (hcasc : dCascadeInEnv env plan.body = true)
+    (S : CarrierSpec env.carrier) (x : DAdtVal env) (vs : List WVal)
+    (hdom : dEnvDomRepr env S x vs) :
+    ∃ tag fields n,
+      vs = [.structv tag fields] ∧
+      IntDispatchSoundness.EvalCascade S plan.body tag fields n ∧
+      ∀ w, S.Repr n w →
+        intRepr S (dEnvStructModel env plan.body x) w := by
+  obtain ⟨tag, fields, hvs, hev⟩ := dCascade_bridge env plan.body hcasc S x vs hdom
+  refine ⟨tag, fields, (cascadeEval plan.body x.1.1 x.1.2.toInt?).getD 0, hvs, hev, ?_⟩
+  intro w hw
+  simpa [intRepr, dEnvStructModel] using hw
+
+#print axioms dCascade_bridge
+#print axioms env_declaredIntDispatch_bridge
+
+end AverCert.DeclaredIndexEnvelope
