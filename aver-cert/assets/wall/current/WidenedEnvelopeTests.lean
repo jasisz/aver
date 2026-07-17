@@ -170,28 +170,29 @@ theorem wUnwrap_honest_passes :
   · exact intbox_group_lowered
   · rfl
 
-/-- FORGE `model := 17`: DIES for EVERY widened envelope. -/
-def oWForgeModel17 : Obligation :=
+/-- FORGE: an arbitrary constant model the byte pin does not force. DIES for
+    EVERY widened envelope. -/
+def oWForgeConstModel : Obligation :=
   { oWUnwrapHonest with model := fun _ => (17 : Int) }
 
-theorem wForge_model_17_dies
+theorem wForge_unpinned_model_dies
     (hostTable : List (HostRole × Nat)) (env : WAdtEnvelope) :
     ¬ WAdtIntFaceLower IntboxBytes.modBytes IntboxBytes.modLen
-        unwrapName "unwrap" 5 hostTable env unwrapPlan oWForgeModel17 := by
+        unwrapName "unwrap" 5 hostTable env unwrapPlan oWForgeConstModel := by
   intro hface
-  have henv := wIntbox_env_forced 5 hostTable env unwrapPlan oWForgeModel17 hface
+  have henv := wIntbox_env_forced 5 hostTable env unwrapPlan oWForgeConstModel hface
   subst henv
   obtain ⟨-, -, -, -, -, -, -, -, -, -, -, hmodel⟩ := hface
   have heq : (fun _ => (17 : Int)) = wEnvStructModel wIntboxEnv unwrapPlan.body :=
     eq_of_heq hmodel
-  have h17 := congrFun heq ⟨(1, .int 5), Or.inl ⟨rfl, 5, rfl⟩⟩
-  exact absurd h17 (by decide)
+  have hconst := congrFun heq ⟨(1, .int 5), Or.inl ⟨rfl, 5, rfl⟩⟩
+  exact absurd hconst (by decide)
 
 /-- FORGE `domRepr := False` (the vacuity smuggle): DIES. -/
 def oWForgeDomFalse : Obligation :=
   { oWUnwrapHonest with domRepr := fun _ _ _ => False }
 
-theorem wForge_domRepr_false_dies
+theorem wForge_vacuous_domRepr_dies
     (hostTable : List (HostRole × Nat)) (env : WAdtEnvelope) :
     ¬ WAdtIntFaceLower IntboxBytes.modBytes IntboxBytes.modLen
         unwrapName "unwrap" 5 hostTable env unwrapPlan oWForgeDomFalse := by
@@ -252,7 +253,7 @@ theorem wTag7_env_forced
 
 /-- The tag-7 forge dies under the widened profile: the forced widened envelope
     declares no `hit` constructor at tag 7, so `wCascadeInEnv` rejects. -/
-theorem wTag7_witness_dies
+theorem wForge_project_undeclared_tag_dies
     (carrier : Nat) (hostTable : List (HostRole × Nat))
     (env : WAdtEnvelope) (o : Obligation) :
     ¬ WAdtIntFaceLower IntboxTag7Bytes.modBytes IntboxTag7Bytes.modLen
@@ -298,7 +299,7 @@ theorem wTag2_env_forced
 
 /-- The tag-2 forge (project a DECLARED payloadless constructor) dies: the forced
     widened envelope declares tag 2 as `unit`, not `hit`. -/
-theorem wTag2_witness_dies
+theorem wForge_project_payloadless_tag_dies
     (carrier : Nat) (hostTable : List (HostRole × Nat))
     (env : WAdtEnvelope) (o : Obligation) :
     ¬ WAdtIntFaceLower IntboxTag2Bytes.modBytes IntboxTag2Bytes.modLen
@@ -398,15 +399,15 @@ def wZeroVal : WAdtVal wMkopEnv :=
   ⟨(3, .opaqueFields []), Or.inr ⟨.unit, rfl, by decide, [], rfl⟩⟩
 
 /-- CONSTRUCTOR FORGE `model := Op.Zero`: DIES (wrong result constructor tag). -/
-def oWMkOpForgeZero : Obligation :=
+def oWMkOpForgeWrongCtor : Obligation :=
   { oWMkOpHonest with model := fun _ => wZeroVal }
 
-theorem wMkop_forge_zero_dies (env : WAdtEnvelope) :
+theorem wForge_wrong_result_ctor_dies (env : WAdtEnvelope) :
     ¬ WAdtCtorFaceLower MkopBytes.modBytes MkopBytes.modLen
-        mkOpName "mkOp" 6 1 1 .i64 mkOpSymPlan env mkOpPlan oWMkOpForgeZero := by
+        mkOpName "mkOp" 6 1 1 .i64 mkOpSymPlan env mkOpPlan oWMkOpForgeWrongCtor := by
   intro hface
   have henv := wMkop_env_forced 6 1 1 .i64 mkOpSymPlan env mkOpPlan
-    oWMkOpForgeZero hface
+    oWMkOpForgeWrongCtor hface
   subst henv
   obtain ⟨-, -, -, -, -, -, -, -, hpay, -, -, -, -, hmodel⟩ := hface
   have heq : (fun _ => wZeroVal) = wEnvCtorModel wMkopEnv 1 hpay :=
@@ -417,7 +418,7 @@ theorem wMkop_forge_zero_dies (env : WAdtEnvelope) :
 
 /-- CONSTRUCTOR FORGE at the payloadless tag (`structIdx := 3`): the forced
     widened envelope declares tag 3 as `unit`, not `hit`. -/
-theorem wMkop_payloadless_structIdx_dies (env : WAdtEnvelope) (o : Obligation) :
+theorem wForge_construct_payloadless_tag_dies (env : WAdtEnvelope) (o : Obligation) :
     ¬ WAdtCtorFaceLower MkopBytes.modBytes MkopBytes.modLen
         mkOpName "mkOp" 6 3 1 .i64 mkOpSymPlan env mkOpPlan o := by
   intro hface
@@ -427,7 +428,7 @@ theorem wMkop_payloadless_structIdx_dies (env : WAdtEnvelope) (o : Obligation) :
   exact absurd hpay (by decide)
 
 /-- CONSTRUCTOR FORGE at a fabricated tag (`structIdx := 8`): out of range. -/
-theorem wMkop_fabricated_structIdx_dies (env : WAdtEnvelope) (o : Obligation) :
+theorem wForge_construct_undeclared_tag_dies (env : WAdtEnvelope) (o : Obligation) :
     ¬ WAdtCtorFaceLower MkopBytes.modBytes MkopBytes.modLen
         mkOpName "mkOp" 6 8 1 .i64 mkOpSymPlan env mkOpPlan o := by
   intro hface
@@ -546,14 +547,14 @@ theorem multiAdt_named_root_pin :
 
 #print axioms wUnwrap_honest_passes
 #print axioms wIntbox_env_forced
-#print axioms wForge_model_17_dies
-#print axioms wForge_domRepr_false_dies
+#print axioms wForge_unpinned_model_dies
+#print axioms wForge_vacuous_domRepr_dies
 #print axioms wForge_flipped_envelope_dies
-#print axioms wTag7_witness_dies
-#print axioms wTag2_witness_dies
+#print axioms wForge_project_undeclared_tag_dies
+#print axioms wForge_project_payloadless_tag_dies
 #print axioms wMkop_env_forced
-#print axioms wMkop_forge_zero_dies
-#print axioms wMkop_payloadless_structIdx_dies
-#print axioms wMkop_fabricated_structIdx_dies
+#print axioms wForge_wrong_result_ctor_dies
+#print axioms wForge_construct_payloadless_tag_dies
+#print axioms wForge_construct_undeclared_tag_dies
 
 end AverCert.WidenedEnvelope.Tests
