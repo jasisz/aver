@@ -22,4 +22,5 @@ lean_lib «CertPrelude» where
     `CompositionSoundness, `AcceptanceSoundnessCore, `DischargeExprFragment,
     `DischargeFieldProjection, `DischargeConstruct, `DischargeVerbatim,
     `DischargeString, `DischargeIntDispatch, `DischargeRecursion,
-    `DischargeComposition, `AcceptanceSoundness]
+    `DischargeComposition, `AcceptanceSoundness,
+    `ArithTemplateDerisk, `ArithTemplateDeriskBytes, `ArithTemplateDeriskTests]
