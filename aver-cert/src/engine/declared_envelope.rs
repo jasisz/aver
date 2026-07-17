@@ -145,7 +145,7 @@ fn skip_valtype(bytes: &[u8], pos: &mut usize) -> Result<(), String> {
         .ok_or_else(|| "type section truncated in valtype".to_string())?;
     match byte {
         // numeric / vector value types
-        0x7f | 0x7e | 0x7d | 0x7c | 0x7b => {
+        0x7b..=0x7f => {
             *pos += 1;
             Ok(())
         }
@@ -219,6 +219,9 @@ fn skip_comp_type(bytes: &[u8], pos: &mut usize) -> Result<(), String> {
     }
 }
 
+/// Candidate constructor payload: `(target byte, is-reference)`.
+type CtorPayload = Option<(u8, bool)>;
+
 /// One flattened subtype entry: optional `sub (final)` header, then the
 /// composite type.
 fn skip_subtype(bytes: &[u8], pos: &mut usize) -> Result<(), String> {
@@ -264,7 +267,7 @@ fn type_section_entries(wasm_bytes: &[u8]) -> Result<(usize, usize, u32), String
 
 /// Classify one constructor entry against the exact byte templates the wall
 /// synthesizes (`dCtorBody root ctor`). Returns `(root, shape, target)`.
-fn classify_ctor_entry(entry: &[u8]) -> Option<(u32, Option<(u8, bool)>)> {
+fn classify_ctor_entry(entry: &[u8]) -> Option<(u32, CtorPayload)> {
     // header: 0x4f (sub final) 0x01 (one supertype) root(single byte < 64)
     if entry.len() < 5 || entry[0] != 0x4f || entry[1] != 0x01 {
         return None;
@@ -357,7 +360,7 @@ pub fn collect_declared_envelopes(
     }
 
     // Group candidate constructor entries by their declared root.
-    let mut ctor_runs: std::collections::BTreeMap<u32, Vec<(u32, Option<(u8, bool)>)>> =
+    let mut ctor_runs: std::collections::BTreeMap<u32, Vec<(u32, CtorPayload)>> =
         std::collections::BTreeMap::new();
     for (idx, entry) in entries.iter().enumerate() {
         let bytes = &wasm_bytes[entry.start..entry.end];

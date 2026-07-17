@@ -40,8 +40,7 @@ pub const CERT_INT_DISPATCH_SOUNDNESS: &str =
     include_str!("../assets/wall/current/IntDispatchSoundness.lean");
 pub const CERT_ENVELOPE_LOWERING: &str =
     include_str!("../assets/wall/current/EnvelopeLowering.lean");
-pub const CERT_WIDENED_ENVELOPE: &str =
-    include_str!("../assets/wall/current/WidenedEnvelope.lean");
+pub const CERT_WIDENED_ENVELOPE: &str = include_str!("../assets/wall/current/WidenedEnvelope.lean");
 pub const CERT_DECLARED_INDEX_ENVELOPE: &str =
     include_str!("../assets/wall/current/DeclaredIndexEnvelope.lean");
 pub const CERT_DECLARED_ENVELOPE_ACCEPT_TRANSPORT: &str =

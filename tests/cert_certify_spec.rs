@@ -832,12 +832,11 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
         std::fs::read_to_string(cert_dir.join("Artifact.lean")).expect("Artifact.lean exists");
     for side_condition in [
         "exprFragmentSideConditions",
-        "stringSideConditions",
+        "stringEqSideConditions",
         "constructSideConditions",
         "recursionSideConditions",
         "mutualSideConditions",
         "verbatimSideConditions",
-        "intDispatchSideConditions",
         "fieldProjectionSideConditions",
         "compositionSideConditions",
     ] {
@@ -858,20 +857,28 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
         ("intLessZero", "exprFragmentSemanticBridge"),
         ("intEqZero", "exprFragmentSemanticBridge"),
         ("boolAndGoal", "exprFragmentSemanticBridge"),
-        ("mkOp", "constructSemanticBridge"),
         ("sumFrom", "recursionSemanticBridge"),
         ("countDown", "recursionSemanticBridge"),
         ("isEven", "mutualSemanticBridge"),
         ("isOdd", "mutualSemanticBridge"),
-        ("evalOp", "intDispatchSemanticBridge"),
-        ("boxInt", "intDispatchSemanticBridge"),
-        ("gauge", "intDispatchSemanticBridge"),
         ("quad", "compositionSemanticBridge"),
         ("hex16", "compositionSemanticBridge"),
     ] {
         assert!(
             artifact_lean.contains(&format!("CertProofs.{name}_{bridge_kind}")),
             "migrated family bridge must feed accept_sound: {name}\n{artifact_lean}"
+        );
+    }
+    for face in [
+        "theorem constructClaim0Face",
+        "theorem intDispatchClaim0Face",
+        "theorem intDispatchClaim1Face",
+        "theorem intDispatchClaim2Face",
+        "theorem stringConcatClaim0Face",
+    ] {
+        assert!(
+            artifact_lean.contains(face),
+            "declared-envelope face theorem missing from Artifact.lean: {face}\n{artifact_lean}"
         );
     }
     for float_name in ["floatLeGoal"] {
@@ -993,17 +1000,15 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
     );
     for dispatch_name in ["evalOp", "boxInt", "gauge"] {
         assert!(
-            certificate.contains(&format!(
+            !certificate.contains(&format!(
                 "theorem {dispatch_name}_intDispatchSemanticBridge"
             )),
-            "dispatch must emit its option-(b) source-model bridge: {dispatch_name}\n{certificate}"
+            "dispatch bridges are derived from the declared-envelope face; no bespoke bridge: {dispatch_name}\n{certificate}"
         );
     }
     assert!(
-        certificate.contains("theorem mkOp_constructSemanticBridge")
-            && certificate.contains("cases n")
-            && certificate.contains("ConstructVerbatimSoundness.constructModelFields"),
-        "construct-with-model must emit only its small source-model bridge:\n{certificate}"
+        !certificate.contains("theorem mkOp_constructSemanticBridge"),
+        "named constructor bridges are derived from the declared-envelope face:\n{certificate}"
     );
     assert!(
         certificate.contains("theorem sumFrom_recursionSemanticBridge")
@@ -2192,8 +2197,8 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
         "String.eq artifact claim should carry lowering indices:\n{artifact_lean}"
     );
     assert!(
-        artifact_lean.contains("theorem stringSideConditions")
-            && artifact_lean.contains("AcceptanceSoundness.stringSemanticBridges data"),
+        artifact_lean.contains("theorem stringEqSideConditions")
+            && artifact_lean.contains("AcceptanceSoundness.stringEqSemanticBridges data"),
         "String.eq bridge must feed the accept-sound aggregate:\n{artifact_lean}"
     );
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
@@ -2365,9 +2370,9 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         "String.concat artifact claim should carry lowering indices:\n{artifact_lean}"
     );
     assert!(
-        artifact_lean.contains("theorem stringSideConditions")
-            && artifact_lean.contains("AcceptanceSoundness.stringSemanticBridges data"),
-        "String.concat bridge must feed the accept-sound aggregate:\n{artifact_lean}"
+        artifact_lean.contains("theorem stringConcatClaim0Face")
+            && artifact_lean.contains("AverCert.StandardFace.stringConcatDeclaredFace"),
+        "String.concat must carry its declared-envelope face:\n{artifact_lean}"
     );
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
         .expect("Certificate.lean exists");
@@ -2620,16 +2625,15 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             for entry in &model_construct_entries {
                 let name = entry["name"].as_str().unwrap();
                 assert!(
-                    artifact_lean.contains("AcceptanceSoundness.constructSemanticBridges data")
-                        && artifact_lean
-                            .contains(&format!("CertProofs.{name}_constructSemanticBridge")),
-                    "construct-with-model bridge must feed the accept-sound aggregate for {name}:\n{artifact_lean}"
+                    artifact_lean.contains("AverCert.StandardFace.constructNamedFace")
+                        && artifact_lean.contains(&format!("exportName := \"{name}\"")),
+                    "construct-with-model must carry its declared-envelope face for {name}:\n{artifact_lean}"
                 );
                 assert!(
-                    certificate.contains(&format!("theorem {name}_constructSemanticBridge"))
+                    !certificate.contains(&format!("theorem {name}_constructSemanticBridge"))
                         && !certificate.contains(&format!("{name}_wasm_certified"))
                         && !certificate.contains(&format!("{name}_simulates")),
-                    "construct-with-model must emit only its option-(b) bridge for {name}:\n{certificate}"
+                    "construct-with-model must not emit a bespoke bridge for {name}:\n{certificate}"
                 );
             }
         }
@@ -2645,16 +2649,15 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
                     "AcceptanceSoundness.intDispatch_canonical_discharges"
                 );
                 assert!(
-                    artifact_lean.contains("AcceptanceSoundness.intDispatchSemanticBridges data")
-                        && artifact_lean
-                            .contains(&format!("CertProofs.{name}_intDispatchSemanticBridge")),
-                    "dispatch bridge must feed the accept-sound aggregate for {name}:\n{artifact_lean}"
+                    artifact_lean.contains("AverCert.StandardFace.intDispatchDeclaredFace")
+                        && artifact_lean.contains(&format!("exportName := \"{name}\"")),
+                    "dispatch must carry its declared-envelope face for {name}:\n{artifact_lean}"
                 );
                 assert!(
-                    certificate.contains(&format!("theorem {name}_intDispatchSemanticBridge"))
+                    !certificate.contains(&format!("theorem {name}_intDispatchSemanticBridge"))
                         && !certificate.contains(&format!("{name}_wasm_certified"))
                         && !certificate.contains(&format!("{name}_simulates")),
-                    "dispatch must emit only its option-(b) bridge for {name}:\n{certificate}"
+                    "dispatch must not emit a bespoke bridge for {name}:\n{certificate}"
                 );
             }
         }
@@ -2713,15 +2716,6 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
                 ),
                 "audited construct discharge changed axiom surface:\n{combined}"
             );
-            for entry in &model_construct_entries {
-                let name = entry["name"].as_str().unwrap();
-                assert!(
-                    combined.contains(&format!(
-                        "'CertProofs.{name}_constructSemanticBridge' depends on axioms: [propext, Quot.sound]"
-                    )),
-                    "construct source-model bridge changed axiom surface for {name}:\n{combined}"
-                );
-            }
         }
         if prefix == "tuple-proj"
             || !dispatch_entries.is_empty()
