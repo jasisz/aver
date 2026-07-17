@@ -743,8 +743,8 @@ fn render_expr_fragment_plans(
         s.push_str(&format!(
             "/-- Declared ADT envelope for `{name}`: root, carrier and every constructor's\n\
                  flattened type index, shape and payload target. The wall confirms the whole\n\
-                 declaration against the module bytes with one type-section byte-slice\n\
-                 equality (`DeclaredIndexEnvelope.concatPinnedAt`). -/\n\
+                 declaration against the module bytes with one type-section walk-match\n\
+                 traversal (`DeclaredIndexEnvelope.dWalkPinned`). -/\n\
              def {name}DeclaredEnvelope : AverCert.DeclaredIndexEnvelope.DIdxEnvelope :=\n  \
              {env}\n\n\
              /-- Opaque declared type-section bytes before `{name}`'s constructor entries. -/\n\
