@@ -15,4 +15,11 @@ lean_lib «CertPrelude» where
     `IntboxBytes, `MkopBytes, `IntboxTag7Bytes, `IntboxTag2Bytes,
     `EnvelopeLoweringTests, `WidenedEnvelope, `WidenedEnvelopeTests,
     `JsonBytes, `CertGoalsBytes, `DeclaredIndexEnvelope,
-    `DeclaredEnvelopeAcceptTransport, `DeclaredIndexEnvelopeTests]
+    `DeclaredEnvelopeAcceptTransport, `DeclaredIndexEnvelopeTests,
+    `ClaimAxes, `ExprFragmentSemantics, `InterpreterSequencing,
+    `ExprFragmentSoundness, `FieldProjectionSoundness, `StandardFace,
+    `RecursionSoundness, `MutualRecursionSoundness,
+    `CompositionSoundness, `AcceptanceSoundnessCore, `DischargeExprFragment,
+    `DischargeFieldProjection, `DischargeConstruct, `DischargeVerbatim,
+    `DischargeString, `DischargeIntDispatch, `DischargeRecursion,
+    `DischargeComposition, `AcceptanceSoundness]

@@ -8,6 +8,7 @@ import AcceptedArtifactCore
 import ConstructVerbatimSoundness
 import FieldProjectionSoundness
 import StringSoundness
+import DeclaredEnvelopeAcceptTransport
 
 namespace AverCert.StandardFace
 
@@ -55,12 +56,11 @@ structure FaceSpec where
   host : HostBuilder
   model? : Option (Dom → Cod) := none
 
-/-- Known families have a complete standard face. User ADT reads retain only
-    the parts that cannot be reconstructed without the source declaration. -/
+/-- Known families have a complete standard face. The former `adtIntRead` /
+    `adtConstructorRead` arms left `Dom`/`domRepr`/`model` unconstrained; user
+    ADT claims are now pinned by the declared-index envelope faces below. -/
 inductive StandardFace where
   | known (spec : FaceSpec)
-  | adtIntRead (host : HostBuilder)
-  | adtConstructorRead (host : HostBuilder)
 
 /-- Dependent fields are compared with `HEq`: ordinary equality cannot state
     the relation before the domain and codomain types have been identified. -/
@@ -75,13 +75,6 @@ def StandardFace.Matches : StandardFace → Obligation → Prop
       match spec.model? with
       | some model => HEq obligation.model model
       | none => True
-  | .adtIntRead host, obligation =>
-      Nonempty obligation.Dom ∧
-      HEq obligation.Cod Int ∧
-      HEq obligation.codRepr (@intRepr obligation.carrier) ∧
-      obligation.host = host
-  | .adtConstructorRead host, obligation =>
-      Nonempty obligation.Dom ∧ obligation.host = host
 
 def intList (carrier arity : Nat) (host : HostBuilder) : FaceSpec where
   carrier := carrier
@@ -288,6 +281,65 @@ def symFragmentMatches
     | some face => face.Matches claim.obligation
     | none => False
 
+/-! ### Declared-index envelope faces (user ADT claims)
+
+The plan/certificate DECLARES the ADT envelope (root, carrier, every
+constructor's flattened index, shape, and payload target) plus the opaque
+type-section prefix before the constructor entries; the wall CONFIRMS the whole
+declaration with ONE byte-slice equality (`concatPinnedAt`). The declared
+envelope then pins the obligation's `Dom`/`domRepr`/`codRepr`/`model` to wall
+terms computed from the checked plan, closing the former free-model /
+free-`domRepr` faces. The envelope and prefix live in the proof term of the
+generated certificate, never in the public JSON manifest. -/
+
+/-- The declared-envelope face carried by a named-ADT constructor claim. The
+    declared hit constructor sits at the byte-pinned `structIdx`; the byte
+    acceptance gate independently binds `elemTy`/`fieldCount` to the real type
+    entry at `structIdx`, and requiring the Int-carrier payload here ties the
+    declared hit shape to that byte-checked entry. -/
+def constructNamedFace
+    (modBytes modLen : Nat) (claim : ConstructClaim)
+    (plan : ConstructRawPlan) : Prop :=
+  claim.elemTy = .nullableRef claim.carrier ∧
+  claim.fieldCount = 1 ∧
+  claim.obligation.host = emptyHost ∧
+  ∃ (typePrefix : List Nat) (env : AverCert.DeclaredIndexEnvelope.DIdxEnvelope)
+    (hhit : AverCert.DeclaredIndexEnvelope.dCtorShape? env claim.structIdx =
+      some .hit),
+    AverCert.DeclaredIndexEnvelope.DIdxCtorFace
+      modBytes modLen typePrefix env claim.structIdx hhit plan claim.obligation
+
+/-- The declared-envelope face carried by an Int-dispatch claim. Every tested
+    dispatch tag must be a declared hit constructor whose synthesized entry is
+    byte-pinned at its declared index by the single `concatPinnedAt` equality;
+    the obligation's meaning terms are the wall terms over the declared
+    envelope and the checked plan. -/
+def intDispatchDeclaredFace
+    (modBytes modLen : Nat) (claim : IntDispatchClaim)
+    (plan : IntDispatchRawPlan) : Prop :=
+  claim.obligation.policy = .simulatesModel ∧
+  claim.obligation.host =
+    intDispatchCanonicalHost claim.carrier claim.hostTable ∧
+  ∃ (typePrefix : List Nat) (env : AverCert.DeclaredIndexEnvelope.DIdxEnvelope),
+    AverCert.DeclaredIndexEnvelope.DIdxIntReadFace
+      modBytes modLen typePrefix env plan claim.obligation
+
+/-- The declared-envelope face carried by a String.concat claim. The literal
+    chunks are required non-empty so the declared `resultTy` occurs inside the
+    byte-matched code entry (`array.new_data resultTy`) — a chunk-less plan
+    would leave the result element type a free semantic tag. -/
+def stringConcatDeclaredFace
+    (modBytes modLen : Nat) (claim : StringConcatClaim)
+    (plan : StringConcatRawPlan) : Prop :=
+  (plan.prefixes.isEmpty && plan.suffixes.isEmpty) = false ∧
+  claim.obligation.host =
+    stringConcatCanonicalHost claim.concatFuncIdx claim.resultTy ∧
+  ∃ (typePrefix : List Nat) (env : AverCert.DeclaredIndexEnvelope.DIdxEnvelope),
+    AverCert.DeclaredIndexEnvelope.DIdxStringConcatFace
+      modBytes modLen typePrefix env claim.resultTy claim.containerTy plan
+      claim.obligation
+
+
 def stringEqMatches (manifest : Manifest) (claim : StringEqClaim) : Prop :=
   match stringEqPlanForExport claim.exportName manifest.stringEqPlans with
   | some plan =>
@@ -296,13 +348,11 @@ def stringEqMatches (manifest : Manifest) (claim : StringEqClaim) : Prop :=
           claim.obligation
   | none => False
 
-def stringConcatMatches (manifest : Manifest) (claim : StringConcatClaim) : Prop :=
+def stringConcatMatches
+    (modBytes modLen : Nat) (manifest : Manifest)
+    (claim : StringConcatClaim) : Prop :=
   match stringConcatPlanForExport claim.exportName manifest.stringConcatPlans with
-  | some plan =>
-      (StandardFace.known
-        (stringConcat claim.carrier claim.resultTy claim.containerTy
-          claim.concatFuncIdx plan)).Matches
-          claim.obligation
+  | some plan => stringConcatDeclaredFace modBytes modLen claim plan
   | none => False
 
 def verbatimMatches (manifest : Manifest) (claim : VerbatimClaim) : Prop :=
@@ -319,7 +369,8 @@ def fieldProjectionMatches
         (projection claim.carrier claim.structIdx plan.fieldIdx)).Matches claim.obligation
   | none => False
 
-def constructMatches (manifest : Manifest) (claim : ConstructClaim) : Prop :=
+def constructMatches
+    (modBytes modLen : Nat) (manifest : Manifest) (claim : ConstructClaim) : Prop :=
   match constructPlanForExport claim.exportName manifest.constructPlans with
   | none => False
   | some plan =>
@@ -335,8 +386,7 @@ def constructMatches (manifest : Manifest) (claim : ConstructClaim) : Prop :=
                 (constructBinary claim.carrier claim.structIdx plan)).Matches
                   claim.obligation
           | _ => False
-      | .named _ =>
-          (StandardFace.adtConstructorRead emptyHost).Matches claim.obligation
+      | .named _ => constructNamedFace modBytes modLen claim plan
       | _ => False
 
 def recursionMatches
@@ -364,14 +414,12 @@ def mutualMatches
     | none => False
 
 def intDispatchMatches
+    (modBytes modLen : Nat)
     (manifest : Manifest) (roles : CertDecode.AddSub.Roles)
     (claim : IntDispatchClaim) : Prop :=
   hostTableBound roles claim.hostTable = true ∧
     match intDispatchPlanForExport claim.exportName manifest.intDispatchPlans with
-    | some _ =>
-        (StandardFace.adtIntRead
-          (intDispatchCanonicalHost claim.carrier claim.hostTable)).Matches
-            claim.obligation
+    | some plan => intDispatchDeclaredFace modBytes modLen claim plan
     | none => False
 
 def compositionMatches
@@ -458,15 +506,18 @@ def checkedFaces (artifact : ArtifactData) : Prop :=
   allClaims (symFragmentMatches artifact.manifest.subject.hostRoles)
     artifact.symFragmentClaims ∧
   allClaims (stringEqMatches artifact.manifest) artifact.stringEqClaims ∧
-  allClaims (stringConcatMatches artifact.manifest) artifact.stringConcatClaims ∧
-  allClaims (constructMatches artifact.manifest) artifact.constructClaims ∧
+  allClaims (stringConcatMatches artifact.modBytes artifact.modLen
+    artifact.manifest) artifact.stringConcatClaims ∧
+  allClaims (constructMatches artifact.modBytes artifact.modLen
+    artifact.manifest) artifact.constructClaims ∧
   allClaims (recursionMatches artifact.manifest
     artifact.manifest.subject.hostRoles) artifact.recursionClaims ∧
   allClaims (mutualMatches artifact.manifest
     artifact.manifest.subject.hostRoles) artifact.mutualRecursionClaims ∧
   allClaims (verbatimMatches artifact.manifest) artifact.verbatimClaims ∧
-  allClaims (intDispatchMatches artifact.manifest
-    artifact.manifest.subject.hostRoles) artifact.intDispatchClaims ∧
+  allClaims (intDispatchMatches artifact.modBytes artifact.modLen
+    artifact.manifest artifact.manifest.subject.hostRoles)
+    artifact.intDispatchClaims ∧
   allClaims (fieldProjectionMatches artifact.manifest) artifact.fieldProjectionClaims ∧
   allClaims (compositionMatches artifact.compositionMembers
     artifact.manifest.subject.hostRoles) artifact.compositionClaims

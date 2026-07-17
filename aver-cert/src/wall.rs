@@ -38,6 +38,14 @@ pub const CERT_CONSTRUCT_VERBATIM_SOUNDNESS: &str =
     include_str!("../assets/wall/current/ConstructVerbatimSoundness.lean");
 pub const CERT_INT_DISPATCH_SOUNDNESS: &str =
     include_str!("../assets/wall/current/IntDispatchSoundness.lean");
+pub const CERT_ENVELOPE_LOWERING: &str =
+    include_str!("../assets/wall/current/EnvelopeLowering.lean");
+pub const CERT_WIDENED_ENVELOPE: &str =
+    include_str!("../assets/wall/current/WidenedEnvelope.lean");
+pub const CERT_DECLARED_INDEX_ENVELOPE: &str =
+    include_str!("../assets/wall/current/DeclaredIndexEnvelope.lean");
+pub const CERT_DECLARED_ENVELOPE_ACCEPT_TRANSPORT: &str =
+    include_str!("../assets/wall/current/DeclaredEnvelopeAcceptTransport.lean");
 pub const CERT_STRING_SOUNDNESS: &str = include_str!("../assets/wall/current/StringSoundness.lean");
 pub const CERT_STANDARD_FACE: &str = include_str!("../assets/wall/current/StandardFace.lean");
 pub const CERT_RECURSION_SOUNDNESS: &str =
@@ -74,7 +82,7 @@ pub struct Source {
 
 /// Exact checker-owned source set. Ordering is not part of the identity:
 /// [`compute_id`] sorts by filename before hashing.
-pub const SOURCES: [Source; 33] = [
+pub const SOURCES: [Source; 37] = [
     Source {
         name: "AcceptedArtifact.lean",
         contents: CERT_ACCEPTED_ARTIFACT,
@@ -112,6 +120,14 @@ pub const SOURCES: [Source; 33] = [
         contents: CERT_CONSTRUCT_VERBATIM_SOUNDNESS,
     },
     Source {
+        name: "DeclaredEnvelopeAcceptTransport.lean",
+        contents: CERT_DECLARED_ENVELOPE_ACCEPT_TRANSPORT,
+    },
+    Source {
+        name: "DeclaredIndexEnvelope.lean",
+        contents: CERT_DECLARED_INDEX_ENVELOPE,
+    },
+    Source {
         name: "DischargeComposition.lean",
         contents: CERT_DISCHARGE_COMPOSITION,
     },
@@ -142,6 +158,10 @@ pub const SOURCES: [Source; 33] = [
     Source {
         name: "DischargeVerbatim.lean",
         contents: CERT_DISCHARGE_VERBATIM,
+    },
+    Source {
+        name: "EnvelopeLowering.lean",
+        contents: CERT_ENVELOPE_LOWERING,
     },
     Source {
         name: "ExprFragmentAccepted.lean",
@@ -207,11 +227,15 @@ pub const SOURCES: [Source; 33] = [
         name: "WasmSlice.lean",
         contents: CERT_WASM_SLICE,
     },
+    Source {
+        name: "WidenedEnvelope.lean",
+        contents: CERT_WIDENED_ENVELOPE,
+    },
 ];
 
 /// Roots whose complete import graph is artifact-independent and can therefore
 /// be cached before a certificate is seen.
-pub const PRISTINE_ROOTS: [&str; 31] = [
+pub const PRISTINE_ROOTS: [&str; 35] = [
     "CertPrelude",
     "CertDecode",
     "WasmSlice",
@@ -229,6 +253,10 @@ pub const PRISTINE_ROOTS: [&str; 31] = [
     "ConstructVerbatimSoundness",
     "IntDispatchSoundness",
     "StringSoundness",
+    "EnvelopeLowering",
+    "WidenedEnvelope",
+    "DeclaredIndexEnvelope",
+    "DeclaredEnvelopeAcceptTransport",
     "StandardFace",
     "RecursionSoundness",
     "MutualRecursionSoundness",
