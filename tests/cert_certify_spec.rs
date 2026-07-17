@@ -1381,10 +1381,8 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
     copy_dir_all(&out_dir, &tampered);
     let manifest_path = tampered.join("cert/Manifest.lean");
     let source = std::fs::read_to_string(&manifest_path).unwrap();
-    let honest =
-        "model := AverCert.DeclaredIndexEnvelope.dEnvCtorModel Plans.mkOpDeclaredEnvelope 1 (by decide) }";
-    let hostile =
-        "model := AverCert.DeclaredIndexEnvelope.dEnvCtorModel Plans.mkOpDeclaredEnvelope 2 (by decide) }";
+    let honest = "model := AverCert.DeclaredIndexEnvelope.dEnvCtorModel Plans.mkOpDeclaredEnvelope 1 (by decide) }";
+    let hostile = "model := AverCert.DeclaredIndexEnvelope.dEnvCtorModel Plans.mkOpDeclaredEnvelope 2 (by decide) }";
     let edited = source.replacen(honest, hostile, 1);
     assert_ne!(
         source, edited,
