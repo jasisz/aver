@@ -10,5 +10,6 @@ lean_lib «CertPrelude» where
   roots := #[`CertPrelude, `CertPreludeSanity, `CertDecode, `SchemaCore,
     `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted,
     `AcceptedArtifactCore, `IntDispatchSoundness, `EnvelopeLowering,
+    `EnvelopeBridge,
     `IntboxBytes, `MkopBytes, `IntboxTag7Bytes, `IntboxTag2Bytes,
     `EnvelopeLoweringTests]
