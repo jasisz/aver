@@ -19,7 +19,7 @@ const AXIOM_WHITELIST: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"]
 const CHECKED_ROOT: &str = "AverCertChecker.checked";
 const MAX_CANDIDATE_LEN: usize = 200;
 const TOOLCHAIN_ROOTS: [&str; 4] = ["Init", "Lake", "Lean", "Std"];
-const FRESH_REPLAY_ARGS: [&str; 4] = ["env", "leanchecker", "--fresh", "CheckerWitness"];
+const FRESH_REPLAY_ARGS: [&str; 4] = ["env", "leanchecker", "--fresh", "ArtifactCertificate"];
 /// User-facing name of the `lake build` step in timeout and failure messages.
 const PROOF_BUILD_PHASE: &str = "certificate proof build";
 
