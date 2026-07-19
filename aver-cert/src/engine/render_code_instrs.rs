@@ -66,6 +66,7 @@ fn render_simple_op(op: &Op) -> Option<String> {
         Op::F64Add => ".f64Add".to_string(),
         Op::F64Mul => ".f64Mul".to_string(),
         Op::F64Le => ".f64Le".to_string(),
+        Op::I32Eq => ".i32Eq".to_string(),
         Op::I32LtS => ".i32LtS".to_string(),
         Op::I32GtS => ".i32GtS".to_string(),
         Op::Call(f) => format!(".call {f}"),

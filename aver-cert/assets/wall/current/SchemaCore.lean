@@ -239,6 +239,15 @@ mutual
         wasm struct type index through the byte-derived struct table. -/
     | projectField (typeName : String) (field : Nat) (fieldTy : SymTy) (value : Nat)
     | intConstCmp (op : SymIntCmp) (value : Nat) (constant : Int)
+    /-- Operational tag-field dispatch over an ADT value (Option/Result). Reads
+        the i32 discriminant in field 0 of the `typeName` struct that `scrutinee`
+        holds, compares it to the literal `tag`, and evaluates `hit` when equal
+        else `miss`. This is a REPRESENTATION-level meaning ("read field 0 == k,
+        branch"), NOT a source-constructor relation: it never claims the tested
+        constructor writes `tag` into field 0. The encoder binds `typeName` to
+        the wasm struct index via the byte-derived struct table; the byte-exact
+        gate confirms field 0 is the i32 tag. -/
+    | tagMatch (typeName : String) (scrutinee : Nat) (tag : Int) (hit miss : SymBlock)
     | ifElse (cond : Nat) (thenBlock elseBlock : SymBlock)
   deriving Repr
 
@@ -273,6 +282,7 @@ inductive FragPrim where
   | i64LeS
   | i64LtS
   | i64GeS
+  | i32Eq
   | i32LtS
   | i32GtS
 deriving Repr, DecidableEq

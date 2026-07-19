@@ -31,6 +31,8 @@ def runPrim : FragPrim -> List WVal -> Option (List WVal)
       some (b32 (a < b) :: st)
   | .i64GeS, .i64v b :: .i64v a :: st =>
       some (b32 (a >= b) :: st)
+  | .i32Eq, .i32v b :: .i32v a :: st =>
+      some (b32 (a = b) :: st)
   | .i32LtS, .i32v b :: .i32v a :: st =>
       some (b32 (a < b) :: st)
   | .i32GtS, .i32v b :: .i32v a :: st =>

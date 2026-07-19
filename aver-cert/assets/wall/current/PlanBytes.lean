@@ -140,6 +140,7 @@ def primBytes : FragPrim → List Nat
   | .i64LtS => [0x53]
   | .i64LeS => [0x57]
   | .i64GeS => [0x59]
+  | .i32Eq => [0x46]
   | .i32LtS => [0x48]
   | .i32GtS => [0x4a]
 

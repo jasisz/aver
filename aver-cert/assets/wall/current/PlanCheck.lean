@@ -109,6 +109,10 @@ def primResultTy? (nodes : List FragNode) (op : FragPrim) (args : List Nat) :
       if argsHaveTys nodes args [.i64, .i64] then some .boolI32 else none
   | .i64GeS =>
       if argsHaveTys nodes args [.i64, .i64] then some .boolI32 else none
+  | .i32Eq =>
+      match args with
+      | [a, b] => if hasI32Ty nodes a && hasI32Ty nodes b then some .boolI32 else none
+      | _ => none
   | .i32LtS =>
       match args with
       | [a, b] => if hasI32Ty nodes a && hasI32Ty nodes b then some .boolI32 else none
@@ -172,9 +176,9 @@ def bytesAllBytes : List Nat → Bool
 def checkBlockFuel : Nat → List FragTy → FragBlock → Bool
   | 0, _, _ => false
   | fuel + 1, params, block =>
-      let inferNodeKindTy (checked : List FragNode) (kind : FragNodeKind) :
+      let inferNodeKindTy (checked : List FragNode) (node : FragNode) :
           Option FragTy :=
-        match kind with
+        match node.kind with
         | .local index => params[index]?
         | .constBool _ => some .boolI32
         | .constI64 _ => some .i64
@@ -182,13 +186,17 @@ def checkBlockFuel : Nat → List FragTy → FragBlock → Bool
         | .constF64Bits _ => some .f64
         | .structGet field receiver =>
             if hasTy checked receiver .intCarrier then carrierFieldTy? field else none
-        -- v1 admits only opaque reference fields out of user structs: the
-        -- projected value is handled verbatim (`adtRef`), never reinterpreted
-        -- as a scalar. Scalar-field projections need their own proof face
-        -- before they can be typed here. The node's `tyIdx`/`field` are bound
-        -- to the module bytes and decoded struct context by artifact acceptance.
+        -- v1 admits two field reads out of a user struct: the opaque
+        -- reference-field projection (`adtRef`, flowed verbatim through the
+        -- field-projection face) and the scalar `i32` tag/discriminant read
+        -- (`rawI32`, e.g. the Option/Result tag) that a tag-dispatch feeds into
+        -- `i32`-typed primitives. The plan DECLARES which via `node.ty`; the
+        -- byte-exact gate and decoded struct context bind `tyIdx`/`field` and
+        -- confirm the field's real storage. A wrong declaration lowers to bytes
+        -- whose read yields the wrong `WVal` kind and traps (fail-closed).
         | .structGetUser _tyIdx _field value =>
-            if hasTy checked value .adtRef then some .adtRef else none
+            if hasTy checked value .adtRef && (node.ty = .adtRef || node.ty = .rawI32)
+            then some node.ty else none
         | .refIsNull value =>
             if hasTy checked value .ref && isCarrierLimbField checked value
             then some .boolI32
@@ -216,7 +224,7 @@ def checkBlockFuel : Nat → List FragTy → FragBlock → Bool
         | [] => true
         | node :: rest =>
             node.id = checked.length &&
-              (match inferNodeKindTy checked node.kind with
+              (match inferNodeKindTy checked node with
               | some ty => sameTy node.ty ty
               | none => false) &&
               checkNodes (checked ++ [node]) rest
@@ -262,6 +270,20 @@ def checkSymBlockFuel : Nat → List SymTy → SymBlock → Bool
             if hasSymTy checked value (.named typeName) then some fieldTy else none
         | .intConstCmp _ value _ =>
             if hasSymTy checked value .int && isSymParam checked value then some .bool else none
+        | .tagMatch _typeName scrutinee _tag hit miss =>
+            -- The scrutinee must be an ADT/record value (encodes to `adtRef`, so
+            -- `struct.get.user` is well-typed); both arms must check under the
+            -- same params and agree on their result type.
+            match lookupSymTy checked scrutinee with
+            | some (.named _) | some (.app1 _ _) | some (.app2 _ _ _) =>
+                if checkSymBlockFuel fuel params hit &&
+                   checkSymBlockFuel fuel params miss then
+                  match lookupSymNode hit.nodes hit.result,
+                        lookupSymNode miss.nodes miss.result with
+                  | some t, some e => if t.ty = e.ty then some t.ty else none
+                  | _, _ => none
+                else none
+            | _ => none
         | .ifElse cond thenBlock elseBlock =>
             if hasSymTy checked cond .bool &&
                checkSymBlockFuel fuel params thenBlock &&
@@ -296,6 +318,7 @@ def primNeedsRelationalFloatResult : FragPrim → Bool
   | .i64LeS => false
   | .i64LtS => false
   | .i64GeS => false
+  | .i32Eq => false
   | .i32LtS => false
   | .i32GtS => false
 
@@ -847,6 +870,22 @@ def encodeSymBlockFuel :
               let thenBlock ← encodeIntSmallConstCmpBlock? index op constant
               let elseBlock ← encodeIntBigConstCmpBlock? index op
               let (st, id) := pushEncodedNode st .boolI32 (.ifElse isSmall thenBlock elseBlock)
+              some { st with symToFrag := st.symToFrag ++ [id] }
+          | .tagMatch typeName scrutinee tag hitBlock missBlock =>
+              -- Canonical tag-dispatch lowering: read field 0 (i32 tag) of the
+              -- scrutinee's struct, compare to the literal discriminant, and
+              -- branch. The arms carry their own encoded sub-models (for
+              -- slotCount each is a boxed integer constant). The struct index is
+              -- resolved from the byte-derived struct table; a wrong table
+              -- encodes to bytes the module cannot match (fail-closed).
+              let tyIdx ← structTyIdx? structTable typeName
+              let scrut ← encodedValue? st scrutinee
+              let (st, tagId) := pushEncodedNode st .rawI32 (.structGetUser tyIdx 0 scrut)
+              let (st, kId) := pushEncodedNode st .rawI32 (.constI32 tag)
+              let (st, cmpId) := pushEncodedNode st .boolI32 (.prim .i32Eq [tagId, kId])
+              let hitFrag ← encodeSymBlockFuel fuel hostTable structTable hitBlock
+              let missFrag ← encodeSymBlockFuel fuel hostTable structTable missBlock
+              let (st, id) := pushEncodedNode st fragTy (.ifElse cmpId hitFrag missFrag)
               some { st with symToFrag := st.symToFrag ++ [id] }
           | .ifElse cond thenBlock elseBlock =>
               let cond ← encodedValue? st cond

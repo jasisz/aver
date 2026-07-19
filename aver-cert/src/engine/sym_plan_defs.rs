@@ -550,6 +550,7 @@ fn sym_node_from_frag_source_subset(node: &FragNode) -> Option<SymNode> {
                 | FragPrim::I64LeS
                 | FragPrim::I64LtS
                 | FragPrim::I64GeS
+                | FragPrim::I32Eq
                 | FragPrim::I32LtS
                 | FragPrim::I32GtS => return None,
             },

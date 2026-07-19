@@ -24,6 +24,7 @@ def primInstr : FragPrim → WInstr
   | .i64LeS => .i64LeS
   | .i64LtS => .i64LtS
   | .i64GeS => .i64GeS
+  | .i32Eq => .i32Eq
   | .i32LtS => .i32LtS
   | .i32GtS => .i32GtS
 

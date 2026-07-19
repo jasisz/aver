@@ -84,11 +84,33 @@ def exprFragmentHasFieldProjection (claim : SymFragmentClaim) : Bool :=
     | .projectField _ _ _ _ => true
     | _ => false)
 
+/-- Tag-dispatch fragments (Option/Result `match` returning an Int constant)
+also discharge through the symbolic generic — their operational model is a
+conditional over boxed constants — but their source scrutinee is an ADT, so
+they are outside the int/Bool `exprFragmentUsesAuditedGeneric` gate. The gate
+here is the encoded representation shape: an `adtRef` scrutinee, an `intCarrier`
+result, and a `struct.get.user` tag read. -/
+def exprFragmentIsTagDispatch (claim : SymFragmentClaim) : Bool :=
+  match AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+      claim.hostTable claim.structTable claim.plan with
+  | some plan =>
+      plan.params = [.adtRef] && plan.result = .intCarrier &&
+      plan.body.nodes.any (fun node =>
+        match node.kind with
+        | .structGetUser _ _ _ => true
+        | _ => false)
+  | none => false
+
 /-- Side condition for one source expression claim.  In-model claims must use
 the symbolic generic. Projection claims may use the audited projection
 generic. Only float-boundary claims may use a bespoke direct discharge. -/
 def exprFragmentSideCondition (claim : SymFragmentClaim) : Prop :=
   (exprFragmentUsesAuditedGeneric claim = true ∧
+    ∀ plan,
+      AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+          claim.hostTable claim.structTable claim.plan = some plan →
+        exprFragmentSemanticBridge claim plan) ∨
+  (exprFragmentIsTagDispatch claim = true ∧
     ∀ plan,
       AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
           claim.hostTable claim.structTable claim.plan = some plan →
@@ -164,8 +186,9 @@ theorem exprFragment_claim_discharges
     (hMem : claim ∈ artifact.symFragmentClaims)
     (hSide : exprFragmentSideCondition claim) :
     obligationHolds claim.obligation := by
-  rcases hSide with hGeneric | hProjection | hFloat
+  rcases hSide with hGeneric | hTagDispatch | hProjection | hFloat
   · exact exprFragment_claim_discharges_generic artifact hAcc claim hMem hGeneric.2
+  · exact exprFragment_claim_discharges_generic artifact hAcc claim hMem hTagDispatch.2
   · exact hProjection.2
   · exact hFloat.2
 

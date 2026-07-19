@@ -122,6 +122,7 @@ fn op_to_wasm(op: FragPrim) -> Op {
         FragPrim::I64LeS => Op::I64LeS,
         FragPrim::I64LtS => Op::I64LtS,
         FragPrim::I64GeS => Op::I64GeS,
+        FragPrim::I32Eq => Op::I32Eq,
         FragPrim::I32LtS => Op::I32LtS,
         FragPrim::I32GtS => Op::I32GtS,
     }

@@ -286,6 +286,11 @@ where
                     let rhs = expr_fragment_value_expr(block, args[1], local);
                     format!("({rhs}) <= ({lhs})")
                 }
+                FragPrim::I32Eq => {
+                    let lhs = expr_fragment_i32_expr(block, args[0], local);
+                    let rhs = expr_fragment_i32_expr(block, args[1], local);
+                    format!("(({lhs}) = ({rhs}))")
+                }
                 FragPrim::I32LtS => {
                     let lhs = expr_fragment_i32_expr(block, args[0], local);
                     let rhs = expr_fragment_i32_expr(block, args[1], local);
@@ -361,6 +366,11 @@ where
                 let lhs = expr_fragment_value_expr(block, args[0], local);
                 let rhs = expr_fragment_value_expr(block, args[1], local);
                 format!("({rhs}) <= ({lhs})")
+            }
+            FragPrim::I32Eq => {
+                let lhs = expr_fragment_i32_expr(block, args[0], local);
+                let rhs = expr_fragment_i32_expr(block, args[1], local);
+                format!("decide (({lhs}) = ({rhs}))")
             }
             FragPrim::I32LtS => {
                 let lhs = expr_fragment_i32_expr(block, args[0], local);
@@ -458,6 +468,7 @@ where
                     | FragPrim::I64LeS
                     | FragPrim::I64LtS
                     | FragPrim::I64GeS
+                    | FragPrim::I32Eq
                     | FragPrim::I32LtS
                     | FragPrim::I32GtS,
                 ..
