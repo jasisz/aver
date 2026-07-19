@@ -5,6 +5,8 @@ package proves the fixed Aver statement about the exact WebAssembly bytes it
 was given. The producer may suggest data, but it cannot choose the checker,
 the accepted theorem shape, or the facts recovered from the artifact.
 
+This document is the architecture: how the verifier reaches its verdict and why the trust boundary sits where it does. See [certification.md](certification.md) for the user guide, and [certificate-format.md](certificate-format.md) for the normative format reference, including the trust inventory and the versioning and freeze policy.
+
 ## Invariants
 
 The design keeps five authority rules explicit:

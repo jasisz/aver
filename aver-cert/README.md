@@ -98,7 +98,8 @@ step's whole process tree is stopped and the certificate is not accepted.
 
 See the [certificate guide](../docs/certification.md) and
 [architecture](../docs/certification-architecture.md) for the guarantee and
-trust boundary.
+trust boundary, and the [format specification](../docs/certificate-format.md)
+for the normative reference, trust inventory, and versioning policy.
 
 ## Library and features
 
