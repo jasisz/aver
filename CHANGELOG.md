@@ -2,6 +2,23 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.27.1 — 2026-07-19
+
+### Added
+
+- **A normative certificate format specification** for anyone reimplementing the verifier independently: `docs/certificate-format.md` documents the on-disk package, exactly what acceptance requires (as opposed to what the producer happens to emit), the trust inventory, and the versioning and freeze policy.
+
+### Changed
+
+- **`aver compile --certify` now certifies modules that don't use the Int runtime helper.** Carrierless modules no longer hard-fail; the host-role table is optional and pinned three ways, so a module without the `__rt_aint_from_i64` helper is proven carrierless from the bytes rather than rejected.
+- **The trusted certificate report prints only kernel-pinned facts.** Values that are declared but not kernel-pinned — such as the source-level domain and codomain prose — now appear only under `aver cert explain`, labelled as declared.
+- **`aver cert verify` is faster.** The final `leanchecker --fresh` replay no longer re-checks Lean's metaprogramming library, which the certificate does not depend on.
+
+### Fixed
+
+- **User-defined ADT, string, and arithmetic obligations are pinned to the exact module bytes.** This closes a gap where such an obligation could be satisfied by a value that did not match the shipped bytes; the acceptance proof now ties each obligation to the module's actual bytes.
+- **The verifier enforces wall-clock timeouts on its subprocesses,** so a hung or slow checker step fails closed instead of blocking indefinitely.
+
 ## 0.27.0 "Witness" — 2026-07-15
 
 Named for the proof carried beside the artifact: Aver binaries can now ship a Lean witness about their exact bytes, checked independently of the compiler.
