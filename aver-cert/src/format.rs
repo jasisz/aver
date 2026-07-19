@@ -108,4 +108,26 @@ mod tests {
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(unique.len(), WASM_GC_CAPABILITIES.len());
     }
+
+    /// The format specification (`docs/certificate-format.md`) prints the wall
+    /// identity and the wall source count verbatim; both are hand-written and
+    /// silently go stale when the wall changes (they did: the spec once printed
+    /// a wall id and count from an earlier wall). An independent reimplementor
+    /// takes these as normative, so a stale value makes the spec reject every
+    /// real package. Keep the doc pinned to reality.
+    #[test]
+    fn format_spec_states_the_current_wall_identity_and_source_count() {
+        let spec = include_str!("../../docs/certificate-format.md");
+        assert!(
+            spec.contains(CURRENT_WALL_ID),
+            "certificate-format.md does not state the current wall id {CURRENT_WALL_ID}; \
+             update the wall identity printed in the spec"
+        );
+        let count_phrase = format!("{} embedded `.lean` wall sources", crate::wall::SOURCES.len());
+        assert!(
+            spec.contains(&count_phrase),
+            "certificate-format.md does not state \"{count_phrase}\"; \
+             update the wall source count printed in the spec"
+        );
+    }
 }
