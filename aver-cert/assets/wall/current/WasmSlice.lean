@@ -240,6 +240,41 @@ def exprProjectionFace? (plan : AverCert.Schema.ExprFragmentRawPlan) :
     | _ => none
   else none
 
+/-- Byte-level recognizer of the tag-dispatch shape (mirror of the representation
+    plan; lives here because WasmSlice cannot import StandardFace). Returns the
+    scrutinee struct index. -/
+def exprTagDispatchStructIdx? (plan : AverCert.Schema.ExprFragmentRawPlan) : Option Nat :=
+  if plan.params = [.adtRef] && plan.result = .intCarrier && plan.body.result = 4 then
+    match plan.body.nodes with
+    | [n0, n1, n2, n3, n4] =>
+        match n0.kind, n1.kind, n2.kind, n3.kind, n4.kind with
+        | .local 0, .structGetUser structIdx 0 0, .constI32 _, .prim .i32Eq [1, 2], .ifElse 3 _ _ =>
+            if n0.ty = .adtRef && n1.ty = .rawI32 && n2.ty = .rawI32 &&
+                n3.ty = .boolI32 && n4.ty = .intCarrier
+            then some structIdx else none
+        | _, _, _, _, _ => none
+    | _ => none
+  else none
+
+/-- The scrutinee struct's field 0 must be the i32 operational tag. Guard
+    structIdx≠carrier (the Int carrier is never the scrutinee). -/
+def checkTagDispatchTypes (carrier structIdx : Nat) (structEntry : CertDecode.TypeEntry) : Bool :=
+  if structIdx == carrier then false else
+  match structEntry.form, structEntry.composite with
+  | .plain, .structType fields =>
+      match (fields[0]? : Option CertDecode.FieldType) with
+      | some { storage := .val (.numeric 0x7f), .. } => true
+      | _ => false
+  | _, _ => false
+
+def exprTagDispatchTypesMatch (modBytes modLen carrier structIdx : Nat) : Bool :=
+  match CertDecode.decodeTypes modBytes modLen with
+  | some info =>
+      match info.entryIndex[structIdx]? with
+      | some structEntry => checkTagDispatchTypes carrier structIdx structEntry
+      | none => false
+  | none => false
+
 /-- Opaque references fail closed unless the plan has the exact projection
     face whose nominal signature and field type can be decoded above. -/
 def exprFragmentNominalTypesMatch
@@ -250,7 +285,10 @@ def exprFragmentNominalTypesMatch
     | some (structIdx, fieldIdx) =>
         exprProjectionTypesMatch
           modBytes modLen typeIdx carrier structIdx fieldIdx
-    | none => false
+    | none =>
+        match exprTagDispatchStructIdx? plan with
+        | some structIdx => exprTagDispatchTypesMatch modBytes modLen carrier structIdx
+        | none => false
   else true
 
 def isNonnegativeNullableRef : CertDecode.ValType → Bool
