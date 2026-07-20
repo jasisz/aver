@@ -719,10 +719,11 @@ def intDispatchCanonicalHost
     The function index is tied to the obligation through
     `binding.funcIdx = obligation.self`, and the obligation's code table must
     carry exactly the plan-lowered body WITH the canonical byte-derived locals
-    count (`armCount + 2`, exactly what the byte lowering declares in the
-    locals vector): an existentially-free `nlocals` would let an honest-bytes
-    artifact claim a 0-locals table whose body traps on its first `local.set`,
-    making the partial-correctness obligation vacuously true. -/
+    count (`bindArmCount + 2`, exactly what the byte lowering declares in the
+    locals vector — a const/nullary arm spills no per-arm local): an
+    existentially-free `nlocals` would let an honest-bytes artifact claim a
+    0-locals table whose body traps on its first `local.set`, making the
+    partial-correctness obligation vacuously true. -/
 def intDispatchPlanAccepted
     (modBytes modLen : Nat)
     (exportNameBytes : AverCert.WasmSlice.ByteSeq)
@@ -747,7 +748,7 @@ def intDispatchPlanAccepted
         modBytes modLen binding.typeIdx (.refNull carrier) = true ∧
       obligation.code binding.funcIdx =
         some { arity := 1,
-               nlocals := AverCert.PlanCheck.intDispatchArmCount plan.body + 2,
+               nlocals := AverCert.PlanCheck.bindArmCount plan.body + 2,
                body := body }
 
 def intDispatchPlanForExport

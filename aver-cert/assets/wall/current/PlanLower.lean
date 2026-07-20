@@ -168,6 +168,7 @@ lacks fail-closes the lowering. -/
 def lowerIntDispatchArm
     (hostTable : List (HostRole × Nat)) (S F tyIdx : Nat) :
     IntDispatchLeaf → Option (List WInstr)
+  | .const _ => none
   | .proj =>
       some [.localGet S, .refCast tyIdx, .structGet tyIdx 0, .localSet F, .localGet F]
   | .hostOp role k constFirst =>
@@ -189,6 +190,16 @@ def lowerIntDispatchCascade
       match AverCert.PlanCheck.hostRoleIdx? hostTable .box with
       | some boxIdx => some [.i64Const k, .call boxIdx]
       | none => none
+  | pos, first, .test tyIdx (.const k) rest =>
+      -- A const (nullary) arm reads no field and spills no local: its if-branch
+      -- is the terminal-style `i64.const k; call box` (NO projection prefix), and
+      -- the binding position `pos` does not advance.
+      match AverCert.PlanCheck.hostRoleIdx? hostTable .box,
+            lowerIntDispatchCascade hostTable S pos false rest with
+      | some boxIdx, some restInstrs =>
+          some ((if first then [] else [.localGet S]) ++
+            [.refTest tyIdx, .ifElse [.i64Const k, .call boxIdx] restInstrs])
+      | _, _ => none
   | pos, first, .test tyIdx hit rest =>
       match lowerIntDispatchArm hostTable S (pos + 1) tyIdx hit,
             lowerIntDispatchCascade hostTable S (pos + 1) false rest with
@@ -200,7 +211,7 @@ def lowerIntDispatchCascade
 def lowerIntDispatchBody
     (hostTable : List (HostRole × Nat))
     (plan : IntDispatchRawPlan) : Option (List WInstr) :=
-  let S := AverCert.PlanCheck.intDispatchArmCount plan.body + 1
+  let S := AverCert.PlanCheck.bindArmCount plan.body + 1
   match lowerIntDispatchCascade hostTable S 0 true plan.body with
   | some cascade => some ([.localGet 0, .localSet S, .localGet S] ++ cascade)
   | none => none

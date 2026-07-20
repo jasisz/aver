@@ -40,6 +40,9 @@ enum IntDispatchLeaf {
         k: i64,
         const_first: bool,
     },
+    /// Return the constant `k` without reading a field (a nullary constructor's
+    /// arm): `i64.const k; call box`, NO projection prefix, NO per-arm spill.
+    Const { k: i64 },
 }
 
 /// A right-nested Int-face `ref.test` dispatch cascade. Rust twin of Lean
@@ -83,10 +86,20 @@ impl IntDispatchHostTable {
     }
 }
 
-fn int_dispatch_arm_count(c: &IntDispatchCascade) -> usize {
+/// The number of PAYLOAD-BINDING (`Proj`/`HostOp`) arms. A `Const` (nullary) arm
+/// spills no per-arm payload local, so the scratch-local layout is a function of
+/// this count, not the total arm count: the `i`-th binding arm spills to local
+/// `i+1`, the scrutinee is local `bind_arm_count + 1`. Twin of Lean
+/// `PlanCheck.bindArmCount`.
+fn int_dispatch_bind_arm_count(c: &IntDispatchCascade) -> usize {
     match c {
         IntDispatchCascade::Default(_) => 0,
-        IntDispatchCascade::Test { rest, .. } => int_dispatch_arm_count(rest) + 1,
+        IntDispatchCascade::Test {
+            hit: IntDispatchLeaf::Const { .. },
+            rest,
+            ..
+        } => int_dispatch_bind_arm_count(rest),
+        IntDispatchCascade::Test { rest, .. } => int_dispatch_bind_arm_count(rest) + 1,
     }
 }
 
@@ -134,6 +147,7 @@ fn int_dispatch_plan_from_cert(c: &Cert, strict: FragHostTable) -> Option<IntDis
             for (tag, leaf) in arms.iter().rev() {
                 let hit = match leaf {
                     ArmLeaf::Proj => IntDispatchLeaf::Proj,
+                    ArmLeaf::Const { k } => IntDispatchLeaf::Const { k: *k },
                     ArmLeaf::HostOp {
                         role,
                         k,
@@ -236,11 +250,12 @@ fn lower_int_dispatch_body_bytes(
     carrier: u32,
     hosts: &IntDispatchHostTable,
 ) -> Option<Vec<u8>> {
-    let arm_count = int_dispatch_arm_count(&plan.body);
+    let arm_count = int_dispatch_bind_arm_count(&plan.body);
     let s = (arm_count + 1) as u32;
     let mut out = Vec::new();
-    // Local declarations: arm payload spills, the eqref scrutinee, the unused
-    // carrier scratch — `arm_count + 2` single-local groups.
+    // Local declarations: per-binding-arm payload spills, the eqref scrutinee,
+    // the unused carrier scratch — `bind_arm_count + 2` single-local groups. A
+    // const (nullary) arm declares no spill group.
     push_u32_leb(&mut out, (arm_count + 2) as u32);
     for _ in 0..arm_count {
         out.extend_from_slice(&[0x01, 0x63]);
@@ -284,9 +299,24 @@ fn int_dispatch_cascade_bytes(
             push_s33_heap_idx(out, *ty_idx);
             out.extend_from_slice(&[0x04, 0x63]);
             push_s33_heap_idx(out, carrier);
-            int_dispatch_arm_bytes(out, hosts, s, pos + 1, *ty_idx, hit)?;
+            // A const (nullary) arm emits the boxed constant inline (no projection
+            // prefix) and does NOT advance the binding position; a binding arm
+            // spills its payload to local `pos + 1` and advances.
+            let next_pos = match hit {
+                IntDispatchLeaf::Const { k } => {
+                    out.push(0x42);
+                    push_i64_leb(out, *k);
+                    out.push(0x10);
+                    push_u32_leb(out, hosts.box_idx);
+                    pos
+                }
+                _ => {
+                    int_dispatch_arm_bytes(out, hosts, s, pos + 1, *ty_idx, hit)?;
+                    pos + 1
+                }
+            };
             out.push(0x05);
-            int_dispatch_cascade_bytes(out, carrier, hosts, s, pos + 1, false, rest)?;
+            int_dispatch_cascade_bytes(out, carrier, hosts, s, next_pos, false, rest)?;
             out.push(0x0b);
             Some(())
         }
@@ -313,6 +343,9 @@ fn int_dispatch_arm_bytes(
     out.push(0x21);
     push_u32_leb(out, f);
     match leaf {
+        // A const arm is lowered inline by the cascade (no projection prefix); it
+        // never reaches this projection-based arm lowering.
+        IntDispatchLeaf::Const { .. } => None,
         IntDispatchLeaf::Proj => {
             out.push(0x20);
             push_u32_leb(out, f);
@@ -365,6 +398,7 @@ fn int_dispatch_host_table_lean_value(hosts: &IntDispatchHostTable) -> String {
 fn int_dispatch_leaf_lean_value(l: &IntDispatchLeaf) -> String {
     match l {
         IntDispatchLeaf::Proj => ".proj".to_string(),
+        IntDispatchLeaf::Const { k } => format!(".const ({k})"),
         IntDispatchLeaf::HostOp {
             role,
             k,

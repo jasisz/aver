@@ -1188,6 +1188,23 @@ def intDispatchArmCount : IntDispatchCascade → Nat
   | .default _ => 0
   | .test _ _ rest => intDispatchArmCount rest + 1
 
+/-- Whether one leaf spills a per-arm payload local: `proj`/`hostOp` read the
+    payload and spill one; a `const` arm reads no field and spills none. -/
+def bindArmLeaf : IntDispatchLeaf → Nat
+  | .proj => 1
+  | .hostOp _ _ _ => 1
+  | .const _ => 0
+
+/-- The number of PAYLOAD-BINDING (`proj`/`hostOp`) `test` arms in a cascade. A
+    `const` arm does not contribute to the scratch-local layout: the `i`-th
+    binding arm spills to local `i+1` and the scrutinee is local
+    `bindArmCount + 1`. This is what both lowerers thread and what the generic
+    simulation is parameterized over; `intDispatchArmCount` (which counts every
+    arm) is retained where total arm count is meant. -/
+def bindArmCount : IntDispatchCascade → Nat
+  | .default _ => 0
+  | .test _ leaf rest => bindArmLeaf leaf + bindArmCount rest
+
 /-- The `HostRole` an Int-face arm combinator resolves through in the
     byte-derived role table. -/
 def intDispatchRoleHostRole : IntDispatchRole → HostRole

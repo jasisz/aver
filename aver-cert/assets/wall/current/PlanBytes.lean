@@ -401,6 +401,7 @@ def intDispatchProjBytes (S F tyIdx : Nat) : Option (List Nat) :=
 def lowerIntDispatchArmBytes
     (hostTable : List (HostRole × Nat)) (S F tyIdx : Nat) :
     IntDispatchLeaf → Option (List Nat)
+  | .const _ => none
   | .proj =>
       match intDispatchProjBytes S F tyIdx, uleb32 F with
       | some proj, some fB => some (proj ++ [0x20] ++ fB)
@@ -428,6 +429,19 @@ def lowerIntDispatchCascadeBytes
     (hostTable : List (HostRole × Nat)) (carrier S : Nat) :
     Nat → Bool → IntDispatchCascade → Option (List Nat)
   | _pos, _first, .default k => intDispatchDefaultBytes hostTable k
+  | pos, first, .test tyIdx (.const k) rest =>
+      -- A const (nullary) arm: the hit block is the boxed constant with NO
+      -- projection prefix (byte-identical to a default), and the binding
+      -- position `pos` does not advance (no per-arm payload spill).
+      match (if first then some ([] : List Nat)
+             else (uleb32 S).map (fun b => [0x20] ++ b)),
+            s33HeapIdx tyIdx, s33HeapIdx carrier,
+            intDispatchDefaultBytes hostTable k,
+            lowerIntDispatchCascadeBytes hostTable carrier S pos false rest with
+      | some reload, some testTy, some blockTy, some hitBytes, some restBytes =>
+          some (reload ++ [0xfb, 0x14] ++ testTy ++ [0x04, 0x63] ++ blockTy ++
+                hitBytes ++ [0x05] ++ restBytes ++ [0x0b])
+      | _, _, _, _, _ => none
   | pos, first, .test tyIdx hit rest =>
       match (if first then some ([] : List Nat)
              else (uleb32 S).map (fun b => [0x20] ++ b)),
@@ -447,9 +461,10 @@ def lowerIntDispatchExprBytes
       some ([0x20, 0x00] ++ [0x21] ++ sB ++ [0x20] ++ sB ++ cascadeBytes ++ [0x0b])
   | _, _ => none
 
-/-- Local declarations: `armCount` single-local carrier-ref groups (the per-arm
-    payload spills), one eqref group (the scrutinee), and one trailing unused
-    carrier scratch group — `armCount + 2` groups in all. -/
+/-- Local declarations: `bindArmCount` single-local carrier-ref groups (the
+    per-binding-arm payload spills), one eqref group (the scrutinee), and one
+    trailing unused carrier scratch group — `bindArmCount + 2` groups in all. A
+    const (nullary) arm declares no spill group. -/
 def intDispatchArmLocalGroups (carrierB : List Nat) : Nat → List Nat
   | 0 => []
   | n + 1 => [0x01, 0x63] ++ carrierB ++ intDispatchArmLocalGroups carrierB n
@@ -464,7 +479,7 @@ def lowerIntDispatchLocalsBytes (carrier armCount : Nat) : Option (List Nat) :=
 def lowerIntDispatchBodyBytes
     (carrier : Nat) (hostTable : List (HostRole × Nat))
     (plan : IntDispatchRawPlan) : Option (List Nat) :=
-  let armCount := AverCert.PlanCheck.intDispatchArmCount plan.body
+  let armCount := AverCert.PlanCheck.bindArmCount plan.body
   match lowerIntDispatchLocalsBytes carrier armCount,
         lowerIntDispatchExprBytes hostTable carrier (armCount + 1) plan.body with
   | some localsBytes, some exprBytes => some (localsBytes ++ exprBytes)

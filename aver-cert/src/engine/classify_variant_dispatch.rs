@@ -105,11 +105,12 @@ fn dispatch_chain(
     Some((rest, default_k))
 }
 
-/// Classify one hit arm as a leaf. The arm must open with the payload
-/// projection `localGet 0; refCast tag; structGet tag 0`; the remainder is
-/// either empty (projection), a boxed constant fed to a contracted host with
-/// the payload first, or — through the emitter's one-local spill — the
-/// constant first. Anything else: no leaf.
+/// Classify one hit arm as a leaf. A nullary (payloadless) constructor's arm is
+/// just a boxed constant with NO projection prefix (`i64.const k; call box`). A
+/// payload-binding arm opens with the projection `localGet 0; refCast tag;
+/// structGet tag 0`; the remainder is either empty (projection), a boxed
+/// constant fed to a contracted host with the payload first, or — through the
+/// emitter's one-local spill — the constant first. Anything else: no leaf.
 fn leaf_of_arm(
     ops: &[Op],
     tag: u32,
@@ -117,6 +118,12 @@ fn leaf_of_arm(
     host_roles: &std::collections::HashMap<u32, HostRole>,
 ) -> Option<ArmLeaf> {
     use Op::*;
+    // Const (nullary) arm: no projection prefix, a boxed constant.
+    if let [I64Const(k), Call(b)] = ops
+        && *b == box_idx
+    {
+        return Some(ArmLeaf::Const { k: *k });
+    }
     let rest = match ops {
         [LocalGet(0), RefCast(t), StructGet(t2, 0), rest @ ..] if t == &tag && t2 == &tag => rest,
         _ => return None,

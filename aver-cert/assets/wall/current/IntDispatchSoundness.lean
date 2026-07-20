@@ -17,6 +17,7 @@ def evalLeaf : IntDispatchLeaf → Int → Int
   | .hostOp .add k false, x => x + k
   | .hostOp .sub k true, x => k - x
   | .hostOp .sub k false, x => x - k
+  | .const k, _ => k
 
 /-- `EvalCascade S body tag fields n` is the semantic meaning of one admitted
     dispatch input. It relates the byte-origin plan to the existing source
@@ -29,19 +30,39 @@ inductive EvalCascade {C : Nat} (S : CarrierSpec C) :
       (fields : List WVal) (x : Int) (v : WVal)
       (hfield : fields[0]? = some v) (hrepr : S.Repr x v) :
       EvalCascade S (.test tyIdx leaf rest) tyIdx fields (evalLeaf leaf x)
+  | constHit (tyIdx : Nat) (k : Int) (rest : IntDispatchCascade) (fields : List WVal) :
+      EvalCascade S (.test tyIdx (.const k) rest) tyIdx fields k
   | miss (tyIdx tag : Nat) (leaf : IntDispatchLeaf) (rest : IntDispatchCascade)
       (fields : List WVal) (n : Int) (hne : tag ≠ tyIdx)
       (hrest : EvalCascade S rest tag fields n) :
       EvalCascade S (.test tyIdx leaf rest) tag fields n
 
+/-- Matched inversion for a payload-BINDING arm. A `const` matched arm has no
+    field, so `constHit` is excluded here by the leaf hypothesis (the caller
+    already discriminates `proj`/`hostOp` from `const`). -/
 theorem evalCascade_hit_inv {C : Nat} {S : CarrierSpec C}
     {tyIdx : Nat} {leaf : IntDispatchLeaf} {rest : IntDispatchCascade}
     {fields : List WVal} {n : Int}
+    (hnc : ∀ k, leaf ≠ .const k)
     (h : EvalCascade S (.test tyIdx leaf rest) tyIdx fields n) :
     ∃ x v, fields[0]? = some v ∧ S.Repr x v ∧ n = evalLeaf leaf x := by
   cases h with
   | hit _ _ _ _ x v hfield hrepr => exact ⟨x, v, hfield, hrepr, rfl⟩
+  | constHit => exact absurd rfl (hnc _)
   | miss _ _ _ _ _ _ hne _ => exact False.elim (hne rfl)
+
+/-- Matched inversion for a `const` arm: the result is the constant, whether the
+    witness was `constHit` or a `hit` carrying a `.const` leaf (which evaluates to
+    the same constant regardless of the field). Reads no field. -/
+theorem evalCascade_constHit_inv {C : Nat} {S : CarrierSpec C}
+    {tyIdx : Nat} {k : Int} {rest : IntDispatchCascade}
+    {fields : List WVal} {n : Int}
+    (h : EvalCascade S (.test tyIdx (.const k) rest) tyIdx fields n) :
+    n = k := by
+  cases h with
+  | hit _ _ _ _ x v hfield hrepr => rfl
+  | constHit => rfl
+  | miss _ _ _ _ _ _ hne _ => exact absurd rfl hne
 
 theorem evalCascade_miss_inv {C : Nat} {S : CarrierSpec C}
     {tyIdx tag : Nat} {leaf : IntDispatchLeaf} {rest : IntDispatchCascade}
@@ -50,6 +71,7 @@ theorem evalCascade_miss_inv {C : Nat} {S : CarrierSpec C}
     EvalCascade S rest tag fields n := by
   cases h with
   | hit _ _ _ _ _ _ _ _ => exact False.elim (hne rfl)
+  | constHit => exact False.elim (hne rfl)
   | miss _ _ _ _ _ _ _ hrest => exact hrest
 
 /-- The template's stack invariant at a block boundary: a successful sub-block
@@ -148,6 +170,10 @@ theorem simLeaf {C : Nat} (S : CarrierSpec C)
       BlockOK S host ar callee (evalLeaf leaf x) base instrs locals base := by
   intro leaf instrs base hlow
   cases leaf with
+  | const k =>
+      -- A const arm never lowers through `lowerIntDispatchArm` (it is emitted
+      -- inline in the cascade); the projection lowering fail-closes.
+      simp [AverCert.PlanLower.lowerIntDispatchArm] at hlow
   | proj =>
       simp only [AverCert.PlanLower.lowerIntDispatchArm, Option.some.injEq] at hlow
       subst instrs
@@ -216,6 +242,18 @@ theorem simLeaf {C : Nat} (S : CarrierSpec C)
                             hset, hbox, boxRef, hhost, popArgs_one, popArgs_two,
                             hop, evalLeaf, hw]
 
+/-- `simConstArm`: a const arm's if-branch `[i64.const k, call box]` leaves the
+    represented constant above the unchanged stack — EXACTLY the terminal-default
+    closer (`S.smallIntro k`), now reused inside a `ref.test` `if`. Reads no local
+    and no field, so it is sound for a nullary (payloadless) constructor. -/
+theorem simConstArm {C : Nat} (S : CarrierSpec C)
+    (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
+    (boxIdx : Nat) (hbox : host boxIdx = some (1, boxRef C))
+    (k : Int) (base locals : List WVal) :
+    BlockOK S host ar callee k base [.i64Const k, .call boxIdx] locals base := by
+  simpa [BlockOK, StackOK, wRunF, hbox, boxRef, popArgs_one]
+    using S.smallIntro k
+
 /-! ### Nested cascade simulation -/
 
 theorem simCascade {C : Nat} (S : CarrierSpec C)
@@ -232,7 +270,7 @@ theorem simCascade {C : Nat} (S : CarrierSpec C)
     (hslot : locals[scrutineeLocal]? = some (.structv tag fields)) :
     ∀ body pos first n instrs base,
       EvalCascade S body tag fields n →
-      pos + AverCert.PlanCheck.intDispatchArmCount body < locals.length →
+      pos + AverCert.PlanCheck.bindArmCount body < locals.length →
       (match body with | .default _ => first = false | .test _ _ _ => True) →
       AverCert.PlanLower.lowerIntDispatchCascade hostTable scrutineeLocal
           pos first body = some instrs →
@@ -256,44 +294,135 @@ theorem simCascade {C : Nat} (S : CarrierSpec C)
             using S.smallIntro k
   | test tyIdx leaf rest ih =>
       intro pos first n instrs base hsem hlen _hfirst hlow
-      cases ha : AverCert.PlanLower.lowerIntDispatchArm hostTable
-          scrutineeLocal (pos + 1) tyIdx leaf with
-      | none => simp [AverCert.PlanLower.lowerIntDispatchCascade, ha] at hlow
-      | some hitInstrs =>
-          cases hr : AverCert.PlanLower.lowerIntDispatchCascade hostTable
-              scrutineeLocal (pos + 1) false rest with
-          | none => simp [AverCert.PlanLower.lowerIntDispatchCascade, ha, hr] at hlow
-          | some restInstrs =>
-              simp only [AverCert.PlanLower.lowerIntDispatchCascade, ha, hr,
-                Option.some.injEq] at hlow
-              subst instrs
-              have hfieldLocal : pos + 1 < locals.length := by
-                simp only [AverCert.PlanCheck.intDispatchArmCount] at hlen
-                omega
-              by_cases htag : tag = tyIdx
-              · subst tag
-                obtain ⟨x, v, hfield, hrepr, hn⟩ := evalCascade_hit_inv hsem
-                subst n
-                have hhit := simLeaf S host ar callee hostTable add sub hslots
-                  hadd hsub scrutineeLocal (pos + 1) tyIdx locals fields x v
-                  hslot hfieldLocal hfield hrepr leaf hitInstrs base ha
-                have hif := blockOK_ifElse S host ar callee
-                  (evalLeaf leaf x) base hitInstrs restInstrs locals base true
-                  (by simpa using hhit)
-                cases first <;>
-                  simpa [BlockOK, StackOK, wRunF, hslot, b32] using hif
-              · have hrest := evalCascade_miss_inv htag hsem
-                have hrestLen : pos + 1 +
-                    AverCert.PlanCheck.intDispatchArmCount rest < locals.length := by
-                  simp only [AverCert.PlanCheck.intDispatchArmCount] at hlen
-                  omega
-                have htail := ih (pos + 1) false n restInstrs base hrest
-                  hrestLen (by cases rest <;> simp) hr
-                have hif := blockOK_ifElse S host ar callee n base
-                  hitInstrs restInstrs locals base false (by simpa using htail)
-                cases first <;>
-                  simp [BlockOK, StackOK, wRunF, hslot, b32, htag] at hif ⊢ <;>
-                  exact hif
+      cases leaf with
+      | const k =>
+          -- Const arm: the if-branch is the boxed constant (no projection), the
+          -- binding position does not advance. Closes via `simConstArm`.
+          cases hb : AverCert.PlanCheck.hostRoleIdx? hostTable .box with
+          | none => simp [AverCert.PlanLower.lowerIntDispatchCascade, hb] at hlow
+          | some boxIdx =>
+              cases hr : AverCert.PlanLower.lowerIntDispatchCascade hostTable
+                  scrutineeLocal pos false rest with
+              | none =>
+                  simp [AverCert.PlanLower.lowerIntDispatchCascade, hb, hr] at hlow
+              | some restInstrs =>
+                  simp only [AverCert.PlanLower.lowerIntDispatchCascade, hb, hr,
+                    Option.some.injEq] at hlow
+                  subst instrs
+                  have hbox := hslots.1 boxIdx hb
+                  by_cases htag : tag = tyIdx
+                  · subst tag
+                    have hn : n = k := evalCascade_constHit_inv hsem
+                    subst n
+                    have harm : BlockOK S host ar callee k base
+                        [.i64Const k, .call boxIdx] locals base :=
+                      simConstArm S host ar callee boxIdx hbox k base locals
+                    have hif := blockOK_ifElse S host ar callee k base
+                      [.i64Const k, .call boxIdx] restInstrs locals base true
+                      (by simpa using harm)
+                    cases first <;>
+                      simpa [BlockOK, StackOK, wRunF, hslot, b32] using hif
+                  · have hrest := evalCascade_miss_inv htag hsem
+                    have hrestLen :
+                        pos + AverCert.PlanCheck.bindArmCount rest < locals.length := by
+                      simp only [AverCert.PlanCheck.bindArmCount,
+                        AverCert.PlanCheck.bindArmLeaf] at hlen
+                      omega
+                    have htail := ih pos false n restInstrs base hrest
+                      hrestLen (by cases rest <;> simp) hr
+                    have hif := blockOK_ifElse S host ar callee n base
+                      [.i64Const k, .call boxIdx] restInstrs locals base false
+                      (by simpa using htail)
+                    cases first <;>
+                      simp [BlockOK, StackOK, wRunF, hslot, b32, htag] at hif ⊢ <;>
+                      exact hif
+      | proj =>
+          cases ha : AverCert.PlanLower.lowerIntDispatchArm hostTable
+              scrutineeLocal (pos + 1) tyIdx .proj with
+          | none => simp [AverCert.PlanLower.lowerIntDispatchCascade, ha] at hlow
+          | some hitInstrs =>
+              cases hr : AverCert.PlanLower.lowerIntDispatchCascade hostTable
+                  scrutineeLocal (pos + 1) false rest with
+              | none =>
+                  simp [AverCert.PlanLower.lowerIntDispatchCascade, ha, hr] at hlow
+              | some restInstrs =>
+                  simp only [AverCert.PlanLower.lowerIntDispatchCascade, ha, hr,
+                    Option.some.injEq] at hlow
+                  subst instrs
+                  have hfieldLocal : pos + 1 < locals.length := by
+                    simp only [AverCert.PlanCheck.bindArmCount,
+                      AverCert.PlanCheck.bindArmLeaf] at hlen
+                    omega
+                  by_cases htag : tag = tyIdx
+                  · subst tag
+                    obtain ⟨x, v, hfield, hrepr, hn⟩ :=
+                      evalCascade_hit_inv (by intro k h; cases h) hsem
+                    subst n
+                    have hhit := simLeaf S host ar callee hostTable add sub hslots
+                      hadd hsub scrutineeLocal (pos + 1) tyIdx locals fields x v
+                      hslot hfieldLocal hfield hrepr .proj hitInstrs base ha
+                    have hif := blockOK_ifElse S host ar callee
+                      (evalLeaf .proj x) base hitInstrs restInstrs locals base true
+                      (by simpa using hhit)
+                    cases first <;>
+                      simpa [BlockOK, StackOK, wRunF, hslot, b32] using hif
+                  · have hrest := evalCascade_miss_inv htag hsem
+                    have hrestLen : pos + 1 +
+                        AverCert.PlanCheck.bindArmCount rest < locals.length := by
+                      simp only [AverCert.PlanCheck.bindArmCount,
+                        AverCert.PlanCheck.bindArmLeaf] at hlen
+                      omega
+                    have htail := ih (pos + 1) false n restInstrs base hrest
+                      hrestLen (by cases rest <;> simp) hr
+                    have hif := blockOK_ifElse S host ar callee n base
+                      hitInstrs restInstrs locals base false (by simpa using htail)
+                    cases first <;>
+                      simp [BlockOK, StackOK, wRunF, hslot, b32, htag] at hif ⊢ <;>
+                      exact hif
+      | hostOp role kk cf =>
+          cases ha : AverCert.PlanLower.lowerIntDispatchArm hostTable
+              scrutineeLocal (pos + 1) tyIdx (.hostOp role kk cf) with
+          | none => simp [AverCert.PlanLower.lowerIntDispatchCascade, ha] at hlow
+          | some hitInstrs =>
+              cases hr : AverCert.PlanLower.lowerIntDispatchCascade hostTable
+                  scrutineeLocal (pos + 1) false rest with
+              | none =>
+                  simp [AverCert.PlanLower.lowerIntDispatchCascade, ha, hr] at hlow
+              | some restInstrs =>
+                  simp only [AverCert.PlanLower.lowerIntDispatchCascade, ha, hr,
+                    Option.some.injEq] at hlow
+                  subst instrs
+                  have hfieldLocal : pos + 1 < locals.length := by
+                    simp only [AverCert.PlanCheck.bindArmCount,
+                      AverCert.PlanCheck.bindArmLeaf] at hlen
+                    omega
+                  by_cases htag : tag = tyIdx
+                  · subst tag
+                    obtain ⟨x, v, hfield, hrepr, hn⟩ :=
+                      evalCascade_hit_inv (by intro k h; cases h) hsem
+                    subst n
+                    have hhit := simLeaf S host ar callee hostTable add sub hslots
+                      hadd hsub scrutineeLocal (pos + 1) tyIdx locals fields x v
+                      hslot hfieldLocal hfield hrepr (.hostOp role kk cf) hitInstrs
+                      base ha
+                    have hif := blockOK_ifElse S host ar callee
+                      (evalLeaf (.hostOp role kk cf) x) base hitInstrs restInstrs
+                      locals base true (by simpa using hhit)
+                    cases first <;>
+                      simpa [BlockOK, StackOK, wRunF, hslot, b32] using hif
+                  · have hrest := evalCascade_miss_inv htag hsem
+                    have hrestLen : pos + 1 +
+                        AverCert.PlanCheck.bindArmCount rest < locals.length := by
+                      simp only [AverCert.PlanCheck.bindArmCount,
+                        AverCert.PlanCheck.bindArmLeaf] at hlen
+                      omega
+                    have htail := ih (pos + 1) false n restInstrs base hrest
+                      hrestLen (by cases rest <;> simp) hr
+                    have hif := blockOK_ifElse S host ar callee n base
+                      hitInstrs restInstrs locals base false (by simpa using htail)
+                    cases first <;>
+                      simp [BlockOK, StackOK, wRunF, hslot, b32, htag] at hif ⊢ <;>
+                      exact hif
 
 /-! ### Generic family certificate -/
 
@@ -312,7 +441,7 @@ theorem generic_int_dispatch_certified {C : Nat} (S : CarrierSpec C)
     (hlow : AverCert.PlanLower.lowerIntDispatchBody hostTable plan = some body)
     (hself : code self = some {
       arity := 1,
-      nlocals := AverCert.PlanCheck.intDispatchArmCount plan.body + 2,
+      nlocals := AverCert.PlanCheck.bindArmCount plan.body + 2,
       body := body }) :
     ∀ fuel tag fields n w,
       EvalCascade S plan.body tag fields n →
@@ -321,8 +450,8 @@ theorem generic_int_dispatch_certified {C : Nat} (S : CarrierSpec C)
   intro fuel tag fields n w hsem hrun
   rcases hroot with ⟨rootTy, rootLeaf, rootRest, hroot⟩
   simp only [wFuncN, hself] at hrun
-  let nlocals := AverCert.PlanCheck.intDispatchArmCount plan.body + 2
-  let scrutineeLocal := AverCert.PlanCheck.intDispatchArmCount plan.body + 1
+  let nlocals := AverCert.PlanCheck.bindArmCount plan.body + 2
+  let scrutineeLocal := AverCert.PlanCheck.bindArmCount plan.body + 1
   let locals : List WVal := [WVal.structv tag fields] ++
     List.replicate nlocals WVal.null
   let updated := locals.set scrutineeLocal (WVal.structv tag fields)
@@ -330,7 +459,7 @@ theorem generic_int_dispatch_certified {C : Nat} (S : CarrierSpec C)
     simp [scrutineeLocal, locals, nlocals]
   have hslot : updated[scrutineeLocal]? = some (.structv tag fields) := by
     exact List.getElem?_set_self hslt
-  have hlen : 0 + AverCert.PlanCheck.intDispatchArmCount plan.body <
+  have hlen : 0 + AverCert.PlanCheck.bindArmCount plan.body <
       updated.length := by
     simp [updated, locals, nlocals]
     omega

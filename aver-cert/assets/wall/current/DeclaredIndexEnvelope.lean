@@ -289,9 +289,12 @@ def checkDIdxEnvelope (env : DIdxEnvelope) : Bool :=
 /-! ## §3 Wall-owned meaning terms over the PLAN (no decode output)
 
 Identical discipline to `WidenedEnvelope`, but the carrier index is the DECLARED
-`env.carrier`, not `wCarrierIdx`. The model reads only the `hit` constructor's Int
-payload; a non-hit payload is opaque and `toInt?` sends it to `none`, which — since
-`dCascadeInEnv` forces every tested tag to be `hit` — never reaches a projection. -/
+`env.carrier`, not `wCarrierIdx`. A payload-BINDING (`proj`/`hostOp`) arm reads the
+`hit` constructor's Int payload; a `const` arm reads NO field and returns its
+constant regardless of the (possibly absent) payload, so it is sound at any
+declared constructor — including a nullary (`unit`) one. `dCascadeEval` is the
+declared-face model that gives a matched `const` arm its constant directly; a
+non-hit payload under a BINDING arm is excluded by `dCascadeInEnv`. -/
 
 def DEnvValidChild (env : DIdxEnvelope) (tag : Nat) (p : WPayload) : Prop :=
   (dCtorShape? env tag = some .hit ∧ ∃ n, p = .int n) ∨
@@ -307,14 +310,39 @@ def dEnvDomRepr (env : DIdxEnvelope) :
     | .int n => ∃ v, vs = [.structv x.1.1 [v]] ∧ S.Repr n v
     | .opaqueFields fs => vs = [.structv x.1.1 fs]
 
+/-- Declared-face cascade model. Like `EnvelopeLowering.cascadeEval` but a matched
+    `const` arm returns its constant WITHOUT consulting the payload: without this,
+    a nullary value (`payload = none`) would send every arm through `none.map _`
+    to the wrong `getD 0 = 0`. Kept separate from the shared `cascadeEval` so the
+    narrow/widened bridges (which never carry a `const` arm) are untouched. -/
+def dCascadeEval : IntDispatchCascade → Nat → Option Int → Option Int
+  | .default k, _, _ => some k
+  | .test tyIdx leaf rest, tag, payload =>
+      if tag = tyIdx then
+        (match leaf with
+         | .const k => some k
+         | _ => payload.map (IntDispatchSoundness.evalLeaf leaf))
+      else dCascadeEval rest tag payload
+
 def dEnvStructModel (env : DIdxEnvelope) (body : IntDispatchCascade) :
     DAdtVal env → Int :=
-  fun x => (cascadeEval body x.1.1 x.1.2.toInt?).getD 0
+  fun x => (dCascadeEval body x.1.1 x.1.2.toInt?).getD 0
 
+/-- Plan-INTERNAL declared-envelope consistency, LEAF-AWARE. A payload-BINDING
+    (`proj`/`hostOp`) arm projects the tested variant's field, so its tag must be a
+    declared `hit` (Int-payload) constructor. A `const` arm reads no field, so its
+    tag need only be a DECLARED constructor of any shape (a nullary `unit` is
+    fine). A uniform `= some .hit` would wrongly reject the nullary const arms; a
+    uniform `.isSome` would be UNSOUND for a binding arm (it could project an
+    opaque non-Int payload). -/
 def dCascadeInEnv (env : DIdxEnvelope) : IntDispatchCascade → Bool
   | .default _ => true
-  | .test tyIdx _ rest =>
-      decide (dCtorShape? env tyIdx = some .hit) && dCascadeInEnv env rest
+  | .test tyIdx leaf rest =>
+      (match leaf with
+       | .const _ => (dCtorShape? env tyIdx).isSome
+       | .proj => decide (dCtorShape? env tyIdx = some .hit)
+       | .hostOp _ _ _ => decide (dCtorShape? env tyIdx = some .hit)) &&
+      dCascadeInEnv env rest
 
 /-! ## §4 The declared-index Int-read face
 
@@ -340,11 +368,14 @@ def DIdxIntReadFace
   HEq o.codRepr (@AverCert.Schema.intRepr env.carrier) ∧
   HEq o.model (dEnvStructModel env plan.body)
 
-/-! ## §5 The positive bridge (reads only hit)
+/-! ## §5 The positive bridge (BINDING arms read hit, CONST arms read nothing)
 
 On any represented declared value the byte-origin `EvalCascade` relates it to
-exactly the plan-computed `cascadeEval` result, whatever the non-hit payload
-shapes. Mirrors `WidenedEnvelope.wCascade_bridge` over the declared carrier. -/
+exactly the plan-computed `dCascadeEval` result. A matched `const` arm relates by
+`constHit` (reads no field, sound for a nullary value); a matched BINDING arm
+relates by `hit` (its tag is `hit`, so the value carries the readable Int payload);
+a non-matched tag recurses through `miss` regardless of leaf shape. Mirrors
+`WidenedEnvelope.wCascade_bridge` over the declared carrier, extended with `const`. -/
 
 theorem dCascade_bridge (env : DIdxEnvelope) (body : IntDispatchCascade)
     (hcasc : dCascadeInEnv env body = true)
@@ -353,7 +384,7 @@ theorem dCascade_bridge (env : DIdxEnvelope) (body : IntDispatchCascade)
     ∃ tag fields,
       vs = [.structv tag fields] ∧
       IntDispatchSoundness.EvalCascade S body tag fields
-        ((cascadeEval body x.1.1 x.1.2.toInt?).getD 0) := by
+        ((dCascadeEval body x.1.1 x.1.2.toInt?).getD 0) := by
   induction body with
   | default k =>
       refine ⟨x.1.1, ?_⟩
@@ -363,33 +394,81 @@ theorem dCascade_bridge (env : DIdxEnvelope) (body : IntDispatchCascade)
           rw [hpay] at hdom
           obtain ⟨v, hvs, _hrepr⟩ := hdom
           refine ⟨[v], hvs, ?_⟩
-          simp only [cascadeEval, Option.getD]
+          simp only [dCascadeEval, Option.getD]
           exact IntDispatchSoundness.EvalCascade.default k x.1.1 [v]
       | opaqueFields fs =>
           rw [hpay] at hdom
           refine ⟨fs, hdom, ?_⟩
-          simp only [cascadeEval, Option.getD]
+          simp only [dCascadeEval, Option.getD]
           exact IntDispatchSoundness.EvalCascade.default k x.1.1 fs
   | test tyIdx leaf rest ih =>
-      simp only [dCascadeInEnv, Bool.and_eq_true, decide_eq_true_eq] at hcasc
-      obtain ⟨hpayTy, hrest⟩ := hcasc
+      simp only [dCascadeInEnv, Bool.and_eq_true] at hcasc
+      obtain ⟨hleaf, hrest⟩ := hcasc
       by_cases htag : x.1.1 = tyIdx
-      · have hchild := x.2
-        unfold DEnvValidChild at hchild
-        rw [htag] at hchild
-        rcases hchild with ⟨_, m, hm⟩ | ⟨c, hcshape, hcne, _⟩
-        · unfold dEnvDomRepr at hdom
-          rw [hm] at hdom
-          obtain ⟨v, hvs, hrepr⟩ := hdom
-          refine ⟨tyIdx, [v], by rw [← htag]; exact hvs, ?_⟩
-          have hce : (cascadeEval (.test tyIdx leaf rest) x.1.1 x.1.2.toInt?).getD 0
-              = IntDispatchSoundness.evalLeaf leaf m := by
-            rw [hm]; simp [cascadeEval, htag, WPayload.toInt?]
-          rw [hce]
-          exact IntDispatchSoundness.EvalCascade.hit tyIdx leaf rest [v] m v rfl hrepr
-        · rw [hpayTy] at hcshape
-          exact absurd (Option.some.inj hcshape).symm hcne
-      · obtain ⟨tag, fields, hvs, hev⟩ := ih hrest
+      · -- matched tag: split on the leaf shape
+        cases leaf with
+        | const kk =>
+            -- const arm: reads no field, sound at any declared shape
+            unfold dEnvDomRepr at hdom
+            cases hpay : x.1.2 with
+            | int m =>
+                rw [hpay] at hdom
+                obtain ⟨v, hvs, _hrepr⟩ := hdom
+                refine ⟨tyIdx, [v], by rw [← htag]; exact hvs, ?_⟩
+                have hce : (dCascadeEval (.test tyIdx (.const kk) rest)
+                    x.1.1 (WPayload.int m).toInt?).getD 0 = kk := by
+                  rw [htag]; simp [dCascadeEval]
+                rw [hce]
+                exact IntDispatchSoundness.EvalCascade.constHit tyIdx kk rest [v]
+            | opaqueFields fs =>
+                rw [hpay] at hdom
+                refine ⟨tyIdx, fs, by rw [← htag]; exact hdom, ?_⟩
+                have hce : (dCascadeEval (.test tyIdx (.const kk) rest)
+                    x.1.1 (WPayload.opaqueFields fs).toInt?).getD 0 = kk := by
+                  rw [htag]; simp [dCascadeEval]
+                rw [hce]
+                exact IntDispatchSoundness.EvalCascade.constHit tyIdx kk rest fs
+        | proj =>
+            have hpayTy : dCtorShape? env tyIdx = some .hit := by
+              simpa using hleaf
+            have hchild := x.2
+            unfold DEnvValidChild at hchild
+            rw [htag] at hchild
+            rcases hchild with ⟨_, m, hm⟩ | ⟨c, hcshape, hcne, _⟩
+            · unfold dEnvDomRepr at hdom
+              rw [hm] at hdom
+              obtain ⟨v, hvs, hrepr⟩ := hdom
+              refine ⟨tyIdx, [v], by rw [← htag]; exact hvs, ?_⟩
+              have hce : (dCascadeEval (.test tyIdx .proj rest)
+                  x.1.1 x.1.2.toInt?).getD 0
+                  = IntDispatchSoundness.evalLeaf .proj m := by
+                rw [hm]; simp [dCascadeEval, htag, WPayload.toInt?]
+              rw [hce]
+              exact IntDispatchSoundness.EvalCascade.hit tyIdx .proj rest [v] m v rfl hrepr
+            · rw [hpayTy] at hcshape
+              exact absurd (Option.some.inj hcshape).symm hcne
+        | hostOp role kk cf =>
+            have hpayTy : dCtorShape? env tyIdx = some .hit := by
+              simpa using hleaf
+            have hchild := x.2
+            unfold DEnvValidChild at hchild
+            rw [htag] at hchild
+            rcases hchild with ⟨_, m, hm⟩ | ⟨c, hcshape, hcne, _⟩
+            · unfold dEnvDomRepr at hdom
+              rw [hm] at hdom
+              obtain ⟨v, hvs, hrepr⟩ := hdom
+              refine ⟨tyIdx, [v], by rw [← htag]; exact hvs, ?_⟩
+              have hce : (dCascadeEval (.test tyIdx (.hostOp role kk cf) rest)
+                  x.1.1 x.1.2.toInt?).getD 0
+                  = IntDispatchSoundness.evalLeaf (.hostOp role kk cf) m := by
+                rw [hm]; simp [dCascadeEval, htag, WPayload.toInt?]
+              rw [hce]
+              exact IntDispatchSoundness.EvalCascade.hit tyIdx (.hostOp role kk cf)
+                rest [v] m v rfl hrepr
+            · rw [hpayTy] at hcshape
+              exact absurd (Option.some.inj hcshape).symm hcne
+      · -- non-matched tag: recurse, leaf shape irrelevant
+        obtain ⟨tag, fields, hvs, hev⟩ := ih hrest
         refine ⟨tag, fields, hvs, ?_⟩
         have htageq : tag = x.1.1 := by
           unfold dEnvDomRepr at hdom
@@ -401,9 +480,9 @@ theorem dCascade_bridge (env : DIdxEnvelope) (body : IntDispatchCascade)
               rw [hpay] at hdom
               rw [hdom] at hvs; injection hvs with hh; injection hh with h1 _; exact h1.symm
         have hne : x.1.1 ≠ tyIdx := htag
-        have hce : (cascadeEval (.test tyIdx leaf rest) x.1.1 x.1.2.toInt?).getD 0
-            = (cascadeEval rest x.1.1 x.1.2.toInt?).getD 0 := by
-          simp only [cascadeEval, if_neg hne]
+        have hce : (dCascadeEval (.test tyIdx leaf rest) x.1.1 x.1.2.toInt?).getD 0
+            = (dCascadeEval rest x.1.1 x.1.2.toInt?).getD 0 := by
+          simp only [dCascadeEval, if_neg hne]
         rw [hce]
         subst htageq
         exact IntDispatchSoundness.EvalCascade.miss tyIdx x.1.1 leaf rest fields _ hne hev
@@ -420,7 +499,7 @@ theorem env_declaredIntDispatch_bridge (env : DIdxEnvelope) (plan : IntDispatchR
       ∀ w, S.Repr n w →
         intRepr S (dEnvStructModel env plan.body x) w := by
   obtain ⟨tag, fields, hvs, hev⟩ := dCascade_bridge env plan.body hcasc S x vs hdom
-  refine ⟨tag, fields, (cascadeEval plan.body x.1.1 x.1.2.toInt?).getD 0, hvs, hev, ?_⟩
+  refine ⟨tag, fields, (dCascadeEval plan.body x.1.1 x.1.2.toInt?).getD 0, hvs, hev, ?_⟩
   intro w hw
   simpa [intRepr, dEnvStructModel] using hw
 

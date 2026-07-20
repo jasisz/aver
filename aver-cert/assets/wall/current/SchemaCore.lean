@@ -611,15 +611,21 @@ inductive IntDispatchLeaf where
       `role` helper. `constFirst` selects the operand order `k ⊕ x` (the spill
       local defers the payload past the constant) vs `x ⊕ k`. -/
   | hostOp (role : IntDispatchRole) (k : Int) (constFirst : Bool)
+  /-- Return the constant `k` WITHOUT reading a field: the arm of a nullary
+      (payloadless) constructor, lowered to `i64.const k; call box` with NO
+      projection prefix. Because it never touches the payload it is sound for a
+      constructor that has none. -/
+  | const (k : Int)
 deriving Repr
 
 /-- A right-nested Int-face `ref.test` dispatch cascade over the spilled
     scrutinee. Each `test` reads the scrutinee local and branches on
     `ref.test tyIdx`; the terminal `default` is a boxed integer constant
     (`i64.const k; call box`). The scrutinee/field scratch locals are NOT plan
-    data: they are a fixed function of the arm count (arm `i` spills to local
-    `i+1`, the scrutinee is local `armCount+1`), exactly what the lowerers
-    compute. -/
+    data: they are a fixed function of the BINDING-arm count (only `proj`/`hostOp`
+    arms read a payload and spill one; a `const` arm spills none). The `i`-th
+    binding arm spills to local `i+1`, the scrutinee is local `bindArmCount+1`,
+    exactly what the lowerers compute. -/
 inductive IntDispatchCascade where
   | default (k : Int)
   | test (tyIdx : Nat) (hit : IntDispatchLeaf) (rest : IntDispatchCascade)
