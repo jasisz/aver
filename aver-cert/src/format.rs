@@ -123,7 +123,10 @@ mod tests {
             "certificate-format.md does not state the current wall id {CURRENT_WALL_ID}; \
              update the wall identity printed in the spec"
         );
-        let count_phrase = format!("{} embedded `.lean` wall sources", crate::wall::SOURCES.len());
+        let count_phrase = format!(
+            "{} embedded `.lean` wall sources",
+            crate::wall::SOURCES.len()
+        );
         assert!(
             spec.contains(&count_phrase),
             "certificate-format.md does not state \"{count_phrase}\"; \
