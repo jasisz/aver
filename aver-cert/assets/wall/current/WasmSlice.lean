@@ -198,9 +198,10 @@ def exprFragmentFuncTypeMatches
   typeSectionMatches (checkExprFragmentFuncType carrier params result)
     modBytes modLen typeIdx
 
-/-- The only admitted opaque-ADT fragment is a direct field projection. Its
-    function parameter must name that exact struct, and its result must equal
-    the selected field's decoded storage type. This simultaneously proves that
+/-- One of the two admitted opaque-ADT fragment shapes is a direct field
+    projection (the other, tag dispatch, is checked below). Its function
+    parameter must name that exact struct, and its result must equal the
+    selected field's decoded storage type. This simultaneously proves that
     the struct and field exist in the artifact's type section. -/
 def checkExprProjectionTypes
     (carrier structIdx fieldIdx : Nat)
@@ -275,8 +276,10 @@ def exprTagDispatchTypesMatch (modBytes modLen carrier structIdx : Nat) : Bool :
       | none => false
   | none => false
 
-/-- Opaque references fail closed unless the plan has the exact projection
-    face whose nominal signature and field type can be decoded above. -/
+/-- Opaque references fail closed unless the plan has one of the two admitted
+    faces: the field-projection face (whose nominal signature and field type are
+    decoded above) or the tag-dispatch face (whose i32 tag field is decoded
+    below). -/
 def exprFragmentNominalTypesMatch
     (modBytes modLen typeIdx carrier : Nat)
     (plan : AverCert.Schema.ExprFragmentRawPlan) : Bool :=
