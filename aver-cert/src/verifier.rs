@@ -884,16 +884,218 @@ fn lean_module_root(name: &str) -> Result<String, String> {
     }
 }
 
+/// Reject a cert data file that carries an elaboration-executing token in
+/// *code* position. This is a fail-closed trust-boundary defense: the scanner's
+/// notion of "this span is an inert string or comment" is a deliberate SOUND
+/// OVER-APPROXIMATION of code — on any lexical ambiguity it defaults to code and
+/// scans, so a token Lean would elaborate is never skipped as inert. It may
+/// over-reject (treat inert bytes as code) but must never under-reject.
+///
+/// Inert spans recognized (and only these): normal string literals `"..."` with
+/// `\` escapes, line comments `-- ... \n`, and nested block comments
+/// `/- ... -/` (which also covers the `/--`/`/-!` doc-comment openers). Char
+/// literals are consumed as code just far enough that a `"` inside `'"'` / `'\"'`
+/// cannot open a phantom string. Raw / interpolated string prefixes (`r"`,
+/// `r#"`, `s!"`) and unterminated strings/comments fall back to scanning the
+/// remainder as pure code.
 fn scan_for_code_exec(name: &str, contents: &[u8]) -> Result<(), String> {
     let text = String::from_utf8_lossy(contents);
-    for token in CODE_EXEC_TOKENS {
-        if text.contains(token) {
-            return Err(format!(
-                "cert data file `{name}` contains elaboration-executing token `{token}`"
-            ));
-        }
+    let chars: Vec<char> = text.chars().collect();
+    if let Some(token) = find_code_exec_token(&chars) {
+        return Err(format!(
+            "cert data file `{name}` contains elaboration-executing token `{token}`"
+        ));
     }
     Ok(())
+}
+
+/// A Lean identifier-continuation character, narrowed to ASCII alphanumerics and
+/// `_`. This is intentionally an UNDER-approximation of Lean's identifier
+/// alphabet: it is used only for the word-boundary check, and treating fewer
+/// characters as identifier-continuation makes the scanner *more* likely to
+/// reject (fail-closed), never less.
+fn is_ident_continuation(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// A forbidden token is treated as a whole *word* (boundary-checked so `elab`
+/// does not fire inside `relabel`) exactly when every one of its bytes is an
+/// ASCII identifier-continuation character. Tokens carrying punctuation, spaces,
+/// or non-ASCII bytes (`#eval`, `@[`, `«`, `open Lean`) are matched as raw
+/// substrings in code position, where a word boundary has no meaning.
+fn token_is_word(token: &str) -> bool {
+    token
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+/// Returns the offending token if one starts, in code position, at `chars[i]`.
+fn token_at(
+    tokens: &[(&'static str, Vec<char>, bool)],
+    chars: &[char],
+    i: usize,
+) -> Option<&'static str> {
+    for (token, needle, is_word) in tokens {
+        let len = needle.len();
+        if i + len > chars.len() || &chars[i..i + len] != needle.as_slice() {
+            continue;
+        }
+        if *is_word {
+            let left_boundary = i == 0 || !is_ident_continuation(chars[i - 1]);
+            let right_boundary = i + len == chars.len() || !is_ident_continuation(chars[i + len]);
+            if left_boundary && right_boundary {
+                return Some(token);
+            }
+        } else {
+            return Some(token);
+        }
+    }
+    None
+}
+
+/// Index just past the closing `"` of the normal string literal opening at
+/// `chars[open]`, or `None` if the string never closes before EOF (an
+/// unterminated string is a lexer error in Lean; the caller then defaults to
+/// scanning the region as code).
+fn string_literal_end(chars: &[char], open: usize) -> Option<usize> {
+    let mut j = open + 1;
+    while j < chars.len() {
+        match chars[j] {
+            '\\' => j += 2, // the escaped character cannot close the string
+            '"' => return Some(j + 1),
+            _ => j += 1,
+        }
+    }
+    None
+}
+
+/// Index just past the matching `-/` of the (nesting) block comment opening at
+/// `chars[open]` (`/-`), or `None` if it never closes before EOF.
+fn block_comment_end(chars: &[char], open: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut j = open + 2;
+    while j < chars.len() {
+        if chars[j] == '/' && j + 1 < chars.len() && chars[j + 1] == '-' {
+            depth += 1;
+            j += 2;
+        } else if chars[j] == '-' && j + 1 < chars.len() && chars[j + 1] == '/' {
+            depth -= 1;
+            j += 2;
+            if depth == 0 {
+                return Some(j);
+            }
+        } else {
+            j += 1;
+        }
+    }
+    None
+}
+
+/// Index just past a char literal opening at `chars[open]` (`'`), or `None` if
+/// `chars[open]` is not the start of a char literal we recognize. Recognition is
+/// deliberately minimal: its only soundness duty is to consume the `"` inside
+/// `'"'` and `'\"'` so it cannot open a phantom string. Every char literal that
+/// can contain a raw `"` byte matches one of those two shapes; other char
+/// literals (`'\n'`, `'\u{22}'`, identifier primes) may go unrecognized, which
+/// is harmless because they carry no `"`.
+fn char_literal_end(chars: &[char], open: usize) -> Option<usize> {
+    if chars.get(open + 1) == Some(&'\\') {
+        // '\X'  (escaped single char, e.g. '\"', '\n', '\\', '\'')
+        if chars.get(open + 2).is_some() && chars.get(open + 3) == Some(&'\'') {
+            return Some(open + 4);
+        }
+        return None;
+    }
+    match chars.get(open + 1) {
+        Some('\'') | None => None, // "''" is not a char literal; nor is a trailing '
+        Some(_) => {
+            // 'X'  (single unescaped char, including 'X' == '"')
+            if chars.get(open + 2) == Some(&'\'') {
+                Some(open + 3)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Scan `chars[start..]` as pure code (no string/comment skipping) and return
+/// the first forbidden token. Used as the default-to-code fallback for
+/// unterminated strings/comments and raw/interpolated string prefixes.
+fn scan_remainder_as_code(
+    tokens: &[(&'static str, Vec<char>, bool)],
+    chars: &[char],
+    start: usize,
+) -> Option<&'static str> {
+    for i in start..chars.len() {
+        if let Some(token) = token_at(tokens, chars, i) {
+            return Some(token);
+        }
+    }
+    None
+}
+
+/// The context-aware core of [`scan_for_code_exec`]: a mini Lean lexer that
+/// walks the file, skips inert string/comment spans, and reports the first
+/// forbidden token that appears in code position.
+fn find_code_exec_token(chars: &[char]) -> Option<&'static str> {
+    let tokens: Vec<(&'static str, Vec<char>, bool)> = CODE_EXEC_TOKENS
+        .iter()
+        .map(|token| (*token, token.chars().collect(), token_is_word(token)))
+        .collect();
+    let n = chars.len();
+    let mut i = 0;
+    while i < n {
+        let c = chars[i];
+        // Inert-span openers take priority. None of them is a token start, so
+        // handling them here never skips over a forbidden token.
+        if c == '"' {
+            // A `"` preceded by a raw/interpolated string prefix (`r"`, `r#"`,
+            // `s!"`) is lexically ambiguous for a normal-string scan; default to
+            // code and scan the remainder rather than risk a desynced skip.
+            if i > 0 && matches!(chars[i - 1], 'r' | '#' | '!') {
+                return scan_remainder_as_code(&tokens, chars, i);
+            }
+            match string_literal_end(chars, i) {
+                Some(end) => {
+                    i = end;
+                    continue;
+                }
+                None => return scan_remainder_as_code(&tokens, chars, i),
+            }
+        }
+        if c == '-' && chars.get(i + 1) == Some(&'-') {
+            // Line comment through end of line (or EOF).
+            let mut j = i + 2;
+            while j < n && chars[j] != '\n' {
+                j += 1;
+            }
+            i = j;
+            continue;
+        }
+        if c == '/' && chars.get(i + 1) == Some(&'-') {
+            match block_comment_end(chars, i) {
+                Some(end) => {
+                    i = end;
+                    continue;
+                }
+                None => return scan_remainder_as_code(&tokens, chars, i),
+            }
+        }
+        // A `'` that opens a char literal is consumed; otherwise it is an
+        // identifier prime and falls through as ordinary code.
+        if c == '\''
+            && let Some(end) = char_literal_end(chars, i)
+        {
+            i = end;
+            continue;
+        }
+        if let Some(token) = token_at(&tokens, chars, i) {
+            return Some(token);
+        }
+        i += 1;
+    }
+    None
 }
 
 fn checker_lakefile(roots: &[String]) -> String {
@@ -1145,5 +1347,63 @@ mod tests {
             Some(FRESH_REPLAY_ARGS.as_slice())
         );
         assert_eq!(kernel_replay_args(ReplayMode::TrustBuiltOleans), None);
+    }
+
+    /// Convenience: run the code-exec scanner over a Lean source snippet.
+    fn scan(src: &str) -> Result<(), String> {
+        scan_for_code_exec("Test.lean", src.as_bytes())
+    }
+
+    #[test]
+    fn code_exec_scanner_is_lexically_context_aware() {
+        // (i) a forbidden word token inside a string literal is inert.
+        assert!(scan(r#"def x := "elab""#).is_ok());
+        // (ii) the same token in code position is rejected.
+        let err = scan("elab foo").unwrap_err();
+        assert!(err.contains("elab"), "{err}");
+        // (iii) a guillemet inside a string literal is an inert byte.
+        assert!(scan(r#"def x := "« inside a string »""#).is_ok());
+        // (iv) a guillemet identifier in code position is rejected.
+        let err = scan("def «weird» := 0").unwrap_err();
+        assert!(err.contains('«'), "{err}");
+        // (v) `elab` as a substring of a larger identifier is not the keyword.
+        assert!(scan("def relabel := 0").is_ok());
+        assert!(scan("def macroexpanded := 0").is_ok());
+        // (vi) an elaboration command in code position is rejected.
+        let err = scan("#eval IO.println \"x\"").unwrap_err();
+        assert!(err.contains("#eval"), "{err}");
+        // (vii) an elaboration command inside a line comment is inert.
+        assert!(scan("-- #eval IO.println \"x\"\ndef y := 0").is_ok());
+        // (viii) a forbidden token inside a nested block comment is inert.
+        assert!(scan("/- outer /- inner #eval -/ still -/\ndef y := 0").is_ok());
+        // (ix) an unterminated string defaults to code: the tail is scanned.
+        let err = scan("def x := \"unterminated #eval").unwrap_err();
+        assert!(err.contains("#eval"), "{err}");
+        // (x) a forbidden word token inside a line comment is inert.
+        assert!(scan("-- elab is only mentioned here\ndef y := 0").is_ok());
+    }
+
+    #[test]
+    fn code_exec_scanner_defaults_to_code_on_ambiguity() {
+        // A `"` inside a char literal must not open a phantom string that would
+        // swallow the following code (desync -> under-reject).
+        let err = scan("def c : Char := '\"'\n#eval evil").unwrap_err();
+        assert!(err.contains("#eval"), "{err}");
+        let err = scan("def c : Char := '\\\"'\n#eval evil").unwrap_err();
+        assert!(err.contains("#eval"), "{err}");
+        // A raw-string prefix is ambiguous for a normal-string scan; the
+        // remainder is scanned as code rather than skipped.
+        let err = scan("def x := r\"#eval evil\"").unwrap_err();
+        assert!(err.contains("#eval"), "{err}");
+        // An unterminated block comment defaults to code.
+        let err = scan("/- never closed #eval").unwrap_err();
+        assert!(err.contains("#eval"), "{err}");
+        // Word-boundary tokens still fire when standing alone next to a string.
+        let err = scan("elab\"x\"").unwrap_err();
+        assert!(err.contains("elab"), "{err}");
+        // `elab_rules` is caught as its own token, not masked by the `elab`
+        // prefix failing its right boundary.
+        let err = scan("elab_rules foo").unwrap_err();
+        assert!(err.contains("elab_rules"), "{err}");
     }
 }
