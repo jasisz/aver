@@ -1199,6 +1199,7 @@ blockquote {
 .install-links {
     grid-column: 2;
     display: flex;
+    flex-wrap: wrap;
     gap: 24px;
 }
 

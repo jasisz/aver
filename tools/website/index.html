@@ -513,20 +513,20 @@
         <div class="frame install-grid">
             <div>
                 <p class="section-index">07 / INSTALL</p>
-                <h2>Install from source.</h2>
-                <p>The commands below install the compiler and independent certificate verifier, then run the bundled example.</p>
-                <p class="install-requirement">Strict certificate verification also requires Elan; <code>aver-cert</code> selects the pinned Lean 4.32 toolchain.</p>
+                <h2>Install Aver.</h2>
+                <p>Install the released compiler from crates.io, then run and verify the bundled example.</p>
+                <p class="install-requirement"><code>--features wasm</code> enables WebAssembly GC and ABC production. Independent ABC verification uses <code>aver-cert</code> and requires Elan for its pinned Lean 4.32 toolchain.</p>
             </div>
             <div class="install-terminal">
-                <div><span>01</span><code>git clone https://github.com/jasisz/aver &amp;&amp; cd aver</code></div>
-                <div><span>02</span><code>cargo install --path . --features wasm</code></div>
-                <div><span>03</span><code>cargo install --path aver-cert</code></div>
-                <div><span>04</span><code>aver run examples/core/hello.av</code></div>
-                <div><span>05</span><code>aver verify examples/core/hello.av</code></div>
+                <div><span>01</span><code>cargo install aver-lang --features wasm</code></div>
+                <div><span>02</span><code>cargo install aver-cert</code></div>
+                <div><span>03</span><code>aver run examples/core/hello.av</code></div>
+                <div><span>04</span><code>aver verify examples/core/hello.av</code></div>
             </div>
             <div class="install-links">
-                <a href="https://github.com/jasisz/aver" target="_blank" rel="noopener">Clone on GitHub ↗</a>
-                <a href="https://crates.io/crates/aver-lang" target="_blank" rel="noopener">View on crates.io ↗</a>
+                <a href="https://crates.io/crates/aver-lang" target="_blank" rel="noopener">aver-lang on crates.io ↗</a>
+                <a href="https://crates.io/crates/aver-cert" target="_blank" rel="noopener">aver-cert on crates.io ↗</a>
+                <a href="https://github.com/jasisz/aver#build-from-source" target="_blank" rel="noopener">Build from source ↗</a>
             </div>
         </div>
     </section>
