@@ -157,11 +157,12 @@ def lowerVerbatimBody (plan : VerbatimRawPlan) : List WInstr :=
 
 /-! ### Int-face `ref.test`-dispatch WInstr lowering (mirrors `{name}Code`).
 
-The scrutinee/field scratch locals are a fixed function of the arm count: arm
-`i` (0-based, in dispatch order) spills its projected payload to local `i+1`,
-the scrutinee is spilled to local `armCount + 1`. The box/add/sub function
-indices come from the byte-derived host-role table PARAMETER — a role the table
-lacks fail-closes the lowering. -/
+The scrutinee/field scratch locals are a fixed function of the payload-BINDING
+arm count: the `j`-th binding (`proj`/`hostOp`) arm (0-based, in dispatch order)
+spills its projected payload to local `j+1`, the scrutinee is spilled to local
+`bindArmCount + 1`; a `const` arm reads no field and spills no local. The
+box/add/sub function indices come from the byte-derived host-role table
+PARAMETER — a role the table lacks fail-closes the lowering. -/
 
 /-- One hit arm: the payload projection spilled through this arm's scratch
     local `F`, then the leaf's own tail. -/

@@ -1181,9 +1181,10 @@ def checkIntDispatchRawPlan (plan : IntDispatchRawPlan) : Bool :=
     | .test _ _ _ => true
     | .default _ => false
 
-/-- The number of `test` arms in an Int-face dispatch cascade. The scratch-local
-    layout both lowerers compute is a fixed function of this count: arm `i`
-    spills to local `i+1`, the scrutinee is local `armCount + 1`. -/
+/-- The number of `test` arms in an Int-face dispatch cascade (const and binding
+    arms alike). The scratch-local layout is NOT a function of this total — only
+    payload-BINDING arms (`proj`/`hostOp`) spill a local; see `intDispatchBindArmCount`
+    for the count that drives the layout. -/
 def intDispatchArmCount : IntDispatchCascade → Nat
   | .default _ => 0
   | .test _ _ rest => intDispatchArmCount rest + 1
