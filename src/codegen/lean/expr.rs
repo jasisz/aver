@@ -280,7 +280,13 @@ fn emit_literal(lit: &Literal) -> String {
 }
 
 fn escape_lean_string(s: &str) -> String {
+    // Lean also uses guillemets as identifier delimiters. Certificate data is
+    // deliberately scanned fail-closed for those delimiters before
+    // elaboration, so preserve string values through escapes rather than
+    // emitting the raw delimiter bytes.
     crate::codegen::common::escape_string_literal(s)
+        .replace('«', "\\u00ab")
+        .replace('»', "\\u00bb")
 }
 
 fn emit_fn_call(
@@ -777,5 +783,6 @@ mod tests {
     fn escape_lean_string_escapes_control_chars() {
         assert_eq!(escape_lean_string("\u{0008}\u{000C}"), "\\x08\\x0c");
         assert_eq!(escape_lean_string("a\n\t\"\\z"), "a\\n\\t\\\"\\\\z");
+        assert_eq!(escape_lean_string("«ok»"), "\\u00abok\\u00bb");
     }
 }

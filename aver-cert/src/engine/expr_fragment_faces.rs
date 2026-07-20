@@ -105,6 +105,129 @@ pub fn expr_fragment_project_face(plan: &ExprFragmentPlan) -> Option<FragProject
     })
 }
 
+/// Exact Rust twin of `StandardFace.classifyTagDispatch` in the frozen wall.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FragTagDispatchFace {
+    pub opt_idx: u32,
+    pub box_idx: u32,
+    pub tag: i64,
+    pub then_c: i64,
+    pub else_c: i64,
+}
+
+fn expr_fragment_tag_dispatch_arm(block: &FragBlock) -> Option<(u32, i64)> {
+    let [n0, n1] = block.nodes.as_slice() else {
+        return None;
+    };
+    if block.result != FragValueId(1)
+        || n0.id != FragValueId(0)
+        || n1.id != FragValueId(1)
+        || n0.ty != FragTy::I64
+        || n1.ty != FragTy::IntCarrier
+    {
+        return None;
+    }
+    let FragNodeKind::ConstI64(constant) = n0.kind else {
+        return None;
+    };
+    let FragNodeKind::HostCall {
+        role: FragHostRole::Box,
+        func_idx,
+        ref args,
+    } = n1.kind
+    else {
+        return None;
+    };
+    (args.as_slice() == [FragValueId(0)]).then_some((func_idx, constant))
+}
+
+pub fn expr_fragment_tag_dispatch_face(plan: &ExprFragmentPlan) -> Option<FragTagDispatchFace> {
+    if plan.params.as_slice() != [FragTy::AdtRef]
+        || plan.result != FragTy::IntCarrier
+        || plan.body.result != FragValueId(4)
+    {
+        return None;
+    }
+    let [n0, n1, n2, n3, n4] = plan.body.nodes.as_slice() else {
+        return None;
+    };
+    if [n0.id.0, n1.id.0, n2.id.0, n3.id.0, n4.id.0] != [0, 1, 2, 3, 4]
+        || n0.ty != FragTy::AdtRef
+        || n1.ty != FragTy::RawI32
+        || n2.ty != FragTy::RawI32
+        || n3.ty != FragTy::BoolI32
+        || n4.ty != FragTy::IntCarrier
+    {
+        return None;
+    }
+    let FragNodeKind::Local { index: 0 } = n0.kind else {
+        return None;
+    };
+    let FragNodeKind::StructGetUser {
+        ty_idx: opt_idx,
+        field: 0,
+        value: FragValueId(0),
+    } = n1.kind
+    else {
+        return None;
+    };
+    let FragNodeKind::ConstI32(tag) = n2.kind else {
+        return None;
+    };
+    let FragNodeKind::Prim {
+        op: FragPrim::I32Eq,
+        ref args,
+    } = n3.kind
+    else {
+        return None;
+    };
+    let FragNodeKind::If {
+        cond: FragValueId(3),
+        ref then_block,
+        ref else_block,
+    } = n4.kind
+    else {
+        return None;
+    };
+    if args.as_slice() != [FragValueId(1), FragValueId(2)] {
+        return None;
+    }
+    let (box_idx, then_c) = expr_fragment_tag_dispatch_arm(then_block)?;
+    let (else_box_idx, else_c) = expr_fragment_tag_dispatch_arm(else_block)?;
+    (box_idx == else_box_idx).then_some(FragTagDispatchFace {
+        opt_idx,
+        box_idx,
+        tag: i64::from(tag),
+        then_c,
+        else_c,
+    })
+}
+
+fn frag_block_has_user_struct_get(block: &FragBlock) -> bool {
+    block.nodes.iter().any(|node| match &node.kind {
+        FragNodeKind::StructGetUser { .. } => true,
+        FragNodeKind::If {
+            then_block,
+            else_block,
+            ..
+        } => {
+            frag_block_has_user_struct_get(then_block)
+                || frag_block_has_user_struct_get(else_block)
+        }
+        _ => false,
+    })
+}
+
+/// Rust twin of the wall's broad `exprFragmentIsTagDispatch` discriminator:
+/// an ADT-ref argument, an Int-carrier result, and at least one user-struct
+/// field read in the encoded plan. The wall's classifier later checks the
+/// exact canonical tag-dispatch node shape.
+pub fn expr_fragment_is_tag_dispatch(plan: &ExprFragmentPlan) -> bool {
+    plan.params.as_slice() == [FragTy::AdtRef]
+        && plan.result == FragTy::IntCarrier
+        && frag_block_has_user_struct_get(&plan.body)
+}
+
 fn frag_block_touches_adt_ref(block: &FragBlock) -> bool {
     block.nodes.iter().any(|node| {
         node.ty == FragTy::AdtRef

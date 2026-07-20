@@ -206,6 +206,20 @@ fn sym_node_kind_lean_value(kind: &SymNodeKind) -> String {
             value.0,
             constant
         ),
+        SymNodeKind::TagMatch {
+            type_name,
+            scrutinee,
+            tag,
+            hit,
+            miss,
+        } => format!(
+            ".tagMatch {} {} ({} : Int) {} {}",
+            lean_str(type_name),
+            scrutinee.0,
+            tag,
+            sym_block_lean_value(hit),
+            sym_block_lean_value(miss)
+        ),
         SymNodeKind::If {
             cond,
             then_block,
@@ -293,6 +307,23 @@ fn render_sym_node_plan(node: &SymNode, indent: usize, out: &mut String) {
                 value.0,
                 constant
             ));
+        }
+        SymNodeKind::TagMatch {
+            type_name,
+            scrutinee,
+            tag,
+            hit,
+            miss,
+        } => {
+            out.push_str(&format!(
+                "tag.match type={type_name} scrutinee=v{} tag={tag}\n",
+                scrutinee.0
+            ));
+            out.push_str(&format!("{pad}hit\n"));
+            render_sym_block_plan(hit, indent + 1, out);
+            out.push_str(&format!("{pad}miss\n"));
+            render_sym_block_plan(miss, indent + 1, out);
+            out.push_str(&format!("{pad}endtag\n"));
         }
         SymNodeKind::If {
             cond,

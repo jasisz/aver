@@ -3063,9 +3063,14 @@ pub(super) fn emit_module_with(
             // Struct-binding table for the plan's projections, resolved from
             // the same registry the MIR emitter would have used, so the
             // plan-lowered `struct.get` cites exactly the emitter's type index.
-            let struct_table = crate::codegen::cert::frag_struct_table_for_plan(plan, &|name| {
-                registry.record_type_idx(name)
-            })
+            let struct_table = crate::codegen::cert::frag_struct_table_for_plan(
+                plan,
+                &|name, source_ty| match name {
+                    "Option" => registry.option_type_idx(&source_ty.canonical_name()),
+                    "Result" => registry.result_type_idx(&source_ty.canonical_name()),
+                    _ => registry.record_type_idx(name),
+                },
+            )
             .ok_or_else(|| {
                 WasmGcError::Validation(format!(
                     "fragment plan struct binding for fn `{}` failed",

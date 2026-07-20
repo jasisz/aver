@@ -70,7 +70,10 @@ pub(super) use crate::ir::mir::{
 pub(super) use crate::types::Type;
 
 pub(super) use super::super::WasmGcError;
-pub(super) use super::super::types::{TypeRegistry, VariantInfo, aver_to_wasm, normalize_compound};
+pub(super) use super::super::types::{
+    OPTION_NONE_TAG, OPTION_SOME_TAG, RESULT_ERR_TAG, RESULT_OK_TAG, TypeRegistry, VariantInfo,
+    aver_to_wasm, normalize_compound,
+};
 pub(super) use super::builtins::emit_args_get_inline;
 pub(super) use super::emit::{
     emit_branch_marker, emit_caller_fn_idx, emit_default_value, emit_group_call,

@@ -433,7 +433,7 @@ impl FragPrim {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FragNodeKind {
     Local { index: u32 },
     ConstBool(bool),
@@ -480,14 +480,14 @@ pub enum FragNodeKind {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FragNode {
     pub id: FragValueId,
     pub ty: FragTy,
     pub kind: FragNodeKind,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FragBlock {
     pub nodes: Vec<FragNode>,
     pub result: FragValueId,
@@ -503,7 +503,7 @@ impl FragBlock {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExprFragmentPlan {
     pub params: Vec<FragTy>,
     pub result: FragTy,

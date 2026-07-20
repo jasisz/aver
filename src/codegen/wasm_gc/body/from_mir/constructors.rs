@@ -77,13 +77,13 @@ pub(crate) fn emit_mir_option_constructor(
     ))?;
     match payload {
         Some(p) => {
-            func.instruction(&Instruction::I32Const(1));
+            func.instruction(&Instruction::I32Const(OPTION_SOME_TAG));
             if emit_mir_expr(func, p, slots, ctx)?.is_none() {
                 return Ok(None);
             }
         }
         None => {
-            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::I32Const(OPTION_NONE_TAG));
             emit_default_value(func, inner_ty, ctx.registry)?;
         }
     }
@@ -173,13 +173,13 @@ pub(crate) fn emit_mir_result_constructor(
         }
     };
     if variant == "Ok" {
-        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::I32Const(RESULT_OK_TAG));
         if emit_payload(func, t_aver)?.is_none() {
             return Ok(None);
         }
         emit_default_value(func, e_aver, ctx.registry)?;
     } else {
-        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::I32Const(RESULT_ERR_TAG));
         emit_default_value(func, t_aver, ctx.registry)?;
         if emit_payload(func, e_aver)?.is_none() {
             return Ok(None);

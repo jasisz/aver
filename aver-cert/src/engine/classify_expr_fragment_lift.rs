@@ -191,14 +191,20 @@ fn collect_sym_block_named_tys(block: &SymBlock, out: &mut Vec<String>) {
         {
             out.push(name.clone());
         }
-        if let SymNodeKind::If {
-            then_block,
-            else_block,
-            ..
-        } = &node.kind
-        {
-            collect_sym_block_named_tys(then_block, out);
-            collect_sym_block_named_tys(else_block, out);
+        match &node.kind {
+            SymNodeKind::TagMatch { hit, miss, .. } => {
+                collect_sym_block_named_tys(hit, out);
+                collect_sym_block_named_tys(miss, out);
+            }
+            SymNodeKind::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                collect_sym_block_named_tys(then_block, out);
+                collect_sym_block_named_tys(else_block, out);
+            }
+            _ => {}
         }
     }
 }
@@ -225,6 +231,10 @@ fn check_sym_block_projection_owners(block: &SymBlock) -> Result<(), String> {
             } => {
                 check_sym_block_projection_owners(then_block)?;
                 check_sym_block_projection_owners(else_block)?;
+            }
+            SymNodeKind::TagMatch { hit, miss, .. } => {
+                check_sym_block_projection_owners(hit)?;
+                check_sym_block_projection_owners(miss)?;
             }
             _ => {}
         }

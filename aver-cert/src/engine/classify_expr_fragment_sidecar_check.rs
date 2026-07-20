@@ -347,18 +347,23 @@ fn check_expr_fragment_plan_object(
     // byte-derived field count, mirroring the hostCall index-vs-table check.
     check_plan_struct_gets(&plan.body, carrier, &struct_field_counts)
         .map_err(|e| format!("plan for `{export_name}`: {e}"))?;
+    let tag_dispatch = expr_fragment_is_tag_dispatch(&plan);
     if (plan_has_host_calls(&plan.body) || plan.result == FragTy::IntCarrier)
         && expr_fragment_int_add_face(&plan).is_none()
+        && !tag_dispatch
     {
         return Err(format!(
             "plan for `{export_name}` has no rendered proof face: Int-carrier results \
-             are supported only through the straight-line integer face"
+             are supported only through the straight-line integer or tag-dispatch face"
         ));
     }
     // Face-gated AdtRef admission (the FIX-1 pattern): plans touching opaque
     // user-ADT references are accepted ONLY as the exact field-projection
     // face; anything else declines fail-closed on producer and verifier alike.
-    if expr_fragment_plan_touches_adt_ref(&plan) && expr_fragment_project_face(&plan).is_none() {
+    if expr_fragment_plan_touches_adt_ref(&plan)
+        && expr_fragment_project_face(&plan).is_none()
+        && !tag_dispatch
+    {
         return Err(format!(
             "plan for `{export_name}` has no rendered proof face: user-ADT references \
              are supported only through the field-projection face"

@@ -224,6 +224,62 @@ impl<'a> SymPlanParser<'a> {
                     constant,
                 }
             }
+            "tag.match" => {
+                let type_name = plan_attr(FragValueId(id.0), &attrs, "type")?.to_string();
+                require_sym_plan_token(id, "type", &type_name)?;
+                let scrutinee = sym_plan_attr_value(id, &attrs, "scrutinee")?;
+                let tag = plan_attr_i64(FragValueId(id.0), &attrs, "tag")?;
+                let scrutinee_ty = nodes
+                    .get(scrutinee.0)
+                    .ok_or_else(|| {
+                        format!(
+                            "source plan tag.match v{} references missing scrutinee v{}",
+                            id.0, scrutinee.0
+                        )
+                    })?
+                    .ty
+                    .clone();
+                let scrutinee_name = match &scrutinee_ty {
+                    SymTy::Named(name) => name,
+                    SymTy::App(name, args) if matches!(args.len(), 1 | 2) => name,
+                    _ => {
+                        return Err(format!(
+                            "source plan tag.match v{} scrutinee has non-ADT type `{}`",
+                            id.0,
+                            scrutinee_ty.plan_tag()
+                        ));
+                    }
+                };
+                if scrutinee_name != &type_name {
+                    return Err(format!(
+                        "source plan tag.match v{} names type `{type_name}`, but its scrutinee has type `{}`",
+                        id.0,
+                        scrutinee_ty.plan_tag()
+                    ));
+                }
+                self.expect_exact("hit")?;
+                let hit = self.parse_block()?;
+                self.expect_exact("miss")?;
+                let miss = self.parse_block()?;
+                self.expect_exact("endtag")?;
+                let expected = hit.result_ty().ok_or_else(|| {
+                    format!("source plan tag.match v{} hit branch has no result", id.0)
+                })?;
+                if miss.result_ty() != Some(expected.clone()) {
+                    return Err(format!(
+                        "source plan tag.match v{} branch result types do not match",
+                        id.0
+                    ));
+                }
+                require_sym_plan_ty(id, &ty, &expected)?;
+                SymNodeKind::TagMatch {
+                    type_name,
+                    scrutinee,
+                    tag,
+                    hit: Box::new(hit),
+                    miss: Box::new(miss),
+                }
+            }
             "if" => {
                 let cond = sym_plan_attr_value(id, &attrs, "cond")?;
                 require_sym_plan_node_ty(nodes, cond, &SymTy::Bool)?;
@@ -371,6 +427,7 @@ fn reject_extra_sym_plan_attrs(
         "empty.list" => &["elem"],
         "project.field" => &["type", "field", "value"],
         "int.const-cmp" => &["op", "value", "constant"],
+        "tag.match" => &["type", "scrutinee", "tag"],
         "if" => &["cond"],
         _ => &[],
     };

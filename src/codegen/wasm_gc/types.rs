@@ -24,6 +24,14 @@ use wasm_encoder::{
     AbstractHeapType, FieldType, HeapType, RefType, StorageType, StructType, ValType,
 };
 
+/// Canonical operational discriminants for the built-in carrier layouts.
+/// Constructors, match lowering, and certificate-plan production all read
+/// these constants so the tag bytes cannot drift between paths.
+pub(crate) const OPTION_NONE_TAG: i32 = 0;
+pub(crate) const OPTION_SOME_TAG: i32 = 1;
+pub(crate) const RESULT_ERR_TAG: i32 = 0;
+pub(crate) const RESULT_OK_TAG: i32 = 1;
+
 use super::WasmGcError;
 use super::types_discovery::{
     collect_lists_from_str, collect_maps_from_expr, collect_maps_from_str,

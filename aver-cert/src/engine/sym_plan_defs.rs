@@ -12,6 +12,26 @@ pub enum SymTy {
 }
 
 impl SymTy {
+    /// Canonical source spelling used by the wasm-gc monomorphisation
+    /// registry. This is representation metadata only; it does not turn an
+    /// operational tag dispatch into a source-constructor claim.
+    pub fn canonical_name(&self) -> String {
+        match self {
+            SymTy::Int => "Int".to_string(),
+            SymTy::Float => "Float".to_string(),
+            SymTy::Bool => "Bool".to_string(),
+            SymTy::String => "String".to_string(),
+            SymTy::Named(name) => name.clone(),
+            SymTy::App(name, args) => format!(
+                "{name}<{}>",
+                args.iter()
+                    .map(SymTy::canonical_name)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        }
+    }
+
     fn from_frag_ty(value: FragTy) -> Option<Self> {
         match value {
             FragTy::F64 => Some(SymTy::Float),
@@ -114,6 +134,17 @@ pub enum SymNodeKind {
         op: SymIntCmp,
         value: SymValueId,
         constant: i64,
+    },
+    /// Operational discriminant dispatch over an ADT value. The encoded plan
+    /// reads field 0 of the struct named by `type_name`, compares it with
+    /// `tag`, and evaluates `hit` on equality or `miss` otherwise. This does
+    /// not assert any source-constructor-to-tag relationship.
+    TagMatch {
+        type_name: String,
+        scrutinee: SymValueId,
+        tag: i64,
+        hit: Box<SymBlock>,
+        miss: Box<SymBlock>,
     },
     If {
         cond: SymValueId,
@@ -428,28 +459,38 @@ pub struct FragmentPlanArtifact {
     pub plan: FragmentPlan,
 }
 
-fn sym_block_project_names_in_order(block: &SymBlock, out: &mut Vec<String>) {
+fn sym_block_struct_names_in_order(block: &SymBlock, out: &mut Vec<String>) {
     for node in &block.nodes {
         match &node.kind {
             SymNodeKind::ProjectField { type_name, .. } => out.push(type_name.clone()),
+            SymNodeKind::TagMatch {
+                type_name,
+                hit,
+                miss,
+                ..
+            } => {
+                out.push(type_name.clone());
+                sym_block_struct_names_in_order(hit, out);
+                sym_block_struct_names_in_order(miss, out);
+            }
             SymNodeKind::If {
                 then_block,
                 else_block,
                 ..
             } => {
-                sym_block_project_names_in_order(then_block, out);
-                sym_block_project_names_in_order(else_block, out);
+                sym_block_struct_names_in_order(then_block, out);
+                sym_block_struct_names_in_order(else_block, out);
             }
             _ => {}
         }
     }
 }
 
-/// The distinct user type names a source plan projects fields out of, in first
-/// appearance order.
+/// The distinct source type names whose wasm struct identity is needed by a
+/// projection or operational tag dispatch, in first appearance order.
 pub(crate) fn sym_plan_project_type_names(plan: &SymPlan) -> Vec<String> {
     let mut all = Vec::new();
-    sym_block_project_names_in_order(&plan.body, &mut all);
+    sym_block_struct_names_in_order(&plan.body, &mut all);
     let mut out = Vec::new();
     for name in all {
         if !out.contains(&name) {
@@ -487,7 +528,7 @@ fn expr_fragment_struct_table_entries(
     plan: &ExprFragmentPlan,
 ) -> Option<Vec<(String, u32)>> {
     let mut names = Vec::new();
-    sym_block_project_names_in_order(&source_plan.body, &mut names);
+    sym_block_struct_names_in_order(&source_plan.body, &mut names);
     let mut indices = Vec::new();
     frag_block_struct_get_user_tys_in_order(&plan.body, &mut indices);
     if names.len() != indices.len() {
@@ -507,20 +548,71 @@ fn expr_fragment_struct_table_entries(
 /// type index). Fail-closed on any unknown name.
 pub fn frag_struct_table_for_plan(
     plan: &FragmentPlan,
-    resolve: &dyn Fn(&str) -> Option<u32>,
+    resolve: &dyn Fn(&str, &SymTy) -> Option<u32>,
 ) -> Option<FragStructTable> {
-    let names = match plan {
-        FragmentPlan::Sym(plan) => sym_plan_project_type_names(plan),
+    let bindings = match plan {
+        FragmentPlan::Sym(plan) => sym_plan_struct_bindings(plan)?,
         FragmentPlan::Expr(_) => Vec::new(),
     };
     let mut table = FragStructTable::default();
-    for name in names {
-        let idx = resolve(&name)?;
+    for (name, ty) in bindings {
+        let idx = resolve(&name, &ty)?;
         if !table.insert(&name, idx) {
             return None;
         }
     }
     Some(table)
+}
+
+fn sym_block_struct_bindings(block: &SymBlock, out: &mut Vec<(String, SymTy)>) -> Option<()> {
+    for node in &block.nodes {
+        match &node.kind {
+            SymNodeKind::ProjectField {
+                type_name, value, ..
+            } => {
+                let ty = block.nodes.get(value.0)?.ty.clone();
+                out.push((type_name.clone(), ty));
+            }
+            SymNodeKind::TagMatch {
+                type_name,
+                scrutinee,
+                hit,
+                miss,
+                ..
+            } => {
+                let ty = block.nodes.get(scrutinee.0)?.ty.clone();
+                out.push((type_name.clone(), ty));
+                sym_block_struct_bindings(hit, out)?;
+                sym_block_struct_bindings(miss, out)?;
+            }
+            SymNodeKind::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                sym_block_struct_bindings(then_block, out)?;
+                sym_block_struct_bindings(else_block, out)?;
+            }
+            _ => {}
+        }
+    }
+    Some(())
+}
+
+fn sym_plan_struct_bindings(plan: &SymPlan) -> Option<Vec<(String, SymTy)>> {
+    let mut all = Vec::new();
+    sym_block_struct_bindings(&plan.body, &mut all)?;
+    let mut out = Vec::<(String, SymTy)>::new();
+    for (name, ty) in all {
+        if let Some((_, existing)) = out.iter().find(|(existing, _)| existing == &name) {
+            if existing != &ty {
+                return None;
+            }
+        } else {
+            out.push((name, ty));
+        }
+    }
+    Some(out)
 }
 
 fn sym_block_from_frag_source_subset(block: &FragBlock) -> Option<SymBlock> {
@@ -587,6 +679,149 @@ fn sym_node_from_frag_source_subset(node: &FragNode) -> Option<SymNode> {
 #[cfg(all(test, feature = "engine"))]
 mod sym_plan_defs_tests {
     use super::*;
+
+    fn int_const_block(value: i64) -> SymBlock {
+        SymBlock {
+            nodes: vec![SymNode {
+                id: SymValueId(0),
+                ty: SymTy::Int,
+                kind: SymNodeKind::ConstInt(value),
+            }],
+            result: SymValueId(0),
+        }
+    }
+
+    fn slot_count_sym_plan() -> SymPlan {
+        let option_int = SymTy::App("Option".to_string(), vec![SymTy::Int]);
+        SymPlan {
+            params: vec![option_int.clone()],
+            result: SymTy::Int,
+            body: SymBlock {
+                nodes: vec![
+                    SymNode {
+                        id: SymValueId(0),
+                        ty: option_int,
+                        kind: SymNodeKind::Param { index: 0 },
+                    },
+                    SymNode {
+                        id: SymValueId(1),
+                        ty: SymTy::Int,
+                        kind: SymNodeKind::TagMatch {
+                            type_name: "Option".to_string(),
+                            scrutinee: SymValueId(0),
+                            tag: 1,
+                            hit: Box::new(int_const_block(1)),
+                            miss: Box::new(int_const_block(0)),
+                        },
+                    },
+                ],
+                result: SymValueId(1),
+            },
+        }
+    }
+
+    #[test]
+    fn slot_count_tag_match_encoder_is_node_for_node_fixture_twin() {
+        let sym = slot_count_sym_plan();
+        let host_table = FragHostTable {
+            box_idx: Some(6),
+            ..FragHostTable::default()
+        };
+        let struct_table = FragStructTable {
+            entries: vec![("Option".to_string(), 2)],
+        };
+        let actual = sym
+            .to_expr_fragment_plan(&host_table, &struct_table)
+            .expect("slotCount symbolic plan encodes");
+        let boxed_const = |value| FragBlock {
+            nodes: vec![
+                FragNode {
+                    id: FragValueId(0),
+                    ty: FragTy::I64,
+                    kind: FragNodeKind::ConstI64(value),
+                },
+                FragNode {
+                    id: FragValueId(1),
+                    ty: FragTy::IntCarrier,
+                    kind: FragNodeKind::HostCall {
+                        role: FragHostRole::Box,
+                        func_idx: 6,
+                        args: vec![FragValueId(0)],
+                    },
+                },
+            ],
+            result: FragValueId(1),
+        };
+        let expected = ExprFragmentPlan {
+            params: vec![FragTy::AdtRef],
+            result: FragTy::IntCarrier,
+            body: FragBlock {
+                nodes: vec![
+                    FragNode {
+                        id: FragValueId(0),
+                        ty: FragTy::AdtRef,
+                        kind: FragNodeKind::Local { index: 0 },
+                    },
+                    FragNode {
+                        id: FragValueId(1),
+                        ty: FragTy::RawI32,
+                        kind: FragNodeKind::StructGetUser {
+                            ty_idx: 2,
+                            field: 0,
+                            value: FragValueId(0),
+                        },
+                    },
+                    FragNode {
+                        id: FragValueId(2),
+                        ty: FragTy::RawI32,
+                        kind: FragNodeKind::ConstI32(1),
+                    },
+                    FragNode {
+                        id: FragValueId(3),
+                        ty: FragTy::BoolI32,
+                        kind: FragNodeKind::Prim {
+                            op: FragPrim::I32Eq,
+                            args: vec![FragValueId(1), FragValueId(2)],
+                        },
+                    },
+                    FragNode {
+                        id: FragValueId(4),
+                        ty: FragTy::IntCarrier,
+                        kind: FragNodeKind::If {
+                            cond: FragValueId(3),
+                            then_block: Box::new(boxed_const(1)),
+                            else_block: Box::new(boxed_const(0)),
+                        },
+                    },
+                ],
+                result: FragValueId(4),
+            },
+        };
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn slot_count_tag_match_lean_render_is_fixture_twin() {
+        let actual = sym_plan_lean_value(&slot_count_sym_plan());
+        let expected = "{ profile := \"sym-fragment-v1\", params := [(.app1 \"Option\" .int)], result := .int, body := ({ nodes := [{ id := 0, ty := (.app1 \"Option\" .int), kind := .param 0 }, { id := 1, ty := .int, kind := .tagMatch \"Option\" 0 (1 : Int) ({ nodes := [{ id := 0, ty := .int, kind := .constInt (1 : Int) }], result := 0 } : SymBlock) ({ nodes := [{ id := 0, ty := .int, kind := .constInt (0 : Int) }], result := 0 } : SymBlock) }], result := 1 } : SymBlock) }";
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn slot_count_tag_match_sidecar_roundtrips_and_rejects_wrong_type_name() {
+        let plan = slot_count_sym_plan();
+        let text = sym_fragment_plan_text(&plan);
+        let mut parser = SymPlanParser::new(&text, plan.params.clone(), plan.result.clone());
+        assert_eq!(parser.parse().expect("parse tag.match plan"), plan.body);
+
+        let malformed = text.replace("type=Option", "type=Unknown");
+        let mut parser = SymPlanParser::new(&malformed, plan.params.clone(), plan.result.clone());
+        let error = parser.parse().expect_err("wrong tag.match type must decline");
+        assert!(
+            error.contains("names type `Unknown`") && error.contains("app:Option[int]"),
+            "unexpected parser error: {error}"
+        );
+    }
 
     #[test]
     fn sym_plan_projects_direct_float_fragment() {

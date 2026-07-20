@@ -131,6 +131,51 @@ impl SymToFragEncoder<'_> {
                 value,
                 constant,
             } => self.encode_int_const_cmp(*op, *value, *constant)?,
+            SymNodeKind::TagMatch {
+                type_name,
+                scrutinee,
+                tag,
+                hit,
+                miss,
+            } => {
+                let ty_idx = self.struct_table.lookup(type_name)?;
+                let scrutinee = *self.sym_to_frag.get(scrutinee.0)?;
+                let tag_value = self.push_node(
+                    FragTy::RawI32,
+                    FragNodeKind::StructGetUser {
+                        ty_idx,
+                        field: 0,
+                        value: scrutinee,
+                    },
+                );
+                let constant = self.push_node(
+                    FragTy::RawI32,
+                    FragNodeKind::ConstI32(i32::try_from(*tag).ok()?),
+                );
+                let cond = self.push_node(
+                    FragTy::BoolI32,
+                    FragNodeKind::Prim {
+                        op: FragPrim::I32Eq,
+                        args: vec![tag_value, constant],
+                    },
+                );
+                self.push_node(
+                    ty,
+                    FragNodeKind::If {
+                        cond,
+                        then_block: Box::new(expr_fragment_block_from_sym(
+                            hit,
+                            self.host_table,
+                            self.struct_table,
+                        )?),
+                        else_block: Box::new(expr_fragment_block_from_sym(
+                            miss,
+                            self.host_table,
+                            self.struct_table,
+                        )?),
+                    },
+                )
+            }
             SymNodeKind::If {
                 cond,
                 then_block,
