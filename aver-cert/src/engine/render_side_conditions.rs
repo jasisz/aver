@@ -46,7 +46,7 @@ fn render_expr_side_arm(c: &Cert) -> String {
         return format!(
             "exact Or.inr (Or.inl ⟨rfl, fun plan hp => by\n  \
              have hpe : plan = AverCert.Plans.{name}Plan := by\n    \
-             have : (some AverCert.Plans.{name}Plan : Option AverCert.ExprFragmentRawPlan) = some plan := by\n      \
+             have : (some AverCert.Plans.{name}Plan : Option AverCert.Schema.ExprFragmentRawPlan) = some plan := by\n      \
              rw [← hp]; rfl\n    exact (Option.some.inj this).symm\n  \
              subst hpe\n  exact CertProofs.{name}_exprFragmentSemanticBridge⟩)"
         );
