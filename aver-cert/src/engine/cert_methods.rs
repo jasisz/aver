@@ -107,6 +107,13 @@ impl Cert {
         }
     }
 
+    fn tag_dispatch_face(&self) -> Option<FragTagDispatchFace> {
+        match self.inner() {
+            Cert::ExprFragment { plan, .. } => expr_fragment_tag_dispatch_face(plan),
+            _ => None,
+        }
+    }
+
     fn name(&self) -> &str {
         match self.inner() {
             Cert::Recursive { name, .. }
@@ -212,6 +219,13 @@ impl Cert {
             let name = self.name();
             return format!("fun add _ _ _ _ => CertModule.{name}Host add");
         }
+        if let Some(face) = self.tag_dispatch_face() {
+            return format!(
+                "AverCert.StandardFace.tagDispatchHost {} {}",
+                self.carrier(),
+                face.box_idx
+            );
+        }
         match self.inner() {
             Cert::Recursive {
                 name, combinator, ..
@@ -265,6 +279,9 @@ impl Cert {
         }
         if self.project_face().is_some() {
             return ("WVal x WVal".to_string(), "WVal".to_string());
+        }
+        if self.tag_dispatch_face().is_some() {
+            return ("Int x WVal".to_string(), "Int".to_string());
         }
         match self.inner() {
             Cert::Recursive { .. }

@@ -198,9 +198,10 @@ def exprFragmentFuncTypeMatches
   typeSectionMatches (checkExprFragmentFuncType carrier params result)
     modBytes modLen typeIdx
 
-/-- The only admitted opaque-ADT fragment is a direct field projection. Its
-    function parameter must name that exact struct, and its result must equal
-    the selected field's decoded storage type. This simultaneously proves that
+/-- One of the two admitted opaque-ADT fragment shapes is a direct field
+    projection (the other, tag dispatch, is checked below). Its function
+    parameter must name that exact struct, and its result must equal the
+    selected field's decoded storage type. This simultaneously proves that
     the struct and field exist in the artifact's type section. -/
 def checkExprProjectionTypes
     (carrier structIdx fieldIdx : Nat)
@@ -240,8 +241,45 @@ def exprProjectionFace? (plan : AverCert.Schema.ExprFragmentRawPlan) :
     | _ => none
   else none
 
-/-- Opaque references fail closed unless the plan has the exact projection
-    face whose nominal signature and field type can be decoded above. -/
+/-- Byte-level recognizer of the tag-dispatch shape (mirror of the representation
+    plan; lives here because WasmSlice cannot import StandardFace). Returns the
+    scrutinee struct index. -/
+def exprTagDispatchStructIdx? (plan : AverCert.Schema.ExprFragmentRawPlan) : Option Nat :=
+  if plan.params = [.adtRef] && plan.result = .intCarrier && plan.body.result = 4 then
+    match plan.body.nodes with
+    | [n0, n1, n2, n3, n4] =>
+        match n0.kind, n1.kind, n2.kind, n3.kind, n4.kind with
+        | .local 0, .structGetUser structIdx 0 0, .constI32 _, .prim .i32Eq [1, 2], .ifElse 3 _ _ =>
+            if n0.ty = .adtRef && n1.ty = .rawI32 && n2.ty = .rawI32 &&
+                n3.ty = .boolI32 && n4.ty = .intCarrier
+            then some structIdx else none
+        | _, _, _, _, _ => none
+    | _ => none
+  else none
+
+/-- The scrutinee struct's field 0 must be the i32 operational tag. Guard
+    structIdx≠carrier (the Int carrier is never the scrutinee). -/
+def checkTagDispatchTypes (carrier structIdx : Nat) (structEntry : CertDecode.TypeEntry) : Bool :=
+  if structIdx == carrier then false else
+  match structEntry.form, structEntry.composite with
+  | .plain, .structType fields =>
+      match (fields[0]? : Option CertDecode.FieldType) with
+      | some { storage := .val (.numeric 0x7f), .. } => true
+      | _ => false
+  | _, _ => false
+
+def exprTagDispatchTypesMatch (modBytes modLen carrier structIdx : Nat) : Bool :=
+  match CertDecode.decodeTypes modBytes modLen with
+  | some info =>
+      match info.entryIndex[structIdx]? with
+      | some structEntry => checkTagDispatchTypes carrier structIdx structEntry
+      | none => false
+  | none => false
+
+/-- Opaque references fail closed unless the plan has one of the two admitted
+    faces: the field-projection face (whose nominal signature and field type are
+    decoded above) or the tag-dispatch face (whose i32 tag field is decoded
+    below). -/
 def exprFragmentNominalTypesMatch
     (modBytes modLen typeIdx carrier : Nat)
     (plan : AverCert.Schema.ExprFragmentRawPlan) : Bool :=
@@ -250,7 +288,10 @@ def exprFragmentNominalTypesMatch
     | some (structIdx, fieldIdx) =>
         exprProjectionTypesMatch
           modBytes modLen typeIdx carrier structIdx fieldIdx
-    | none => false
+    | none =>
+        match exprTagDispatchStructIdx? plan with
+        | some structIdx => exprTagDispatchTypesMatch modBytes modLen carrier structIdx
+        | none => false
   else true
 
 def isNonnegativeNullableRef : CertDecode.ValType → Bool

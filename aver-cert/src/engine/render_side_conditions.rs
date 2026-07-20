@@ -42,12 +42,21 @@ fn render_expr_side_arm(c: &Cert) -> String {
              subst plan\n  exact CertProofs.{name}_exprFragmentSemanticBridge⟩"
         );
     }
+    if c.tag_dispatch_face().is_some() {
+        return format!(
+            "exact Or.inr (Or.inl ⟨rfl, fun plan hp => by\n  \
+             have hpe : plan = AverCert.Plans.{name}Plan := by\n    \
+             have : (some AverCert.Plans.{name}Plan : Option AverCert.Schema.ExprFragmentRawPlan) = some plan := by\n      \
+             rw [← hp]; rfl\n    exact (Option.some.inj this).symm\n  \
+             subst hpe\n  exact CertProofs.{name}_exprFragmentSemanticBridge⟩)"
+        );
+    }
     if let Some(face) = c.project_face() {
         return format!(
-            "exact Or.inr (Or.inl ⟨rfl, by\n  exact \
+            "exact Or.inr (Or.inr (Or.inl ⟨rfl, by\n  exact \
              AcceptanceSoundness.fieldProjection_direct_canonical_discharges \
              \"{name}\" {} {} {} {} CertModule.{name}Code \
-             (fun _ _ _ _ _ => CertModule.{name}Host) (by decide) (by rfl)⟩)",
+             (fun _ _ _ _ _ => CertModule.{name}Host) (by decide) (by rfl)⟩))",
             c.carrier(),
             face.struct_idx,
             c.self_idx(),
@@ -62,7 +71,7 @@ fn render_expr_side_arm(c: &Cert) -> String {
         "only float expression claims may use the bespoke residual: {name}"
     );
     format!(
-        "exact Or.inr (Or.inr ⟨rfl, CertProofs.{name}_simulates⟩)"
+        "exact Or.inr (Or.inr (Or.inr ⟨rfl, CertProofs.{name}_simulates⟩))"
     )
 }
 

@@ -8,10 +8,13 @@
 /// ADT-ref plan (a bare reference passthrough, a projection chain) stays
 /// unplanned here and declines fail-closed at the verifier.
 fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan) -> bool {
-    let int_face_ok =
-        plan.result != FragTy::IntCarrier || expr_fragment_int_add_face(plan).is_some();
-    let adt_face_ok =
-        !expr_fragment_plan_touches_adt_ref(plan) || expr_fragment_project_face(plan).is_some();
+    let tag_dispatch = expr_fragment_is_tag_dispatch(plan);
+    let int_face_ok = plan.result != FragTy::IntCarrier
+        || expr_fragment_int_add_face(plan).is_some()
+        || tag_dispatch;
+    let adt_face_ok = !expr_fragment_plan_touches_adt_ref(plan)
+        || expr_fragment_project_face(plan).is_some()
+        || tag_dispatch;
     int_face_ok && adt_face_ok
 }
 
@@ -146,6 +149,25 @@ fn sym_ty_from_mir_name(ty: &str) -> Option<SymTy> {
         "String" | "Str" => Some(SymTy::String),
         "" => None,
         other => {
+            if let Some(inner) = other
+                .strip_prefix("Option(")
+                .and_then(|value| value.strip_suffix(')'))
+            {
+                return Some(SymTy::App(
+                    "Option".to_string(),
+                    vec![sym_ty_from_mir_name(inner)?],
+                ));
+            }
+            if let Some(inner) = other
+                .strip_prefix("Result(")
+                .and_then(|value| value.strip_suffix(')'))
+            {
+                let (ok, err) = split_mir_debug_binary_args(inner)?;
+                return Some(SymTy::App(
+                    "Result".to_string(),
+                    vec![sym_ty_from_mir_name(ok)?, sym_ty_from_mir_name(err)?],
+                ));
+            }
             // User records/ADTs print as `Named { id: ..., name: "User" }`;
             // extract the source name. Anything else keeps the pre-existing
             // whole-token fallback.
@@ -155,6 +177,21 @@ fn sym_ty_from_mir_name(ty: &str) -> Option<SymTy> {
             Some(SymTy::Named(other.to_string()))
         }
     }
+}
+
+fn split_mir_debug_binary_args(value: &str) -> Option<(&str, &str)> {
+    let mut depth = 0i32;
+    for (at, ch) in value.char_indices() {
+        match ch {
+            '(' | '<' | '[' | '{' => depth += 1,
+            ')' | '>' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                return Some((value[..at].trim(), value[at + 1..].trim()));
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Extract the source type name from the resolver `Type::Named` Debug
@@ -233,6 +270,7 @@ impl MirSymPlanBuilder<'_> {
                 )
             }
             crate::ir::mir::MirExpr::IfThenElse(ite) => self.lower_if(&ite.node),
+            crate::ir::mir::MirExpr::Match(m) => self.lower_tag_match(&m.node),
             _ => None,
         }
     }
@@ -381,6 +419,108 @@ impl MirSymPlanBuilder<'_> {
                 cond,
                 then_block: Box::new(then_block),
                 else_block: Box::new(else_block),
+            },
+        )
+    }
+
+    fn lower_tag_match(
+        &mut self,
+        m: &crate::ir::mir::MirMatch,
+    ) -> Option<(SymValueId, SymTy)> {
+        if self.params_by_slot.len() != 1 || m.arms.len() != 2 {
+            return None;
+        }
+        let crate::ir::mir::MirExpr::Local(subject_local) = &m.subject.node else {
+            return None;
+        };
+        let (_, subject_ty) = self.params_by_slot.get(&subject_local.node.slot.0)?;
+        let (type_name, hit_ctor, miss_ctor, tag) = match subject_ty {
+            SymTy::App(name, args) if name == "Option" && args.len() == 1 => (
+                "Option",
+                crate::ir::hir::BuiltinCtor::OptionSome,
+                crate::ir::hir::BuiltinCtor::OptionNone,
+                crate::codegen::wasm_gc::OPTION_SOME_TAG,
+            ),
+            SymTy::App(name, args) if name == "Result" && args.len() == 2 => (
+                "Result",
+                crate::ir::hir::BuiltinCtor::ResultOk,
+                crate::ir::hir::BuiltinCtor::ResultErr,
+                crate::codegen::wasm_gc::RESULT_OK_TAG,
+            ),
+            _ => return None,
+        };
+
+        let mut hit = None;
+        let mut miss = None;
+        let mut wildcard = None;
+        for arm in &m.arms {
+            let value = mir_int_literal(&arm.body)?;
+            match &arm.pattern {
+                crate::ir::mir::MirPattern::Ctor {
+                    ctor: crate::ir::mir::MirCtor::Builtin(ctor),
+                    ..
+                } if *ctor == hit_ctor && hit.is_none() => hit = Some(value),
+                crate::ir::mir::MirPattern::Ctor {
+                    ctor: crate::ir::mir::MirCtor::Builtin(ctor),
+                    ..
+                } if *ctor == miss_ctor && miss.is_none() => miss = Some(value),
+                crate::ir::mir::MirPattern::Wildcard if wildcard.is_none() => {
+                    wildcard = Some(value)
+                }
+                _ => return None,
+            }
+        }
+        match (hit, miss, wildcard) {
+            (Some(hit), Some(miss), None) => self.push_tag_match(
+                &m.subject,
+                type_name,
+                tag,
+                hit,
+                miss,
+            ),
+            (Some(hit), None, Some(miss)) => self.push_tag_match(
+                &m.subject,
+                type_name,
+                tag,
+                hit,
+                miss,
+            ),
+            (None, Some(miss), Some(hit)) => self.push_tag_match(
+                &m.subject,
+                type_name,
+                tag,
+                hit,
+                miss,
+            ),
+            _ => None,
+        }
+    }
+
+    fn push_tag_match(
+        &mut self,
+        subject: &crate::ast::Spanned<crate::ir::mir::MirExpr>,
+        type_name: &str,
+        tag: i32,
+        hit: i64,
+        miss: i64,
+    ) -> Option<(SymValueId, SymTy)> {
+        let (scrutinee, _) = self.lower_expr(subject)?;
+        let int_block = |value| SymBlock {
+            nodes: vec![SymNode {
+                id: SymValueId(0),
+                ty: SymTy::Int,
+                kind: SymNodeKind::ConstInt(value),
+            }],
+            result: SymValueId(0),
+        };
+        self.push_node(
+            SymTy::Int,
+            SymNodeKind::TagMatch {
+                type_name: type_name.to_string(),
+                scrutinee,
+                tag: i64::from(tag),
+                hit: Box::new(int_block(hit)),
+                miss: Box::new(int_block(miss)),
             },
         )
     }
@@ -721,9 +861,11 @@ fn big_int_const_cmp_kind(op: crate::ast::BinOp) -> Option<BigIntConstCmpKind> {
 mod tests {
     use super::*;
     use crate::ast::{BinOp, Literal, Spanned};
+    use crate::ir::hir::BuiltinCtor;
     use crate::ir::FnId;
     use crate::ir::mir::{
-        LocalId, MirBinOp, MirExpr, MirFn, MirFnRepr, MirLocal, MirParam,
+        LocalId, MirBinOp, MirCtor, MirExpr, MirFn, MirFnRepr, MirLocal, MirMatch, MirMatchArm,
+        MirParam, MirPattern,
     };
 
     fn span<T>(node: T) -> Spanned<T> {
@@ -816,6 +958,86 @@ mod tests {
             aliased_slots: std::sync::Arc::new(Vec::new()),
             repr: MirFnRepr::default(),
         }
+    }
+
+    fn option_slot_count_fn(some_body: Spanned<MirExpr>) -> MirFn {
+        MirFn {
+            fn_id: FnId(0),
+            name: "slotCount".to_string(),
+            params: vec![MirParam {
+                local: LocalId(0),
+                name: "egg".to_string(),
+                ty: "Option(Int)".to_string(),
+            }],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            body: span(MirExpr::Match(span(MirMatch {
+                subject: Box::new(int_local(0)),
+                arms: vec![
+                    MirMatchArm {
+                        pattern: MirPattern::Ctor {
+                            ctor: MirCtor::Builtin(BuiltinCtor::OptionNone),
+                            bindings: vec![],
+                            binding_names: vec![],
+                        },
+                        body: int_lit(0),
+                    },
+                    MirMatchArm {
+                        pattern: MirPattern::Ctor {
+                            ctor: MirCtor::Builtin(BuiltinCtor::OptionSome),
+                            bindings: vec![LocalId(1)],
+                            binding_names: vec!["value".to_string()],
+                        },
+                        body: some_body,
+                    },
+                ],
+            }))),
+            local_count: 2,
+            aliased_slots: std::sync::Arc::new(Vec::new()),
+            repr: MirFnRepr::default(),
+        }
+    }
+
+    #[test]
+    fn option_literal_match_lowers_to_operational_tag_dispatch() {
+        let mir_fn = option_slot_count_fn(int_lit(1));
+        let plan = fragment_plan_from_mir_fn(&mir_fn, &|_, _| None).expect("tag plan");
+        let FragmentPlan::Sym(sym) = &plan else {
+            panic!("Option tag match must remain a source symbolic plan")
+        };
+        assert_eq!(
+            sym.params,
+            vec![SymTy::App("Option".to_string(), vec![SymTy::Int])]
+        );
+        assert!(matches!(
+            &sym.body.nodes[1].kind,
+            SymNodeKind::TagMatch {
+                type_name,
+                scrutinee: SymValueId(0),
+                tag,
+                hit,
+                miss,
+            } if type_name == "Option"
+                && *tag == i64::from(crate::codegen::wasm_gc::OPTION_SOME_TAG)
+                && matches!(hit.nodes[0].kind, SymNodeKind::ConstInt(1))
+                && matches!(miss.nodes[0].kind, SymNodeKind::ConstInt(0))
+        ));
+        let encoded = plan
+            .to_expr_fragment_plan(
+                &FragHostTable::placeholder(),
+                &FragStructTable::placeholder_for(sym),
+            )
+            .expect("tag plan encodes");
+        assert!(expr_fragment_is_tag_dispatch(&encoded));
+    }
+
+    #[test]
+    fn option_match_using_payload_stays_unplanned() {
+        let mir_fn = option_slot_count_fn(int_local(1));
+        assert!(
+            fragment_plan_from_mir_fn(&mir_fn, &|_, _| None).is_none(),
+            "payload-dependent match exceeds the narrow tag-dispatch producer scope"
+        );
     }
 
     #[test]

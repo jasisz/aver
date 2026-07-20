@@ -422,6 +422,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                             first_arith_strict.get_or_insert(FirstI64Arith::Mul);
                             Op::Other
                         }
+                        Operator::I32Eq => Op::I32Eq,
                         Operator::I32LtS => Op::I32LtS,
                         Operator::I32GtS => Op::I32GtS,
                         Operator::If { .. } => Op::If,

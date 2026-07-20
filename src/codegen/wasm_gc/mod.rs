@@ -65,6 +65,7 @@ mod module;
 #[cfg(test)]
 mod tests;
 mod types;
+pub(crate) use types::{OPTION_SOME_TAG, RESULT_OK_TAG};
 mod types_discovery;
 mod view;
 mod wasip2_helpers;

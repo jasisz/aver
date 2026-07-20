@@ -430,6 +430,7 @@ fn plan_prim_from_tag(tag: &str) -> Option<FragPrim> {
         "i64.le_s" => Some(FragPrim::I64LeS),
         "i64.lt_s" => Some(FragPrim::I64LtS),
         "i64.ge_s" => Some(FragPrim::I64GeS),
+        "i32.eq" => Some(FragPrim::I32Eq),
         "i32.lt_s" => Some(FragPrim::I32LtS),
         "i32.gt_s" => Some(FragPrim::I32GtS),
         _ => None,
@@ -447,7 +448,9 @@ fn check_plan_prim_args(
         FragPrim::I64Eq | FragPrim::I64LeS | FragPrim::I64LtS | FragPrim::I64GeS => {
             &[FragTy::I64, FragTy::I64]
         }
-        FragPrim::I32LtS | FragPrim::I32GtS => &[FragTy::RawI32, FragTy::RawI32],
+        FragPrim::I32Eq | FragPrim::I32LtS | FragPrim::I32GtS => {
+            &[FragTy::RawI32, FragTy::RawI32]
+        }
     };
     if args.len() != expected_args.len() {
         return Err(format!(
@@ -458,7 +461,7 @@ fn check_plan_prim_args(
         ));
     }
     for (arg, expected) in args.iter().zip(expected_args) {
-        if matches!(op, FragPrim::I32LtS | FragPrim::I32GtS) {
+        if matches!(op, FragPrim::I32Eq | FragPrim::I32LtS | FragPrim::I32GtS) {
             let got = nodes
                 .get(arg.0)
                 .ok_or_else(|| format!("plan references missing node v{}", arg.0))?
@@ -482,6 +485,7 @@ fn check_plan_prim_args(
         | FragPrim::I64LeS
         | FragPrim::I64LtS
         | FragPrim::I64GeS
+        | FragPrim::I32Eq
         | FragPrim::I32LtS
         | FragPrim::I32GtS => FragTy::BoolI32,
     })

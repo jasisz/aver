@@ -47,7 +47,9 @@ fn render_certificate(
             // Int-face dispatch is discharged in `Final.cert` by the
             // declared-envelope face transport; no bespoke bridge is emitted.
             Cert::WidenedIntMatch { .. } | Cert::VariantDispatch { .. } => {}
-            Cert::ExprFragment { .. } if expr_fragment_uses_audited_generic(c) => {
+            Cert::ExprFragment { .. }
+                if expr_fragment_uses_audited_generic(c) || c.tag_dispatch_face().is_some() =>
+            {
                 s.push_str(&render_expr_fragment_semantic_bridge(
                     c,
                     analysis.frag_host_table,

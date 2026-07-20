@@ -93,6 +93,7 @@ enum Op {
     F64Add,
     F64Mul,
     F64Le,
+    I32Eq,
     I32LtS,
     I32GtS,
     If,

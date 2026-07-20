@@ -231,10 +231,70 @@ def classifyIntAdd (plan : ExprFragmentRawPlan) : Option IntAddFace :=
     | _ => none
   else none
 
-/-- Generic fragments have no host-dependent or opaque-ADT face. Fuel
-    exhaustion rejects rather than accidentally admitting a future deeper
-    plan. Exact integer-add and projection plans are selected before this
-    check. -/
+/-! ### Tag-dispatch face (Option/Result `match` returning an Int constant)
+
+An ADT whose discriminant is a tag FIELD (not a `ref.test` subtype): read the
+i32 tag in field 0 of the scrutinee struct, compare to a literal, and return a
+boxed integer constant on each arm. The face is stated OPERATIONALLY over the
+representation — `Dom = (tag, payload)`, `model` reads the tag and branches —
+so it never claims that a source constructor writes the tag into field 0. -/
+
+structure TagDispatchFace where
+  optIdx : Nat
+  boxIdx : Nat
+  tag    : Int
+  thenC  : Int
+  elseC  : Int
+deriving Repr, DecidableEq
+
+def tagDispatchHost (carrier boxIdx : Nat) : HostBuilder :=
+  fun _add _sub _mul _stringEq _stringConcat fn =>
+    if fn = boxIdx then some (1, boxRef carrier) else none
+
+/-- The complete operational face of a tag-dispatch obligation. `Dom` carries the
+    tag and payload; `domRepr` pins the scrutinee to the tagged struct; `model`
+    reads the tag and returns the arm constant; the result is a represented
+    integer. -/
+def tagDispatch (carrier : Nat) (face : TagDispatchFace) : FaceSpec where
+  carrier := carrier
+  Dom := Int × WVal
+  Cod := Int
+  domRepr := fun _S p vs => vs = [.structv face.optIdx [.i32v p.1, p.2]]
+  codRepr := intRepr
+  host := tagDispatchHost carrier face.boxIdx
+  model? := some (fun p => if p.1 = face.tag then face.thenC else face.elseC)
+
+/-- One boxed-Int-constant arm: `[i64.const c, box bi]` yields `(bi, c)`. -/
+def tagDispatchArm? (b : FragBlock) : Option (Nat × Int) :=
+  match b.nodes, b.result with
+  | [{ id := 0, ty := .i64, kind := .constI64 c },
+     { id := 1, ty := .intCarrier, kind := .hostCall .box bi [0] }], 1 => some (bi, c)
+  | _, _ => none
+
+/-- Exact tag-dispatch classifier: `local0; struct.get.user optIdx 0; i32.const k;
+    i32.eq; if (box thenC) (box elseC)`. Both arms must box through the same
+    `box` helper. -/
+def classifyTagDispatch (plan : ExprFragmentRawPlan) : Option TagDispatchFace :=
+  if plan.params = [.adtRef] && plan.result = .intCarrier &&
+      plan.body.result = 4 then
+    match plan.body.nodes with
+    | [n0, n1, n2, n3, n4] =>
+        match n0.kind, n1.kind, n2.kind, n3.kind, n4.kind with
+        | .local 0, .structGetUser optIdx 0 0, .constI32 tag, .prim .i32Eq [1, 2],
+          .ifElse 3 hitBlk missBlk =>
+            if n0.ty = .adtRef && n1.ty = .rawI32 && n2.ty = .rawI32 &&
+                n3.ty = .boolI32 && n4.ty = .intCarrier then
+              match tagDispatchArm? hitBlk, tagDispatchArm? missBlk with
+              | some (boxIdx, thenC), some (boxIdx2, elseC) =>
+                  if boxIdx = boxIdx2 then
+                    some { optIdx := optIdx, boxIdx := boxIdx, tag := tag,
+                           thenC := thenC, elseC := elseC }
+                  else none
+              | _, _ => none
+            else none
+        | _, _, _, _, _ => none
+    | _ => none
+  else none
 def genericFragmentAllowedFuel : Nat → FragBlock → Bool
   | 0, _ => false
   | fuel + 1, block =>
@@ -270,9 +330,12 @@ noncomputable def symFragmentFace (claim : SymFragmentClaim) : Option StandardFa
           | some (structIdx, fieldIdx) =>
               some (.known (projection claim.carrier structIdx fieldIdx))
           | none =>
-              if genericFragmentAllowed plan then
-                some (.known (fragment claim.carrier plan.params plan.result))
-              else none
+              match classifyTagDispatch plan with
+              | some face => some (.known (tagDispatch claim.carrier face))
+              | none =>
+                  if genericFragmentAllowed plan then
+                    some (.known (fragment claim.carrier plan.params plan.result))
+                  else none
 
 def symFragmentMatches
     (roles : CertDecode.AddSub.Roles) (claim : SymFragmentClaim) : Prop :=

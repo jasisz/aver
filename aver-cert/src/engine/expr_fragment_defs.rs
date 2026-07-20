@@ -394,6 +394,7 @@ pub enum FragPrim {
     I64LeS,
     I64LtS,
     I64GeS,
+    I32Eq,
     I32LtS,
     I32GtS,
 }
@@ -409,6 +410,7 @@ impl FragPrim {
             FragPrim::I64LeS => "i64.le_s",
             FragPrim::I64LtS => "i64.lt_s",
             FragPrim::I64GeS => "i64.ge_s",
+            FragPrim::I32Eq => "i32.eq",
             FragPrim::I32LtS => "i32.lt_s",
             FragPrim::I32GtS => "i32.gt_s",
         }
@@ -424,13 +426,14 @@ impl FragPrim {
             FragPrim::I64LeS => ".i64LeS",
             FragPrim::I64LtS => ".i64LtS",
             FragPrim::I64GeS => ".i64GeS",
+            FragPrim::I32Eq => ".i32Eq",
             FragPrim::I32LtS => ".i32LtS",
             FragPrim::I32GtS => ".i32GtS",
         }
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FragNodeKind {
     Local { index: u32 },
     ConstBool(bool),
@@ -477,14 +480,14 @@ pub enum FragNodeKind {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FragNode {
     pub id: FragValueId,
     pub ty: FragTy,
     pub kind: FragNodeKind,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FragBlock {
     pub nodes: Vec<FragNode>,
     pub result: FragValueId,
@@ -500,7 +503,7 @@ impl FragBlock {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExprFragmentPlan {
     pub params: Vec<FragTy>,
     pub result: FragTy,

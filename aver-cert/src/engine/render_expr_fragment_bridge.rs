@@ -37,7 +37,7 @@ fn expr_fragment_claim_lean_value(
     host_table: FragHostTable,
     struct_table_lean: &str,
 ) -> String {
-    debug_assert!(expr_fragment_uses_audited_generic(c));
+    debug_assert!(expr_fragment_uses_audited_generic(c) || c.tag_dispatch_face().is_some());
     let name = c.name();
     format!(
         "({{ exportNameBytes := {}, exportName := {}, carrier := {}, \
@@ -84,6 +84,14 @@ fn render_expr_fragment_semantic_bridge(
     host_table: FragHostTable,
     struct_table_lean: &str,
 ) -> String {
+    if let Some(face) = c.tag_dispatch_face() {
+        return render_expr_fragment_tag_dispatch_semantic_bridge(
+            c,
+            face,
+            host_table,
+            struct_table_lean,
+        );
+    }
     debug_assert!(expr_fragment_uses_audited_generic(c));
     if let Some(face) = c.int_add_face() {
         return render_expr_fragment_int_add_semantic_bridge(
@@ -94,6 +102,71 @@ fn render_expr_fragment_semantic_bridge(
         );
     }
     render_expr_fragment_int_bool_semantic_bridge(c, host_table, struct_table_lean)
+}
+
+fn render_expr_fragment_tag_dispatch_semantic_bridge(
+    c: &Cert,
+    face: FragTagDispatchFace,
+    host_table: FragHostTable,
+    struct_table_lean: &str,
+) -> String {
+    let name = c.name();
+    let carrier = c.carrier();
+    let claim_name = format!("{name}TagDispatchClaim");
+    let claim = expr_fragment_claim_lean_value(c, host_table, struct_table_lean);
+    let acceptance = expr_fragment_claim_acceptance_proof(c);
+    let host_table_lean = host_table.lean_value();
+    let tag = lean_int_lit(face.tag);
+    let then_c = lean_int_lit(face.then_c);
+    let else_c = lean_int_lit(face.else_c);
+    let arm = |constant: &str| {
+        format!(
+            r#"  · refine ⟨[.structv {opt_idx} [.i32v x.1, x.2]], [.structv {opt_idx} [.i32v x.1, x.2], .null],
+      carrierSmall {carrier} ({constant}), rfl, rfl, ?_, ?_, ?_⟩
+    · simp [ExprFragmentSoundness.blockCallsOK, ExprFragmentSoundness.nodesCallsOK,
+        ExprFragmentSoundness.kindCallsOK, AverCert.Plans.{name}Plan, {claim_name}, AverCert.{name}Ob,
+        AverCert.StandardFace.tagDispatchHost]
+    · simp [ExprFragmentSemantics.evalSymRawPlan, {claim_name}, AverCert.{name}Ob, AverCert.StandardFace.tagDispatchHost,
+        show AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan {host_table_lean} {struct_table_lean}
+          AverCert.Plans.{name}SymPlan = some AverCert.Plans.{name}Plan from rfl,
+        AverCert.Plans.{name}Plan, ExprFragmentSemantics.runBlock,
+        AverCert.PlanLower.maxFuel, ExprFragmentSemantics.runBlockFuel,
+        ExprFragmentSemantics.runNodesFuel, ExprFragmentSemantics.finishWith,
+        AverCert.AcceptedArtifact.exprFragmentNLocals, initLocals, PlanLower.popExpected,
+        PlanLower.popExpectedAll, PlanLower.primInstr, ExprFragmentSemantics.runPrim,
+        wRunF, boxRef, popArgs, carrierSmall, b32, hx]
+    · simpa [{claim_name}, AverCert.{name}Ob, AverCert.Schema.intRepr, hx]
+        using S.smallIntro ({constant} : Int)
+"#,
+            opt_idx = face.opt_idx,
+        )
+    };
+    let then_arm = arm(&then_c);
+    let else_arm = arm(&else_c);
+    format!(
+        r#"/-! ### {name} — operational tag-dispatch expr-fragment semantic bridge -/
+
+def {claim_name} : AverCert.AcceptedArtifact.SymFragmentClaim := {claim}
+
+theorem {name}_exprFragmentClaimAccepted :
+    AverCert.AcceptedArtifact.symFragmentClaimAccepted
+      AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {claim_name} := by
+  unfold AverCert.AcceptedArtifact.symFragmentClaimAccepted
+  exact {acceptance}
+
+theorem {name}_exprFragmentSemanticBridge :
+    AcceptanceSoundness.exprFragmentSemanticBridge {claim_name}
+      AverCert.Plans.{name}Plan := by
+  refine ⟨rfl, ?_⟩
+  intro S add sub mul stringEq stringConcat hAdd hSub hMul hStringEq hStringConcat
+    fuel x vs w hDom hRun
+  dsimp only [{claim_name}, AverCert.{name}Ob] at x hDom ⊢
+  subst hDom
+  by_cases hx : x.1 = {tag}
+{then_arm}{else_arm}
+#print axioms {name}_exprFragmentSemanticBridge
+"#
+    )
 }
 
 fn render_expr_fragment_int_add_semantic_bridge(

@@ -18,6 +18,24 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
             arity = c.arity(),
         );
     }
+    if let Some(face) = c.tag_dispatch_face() {
+        return format!(
+            "abbrev {name}Ob : Schema.Obligation :=\n  \
+             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             code := CertModule.{name}Code, host := AverCert.StandardFace.tagDispatchHost {carrier} {box_idx}, self := {self_idx},\n    \
+             Dom := Int × WVal, Cod := Int,\n    \
+             domRepr := fun _S p vs => vs = [.structv {opt_idx} [.i32v p.1, p.2]],\n    \
+             codRepr := fun S v w => intRepr S v w,\n    \
+             model := fun p => if p.1 = {tag} then {then_c} else {else_c} }}\n\n",
+            carrier = c.carrier(),
+            box_idx = face.box_idx,
+            self_idx = c.self_idx(),
+            opt_idx = face.opt_idx,
+            tag = lean_int_lit(face.tag),
+            then_c = lean_int_lit(face.then_c),
+            else_c = lean_int_lit(face.else_c),
+        );
+    }
     // An ADT-ref expr fragment with the field-projection face states the SAME
     // verbatim projection obligation the legacy field-projection class ships:
     // a two-field struct in, the projected field out unchanged.
@@ -219,7 +237,7 @@ fn render_manifest_lean(
 ) -> String {
     let mut s = String::new();
     s.push_str(
-        "import Schema\nimport Module\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\nimport WasmSlice\nimport ExprFragmentAccepted\nimport ArtifactBytes\nimport Plans\nimport ConstructVerbatimSoundness\n",
+        "import Schema\nimport Module\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\nimport WasmSlice\nimport ExprFragmentAccepted\nimport ArtifactBytes\nimport Plans\nimport ConstructVerbatimSoundness\nimport StandardFace\n",
     );
     for r in model_roots {
         s.push_str(&format!("import {r}\n"));

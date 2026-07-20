@@ -966,7 +966,7 @@ pub(crate) fn emit_mir_option_match(
         struct_type_index: opt_idx,
         field_index: 0,
     });
-    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::I32Const(OPTION_SOME_TAG));
     func.instruction(&Instruction::I32Eq);
     func.instruction(&Instruction::If(block_ty));
 
@@ -1058,7 +1058,7 @@ pub(crate) fn emit_mir_result_match(
         struct_type_index: res_idx,
         field_index: 0,
     });
-    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::I32Const(RESULT_OK_TAG));
     func.instruction(&Instruction::I32Eq);
     func.instruction(&Instruction::If(block_ty));
 
