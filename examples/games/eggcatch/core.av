@@ -158,7 +158,7 @@ verify spawnChute
 
 fn spawnDiffers(seed: Int) -> Bool
     ? "True when mode A and mode B pick different spawn chutes for this seed —"
-      "the two modes are genuinely distinct spawn patterns, not a renaming."
+      "the two modes are genuinely distinct spawn patterns, not a relabel."
     Bool.not(chuteEq(spawnChute(seed, Mode.ModeA), spawnChute(seed, Mode.ModeB)))
 
 verify spawnDiffers

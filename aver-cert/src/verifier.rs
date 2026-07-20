@@ -1082,12 +1082,13 @@ fn find_code_exec_token(chars: &[char]) -> Option<&'static str> {
                 None => return scan_remainder_as_code(&tokens, chars, i),
             }
         }
-        if c == '\'' {
-            if let Some(end) = char_literal_end(chars, i) {
-                i = end;
-                continue;
-            }
-            // Not a char literal: `'` is an identifier prime, ordinary code.
+        // A `'` that opens a char literal is consumed; otherwise it is an
+        // identifier prime and falls through as ordinary code.
+        if c == '\''
+            && let Some(end) = char_literal_end(chars, i)
+        {
+            i = end;
+            continue;
         }
         if let Some(token) = token_at(&tokens, chars, i) {
             return Some(token);
