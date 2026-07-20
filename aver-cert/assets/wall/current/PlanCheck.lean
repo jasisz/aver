@@ -1181,12 +1181,30 @@ def checkIntDispatchRawPlan (plan : IntDispatchRawPlan) : Bool :=
     | .test _ _ _ => true
     | .default _ => false
 
-/-- The number of `test` arms in an Int-face dispatch cascade. The scratch-local
-    layout both lowerers compute is a fixed function of this count: arm `i`
-    spills to local `i+1`, the scrutinee is local `armCount + 1`. -/
+/-- The number of `test` arms in an Int-face dispatch cascade (const and binding
+    arms alike). The scratch-local layout is NOT a function of this total — only
+    payload-BINDING arms (`proj`/`hostOp`) spill a local; see `intDispatchBindArmCount`
+    for the count that drives the layout. -/
 def intDispatchArmCount : IntDispatchCascade → Nat
   | .default _ => 0
   | .test _ _ rest => intDispatchArmCount rest + 1
+
+/-- Whether one leaf spills a per-arm payload local: `proj`/`hostOp` read the
+    payload and spill one; a `const` arm reads no field and spills none. -/
+def bindArmLeaf : IntDispatchLeaf → Nat
+  | .proj => 1
+  | .hostOp _ _ _ => 1
+  | .const _ => 0
+
+/-- The number of PAYLOAD-BINDING (`proj`/`hostOp`) `test` arms in a cascade. A
+    `const` arm does not contribute to the scratch-local layout: the `i`-th
+    binding arm spills to local `i+1` and the scrutinee is local
+    `bindArmCount + 1`. This is what both lowerers thread and what the generic
+    simulation is parameterized over; `intDispatchArmCount` (which counts every
+    arm) is retained where total arm count is meant. -/
+def bindArmCount : IntDispatchCascade → Nat
+  | .default _ => 0
+  | .test _ leaf rest => bindArmLeaf leaf + bindArmCount rest
 
 /-- The `HostRole` an Int-face arm combinator resolves through in the
     byte-derived role table. -/

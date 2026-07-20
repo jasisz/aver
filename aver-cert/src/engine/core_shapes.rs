@@ -11,6 +11,10 @@ enum ArmLeaf {
         k: i64,
         const_first: bool,
     },
+    /// Return the constant `k` without reading a field: the arm of a nullary
+    /// (payloadless) constructor, emitted as `i64.const k; call box` with NO
+    /// projection prefix.
+    Const { k: i64 },
 }
 
 /// The straight-line integer shape of one function inside a composition's call

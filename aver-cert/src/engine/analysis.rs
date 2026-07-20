@@ -42,6 +42,22 @@ fn int_dispatch_test_tags(body: &IntDispatchCascade) -> Vec<u32> {
     tags
 }
 
+/// Collect the tags the checked cascade tests, in dispatch order, with whether
+/// each arm BINDS a payload (`Proj`/`HostOp`) or is a `Const` (nullary) arm that
+/// reads no field. A binding arm's tag must be a declared Int-payload (`hit`)
+/// constructor; a const arm's tag need only be a declared constructor of any
+/// shape (mirrors the wall's leaf-aware `dCascadeInEnv`).
+fn int_dispatch_test_arms(body: &IntDispatchCascade) -> Vec<(u32, bool)> {
+    let mut arms = Vec::new();
+    let mut cursor = body;
+    while let IntDispatchCascade::Test { ty_idx, hit, rest } = cursor {
+        let binds = !matches!(hit, IntDispatchLeaf::Const { .. });
+        arms.push((*ty_idx, binds));
+        cursor = rest;
+    }
+    arms
+}
+
 /// Fail-closed declared-envelope gate for user-ADT claims: an Int-dispatch or
 /// named-ADT constructor certificate is kept only when its ADT's envelope is
 /// extractable and the claim's byte-pinned indices are declared hit
@@ -57,8 +73,8 @@ fn declared_envelope_gate(
             let plan = int_dispatch_plan_from_cert(c, frag_host_table).ok_or_else(|| {
                 "declared-envelope gate: no byte-matching int-dispatch plan".to_string()
             })?;
-            let tags = int_dispatch_test_tags(&plan.body);
-            let first = *tags.first().ok_or_else(|| {
+            let arms = int_dispatch_test_arms(&plan.body);
+            let (first, _) = *arms.first().ok_or_else(|| {
                 "declared-envelope gate: dispatch plan tests no variant".to_string()
             })?;
             let envelope = envelopes.for_ctor(first).ok_or_else(|| {
@@ -66,11 +82,23 @@ fn declared_envelope_gate(
                     .to_string()
             })?;
             let hits = envelope.hit_indices();
-            for tag in &tags {
-                if !hits.contains(tag) {
-                    return Err(format!(
-                        "dispatch tests variant {tag} which is not a declared Int-payload constructor; declined"
-                    ));
+            for (tag, binds) in &arms {
+                if *binds {
+                    // Payload-binding arm: the tag must be a declared Int-payload
+                    // (`hit`) constructor, since the arm projects its field.
+                    if !hits.contains(tag) {
+                        return Err(format!(
+                            "dispatch tests variant {tag} which is not a declared Int-payload constructor; declined"
+                        ));
+                    }
+                } else {
+                    // Const (nullary) arm: reads no field, so the tag need only be
+                    // a declared constructor of any shape.
+                    if !envelope.ctors.iter().any(|c| c.idx == *tag) {
+                        return Err(format!(
+                            "dispatch tests variant {tag} which is not a declared constructor; declined"
+                        ));
+                    }
                 }
             }
             Ok(())

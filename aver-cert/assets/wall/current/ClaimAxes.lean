@@ -149,6 +149,7 @@ def useIntDispatchLeaf : IntDispatchLeaf → ContractUse
   | .proj => {}
   | .hostOp .add _ _ => { box := true, add := true }
   | .hostOp .sub _ _ => { box := true, sub := true }
+  | .const _ => { box := true }
 
 def useIntDispatchCascade : IntDispatchCascade → ContractUse
   | .default _ => { box := true }

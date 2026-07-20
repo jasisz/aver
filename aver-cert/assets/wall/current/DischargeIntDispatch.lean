@@ -167,7 +167,7 @@ theorem intDispatch_accepted_call
           body, codeEntry, binding, hLow, _hCodeEntry, _hExactBinding,
           hSelf, _hFuncType, hCode⟩
       have hCodeSelf : claim.obligation.code claim.obligation.self =
-          some ⟨1, AverCert.PlanCheck.intDispatchArmCount plan.body + 2,
+          some ⟨1, AverCert.PlanCheck.bindArmCount plan.body + 2,
             body⟩ := by
         simpa [← hSelf] using hCode
       have hHost' : claim.obligation.host =
@@ -245,7 +245,7 @@ theorem intDispatch_canonical_discharges
     (hLow : AverCert.PlanLower.lowerIntDispatchBody hostTable plan = some body)
     (hCode : code self = some {
       arity := 1,
-      nlocals := AverCert.PlanCheck.intDispatchArmCount plan.body + 2,
+      nlocals := AverCert.PlanCheck.bindArmCount plan.body + 2,
       body := body })
     (hSemantic : ∀ (S : CarrierSpec carrier) (x : Dom) (vs : List WVal),
       domRepr S x vs →
