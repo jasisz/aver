@@ -202,23 +202,48 @@ def replace_once(pattern: str, replacement: str, text: str, *, flags: int = 0) -
 
 
 def update_main_index(text: str, sizes: dict[str, str]) -> str:
-    summary = (
-        "Eight games compiled directly from Aver to WebAssembly GC. "
-        "Engine handles GC and tail calls — no NaN-boxing, no custom heap. "
-        f"Snake ships at {sizes['snake']}; a full roguelike with "
-        f"procedural generation is {sizes['rogue']}. "
-        "Modern browsers only (Chrome 119+ / Firefox 120+ / Safari 18.2+)."
-    )
-    text = replace_once(
-        r'(<section class="games" id="demo">.*?<p class="section-sub">)(.*?)(</p>)',
-        rf"\1{summary}\3",
-        text,
-        flags=re.S,
-    )
+    size_values: dict[str, float] = {}
+    for game in GAMES:
+        match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?) KiB", sizes[game.slug])
+        if match is None:
+            raise SystemExit(
+                f"Expected a KiB artifact size for {game.slug}: {sizes[game.slug]!r}"
+            )
+        size_values[game.slug] = float(match.group(1))
+
+    largest = max(size_values.values())
+    if largest <= 0:
+        raise SystemExit("Expected at least one non-zero playground artifact")
 
     for game in GAMES:
-        pattern = rf'(<a href="playground/\?game={re.escape(game.slug)}" class="game-card">.*?<small>)([^<]+)(</small>)'
-        text = replace_once(pattern, rf"\g<1>{sizes[game.slug]}\g<3>", text, flags=re.S)
+        artifact_percent = round(size_values[game.slug] / largest * 100)
+        row_pattern = (
+            r'(<a\b'
+            r'(?=[^>]*\bclass="[^"]*\bprogram-row\b[^"]*")'
+            rf'(?=[^>]*\bhref="[^"]*playground/\?game={re.escape(game.slug)}'
+            r'(?:[&#][^"]*)?")'
+            r"[^>]*>)(.*?)(</a>)"
+        )
+
+        def update_row(match: re.Match[str]) -> str:
+            opening, body, closing = match.groups()
+            opening = replace_once(
+                r"(--artifact\s*:\s*)[0-9]+(?:\.[0-9]+)?%",
+                rf"\g<1>{artifact_percent}%",
+                opening,
+            )
+            body = replace_once(
+                r"(<b>)([^<]*)(</b>)",
+                rf"\g<1>{sizes[game.slug]}\g<3>",
+                body,
+            )
+            return opening + body + closing
+
+        text, count = re.subn(row_pattern, update_row, text, count=1, flags=re.S)
+        if count != 1:
+            raise SystemExit(
+                f"Expected exactly one .program-row for playground game {game.slug}"
+            )
 
     return text
 

@@ -4,21 +4,21 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <title>Aver — A language designed for AI to write and humans to review</title>
-    <meta name="description" content="Aver is an AI-native programming language where every function explains itself, side effects are visible in the type system, and tests are co-located specs. Designed for AI to generate and humans to trust.">
-    <meta name="keywords" content="AI-native language, AI-first programming, AI code review, programming language, formal verification, effect system, Rust, WASM">
-    <link rel="stylesheet" href="style.css">
+    <title>Aver — programming language for code written with AI</title>
+    <meta name="description" content="Aver is a programming language for code written with AI. Intent, effects, verification, and behavioral certificate obligations stay with the source.">
+    <link rel="canonical" href="https://averlang.dev/">
     <link rel="alternate" type="text/plain" href="/llms.txt" title="LLM context">
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to content</a>
 
-<!-- ── Nav ──────────────────────────────────────────────────────────── -->
-<nav class="nav">
-    <div class="nav-inner">
-        <a href="/" class="nav-brand">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 100" class="nav-logo">
+<header class="site-header">
+    <div class="frame header-grid">
+        <a class="wordmark" href="/" aria-label="Aver home">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 100" class="brand-logo" aria-hidden="true">
                 <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-                    <g stroke="var(--logo-text, #e2e8f0)" stroke-width="5">
+                    <g stroke="var(--logo-text, #171b20)" stroke-width="5">
                         <circle cx="45" cy="55" r="20"/>
                         <line x1="65" y1="35" x2="65" y2="75"/>
                         <polyline points="77 35, 96 75, 115 35"/>
@@ -34,302 +34,535 @@
                 <circle cx="242" cy="84" r="4.5" fill="#d97706"/>
             </svg>
         </a>
-        <div class="nav-links">
-            <a href="#features">Features</a>
-            <a href="#constraints">Design</a>
-            <a href="#demo">Demo</a>
-            <a href="#start">Get started</a>
-            <a href="playground/">Playground</a>
-            <a href="https://github.com/jasisz/aver" target="_blank">GitHub</a>
-        </div>
+        <nav class="site-nav" aria-label="Primary navigation">
+            <a href="#example">Source</a>
+            <a href="#design">Design</a>
+            <a href="#toolchain">Toolchain</a>
+            <a href="#certificate">ABC</a>
+            <a href="#programs">Programs</a>
+            <a href="#install">Install</a>
+            <a href="/playground/">Playground ↗</a>
+        </nav>
     </div>
-</nav>
+</header>
 
-<!-- ── Hero ─────────────────────────────────────────────────────────── -->
-<section class="hero">
-    <div class="hero-text">
-        <p class="hero-thesis">Code is cheap to generate. Expensive to trust.</p>
-        <h1>The AI-native language where code explains itself.</h1>
-        <p class="hero-sub">Aver is a language where every function carries its intent, side effects are visible in the type system, and tests are executable specs next to the code. The optimization target is the reviewer, not the generator.</p>
-        <div class="hero-meta">
-            <span class="hero-meta-item">Three backends: VM, Rust, standalone WASM.</span>
-            <a href="llms.txt" class="hero-meta-link">For agents: llms.txt</a>
+<main id="main">
+    <section class="hero">
+        <div class="frame hero-grid">
+            <div class="hero-copy">
+                <h1>aver</h1>
+                <p class="hero-purpose">A programming language for code written with AI.</p>
+                <p class="hero-deck">Source language · Bytecode VM · Rust · WebAssembly GC · Lean 4.32</p>
+                <p class="hero-lede">
+                    Function descriptions, effect sets, verify blocks, architecture decisions,
+                    and certificate obligations are language constructs. The wasm-gc backend can
+                    emit behavioral certificates checked by the standalone verifier.
+                </p>
+                <p class="agent-reference"><span>Agent reference</span><a href="/llms.txt">llms.txt ↗</a></p>
+                <div class="hero-links" aria-label="Primary actions">
+                    <a class="action action-dark" href="/playground/">Try in browser <span>↗</span></a>
+                    <a class="action" href="#example">Read the source example <span>↓</span></a>
+                </div>
+            </div>
+
+            <aside class="project-record" aria-label="Project record">
+                <div class="record-head">
+                    <span>PROJECT RECORD</span>
+                    <span>PUBLIC / MIT</span>
+                </div>
+                <div class="record-diagram" aria-label="Artifact certificate acceptance path">
+                    <p>STRICT ACCEPTANCE PATH</p>
+                    <div class="record-flow">
+                        <div>
+                            <span>01 / SOURCE</span>
+                            <strong>app.av</strong>
+                        </div>
+                        <b aria-hidden="true">→</b>
+                        <div>
+                            <span>02 / EMIT</span>
+                            <strong>app.wasm<br>+ cert/</strong>
+                        </div>
+                        <b aria-hidden="true">→</b>
+                        <div>
+                            <span>03 / CHECK</span>
+                            <strong>aver-cert<br>Lean 4.32</strong>
+                        </div>
+                    </div>
+                    <div class="record-outcome">
+                        <span>STRICT VERDICT</span>
+                        <strong>CERTIFIED</strong>
+                        <i>or decline</i>
+                    </div>
+                </div>
+                <dl>
+                    <div>
+                        <dt>Version</dt>
+                        <dd>0.27.1 / experimental</dd>
+                    </div>
+                    <div>
+                        <dt>Runtime</dt>
+                        <dd>Bytecode VM</dd>
+                    </div>
+                    <div>
+                        <dt>Deploy</dt>
+                        <dd>Rust / wasm-gc / WASI 0.2</dd>
+                    </div>
+                    <div>
+                        <dt>Evidence</dt>
+                        <dd>Verify / Lean 4.32 / Dafny / cert</dd>
+                    </div>
+                    <div>
+                        <dt>Implementation</dt>
+                        <dd>Rust</dd>
+                    </div>
+                </dl>
+                <p class="record-note">
+                    Independent experimental project. The compiler, runtime, proof backends,
+                    language tooling, and certificate verifier are developed in the public repository.
+                </p>
+            </aside>
         </div>
-        <div class="hero-cta">
-            <a href="playground/" class="btn btn-primary">Try in browser</a>
-            <a href="#start" class="btn btn-secondary">Install</a>
+        <div class="frame language-strip">
+            <span class="language-strip-label">LANGUAGE SURFACE</span>
+            <ul>
+                <li><code>? intent</code></li>
+                <li><code>! effects</code></li>
+                <li><code>verify</code></li>
+                <li><code>artifact cert</code></li>
+            </ul>
         </div>
-        <p class="hero-proof">MIT licensed &middot; Written in Rust &middot; v0.27 &middot; <a href="https://crates.io/crates/aver-lang" target="_blank">crates.io</a></p>
-    </div>
-    <div class="hero-code">
-        <div class="hero-window">
-            <pre class="code-block hero-code-block"><span class="hl-keyword">fn</span> <span class="hl-fn">cartTotal</span>(items: <span class="hl-type">List</span>&lt;<span class="hl-type">Int</span>&gt;) <span class="hl-operator">-></span> <span class="hl-type">Int</span>
-    <span class="hl-effect">?</span> <span class="hl-desc">"Sum the prices in a cart."</span>
-    <span class="hl-keyword">match</span> items
-        [] <span class="hl-operator">-></span> <span class="hl-number">0</span>
-        [price, ..rest] <span class="hl-operator">-></span> price + cartTotal(rest)
+    </section>
 
-<span class="hl-keyword">fn</span> <span class="hl-fn">combine</span>(a: <span class="hl-type">List</span>&lt;<span class="hl-type">Int</span>&gt;, b: <span class="hl-type">List</span>&lt;<span class="hl-type">Int</span>&gt;) <span class="hl-operator">-></span> <span class="hl-type">List</span>&lt;<span class="hl-type">Int</span>&gt;
-    <span class="hl-effect">?</span> <span class="hl-desc">"Put cart b's items after cart a."</span>
-    <span class="hl-keyword">match</span> a
-        [] <span class="hl-operator">-></span> b
-        [x, ..rest] <span class="hl-operator">-></span> List.prepend(x, combine(rest, b))
+    <section class="section source-section" id="example">
+        <div class="frame">
+            <header class="section-heading">
+                <p class="section-index">01 / SOURCE</p>
+                <h2>Cart totals.</h2>
+                <p>
+                    A complete pure module: public API, function descriptions,
+                    concrete cases, and a law checked over nine input pairs.
+                </p>
+            </header>
 
-<span class="hl-keyword">verify</span> <span class="hl-fn">cartTotal</span> <span class="hl-keyword">law</span> combinePreservesTotal
-    <span class="hl-keyword">given</span> a: <span class="hl-type">List</span>&lt;<span class="hl-type">Int</span>&gt; <span class="hl-operator">=</span> [[], [<span class="hl-number">5</span>], [<span class="hl-number">3</span>, <span class="hl-number">4</span>]]
-    <span class="hl-keyword">given</span> b: <span class="hl-type">List</span>&lt;<span class="hl-type">Int</span>&gt; <span class="hl-operator">=</span> [[], [<span class="hl-number">10</span>], [<span class="hl-number">1</span>, <span class="hl-number">2</span>]]
-    cartTotal(combine(a, b)) <span class="hl-operator">=></span> cartTotal(a) + cartTotal(b)</pre>
-        </div>
-    </div>
-</section>
+            <div class="source-board">
+                <div class="source-panel">
+                    <div class="source-titlebar">
+                        <span>cart.av</span>
+                        <span>26 lines / complete module</span>
+                    </div>
+                    <div class="source-scroll" tabindex="0" role="region" aria-label="Annotated Aver source">
+                        <div class="source-line"><span class="ln">01</span><code><span class="tok-keyword">module</span> Cart</code></div>
+                        <div class="source-line"><span class="ln">02</span><code class="indent-1"><span class="tok-meta">intent</span> =</code></div>
+                        <div class="source-line"><span class="ln">03</span><code class="indent-2"><span class="tok-string">"Cart operations and the total they preserve."</span></code></div>
+                        <div class="source-line"><span class="ln">04</span><code class="indent-1"><span class="tok-meta">exposes</span> [cartTotal, combine]</code></div>
+                        <div class="source-line"><span class="ln">05</span><code class="indent-1"><span class="tok-meta">effects</span> []</code></div>
+                        <div class="source-line is-blank"><span class="ln">06</span><code>&nbsp;</code></div>
+                        <div class="source-line"><span class="ln">07</span><code><span class="tok-keyword">fn</span> <span class="tok-name">cartTotal</span>(items: <span class="tok-type">List&lt;Int&gt;</span>) <span class="tok-op">-&gt;</span> <span class="tok-type">Int</span></code></div>
+                        <div class="source-line"><span class="ln">08</span><code class="indent-1"><span class="tok-effect">?</span> <span class="tok-string">"Sum the prices in a cart."</span></code></div>
+                        <div class="source-line"><span class="ln">09</span><code class="indent-1"><span class="tok-keyword">match</span> items</code></div>
+                        <div class="source-line"><span class="ln">10</span><code class="indent-2">[] <span class="tok-op">-&gt;</span> 0</code></div>
+                        <div class="source-line"><span class="ln">11</span><code class="indent-2">[price, ..rest] <span class="tok-op">-&gt;</span> price + cartTotal(rest)</code></div>
+                        <div class="source-line is-blank"><span class="ln">12</span><code>&nbsp;</code></div>
+                        <div class="source-line"><span class="ln">13</span><code><span class="tok-keyword">fn</span> <span class="tok-name">combine</span>(a: <span class="tok-type">List&lt;Int&gt;</span>, b: <span class="tok-type">List&lt;Int&gt;</span>) <span class="tok-op">-&gt;</span> <span class="tok-type">List&lt;Int&gt;</span></code></div>
+                        <div class="source-line"><span class="ln">14</span><code class="indent-1"><span class="tok-effect">?</span> <span class="tok-string">"Put cart b's items after cart a."</span></code></div>
+                        <div class="source-line"><span class="ln">15</span><code class="indent-1"><span class="tok-keyword">match</span> a</code></div>
+                        <div class="source-line"><span class="ln">16</span><code class="indent-2">[] <span class="tok-op">-&gt;</span> b</code></div>
+                        <div class="source-line"><span class="ln">17</span><code class="indent-2">[x, ..rest] <span class="tok-op">-&gt;</span> List.prepend(x, combine(rest, b))</code></div>
+                        <div class="source-line is-blank"><span class="ln">18</span><code>&nbsp;</code></div>
+                        <div class="source-line"><span class="ln">19</span><code><span class="tok-keyword">verify</span> <span class="tok-name">combine</span></code></div>
+                        <div class="source-line"><span class="ln">20</span><code class="indent-1">combine([], [1, 2]) <span class="tok-op">=&gt;</span> [1, 2]</code></div>
+                        <div class="source-line"><span class="ln">21</span><code class="indent-1">combine([3, 4], [1, 2]) <span class="tok-op">=&gt;</span> [3, 4, 1, 2]</code></div>
+                        <div class="source-line is-blank"><span class="ln">22</span><code>&nbsp;</code></div>
+                        <div class="source-line"><span class="ln">23</span><code><span class="tok-keyword">verify</span> <span class="tok-name">cartTotal</span> <span class="tok-keyword">law</span> <span class="tok-name">combinePreservesTotal</span></code></div>
+                        <div class="source-line"><span class="ln">24</span><code class="indent-1"><span class="tok-keyword">given</span> a: <span class="tok-type">List&lt;Int&gt;</span> <span class="tok-op">=</span> [[], [5], [3, 4]]</code></div>
+                        <div class="source-line"><span class="ln">25</span><code class="indent-1"><span class="tok-keyword">given</span> b: <span class="tok-type">List&lt;Int&gt;</span> <span class="tok-op">=</span> [[], [10], [1, 2]]</code></div>
+                        <div class="source-line"><span class="ln">26</span><code class="indent-1">cartTotal(combine(a, b)) <span class="tok-op">=&gt;</span> cartTotal(a) + cartTotal(b)</code></div>
+                    </div>
+                </div>
 
-<!-- ── Social proof ─────────────────────────────────────────────────── -->
-<p class="hero-podcast">Discussed on <em>Happy Path Programming</em> #120 with Bruce Eckel and James Ward — why a language should optimize for reviewer trust over generation speed. <a href="https://www.youtube.com/watch?v=D_mPxGtSzbQ" target="_blank" rel="noopener">Watch / listen →</a></p>
+                <ol class="source-notes">
+                    <li>
+                        <span class="note-lines">01—05</span>
+                        <h3>Module contract</h3>
+                        <p><code>intent</code> states the purpose, <code>exposes</code> names the public API, and <code>effects []</code> keeps it pure.</p>
+                    </li>
+                    <li>
+                        <span class="note-lines">07—17</span>
+                        <h3>Descriptions + patterns</h3>
+                        <p>Both typed functions carry a <code>?</code> description and exhaust lists with explicit patterns.</p>
+                    </li>
+                    <li>
+                        <span class="note-lines">19—21</span>
+                        <h3>Concrete cases</h3>
+                        <p>The ordinary <code>verify</code> block fixes empty and non-empty behavior for <code>combine</code>.</p>
+                    </li>
+                    <li>
+                        <span class="note-lines">23—26</span>
+                        <h3>Named law</h3>
+                        <p>Three values for each input produce nine checked pairs for <code>combinePreservesTotal</code>.</p>
+                    </li>
+                </ol>
+            </div>
 
-<!-- ── Features ─────────────────────────────────────────────────────── -->
-<section class="features" id="features">
-    <h2>Why Aver?</h2>
-    <div class="features-grid">
-
-        <div class="feature-card">
-            <h3>Intent is explicit</h3>
-            <p>Every function carries a prose description. The <em>why</em> stays with the code.</p>
-            <pre class="code-block code-sm"><span class="hl-keyword">fn</span> <span class="hl-fn">classify</span>(c: <span class="hl-type">Float</span>) <span class="hl-operator">-></span> <span class="hl-type">String</span>
-    <span class="hl-effect">?</span> <span class="hl-desc">"Human-readable category."</span>
-    <span class="hl-keyword">match</span> c &lt;= <span class="hl-number">0.0</span>
-        <span class="hl-constant">true</span>  <span class="hl-operator">-></span> <span class="hl-string">"freezing"</span>
-        <span class="hl-constant">false</span> <span class="hl-operator">-></span> <span class="hl-string">"comfortable"</span></pre>
-        </div>
-
-        <div class="feature-card">
-            <h3>Effects are tracked</h3>
-            <p>I/O, network, disk — declared on every function. No hidden side effects. Run <a href="playground/?example=hello">a tracked <code>Console.print</code></a> in-browser.</p>
-            <pre class="code-block code-sm"><span class="hl-keyword">fn</span> <span class="hl-fn">greet</span>(name: <span class="hl-type">String</span>) <span class="hl-operator">-></span> <span class="hl-type">Unit</span>
-    <span class="hl-effect">?</span> <span class="hl-desc">"Greeting to stdout."</span>
-    <span class="hl-effect">!</span> <span class="hl-effect">[Console.print]</span>
-    Console.print(<span class="hl-string">"Hi, {name}!"</span>)</pre>
-        </div>
-
-        <div class="feature-card">
-            <h3>Verify blocks are specs</h3>
-            <p>Tests live next to the function. Checks, docs, and regression guards — in one place.</p>
-            <pre class="code-block code-sm"><span class="hl-keyword">verify</span> <span class="hl-fn">divide</span>
-    divide(<span class="hl-number">10</span>, <span class="hl-number">2</span>) <span class="hl-operator">=></span> Result.Ok(<span class="hl-number">5</span>)
-    divide(<span class="hl-number">7</span>, <span class="hl-number">0</span>)  <span class="hl-operator">=></span> Result.Err(<span class="hl-string">"zero"</span>)
-    divide(<span class="hl-number">9</span>, <span class="hl-number">3</span>)  <span class="hl-operator">=></span> Result.Ok(<span class="hl-number">3</span>)</pre>
-        </div>
-
-        <div class="feature-card">
-            <h3>Decisions are first-class</h3>
-            <p>Architectural choices live in the code, not a wiki. Searchable and exportable.</p>
-            <pre class="code-block code-sm"><span class="hl-keyword">decision</span> <span class="hl-fn">UseResult</span>
-    chosen = <span class="hl-string">"Result"</span>
-    rejected = [<span class="hl-string">"Exceptions"</span>]
-    reason =
-        <span class="hl-desc">"Exceptions hide in sigs.</span>
-        <span class="hl-desc"> Result forces handling."</span></pre>
-        </div>
-
-        <div class="feature-card">
-            <h3>Effect policies</h3>
-            <p><code>aver.toml</code> controls which hosts, paths, and env vars your code can touch. <em>Deployment guardrails.</em></p>
-            <pre class="code-block code-sm"><span class="hl-comment"># aver.toml</span>
-[effects.Http]
-hosts = [<span class="hl-string">"api.example.com"</span>]
-
-[effects.Disk]
-paths = [<span class="hl-string">"./data/**"</span>]</pre>
-        </div>
-
-        <div class="feature-card">
-            <h3>Errors that teach</h3>
-            <p>Diagnostics built for humans and LLMs — precise, actionable, with hints. See <a href="playground/?example=effect-violation">an effect-violation diagnostic</a> rendered live.</p>
-            <pre class="code-block code-sm"><span class="hl-red">Error [3:5]:</span> <span class="hl-fn">'greet'</span> calls
-  <span class="hl-fn">'Console.print'</span> but does
-  not declare the effect.
-
-<span class="hl-muted">Hint: add</span> <span class="hl-effect">! [Console.print]</span></pre>
-        </div>
-
-        <div class="feature-card">
-            <h3>AI-native navigation</h3>
-            <p><code>aver context</code> exports types, effects, intents — sized to fit an LLM window. Also runs in-browser via the playground Context panel.</p>
-            <pre class="code-block code-sm"><span class="hl-muted">$</span> aver context app.av
-
-<span class="hl-comment"># Module: Main</span>
-<span class="hl-muted">></span> <span class="hl-desc">"Payment ops entry."</span>
-<span class="hl-muted">effects:</span> <span class="hl-effect">[Console, Disk]</span>
-
-<span class="hl-keyword">fn</span> <span class="hl-fn">run</span>(cmd) <span class="hl-operator">-></span> <span class="hl-type">Result</span>&lt;<span class="hl-type">Report</span>, <span class="hl-type">String</span>&gt;</pre>
-        </div>
-
-        <div class="feature-card">
-            <h3>Formal verification</h3>
-            <p>Verify blocks state laws the compiler checks and exports to <em>Lean 4</em> proofs and <em>Dafny</em> lemmas. Effectful functions get proofs too via <em>Oracle</em> &mdash; see the <a href="oracle.html">randomness paradox</a> or try a <a href="playground/?example=verify-first">pure law</a> in-browser.</p>
-            <pre class="code-block code-sm"><span class="hl-keyword">verify</span> add <span class="hl-keyword">law</span> commutative
-    <span class="hl-keyword">given</span> a: <span class="hl-type">Int</span> = -<span class="hl-number">10</span>..<span class="hl-number">10</span>
-    <span class="hl-keyword">given</span> b: <span class="hl-type">Int</span> = -<span class="hl-number">10</span>..<span class="hl-number">10</span>
-    add(a, b) <span class="hl-operator">=></span> add(b, a)</pre>
-        </div>
-
-        <div class="feature-card">
-            <h3>Multiple backends</h3>
-            <p>VM for dev, native Rust for production, WASM for browsers. Same source.</p>
-            <pre class="code-block code-sm"><span class="hl-muted">$</span> aver run hello.av
-<span class="hl-muted">$</span> aver compile hello.av --target rust
-<span class="hl-muted">$</span> aver compile hello.av --target wasm-gc</pre>
-        </div>
-    </div>
-</section>
-
-<!-- ── Constraints ─────────────────────────────────────────────────── -->
-<section class="constraints" id="constraints">
-    <h2>What Aver deliberately omits</h2>
-    <p class="section-sub">The safest code is code that can't go wrong. Aver removes entire categories of bugs by not having the features that cause them.</p>
-    <div class="constraints-grid">
-        <div class="constraint">
-            <span class="constraint-absent">No <code>null</code></span>
-            <span class="constraint-instead"><code>Option&lt;T&gt;</code> with <code>Some</code> / <code>None</code> — the compiler forces you to handle both.</span>
-        </div>
-        <div class="constraint">
-            <span class="constraint-absent">No closures</span>
-            <span class="constraint-instead">All functions are top-level. No captured variables — what you see is what it uses.</span>
-        </div>
-        <div class="constraint">
-            <span class="constraint-absent">No exceptions</span>
-            <span class="constraint-instead"><code>Result&lt;T, E&gt;</code> only — errors are values, never invisible control flow.</span>
-        </div>
-        <div class="constraint">
-            <span class="constraint-absent">No <code>if</code>/<code>else</code></span>
-            <span class="constraint-instead"><code>match</code> is exhaustive — the compiler catches every missing case.</span>
-        </div>
-        <div class="constraint">
-            <span class="constraint-absent">No mutable state</span>
-            <span class="constraint-instead">All bindings are immutable. No hidden side channels, no spooky action at a distance.</span>
-        </div>
-        <div class="constraint">
-            <span class="constraint-absent">No async runtime</span>
-            <span class="constraint-instead">Independence (<code>?!</code>) for parallelism — explicit, not implicit.</span>
-        </div>
-        <div class="constraint">
-            <span class="constraint-absent">No loops</span>
-            <span class="constraint-instead">Recursion + <code>match</code> + TCO. Termination is visible in the structure.</span>
-        </div>
-        <div class="constraint">
-            <span class="constraint-absent">No magic</span>
-            <span class="constraint-instead">No decorators, no implicit behaviour, no runtime reflection. Code is what it says.</span>
-        </div>
-    </div>
-</section>
-
-<!-- ── Demo ─────────────────────────────────────────────────────────── -->
-<section class="games" id="demo">
-    <h2>Native WASM, shared runtime</h2>
-    <p class="section-sub">Eight games compiled directly from Aver to WebAssembly GC. Engine handles GC and tail calls — no NaN-boxing, no custom heap. Snake ships at 8.1 KiB; a full roguelike with procedural generation is 33.2 KiB. Modern browsers only (Chrome 119+ / Firefox 120+ / Safari 18.2+).</p>
-    <div class="games-grid">
-        <a href="playground/?game=life" class="game-card">
-            <div class="game-icon">🧬</div>
-            <span>Game of Life</span>
-            <small>12.3 KiB</small>
-        </a>
-        <a href="playground/?game=snake" class="game-card">
-            <div class="game-icon">🐍</div>
-            <span>Snake</span>
-            <small>8.1 KiB</small>
-        </a>
-        <a href="playground/?game=tetris" class="game-card">
-            <div class="game-icon">🧱</div>
-            <span>Tetris</span>
-            <small>13.1 KiB</small>
-        </a>
-        <a href="playground/?game=checkers" class="game-card">
-            <div class="game-icon">🏁</div>
-            <span>Checkers</span>
-            <small>28.8 KiB</small>
-        </a>
-        <a href="playground/?game=rogue" class="game-card">
-            <div class="game-icon">🗡️</div>
-            <span>Roguelike</span>
-            <small>33.2 KiB</small>
-        </a>
-        <a href="playground/?game=doom" class="game-card">
-            <div class="game-icon">👹</div>
-            <span>Doom</span>
-            <small>28.2 KiB</small>
-        </a>
-        <a href="playground/?game=wumpus" class="game-card">
-            <div class="game-icon">🦇</div>
-            <span>Wumpus</span>
-            <small>7.9 KiB</small>
-        </a>
-        <a href="playground/?game=eggcatch" class="game-card">
-            <div class="game-icon">🥚</div>
-            <span>Egg Catch</span>
-            <small>15.6 KiB</small>
-        </a>
-    </div>
-</section>
-
-<!-- ── Getting started ─────────────────────────────────────────────── -->
-<section class="start" id="start">
-    <h2>Get started in 30 seconds</h2>
-    <div class="start-steps">
-        <div class="step">
-            <div class="step-num">1</div>
-            <div class="step-body">
-                <h3>Install</h3>
-                <pre class="code-block code-sm"><span class="hl-muted">$</span> cargo install aver-lang</pre>
+            <div class="source-caption">
+                <p><span>Read the source</span> <a href="cart.av">Open cart.av ↗</a></p>
+                <p><span>Give it to an agent</span> <a href="/llms.txt">Read llms.txt ↗</a></p>
             </div>
         </div>
-        <div class="step">
-            <div class="step-num">2</div>
-            <div class="step-body">
-                <h3>Write</h3>
-                <pre class="code-block code-sm"><span class="hl-comment"># hello.av</span>
-<span class="hl-keyword">fn</span> <span class="hl-fn">greeting</span>(name: <span class="hl-type">String</span>) <span class="hl-operator">-></span> <span class="hl-type">String</span>
-    <span class="hl-string">"Hello, {name}!"</span>
+    </section>
 
-<span class="hl-keyword">fn</span> <span class="hl-fn">main</span>() <span class="hl-operator">-></span> <span class="hl-type">Unit</span>
-    <span class="hl-effect">!</span> <span class="hl-effect">[Console.print]</span>
-    Console.print(greeting(<span class="hl-string">"Aver"</span>))
+    <section class="section design-section" id="design">
+        <div class="frame">
+            <header class="section-heading compact">
+                <p class="section-index">02 / DESIGN POSITION</p>
+                <h2>Deliberate omissions.</h2>
+                <p>The language does not include the following constructs; each has an explicit replacement.</p>
+            </header>
 
-<span class="hl-keyword">verify</span> <span class="hl-fn">greeting</span>
-    greeting(<span class="hl-string">"Aver"</span>) <span class="hl-operator">=></span> <span class="hl-string">"Hello, Aver!"</span></pre>
+            <div class="constraint-list" role="table" aria-label="Deliberate language omissions">
+                <div class="constraint-head" role="row">
+                    <span role="columnheader">Ref.</span>
+                    <span role="columnheader">Absent</span>
+                    <span role="columnheader">Replacement</span>
+                </div>
+                <div class="constraint-row" role="row">
+                    <span class="constraint-ref" role="cell">D.01</span>
+                    <strong role="cell">No <code>null</code></strong>
+                    <p role="cell"><code>Option&lt;T&gt;</code> with explicit <code>Some</code> and <code>None</code>.</p>
+                </div>
+                <div class="constraint-row" role="row">
+                    <span class="constraint-ref" role="cell">D.02</span>
+                    <strong role="cell">No exceptions</strong>
+                    <p role="cell"><code>Result&lt;T, E&gt;</code>; errors stay in signatures and values.</p>
+                </div>
+                <div class="constraint-row" role="row">
+                    <span class="constraint-ref" role="cell">D.03</span>
+                    <strong role="cell">No <code>if</code> / <code>else</code></strong>
+                    <p role="cell">Exhaustive <code>match</code>; a missing case is a compiler concern.</p>
+                </div>
+                <div class="constraint-row" role="row">
+                    <span class="constraint-ref" role="cell">D.04</span>
+                    <strong role="cell">No mutable bindings</strong>
+                    <p role="cell">Values do not change behind the reader’s back.</p>
+                </div>
+                <div class="constraint-row" role="row">
+                    <span class="constraint-ref" role="cell">D.05</span>
+                    <strong role="cell">No closures</strong>
+                    <p role="cell">Top-level functions; inputs are visible rather than captured.</p>
+                </div>
+                <div class="constraint-row" role="row">
+                    <span class="constraint-ref" role="cell">D.06</span>
+                    <strong role="cell">No async runtime</strong>
+                    <p role="cell">Independent products express parallel work without hidden scheduling syntax.</p>
+                </div>
+                <div class="constraint-row" role="row">
+                    <span class="constraint-ref" role="cell">D.07</span>
+                    <strong role="cell">No loops</strong>
+                    <p role="cell">Recursion, pattern matching, and tail-call optimization.</p>
+                </div>
+                <div class="constraint-row" role="row">
+                    <span class="constraint-ref" role="cell">D.08</span>
+                    <strong role="cell">No runtime magic</strong>
+                    <p role="cell">No decorators, reflection, or implicit behavior.</p>
+                </div>
             </div>
         </div>
-        <div class="step">
-            <div class="step-num">3</div>
-            <div class="step-body">
-                <h3>Run</h3>
-                <pre class="code-block code-sm"><span class="hl-muted">$</span> aver run hello.av
-<span class="hl-string">Hello, Aver!</span></pre>
-            </div>
-        </div>
-        <div class="step">
-            <div class="step-num">4</div>
-            <div class="step-body">
-                <h3>Verify</h3>
-                <pre class="code-block code-sm"><span class="hl-muted">$</span> aver verify hello.av
-<span class="hl-green">All 1 case passed.</span></pre>
-            </div>
-        </div>
-    </div>
-</section>
+    </section>
 
-<!-- ── Footer ──────────────────────────────────────────────────────── -->
-<footer class="footer">
-    <div class="footer-inner">
-        <div class="footer-brand">Aver</div>
-        <div class="footer-links">
-            <a href="https://github.com/jasisz/aver" target="_blank">GitHub</a>
-            <a href="https://crates.io/crates/aver-lang" target="_blank">crates.io</a>
-            <a href="https://github.com/jasisz/aver/blob/main/docs/language.md" target="_blank">Language Guide</a>
-            <a href="https://github.com/jasisz/aver/blob/main/docs/pushback.md" target="_blank">Common Pushback</a>
-            <a href="playground/">Playground</a>
-            <a href="llms.txt">llms.txt</a>
+    <section class="section toolchain-section" id="toolchain">
+        <div class="frame">
+            <header class="section-heading">
+                <p class="section-index">03 / TOOLCHAIN</p>
+                <h2>Check, verify, prove, compile.</h2>
+                <p>The main source-analysis and build commands, in order.</p>
+            </header>
+
+            <div class="pipeline">
+                <article>
+                    <span class="pipeline-index">01</span>
+                    <p class="pipeline-command">aver check</p>
+                    <h3>Static checks</h3>
+                    <p>Types, descriptions, module intent, effect propagation, and diagnostics.</p>
+                </article>
+                <article>
+                    <span class="pipeline-index">02</span>
+                    <p class="pipeline-command">aver verify</p>
+                    <h3>Source verification</h3>
+                    <p>Colocated examples and laws become executable regression evidence.</p>
+                </article>
+                <article>
+                    <span class="pipeline-index">03</span>
+                    <p class="pipeline-command">aver proof</p>
+                    <h3>Proof export</h3>
+                    <p>Lean and Dafny backends carry selected laws beyond example checking.</p>
+                </article>
+                <article>
+                    <span class="pipeline-index">04</span>
+                    <p class="pipeline-command">aver compile</p>
+                    <h3>Artifact compilation</h3>
+                    <p>Deploy through Rust or WebAssembly; certify supported wasm-gc artifacts.</p>
+                </article>
+            </div>
+
+            <div class="diagnostic-strip">
+                <div>
+                    <span class="terminal-prompt">$</span> aver check payment.av
+                </div>
+                <p><strong>effect-violation</strong> ‘charge’ calls ‘Http.post’ but does not declare it.</p>
+                <p class="terminal-hint">
+                    hint / add <code>! [Http.post]</code> to the function contract
+                    <a href="/playground/?example=effect-violation">Open example ↗</a>
+                </p>
+            </div>
+            <p class="toolchain-related">
+                <span>Case study</span>
+                <a href="/oracle.html">The randomness paradox: verify, hostile mode, Lean, and Dafny ↗</a>
+            </p>
         </div>
+    </section>
+
+    <section class="section certificate-section" id="certificate">
+        <div class="frame">
+            <header class="section-heading">
+                <p class="section-index">04 / ABC</p>
+                <h2>Artifact Behavioral Certificates.</h2>
+                <p>
+                    A certificate states what selected exports of one WebAssembly module
+                    compute. Verification binds accepted claims to the supplied bytes and
+                    to a checker-owned statement schema.
+                </p>
+            </header>
+
+            <div class="certificate-composition">
+                <div class="certificate-copy">
+                    <p class="certificate-kicker">BEHAVIORAL PROOF / FAIL CLOSED</p>
+                    <h3>Verifier independence.</h3>
+                    <ul class="certificate-facts">
+                        <li>
+                            <span>Identity</span>
+                            <p>The <code>.wasm</code> file passed to <code>aver-cert</code> is validated, hashed, and encoded for Lean.</p>
+                        </li>
+                        <li>
+                            <span>Authority</span>
+                            <p>The checker owns the statement schema, soundness wall, toolchain, and fresh witness.</p>
+                        </li>
+                        <li>
+                            <span>Scope</span>
+                            <p>Unsupported exports are declined explicitly; no claim is made about them.</p>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="certificate-sheet" aria-label="Illustrative artifact certificate record">
+                    <div class="certificate-sheet-head">
+                        <span>AVER / ABC RECORD</span>
+                        <span>FORMAT 1 · SCHEMA 2</span>
+                    </div>
+                    <dl>
+                        <div>
+                            <dt>Subject</dt>
+                            <dd>out/app.wasm</dd>
+                        </div>
+                        <div>
+                            <dt>Byte binding</dt>
+                            <dd>SHA-256 / checker recovered</dd>
+                        </div>
+                        <div>
+                            <dt>Verifier</dt>
+                            <dd>aver-cert / independent process</dd>
+                        </div>
+                        <div>
+                            <dt>Kernel</dt>
+                            <dd>Lean 4.32 / pinned wall</dd>
+                        </div>
+                        <div>
+                            <dt>Accepted scope</dt>
+                            <dd>selected admitted exports</dd>
+                        </div>
+                    </dl>
+                    <div class="certificate-verdict">
+                        <span>STRICT VERDICT</span>
+                        <strong>CERTIFIED</strong>
+                    </div>
+                </div>
+
+                <div class="certificate-chain" aria-label="Certificate verification flow">
+                    <div>
+                        <span>INPUT / 01</span>
+                        <strong>actual app.wasm</strong>
+                        <small>validated + hashed</small>
+                    </div>
+                    <b aria-hidden="true">+</b>
+                    <div>
+                        <span>INPUT / 02</span>
+                        <strong>cert/ package</strong>
+                        <small>Plans.lean / authoritative plan data</small>
+                    </div>
+                    <b aria-hidden="true">→</b>
+                    <div>
+                        <span>CHECKER</span>
+                        <strong>aver-cert + Lean 4.32</strong>
+                        <small>checker-owned statement and wall</small>
+                    </div>
+                    <b aria-hidden="true">→</b>
+                    <div class="chain-result">
+                        <span>OUTPUT</span>
+                        <strong>CERTIFIED</strong>
+                        <small>or decline</small>
+                    </div>
+                </div>
+
+                <div class="certificate-commands">
+                    <div><span>01</span><code>aver compile app.av --target wasm-gc --certify -o out/</code></div>
+                    <div><span>02</span><code>aver-cert verify out/app.wasm out/cert</code></div>
+                </div>
+                <div class="certificate-limit">
+                    <p><strong>Precise limit:</strong> this is behavioral proof, not a signature or reproducible-build attestation.</p>
+                    <p>
+                        <a href="/certificate.html">Read the ABC record ↗</a>
+                        <a href="https://github.com/jasisz/aver/blob/main/docs/certification.md" target="_blank" rel="noopener">Source guide ↗</a>
+                        <a href="https://github.com/jasisz/aver/blob/main/docs/certification-architecture.md" target="_blank" rel="noopener">Architecture source ↗</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section programs-section" id="programs">
+        <div class="frame">
+            <header class="section-heading compact">
+                <p class="section-index">05 / BUILD LEDGER</p>
+                <h2>WebAssembly GC examples.</h2>
+                <p>Eight browser programs emitted directly from Aver source.</p>
+            </header>
+
+            <div class="program-ledger">
+                <div class="program-head">
+                    <span>Program</span>
+                    <span>Artifact size</span>
+                    <span>Open</span>
+                </div>
+                <a class="program-row" href="/playground/?game=wumpus" style="--artifact: 24%">
+                    <span>Wumpus</span><span class="size"><i></i><b>7.9 KiB</b></span><span>Run ↗</span>
+                </a>
+                <a class="program-row" href="/playground/?game=snake" style="--artifact: 25%">
+                    <span>Snake</span><span class="size"><i></i><b>8.1 KiB</b></span><span>Run ↗</span>
+                </a>
+                <a class="program-row" href="/playground/?game=life" style="--artifact: 37%">
+                    <span>Game of Life</span><span class="size"><i></i><b>12.3 KiB</b></span><span>Run ↗</span>
+                </a>
+                <a class="program-row" href="/playground/?game=tetris" style="--artifact: 39%">
+                    <span>Tetris</span><span class="size"><i></i><b>13.1 KiB</b></span><span>Run ↗</span>
+                </a>
+                <a class="program-row" href="/playground/?game=eggcatch" style="--artifact: 47%">
+                    <span>Egg Catch</span><span class="size"><i></i><b>15.6 KiB</b></span><span>Run ↗</span>
+                </a>
+                <a class="program-row" href="/playground/?game=doom" style="--artifact: 85%">
+                    <span>Doom</span><span class="size"><i></i><b>28.2 KiB</b></span><span>Run ↗</span>
+                </a>
+                <a class="program-row" href="/playground/?game=checkers" style="--artifact: 87%">
+                    <span>Checkers</span><span class="size"><i></i><b>28.8 KiB</b></span><span>Run ↗</span>
+                </a>
+                <a class="program-row" href="/playground/?game=rogue" style="--artifact: 100%">
+                    <span>Roguelike</span><span class="size"><i></i><b>33.2 KiB</b></span><span>Run ↗</span>
+                </a>
+            </div>
+            <p class="ledger-note">Size bars are relative to the largest artifact in this set. Modern WebAssembly GC browser required.</p>
+        </div>
+    </section>
+
+    <section class="section notes-section" id="writing">
+        <div class="frame notes-grid">
+            <div>
+                <p class="section-index">06 / PROJECT NOTE</p>
+                <blockquote>
+                    “This is not a language optimized for humans to type by hand all day.
+                    It is optimized for AI to generate code that humans can inspect,
+                    constrain, test, and ship.”
+                </blockquote>
+                <p class="quote-source">— Aver README</p>
+            </div>
+            <div class="reading-list">
+                <h2>Documents and discussion.</h2>
+                <a href="/certificate.html">
+                    <span>ABC</span><span>Artifact Behavioral Certificate ↗</span>
+                </a>
+                <a href="/oracle.html">
+                    <span>The randomness paradox</span><span>Verify, hostile mode, and proof ↗</span>
+                </a>
+                <a href="/grandfather.html">
+                    <span>Finding Aver’s grandfather</span><span>ACL2 and an executable paper bug ↗</span>
+                </a>
+                <a href="https://jasisz.github.io/aver-language/" target="_blank" rel="noopener">
+                    <span>Aver Manifesto</span><span>Long-form position ↗</span>
+                </a>
+                <a href="https://github.com/jasisz/aver/blob/main/docs/pushback.md" target="_blank" rel="noopener">
+                    <span>Common Pushback</span><span>Objections and limits ↗</span>
+                </a>
+                <a href="https://www.youtube.com/watch?v=D_mPxGtSzbQ" target="_blank" rel="noopener">
+                    <span>Happy Path Programming #120</span><span>Conversation ↗</span>
+                </a>
+                <a href="https://github.com/jasisz/aver/blob/main/docs/language.md" target="_blank" rel="noopener">
+                    <span>Language Guide</span><span>Surface reference ↗</span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <section class="section install-section" id="install">
+        <div class="frame install-grid">
+            <div>
+                <p class="section-index">07 / INSTALL</p>
+                <h2>Install from source.</h2>
+                <p>The commands below install the compiler and independent certificate verifier, then run the bundled example.</p>
+                <p class="install-requirement">Strict certificate verification also requires Elan; <code>aver-cert</code> selects the pinned Lean 4.32 toolchain.</p>
+            </div>
+            <div class="install-terminal">
+                <div><span>01</span><code>git clone https://github.com/jasisz/aver &amp;&amp; cd aver</code></div>
+                <div><span>02</span><code>cargo install --path . --features wasm</code></div>
+                <div><span>03</span><code>cargo install --path aver-cert</code></div>
+                <div><span>04</span><code>aver run examples/core/hello.av</code></div>
+                <div><span>05</span><code>aver verify examples/core/hello.av</code></div>
+            </div>
+            <div class="install-links">
+                <a href="https://github.com/jasisz/aver" target="_blank" rel="noopener">Clone on GitHub ↗</a>
+                <a href="https://crates.io/crates/aver-lang" target="_blank" rel="noopener">View on crates.io ↗</a>
+            </div>
+        </div>
+    </section>
+</main>
+
+<footer class="site-footer">
+    <div class="frame footer-grid">
+        <a class="wordmark footer-wordmark" href="/" aria-label="Aver home">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 100" class="brand-logo" aria-hidden="true">
+                <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+                    <g stroke="var(--logo-text, #faf8f1)" stroke-width="5">
+                        <circle cx="45" cy="55" r="20"/>
+                        <line x1="65" y1="35" x2="65" y2="75"/>
+                        <polyline points="77 35, 96 75, 115 35"/>
+                        <path d="M 127 55 H 167 C 167 44 158 35 147 35 C 136 35 127 44 127 55 C 127 66 136 75 147 75 C 157 75 163 72 163 67"/>
+                        <line x1="179" y1="75" x2="179" y2="35"/>
+                        <path d="M 179 46 Q 179 35 199 35"/>
+                    </g>
+                    <g stroke="#d97706" stroke-width="6">
+                        <path d="M 215 42 C 215 22 239 22 239 42 C 239 53 229 56 229 66"/>
+                        <line x1="255" y1="24" x2="255" y2="66"/>
+                    </g>
+                </g>
+                <circle cx="242" cy="84" r="4.5" fill="#d97706"/>
+            </svg>
+        </a>
+        <p>Code is a letter to the next reader.</p>
+        <nav aria-label="Footer navigation">
+            <a href="/">Home</a>
+            <a href="#writing">Writing</a>
+            <a href="/certificate.html">ABC</a>
+            <a href="/playground/">Playground</a>
+            <a href="/llms.txt">llms.txt</a>
+            <a href="https://github.com/jasisz/aver">GitHub</a>
+        </nav>
     </div>
 </footer>
-
 </body>
 </html>

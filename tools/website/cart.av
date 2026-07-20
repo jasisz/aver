@@ -1,0 +1,26 @@
+module Cart
+    intent =
+        "Cart operations and the total they preserve."
+    exposes [cartTotal, combine]
+    effects []
+
+fn cartTotal(items: List<Int>) -> Int
+    ? "Sum the prices in a cart."
+    match items
+        [] -> 0
+        [price, ..rest] -> price + cartTotal(rest)
+
+fn combine(a: List<Int>, b: List<Int>) -> List<Int>
+    ? "Put cart b's items after cart a."
+    match a
+        [] -> b
+        [x, ..rest] -> List.prepend(x, combine(rest, b))
+
+verify combine
+    combine([], [1, 2]) => [1, 2]
+    combine([3, 4], [1, 2]) => [3, 4, 1, 2]
+
+verify cartTotal law combinePreservesTotal
+    given a: List<Int> = [[], [5], [3, 4]]
+    given b: List<Int> = [[], [10], [1, 2]]
+    cartTotal(combine(a, b)) => cartTotal(a) + cartTotal(b)

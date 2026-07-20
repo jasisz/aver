@@ -4,211 +4,26 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <title>Finding Aver's grandfather — Aver</title>
+    <title>Finding Aver’s grandfather — Aver</title>
     <meta name="description" content="Aver meets its grandfather ACL2: implementing the 1996 AMD K5 division paper as executable laws surfaced a 30-year-old bug in the paper's presentation.">
     <meta property="og:type" content="article">
-    <meta property="og:title" content="Finding Aver's grandfather">
+    <meta property="og:title" content="Finding Aver’s grandfather">
     <meta property="og:description" content="Aver meets its grandfather ACL2: implementing the 1996 AMD K5 division paper as executable laws surfaced a 30-year-old bug in the paper's presentation.">
     <meta property="og:url" content="https://averlang.dev/grandfather">
     <meta property="og:image" content="https://averlang.dev/img/grandfather-card.png">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:image" content="https://averlang.dev/img/grandfather-card.png">
-    <link rel="stylesheet" href="style.css">
-    <style>
-        .grandfather-page { max-width: 48rem; margin: 0 auto; padding: 0 1.5rem; }
-
-        .grandfather-hero { padding: 3rem 0 1.2rem; }
-        .grandfather-hero h1 {
-            font-size: clamp(2rem, 4vw, 2.8rem);
-            font-weight: 790;
-            letter-spacing: -0.03em;
-            line-height: 1.08;
-            margin-bottom: 0.95rem;
-            max-width: 18ch;
-        }
-        .grandfather-hero .subhead {
-            color: var(--muted);
-            font-size: 1.125rem;
-            line-height: 1.62;
-        }
-        .tldr-box {
-            margin-top: 1.4rem;
-            padding: 1.1rem 1.3rem 1.15rem;
-            border: 1px solid var(--border);
-            border-left: 3px solid var(--accent);
-            border-radius: 10px;
-            background: color-mix(in srgb, var(--accent) 6%, transparent);
-        }
-        .tldr-label {
-            color: var(--accent);
-            font-family: var(--font-mono);
-            font-size: 0.72rem;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            margin-bottom: 0.45rem;
-        }
-        .tldr-box .subhead { margin: 0; }
-
-        .grandfather-section { padding: 0.4rem 0 1rem; }
-        .grandfather-section h2 {
-            font-size: 1.4rem;
-            font-weight: 700;
-            margin: 1.1rem 0 0.85rem;
-            letter-spacing: -0.01em;
-        }
-        .grandfather-section p {
-            color: var(--text);
-            line-height: 1.54;
-            margin-bottom: 0.95rem;
-            font-size: 1.125rem;
-            overflow-wrap: anywhere; /* bare-URL link text must not force horizontal scroll on phones */
-        }
-        .grandfather-section ol {
-            color: var(--text);
-            line-height: 1.54;
-            font-size: 1.125rem;
-            margin: 0 0 0.9rem 1.4rem;
-        }
-        .grandfather-section ol li { margin-bottom: 0.25rem; }
-        .grandfather-section a {
-            color: var(--accent);
-            text-decoration: none;
-            border-bottom: 1px solid transparent;
-        }
-        .grandfather-section a:hover { border-bottom-color: var(--accent); }
-        .grandfather-section code {
-            font-family: var(--font-mono);
-            font-size: 0.88em;
-            background: var(--inline-code-bg);
-            color: var(--inline-code-text);
-            padding: 0.08em 0.4em;
-            border-radius: 4px;
-            border: 1px solid var(--inline-code-border);
-        }
-
-        .grandfather-page figure { margin: 1.5rem 0 1.7rem; }
-        .grandfather-page figure img {
-            display: block;
-            width: 100%;
-            max-width: 100%;
-            height: auto;
-            border: 1px solid var(--border);
-            border-radius: 10px;
-        }
-        .grandfather-page figure.paper-scan img { background: #ffffff; }
-        /* Figure 1 is a tall full-page algorithm scan that otherwise dominates the
-           layout on wide screens. Cap its rendered width and centre it; on phones
-           the column is already narrower than this cap, so it just fills the column. */
-        .grandfather-page figure.figure-algorithm { text-align: center; }
-        .grandfather-page figure.figure-algorithm img {
-            max-width: 30rem;
-            margin: 0 auto;
-        }
-        .grandfather-page figcaption {
-            color: var(--muted);
-            font-family: var(--font-mono);
-            font-size: 0.8rem;
-            line-height: 1.5;
-            margin-top: 0.55rem;
-            text-align: center;
-        }
-        .grandfather-page figcaption code {
-            font-family: var(--font-mono);
-            background: transparent;
-            border: none;
-            padding: 0;
-        }
-
-        .footer-spacer {
-            padding: 2.5rem 0 4rem;
-            text-align: center;
-            color: var(--muted);
-            font-size: 0.88rem;
-            border-top: 1px solid var(--border);
-            margin-top: 2rem;
-        }
-        .footer-spacer a { color: var(--accent); text-decoration: none; }
-        .footer-spacer a:hover { text-decoration: underline; }
-
-        .grandfather-page .terminal pre {
-            background: #0d1117;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 1rem 1.2rem;
-            max-height: 34rem;
-            overflow-x: auto;
-            overflow-y: auto;
-            font-family: var(--font-mono);
-            font-size: 0.74rem;
-            line-height: 1.6;
-            color: #f2f5f9;
-            /* real-terminal feel: long lines scroll horizontally, never wrap */
-            white-space: pre;
-        }
-        /* Hard reset: the inline-code styling (.grandfather-section code: background,
-           border, padding, border-radius) leaks into the terminal's <code> and its
-           colorizing <span>s and paints a border/underline on every wrapped line.
-           Neutralize everything inside the terminal <pre> — but NOT the <pre> panel
-           itself, which keeps its dark #0d1117 background from the rule above. */
-        .grandfather-page .terminal pre code,
-        .grandfather-page .terminal pre span {
-            background: none;
-            background-color: transparent;
-            border: none;
-            border-radius: 0;
-            text-decoration: none;
-            box-shadow: none;
-            font-family: inherit;
-            padding: 0;
-            margin: 0;
-            font-size: inherit;
-            line-height: inherit;
-        }
-        .grandfather-page .terminal pre span { display: inline; }
-        /* On narrow phones the 0.74rem terminal feels cramped; nudge it down a touch.
-           Horizontal scrolling inside the <pre> is preserved (overflow-x:auto above). */
-        @media (max-width: 480px) {
-            .grandfather-page .terminal pre { font-size: 0.68rem; }
-        }
-        .grandfather-page .terminal .t-ok { color: #3fb950; }
-        .grandfather-page .terminal .t-fail { color: #f85149; font-weight: 600; }
-        .grandfather-page .terminal .t-meta { color: #d2a8ff; }
-        .grandfather-page .terminal .t-dim { color: #98a1ad; }
-        .grandfather-page .terminal .t-sum { color: #e3b341; font-weight: 600; }
-        .grandfather-page .terminal .t-cmd { color: #79c0ff; font-weight: 600; }
-        .grandfather-page .terminal .t-num { color: #ffffff; font-weight: 600; }
-        .grandfather-page .terminal .t-more { color: #ffffff; font-style: italic; }
-        .grandfather-page .update-box {
-            border: 1px solid var(--border);
-            border-left: 3px solid var(--accent);
-            border-radius: 8px;
-            padding: 0.9rem 1.1rem 0.1rem;
-            margin: 1.4rem 0;
-            background: color-mix(in srgb, var(--accent) 4%, transparent);
-        }
-        .grandfather-page .update-box .update-label {
-            color: var(--accent);
-            font-family: var(--font-mono);
-            font-size: 0.74rem;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            margin-bottom: 0.4rem;
-        }
-        .grandfather-page .terminal-small pre {
-            max-height: none;
-            font-size: 0.82rem;
-        }
-    </style>
+    <link rel="stylesheet" href="article.css">
 </head>
-<body>
+<body class="article-page essay-page">
+<a class="skip-link" href="#main">Skip to content</a>
 
-<!-- ── Nav (mirror of index.html) ───────────────────────────────────── -->
-<nav class="nav">
-    <div class="nav-inner">
-        <a href="/" class="nav-brand">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 100" class="nav-logo">
+<header class="article-site-header">
+    <div class="article-frame">
+        <a class="wordmark" href="/" aria-label="Aver home">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 100" class="brand-logo" aria-hidden="true">
                 <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-                    <g stroke="var(--logo-text, #e2e8f0)" stroke-width="5">
+                    <g stroke="var(--logo-text, #171b20)" stroke-width="5">
                         <circle cx="45" cy="55" r="20"/>
                         <line x1="65" y1="35" x2="65" y2="75"/>
                         <polyline points="77 35, 96 75, 115 35"/>
@@ -224,62 +39,71 @@
                 <circle cx="242" cy="84" r="4.5" fill="#d97706"/>
             </svg>
         </a>
-        <div class="nav-links">
-            <a href="/#features">Features</a>
-            <a href="/#constraints">Design</a>
-            <a href="/#demo">Demo</a>
-            <a href="/#start">Get started</a>
-            <a href="playground/">Playground</a>
-            <a href="https://github.com/jasisz/aver" target="_blank">GitHub</a>
-        </div>
+        <nav class="article-nav" aria-label="Primary navigation">
+            <a href="/">Home</a>
+            <a href="/#example">Source</a>
+            <a href="/#toolchain">Toolchain</a>
+            <a href="/certificate.html">ABC</a>
+            <a href="/playground/">Playground ↗</a>
+            <a href="https://github.com/jasisz/aver" target="_blank" rel="noopener">GitHub ↗</a>
+        </nav>
     </div>
-</nav>
+</header>
 
-<main class="grandfather-page">
+<main class="article-main article-main--essay" id="main">
+    <div class="article-frame">
+        <header class="article-hero">
+            <h1>Finding Aver’s grandfather.</h1>
+            <p class="article-deck">I found a more than 30-year-old grandfather of my language and when I tried to implement its core paper in Aver just for fun - I've found a bug hiding in the paper's presentation for 30 years.</p>
+            <p class="article-meta">
+                <span>Project note</span>
+                <span>Aver 0.25.0 “The Method” · 12 June 2026</span>
+            </p>
+        </header>
 
-    <header class="grandfather-hero">
-        <h1>Finding Aver's grandfather</h1>
-        <div class="tldr-box">
-            <div class="tldr-label">TL;DR</div>
-            <p class="subhead">I found a more than 30-year-old grandfather of my language and when I tried to implement its core paper in Aver just for fun - I've found a bug hiding in the paper's presentation for 30 years.</p>
-        </div>
-    </header>
+        <section class="article-section">
+            <aside class="article-note">
+                <p><strong>Archive note.</strong> This essay documents a particular stage of the project. The release anticipated in the story shipped as Aver 0.25.0, “The Method”, on 12 June 2026.</p>
+            </aside>
 
-    <section class="grandfather-section">
-        <p>When I was developing <strong>Aver</strong> I was sure that it has to have two properties when it comes to formal verification:</p>
-        <ol>
-            <li>Everything has to be one grammar (no verifier/prover language leaking into the source)</li>
-            <li>Compiler needs to be deterministic for proving</li>
-        </ol>
-        <p>This means that the compiler doesn't need to be "smart" as in having an LLM in there, but has to have a number of good strategies, a way to reuse lemmas and combine them for more complicated induction. I was grinding hard to somehow "make it work" and then... I found out that there is a lineage I was not aware of and a big chunk of my problems was already solved. Here comes the story of Aver finding its grandfather <strong>ACL2</strong> and how it turned out.</p>
+            <p>When I was developing <strong>Aver</strong> I was sure that it has to have two properties when it comes to formal verification:</p>
+            <ol>
+                <li>Everything has to be one grammar (no verifier/prover language leaking into the source)</li>
+                <li>Compiler needs to be deterministic for proving</li>
+            </ol>
+            <p>This means that the compiler doesn't need to be "smart" as in having an LLM in there, but has to have a number of good strategies, a way to reuse lemmas and combine them for more complicated induction. I was grinding hard to somehow "make it work" and then... I found out that there is a lineage I was not aware of and a big chunk of my problems was already solved. Here comes the story of Aver finding its grandfather <strong>ACL2</strong> and how it turned out.</p>
+        </section>
 
-        <h2>History</h2>
-        <p>In 1994 a mathematician Thomas R. <strong>Nicely</strong> found <a href="https://en.wikipedia.org/wiki/Pentium_FDIV_bug">a bug in early Intel Pentium processors</a>. In a nutshell - Intel wanted a faster division and used a SRT algorithm, and this algorithm needs a lookup table. They ended up producing chips with 5 values mismatched in that table (0 instead of +2). The error was cumulative because of the nature of the algorithm, you could even see it easily by just using Windows Calculator and dividing 4,195,835 by 3,145,727 (the most famous combination):</p>
+        <section class="article-section" id="history">
+            <h2>History</h2>
+            <p>In 1994 a mathematician Thomas R. <strong>Nicely</strong> found <a href="https://en.wikipedia.org/wiki/Pentium_FDIV_bug">a bug in early Intel Pentium processors</a>. In a nutshell - Intel wanted a faster division and used a SRT algorithm, and this algorithm needs a lookup table. They ended up producing chips with 5 values mismatched in that table (0 instead of +2). The error was cumulative because of the nature of the algorithm, you could even see it easily by just using Windows Calculator and dividing 4,195,835 by 3,145,727 (the most famous combination):</p>
 
-        <figure class="terminal terminal-small">
-            <pre><code><span class="t-cmd">$ python3 -c "print(4195835 / 3145727)"</span>
+            <figure class="article-terminal-figure article-terminal-figure--compact">
+                <pre class="article-code"><code><span class="t-cmd">$ python3 -c "print(4195835 / 3145727)"</span>
 <span class="t-num">1.333</span><span class="t-ok">820449136241</span>
 <span class="t-dim"># the flawed Pentium FDIV returned:</span>
 <span class="t-num">1.333</span><span class="t-fail">739068902037589</span></code></pre>
-        </figure>
+            </figure>
 
-        <p>Intel claimed the bug was not that serious, pretty rare (it required a specific combination of numbers) and regular users won't even notice it. But it was there, crystal clear in the shipped silicon in millions of households, universities and companies. It was a huge PR problem for Intel, they finally offered a free replacement. The whole thing cost them almost half a billion in 1995 dollars. Interestingly there were also software level patches, which were totally consuming the speedup from the new algorithm. For the record: I was 6 at the time, dreaming about my first PC - the Celeron I would eventually get didn't even exist yet.</p>
-        <p>AMD was developing its K5 processor at the time, and they certainly didn't want to have a bug like that. They hired Computational Logic Inc. - <strong>Moore</strong> and <strong>Kaufmann</strong>'s shop - (<strong>Lynch</strong> was from AMD side) to prove the algorithm for them. It was a huge thing, and they already had ACL2 almost ready for that task. ACL2 stands for <em>A Computational Logic for Applicative Common Lisp</em>. Applicative Common Lisp was their stripped out version of Common Lisp without side-effects and total first-order logic functions. ACL2 added automated theorem prover on top of that with the ability to feed it user-provided theorems. Which is something I've only figured out fully less than a week ago in Aver - that my "laws" are already shaped to support such a function. Here comes the more complicated part, how to incorporate them? How to structure them for induction? And all the hard questions... ACL2 already tried to tackle! They called it <a href="https://www.cs.utexas.edu/~moore/acl2/manuals/current/manual/?topic=ACL2____THE-METHOD"><strong>The Method</strong></a> and to be honest this is my gold-mine now. Not in a sense that everything can be copied to Aver, but I can see they solved similar problems, which feels - well - kind of refreshing! Similar designs and similar problems, how not to love that?</p>
-        <p>And a K5 verification was a huge success, one of the biggest industrial proofs done back then - over 1600 definitions and lemmas, and the whole proof replayed in two hours. They published <a href="https://www.cs.utexas.edu/users/moore/publications/divide_paper.pdf">paper about it in 1996</a>. And the lineage kept going - in 1999 <strong>Russinoff</strong> caught two real bugs in K7's FPU multiplier with the same toolchain, before the silicon was made.</p>
+            <p>Intel claimed the bug was not that serious, pretty rare (it required a specific combination of numbers) and regular users won't even notice it. But it was there, crystal clear in the shipped silicon in millions of households, universities and companies. It was a huge PR problem for Intel, they finally offered a free replacement. The whole thing cost them almost half a billion in 1995 dollars. Interestingly there were also software level patches, which were totally consuming the speedup from the new algorithm. For the record: I was 6 at the time, dreaming about my first PC - the Celeron I would eventually get didn't even exist yet.</p>
+            <p>AMD was developing its K5 processor at the time, and they certainly didn't want to have a bug like that. They hired Computational Logic Inc. - <strong>Moore</strong> and <strong>Kaufmann</strong>'s shop - (<strong>Lynch</strong> was from AMD side) to prove the algorithm for them. It was a huge thing, and they already had ACL2 almost ready for that task. ACL2 stands for <em>A Computational Logic for Applicative Common Lisp</em>. Applicative Common Lisp was their stripped out version of Common Lisp without side-effects and total first-order logic functions. ACL2 added automated theorem prover on top of that with the ability to feed it user-provided theorems. Which is something I've only figured out fully less than a week ago in Aver - that my "laws" are already shaped to support such a function. Here comes the more complicated part, how to incorporate them? How to structure them for induction? And all the hard questions... ACL2 already tried to tackle! They called it <a href="https://www.cs.utexas.edu/~moore/acl2/manuals/current/manual/?topic=ACL2____THE-METHOD"><strong>The Method</strong></a> and to be honest this is my gold-mine now. Not in a sense that everything can be copied to Aver, but I can see they solved similar problems, which feels - well - kind of refreshing! Similar designs and similar problems, how not to love that?</p>
+            <p>And a K5 verification was a huge success, one of the biggest industrial proofs done back then - over 1600 definitions and lemmas, and the whole proof replayed in two hours. They published <a href="https://www.cs.utexas.edu/users/moore/publications/divide_paper.pdf">paper about it in 1996</a>. And the lineage kept going - in 1999 <strong>Russinoff</strong> caught two real bugs in K7's FPU multiplier with the same toolchain, before the silicon was made.</p>
 
-        <p>This is the entire algorithm by the way - all 32 lines of it (see those <code>[sticky 64]</code> annotations near the end? remember them):</p>
+            <p>This is the entire algorithm by the way - all 32 lines of it (see those <code>[sticky 64]</code> annotations near the end? remember them):</p>
 
-        <figure class="paper-scan figure-algorithm">
-            <img src="img/paper-p2-figure1-the-division-algorithm.png" alt="Figure 1 from the 1996 paper: the divide(p, d, mode) algorithm - 32 assignment statements with rounding annotations, ending with three digit summations marked sticky 64" width="1664" height="2141">
-            <figcaption>Figure 1 from the paper: the entire division kernel</figcaption>
-        </figure>
+            <figure class="article-figure article-figure--portrait">
+                <img src="img/paper-p2-figure1-the-division-algorithm.png" alt="Figure 1 from the 1996 paper: the divide(p, d, mode) algorithm - 32 assignment statements with rounding annotations, ending with three digit summations marked sticky 64" width="1664" height="2141">
+                <figcaption>Figure 1 from the paper: the entire division kernel</figcaption>
+            </figure>
+        </section>
 
-        <h2>Aver trying to honor ACL2</h2>
-        <p>When I found out about this I immediately decided to call the next Aver release (focused on proving side of the language) "<strong>The Method</strong>". And I thought about a fun way to celebrate that - I'd tell the agent to replicate the original paper in Aver. I was sure it won't be fully proved in Lean or Dafny yet, I am still on my way through <strong>The Method</strong> and other problems (maybe 0.26? 0.27?), but it still sounded like something I definitely have to do.</p>
-        <p>And the funniest and most trivia-worthy thing happened. Agent OCR-ed all the algorithms, lemmas from paper and faithfully transcribed the definitions to Aver (<a href="https://averlang.dev/playground/?example=sticky-1996">try it in the playground</a>). And before you ask - the paper's own worked examples pass against my transcription, so the transcription is faithful. I ran aver verify (which is just the deterministic tests over given domain, nothing fancy, not even the proving part yet) and... it fails. The sticky algorithm for division (one they call "singularly difficult to prove" in the paper) just fails, the simplest way to reproduce is to take x = 1 and y = 1/3 at 3 bits of precision: the paper's Lemma 7.3.2 says both sides must be equal, but the printed definition gives 4/3 on the left and 11/8 on the right.</p>
+        <section class="article-section">
+            <h2>Aver trying to honor ACL2</h2>
+            <p>When I found out about this I immediately decided to call the next Aver release (focused on proving side of the language) "<strong>The Method</strong>". And I thought about a fun way to celebrate that - I'd tell the agent to replicate the original paper in Aver. I was sure it wouldn't be fully proved in Lean or Dafny yet; I was still on my way through <strong>The Method</strong> and other problems, but it still sounded like something I definitely had to do.</p>
+            <p>And the funniest and most trivia-worthy thing happened. Agent OCR-ed all the algorithms, lemmas from paper and faithfully transcribed the definitions to Aver (<a href="https://averlang.dev/playground/?example=sticky-1996">try it in the playground</a>). And before you ask - the paper's own worked examples pass against my transcription, so the transcription is faithful. I ran aver verify (which is just the deterministic tests over given domain, nothing fancy, not even the proving part yet) and... it fails. The sticky algorithm for division (one they call "singularly difficult to prove" in the paper) just fails, the simplest way to reproduce is to take x = 1 and y = 1/3 at 3 bits of precision: the paper's Lemma 7.3.2 says both sides must be equal, but the printed definition gives 4/3 on the left and 11/8 on the right.</p>
 
-        <figure class="terminal">
-            <pre><code><span class="t-cmd">$ time aver verify sticky_typo.av</span>
+            <figure class="article-terminal-figure">
+                <pre class="article-code"><code><span class="t-cmd">$ time aver verify sticky_typo.av</span>
 Verify: sticky_typo.av
 <span class="t-ok">  ✓ ratEq      2/2</span>
 <span class="t-ok">  ✓ ratAdd      1/1</span>
@@ -336,46 +160,49 @@ Verify: sticky_typo.av
 
 <span class="t-sum">Summary: 1 file | 20 blocks | 2728/6164 cases passed | 300 failed | 3136 skipped by `when`</span>
 aver verify sticky_typo.av  1,40s user 0,08s system 96% cpu 1,541 total</code></pre>
-            <figcaption><em>aver verify</em> on the transcribed definitions &mdash; text, not a screenshot: select away</figcaption>
-        </figure>
+                <figcaption><em>aver verify</em> on the transcribed definitions &mdash; text, not a screenshot: select away</figcaption>
+            </figure>
 
-        <p>I'm like "that is impossible". But it is there, numbers staring at me, the counterexamples, not one or two, 300 counterexamples (out of a 3,072-case grid) for the paper published 30 years ago. I go searching, I find the later implementations in Lisp, the Russinoff in main ACL2 repo (<a href="https://github.com/acl2/acl2/blob/master/books/rtl/rel1/lib1/round.lisp">round.lisp from the 1996-98 AMD library</a>, <a href="https://github.com/acl2/acl2/blob/master/books/rtl/rel1/support/sticky.lisp">the same definition standalone</a>, <a href="https://github.com/acl2/acl2/blob/master/books/rtl/rel11/lib/round.lisp">and its modern descendant</a>) and the definition is different! There is a bug in the paper's presentation, I am sure they proved the right thing, but when they translated that to the paper's math notation they had a bug in there.</p>
+            <p>I'm like "that is impossible". But it is there, numbers staring at me, the counterexamples, not one or two, 300 counterexamples (out of a 3,072-case grid) for the paper published 30 years ago. I go searching, I find the later implementations in Lisp, the Russinoff in main ACL2 repo (<a href="https://github.com/acl2/acl2/blob/master/books/rtl/rel1/lib1/round.lisp">round.lisp from the 1996-98 AMD library</a>, <a href="https://github.com/acl2/acl2/blob/master/books/rtl/rel1/support/sticky.lisp">the same definition standalone</a>, <a href="https://github.com/acl2/acl2/blob/master/books/rtl/rel11/lib/round.lisp">and its modern descendant</a>) and the definition is different! There is a bug in the paper's presentation, I am sure they proved the right thing, but when they translated that to the paper's math notation they had a bug in there.</p>
 
-        <figure class="paper-scan">
-            <img src="img/paper-p13-stickyn-as-printed.png" alt="Scan of the 1996 paper, page 13: the stickyn definition as printed, with the branch 'if truncn(s, n) = s or bitn(s, 1 - n) = 1'" width="3719" height="1250">
-            <figcaption>The printed stickyn definition, p. 13</figcaption>
-        </figure>
+            <figure class="article-figure">
+                <img src="img/paper-p13-stickyn-as-printed.png" alt="Scan of the 1996 paper, page 13: the stickyn definition as printed, with the branch 'if truncn(s, n) = s or bitn(s, 1 - n) = 1'" width="3719" height="1250">
+                <figcaption>The printed stickyn definition, p. 13</figcaption>
+            </figure>
 
-        <figure class="paper-scan">
-            <img src="img/paper-p21-lemma-732-sticky-plus.png" alt="Scan of the 1996 paper, page 21: Lemma 7.3.2 (Sticky Plus), stating sticky(x + y, n) = sticky(x + sticky(y, k), n)" width="3719" height="1579">
-            <figcaption>Lemma 7.3.2 "Sticky Plus", p. 21</figcaption>
-        </figure>
+            <figure class="article-figure">
+                <img src="img/paper-p21-lemma-732-sticky-plus.png" alt="Scan of the 1996 paper, page 21: Lemma 7.3.2 (Sticky Plus), stating sticky(x + y, n) = sticky(x + sticky(y, k), n)" width="3719" height="1579">
+                <figcaption>Lemma 7.3.2 "Sticky Plus", p. 21</figcaption>
+            </figure>
 
-        <p>The bug is subtle, hiding in one of the arms, not obvious if you check on some examples in your head. The printed version returns the untouched s when the last kept bit happens to be 1 - so it's not even a rounding operation, it just leaks the infinite tail through. The ACL2 sources truncate to n-1 bits and force the last bit instead. That's the whole difference, and it survived 30 years in print.</p>
+            <p>The bug is subtle, hiding in one of the arms, not obvious if you check on some examples in your head. The printed version returns the untouched s when the last kept bit happens to be 1 - so it's not even a rounding operation, it just leaks the infinite tail through. The ACL2 sources truncate to n-1 bits and force the last bit instead. That's the whole difference, and it survived 30 years in print.</p>
 
-        <div class="update-box">
-            <div class="update-label">Update</div>
-            <p>I got my hands on the version published in IEEE Transactions on Computers (Sept 1998) which is behind a paywall and there the definition is fixed: the first branch returns <code>truncn(s, i)</code> instead of the bare <code>s</code>. One token. So this was caught before the journal print. The freely available March 1996 draft (the one linked from the author's own pages) still carries the original branch.</p>
-        </div>
+            <aside class="article-note">
+                <p><strong>Update.</strong> I got my hands on the version published in IEEE Transactions on Computers (Sept 1998) which is behind a paywall and there the definition is fixed: the first branch returns <code>truncn(s, i)</code> instead of the bare <code>s</code>. One token. So this was caught before the journal print. The freely available March 1996 draft (the one linked from the author's own pages) still carries the original branch.</p>
+            </aside>
+        </section>
 
+        <section class="article-section">
+            <h2>The moral</h2>
+            <p>You can't trust the prose or the spec if you can't run it. And this was the funniest and nerdiest thing that happened to me, period.</p>
+            <p>The ACL2 folks taught everyone this lesson 30 years ago. They just couldn't run their LaTeX.</p>
+        </section>
+    </div>
+</main>
 
-        <h2>The moral</h2>
-        <p>You can't trust the prose or the spec if you can't run it. And this was the funniest and nerdiest thing that happened to me, period.</p>
-
-        <p>The ACL2 folks taught everyone this lesson 30 years ago. They just couldn't run their LaTeX.</p>
-    </section>
-
-    <footer class="footer-spacer">
+<footer class="article-site-footer">
+    <div class="article-frame">
         <p>
-            <a href="playground/?example=sticky-1996">playground: sticky-1996</a>
-            &nbsp;&middot;&nbsp;
+            <a href="/playground/?example=sticky-1996">playground: sticky-1996</a>
+            <span aria-hidden="true">·</span>
             <a href="https://www.cs.utexas.edu/users/moore/publications/divide_paper.pdf">the 1996 paper</a>
-            &nbsp;&middot;&nbsp;
+            <span aria-hidden="true">·</span>
+            <a href="/certificate.html">ABC</a>
+            <span aria-hidden="true">·</span>
             <a href="/">averlang.dev</a>
         </p>
-    </footer>
-
-</main>
+    </div>
+</footer>
 
 </body>
 </html>

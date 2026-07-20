@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <title>ABC (Artifact Behavioral Certificate) — Aver</title>
+    <meta name="description" content="ABC (Artifact Behavioral Certificate) binds admitted claims about selected exports to the exact WebAssembly bytes checked by the standalone aver-cert verifier and Lean 4.32.">
+    <link rel="canonical" href="https://averlang.dev/certificate.html">
+    <link rel="stylesheet" href="article.css">
+</head>
+<body class="article-page certificate-page">
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="article-site-header">
+    <div class="article-frame">
+        <a class="article-brand" href="/" aria-label="Aver home">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 100" class="brand-logo" aria-hidden="true">
+                <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+                    <g stroke="var(--logo-text, #171b20)" stroke-width="5">
+                        <circle cx="45" cy="55" r="20"/>
+                        <line x1="65" y1="35" x2="65" y2="75"/>
+                        <polyline points="77 35, 96 75, 115 35"/>
+                        <path d="M 127 55 H 167 C 167 44 158 35 147 35 C 136 35 127 44 127 55 C 127 66 136 75 147 75 C 157 75 163 72 163 67"/>
+                        <line x1="179" y1="75" x2="179" y2="35"/>
+                        <path d="M 179 46 Q 179 35 199 35"/>
+                    </g>
+                    <g stroke="#d97706" stroke-width="6">
+                        <path d="M 215 42 C 215 22 239 22 239 42 C 239 53 229 56 229 66"/>
+                        <line x1="255" y1="24" x2="255" y2="66"/>
+                    </g>
+                </g>
+                <circle cx="242" cy="84" r="4.5" fill="#d97706"/>
+            </svg>
+        </a>
+        <nav class="article-nav" aria-label="Primary navigation">
+            <a href="/">Home</a>
+            <a href="/#example">Source</a>
+            <a href="/#writing">Writing</a>
+            <a href="/playground/">Playground</a>
+            <a href="https://github.com/jasisz/aver" target="_blank" rel="noopener">GitHub ↗</a>
+        </nav>
+    </div>
+</header>
+
+<main id="main" class="article-main article-main--wide">
+<article>
+    <header class="article-hero">
+        <h1>ABC (Artifact Behavioral Certificate)</h1>
+        <p class="article-deck">
+            An ABC binds admitted behavioral claims about selected exports to the exact
+            WebAssembly bytes supplied to the verifier. The standalone
+            <code>aver-cert</code> checks those claims under its embedded Lean 4.32 wall
+            and emits <code>CERTIFIED</code> after the fixed proof root, axiom audit, and
+            fresh kernel replay succeed.
+        </p>
+        <p class="article-meta" aria-label="ABC version record">
+            <span><code>aver-cert</code> 0.1.x</span>
+            <span>package 1</span>
+            <span>schema 2</span>
+            <span>Lean 4.32</span>
+            <span><code>CERTIFIED</code> or decline</span>
+        </p>
+    </header>
+
+    <section class="article-section" id="identity">
+        <h2>The exact artifact</h2>
+        <p>
+            The <code>.wasm</code> file passed to <code>aver-cert</code> determines the
+            artifact identity. The verifier validates the module, computes its SHA-256,
+            and generates <code>ArtifactBytes.lean</code> from the bytes it actually
+            read. A certificate package cannot supply replacement artifact bytes,
+            checker files, a toolchain, or a soundness wall.
+        </p>
+        <p>
+            <code>aver-cert</code> is a standalone crate and executable with an
+            independently versioned 0.1.x release line. It has no dependency on
+            <code>aver-lang</code>, <code>aver-rt</code>, or
+            <code>aver-memory</code>. The compiler and certificate producer are outside
+            the verifier's positive acceptance path.
+        </p>
+        <aside class="article-note">
+            <p>
+                An ABC covers admitted claims for selected exports. Unsupported exports
+                remain explicitly uncertified, and an artifact with no accepted exports
+                exits nonzero without an ABC.
+            </p>
+        </aside>
+    </section>
+
+    <section class="article-section" id="acceptance">
+        <h2>ABC acceptance path</h2>
+        <p>
+            Any mismatch produces a decline. Diagnostics identify the failing gate.
+        </p>
+        <ol class="certificate-flow" aria-label="Strict ABC verification flow">
+            <li>
+                <span>01</span>
+                <div>
+                    <strong>Read the module</strong>
+                    <p>Validate WebAssembly, compute SHA-256, and parse the package envelope.</p>
+                </div>
+            </li>
+            <li>
+                <span>02</span>
+                <div>
+                    <strong>Pin the format</strong>
+                    <p>Require package 1, schema 2, the actual hash, and an embedded <code>wall_id</code>.</p>
+                </div>
+            </li>
+            <li>
+                <span>03</span>
+                <div>
+                    <strong>Build a fresh checker project</strong>
+                    <p>Materialize the checker-owned wall, Lean 4.32 toolchain, build files, and witness.</p>
+                </div>
+            </li>
+            <li>
+                <span>04</span>
+                <div>
+                    <strong>Recover artifact facts</strong>
+                    <p>Generate <code>ArtifactBytes.lean</code>; decode the relevant functions, types, and code bytes.</p>
+                </div>
+            </li>
+            <li>
+                <span>05</span>
+                <div>
+                    <strong>Check and lower plans</strong>
+                    <p>Validate <code>Plans.lean</code>, derive canonical bodies, then run <code>StandardFace</code> and <code>ClaimAxes</code>.</p>
+                </div>
+            </li>
+            <li>
+                <span>06</span>
+                <div>
+                    <strong>Check the fixed root</strong>
+                    <p>Pin the report through <code>AverCertChecker.checked</code> and audit its axiom closure.</p>
+                </div>
+            </li>
+            <li>
+                <span>07</span>
+                <div>
+                    <strong>Replay in a fresh environment</strong>
+                    <p>Run <code>lake env leanchecker --fresh</code>, then construct the <code>CERTIFIED</code> report.</p>
+                </div>
+            </li>
+        </ol>
+    </section>
+
+    <section class="article-section" id="record">
+        <h2>ABC verification record</h2>
+        <div class="record-table" role="region" aria-label="ABC verification record" tabindex="0">
+            <table>
+                <tbody>
+                    <tr>
+                        <th scope="row">Verifier</th>
+                        <td>Standalone <code>aver-cert</code>, release line 0.1.x</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Public package</th>
+                        <td>Format version 1</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Statement</th>
+                        <td>Schema version 2</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Plan authority</th>
+                        <td><code>Plans.lean</code></td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Artifact bytes</th>
+                        <td>Supplied by the caller; encoded by the verifier</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Soundness wall</th>
+                        <td>Checker-owned and selected by exact <code>wall_id</code></td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Toolchain</th>
+                        <td>Pinned Lean 4.32, resolved through Elan</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Public proof root</th>
+                        <td><code>AverCert.Artifact.certificate</code></td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Checker root</th>
+                        <td><code>AverCertChecker.checked</code></td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Allowed axioms</th>
+                        <td><code>propext</code>, <code>Classical.choice</code>, <code>Quot.sound</code></td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Strict result</th>
+                        <td><code>CERTIFIED</code> or decline</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="article-section" id="run">
+        <h2>Generate and verify an ABC</h2>
+        <pre class="article-code"><code>cargo install aver-lang --features wasm
+cargo install aver-cert
+
+aver compile app.av --target wasm-gc --certify -o out/
+aver-cert verify out/app.wasm out/cert
+aver-cert explain out/app.wasm out/cert</code></pre>
+        <p>
+            <code>aver cert verify</code> and the other <code>aver cert</code> commands
+            are exact subprocess shortcuts. They forward arguments, standard streams,
+            and exit status to a sibling <code>aver-cert</code> executable or one found
+            on <code>PATH</code>.
+        </p>
+        <aside class="article-note">
+            <p>
+                <code>aver-cert check</code> is a weaker development preflight. It skips
+                the final <code>leanchecker --fresh</code> whole-closure replay and
+                reports <code>CHECKED</code>. Release and admission gates use
+                <code>verify</code>.
+            </p>
+        </aside>
+    </section>
+
+    <section class="article-section" id="claims">
+        <h2>What an ABC establishes</h2>
+        <pre class="article-code"><code>AverCert.Artifact.certificate :
+  AverCert.AcceptedArtifact.accepted AverCert.Artifact.data</code></pre>
+        <p>A successful verification establishes that:</p>
+        <ul>
+            <li>the proof concerns the exact bytes supplied to <code>aver-cert</code>;</li>
+            <li>each certified export has an admitted class with its standard domain, codomain, representation relations, host behavior, and model constraints;</li>
+            <li>policy, termination evidence, totality role, and runtime contracts are derived canonically from checked plans;</li>
+            <li>exports, imports and capabilities, the start function, and the reachable certified call surface are accounted for;</li>
+            <li>the named proof root uses only the allowed Lean axiom whitelist.</li>
+        </ul>
+
+        <h3 id="levels">ABC certification levels</h3>
+        <div class="record-table record-table--levels" role="region" aria-label="ABC certification levels" tabindex="0">
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">Level</th>
+                        <th scope="col">Policy</th>
+                        <th scope="col">Guarantee</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <th scope="row">L1</th>
+                        <td><code>simulatesModel</code></td>
+                        <td>If evaluation returns, the value is represented by the declared model result. Named runtime contracts remain explicit premises.</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">L3</th>
+                        <td><code>simulatesModelTotally</code></td>
+                        <td>Simulation is total for admitted inputs, using Lean-derived termination evidence and the required total runtime contracts.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="article-section" id="package">
+        <h2>ABC package and schema</h2>
+        <p>
+            The public package format is version 1 and its certificate statement
+            schema is version 2. The package is untrusted input throughout verification.
+        </p>
+        <div class="record-table" role="region" aria-label="ABC package contents" tabindex="0">
+            <table>
+                <tbody>
+                    <tr>
+                        <th scope="row"><code>cert-manifest.json</code></th>
+                        <td>Transport and reporting envelope; it carries versions, artifact hash, wall identity, report candidates, and declared uncertified exports.</td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><code>Plans.lean</code></th>
+                        <td>The sole authoritative plan data; structurally checked and canonically lowered in Lean.</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Model and proof modules</th>
+                        <td>Artifact-specific, untrusted proof data admitted through staging, pinning, and kernel checks.</td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><code>ArtifactBytes.lean</code></th>
+                        <td>Absent from the package; regenerated by the verifier from the supplied <code>.wasm</code>.</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Plan sidecars</th>
+                        <td>No public <code>fragments/*.plan</code> files and no authoritative JSON plan AST.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <aside class="article-note">
+            <p>
+                Schema 2 allows the subject's <code>hostRoleTable</code> to be
+                <code>null</code> for a module without the Int carrier runtime. The
+                checker accepts that value only when byte-derived evidence shows that
+                the module has no Int box helper. An incomplete host-role scan satisfies
+                no manifest declaration.
+            </p>
+        </aside>
+    </section>
+
+    <section class="article-section" id="scope">
+        <h2>ABC scope and trust boundary</h2>
+        <h3>Scope boundaries</h3>
+        <ul>
+            <li>Behavioral claims apply to admitted obligations and their certified closure, not every export in the module.</li>
+            <li>An ABC is not a signature, authorship claim, or reproducible-build attestation.</li>
+            <li>Source meaning erased by WebAssembly, including user-ADT domain, representation, and model declarations, remains an explicit premise.</li>
+            <li>Trace and replay recordings do not participate in plan selection, theorem construction, or the verdict.</li>
+            <li><code>leanchecker --fresh</code> belongs to the same Lean 4.32 distribution; the architecture does not claim two independently implemented kernels.</li>
+        </ul>
+
+        <h3>Trusted computing base</h3>
+        <p>A successful ABC verdict depends on:</p>
+        <ul>
+            <li>the small standalone verifier path for file I/O, hashing, version checks, safe staging, process execution, and report pinning;</li>
+            <li><code>wasmparser::Validator</code> for complete WebAssembly validity;</li>
+            <li>the exact embedded Lean wall and Lean 4.32 elaborator, kernel, and build tools;</li>
+            <li>the canonical Elan installation used to resolve the pinned toolchain;</li>
+            <li>SHA-256 collision resistance, named runtime contracts, explicit source declarations, and any configured local build cache.</li>
+        </ul>
+        <p>
+            The positive verdict does not run or trust the Aver compiler, optimizer,
+            producer classifier, disassembler, or Rust obligation rederivation. The
+            retained Rust WebAssembly validator remains necessary because the Lean
+            wall's decoder is not a complete WebAssembly validation stack.
+        </p>
+    </section>
+
+    <section class="article-section" id="specifications">
+        <h2>ABC specifications</h2>
+        <ul>
+            <li><a href="https://github.com/jasisz/aver/blob/main/docs/certification.md">User guide ↗</a></li>
+            <li><a href="https://github.com/jasisz/aver/blob/main/docs/certification-architecture.md">Verifier architecture ↗</a></li>
+            <li><a href="https://github.com/jasisz/aver/blob/main/docs/certificate-format.md">Certificate format specification ↗</a></li>
+        </ul>
+    </section>
+</article>
+</main>
+
+<footer class="article-site-footer">
+    <div class="article-frame">
+        <p>Aver · programming language for code written with AI</p>
+        <nav class="article-nav" aria-label="Footer navigation">
+            <a href="/">Home</a>
+            <a href="/#example">Source</a>
+            <a href="/playground/">Playground</a>
+            <a href="https://github.com/jasisz/aver" target="_blank" rel="noopener">GitHub ↗</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>

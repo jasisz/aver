@@ -871,28 +871,55 @@ def read_crate_version(crate: str) -> str:
 
 
 def bump_website_version(new_version: str, dry_run: bool) -> None:
-    """Bump the version badge shown in the landing hero (tools/website/index.html)."""
-    path = REPO_ROOT / "tools" / "website" / "index.html"
-    major_minor = ".".join(new_version.split(".")[:2])
-    short = f"v{major_minor}"
+    """Bump the version shown on the landing page.
 
+    The editorial homepage carries the full release version in its project
+    record. Keep the legacy hero badge as a fallback so the release script
+    remains usable while the new homepage is being promoted.
+    """
+    path = REPO_ROOT / "tools" / "website" / "index.html"
     text = path.read_text()
-    pattern = (
-        r"(MIT licensed &middot; Written in Rust &middot; )v\d+(?:\.\d+)+( &middot;)"
+
+    project_record_pattern = (
+        r"(<dt>\s*Version\s*</dt>\s*<dd>\s*)"
+        r"v?\d+(?:\.\d+)+"
+        r"(\s*/\s*experimental\s*</dd>)"
     )
     new_text, count = re.subn(
-        pattern, lambda m: f"{m.group(1)}{short}{m.group(2)}", text
+        project_record_pattern,
+        lambda m: f"{m.group(1)}{new_version}{m.group(2)}",
+        text,
+        flags=re.IGNORECASE,
     )
+    label = f"website project record -> {new_version}"
 
     if count == 0:
-        print("  WARN: hero-proof version badge not found, skipping")
+        major_minor = ".".join(new_version.split(".")[:2])
+        short = f"v{major_minor}"
+        legacy_badge_pattern = (
+            r"(MIT licensed &middot; Written in Rust &middot; )"
+            r"v\d+(?:\.\d+)+( &middot;)"
+        )
+        new_text, count = re.subn(
+            legacy_badge_pattern,
+            lambda m: f"{m.group(1)}{short}{m.group(2)}",
+            text,
+        )
+        label = f"website hero badge -> {short}"
+
+    if count == 0:
+        print("  WARN: website version marker not found, skipping")
         return
+    if count > 1:
+        raise ReleaseError(
+            f"expected one website version marker in {path}, found {count}"
+        )
 
     if dry_run:
-        print(f"  [dry-run] website hero badge -> {short}")
+        print(f"  [dry-run] {label}")
     else:
         path.write_text(new_text)
-        print(f"  Updated website hero badge -> {short}")
+        print(f"  Updated {label}")
 
 
 def regenerate_self_host(dry_run: bool) -> None:

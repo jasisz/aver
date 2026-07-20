@@ -603,6 +603,55 @@ class PublishIntegrityTests(unittest.TestCase):
                 release.publish(target, initial, plan, dry_run=False)
 
 
+class WebsiteVersionTests(unittest.TestCase):
+    def run_bump(
+        self, html: str, new_version: str, *, dry_run: bool = False
+    ) -> tuple[str, str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "tools" / "website" / "index.html"
+            path.parent.mkdir(parents=True)
+            path.write_text(html)
+            output = io.StringIO()
+            with (
+                mock.patch.object(release, "REPO_ROOT", root),
+                contextlib.redirect_stdout(output),
+            ):
+                release.bump_website_version(new_version, dry_run=dry_run)
+            return path.read_text(), output.getvalue()
+
+    def test_bumps_editorial_project_record_with_full_version(self) -> None:
+        html = """\
+<dl>
+    <div>
+        <dt>Version</dt>
+        <dd>0.27.1 / experimental</dd>
+    </div>
+</dl>
+"""
+        updated, output = self.run_bump(html, "0.28.0")
+
+        self.assertIn("<dd>0.28.0 / experimental</dd>", updated)
+        self.assertIn("Updated website project record -> 0.28.0", output)
+
+    def test_falls_back_to_legacy_short_hero_badge(self) -> None:
+        html = (
+            "<p>MIT licensed &middot; Written in Rust &middot; "
+            "v0.27 &middot; Built for review</p>"
+        )
+        updated, output = self.run_bump(html, "0.28.3")
+
+        self.assertIn("v0.28 &middot;", updated)
+        self.assertIn("Updated website hero badge -> v0.28", output)
+
+    def test_dry_run_does_not_write_editorial_project_record(self) -> None:
+        html = "<dt>Version</dt><dd>0.27.1 / experimental</dd>"
+        unchanged, output = self.run_bump(html, "0.28.0", dry_run=True)
+
+        self.assertEqual(unchanged, html)
+        self.assertIn("[dry-run] website project record -> 0.28.0", output)
+
+
 class RetryTests(unittest.TestCase):
     def test_retry_succeeds_without_real_sleep(self) -> None:
         answers = iter([(False, "missing"), (False, "lagging"), (True, "ready")])
