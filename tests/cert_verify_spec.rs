@@ -84,12 +84,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn temp_dir(prefix: &str) -> PathBuf {
+    // Nanos alone collide when parallel tests request dirs in the same tick
+    // (observed as spurious NotFound failures under RUST_TEST_THREADS=6);
+    // the process id and a per-process counter make the name unique.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let mut d = std::env::temp_dir();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    d.push(format!("aver-{prefix}-{nanos}"));
+    let pid = std::process::id();
+    let seq = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    d.push(format!("aver-{prefix}-{nanos}-{pid}-{seq}"));
     d
 }
 
