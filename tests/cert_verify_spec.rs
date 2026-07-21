@@ -6119,7 +6119,7 @@ fn cert_verify_accepts_fused_vector_read_and_declines_three_tampers() {
     let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
-        .arg("tests/fixtures/cell_at.av")
+        .arg("tools/certkit/fixtures/cell_at.av")
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")

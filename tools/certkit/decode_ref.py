@@ -259,6 +259,10 @@ SIMPLE = {
     0xa1: ".f64Sub", 0xa2: ".f64Mul", 0xa3: ".f64Div", 0x61: ".f64Eq",
     0x63: ".f64Lt", 0x65: ".f64Le", 0x66: ".f64Ge", 0x64: ".f64Gt",
     0xd1: ".refIsNull", 0x0f: ".ret",
+    # `__aint_to_index` helper-body vocabulary: the named to-index host-role
+    # export truncates an in-range Small to its i32 index. Any other opcode
+    # stays an error (fail closed).
+    0xa7: ".i32WrapI64",
 }
 
 
