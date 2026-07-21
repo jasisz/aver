@@ -1070,3 +1070,227 @@ example : AcceptedArtifact.exportsAccounted hostileSelfArtifact = false := rfl
     );
     let _ = std::fs::remove_dir_all(out_dir);
 }
+
+/// The type index the named export's function declares (for anchoring nominal
+/// type-gate probes to the byte-derived binding).
+fn export_func_type_idx(bytes: &[u8], name: &str) -> u32 {
+    let mut imported_funcs = 0u32;
+    let mut func_types = Vec::new();
+    let mut export_idx = None;
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        match payload.expect("compiler-produced wasm must parse") {
+            wasmparser::Payload::ImportSection(reader) => {
+                for group in reader {
+                    for import in group.expect("import group must parse") {
+                        let (_, import) = import.expect("import must parse");
+                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                            imported_funcs += 1;
+                        }
+                    }
+                }
+            }
+            wasmparser::Payload::FunctionSection(reader) => {
+                for type_idx in reader {
+                    func_types.push(type_idx.expect("function type index must parse"));
+                }
+            }
+            wasmparser::Payload::ExportSection(reader) => {
+                for export in reader {
+                    let export = export.expect("export must parse");
+                    if export.kind == wasmparser::ExternalKind::Func && export.name == name {
+                        export_idx = Some(export.index);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let export_idx = export_idx.unwrap_or_else(|| panic!("module exports no function `{name}`"));
+    func_types[(export_idx - imported_funcs) as usize]
+}
+
+/// Nominal vector-read GuardIso: the fused `Vector.get`-or-default face pins
+/// the claimed array type's element storage to the nullable carrier reference
+/// (`checkVectorGetTypes` via `exprVectorGetTypesMatch`). Two hand-built
+/// modules that differ ONLY in that element storage are indistinguishable to
+/// the byte-binding gates (same export map, same code entry), so this gate is
+/// the sole discriminator; a literal gate-weakened copy accepts the raw-i64
+/// module. The honest surfaces are then confirmed on the real fused-read
+/// artifact at its byte-derived binding, and the audited sym-plan encoder is
+/// pinned to fail closed when the to-index role or the array binding is
+/// absent from the byte-derived tables.
+#[test]
+fn inkernel_vector_get_nominal_type_guard_is_isolated_and_weaken_confirmed() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping vector-read nominal GuardIso test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-vector-get-nominal-guard-iso");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/cell_at.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile cell_at fixture for vector-read nominal GuardIso");
+    assert!(
+        compile.status.success(),
+        "cell_at compile failed for vector-read nominal GuardIso:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = std::fs::read(out_dir.join("cell_at.wasm")).unwrap();
+    let type_idx = export_func_type_idx(&wasm, "cellAt");
+    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx) =
+        aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
+    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx) = (
+        box_idx.expect("cell_at box role"),
+        add_idx.expect("cell_at add role"),
+        mul_idx.expect("cell_at mul role"),
+        sub_idx.expect("cell_at sub role"),
+        to_index_idx.expect("cell_at to-index role"),
+    );
+
+    let cert = out_dir.join("cert");
+    // The manifest's fused-read host call carries the claim's carrier and
+    // array-type surfaces; cross-check its helper indices against the
+    // independent Rust role classifier before probing the gate with them.
+    let manifest_text = std::fs::read_to_string(cert.join("Manifest.lean")).unwrap();
+    let host_call = manifest_text
+        .split("vectorGetOrDefaultHost ")
+        .nth(1)
+        .expect("manifest must carry the fused vector-read host");
+    let leading_number = |s: &str| -> u32 {
+        let digits: String = s.chars().take_while(char::is_ascii_digit).collect();
+        digits
+            .parse()
+            .unwrap_or_else(|_| panic!("expected a number at `{}`", &s[..s.len().min(40)]))
+    };
+    let field = |key: &str| -> u32 {
+        leading_number(
+            host_call
+                .split(key)
+                .nth(1)
+                .unwrap_or_else(|| panic!("manifest host call lacks `{key}`")),
+        )
+    };
+    let carrier = leading_number(host_call);
+    let arr_ty = field("arrTy := ");
+    assert_eq!(field("toIndexIdx := "), to_index_idx);
+    assert_eq!(field("boxIdx := "), box_idx);
+    assert_ne!(arr_ty, carrier, "fixture carrier/array types must differ");
+
+    materialize_wall(&cert);
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build cell_at certificate before vector-read nominal GuardIso");
+    assert!(
+        build.status.success(),
+        "cell_at certificate failed before vector-read nominal GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let name_bytes = "cellAt"
+        .bytes()
+        .map(|b| b.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let lean = format!(
+        r#"import ArtifactCertificate
+
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 300000
+
+def packLE : List Nat → Nat | [] => 0 | b :: bs => b + (packLE bs <<< 8)
+
+-- Minimal modules: header, type section, then a shared func/export/code tail.
+-- `f` is func 0 of type 0 with the canonical fused-read signature over
+-- carrier 2 and array type 1; only the ARRAY ELEMENT STORAGE differs between
+-- the two: `(mut (ref null 2))` (carrier elements) vs `(mut i64)` (raw
+-- limbs). NOTE: like the int-dispatch signature probes, these hand-built
+-- modules demonstrate guard DISCRIMINATION only (they would fail the
+-- wasmparser chokepoint); the fused-read E2E tampers close the end-to-end gap
+-- on a real validated artifact.
+def hdr : List Nat := [0, 97, 115, 109, 1, 0, 0, 0]
+def carrierElemType : List Nat := [1, 14, 2, 96, 2, 99, 1, 99, 2, 1, 99, 2, 94, 99, 2, 1]
+def rawElemType : List Nat := [1, 13, 2, 96, 2, 99, 1, 99, 2, 1, 99, 2, 94, 126, 1]
+def tailSecs : List Nat := [3, 2, 1, 0, 7, 5, 1, 1, 102, 0, 0, 10, 4, 1, 2, 0, 11]
+def honestMod : List Nat := hdr ++ carrierElemType ++ tailSecs
+def hostileMod : List Nat := hdr ++ rawElemType ++ tailSecs
+def nameF : List Nat := [102]
+
+-- The byte-binding gates cannot tell the two modules apart...
+example : WasmSlice.funcBindingForExport (packLE honestMod) honestMod.length nameF =
+    WasmSlice.funcBindingForExport (packLE hostileMod) hostileMod.length nameF := rfl
+example : WasmSlice.exactFuncBindingForExport (packLE honestMod) honestMod.length nameF [2, 0, 11] =
+    WasmSlice.exactFuncBindingForExport (packLE hostileMod) hostileMod.length nameF [2, 0, 11] := rfl
+-- ...only the nominal vector-read type gate discriminates them...
+example : WasmSlice.exprVectorGetTypesMatch (packLE honestMod) honestMod.length 0 2 1 = true := rfl
+example : WasmSlice.exprVectorGetTypesMatch (packLE hostileMod) hostileMod.length 0 2 1 = false := rfl
+-- ...and the fused-read face routes through exactly that gate: the plan
+-- recognizer is blind to the module's type section either way.
+def probePlan : ExprFragmentRawPlan := {{ profile := "expr-fragment-v1", params := [.adtRef, .intCarrier], result := .intCarrier, body := ({{ nodes := [{{ id := 0, ty := .intCarrier, kind := .vectorGetOrDefault 1 5 6 (0 : Int) }}], result := 0 }} : FragBlock) }}
+example : WasmSlice.exprVectorGetOrDefaultArrTy? probePlan = some 1 := rfl
+example : WasmSlice.exprFragmentNominalTypesMatch (packLE honestMod) honestMod.length 0 2 probePlan = true := rfl
+example : WasmSlice.exprFragmentNominalTypesMatch (packLE hostileMod) hostileMod.length 0 2 probePlan = false := rfl
+-- An array type confused with the carrier itself fail-closes on either module.
+example : WasmSlice.exprVectorGetTypesMatch (packLE honestMod) honestMod.length 0 1 1 = false := rfl
+-- The literal gate-weakened copy accepts every negative.
+def weakVectorTypes (_ _ _ _ _ : Nat) : Bool := true
+example : weakVectorTypes (packLE hostileMod) hostileMod.length 0 2 1 = true := rfl
+example : weakVectorTypes (packLE honestMod) honestMod.length 0 1 1 = true := rfl
+
+-- On the real artifact the honest claim surfaces pass the gate at the
+-- byte-derived binding's type index, and the carrier-confused variant fails.
+example : (WasmSlice.funcBindingForExport ArtifactBytes.modBytes ArtifactBytes.modLen
+    [{name_bytes}]).map (fun b => b.typeIdx) = some {type_idx} := rfl
+example : WasmSlice.exprVectorGetTypesMatch ArtifactBytes.modBytes ArtifactBytes.modLen
+    {type_idx} {carrier} {arr_ty} = true := rfl
+example : WasmSlice.exprVectorGetTypesMatch ArtifactBytes.modBytes ArtifactBytes.modLen
+    {type_idx} {carrier} {carrier} = false := rfl
+
+-- The claim really carries exactly those surfaces...
+def honestHostTable : List (HostRole × Nat) :=
+  [(.box, {box_idx}), (.add, {add_idx}), (.mul, {mul_idx}), (.sub, {sub_idx}), (.toIndex, {to_index_idx})]
+def honestStructTable : List (String × Nat) := [("Vector<Int>", {arr_ty})]
+example : Artifact.symFragmentClaims.map (fun c => (c.carrier, c.hostTable, c.structTable)) =
+    [({carrier}, honestHostTable, honestStructTable)] := rfl
+
+-- ...the audited encoder binds the fused node through the byte-derived
+-- tables...
+example : PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+    honestHostTable honestStructTable Plans.cellAtSymPlan = some Plans.cellAtPlan := rfl
+-- ...and fail-closes when the to-index role or the array binding is absent.
+def noToIndexTable : List (HostRole × Nat) :=
+  [(.box, {box_idx}), (.add, {add_idx}), (.mul, {mul_idx}), (.sub, {sub_idx})]
+example : PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+    noToIndexTable honestStructTable Plans.cellAtSymPlan = none := rfl
+example : PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+    honestHostTable [] Plans.cellAtSymPlan = none := rfl
+"#
+    );
+    std::fs::write(cert.join("VectorGetNominalGuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("VectorGetNominalGuardIso.lean")
+        .output()
+        .expect("run vector-read nominal GuardIso");
+    assert!(
+        check.status.success(),
+        "vector-read nominal GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(out_dir);
+}
