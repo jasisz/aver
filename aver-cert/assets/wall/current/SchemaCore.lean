@@ -756,6 +756,7 @@ structure Obligation where
     (List WVal → Option WVal) →
     (List WVal → Option WVal) →
     (Nat → List WVal → Option WVal) →
+    (List WVal → Option WVal) →
     HostTbl
   self    : Nat
   Dom     : Type
@@ -775,14 +776,16 @@ def Obligation.holds (o : Obligation) : Prop :=
   ∀ (S : CarrierSpec o.carrier)
     (add sub mul stringEq : List WVal → Option WVal)
     (stringConcat : Nat → List WVal → Option WVal)
+    (toIndex : List WVal → Option WVal)
     (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
     (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
     (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
     (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
     (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
+    (_hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r → r = .i32v (toIndexW n))
     (fuel : Nat) (x : o.Dom) (vs : List WVal) (w : WVal),
     o.domRepr S x vs →
-    wFuncN o.code (o.host add sub mul stringEq stringConcat) fuel o.self vs = some w →
+    wFuncN o.code (o.host add sub mul stringEq stringConcat toIndex) fuel o.self vs = some w →
     o.codRepr S (o.model x) w
 
 /-- Denotation of `simulatesModelTotally`, with its totality assumptions selected
@@ -799,33 +802,37 @@ def Obligation.holdsTotal (o : Obligation) : Prop :=
       ∀ (S : CarrierSpec o.carrier)
         (add sub mul stringEq : List WVal → Option WVal)
         (stringConcat : Nat → List WVal → Option WVal)
+        (toIndex : List WVal → Option WVal)
         (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
         (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
         (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
         (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
         (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
+        (_hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r → r = .i32v (toIndexW n))
         (_hAddTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
         (_hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
         (x : o.Dom) (vs : List WVal), o.domRepr S x vs →
         ∃ n v tail, vs = v :: tail ∧ S.Repr n v ∧
-          ∃ w, wFuncN o.code (o.host add sub mul stringEq stringConcat)
+          ∃ w, wFuncN o.code (o.host add sub mul stringEq stringConcat toIndex)
               (n.natAbs + 1) o.self vs = some w ∧
             o.codRepr S (o.model x) w
   | .mul =>
       ∀ (S : CarrierSpec o.carrier)
         (add sub mul stringEq : List WVal → Option WVal)
         (stringConcat : Nat → List WVal → Option WVal)
+        (toIndex : List WVal → Option WVal)
         (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
         (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
         (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
         (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
         (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
+        (_hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r → r = .i32v (toIndexW n))
         (_hAddTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
         (_hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
         (_hMulTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, mul [va, vb] = some w)
         (x : o.Dom) (vs : List WVal), o.domRepr S x vs →
         ∃ n v tail, vs = v :: tail ∧ S.Repr n v ∧
-          ∃ w, wFuncN o.code (o.host add sub mul stringEq stringConcat)
+          ∃ w, wFuncN o.code (o.host add sub mul stringEq stringConcat toIndex)
               (n.natAbs + 1) o.self vs = some w ∧
             o.codRepr S (o.model x) w
 

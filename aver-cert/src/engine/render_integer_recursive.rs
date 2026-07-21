@@ -162,8 +162,8 @@ theorem {name}_wasm_total
 #print axioms {name}_wasm_total
 
 theorem {name}_simulates_total : AverCert.Schema.Obligation.holdsTotal {name}Ob := by
-  intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat
-    hAddTot hSubTot x vs hDom
+  intro S add sub mul stringEq stringConcat toIndex hadd hsub hmul hStringEq hStringConcat
+    _hToIndex hAddTot hSubTot x vs hDom
   simp only [{name}Ob] at hDom ⊢
   obtain ⟨hrepr, harity⟩ := hDom
   cases hrepr with
@@ -313,7 +313,7 @@ example :
         ),
         simulates: format!(
             r#"theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun
+  intro S add sub mul stringEq stringConcat toIndex hadd hsub hmul hStringEq hStringConcat _hToIndex fuel ns vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
   obtain ⟨hrepr, harity⟩ := hrepr
   cases hrepr with

@@ -24,9 +24,10 @@ abbrev HostBuilder :=
   (List WVal → Option WVal) →
   (List WVal → Option WVal) →
   (List WVal → Option WVal) →
-  (Nat → List WVal → Option WVal) → HostTbl
+  (Nat → List WVal → Option WVal) →
+  (List WVal → Option WVal) → HostTbl
 
-def emptyHost : HostBuilder := fun _ _ _ _ _ _ => none
+def emptyHost : HostBuilder := fun _ _ _ _ _ _ _ => none
 
 def decodedRoleIdx (roles : CertDecode.AddSub.Roles) : HostRole → Option Nat
   | .box => roles.box
@@ -207,7 +208,7 @@ structure IntAddFace where
 deriving Repr, DecidableEq
 
 def intAddHost (carrier : Nat) (face : IntAddFace) : HostBuilder :=
-  fun add _ _ _ _ fn =>
+  fun add _ _ _ _ _ fn =>
     if fn = face.boxIdx then some (1, boxRef carrier)
     else if fn = face.addIdx then some (2, add)
     else none
@@ -248,7 +249,7 @@ structure TagDispatchFace where
 deriving Repr, DecidableEq
 
 def tagDispatchHost (carrier boxIdx : Nat) : HostBuilder :=
-  fun _add _sub _mul _stringEq _stringConcat fn =>
+  fun _add _sub _mul _stringEq _stringConcat _toIndex fn =>
     if fn = boxIdx then some (1, boxRef carrier) else none
 
 /-- The complete operational face of a tag-dispatch obligation. `Dom` carries the

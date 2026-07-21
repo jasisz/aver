@@ -217,7 +217,7 @@ impl Cert {
     fn host_expr(&self) -> String {
         if let Some(_face) = self.int_add_face() {
             let name = self.name();
-            return format!("fun add _ _ _ _ => CertModule.{name}Host add");
+            return format!("fun add _ _ _ _ _ => CertModule.{name}Host add");
         }
         if let Some(face) = self.tag_dispatch_face() {
             return format!(
@@ -232,38 +232,38 @@ impl Cert {
             } => {
                 // Draw the combinator slot (`add` or `mul`) from the obligation.
                 format!(
-                    "fun add sub mul _ _ => CertModule.{name}Host {} sub",
+                    "fun add sub mul _ _ _ => CertModule.{name}Host {} sub",
                     combinator.param()
                 )
             }
             Cert::AccumulatorRecursive { name, .. } | Cert::Composition { name, .. } => {
-                format!("fun add sub _ _ _ => CertModule.{name}Host add sub")
+                format!("fun add sub _ _ _ _ => CertModule.{name}Host add sub")
             }
             // The whole SCC shares one host (box + sub only), named after the
             // primary (lowest-`self_idx`) member; every member's obligation points
             // at it. `add`/`mul` are ignored (mutual has no combinator).
             Cert::MutualRecursion { scc, .. } => {
-                format!("fun _ sub _ _ _ => CertModule.{}Host sub", scc[0].name)
+                format!("fun _ sub _ _ _ _ => CertModule.{}Host sub", scc[0].name)
             }
             Cert::AdtConstructor { name, .. } | Cert::FieldProjection { name, .. } => {
-                format!("fun _ _ _ _ _ => CertModule.{name}Host")
+                format!("fun _ _ _ _ _ _ => CertModule.{name}Host")
             }
             Cert::WidenedIntMatch { name, .. }
             | Cert::VerbatimWidenedMatch { name, .. }
             | Cert::VerbatimVariantDispatch { name, .. } => {
-                format!("fun _ _ _ _ _ => CertModule.{name}Host")
+                format!("fun _ _ _ _ _ _ => CertModule.{name}Host")
             }
             Cert::ExprFragment { name, .. } => {
-                format!("fun _ _ _ _ _ => CertModule.{name}Host")
+                format!("fun _ _ _ _ _ _ => CertModule.{name}Host")
             }
             Cert::StringEqVerbatimMatch { name, .. } => {
-                format!("fun _ _ _ stringEq _ => CertModule.{name}Host stringEq")
+                format!("fun _ _ _ stringEq _ _ => CertModule.{name}Host stringEq")
             }
             Cert::StringConcatVerbatimMatch { name, .. } => {
-                format!("fun _ _ _ _ stringConcat => CertModule.{name}Host stringConcat")
+                format!("fun _ _ _ _ stringConcat _ => CertModule.{name}Host stringConcat")
             }
             Cert::VariantDispatch { name, .. } => {
-                format!("fun add sub _ _ _ => CertModule.{name}Host add sub")
+                format!("fun add sub _ _ _ _ => CertModule.{name}Host add sub")
             }
             Cert::NonRecursive { .. } => unreachable!(),
         }

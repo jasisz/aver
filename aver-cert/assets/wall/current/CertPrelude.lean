@@ -443,6 +443,24 @@ def stringConcatW (resultTy : Nat) : WVal → Option WVal
       some (.arr resultTy bytes)
   | _ => none
 
+/-- The `__aint_to_index` contract at the ℤ level (confirmed against
+    `wat/to_index.wat`): a represented integer in `[0, 2^31)` extracts to its
+    own i32 value; a negative or `>= 2^31` value — and in particular every
+    limb-carrying big value — collapses to the out-of-bounds sentinel `-1`.
+    The sentinel fails BOTH halves of the emitter's bounds check (`idx >= 0`
+    signed AND `idx < len` unsigned), so an unrepresentable index always takes
+    the miss arm, never a wrapped in-range read. -/
+def toIndexW (n : Int) : Int :=
+  if 0 ≤ n ∧ n < 2147483648 then n else -1
+
+/-- Executable reference face of the `__aint_to_index` contract: a small
+    carrier extracts through `toIndexW`; any big (limb-carrying) carrier is
+    the sentinel. -/
+def toIndexRef : List WVal → Option WVal
+  | [.structv _ [.i64v s, .null, .i32v _]] => some (.i32v (toIndexW s))
+  | [.structv _ [.i64v _, .arr _ _, .i32v _]] => some (.i32v (-1))
+  | _ => none
+
 /-- Int comparison contract faces: decode both carriers, compare in ℤ, return
     the i32 boolean the wasm helper produces (`<= < >= > ==`). -/
 def cmpRef (p : Int → Int → Bool) : List WVal → Option WVal

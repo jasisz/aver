@@ -66,7 +66,7 @@ theorem {name}_wasm_certified (S : CarrierSpec {carrier}) :
 def {name}HostRef : HostTbl := {name}Host
 
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel p vs w hrepr hrun
+  intro S add sub mul stringEq stringConcat toIndex hadd hsub hmul hStringEq hStringConcat _hToIndex fuel p vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
   subst hrepr
   cases fuel with
@@ -144,7 +144,7 @@ example :
 /-- Schema-shaped simulation obligation for `{name}` (composed by the single
     final theorem). Partial correctness over any fuel and representation. -/
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq hStringConcat fuel ns vs w hrepr hrun
+  intro S add sub mul stringEq stringConcat toIndex hadd hsub hmul hStringEq hStringConcat _hToIndex fuel ns vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
   obtain ⟨hrepr, harity⟩ := hrepr
   cases hrepr with

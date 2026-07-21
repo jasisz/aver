@@ -578,10 +578,10 @@ impl ObligationFace {
                 ));
                 s.push_str(&format!(
                     "example : ∀ o, {obl}[{idx}]? = some o →\n    \
-                     ∀ add sub mul stringEq stringConcat,\n      \
-                     o.host add sub mul stringEq stringConcat {helper_idx} =\n        \
+                     ∀ add sub mul stringEq stringConcat toIndex,\n      \
+                     o.host add sub mul stringEq stringConcat toIndex {helper_idx} =\n        \
                      some (2, stringEq) := by\n  \
-                     intro o h add sub mul stringEq stringConcat\n  {reduce}\n  \
+                     intro o h add sub mul stringEq stringConcat toIndex\n  {reduce}\n  \
                      subst h; rfl\n"
                 ));
             }
@@ -601,10 +601,10 @@ impl ObligationFace {
                 ));
                 s.push_str(&format!(
                     "example : ∀ o, {obl}[{idx}]? = some o →\n    \
-                     ∀ add sub mul stringEq stringConcat,\n      \
-                     o.host add sub mul stringEq stringConcat {helper_idx} =\n        \
+                     ∀ add sub mul stringEq stringConcat toIndex,\n      \
+                     o.host add sub mul stringEq stringConcat toIndex {helper_idx} =\n        \
                      some (1, stringConcat {result_ty}) := by\n  \
-                     intro o h add sub mul stringEq stringConcat\n  {reduce}\n  \
+                     intro o h add sub mul stringEq stringConcat toIndex\n  {reduce}\n  \
                      subst h; rfl\n"
                 ));
             }

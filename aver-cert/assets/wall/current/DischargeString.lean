@@ -60,12 +60,13 @@ theorem stringEq_accepted_call
       stringEqPlanForExport claim.exportName
           artifact.manifest.stringEqPlans = some plan ∧
       ∀ (add sub mul stringEq : List WVal → Option WVal)
-        (stringConcat : Nat → List WVal → Option WVal),
+        (stringConcat : Nat → List WVal → Option WVal)
+        (toIndex : List WVal → Option WVal),
         (∀ a b w, stringEq [a, b] = some w →
           w = b32 (stringEqW a b)) →
         ∀ (fuel : Nat) (v w : WVal),
           wFuncN claim.obligation.code
-              (claim.obligation.host add sub mul stringEq stringConcat)
+              (claim.obligation.host add sub mul stringEq stringConcat toIndex)
               (fuel + 1) claim.obligation.self [v] = some w →
             w = StringSoundness.evalStringEq claim.stringTy plan v := by
   have hClaim : stringEqClaimAccepted artifact.modBytes artifact.modLen
@@ -92,15 +93,15 @@ theorem stringEq_accepted_call
           some ⟨1, 2, body⟩ := by
         simpa [← hSelf] using hCode
       refine ⟨plan, rfl, ?_⟩
-      intro add sub mul stringEq stringConcat hStringEq fuel v w hRun
+      intro add sub mul stringEq stringConcat toIndex hStringEq fuel v w hRun
       have hHostSlot :
-          claim.obligation.host add sub mul stringEq stringConcat
+          claim.obligation.host add sub mul stringEq stringConcat toIndex
               claim.stringEqFuncIdx = some (2, stringEq) := by
         rw [hHost]
         simp [stringEqCanonicalHost]
       exact StringSoundness.generic_string_eq_certified
         claim.stringTy claim.stringEqFuncIdx plan claim.obligation.code
-        (claim.obligation.host add sub mul stringEq stringConcat)
+        (claim.obligation.host add sub mul stringEq stringConcat toIndex)
         claim.obligation.self stringEq hStringEq hCheck body hLow hCodeSelf
         hHostSlot fuel v w hRun
 
@@ -113,13 +114,14 @@ theorem stringConcat_accepted_call
       stringConcatPlanForExport claim.exportName
           artifact.manifest.stringConcatPlans = some plan ∧
       ∀ (add sub mul stringEq : List WVal → Option WVal)
-        (stringConcat : Nat → List WVal → Option WVal),
+        (stringConcat : Nat → List WVal → Option WVal)
+        (toIndex : List WVal → Option WVal),
         (∀ resultTy parts c,
           stringConcat resultTy [parts] = some c →
             stringConcatW resultTy parts = some c) →
         ∀ (fuel : Nat) (v w : WVal),
           wFuncN claim.obligation.code
-              (claim.obligation.host add sub mul stringEq stringConcat)
+              (claim.obligation.host add sub mul stringEq stringConcat toIndex)
               (fuel + 1) claim.obligation.self [v] = some w →
             w = StringSoundness.evalStringConcat
               claim.resultTy claim.containerTy plan v := by
@@ -147,9 +149,9 @@ theorem stringConcat_accepted_call
           some ⟨1, 1, body⟩ := by
         simpa [hSelf, stringConcatNLocals] using hCode
       refine ⟨plan, rfl, ?_⟩
-      intro add sub mul stringEq stringConcat hStringConcat fuel v w hRun
+      intro add sub mul stringEq stringConcat toIndex hStringConcat fuel v w hRun
       have hHostSlot :
-          claim.obligation.host add sub mul stringEq stringConcat
+          claim.obligation.host add sub mul stringEq stringConcat toIndex
               claim.concatFuncIdx =
             some (1, stringConcat claim.resultTy) := by
         rw [hHost]
@@ -157,7 +159,7 @@ theorem stringConcat_accepted_call
       exact StringSoundness.generic_string_concat_certified
         claim.resultTy claim.containerTy claim.concatFuncIdx plan
         claim.obligation.code
-        (claim.obligation.host add sub mul stringEq stringConcat)
+        (claim.obligation.host add sub mul stringEq stringConcat toIndex)
         claim.obligation.self stringConcat hStringConcat hCheck body hLow
         hCodeSelf hHostSlot fuel v w hRun
 
@@ -172,14 +174,15 @@ theorem stringEq_canonical_discharges
       (List WVal → Option WVal) →
       (List WVal → Option WVal) →
       (List WVal → Option WVal) →
-      (Nat → List WVal → Option WVal) → HostTbl)
+      (Nat → List WVal → Option WVal) →
+      (List WVal → Option WVal) → HostTbl)
     (hCheck : AverCert.PlanCheck.checkStringEqRawPlan plan = true)
     {body : List WInstr}
     (hLow : AverCert.PlanLower.lowerStringEqBody
       stringTy stringEqFuncIdx plan = some body)
     (hCode : code self = some ⟨1, 2, body⟩)
-    (hHost : ∀ add sub mul stringEq stringConcat,
-      host add sub mul stringEq stringConcat stringEqFuncIdx =
+    (hHost : ∀ add sub mul stringEq stringConcat toIndex,
+      host add sub mul stringEq stringConcat toIndex stringEqFuncIdx =
         some (2, stringEq)) :
     Obligation.holds
       ({ export_ := exportName
@@ -194,16 +197,16 @@ theorem stringEq_canonical_discharges
          codRepr := fun S v w => verbatimRepr S v w
          model := fun v => StringSoundness.evalStringEq stringTy plan v } :
         Obligation) := by
-  intro S add sub mul stringEq stringConcat
-    _hAdd _hSub _hMul hStringEq _hStringConcat fuel v vs w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex
+    _hAdd _hSub _hMul hStringEq _hStringConcat _hToIndex fuel v vs w hDom hRun
   subst vs
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
       have hCall := StringSoundness.generic_string_eq_certified
         stringTy stringEqFuncIdx plan code
-        (host add sub mul stringEq stringConcat) self stringEq hStringEq
-        hCheck body hLow hCode (hHost add sub mul stringEq stringConcat)
+        (host add sub mul stringEq stringConcat toIndex) self stringEq hStringEq
+        hCheck body hLow hCode (hHost add sub mul stringEq stringConcat toIndex)
         fuel v w hRun
       simpa [verbatimRepr] using hCall
 
@@ -217,14 +220,15 @@ theorem stringConcat_canonical_discharges
       (List WVal → Option WVal) →
       (List WVal → Option WVal) →
       (List WVal → Option WVal) →
-      (Nat → List WVal → Option WVal) → HostTbl)
+      (Nat → List WVal → Option WVal) →
+      (List WVal → Option WVal) → HostTbl)
     (hCheck : AverCert.PlanCheck.checkStringConcatRawPlan plan = true)
     {body : List WInstr}
     (hLow : AverCert.PlanLower.lowerStringConcatBody
       resultTy containerTy concatFuncIdx plan = some body)
     (hCode : code self = some ⟨1, 1, body⟩)
-    (hHost : ∀ add sub mul stringEq stringConcat,
-      host add sub mul stringEq stringConcat concatFuncIdx =
+    (hHost : ∀ add sub mul stringEq stringConcat toIndex,
+      host add sub mul stringEq stringConcat toIndex concatFuncIdx =
         some (1, stringConcat resultTy)) :
     Obligation.holds
       ({ export_ := exportName
@@ -240,16 +244,16 @@ theorem stringConcat_canonical_discharges
          model := fun v =>
            StringSoundness.evalStringConcat resultTy containerTy plan v } :
         Obligation) := by
-  intro S add sub mul stringEq stringConcat
-    _hAdd _hSub _hMul _hStringEq hStringConcat fuel v vs w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex
+    _hAdd _hSub _hMul _hStringEq hStringConcat _hToIndex fuel v vs w hDom hRun
   subst vs
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
       have hCall := StringSoundness.generic_string_concat_certified
         resultTy containerTy concatFuncIdx plan code
-        (host add sub mul stringEq stringConcat) self stringConcat hStringConcat
-        hCheck body hLow hCode (hHost add sub mul stringEq stringConcat)
+        (host add sub mul stringEq stringConcat toIndex) self stringConcat hStringConcat
+        hCheck body hLow hCode (hHost add sub mul stringEq stringConcat toIndex)
         fuel v w hRun
       simpa [verbatimRepr] using hCall
 
@@ -267,14 +271,14 @@ theorem stringEq_claim_discharges
     ⟨plan, hPlan, hCall⟩
   rcases hBridge plan hPlan with ⟨hPolicy, hSemantic⟩
   rw [obligationHolds, hPolicy]
-  intro S add sub mul stringEq stringConcat
-    _hAdd _hSub _hMul hStringEq _hStringConcat fuel x vs w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex
+    _hAdd _hSub _hMul hStringEq _hStringConcat _hToIndex fuel x vs w hDom hRun
   rcases hSemantic S x vs hDom with ⟨v, hVs, hCod⟩
   subst vs
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
-      have hResult := hCall add sub mul stringEq stringConcat
+      have hResult := hCall add sub mul stringEq stringConcat toIndex
         hStringEq fuel v w hRun
       simpa [hResult] using hCod
 
@@ -292,14 +296,14 @@ theorem stringConcat_claim_discharges
     ⟨plan, hPlan, hCall⟩
   rcases hBridge plan hPlan with ⟨hPolicy, hSemantic⟩
   rw [obligationHolds, hPolicy]
-  intro S add sub mul stringEq stringConcat
-    _hAdd _hSub _hMul _hStringEq hStringConcat fuel x vs w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex
+    _hAdd _hSub _hMul _hStringEq hStringConcat _hToIndex fuel x vs w hDom hRun
   rcases hSemantic S x vs hDom with ⟨v, hVs, hCod⟩
   subst vs
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
-      have hResult := hCall add sub mul stringEq stringConcat
+      have hResult := hCall add sub mul stringEq stringConcat toIndex
         hStringConcat fuel v w hRun
       simpa [hResult] using hCod
 

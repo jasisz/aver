@@ -1721,7 +1721,7 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
     let base = format!("AverCert.{ob_ref}");
     let original = format!("obligation := {base}");
     let tampered = format!(
-        "obligation := {{ {base} with host := fun add sub mul stringEq stringConcat fn => if fn = {base}.self + 999999 then none else {base}.host add sub mul stringEq stringConcat fn }}"
+        "obligation := {{ {base} with host := fun add sub mul stringEq stringConcat toIndex fn => if fn = {base}.self + 999999 then none else {base}.host add sub mul stringEq stringConcat toIndex fn }}"
     );
     let tampered_artifact = artifact_text.replacen(&original, &tampered, 1);
     assert_ne!(
@@ -3140,8 +3140,8 @@ def duplicateOb : Obligation :=
   { AverCert.addTwoOb with code := inertCode, self := 999 }
 
 theorem duplicateObHolds : duplicateOb.holds := by
-  intro S add sub mul stringEq stringConcat hadd hsub hmul hStringEq
-    hStringConcat fuel x vs w hdom hrun
+  intro S add sub mul stringEq stringConcat toIndex hadd hsub hmul hStringEq
+    hStringConcat _hToIndex fuel x vs w hdom hrun
   cases fuel <;> simp [duplicateOb, inertCode, wFuncN] at hrun
 
 def duplicateManifest : Manifest :=

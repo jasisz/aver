@@ -234,6 +234,7 @@ def compositionClaimSemanticBridge
   ∀ (S : CarrierSpec claim.obligation.carrier)
     (add sub mul stringEq : List WVal → Option WVal)
     (stringConcat : Nat → List WVal → Option WVal)
+    (toIndex : List WVal → Option WVal)
     (hAdd : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
       add [va, vb] = some w → S.Repr (a + b) w)
     (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
@@ -245,6 +246,8 @@ def compositionClaimSemanticBridge
     (hStringConcat : ∀ resultTy parts c,
       stringConcat resultTy [parts] = some c →
         stringConcatW resultTy parts = some c)
+    (hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r →
+      r = .i32v (toIndexW n))
     (x : claim.obligation.Dom) (vs : List WVal),
     claim.obligation.domRepr S x vs →
     ∃ (n : Int) (v : WVal) (models : String → Int → Int)
@@ -260,7 +263,7 @@ def compositionClaimSemanticBridge
         ∀ name ∈ callees,
           Nonempty (CompositionSoundness.MemberFact S artifact.compositionMembers
             funcTable claim.obligation.code
-            (claim.obligation.host add sub mul stringEq stringConcat)
+            (claim.obligation.host add sub mul stringEq stringConcat toIndex)
           models name)
 
 /-- Artifact-wide form of the tied composition bridge. Each root's selected
@@ -331,14 +334,14 @@ theorem composition_claim_discharges_with_bridge
           rcases hBridge rootMember hRootLookup callees hShape with
             ⟨hPolicy, hModel⟩
           rw [obligationHolds, hPolicy]
-          intro S add sub mul stringEq stringConcat
-            hAdd hSub hMul hStringEq hStringConcat fuel x vs w hDom hRun
-          rcases hModel S add sub mul stringEq stringConcat
-              hAdd hSub hMul hStringEq hStringConcat x vs hDom with
+          intro S add sub mul stringEq stringConcat toIndex
+            hAdd hSub hMul hStringEq hStringConcat _hToIndex fuel x vs w hDom hRun
+          rcases hModel S add sub mul stringEq stringConcat toIndex
+              hAdd hSub hMul hStringEq hStringConcat _hToIndex x vs hDom with
             ⟨n, v, models, rootModel, rfl, hv, hRootModel, hCod, hMembers⟩
           have hCertified := CompositionSoundness.generic_composition_certified
             S artifact.compositionMembers funcTable claim.obligation.code
-            (claim.obligation.host add sub mul stringEq stringConcat)
+            (claim.obligation.host add sub mul stringEq stringConcat toIndex)
             models rootModel claim.obligation.self claim.hostTable
             rootMember.plan callees hShape hCheck body hLower hCodeSelf
             (fun name hName => Classical.choice
