@@ -1,6 +1,6 @@
 /-
   CertPrelude — certificate semantics for the measured Aver wasm-gc user-code
-  fragment (39 distinct opcodes, no loops, no linear memory).
+  fragment (43 distinct opcodes, no loops, no linear memory).
 
   Architecture is fixed by the kill-fast probes (probe-artifacts/pcc-kill):
   * `wRunF` is STRUCTURAL on the instruction tree and takes the call
@@ -55,8 +55,10 @@ inductive WInstr where
   | structGet (tyIdx : Nat) (field : Nat)
   | arrayNewFixed (tyIdx : Nat) (n : Nat)
   | arrayNewData (tyIdx : Nat) (bytes : List Nat)
+  | arrayLen
+  | arrayGet (tyIdx : Nat)
   | i64Eqz | i64Eq | i64LeS | i64LtS | i64GeS | i64GtS
-  | i32Eq | i32And | i32LtS | i32LeS | i32GtS
+  | i32Eq | i32And | i32LtS | i32LeS | i32GtS | i32GeS | i32LtU
   | f64Add | f64Sub | f64Mul | f64Div
   | f64Eq | f64Lt | f64Le | f64Ge | f64Gt
   | ifElse (thenB elseB : List WInstr)
@@ -157,6 +159,25 @@ def wRunF (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) :
       | .i32v _ :: .i32v _ :: st' =>
           wRunF host ar callee rest locals (.arr ty (bytes.map (.i32v ∘ Int.ofNat)) :: st')
       | _ => none
+  | .arrayLen :: rest, locals, st =>
+      -- array.len: an array reference on top yields its element count. A null
+      -- reference traps at runtime, modelled as `none`; any other value is a
+      -- type error, also `none`.
+      match st with
+      | .arr _ es :: st' =>
+          wRunF host ar callee rest locals (.i32v (Int.ofNat es.length) :: st')
+      | _ => none
+  | .arrayGet ty :: rest, locals, st =>
+      -- array.get with the declared array type immediate. A type mismatch,
+      -- a negative index, or an out-of-bounds read traps, modelled as `none`.
+      match st with
+      | .i32v i :: .arr t es :: st' =>
+          if t = ty ∧ 0 ≤ i then
+            match es[i.toNat]? with
+            | some v => wRunF host ar callee rest locals (v :: st')
+            | none => none
+          else none
+      | _ => none
   | .i64Eqz :: rest, locals, st =>
       match st with
       | .i64v a :: st' => wRunF host ar callee rest locals (b32 (a = 0) :: st')
@@ -204,6 +225,21 @@ def wRunF (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) :
   | .i32GtS :: rest, locals, st =>
       match st with
       | .i32v b :: .i32v a :: st' => wRunF host ar callee rest locals (b32 (a > b) :: st')
+      | _ => none
+  | .i32GeS :: rest, locals, st =>
+      match st with
+      | .i32v b :: .i32v a :: st' => wRunF host ar callee rest locals (b32 (a ≥ b) :: st')
+      | _ => none
+  | .i32LtU :: rest, locals, st =>
+      -- TRUE unsigned 32-bit comparison: both operands are reduced to their
+      -- unsigned representatives (`emod 2^32`) before comparing. This is NOT
+      -- the signed pattern above: the `__aint_to_index` out-of-bounds sentinel
+      -- `-1` becomes `2^32 - 1` here, which is never below an engine array
+      -- length (< 2^31), so a sentinel index always fails the bounds check.
+      match st with
+      | .i32v b :: .i32v a :: st' =>
+          wRunF host ar callee rest locals
+            (b32 (a.emod 4294967296 < b.emod 4294967296) :: st')
       | _ => none
   | .f64Add :: rest, locals, st =>
       match st with
