@@ -13,7 +13,8 @@ fn render_certificate(
     s.push_str(
         "\nset_option linter.unusedSimpArgs false\n\
          set_option linter.unusedVariables false\n\
-         set_option maxRecDepth 1000000\n\n\
+         set_option maxRecDepth 1000000\n\
+         set_option maxHeartbeats 1600000\n\n\
          namespace CertProofs\nopen CertPrelude CertModule AverCert AverCert.Schema\n\n",
     );
     let struct_table_lean = emit_frag_struct_table_lean(analysis)
