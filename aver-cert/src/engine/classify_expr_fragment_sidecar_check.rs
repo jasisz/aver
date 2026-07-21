@@ -348,25 +348,29 @@ fn check_expr_fragment_plan_object(
     check_plan_struct_gets(&plan.body, carrier, &struct_field_counts)
         .map_err(|e| format!("plan for `{export_name}`: {e}"))?;
     let tag_dispatch = expr_fragment_is_tag_dispatch(&plan);
+    let vector_get = expr_fragment_vector_get_face(&plan).is_some();
     if (plan_has_host_calls(&plan.body) || plan.result == FragTy::IntCarrier)
         && expr_fragment_int_add_face(&plan).is_none()
         && !tag_dispatch
+        && !vector_get
     {
         return Err(format!(
             "plan for `{export_name}` has no rendered proof face: Int-carrier results \
-             are supported only through the straight-line integer or tag-dispatch face"
+             are supported only through the straight-line integer, tag-dispatch, or \
+             fused vector-read face"
         ));
     }
     // Face-gated AdtRef admission (the FIX-1 pattern): plans touching opaque
-    // user-ADT references are accepted ONLY as the exact field-projection
-    // face; anything else declines fail-closed on producer and verifier alike.
+    // user-ADT references are accepted ONLY as an exact recognised face;
+    // anything else declines fail-closed on producer and verifier alike.
     if expr_fragment_plan_touches_adt_ref(&plan)
         && expr_fragment_project_face(&plan).is_none()
         && !tag_dispatch
+        && !vector_get
     {
         return Err(format!(
             "plan for `{export_name}` has no rendered proof face: user-ADT references \
-             are supported only through the field-projection face"
+             are supported only through the field-projection or fused vector-read face"
         ));
     }
     if plan.params != params {
@@ -459,7 +463,8 @@ fn block_has_nan_nondeterministic_float_op(block: &FragBlock) -> bool {
         | FragNodeKind::StructGetUser { .. }
         | FragNodeKind::RefIsNull { .. }
         | FragNodeKind::HostCall { .. }
-        | FragNodeKind::SelfCall { .. } => false,
+        | FragNodeKind::SelfCall { .. }
+        | FragNodeKind::VectorGetOrDefault { .. } => false,
     })
 }
 

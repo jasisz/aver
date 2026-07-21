@@ -176,6 +176,24 @@ impl SymToFragEncoder<'_> {
                     },
                 )
             }
+            SymNodeKind::VectorGetOrDefault { type_name, default } => {
+                // Twin of the Lean encoder arm: resolve the vector's array
+                // type through the byte-derived struct table and both helpers
+                // through the byte-derived role table; a missing binding
+                // fail-closes the encoding.
+                let arr_ty = self.struct_table.lookup(type_name)?;
+                let to_index_idx = self.host_table.lookup(FragHostRole::ToIndex)?;
+                let box_idx = self.host_table.lookup(FragHostRole::Box)?;
+                self.push_node(
+                    ty,
+                    FragNodeKind::VectorGetOrDefault {
+                        arr_ty,
+                        to_index_idx,
+                        box_idx,
+                        default: *default,
+                    },
+                )
+            }
             SymNodeKind::If {
                 cond,
                 then_block,

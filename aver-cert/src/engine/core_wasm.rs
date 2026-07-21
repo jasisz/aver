@@ -96,6 +96,14 @@ enum Op {
     I32Eq,
     I32LtS,
     I32GtS,
+    /// The fused vector-read bounds-check comparisons and combiner, plus the
+    /// array read itself. Captured (not `Op::Other`) so the fused-read plan
+    /// re-lowering compares exactly against the disassembled body.
+    I32LtU,
+    I32GeS,
+    I32And,
+    ArrayLen,
+    ArrayGet(u32),
     If,
     Else,
     End,

@@ -2645,6 +2645,13 @@ pub(super) fn emit_module_with(
             if let Some(idx) = registry.aint_from_i64_fn_idx {
                 exports.export("__rt_aint_from_i64", ExportKind::Func, idx);
             }
+            // The certificate wall identifies the `__aint_to_index` host
+            // role by this named export, exactly like the box helper above.
+            // Present only when a Vector/List index extraction instantiated
+            // the helper.
+            if let Some(idx) = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintToIndex) {
+                exports.export("__aint_to_index", ExportKind::Func, idx);
+            }
         }
         exports.export("memory", ExportKind::Memory, 0);
     } else if cabi_realloc.is_some() {
@@ -2764,7 +2771,11 @@ pub(super) fn emit_module_with(
             .iter()
             .map(|mir_fn| {
                 mir_fn.and_then(|mir_fn| {
-                    crate::codegen::cert::fragment_plan_from_mir_fn(mir_fn, &record_field_lookup)
+                    crate::codegen::cert::fragment_plan_from_mir_fn(
+                        mir_fn,
+                        &record_field_lookup,
+                        &mir_program.builtins,
+                    )
                 })
             })
             .collect()
@@ -3050,6 +3061,7 @@ pub(super) fn emit_module_with(
         add_idx: builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintAdd),
         mul_idx: builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintMul),
         sub_idx: builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintSub),
+        to_index_idx: builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintToIndex),
         // The declared arith template indices matter only for the certificate
         // manifest, which the checker re-derives from the emitted bytes; the
         // plan encoder here needs only the four call-target roles above.
@@ -3068,6 +3080,7 @@ pub(super) fn emit_module_with(
                 &|name, source_ty| match name {
                     "Option" => registry.option_type_idx(&source_ty.canonical_name()),
                     "Result" => registry.result_type_idx(&source_ty.canonical_name()),
+                    _ if name.starts_with("Vector<") => registry.vector_type_idx(name),
                     _ => registry.record_type_idx(name),
                 },
             )

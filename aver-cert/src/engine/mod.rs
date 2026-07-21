@@ -60,6 +60,8 @@ pub const STRING_EQ_CONTRACT: &str =
     "String.eq (WVal byte-array equality; non-arrays compare false)";
 pub const STRING_CONCAT_CONTRACT: &str =
     "String.concat (container-of-string-arrays -> byte-concatenated array)";
+pub const TO_INDEX_CONTRACT: &str =
+    "__aint_to_index (carrier -> i32 array index; [0, 2^31) passes, else -1)";
 /// The one approved final-theorem statement line. `aver cert verify` confirms
 /// this exact line is present in `Final.lean` (name + `Holds manifest`), which
 /// is what pins the statement without matching arbitrary Lean syntax.

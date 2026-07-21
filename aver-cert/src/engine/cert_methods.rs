@@ -114,6 +114,13 @@ impl Cert {
         }
     }
 
+    fn vector_get_face(&self) -> Option<FragVectorGetOrDefaultFace> {
+        match self.inner() {
+            Cert::ExprFragment { plan, .. } => expr_fragment_vector_get_face(plan),
+            _ => None,
+        }
+    }
+
     fn name(&self) -> &str {
         match self.inner() {
             Cert::Recursive { name, .. }
@@ -226,6 +233,17 @@ impl Cert {
                 face.box_idx
             );
         }
+        if let Some(face) = self.vector_get_face() {
+            return format!(
+                "AverCert.StandardFace.vectorGetOrDefaultHost {} \
+                 {{ arrTy := {}, toIndexIdx := {}, boxIdx := {}, d := ({} : Int) }}",
+                self.carrier(),
+                face.arr_ty,
+                face.to_index_idx,
+                face.box_idx,
+                face.default
+            );
+        }
         match self.inner() {
             Cert::Recursive {
                 name, combinator, ..
@@ -282,6 +300,9 @@ impl Cert {
         }
         if self.tag_dispatch_face().is_some() {
             return ("Int x WVal".to_string(), "Int".to_string());
+        }
+        if self.vector_get_face().is_some() {
+            return ("List Int x Int".to_string(), "Int".to_string());
         }
         match self.inner() {
             Cert::Recursive { .. }

@@ -12,6 +12,9 @@ fn render_expr_fragment_cert(c: &Cert) -> String {
     if c.project_face().is_some() {
         return String::new();
     }
+    if let Some(face) = c.vector_get_face() {
+        return render_expr_fragment_vector_get_cert(c, face);
+    }
     let c = c.inner();
     let Cert::ExprFragment {
         name,
@@ -78,6 +81,34 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
       simp [{cod_repr}]
 "#,
         intro_args = theorem_args.join(" "),
+    )
+}
+
+/// The fused vector-read proof: the obligation discharges through the wall's
+/// generic template theorem, specialised to this claim's byte-derived holes
+/// and the plan-lowered code table. The to-index contract hypothesis comes
+/// straight from the obligation denotation's sixth host-contract slot.
+fn render_expr_fragment_vector_get_cert(c: &Cert, face: FragVectorGetOrDefaultFace) -> String {
+    let name = c.name();
+    let carrier = c.carrier();
+    let self_idx = c.self_idx();
+    format!(
+        r#"/-! ### {name} — fused vector-read certificate (carrier type {carrier}) -/
+
+theorem {name}_simulates : AverCert.Schema.Obligation.holds AverCert.{name}Ob := by
+  intro S add sub mul stringEq stringConcat toIndex _hadd _hsub _hmul _hStringEq
+    _hStringConcat hToIndex fuel p vs w hDom hRun
+  obtain ⟨v, i⟩ := p
+  exact AverCert.StandardFace.vectorGetOrDefault_simulates_model
+    {carrier} {to_index_idx} {box_idx} {arr_ty} ({d} : Int) (by decide) S toIndex hToIndex
+    CertModule.{name}Code {self_idx} rfl fuel v i vs w hDom hRun
+
+#print axioms {name}_simulates
+"#,
+        to_index_idx = face.to_index_idx,
+        box_idx = face.box_idx,
+        arr_ty = face.arr_ty,
+        d = face.default,
     )
 }
 
@@ -245,6 +276,9 @@ where
         FragNodeKind::StructGetUser { .. } => {
             unreachable!("user struct projection is rendered by the projection face, not the generic value renderer")
         }
+        FragNodeKind::VectorGetOrDefault { .. } => {
+            unreachable!("the fused vector read is rendered by its own face, not the generic value renderer")
+        }
         FragNodeKind::RefIsNull { value } => {
             let v = expr_fragment_value_expr(block, *value, local);
             format!("{v} = WVal.null")
@@ -402,7 +436,8 @@ where
         | FragNodeKind::HostCall { .. }
         | FragNodeKind::SelfCall { .. }
         | FragNodeKind::StructGet { .. }
-        | FragNodeKind::StructGetUser { .. } => unreachable!("node is not BoolI32"),
+        | FragNodeKind::StructGetUser { .. }
+        | FragNodeKind::VectorGetOrDefault { .. } => unreachable!("node is not BoolI32"),
     }
 }
 

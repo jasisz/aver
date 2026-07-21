@@ -134,6 +134,11 @@ pub enum FragHostRole {
     /// The strict integer-subtraction contract (`carrier sub`). Admitted by the
     /// Lean `HostRole` grammar for the fuel-recursion descent `sub(n, box(1))`.
     Sub,
+    /// The `__aint_to_index` index-extraction contract: a represented integer
+    /// in `[0, 2^31)` passes through as its i32 value, anything else collapses
+    /// to the `-1` out-of-bounds sentinel. Consumed only inside the monolithic
+    /// fused vector-read node, never as a standalone `hostCall`.
+    ToIndex,
 }
 
 impl FragHostRole {
@@ -144,6 +149,7 @@ impl FragHostRole {
             FragHostRole::Add => "add",
             FragHostRole::Mul => "mul",
             FragHostRole::Sub => "sub",
+            FragHostRole::ToIndex => "to_index",
         }
     }
 
@@ -154,6 +160,7 @@ impl FragHostRole {
             FragHostRole::Add => ".add",
             FragHostRole::Mul => ".mul",
             FragHostRole::Sub => ".sub",
+            FragHostRole::ToIndex => ".toIndex",
         }
     }
 
@@ -163,6 +170,7 @@ impl FragHostRole {
             "add" => Some(FragHostRole::Add),
             "mul" => Some(FragHostRole::Mul),
             "sub" => Some(FragHostRole::Sub),
+            "to_index" => Some(FragHostRole::ToIndex),
             _ => None,
         }
     }
@@ -175,6 +183,9 @@ impl FragHostRole {
             FragHostRole::Add => (&[FragTy::IntCarrier, FragTy::IntCarrier], FragTy::IntCarrier),
             FragHostRole::Mul => (&[FragTy::IntCarrier, FragTy::IntCarrier], FragTy::IntCarrier),
             FragHostRole::Sub => (&[FragTy::IntCarrier, FragTy::IntCarrier], FragTy::IntCarrier),
+            // Twin of `PlanCheck.hostCallResultTy?` returning `none`: the
+            // to-index role has no standalone `hostCall` signature.
+            FragHostRole::ToIndex => (&[], FragTy::RawI32),
         }
     }
 }
@@ -191,6 +202,9 @@ pub struct FragHostTable {
     /// The strict `sub` binding (byte-derived exactly like add/mul:
     /// carrier-binop signature + first arithmetic operator + uniqueness).
     pub sub_idx: Option<u32>,
+    /// The `__aint_to_index` binding, byte-derived from the named helper
+    /// export exactly like `box`.
+    pub to_index_idx: Option<u32>,
     /// The limb array type index the Int carrier's middle field references.
     pub limb_idx: Option<u32>,
     /// The four bignum sub-routine FUNCTION indices the arith helper bodies
@@ -214,6 +228,7 @@ impl FragHostTable {
             FragHostRole::Add => self.add_idx,
             FragHostRole::Mul => self.mul_idx,
             FragHostRole::Sub => self.sub_idx,
+            FragHostRole::ToIndex => self.to_index_idx,
         }
     }
 
@@ -233,6 +248,9 @@ impl FragHostTable {
         if let Some(idx) = self.sub_idx {
             entries.push(format!("(.sub, {idx})"));
         }
+        if let Some(idx) = self.to_index_idx {
+            entries.push(format!("(.toIndex, {idx})"));
+        }
         format!("[{}]", entries.join(", "))
     }
 
@@ -245,11 +263,13 @@ impl FragHostTable {
             None => "none".to_string(),
         };
         format!(
-            "({{ box := {}, add := {}, mul := {}, sub := {} }} : CertDecode.AddSub.Roles)",
+            "({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {} }} : \
+             CertDecode.AddSub.Roles)",
             option(self.box_idx),
             option(self.add_idx),
             option(self.mul_idx),
             option(self.sub_idx),
+            option(self.to_index_idx),
         )
     }
 
@@ -259,10 +279,15 @@ impl FragHostTable {
     /// indices are always used wherever bytes are available.
     pub fn placeholder() -> Self {
         FragHostTable {
+            // Distinct placeholder indices: face recognisers may require
+            // distinct role bindings (e.g. the fused vector read's
+            // to-index/box distinctness), and real byte-derived tables are
+            // always distinct, so the shape gate must be too.
             box_idx: Some(0),
-            add_idx: Some(0),
-            mul_idx: Some(0),
-            sub_idx: Some(0),
+            add_idx: Some(1),
+            mul_idx: Some(2),
+            sub_idx: Some(3),
+            to_index_idx: Some(4),
             limb_idx: Some(0),
             decompose_idx: Some(0),
             normalize_idx: Some(0),
@@ -478,6 +503,16 @@ pub enum FragNodeKind {
         then_block: Box<FragBlock>,
         else_block: Box<FragBlock>,
     },
+    /// Monolithic fused bounds-checked vector read
+    /// (`Option.withDefault(Vector.get(p0, p1), default)`): the exact emitter
+    /// template over pinned locals 0 (vector) and 1 (index). Consumes no
+    /// operand stack values. Twin of `FragNodeKind.vectorGetOrDefault`.
+    VectorGetOrDefault {
+        arr_ty: u32,
+        to_index_idx: u32,
+        box_idx: u32,
+        default: i64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -660,6 +695,12 @@ fn expr_fragment_node_kind_lean_value(kind: &FragNodeKind) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        FragNodeKind::VectorGetOrDefault {
+            arr_ty,
+            to_index_idx,
+            box_idx,
+            default,
+        } => format!(".vectorGetOrDefault {arr_ty} {to_index_idx} {box_idx} ({default} : Int)"),
         FragNodeKind::If {
             cond,
             then_block,
@@ -749,6 +790,17 @@ fn render_fragment_node_plan(node: &FragNode, indent: usize, out: &mut String) {
             out.push_str(&format!(
                 "selfcall tail={tail} func={func_idx} args={}\n",
                 render_fragment_plan_ids(args)
+            ));
+        }
+        FragNodeKind::VectorGetOrDefault {
+            arr_ty,
+            to_index_idx,
+            box_idx,
+            default,
+        } => {
+            out.push_str(&format!(
+                "vector.get_or_default arr_ty={arr_ty} to_index={to_index_idx} \
+                 box={box_idx} default={default}\n"
             ));
         }
         FragNodeKind::If {

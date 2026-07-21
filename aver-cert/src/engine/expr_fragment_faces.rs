@@ -203,6 +203,49 @@ pub fn expr_fragment_tag_dispatch_face(plan: &ExprFragmentPlan) -> Option<FragTa
     })
 }
 
+/// Exact Rust twin of `StandardFace.classifyVectorGetOrDefault` in the wall:
+/// the plan is the single monolithic fused vector-read node over the pinned
+/// `(vector, index)` params, with distinct helper indices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FragVectorGetOrDefaultFace {
+    pub arr_ty: u32,
+    pub to_index_idx: u32,
+    pub box_idx: u32,
+    pub default: i64,
+}
+
+pub fn expr_fragment_vector_get_face(
+    plan: &ExprFragmentPlan,
+) -> Option<FragVectorGetOrDefaultFace> {
+    if plan.params.as_slice() != [FragTy::AdtRef, FragTy::IntCarrier]
+        || plan.result != FragTy::IntCarrier
+        || plan.body.result != FragValueId(0)
+    {
+        return None;
+    }
+    let [n0] = plan.body.nodes.as_slice() else {
+        return None;
+    };
+    if n0.id != FragValueId(0) || n0.ty != FragTy::IntCarrier {
+        return None;
+    }
+    let FragNodeKind::VectorGetOrDefault {
+        arr_ty,
+        to_index_idx,
+        box_idx,
+        default,
+    } = n0.kind
+    else {
+        return None;
+    };
+    (to_index_idx != box_idx).then_some(FragVectorGetOrDefaultFace {
+        arr_ty,
+        to_index_idx,
+        box_idx,
+        default,
+    })
+}
+
 fn frag_block_has_user_struct_get(block: &FragBlock) -> bool {
     block.nodes.iter().any(|node| match &node.kind {
         FragNodeKind::StructGetUser { .. } => true,

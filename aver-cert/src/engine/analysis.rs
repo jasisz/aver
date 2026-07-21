@@ -288,6 +288,7 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
     let mut has_mul = false;
     let mut has_string_eq = false;
     let mut has_string_concat = false;
+    let mut has_to_index = false;
     let mut has_add_total = false;
     let mut has_sub_total = false;
     let mut has_mul_total = false;
@@ -300,6 +301,18 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
         if c.int_add_face().is_some() {
             has_box = true;
             has_add = true;
+            continue;
+        }
+        if c.tag_dispatch_face().is_some() {
+            // Both arms box their Int constant (twin of the wall's
+            // `useFragBlockFuel` role accounting for the encoded plan).
+            has_box = true;
+            continue;
+        }
+        if c.vector_get_face().is_some() {
+            // The fused read calls the to-index helper and boxes the default.
+            has_box = true;
+            has_to_index = true;
             continue;
         }
         match c.inner() {
@@ -380,6 +393,9 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
     }
     if has_string_concat {
         contracts.push(STRING_CONCAT_CONTRACT.to_string());
+    }
+    if has_to_index {
+        contracts.push(TO_INDEX_CONTRACT.to_string());
     }
     if has_add_total {
         contracts.push(INT_ADD_TOTAL_CONTRACT.to_string());

@@ -425,6 +425,13 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                         Operator::I32Eq => Op::I32Eq,
                         Operator::I32LtS => Op::I32LtS,
                         Operator::I32GtS => Op::I32GtS,
+                        Operator::I32LtU => Op::I32LtU,
+                        Operator::I32GeS => Op::I32GeS,
+                        Operator::I32And => Op::I32And,
+                        Operator::ArrayLen => Op::ArrayLen,
+                        Operator::ArrayGet { array_type_index } => {
+                            Op::ArrayGet(array_type_index)
+                        }
                         Operator::If { .. } => Op::If,
                         Operator::Else => Op::Else,
                         Operator::End => Op::End,
@@ -498,6 +505,14 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
     let box_idx = exports
         .iter()
         .find(|(n, _)| n == "__rt_aint_from_i64")
+        .map(|(_, i)| *i);
+
+    // `__aint_to_index` helper, exact by export name (mirror of `box`; twin
+    // of `CertDecode.AddSub.toIndexIdx`). Absent in modules with no fused
+    // vector read; `None` keeps the fused-read recognizer fail-closed.
+    let to_index_idx = exports
+        .iter()
+        .find(|(n, _)| n == "__aint_to_index")
         .map(|(_, i)| *i);
 
     let is_carrier_binop = |def_idx: usize| -> bool {
@@ -663,6 +678,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
             add_idx,
             mul_idx,
             sub_idx,
+            to_index_idx,
             limb_idx: limb,
             decompose_idx,
             normalize_idx,

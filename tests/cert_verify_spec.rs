@@ -4513,7 +4513,7 @@ fn mutual_scc_kernel_guards_are_isolating() {
     lean.push_str("example : mutualMembersFormClosedSccs [(1, 1, [1])] = false := rfl\n");
     lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3, 4]), (2, 1, [1, 2, 3, 4]), (3, 4, [1, 2, 3, 4]), (4, 3, [1, 2, 3, 4])] = false := rfl\n\n");
     // FIX B: the REAL acceptance conjunct rejects a dangling group; shape passes.
-    lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := 2, code := fun _ => none,\n    host := fun _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
+    lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := 2, code := fun _ => none,\n    host := fun _ _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
     lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], declaredUncertified := [], capabilities := [], start := none, hostRoleTable := some { box := none, add := none, mul := none, sub := none }, arithParams := none, stringHostRoles := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
     lean.push_str("def claimsS : List MutualRecursionClaim :=\n  [ { exportNameBytes := [], exportName := \"a\", carrier := 2, memberSet := [1, 2],\n      hostTable := [(.box, 7), (.sub, 9)], obligation := dummyOb \"a\" 1 } ]\n\n");
     lean.push_str("example : AverCert.PlanCheck.checkMutualPlanShape [1, 2] [(.box, 7), (.sub, 9)] honestPlan = true := rfl\n");
@@ -5170,7 +5170,7 @@ def isoCode : CertPrelude.CodeTbl := fun i : Nat =>
 
 def isoOb : Obligation :=
   { export_ := "f", policy := .simulatesModel, carrier := 5,
-    code := isoCode, host := fun _ _ _ _ _ => (fun _ : Nat => none), self := 0,
+    code := isoCode, host := fun _ _ _ _ _ _ => (fun _ : Nat => none), self := 0,
     Dom := Unit, Cod := Unit,
     domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True,
     model := fun _ => () }
@@ -6029,7 +6029,7 @@ fn int_dispatch_kernel_guards_are_isolating() {
         "    (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
         "    (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
         "    (Nat → List WVal → Option WVal) → CertPrelude.HostTbl :=\n",
-        "  fun _ _ _ _ _ => fun fn =>\n",
+        "  fun _ _ _ _ _ _ => fun fn =>\n",
         "    if fn = 7 then\n",
         "      some (1, fun args => match args with\n",
         "        | [WVal.i64v 0] => CertPrelude.boxRef 11 args\n",
